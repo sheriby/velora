@@ -242,6 +242,10 @@ pub struct I18nStrings {
     pub workspace_tab_recent: String,
     /// Empty state for the recent-workspaces list.
     pub workspace_empty_recent: String,
+    /// Placeholder for filtering workspace files by name.
+    pub workspace_search_placeholder: String,
+    /// Empty state when the filename filter has no matches.
+    pub workspace_no_search_results: String,
     /// Title shown when no Markdown file path is available for workspace mode.
     pub workspace_no_file_title: String,
     /// Message shown when no Markdown file path is available for workspace mode.
@@ -477,6 +481,8 @@ struct I18nStringsDe {
     workspace_tab_outline: Option<String>,
     workspace_tab_recent: Option<String>,
     workspace_empty_recent: Option<String>,
+    workspace_search_placeholder: Option<String>,
+    workspace_no_search_results: Option<String>,
     workspace_no_file_title: Option<String>,
     workspace_no_file_message: Option<String>,
     workspace_empty_files: Option<String>,
@@ -666,6 +672,8 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_tab_outline",
     "workspace_tab_recent",
     "workspace_empty_recent",
+    "workspace_search_placeholder",
+    "workspace_no_search_results",
     "workspace_no_file_title",
     "workspace_no_file_message",
     "workspace_empty_files",
@@ -1097,6 +1105,12 @@ impl I18nStringsDe {
             workspace_empty_recent: self
                 .workspace_empty_recent
                 .unwrap_or(defaults.workspace_empty_recent),
+            workspace_search_placeholder: self
+                .workspace_search_placeholder
+                .unwrap_or(defaults.workspace_search_placeholder),
+            workspace_no_search_results: self
+                .workspace_no_search_results
+                .unwrap_or(defaults.workspace_no_search_results),
             workspace_no_file_title: self
                 .workspace_no_file_title
                 .unwrap_or(defaults.workspace_no_file_title),
@@ -1372,6 +1386,8 @@ impl I18nStrings {
             workspace_tab_outline: "大纲".into(),
             workspace_tab_recent: "最近".into(),
             workspace_empty_recent: "还没有最近打开的工作区".into(),
+            workspace_search_placeholder: "按文件名搜索".into(),
+            workspace_no_search_results: "没有匹配的文件".into(),
             workspace_no_file_title: "未打开 Markdown 文件".into(),
             workspace_no_file_message: "打开或保存一个 .md 文件后，工作区会使用该文件所在目录。"
                 .into(),
@@ -1590,6 +1606,8 @@ impl I18nStrings {
             workspace_tab_outline: "Outline".into(),
             workspace_tab_recent: "Recent".into(),
             workspace_empty_recent: "No recent workspaces".into(),
+            workspace_search_placeholder: "Search file names".into(),
+            workspace_no_search_results: "No matching files".into(),
             workspace_no_file_title: "No Markdown File Open".into(),
             workspace_no_file_message:
                 "Open or save a .md file to use its folder as the workspace.".into(),

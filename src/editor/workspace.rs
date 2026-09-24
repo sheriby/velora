@@ -73,6 +73,8 @@ pub(super) struct WorkspaceState {
     active_document: Option<PathBuf>,
     recent_roots: Vec<PathBuf>,
     recent_roots_loaded: bool,
+    filename_query: String,
+    filename_search_focus: Option<FocusHandle>,
 }
 
 impl Default for WorkspaceState {
@@ -91,6 +93,8 @@ impl Default for WorkspaceState {
             active_document: None,
             recent_roots: Vec::new(),
             recent_roots_loaded: false,
+            filename_query: String::new(),
+            filename_search_focus: None,
         }
     }
 }
@@ -574,6 +578,63 @@ impl Editor {
                     editor.prompt_open_workspace_folder(cx);
                 });
             });
+        let search_focus = self
+            .workspace
+            .filename_search_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        let search_focus_for_click = search_focus.clone();
+        let search_editor = editor.clone();
+        let search_query = self.workspace.filename_query.clone();
+        let search_label = if search_query.is_empty() {
+            strings.workspace_search_placeholder.clone()
+        } else {
+            search_query.clone()
+        };
+        let search_field = div()
+            .id("workspace-file-search")
+            .track_focus(&search_focus)
+            .w_full()
+            .h(px(32.0))
+            .px(px(10.0))
+            .flex()
+            .items_center()
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(c.dialog_border)
+            .bg(c.editor_background)
+            .text_size(px(t.text_size * 0.88))
+            .text_color(if search_query.is_empty() {
+                c.dialog_muted
+            } else {
+                c.text_default
+            })
+            .child(search_label)
+            .on_click(move |_event, window, _cx| window.focus(&search_focus_for_click))
+            .on_key_down(move |event: &KeyDownEvent, _window, cx| {
+                let key = event.keystroke.key.to_ascii_lowercase();
+                let key_char = event.keystroke.key_char.clone();
+                let modified =
+                    event.keystroke.modifiers.secondary() || event.keystroke.modifiers.alt;
+                let _ = search_editor.update(cx, |editor, cx| {
+                    match key.as_str() {
+                        "backspace" => {
+                            editor.workspace.filename_query.pop();
+                        }
+                        "escape" => editor.workspace.filename_query.clear(),
+                        _ if !modified => {
+                            if let Some(character) = key_char {
+                                if !character.chars().any(char::is_control) {
+                                    editor.workspace.filename_query.push_str(&character);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            });
 
         Some(
             div()
@@ -616,7 +677,8 @@ impl Editor {
                                     self.workspace.active_tab == WorkspaceTab::Recent,
                                 )),
                         )
-                        .child(open_folder_button),
+                        .child(open_folder_button)
+                        .child(search_field),
                 )
                 .child(
                     div()
@@ -657,6 +719,29 @@ impl Editor {
         let Some(root) = self.workspace.file_tree.as_ref() else {
             return self.render_workspace_empty_state("", &strings.workspace_empty_files, theme);
         };
+
+        if !self.workspace.filename_query.trim().is_empty() {
+            let mut matches = Vec::new();
+            collect_matching_workspace_files(
+                root,
+                root,
+                &self.workspace.filename_query.to_lowercase(),
+                &mut matches,
+            );
+            if matches.is_empty() {
+                return self.render_workspace_empty_state(
+                    "",
+                    &strings.workspace_no_search_results,
+                    theme,
+                );
+            }
+            return div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .children(self.render_workspace_nodes(&matches, 0, theme, editor))
+                .into_any_element();
+        }
 
         div()
             .w_full()
@@ -913,6 +998,44 @@ fn is_markdown_file(path: &Path) -> bool {
         .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("md"))
 }
 
+fn collect_matching_workspace_files(
+    node: &WorkspaceTreeNode,
+    root: &WorkspaceTreeNode,
+    query: &str,
+    matches: &mut Vec<WorkspaceTreeNode>,
+) {
+    let query = query.to_lowercase();
+    match &node.kind {
+        WorkspaceTreeKind::Directory(_) => {
+            for child in &node.children {
+                collect_matching_workspace_files(child, root, &query, matches);
+            }
+        }
+        WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path)
+            if path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().to_lowercase().contains(&query)) =>
+        {
+            let root_path = match &root.kind {
+                WorkspaceTreeKind::Directory(path) => path.as_path(),
+                _ => Path::new(""),
+            };
+            let label = path
+                .strip_prefix(root_path)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned();
+            matches.push(WorkspaceTreeNode {
+                id: node.id.clone(),
+                label,
+                kind: node.kind.clone(),
+                children: Vec::new(),
+            });
+        }
+        _ => {}
+    }
+}
+
 fn is_code_file(path: &Path) -> bool {
     const CODE_EXTENSIONS: &[&str] = &[
         "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "json", "jsx", "kt",
@@ -1114,7 +1237,8 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 mod tests {
     use super::{
         WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
-        prune_outline_state, scan_workspace_dir, workspace_panel_width_for_viewport,
+        collect_matching_workspace_files, prune_outline_state, scan_workspace_dir,
+        workspace_panel_width_for_viewport,
     };
     use std::fs;
 
@@ -1147,6 +1271,36 @@ mod tests {
             tree.children[2].kind,
             WorkspaceTreeKind::CodeFile(_)
         ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workspace_filename_search_matches_names_case_insensitively() {
+        let root =
+            std::env::temp_dir().join(format!("maksher-workspace-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).expect("create source dir");
+        fs::write(
+            root.join("README.md"),
+            "search term is only in file content",
+        )
+        .expect("write md");
+        fs::write(root.join("src").join("main.rs"), "fn main() {}").expect("write code");
+        let tree = scan_workspace_dir(&root).expect("scan tree");
+
+        let mut matches = Vec::new();
+        collect_matching_workspace_files(&tree, &tree, "MAIN", &mut matches);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].label, "src/main.rs");
+
+        matches.clear();
+        collect_matching_workspace_files(&tree, &tree, "readme", &mut matches);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].label, "README.md");
+
+        matches.clear();
+        collect_matching_workspace_files(&tree, &tree, "content", &mut matches);
+        assert!(matches.is_empty());
 
         let _ = fs::remove_dir_all(root);
     }
