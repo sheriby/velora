@@ -246,6 +246,104 @@ impl Editor {
         .detach();
     }
 
+    fn prompt_rename_or_move_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(source) = self.selected_workspace_path() else {
+            return;
+        };
+        let Some(parent) = source.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let suggested_name = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        let prompt = cx.prompt_for_new_path(&parent, suggested_name.as_deref());
+        let editor = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        let source_is_directory = source.is_dir();
+
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let Ok(Ok(Some(destination))) = prompt.await else {
+                return;
+            };
+            if destination == source {
+                return;
+            }
+            if destination.exists() {
+                Self::show_workspace_file_error(
+                    window_handle,
+                    format!("目标路径已存在：{}", destination.display()),
+                    cx,
+                );
+                return;
+            }
+            if let Err(err) = std::fs::rename(&source, &destination) {
+                Self::show_workspace_file_error(
+                    window_handle,
+                    format!("无法移动或重命名：{}", err),
+                    cx,
+                );
+                return;
+            }
+
+            let _ = editor.update(cx, move |editor, cx| {
+                for tab in &mut editor.workspace.open_documents {
+                    if let Some(path) =
+                        remap_moved_path(&tab.path, &source, &destination, source_is_directory)
+                    {
+                        tab.path = path;
+                    }
+                }
+                if let Some(path) = editor.file_path.as_ref().and_then(|path| {
+                    remap_moved_path(path, &source, &destination, source_is_directory)
+                }) {
+                    editor.file_path = Some(path);
+                    editor.pending_window_title_refresh = true;
+                }
+                if let Some(path) = editor.workspace.active_document.as_ref().and_then(|path| {
+                    remap_moved_path(path, &source, &destination, source_is_directory)
+                }) {
+                    editor.workspace.active_document = Some(path);
+                }
+                if let Some(root) = editor.workspace.root.as_ref().and_then(|root| {
+                    remap_moved_path(root, &source, &destination, source_is_directory)
+                }) {
+                    editor.workspace.root = Some(root.clone());
+                    if let Ok(recent) = crate::config::record_recent_workspace(&root) {
+                        editor.workspace.recent_roots = recent;
+                    }
+                }
+                editor.workspace.selected = match editor.workspace.selected.take() {
+                    Some(WorkspaceSelection::File(path)) => {
+                        remap_moved_path(&path, &source, &destination, source_is_directory)
+                            .map(WorkspaceSelection::File)
+                    }
+                    Some(WorkspaceSelection::Directory(path)) => {
+                        remap_moved_path(&path, &source, &destination, source_is_directory)
+                            .map(WorkspaceSelection::Directory)
+                    }
+                    Some(WorkspaceSelection::WorkspaceRoot(path)) => {
+                        remap_moved_path(&path, &source, &destination, source_is_directory)
+                            .map(WorkspaceSelection::WorkspaceRoot)
+                    }
+                    other => other,
+                };
+                editor.refresh_workspace_tree(cx);
+                editor.workspace.recent_roots_loaded = true;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn selected_workspace_path(&self) -> Option<PathBuf> {
+        match self.workspace.selected.as_ref()? {
+            WorkspaceSelection::Directory(path)
+            | WorkspaceSelection::File(path)
+            | WorkspaceSelection::WorkspaceRoot(path) => Some(path.clone()),
+            WorkspaceSelection::Outline(_) => None,
+        }
+    }
+
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.is_open {
             self.workspace.is_open = false;
@@ -726,6 +824,27 @@ impl Editor {
                     editor.prompt_create_workspace_folder(window, cx);
                 });
             });
+        let rename_editor = editor.clone();
+        let rename_button = div()
+            .id("workspace-rename")
+            .w_full()
+            .h(px(30.0))
+            .px(px(7.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .bg(c.dialog_secondary_button_bg)
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .cursor_pointer()
+            .text_size(px(t.text_size * 0.78))
+            .text_color(c.text_default)
+            .child(strings.workspace_rename.clone())
+            .on_click(move |_event, window, cx| {
+                let _ = rename_editor.update(cx, |editor, cx| {
+                    editor.prompt_rename_or_move_selected(window, cx);
+                });
+            });
         let search_focus = self
             .workspace
             .filename_search_focus
@@ -834,7 +953,8 @@ impl Editor {
                                 .gap(px(6.0))
                                 .child(new_file_button)
                                 .child(new_folder_button),
-                        ),
+                        )
+                        .child(rename_button),
                 )
                 .child(
                     div()
@@ -1172,6 +1292,22 @@ fn create_workspace_folder(path: &Path) -> std::io::Result<()> {
     std::fs::create_dir(path)
 }
 
+fn remap_moved_path(
+    path: &Path,
+    source: &Path,
+    destination: &Path,
+    source_is_directory: bool,
+) -> Option<PathBuf> {
+    let suffix = if source_is_directory {
+        path.strip_prefix(source).ok()?
+    } else if path == source {
+        Path::new("")
+    } else {
+        return None;
+    };
+    Some(destination.join(suffix))
+}
+
 fn collect_matching_workspace_files(
     node: &WorkspaceTreeNode,
     root: &WorkspaceTreeNode,
@@ -1412,9 +1548,11 @@ mod tests {
     use super::{
         WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
         collect_matching_workspace_files, create_workspace_file, create_workspace_folder,
-        prune_outline_state, scan_workspace_dir, workspace_panel_width_for_viewport,
+        prune_outline_state, remap_moved_path, scan_workspace_dir,
+        workspace_panel_width_for_viewport,
     };
     use std::fs;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn workspace_scan_includes_markdown_and_code_files() {
@@ -1502,6 +1640,39 @@ mod tests {
         assert!(folder.is_dir());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn moving_a_folder_remaps_open_document_descendants() {
+        let source = Path::new("/workspace/old");
+        let destination = Path::new("/workspace/new");
+        assert_eq!(
+            remap_moved_path(
+                Path::new("/workspace/old/docs/readme.md"),
+                source,
+                destination,
+                true,
+            ),
+            Some(PathBuf::from("/workspace/new/docs/readme.md"))
+        );
+        assert_eq!(
+            remap_moved_path(
+                Path::new("/workspace/other/readme.md"),
+                source,
+                destination,
+                true,
+            ),
+            None
+        );
+        assert_eq!(
+            remap_moved_path(
+                Path::new("/workspace/old.md"),
+                Path::new("/workspace/old.md"),
+                Path::new("/workspace/new.md"),
+                false,
+            ),
+            Some(PathBuf::from("/workspace/new.md"))
+        );
     }
 
     #[test]
