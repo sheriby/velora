@@ -13,6 +13,7 @@ pub(crate) struct CodeViewer {
     path: PathBuf,
     source: SharedString,
     highlight: Option<CodeHighlightResult>,
+    system_appearance_subscription: Option<Subscription>,
 }
 
 impl CodeViewer {
@@ -79,7 +80,17 @@ impl CodeViewer {
 }
 
 impl Render for CodeViewer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.system_appearance_subscription.is_none() {
+            self.system_appearance_subscription =
+                Some(cx.observe_window_appearance(window, |_viewer, window, cx| {
+                    let appearance = window.appearance();
+                    cx.update_global::<ThemeManager, _>(|manager, _cx| {
+                        manager.set_system_appearance(appearance)
+                    });
+                    cx.refresh_windows();
+                }));
+        }
         let theme = cx.global::<ThemeManager>().current_arc();
         let file_name = self
             .path
@@ -157,6 +168,7 @@ pub(crate) fn open_code_viewer_window(
                 path,
                 source: source.into(),
                 highlight,
+                system_appearance_subscription: None,
             })
         },
     )?;

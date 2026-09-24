@@ -646,6 +646,7 @@ pub(crate) struct PreferencesWindow {
     saved_status_bar_show_cursor_position: bool,
     saved_status_bar_show_sidebar_toggle: bool,
     saved_status_bar_show_mode_switch: bool,
+    system_appearance_subscription: Option<Subscription>,
 }
 
 impl PreferencesWindow {
@@ -692,6 +693,7 @@ impl PreferencesWindow {
             saved_status_bar_show_cursor_position: preferences.status_bar.show_cursor_position,
             saved_status_bar_show_sidebar_toggle: preferences.status_bar.show_sidebar_toggle,
             saved_status_bar_show_mode_switch: preferences.status_bar.show_mode_switch,
+            system_appearance_subscription: None,
         }
     }
 
@@ -1674,6 +1676,18 @@ impl PreferencesWindow {
 
 impl Render for PreferencesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.system_appearance_subscription.is_none() {
+            self.system_appearance_subscription = Some(cx.observe_window_appearance(
+                window,
+                |_preferences, window, cx| {
+                    let appearance = window.appearance();
+                    cx.update_global::<ThemeManager, _>(|manager, _cx| {
+                        manager.set_system_appearance(appearance)
+                    });
+                    cx.refresh_windows();
+                },
+            ));
+        }
         let theme = cx.global::<ThemeManager>().current().clone();
         let strings = cx.global::<I18nManager>().strings().clone();
         let c = &theme.colors;
