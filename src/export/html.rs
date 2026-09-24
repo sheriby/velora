@@ -1017,7 +1017,7 @@ fn escape_html(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_tibetan_text, render_chromium_pdf_html_with_base_dir, render_html,
+        contains_tibetan_text, css_color, render_chromium_pdf_html_with_base_dir, render_html,
         render_html_with_base_dir,
     };
     use crate::theme::Theme;
@@ -1060,11 +1060,15 @@ mod tests {
     }
     #[test]
     fn emits_pdf_compatible_theme_css() {
-        let html = render_html("# Title\n\ntext", &Theme::default_theme(), "Doc");
+        let theme = Theme::default_theme();
+        let html = render_html("# Title\n\ntext", &theme, "Doc");
 
         assert!(!html.contains("hsla("));
         assert!(html.contains("color-scheme: dark;"));
-        assert!(html.contains("--vlt-bg: rgba(25,25,25,1.000);"));
+        assert!(html.contains(&format!(
+            "--vlt-bg: {};",
+            css_color(theme.colors.editor_background)
+        )));
         assert!(html.contains("html { background-color: var(--vlt-bg); color: var(--vlt-text); }"));
         assert!(html.contains("background-color: var(--vlt-code-bg);"));
         assert!(html.contains("border: 1px solid;\n  border-color: var(--vlt-border);"));
@@ -1077,10 +1081,14 @@ mod tests {
 
     #[test]
     fn light_theme_exports_light_color_scheme() {
-        let html = render_html("# Title\n\ntext", &Theme::light_theme(), "Doc");
+        let theme = Theme::light_theme();
+        let html = render_html("# Title\n\ntext", &theme, "Doc");
 
         assert!(html.contains("color-scheme: light;"));
-        assert!(html.contains("--vlt-bg: rgba(247,248,251,1.000);"));
+        assert!(html.contains(&format!(
+            "--vlt-bg: {};",
+            css_color(theme.colors.editor_background)
+        )));
         assert!(!html.contains("color-scheme: dark;"));
     }
 
