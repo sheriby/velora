@@ -297,6 +297,8 @@ pub struct I18nStrings {
     pub view_mode_rendered: String,
     /// Hover label shown when source mode can switch to rendered mode.
     pub view_mode_switch_to_rendered: String,
+    /// Explains why a document with ambiguous extensions stays in source mode.
+    pub source_mode_fallback_message: String,
     /// Root context-menu insert label.
     pub context_menu_insert: String,
     /// Insert submenu item for tables.
@@ -536,6 +538,7 @@ struct I18nStringsDe {
     view_mode_switch_to_source: Option<String>,
     view_mode_rendered: Option<String>,
     view_mode_switch_to_rendered: Option<String>,
+    source_mode_fallback_message: Option<String>,
     context_menu_insert: Option<String>,
     context_menu_table: Option<String>,
     table_axis_align_column_left: Option<String>,
@@ -741,6 +744,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "view_mode_switch_to_source",
     "view_mode_rendered",
     "view_mode_switch_to_rendered",
+    "source_mode_fallback_message",
     "context_menu_insert",
     "context_menu_table",
     "table_axis_align_column_left",
@@ -1232,6 +1236,9 @@ impl I18nStringsDe {
             view_mode_switch_to_rendered: self
                 .view_mode_switch_to_rendered
                 .unwrap_or(defaults.view_mode_switch_to_rendered),
+            source_mode_fallback_message: self
+                .source_mode_fallback_message
+                .unwrap_or(defaults.source_mode_fallback_message),
             context_menu_insert: self
                 .context_menu_insert
                 .unwrap_or(defaults.context_menu_insert),
@@ -1509,6 +1516,9 @@ impl I18nStrings {
             view_mode_switch_to_source: "切换到源码".into(),
             view_mode_rendered: "渲染".into(),
             view_mode_switch_to_rendered: "切换到渲染".into(),
+            source_mode_fallback_message:
+                "检测到无法安全拆分的 Markdown 扩展语法，已切换到源码模式以保留原文。移除该语法后可切回渲染模式。"
+                    .into(),
             context_menu_insert: "插入".into(),
             context_menu_table: "表格".into(),
             table_axis_align_column_left: "左对齐此列".into(),
@@ -1742,6 +1752,9 @@ impl I18nStrings {
             view_mode_switch_to_source: "Switch to Source".into(),
             view_mode_rendered: "Rendered".into(),
             view_mode_switch_to_rendered: "Switch to Rendered".into(),
+            source_mode_fallback_message:
+                "This document contains Markdown extension syntax that cannot be isolated safely, so it stays in source mode to preserve the original text. Remove that syntax to switch back to rendered mode."
+                    .into(),
             context_menu_insert: "Insert".into(),
             context_menu_table: "Table".into(),
             table_axis_align_column_left: "Align Column Left".into(),
@@ -2185,6 +2198,7 @@ mod tests {
         assert_eq!(strings.save_failed_title, "保存失败");
         assert_eq!(strings.export_failed_title, "导出失败");
         assert_eq!(strings.view_mode_switch_to_source, "切换到源码");
+        assert!(strings.source_mode_fallback_message.contains("保留原文"));
         assert_eq!(strings.context_menu_insert, "插入");
         assert_eq!(strings.table_insert_title, "插入表格");
         assert_eq!(strings.image_loading_without_alt, "正在加载图片...");

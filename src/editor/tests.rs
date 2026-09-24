@@ -1082,6 +1082,14 @@ async fn dropped_markdown_replaces_clean_editor_in_current_window(cx: &mut TestA
         );
         assert!(editor.document.markdown_text(cx).contains("# Dropped"));
     });
+
+    let fallback_source = "!!! note\n  keep this text";
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_markdown(fallback_source.into(), None, cx);
+        assert!(matches!(editor.view_mode, ViewMode::Source));
+        assert!(editor.source_mode_fallback_required);
+        assert_eq!(editor.document.raw_source_text(cx), fallback_source);
+    });
     assert_eq!(cx.cx.windows().len(), 1);
 }
 

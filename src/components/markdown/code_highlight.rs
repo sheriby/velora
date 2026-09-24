@@ -761,6 +761,14 @@ mod tests {
         assert!(text.spans.is_empty());
     }
 
+    #[test]
+    fn code_extensions_without_grammars_remain_available_as_plain_text() {
+        for language in ["sql", "swift", "kt", "xml"] {
+            assert_eq!(resolve_code_language_key(Some(language)), None);
+            assert_eq!(highlight_code_block(Some(language), "source text"), None);
+        }
+    }
+
     #[cfg(all(feature = "code-highlight-core", feature = "code-highlight-official"))]
     #[test]
     fn default_official_highlight_bundle_produces_spans() {

@@ -66,6 +66,8 @@ pub struct Editor {
     table_cells: HashMap<EntityId, TableCellBinding>,
     /// Which view the editor is currently presenting.
     pub(crate) view_mode: ViewMode,
+    /// Keeps ambiguous Markdown extensions in source mode until their syntax is removed.
+    source_mode_fallback_required: bool,
     /// Deferred focus target applied during render when a [`Window`] is
     /// available.
     pending_focus: Option<EntityId>,
@@ -313,7 +315,15 @@ impl Editor {
         file_path: Option<PathBuf>,
     ) -> Self {
         let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
-        let mut roots = Self::build_root_blocks_from_markdown(cx, &normalized);
+        let source_mode_fallback_required =
+            Self::markdown_requires_source_mode_fallback(&normalized);
+        let mut roots = if source_mode_fallback_required {
+            let block = Self::new_block(cx, BlockRecord::paragraph(normalized.clone()));
+            block.update(cx, |block, _cx| block.set_source_document_mode());
+            vec![block]
+        } else {
+            Self::build_root_blocks_from_markdown(cx, &normalized)
+        };
         if roots.is_empty() {
             roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
         }
@@ -325,7 +335,12 @@ impl Editor {
         let mut editor = Self {
             document,
             table_cells: HashMap::new(),
-            view_mode: ViewMode::Rendered,
+            view_mode: if source_mode_fallback_required {
+                ViewMode::Source
+            } else {
+                ViewMode::Rendered
+            },
+            source_mode_fallback_required,
             pending_focus,
             active_entity_id: pending_focus,
             pending_scroll_active_block_into_view: true,

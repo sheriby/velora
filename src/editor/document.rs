@@ -188,6 +188,38 @@ fn find_matching_closing_fence(
     None
 }
 
+fn is_fenced_div_opening(line: &str) -> bool {
+    strip_fence_indent(line)
+        .and_then(|line| line.strip_prefix(":::"))
+        .is_some_and(|suffix| !suffix.trim().is_empty())
+}
+
+fn is_fenced_div_closing(line: &str) -> bool {
+    strip_fence_indent(line).is_some_and(|line| line.trim() == ":::")
+}
+
+fn collect_fenced_div_end(lines: &[String], start: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    for (index, line) in lines.iter().enumerate().skip(start + 1) {
+        if is_fenced_div_opening(line) {
+            depth += 1;
+        } else if is_fenced_div_closing(line) {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index + 1);
+            }
+        }
+    }
+    None
+}
+
+fn is_unsupported_admonition_opening(line: &str) -> bool {
+    strip_fence_indent(line).is_some_and(|line| {
+        let line = line.trim_start();
+        line.starts_with("!!!") || line.starts_with("???")
+    })
+}
+
 fn leading_indent_columns_and_bytes(line: &str) -> (usize, usize) {
     let mut columns = 0usize;
     let mut bytes = 0usize;
@@ -925,6 +957,30 @@ fn build_native_footnote_definition_block(
 }
 
 impl Editor {
+    pub(super) fn markdown_requires_source_mode_fallback(markdown: &str) -> bool {
+        let lines = markdown.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+        let mut index = 0;
+        while index < lines.len() {
+            if let Some(fence) = parse_opening_fence(&lines[index]) {
+                if let Some(closing_index) = find_matching_closing_fence(&lines, index, &fence) {
+                    index = closing_index + 1;
+                    continue;
+                }
+                break;
+            }
+            if is_unsupported_admonition_opening(&lines[index]) {
+                return true;
+            }
+            if is_fenced_div_opening(&lines[index])
+                && collect_fenced_div_end(&lines, index).is_none()
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
     pub(super) fn build_root_blocks_from_markdown(
         cx: &mut Context<Self>,
         markdown: &str,
@@ -996,6 +1052,13 @@ impl Editor {
 
                 roots.push(block);
                 index = next_index;
+                continue;
+            }
+
+            if is_fenced_div_opening(line) {
+                let end = collect_fenced_div_end(lines, index).unwrap_or(lines.len());
+                roots.push(raw_block(cx, lines[index..end].join("\n")));
+                index = end;
                 continue;
             }
 
@@ -1865,6 +1928,80 @@ mod tests {
         ];
         let opener = parse_opening_fence(&lines[0]).expect("opening fence");
         assert_eq!(find_matching_closing_fence(&lines, 0, &opener), None);
+    }
+
+    #[gpui::test]
+    async fn balanced_unknown_fenced_div_stays_as_editable_raw_markdown(cx: &mut TestAppContext) {
+        let source = "before\n\n::: warning\nUse caution.\n:::\n\n# after";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            assert!(matches!(editor.view_mode, super::super::ViewMode::Rendered));
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 3);
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Paragraph);
+            let raw = visible[1].entity.clone();
+            assert_eq!(raw.read(cx).kind(), BlockKind::RawMarkdown);
+            assert_eq!(
+                raw.read(cx).display_text(),
+                "::: warning\nUse caution.\n:::"
+            );
+            assert_eq!(
+                visible[2].entity.read(cx).kind(),
+                BlockKind::Heading { level: 1 }
+            );
+            assert_eq!(editor.document.markdown_text(cx), source);
+
+            let start = "::: warning\n".len();
+            raw.update(cx, |block, block_cx| {
+                block.prepare_undo_capture(
+                    crate::components::UndoCaptureKind::NonCoalescible,
+                    block_cx,
+                );
+                block.replace_text_in_visible_range(
+                    start..start + "Use caution.".len(),
+                    "Be careful.",
+                    None,
+                    false,
+                    block_cx,
+                );
+            });
+            assert_eq!(
+                editor.document.markdown_text(cx),
+                "before\n\n::: warning\nBe careful.\n:::\n\n# after"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn ambiguous_markdown_extensions_open_and_stay_in_source_mode(cx: &mut TestAppContext) {
+        let unsupported = [
+            "::: custom\ncontent",
+            "!!! note\n  content",
+            "??? note\n  content",
+        ];
+
+        for source in unsupported {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+            editor.update(cx, |editor, cx| {
+                assert!(matches!(editor.view_mode, super::super::ViewMode::Source));
+                assert!(editor.source_mode_fallback_required);
+                assert_eq!(editor.document.raw_source_text(cx), source);
+
+                editor.toggle_view_mode(cx);
+                assert!(matches!(editor.view_mode, super::super::ViewMode::Source));
+                assert!(editor.source_mode_fallback_required);
+                assert_eq!(editor.document.raw_source_text(cx), source);
+            });
+        }
+
+        let fenced = cx.new(|cx| {
+            Editor::from_markdown(cx, "```markdown\n!!! note\n::: custom\n```".into(), None)
+        });
+        fenced.update(cx, |editor, _cx| {
+            assert!(matches!(editor.view_mode, super::super::ViewMode::Rendered));
+            assert!(!editor.source_mode_fallback_required);
+        });
     }
 
     #[test]

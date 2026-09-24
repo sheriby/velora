@@ -2048,6 +2048,33 @@ impl Render for Editor {
         } else {
             content_area.into_any_element()
         };
+        let content_area = if self.source_mode_fallback_required {
+            div()
+                .id("source-mode-fallback-container")
+                .w_full()
+                .h_full()
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("source-mode-fallback-notice")
+                        .w_full()
+                        .flex_shrink_0()
+                        .px(px(16.0))
+                        .py(px(9.0))
+                        .border_b(px(1.0))
+                        .border_color(theme.colors.callout_warning_border)
+                        .bg(theme.colors.callout_warning_bg)
+                        .text_size(px(theme.typography.text_size * 0.82))
+                        .text_color(theme.colors.text_default)
+                        .child(strings.source_mode_fallback_message.clone()),
+                )
+                .child(div().w_full().flex_1().min_h(px(0.0)).child(content_area))
+                .into_any_element()
+        } else {
+            content_area
+        };
 
         // Repaint when the Cmd/Ctrl follow modifier toggles so a hovered link's
         // hand cursor updates without moving the pointer. `ModifiersChanged` is

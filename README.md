@@ -5,7 +5,9 @@
 ## 首版功能
 
 - 打开一个文件夹作为工作区，浏览 Markdown 与代码文件；
-- 多标签编辑 Markdown，代码文件使用只读语法高亮窗口；
+- 多标签编辑 Markdown；代码文件在独立只读窗口浏览；
+- Rust、JavaScript/TypeScript、C/C++、C#、Go、Java、PHP、Python、Ruby、HTML/CSS、JSON、YAML、TOML 和 Bash 提供语法高亮；SQL、Swift、Kotlin、XML 等也可打开并以纯文本显示；
+- 可界定的未知扩展语法按原文块显示和编辑；无法安全拆分的扩展语法会保留在源码模式，并显示原因；
 - 按文件名筛选，查看文档标题大纲和最近工作区；
 - 在工作区中新建、重命名、移动和删除文件或文件夹；
 - 粘贴或拖入图片时复制到资源目录并插入相对路径；

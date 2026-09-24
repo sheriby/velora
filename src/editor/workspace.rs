@@ -2451,8 +2451,8 @@ mod tests {
     use super::{
         Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
         collect_matching_workspace_files, create_workspace_file, create_workspace_folder,
-        path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
-        scan_workspace_dir, workspace_panel_width_for_viewport,
+        is_code_file, path_is_affected, prune_outline_state, remap_moved_path,
+        rewrite_relative_image_targets, scan_workspace_dir, workspace_panel_width_for_viewport,
     };
     use gpui::{AppContext, TestAppContext};
     use std::fs;
@@ -2491,6 +2491,45 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn workspace_tree_includes_plain_viewer_code_extensions() {
+        let root = std::env::temp_dir().join(format!(
+            "maksher-workspace-plain-code-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create root");
+        for (name, source) in [
+            ("query.sql", "select 1;"),
+            ("App.swift", "struct App {}"),
+            ("Main.kt", "fun main() {}"),
+            ("layout.xml", "<root />"),
+        ] {
+            fs::write(root.join(name), source).expect("write code sample");
+        }
+
+        let tree = scan_workspace_dir(&root).expect("scan code workspace");
+        assert_eq!(tree.children.len(), 4);
+        assert!(
+            tree.children
+                .iter()
+                .all(|node| { matches!(node.kind, WorkspaceTreeKind::CodeFile(_)) })
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn code_viewer_extensions_are_case_insensitive() {
+        for extension in ["rs", "sql", "swift", "kt", "xml"] {
+            assert!(is_code_file(Path::new(&format!("source.{extension}"))));
+            assert!(is_code_file(Path::new(&format!(
+                "source.{}",
+                extension.to_ascii_uppercase()
+            ))));
+        }
+        assert!(!is_code_file(Path::new("notes.txt")));
+    }
+
     #[gpui::test]
     async fn opening_a_code_file_creates_a_separate_viewer_window(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2503,6 +2542,8 @@ mod tests {
         fs::create_dir_all(&root).expect("create test workspace");
         let path = root.join("main.rs");
         fs::write(&path, "fn main() { println!(\"hello\"); }").expect("write code file");
+        let plain_path = root.join("query.sql");
+        fs::write(&plain_path, "select 1;").expect("write plain code file");
         let cleanup_root = root.clone();
         cx.on_quit(move || {
             let _ = fs::remove_dir_all(cleanup_root);
@@ -2511,8 +2552,10 @@ mod tests {
         let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
         editor.update(cx, |editor, cx| editor.open_code_file(path, cx));
         cx.run_until_parked();
+        editor.update(cx, |editor, cx| editor.open_code_file(plain_path, cx));
+        cx.run_until_parked();
 
-        assert_eq!(cx.windows().len(), 1);
+        assert_eq!(cx.windows().len(), 2);
     }
 
     #[test]

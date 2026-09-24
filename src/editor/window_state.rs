@@ -353,12 +353,19 @@ impl Editor {
             }
             ViewMode::Source => {
                 let source = self.document.raw_source_text(cx);
+                self.source_mode_fallback_required =
+                    Self::markdown_requires_source_mode_fallback(&source);
+                if self.source_mode_fallback_required {
+                    cx.notify();
+                    return;
+                }
                 let mut roots = Self::build_root_blocks_from_markdown(cx, &source);
                 if roots.is_empty() {
                     roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
                 }
                 self.document.replace_roots(roots, cx);
                 self.view_mode = ViewMode::Rendered;
+                self.source_mode_fallback_required = false;
                 self.rebuild_table_runtimes(cx);
                 self.rebuild_image_runtimes(cx);
             }

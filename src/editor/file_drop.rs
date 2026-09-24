@@ -124,7 +124,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
-        let mut roots = Self::build_root_blocks_from_markdown(cx, &normalized);
+        let source_mode_fallback_required =
+            Self::markdown_requires_source_mode_fallback(&normalized);
+        let mut roots = if source_mode_fallback_required {
+            let block = Self::new_block(cx, BlockRecord::paragraph(normalized.clone()));
+            block.update(cx, |block, _cx| block.set_source_document_mode());
+            vec![block]
+        } else {
+            Self::build_root_blocks_from_markdown(cx, &normalized)
+        };
         if roots.is_empty() {
             roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
         }
@@ -133,7 +141,12 @@ impl Editor {
             .as_ref()
             .map(|_| super::persistence::file_content_version(&normalized));
         self.file_path = file_path;
-        self.view_mode = ViewMode::Rendered;
+        self.view_mode = if source_mode_fallback_required {
+            ViewMode::Source
+        } else {
+            ViewMode::Rendered
+        };
+        self.source_mode_fallback_required = source_mode_fallback_required;
         self.document.replace_roots(roots, cx);
         self.table_cells.clear();
         self.rebuild_table_runtimes(cx);
