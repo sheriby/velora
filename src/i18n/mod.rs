@@ -142,6 +142,10 @@ pub struct I18nStrings {
     pub recent_file_missing_message_template: String,
     /// Title of the save failure prompt.
     pub save_failed_title: String,
+    /// Title of the prompt shown when a file changes outside the app.
+    pub external_change_title: String,
+    /// Message shown when a file changes outside the app.
+    pub external_change_message: String,
     /// Title of the export failure prompt.
     pub export_failed_title: String,
     /// Title of the image-paste failure prompt.
@@ -416,6 +420,8 @@ struct I18nStringsDe {
     recent_file_missing_title: Option<String>,
     recent_file_missing_message_template: Option<String>,
     save_failed_title: Option<String>,
+    external_change_title: Option<String>,
+    external_change_message: Option<String>,
     export_failed_title: Option<String>,
     image_paste_failed_title: Option<String>,
     config_import_failed_title: Option<String>,
@@ -615,6 +621,8 @@ const I18N_STRING_KEYS: &[&str] = &[
     "recent_file_missing_title",
     "recent_file_missing_message_template",
     "save_failed_title",
+    "external_change_title",
+    "external_change_message",
     "export_failed_title",
     "image_paste_failed_title",
     "config_import_failed_title",
@@ -896,6 +904,12 @@ impl I18nStringsDe {
                 .recent_file_missing_message_template
                 .unwrap_or(defaults.recent_file_missing_message_template),
             save_failed_title: self.save_failed_title.unwrap_or(defaults.save_failed_title),
+            external_change_title: self
+                .external_change_title
+                .unwrap_or(defaults.external_change_title),
+            external_change_message: self
+                .external_change_message
+                .unwrap_or(defaults.external_change_message),
             export_failed_title: self
                 .export_failed_title
                 .unwrap_or(defaults.export_failed_title),
@@ -1365,6 +1379,9 @@ impl I18nStrings {
             recent_file_missing_message_template: "此最近文件已经不存在，已从记录中移除：\n{path}"
                 .into(),
             save_failed_title: "保存失败".into(),
+            external_change_title: "文件已在其他程序中修改".into(),
+            external_change_message:
+                "为避免覆盖外部内容，自动保存已暂停。请使用“另存为”保留当前编辑内容。".into(),
             export_failed_title: "导出失败".into(),
             config_import_failed_title: "配置导入失败".into(),
             preferences_window_title: "偏好设置".into(),
@@ -1582,6 +1599,8 @@ impl I18nStrings {
             recent_file_missing_message_template:
                 "This recent file no longer exists and has been removed:\n{path}".into(),
             save_failed_title: "Save Failed".into(),
+            external_change_title: "File Changed Outside Maksher".into(),
+            external_change_message: "Autosave was paused to avoid overwriting external changes. Use Save As to keep your edits.".into(),
             export_failed_title: "Export Failed".into(),
             image_paste_failed_title: "Image Paste Failed".into(),
             config_import_failed_title: "Config Import Failed".into(),

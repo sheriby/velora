@@ -4,6 +4,7 @@
 //! Markdown. Source mode writes the raw source buffer directly so literal
 //! delimiters are preserved.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
@@ -55,23 +56,42 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{name}.maksher-{}.tmp", uuid::Uuid::new_v4()))
 }
 
+fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<()> {
+    let markdown = std::fs::read_to_string(path)
+        .with_context(|| format!("无法读取文件以检查外部修改：{}", path.display()))?;
+    if file_content_version(&markdown) != expected_version {
+        anyhow::bail!("检测到外部修改：{}", path.display());
+    }
+    Ok(())
+}
+
+pub(super) fn file_content_version(markdown: &str) -> u64 {
+    let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+    let mut hasher = DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[derive(Clone)]
 struct PendingAutosaveDocument {
     recovery: crate::config::RecoverySnapshot,
     path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
+    file_version: Option<u64>,
 }
 
 impl Editor {
     pub(super) fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
         if self.pending_close_after_save
             || self.autosave_task.is_some()
+            || self.has_external_autosave_conflict()
             || (!self.document_dirty && !self.has_dirty_workspace_documents())
         {
             return;
         }
 
         let editor = cx.entity().downgrade();
+        let window_handle = self.window_handle;
         self.autosave_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 cx.background_executor()
@@ -90,6 +110,7 @@ impl Editor {
                                     markdown: document.markdown,
                                 },
                                 temp_path: Some(autosave_temp_path(&document.path)),
+                                file_version: Some(document.file_version),
                                 path: Some(document.path),
                             })
                             .collect::<Vec<_>>();
@@ -102,6 +123,7 @@ impl Editor {
                                 },
                                 path: None,
                                 temp_path: None,
+                                file_version: None,
                             });
                         }
                         if documents.is_empty() {
@@ -122,72 +144,96 @@ impl Editor {
                     .spawn(async move {
                         for document in documents_for_write {
                             crate::config::save_recovery_snapshot(&document.recovery)?;
+                            if let (Some(path), Some(expected_version)) =
+                                (document.path.as_deref(), document.file_version)
+                            {
+                                verify_file_version(path, expected_version)?;
+                            }
                             if let Some(temp_path) = document.temp_path {
                                 std::fs::write(temp_path, &document.recovery.markdown)?;
+                                if let (Some(path), Some(expected_version)) =
+                                    (document.path.as_deref(), document.file_version)
+                                {
+                                    verify_file_version(path, expected_version)?;
+                                }
                             }
                         }
                         Ok::<_, anyhow::Error>(())
                     })
                     .await;
-                let _ = editor.update(cx, move |editor, cx| {
-                    editor.autosave_task = None;
-                    match write_result {
-                        Ok(()) => {}
-                        Err(error) => {
+                let conflict_detail = editor
+                    .update(cx, move |editor, cx| {
+                        editor.autosave_task = None;
+                        match write_result {
+                            Ok(()) => {}
+                            Err(error) => {
+                                for document in &documents {
+                                    if let Some(temp_path) = document.temp_path.as_ref() {
+                                        let _ = std::fs::remove_file(temp_path);
+                                    }
+                                }
+                                let detail = error.to_string();
+                                eprintln!("failed to save recovery snapshot: {detail}");
+                                editor.report_workspace_file_error(detail.clone(), cx);
+                                return Some(detail);
+                            }
+                        }
+
+                        if editor.document_revision != revision {
                             for document in &documents {
                                 if let Some(temp_path) = document.temp_path.as_ref() {
                                     let _ = std::fs::remove_file(temp_path);
                                 }
                             }
-                            eprintln!("failed to save recovery snapshot: {error}");
-                            return;
+                            editor.schedule_autosave(cx);
+                            return None;
                         }
-                    }
 
-                    if editor.document_revision != revision {
+                        let mut saved_documents = Vec::new();
                         for document in &documents {
-                            if let Some(temp_path) = document.temp_path.as_ref() {
+                            let (Some(path), Some(temp_path)) =
+                                (document.path.as_ref(), document.temp_path.as_ref())
+                            else {
+                                continue;
+                            };
+                            if let Err(error) = std::fs::rename(temp_path, path) {
                                 let _ = std::fs::remove_file(temp_path);
+                                eprintln!("failed to autosave '{}': {error}", path.display());
+                                continue;
                             }
+                            if let Err(error) =
+                                crate::config::remove_recovery_snapshot(document.recovery.id)
+                            {
+                                eprintln!("failed to remove autosave snapshot: {error}");
+                            }
+                            saved_documents.push(super::workspace::WorkspaceAutosaveDocument {
+                                recovery_id: document.recovery.id,
+                                file_version: file_content_version(&document.recovery.markdown),
+                                path: path.clone(),
+                                markdown: document.recovery.markdown.clone(),
+                            });
                         }
-                        editor.schedule_autosave(cx);
-                        return;
-                    }
-
-                    let mut saved_documents = Vec::new();
-                    for document in &documents {
-                        let (Some(path), Some(temp_path)) =
-                            (document.path.as_ref(), document.temp_path.as_ref())
-                        else {
-                            continue;
-                        };
-                        if let Err(error) = std::fs::rename(temp_path, path) {
-                            let _ = std::fs::remove_file(temp_path);
-                            eprintln!("failed to autosave '{}': {error}", path.display());
-                            continue;
+                        if editor.mark_workspace_documents_saved(&saved_documents) {
+                            editor.document_dirty = false;
+                            editor.pending_window_edited = false;
+                            editor.pending_window_unedited = true;
+                            editor.pending_window_title_refresh = true;
+                            editor.snapshot_current_document(cx);
                         }
-                        if let Err(error) =
-                            crate::config::remove_recovery_snapshot(document.recovery.id)
-                        {
-                            eprintln!("failed to remove autosave snapshot: {error}");
+                        if !saved_documents.is_empty() {
+                            cx.notify();
                         }
-                        saved_documents.push(super::workspace::WorkspaceAutosaveDocument {
-                            recovery_id: document.recovery.id,
-                            path: path.clone(),
-                            markdown: document.recovery.markdown.clone(),
-                        });
+                        None
+                    })
+                    .ok()
+                    .flatten();
+                if let (Some(window_handle), Some(detail)) = (window_handle, conflict_detail) {
+                    if detail.starts_with("检测到外部修改") {
+                        Self::show_external_change_error(window_handle, detail, cx);
+                    } else {
+                        Self::show_workspace_save_error(window_handle, detail, cx);
                     }
-                    if editor.mark_workspace_documents_saved(&saved_documents) {
-                        editor.document_dirty = false;
-                        editor.pending_window_edited = false;
-                        editor.pending_window_unedited = true;
-                        editor.pending_window_title_refresh = true;
-                        editor.snapshot_current_document(cx);
-                    }
-                    if !saved_documents.is_empty() {
-                        cx.notify();
-                    }
-                });
+                }
             },
         ));
     }
@@ -216,6 +262,7 @@ impl Editor {
         self.pending_close_after_save = true;
         let editor = cx.entity().downgrade();
         let window_handle = window.window_handle();
+        let editor_window_for_error = Some(window_handle);
         let background = cx.background_executor().clone();
 
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -230,26 +277,30 @@ impl Editor {
                             source_path: Some(document.path.clone()),
                             markdown: document.markdown.clone(),
                         })?;
+                        verify_file_version(&document.path, document.file_version)?;
                         std::fs::write(&temp_path, &document.markdown).with_context(|| {
                             format!("failed to stage '{}'", document.path.display())
                         })?;
+                        verify_file_version(&document.path, document.file_version)?;
                         prepared.push((document, temp_path));
                     }
                     Ok::<_, anyhow::Error>(prepared)
                 })
                 .await;
 
-            let close_window = editor
+            let (close_window, error_detail) = editor
                 .update(cx, move |editor, cx| {
                     editor.autosave_task = None;
                     let prepared = match write_result {
                         Ok(prepared) => prepared,
                         Err(error) => {
+                            let detail = error.to_string();
                             editor.pending_close_after_save = false;
                             editor.show_unsaved_changes_dialog = true;
-                            eprintln!("failed to save workspace documents: {error}");
+                            editor.report_workspace_file_error(detail.clone(), cx);
+                            eprintln!("failed to save workspace documents: {detail}");
                             cx.notify();
-                            return false;
+                            return (false, Some(detail));
                         }
                     };
                     if editor.document_revision != revision {
@@ -259,7 +310,7 @@ impl Editor {
                         editor.pending_close_after_save = false;
                         editor.show_unsaved_changes_dialog = true;
                         cx.notify();
-                        return false;
+                        return (false, None);
                     }
 
                     let mut saved_documents = Vec::new();
@@ -293,13 +344,22 @@ impl Editor {
                         editor.pending_close_after_save = false;
                         editor.show_unsaved_changes_dialog = true;
                         cx.notify();
-                        return false;
+                        return (false, None);
                     }
                     editor.pending_close_after_save = false;
                     editor.show_unsaved_changes_dialog = false;
-                    true
+                    (true, None)
                 })
-                .unwrap_or(false);
+                .unwrap_or((false, None));
+            if let Some(detail) = error_detail {
+                if let Some(error_window) = editor_window_for_error {
+                    if detail.starts_with("检测到外部修改") {
+                        Self::show_external_change_error(error_window, detail, cx);
+                    } else {
+                        Self::show_workspace_save_error(error_window, detail, cx);
+                    }
+                }
+            }
             if close_window {
                 let _ = cx.update_window(
                     window_handle,
@@ -350,6 +410,7 @@ impl Editor {
 
     pub(super) fn apply_successful_save(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.document_revision = self.document_revision.wrapping_add(1);
+        self.file_version = Some(file_content_version(&self.serialized_document_text(cx)));
         self.file_path = Some(path);
         self.recovery_source_path = None;
         self.is_recovered_document = false;
@@ -373,6 +434,33 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if let Some(expected_version) = self.file_version
+            && let Err(error) = verify_file_version(path, expected_version)
+        {
+            let detail = error.to_string();
+            let strings = cx.global::<I18nManager>().strings().clone();
+            let buttons = [strings.info_dialog_ok.as_str()];
+            if detail.starts_with("检测到外部修改") {
+                self.report_workspace_file_error(detail.clone(), cx);
+                let message = format!("{}\n\n{}", strings.external_change_message, path.display());
+                let _ = window.prompt(
+                    PromptLevel::Warning,
+                    &strings.external_change_title,
+                    Some(&message),
+                    &buttons,
+                    cx,
+                );
+            } else {
+                let _ = window.prompt(
+                    PromptLevel::Critical,
+                    &strings.save_failed_title,
+                    Some(&detail),
+                    &buttons,
+                    cx,
+                );
+            }
+            return false;
+        }
         let markdown = self.serialized_document_text(cx);
         match std::fs::write(path, markdown) {
             Ok(_) => {

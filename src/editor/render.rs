@@ -1502,6 +1502,7 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.window_handle = Some(window.window_handle());
         self.install_close_guard(cx, window);
         self.apply_pending_focus(window, cx);
         self.apply_pending_scroll_into_view(window, cx);

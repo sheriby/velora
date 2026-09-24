@@ -49,12 +49,14 @@ pub(super) struct WorkspaceTreeNode {
 struct WorkspaceDocumentTab {
     path: PathBuf,
     recovery_id: uuid::Uuid,
+    file_version: u64,
     markdown: String,
     dirty: bool,
 }
 
 pub(super) struct WorkspaceAutosaveDocument {
     pub(super) recovery_id: uuid::Uuid,
+    pub(super) file_version: u64,
     pub(super) path: PathBuf,
     pub(super) markdown: String,
 }
@@ -189,6 +191,57 @@ impl Editor {
                 );
             },
         );
+    }
+
+    pub(super) fn show_external_change_error(
+        window_handle: AnyWindowHandle,
+        detail: String,
+        cx: &mut AsyncApp,
+    ) {
+        let _ = cx.update_window(
+            window_handle,
+            move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+                let message = format!("{}\n\n{}", strings.external_change_message, detail);
+                let buttons = [strings.info_dialog_ok.as_str()];
+                let _ = window.prompt(
+                    PromptLevel::Warning,
+                    &strings.external_change_title,
+                    Some(&message),
+                    &buttons,
+                    cx,
+                );
+            },
+        );
+    }
+
+    pub(super) fn show_workspace_save_error(
+        window_handle: AnyWindowHandle,
+        detail: String,
+        cx: &mut AsyncApp,
+    ) {
+        let _ = cx.update_window(
+            window_handle,
+            move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+                let buttons = [strings.info_dialog_ok.as_str()];
+                let _ = window.prompt(
+                    PromptLevel::Critical,
+                    &strings.save_failed_title,
+                    Some(&detail),
+                    &buttons,
+                    cx,
+                );
+            },
+        );
+    }
+
+    pub(super) fn report_workspace_file_error(&mut self, detail: String, cx: &mut Context<Self>) {
+        if self.workspace.root.is_none() {
+            self.workspace.root = self.workspace_root_for_current_file();
+        }
+        self.workspace.file_error = Some(detail);
+        cx.notify();
     }
 
     fn prompt_create_workspace_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -465,6 +518,7 @@ impl Editor {
                         if active_deleted {
                             if let Some(tab) = next_tab {
                                 editor.recovery_id = tab.recovery_id;
+                                let file_version = tab.file_version;
                                 editor.recovery_source_path = None;
                                 editor.is_recovered_document = false;
                                 editor.workspace.active_document = Some(tab.path.clone());
@@ -474,6 +528,7 @@ impl Editor {
                                     cx,
                                 );
                                 editor.document_dirty = tab.dirty;
+                                editor.file_version = Some(file_version);
                                 window.set_window_edited(tab.dirty);
                             } else {
                                 editor.recovery_id = uuid::Uuid::new_v4();
@@ -537,6 +592,9 @@ impl Editor {
             let previous = self.workspace.active_document.clone();
             if previous.as_ref() != Some(&path) {
                 let markdown = self.serialized_document_text(cx);
+                let file_version = self
+                    .file_version
+                    .unwrap_or_else(|| super::persistence::file_content_version(&markdown));
                 let previous_index = previous.as_ref().and_then(|previous| {
                     self.workspace
                         .open_documents
@@ -558,24 +616,28 @@ impl Editor {
                         };
                         let tab = &mut self.workspace.open_documents[current_index];
                         tab.recovery_id = self.recovery_id;
+                        tab.file_version = file_version;
                         tab.markdown = markdown;
                         tab.dirty = false;
                     } else {
                         let tab = &mut self.workspace.open_documents[previous_index];
                         tab.path = path.clone();
                         tab.recovery_id = self.recovery_id;
+                        tab.file_version = file_version;
                         tab.markdown = markdown;
                         tab.dirty = false;
                     }
                 } else if let Some(current_index) = current_index {
                     let tab = &mut self.workspace.open_documents[current_index];
                     tab.recovery_id = self.recovery_id;
+                    tab.file_version = file_version;
                     tab.markdown = markdown;
                     tab.dirty = false;
                 } else {
                     self.workspace.open_documents.push(WorkspaceDocumentTab {
                         path: path.clone(),
                         recovery_id: self.recovery_id,
+                        file_version,
                         markdown,
                         dirty: false,
                     });
@@ -627,10 +689,15 @@ impl Editor {
             .iter()
             .any(|tab| tab.path == path)
         {
+            let markdown = self.serialized_document_text(cx);
+            let file_version = self
+                .file_version
+                .unwrap_or_else(|| super::persistence::file_content_version(&markdown));
             self.workspace.open_documents.push(WorkspaceDocumentTab {
                 path: path.clone(),
                 recovery_id: self.recovery_id,
-                markdown: self.serialized_document_text(cx),
+                file_version,
+                markdown,
                 dirty: self.document_dirty,
             });
         }
@@ -654,6 +721,9 @@ impl Editor {
             self.workspace.open_documents.push(WorkspaceDocumentTab {
                 path: path.clone(),
                 recovery_id: self.recovery_id,
+                file_version: self
+                    .file_version
+                    .unwrap_or_else(|| super::persistence::file_content_version(&markdown)),
                 markdown,
                 dirty: self.document_dirty,
             });
@@ -669,6 +739,7 @@ impl Editor {
             .filter(|tab| tab.dirty)
             .map(|tab| WorkspaceAutosaveDocument {
                 recovery_id: tab.recovery_id,
+                file_version: tab.file_version,
                 path: tab.path.clone(),
                 markdown: tab.markdown.clone(),
             })
@@ -690,6 +761,10 @@ impl Editor {
             };
             tab.markdown = document.markdown.clone();
             tab.dirty = false;
+            tab.file_version = super::persistence::file_content_version(&document.markdown);
+            if self.file_path.as_ref() == Some(&tab.path) {
+                self.file_version = Some(tab.file_version);
+            }
             active_document_saved |= self.workspace.active_document.as_ref() == Some(&tab.path);
         }
         active_document_saved
@@ -697,6 +772,12 @@ impl Editor {
 
     pub(super) fn has_dirty_workspace_documents(&self) -> bool {
         self.workspace.open_documents.iter().any(|tab| tab.dirty)
+    }
+
+    pub(super) fn has_external_autosave_conflict(&self) -> bool {
+        self.workspace.file_error.as_deref().is_some_and(|detail| {
+            detail.starts_with("检测到外部修改") || detail.starts_with("无法读取文件以检查外部修改")
+        })
     }
 
     pub(super) fn workspace_recovery_ids(&self) -> Vec<uuid::Uuid> {
@@ -806,6 +887,9 @@ impl Editor {
             return;
         }
 
+        if !self.has_external_autosave_conflict() {
+            self.workspace.file_error = None;
+        }
         self.snapshot_current_document(cx);
         let cached = self
             .workspace
@@ -813,11 +897,30 @@ impl Editor {
             .iter()
             .find(|tab| tab.path == path)
             .cloned();
-        let (markdown, dirty, recovery_id) = if let Some(tab) = cached {
-            (tab.markdown, tab.dirty, tab.recovery_id)
+        let (markdown, dirty, recovery_id, file_version) = if let Some(tab) = cached {
+            if tab.dirty {
+                (tab.markdown, true, tab.recovery_id, tab.file_version)
+            } else {
+                match fs::read_to_string(&path) {
+                    Ok(markdown) => {
+                        let file_version = super::persistence::file_content_version(&markdown);
+                        (markdown, false, tab.recovery_id, file_version)
+                    }
+                    Err(err) => {
+                        self.workspace.file_error = Some(err.to_string());
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
         } else {
             match fs::read_to_string(&path) {
-                Ok(markdown) => (markdown, false, uuid::Uuid::new_v4()),
+                Ok(markdown) => (
+                    markdown.clone(),
+                    false,
+                    uuid::Uuid::new_v4(),
+                    super::persistence::file_content_version(&markdown),
+                ),
                 Err(err) => {
                     self.workspace.file_error = Some(err.to_string());
                     cx.notify();
@@ -834,17 +937,30 @@ impl Editor {
             self.workspace.open_documents.push(WorkspaceDocumentTab {
                 path: path.clone(),
                 recovery_id,
+                file_version,
                 markdown: markdown.clone(),
                 dirty,
             });
         }
+        if let Some(tab) = self
+            .workspace
+            .open_documents
+            .iter_mut()
+            .find(|tab| tab.path == path)
+        {
+            tab.markdown = markdown.clone();
+            tab.dirty = dirty;
+            tab.file_version = file_version;
+        }
         self.recovery_id = recovery_id;
+        self.file_version = Some(file_version);
         self.recovery_source_path = None;
         self.is_recovered_document = false;
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
         self.replace_document_from_markdown(markdown, Some(path), cx);
         self.document_dirty = dirty;
+        self.file_version = Some(file_version);
         if dirty || self.has_dirty_workspace_documents() {
             self.schedule_autosave(cx);
         }

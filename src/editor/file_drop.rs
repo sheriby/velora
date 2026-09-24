@@ -129,6 +129,9 @@ impl Editor {
             roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
         }
 
+        self.file_version = file_path
+            .as_ref()
+            .map(|_| super::persistence::file_content_version(&normalized));
         self.file_path = file_path;
         self.view_mode = ViewMode::Rendered;
         self.document.replace_roots(roots, cx);

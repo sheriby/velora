@@ -84,6 +84,8 @@ pub struct Editor {
     recovery_id: uuid::Uuid,
     recovery_source_path: Option<PathBuf>,
     is_recovered_document: bool,
+    file_version: Option<u64>,
+    window_handle: Option<AnyWindowHandle>,
     file_path: Option<PathBuf>,
     scroll_handle: ScrollHandle,
     last_scroll_viewport_size: Option<Size<Pixels>>,
@@ -339,6 +341,10 @@ impl Editor {
             recovery_id: uuid::Uuid::new_v4(),
             recovery_source_path: None,
             is_recovered_document: false,
+            file_version: file_path
+                .as_ref()
+                .map(|_| persistence::file_content_version(&normalized)),
+            window_handle: None,
             file_path,
             scroll_handle: ScrollHandle::new(),
             last_scroll_viewport_size: None,

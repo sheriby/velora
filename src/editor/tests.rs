@@ -490,6 +490,59 @@ async fn dirty_saved_document_is_autosaved(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn autosave_does_not_overwrite_external_file_changes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("autosave-external-change");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("our edits".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    fs::write(&path, "external edits").expect("write external changes");
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read external file"),
+        "external edits"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.document_dirty);
+        assert!(editor.has_external_autosave_conflict());
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            assert!(!editor.save_to_existing_path(&path, window, cx));
+        });
+    });
+    assert_eq!(
+        fs::read_to_string(&path).expect("read external file after manual save"),
+        "external edits"
+    );
+}
+
+#[gpui::test]
 async fn autosave_flushes_a_dirty_tab_after_switching_away(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
