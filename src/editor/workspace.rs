@@ -25,6 +25,7 @@ pub(super) enum WorkspaceTab {
     #[default]
     Files,
     Outline,
+    Recent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub(super) enum WorkspaceTreeKind {
     Directory(PathBuf),
     MarkdownFile(PathBuf),
     CodeFile(PathBuf),
+    RecentWorkspace(PathBuf),
     Heading { line: usize, level: u8 },
 }
 
@@ -53,6 +55,7 @@ struct WorkspaceDocumentTab {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WorkspaceSelection {
     File(PathBuf),
+    WorkspaceRoot(PathBuf),
     Outline(String),
 }
 
@@ -68,6 +71,8 @@ pub(super) struct WorkspaceState {
     selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
+    recent_roots: Vec<PathBuf>,
+    recent_roots_loaded: bool,
 }
 
 impl Default for WorkspaceState {
@@ -84,6 +89,8 @@ impl Default for WorkspaceState {
             selected: None,
             open_documents: Vec::new(),
             active_document: None,
+            recent_roots: Vec::new(),
+            recent_roots_loaded: false,
         }
     }
 }
@@ -116,6 +123,10 @@ impl Editor {
     }
 
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        if let Ok(recent) = crate::config::record_recent_workspace(&root) {
+            self.workspace.recent_roots = recent;
+            self.workspace.recent_roots_loaded = true;
+        }
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
         self.workspace.file_error = None;
@@ -153,6 +164,12 @@ impl Editor {
         self.workspace.outline_source = None;
         if self.workspace.root.is_none() {
             self.workspace.root = self.workspace_root_for_current_file();
+            if let Some(root) = self.workspace.root.as_ref()
+                && let Ok(recent) = crate::config::record_recent_workspace(root)
+            {
+                self.workspace.recent_roots = recent;
+                self.workspace.recent_roots_loaded = true;
+            }
         }
         if self.workspace.is_open {
             self.sync_workspace_models(cx);
@@ -160,6 +177,11 @@ impl Editor {
     }
 
     fn sync_workspace_models(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace.recent_roots_loaded {
+            self.workspace.recent_roots =
+                crate::config::read_recent_workspaces().unwrap_or_default();
+            self.workspace.recent_roots_loaded = true;
+        }
         self.sync_workspace_file_tree();
         self.sync_workspace_outline(cx);
         self.ensure_current_document_tab(cx);
@@ -496,6 +518,7 @@ impl Editor {
             let tab_id = match tab {
                 WorkspaceTab::Files => "workspace-tab-files",
                 WorkspaceTab::Outline => "workspace-tab-outline",
+                WorkspaceTab::Recent => "workspace-tab-recent",
             };
             div()
                 .id(tab_id)
@@ -529,6 +552,7 @@ impl Editor {
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor),
+            WorkspaceTab::Recent => self.render_recent_workspaces(theme, strings, &editor),
         };
         let open_folder_editor = editor.clone();
         let open_folder_button = div()
@@ -585,6 +609,11 @@ impl Editor {
                                     strings.workspace_tab_outline.clone(),
                                     WorkspaceTab::Outline,
                                     self.workspace.active_tab == WorkspaceTab::Outline,
+                                ))
+                                .child(tab(
+                                    strings.workspace_tab_recent.clone(),
+                                    WorkspaceTab::Recent,
+                                    self.workspace.active_tab == WorkspaceTab::Recent,
                                 )),
                         )
                         .child(open_folder_button),
@@ -652,6 +681,34 @@ impl Editor {
             .flex()
             .flex_col()
             .children(self.render_workspace_nodes(&self.workspace.outline_tree, 0, theme, editor))
+            .into_any_element()
+    }
+
+    fn render_recent_workspaces(
+        &self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        editor: &WeakEntity<Editor>,
+    ) -> AnyElement {
+        if self.workspace.recent_roots.is_empty() {
+            return self.render_workspace_empty_state("", &strings.workspace_empty_recent, theme);
+        }
+        let nodes = self
+            .workspace
+            .recent_roots
+            .iter()
+            .map(|path| WorkspaceTreeNode {
+                id: file_node_id(path),
+                label: path.to_string_lossy().into_owned(),
+                kind: WorkspaceTreeKind::RecentWorkspace(path.clone()),
+                children: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .children(self.render_workspace_nodes(&nodes, 0, theme, editor))
             .into_any_element()
     }
 
@@ -732,6 +789,10 @@ impl Editor {
             (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::CodeFile(path)) => {
                 selected == path
             }
+            (
+                Some(WorkspaceSelection::WorkspaceRoot(selected)),
+                WorkspaceTreeKind::RecentWorkspace(path),
+            ) => selected == path,
             (Some(WorkspaceSelection::Outline(selected)), _) => selected == &node.id,
             _ => false,
         };
@@ -747,7 +808,9 @@ impl Editor {
         };
 
         let icon = match &node.kind {
-            WorkspaceTreeKind::Directory(_) => Some((FOLDER_ICON, Hsla::from(rgba(0xf59e0bff)))),
+            WorkspaceTreeKind::Directory(_) | WorkspaceTreeKind::RecentWorkspace(_) => {
+                Some((FOLDER_ICON, Hsla::from(rgba(0xf59e0bff))))
+            }
             WorkspaceTreeKind::MarkdownFile(_) => {
                 Some((MARKDOWN_ICON, Hsla::from(rgba(0x2563ebff))))
             }
@@ -831,6 +894,12 @@ impl Editor {
                     }
                     WorkspaceTreeKind::CodeFile(path) => {
                         editor.open_code_file(path, cx);
+                    }
+                    WorkspaceTreeKind::RecentWorkspace(path) => {
+                        editor.workspace.selected =
+                            Some(WorkspaceSelection::WorkspaceRoot(path.clone()));
+                        editor.set_workspace_root(path, cx);
+                        editor.set_workspace_tab(WorkspaceTab::Files, cx);
                     }
                     WorkspaceTreeKind::Heading { .. } => editor.select_outline_node(node_id, cx),
                 });

@@ -238,6 +238,10 @@ pub struct I18nStrings {
     pub workspace_tab_files: String,
     /// Workspace drawer Outline tab.
     pub workspace_tab_outline: String,
+    /// Workspace drawer recent roots tab.
+    pub workspace_tab_recent: String,
+    /// Empty state for the recent-workspaces list.
+    pub workspace_empty_recent: String,
     /// Title shown when no Markdown file path is available for workspace mode.
     pub workspace_no_file_title: String,
     /// Message shown when no Markdown file path is available for workspace mode.
@@ -471,6 +475,8 @@ struct I18nStringsDe {
     preferences_shortcut_toggle_workspace: Option<String>,
     workspace_tab_files: Option<String>,
     workspace_tab_outline: Option<String>,
+    workspace_tab_recent: Option<String>,
+    workspace_empty_recent: Option<String>,
     workspace_no_file_title: Option<String>,
     workspace_no_file_message: Option<String>,
     workspace_empty_files: Option<String>,
@@ -658,6 +664,8 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_shortcut_toggle_workspace",
     "workspace_tab_files",
     "workspace_tab_outline",
+    "workspace_tab_recent",
+    "workspace_empty_recent",
     "workspace_no_file_title",
     "workspace_no_file_message",
     "workspace_empty_files",
@@ -1083,6 +1091,12 @@ impl I18nStringsDe {
             workspace_tab_outline: self
                 .workspace_tab_outline
                 .unwrap_or(defaults.workspace_tab_outline),
+            workspace_tab_recent: self
+                .workspace_tab_recent
+                .unwrap_or(defaults.workspace_tab_recent),
+            workspace_empty_recent: self
+                .workspace_empty_recent
+                .unwrap_or(defaults.workspace_empty_recent),
             workspace_no_file_title: self
                 .workspace_no_file_title
                 .unwrap_or(defaults.workspace_no_file_title),
@@ -1356,6 +1370,8 @@ impl I18nStrings {
             preferences_shortcut_toggle_workspace: "切换工作区".into(),
             workspace_tab_files: "文件".into(),
             workspace_tab_outline: "大纲".into(),
+            workspace_tab_recent: "最近".into(),
+            workspace_empty_recent: "还没有最近打开的工作区".into(),
             workspace_no_file_title: "未打开 Markdown 文件".into(),
             workspace_no_file_message: "打开或保存一个 .md 文件后，工作区会使用该文件所在目录。"
                 .into(),
@@ -1572,6 +1588,8 @@ impl I18nStrings {
             preferences_shortcut_toggle_workspace: "Toggle Workspace".into(),
             workspace_tab_files: "Files".into(),
             workspace_tab_outline: "Outline".into(),
+            workspace_tab_recent: "Recent".into(),
+            workspace_empty_recent: "No recent workspaces".into(),
             workspace_no_file_title: "No Markdown File Open".into(),
             workspace_no_file_message:
                 "Open or save a .md file to use its folder as the workspace.".into(),

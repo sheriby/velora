@@ -17,6 +17,7 @@ pub(crate) use preferences::{
 };
 
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
+pub(crate) const RECENT_WORKSPACES_LIMIT: usize = 10;
 
 /// Cross-platform configuration directories owned by Velotype.
 #[derive(Debug, Clone)]
@@ -56,6 +57,10 @@ impl VelotypeConfigDirs {
         self.root.join(".history")
     }
 
+    pub(crate) fn recent_workspaces_file(&self) -> PathBuf {
+        self.root.join("recent-workspaces.txt")
+    }
+
     pub(crate) fn app_config_file(&self) -> PathBuf {
         self.root.join("config.toml")
     }
@@ -71,6 +76,76 @@ pub(crate) fn record_recent_file(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
 
 pub(crate) fn remove_recent_file(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     remove_recent_file_with_dirs(path, &VelotypeConfigDirs::from_system()?)
+}
+
+pub(crate) fn read_recent_workspaces() -> anyhow::Result<Vec<PathBuf>> {
+    read_recent_workspaces_with_dirs(&VelotypeConfigDirs::from_system()?)
+}
+
+pub(crate) fn record_recent_workspace(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    record_recent_workspace_with_dirs(path, &VelotypeConfigDirs::from_system()?)
+}
+
+fn read_recent_workspaces_with_dirs(dirs: &VelotypeConfigDirs) -> anyhow::Result<Vec<PathBuf>> {
+    let path = dirs.recent_workspaces_file();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read '{}'", path.display()));
+        }
+    };
+    Ok(normalize_recent_workspaces(text.lines().map(PathBuf::from)))
+}
+
+fn record_recent_workspace_with_dirs(
+    path: &Path,
+    dirs: &VelotypeConfigDirs,
+) -> anyhow::Result<Vec<PathBuf>> {
+    if !path.is_dir() {
+        bail!("workspace path is not a directory: '{}'", path.display());
+    }
+    let mut paths = read_recent_workspaces_with_dirs(dirs)?;
+    paths.retain(|existing| !same_recent_path(existing, path));
+    paths.insert(0, path.to_path_buf());
+    paths.truncate(RECENT_WORKSPACES_LIMIT);
+    let file = dirs.recent_workspaces_file();
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create '{}'", parent.display()))?;
+    }
+    let content = paths
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&file, content + "\n")
+        .with_context(|| format!("failed to write '{}'", file.display()))?;
+    Ok(paths)
+}
+
+fn normalize_recent_workspaces(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut normalized: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        let text = path.to_string_lossy();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        if !path.is_dir()
+            || normalized
+                .iter()
+                .any(|existing| same_recent_path(existing, &path))
+        {
+            continue;
+        }
+        normalized.push(path);
+        if normalized.len() == RECENT_WORKSPACES_LIMIT {
+            break;
+        }
+    }
+    normalized
 }
 
 pub(crate) fn read_recent_files_with_dirs(
@@ -406,9 +481,10 @@ fn is_empty_json_value(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        RECENT_FILES_LIMIT, VelotypeConfigDirs, parse_jsonc_value, prune_empty_json_values,
-        read_recent_files_with_dirs, record_recent_file_with_dirs, remove_recent_file_with_dirs,
-        sanitize_config_file_stem, strip_jsonc_comments,
+        RECENT_FILES_LIMIT, RECENT_WORKSPACES_LIMIT, VelotypeConfigDirs, parse_jsonc_value,
+        prune_empty_json_values, read_recent_files_with_dirs, read_recent_workspaces_with_dirs,
+        record_recent_file_with_dirs, record_recent_workspace_with_dirs,
+        remove_recent_file_with_dirs, sanitize_config_file_stem, strip_jsonc_comments,
     };
     use serde_json::json;
     use std::path::{Path, PathBuf};
@@ -430,6 +506,59 @@ mod tests {
         assert_eq!(parsed["text"], "/* not a comment */");
         assert_eq!(parsed["value"], 1);
         assert!(strip_jsonc_comments(text).is_ok());
+    }
+
+    #[test]
+    fn recent_workspaces_are_deduplicated_and_most_recent_first() {
+        let root = std::env::temp_dir().join(format!(
+            "maksher-recent-workspaces-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).expect("create first workspace");
+        std::fs::create_dir_all(&second).expect("create second workspace");
+        let dirs = VelotypeConfigDirs::from_root(root.join("config"));
+
+        assert_eq!(
+            record_recent_workspace_with_dirs(&first, &dirs).expect("record first"),
+            vec![first.clone()]
+        );
+        assert_eq!(
+            record_recent_workspace_with_dirs(&second, &dirs).expect("record second"),
+            vec![second.clone(), first.clone()]
+        );
+        assert_eq!(
+            record_recent_workspace_with_dirs(&first, &dirs).expect("move first to front"),
+            vec![first.clone(), second.clone()]
+        );
+        assert_eq!(
+            read_recent_workspaces_with_dirs(&dirs).expect("read recent"),
+            vec![first, second]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recent_workspaces_respect_the_limit() {
+        let root = std::env::temp_dir().join(format!(
+            "maksher-recent-workspaces-limit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let dirs = VelotypeConfigDirs::from_root(root.join("config"));
+        let mut expected = Vec::new();
+
+        for index in 0..RECENT_WORKSPACES_LIMIT + 1 {
+            let path = root.join(format!("workspace-{index}"));
+            std::fs::create_dir_all(&path).expect("create workspace");
+            let recent = record_recent_workspace_with_dirs(&path, &dirs).expect("record workspace");
+            expected.insert(0, path);
+            expected.truncate(RECENT_WORKSPACES_LIMIT);
+            assert_eq!(recent, expected);
+        }
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
