@@ -4,7 +4,7 @@
 
 **Goal:** Determine with reproducible evidence whether Velotype's native editor is a viable source for maksher's selective GPUI editor extraction.
 
-**Architecture:** Keep the current `maksher` main branch as the design record. Execute this plan in a dedicated worktree; build the pinned Velotype commit in a separate temporary clone so `../velotype` remains untouched. Generate fixed documents, measure the actual release application, test macOS Chinese IME, then decide whether to write the editor-extraction plan. No Tauri code enters this phase.
+**Architecture:** Develop maksher directly in the current workspace, as the user requested. Build the pinned Velotype commit in a separate temporary clone so `../velotype` remains untouched. Generate fixed documents, measure the actual release application, test macOS Chinese IME, then decide whether to write the editor-extraction plan. No Tauri code enters this phase.
 
 **Tech Stack:** Rust 2024, GPUI 0.2, Cargo, Node.js 24 for fixture generation and measurement reporting, macOS.
 
@@ -15,22 +15,23 @@
 - Read [approved design](2026-09-24-maksher-gpui-editor-design.md) before starting. The user chose a new maksher GPUI application structure and one-time extraction of selected Velotype editor code, with manual upstream patching only.
 - Pin local Velotype source to `ed65977be94f2f2703037fcb8b6cbab2e7579571`. Upstream: `https://github.com/manyougz/velotype`.
 - This plan is only the **first feasibility gate**. Do not copy Velotype into `maksher` or build workspace features yet. The later extraction plan depends on baseline results and the actual editor-host boundary.
-- The earlier untracked Tauri scaffold has been removed at the user's request. Work in `/private/tmp/maksher-gpui-feasibility`; do not recreate that scaffold.
+- The earlier untracked Tauri scaffold has been removed at the user's request. All maksher source and reports belong in the current repository; only the independent Velotype baseline clone stays under `/private/tmp`.
 - Each code task below is a separate commit. If a command fails, record the original output and fix the cause; do not weaken checks or silently relax performance thresholds.
 
 ### Task 1: Isolate both checkouts
 
 **Files:** No tracked files.
 
-**Step 1: Create the maksher worktree**
+**Step 1: Verify the current maksher workspace**
 
 Run from the `maksher` root:
 
 ```bash
-git worktree add -b feat/gpui-feasibility /private/tmp/maksher-gpui-feasibility main
+git status --short --branch
+rg --files
 ```
 
-Expected: the worktree contains the approved design and no Tauri files. If the path or branch already exists, inspect it before choosing a fresh name; do not delete it blindly.
+Expected: source and docs are in the current workspace, and no Tauri files exist. The earlier temporary worktree has been removed after the user's correction.
 
 **Step 2: Make an independent Velotype checkout**
 
@@ -139,7 +140,7 @@ Expected: test PASS and a clean commit. Compare byte lengths with `Buffer.byteLe
 
 **Step 1: Generate samples and build the pinned source**
 
-Run `node scripts/generate-fixtures.mjs /private/tmp/maksher-velotype-fixtures` from the maksher worktree. In `/private/tmp/maksher-velotype-baseline`, run:
+Run `node scripts/generate-fixtures.mjs /private/tmp/maksher-velotype-fixtures` from the current maksher workspace. In `/private/tmp/maksher-velotype-baseline`, run:
 
 ```bash
 cargo test --locked
@@ -231,4 +232,4 @@ Record one of: (a) baseline meets targets and IME is stable, proceed to a separa
 
 **Step 2: Verify and commit**
 
-Re-read the decision and raw reports; check they make no claim unsupported by a run. Run `git diff --check`, then commit the decision. Merge the feasibility branch only after review. A future implementation plan must cover the new GPUI shell, selective extraction, workspace/tabs, safe persistence and packaging; it must not revive the paused Tauri scaffold.
+Re-read the decision and raw reports; check they make no claim unsupported by a run. Run `git diff --check`, then commit the decision in the current repository. A future implementation plan must cover selective extraction, workspace/tabs, safe persistence and packaging; it must not revive the deleted Tauri scaffold.
