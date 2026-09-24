@@ -23,6 +23,10 @@
 
 项目的 .cargo/config.toml 使用 sccache 作为 Rust 编译缓存。首次构建仍需编译 GPUI 依赖。
 
+## macOS 内部安装包
+
+在 macOS 开发机执行 scripts/package-macos.sh，会用 fastdev 构建生成 dist/maksher.app 和 dist/maksher-0.1.0.pkg。安装包未签名或公证，仅用于本机和小范围内部试用。
+
 ## 当前验证范围
 
 已在 macOS 开发环境验证 GPUI 应用启动，并运行了工作区、主题、图片处理、自动保存、恢复和外部修改冲突的定向测试。Windows 运行、安装包构建、中文拼音真实输入以及全机性能阈值仍需单独验收；本仓库不宣称这些项目已通过。
