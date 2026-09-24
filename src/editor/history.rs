@@ -109,6 +109,21 @@ impl Editor {
         };
 
         let current_source = self.current_document_source(cx);
+        if pending.snapshot.kind == UndoCaptureKind::ImeCompositionCommit
+            && let Some(last) = self
+                .undo_history
+                .last_mut()
+                .filter(|entry| entry.kind == UndoCaptureKind::ImeComposition)
+        {
+            self.redo_history.clear();
+            if last.source_text == current_source {
+                self.undo_history.pop();
+            } else {
+                last.kind = UndoCaptureKind::NonCoalescible;
+            }
+            self.refresh_stable_document_snapshot(cx);
+            return;
+        }
         if current_source == pending.snapshot.source_text {
             self.refresh_stable_document_snapshot(cx);
             return;

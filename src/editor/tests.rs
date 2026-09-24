@@ -11,7 +11,7 @@ use super::{Editor, MountedRun, ViewMode};
 use crate::components::{
     Block, BlockKind, CloseWindow, FocusNext, ImageReferenceDefinitions, ImageResolvedSource,
     InlineTextTree, Newline, QuitApplication, SaveDocument, TableCellInlineImageSegment,
-    TableColumnAlignment, parse_table_cell_inline_images, superscript_ordinal,
+    TableColumnAlignment, UndoCaptureKind, parse_table_cell_inline_images, superscript_ordinal,
 };
 use crate::export::ExportFormat;
 use crate::i18n::{I18nManager, I18nStrings};
@@ -527,6 +527,14 @@ async fn chinese_ime_composition_commit_save_and_undo_keep_text(cx: &mut TestApp
         Some(4..9)
     );
     redraw(cx);
+    editor.update(cx, |editor, _cx| {
+        let entry = editor
+            .undo_history
+            .last_mut()
+            .expect("composition should capture its original source");
+        assert_eq!(entry.kind, UndoCaptureKind::ImeComposition);
+        entry.timestamp = Instant::now() - Duration::from_secs(2);
+    });
     let block_bounds = block.read_with(cx, |block, _cx| {
         block
             .last_bounds
@@ -550,6 +558,13 @@ async fn chinese_ime_composition_commit_save_and_undo_keep_text(cx: &mut TestApp
             );
         });
     });
+    editor.update(cx, |editor, cx| editor.request_save_document(cx));
+    redraw(cx);
+    assert_eq!(
+        fs::read_to_string(&path).expect("composition should not be saved"),
+        "note"
+    );
+    editor.read_with(cx, |editor, _cx| assert!(editor.pending_save));
 
     cx.update(|window, cx| {
         block.update(cx, |block, block_cx| {
@@ -566,21 +581,74 @@ async fn chinese_ime_composition_commit_save_and_undo_keep_text(cx: &mut TestApp
         block.read_with(cx, |block, _cx| block.marked_range.clone()),
         None
     );
-
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            assert!(editor.save_to_existing_path(&path, window, cx));
-        });
-    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| assert!(!editor.pending_save));
     assert_eq!(
         fs::read_to_string(&path).expect("read saved Markdown"),
         "note你好"
     );
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.undo_history.len(), 1);
+    });
 
     editor.update(cx, |editor, cx| editor.undo_document(cx));
     assert_eq!(
         editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx)),
         "note"
+    );
+}
+
+#[gpui::test]
+async fn autosave_waits_until_ime_composition_is_committed(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("ime-autosave");
+    fs::write(&path, "note").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "note".to_string(), Some(path))
+    });
+    let block = editor.read_with(cx, |editor, _cx| {
+        editor.document.first_root().expect("paragraph").clone()
+    });
+    block.update(cx, |block, _cx| block.selected_range = 4..4);
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_and_mark_text_in_range(
+                block,
+                None,
+                "nihao",
+                Some(5..5),
+                window,
+                block_cx,
+            );
+        });
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(
+        fs::read_to_string(&path).expect("read Markdown during composition"),
+        "note"
+    );
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "你好", window, block_cx,
+            );
+        });
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(
+        fs::read_to_string(&path).expect("read committed Markdown"),
+        "note你好"
     );
 }
 

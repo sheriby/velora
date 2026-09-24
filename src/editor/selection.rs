@@ -1040,7 +1040,7 @@ mod tests {
                 "ni",
                 Some(2..2),
                 true,
-                UndoCaptureKind::CoalescibleText,
+                UndoCaptureKind::ImeComposition,
                 cx
             ));
 

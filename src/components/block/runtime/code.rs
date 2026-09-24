@@ -104,7 +104,15 @@ impl Block {
             return;
         }
 
-        self.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+        if self.code_language_marked_range.is_some() {
+            if !mark_inserted_text {
+                self.prepare_undo_capture(UndoCaptureKind::ImeCompositionCommit, cx);
+            }
+        } else if mark_inserted_text {
+            self.prepare_undo_capture(UndoCaptureKind::ImeComposition, cx);
+        } else {
+            self.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+        }
 
         let current = self.code_language_text().to_string();
         let range = range.start.min(current.len())..range.end.min(current.len());

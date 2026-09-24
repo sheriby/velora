@@ -847,6 +847,11 @@ pub enum BlockEvent {
 pub enum UndoCaptureKind {
     /// Text edits that may merge with adjacent typing within the coalescing window.
     CoalescibleText,
+    /// An in-progress input-method composition, which must remain one undo step
+    /// regardless of how long the candidate window stays open.
+    ImeComposition,
+    /// The commit or cancellation that ends an input-method composition.
+    ImeCompositionCommit,
     /// Structural or discrete edits that always form their own undo entry.
     NonCoalescible,
 }

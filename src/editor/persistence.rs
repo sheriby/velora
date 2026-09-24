@@ -81,10 +81,18 @@ struct PendingAutosaveDocument {
 }
 
 impl Editor {
+    pub(super) fn has_marked_document_text(&self, cx: &App) -> bool {
+        self.document.flatten_visible_blocks().iter().any(|block| {
+            let block = block.entity.read(cx);
+            block.marked_range.is_some() || block.code_language_marked_range.is_some()
+        })
+    }
+
     pub(super) fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
         if self.pending_close_after_save
             || self.autosave_task.is_some()
             || self.has_external_autosave_conflict()
+            || self.has_marked_document_text(cx)
             || (!self.document_dirty && !self.has_dirty_workspace_documents())
         {
             return;
@@ -100,6 +108,9 @@ impl Editor {
 
                 let snapshot = editor
                     .update(cx, |editor, cx| {
+                        if editor.has_marked_document_text(cx) {
+                            return None;
+                        }
                         let mut documents = editor
                             .dirty_workspace_documents(cx)
                             .into_iter()
@@ -247,6 +258,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.has_marked_document_text(cx) {
+            self.pending_close_after_save = true;
+            self.pending_save = true;
+            cx.notify();
+            return;
+        }
         self.snapshot_current_document(cx);
         let documents = self.dirty_workspace_documents(cx);
         if self.document_dirty && self.file_path.is_none() {
@@ -438,6 +455,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.has_marked_document_text(cx) {
+            self.pending_save = true;
+            cx.notify();
+            return false;
+        }
         if let Some(expected_version) = self.file_version
             && let Err(error) = verify_file_version(path, expected_version)
         {
@@ -489,6 +511,11 @@ impl Editor {
     }
 
     fn save_document_via_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_marked_document_text(cx) {
+            self.pending_save = true;
+            cx.notify();
+            return;
+        }
         let markdown = self.serialized_document_text(cx);
         let (default_dir, suggested_name) = self.save_dialog_defaults();
         let prompt = cx.prompt_for_new_path(&default_dir, suggested_name.as_deref());
@@ -588,6 +615,13 @@ impl Editor {
     }
 
     pub(crate) fn save_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_close_after_save
+            && self.has_dirty_workspace_documents()
+            && (self.file_path.is_some() || !self.document_dirty)
+        {
+            self.save_dirty_workspace_documents_and_close(window, cx);
+            return;
+        }
         if let Some(path) = self.file_path.clone() {
             let should_close_after_save = self.pending_close_after_save;
             if self.save_to_existing_path(&path, window, cx) {
@@ -604,6 +638,11 @@ impl Editor {
     }
 
     pub(crate) fn save_document_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_marked_document_text(cx) {
+            self.pending_save_as = true;
+            cx.notify();
+            return;
+        }
         self.save_document_via_prompt(window, cx);
     }
 }

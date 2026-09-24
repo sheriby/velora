@@ -99,12 +99,21 @@ impl EntityInputHandler for Block {
                 text: new_text.to_string(),
                 selected_range_relative: None,
                 mark_inserted_text: false,
-                undo_kind: UndoCaptureKind::CoalescibleText,
+                undo_kind: if self.marked_range.is_some() {
+                    UndoCaptureKind::ImeCompositionCommit
+                } else {
+                    UndoCaptureKind::CoalescibleText
+                },
             });
             return;
         }
 
-        self.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+        let undo_kind = if self.marked_range.is_some() {
+            UndoCaptureKind::ImeCompositionCommit
+        } else {
+            UndoCaptureKind::CoalescibleText
+        };
+        self.prepare_undo_capture(undo_kind, cx);
         let visible_range = range_utf16
             .as_ref()
             .map(|range| self.range_from_utf16(range))
@@ -152,12 +161,18 @@ impl EntityInputHandler for Block {
                 text: new_text.to_string(),
                 selected_range_relative,
                 mark_inserted_text: !new_text.is_empty(),
-                undo_kind: UndoCaptureKind::CoalescibleText,
+                undo_kind: UndoCaptureKind::ImeComposition,
             });
             return;
         }
 
-        self.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+        if self.marked_range.is_some() {
+            if new_text.is_empty() {
+                self.prepare_undo_capture(UndoCaptureKind::ImeCompositionCommit, cx);
+            }
+        } else if !new_text.is_empty() {
+            self.prepare_undo_capture(UndoCaptureKind::ImeComposition, cx);
+        }
         let visible_range = range_utf16
             .as_ref()
             .map(|range| self.range_from_utf16(range))
