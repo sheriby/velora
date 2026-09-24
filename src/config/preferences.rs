@@ -126,7 +126,7 @@ impl Default for AppPreferences {
             default_language_id: DEFAULT_LANGUAGE_ID.into(),
             default_theme_id: DEFAULT_THEME_ID.into(),
             show_table_headers: true,
-            image_paste_behavior: ImagePasteBehavior::None,
+            image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
         }
@@ -381,7 +381,7 @@ fn app_preferences_from_toml_value(
         .and_then(|editor| editor.get("image_paste_behavior"))
         .and_then(|value| value.as_str())
         .map(ImagePasteBehavior::from_str)
-        .unwrap_or(ImagePasteBehavior::None);
+        .unwrap_or(ImagePasteBehavior::CopyToAssetsFolder);
 
     let status_bar = value
         .get("status_bar")
@@ -2020,7 +2020,10 @@ mod tests {
         assert_eq!(preferences.startup_open, StartupOpenPreference::NewFile);
         assert_eq!(preferences.default_language_id, "en-US");
         assert_eq!(preferences.default_theme_id, "velotype-light");
-        assert_eq!(preferences.image_paste_behavior, ImagePasteBehavior::None);
+        assert_eq!(
+            preferences.image_paste_behavior,
+            ImagePasteBehavior::CopyToAssetsFolder
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2242,9 +2245,9 @@ mod tests {
                 preferences.startup_open = StartupOpenPreference::NewFile;
                 assert!(!preferences.has_unsaved_changes());
 
-                preferences.image_paste_behavior = ImagePasteBehavior::CopyToAssetsFolder;
+                preferences.image_paste_behavior = ImagePasteBehavior::CopyToDocumentFolder;
                 assert!(preferences.has_unsaved_changes());
-                preferences.image_paste_behavior = ImagePasteBehavior::None;
+                preferences.image_paste_behavior = ImagePasteBehavior::CopyToAssetsFolder;
                 assert!(!preferences.has_unsaved_changes());
 
                 preferences

@@ -752,6 +752,27 @@ async fn dropped_paths_pick_first_valid_markdown_file(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn dropped_paths_pick_first_valid_image_file(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let text_path = temp_export_path("drop-ignore-non-image", "txt");
+    let image_path = temp_export_path("drop-pick-image", "png");
+    fs::write(&text_path, "plain").expect("write text");
+    fs::write(&image_path, b"image bytes").expect("write image");
+    let cleanup_text = text_path.clone();
+    let cleanup_image = image_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_text);
+        let _ = fs::remove_file(&cleanup_image);
+    });
+
+    assert_eq!(
+        Editor::first_dropped_image_path(&[text_path, image_path.clone()]),
+        Some(image_path)
+    );
+}
+
+#[gpui::test]
 async fn dirty_drop_waits_for_replace_decision_and_cancel_preserves_document(
     cx: &mut TestAppContext,
 ) {

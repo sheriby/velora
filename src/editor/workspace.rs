@@ -566,6 +566,10 @@ impl Editor {
         self.file_path.as_ref()?.parent().map(Path::to_path_buf)
     }
 
+    pub(super) fn workspace_root_for_image_paste(&self) -> Option<PathBuf> {
+        self.workspace.root.clone()
+    }
+
     fn sync_workspace_file_tree(&mut self) {
         let next_root = self
             .workspace

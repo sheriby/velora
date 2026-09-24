@@ -25,19 +25,49 @@ impl Editor {
             .cloned()
     }
 
+    pub(super) fn first_dropped_image_path(paths: &[PathBuf]) -> Option<PathBuf> {
+        paths
+            .iter()
+            .find(|path| super::Block::is_supported_local_image_path(path))
+            .cloned()
+    }
+
     pub(crate) fn on_external_paths_drop(
         &mut self,
         paths: &ExternalPaths,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = Self::first_dropped_markdown_path(paths.paths()) else {
-            let strings = cx.global::<I18nManager>().strings().clone();
-            self.show_drop_open_failed_prompt(strings.drop_no_markdown_file_message, window, cx);
+        if let Some(path) = Self::first_dropped_markdown_path(paths.paths()) {
+            self.request_dropped_markdown_replace(path, window, cx);
             return;
-        };
+        }
 
-        self.request_dropped_markdown_replace(path, window, cx);
+        if let Some(path) = Self::first_dropped_image_path(paths.paths()) {
+            let block = self
+                .active_entity_id
+                .and_then(|id| self.focusable_entity_by_id(id))
+                .or_else(|| self.document.first_root().cloned());
+            if let Some(block) = block {
+                let (leading, trailing) = block.update(cx, |block, _cx| block.paste_image_split());
+                self.handle_paste_image_request(
+                    block,
+                    &leading,
+                    &crate::components::PastedImageSource::LocalPath(path),
+                    &trailing,
+                    cx,
+                );
+                return;
+            }
+            self.show_image_paste_error(
+                anyhow::anyhow!("no focused Markdown block is available for the dropped image"),
+                cx,
+            );
+            return;
+        }
+
+        let strings = cx.global::<I18nManager>().strings().clone();
+        self.show_drop_open_failed_prompt(strings.drop_no_markdown_file_message, window, cx);
     }
 
     pub(crate) fn request_dropped_markdown_replace(

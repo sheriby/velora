@@ -239,10 +239,23 @@ impl Editor {
     }
 
     fn image_paste_root_dir(&self) -> anyhow::Result<PathBuf> {
-        if let Some(parent) = self.file_path.as_ref().and_then(|path| path.parent()) {
-            return Ok(parent.to_path_buf());
+        if let Some(root) = Self::image_paste_base_dir(
+            self.file_path.as_deref(),
+            self.workspace_root_for_image_paste().as_deref(),
+        ) {
+            return Ok(root);
         }
         std::env::current_dir().context("failed to resolve current working directory")
+    }
+
+    fn image_paste_base_dir(
+        file_path: Option<&Path>,
+        workspace_root: Option<&Path>,
+    ) -> Option<PathBuf> {
+        file_path
+            .and_then(Path::parent)
+            .or(workspace_root)
+            .map(Path::to_path_buf)
     }
 
     fn clipboard_image_extension(format: ImageFormat) -> &'static str {
@@ -431,7 +444,7 @@ impl Editor {
         ))
     }
 
-    fn show_image_paste_error(&self, err: anyhow::Error, cx: &mut Context<Self>) {
+    pub(super) fn show_image_paste_error(&self, err: anyhow::Error, cx: &mut Context<Self>) {
         let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
         if let Some(window) = cx.active_window() {
             let ok = strings.info_dialog_ok.clone();
@@ -536,7 +549,7 @@ impl Editor {
         self.rebuild_image_runtimes(cx);
     }
 
-    fn handle_paste_image_request(
+    pub(super) fn handle_paste_image_request(
         &mut self,
         block: Entity<super::Block>,
         leading: &InlineTextTree,
@@ -2341,6 +2354,22 @@ mod tests {
         ExitCodeBlock, InlineTextTree, Newline,
     };
     use gpui::{App, AppContext, Entity, TestAppContext};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn untitled_workspace_image_uses_the_workspace_root() {
+        assert_eq!(
+            Editor::image_paste_base_dir(None, Some(Path::new("/workspace"))),
+            Some(PathBuf::from("/workspace"))
+        );
+        assert_eq!(
+            Editor::image_paste_base_dir(
+                Some(Path::new("/workspace/docs/readme.md")),
+                Some(Path::new("/workspace")),
+            ),
+            Some(PathBuf::from("/workspace/docs"))
+        );
+    }
 
     #[gpui::test]
     async fn request_quote_break_creates_new_root_leaf_quote_group(cx: &mut TestAppContext) {
