@@ -490,6 +490,145 @@ async fn dirty_saved_document_is_autosaved(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn autosave_flushes_a_dirty_tab_after_switching_away(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let first_path = temp_markdown_path("autosave-tab-first");
+    let second_path = temp_markdown_path("autosave-tab-second");
+    fs::write(&first_path, "alpha").expect("write first document");
+    fs::write(&second_path, "beta").expect("write second document");
+    let cleanup_first = first_path.clone();
+    let cleanup_second = second_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_first);
+        let _ = fs::remove_file(cleanup_second);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let first_path = first_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(first_path))
+    });
+    let first_recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("edited alpha".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second_path.clone(), window, cx);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        let second = editor.document.first_root().expect("second block").clone();
+        second.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("edited beta".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    let second_recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(first_recovery_id);
+        let _ = crate::config::remove_recovery_snapshot(second_recovery_id);
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&first_path).expect("read first autosaved document"),
+        "edited alpha"
+    );
+    assert_eq!(
+        fs::read_to_string(&second_path).expect("read second autosaved document"),
+        "edited beta"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.file_path.as_ref(), Some(&second_path));
+        assert!(!editor.document_dirty);
+        assert!(!editor.has_dirty_workspace_documents());
+    });
+}
+
+#[gpui::test]
+async fn save_and_close_writes_every_dirty_workspace_tab(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let first_path = temp_markdown_path("save-close-tab-first");
+    let second_path = temp_markdown_path("save-close-tab-second");
+    fs::write(&first_path, "alpha").expect("write first document");
+    fs::write(&second_path, "beta").expect("write second document");
+    let cleanup_first = first_path.clone();
+    let cleanup_second = second_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_first);
+        let _ = fs::remove_file(cleanup_second);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let first_path = first_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(first_path))
+    });
+    let first_recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("edited alpha".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second_path.clone(), window, cx);
+        });
+    });
+    let second_recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(first_recovery_id);
+        let _ = crate::config::remove_recovery_snapshot(second_recovery_id);
+    });
+    editor.update(cx, |editor, cx| {
+        let second = editor.document.first_root().expect("second block").clone();
+        second.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("edited beta".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.save_dirty_workspace_documents_and_close(window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&first_path).expect("read first"),
+        "edited alpha"
+    );
+    assert_eq!(
+        fs::read_to_string(&second_path).expect("read second"),
+        "edited beta"
+    );
+    assert_eq!(cx.cx.windows().len(), 0);
+}
+
+#[gpui::test]
 async fn recovered_document_is_opened_as_a_dirty_copy(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 

@@ -57,7 +57,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.document_dirty {
+        if !self.document_dirty && !self.has_dirty_workspace_documents() {
             return true;
         }
 
@@ -97,6 +97,11 @@ impl Editor {
         self.hide_unsaved_changes_dialog(cx);
         self.document_revision = self.document_revision.wrapping_add(1);
         self.autosave_task = None;
+        for recovery_id in self.workspace_recovery_ids() {
+            if let Err(error) = crate::config::remove_recovery_snapshot(recovery_id) {
+                eprintln!("failed to remove discarded tab recovery snapshot: {error}");
+            }
+        }
         if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
             eprintln!("failed to remove discarded document recovery snapshot: {error}");
         }
@@ -106,9 +111,17 @@ impl Editor {
     pub(crate) fn on_save_and_close(
         &mut self,
         _: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.has_dirty_workspace_documents()
+            && (self.file_path.is_some() || !self.document_dirty)
+        {
+            self.close_menu_bar(cx);
+            self.hide_unsaved_changes_dialog(cx);
+            self.save_dirty_workspace_documents_and_close(window, cx);
+            return;
+        }
         self.pending_close_after_save = true;
         self.close_menu_bar(cx);
         self.hide_unsaved_changes_dialog(cx);

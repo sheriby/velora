@@ -80,7 +80,7 @@ impl Editor {
         self.hide_info_dialog(cx);
         self.dismiss_contextual_overlays(cx);
 
-        if self.document_dirty {
+        if self.document_dirty || self.has_dirty_workspace_documents() {
             self.pending_drop_replace_path = Some(path);
             self.pending_drop_replace_after_save = false;
             if !self.show_drop_replace_dialog {

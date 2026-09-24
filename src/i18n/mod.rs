@@ -1302,7 +1302,8 @@ impl I18nStrings {
             dirty_title_marker: "\u{00B7}".into(),
             recovered_document_title: "恢复副本".into(),
             unsaved_changes_title: "不保存并关闭？".into(),
-            unsaved_changes_message: "此文档有未保存的更改。关闭前保存可避免丢失最新编辑。".into(),
+            unsaved_changes_message:
+                "当前文档或其他打开的标签页有未保存的更改。关闭前保存可避免丢失编辑内容。".into(),
             unsaved_changes_save_and_close: "保存并关闭".into(),
             unsaved_changes_discard_and_close: "放弃并关闭".into(),
             unsaved_changes_cancel: "继续编辑".into(),
@@ -1513,7 +1514,7 @@ impl I18nStrings {
             recovered_document_title: "Recovered Copy".into(),
             unsaved_changes_title: "Close without saving?".into(),
             unsaved_changes_message:
-                "This document has unsaved changes. Save before closing to avoid losing your latest edits."
+                "This document or another open tab has unsaved changes. Save before closing to avoid losing edits."
                     .into(),
             unsaved_changes_save_and_close: "Save and Close".into(),
             unsaved_changes_discard_and_close: "Discard and Close".into(),
