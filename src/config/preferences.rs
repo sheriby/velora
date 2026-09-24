@@ -22,6 +22,7 @@ use crate::window_chrome::{
 
 const DEFAULT_THEME_ID: &str = "system";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
+const PREFERENCES_VERSION: i64 = 1;
 
 /// A user-configurable button shown in the status bar.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,6 +223,7 @@ impl EditorSettings {
 
 #[derive(Serialize)]
 struct PreferencesFile {
+    preferences_version: i64,
     startup: StartupPreferencesFile,
     language: LanguagePreferencesFile,
     theme: ThemePreferencesFile,
@@ -278,6 +280,7 @@ impl From<&StatusBarPreferences> for StatusBarPreferencesFile {
 impl From<&AppPreferences> for PreferencesFile {
     fn from(value: &AppPreferences) -> Self {
         Self {
+            preferences_version: PREFERENCES_VERSION,
             startup: StartupPreferencesFile {
                 open: value.startup_open.as_str().into(),
             },
@@ -318,7 +321,44 @@ pub(crate) fn read_app_preferences_with_dirs(
         return Ok(AppPreferences::default());
     };
 
-    Ok(app_preferences_from_toml_value(&value, DEFAULT_LANGUAGE_ID))
+    let (preferences, needs_migration) =
+        load_preferences_from_toml_value(&value, DEFAULT_LANGUAGE_ID);
+    if needs_migration {
+        save_app_preferences_with_dirs(&preferences, dirs)?;
+    }
+    Ok(preferences)
+}
+
+fn load_preferences_from_toml_value(
+    value: &toml::Value,
+    fallback_language_id: &str,
+) -> (AppPreferences, bool) {
+    let mut preferences = app_preferences_from_toml_value(value, fallback_language_id);
+    let version = value
+        .get("preferences_version")
+        .and_then(toml::Value::as_integer)
+        .unwrap_or_default();
+    if version >= PREFERENCES_VERSION {
+        return (preferences, false);
+    }
+
+    if value
+        .get("theme")
+        .and_then(|theme| theme.get("default_theme_id"))
+        .and_then(toml::Value::as_str)
+        == Some("velotype")
+    {
+        preferences.default_theme_id = DEFAULT_THEME_ID.into();
+    }
+    if value
+        .get("editor")
+        .and_then(|editor| editor.get("image_paste_behavior"))
+        .and_then(toml::Value::as_str)
+        == Some("none")
+    {
+        preferences.image_paste_behavior = ImagePasteBehavior::CopyToAssetsFolder;
+    }
+    (preferences, true)
 }
 
 pub(crate) fn load_or_create_app_preferences() -> anyhow::Result<AppPreferences> {
@@ -466,7 +506,7 @@ where
     let path = dirs.app_config_file();
     let preferences = match std::fs::read_to_string(&path) {
         Ok(text) => toml::from_str::<toml::Value>(&text)
-            .map(|value| app_preferences_from_toml_value(&value, detected_language_id))
+            .map(|value| load_preferences_from_toml_value(&value, detected_language_id).0)
             .unwrap_or_else(|_| AppPreferences {
                 default_language_id: detected_language_id.into(),
                 ..AppPreferences::default()
@@ -2031,6 +2071,57 @@ mod tests {
             read_app_preferences_with_dirs(&dirs).expect("missing preferences should load");
         assert_eq!(preferences, AppPreferences::default());
         assert_eq!(preferences.default_theme_id, "system");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migrates_legacy_default_theme_and_image_paste_behavior_once() {
+        let root = std::env::temp_dir().join(format!(
+            "velotype-preferences-migration-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("temp root should exist");
+        let dirs = VelotypeConfigDirs::from_root(&root);
+        std::fs::write(
+            dirs.app_config_file(),
+            r#"
+                [theme]
+                default_theme_id = "velotype"
+
+                [editor]
+                image_paste_behavior = "none"
+            "#,
+        )
+        .expect("legacy preferences should be written");
+
+        let preferences =
+            read_app_preferences_with_dirs(&dirs).expect("legacy preferences should migrate");
+        assert_eq!(preferences.default_theme_id, "system");
+        assert_eq!(
+            preferences.image_paste_behavior,
+            ImagePasteBehavior::CopyToAssetsFolder
+        );
+        let migrated_text =
+            std::fs::read_to_string(dirs.app_config_file()).expect("config should be migrated");
+        assert!(migrated_text.contains("preferences_version = 1"));
+        assert!(migrated_text.contains("default_theme_id = \"system\""));
+        assert!(migrated_text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
+
+        let current_preferences = migrated_text
+            .replace(
+                "default_theme_id = \"system\"",
+                "default_theme_id = \"velotype\"",
+            )
+            .replace(
+                "image_paste_behavior = \"copy_to_assets_folder\"",
+                "image_paste_behavior = \"none\"",
+            );
+        std::fs::write(dirs.app_config_file(), current_preferences)
+            .expect("current explicit preferences should be written");
+        let preferences = read_app_preferences_with_dirs(&dirs)
+            .expect("versioned preferences should load without migration");
+        assert_eq!(preferences.default_theme_id, "velotype");
+        assert_eq!(preferences.image_paste_behavior, ImagePasteBehavior::None);
         let _ = std::fs::remove_dir_all(root);
     }
 
