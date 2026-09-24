@@ -44,6 +44,13 @@ pub(super) struct WorkspaceTreeNode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkspaceDocumentTab {
+    path: PathBuf,
+    markdown: String,
+    dirty: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum WorkspaceSelection {
     File(PathBuf),
     Outline(String),
@@ -59,6 +66,8 @@ pub(super) struct WorkspaceState {
     outline_source: Option<String>,
     expanded: HashSet<String>,
     selected: Option<WorkspaceSelection>,
+    open_documents: Vec<WorkspaceDocumentTab>,
+    active_document: Option<PathBuf>,
 }
 
 impl Default for WorkspaceState {
@@ -73,6 +82,8 @@ impl Default for WorkspaceState {
             outline_source: None,
             expanded: HashSet::new(),
             selected: None,
+            open_documents: Vec::new(),
+            active_document: None,
         }
     }
 }
@@ -151,6 +162,52 @@ impl Editor {
     fn sync_workspace_models(&mut self, cx: &mut Context<Self>) {
         self.sync_workspace_file_tree();
         self.sync_workspace_outline(cx);
+        self.ensure_current_document_tab(cx);
+    }
+
+    fn ensure_current_document_tab(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.file_path.clone() else {
+            return;
+        };
+        if self.workspace.active_document.as_ref() == Some(&path) {
+            return;
+        }
+        if !self
+            .workspace
+            .open_documents
+            .iter()
+            .any(|tab| tab.path == path)
+        {
+            self.workspace.open_documents.push(WorkspaceDocumentTab {
+                path: path.clone(),
+                markdown: self.serialized_document_text(cx),
+                dirty: self.document_dirty,
+            });
+        }
+        self.workspace.active_document = Some(path);
+    }
+
+    fn snapshot_current_document(&mut self, cx: &App) {
+        let Some(path) = self.file_path.clone() else {
+            return;
+        };
+        let markdown = self.serialized_document_text(cx);
+        if let Some(tab) = self
+            .workspace
+            .open_documents
+            .iter_mut()
+            .find(|tab| tab.path == path)
+        {
+            tab.markdown = markdown;
+            tab.dirty = self.document_dirty;
+        } else {
+            self.workspace.open_documents.push(WorkspaceDocumentTab {
+                path: path.clone(),
+                markdown,
+                dirty: self.document_dirty,
+            });
+        }
+        self.workspace.active_document = Some(path);
     }
 
     fn workspace_root_for_current_file(&self) -> Option<PathBuf> {
@@ -234,9 +291,142 @@ impl Editor {
         cx.notify();
     }
 
-    fn open_workspace_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_workspace_file(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_path.as_ref() == Some(&path) {
+            return;
+        }
+        if self.file_path.is_none() && self.document_dirty {
+            self.request_dropped_markdown_replace(path, window, cx);
+            return;
+        }
+
+        self.snapshot_current_document(cx);
+        let cached = self
+            .workspace
+            .open_documents
+            .iter()
+            .find(|tab| tab.path == path)
+            .cloned();
+        let (markdown, dirty) = if let Some(tab) = cached {
+            (tab.markdown, tab.dirty)
+        } else {
+            match fs::read_to_string(&path) {
+                Ok(markdown) => (markdown, false),
+                Err(err) => {
+                    self.workspace.file_error = Some(err.to_string());
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        if !self
+            .workspace
+            .open_documents
+            .iter()
+            .any(|tab| tab.path == path)
+        {
+            self.workspace.open_documents.push(WorkspaceDocumentTab {
+                path: path.clone(),
+                markdown: markdown.clone(),
+                dirty,
+            });
+        }
+        self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
-        self.request_dropped_markdown_replace(path, window, cx);
+        self.replace_document_from_markdown(markdown, Some(path), cx);
+        self.document_dirty = dirty;
+        window.set_window_edited(dirty);
+        cx.notify();
+    }
+
+    pub(super) fn render_document_tabs(
+        &mut self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.ensure_current_document_tab(cx);
+        if self.workspace.open_documents.is_empty() {
+            return None;
+        }
+
+        let editor = cx.entity().downgrade();
+        let c = &theme.colors;
+        let t = &theme.typography;
+        let tabs = self
+            .workspace
+            .open_documents
+            .iter()
+            .map(|tab| {
+                let path = tab.path.clone();
+                let click_path = path.clone();
+                let active = self.workspace.active_document.as_ref() == Some(&tab.path);
+                let dirty = if active {
+                    self.document_dirty
+                } else {
+                    tab.dirty
+                };
+                let title = tab
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| tab.path.to_string_lossy().into_owned());
+                let tab_editor = editor.clone();
+                div()
+                    .id(("document-tab", stable_node_hash(&path.to_string_lossy())))
+                    .h(px(36.0))
+                    .px(px(14.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .border_b(px(if active { 2.0 } else { 1.0 }))
+                    .border_color(if active {
+                        c.dialog_primary_button_bg
+                    } else {
+                        c.dialog_border
+                    })
+                    .bg(if active {
+                        c.dialog_surface
+                    } else {
+                        c.editor_background
+                    })
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .cursor_pointer()
+                    .text_size(px(t.text_size * 0.86))
+                    .text_color(if active {
+                        c.text_default
+                    } else {
+                        c.dialog_muted
+                    })
+                    .child(if dirty { format!("● {title}") } else { title })
+                    .on_click(move |_event, window, cx| {
+                        let _ = tab_editor.update(cx, |editor, cx| {
+                            editor.open_workspace_file(click_path.clone(), window, cx);
+                        });
+                    })
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        Some(
+            div()
+                .id("document-tabs")
+                .w_full()
+                .h(px(38.0))
+                .flex_shrink_0()
+                .flex()
+                .overflow_x_scroll()
+                .bg(c.editor_background)
+                .border_b(px(theme.dimensions.dialog_border_width))
+                .border_color(c.dialog_border)
+                .children(tabs)
+                .into_any_element(),
+        )
     }
 
     fn open_code_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {

@@ -2013,6 +2013,22 @@ impl Render for Editor {
             content_area
         };
 
+        let content_area = if let Some(document_tabs) = self.render_document_tabs(&theme, cx) {
+            div()
+                .id("editor-column")
+                .w_full()
+                .h_full()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .child(document_tabs)
+                .child(content_area)
+                .into_any_element()
+        } else {
+            content_area.into_any_element()
+        };
+
         // Repaint when the Cmd/Ctrl follow modifier toggles so a hovered link's
         // hand cursor updates without moving the pointer. `ModifiersChanged` is
         // dispatched along the focused element's path to the root, and this root

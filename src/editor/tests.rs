@@ -450,6 +450,59 @@ async fn ctrl_s_saves_rendered_mode_edit_to_existing_file(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn workspace_tabs_restore_unsaved_markdown_state(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let first_path = temp_markdown_path("workspace-tab-first");
+    let second_path = temp_markdown_path("workspace-tab-second");
+    fs::write(&first_path, "alpha").expect("write first document");
+    fs::write(&second_path, "beta").expect("write second document");
+    let cleanup_first = first_path.clone();
+    let cleanup_second = second_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_first);
+        let _ = fs::remove_file(&cleanup_second);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let first_path = first_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(first_path))
+    });
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("edited alpha".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second_path.clone(), window, cx);
+        });
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.file_path.as_ref(), Some(&second_path));
+        assert_eq!(editor.document.markdown_text(cx), "beta");
+        assert!(!editor.document_dirty);
+    });
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(first_path.clone(), window, cx);
+        });
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.file_path.as_ref(), Some(&first_path));
+        assert_eq!(editor.document.markdown_text(cx), "edited alpha");
+        assert!(editor.document_dirty);
+    });
+}
+
+#[gpui::test]
 async fn window_save_action_saves_current_editor_without_global_menu_route(
     cx: &mut TestAppContext,
 ) {
