@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>maksher 界面原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #f3f4f6;
+      --window: #ffffff;
+      --panel: #f8f9fb;
+      --panel-strong: #f1f3f6;
+      --text: #252832;
+      --muted: #777d89;
+      --faint: #a2a7b1;
+      --line: #e6e8ed;
+      --accent: #6558d3;
+      --accent-soft: #eeecff;
+      --selection: #e8e5ff;
+      --code: #f2f3f6;
+      --shadow: 0 28px 80px #17213a20, 0 2px 8px #17213a12;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --canvas: #111318;
+      --window: #1b1d24;
+      --panel: #20232b;
+      --panel-strong: #292c35;
+      --text: #e8e9ee;
+      --muted: #a0a4af;
+      --faint: #737986;
+      --line: #333640;
+      --accent: #aaa0ff;
+      --accent-soft: #34304f;
+      --selection: #403a61;
+      --code: #252832;
+      --shadow: 0 28px 80px #00000070, 0 2px 8px #00000040;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      background: var(--canvas);
+      color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      transition: background .18s ease, color .18s ease;
+    }
+    button { color: inherit; font: inherit; }
+    .window {
+      width: min(1440px, 100%);
+      height: min(900px, calc(100vh - 56px));
+      min-height: 680px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--window);
+      box-shadow: var(--shadow);
+    }
+    .titlebar {
+      height: 54px;
+      flex: 0 0 54px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--window);
+    }
+    .traffic { display: flex; gap: 8px; margin-right: 2px; }
+    .traffic i { width: 11px; height: 11px; border-radius: 50%; background: #ff6058; }
+    .traffic i:nth-child(2) { background: #ffbd2e; }
+    .traffic i:nth-child(3) { background: #28c840; }
+    .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -.2px; }
+    .brand-mark {
+      width: 27px; height: 27px; display: grid; place-items: center;
+      border-radius: 8px; color: white; background: #6558d3; font-size: 15px; font-weight: 750;
+    }
+    .crumb { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+    .crumb strong { color: var(--text); font-weight: 550; }
+    .spacer { flex: 1; }
+    .theme-toggle, .toolbar-button, .icon-button {
+      border: 1px solid var(--line); background: var(--window); cursor: pointer;
+    }
+    .theme-toggle {
+      height: 30px; padding: 0 10px; border-radius: 7px; color: var(--muted); font-size: 12px;
+    }
+    .toolbar {
+      height: 46px; flex: 0 0 46px; display: flex; align-items: center; gap: 8px;
+      padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--window);
+    }
+    .toolbar-button {
+      height: 29px; padding: 0 9px; border-color: transparent; border-radius: 6px;
+      color: var(--muted); font-size: 12px;
+    }
+    .toolbar-button:hover, .icon-button:hover { background: var(--panel-strong); }
+    .toolbar-button.primary { background: var(--accent-soft); color: var(--accent); }
+    .workspace { flex: 1; min-height: 0; display: flex; }
+    .activity {
+      width: 50px; flex: 0 0 50px; display: flex; flex-direction: column; align-items: center;
+      gap: 13px; padding-top: 15px; border-right: 1px solid var(--line); background: var(--panel);
+    }
+    .activity button {
+      width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 8px;
+      background: transparent; color: var(--faint); cursor: pointer;
+    }
+    .activity button.active { background: var(--accent-soft); color: var(--accent); }
+    .sidebar {
+      width: 258px; flex: 0 0 258px; display: flex; flex-direction: column;
+      border-right: 1px solid var(--line); background: var(--panel);
+    }
+    .side-head { padding: 16px 15px 11px; }
+    .side-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+    .side-title strong { font-size: 12px; font-weight: 650; letter-spacing: .5px; }
+    .side-tools { display: flex; gap: 5px; color: var(--muted); }
+    .side-tools span { width: 23px; height: 23px; display: grid; place-items: center; border-radius: 5px; }
+    .side-tools span:hover { background: var(--panel-strong); }
+    .side-tabs { display: flex; gap: 15px; border-bottom: 1px solid var(--line); }
+    .side-tabs button {
+      position: relative; padding: 0 0 9px; border: 0; background: none; color: var(--muted);
+      cursor: pointer; font-size: 12px;
+    }
+    .side-tabs button.active { color: var(--text); font-weight: 600; }
+    .side-tabs button.active::after {
+      position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px;
+      background: var(--accent); content: "";
+    }
+    .search {
+      height: 31px; margin: 2px 13px 12px; display: flex; align-items: center; gap: 8px;
+      padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--faint);
+      background: var(--window); font-size: 12px;
+    }
+    .tree { overflow: auto; padding: 0 8px 16px; font-size: 12.5px; }
+    .tree-row {
+      height: 29px; display: flex; align-items: center; gap: 8px; padding: 0 8px;
+      border-radius: 6px; color: var(--muted); white-space: nowrap;
+    }
+    .tree-row.folder { color: var(--text); font-weight: 550; }
+    .tree-row.selected { color: var(--accent); background: var(--selection); }
+    .tree-row.indent { padding-left: 26px; }
+    .tree-row.indent2 { padding-left: 43px; }
+    .caret { width: 10px; color: var(--faint); text-align: center; }
+    .file-icon { width: 15px; height: 15px; display: grid; place-items: center; color: var(--accent); font-size: 10px; }
+    .file-icon.code { color: #5b8ed9; }
+    .main { min-width: 0; flex: 1; display: flex; flex-direction: column; background: var(--window); }
+    .tabs {
+      height: 43px; flex: 0 0 43px; display: flex; align-items: stretch;
+      border-bottom: 1px solid var(--line); background: var(--panel);
+    }
+    .doc-tab {
+      min-width: 150px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+      border-right: 1px solid var(--line); color: var(--muted); font-size: 12px;
+    }
+    .doc-tab.active { position: relative; color: var(--text); background: var(--window); }
+    .doc-tab.active::after { position: absolute; top: 0; right: 0; left: 0; height: 2px; background: var(--accent); content: ""; }
+    .dirty-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent); }
+    .editor-tools {
+      height: 41px; flex: 0 0 41px; display: flex; align-items: center; gap: 6px;
+      padding: 0 22px; border-bottom: 1px solid var(--line); color: var(--muted);
+    }
+    .editor-tools .divider { width: 1px; height: 18px; margin: 0 5px; background: var(--line); }
+    .icon-button {
+      width: 29px; height: 27px; display: grid; place-items: center; border-color: transparent;
+      border-radius: 5px; color: var(--muted); font-size: 12px;
+    }
+    .page-scroll { flex: 1; overflow: auto; }
+    .page {
+      width: min(760px, calc(100% - 72px)); margin: 52px auto 72px; color: var(--text);
+    }
+    .eyebrow { margin-bottom: 10px; color: var(--accent); font-size: 11px; font-weight: 650; letter-spacing: 1.2px; }
+    h1 { margin: 0 0 19px; font-size: 34px; line-height: 1.28; letter-spacing: -1.1px; font-weight: 680; }
+    .lead { margin: 0 0 31px; color: var(--muted); font-size: 16px; line-height: 1.9; }
+    .rule { height: 1px; margin: 29px 0; background: var(--line); }
+    h2 { margin: 0 0 12px; font-size: 22px; font-weight: 650; letter-spacing: -.4px; }
+    p { margin: 0 0 14px; font-size: 14px; line-height: 1.9; }
+    .callout {
+      display: flex; gap: 12px; margin: 20px 0 27px; padding: 15px 17px;
+      border: 1px solid var(--line); border-left: 3px solid var(--accent);
+      border-radius: 8px; color: var(--muted); background: var(--panel);
+    }
+    .callout strong { color: var(--text); }
+    .checklist { display: grid; gap: 12px; margin: 15px 0 0; padding: 0; list-style: none; }
+    .checklist li { display: flex; align-items: flex-start; gap: 10px; line-height: 1.8; }
+    .check {
+      width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; margin-top: 3px;
+      border: 1px solid var(--accent); border-radius: 4px; color: white; background: var(--accent); font-size: 11px;
+    }
+    code { padding: 2px 5px; border-radius: 4px; background: var(--code); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .status {
+      height: 27px; flex: 0 0 27px; display: flex; align-items: center; gap: 16px;
+      padding: 0 13px; border-top: 1px solid var(--line); color: var(--muted);
+      background: var(--panel); font-size: 11px;
+    }
+    .status .right { margin-left: auto; }
+    @media (max-width: 900px) {
+      body { padding: 0; }
+      .window { height: 100vh; min-height: 600px; border: 0; border-radius: 0; }
+      .sidebar { width: 220px; flex-basis: 220px; }
+      .page { margin-top: 36px; width: min(700px, calc(100% - 40px)); }
+    }
+  </style>
+</head>
+<body>
+  <main class="window">
+    <header class="titlebar">
+      <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand"><span class="brand-mark">m</span><span>maksher</span></div>
+      <div class="crumb"><span>/</span><strong>我的工作区</strong><span>/</span><span>产品设计</span></div>
+      <div class="spacer"></div>
+      <button class="theme-toggle" id="theme-toggle">切换深色预览</button>
+      <button class="icon-button" title="设置">⚙</button>
+    </header>
+    <div class="toolbar">
+      <button class="toolbar-button">⌕　查找</button>
+      <button class="toolbar-button">⌘　命令</button>
+      <div class="spacer"></div>
+      <button class="toolbar-button">跟随系统外观</button>
+      <button class="toolbar-button primary">Markdown　⌄</button>
+    </div>
+    <div class="workspace">
+      <nav class="activity" aria-label="活动栏">
+        <button class="active" title="文件">▤</button>
+        <button title="搜索">⌕</button>
+        <button title="大纲">☷</button>
+        <div class="spacer"></div>
+        <button title="偏好设置">⚙</button>
+      </nav>
+      <aside class="sidebar">
+        <div class="side-head">
+          <div class="side-title">
+            <strong>资源管理器</strong>
+            <div class="side-tools"><span title="新建文件">＋</span><span title="新建文件夹">▱</span><span title="刷新">↻</span></div>
+          </div>
+          <div class="side-tabs">
+            <button class="active">文件</button><button>大纲</button><button>最近</button>
+          </div>
+        </div>
+        <div class="search"><span>⌕</span><span>按文件名搜索</span><span class="spacer"></span><span>⌘ P</span></div>
+        <div class="tree">
+          <div class="tree-row folder"><span class="caret">⌄</span><span>▰</span><span>产品设计</span></div>
+          <div class="tree-row folder indent"><span class="caret">⌄</span><span>▰</span><span>docs</span></div>
+          <div class="tree-row indent2 selected"><span class="file-icon">M</span><span>设计方向.md</span></div>
+          <div class="tree-row indent2"><span class="file-icon">M</span><span>迭代计划.md</span></div>
+          <div class="tree-row folder indent"><span class="caret">›</span><span>▰</span><span>src</span></div>
+          <div class="tree-row indent"><span class="file-icon">M</span><span>README.md</span></div>
+          <div class="tree-row indent"><span class="file-icon code">R</span><span>main.rs</span></div>
+          <div class="tree-row indent"><span class="file-icon code">J</span><span>package.json</span></div>
+        </div>
+      </aside>
+      <section class="main">
+        <div class="tabs">
+          <div class="doc-tab active"><span class="file-icon">M</span><span>设计方向.md</span><span class="dirty-dot"></span></div>
+          <div class="doc-tab"><span class="file-icon">M</span><span>README.md</span></div>
+          <div class="doc-tab"><span class="file-icon code">R</span><span>main.rs</span></div>
+        </div>
+        <div class="editor-tools">
+          <button class="icon-button" title="撤销">↶</button>
+          <button class="icon-button" title="重做">↷</button>
+          <span class="divider"></span>
+          <button class="icon-button" title="粗体"><strong>B</strong></button>
+          <button class="icon-button" title="斜体"><em>I</em></button>
+          <button class="icon-button" title="链接">↗</button>
+          <button class="icon-button" title="列表">☷</button>
+          <button class="icon-button" title="插入图片">▧</button>
+          <span class="divider"></span>
+          <span style="font-size:12px">自动保存</span>
+          <span class="spacer"></span>
+          <button class="toolbar-button">查看源码</button>
+        </div>
+        <div class="page-scroll">
+          <article class="page">
+            <div class="eyebrow">产品设计　·　2026 年 9 月</div>
+            <h1>让长篇写作保持专注</h1>
+            <p class="lead">编辑器应该安静地退到背景里：内容清晰、结构好找，切换文档时也不打断思路。</p>
+            <div class="rule"></div>
+            <h2>设计原则</h2>
+            <p>工作区负责组织文件，编辑区域负责呈现内容。Markdown 标题、列表、引用和代码块在编辑时直接保持清晰的视觉层级。</p>
+            <div class="callout"><span>✦</span><div><strong>保持轻量</strong><br>只让当前任务相关的控件保持可见；搜索、文件操作与视图切换都能在需要时快速找到。</div></div>
+            <h2>首版范围</h2>
+            <ul class="checklist">
+              <li><span class="check">✓</span><span>在同一个工作区浏览 Markdown 与代码文件。</span></li>
+              <li><span class="check">✓</span><span>文档支持富文本编辑、撤销、自动保存与崩溃恢复。</span></li>
+              <li><span class="check">✓</span><span>图片放进工作区资源目录，文档使用相对路径引用。</span></li>
+              <li><span class="check">✓</span><span>浅色与深色外观跟随系统，也可在设置中切换。</span></li>
+            </ul>
+            <div class="rule"></div>
+            <p>需要强调的词语可以 <strong>直接显示为格式</strong>。代码、链接与表格也保留清楚的边界，避免页面显得拥挤。</p>
+            <p><code>⌘ S</code>　保存当前文档　　<code>⌘ P</code>　按文件名查找</p>
+          </article>
+        </div>
+        <footer class="status">
+          <span>●　工作区</span><span>富文本 Markdown</span>
+          <span class="right">第 8 行，1 列</span><span>约 286 字</span><span>UTF-8</span>
+        </footer>
+      </section>
+    </div>
+  </main>
+  <script>
+    const root = document.documentElement;
+    const toggle = document.getElementById("theme-toggle");
+    const preferredTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    root.dataset.theme = preferredTheme;
+    function updateThemeButton() {
+      toggle.textContent = root.dataset.theme === "dark" ? "切换浅色预览" : "切换深色预览";
+    }
+    updateThemeButton();
+    toggle.addEventListener("click", () => {
+      root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+      updateThemeButton();
+    });
+    document.querySelectorAll(".side-tabs button").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".side-tabs button").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+  </script>
+</body>
+</html>
