@@ -258,6 +258,8 @@ pub struct I18nStrings {
     pub workspace_delete_confirm_title: String,
     /// Confirmation message for deleting a workspace item.
     pub workspace_delete_confirm_message: String,
+    /// Warning shown when deleting workspace content with unsaved edits.
+    pub workspace_delete_unsaved_message: String,
     /// Title shown when no Markdown file path is available for workspace mode.
     pub workspace_no_file_title: String,
     /// Message shown when no Markdown file path is available for workspace mode.
@@ -501,6 +503,7 @@ struct I18nStringsDe {
     workspace_delete: Option<String>,
     workspace_delete_confirm_title: Option<String>,
     workspace_delete_confirm_message: Option<String>,
+    workspace_delete_unsaved_message: Option<String>,
     workspace_no_file_title: Option<String>,
     workspace_no_file_message: Option<String>,
     workspace_empty_files: Option<String>,
@@ -698,6 +701,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_delete",
     "workspace_delete_confirm_title",
     "workspace_delete_confirm_message",
+    "workspace_delete_unsaved_message",
     "workspace_no_file_title",
     "workspace_no_file_message",
     "workspace_empty_files",
@@ -1149,6 +1153,9 @@ impl I18nStringsDe {
             workspace_delete_confirm_message: self
                 .workspace_delete_confirm_message
                 .unwrap_or(defaults.workspace_delete_confirm_message),
+            workspace_delete_unsaved_message: self
+                .workspace_delete_unsaved_message
+                .unwrap_or(defaults.workspace_delete_unsaved_message),
             workspace_no_file_title: self
                 .workspace_no_file_title
                 .unwrap_or(defaults.workspace_no_file_title),
@@ -1432,6 +1439,7 @@ impl I18nStrings {
             workspace_delete: "删除".into(),
             workspace_delete_confirm_title: "删除工作区项目？".into(),
             workspace_delete_confirm_message: "此操作会永久删除选中的文件或文件夹。".into(),
+            workspace_delete_unsaved_message: "其中包含未保存的编辑内容，删除后将无法恢复。".into(),
             workspace_no_file_title: "未打开 Markdown 文件".into(),
             workspace_no_file_message: "打开或保存一个 .md 文件后，工作区会使用该文件所在目录。"
                 .into(),
@@ -1658,6 +1666,7 @@ impl I18nStrings {
             workspace_delete: "Delete".into(),
             workspace_delete_confirm_title: "Delete workspace item?".into(),
             workspace_delete_confirm_message: "The selected file or folder will be permanently deleted.".into(),
+            workspace_delete_unsaved_message: "It contains unsaved edits that will be lost.".into(),
             workspace_no_file_title: "No Markdown File Open".into(),
             workspace_no_file_message:
                 "Open or save a .md file to use its folder as the workspace.".into(),

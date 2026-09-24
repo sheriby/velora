@@ -335,6 +335,128 @@ impl Editor {
         .detach();
     }
 
+    fn prompt_delete_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.selected_workspace_path() else {
+            return;
+        };
+        if self.workspace.root.as_ref() == Some(&target) {
+            return;
+        }
+        let target_is_directory = target.is_dir();
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        let has_unsaved_changes =
+            self.document_dirty
+                && self
+                    .file_path
+                    .as_ref()
+                    .is_some_and(|path| path_is_affected(path, &target, target_is_directory))
+                || self.workspace.open_documents.iter().any(|tab| {
+                    tab.dirty && path_is_affected(&tab.path, &target, target_is_directory)
+                });
+        let mut detail = format!(
+            "{}\n{}",
+            strings.workspace_delete_confirm_message,
+            target.display()
+        );
+        if has_unsaved_changes {
+            detail.push_str("\n");
+            detail.push_str(&strings.workspace_delete_unsaved_message);
+        }
+        let buttons = [
+            strings.workspace_delete.as_str(),
+            strings.open_link_cancel.as_str(),
+        ];
+        let prompt = window.prompt(
+            PromptLevel::Warning,
+            &strings.workspace_delete_confirm_title,
+            Some(&detail),
+            &buttons,
+            cx,
+        );
+        let editor = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        let background = cx.background_executor().clone();
+
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let Ok(0) = prompt.await else {
+                return;
+            };
+            let delete_target = target.clone();
+            let result = background
+                .spawn(async move {
+                    if target_is_directory {
+                        std::fs::remove_dir_all(delete_target)
+                    } else {
+                        std::fs::remove_file(delete_target)
+                    }
+                })
+                .await;
+            if let Err(err) = result {
+                Self::show_workspace_file_error(window_handle, format!("无法删除：{}", err), cx);
+                return;
+            }
+
+            let target_for_update = target.clone();
+            let _ = cx.update_window(
+                window_handle,
+                move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                    let _ = editor.update(cx, |editor, cx| {
+                        let active_deleted = editor.file_path.as_ref().is_some_and(|path| {
+                            path_is_affected(path, &target_for_update, target_is_directory)
+                        });
+                        if active_deleted {
+                            editor.snapshot_current_document(cx);
+                        }
+                        let next_tab = editor
+                            .workspace
+                            .open_documents
+                            .iter()
+                            .find(|tab| {
+                                !path_is_affected(
+                                    &tab.path,
+                                    &target_for_update,
+                                    target_is_directory,
+                                )
+                            })
+                            .cloned();
+                        editor.workspace.open_documents.retain(|tab| {
+                            !path_is_affected(&tab.path, &target_for_update, target_is_directory)
+                        });
+                        editor.workspace.recent_roots.retain(|root| {
+                            !path_is_affected(root, &target_for_update, target_is_directory)
+                        });
+                        if editor.workspace.root.as_ref().is_some_and(|root| {
+                            path_is_affected(root, &target_for_update, target_is_directory)
+                        }) {
+                            editor.workspace.root = None;
+                            editor.workspace.file_tree = None;
+                        }
+                        editor.workspace.selected = None;
+                        if active_deleted {
+                            if let Some(tab) = next_tab {
+                                editor.workspace.active_document = Some(tab.path.clone());
+                                editor.replace_document_from_markdown(
+                                    tab.markdown,
+                                    Some(tab.path),
+                                    cx,
+                                );
+                                editor.document_dirty = tab.dirty;
+                                window.set_window_edited(tab.dirty);
+                            } else {
+                                editor.workspace.active_document = None;
+                                editor.replace_document_from_markdown(String::new(), None, cx);
+                                window.set_window_edited(false);
+                            }
+                        }
+                        editor.refresh_workspace_tree(cx);
+                        cx.notify();
+                    });
+                },
+            );
+        })
+        .detach();
+    }
+
     fn selected_workspace_path(&self) -> Option<PathBuf> {
         match self.workspace.selected.as_ref()? {
             WorkspaceSelection::Directory(path)
@@ -827,7 +949,7 @@ impl Editor {
         let rename_editor = editor.clone();
         let rename_button = div()
             .id("workspace-rename")
-            .w_full()
+            .flex_1()
             .h(px(30.0))
             .px(px(7.0))
             .flex()
@@ -843,6 +965,27 @@ impl Editor {
             .on_click(move |_event, window, cx| {
                 let _ = rename_editor.update(cx, |editor, cx| {
                     editor.prompt_rename_or_move_selected(window, cx);
+                });
+            });
+        let delete_editor = editor.clone();
+        let delete_button = div()
+            .id("workspace-delete")
+            .flex_1()
+            .h(px(30.0))
+            .px(px(7.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .bg(c.dialog_secondary_button_bg)
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .cursor_pointer()
+            .text_size(px(t.text_size * 0.78))
+            .text_color(c.text_default)
+            .child(strings.workspace_delete.clone())
+            .on_click(move |_event, window, cx| {
+                let _ = delete_editor.update(cx, |editor, cx| {
+                    editor.prompt_delete_selected(window, cx);
                 });
             });
         let search_focus = self
@@ -954,7 +1097,14 @@ impl Editor {
                                 .child(new_file_button)
                                 .child(new_folder_button),
                         )
-                        .child(rename_button),
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .gap(px(6.0))
+                                .child(rename_button)
+                                .child(delete_button),
+                        ),
                 )
                 .child(
                     div()
@@ -1308,6 +1458,14 @@ fn remap_moved_path(
     Some(destination.join(suffix))
 }
 
+fn path_is_affected(path: &Path, target: &Path, target_is_directory: bool) -> bool {
+    if target_is_directory {
+        path.starts_with(target)
+    } else {
+        path == target
+    }
+}
+
 fn collect_matching_workspace_files(
     node: &WorkspaceTreeNode,
     root: &WorkspaceTreeNode,
@@ -1548,7 +1706,7 @@ mod tests {
     use super::{
         WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
         collect_matching_workspace_files, create_workspace_file, create_workspace_folder,
-        prune_outline_state, remap_moved_path, scan_workspace_dir,
+        path_is_affected, prune_outline_state, remap_moved_path, scan_workspace_dir,
         workspace_panel_width_for_viewport,
     };
     use std::fs;
@@ -1673,6 +1831,26 @@ mod tests {
             ),
             Some(PathBuf::from("/workspace/new.md"))
         );
+    }
+
+    #[test]
+    fn deleting_a_folder_matches_only_its_descendants() {
+        let folder = Path::new("/workspace/docs");
+        assert!(path_is_affected(
+            Path::new("/workspace/docs/readme.md"),
+            folder,
+            true,
+        ));
+        assert!(!path_is_affected(
+            Path::new("/workspace/docs-old/readme.md"),
+            folder,
+            true,
+        ));
+        assert!(path_is_affected(
+            Path::new("/workspace/readme.md"),
+            Path::new("/workspace/readme.md"),
+            false,
+        ));
     }
 
     #[test]
