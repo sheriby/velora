@@ -1085,52 +1085,54 @@ mod tests {
 
     #[test]
     fn cross_block_cut_writes_markdown_deletes_range_and_undo_restores() {
-        let mut cx = TestAppContext::single();
-        init_editor_test_app(&mut cx);
+        let mut app_cx = TestAppContext::single();
+        init_editor_test_app(&mut app_cx);
         let original = "alpha\n\nbeta\n\ngamma";
-        let (editor, cx) = cx.add_window_view({
+        let (editor, window_cx) = app_cx.add_window_view({
             let original = original.to_string();
             move |_window, cx| Editor::from_markdown(cx, original.clone(), None)
         });
-        redraw(cx);
+        redraw(window_cx);
 
-        editor.update(cx, |editor, cx| {
+        editor.update(window_cx, |editor, cx| {
             set_selection(editor, 0, 2, 2, 2, cx);
             assert_eq!(
                 editor.cross_block_selected_markdown(cx).as_deref(),
                 Some("pha\n\nbeta\n\nga")
             );
         });
-        redraw(cx);
+        redraw(window_cx);
 
-        cx.dispatch_action(Cut);
-        redraw(cx);
+        window_cx.dispatch_action(Cut);
+        redraw(window_cx);
 
         assert_eq!(
-            cx.read_from_clipboard()
+            window_cx
+                .read_from_clipboard()
                 .and_then(|item| item.text())
                 .as_deref(),
             Some("pha\n\nbeta\n\nga")
         );
         assert_eq!(
-            editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx)),
+            editor.read_with(window_cx, |editor, cx| editor.document.markdown_text(cx)),
             "almma"
         );
 
-        cx.dispatch_action(Undo);
-        redraw(cx);
+        window_cx.dispatch_action(Undo);
+        redraw(window_cx);
 
         assert_eq!(
-            editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx)),
+            editor.read_with(window_cx, |editor, cx| editor.document.markdown_text(cx)),
             original
         );
-        editor.read_with(cx, |editor, cx| {
+        editor.read_with(window_cx, |editor, cx| {
             assert_eq!(
                 editor.cross_block_selected_markdown(cx).as_deref(),
                 Some("pha\n\nbeta\n\nga")
             );
         });
-        cx.quit();
+        drop(editor);
+        app_cx.quit();
     }
 
     const TABLE_DOC: &str = "alpha\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\ngamma";
