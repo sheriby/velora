@@ -1090,6 +1090,7 @@ async fn dropped_markdown_replaces_clean_editor_in_current_window(cx: &mut TestA
         assert!(editor.source_mode_fallback_required);
         assert_eq!(editor.document.raw_source_text(cx), fallback_source);
     });
+    redraw(cx);
     assert_eq!(cx.cx.windows().len(), 1);
 }
 
