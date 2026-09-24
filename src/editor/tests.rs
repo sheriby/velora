@@ -464,6 +464,10 @@ async fn dirty_saved_document_is_autosaved(cx: &mut TestAppContext) {
         let path = path.clone();
         move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
     });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
     editor.update(cx, |editor, cx| {
         let first = editor.document.first_root().expect("first block").clone();
         first.update(cx, |block, _cx| {
@@ -483,6 +487,35 @@ async fn dirty_saved_document_is_autosaved(cx: &mut TestAppContext) {
         "autosaved text"
     );
     editor.read_with(cx, |editor, _cx| assert!(!editor.document_dirty));
+}
+
+#[gpui::test]
+async fn recovered_document_is_opened_as_a_dirty_copy(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let recovery_id = uuid::Uuid::new_v4();
+    let source_path = temp_markdown_path("recovered-source");
+    let (editor, cx) = cx.add_window_view({
+        let source_path = source_path.clone();
+        move |_window, cx| {
+            Editor::from_recovery(
+                cx,
+                crate::config::RecoverySnapshot {
+                    id: recovery_id,
+                    source_path: Some(source_path),
+                    markdown: "recovered text".to_string(),
+                },
+            )
+        }
+    });
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.document_dirty);
+        assert!(editor.is_recovered_document);
+        assert_eq!(editor.recovery_id, recovery_id);
+        assert_eq!(editor.file_path, None);
+        assert_eq!(editor.document.markdown_text(cx), "recovered text");
+    });
 }
 
 #[gpui::test]

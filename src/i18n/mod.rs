@@ -22,6 +22,8 @@ use crate::config::{
 pub struct I18nStrings {
     /// Marker prepended to the window title when the document is dirty.
     pub dirty_title_marker: String,
+    /// Label used for a document restored from an unexpected exit.
+    pub recovered_document_title: String,
     /// Title of the unsaved-changes dialog.
     pub unsaved_changes_title: String,
     /// Body message of the unsaved-changes dialog.
@@ -354,6 +356,7 @@ pub struct I18nStrings {
 #[derive(Debug, Default, Deserialize)]
 struct I18nStringsDe {
     dirty_title_marker: Option<String>,
+    recovered_document_title: Option<String>,
     unsaved_changes_title: Option<String>,
     unsaved_changes_message: Option<String>,
     unsaved_changes_save_and_close: Option<String>,
@@ -552,6 +555,7 @@ struct I18nStringsDe {
 
 const I18N_STRING_KEYS: &[&str] = &[
     "dirty_title_marker",
+    "recovered_document_title",
     "unsaved_changes_title",
     "unsaved_changes_message",
     "unsaved_changes_save_and_close",
@@ -754,6 +758,9 @@ impl I18nStringsDe {
             dirty_title_marker: self
                 .dirty_title_marker
                 .unwrap_or(defaults.dirty_title_marker),
+            recovered_document_title: self
+                .recovered_document_title
+                .unwrap_or(defaults.recovered_document_title),
             unsaved_changes_title: self
                 .unsaved_changes_title
                 .unwrap_or(defaults.unsaved_changes_title),
@@ -1293,6 +1300,7 @@ impl I18nStrings {
     pub fn zh_cn() -> Self {
         let mut strings = Self {
             dirty_title_marker: "\u{00B7}".into(),
+            recovered_document_title: "恢复副本".into(),
             unsaved_changes_title: "不保存并关闭？".into(),
             unsaved_changes_message: "此文档有未保存的更改。关闭前保存可避免丢失最新编辑。".into(),
             unsaved_changes_save_and_close: "保存并关闭".into(),
@@ -1502,6 +1510,7 @@ impl I18nStrings {
     pub fn en_us() -> Self {
         Self {
             dirty_title_marker: "\u{00B7}".into(),
+            recovered_document_title: "Recovered Copy".into(),
             unsaved_changes_title: "Close without saving?".into(),
             unsaved_changes_message:
                 "This document has unsaved changes. Save before closing to avoid losing your latest edits."

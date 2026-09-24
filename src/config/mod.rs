@@ -8,12 +8,16 @@ use directories::ProjectDirs;
 use serde_json::{Map, Value};
 
 pub(crate) mod preferences;
+mod recovery;
 
 pub(crate) use preferences::{
     EditorSettings, ImagePasteBehavior, StartupOpenPreference, apply_configured_language,
     apply_configured_theme, first_existing_recent_markdown_file, import_language_config_and_select,
     import_theme_config_and_select, load_or_create_app_preferences, open_preferences_window,
     read_app_preferences,
+};
+pub(crate) use recovery::{
+    RecoverySnapshot, read_recovery_snapshots, remove_recovery_snapshot, save_recovery_snapshot,
 };
 
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
@@ -63,6 +67,10 @@ impl VelotypeConfigDirs {
 
     pub(crate) fn app_config_file(&self) -> PathBuf {
         self.root.join("config.toml")
+    }
+
+    pub(crate) fn recovery_dir(&self) -> PathBuf {
+        self.root.join("recovery")
     }
 }
 

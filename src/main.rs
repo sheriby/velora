@@ -8,7 +8,6 @@
 
 use std::borrow::Cow;
 use std::path::PathBuf;
-#[cfg(target_os = "macos")]
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -59,6 +58,33 @@ fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference
     }
 
     open_editor_window(cx, String::new(), None);
+}
+
+fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
+    if restored.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let snapshots = match config::read_recovery_snapshots() {
+        Ok(snapshots) => snapshots,
+        Err(error) => {
+            eprintln!("failed to read recovery snapshots: {error}");
+            return;
+        }
+    };
+    for snapshot in snapshots {
+        if snapshot
+            .source_path
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .is_some_and(|markdown| markdown == snapshot.markdown)
+        {
+            if let Err(error) = config::remove_recovery_snapshot(snapshot.id) {
+                eprintln!("failed to remove completed recovery snapshot: {error}");
+            }
+            continue;
+        }
+        app_menu::open_recovered_editor_window(cx, snapshot);
+    }
 }
 
 impl AssetSource for VelotypeAssets {
@@ -198,14 +224,19 @@ fn main() {
         net::install_http_client(cx);
         init_editor(cx, &preferences.keybindings);
         init_app_menu(cx);
+        let recovery_windows_restored = Arc::new(AtomicBool::new(false));
 
+        #[cfg(target_os = "macos")]
+        let recovery_windows_restored_for_open = recovery_windows_restored.clone();
         #[cfg(target_os = "macos")]
         cx.spawn(async move |cx| {
             while let Some(path) = open_file_rx.next().await {
+                let recovery_windows_restored = recovery_windows_restored_for_open.clone();
                 let _ = cx.update(move |cx| {
                     if let Err(err) = app_menu::open_file_in_new_window(cx, &path) {
                         eprintln!("failed to open '{}': {err}", path.display());
                     }
+                    restore_recovery_windows(cx, &recovery_windows_restored);
                 });
             }
         })
@@ -216,19 +247,26 @@ fn main() {
             {
                 let startup_open = preferences.startup_open;
                 let open_file_requested = open_file_requested.clone();
+                let recovery_windows_restored = recovery_windows_restored.clone();
                 cx.spawn(async move |cx| {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(150))
                         .await;
                     if !open_file_requested.load(Ordering::SeqCst) {
-                        let _ = cx.update(move |cx| open_startup_window(cx, startup_open));
+                        let _ = cx.update(move |cx| {
+                            open_startup_window(cx, startup_open);
+                            restore_recovery_windows(cx, &recovery_windows_restored);
+                        });
                     }
                 })
                 .detach();
             }
 
             #[cfg(not(target_os = "macos"))]
-            open_startup_window(cx, preferences.startup_open);
+            {
+                open_startup_window(cx, preferences.startup_open);
+                restore_recovery_windows(cx, &recovery_windows_restored);
+            }
 
             return;
         }
@@ -267,6 +305,7 @@ fn main() {
             };
             open_editor_window(cx, markdown, Some(absolute_path));
         }
+        restore_recovery_windows(cx, &recovery_windows_restored);
         app_menu::install_menus(cx);
         cx.refresh_windows();
     });

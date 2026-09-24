@@ -81,6 +81,9 @@ pub struct Editor {
     document_dirty: bool,
     document_revision: u64,
     autosave_task: Option<Task<()>>,
+    recovery_id: uuid::Uuid,
+    recovery_source_path: Option<PathBuf>,
+    is_recovered_document: bool,
     file_path: Option<PathBuf>,
     scroll_handle: ScrollHandle,
     last_scroll_viewport_size: Option<Size<Pixels>>,
@@ -333,6 +336,9 @@ impl Editor {
             document_dirty: false,
             document_revision: 0,
             autosave_task: None,
+            recovery_id: uuid::Uuid::new_v4(),
+            recovery_source_path: None,
+            is_recovered_document: false,
             file_path,
             scroll_handle: ScrollHandle::new(),
             last_scroll_viewport_size: None,
@@ -387,6 +393,20 @@ impl Editor {
         editor.pending_focus = editor.first_focusable_entity_id(cx);
         editor.active_entity_id = editor.pending_focus;
         editor.refresh_stable_document_snapshot(cx);
+        editor
+    }
+
+    pub(crate) fn from_recovery(
+        cx: &mut Context<Self>,
+        snapshot: crate::config::RecoverySnapshot,
+    ) -> Self {
+        let mut editor = Self::from_markdown(cx, snapshot.markdown, None);
+        editor.recovery_id = snapshot.id;
+        editor.recovery_source_path = snapshot.source_path;
+        editor.is_recovered_document = true;
+        editor.document_dirty = true;
+        editor.pending_window_edited = true;
+        editor.pending_window_title_refresh = true;
         editor
     }
 }

@@ -75,6 +75,13 @@ impl Editor {
     ) -> Result<()> {
         let markdown = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read '{}'", path.display()))?;
+        self.document_revision = self.document_revision.wrapping_add(1);
+        self.autosave_task = None;
+        self.recovery_source_path = None;
+        self.is_recovered_document = false;
+        if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
+            eprintln!("failed to remove replaced document recovery snapshot: {error}");
+        }
         self.replace_document_from_markdown(markdown, Some(path.to_path_buf()), cx);
         crate::app_menu::record_recent_file_from_editor(path, cx);
         Ok(())

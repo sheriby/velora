@@ -95,6 +95,11 @@ impl Editor {
         self.close_dialog_restore_focus = None;
         self.close_menu_bar(cx);
         self.hide_unsaved_changes_dialog(cx);
+        self.document_revision = self.document_revision.wrapping_add(1);
+        self.autosave_task = None;
+        if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
+            eprintln!("failed to remove discarded document recovery snapshot: {error}");
+        }
         window.remove_window();
     }
 

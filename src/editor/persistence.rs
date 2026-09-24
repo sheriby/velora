@@ -56,7 +56,7 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
 
 impl Editor {
     pub(super) fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
-        if self.autosave_task.is_some() || !self.document_dirty || self.file_path.is_none() {
+        if self.autosave_task.is_some() || !self.document_dirty {
             return;
         }
 
@@ -69,58 +69,86 @@ impl Editor {
 
                 let snapshot = editor
                     .update(cx, |editor, cx| {
-                        let path = editor.file_path.clone()?;
+                        if !editor.document_dirty {
+                            return None;
+                        }
                         let markdown = editor.serialized_document_text(cx);
                         let revision = editor.document_revision;
-                        let temp_path = autosave_temp_path(&path);
-                        Some((path, temp_path, markdown, revision))
+                        let path = editor.file_path.clone();
+                        let temp_path = path.as_deref().map(autosave_temp_path);
+                        let recovery = crate::config::RecoverySnapshot {
+                            id: editor.recovery_id,
+                            source_path: path
+                                .clone()
+                                .or_else(|| editor.recovery_source_path.clone()),
+                            markdown: markdown.clone(),
+                        };
+                        Some((path, temp_path, markdown, revision, recovery))
                     })
                     .ok()
                     .flatten();
-                let Some((path, temp_path, markdown, revision)) = snapshot else {
+                let Some((path, temp_path, markdown, revision, recovery)) = snapshot else {
                     let _ = editor.update(cx, |editor, _cx| editor.autosave_task = None);
                     return;
                 };
 
-                let write_path = temp_path.clone();
                 let write_result = cx
                     .background_executor()
-                    .spawn(async move { std::fs::write(write_path, markdown) })
+                    .spawn(async move {
+                        crate::config::save_recovery_snapshot(&recovery)?;
+                        if let Some(temp_path) = temp_path {
+                            std::fs::write(&temp_path, markdown)?;
+                            Ok::<_, anyhow::Error>(Some(temp_path))
+                        } else {
+                            Ok(None)
+                        }
+                    })
                     .await;
                 let path_for_update = path;
                 let _ = editor.update(cx, move |editor, cx| {
                     editor.autosave_task = None;
-                    if let Err(error) = write_result {
-                        let _ = std::fs::remove_file(&temp_path);
-                        eprintln!(
-                            "failed to autosave '{}': {error}",
-                            path_for_update.display()
-                        );
-                        return;
-                    }
-                    if editor.file_path.as_ref() == Some(&path_for_update)
-                        && editor.document_revision == revision
-                        && editor.document_dirty
-                    {
-                        if let Err(error) = std::fs::rename(&temp_path, &path_for_update) {
-                            let _ = std::fs::remove_file(&temp_path);
-                            eprintln!(
-                                "failed to autosave '{}': {error}",
-                                path_for_update.display()
-                            );
+                    let temp_path = match write_result {
+                        Ok(temp_path) => temp_path,
+                        Err(error) => {
+                            eprintln!("failed to save recovery snapshot: {error}");
                             return;
                         }
-                        editor.document_dirty = false;
-                        editor.pending_window_edited = false;
-                        editor.pending_window_unedited = true;
-                        editor.pending_window_title_refresh = true;
-                        editor.snapshot_current_document(cx);
-                        cx.notify();
+                    };
+                    let still_current = editor.document_revision == revision
+                        && editor.document_dirty
+                        && editor.file_path == path_for_update;
+                    if let (Some(path), Some(temp_path)) = (&path_for_update, temp_path) {
+                        if still_current {
+                            if let Err(error) = std::fs::rename(&temp_path, path) {
+                                let _ = std::fs::remove_file(&temp_path);
+                                eprintln!("failed to autosave '{}': {error}", path.display());
+                                return;
+                            }
+                            if let Err(error) =
+                                crate::config::remove_recovery_snapshot(editor.recovery_id)
+                            {
+                                eprintln!("failed to remove autosave snapshot: {error}");
+                            }
+                            editor.document_dirty = false;
+                            editor.pending_window_edited = false;
+                            editor.pending_window_unedited = true;
+                            editor.pending_window_title_refresh = true;
+                            editor.snapshot_current_document(cx);
+                            cx.notify();
+                        } else if editor.document_dirty {
+                            let _ = std::fs::remove_file(&temp_path);
+                            editor.schedule_autosave(cx);
+                        } else {
+                            let _ = std::fs::remove_file(&temp_path);
+                            let _ = crate::config::remove_recovery_snapshot(editor.recovery_id);
+                        }
+                    } else if still_current {
+                        // Keep untitled documents dirty: their recovery snapshot is
+                        // durable, but they still need an explicit destination.
                     } else if editor.document_dirty {
-                        let _ = std::fs::remove_file(&temp_path);
                         editor.schedule_autosave(cx);
                     } else {
-                        let _ = std::fs::remove_file(&temp_path);
+                        let _ = crate::config::remove_recovery_snapshot(editor.recovery_id);
                     }
                 });
             },
@@ -136,6 +164,16 @@ impl Editor {
     }
 
     pub(super) fn save_dialog_defaults(&self) -> (PathBuf, Option<String>) {
+        if let Some(path) = self.recovery_source_path.as_ref() {
+            let directory = path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let suggested_name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string());
+            return (directory, suggested_name);
+        }
         if let Some(path) = self.file_path.as_ref() {
             let directory = path
                 .parent()
@@ -156,6 +194,8 @@ impl Editor {
     pub(super) fn apply_successful_save(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.document_revision = self.document_revision.wrapping_add(1);
         self.file_path = Some(path);
+        self.recovery_source_path = None;
+        self.is_recovered_document = false;
         self.document_dirty = false;
         self.pending_window_edited = false;
         self.pending_window_unedited = true;
@@ -163,6 +203,9 @@ impl Editor {
         self.pending_close_after_save = false;
         self.close_dialog_restore_focus = None;
         self.autosave_task = None;
+        if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
+            eprintln!("failed to remove saved document recovery snapshot: {error}");
+        }
         self.sync_workspace_after_document_path_change(cx);
         cx.notify();
     }

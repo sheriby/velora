@@ -199,10 +199,21 @@ impl Editor {
     /// document has unsaved changes.
     pub(super) fn window_title(
         file_path: Option<&Path>,
+        recovery_source_path: Option<&Path>,
+        is_recovered_document: bool,
         is_dirty: bool,
         strings: &crate::i18n::I18nStrings,
     ) -> String {
-        let base_title = if let Some(path) = file_path {
+        let base_title = if is_recovered_document {
+            let source_name = recovery_source_path
+                .and_then(|path| path.file_name())
+                .map(|name| format!(" ({})", name.to_string_lossy()))
+                .unwrap_or_default();
+            format!(
+                "maksher - {}{source_name}",
+                strings.recovered_document_title
+            )
+        } else if let Some(path) = file_path {
             format!(
                 "maksher - {}",
                 path.file_name().map_or_else(

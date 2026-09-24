@@ -575,7 +575,13 @@ impl Editor {
     fn sync_window_title(&mut self, window: &mut Window, strings: &I18nStrings) {
         if self.pending_window_title_refresh {
             self.pending_window_title_refresh = false;
-            let title = Self::window_title(self.file_path.as_deref(), self.document_dirty, strings);
+            let title = Self::window_title(
+                self.file_path.as_deref(),
+                self.recovery_source_path.as_deref(),
+                self.is_recovered_document,
+                self.document_dirty,
+                strings,
+            );
             window.set_window_title(&title);
         }
     }
@@ -2090,8 +2096,13 @@ impl Render for Editor {
             .as_ref()
             .map(|m| m.iter().map(|menu| menu.name.clone()).collect())
             .unwrap_or_default();
-        let window_title =
-            Self::window_title(self.file_path.as_deref(), self.document_dirty, &strings);
+        let window_title = Self::window_title(
+            self.file_path.as_deref(),
+            self.recovery_source_path.as_deref(),
+            self.is_recovered_document,
+            self.document_dirty,
+            &strings,
+        );
         let base = if let Some(titlebar) = render_custom_titlebar(
             "editor-titlebar",
             window_title.into(),

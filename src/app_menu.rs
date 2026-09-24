@@ -17,9 +17,9 @@ use crate::components::{
     ToggleWorkspace, UninstallCliTool,
 };
 use crate::config::{
-    apply_configured_language, apply_configured_theme, import_language_config_and_select,
-    import_theme_config_and_select, open_preferences_window, read_recent_files, record_recent_file,
-    remove_recent_file,
+    RecoverySnapshot, apply_configured_language, apply_configured_theme,
+    import_language_config_and_select, import_theme_config_and_select, open_preferences_window,
+    read_recent_files, record_recent_file, remove_recent_file,
 };
 use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
@@ -77,6 +77,28 @@ pub(crate) fn open_editor_window(
         .expect("newly opened editor window should be updateable");
 
     handle
+}
+
+pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnapshot) {
+    let recovered_title = cx
+        .global::<I18nManager>()
+        .strings()
+        .recovered_document_title
+        .clone();
+    let title = format!("maksher - {recovered_title}");
+    let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
+    let handle = cx
+        .open_window(
+            velotype_window_options(title.into(), bounds),
+            move |_window, cx| cx.new(move |cx| Editor::from_recovery(cx, snapshot)),
+        )
+        .unwrap();
+    handle
+        .update(cx, |editor, window, cx| {
+            window.activate_window();
+            editor.force_install_close_guard(cx, window);
+        })
+        .expect("newly opened recovered document should be updateable");
 }
 
 pub(crate) fn open_workspace_window(cx: &mut App, root: PathBuf) -> anyhow::Result<()> {
