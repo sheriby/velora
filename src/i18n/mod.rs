@@ -170,6 +170,12 @@ pub struct I18nStrings {
     pub preferences_startup_last_opened_file: String,
     /// Theme preference field label.
     pub preferences_local_theme: String,
+    /// System theme selection label.
+    pub preferences_theme_system: String,
+    /// Dark theme selection label.
+    pub preferences_theme_dark: String,
+    /// Light theme selection label.
+    pub preferences_theme_light: String,
     /// Image paste behavior field label.
     pub preferences_image_insert_behavior: String,
     pub preferences_image_paste_none: String,
@@ -434,6 +440,9 @@ struct I18nStringsDe {
     preferences_startup_new_file: Option<String>,
     preferences_startup_last_opened_file: Option<String>,
     preferences_local_theme: Option<String>,
+    preferences_theme_system: Option<String>,
+    preferences_theme_dark: Option<String>,
+    preferences_theme_light: Option<String>,
     preferences_image_insert_behavior: Option<String>,
     preferences_image_paste_none: Option<String>,
     preferences_image_paste_copy_to_document_folder: Option<String>,
@@ -635,6 +644,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_startup_new_file",
     "preferences_startup_last_opened_file",
     "preferences_local_theme",
+    "preferences_theme_system",
+    "preferences_theme_dark",
+    "preferences_theme_light",
     "preferences_image_insert_behavior",
     "preferences_image_paste_none",
     "preferences_image_paste_copy_to_document_folder",
@@ -946,6 +958,15 @@ impl I18nStringsDe {
             preferences_local_theme: self
                 .preferences_local_theme
                 .unwrap_or(defaults.preferences_local_theme),
+            preferences_theme_system: self
+                .preferences_theme_system
+                .unwrap_or(defaults.preferences_theme_system),
+            preferences_theme_dark: self
+                .preferences_theme_dark
+                .unwrap_or(defaults.preferences_theme_dark),
+            preferences_theme_light: self
+                .preferences_theme_light
+                .unwrap_or(defaults.preferences_theme_light),
             preferences_image_insert_behavior: self
                 .preferences_image_insert_behavior
                 .unwrap_or(defaults.preferences_image_insert_behavior),
@@ -1392,6 +1413,9 @@ impl I18nStrings {
             preferences_startup_new_file: "新 md 文件".into(),
             preferences_startup_last_opened_file: "上一次打开的 md 文件".into(),
             preferences_local_theme: "本地主题".into(),
+            preferences_theme_system: "跟随系统".into(),
+            preferences_theme_dark: "深色".into(),
+            preferences_theme_light: "浅色".into(),
             preferences_save: "保存".into(),
             preferences_cancel: "取消".into(),
             preferences_save_failed_title: "保存偏好设置失败".into(),
@@ -1613,6 +1637,9 @@ impl I18nStrings {
             preferences_startup_new_file: "New Markdown File".into(),
             preferences_startup_last_opened_file: "Last Opened Markdown File".into(),
             preferences_local_theme: "Local Theme".into(),
+            preferences_theme_system: "Follow System".into(),
+            preferences_theme_dark: "Dark".into(),
+            preferences_theme_light: "Light".into(),
             preferences_image_insert_behavior: "When inserting images...".into(),
             preferences_image_paste_none: "No special action".into(),
             preferences_image_paste_copy_to_document_folder:

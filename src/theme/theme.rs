@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
-use gpui::{App, FontWeight, Global, Hsla, hsla, rgba};
+use gpui::{App, FontWeight, Global, Hsla, WindowAppearance, hsla, rgba};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
@@ -1466,10 +1466,15 @@ const BUILTIN_THEME_VELOTYPE_ID: &str = "velotype";
 const BUILTIN_THEME_VELOTYPE_NAME: &str = "maksher";
 const BUILTIN_THEME_VELOTYPE_LIGHT_ID: &str = "velotype-light";
 const BUILTIN_THEME_VELOTYPE_LIGHT_NAME: &str = "maksher Light";
+const BUILTIN_THEME_SYSTEM_ID: &str = "system";
 const CUSTOM_THEME_ID: &str = "custom";
 
 fn builtin_theme_catalog() -> Vec<ThemeCatalogEntry> {
     vec![
+        ThemeCatalogEntry {
+            id: BUILTIN_THEME_SYSTEM_ID.into(),
+            name: "System".into(),
+        },
         ThemeCatalogEntry {
             id: BUILTIN_THEME_VELOTYPE_ID.into(),
             name: BUILTIN_THEME_VELOTYPE_NAME.into(),
@@ -1497,6 +1502,7 @@ struct CustomThemeEntry {
 pub struct ThemeManager {
     current: Arc<Theme>,
     current_theme_id: String,
+    system_appearance: WindowAppearance,
     custom_themes: Vec<CustomThemeEntry>,
     theme_catalog: Vec<ThemeCatalogEntry>,
 }
@@ -1508,6 +1514,7 @@ impl Default for ThemeManager {
         Self {
             current: Arc::new(Theme::default_theme()),
             current_theme_id: BUILTIN_THEME_VELOTYPE_ID.into(),
+            system_appearance: WindowAppearance::Light,
             custom_themes: Vec::new(),
             theme_catalog: builtin_theme_catalog(),
         }
@@ -1520,7 +1527,7 @@ impl ThemeManager {
     pub fn init(cx: &mut App) {
         let theme_id = crate::config::read_app_preferences()
             .map(|preferences| preferences.default_theme_id)
-            .unwrap_or_else(|_| BUILTIN_THEME_VELOTYPE_ID.into());
+            .unwrap_or_else(|_| BUILTIN_THEME_SYSTEM_ID.into());
         Self::init_with_theme_id(cx, &theme_id);
     }
 
@@ -1531,6 +1538,9 @@ impl ThemeManager {
             && let Err(err) = manager.load_custom_themes_from_dirs(&dirs)
         {
             eprintln!("failed to load custom themes: {err}");
+        }
+        if theme_id == BUILTIN_THEME_SYSTEM_ID {
+            manager.system_appearance = cx.window_appearance();
         }
         let _ = manager.set_theme_by_id(theme_id);
         cx.set_global(manager);
@@ -1582,13 +1592,39 @@ impl ThemeManager {
 
     /// Restores the built-in default theme.
     pub fn reset(&mut self) {
-        self.current = Arc::new(Theme::default_theme());
-        self.current_theme_id = BUILTIN_THEME_VELOTYPE_ID.into();
+        self.current_theme_id = BUILTIN_THEME_SYSTEM_ID.into();
+        self.current = Arc::new(match self.system_appearance {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::default_theme(),
+            WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light_theme(),
+        });
+    }
+
+    /// Updates the active system-following theme when the OS appearance changes.
+    pub fn set_system_appearance(&mut self, appearance: WindowAppearance) {
+        self.system_appearance = appearance;
+        if self.current_theme_id == BUILTIN_THEME_SYSTEM_ID {
+            self.current = Arc::new(match appearance {
+                WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::default_theme(),
+                WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light_theme(),
+            });
+        }
     }
 
     /// Activates a theme by identifier.
     pub fn set_theme_by_id(&mut self, theme_id: &str) -> bool {
         match theme_id {
+            id if id == BUILTIN_THEME_SYSTEM_ID => {
+                self.current_theme_id = BUILTIN_THEME_SYSTEM_ID.into();
+                self.current = Arc::new(match self.system_appearance {
+                    WindowAppearance::Dark | WindowAppearance::VibrantDark => {
+                        Theme::default_theme()
+                    }
+                    WindowAppearance::Light | WindowAppearance::VibrantLight => {
+                        Theme::light_theme()
+                    }
+                });
+                true
+            }
             id if id == BUILTIN_THEME_VELOTYPE_ID => {
                 self.current = Arc::new(Theme::default_theme());
                 self.current_theme_id = BUILTIN_THEME_VELOTYPE_ID.into();
@@ -1707,6 +1743,14 @@ impl ThemeManager {
 
     fn theme_import_base_theme_id(&self) -> String {
         match self.current_theme_id.as_str() {
+            BUILTIN_THEME_SYSTEM_ID => match self.system_appearance {
+                WindowAppearance::Dark | WindowAppearance::VibrantDark => {
+                    BUILTIN_THEME_VELOTYPE_ID.into()
+                }
+                WindowAppearance::Light | WindowAppearance::VibrantLight => {
+                    BUILTIN_THEME_VELOTYPE_LIGHT_ID.into()
+                }
+            },
             BUILTIN_THEME_VELOTYPE_LIGHT_ID => BUILTIN_THEME_VELOTYPE_LIGHT_ID.into(),
             BUILTIN_THEME_VELOTYPE_ID => BUILTIN_THEME_VELOTYPE_ID.into(),
             id => self
@@ -1855,7 +1899,32 @@ fn required_string(object: &Map<String, Value>, key: &str) -> anyhow::Result<Str
 mod tests {
     use super::{Theme, ThemeManager};
     use crate::config::VelotypeConfigDirs;
-    use gpui::rgba;
+    use gpui::{WindowAppearance, rgba};
+
+    #[test]
+    fn system_theme_tracks_window_appearance_changes() {
+        let mut manager = ThemeManager::default();
+        manager.set_system_appearance(WindowAppearance::Dark);
+        assert!(manager.set_theme_by_id("system"));
+        assert_eq!(manager.current_theme_id(), "system");
+        assert_eq!(
+            manager.current().colors.editor_background,
+            Theme::default_theme().colors.editor_background
+        );
+
+        manager.set_system_appearance(WindowAppearance::Light);
+        assert_eq!(
+            manager.current().colors.editor_background,
+            Theme::light_theme().colors.editor_background
+        );
+
+        assert!(manager.set_theme_by_id("velotype"));
+        manager.set_system_appearance(WindowAppearance::Dark);
+        assert_eq!(
+            manager.current().colors.editor_background,
+            Theme::default_theme().colors.editor_background
+        );
+    }
 
     #[test]
     fn deserializes_legacy_block_focused_bg_key() {

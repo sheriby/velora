@@ -20,7 +20,7 @@ use crate::window_chrome::{
     custom_titlebar_height, render_custom_titlebar, velotype_window_options,
 };
 
-const DEFAULT_THEME_ID: &str = "velotype";
+const DEFAULT_THEME_ID: &str = "system";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
 
 /// A user-configurable button shown in the status bar.
@@ -695,12 +695,25 @@ impl PreferencesWindow {
         }
     }
 
-    fn selected_theme_name(&self) -> String {
+    fn theme_display_name(
+        &self,
+        entry: &ThemeCatalogEntry,
+        strings: &crate::i18n::I18nStrings,
+    ) -> String {
+        match entry.id.as_str() {
+            "system" => strings.preferences_theme_system.clone(),
+            "velotype" => strings.preferences_theme_dark.clone(),
+            "velotype-light" => strings.preferences_theme_light.clone(),
+            _ => entry.name.clone(),
+        }
+    }
+
+    fn selected_theme_name(&self, strings: &crate::i18n::I18nStrings) -> String {
         self.theme_options
             .iter()
             .find(|entry| entry.id == self.selected_theme_id)
-            .map(|entry| entry.name.clone())
-            .unwrap_or_else(|| "Velotype".into())
+            .map(|entry| self.theme_display_name(entry, strings))
+            .unwrap_or_else(|| strings.preferences_theme_system.clone())
     }
 
     fn has_unsaved_changes(&self) -> bool {
@@ -1072,7 +1085,7 @@ impl PreferencesWindow {
             .gap(px(4.0))
             .child(Self::dropdown_button(
                 "preferences-theme-dropdown",
-                self.selected_theme_name(),
+                self.selected_theme_name(strings),
                 theme,
                 Self::toggle_theme_dropdown,
                 cx,
@@ -1088,9 +1101,10 @@ impl PreferencesWindow {
 
             for (index, entry) in self.theme_options.clone().into_iter().enumerate() {
                 let selected = entry.id == self.selected_theme_id;
+                let name = self.theme_display_name(&entry, strings);
                 list = list.child(Self::dropdown_item(
                     ("preferences-theme-option", index),
-                    entry.name,
+                    name,
                     selected,
                     theme,
                     move |this, _, _, cx| {
@@ -1976,10 +1990,20 @@ mod tests {
     }
 
     fn default_theme_options() -> Vec<ThemeCatalogEntry> {
-        vec![ThemeCatalogEntry {
-            id: "velotype".into(),
-            name: "Velotype".into(),
-        }]
+        vec![
+            ThemeCatalogEntry {
+                id: "system".into(),
+                name: "System".into(),
+            },
+            ThemeCatalogEntry {
+                id: "velotype".into(),
+                name: "maksher".into(),
+            },
+            ThemeCatalogEntry {
+                id: "velotype-light".into(),
+                name: "maksher Light".into(),
+            },
+        ]
     }
 
     #[test]
@@ -1992,6 +2016,7 @@ mod tests {
         let preferences =
             read_app_preferences_with_dirs(&dirs).expect("missing preferences should load");
         assert_eq!(preferences, AppPreferences::default());
+        assert_eq!(preferences.default_theme_id, "system");
         let _ = std::fs::remove_dir_all(root);
     }
 

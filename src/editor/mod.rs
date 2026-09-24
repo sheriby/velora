@@ -86,6 +86,7 @@ pub struct Editor {
     is_recovered_document: bool,
     file_version: Option<u64>,
     window_handle: Option<AnyWindowHandle>,
+    system_appearance_subscription: Option<Subscription>,
     file_path: Option<PathBuf>,
     scroll_handle: ScrollHandle,
     last_scroll_viewport_size: Option<Size<Pixels>>,
@@ -345,6 +346,7 @@ impl Editor {
                 .as_ref()
                 .map(|_| persistence::file_content_version(&normalized)),
             window_handle: None,
+            system_appearance_subscription: None,
             file_path,
             scroll_handle: ScrollHandle::new(),
             last_scroll_viewport_size: None,
