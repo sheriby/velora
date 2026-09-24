@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
-use gpui::{App, FontWeight, Global, Hsla, WindowAppearance, hsla, rgba};
+use gpui::{App, FontWeight, Global, Hsla, WindowAppearance, rgba};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
@@ -682,120 +682,120 @@ impl<'de> Deserialize<'de> for ThemeColors {
                 .unwrap_or_else(|| Hsla::from(rgba(0xf87171ff))),
             footnote_bg: raw
                 .footnote_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0x212124ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x292929ff))),
             footnote_border: raw
                 .footnote_border
-                .unwrap_or_else(|| Hsla::from(rgba(0x71717a52))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x48464452))),
             footnote_badge_bg: raw
                 .footnote_badge_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0xa1a1aa24))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x3b3a3924))),
             footnote_badge_text: raw
                 .footnote_badge_text
-                .unwrap_or_else(|| Hsla::from(rgba(0xd4d4d8cc))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xd6d6d6ff))),
             footnote_backref: raw
                 .footnote_backref
-                .unwrap_or_else(|| Hsla::from(rgba(0xa1a1aaff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x75beffff))),
             task_checkbox_border: raw
                 .task_checkbox_border
-                .unwrap_or_else(|| Hsla::from(rgba(0x71717aff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x8a8886ff))),
             task_checkbox_bg: raw
                 .task_checkbox_bg
                 .unwrap_or_else(|| Hsla::from(rgba(0x00000000))),
             task_checkbox_checked_bg: raw
                 .task_checkbox_checked_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0xf0efedff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x4cc2ffff))),
             task_checkbox_check: raw
                 .task_checkbox_check
-                .unwrap_or_else(|| Hsla::from(rgba(0x18181bff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x1f1f1fff))),
             separator_color: raw
                 .separator_color
-                .unwrap_or_else(|| Hsla::from(rgba(0x71717aff))),
-            code_bg: raw.code_bg.unwrap_or_else(|| Hsla::from(rgba(0x111827ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x5a5a5aff))),
+            code_bg: raw.code_bg.unwrap_or_else(|| Hsla::from(rgba(0x292929ff))),
             code_text: raw.code_text,
             code_language_input_bg: raw
                 .code_language_input_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0x343941ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x333333ff))),
             code_language_input_border: raw
                 .code_language_input_border
-                .unwrap_or_else(|| Hsla::from(rgba(0x4b5563cc))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x484644ff))),
             code_language_input_text: raw
                 .code_language_input_text
-                .unwrap_or_else(|| Hsla::from(rgba(0xe5e7ebff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xf5f5f5ff))),
             code_language_input_placeholder: raw
                 .code_language_input_placeholder
-                .unwrap_or_else(|| Hsla::from(rgba(0x9ca3afcc))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x9c9c9cff))),
             code_syntax_comment: raw
                 .code_syntax_comment
-                .unwrap_or_else(|| Hsla::from(rgba(0x565f89ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x858585ff))),
             code_syntax_keyword: raw
                 .code_syntax_keyword
-                .unwrap_or_else(|| Hsla::from(rgba(0xbb9af7ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xc586c0ff))),
             code_syntax_string: raw
                 .code_syntax_string
-                .unwrap_or_else(|| Hsla::from(rgba(0x9ece6aff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xce9178ff))),
             code_syntax_number: raw
                 .code_syntax_number
-                .unwrap_or_else(|| Hsla::from(rgba(0xff9e64ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xb5cea8ff))),
             code_syntax_type: raw
                 .code_syntax_type
-                .unwrap_or_else(|| Hsla::from(rgba(0x2ac3deff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x4ec9b0ff))),
             code_syntax_function: raw
                 .code_syntax_function
-                .unwrap_or_else(|| Hsla::from(rgba(0x7aa2f7ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xdcdcaaFF))),
             code_syntax_constant: raw
                 .code_syntax_constant
-                .unwrap_or_else(|| Hsla::from(rgba(0xffd166ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x4fc1ffff))),
             code_syntax_variable: raw
                 .code_syntax_variable
-                .unwrap_or_else(|| Hsla::from(rgba(0xe5e9f0ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x9cdcfeff))),
             code_syntax_property: raw
                 .code_syntax_property
-                .unwrap_or_else(|| Hsla::from(rgba(0x7dcfffcc))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x9cdcfeff))),
             code_syntax_operator: raw
                 .code_syntax_operator
-                .unwrap_or_else(|| Hsla::from(rgba(0x89ddffff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xd4d4d4ff))),
             code_syntax_punctuation: raw
                 .code_syntax_punctuation
-                .unwrap_or_else(|| Hsla::from(rgba(0x9aa5ceff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xd4d4d4ff))),
             table_border: raw
                 .table_border
-                .unwrap_or_else(|| Hsla::from(rgba(0x3f3f46ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x484644ff))),
             table_header_bg: raw
                 .table_header_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0x232326ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x333333ff))),
             table_cell_bg: raw
                 .table_cell_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0x1d1d20ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x292929ff))),
             table_cell_active_outline: raw
                 .table_cell_active_outline
-                .unwrap_or_else(|| Hsla::from(rgba(0x60a5faff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x4cc2ffff))),
             table_axis_preview_bg: raw
                 .table_axis_preview_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0xf4f4f51a))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xf5f5f51a))),
             table_axis_selected_bg: raw
                 .table_axis_selected_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0xf4f4f533))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xf5f5f533))),
             table_append_button_bg: raw
                 .table_append_button_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0x27272aff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x333333ff))),
             table_append_button_hover: raw
                 .table_append_button_hover
-                .unwrap_or_else(|| Hsla::from(rgba(0x3f3f46ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x484644ff))),
             table_append_button_text: raw
                 .table_append_button_text
-                .unwrap_or_else(|| Hsla::from(rgba(0xf4f4f5ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xf5f5f5ff))),
             image_placeholder_bg: raw
                 .image_placeholder_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0x202024ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x292929ff))),
             image_placeholder_border: raw
                 .image_placeholder_border
-                .unwrap_or_else(|| Hsla::from(rgba(0x52525bff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x484644ff))),
             image_placeholder_text: raw
                 .image_placeholder_text
-                .unwrap_or_else(|| Hsla::from(rgba(0xd4d4d8ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xd6d6d6ff))),
             image_caption_text: raw
                 .image_caption_text
-                .unwrap_or_else(|| Hsla::from(rgba(0xa1a1aaff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xa19f9dff))),
             scrollbar_thumb: raw.scrollbar_thumb,
             cursor: raw.cursor,
             selection: raw.selection,
@@ -816,16 +816,16 @@ impl<'de> Deserialize<'de> for ThemeColors {
             dialog_danger_button_text: raw.dialog_danger_button_text,
             status_bar_background: raw
                 .status_bar_background
-                .unwrap_or_else(|| Hsla::from(rgba(0x1c1c1fff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x292929ff))),
             status_bar_text: raw
                 .status_bar_text
-                .unwrap_or_else(|| Hsla::from(rgba(0xd4d4d8cc))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xd6d6d6ff))),
             status_bar_text_dim: raw
                 .status_bar_text_dim
-                .unwrap_or_else(|| Hsla::from(rgba(0x71717aff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xa19f9dff))),
             status_bar_button_hover: raw
                 .status_bar_button_hover
-                .unwrap_or_else(|| Hsla::from(rgba(0x3f3f46ff))),
+                .unwrap_or_else(|| Hsla::from(rgba(0x484644ff))),
         })
     }
 }
@@ -1095,99 +1095,96 @@ impl Theme {
     /// Returns the built-in fallback theme used when no custom theme is loaded.
     pub fn default_theme() -> Self {
         Self {
-            name: "Velotype".into(),
+            name: BUILTIN_THEME_VELOTYPE_NAME.into(),
             colors: ThemeColors {
-                editor_background: Hsla::from(rgba(0x191919ff)),
-                source_mode_block_bg: Hsla::from(rgba(0x313131ff)),
-                comment_bg: Hsla::from(rgba(0xfbbf2426)),
-                text_default: Hsla::from(rgba(0xf0efedff)),
-                text_link: Hsla::from(rgba(0x60a5faff)),
-                text_placeholder: hsla(0., 0., 0.6, 1.0),
-                text_h1: Hsla::from(rgba(0xf0efedff)),
-                text_h2: Hsla::from(rgba(0xf0efedff)),
-                text_h3: Hsla::from(rgba(0xf0efedff)),
-                text_h4: Hsla::from(rgba(0xf0efedff)),
-                text_h5: Hsla::from(rgba(0xf0efedff)),
-                text_h6: Hsla::from(rgba(0xf0efedff)),
-                border_h1: Hsla::from(rgba(0xe0e0e0ff)),
-                border_h2: Hsla::from(rgba(0xe0e0e0cc)),
-                text_quote: Hsla::from(rgba(0xd1d5dbff)),
-                border_quote: Hsla::from(rgba(0x6b7280ff)),
+                editor_background: Hsla::from(rgba(0x1f1f1fff)),
+                source_mode_block_bg: Hsla::from(rgba(0x292929ff)),
+                comment_bg: Hsla::from(rgba(0xfce10026)),
+                text_default: Hsla::from(rgba(0xf5f5f5ff)),
+                text_link: Hsla::from(rgba(0x75beffff)),
+                text_placeholder: Hsla::from(rgba(0x9c9c9cff)),
+                text_h1: Hsla::from(rgba(0xf5f5f5ff)),
+                text_h2: Hsla::from(rgba(0xf5f5f5ff)),
+                text_h3: Hsla::from(rgba(0xf5f5f5ff)),
+                text_h4: Hsla::from(rgba(0xf5f5f5ff)),
+                text_h5: Hsla::from(rgba(0xf5f5f5ff)),
+                text_h6: Hsla::from(rgba(0xf5f5f5ff)),
+                border_h1: Hsla::from(rgba(0x484644ff)),
+                border_h2: Hsla::from(rgba(0x3b3a39ff)),
+                text_quote: Hsla::from(rgba(0xd6d6d6ff)),
+                border_quote: Hsla::from(rgba(0x4cc2ffff)),
                 callout_note_bg: Hsla::from(rgba(0x94a3b81f)),
                 callout_note_border: Hsla::from(rgba(0x94a3b4ff)),
-                callout_tip_bg: Hsla::from(rgba(0x1d4ed81f)),
-                callout_tip_border: Hsla::from(rgba(0x60a5faff)),
+                callout_tip_bg: Hsla::from(rgba(0x4cc2ff1f)),
+                callout_tip_border: Hsla::from(rgba(0x4cc2ffff)),
                 callout_important_bg: Hsla::from(rgba(0xa78bfa1f)),
                 callout_important_border: Hsla::from(rgba(0xa78bfaff)),
-                callout_warning_bg: Hsla::from(rgba(0xfb71851f)),
-                callout_warning_border: Hsla::from(rgba(0xfb7185ff)),
-                callout_caution_bg: Hsla::from(rgba(0xdc26261f)),
-                callout_caution_border: Hsla::from(rgba(0xf87171ff)),
-                footnote_bg: Hsla::from(rgba(0x212124ff)),
-                footnote_border: Hsla::from(rgba(0x71717a52)),
-                footnote_badge_bg: Hsla::from(rgba(0xa1a1aa24)),
-                footnote_badge_text: Hsla::from(rgba(0xd4d4d8cc)),
-                footnote_backref: Hsla::from(rgba(0xa1a1aaff)),
-                task_checkbox_border: Hsla::from(rgba(0x71717aff)),
+                callout_warning_bg: Hsla::from(rgba(0xfce1001f)),
+                callout_warning_border: Hsla::from(rgba(0xfce100ff)),
+                callout_caution_bg: Hsla::from(rgba(0xd134381f)),
+                callout_caution_border: Hsla::from(rgba(0xd13438ff)),
+                footnote_bg: Hsla::from(rgba(0x292929ff)),
+                footnote_border: Hsla::from(rgba(0x484644ff)),
+                footnote_badge_bg: Hsla::from(rgba(0x3b3a39ff)),
+                footnote_badge_text: Hsla::from(rgba(0xd6d6d6ff)),
+                footnote_backref: Hsla::from(rgba(0x75beffff)),
+                task_checkbox_border: Hsla::from(rgba(0x8a8886ff)),
                 task_checkbox_bg: Hsla::from(rgba(0x00000000)),
-                task_checkbox_checked_bg: Hsla::from(rgba(0xf0efedff)),
-                task_checkbox_check: Hsla::from(rgba(0x18181bff)),
-                separator_color: Hsla::from(rgba(0x71717aff)),
-                code_bg: Hsla::from(rgba(0x23272eff)),
-                code_text: Hsla::from(rgba(0xe5e7ebff)),
-                code_language_input_bg: Hsla::from(rgba(0x343941ff)),
-                code_language_input_border: Hsla::from(rgba(0x4b5563cc)),
-                code_language_input_text: Hsla::from(rgba(0xe5e7ebff)),
-                code_language_input_placeholder: Hsla::from(rgba(0x9ca3afcc)),
-                code_syntax_comment: Hsla::from(rgba(0x565f89ff)),
-                code_syntax_keyword: Hsla::from(rgba(0xbb9af7ff)),
-                code_syntax_string: Hsla::from(rgba(0x9ece6aff)),
-                code_syntax_number: Hsla::from(rgba(0xff9e64ff)),
-                code_syntax_type: Hsla::from(rgba(0x2ac3deff)),
-                code_syntax_function: Hsla::from(rgba(0x7aa2f7ff)),
-                code_syntax_constant: Hsla::from(rgba(0xffd166ff)),
-                code_syntax_variable: Hsla::from(rgba(0xe5e9f0ff)),
-                code_syntax_property: Hsla::from(rgba(0x7dcfffcc)),
-                code_syntax_operator: Hsla::from(rgba(0x89ddffff)),
-                code_syntax_punctuation: Hsla::from(rgba(0x9aa5ceff)),
-                table_border: Hsla::from(rgba(0x3f3f46ff)),
-                table_header_bg: Hsla::from(rgba(0x232326ff)),
-                table_cell_bg: Hsla::from(rgba(0x1d1d20ff)),
-                table_cell_active_outline: Hsla::from(rgba(0x60a5faff)),
-                table_axis_preview_bg: Hsla::from(rgba(0xf4f4f51a)),
-                table_axis_selected_bg: Hsla::from(rgba(0xf4f4f533)),
-                table_append_button_bg: Hsla::from(rgba(0x27272aff)),
-                table_append_button_hover: Hsla::from(rgba(0x3f3f46ff)),
-                table_append_button_text: Hsla::from(rgba(0xf4f4f5ff)),
-                image_placeholder_bg: Hsla::from(rgba(0x202024ff)),
-                image_placeholder_border: Hsla::from(rgba(0x52525bff)),
-                image_placeholder_text: Hsla::from(rgba(0xd4d4d8ff)),
-                image_caption_text: Hsla::from(rgba(0xa1a1aaff)),
-                scrollbar_thumb: Hsla::from(rgba(0xd1d5dbd8)),
-                cursor: Hsla::from(rgba(0xf0efedff)),
-                selection: Hsla::from(rgba(0x1c3651ff)),
-                dialog_backdrop: Hsla::from(rgba(0x09090bcc)),
-                dialog_surface: Hsla::from(rgba(0x18181bff)),
-                dialog_border: Hsla::from(rgba(0x27272aff)),
-                dialog_title: Hsla::from(rgba(0xf4f4f5ff)),
-                dialog_body: Hsla::from(rgba(0xd4d4d8ff)),
-                dialog_muted: Hsla::from(rgba(0xa1a1aaff)),
-                dialog_primary_button_bg: Hsla::from(rgba(0xf4f4f5ff)),
-                dialog_primary_button_hover: Hsla::from(rgba(0xe4e4e7ff)),
-                dialog_primary_button_text: Hsla::from(rgba(0x18181bff)),
-                dialog_secondary_button_bg: Hsla::from(rgba(0x27272aff)),
-                dialog_secondary_button_hover: Hsla::from(rgba(0x3f3f46ff)),
-                dialog_secondary_button_text: Hsla::from(rgba(0xf4f4f5ff)),
-                // Doubles as the destructive menu-item text color (e.g. Delete
-                // Row/Column), so it must stay legible on the dark menu surface
-                // rather than the muted red used previously.
-                dialog_danger_button_bg: Hsla::from(rgba(0xef4444ff)),
-                dialog_danger_button_hover: Hsla::from(rgba(0xdc2626ff)),
-                dialog_danger_button_text: Hsla::from(rgba(0xfef2f2ff)),
-                status_bar_background: Hsla::from(rgba(0x1c1c1fff)),
-                status_bar_text: Hsla::from(rgba(0xd4d4d8cc)),
-                status_bar_text_dim: Hsla::from(rgba(0x71717aff)),
-                status_bar_button_hover: Hsla::from(rgba(0x3f3f46ff)),
+                task_checkbox_checked_bg: Hsla::from(rgba(0x4cc2ffff)),
+                task_checkbox_check: Hsla::from(rgba(0x1f1f1fff)),
+                separator_color: Hsla::from(rgba(0x5a5a5aff)),
+                code_bg: Hsla::from(rgba(0x292929ff)),
+                code_text: Hsla::from(rgba(0xd6d6d6ff)),
+                code_language_input_bg: Hsla::from(rgba(0x333333ff)),
+                code_language_input_border: Hsla::from(rgba(0x484644ff)),
+                code_language_input_text: Hsla::from(rgba(0xf5f5f5ff)),
+                code_language_input_placeholder: Hsla::from(rgba(0x9c9c9cff)),
+                code_syntax_comment: Hsla::from(rgba(0x858585ff)),
+                code_syntax_keyword: Hsla::from(rgba(0xc586c0ff)),
+                code_syntax_string: Hsla::from(rgba(0xce9178ff)),
+                code_syntax_number: Hsla::from(rgba(0xb5cea8ff)),
+                code_syntax_type: Hsla::from(rgba(0x4ec9b0ff)),
+                code_syntax_function: Hsla::from(rgba(0xdcdcaaFF)),
+                code_syntax_constant: Hsla::from(rgba(0x4fc1ffff)),
+                code_syntax_variable: Hsla::from(rgba(0x9cdcfeff)),
+                code_syntax_property: Hsla::from(rgba(0x9cdcfeff)),
+                code_syntax_operator: Hsla::from(rgba(0xd4d4d4ff)),
+                code_syntax_punctuation: Hsla::from(rgba(0xd4d4d4ff)),
+                table_border: Hsla::from(rgba(0x484644ff)),
+                table_header_bg: Hsla::from(rgba(0x333333ff)),
+                table_cell_bg: Hsla::from(rgba(0x292929ff)),
+                table_cell_active_outline: Hsla::from(rgba(0x4cc2ffff)),
+                table_axis_preview_bg: Hsla::from(rgba(0xf5f5f51a)),
+                table_axis_selected_bg: Hsla::from(rgba(0xf5f5f533)),
+                table_append_button_bg: Hsla::from(rgba(0x333333ff)),
+                table_append_button_hover: Hsla::from(rgba(0x484644ff)),
+                table_append_button_text: Hsla::from(rgba(0xf5f5f5ff)),
+                image_placeholder_bg: Hsla::from(rgba(0x292929ff)),
+                image_placeholder_border: Hsla::from(rgba(0x484644ff)),
+                image_placeholder_text: Hsla::from(rgba(0xd6d6d6ff)),
+                image_caption_text: Hsla::from(rgba(0xa19f9dff)),
+                scrollbar_thumb: Hsla::from(rgba(0xa19f9dcc)),
+                cursor: Hsla::from(rgba(0xf5f5f5ff)),
+                selection: Hsla::from(rgba(0x264f78ff)),
+                dialog_backdrop: Hsla::from(rgba(0x00000088)),
+                dialog_surface: Hsla::from(rgba(0x292929ff)),
+                dialog_border: Hsla::from(rgba(0x484644ff)),
+                dialog_title: Hsla::from(rgba(0xf5f5f5ff)),
+                dialog_body: Hsla::from(rgba(0xd6d6d6ff)),
+                dialog_muted: Hsla::from(rgba(0xa19f9dff)),
+                dialog_primary_button_bg: Hsla::from(rgba(0x4cc2ffff)),
+                dialog_primary_button_hover: Hsla::from(rgba(0x75beffff)),
+                dialog_primary_button_text: Hsla::from(rgba(0x1f1f1fff)),
+                dialog_secondary_button_bg: Hsla::from(rgba(0x333333ff)),
+                dialog_secondary_button_hover: Hsla::from(rgba(0x484644ff)),
+                dialog_secondary_button_text: Hsla::from(rgba(0xf5f5f5ff)),
+                dialog_danger_button_bg: Hsla::from(rgba(0xd13438ff)),
+                dialog_danger_button_hover: Hsla::from(rgba(0xa4262cff)),
+                dialog_danger_button_text: Hsla::from(rgba(0xffffffff)),
+                status_bar_background: Hsla::from(rgba(0x292929ff)),
+                status_bar_text: Hsla::from(rgba(0xd6d6d6ff)),
+                status_bar_text_dim: Hsla::from(rgba(0xa19f9dff)),
+                status_bar_button_hover: Hsla::from(rgba(0x484644ff)),
             },
             dimensions: ThemeDimensions {
                 editor_padding: 24.0,
@@ -1343,94 +1340,94 @@ impl Theme {
         Self {
             name: BUILTIN_THEME_VELOTYPE_LIGHT_NAME.into(),
             colors: ThemeColors {
-                editor_background: Hsla::from(rgba(0xf7f8fbff)),
-                source_mode_block_bg: Hsla::from(rgba(0xeef2f7ff)),
-                comment_bg: Hsla::from(rgba(0xfef3c766)),
-                text_default: Hsla::from(rgba(0x1f2937ff)),
-                text_link: Hsla::from(rgba(0x2563ebff)),
-                text_placeholder: Hsla::from(rgba(0x6b7280cc)),
-                text_h1: Hsla::from(rgba(0x111827ff)),
-                text_h2: Hsla::from(rgba(0x111827ff)),
-                text_h3: Hsla::from(rgba(0x111827ff)),
-                text_h4: Hsla::from(rgba(0x111827ff)),
-                text_h5: Hsla::from(rgba(0x111827ff)),
-                text_h6: Hsla::from(rgba(0x111827ff)),
-                border_h1: Hsla::from(rgba(0xcbd5e1ff)),
-                border_h2: Hsla::from(rgba(0xdbe3efff)),
-                text_quote: Hsla::from(rgba(0x475569ff)),
-                border_quote: Hsla::from(rgba(0x94a3b8ff)),
-                callout_note_bg: Hsla::from(rgba(0x2563eb14)),
-                callout_note_border: Hsla::from(rgba(0x2563ebff)),
-                callout_tip_bg: Hsla::from(rgba(0x16a34a14)),
-                callout_tip_border: Hsla::from(rgba(0x16a34aff)),
-                callout_important_bg: Hsla::from(rgba(0x7c3aed14)),
-                callout_important_border: Hsla::from(rgba(0x7c3aedff)),
-                callout_warning_bg: Hsla::from(rgba(0xf9731614)),
-                callout_warning_border: Hsla::from(rgba(0xf97316ff)),
-                callout_caution_bg: Hsla::from(rgba(0xdc262614)),
-                callout_caution_border: Hsla::from(rgba(0xdc2626ff)),
+                editor_background: Hsla::from(rgba(0xfaf9f8ff)),
+                source_mode_block_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                comment_bg: Hsla::from(rgba(0xfff4ce99)),
+                text_default: Hsla::from(rgba(0x242424ff)),
+                text_link: Hsla::from(rgba(0x0078d4ff)),
+                text_placeholder: Hsla::from(rgba(0x8a8886cc)),
+                text_h1: Hsla::from(rgba(0x201f1eff)),
+                text_h2: Hsla::from(rgba(0x201f1eff)),
+                text_h3: Hsla::from(rgba(0x201f1eff)),
+                text_h4: Hsla::from(rgba(0x201f1eff)),
+                text_h5: Hsla::from(rgba(0x201f1eff)),
+                text_h6: Hsla::from(rgba(0x201f1eff)),
+                border_h1: Hsla::from(rgba(0xd1d1d1ff)),
+                border_h2: Hsla::from(rgba(0xedebe9ff)),
+                text_quote: Hsla::from(rgba(0x484644ff)),
+                border_quote: Hsla::from(rgba(0x0078d4ff)),
+                callout_note_bg: Hsla::from(rgba(0x0078d414)),
+                callout_note_border: Hsla::from(rgba(0x0078d4ff)),
+                callout_tip_bg: Hsla::from(rgba(0x107c1014)),
+                callout_tip_border: Hsla::from(rgba(0x107c10ff)),
+                callout_important_bg: Hsla::from(rgba(0x8764b814)),
+                callout_important_border: Hsla::from(rgba(0x8764b8ff)),
+                callout_warning_bg: Hsla::from(rgba(0xca501014)),
+                callout_warning_border: Hsla::from(rgba(0xca5010ff)),
+                callout_caution_bg: Hsla::from(rgba(0xd1343814)),
+                callout_caution_border: Hsla::from(rgba(0xd13438ff)),
                 footnote_bg: Hsla::from(rgba(0xffffffff)),
-                footnote_border: Hsla::from(rgba(0xcbd5e1ff)),
-                footnote_badge_bg: Hsla::from(rgba(0xe2e8f0ff)),
-                footnote_badge_text: Hsla::from(rgba(0x334155ff)),
-                footnote_backref: Hsla::from(rgba(0x2563ebff)),
-                task_checkbox_border: Hsla::from(rgba(0x94a3b8ff)),
+                footnote_border: Hsla::from(rgba(0xd1d1d1ff)),
+                footnote_badge_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                footnote_badge_text: Hsla::from(rgba(0x484644ff)),
+                footnote_backref: Hsla::from(rgba(0x0078d4ff)),
+                task_checkbox_border: Hsla::from(rgba(0x8a8886ff)),
                 task_checkbox_bg: Hsla::from(rgba(0xffffffff)),
-                task_checkbox_checked_bg: Hsla::from(rgba(0x2563ebff)),
+                task_checkbox_checked_bg: Hsla::from(rgba(0x0078d4ff)),
                 task_checkbox_check: Hsla::from(rgba(0xffffffff)),
-                separator_color: Hsla::from(rgba(0xcbd5e1ff)),
-                code_bg: Hsla::from(rgba(0xf1f5f9ff)),
-                code_text: Hsla::from(rgba(0x111827ff)),
+                separator_color: Hsla::from(rgba(0xd1d1d1ff)),
+                code_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                code_text: Hsla::from(rgba(0x242424ff)),
                 code_language_input_bg: Hsla::from(rgba(0xffffffff)),
-                code_language_input_border: Hsla::from(rgba(0xcbd5e1ff)),
-                code_language_input_text: Hsla::from(rgba(0x1f2937ff)),
-                code_language_input_placeholder: Hsla::from(rgba(0x64748bcc)),
-                code_syntax_comment: Hsla::from(rgba(0x6b7280ff)),
-                code_syntax_keyword: Hsla::from(rgba(0x7c3aedff)),
-                code_syntax_string: Hsla::from(rgba(0x15803dff)),
-                code_syntax_number: Hsla::from(rgba(0xc2410cff)),
-                code_syntax_type: Hsla::from(rgba(0x0f766eff)),
-                code_syntax_function: Hsla::from(rgba(0x2563ebff)),
-                code_syntax_constant: Hsla::from(rgba(0xb45309ff)),
-                code_syntax_variable: Hsla::from(rgba(0x1f2937ff)),
-                code_syntax_property: Hsla::from(rgba(0x0891b2ff)),
-                code_syntax_operator: Hsla::from(rgba(0x9333eaff)),
-                code_syntax_punctuation: Hsla::from(rgba(0x64748bff)),
-                table_border: Hsla::from(rgba(0xd1d5dbff)),
-                table_header_bg: Hsla::from(rgba(0xf1f5f9ff)),
+                code_language_input_border: Hsla::from(rgba(0xd1d1d1ff)),
+                code_language_input_text: Hsla::from(rgba(0x242424ff)),
+                code_language_input_placeholder: Hsla::from(rgba(0x8a8886cc)),
+                code_syntax_comment: Hsla::from(rgba(0x6a6a6aff)),
+                code_syntax_keyword: Hsla::from(rgba(0xaf00dbff)),
+                code_syntax_string: Hsla::from(rgba(0x008000ff)),
+                code_syntax_number: Hsla::from(rgba(0x098658ff)),
+                code_syntax_type: Hsla::from(rgba(0x267f99ff)),
+                code_syntax_function: Hsla::from(rgba(0x795e26ff)),
+                code_syntax_constant: Hsla::from(rgba(0x0070c1ff)),
+                code_syntax_variable: Hsla::from(rgba(0x001080ff)),
+                code_syntax_property: Hsla::from(rgba(0x001080ff)),
+                code_syntax_operator: Hsla::from(rgba(0x393a34ff)),
+                code_syntax_punctuation: Hsla::from(rgba(0x393a34ff)),
+                table_border: Hsla::from(rgba(0xd1d1d1ff)),
+                table_header_bg: Hsla::from(rgba(0xf3f2f1ff)),
                 table_cell_bg: Hsla::from(rgba(0xffffffff)),
-                table_cell_active_outline: Hsla::from(rgba(0x2563ebff)),
-                table_axis_preview_bg: Hsla::from(rgba(0x2563eb14)),
-                table_axis_selected_bg: Hsla::from(rgba(0x2563eb29)),
-                table_append_button_bg: Hsla::from(rgba(0xe2e8f0ff)),
-                table_append_button_hover: Hsla::from(rgba(0xcbd5e1ff)),
-                table_append_button_text: Hsla::from(rgba(0x334155ff)),
-                image_placeholder_bg: Hsla::from(rgba(0xf8fafcff)),
-                image_placeholder_border: Hsla::from(rgba(0xcbd5e1ff)),
-                image_placeholder_text: Hsla::from(rgba(0x475569ff)),
-                image_caption_text: Hsla::from(rgba(0x64748bff)),
-                scrollbar_thumb: Hsla::from(rgba(0x64748bb8)),
-                cursor: Hsla::from(rgba(0x111827ff)),
-                selection: Hsla::from(rgba(0xbfdbfecc)),
-                dialog_backdrop: Hsla::from(rgba(0x0f172a66)),
+                table_cell_active_outline: Hsla::from(rgba(0x0078d4ff)),
+                table_axis_preview_bg: Hsla::from(rgba(0x0078d414)),
+                table_axis_selected_bg: Hsla::from(rgba(0x0078d429)),
+                table_append_button_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                table_append_button_hover: Hsla::from(rgba(0xedebe9ff)),
+                table_append_button_text: Hsla::from(rgba(0x484644ff)),
+                image_placeholder_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                image_placeholder_border: Hsla::from(rgba(0xd1d1d1ff)),
+                image_placeholder_text: Hsla::from(rgba(0x484644ff)),
+                image_caption_text: Hsla::from(rgba(0x605e5cff)),
+                scrollbar_thumb: Hsla::from(rgba(0x8a8886b8)),
+                cursor: Hsla::from(rgba(0x242424ff)),
+                selection: Hsla::from(rgba(0xcfe4faff)),
+                dialog_backdrop: Hsla::from(rgba(0x00000066)),
                 dialog_surface: Hsla::from(rgba(0xffffffff)),
-                dialog_border: Hsla::from(rgba(0xd1d5dbff)),
-                dialog_title: Hsla::from(rgba(0x111827ff)),
-                dialog_body: Hsla::from(rgba(0x374151ff)),
-                dialog_muted: Hsla::from(rgba(0x6b7280ff)),
-                dialog_primary_button_bg: Hsla::from(rgba(0x2563ebff)),
-                dialog_primary_button_hover: Hsla::from(rgba(0x1d4ed8ff)),
+                dialog_border: Hsla::from(rgba(0xd1d1d1ff)),
+                dialog_title: Hsla::from(rgba(0x201f1eff)),
+                dialog_body: Hsla::from(rgba(0x323130ff)),
+                dialog_muted: Hsla::from(rgba(0x605e5cff)),
+                dialog_primary_button_bg: Hsla::from(rgba(0x0078d4ff)),
+                dialog_primary_button_hover: Hsla::from(rgba(0x106ebeff)),
                 dialog_primary_button_text: Hsla::from(rgba(0xffffffff)),
-                dialog_secondary_button_bg: Hsla::from(rgba(0xf1f5f9ff)),
-                dialog_secondary_button_hover: Hsla::from(rgba(0xe2e8f0ff)),
-                dialog_secondary_button_text: Hsla::from(rgba(0x1f2937ff)),
-                dialog_danger_button_bg: Hsla::from(rgba(0xdc2626ff)),
-                dialog_danger_button_hover: Hsla::from(rgba(0xb91c1cff)),
+                dialog_secondary_button_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                dialog_secondary_button_hover: Hsla::from(rgba(0xedebe9ff)),
+                dialog_secondary_button_text: Hsla::from(rgba(0x242424ff)),
+                dialog_danger_button_bg: Hsla::from(rgba(0xd13438ff)),
+                dialog_danger_button_hover: Hsla::from(rgba(0xa4262cff)),
                 dialog_danger_button_text: Hsla::from(rgba(0xffffffff)),
-                status_bar_background: Hsla::from(rgba(0xe2e8f0ff)),
-                status_bar_text: Hsla::from(rgba(0x334155ff)),
-                status_bar_text_dim: Hsla::from(rgba(0x64748bff)),
-                status_bar_button_hover: Hsla::from(rgba(0xcbd5e1ff)),
+                status_bar_background: Hsla::from(rgba(0xf3f2f1ff)),
+                status_bar_text: Hsla::from(rgba(0x323130ff)),
+                status_bar_text_dim: Hsla::from(rgba(0x605e5cff)),
+                status_bar_button_hover: Hsla::from(rgba(0xedebe9ff)),
             },
             dimensions: base.dimensions,
             typography: base.typography,
@@ -2098,11 +2095,11 @@ mod tests {
         let json = serde_json::to_string(&object).expect("theme json should serialize");
         let theme = Theme::from_json(&json).expect("theme without footnote tokens should load");
 
-        assert_eq!(theme.colors.footnote_bg, rgba(0x212124ff).into());
-        assert_eq!(theme.colors.footnote_border, rgba(0x71717a52).into());
-        assert_eq!(theme.colors.footnote_badge_bg, rgba(0xa1a1aa24).into());
-        assert_eq!(theme.colors.footnote_badge_text, rgba(0xd4d4d8cc).into());
-        assert_eq!(theme.colors.footnote_backref, rgba(0xa1a1aaff).into());
+        assert_eq!(theme.colors.footnote_bg, rgba(0x292929ff).into());
+        assert_eq!(theme.colors.footnote_border, rgba(0x48464452).into());
+        assert_eq!(theme.colors.footnote_badge_bg, rgba(0x3b3a3924).into());
+        assert_eq!(theme.colors.footnote_badge_text, rgba(0xd6d6d6ff).into());
+        assert_eq!(theme.colors.footnote_backref, rgba(0x75beffff).into());
         assert_eq!(theme.dimensions.footnote_padding_x, 10.0);
         assert_eq!(theme.dimensions.footnote_padding_y, 6.0);
         assert_eq!(theme.dimensions.footnote_radius, 6.0);
@@ -2136,19 +2133,19 @@ mod tests {
         let theme =
             Theme::from_json(&json).expect("theme without code language palette should load");
 
-        assert_eq!(theme.colors.code_bg, rgba(0x111827ff).into());
-        assert_eq!(theme.colors.code_language_input_bg, rgba(0x343941ff).into());
+        assert_eq!(theme.colors.code_bg, rgba(0x292929ff).into());
+        assert_eq!(theme.colors.code_language_input_bg, rgba(0x333333ff).into());
         assert_eq!(
             theme.colors.code_language_input_border,
-            rgba(0x4b5563cc).into()
+            rgba(0x484644ff).into()
         );
         assert_eq!(
             theme.colors.code_language_input_text,
-            rgba(0xe5e7ebff).into()
+            rgba(0xf5f5f5ff).into()
         );
         assert_eq!(
             theme.colors.code_language_input_placeholder,
-            rgba(0x9ca3afcc).into()
+            rgba(0x9c9c9cff).into()
         );
     }
 
@@ -2161,13 +2158,13 @@ mod tests {
             rgba(0xa78bfaff).into()
         );
         assert_eq!(theme.dimensions.block_gap, 6.0);
-        assert_eq!(theme.colors.footnote_bg, rgba(0x212124ff).into());
+        assert_eq!(theme.colors.footnote_bg, rgba(0x292929ff).into());
         assert_eq!(theme.dimensions.footnote_padding_x, 10.0);
-        assert_eq!(theme.colors.code_bg, rgba(0x23272eff).into());
-        assert_eq!(theme.colors.code_language_input_bg, rgba(0x343941ff).into());
+        assert_eq!(theme.colors.code_bg, rgba(0x292929ff).into());
+        assert_eq!(theme.colors.code_language_input_bg, rgba(0x333333ff).into());
         assert_eq!(
             theme.colors.code_language_input_border,
-            rgba(0x4b5563cc).into()
+            rgba(0x484644ff).into()
         );
     }
 
@@ -2176,18 +2173,18 @@ mod tests {
         let dark = Theme::default_theme();
         let light = Theme::light_theme();
 
-        assert_eq!(light.name, "Velotype Light");
-        assert_eq!(light.colors.editor_background, rgba(0xf7f8fbff).into());
-        assert_eq!(light.colors.text_default, rgba(0x1f2937ff).into());
-        assert_eq!(light.colors.text_link, rgba(0x2563ebff).into());
-        assert_eq!(light.colors.code_bg, rgba(0xf1f5f9ff).into());
+        assert_eq!(light.name, "maksher Light");
+        assert_eq!(light.colors.editor_background, rgba(0xfaf9f8ff).into());
+        assert_eq!(light.colors.text_default, rgba(0x242424ff).into());
+        assert_eq!(light.colors.text_link, rgba(0x0078d4ff).into());
+        assert_eq!(light.colors.code_bg, rgba(0xf3f2f1ff).into());
         assert_eq!(
             light.colors.code_language_input_border,
-            rgba(0xcbd5e1ff).into()
+            rgba(0xd1d1d1ff).into()
         );
         assert_eq!(
             light.colors.table_cell_active_outline,
-            rgba(0x2563ebff).into()
+            rgba(0x0078d4ff).into()
         );
         assert_eq!(light.dimensions.block_gap, dark.dimensions.block_gap);
         assert_eq!(light.typography.text_size, dark.typography.text_size);
@@ -2413,27 +2410,27 @@ mod tests {
     fn theme_manager_switches_builtin_themes() {
         let mut manager = ThemeManager::default();
         assert_eq!(manager.current_theme_id(), "velotype");
-        assert_eq!(manager.current().name, "Velotype");
+        assert_eq!(manager.current().name, "maksher");
         assert_eq!(
             manager
                 .available_themes()
                 .iter()
                 .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Velotype", "Velotype Light"]
+            vec!["System", "maksher", "maksher Light"]
         );
 
         assert!(manager.set_theme_by_id("velotype-light"));
         assert_eq!(manager.current_theme_id(), "velotype-light");
-        assert_eq!(manager.current().name, "Velotype Light");
+        assert_eq!(manager.current().name, "maksher Light");
         assert_eq!(
             manager.current().colors.editor_background,
-            rgba(0xf7f8fbff).into()
+            rgba(0xfaf9f8ff).into()
         );
 
         assert!(manager.set_theme_by_id("velotype"));
         assert_eq!(manager.current_theme_id(), "velotype");
-        assert_eq!(manager.current().name, "Velotype");
+        assert_eq!(manager.current().name, "maksher");
         assert!(!manager.set_theme_by_id("missing"));
     }
 }

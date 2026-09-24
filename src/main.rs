@@ -37,7 +37,7 @@ use file_url::parse_file_url;
 use i18n::I18nManager;
 use theme::ThemeManager;
 
-struct VelotypeAssets;
+struct MaksherAssets;
 
 fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference) {
     if startup_open == config::StartupOpenPreference::LastOpenedFile
@@ -87,7 +87,7 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
     }
 }
 
-impl AssetSource for VelotypeAssets {
+impl AssetSource for MaksherAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
         match path {
             "icon/workspace/folder.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
@@ -98,6 +98,21 @@ impl AssetSource for VelotypeAssets {
             )))),
             "icon/workspace/code.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/code.svg"
+            )))),
+            "icon/workspace/open-folder.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/open-folder.svg"
+            )))),
+            "icon/workspace/new-file.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/new-file.svg"
+            )))),
+            "icon/workspace/new-folder.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/new-folder.svg"
+            )))),
+            "icon/workspace/rename.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/rename.svg"
+            )))),
+            "icon/workspace/delete.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/delete.svg"
             )))),
             "icon/titlebar/chrome-close.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/titlebar/chrome-close.svg"
@@ -197,7 +212,7 @@ fn main() {
     #[cfg(target_os = "macos")]
     let open_file_requested = Arc::new(AtomicBool::new(false));
 
-    let app = Application::new().with_assets(VelotypeAssets);
+    let app = Application::new().with_assets(MaksherAssets);
 
     #[cfg(target_os = "macos")]
     {

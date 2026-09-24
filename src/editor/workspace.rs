@@ -11,11 +11,16 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 
 use super::{BlockKind, Editor, code_viewer};
 use crate::i18n::I18nStrings;
-use crate::theme::Theme;
+use crate::theme::{Theme, ThemeManager};
 
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
+const OPEN_FOLDER_ICON: &str = "icon/workspace/open-folder.svg";
+const NEW_FILE_ICON: &str = "icon/workspace/new-file.svg";
+const NEW_FOLDER_ICON: &str = "icon/workspace/new-folder.svg";
+const RENAME_ICON: &str = "icon/workspace/rename.svg";
+const DELETE_ICON: &str = "icon/workspace/delete.svg";
 const WORKSPACE_PANEL_TARGET_RATIO: f32 = 0.15;
 const WORKSPACE_PANEL_MIN_WIDTH: f32 = 240.0;
 const WORKSPACE_PANEL_MAX_WIDTH: f32 = 360.0;
@@ -45,6 +50,54 @@ pub(super) struct WorkspaceTreeNode {
     label: String,
     kind: WorkspaceTreeKind,
     children: Vec<WorkspaceTreeNode>,
+}
+
+struct WorkspaceTooltip {
+    label: String,
+}
+
+impl Render for WorkspaceTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<ThemeManager>().current_arc();
+        div()
+            .px(px(8.0))
+            .py(px(5.0))
+            .rounded(px(6.0))
+            .bg(theme.colors.dialog_surface)
+            .border_1()
+            .border_color(theme.colors.dialog_border)
+            .shadow_md()
+            .text_size(px(12.0))
+            .text_color(theme.colors.dialog_title)
+            .child(self.label.clone())
+    }
+}
+
+fn workspace_toolbar_button(
+    id: &'static str,
+    icon_path: &'static str,
+    label: String,
+    icon_color: Hsla,
+    theme: &Theme,
+) -> Stateful<Div> {
+    let tooltip_label = label.clone();
+    div()
+        .id(id)
+        .w(px(26.0))
+        .h(px(26.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.0))
+        .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
+        .cursor_pointer()
+        .child(svg().path(icon_path).size(px(16.0)).text_color(icon_color))
+        .tooltip(move |_window, cx| {
+            cx.new(|_| WorkspaceTooltip {
+                label: tooltip_label.clone(),
+            })
+            .into()
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1323,109 +1376,70 @@ impl Editor {
             WorkspaceTab::Recent => self.render_recent_workspaces(theme, strings, &editor),
         };
         let open_folder_editor = editor.clone();
-        let open_folder_button = div()
-            .id("workspace-open-folder")
-            .w_full()
-            .h(px(32.0))
-            .px(px(10.0))
-            .flex()
-            .items_center()
-            .rounded(px(7.0))
-            .bg(c.dialog_secondary_button_bg)
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .text_size(px(t.text_size * 0.9))
-            .text_color(c.text_default)
-            .child(strings.menu_open_workspace_folder.clone())
-            .on_click(move |_event, _window, cx| {
-                let _ = open_folder_editor.update(cx, |editor, cx| {
-                    editor.prompt_open_workspace_folder(cx);
-                });
+        let open_folder_button = workspace_toolbar_button(
+            "workspace-open-folder",
+            OPEN_FOLDER_ICON,
+            strings.menu_open_workspace_folder.clone(),
+            c.dialog_muted,
+            theme,
+        )
+        .on_click(move |_event, _window, cx| {
+            let _ = open_folder_editor.update(cx, |editor, cx| {
+                editor.prompt_open_workspace_folder(cx);
             });
+        });
         let new_file_editor = editor.clone();
-        let new_file_button = div()
-            .id("workspace-new-file")
-            .flex_1()
-            .h(px(30.0))
-            .px(px(7.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.0))
-            .bg(c.dialog_secondary_button_bg)
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .text_size(px(t.text_size * 0.78))
-            .text_color(c.text_default)
-            .child(strings.workspace_new_file.clone())
-            .on_click(move |_event, window, cx| {
-                let _ = new_file_editor.update(cx, |editor, cx| {
-                    editor.prompt_create_workspace_file(window, cx);
-                });
+        let new_file_button = workspace_toolbar_button(
+            "workspace-new-file",
+            NEW_FILE_ICON,
+            strings.workspace_new_file.clone(),
+            c.dialog_muted,
+            theme,
+        )
+        .on_click(move |_event, window, cx| {
+            let _ = new_file_editor.update(cx, |editor, cx| {
+                editor.prompt_create_workspace_file(window, cx);
             });
+        });
         let new_folder_editor = editor.clone();
-        let new_folder_button = div()
-            .id("workspace-new-folder")
-            .flex_1()
-            .h(px(30.0))
-            .px(px(7.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.0))
-            .bg(c.dialog_secondary_button_bg)
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .text_size(px(t.text_size * 0.78))
-            .text_color(c.text_default)
-            .child(strings.workspace_new_folder.clone())
-            .on_click(move |_event, window, cx| {
-                let _ = new_folder_editor.update(cx, |editor, cx| {
-                    editor.prompt_create_workspace_folder(window, cx);
-                });
+        let new_folder_button = workspace_toolbar_button(
+            "workspace-new-folder",
+            NEW_FOLDER_ICON,
+            strings.workspace_new_folder.clone(),
+            c.dialog_muted,
+            theme,
+        )
+        .on_click(move |_event, window, cx| {
+            let _ = new_folder_editor.update(cx, |editor, cx| {
+                editor.prompt_create_workspace_folder(window, cx);
             });
+        });
         let rename_editor = editor.clone();
-        let rename_button = div()
-            .id("workspace-rename")
-            .flex_1()
-            .h(px(30.0))
-            .px(px(7.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.0))
-            .bg(c.dialog_secondary_button_bg)
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .text_size(px(t.text_size * 0.78))
-            .text_color(c.text_default)
-            .child(strings.workspace_rename.clone())
-            .on_click(move |_event, window, cx| {
-                let _ = rename_editor.update(cx, |editor, cx| {
-                    editor.prompt_rename_or_move_selected(window, cx);
-                });
+        let rename_button = workspace_toolbar_button(
+            "workspace-rename",
+            RENAME_ICON,
+            strings.workspace_rename.clone(),
+            c.dialog_muted,
+            theme,
+        )
+        .on_click(move |_event, window, cx| {
+            let _ = rename_editor.update(cx, |editor, cx| {
+                editor.prompt_rename_or_move_selected(window, cx);
             });
+        });
         let delete_editor = editor.clone();
-        let delete_button = div()
-            .id("workspace-delete")
-            .flex_1()
-            .h(px(30.0))
-            .px(px(7.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.0))
-            .bg(c.dialog_secondary_button_bg)
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .text_size(px(t.text_size * 0.78))
-            .text_color(c.text_default)
-            .child(strings.workspace_delete.clone())
-            .on_click(move |_event, window, cx| {
-                let _ = delete_editor.update(cx, |editor, cx| {
-                    editor.prompt_delete_selected(window, cx);
-                });
+        let delete_button = workspace_toolbar_button(
+            "workspace-delete",
+            DELETE_ICON,
+            strings.workspace_delete.clone(),
+            c.dialog_danger_button_bg,
+            theme,
+        )
+        .on_click(move |_event, window, cx| {
+            let _ = delete_editor.update(cx, |editor, cx| {
+                editor.prompt_delete_selected(window, cx);
             });
+        });
         let search_focus = self
             .workspace
             .filename_search_focus
@@ -1507,8 +1521,33 @@ impl Editor {
                         .border_color(c.dialog_border)
                         .child(
                             div()
+                                .w_full()
                                 .flex()
-                                .gap(px(8.0))
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(c.text_default)
+                                        .child(strings.workspace_panel_title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(2.0))
+                                        .child(open_folder_button)
+                                        .child(new_file_button)
+                                        .child(new_folder_button)
+                                        .child(rename_button)
+                                        .child(delete_button),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(4.0))
                                 .child(tab(
                                     strings.workspace_tab_files.clone(),
                                     WorkspaceTab::Files,
@@ -1525,24 +1564,7 @@ impl Editor {
                                     self.workspace.active_tab == WorkspaceTab::Recent,
                                 )),
                         )
-                        .child(open_folder_button)
-                        .child(search_field)
-                        .child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .gap(px(6.0))
-                                .child(new_file_button)
-                                .child(new_folder_button),
-                        )
-                        .child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .gap(px(6.0))
-                                .child(rename_button)
-                                .child(delete_button),
-                        ),
+                        .child(search_field),
                 )
                 .child(
                     div()
@@ -1550,8 +1572,8 @@ impl Editor {
                         .flex_1()
                         .min_h(px(0.0))
                         .overflow_y_scroll()
-                        .px(px(8.0))
-                        .py(px(10.0))
+                        .px(px(6.0))
+                        .py(px(8.0))
                         .child(body),
                 )
                 .into_any_element(),
