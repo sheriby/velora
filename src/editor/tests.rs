@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gpui::{
-    AnyWindowHandle, AppContext, ClickEvent, KeyDownEvent, Keystroke, TestAppContext,
-    VisualTestContext,
+    AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, KeyDownEvent, Keystroke,
+    TestAppContext, VisualTestContext,
 };
 
 use super::{Editor, MountedRun, ViewMode};
 use crate::components::{
-    BlockKind, CloseWindow, FocusNext, ImageReferenceDefinitions, ImageResolvedSource,
+    Block, BlockKind, CloseWindow, FocusNext, ImageReferenceDefinitions, ImageResolvedSource,
     InlineTextTree, Newline, QuitApplication, SaveDocument, TableCellInlineImageSegment,
     TableColumnAlignment, parse_table_cell_inline_images, superscript_ordinal,
 };
@@ -484,6 +484,104 @@ async fn dirty_saved_document_is_autosaved(cx: &mut TestAppContext) {
         "autosaved text"
     );
     editor.read_with(cx, |editor, _cx| assert!(!editor.document_dirty));
+}
+
+#[gpui::test]
+async fn chinese_ime_composition_commit_save_and_undo_keep_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("chinese-ime-commit");
+    fs::write(&path, "note").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "note".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    let block = editor.read_with(cx, |editor, _cx| {
+        editor.document.first_root().expect("paragraph").clone()
+    });
+    block.update(cx, |block, _cx| block.selected_range = 4..4);
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_and_mark_text_in_range(
+                block,
+                None,
+                "nihao",
+                Some(5..5),
+                window,
+                block_cx,
+            );
+        });
+    });
+    assert_eq!(
+        block.read_with(cx, |block, _cx| block.marked_range.clone()),
+        Some(4..9)
+    );
+    redraw(cx);
+    let block_bounds = block.read_with(cx, |block, _cx| {
+        block
+            .last_bounds
+            .expect("composing text should be laid out")
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            assert_eq!(
+                <Block as EntityInputHandler>::marked_text_range(block, window, block_cx),
+                Some(4..9)
+            );
+            assert!(
+                <Block as EntityInputHandler>::bounds_for_range(
+                    block,
+                    4..9,
+                    block_bounds,
+                    window,
+                    block_cx,
+                )
+                .is_some()
+            );
+        });
+    });
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "你好", window, block_cx,
+            );
+        });
+    });
+    assert_eq!(
+        block.read_with(cx, |block, _cx| block.display_text().to_string()),
+        "note你好"
+    );
+    assert_eq!(
+        block.read_with(cx, |block, _cx| block.marked_range.clone()),
+        None
+    );
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            assert!(editor.save_to_existing_path(&path, window, cx));
+        });
+    });
+    assert_eq!(
+        fs::read_to_string(&path).expect("read saved Markdown"),
+        "note你好"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx)),
+        "note"
+    );
 }
 
 #[gpui::test]
