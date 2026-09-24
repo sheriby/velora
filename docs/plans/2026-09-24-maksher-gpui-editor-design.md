@@ -18,7 +18,7 @@ maksher 是以长篇 Markdown 写作为主的桌面编辑器。首版先发布 m
 1. 完整 fork Velotype：能最快继承现有原生编辑器，但也会继承应用级窗口、菜单和工作区结构，改造边界不清。
 2. 从头实现原生编辑器，只借鉴思路：结构最自由，但富文本、Markdown 往返和输入法都要重做，交付风险最高。
 
-Velotype 的本地基线固定为提交 `ed65977be94f2f2703037fcb8b6cbab2e7579571`。它使用 Rust + GPUI，已有富文本与源码模式、块模型、图片粘贴、主题和大文档可视区域裁剪。其编辑核心与应用层紧密相连：`Editor` 同时持有文档、焦点、滚动、菜单及窗口状态，`DocumentTree` 直接依赖 `Context<Editor>`。抽取因此是需要验证的重构，不能把复制若干文件视为完成。[Velotype 编辑器](../../../velotype/src/editor/mod.rs)、[DocumentTree](../../../velotype/src/editor/tree.rs)。
+Velotype 的本地基线固定为提交 `ed65977be94f2f2703037fcb8b6cbab2e7579571`。它使用 Rust + GPUI，已有富文本与源码模式、块模型、图片粘贴、主题和大文档可视区域裁剪。其编辑核心与应用层紧密相连：`Editor` 同时持有文档、焦点、滚动、菜单及窗口状态，`DocumentTree` 直接依赖 `Context<Editor>`。抽取因此是需要验证的重构，不能把复制若干文件视为完成。[Velotype 编辑器](https://github.com/manyougz/velotype/blob/ed65977be94f2f2703037fcb8b6cbab2e7579571/src/editor/mod.rs)、[DocumentTree](https://github.com/manyougz/velotype/blob/ed65977be94f2f2703037fcb8b6cbab2e7579571/src/editor/tree.rs)。
 
 ## 架构与数据流
 
@@ -41,4 +41,4 @@ Velotype 的本地基线固定为提交 `ed65977be94f2f2703037fcb8b6cbab2e757957
 - Markdown 固定样本覆盖受支持语法的读取、编辑、保存、重开、语义往返与不支持语法回退；文件测试覆盖外部修改冲突、原子写入和意外退出恢复。
 - macOS 在真实安装包中验收界面原型、工作区、代码浏览、主题及性能。Windows 首版只构建内部安装包，不宣称运行体验已验证。
 - Velotype 标为 Apache-2.0。抽取时保留对应许可和版权声明，记录固定来源提交与修改范围；maksher 使用自己的名称与视觉资产。分发前核对依赖及 NOTICE 要求。参见 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)。
-- 当前 `maksher` 目录里有暂停的、尚未提交的 Tauri 脚手架。此设计获批后仍先保留它；新实施计划须明确迁移与清理步骤，不在设计阶段删除。
+- 先前未提交的 Tauri 脚手架已按用户要求删除；后续只按本 GPUI 设计推进。
