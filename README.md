@@ -35,7 +35,7 @@
 
 ## 当前验证范围
 
-已在 macOS 环境用 fastdev 构建并启动 macOS `.app`，生成 `.pkg` 和 Windows x64 内部安装器；全量 fastdev 测试 779 项通过。测试覆盖工作区、文件树、代码浏览、高亮与纯文本回退、Markdown 原文保护、主题、图片、保存/恢复和中文组合输入模拟。macOS 拼音实机体验、Windows 实机运行、全机性能阈值和原生 GPUI 窗口视觉检查仍未验收。
+已在 macOS 环境用 fastdev 构建并启动 macOS `.app`，生成 `.pkg` 和 Windows x64 内部安装器；全量 fastdev 测试 779 项通过。测试覆盖工作区、文件树、代码浏览、高亮与纯文本回退、Markdown 原文保护、主题、图片、保存/恢复和中文组合输入。Apple 拼音系统输入源 smoke test 已验证 `nihao` 确认、保存和撤销；实体键盘候选窗视觉、Windows 实机运行及全机性能阈值仍需单独验收。原生界面截图见 [验收记录](docs/验收记录/2026-09-25-maksher-macos-原生界面.png)。
 
 ## 设计与来源
 
