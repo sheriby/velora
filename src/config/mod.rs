@@ -23,7 +23,7 @@ pub(crate) use recovery::{
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
 pub(crate) const RECENT_WORKSPACES_LIMIT: usize = 10;
 
-/// Cross-platform configuration directories owned by Velotype.
+/// maksher 的跨平台配置目录。
 #[derive(Debug, Clone)]
 pub(crate) struct VelotypeConfigDirs {
     root: PathBuf,

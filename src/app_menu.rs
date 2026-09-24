@@ -25,7 +25,7 @@ use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
 use crate::i18n::I18nManager;
 use crate::theme::ThemeManager;
-use crate::window_chrome::velotype_window_options;
+use crate::window_chrome::maksher_window_options;
 
 /// Global app-menu state for platform menu lifecycle hooks.
 #[derive(Default)]
@@ -63,10 +63,9 @@ pub(crate) fn open_editor_window(
     let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
     let title = window_title(file_path.as_deref());
     let handle = cx
-        .open_window(
-            velotype_window_options(title, bounds),
-            move |_window, cx| cx.new(move |cx| Editor::from_markdown(cx, markdown, file_path)),
-        )
+        .open_window(maksher_window_options(title, bounds), move |_window, cx| {
+            cx.new(move |cx| Editor::from_markdown(cx, markdown, file_path))
+        })
         .unwrap();
 
     handle
@@ -89,7 +88,7 @@ pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnaps
     let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
     let handle = cx
         .open_window(
-            velotype_window_options(title.into(), bounds),
+            maksher_window_options(title.into(), bounds),
             move |_window, cx| cx.new(move |cx| Editor::from_recovery(cx, snapshot)),
         )
         .unwrap();
@@ -691,10 +690,16 @@ fn build_menus(
         .available_themes()
         .iter()
         .map(|entry| {
+            let name = match entry.id.as_str() {
+                "system" => strings.preferences_theme_system.clone(),
+                "velotype" => strings.preferences_theme_dark.clone(),
+                "velotype-light" => strings.preferences_theme_light.clone(),
+                _ => entry.name.clone(),
+            };
             let label = if entry.id.as_str() == current_theme_id {
-                format!("\u{2713} {}", entry.name)
+                format!("\u{2713} {name}")
             } else {
-                entry.name.to_string()
+                name
             };
             MenuItem::action(
                 label,
@@ -1146,17 +1151,17 @@ mod tests {
     fn applescript_string_literal_escapes_special_characters() {
         assert_eq!(
             applescript_string_literal(
-                r#"/Applications/Velotype "Test".app/Contents/MacOS/velotype"#
+                r#"/Applications/maksher "Test".app/Contents/MacOS/maksher"#
             ),
-            r#""/Applications/Velotype \"Test\".app/Contents/MacOS/velotype""#
+            r#""/Applications/maksher \"Test\".app/Contents/MacOS/maksher""#
         );
         assert_eq!(
-            applescript_string_literal(r#"/Applications/O'Brien\Velotype.app"#),
-            r#""/Applications/O'Brien\\Velotype.app""#
+            applescript_string_literal(r#"/Applications/O'Brien\maksher.app"#),
+            r#""/Applications/O'Brien\\maksher.app""#
         );
     }
 
-    // On macOS the menu bar is: [Velotype app menu, File, Export, Language, Theme, Workspace, Help]
+    // On macOS the menu bar is: [maksher app menu, File, Export, Language, Theme, Workspace, Help]
     // On other platforms:       [File, Export, Language, Theme, Workspace, Help]
     #[cfg(target_os = "macos")]
     const EXPORT_IDX: usize = 2;
@@ -1198,7 +1203,7 @@ mod tests {
         assert_eq!(
             menu_names,
             vec![
-                "Velotype",
+                "maksher",
                 "File",
                 "Export",
                 "Language",
@@ -1282,7 +1287,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(
             menu_names,
-            vec!["Velotype", "文件", "导出", "语言", "主题", "工作区", "帮助"]
+            vec!["maksher", "文件", "导出", "语言", "主题", "工作区", "帮助"]
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
@@ -1441,8 +1446,9 @@ mod tests {
         }
 
         let theme_items = &menus[THEME_IDX].items;
-        assert_eq!(action_name(&theme_items[0]), "\u{2713} Velotype");
-        assert_eq!(action_name(&theme_items[1]), "Velotype Light");
+        assert_eq!(action_name(&theme_items[0]), "Follow System");
+        assert_eq!(action_name(&theme_items[1]), "\u{2713} Dark");
+        assert_eq!(action_name(&theme_items[2]), "Light");
         assert!(matches!(
             theme_items[theme_items.len() - 2],
             MenuItem::Separator
@@ -1451,7 +1457,7 @@ mod tests {
             action_name(&theme_items[theme_items.len() - 1]),
             "Add Theme Config"
         );
-        match &theme_items[0] {
+        match &theme_items[1] {
             MenuItem::Action { action, .. } => {
                 assert!(action.as_any().is::<SelectTheme>());
             }
@@ -1473,9 +1479,10 @@ mod tests {
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
         let theme_items = &menus[THEME_IDX].items;
 
-        assert_eq!(action_name(&theme_items[0]), "Velotype");
-        assert_eq!(action_name(&theme_items[1]), "\u{2713} Velotype Light");
-        match &theme_items[1] {
+        assert_eq!(action_name(&theme_items[0]), "Follow System");
+        assert_eq!(action_name(&theme_items[1]), "Dark");
+        assert_eq!(action_name(&theme_items[2]), "\u{2713} Light");
+        match &theme_items[2] {
             MenuItem::Action { action, .. } => {
                 let action = action
                     .as_any()

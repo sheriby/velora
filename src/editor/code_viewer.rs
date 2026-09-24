@@ -7,7 +7,7 @@ use gpui::*;
 
 use crate::components::markdown::code_highlight::{CodeHighlightResult, code_highlight_color};
 use crate::theme::{Theme, ThemeManager};
-use crate::window_chrome::velotype_window_options;
+use crate::window_chrome::maksher_window_options;
 
 pub(crate) struct CodeViewer {
     path: PathBuf,
@@ -151,7 +151,7 @@ pub(crate) fn open_code_viewer_window(
         .unwrap_or_else(|| "maksher".to_string());
     let bounds = Bounds::centered(None, size(px(980.0), px(720.0)), cx);
     let _ = cx.open_window(
-        velotype_window_options(title.into(), bounds),
+        maksher_window_options(title.into(), bounds),
         move |_, cx| {
             cx.new(|_| CodeViewer {
                 path,

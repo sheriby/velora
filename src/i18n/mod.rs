@@ -1368,10 +1368,9 @@ impl I18nStrings {
             update_open_release: "前往下载".into(),
             update_later: "稍后".into(),
             help_about_title: "关于 maksher".into(),
-            help_about_message: "作者：所有项目贡献者".into(),
-            help_about_github_label: "GitHub".into(),
-            help_about_star_message: "如果本项目对您有帮助，那不妨给本项目一颗 Star⭐，十分感谢！"
-                .into(),
+            help_about_message: "一款基于 GPUI 的原生 Markdown 编辑器。编辑核心基于 Velotype，并保留其 Apache-2.0 许可。".into(),
+            help_about_github_label: "编辑核心来源".into(),
+            help_about_star_message: "第三方来源与许可信息见项目文档。".into(),
             menu_file: "文件".into(),
             menu_export: "导出".into(),
             menu_language: "语言".into(),
@@ -1592,10 +1591,9 @@ impl I18nStrings {
             update_open_release: "Open Releases".into(),
             update_later: "Later".into(),
             help_about_title: "About maksher".into(),
-            help_about_message: "Author: All project contributors".into(),
-            help_about_github_label: "GitHub".into(),
-            help_about_star_message:
-                "If this project helps you, consider giving it a Star⭐. Thank you!".into(),
+            help_about_message: "A native Markdown editor built with GPUI. The editing core is based on Velotype under Apache-2.0.".into(),
+            help_about_github_label: "Editor core source".into(),
+            help_about_star_message: "Third-party sources and licenses are documented in the project.".into(),
             menu_file: "File".into(),
             menu_export: "Export".into(),
             menu_language: "Language".into(),
@@ -2192,13 +2190,13 @@ mod tests {
         assert_eq!(strings.image_loading_without_alt, "正在加载图片...");
         assert_eq!(
             strings.help_check_updates_message,
-            "正在检查 Velotype 的最新版本..."
+            "正在检查 maksher 的最新版本..."
         );
         assert_eq!(strings.update_open_release, "前往下载");
-        assert_eq!(strings.help_about_github_label, "GitHub");
+        assert_eq!(strings.help_about_github_label, "编辑核心来源");
         assert_eq!(
             strings.help_about_star_message,
-            "如果本项目对您有帮助，那不妨给本项目一颗 Star⭐，十分感谢！"
+            "第三方来源与许可信息见项目文档。"
         );
     }
 
@@ -2365,10 +2363,10 @@ mod tests {
         assert_eq!(pack.strings.menu_export, "导出");
         assert_eq!(pack.strings.info_dialog_ok, "确定");
         assert_eq!(pack.strings.update_open_release, "前往下载");
-        assert_eq!(pack.strings.help_about_github_label, "GitHub");
+        assert_eq!(pack.strings.help_about_github_label, "编辑核心来源");
         assert_eq!(
             pack.strings.help_about_star_message,
-            "如果本项目对您有帮助，那不妨给本项目一颗 Star⭐，十分感谢！"
+            "第三方来源与许可信息见项目文档。"
         );
     }
 
@@ -2396,10 +2394,10 @@ mod tests {
             pack.strings.recent_file_missing_title,
             "Recent File Missing"
         );
-        assert_eq!(pack.strings.help_about_github_label, "GitHub");
+        assert_eq!(pack.strings.help_about_github_label, "Editor core source");
         assert_eq!(
             pack.strings.help_about_star_message,
-            "If this project helps you, consider giving it a Star⭐. Thank you!"
+            "Third-party sources and licenses are documented in the project."
         );
     }
 }

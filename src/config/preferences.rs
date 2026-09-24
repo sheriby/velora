@@ -17,7 +17,7 @@ use crate::components::{
 use crate::i18n::{I18nManager, language_id_for_locale_preferences};
 use crate::theme::{Theme, ThemeCatalogEntry, ThemeManager};
 use crate::window_chrome::{
-    custom_titlebar_height, render_custom_titlebar, velotype_window_options,
+    custom_titlebar_height, maksher_window_options, render_custom_titlebar,
 };
 
 const DEFAULT_THEME_ID: &str = "system";
@@ -1681,7 +1681,7 @@ impl Render for PreferencesWindow {
         let t = &theme.typography;
         let can_save = self.has_unsaved_changes();
         let window_title =
-            SharedString::from(format!("Velotype - {}", strings.preferences_window_title));
+            SharedString::from(format!("maksher - {}", strings.preferences_window_title));
         window.set_window_title(window_title.as_ref());
         let titlebar_height = custom_titlebar_height(window, d);
 
@@ -1929,10 +1929,10 @@ fn open_preferences_window_with_state(
     title: String,
 ) -> WindowHandle<PreferencesWindow> {
     let bounds = Bounds::centered(None, size(px(720.0), px(480.0)), cx);
-    let window_title = SharedString::from(format!("Velotype - {title}"));
+    let window_title = SharedString::from(format!("maksher - {title}"));
     let handle = cx
         .open_window(
-            velotype_window_options(window_title, bounds),
+            maksher_window_options(window_title, bounds),
             move |_window, cx| {
                 cx.new(move |cx| PreferencesWindow::new(preferences, theme_options, cx))
             },

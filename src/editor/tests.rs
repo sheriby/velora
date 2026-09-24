@@ -384,19 +384,16 @@ async fn document_present_on_the_first_frame_is_measured_at_the_real_width(
 }
 
 #[test]
-fn about_dialog_body_lines_include_repository_and_star_message() {
+fn about_dialog_body_lines_use_maksher_brand_and_source_attribution() {
     let strings = I18nStrings::zh_cn();
     let lines = Editor::about_dialog_body_lines(&strings);
 
-    assert_eq!(lines[0], format!("Velotype {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(lines[0], format!("maksher {}", env!("CARGO_PKG_VERSION")));
     assert_eq!(
         lines[2],
-        format!("GitHub: {}", super::render::ABOUT_GITHUB_URL)
+        format!("编辑核心来源: {}", super::render::ABOUT_GITHUB_URL)
     );
-    assert_eq!(
-        lines[3],
-        "如果本项目对您有帮助，那不妨给本项目一颗 Star⭐，十分感谢！"
-    );
+    assert_eq!(lines[3], "第三方来源与许可信息见项目文档。");
 }
 
 #[gpui::test]

@@ -1338,7 +1338,7 @@ impl Editor {
 
     pub(crate) fn about_dialog_body_lines(strings: &I18nStrings) -> Vec<String> {
         vec![
-            format!("Velotype {}", env!("CARGO_PKG_VERSION")),
+            format!("maksher {}", env!("CARGO_PKG_VERSION")),
             strings.help_about_message.clone(),
             format!("{}: {}", strings.help_about_github_label, ABOUT_GITHUB_URL),
             strings.help_about_star_message.clone(),
@@ -1385,7 +1385,7 @@ impl Editor {
                 .flex()
                 .flex_col()
                 .gap(px(d.dialog_gap * 0.5))
-                .child(body_style(div()).child(format!("Velotype {}", env!("CARGO_PKG_VERSION"))))
+                .child(body_style(div()).child(format!("maksher {}", env!("CARGO_PKG_VERSION"))))
                 .child(body_style(div()).child(strings.help_about_message.clone()))
                 .child(
                     body_style(div())
@@ -2479,7 +2479,7 @@ mod tests {
     #[test]
     fn import_menu_split_detects_theme_and_language_import_tails() {
         let theme_items = vec![
-            disabled_menu_action("Velotype"),
+            disabled_menu_action("maksher"),
             OwnedMenuItem::Separator,
             add_theme_menu_action(),
         ];
@@ -2493,8 +2493,7 @@ mod tests {
             OwnedMenuItem::Separator,
             disabled_menu_action("Save"),
         ];
-        let malformed_import_items =
-            vec![disabled_menu_action("Velotype"), add_theme_menu_action()];
+        let malformed_import_items = vec![disabled_menu_action("maksher"), add_theme_menu_action()];
 
         assert_eq!(import_menu_split_index(&theme_items), Some(1));
         assert_eq!(import_menu_split_index(&language_items), Some(1));
