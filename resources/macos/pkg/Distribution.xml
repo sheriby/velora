@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 基于 Velotype 修改：安装包名称与标识改为 maksher。 -->
+<installer-gui-script minSpecVersion="1">
+    <title>maksher</title>
+    <welcome>maksher 是一款基于 Rust 与 GPUI 的 Markdown 编辑器。</welcome>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="10.15"/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="default">
+            <line choice="maksher"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="maksher" title="安装 maksher" description="将 maksher 安装到应用程序目录">
+        <pkg-ref id="app.maksher.editor"/>
+    </choice>
+    <pkg-ref id="app.maksher.editor" version="__MAKSHER_VERSION__" onConclusion="none">#maksher-component.pkg</pkg-ref>
+</installer-gui-script>
