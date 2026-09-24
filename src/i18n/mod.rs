@@ -246,6 +246,18 @@ pub struct I18nStrings {
     pub workspace_search_placeholder: String,
     /// Empty state when the filename filter has no matches.
     pub workspace_no_search_results: String,
+    /// Workspace action for creating a Markdown file.
+    pub workspace_new_file: String,
+    /// Workspace action for creating a folder.
+    pub workspace_new_folder: String,
+    /// Workspace action for renaming or moving the selected item.
+    pub workspace_rename: String,
+    /// Workspace action for deleting the selected item.
+    pub workspace_delete: String,
+    /// Confirmation title for deleting a workspace item.
+    pub workspace_delete_confirm_title: String,
+    /// Confirmation message for deleting a workspace item.
+    pub workspace_delete_confirm_message: String,
     /// Title shown when no Markdown file path is available for workspace mode.
     pub workspace_no_file_title: String,
     /// Message shown when no Markdown file path is available for workspace mode.
@@ -483,6 +495,12 @@ struct I18nStringsDe {
     workspace_empty_recent: Option<String>,
     workspace_search_placeholder: Option<String>,
     workspace_no_search_results: Option<String>,
+    workspace_new_file: Option<String>,
+    workspace_new_folder: Option<String>,
+    workspace_rename: Option<String>,
+    workspace_delete: Option<String>,
+    workspace_delete_confirm_title: Option<String>,
+    workspace_delete_confirm_message: Option<String>,
     workspace_no_file_title: Option<String>,
     workspace_no_file_message: Option<String>,
     workspace_empty_files: Option<String>,
@@ -674,6 +692,12 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_empty_recent",
     "workspace_search_placeholder",
     "workspace_no_search_results",
+    "workspace_new_file",
+    "workspace_new_folder",
+    "workspace_rename",
+    "workspace_delete",
+    "workspace_delete_confirm_title",
+    "workspace_delete_confirm_message",
     "workspace_no_file_title",
     "workspace_no_file_message",
     "workspace_empty_files",
@@ -1111,6 +1135,20 @@ impl I18nStringsDe {
             workspace_no_search_results: self
                 .workspace_no_search_results
                 .unwrap_or(defaults.workspace_no_search_results),
+            workspace_new_file: self
+                .workspace_new_file
+                .unwrap_or(defaults.workspace_new_file),
+            workspace_new_folder: self
+                .workspace_new_folder
+                .unwrap_or(defaults.workspace_new_folder),
+            workspace_rename: self.workspace_rename.unwrap_or(defaults.workspace_rename),
+            workspace_delete: self.workspace_delete.unwrap_or(defaults.workspace_delete),
+            workspace_delete_confirm_title: self
+                .workspace_delete_confirm_title
+                .unwrap_or(defaults.workspace_delete_confirm_title),
+            workspace_delete_confirm_message: self
+                .workspace_delete_confirm_message
+                .unwrap_or(defaults.workspace_delete_confirm_message),
             workspace_no_file_title: self
                 .workspace_no_file_title
                 .unwrap_or(defaults.workspace_no_file_title),
@@ -1388,6 +1426,12 @@ impl I18nStrings {
             workspace_empty_recent: "还没有最近打开的工作区".into(),
             workspace_search_placeholder: "按文件名搜索".into(),
             workspace_no_search_results: "没有匹配的文件".into(),
+            workspace_new_file: "新建 Markdown 文件".into(),
+            workspace_new_folder: "新建文件夹".into(),
+            workspace_rename: "重命名或移动".into(),
+            workspace_delete: "删除".into(),
+            workspace_delete_confirm_title: "删除工作区项目？".into(),
+            workspace_delete_confirm_message: "此操作会永久删除选中的文件或文件夹。".into(),
             workspace_no_file_title: "未打开 Markdown 文件".into(),
             workspace_no_file_message: "打开或保存一个 .md 文件后，工作区会使用该文件所在目录。"
                 .into(),
@@ -1608,6 +1652,12 @@ impl I18nStrings {
             workspace_empty_recent: "No recent workspaces".into(),
             workspace_search_placeholder: "Search file names".into(),
             workspace_no_search_results: "No matching files".into(),
+            workspace_new_file: "New Markdown File".into(),
+            workspace_new_folder: "New Folder".into(),
+            workspace_rename: "Rename or Move".into(),
+            workspace_delete: "Delete".into(),
+            workspace_delete_confirm_title: "Delete workspace item?".into(),
+            workspace_delete_confirm_message: "The selected file or folder will be permanently deleted.".into(),
             workspace_no_file_title: "No Markdown File Open".into(),
             workspace_no_file_message:
                 "Open or save a .md file to use its folder as the workspace.".into(),

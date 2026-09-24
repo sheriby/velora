@@ -54,6 +54,7 @@ struct WorkspaceDocumentTab {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WorkspaceSelection {
+    Directory(PathBuf),
     File(PathBuf),
     WorkspaceRoot(PathBuf),
     Outline(String),
@@ -136,8 +137,113 @@ impl Editor {
         self.workspace.file_error = None;
         self.workspace.expanded.clear();
         self.sync_workspace_file_tree();
+        if self.workspace.selected.is_none() {
+            self.workspace.selected = self
+                .workspace
+                .root
+                .clone()
+                .map(WorkspaceSelection::Directory);
+        }
         self.sync_workspace_outline(cx);
         cx.notify();
+    }
+
+    fn selected_workspace_directory(&self) -> Option<PathBuf> {
+        match self.workspace.selected.as_ref() {
+            Some(WorkspaceSelection::Directory(path)) => Some(path.clone()),
+            Some(WorkspaceSelection::File(path)) => path.parent().map(Path::to_path_buf),
+            Some(WorkspaceSelection::WorkspaceRoot(path)) => Some(path.clone()),
+            _ => self.workspace.root.clone(),
+        }
+    }
+
+    fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
+        self.workspace.file_tree = None;
+        self.sync_workspace_file_tree();
+        cx.notify();
+    }
+
+    fn show_workspace_file_error(
+        window_handle: AnyWindowHandle,
+        detail: String,
+        cx: &mut AsyncApp,
+    ) {
+        let _ = cx.update_window(
+            window_handle,
+            move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+                let buttons = [strings.info_dialog_ok.as_str()];
+                let _ = window.prompt(
+                    PromptLevel::Critical,
+                    &strings.open_failed_title,
+                    Some(&detail),
+                    &buttons,
+                    cx,
+                );
+            },
+        );
+    }
+
+    fn prompt_create_workspace_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(directory) = self.selected_workspace_directory() else {
+            return;
+        };
+        let prompt = cx.prompt_for_new_path(&directory, Some("untitled.md"));
+        let editor = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let Ok(Ok(Some(path))) = prompt.await else {
+                return;
+            };
+            if let Err(err) = create_workspace_file(&path) {
+                Self::show_workspace_file_error(
+                    window_handle,
+                    format!("无法新建文件：{}", err),
+                    cx,
+                );
+                return;
+            }
+            let _ = editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+            let _ = cx.update_window(
+                window_handle,
+                move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                    let _ = editor.update(cx, |editor, cx| {
+                        editor.open_workspace_file(path, window, cx);
+                    });
+                },
+            );
+        })
+        .detach();
+    }
+
+    fn prompt_create_workspace_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(directory) = self.selected_workspace_directory() else {
+            return;
+        };
+        let prompt = cx.prompt_for_new_path(&directory, Some("New Folder"));
+        let editor = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let Ok(Ok(Some(path))) = prompt.await else {
+                return;
+            };
+            if let Err(err) = create_workspace_folder(&path) {
+                Self::show_workspace_file_error(
+                    window_handle,
+                    format!("无法新建文件夹：{}", err),
+                    cx,
+                );
+                return;
+            }
+            let folder_path = path.clone();
+            let _ = editor.update(cx, move |editor, cx| {
+                editor.refresh_workspace_tree(cx);
+                editor.workspace.expanded.insert(file_node_id(&folder_path));
+                editor.workspace.selected = Some(WorkspaceSelection::Directory(folder_path));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -578,6 +684,48 @@ impl Editor {
                     editor.prompt_open_workspace_folder(cx);
                 });
             });
+        let new_file_editor = editor.clone();
+        let new_file_button = div()
+            .id("workspace-new-file")
+            .flex_1()
+            .h(px(30.0))
+            .px(px(7.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .bg(c.dialog_secondary_button_bg)
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .cursor_pointer()
+            .text_size(px(t.text_size * 0.78))
+            .text_color(c.text_default)
+            .child(strings.workspace_new_file.clone())
+            .on_click(move |_event, window, cx| {
+                let _ = new_file_editor.update(cx, |editor, cx| {
+                    editor.prompt_create_workspace_file(window, cx);
+                });
+            });
+        let new_folder_editor = editor.clone();
+        let new_folder_button = div()
+            .id("workspace-new-folder")
+            .flex_1()
+            .h(px(30.0))
+            .px(px(7.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .bg(c.dialog_secondary_button_bg)
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .cursor_pointer()
+            .text_size(px(t.text_size * 0.78))
+            .text_color(c.text_default)
+            .child(strings.workspace_new_folder.clone())
+            .on_click(move |_event, window, cx| {
+                let _ = new_folder_editor.update(cx, |editor, cx| {
+                    editor.prompt_create_workspace_folder(window, cx);
+                });
+            });
         let search_focus = self
             .workspace
             .filename_search_focus
@@ -678,7 +826,15 @@ impl Editor {
                                 )),
                         )
                         .child(open_folder_button)
-                        .child(search_field),
+                        .child(search_field)
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .gap(px(6.0))
+                                .child(new_file_button)
+                                .child(new_folder_button),
+                        ),
                 )
                 .child(
                     div()
@@ -868,6 +1024,9 @@ impl Editor {
         let is_expanded = self.workspace.expanded.contains(&node.id);
         let has_children = !node.children.is_empty();
         let selected = match (&self.workspace.selected, &node.kind) {
+            (Some(WorkspaceSelection::Directory(selected)), WorkspaceTreeKind::Directory(path)) => {
+                selected == path
+            }
             (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::MarkdownFile(path)) => {
                 selected == path
             }
@@ -973,7 +1132,10 @@ impl Editor {
                 let node_id = node_id.clone();
                 let click_kind = click_kind.clone();
                 let _ = click_editor.update(cx, |editor, cx| match click_kind {
-                    WorkspaceTreeKind::Directory(_) => editor.toggle_workspace_node(&node_id, cx),
+                    WorkspaceTreeKind::Directory(path) => {
+                        editor.workspace.selected = Some(WorkspaceSelection::Directory(path));
+                        editor.toggle_workspace_node(&node_id, cx);
+                    }
                     WorkspaceTreeKind::MarkdownFile(path) => {
                         editor.open_workspace_file(path, window, cx);
                     }
@@ -996,6 +1158,18 @@ impl Editor {
 fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("md"))
+}
+
+fn create_workspace_file(path: &Path) -> std::io::Result<()> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map(|_| ())
+}
+
+fn create_workspace_folder(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(path)
 }
 
 fn collect_matching_workspace_files(
@@ -1237,8 +1411,8 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 mod tests {
     use super::{
         WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
-        collect_matching_workspace_files, prune_outline_state, scan_workspace_dir,
-        workspace_panel_width_for_viewport,
+        collect_matching_workspace_files, create_workspace_file, create_workspace_folder,
+        prune_outline_state, scan_workspace_dir, workspace_panel_width_for_viewport,
     };
     use std::fs;
 
@@ -1301,6 +1475,31 @@ mod tests {
         matches.clear();
         collect_matching_workspace_files(&tree, &tree, "content", &mut matches);
         assert!(matches.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workspace_create_operations_do_not_overwrite_existing_files() {
+        let root =
+            std::env::temp_dir().join(format!("maksher-workspace-create-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create root");
+        let file = root.join("notes.md");
+        fs::write(&file, "keep this").expect("write existing file");
+
+        assert!(create_workspace_file(&file).is_err());
+        assert_eq!(
+            fs::read_to_string(&file).expect("read existing file"),
+            "keep this"
+        );
+
+        let new_file = root.join("new.md");
+        create_workspace_file(&new_file).expect("create markdown file");
+        assert_eq!(fs::read_to_string(&new_file).expect("read new file"), "");
+
+        let folder = root.join("nested");
+        create_workspace_folder(&folder).expect("create folder");
+        assert!(folder.is_dir());
 
         let _ = fs::remove_dir_all(root);
     }
