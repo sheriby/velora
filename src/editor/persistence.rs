@@ -172,6 +172,10 @@ impl Editor {
                                         let _ = std::fs::remove_file(temp_path);
                                     }
                                 }
+                                if editor.document_revision != revision {
+                                    editor.schedule_autosave(cx);
+                                    return None;
+                                }
                                 let detail = error.to_string();
                                 eprintln!("failed to save recovery snapshot: {detail}");
                                 editor.report_workspace_file_error(detail.clone(), cx);

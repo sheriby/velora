@@ -1,11 +1,13 @@
 //! Lightweight workspace panel state, file-tree scanning, and outline parsing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use gpui::*;
+use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 
 use super::{BlockKind, Editor, code_viewer};
 use crate::i18n::I18nStrings;
@@ -320,6 +322,7 @@ impl Editor {
         let editor = cx.entity().downgrade();
         let window_handle = window.window_handle();
         let source_is_directory = source.is_dir();
+        let background = cx.background_executor().clone();
 
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let Ok(Ok(Some(destination))) = prompt.await else {
@@ -336,6 +339,72 @@ impl Editor {
                 );
                 return;
             }
+
+            let source_directory = source.parent().map(Path::to_path_buf);
+            let destination_directory = destination.parent().map(Path::to_path_buf);
+            let markdown_move = !source_is_directory
+                && is_markdown_file(&source)
+                && source_directory != destination_directory;
+            let open_markdown = if markdown_move {
+                editor
+                    .update(cx, |editor, cx| editor.markdown_state_for_path(&source, cx))
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            let source_for_read = source.clone();
+            let disk_markdown = if markdown_move {
+                match background
+                    .spawn(async move { fs::read_to_string(source_for_read) })
+                    .await
+                {
+                    Ok(markdown) => Some(markdown),
+                    Err(error) => {
+                        Self::show_workspace_file_error(
+                            window_handle,
+                            format!("无法读取待移动的 Markdown 文件：{error}"),
+                            cx,
+                        );
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+            if let (Some((_, _, expected_version)), Some(markdown)) =
+                (open_markdown.as_ref(), disk_markdown.as_ref())
+                && super::persistence::file_content_version(markdown) != *expected_version
+            {
+                Self::show_external_change_error(
+                    window_handle,
+                    format!("检测到外部修改：{}", source.display()),
+                    cx,
+                );
+                return;
+            }
+            let rewritten_disk_markdown = match (
+                markdown_move,
+                disk_markdown.as_deref(),
+                source_directory.as_deref(),
+                destination_directory.as_deref(),
+            ) {
+                (true, Some(markdown), Some(source_directory), Some(destination_directory)) => {
+                    Some(rewrite_relative_image_targets(
+                        markdown,
+                        source_directory,
+                        destination_directory,
+                    ))
+                }
+                _ => None,
+            };
+            let moved_disk_markdown = rewritten_disk_markdown
+                .clone()
+                .or_else(|| disk_markdown.clone());
+            let moved_disk_version = moved_disk_markdown
+                .as_deref()
+                .map(super::persistence::file_content_version);
+
             if let Err(err) = std::fs::rename(&source, &destination) {
                 Self::show_workspace_file_error(
                     window_handle,
@@ -344,15 +413,53 @@ impl Editor {
                 );
                 return;
             }
+            if let Some(rewritten) = rewritten_disk_markdown
+                .as_ref()
+                .zip(disk_markdown.as_ref())
+                .and_then(|(rewritten, original)| (rewritten != original).then_some(rewritten))
+                && let Err(error) = fs::write(&destination, rewritten)
+            {
+                let rollback_error = std::fs::rename(&destination, &source).err();
+                let detail = if let Some(rollback_error) = rollback_error {
+                    format!("无法更新图片相对路径：{error}；回滚也失败：{rollback_error}")
+                } else {
+                    format!("无法更新图片相对路径：{error}")
+                };
+                Self::show_workspace_file_error(window_handle, detail, cx);
+                return;
+            }
 
             let _ = editor.update(cx, move |editor, cx| {
+                editor.document_revision = editor.document_revision.wrapping_add(1);
+                editor.autosave_task = None;
                 for tab in &mut editor.workspace.open_documents {
+                    if markdown_move && tab.path == source {
+                        if let (Some(source_directory), Some(destination_directory)) = (
+                            source_directory.as_deref(),
+                            destination_directory.as_deref(),
+                        ) {
+                            tab.markdown = rewrite_relative_image_targets(
+                                &tab.markdown,
+                                source_directory,
+                                destination_directory,
+                            );
+                        }
+                        if let Some(file_version) = moved_disk_version {
+                            tab.file_version = file_version;
+                        }
+                    }
                     if let Some(path) =
                         remap_moved_path(&tab.path, &source, &destination, source_is_directory)
                     {
                         tab.path = path;
                     }
                 }
+                let active_markdown = if markdown_move && editor.file_path.as_ref() == Some(&source)
+                {
+                    Some((editor.serialized_document_text(cx), editor.document_dirty))
+                } else {
+                    None
+                };
                 if let Some(path) = editor.file_path.as_ref().and_then(|path| {
                     remap_moved_path(path, &source, &destination, source_is_directory)
                 }) {
@@ -387,8 +494,50 @@ impl Editor {
                     }
                     other => other,
                 };
+                if let Some((markdown, was_dirty)) = active_markdown {
+                    if let (Some(source_directory), Some(destination_directory)) = (
+                        source_directory.as_deref(),
+                        destination_directory.as_deref(),
+                    ) {
+                        let rewritten = rewrite_relative_image_targets(
+                            &markdown,
+                            source_directory,
+                            destination_directory,
+                        );
+                        editor.file_version = moved_disk_version;
+                        if rewritten != markdown {
+                            editor.replace_document_from_markdown(
+                                rewritten.clone(),
+                                Some(destination.clone()),
+                                cx,
+                            );
+                            editor.file_version = moved_disk_version;
+                            editor.document_dirty = was_dirty;
+                            if was_dirty {
+                                editor.mark_dirty(cx);
+                            }
+                            if let Some(tab) =
+                                editor.workspace.open_documents.iter_mut().find(|tab| {
+                                    tab.path == destination && tab.recovery_id == editor.recovery_id
+                                })
+                            {
+                                tab.markdown = rewritten;
+                                tab.dirty = editor.document_dirty;
+                                tab.file_version = moved_disk_version.unwrap_or_else(|| {
+                                    super::persistence::file_content_version(&tab.markdown)
+                                });
+                            }
+                        } else if was_dirty {
+                            editor.document_dirty = true;
+                            editor.schedule_autosave(cx);
+                        }
+                    }
+                }
                 editor.refresh_workspace_tree(cx);
                 editor.workspace.recent_roots_loaded = true;
+                if editor.document_dirty || editor.has_dirty_workspace_documents() {
+                    editor.schedule_autosave(cx);
+                }
                 cx.notify();
             });
         })
@@ -794,6 +943,23 @@ impl Editor {
 
     pub(super) fn workspace_root_for_image_paste(&self) -> Option<PathBuf> {
         self.workspace.root.clone()
+    }
+
+    fn markdown_state_for_path(&self, path: &Path, cx: &App) -> Option<(String, bool, u64)> {
+        if self.file_path.as_deref() == Some(path) {
+            let markdown = self.serialized_document_text(cx);
+            return Some((
+                markdown.clone(),
+                self.document_dirty,
+                self.file_version
+                    .unwrap_or_else(|| super::persistence::file_content_version(&markdown)),
+            ));
+        }
+        self.workspace
+            .open_documents
+            .iter()
+            .find(|tab| tab.path == path)
+            .map(|tab| (tab.markdown.clone(), tab.dirty, tab.file_version))
     }
 
     fn sync_workspace_file_tree(&mut self) {
@@ -1730,6 +1896,291 @@ fn remap_moved_path(
     Some(destination.join(suffix))
 }
 
+fn inline_image_destination_range(source: &str, range: Range<usize>) -> Option<Range<usize>> {
+    let image = source.get(range.clone())?;
+    let bytes = image.as_bytes();
+    if !image.starts_with("![") {
+        return None;
+    }
+
+    let mut cursor = 2;
+    let mut bracket_depth = 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => cursor = cursor.checked_add(2)?,
+            b'[' => {
+                bracket_depth += 1;
+                cursor += 1;
+            }
+            b']' => {
+                bracket_depth -= 1;
+                cursor += 1;
+                if bracket_depth == 0 {
+                    break;
+                }
+            }
+            _ => cursor += 1,
+        }
+    }
+    if bracket_depth != 0 {
+        return None;
+    }
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'(') {
+        return None;
+    }
+    cursor += 1;
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+
+    let (start, end) = if bytes.get(cursor) == Some(&b'<') {
+        let start = cursor + 1;
+        cursor = start;
+        while cursor < bytes.len() {
+            if bytes[cursor] == b'\\' {
+                cursor = cursor.checked_add(2)?;
+            } else if bytes[cursor] == b'>' {
+                break;
+            } else {
+                cursor += 1;
+            }
+        }
+        (start, cursor)
+    } else {
+        let start = cursor;
+        let mut parentheses = 0usize;
+        while cursor < bytes.len() {
+            match bytes[cursor] {
+                b'\\' => cursor = cursor.checked_add(2)?,
+                b'(' => {
+                    parentheses += 1;
+                    cursor += 1;
+                }
+                b')' if parentheses == 0 => break,
+                b')' => {
+                    parentheses -= 1;
+                    cursor += 1;
+                }
+                byte if byte.is_ascii_whitespace() && parentheses == 0 => break,
+                _ => cursor += 1,
+            }
+        }
+        (start, cursor)
+    };
+    (start < end).then_some((range.start + start)..(range.start + end))
+}
+
+fn rewrite_relative_image_destination(
+    destination: &str,
+    source_directory: &Path,
+    destination_directory: &Path,
+) -> Option<String> {
+    if destination.starts_with("//")
+        || destination.starts_with('/')
+        || destination.starts_with('#')
+        || url::Url::parse(destination).is_ok()
+    {
+        return None;
+    }
+
+    let suffix_start = destination
+        .char_indices()
+        .find(|(_, character)| matches!(character, '?' | '#'))
+        .map_or(destination.len(), |(index, _)| index);
+    let (relative_target, suffix) = destination.split_at(suffix_start);
+    if relative_target.is_empty() {
+        return None;
+    }
+    let target_path = Path::new(relative_target);
+    if target_path.is_absolute() {
+        return None;
+    }
+    let resolved_target = normalize_path(&source_directory.join(target_path));
+    let relative_path = relative_path_between(destination_directory, &resolved_target)?;
+    let mut relative = relative_path.to_string_lossy().replace('\\', "/");
+    if !relative.starts_with("./") && !relative.starts_with("../") {
+        relative = format!("./{relative}");
+    }
+    relative = relative
+        .replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('(', "%28")
+        .replace(')', "%29")
+        .replace('"', "%22");
+    Some(format!("{relative}{suffix}"))
+}
+
+fn rewrite_relative_image_targets(
+    markdown: &str,
+    source_directory: &Path,
+    destination_directory: &Path,
+) -> String {
+    let mut replacements = Vec::new();
+    let mut reference_destinations = HashMap::new();
+    for (event, range) in Parser::new_ext(markdown, Options::all()).into_offset_iter() {
+        let Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            id,
+            ..
+        }) = event
+        else {
+            continue;
+        };
+        let Some(destination) =
+            rewrite_relative_image_destination(&dest_url, source_directory, destination_directory)
+        else {
+            continue;
+        };
+        if link_type == LinkType::Inline {
+            if let Some(range) = inline_image_destination_range(markdown, range) {
+                replacements.push((range, destination));
+            }
+        } else {
+            reference_destinations.insert(normalize_reference_id(&id), destination);
+        }
+    }
+
+    if !reference_destinations.is_empty() {
+        let mut line_offset = 0;
+        for line in markdown.split_inclusive('\n') {
+            if let Some((id, range)) = reference_definition_target_range(line, line_offset)
+                && let Some(destination) = reference_destinations.get(&id)
+            {
+                replacements.push((range, destination.clone()));
+            }
+            line_offset += line.len();
+        }
+    }
+
+    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
+    let mut rewritten = markdown.to_string();
+    for (range, destination) in replacements {
+        rewritten.replace_range(range, &destination);
+    }
+    rewritten
+}
+
+fn normalize_reference_id(id: &str) -> String {
+    id.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn reference_definition_target_range(
+    line: &str,
+    line_offset: usize,
+) -> Option<(String, Range<usize>)> {
+    let bytes = line.as_bytes();
+    let mut cursor = 0;
+    while bytes.get(cursor) == Some(&b' ') && cursor < 4 {
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'[') {
+        return None;
+    }
+    let id_start = cursor + 1;
+    cursor = id_start;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => cursor = cursor.checked_add(2)?,
+            b']' => break,
+            _ => cursor += 1,
+        }
+    }
+    if bytes.get(cursor) != Some(&b']') || bytes.get(cursor + 1) != Some(&b':') {
+        return None;
+    }
+    let id = normalize_reference_id(line.get(id_start..cursor)?);
+    cursor += 2;
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+
+    let (start, end) = if bytes.get(cursor) == Some(&b'<') {
+        let start = cursor + 1;
+        cursor = start;
+        while cursor < bytes.len() {
+            if bytes[cursor] == b'\\' {
+                cursor = cursor.checked_add(2)?;
+            } else if bytes[cursor] == b'>' {
+                break;
+            } else {
+                cursor += 1;
+            }
+        }
+        (start, cursor)
+    } else {
+        let start = cursor;
+        while cursor < bytes.len() && !bytes[cursor].is_ascii_whitespace() && bytes[cursor] != b')'
+        {
+            if bytes[cursor] == b'\\' {
+                cursor = cursor.checked_add(2)?;
+            } else {
+                cursor += 1;
+            }
+        }
+        (start, cursor)
+    };
+    (start < end).then_some((id, (line_offset + start)..(line_offset + end)))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn relative_path_between(from: &Path, to: &Path) -> Option<PathBuf> {
+    let from = normalize_path(from);
+    let to = normalize_path(to);
+    if !from.is_absolute() || !to.is_absolute() {
+        return None;
+    }
+    let from_components = from.components().collect::<Vec<_>>();
+    let to_components = to.components().collect::<Vec<_>>();
+    let mut common = 0;
+    while common < from_components.len()
+        && common < to_components.len()
+        && from_components[common] == to_components[common]
+    {
+        common += 1;
+    }
+    if common == 0 {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for component in &from_components[common..] {
+        if matches!(component, std::path::Component::Normal(_)) {
+            relative.push("..");
+        }
+    }
+    for component in &to_components[common..] {
+        if matches!(
+            component,
+            std::path::Component::Normal(_) | std::path::Component::ParentDir
+        ) {
+            relative.push(component.as_os_str());
+        }
+    }
+    Some(relative)
+}
+
 fn path_is_affected(path: &Path, target: &Path, target_is_directory: bool) -> bool {
     if target_is_directory {
         path.starts_with(target)
@@ -1978,8 +2429,8 @@ mod tests {
     use super::{
         WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
         collect_matching_workspace_files, create_workspace_file, create_workspace_folder,
-        path_is_affected, prune_outline_state, remap_moved_path, scan_workspace_dir,
-        workspace_panel_width_for_viewport,
+        path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
+        scan_workspace_dir, workspace_panel_width_for_viewport,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -2102,6 +2553,32 @@ mod tests {
                 false,
             ),
             Some(PathBuf::from("/workspace/new.md"))
+        );
+    }
+
+    #[test]
+    fn moving_a_markdown_file_rewrites_relative_inline_image_paths() {
+        let markdown = "![diagram](./assets/diagram.png \"Diagram\")\n\n![online](https://example.com/image.png)";
+        assert_eq!(
+            rewrite_relative_image_targets(
+                markdown,
+                Path::new("/workspace/docs"),
+                Path::new("/workspace/notes"),
+            ),
+            "![diagram](../docs/assets/diagram.png \"Diagram\")\n\n![online](https://example.com/image.png)"
+        );
+    }
+
+    #[test]
+    fn moving_a_markdown_file_rewrites_reference_image_definitions() {
+        let markdown = "![cover][hero]\n\n[hero]: ./assets/cover.png \"Cover\"";
+        assert_eq!(
+            rewrite_relative_image_targets(
+                markdown,
+                Path::new("/workspace/docs"),
+                Path::new("/workspace/notes"),
+            ),
+            "![cover][hero]\n\n[hero]: ../docs/assets/cover.png \"Cover\""
         );
     }
 
