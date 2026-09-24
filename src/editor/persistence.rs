@@ -46,7 +46,87 @@ pub(super) fn safe_code_fence_with_info(content: &str, info: Option<&str>) -> St
     safe_code_fence(content)
 }
 
+fn autosave_temp_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{name}.maksher-{}.tmp", uuid::Uuid::new_v4()))
+}
+
 impl Editor {
+    pub(super) fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
+        if self.autosave_task.is_some() || !self.document_dirty || self.file_path.is_none() {
+            return;
+        }
+
+        let editor = cx.entity().downgrade();
+        self.autosave_task = Some(cx.spawn(
+            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(800))
+                    .await;
+
+                let snapshot = editor
+                    .update(cx, |editor, cx| {
+                        let path = editor.file_path.clone()?;
+                        let markdown = editor.serialized_document_text(cx);
+                        let revision = editor.document_revision;
+                        let temp_path = autosave_temp_path(&path);
+                        Some((path, temp_path, markdown, revision))
+                    })
+                    .ok()
+                    .flatten();
+                let Some((path, temp_path, markdown, revision)) = snapshot else {
+                    let _ = editor.update(cx, |editor, _cx| editor.autosave_task = None);
+                    return;
+                };
+
+                let write_path = temp_path.clone();
+                let write_result = cx
+                    .background_executor()
+                    .spawn(async move { std::fs::write(write_path, markdown) })
+                    .await;
+                let path_for_update = path;
+                let _ = editor.update(cx, move |editor, cx| {
+                    editor.autosave_task = None;
+                    if let Err(error) = write_result {
+                        let _ = std::fs::remove_file(&temp_path);
+                        eprintln!(
+                            "failed to autosave '{}': {error}",
+                            path_for_update.display()
+                        );
+                        return;
+                    }
+                    if editor.file_path.as_ref() == Some(&path_for_update)
+                        && editor.document_revision == revision
+                        && editor.document_dirty
+                    {
+                        if let Err(error) = std::fs::rename(&temp_path, &path_for_update) {
+                            let _ = std::fs::remove_file(&temp_path);
+                            eprintln!(
+                                "failed to autosave '{}': {error}",
+                                path_for_update.display()
+                            );
+                            return;
+                        }
+                        editor.document_dirty = false;
+                        editor.pending_window_edited = false;
+                        editor.pending_window_unedited = true;
+                        editor.pending_window_title_refresh = true;
+                        editor.snapshot_current_document(cx);
+                        cx.notify();
+                    } else if editor.document_dirty {
+                        let _ = std::fs::remove_file(&temp_path);
+                        editor.schedule_autosave(cx);
+                    } else {
+                        let _ = std::fs::remove_file(&temp_path);
+                    }
+                });
+            },
+        ));
+    }
+
     pub(super) fn serialized_document_text(&self, cx: &App) -> String {
         if self.view_mode == super::ViewMode::Source {
             self.document.raw_source_text(cx)
@@ -74,12 +154,15 @@ impl Editor {
     }
 
     pub(super) fn apply_successful_save(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.document_revision = self.document_revision.wrapping_add(1);
         self.file_path = Some(path);
         self.document_dirty = false;
         self.pending_window_edited = false;
+        self.pending_window_unedited = true;
         self.pending_window_title_refresh = true;
         self.pending_close_after_save = false;
         self.close_dialog_restore_focus = None;
+        self.autosave_task = None;
         self.sync_workspace_after_document_path_change(cx);
         cx.notify();
     }

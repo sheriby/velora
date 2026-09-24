@@ -450,6 +450,42 @@ async fn ctrl_s_saves_rendered_mode_edit_to_existing_file(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn dirty_saved_document_is_autosaved(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("autosave");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("autosaved text".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read autosaved markdown"),
+        "autosaved text"
+    );
+    editor.read_with(cx, |editor, _cx| assert!(!editor.document_dirty));
+}
+
+#[gpui::test]
 async fn workspace_tabs_restore_unsaved_markdown_state(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 

@@ -550,7 +550,10 @@ impl Editor {
     }
 
     fn sync_window_edited_state(&mut self, window: &mut Window) {
-        if self.pending_window_edited {
+        if self.pending_window_unedited {
+            self.pending_window_unedited = false;
+            window.set_window_edited(false);
+        } else if self.pending_window_edited {
             self.pending_window_edited = false;
             window.set_window_edited(true);
         }

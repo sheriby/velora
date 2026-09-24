@@ -370,12 +370,15 @@ impl Editor {
     /// Marks the document dirty and schedules window-title and edited-state
     /// refresh for the next render frame.
     pub(super) fn mark_dirty(&mut self, cx: &mut Context<Self>) {
+        self.document_revision = self.document_revision.wrapping_add(1);
         if !self.document_dirty {
             self.document_dirty = true;
             self.pending_window_edited = true;
+            self.pending_window_unedited = false;
             self.pending_window_title_refresh = true;
             cx.notify();
         }
+        self.schedule_autosave(cx);
     }
 
     pub(super) fn request_active_block_scroll_into_view(&mut self, cx: &mut Context<Self>) {

@@ -539,7 +539,7 @@ impl Editor {
         self.workspace.active_document = Some(path);
     }
 
-    fn snapshot_current_document(&mut self, cx: &App) {
+    pub(super) fn snapshot_current_document(&mut self, cx: &App) {
         let Some(path) = self.file_path.clone() else {
             return;
         };
