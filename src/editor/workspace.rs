@@ -2449,11 +2449,12 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
+        Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
         collect_matching_workspace_files, create_workspace_file, create_workspace_folder,
         path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
         scan_workspace_dir, workspace_panel_width_for_viewport,
     };
+    use gpui::{AppContext, TestAppContext};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -2488,6 +2489,30 @@ mod tests {
         ));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn opening_a_code_file_creates_a_separate_viewer_window(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root =
+            std::env::temp_dir().join(format!("maksher-code-viewer-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create test workspace");
+        let path = root.join("main.rs");
+        fs::write(&path, "fn main() { println!(\"hello\"); }").expect("write code file");
+        let cleanup_root = root.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_dir_all(cleanup_root);
+        });
+
+        let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| editor.open_code_file(path, cx));
+        cx.run_until_parked();
+
+        assert_eq!(cx.windows().len(), 1);
     }
 
     #[test]
