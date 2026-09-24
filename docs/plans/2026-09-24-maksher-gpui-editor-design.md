@@ -40,5 +40,6 @@ Velotype 的本地基线固定为提交 `ed65977be94f2f2703037fcb8b6cbab2e757957
 - 中文拼音验收覆盖候选词位置、组合输入、跨块编辑、撤销、保存和重开，均不能丢字。Velotype 的路线图仍将更完整的 IME 行为列为待办，所以它是早期关口。
 - Markdown 固定样本覆盖受支持语法的读取、编辑、保存、重开、语义往返与不支持语法回退；文件测试覆盖外部修改冲突、原子写入和意外退出恢复。
 - macOS 在真实安装包中验收界面原型、工作区、代码浏览、主题及性能。Windows 首版只构建内部安装包，不宣称运行体验已验证。
+- macOS `.app` 与 `.pkg` 可由 fastdev 脚本生成；Windows x64 使用 GNU 交叉编译和 NSIS 构建内部安装包。Windows 实机运行仍需后续验收。
 - Velotype 标为 Apache-2.0。抽取时保留对应许可和版权声明，记录固定来源提交与修改范围；maksher 使用自己的名称与视觉资产。分发前核对依赖及 NOTICE 要求。参见 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)。
 - 先前未提交的 Tauri 脚手架已按用户要求删除；后续只按本 GPUI 设计推进。
