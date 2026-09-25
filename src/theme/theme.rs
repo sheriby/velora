@@ -1128,6 +1128,7 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     theme.name = name.into();
     c.editor_background = color(palette.window);
     c.source_mode_block_bg = color(palette.code);
+    c.comment_bg = color(palette.code);
     c.text_default = color(palette.text);
     c.text_placeholder = color(palette.muted);
     c.text_link = color(palette.accent);
@@ -1151,6 +1152,8 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.footnote_badge_text = color(palette.muted);
     c.footnote_backref = color(palette.accent);
     c.task_checkbox_checked_bg = color(palette.accent);
+    c.task_checkbox_border = color(palette.muted);
+    c.task_checkbox_bg = color(palette.window);
     c.task_checkbox_check = color(if palette.dark { 0x171b22ff } else { 0xffffffff });
     c.separator_color = color(palette.line);
     c.code_bg = color(palette.code);
@@ -1174,6 +1177,7 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.image_caption_text = color(palette.muted);
     c.cursor = color(palette.text);
     c.selection = color(palette.selection);
+    c.scrollbar_thumb = color((palette.muted & 0xffffff00) | 0xb8);
     c.dialog_surface = color(palette.window);
     c.dialog_border = color(palette.line);
     c.dialog_title = color(palette.text);
