@@ -9,6 +9,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use gpui::*;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{BlockKind, Editor, UndoSelectionSnapshot};
 use crate::i18n::I18nStrings;
@@ -134,6 +135,8 @@ pub(super) struct WorkspaceState {
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
     search_query: String,
+    search_selected_range: Range<usize>,
+    search_marked_range: Option<Range<usize>>,
     show_search: bool,
     search_focus: Option<FocusHandle>,
     search_results: Vec<WorkspaceSearchHit>,
@@ -159,6 +162,8 @@ impl Default for WorkspaceState {
             open_documents: Vec::new(),
             active_document: None,
             search_query: String::new(),
+            search_selected_range: 0..0,
+            search_marked_range: None,
             show_search: false,
             search_focus: None,
             search_results: Vec::new(),
@@ -214,6 +219,8 @@ impl Editor {
         self.workspace.active_tab = WorkspaceTab::Files;
         self.workspace.show_search = false;
         self.workspace.search_query.clear();
+        self.workspace.search_selected_range = 0..0;
+        self.workspace.search_marked_range = None;
         self.workspace.search_results.clear();
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
@@ -1233,6 +1240,8 @@ impl Editor {
         let changed = self.workspace.active_tab != tab || self.workspace.show_search;
         self.workspace.show_search = false;
         self.workspace.search_query.clear();
+        self.workspace.search_selected_range = 0..0;
+        self.workspace.search_marked_range = None;
         self.workspace.search_results.clear();
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
@@ -1635,6 +1644,8 @@ impl Editor {
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
         let search_focus_for_click = search_focus.clone();
+        let search_focus_for_input = search_focus.clone();
+        let search_input_editor = cx.entity();
         let search_editor = editor.clone();
         let search_query = self.workspace.search_query.clone();
         let search_label = if search_query.is_empty() {
@@ -1644,6 +1655,7 @@ impl Editor {
         };
         let search_field = div()
             .id("workspace-file-search")
+            .relative()
             .track_focus(&search_focus)
             .w_full()
             .h(px(31.0))
@@ -1661,36 +1673,84 @@ impl Editor {
                 c.text_default
             })
             .child(search_label)
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, cx| {
+                        window.handle_input(
+                            &search_focus_for_input,
+                            ElementInputHandler::new(bounds, search_input_editor.clone()),
+                            cx,
+                        );
+                    },
+                )
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .left_0(),
+            )
             .on_click(move |_event, window, _cx| window.focus(&search_focus_for_click))
             .on_key_down(move |event: &KeyDownEvent, _window, cx| {
                 let key = event.keystroke.key.to_ascii_lowercase();
-                let key_char = event.keystroke.key_char.clone();
-                let modified =
-                    event.keystroke.modifiers.secondary() || event.keystroke.modifiers.alt;
-                let _ = search_editor.update(cx, |editor, cx| {
-                    let before = editor.workspace.search_query.clone();
-                    match key.as_str() {
-                        "backspace" => {
-                            editor.workspace.search_query.pop();
-                        }
-                        "escape" => {
+                let secondary = event.keystroke.modifiers.secondary();
+                match key.as_str() {
+                    "escape" => {
+                        let _ = search_editor.update(cx, |editor, cx| {
                             editor.workspace.search_query.clear();
+                            editor.workspace.search_selected_range = 0..0;
+                            editor.workspace.search_marked_range = None;
                             editor.workspace.show_search = false;
-                        }
-                        _ if !modified => {
-                            if let Some(character) = key_char {
-                                if !character.chars().any(char::is_control) {
-                                    editor.workspace.search_query.push_str(&character);
-                                }
+                            editor.schedule_workspace_search(cx);
+                            cx.notify();
+                        });
+                    }
+                    "a" if secondary => {
+                        let _ = search_editor.update(cx, |editor, cx| {
+                            editor.workspace.search_selected_range =
+                                0..editor.workspace.search_query.len();
+                            cx.notify();
+                        });
+                    }
+                    "backspace" => {
+                        let handled = search_editor.update(cx, |editor, cx| {
+                            if editor.workspace.search_marked_range.is_some() {
+                                return false;
                             }
+                            let selected = editor.workspace.search_selected_range.clone();
+                            let range = if selected.start == selected.end {
+                                let before = &editor.workspace.search_query[..selected.start];
+                                let start = before
+                                    .grapheme_indices(true)
+                                    .last()
+                                    .map(|(start, _)| start)
+                                    .unwrap_or(selected.start);
+                                start..selected.start
+                            } else {
+                                selected
+                            };
+                            editor.replace_workspace_search_text(range, "", None, false, cx);
+                            true
+                        });
+                        if !matches!(handled, Ok(true)) {
+                            return;
                         }
-                        _ => {}
                     }
-                    if editor.workspace.search_query != before {
-                        editor.schedule_workspace_search(cx);
+                    "v" if secondary => {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                            let _ = search_editor.update(cx, |editor, cx| {
+                                editor.replace_workspace_search_text(
+                                    editor.workspace.search_selected_range.clone(),
+                                    &text,
+                                    None,
+                                    false,
+                                    cx,
+                                );
+                            });
+                        }
                     }
-                    cx.notify();
-                });
+                    _ => return,
+                }
                 cx.stop_propagation();
             });
 
@@ -2694,6 +2754,168 @@ fn scan_workspace_dir(path: &Path) -> Result<WorkspaceTreeNode> {
     })
 }
 
+fn search_utf16_to_utf8(text: &str, offset: usize) -> usize {
+    let mut utf16 = 0;
+    for (byte, ch) in text.char_indices() {
+        if utf16 >= offset || utf16 + ch.len_utf16() > offset {
+            return byte;
+        }
+        utf16 += ch.len_utf16();
+    }
+    text.len()
+}
+
+fn search_utf8_to_utf16(text: &str, offset: usize) -> usize {
+    let mut byte = offset.min(text.len());
+    while !text.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    text[..byte].encode_utf16().count()
+}
+
+impl Editor {
+    fn replace_workspace_search_text(
+        &mut self,
+        range: Range<usize>,
+        new_text: &str,
+        selected_in_inserted: Option<Range<usize>>,
+        marked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let old = self.workspace.search_query.clone();
+        let was_marked = self.workspace.search_marked_range.is_some();
+        let start = range.start.min(old.len());
+        let end = range.end.min(old.len()).max(start);
+        if !old.is_char_boundary(start) || !old.is_char_boundary(end) {
+            return;
+        }
+        let inserted = new_text.replace(['\r', '\n'], " ");
+        self.workspace
+            .search_query
+            .replace_range(start..end, &inserted);
+        let inserted_end = start + inserted.len();
+        self.workspace.search_selected_range = selected_in_inserted
+            .map(|selection| {
+                start + selection.start.min(inserted.len())
+                    ..start + selection.end.min(inserted.len())
+            })
+            .unwrap_or(inserted_end..inserted_end);
+        self.workspace.search_marked_range =
+            (marked && !inserted.is_empty()).then_some(start..inserted_end);
+        if !marked && (self.workspace.search_query != old || was_marked) {
+            self.schedule_workspace_search(cx);
+        }
+        cx.notify();
+    }
+}
+
+// Only the focused workspace search field registers this handler; document
+// blocks keep their own input handlers and IME state.
+impl EntityInputHandler for Editor {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        actual_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let text = &self.workspace.search_query;
+        let start = search_utf16_to_utf8(text, range.start);
+        let end = search_utf16_to_utf8(text, range.end).max(start);
+        *actual_range = Some(search_utf8_to_utf16(text, start)..search_utf8_to_utf16(text, end));
+        Some(text[start..end].to_string())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let text = &self.workspace.search_query;
+        let range = &self.workspace.search_selected_range;
+        Some(UTF16Selection {
+            range: search_utf8_to_utf16(text, range.start)..search_utf8_to_utf16(text, range.end),
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        let text = &self.workspace.search_query;
+        self.workspace.search_marked_range.as_ref().map(|range| {
+            search_utf8_to_utf16(text, range.start)..search_utf8_to_utf16(text, range.end)
+        })
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.search_marked_range.take().is_some() {
+            self.schedule_workspace_search(cx);
+            cx.notify();
+        }
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let query = &self.workspace.search_query;
+        let range = range
+            .map(|range| {
+                search_utf16_to_utf8(query, range.start)..search_utf16_to_utf8(query, range.end)
+            })
+            .or_else(|| self.workspace.search_marked_range.clone())
+            .unwrap_or_else(|| self.workspace.search_selected_range.clone());
+        self.replace_workspace_search_text(range, text, None, false, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let query = &self.workspace.search_query;
+        let range = range
+            .map(|range| {
+                search_utf16_to_utf8(query, range.start)..search_utf16_to_utf8(query, range.end)
+            })
+            .or_else(|| self.workspace.search_marked_range.clone())
+            .unwrap_or_else(|| self.workspace.search_selected_range.clone());
+        let selected = new_selected_range.map(|range| {
+            search_utf16_to_utf8(new_text, range.start)..search_utf16_to_utf8(new_text, range.end)
+        });
+        self.replace_workspace_search_text(range, new_text, selected, true, cx);
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range: Range<usize>,
+        bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        Some(bounds)
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        Some(self.workspace.search_query.encode_utf16().count())
+    }
+}
+
 fn file_label(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -2832,13 +3054,89 @@ mod tests {
         Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
         clamp_workspace_panel_width, create_workspace_file, create_workspace_folder, is_code_file,
         path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
-        scan_workspace_dir, search_workspace_files,
+        scan_workspace_dir, search_utf8_to_utf16, search_utf16_to_utf8, search_workspace_files,
     };
     use crate::components::{Block, UndoCaptureKind};
-    use gpui::{AppContext, EntityInputHandler, TestAppContext, point, px};
+    use gpui::{AppContext, ClipboardItem, EntityInputHandler, TestAppContext, point, px};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
+
+    #[test]
+    fn search_offsets_keep_cjk_and_emoji_boundaries() {
+        let text = "中😀a";
+        assert_eq!(search_utf16_to_utf8(text, 1), "中".len());
+        assert_eq!(search_utf16_to_utf8(text, 2), "中".len());
+        assert_eq!(search_utf16_to_utf8(text, 3), "中😀".len());
+        assert_eq!(search_utf8_to_utf16(text, "中😀".len()), 3);
+    }
+
+    #[gpui::test]
+    async fn workspace_search_accepts_unicode_platform_input(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.workspace.show_search = true;
+                let focus = editor
+                    .workspace
+                    .search_focus
+                    .get_or_insert_with(|| cx.focus_handle())
+                    .clone();
+                window.focus(&focus);
+                cx.notify();
+            });
+            window.draw(cx).clear();
+        });
+        cx.simulate_input("你好");
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_query, "你好");
+            assert_eq!(
+                editor.workspace.search_selected_range,
+                "你好".len().."你好".len()
+            );
+        });
+        cx.simulate_keystrokes("backspace");
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_query, "你");
+        });
+        cx.update(|_window, cx| cx.write_to_clipboard(ClipboardItem::new_string("世界".into())));
+        cx.simulate_keystrokes("cmd-v");
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_query, "你世界");
+        });
+    }
+
+    #[gpui::test]
+    async fn workspace_search_waits_for_ime_commit_before_searching(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.workspace.show_search = true;
+                let generation = editor.workspace.search_generation;
+                editor.replace_and_mark_text_in_range(None, "ni", Some(2..2), window, cx);
+                assert_eq!(editor.workspace.search_query, "ni");
+                assert_eq!(editor.workspace.search_generation, generation);
+                editor.replace_and_mark_text_in_range(None, "你", Some(1..1), window, cx);
+                assert_eq!(editor.workspace.search_query, "你");
+                assert_eq!(editor.workspace.search_generation, generation);
+                editor.replace_text_in_range(None, "你", window, cx);
+                assert!(editor.workspace.search_marked_range.is_none());
+                assert_eq!(editor.workspace.search_generation, generation + 1);
+            });
+        });
+    }
 
     #[test]
     fn workspace_scan_includes_markdown_and_code_files() {
