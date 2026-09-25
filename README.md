@@ -42,6 +42,7 @@ macOS 已使用 `fastdev` 构建并生成可启动的 `.app` 与 `.pkg`。上一
 - [Velora 原生编辑器设计](docs/plans/2026-09-24-velora-gpui-editor-design.md)
 - [界面原型](docs/design/界面原型.html)
 - [界面原型说明](docs/design/界面原型说明.md)
+- [Velora 更名与界面调整验收](docs/验收记录/2026-09-25-Velora-更名与界面调整.md)
 - [第三方代码来源与许可](docs/third-party.md)
 - [首版开发验证记录](docs/验收记录/2026-09-25-首版开发验证.md)
 
