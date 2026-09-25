@@ -1,1 +1,2 @@
 tests/fixtures/velotype-original.md whitespace=-blank-at-eol
+vendor/gpui/src/platform/mac/shaders.metal whitespace=-space-before-tab

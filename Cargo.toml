@@ -261,3 +261,6 @@ etagere = { opt-level = 3 }
 image = { opt-level = 3 }
 serde = { opt-level = 3 }
 serde_json = { opt-level = 3 }
+
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }

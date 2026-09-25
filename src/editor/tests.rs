@@ -53,6 +53,40 @@ fn activate_visual_window(cx: &mut VisualTestContext) -> AnyWindowHandle {
         .update(|cx| cx.active_window().expect("window should be active"))
 }
 
+#[gpui::test]
+#[ignore = "手动大文件诊断；设置 VELORA_PERF_FILE 后单独运行"]
+async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
+    let path = std::env::var("VELORA_PERF_FILE").expect("需要设置 VELORA_PERF_FILE");
+    let markdown = fs::read_to_string(path).expect("性能样本必须是 UTF-8 文本");
+    let bytes = markdown.len();
+    init_editor_test_app(cx);
+
+    let start = Instant::now();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        let start = Instant::now();
+        let editor = Editor::from_markdown(cx, markdown, None);
+        println!(
+            "editor_constructor_ms={:.1}",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        editor
+    });
+    let construct = start.elapsed();
+    let (mode, rows) = editor.read_with(cx, |editor, _cx| {
+        (editor.view_mode, editor.document.visible_blocks().len())
+    });
+    assert!(matches!(mode, ViewMode::Rendered));
+
+    let start = Instant::now();
+    redraw(cx);
+    let first_draw = start.elapsed();
+    println!(
+        "bytes={bytes} rows={rows} construct_ms={:.1} first_draw_ms={:.1}",
+        construct.as_secs_f64() * 1000.0,
+        first_draw.as_secs_f64() * 1000.0
+    );
+}
+
 #[test]
 fn centered_column_ratio_stays_full_before_shrink_start() {
     let theme = Theme::default_theme();
