@@ -1,5 +1,5 @@
-//! maksher - a block-based Markdown editor built with GPUI.
-//! 基于 Velotype 修改：应用入口与命令名称改为 maksher。
+//! velora - a block-based Markdown editor built with GPUI.
+//! 基于 Velotype 修改：应用入口与命令名称改为 velora。
 //!
 //! Reads file paths from command-line arguments and opens one GPUI window per
 //! file. With no arguments, a single empty window is created.
@@ -37,7 +37,7 @@ use file_url::parse_file_url;
 use i18n::I18nManager;
 use theme::ThemeManager;
 
-struct MaksherAssets;
+struct VeloraAssets;
 
 fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference) {
     if startup_open == config::StartupOpenPreference::LastOpenedFile
@@ -87,11 +87,17 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
     }
 }
 
-impl AssetSource for MaksherAssets {
+impl AssetSource for VeloraAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
         match path {
             "icon/workspace/folder.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/folder.svg"
+            )))),
+            "icon/workspace/chevron-right.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/chevron-right.svg"
+            )))),
+            "icon/workspace/chevron-down.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/chevron-down.svg"
             )))),
             "icon/workspace/markdown.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/markdown.svg"
@@ -146,17 +152,17 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--version" | "-v" => {
-                println!("maksher {}", env!("CARGO_PKG_VERSION"));
+                println!("velora {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
             "--help" | "-h" => {
                 println!(
-                    "maksher {} - A block-based Markdown editor",
+                    "velora {} - A block-based Markdown editor",
                     env!("CARGO_PKG_VERSION")
                 );
                 println!();
                 println!("USAGE:");
-                println!("    maksher [OPTIONS] [FILES...]");
+                println!("    velora [OPTIONS] [FILES...]");
                 println!();
                 println!("OPTIONS:");
                 println!("    -v, --version    Print version information");
@@ -212,7 +218,7 @@ fn main() {
     #[cfg(target_os = "macos")]
     let open_file_requested = Arc::new(AtomicBool::new(false));
 
-    let app = Application::new().with_assets(MaksherAssets);
+    let app = Application::new().with_assets(VeloraAssets);
 
     #[cfg(target_os = "macos")]
     {

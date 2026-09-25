@@ -53,7 +53,7 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
         .file_name()
         .map(|name| name.to_string_lossy())
         .unwrap_or_default();
-    path.with_file_name(format!(".{name}.maksher-{}.tmp", uuid::Uuid::new_v4()))
+    path.with_file_name(format!(".{name}.velora-{}.tmp", uuid::Uuid::new_v4()))
 }
 
 fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<()> {

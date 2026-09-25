@@ -9,7 +9,7 @@ use gpui::{
     WindowControlArea, WindowDecorations, WindowOptions, div, point, px, rgba, svg,
 };
 
-use crate::app_identity::MAKSHER_APP_ID;
+use crate::app_identity::VELORA_APP_ID;
 use crate::theme::{Theme, ThemeDimensions};
 
 const TITLEBAR_MIN_HEIGHT: f32 = 44.0;
@@ -21,7 +21,7 @@ const TITLEBAR_MAXIMIZE_ICON: &str = "icon/titlebar/chrome-maximize.svg";
 const TITLEBAR_MINIMIZE_ICON: &str = "icon/titlebar/chrome-minimize.svg";
 const TITLEBAR_RESTORE_ICON: &str = "icon/titlebar/chrome-restore.svg";
 
-/// Selects whether maksher or the platform should render window controls.
+/// Selects whether velora or the platform should render window controls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TitlebarControlMode {
     NativeTrafficLights,
@@ -170,13 +170,13 @@ pub(crate) fn window_decorations_for_target_os(target_os: &str) -> Option<Window
     }
 }
 
-pub(crate) fn maksher_window_options_for_target_os(
+pub(crate) fn velora_window_options_for_target_os(
     target_os: &str,
     title: SharedString,
     bounds: Bounds<Pixels>,
 ) -> WindowOptions {
     WindowOptions {
-        app_id: Some(MAKSHER_APP_ID.to_string()),
+        app_id: Some(VELORA_APP_ID.to_string()),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(titlebar_options_for_target_os(target_os, title)),
         window_background: WindowBackgroundAppearance::Opaque,
@@ -185,8 +185,8 @@ pub(crate) fn maksher_window_options_for_target_os(
     }
 }
 
-pub(crate) fn maksher_window_options(title: SharedString, bounds: Bounds<Pixels>) -> WindowOptions {
-    maksher_window_options_for_target_os(std::env::consts::OS, title, bounds)
+pub(crate) fn velora_window_options(title: SharedString, bounds: Bounds<Pixels>) -> WindowOptions {
+    velora_window_options_for_target_os(std::env::consts::OS, title, bounds)
 }
 
 pub(crate) fn custom_titlebar_layout_for_target_os(
@@ -296,7 +296,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
 
     let breadcrumb = title
         .to_string()
-        .split_once("maksher - ")
+        .split_once("Velora - ")
         .map(|(_, name)| name)
         .unwrap_or("")
         .to_string();
@@ -322,14 +322,14 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                 .text_size(px(11.0))
                 .font_weight(FontWeight::BOLD)
                 .text_color(c.dialog_primary_button_text)
-                .child("m"),
+                .child("v"),
         )
         .child(
             div()
                 .text_size(px(13.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(c.text_default)
-                .child("maksher"),
+                .child("Velora"),
         )
         .child(div().text_color(c.dialog_muted).child("/"))
         .child(
@@ -520,9 +520,9 @@ mod tests {
 
     #[test]
     fn titlebar_options_enable_transparency_on_mac_and_windows() {
-        assert!(titlebar_options_for_target_os("windows", "maksher".into()).appears_transparent);
-        assert!(titlebar_options_for_target_os("macos", "maksher".into()).appears_transparent);
-        assert!(!titlebar_options_for_target_os("linux", "maksher".into()).appears_transparent);
+        assert!(titlebar_options_for_target_os("windows", "velora".into()).appears_transparent);
+        assert!(titlebar_options_for_target_os("macos", "velora".into()).appears_transparent);
+        assert!(!titlebar_options_for_target_os("linux", "velora".into()).appears_transparent);
     }
 
     #[test]

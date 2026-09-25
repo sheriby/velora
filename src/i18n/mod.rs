@@ -1,5 +1,5 @@
 //! Localised UI strings and runtime language selection.
-//! 基于 Velotype 修改：应用名称相关文案改为 maksher。
+//! 基于 Velotype 修改：应用名称相关文案改为 velora。
 //!
 //! This module owns language packs, system-locale matching, and the global
 //! manager used by menus and editor UI. Visual styling remains in `theme`.
@@ -1364,7 +1364,7 @@ impl I18nStrings {
                 "请拖入 Markdown 文件（.md 或 .markdown）以在当前窗口打开。".into(),
             info_dialog_ok: "确定".into(),
             help_check_updates_title: "检查更新".into(),
-            help_check_updates_message: "正在检查 maksher 的最新版本...".into(),
+            help_check_updates_message: "正在检查 Velora 的最新版本...".into(),
             update_available_title: "发现新版本".into(),
             update_available_message_template:
                 "当前版本：{current}\n最新版本：{latest}\n是否前往 GitHub Releases 下载？".into(),
@@ -1374,7 +1374,7 @@ impl I18nStrings {
             update_failed_message_template: "无法完成在线更新检查：{error}".into(),
             update_open_release: "前往下载".into(),
             update_later: "稍后".into(),
-            help_about_title: "关于 maksher".into(),
+            help_about_title: "关于 Velora".into(),
             help_about_message: "一款基于 GPUI 的原生 Markdown 编辑器。编辑核心基于 Velotype，并保留其 Apache-2.0 许可。".into(),
             help_about_github_label: "编辑核心来源".into(),
             help_about_star_message: "第三方来源与许可信息见项目文档。".into(),
@@ -1587,7 +1587,7 @@ impl I18nStrings {
                 "Drop a Markdown file (.md or .markdown) to open it in this window.".into(),
             info_dialog_ok: "OK".into(),
             help_check_updates_title: "Check for Updates".into(),
-            help_check_updates_message: "Checking the latest maksher version...".into(),
+            help_check_updates_message: "Checking the latest Velora version...".into(),
             update_available_title: "Update Available".into(),
             update_available_message_template:
                 "Current version: {current}\nLatest version: {latest}\nOpen GitHub Releases to download it?"
@@ -1600,7 +1600,7 @@ impl I18nStrings {
                 .into(),
             update_open_release: "Open Releases".into(),
             update_later: "Later".into(),
-            help_about_title: "About maksher".into(),
+            help_about_title: "About Velora".into(),
             help_about_message: "A native Markdown editor built with GPUI. The editing core is based on Velotype under Apache-2.0.".into(),
             help_about_github_label: "Editor core source".into(),
             help_about_star_message: "Third-party sources and licenses are documented in the project.".into(),
@@ -1638,7 +1638,7 @@ impl I18nStrings {
             recent_file_missing_message_template:
                 "This recent file no longer exists and has been removed:\n{path}".into(),
             save_failed_title: "Save Failed".into(),
-            external_change_title: "File Changed Outside Maksher".into(),
+            external_change_title: "File Changed Outside Velora".into(),
             external_change_message: "Autosave was paused to avoid overwriting external changes. Use Save As to keep your edits.".into(),
             export_failed_title: "Export Failed".into(),
             image_paste_failed_title: "Image Paste Failed".into(),
@@ -2204,7 +2204,7 @@ mod tests {
         assert_eq!(strings.image_loading_without_alt, "正在加载图片...");
         assert_eq!(
             strings.help_check_updates_message,
-            "正在检查 maksher 的最新版本..."
+            "正在检查 Velora 的最新版本..."
         );
         assert_eq!(strings.update_open_release, "前往下载");
         assert_eq!(strings.help_about_github_label, "编辑核心来源");

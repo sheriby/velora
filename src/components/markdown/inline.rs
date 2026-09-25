@@ -1,5 +1,5 @@
 //! Attribute-based inline Markdown tree for block titles and table cells.
-//! 基于 Velotype 修改：测试夹具改放在 maksher 的 tests/fixtures 目录。
+//! 基于 Velotype 修改：测试夹具改放在 velora 的 tests/fixtures 目录。
 //!
 //! The runtime model stores only text fragments and formatting attributes.
 //! Markdown markers are parsed at the I/O boundary and regenerated on save,

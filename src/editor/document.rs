@@ -1,5 +1,5 @@
 //! Markdown-to-editor-tree deserialization.
-//! 基于 Velotype 修改：测试夹具改放在 maksher 的 tests/fixtures 目录。
+//! 基于 Velotype 修改：测试夹具改放在 velora 的 tests/fixtures 目录。
 //!
 //! Raw Markdown is parsed into the subset of native block structures Velotype
 //! can edit safely. Syntax that exceeds the current runtime model is preserved

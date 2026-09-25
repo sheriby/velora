@@ -1,6 +1,6 @@
-# 基于 Velotype 清单修改：应用名称、版本与发布来源改为 maksher。
+# 基于 Velotype 清单修改：应用名称、版本与发布来源改为 velora。
 [package]
-name = "maksher"
+name = "velora"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
@@ -188,7 +188,7 @@ harness = false
 # without this, Criterion-specific CLI flags (`--save-baseline`, etc.) trip
 # the libtest stub before Criterion's `main` runs (rust-lang/rust#47241).
 [[bin]]
-name = "maksher"
+name = "velora"
 path = "src/main.rs"
 bench = false
 

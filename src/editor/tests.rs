@@ -391,11 +391,11 @@ async fn document_present_on_the_first_frame_is_measured_at_the_real_width(
 }
 
 #[test]
-fn about_dialog_body_lines_use_maksher_brand_and_source_attribution() {
+fn about_dialog_body_lines_use_velora_brand_and_source_attribution() {
     let strings = I18nStrings::zh_cn();
     let lines = Editor::about_dialog_body_lines(&strings);
 
-    assert_eq!(lines[0], format!("maksher {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(lines[0], format!("Velora {}", env!("CARGO_PKG_VERSION")));
     assert_eq!(
         lines[2],
         format!("编辑核心来源: {}", super::render::ABOUT_GITHUB_URL)

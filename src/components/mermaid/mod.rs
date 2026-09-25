@@ -1,5 +1,5 @@
 //! Mermaid fenced-block parsing and SVG rendering helpers.
-//! 基于 Velotype 修改：缓存写入 maksher 独立目录。
+//! 基于 Velotype 修改：缓存写入 velora 独立目录。
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -502,9 +502,9 @@ fn svg_root_attrs(root_tag: &str) -> Vec<SvgRootAttr> {
 }
 
 fn mermaid_cache_dir() -> anyhow::Result<PathBuf> {
-    let root = ProjectDirs::from("app", "maksher", "maksher")
+    let root = ProjectDirs::from("app", "velora", "velora")
         .map(|dirs| dirs.cache_dir().to_path_buf())
-        .unwrap_or_else(|| std::env::temp_dir().join("maksher"));
+        .unwrap_or_else(|| std::env::temp_dir().join("velora"));
     let dir = root.join("mermaid-svg");
     fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create Mermaid SVG cache '{}'", dir.display()))?;

@@ -3548,57 +3548,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
 
 [[package]]
-name = "maksher"
-version = "0.1.0"
-dependencies = [
- "adot-tree-sitter-toml",
- "anyhow",
- "base64 0.23.1",
- "chromiumoxide",
- "criterion",
- "cssparser",
- "directories",
- "embed-resource",
- "futures",
- "gpui",
- "mermaid-rs-renderer",
- "pulldown-cmark",
- "ratex-layout",
- "ratex-parser",
- "ratex-svg",
- "reqwest",
- "schemars",
- "semver",
- "serde",
- "serde_json",
- "sys-locale",
- "tokio",
- "toml 1.1.4+spec-1.1.0",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-c-sharp",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-go",
- "tree-sitter-highlight",
- "tree-sitter-html",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-md",
- "tree-sitter-php",
- "tree-sitter-python",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-typescript",
- "tree-sitter-yaml",
- "unicode-segmentation",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7083,6 +7032,57 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "velora"
+version = "0.1.0"
+dependencies = [
+ "adot-tree-sitter-toml",
+ "anyhow",
+ "base64 0.23.1",
+ "chromiumoxide",
+ "criterion",
+ "cssparser",
+ "directories",
+ "embed-resource",
+ "futures",
+ "gpui",
+ "mermaid-rs-renderer",
+ "pulldown-cmark",
+ "ratex-layout",
+ "ratex-parser",
+ "ratex-svg",
+ "reqwest",
+ "schemars",
+ "semver",
+ "serde",
+ "serde_json",
+ "sys-locale",
+ "tokio",
+ "toml 1.1.4+spec-1.1.0",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-c-sharp",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-go",
+ "tree-sitter-highlight",
+ "tree-sitter-html",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-md",
+ "tree-sitter-php",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
+ "unicode-segmentation",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "version_check"

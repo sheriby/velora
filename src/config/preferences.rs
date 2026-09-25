@@ -16,9 +16,7 @@ use crate::components::{
 };
 use crate::i18n::{I18nManager, language_id_for_locale_preferences};
 use crate::theme::{Theme, ThemeCatalogEntry, ThemeManager};
-use crate::window_chrome::{
-    custom_titlebar_height, maksher_window_options, render_custom_titlebar,
-};
+use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar, velora_window_options};
 
 const DEFAULT_THEME_ID: &str = "system";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
@@ -1986,7 +1984,7 @@ impl Render for PreferencesWindow {
         let t = &theme.typography;
         let can_save = self.has_unsaved_changes();
         let window_title =
-            SharedString::from(format!("maksher - {}", strings.preferences_window_title));
+            SharedString::from(format!("Velora - {}", strings.preferences_window_title));
         window.set_window_title(window_title.as_ref());
         let titlebar_height = custom_titlebar_height(window, d);
 
@@ -2234,10 +2232,10 @@ fn open_preferences_window_with_state(
     title: String,
 ) -> WindowHandle<PreferencesWindow> {
     let bounds = Bounds::centered(None, size(px(720.0), px(480.0)), cx);
-    let window_title = SharedString::from(format!("maksher - {title}"));
+    let window_title = SharedString::from(format!("Velora - {title}"));
     let handle = cx
         .open_window(
-            maksher_window_options(window_title, bounds),
+            velora_window_options(window_title, bounds),
             move |_window, cx| {
                 cx.new(move |cx| PreferencesWindow::new(preferences, theme_options, cx))
             },
@@ -2302,11 +2300,11 @@ mod tests {
             },
             ThemeCatalogEntry {
                 id: "velotype".into(),
-                name: "maksher".into(),
+                name: "Velora".into(),
             },
             ThemeCatalogEntry {
                 id: "velotype-light".into(),
-                name: "maksher Light".into(),
+                name: "Velora Light".into(),
             },
         ]
     }

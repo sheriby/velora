@@ -16,11 +16,13 @@ use crate::theme::{Theme, ThemeManager};
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
+const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
+const CHEVRON_DOWN_ICON: &str = "icon/workspace/chevron-down.svg";
 const WORKSPACE_PANEL_TARGET_RATIO: f32 = 0.18;
 const WORKSPACE_PANEL_MIN_WIDTH: f32 = 258.0;
 const WORKSPACE_PANEL_MAX_WIDTH: f32 = 320.0;
-const WORKSPACE_NODE_HEIGHT: f32 = 28.0;
-const WORKSPACE_NODE_INDENT: f32 = 18.0;
+const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
+const WORKSPACE_NODE_INDENT: f32 = 16.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum WorkspaceTab {
@@ -1571,8 +1573,8 @@ impl Editor {
                         .flex_1()
                         .min_h(px(0.0))
                         .overflow_y_scroll()
-                        .px(px(6.0))
-                        .py(px(8.0))
+                        .px(px(4.0))
+                        .py(px(6.0))
                         .child(body),
                 )
                 .into_any_element(),
@@ -1865,14 +1867,14 @@ impl Editor {
         let context_kind = node.kind.clone();
         let arrow_node_id = node.id.clone();
         let arrow_editor = editor.clone();
-        let arrow = if has_children {
-            if is_expanded { "v" } else { ">" }
+        let arrow_icon = has_children.then_some(if is_expanded {
+            CHEVRON_DOWN_ICON
         } else {
-            ""
-        };
+            CHEVRON_RIGHT_ICON
+        });
 
         let icon = match &node.kind {
-            WorkspaceTreeKind::Directory(_) => Some((FOLDER_ICON, Hsla::from(rgba(0xf59e0bff)))),
+            WorkspaceTreeKind::Directory(_) => Some((FOLDER_ICON, Hsla::from(rgba(0x4a93d8ff)))),
             WorkspaceTreeKind::MarkdownFile(_) => Some((MARKDOWN_ICON, c.dialog_primary_button_bg)),
             WorkspaceTreeKind::CodeFile(_) => Some((CODE_ICON, c.dialog_muted)),
             WorkspaceTreeKind::Heading { .. } => None,
@@ -1885,15 +1887,15 @@ impl Editor {
         };
 
         let mut arrow_el = div()
-            .w(px(14.0))
-            .h(px(18.0))
+            .w(px(16.0))
+            .h(px(20.0))
             .flex_shrink_0()
             .flex()
             .items_center()
             .justify_center()
-            .text_size(px(12.0))
-            .text_color(c.dialog_muted)
-            .child(arrow);
+            .children(
+                arrow_icon.map(|path| svg().path(path).size(px(14.0)).text_color(c.dialog_muted)),
+            );
         if has_children {
             arrow_el = arrow_el.cursor_pointer().on_mouse_down(
                 MouseButton::Left,
@@ -1913,10 +1915,10 @@ impl Editor {
             .overflow_hidden()
             .flex()
             .items_center()
-            .gap(px(6.0))
-            .pl(px(8.0 + depth as f32 * WORKSPACE_NODE_INDENT))
-            .pr(px(8.0))
-            .rounded(px(6.0))
+            .gap(px(4.0))
+            .pl(px(6.0 + depth as f32 * WORKSPACE_NODE_INDENT))
+            .pr(px(6.0))
+            .rounded(px(4.0))
             .bg(if selected {
                 c.selection
             } else {
@@ -2593,7 +2595,7 @@ mod tests {
     #[test]
     fn workspace_tree_includes_plain_viewer_code_extensions() {
         let root = std::env::temp_dir().join(format!(
-            "maksher-workspace-plain-code-test-{}",
+            "velora-workspace-plain-code-test-{}",
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&root).expect("create root");
@@ -2637,7 +2639,7 @@ mod tests {
             crate::components::init(cx);
         });
         let root =
-            std::env::temp_dir().join(format!("maksher-code-viewer-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("velora-code-viewer-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create test workspace");
         let path = root.join("main.rs");
         fs::write(&path, "fn main() { println!(\"hello\"); }").expect("write code file");
@@ -2756,7 +2758,7 @@ mod tests {
             crate::theme::ThemeManager::init(cx);
             crate::components::init(cx);
         });
-        let root = std::env::temp_dir().join(format!("maksher-menu-test-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("velora-menu-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("note.md");
         fs::write(&path, "hello").unwrap();
@@ -2785,7 +2787,7 @@ mod tests {
     #[test]
     fn workspace_filename_search_matches_names_case_insensitively() {
         let root =
-            std::env::temp_dir().join(format!("maksher-workspace-search-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("velora-workspace-search-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("src")).expect("create source dir");
         fs::write(
             root.join("README.md"),
@@ -2815,7 +2817,7 @@ mod tests {
     #[test]
     fn workspace_create_operations_do_not_overwrite_existing_files() {
         let root =
-            std::env::temp_dir().join(format!("maksher-workspace-create-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("velora-workspace-create-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create root");
         let file = root.join("notes.md");
         fs::write(&file, "keep this").expect("write existing file");

@@ -1,5 +1,5 @@
 //! Window-level editor state such as scrolling, mode switching, and menus.
-//! 基于 Velotype 修改：窗口标题显示 maksher。
+//! 基于 Velotype 修改：窗口标题显示 velora。
 
 use super::*;
 
@@ -210,20 +210,17 @@ impl Editor {
                 .and_then(|path| path.file_name())
                 .map(|name| format!(" ({})", name.to_string_lossy()))
                 .unwrap_or_default();
-            format!(
-                "maksher - {}{source_name}",
-                strings.recovered_document_title
-            )
+            format!("Velora - {}{source_name}", strings.recovered_document_title)
         } else if let Some(path) = file_path {
             format!(
-                "maksher - {}",
+                "Velora - {}",
                 path.file_name().map_or_else(
                     || path.to_string_lossy().to_string(),
                     |name| name.to_string_lossy().to_string()
                 )
             )
         } else {
-            "maksher".to_string()
+            "Velora".to_string()
         };
 
         if is_dirty && !strings.dirty_title_marker.is_empty() {

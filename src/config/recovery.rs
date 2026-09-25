@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn recovery_snapshots_round_trip_and_can_be_removed() {
         let root =
-            std::env::temp_dir().join(format!("maksher-recovery-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("velora-recovery-test-{}", uuid::Uuid::new_v4()));
         let snapshot = RecoverySnapshot {
             id: uuid::Uuid::new_v4(),
             source_path: Some(Path::new("/notes/draft.md").to_path_buf()),

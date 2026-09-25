@@ -3,10 +3,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
-PACKAGE_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/maksher-package.XXXXXX")"
+PACKAGE_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/velora-package.XXXXXX")"
 OUTPUT_DIR="$REPO_ROOT/dist"
-APP_BUNDLE="$PACKAGE_WORK_DIR/payload/maksher.app"
-ICONSET_DIR="$PACKAGE_WORK_DIR/maksher.iconset"
+APP_BUNDLE="$PACKAGE_WORK_DIR/payload/velora.app"
+ICONSET_DIR="$PACKAGE_WORK_DIR/velora.iconset"
 
 cleanup() {
     rm -rf "$PACKAGE_WORK_DIR"
@@ -17,21 +17,21 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources" \
     "$ICONSET_DIR" "$OUTPUT_DIR"
 
 cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --profile fastdev
-cp "$REPO_ROOT/target/fastdev/maksher" "$APP_BUNDLE/Contents/MacOS/maksher"
+cp "$REPO_ROOT/target/fastdev/velora" "$APP_BUNDLE/Contents/MacOS/velora"
 cp "$REPO_ROOT/resources/macos/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \
     "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" \
     "$APP_BUNDLE/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile maksher" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile velora" \
     "$APP_BUNDLE/Contents/Info.plist"
 
 render_icon() {
     pixel_size="$1"
     output_name="$2"
     sips -s format png -z "$pixel_size" "$pixel_size" \
-        "$REPO_ROOT/assets/icon/maksher-app.svg" \
+        "$REPO_ROOT/assets/icon/velora-app.svg" \
         --out "$ICONSET_DIR/$output_name" >/dev/null
 }
 
@@ -45,25 +45,25 @@ render_icon 256 icon_256x256.png
 render_icon 512 icon_256x256@2x.png
 render_icon 512 icon_512x512.png
 render_icon 1024 icon_512x512@2x.png
-iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/maksher.icns"
+iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/velora.icns"
 
 plutil -lint "$APP_BUNDLE/Contents/Info.plist"
-test -x "$APP_BUNDLE/Contents/MacOS/maksher"
+test -x "$APP_BUNDLE/Contents/MacOS/velora"
 
-APP_OUTPUT="$OUTPUT_DIR/maksher.app"
-PKG_OUTPUT="$OUTPUT_DIR/maksher-$VERSION.pkg"
+APP_OUTPUT="$OUTPUT_DIR/velora.app"
+PKG_OUTPUT="$OUTPUT_DIR/velora-$VERSION.pkg"
 rm -rf "$APP_OUTPUT"
 rm -f "$PKG_OUTPUT"
 ditto "$APP_BUNDLE" "$APP_OUTPUT"
 
 pkgbuild \
     --root "$PACKAGE_WORK_DIR/payload" \
-    --identifier app.maksher.editor \
+    --identifier app.velora.editor \
     --version "$VERSION" \
     --install-location /Applications \
-    "$PACKAGE_WORK_DIR/maksher-component.pkg"
+    "$PACKAGE_WORK_DIR/velora-component.pkg"
 
-sed "s/__MAKSHER_VERSION__/$VERSION/g" \
+sed "s/__VELORA_VERSION__/$VERSION/g" \
     "$REPO_ROOT/resources/macos/pkg/Distribution.xml" \
     > "$PACKAGE_WORK_DIR/Distribution.xml"
 productbuild \
@@ -72,6 +72,6 @@ productbuild \
     "$PKG_OUTPUT"
 
 pkgutil --expand-full "$PKG_OUTPUT" "$PACKAGE_WORK_DIR/expanded-package"
-test -f "$PACKAGE_WORK_DIR/expanded-package/maksher-component.pkg/Payload/maksher.app/Contents/Info.plist"
+test -f "$PACKAGE_WORK_DIR/expanded-package/velora-component.pkg/Payload/velora.app/Contents/Info.plist"
 echo "已生成：$APP_OUTPUT"
 echo "已生成：$PKG_OUTPUT"

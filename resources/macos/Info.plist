@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- 基于 Velotype 修改：应用名称、可执行文件与包标识改为 maksher。 -->
+<!-- 基于 Velotype 修改：应用名称、可执行文件与包标识改为 velora。 -->
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>maksher</string>
+  <string>Velora</string>
   <key>CFBundleExecutable</key>
-  <string>maksher</string>
+  <string>velora</string>
   <key>CFBundleIconFile</key>
-  <string>maksher</string>
+  <string>velora</string>
   <key>CFBundleIdentifier</key>
-  <string>app.maksher.editor</string>
+  <string>app.velora.editor</string>
   <key>CFBundleName</key>
-  <string>maksher</string>
+  <string>Velora</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

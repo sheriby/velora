@@ -1,5 +1,5 @@
 //! Shared user-configuration helpers for app preferences and imported packs.
-//! 基于 Velotype 修改：配置写入 maksher 独立目录。
+//! 基于 Velotype 修改：配置写入 velora 独立目录。
 
 use std::path::{Path, PathBuf};
 
@@ -23,7 +23,7 @@ pub(crate) use recovery::{
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
 pub(crate) const RECENT_WORKSPACES_LIMIT: usize = 10;
 
-/// maksher 的跨平台配置目录。
+/// velora 的跨平台配置目录。
 #[derive(Debug, Clone)]
 pub(crate) struct VelotypeConfigDirs {
     root: PathBuf,
@@ -36,8 +36,8 @@ impl VelotypeConfigDirs {
     /// language and theme packs are stored under the OS location returned by
     /// `directories::ProjectDirs`.
     pub(crate) fn from_system() -> anyhow::Result<Self> {
-        let dirs = ProjectDirs::from("app", "maksher", "maksher")
-            .context("failed to resolve the maksher config directory")?;
+        let dirs = ProjectDirs::from("app", "velora", "velora")
+            .context("failed to resolve the velora config directory")?;
         Ok(Self {
             root: dirs.config_dir().to_path_buf(),
         })
@@ -518,10 +518,8 @@ mod tests {
 
     #[test]
     fn recent_workspaces_are_deduplicated_and_most_recent_first() {
-        let root = std::env::temp_dir().join(format!(
-            "maksher-recent-workspaces-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("velora-recent-workspaces-{}", uuid::Uuid::new_v4()));
         let first = root.join("first");
         let second = root.join("second");
         std::fs::create_dir_all(&first).expect("create first workspace");
@@ -551,7 +549,7 @@ mod tests {
     #[test]
     fn recent_workspaces_respect_the_limit() {
         let root = std::env::temp_dir().join(format!(
-            "maksher-recent-workspaces-limit-{}",
+            "velora-recent-workspaces-limit-{}",
             uuid::Uuid::new_v4()
         ));
         let dirs = VelotypeConfigDirs::from_root(root.join("config"));

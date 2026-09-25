@@ -1,5 +1,5 @@
 //! Theme data structures and defaults.
-//! 基于 Velotype 修改：内置主题的显示名称改为 maksher。
+//! 基于 Velotype 修改：内置主题的显示名称改为 velora。
 //!
 //! The theme layer keeps visual tokens out of editor logic so rendering and
 //! interaction code can depend on stable semantic names instead of hard-coded
@@ -710,7 +710,7 @@ impl<'de> Deserialize<'de> for ThemeColors {
             separator_color: raw
                 .separator_color
                 .unwrap_or_else(|| Hsla::from(rgba(0x5a5a5aff))),
-            code_bg: raw.code_bg.unwrap_or_else(|| Hsla::from(rgba(0x292929ff))),
+            code_bg: raw.code_bg.unwrap_or_else(|| Hsla::from(rgba(0x252832ff))),
             code_text: raw.code_text,
             code_language_input_bg: raw
                 .code_language_input_bg
@@ -1460,9 +1460,9 @@ pub struct ThemeCatalogEntry {
 }
 
 const BUILTIN_THEME_VELOTYPE_ID: &str = "velotype";
-const BUILTIN_THEME_VELOTYPE_NAME: &str = "maksher";
+const BUILTIN_THEME_VELOTYPE_NAME: &str = "Velora";
 const BUILTIN_THEME_VELOTYPE_LIGHT_ID: &str = "velotype-light";
-const BUILTIN_THEME_VELOTYPE_LIGHT_NAME: &str = "maksher Light";
+const BUILTIN_THEME_VELOTYPE_LIGHT_NAME: &str = "Velora Light";
 const BUILTIN_THEME_SYSTEM_ID: &str = "system";
 const CUSTOM_THEME_ID: &str = "custom";
 
@@ -2173,7 +2173,7 @@ mod tests {
         let dark = Theme::default_theme();
         let light = Theme::light_theme();
 
-        assert_eq!(light.name, "maksher Light");
+        assert_eq!(light.name, "Velora Light");
         assert_eq!(light.colors.editor_background, rgba(0xffffffff).into());
         assert_eq!(light.colors.text_default, rgba(0x252832ff).into());
         assert_eq!(light.colors.text_link, rgba(0x6558d3ff).into());
@@ -2410,19 +2410,19 @@ mod tests {
     fn theme_manager_switches_builtin_themes() {
         let mut manager = ThemeManager::default();
         assert_eq!(manager.current_theme_id(), "velotype");
-        assert_eq!(manager.current().name, "maksher");
+        assert_eq!(manager.current().name, "Velora");
         assert_eq!(
             manager
                 .available_themes()
                 .iter()
                 .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["System", "maksher", "maksher Light"]
+            vec!["System", "Velora", "Velora Light"]
         );
 
         assert!(manager.set_theme_by_id("velotype-light"));
         assert_eq!(manager.current_theme_id(), "velotype-light");
-        assert_eq!(manager.current().name, "maksher Light");
+        assert_eq!(manager.current().name, "Velora Light");
         assert_eq!(
             manager.current().colors.editor_background,
             rgba(0xffffffff).into()
@@ -2430,7 +2430,7 @@ mod tests {
 
         assert!(manager.set_theme_by_id("velotype"));
         assert_eq!(manager.current_theme_id(), "velotype");
-        assert_eq!(manager.current().name, "maksher");
+        assert_eq!(manager.current().name, "Velora");
         assert!(!manager.set_theme_by_id("missing"));
     }
 }

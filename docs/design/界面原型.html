@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>maksher 界面原型</title>
+  <title>Velora 界面原型</title>
   <style>
     :root {
       color-scheme: light;
@@ -98,16 +98,17 @@
       width: 258px; flex: 0 0 258px; display: flex; flex-direction: column;
       border-right: 1px solid var(--line); background: var(--panel);
     }
-    .tree { flex: 1; overflow: auto; padding: 0 8px 16px; font-size: 12.5px; }
+    .tree { flex: 1; overflow: auto; padding: 6px 4px 12px; font-size: 12px; }
     .tree-row {
-      height: 29px; display: flex; align-items: center; gap: 8px; padding: 0 8px;
+      height: 24px; display: flex; align-items: center; gap: 4px; padding: 0 6px;
       border-radius: 6px; color: var(--muted); white-space: nowrap;
     }
     .tree-row.folder { color: var(--text); font-weight: 550; }
     .tree-row.selected { color: var(--accent); background: var(--selection); }
-    .tree-row.indent { padding-left: 26px; }
-    .tree-row.indent2 { padding-left: 43px; }
-    .caret { width: 10px; color: var(--faint); text-align: center; }
+    .tree-row.indent { padding-left: 22px; }
+    .tree-row.indent2 { padding-left: 38px; }
+    .caret { width: 16px; height: 16px; flex: 0 0 16px; display: grid; place-items: center; color: var(--muted); }
+    .caret svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     .file-icon { width: 15px; height: 15px; display: grid; place-items: center; color: var(--accent); font-size: 10px; }
     .file-icon.code { color: #5b8ed9; }
     .main { min-width: 0; flex: 1; display: flex; flex-direction: column; background: var(--window); }
@@ -163,7 +164,7 @@
   <main class="window">
     <header class="titlebar">
       <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
-      <div class="brand"><span class="brand-mark">m</span><span>maksher</span></div>
+      <div class="brand"><span class="brand-mark">v</span><span>Velora</span></div>
       <div class="crumb"><span>/</span><strong>我的工作区</strong><span>/</span><span>产品设计</span></div>
     </header>
     <div class="workspace">
@@ -174,11 +175,11 @@
       </nav>
       <aside class="sidebar">
         <div class="tree">
-          <div class="tree-row folder"><span class="caret">⌄</span><span>▰</span><span>产品设计</span></div>
-          <div class="tree-row folder indent"><span class="caret">⌄</span><span>▰</span><span>docs</span></div>
+          <div class="tree-row folder"><span class="caret"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 6 4.5 4.5L12.5 6"/></svg></span><span>▰</span><span>产品设计</span></div>
+          <div class="tree-row folder indent"><span class="caret"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 6 4.5 4.5L12.5 6"/></svg></span><span>▰</span><span>docs</span></div>
           <div class="tree-row indent2 selected"><span class="file-icon">M</span><span>设计方向.md</span></div>
           <div class="tree-row indent2"><span class="file-icon">M</span><span>迭代计划.md</span></div>
-          <div class="tree-row folder indent"><span class="caret">›</span><span>▰</span><span>src</span></div>
+          <div class="tree-row folder indent"><span class="caret"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></span><span>▰</span><span>src</span></div>
           <div class="tree-row indent"><span class="file-icon">M</span><span>README.md</span></div>
           <div class="tree-row indent"><span class="file-icon code">R</span><span>main.rs</span></div>
           <div class="tree-row indent"><span class="file-icon code">J</span><span>package.json</span></div>

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 test('creates fixed, valid Markdown documents', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'maksher-fixtures-'));
+  const dir = mkdtempSync(join(tmpdir(), 'velora-fixtures-'));
   try {
     execFileSync(process.execPath, ['scripts/generate-fixtures.mjs', dir]);
     for (const [name, size] of [['one-mib.md', 1_048_576], ['ten-mib.md', 10_485_760]]) {

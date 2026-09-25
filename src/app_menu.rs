@@ -1,5 +1,5 @@
 //! Native application menu, app-level actions, and window close routing.
-//! 基于 Velotype 修改：应用名称及命令路径改为 maksher，并隐藏原项目更新入口。
+//! 基于 Velotype 修改：应用名称及命令路径改为 velora，并隐藏原项目更新入口。
 //!
 //! This module owns menu construction and the actions that operate on the
 //! active editor window. The Quit action is routed to the current window so the
@@ -25,7 +25,7 @@ use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
 use crate::i18n::I18nManager;
 use crate::theme::ThemeManager;
-use crate::window_chrome::maksher_window_options;
+use crate::window_chrome::velora_window_options;
 
 /// Global app-menu state for platform menu lifecycle hooks.
 #[derive(Default)]
@@ -43,14 +43,14 @@ fn window_title(file_path: Option<&Path>) -> SharedString {
         // Display impl writes the borrowed bytes straight into the output
         // String, no intermediate allocation.
         format!(
-            "maksher - {}",
+            "Velora - {}",
             path.file_name()
                 .map(|name| name.to_string_lossy())
                 .unwrap_or_else(|| path.to_string_lossy())
         )
         .into()
     } else {
-        SharedString::new("maksher")
+        SharedString::new("Velora")
     }
 }
 
@@ -63,7 +63,7 @@ pub(crate) fn open_editor_window(
     let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
     let title = window_title(file_path.as_deref());
     let handle = cx
-        .open_window(maksher_window_options(title, bounds), move |_window, cx| {
+        .open_window(velora_window_options(title, bounds), move |_window, cx| {
             cx.new(move |cx| Editor::from_file_source(cx, markdown, file_path))
         })
         .unwrap();
@@ -84,11 +84,11 @@ pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnaps
         .strings()
         .recovered_document_title
         .clone();
-    let title = format!("maksher - {recovered_title}");
+    let title = format!("Velora - {recovered_title}");
     let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
     let handle = cx
         .open_window(
-            maksher_window_options(title.into(), bounds),
+            velora_window_options(title.into(), bounds),
             move |_window, cx| cx.new(move |cx| Editor::from_recovery(cx, snapshot)),
         )
         .unwrap();
@@ -126,12 +126,12 @@ fn record_recent_file_and_refresh(path: &Path, cx: &mut App) {
 }
 
 #[cfg(target_os = "macos")]
-/// Check whether `/usr/local/bin/maksher` is correctly installed for this app.
+/// Check whether `/usr/local/bin/velora` is correctly installed for this app.
 ///
 /// Returns `true` only if the symlink exists **and** resolves (directly or via
 /// one level of canonicalization) to the currently running executable.
 fn is_cli_symlink_current_app() -> bool {
-    let link = std::path::Path::new("/usr/local/bin/maksher");
+    let link = std::path::Path::new("/usr/local/bin/velora");
     let Ok(target) = std::fs::read_link(link) else {
         return false; // does not exist or not a symlink
     };
@@ -173,7 +173,7 @@ fn applescript_string_literal(value: &str) -> String {
 pub(crate) fn install_cli_tool(cx: &mut App) {
     use std::process::Command;
 
-    let bin_link = "/usr/local/bin/maksher";
+    let bin_link = "/usr/local/bin/velora";
     let strings = cx.global::<I18nManager>().strings();
 
     let current_exe = match std::env::current_exe() {
@@ -211,12 +211,12 @@ do shell script "rm -f " & quoted form of linkPath & linefeed & "ln -s " & quote
             if output.status.success() {
                 let title = "CLI Command Installed";
                 let detail = format!(
-                    "Successfully installed! You can now use 'maksher' from the terminal:\n\n\
-                     \x1b[1mmaksher README.md\x1b[0m\n\
-                     \x1b[1mmaksher file1.md file2.md\x1b[0m\n\n\
+                    "Successfully installed! You can now use 'velora' from the terminal:\n\n\
+                     \x1b[1mvelora README.md\x1b[0m\n\
+                     \x1b[1mvelora file1.md file2.md\x1b[0m\n\n\
                      Location: {bin_link}\n\n\
-                     Note: If you move or delete maksher.app,\n\
-                     the 'maksher' command will stop working\n\
+                     Note: If you move or delete velora.app,\n\
+                     the 'velora' command will stop working\n\
                      automatically (no cleanup needed)."
                 );
                 if let Some(window) = cx.active_window() {
@@ -255,7 +255,7 @@ do shell script "rm -f " & quoted form of linkPath & linefeed & "ln -s " & quote
 pub(crate) fn uninstall_cli_tool(cx: &mut App) {
     use std::process::Command;
 
-    let bin_link = "/usr/local/bin/maksher";
+    let bin_link = "/usr/local/bin/velora";
     let strings = cx.global::<I18nManager>().strings();
 
     if !is_cli_symlink_current_app() {
@@ -783,7 +783,7 @@ fn build_menus(
         // match standard macOS conventions.
         vec![
             Menu {
-                name: "maksher".into(),
+                name: "Velora".into(),
                 items: vec![
                     MenuItem::action(strings.menu_preferences.clone(), OpenPreferences),
                     MenuItem::separator(),
@@ -1212,7 +1212,7 @@ mod tests {
     fn recent_workspaces_are_in_the_workspace_menu() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let root = PathBuf::from("/tmp/maksher-writing");
+        let root = PathBuf::from("/tmp/velora-writing");
         let menus = build_menus(&theme_manager, &i18n_manager, &[], &[root.clone()]);
         let recent = submenu(&menus[WORKSPACE_IDX].items[1]);
         match &recent.items[0] {
@@ -1230,18 +1230,16 @@ mod tests {
     #[test]
     fn applescript_string_literal_escapes_special_characters() {
         assert_eq!(
-            applescript_string_literal(
-                r#"/Applications/maksher "Test".app/Contents/MacOS/maksher"#
-            ),
-            r#""/Applications/maksher \"Test\".app/Contents/MacOS/maksher""#
+            applescript_string_literal(r#"/Applications/velora "Test".app/Contents/MacOS/velora"#),
+            r#""/Applications/velora \"Test\".app/Contents/MacOS/velora""#
         );
         assert_eq!(
-            applescript_string_literal(r#"/Applications/O'Brien\maksher.app"#),
-            r#""/Applications/O'Brien\\maksher.app""#
+            applescript_string_literal(r#"/Applications/O'Brien\velora.app"#),
+            r#""/Applications/O'Brien\\velora.app""#
         );
     }
 
-    // On macOS the menu bar is: [maksher app menu, File, Export, Language, Theme, Workspace, Help]
+    // On macOS the menu bar is: [velora app menu, File, Export, Language, Theme, Workspace, Help]
     // On other platforms:       [File, Export, Language, Theme, Workspace, Help]
     #[cfg(target_os = "macos")]
     const EXPORT_IDX: usize = 2;
@@ -1283,7 +1281,7 @@ mod tests {
         assert_eq!(
             menu_names,
             vec![
-                "maksher",
+                "Velora",
                 "File",
                 "Export",
                 "Language",
@@ -1375,7 +1373,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(
             menu_names,
-            vec!["maksher", "文件", "导出", "语言", "主题", "工作区", "帮助"]
+            vec!["Velora", "文件", "导出", "语言", "主题", "工作区", "帮助"]
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
