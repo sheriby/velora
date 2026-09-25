@@ -55,6 +55,7 @@ actions!(
         SaveDocument,
         NewWindow,
         OpenFile,
+        OpenWorkspaceFolder,
         OpenPreferences,
         NoRecentFiles,
         SaveDocumentAs,
@@ -98,6 +99,13 @@ pub struct SelectLanguage {
 #[serde(deny_unknown_fields)]
 pub struct OpenRecentFile {
     /// Path stored in Velotype's recent-file history.
+    pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, gpui::Action)]
+#[action(namespace = velotype)]
+#[serde(deny_unknown_fields)]
+pub struct OpenRecentWorkspace {
     pub path: String,
 }
 

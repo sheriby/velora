@@ -1097,10 +1097,10 @@ impl Theme {
         Self {
             name: BUILTIN_THEME_VELOTYPE_NAME.into(),
             colors: ThemeColors {
-                editor_background: Hsla::from(rgba(0x1f1f1fff)),
+                editor_background: Hsla::from(rgba(0x1b1d24ff)),
                 source_mode_block_bg: Hsla::from(rgba(0x292929ff)),
                 comment_bg: Hsla::from(rgba(0xfce10026)),
-                text_default: Hsla::from(rgba(0xf5f5f5ff)),
+                text_default: Hsla::from(rgba(0xe8e9eeff)),
                 text_link: Hsla::from(rgba(0x75beffff)),
                 text_placeholder: Hsla::from(rgba(0x9c9c9cff)),
                 text_h1: Hsla::from(rgba(0xf5f5f5ff)),
@@ -1112,7 +1112,7 @@ impl Theme {
                 border_h1: Hsla::from(rgba(0x484644ff)),
                 border_h2: Hsla::from(rgba(0x3b3a39ff)),
                 text_quote: Hsla::from(rgba(0xd6d6d6ff)),
-                border_quote: Hsla::from(rgba(0x4cc2ffff)),
+                border_quote: Hsla::from(rgba(0xaaa0ffff)),
                 callout_note_bg: Hsla::from(rgba(0x94a3b81f)),
                 callout_note_border: Hsla::from(rgba(0x94a3b4ff)),
                 callout_tip_bg: Hsla::from(rgba(0x4cc2ff1f)),
@@ -1133,7 +1133,7 @@ impl Theme {
                 task_checkbox_checked_bg: Hsla::from(rgba(0x4cc2ffff)),
                 task_checkbox_check: Hsla::from(rgba(0x1f1f1fff)),
                 separator_color: Hsla::from(rgba(0x5a5a5aff)),
-                code_bg: Hsla::from(rgba(0x292929ff)),
+                code_bg: Hsla::from(rgba(0x252832ff)),
                 code_text: Hsla::from(rgba(0xd6d6d6ff)),
                 code_language_input_bg: Hsla::from(rgba(0x333333ff)),
                 code_language_input_border: Hsla::from(rgba(0x484644ff)),
@@ -1165,23 +1165,23 @@ impl Theme {
                 image_caption_text: Hsla::from(rgba(0xa19f9dff)),
                 scrollbar_thumb: Hsla::from(rgba(0xa19f9dcc)),
                 cursor: Hsla::from(rgba(0xf5f5f5ff)),
-                selection: Hsla::from(rgba(0x264f78ff)),
+                selection: Hsla::from(rgba(0x403a61ff)),
                 dialog_backdrop: Hsla::from(rgba(0x00000088)),
-                dialog_surface: Hsla::from(rgba(0x292929ff)),
-                dialog_border: Hsla::from(rgba(0x484644ff)),
+                dialog_surface: Hsla::from(rgba(0x1b1d24ff)),
+                dialog_border: Hsla::from(rgba(0x333640ff)),
                 dialog_title: Hsla::from(rgba(0xf5f5f5ff)),
                 dialog_body: Hsla::from(rgba(0xd6d6d6ff)),
-                dialog_muted: Hsla::from(rgba(0xa19f9dff)),
-                dialog_primary_button_bg: Hsla::from(rgba(0x4cc2ffff)),
-                dialog_primary_button_hover: Hsla::from(rgba(0x75beffff)),
+                dialog_muted: Hsla::from(rgba(0xa0a4afff)),
+                dialog_primary_button_bg: Hsla::from(rgba(0xaaa0ffff)),
+                dialog_primary_button_hover: Hsla::from(rgba(0xb9afffff)),
                 dialog_primary_button_text: Hsla::from(rgba(0x1f1f1fff)),
-                dialog_secondary_button_bg: Hsla::from(rgba(0x333333ff)),
-                dialog_secondary_button_hover: Hsla::from(rgba(0x484644ff)),
+                dialog_secondary_button_bg: Hsla::from(rgba(0x20232bff)),
+                dialog_secondary_button_hover: Hsla::from(rgba(0x292c35ff)),
                 dialog_secondary_button_text: Hsla::from(rgba(0xf5f5f5ff)),
                 dialog_danger_button_bg: Hsla::from(rgba(0xd13438ff)),
                 dialog_danger_button_hover: Hsla::from(rgba(0xa4262cff)),
                 dialog_danger_button_text: Hsla::from(rgba(0xffffffff)),
-                status_bar_background: Hsla::from(rgba(0x292929ff)),
+                status_bar_background: Hsla::from(rgba(0x20232bff)),
                 status_bar_text: Hsla::from(rgba(0xd6d6d6ff)),
                 status_bar_text_dim: Hsla::from(rgba(0xa19f9dff)),
                 status_bar_button_hover: Hsla::from(rgba(0x484644ff)),
@@ -1340,11 +1340,11 @@ impl Theme {
         Self {
             name: BUILTIN_THEME_VELOTYPE_LIGHT_NAME.into(),
             colors: ThemeColors {
-                editor_background: Hsla::from(rgba(0xfaf9f8ff)),
+                editor_background: Hsla::from(rgba(0xffffffff)),
                 source_mode_block_bg: Hsla::from(rgba(0xf3f2f1ff)),
                 comment_bg: Hsla::from(rgba(0xfff4ce99)),
-                text_default: Hsla::from(rgba(0x242424ff)),
-                text_link: Hsla::from(rgba(0x0078d4ff)),
+                text_default: Hsla::from(rgba(0x252832ff)),
+                text_link: Hsla::from(rgba(0x6558d3ff)),
                 text_placeholder: Hsla::from(rgba(0x8a8886cc)),
                 text_h1: Hsla::from(rgba(0x201f1eff)),
                 text_h2: Hsla::from(rgba(0x201f1eff)),
@@ -1355,7 +1355,7 @@ impl Theme {
                 border_h1: Hsla::from(rgba(0xd1d1d1ff)),
                 border_h2: Hsla::from(rgba(0xedebe9ff)),
                 text_quote: Hsla::from(rgba(0x484644ff)),
-                border_quote: Hsla::from(rgba(0x0078d4ff)),
+                border_quote: Hsla::from(rgba(0x6558d3ff)),
                 callout_note_bg: Hsla::from(rgba(0x0078d414)),
                 callout_note_border: Hsla::from(rgba(0x0078d4ff)),
                 callout_tip_bg: Hsla::from(rgba(0x107c1014)),
@@ -1373,10 +1373,10 @@ impl Theme {
                 footnote_backref: Hsla::from(rgba(0x0078d4ff)),
                 task_checkbox_border: Hsla::from(rgba(0x8a8886ff)),
                 task_checkbox_bg: Hsla::from(rgba(0xffffffff)),
-                task_checkbox_checked_bg: Hsla::from(rgba(0x0078d4ff)),
+                task_checkbox_checked_bg: Hsla::from(rgba(0x6558d3ff)),
                 task_checkbox_check: Hsla::from(rgba(0xffffffff)),
                 separator_color: Hsla::from(rgba(0xd1d1d1ff)),
-                code_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                code_bg: Hsla::from(rgba(0xf2f3f6ff)),
                 code_text: Hsla::from(rgba(0x242424ff)),
                 code_language_input_bg: Hsla::from(rgba(0xffffffff)),
                 code_language_input_border: Hsla::from(rgba(0xd1d1d1ff)),
@@ -1396,7 +1396,7 @@ impl Theme {
                 table_border: Hsla::from(rgba(0xd1d1d1ff)),
                 table_header_bg: Hsla::from(rgba(0xf3f2f1ff)),
                 table_cell_bg: Hsla::from(rgba(0xffffffff)),
-                table_cell_active_outline: Hsla::from(rgba(0x0078d4ff)),
+                table_cell_active_outline: Hsla::from(rgba(0x6558d3ff)),
                 table_axis_preview_bg: Hsla::from(rgba(0x0078d414)),
                 table_axis_selected_bg: Hsla::from(rgba(0x0078d429)),
                 table_append_button_bg: Hsla::from(rgba(0xf3f2f1ff)),
@@ -1408,23 +1408,23 @@ impl Theme {
                 image_caption_text: Hsla::from(rgba(0x605e5cff)),
                 scrollbar_thumb: Hsla::from(rgba(0x8a8886b8)),
                 cursor: Hsla::from(rgba(0x242424ff)),
-                selection: Hsla::from(rgba(0xcfe4faff)),
+                selection: Hsla::from(rgba(0xe8e5ffff)),
                 dialog_backdrop: Hsla::from(rgba(0x00000066)),
                 dialog_surface: Hsla::from(rgba(0xffffffff)),
-                dialog_border: Hsla::from(rgba(0xd1d1d1ff)),
+                dialog_border: Hsla::from(rgba(0xe6e8edff)),
                 dialog_title: Hsla::from(rgba(0x201f1eff)),
                 dialog_body: Hsla::from(rgba(0x323130ff)),
-                dialog_muted: Hsla::from(rgba(0x605e5cff)),
-                dialog_primary_button_bg: Hsla::from(rgba(0x0078d4ff)),
-                dialog_primary_button_hover: Hsla::from(rgba(0x106ebeff)),
+                dialog_muted: Hsla::from(rgba(0x777d89ff)),
+                dialog_primary_button_bg: Hsla::from(rgba(0x6558d3ff)),
+                dialog_primary_button_hover: Hsla::from(rgba(0x574bc2ff)),
                 dialog_primary_button_text: Hsla::from(rgba(0xffffffff)),
-                dialog_secondary_button_bg: Hsla::from(rgba(0xf3f2f1ff)),
-                dialog_secondary_button_hover: Hsla::from(rgba(0xedebe9ff)),
+                dialog_secondary_button_bg: Hsla::from(rgba(0xf8f9fbff)),
+                dialog_secondary_button_hover: Hsla::from(rgba(0xf1f3f6ff)),
                 dialog_secondary_button_text: Hsla::from(rgba(0x242424ff)),
                 dialog_danger_button_bg: Hsla::from(rgba(0xd13438ff)),
                 dialog_danger_button_hover: Hsla::from(rgba(0xa4262cff)),
                 dialog_danger_button_text: Hsla::from(rgba(0xffffffff)),
-                status_bar_background: Hsla::from(rgba(0xf3f2f1ff)),
+                status_bar_background: Hsla::from(rgba(0xf8f9fbff)),
                 status_bar_text: Hsla::from(rgba(0x323130ff)),
                 status_bar_text_dim: Hsla::from(rgba(0x605e5cff)),
                 status_bar_button_hover: Hsla::from(rgba(0xedebe9ff)),
@@ -2133,7 +2133,7 @@ mod tests {
         let theme =
             Theme::from_json(&json).expect("theme without code language palette should load");
 
-        assert_eq!(theme.colors.code_bg, rgba(0x292929ff).into());
+        assert_eq!(theme.colors.code_bg, rgba(0x252832ff).into());
         assert_eq!(theme.colors.code_language_input_bg, rgba(0x333333ff).into());
         assert_eq!(
             theme.colors.code_language_input_border,
@@ -2160,7 +2160,7 @@ mod tests {
         assert_eq!(theme.dimensions.block_gap, 6.0);
         assert_eq!(theme.colors.footnote_bg, rgba(0x292929ff).into());
         assert_eq!(theme.dimensions.footnote_padding_x, 10.0);
-        assert_eq!(theme.colors.code_bg, rgba(0x292929ff).into());
+        assert_eq!(theme.colors.code_bg, rgba(0x252832ff).into());
         assert_eq!(theme.colors.code_language_input_bg, rgba(0x333333ff).into());
         assert_eq!(
             theme.colors.code_language_input_border,
@@ -2174,17 +2174,17 @@ mod tests {
         let light = Theme::light_theme();
 
         assert_eq!(light.name, "maksher Light");
-        assert_eq!(light.colors.editor_background, rgba(0xfaf9f8ff).into());
-        assert_eq!(light.colors.text_default, rgba(0x242424ff).into());
-        assert_eq!(light.colors.text_link, rgba(0x0078d4ff).into());
-        assert_eq!(light.colors.code_bg, rgba(0xf3f2f1ff).into());
+        assert_eq!(light.colors.editor_background, rgba(0xffffffff).into());
+        assert_eq!(light.colors.text_default, rgba(0x252832ff).into());
+        assert_eq!(light.colors.text_link, rgba(0x6558d3ff).into());
+        assert_eq!(light.colors.code_bg, rgba(0xf2f3f6ff).into());
         assert_eq!(
             light.colors.code_language_input_border,
             rgba(0xd1d1d1ff).into()
         );
         assert_eq!(
             light.colors.table_cell_active_outline,
-            rgba(0x0078d4ff).into()
+            rgba(0x6558d3ff).into()
         );
         assert_eq!(light.dimensions.block_gap, dark.dimensions.block_gap);
         assert_eq!(light.typography.text_size, dark.typography.text_size);
@@ -2425,7 +2425,7 @@ mod tests {
         assert_eq!(manager.current().name, "maksher Light");
         assert_eq!(
             manager.current().colors.editor_background,
-            rgba(0xfaf9f8ff).into()
+            rgba(0xffffffff).into()
         );
 
         assert!(manager.set_theme_by_id("velotype"));

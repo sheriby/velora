@@ -12,7 +12,8 @@ impl Editor {
         let track_height = viewport_height.max(20.0);
         let content_height = viewport_height + max_scroll_y;
         let thumb_height = if max_scroll_y > 0.5 {
-            (track_height * (viewport_height / content_height)).clamp(28.0, track_height)
+            (track_height * (viewport_height / content_height))
+                .clamp(28.0_f32.min(track_height), track_height)
         } else {
             track_height
         };
@@ -241,7 +242,7 @@ impl Editor {
         self.toggle_view_mode_from_ui(cx);
     }
 
-    pub(super) fn toggle_view_mode_from_ui(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_view_mode_from_ui(&mut self, cx: &mut Context<Self>) {
         if self.code_tab_active() {
             return;
         }

@@ -88,6 +88,13 @@ fn scrollbar_geometry_and_inverse_mapping_stay_aligned() {
 }
 
 #[test]
+fn scrollbar_geometry_handles_a_newly_mounted_short_viewport() {
+    let geometry = Editor::scrollbar_geometry(20.0, 100.0, 0.0);
+    assert_eq!(geometry.track_height, 20.0);
+    assert_eq!(geometry.thumb_height, 20.0);
+}
+
+#[test]
 fn scrollbar_offset_mapping_clamps_to_track_bounds() {
     let geometry = Editor::scrollbar_geometry(300.0, 450.0, 0.0);
     assert_eq!(

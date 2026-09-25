@@ -63,8 +63,8 @@
       box-shadow: var(--shadow);
     }
     .titlebar {
-      height: 54px;
-      flex: 0 0 54px;
+      height: 44px;
+      flex: 0 0 44px;
       display: flex;
       align-items: center;
       gap: 18px;
@@ -78,28 +78,12 @@
     .traffic i:nth-child(3) { background: #28c840; }
     .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -.2px; }
     .brand-mark {
-      width: 27px; height: 27px; display: grid; place-items: center;
-      border-radius: 8px; color: white; background: #6558d3; font-size: 15px; font-weight: 750;
+      width: 20px; height: 20px; display: grid; place-items: center;
+      border-radius: 6px; color: white; background: #6558d3; font-size: 11px; font-weight: 750;
     }
     .crumb { display: flex; align-items: center; gap: 8px; color: var(--muted); }
     .crumb strong { color: var(--text); font-weight: 550; }
     .spacer { flex: 1; }
-    .theme-toggle, .toolbar-button, .icon-button {
-      border: 1px solid var(--line); background: var(--window); cursor: pointer;
-    }
-    .theme-toggle {
-      height: 30px; padding: 0 10px; border-radius: 7px; color: var(--muted); font-size: 12px;
-    }
-    .toolbar {
-      height: 46px; flex: 0 0 46px; display: flex; align-items: center; gap: 8px;
-      padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--window);
-    }
-    .toolbar-button {
-      height: 29px; padding: 0 9px; border-color: transparent; border-radius: 6px;
-      color: var(--muted); font-size: 12px;
-    }
-    .toolbar-button:hover, .icon-button:hover { background: var(--panel-strong); }
-    .toolbar-button.primary { background: var(--accent-soft); color: var(--accent); }
     .workspace { flex: 1; min-height: 0; display: flex; }
     .activity {
       width: 50px; flex: 0 0 50px; display: flex; flex-direction: column; align-items: center;
@@ -114,28 +98,7 @@
       width: 258px; flex: 0 0 258px; display: flex; flex-direction: column;
       border-right: 1px solid var(--line); background: var(--panel);
     }
-    .side-head { padding: 16px 15px 11px; }
-    .side-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
-    .side-title strong { font-size: 12px; font-weight: 650; letter-spacing: .5px; }
-    .side-tools { display: flex; gap: 5px; color: var(--muted); }
-    .side-tools span { width: 23px; height: 23px; display: grid; place-items: center; border-radius: 5px; }
-    .side-tools span:hover { background: var(--panel-strong); }
-    .side-tabs { display: flex; gap: 15px; border-bottom: 1px solid var(--line); }
-    .side-tabs button {
-      position: relative; padding: 0 0 9px; border: 0; background: none; color: var(--muted);
-      cursor: pointer; font-size: 12px;
-    }
-    .side-tabs button.active { color: var(--text); font-weight: 600; }
-    .side-tabs button.active::after {
-      position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px;
-      background: var(--accent); content: "";
-    }
-    .search {
-      height: 31px; margin: 2px 13px 12px; display: flex; align-items: center; gap: 8px;
-      padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--faint);
-      background: var(--window); font-size: 12px;
-    }
-    .tree { overflow: auto; padding: 0 8px 16px; font-size: 12.5px; }
+    .tree { flex: 1; overflow: auto; padding: 0 8px 16px; font-size: 12.5px; }
     .tree-row {
       height: 29px; display: flex; align-items: center; gap: 8px; padding: 0 8px;
       border-radius: 6px; color: var(--muted); white-space: nowrap;
@@ -149,25 +112,16 @@
     .file-icon.code { color: #5b8ed9; }
     .main { min-width: 0; flex: 1; display: flex; flex-direction: column; background: var(--window); }
     .tabs {
-      height: 43px; flex: 0 0 43px; display: flex; align-items: stretch;
+      height: 32px; flex: 0 0 32px; display: flex; align-items: stretch;
       border-bottom: 1px solid var(--line); background: var(--panel);
     }
     .doc-tab {
-      min-width: 150px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+      min-width: 120px; display: flex; align-items: center; gap: 8px; padding: 0 10px;
       border-right: 1px solid var(--line); color: var(--muted); font-size: 12px;
     }
     .doc-tab.active { position: relative; color: var(--text); background: var(--window); }
     .doc-tab.active::after { position: absolute; top: 0; right: 0; left: 0; height: 2px; background: var(--accent); content: ""; }
     .dirty-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent); }
-    .editor-tools {
-      height: 41px; flex: 0 0 41px; display: flex; align-items: center; gap: 6px;
-      padding: 0 22px; border-bottom: 1px solid var(--line); color: var(--muted);
-    }
-    .editor-tools .divider { width: 1px; height: 18px; margin: 0 5px; background: var(--line); }
-    .icon-button {
-      width: 29px; height: 27px; display: grid; place-items: center; border-color: transparent;
-      border-radius: 5px; color: var(--muted); font-size: 12px;
-    }
     .page-scroll { flex: 1; overflow: auto; }
     .page {
       width: min(760px, calc(100% - 72px)); margin: 52px auto 72px; color: var(--text);
@@ -211,36 +165,14 @@
       <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="brand"><span class="brand-mark">m</span><span>maksher</span></div>
       <div class="crumb"><span>/</span><strong>我的工作区</strong><span>/</span><span>产品设计</span></div>
-      <div class="spacer"></div>
-      <button class="theme-toggle" id="theme-toggle">切换深色预览</button>
-      <button class="icon-button" title="设置">⚙</button>
     </header>
-    <div class="toolbar">
-      <button class="toolbar-button">⌕　查找</button>
-      <button class="toolbar-button">⌘　命令</button>
-      <div class="spacer"></div>
-      <button class="toolbar-button">跟随系统外观</button>
-      <button class="toolbar-button primary">Markdown　⌄</button>
-    </div>
     <div class="workspace">
       <nav class="activity" aria-label="活动栏">
         <button class="active" title="文件">▤</button>
         <button title="搜索">⌕</button>
         <button title="大纲">☷</button>
-        <div class="spacer"></div>
-        <button title="偏好设置">⚙</button>
       </nav>
       <aside class="sidebar">
-        <div class="side-head">
-          <div class="side-title">
-            <strong>资源管理器</strong>
-            <div class="side-tools"><span title="新建文件">＋</span><span title="新建文件夹">▱</span><span title="刷新">↻</span></div>
-          </div>
-          <div class="side-tabs">
-            <button class="active">文件</button><button>大纲</button><button>最近</button>
-          </div>
-        </div>
-        <div class="search"><span>⌕</span><span>按文件名搜索</span><span class="spacer"></span><span>⌘ P</span></div>
         <div class="tree">
           <div class="tree-row folder"><span class="caret">⌄</span><span>▰</span><span>产品设计</span></div>
           <div class="tree-row folder indent"><span class="caret">⌄</span><span>▰</span><span>docs</span></div>
@@ -257,20 +189,6 @@
           <div class="doc-tab active"><span class="file-icon">M</span><span>设计方向.md</span><span class="dirty-dot"></span></div>
           <div class="doc-tab"><span class="file-icon">M</span><span>README.md</span></div>
           <div class="doc-tab"><span class="file-icon code">R</span><span>main.rs</span></div>
-        </div>
-        <div class="editor-tools">
-          <button class="icon-button" title="撤销">↶</button>
-          <button class="icon-button" title="重做">↷</button>
-          <span class="divider"></span>
-          <button class="icon-button" title="粗体"><strong>B</strong></button>
-          <button class="icon-button" title="斜体"><em>I</em></button>
-          <button class="icon-button" title="链接">↗</button>
-          <button class="icon-button" title="列表">☷</button>
-          <button class="icon-button" title="插入图片">▧</button>
-          <span class="divider"></span>
-          <span style="font-size:12px">自动保存</span>
-          <span class="spacer"></span>
-          <button class="toolbar-button">查看源码</button>
         </div>
         <div class="page-scroll">
           <article class="page">
@@ -294,31 +212,13 @@
           </article>
         </div>
         <footer class="status">
-          <span>●　工作区</span><span>富文本 Markdown</span>
-          <span class="right">第 8 行，1 列</span><span>约 286 字</span><span>UTF-8</span>
+          <span class="right">约 286 字</span>
         </footer>
       </section>
     </div>
   </main>
   <script>
-    const root = document.documentElement;
-    const toggle = document.getElementById("theme-toggle");
-    const preferredTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    root.dataset.theme = preferredTheme;
-    function updateThemeButton() {
-      toggle.textContent = root.dataset.theme === "dark" ? "切换浅色预览" : "切换深色预览";
-    }
-    updateThemeButton();
-    toggle.addEventListener("click", () => {
-      root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
-      updateThemeButton();
-    });
-    document.querySelectorAll(".side-tabs button").forEach((button) => {
-      button.addEventListener("click", () => {
-        document.querySelectorAll(".side-tabs button").forEach((item) => item.classList.remove("active"));
-        button.classList.add("active");
-      });
-    });
+    document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   </script>
 </body>
 </html>

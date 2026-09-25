@@ -13,13 +13,13 @@ use gpui::*;
 use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     InstallCliTool, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
-    QuitApplication, SaveDocument, SaveDocumentAs, SelectLanguage, SelectTheme, ShowAbout,
-    ToggleWorkspace, UninstallCliTool,
+    OpenRecentWorkspace, OpenWorkspaceFolder, QuitApplication, SaveDocument, SaveDocumentAs,
+    SelectLanguage, SelectTheme, ShowAbout, ToggleViewMode, ToggleWorkspace, UninstallCliTool,
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
     import_language_config_and_select, import_theme_config_and_select, open_preferences_window,
-    read_recent_files, record_recent_file, remove_recent_file,
+    read_recent_files, read_recent_workspaces, record_recent_file, remove_recent_file,
 };
 use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
@@ -64,7 +64,7 @@ pub(crate) fn open_editor_window(
     let title = window_title(file_path.as_deref());
     let handle = cx
         .open_window(maksher_window_options(title, bounds), move |_window, cx| {
-            cx.new(move |cx| Editor::from_markdown(cx, markdown, file_path))
+            cx.new(move |cx| Editor::from_file_source(cx, markdown, file_path))
         })
         .unwrap();
 
@@ -437,6 +437,9 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<InstallCliTool>()
         || action.as_any().is::<UninstallCliTool>()
         || action.as_any().is::<ToggleWorkspace>()
+        || action.as_any().is::<OpenWorkspaceFolder>()
+        || action.as_any().is::<OpenRecentWorkspace>()
+        || action.as_any().is::<ToggleViewMode>()
 }
 
 fn is_window_context_menu_action(action: &dyn Action) -> bool {
@@ -535,6 +538,13 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         open_editor_window(cx, String::new(), None);
     } else if action.as_any().is::<OpenFile>() {
         prompt_and_open_files(cx);
+    } else if action.as_any().is::<OpenWorkspaceFolder>() {
+        let _ = with_active_editor(cx, |editor, _, cx| editor.prompt_open_workspace_folder(cx));
+    } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentWorkspace>() {
+        let path = PathBuf::from(&action.path);
+        let _ = with_active_editor(cx, |editor, _, cx| editor.set_workspace_root(path, cx));
+    } else if action.as_any().is::<ToggleViewMode>() {
+        let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -632,6 +642,13 @@ pub(crate) fn dispatch_menu_action_for_editor(
         open_editor_window(cx, String::new(), None);
     } else if action.as_any().is::<OpenFile>() {
         prompt_and_open_files_with_error_window(cx, current_window);
+    } else if action.as_any().is::<OpenWorkspaceFolder>() {
+        let _ = target.update(cx, |editor, cx| editor.prompt_open_workspace_folder(cx));
+    } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentWorkspace>() {
+        let path = PathBuf::from(&action.path);
+        let _ = target.update(cx, |editor, cx| editor.set_workspace_root(path, cx));
+    } else if action.as_any().is::<ToggleViewMode>() {
+        let _ = target.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -682,6 +699,7 @@ fn build_menus(
     theme_manager: &ThemeManager,
     i18n_manager: &I18nManager,
     recent_files: &[PathBuf],
+    recent_workspaces: &[PathBuf],
 ) -> Vec<Menu> {
     let current_theme_id = theme_manager.current_theme_id().to_string();
     let current_language_id = i18n_manager.current_language_id().to_string();
@@ -838,6 +856,21 @@ fn build_menus(
     #[cfg(not(target_os = "macos"))]
     let help_items = vec![MenuItem::action(strings.menu_about.clone(), ShowAbout)];
 
+    let recent_workspace_items = if recent_workspaces.is_empty() {
+        vec![MenuItem::action(
+            strings.workspace_empty_recent.clone(),
+            NoRecentFiles,
+        )]
+    } else {
+        recent_workspaces
+            .iter()
+            .map(|path| {
+                let label = path.to_string_lossy().into_owned();
+                MenuItem::action(label.clone(), OpenRecentWorkspace { path: label })
+            })
+            .collect::<Vec<_>>()
+    };
+
     let mut menus = initial_menus;
     menus.extend([
         Menu {
@@ -857,10 +890,27 @@ fn build_menus(
         },
         Menu {
             name: strings.menu_workspace.into(),
-            items: vec![MenuItem::action(
-                strings.menu_toggle_workspace.clone(),
-                ToggleWorkspace,
-            )],
+            items: vec![
+                MenuItem::action(
+                    strings.menu_open_workspace_folder.clone(),
+                    OpenWorkspaceFolder,
+                ),
+                MenuItem::submenu(Menu {
+                    name: if current_language_id == "zh-CN" {
+                        "最近工作区"
+                    } else {
+                        "Recent Workspaces"
+                    }
+                    .into(),
+                    items: recent_workspace_items,
+                }),
+                MenuItem::separator(),
+                MenuItem::action(strings.menu_toggle_workspace.clone(), ToggleWorkspace),
+                MenuItem::action(
+                    strings.preferences_shortcut_toggle_view_mode.clone(),
+                    ToggleViewMode,
+                ),
+            ],
         },
         Menu {
             name: strings.menu_help.into(),
@@ -872,10 +922,12 @@ fn build_menus(
 
 pub(crate) fn install_menus(cx: &mut App) {
     let recent_files = recent_files_for_menu();
+    let recent_workspaces = read_recent_workspaces().unwrap_or_default();
     let menus = build_menus(
         cx.global::<ThemeManager>(),
         cx.global::<I18nManager>(),
         &recent_files,
+        &recent_workspaces,
     );
     cx.set_menus(menus);
 }
@@ -1067,6 +1119,15 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &OpenFile, cx| {
         dispatch_menu_action(&OpenFile, cx);
     });
+    cx.on_action(|_: &OpenWorkspaceFolder, cx| {
+        dispatch_menu_action(&OpenWorkspaceFolder, cx);
+    });
+    cx.on_action(|action: &OpenRecentWorkspace, cx| {
+        dispatch_menu_action(action, cx);
+    });
+    cx.on_action(|_: &ToggleViewMode, cx| {
+        dispatch_menu_action(&ToggleViewMode, cx);
+    });
     cx.on_action(|_: &OpenPreferences, cx| {
         dispatch_menu_action(&OpenPreferences, cx);
     });
@@ -1125,8 +1186,8 @@ mod tests {
     use super::{applescript_string_literal, build_menus};
     use crate::components::{
         AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
-        NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile, QuitApplication,
-        SaveDocument, SelectLanguage, SelectTheme, ShowAbout,
+        NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile, OpenRecentWorkspace,
+        QuitApplication, SaveDocument, SelectLanguage, SelectTheme, ShowAbout,
     };
     use crate::i18n::I18nManager;
     use crate::theme::ThemeManager;
@@ -1144,6 +1205,25 @@ mod tests {
         match item {
             MenuItem::Submenu(menu) => menu,
             _ => panic!("expected submenu item"),
+        }
+    }
+
+    #[test]
+    fn recent_workspaces_are_in_the_workspace_menu() {
+        let theme_manager = ThemeManager::default();
+        let i18n_manager = I18nManager::default();
+        let root = PathBuf::from("/tmp/maksher-writing");
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[root.clone()]);
+        let recent = submenu(&menus[WORKSPACE_IDX].items[1]);
+        match &recent.items[0] {
+            MenuItem::Action { action, .. } => {
+                let action = action
+                    .as_any()
+                    .downcast_ref::<OpenRecentWorkspace>()
+                    .unwrap();
+                assert_eq!(action.path, root.to_string_lossy());
+            }
+            _ => panic!("expected recent workspace action"),
         }
     }
 
@@ -1192,7 +1272,7 @@ mod tests {
     fn build_menus_uses_english_fallback_by_default() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
 
         let menu_names = menus
             .iter()
@@ -1258,6 +1338,14 @@ mod tests {
         );
         assert_eq!(
             action_name(&menus[WORKSPACE_IDX].items[0]),
+            "Open Workspace Folder"
+        );
+        assert_eq!(
+            submenu(&menus[WORKSPACE_IDX].items[1]).name.as_ref(),
+            "Recent Workspaces"
+        );
+        assert_eq!(
+            action_name(&menus[WORKSPACE_IDX].items[3]),
             "Toggle Workspace"
         );
     }
@@ -1266,7 +1354,7 @@ mod tests {
     fn build_menus_uses_chinese_language_when_selected() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::new_with_language_id("zh-CN");
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
 
         #[cfg(target_os = "macos")]
         assert_eq!(
@@ -1306,14 +1394,22 @@ mod tests {
             "\u{2713} 简体中文"
         );
         assert_eq!(action_name(&menus[LANGUAGE_IDX].items[1]), "English");
-        assert_eq!(action_name(&menus[WORKSPACE_IDX].items[0]), "切换工作区");
+        assert_eq!(
+            action_name(&menus[WORKSPACE_IDX].items[0]),
+            "打开工作区文件夹"
+        );
+        assert_eq!(
+            submenu(&menus[WORKSPACE_IDX].items[1]).name.as_ref(),
+            "最近工作区"
+        );
+        assert_eq!(action_name(&menus[WORKSPACE_IDX].items[3]), "切换工作区");
     }
 
     #[test]
     fn export_menu_items_dispatch_export_actions() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
 
         match &menus[EXPORT_IDX].items[0] {
             MenuItem::Action { action, .. } => {
@@ -1334,7 +1430,7 @@ mod tests {
     fn language_menu_items_dispatch_select_language_actions() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
 
         match &menus[LANGUAGE_IDX].items[0] {
             MenuItem::Action { action, .. } => {
@@ -1352,7 +1448,7 @@ mod tests {
     fn recent_files_submenu_uses_empty_state_when_history_is_empty() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
 
         // On macOS: File menu is index 1, Open Recent is item 3 within it.
         // On other platforms: File menu is index 0, Open Recent is item 3.
@@ -1380,7 +1476,7 @@ mod tests {
             PathBuf::from(r"C:\docs\one.md"),
             PathBuf::from(r"D:\notes\two.markdown"),
         ];
-        let menus = build_menus(&theme_manager, &i18n_manager, &recent_files);
+        let menus = build_menus(&theme_manager, &i18n_manager, &recent_files, &[]);
 
         #[cfg(target_os = "macos")]
         let recent_menu = submenu(&menus[1].items[3]);
@@ -1427,7 +1523,7 @@ mod tests {
     fn config_import_items_are_bottom_menu_actions() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
 
         let language_items = &menus[LANGUAGE_IDX].items;
         assert!(matches!(
@@ -1476,7 +1572,7 @@ mod tests {
         let mut theme_manager = ThemeManager::default();
         assert!(theme_manager.set_theme_by_id("velotype-light"));
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
         let theme_items = &menus[THEME_IDX].items;
 
         assert_eq!(action_name(&theme_items[0]), "Follow System");
@@ -1498,7 +1594,7 @@ mod tests {
     fn help_menu_omits_upstream_update_action() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
         let help_items = &menus[HELP_IDX].items;
 
         assert!(help_items.iter().all(|item| match item {
@@ -1512,7 +1608,7 @@ mod tests {
     fn help_menu_contains_about_only() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
         let help_items = &menus[HELP_IDX].items;
 
         assert_eq!(help_items.len(), 1);
@@ -1529,7 +1625,7 @@ mod tests {
     fn help_menu_contains_cli_and_about_on_macos() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let menus = build_menus(&theme_manager, &i18n_manager, &[], &[]);
         let help_items = &menus[HELP_IDX].items;
 
         // 安装或卸载命令、分隔线、关于

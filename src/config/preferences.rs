@@ -1952,24 +1952,6 @@ impl PreferencesWindow {
                     cx.notify();
                 },
                 cx,
-            ))
-            .child(switch_row(
-                &strings.preferences_status_bar_show_sidebar_toggle,
-                self.status_bar_show_sidebar_toggle,
-                |this, _, _, cx| {
-                    this.status_bar_show_sidebar_toggle = !this.status_bar_show_sidebar_toggle;
-                    cx.notify();
-                },
-                cx,
-            ))
-            .child(switch_row(
-                &strings.preferences_status_bar_show_mode_switch,
-                self.status_bar_show_mode_switch,
-                |this, _, _, cx| {
-                    this.status_bar_show_mode_switch = !this.status_bar_show_mode_switch;
-                    cx.notify();
-                },
-                cx,
             ));
 
         div()

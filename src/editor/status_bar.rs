@@ -1,5 +1,4 @@
-//! Bottom status bar: sidebar toggle, mode switch, cursor position,
-//! word count, and custom buttons.
+//! Bottom status bar: cursor position, word count, and custom buttons.
 
 use gpui::*;
 use unicode_segmentation::UnicodeSegmentation;
@@ -11,8 +10,6 @@ use crate::theme::Theme;
 
 #[derive(Default)]
 pub(super) struct StatusBarState {
-    pub sidebar_hovered: bool,
-    pub mode_hovered: bool,
     custom_button_hovered: Option<String>,
 }
 
@@ -31,28 +28,6 @@ impl Editor {
 
         let c = &theme.colors;
         let d = &theme.dimensions;
-
-        let mut left_items: Vec<AnyElement> = Vec::new();
-
-        if prefs.show_sidebar_toggle {
-            left_items.push(render_sidebar_toggle(
-                &mut self.status_bar,
-                self.workspace.is_open,
-                theme,
-                strings,
-                cx,
-            ));
-        }
-
-        if prefs.show_mode_switch && !self.code_tab_active() {
-            left_items.push(render_mode_switch(
-                &mut self.status_bar,
-                self.view_mode,
-                theme,
-                strings,
-                cx,
-            ));
-        }
 
         let mut right_items: Vec<AnyElement> = Vec::new();
 
@@ -99,18 +74,11 @@ impl Editor {
             .flex_shrink_0()
             .flex()
             .items_center()
-            .justify_between()
+            .justify_end()
             .px(px(d.status_bar_padding_x))
             .bg(c.status_bar_background)
             .border_t(px(1.0))
             .border_color(c.dialog_border)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(d.status_bar_item_gap))
-                    .children(left_items),
-            )
             .child(
                 div()
                     .flex()
@@ -139,103 +107,6 @@ impl Editor {
         let col = text[last_newline..clamped].graphemes(true).count() + 1;
         (line, col)
     }
-}
-
-fn render_sidebar_toggle(
-    state: &mut StatusBarState,
-    _is_open: bool,
-    theme: &Theme,
-    strings: &I18nStrings,
-    cx: &mut Context<Editor>,
-) -> AnyElement {
-    let c = &theme.colors;
-    let d = &theme.dimensions;
-
-    div()
-        .id("status-bar-sidebar-toggle")
-        .h(px(d.status_bar_height - 4.0))
-        .px(px(6.0))
-        .flex()
-        .items_center()
-        .rounded(px(4.0))
-        .bg(if state.sidebar_hovered {
-            c.status_bar_button_hover
-        } else {
-            hsla(0., 0., 0., 0.)
-        })
-        .cursor_pointer()
-        .text_size(px(d.status_bar_text_size))
-        .text_color(c.status_bar_text)
-        .child(strings.status_bar_files.clone())
-        .on_hover(cx.listener(
-            |editor: &mut Editor,
-             hovered: &bool,
-             _window: &mut Window,
-             cx: &mut Context<Editor>| {
-                editor.status_bar.sidebar_hovered = *hovered;
-                cx.notify();
-            },
-        ))
-        .on_click(cx.listener(
-            |editor: &mut Editor,
-             _: &gpui::ClickEvent,
-             window: &mut Window,
-             cx: &mut Context<Editor>| {
-                editor.toggle_workspace_drawer(window, cx);
-            },
-        ))
-        .into_any_element()
-}
-
-fn render_mode_switch(
-    state: &mut StatusBarState,
-    view_mode: super::ViewMode,
-    theme: &Theme,
-    strings: &I18nStrings,
-    cx: &mut Context<Editor>,
-) -> AnyElement {
-    let c = &theme.colors;
-    let d = &theme.dimensions;
-
-    let label = match view_mode {
-        super::ViewMode::Source => strings.status_bar_mode_rendered.clone(),
-        super::ViewMode::Rendered => strings.status_bar_mode_source.clone(),
-    };
-
-    div()
-        .id("status-bar-mode-switch")
-        .h(px(d.status_bar_height - 4.0))
-        .px(px(6.0))
-        .flex()
-        .items_center()
-        .rounded(px(4.0))
-        .bg(if state.mode_hovered {
-            c.status_bar_button_hover
-        } else {
-            hsla(0., 0., 0., 0.)
-        })
-        .cursor_pointer()
-        .text_size(px(d.status_bar_text_size))
-        .text_color(c.status_bar_text)
-        .child(label)
-        .on_hover(cx.listener(
-            |editor: &mut Editor,
-             hovered: &bool,
-             _window: &mut Window,
-             cx: &mut Context<Editor>| {
-                editor.status_bar.mode_hovered = *hovered;
-                cx.notify();
-            },
-        ))
-        .on_click(cx.listener(
-            |editor: &mut Editor,
-             _: &gpui::ClickEvent,
-             _window: &mut Window,
-             cx: &mut Context<Editor>| {
-                editor.toggle_view_mode_from_ui(cx);
-            },
-        ))
-        .into_any_element()
 }
 
 fn render_cursor((line, col): (usize, usize), theme: &Theme) -> AnyElement {

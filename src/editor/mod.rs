@@ -422,6 +422,23 @@ impl Editor {
         editor
     }
 
+    pub(crate) fn from_file_source(
+        cx: &mut Context<Self>,
+        source: String,
+        file_path: Option<PathBuf>,
+    ) -> Self {
+        if file_path
+            .as_ref()
+            .is_some_and(|path| workspace::is_code_file(path))
+        {
+            let mut editor = Self::from_markdown(cx, String::new(), None);
+            editor.replace_document_from_code_source(source, file_path.unwrap(), cx);
+            editor
+        } else {
+            Self::from_markdown(cx, source, file_path)
+        }
+    }
+
     pub(crate) fn from_recovery(
         cx: &mut Context<Self>,
         snapshot: crate::config::RecoverySnapshot,

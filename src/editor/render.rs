@@ -1552,7 +1552,11 @@ impl Render for Editor {
         let viewport_width = f32::from(viewport_bounds.size.width.max(px(1.0)));
         let has_overflow = max_scroll_y > 0.5;
 
-        let centered_width = Self::centered_column_width(viewport_width, &theme.dimensions);
+        let centered_width = if self.code_tab_active() {
+            (viewport_width - 72.0).max(1.0)
+        } else {
+            Self::centered_column_width(viewport_width, &theme.dimensions).min(760.0)
+        };
         let current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).clamp(0.0, max_scroll_y);
         let scrollbar_geometry =
             Self::scrollbar_geometry(viewport_height, max_scroll_y, current_scroll_y);
@@ -1944,6 +1948,7 @@ impl Render for Editor {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_editor_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_editor_scroll_wheel))
             .p(px(d.editor_padding))
+            .pt(px(if self.code_tab_active() { 24.0 } else { 52.0 }))
             .pb(px(d.editor_padding
                 + scroll_trigger_padding
                 + scroll_beyond_bottom))
@@ -2036,22 +2041,20 @@ impl Render for Editor {
             content_area
         };
 
-        let content_area = if let Some(document_tabs) = self.render_document_tabs(&theme, cx) {
-            div()
-                .id("editor-column")
-                .w_full()
-                .h_full()
-                .flex_1()
-                .min_w(px(0.0))
-                .flex()
-                .flex_col()
-                .child(document_tabs)
-                .child(content_area)
-                .into_any_element()
-        } else {
-            content_area.into_any_element()
-        };
-        let content_area = if self.source_mode_fallback_required {
+        let content_area = content_area.into_any_element();
+        let document_tabs = self.render_document_tabs(&theme, cx);
+        let content_area = div()
+            .id("editor-column")
+            .w_full()
+            .h_full()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .children(document_tabs)
+            .child(content_area)
+            .into_any_element();
+        let content_area = if self.source_mode_fallback_required && !self.code_tab_active() {
             div()
                 .id("source-mode-fallback-container")
                 .w_full()
@@ -2137,16 +2140,9 @@ impl Render for Editor {
             .as_ref()
             .map(|m| m.iter().map(|menu| menu.name.clone()).collect())
             .unwrap_or_default();
-        let window_title = Self::window_title(
-            self.file_path.as_deref(),
-            self.recovery_source_path.as_deref(),
-            self.is_recovered_document,
-            self.document_dirty,
-            &strings,
-        );
         let base = if let Some(titlebar) = render_custom_titlebar(
             "editor-titlebar",
-            window_title.into(),
+            format!("maksher - {}", self.workspace_breadcrumb()).into(),
             &theme,
             window,
             cx,
@@ -2176,6 +2172,7 @@ impl Render for Editor {
             .pt(px(titlebar_height + menu_bar_height))
             .flex()
             .min_w(px(0.0));
+        let main_content = main_content.child(self.render_activity_rail(&theme, cx));
         let main_content = if let Some(workspace_panel) =
             self.render_workspace_panel(&theme, &strings, workspace_width, cx)
         {
@@ -2206,6 +2203,12 @@ impl Render for Editor {
         } else {
             base
         };
+        let base =
+            if let Some(menu) = self.render_workspace_context_menu_overlay(&theme, window, cx) {
+                base.child(menu)
+            } else {
+                base
+            };
         let base = if let Some(table_dialog) = self.render_table_insert_dialog_overlay(&theme, cx) {
             base.child(table_dialog)
         } else {

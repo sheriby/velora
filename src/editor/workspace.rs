@@ -16,14 +16,9 @@ use crate::theme::{Theme, ThemeManager};
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
-const OPEN_FOLDER_ICON: &str = "icon/workspace/open-folder.svg";
-const NEW_FILE_ICON: &str = "icon/workspace/new-file.svg";
-const NEW_FOLDER_ICON: &str = "icon/workspace/new-folder.svg";
-const RENAME_ICON: &str = "icon/workspace/rename.svg";
-const DELETE_ICON: &str = "icon/workspace/delete.svg";
-const WORKSPACE_PANEL_TARGET_RATIO: f32 = 0.15;
-const WORKSPACE_PANEL_MIN_WIDTH: f32 = 240.0;
-const WORKSPACE_PANEL_MAX_WIDTH: f32 = 360.0;
+const WORKSPACE_PANEL_TARGET_RATIO: f32 = 0.18;
+const WORKSPACE_PANEL_MIN_WIDTH: f32 = 258.0;
+const WORKSPACE_PANEL_MAX_WIDTH: f32 = 320.0;
 const WORKSPACE_NODE_HEIGHT: f32 = 28.0;
 const WORKSPACE_NODE_INDENT: f32 = 18.0;
 
@@ -32,7 +27,6 @@ pub(super) enum WorkspaceTab {
     #[default]
     Files,
     Outline,
-    Recent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,7 +34,6 @@ pub(super) enum WorkspaceTreeKind {
     Directory(PathBuf),
     MarkdownFile(PathBuf),
     CodeFile(PathBuf),
-    RecentWorkspace(PathBuf),
     Heading { line: usize, level: u8 },
 }
 
@@ -73,33 +66,6 @@ impl Render for WorkspaceTooltip {
     }
 }
 
-fn workspace_toolbar_button(
-    id: &'static str,
-    icon_path: &'static str,
-    label: String,
-    icon_color: Hsla,
-    theme: &Theme,
-) -> Stateful<Div> {
-    let tooltip_label = label.clone();
-    div()
-        .id(id)
-        .w(px(26.0))
-        .h(px(26.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.0))
-        .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
-        .cursor_pointer()
-        .child(svg().path(icon_path).size(px(16.0)).text_color(icon_color))
-        .tooltip(move |_window, cx| {
-            cx.new(|_| WorkspaceTooltip {
-                label: tooltip_label.clone(),
-            })
-            .into()
-        })
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WorkspaceDocumentTab {
     path: PathBuf,
@@ -107,6 +73,20 @@ struct WorkspaceDocumentTab {
     file_version: u64,
     markdown: String,
     dirty: bool,
+}
+
+#[derive(Clone, Copy)]
+struct WorkspaceContextMenu {
+    position: Point<Pixels>,
+    has_target: bool,
+}
+
+#[derive(Clone, Copy)]
+enum WorkspaceMenuAction {
+    NewFile,
+    NewFolder,
+    Rename,
+    Delete,
 }
 
 pub(super) struct WorkspaceAutosaveDocument {
@@ -136,10 +116,10 @@ pub(super) struct WorkspaceState {
     selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
-    recent_roots: Vec<PathBuf>,
-    recent_roots_loaded: bool,
     filename_query: String,
+    show_filename_search: bool,
     filename_search_focus: Option<FocusHandle>,
+    context_menu: Option<WorkspaceContextMenu>,
 }
 
 impl Default for WorkspaceState {
@@ -156,16 +136,16 @@ impl Default for WorkspaceState {
             selected: None,
             open_documents: Vec::new(),
             active_document: None,
-            recent_roots: Vec::new(),
-            recent_roots_loaded: false,
             filename_query: String::new(),
+            show_filename_search: false,
             filename_search_focus: None,
+            context_menu: None,
         }
     }
 }
 
 impl Editor {
-    fn prompt_open_workspace_folder(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn prompt_open_workspace_folder(&mut self, cx: &mut Context<Self>) {
         let prompt_title = cx
             .global::<crate::i18n::I18nManager>()
             .strings()
@@ -192,9 +172,12 @@ impl Editor {
     }
 
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
-        if let Ok(recent) = crate::config::record_recent_workspace(&root) {
-            self.workspace.recent_roots = recent;
-            self.workspace.recent_roots_loaded = true;
+        if crate::config::record_recent_workspace(&root).is_ok() {
+            if cx.try_global::<ThemeManager>().is_some()
+                && cx.try_global::<crate::i18n::I18nManager>().is_some()
+            {
+                crate::app_menu::install_menus(cx);
+            }
         }
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
@@ -528,9 +511,8 @@ impl Editor {
                     remap_moved_path(root, &source, &destination, source_is_directory)
                 }) {
                     editor.workspace.root = Some(root.clone());
-                    if let Ok(recent) = crate::config::record_recent_workspace(&root) {
-                        editor.workspace.recent_roots = recent;
-                    }
+                    let _ = crate::config::record_recent_workspace(&root);
+                    crate::app_menu::install_menus(cx);
                 }
                 editor.workspace.selected = match editor.workspace.selected.take() {
                     Some(WorkspaceSelection::File(path)) => {
@@ -587,7 +569,6 @@ impl Editor {
                     }
                 }
                 editor.refresh_workspace_tree(cx);
-                editor.workspace.recent_roots_loaded = true;
                 if editor.document_dirty || editor.has_dirty_workspace_documents() {
                     editor.schedule_autosave(cx);
                 }
@@ -707,9 +688,6 @@ impl Editor {
                         editor.workspace.open_documents.retain(|tab| {
                             !path_is_affected(&tab.path, &target_for_update, target_is_directory)
                         });
-                        editor.workspace.recent_roots.retain(|root| {
-                            !path_is_affected(root, &target_for_update, target_is_directory)
-                        });
                         if editor.workspace.root.as_ref().is_some_and(|root| {
                             path_is_affected(root, &target_for_update, target_is_directory)
                         }) {
@@ -765,6 +743,163 @@ impl Editor {
             | WorkspaceSelection::WorkspaceRoot(path) => Some(path.clone()),
             WorkspaceSelection::Outline(_) => None,
         }
+    }
+
+    pub(super) fn close_workspace_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn open_workspace_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        selection: Option<WorkspaceSelection>,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_contextual_overlays(cx);
+        let has_target = selection.as_ref().is_some_and(|selection| match selection {
+            WorkspaceSelection::File(path) | WorkspaceSelection::Directory(path) => {
+                self.workspace.root.as_ref() != Some(path)
+            }
+            _ => false,
+        });
+        self.workspace.selected = selection.or_else(|| {
+            self.workspace
+                .root
+                .clone()
+                .map(WorkspaceSelection::WorkspaceRoot)
+        });
+        self.workspace.context_menu = Some(WorkspaceContextMenu {
+            position,
+            has_target,
+        });
+        cx.notify();
+    }
+
+    fn on_workspace_background_right_click(
+        &mut self,
+        event: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_workspace_context_menu(event.position, None, cx);
+        cx.stop_propagation();
+    }
+
+    pub(super) fn render_workspace_context_menu_overlay(
+        &self,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let menu = self.workspace.context_menu?;
+        let strings = cx.global::<crate::i18n::I18nManager>().strings();
+        let mut actions = vec![
+            (
+                strings.workspace_new_file.clone(),
+                WorkspaceMenuAction::NewFile,
+            ),
+            (
+                strings.workspace_new_folder.clone(),
+                WorkspaceMenuAction::NewFolder,
+            ),
+        ];
+        if menu.has_target {
+            actions.push((
+                strings.workspace_rename.clone(),
+                WorkspaceMenuAction::Rename,
+            ));
+            actions.push((
+                strings.workspace_delete.clone(),
+                WorkspaceMenuAction::Delete,
+            ));
+        }
+        let width = 180.0;
+        let height = actions.len() as f32 * 32.0 + 8.0;
+        let viewport = window.viewport_size();
+        let left = f32::from(menu.position.x)
+            .min((f32::from(viewport.width) - width - 8.0).max(8.0))
+            .max(8.0);
+        let top = f32::from(menu.position.y)
+            .min((f32::from(viewport.height) - height - 8.0).max(8.0))
+            .max(8.0);
+        let editor = cx.entity().downgrade();
+        let rows = actions
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, action))| {
+                let editor = editor.clone();
+                div()
+                    .id(("workspace-context-action", index))
+                    .h(px(32.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(5.0))
+                    .cursor_pointer()
+                    .text_size(px(12.0))
+                    .text_color(if matches!(action, WorkspaceMenuAction::Delete) {
+                        theme.colors.dialog_danger_button_bg
+                    } else {
+                        theme.colors.dialog_body
+                    })
+                    .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
+                    .child(label)
+                    .on_click(move |_, window, cx| {
+                        let _ = editor.update(cx, |editor, cx| {
+                            editor.workspace.context_menu = None;
+                            match action {
+                                WorkspaceMenuAction::NewFile => {
+                                    editor.prompt_create_workspace_file(window, cx)
+                                }
+                                WorkspaceMenuAction::NewFolder => {
+                                    editor.prompt_create_workspace_folder(window, cx)
+                                }
+                                WorkspaceMenuAction::Rename => {
+                                    editor.prompt_rename_or_move_selected(window, cx)
+                                }
+                                WorkspaceMenuAction::Delete => {
+                                    editor.prompt_delete_selected(window, cx)
+                                }
+                            }
+                            cx.notify();
+                        });
+                        cx.stop_propagation();
+                    })
+            })
+            .collect::<Vec<_>>();
+        let close_editor = editor;
+        Some(
+            div()
+                .id("workspace-context-overlay")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = close_editor
+                        .update(cx, |editor, cx| editor.close_workspace_context_menu(cx));
+                })
+                .child(
+                    div()
+                        .id("workspace-context-panel")
+                        .absolute()
+                        .left(px(left))
+                        .top(px(top))
+                        .w(px(width))
+                        .p(px(4.0))
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(theme.colors.dialog_border)
+                        .bg(theme.colors.dialog_surface)
+                        .shadow_md()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -855,11 +990,8 @@ impl Editor {
         self.workspace.outline_source = None;
         if self.workspace.root.is_none() {
             self.workspace.root = self.workspace_root_for_current_file();
-            if let Some(root) = self.workspace.root.as_ref()
-                && let Ok(recent) = crate::config::record_recent_workspace(root)
-            {
-                self.workspace.recent_roots = recent;
-                self.workspace.recent_roots_loaded = true;
+            if let Some(root) = self.workspace.root.as_ref() {
+                let _ = crate::config::record_recent_workspace(root);
             }
         }
         if self.workspace.is_open {
@@ -868,11 +1000,6 @@ impl Editor {
     }
 
     fn sync_workspace_models(&mut self, cx: &mut Context<Self>) {
-        if !self.workspace.recent_roots_loaded {
-            self.workspace.recent_roots =
-                crate::config::read_recent_workspaces().unwrap_or_default();
-            self.workspace.recent_roots_loaded = true;
-        }
         self.sync_workspace_file_tree();
         self.sync_workspace_outline(cx);
         self.ensure_current_document_tab(cx);
@@ -1073,7 +1200,10 @@ impl Editor {
     }
 
     fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
-        if self.workspace.active_tab != tab {
+        let changed = self.workspace.active_tab != tab || self.workspace.show_filename_search;
+        self.workspace.show_filename_search = false;
+        self.workspace.filename_query.clear();
+        if changed {
             self.workspace.active_tab = tab;
             self.sync_workspace_models(cx);
             cx.notify();
@@ -1203,7 +1333,6 @@ impl Editor {
 
         let editor = cx.entity().downgrade();
         let c = &theme.colors;
-        let t = &theme.typography;
         let tabs = self
             .workspace
             .open_documents
@@ -1225,32 +1354,59 @@ impl Editor {
                 let tab_editor = editor.clone();
                 div()
                     .id(("document-tab", stable_node_hash(&path.to_string_lossy())))
-                    .h(px(36.0))
-                    .px(px(14.0))
+                    .h(px(32.0))
+                    .min_w(px(120.0))
+                    .px(px(10.0))
                     .flex_shrink_0()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
-                    .border_b(px(if active { 2.0 } else { 1.0 }))
-                    .border_color(if active {
-                        c.dialog_primary_button_bg
-                    } else {
-                        c.dialog_border
-                    })
+                    .gap(px(6.0))
+                    .relative()
+                    .border_r(px(1.0))
+                    .border_color(c.dialog_border)
                     .bg(if active {
                         c.dialog_surface
                     } else {
-                        c.editor_background
+                        c.dialog_secondary_button_bg
                     })
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
                     .cursor_pointer()
-                    .text_size(px(t.text_size * 0.86))
+                    .text_size(px(11.0))
                     .text_color(if active {
                         c.text_default
                     } else {
                         c.dialog_muted
                     })
-                    .child(if dirty { format!("● {title}") } else { title })
+                    .children(active.then(|| {
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(px(2.0))
+                            .bg(c.dialog_primary_button_bg)
+                    }))
+                    .child(
+                        div()
+                            .w(px(11.0))
+                            .text_center()
+                            .text_size(px(9.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(if is_code_file(&path) {
+                                c.dialog_muted
+                            } else {
+                                c.dialog_primary_button_bg
+                            })
+                            .child(if is_code_file(&path) { "⌘" } else { "M" }),
+                    )
+                    .child(div().flex_1().min_w(px(0.0)).truncate().child(title))
+                    .children(dirty.then(|| {
+                        div()
+                            .w(px(7.0))
+                            .h(px(7.0))
+                            .rounded(px(4.0))
+                            .bg(c.dialog_primary_button_bg)
+                    }))
                     .on_click(move |_event, window, cx| {
                         let _ = tab_editor.update(cx, |editor, cx| {
                             editor.open_workspace_file(click_path.clone(), window, cx);
@@ -1264,11 +1420,11 @@ impl Editor {
             div()
                 .id("document-tabs")
                 .w_full()
-                .h(px(38.0))
+                .h(px(32.0))
                 .flex_shrink_0()
                 .flex()
                 .overflow_x_scroll()
-                .bg(c.editor_background)
+                .bg(c.dialog_secondary_button_bg)
                 .border_b(px(theme.dimensions.dialog_border_width))
                 .border_color(c.dialog_border)
                 .children(tabs)
@@ -1281,9 +1437,16 @@ impl Editor {
     }
 
     pub(super) fn workspace_breadcrumb(&self) -> String {
-        let folder = self.workspace.root.as_ref().and_then(|path| path.file_name())
+        let folder = self
+            .workspace
+            .root
+            .as_ref()
+            .and_then(|path| path.file_name())
             .map(|name| name.to_string_lossy().into_owned());
-        let file = self.file_path.as_ref().or(self.recovery_source_path.as_ref())
+        let file = self
+            .file_path
+            .as_ref()
+            .or(self.recovery_source_path.as_ref())
             .and_then(|path| path.file_name())
             .map(|name| name.to_string_lossy().into_owned());
         match (folder, file) {
@@ -1298,9 +1461,9 @@ impl Editor {
         self.code_tab_active().then(|| {
             let source = self.document.raw_source_text(cx);
             if source.is_empty() {
-                0
+                1
             } else {
-                source.lines().count()
+                source.split('\n').count()
             }
         })
     }
@@ -1320,114 +1483,11 @@ impl Editor {
         let editor = cx.entity().downgrade();
         let c = &theme.colors;
         let d = &theme.dimensions;
-        let t = &theme.typography;
-
-        let tab = |label: String, tab: WorkspaceTab, active: bool| {
-            let tab_editor = editor.clone();
-            let tab_id = match tab {
-                WorkspaceTab::Files => "workspace-tab-files",
-                WorkspaceTab::Outline => "workspace-tab-outline",
-                WorkspaceTab::Recent => "workspace-tab-recent",
-            };
-            div()
-                .id(tab_id)
-                .h(px(30.0))
-                .px(px(12.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.0))
-                .bg(if active {
-                    c.selection
-                } else {
-                    hsla(0.0, 0.0, 0.0, 0.0)
-                })
-                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .cursor_pointer()
-                .text_size(px(t.text_size * 0.88))
-                .text_color(if active {
-                    c.text_default
-                } else {
-                    c.dialog_muted
-                })
-                .child(label)
-                .on_click(move |_event, _window, cx| {
-                    let _ = tab_editor.update(cx, |editor, cx| {
-                        editor.set_workspace_tab(tab, cx);
-                    });
-                })
-        };
 
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor),
-            WorkspaceTab::Recent => self.render_recent_workspaces(theme, strings, &editor),
         };
-        let open_folder_editor = editor.clone();
-        let open_folder_button = workspace_toolbar_button(
-            "workspace-open-folder",
-            OPEN_FOLDER_ICON,
-            strings.menu_open_workspace_folder.clone(),
-            c.dialog_muted,
-            theme,
-        )
-        .on_click(move |_event, _window, cx| {
-            let _ = open_folder_editor.update(cx, |editor, cx| {
-                editor.prompt_open_workspace_folder(cx);
-            });
-        });
-        let new_file_editor = editor.clone();
-        let new_file_button = workspace_toolbar_button(
-            "workspace-new-file",
-            NEW_FILE_ICON,
-            strings.workspace_new_file.clone(),
-            c.dialog_muted,
-            theme,
-        )
-        .on_click(move |_event, window, cx| {
-            let _ = new_file_editor.update(cx, |editor, cx| {
-                editor.prompt_create_workspace_file(window, cx);
-            });
-        });
-        let new_folder_editor = editor.clone();
-        let new_folder_button = workspace_toolbar_button(
-            "workspace-new-folder",
-            NEW_FOLDER_ICON,
-            strings.workspace_new_folder.clone(),
-            c.dialog_muted,
-            theme,
-        )
-        .on_click(move |_event, window, cx| {
-            let _ = new_folder_editor.update(cx, |editor, cx| {
-                editor.prompt_create_workspace_folder(window, cx);
-            });
-        });
-        let rename_editor = editor.clone();
-        let rename_button = workspace_toolbar_button(
-            "workspace-rename",
-            RENAME_ICON,
-            strings.workspace_rename.clone(),
-            c.dialog_muted,
-            theme,
-        )
-        .on_click(move |_event, window, cx| {
-            let _ = rename_editor.update(cx, |editor, cx| {
-                editor.prompt_rename_or_move_selected(window, cx);
-            });
-        });
-        let delete_editor = editor.clone();
-        let delete_button = workspace_toolbar_button(
-            "workspace-delete",
-            DELETE_ICON,
-            strings.workspace_delete.clone(),
-            c.dialog_danger_button_bg,
-            theme,
-        )
-        .on_click(move |_event, window, cx| {
-            let _ = delete_editor.update(cx, |editor, cx| {
-                editor.prompt_delete_selected(window, cx);
-            });
-        });
         let search_focus = self
             .workspace
             .filename_search_focus
@@ -1445,7 +1505,7 @@ impl Editor {
             .id("workspace-file-search")
             .track_focus(&search_focus)
             .w_full()
-            .h(px(32.0))
+            .h(px(31.0))
             .px(px(10.0))
             .flex()
             .items_center()
@@ -1453,7 +1513,7 @@ impl Editor {
             .border_1()
             .border_color(c.dialog_border)
             .bg(c.editor_background)
-            .text_size(px(t.text_size * 0.88))
+            .text_size(px(12.0))
             .text_color(if search_query.is_empty() {
                 c.dialog_muted
             } else {
@@ -1471,7 +1531,10 @@ impl Editor {
                         "backspace" => {
                             editor.workspace.filename_query.pop();
                         }
-                        "escape" => editor.workspace.filename_query.clear(),
+                        "escape" => {
+                            editor.workspace.filename_query.clear();
+                            editor.workspace.show_filename_search = false;
+                        }
                         _ if !modified => {
                             if let Some(character) = key_char {
                                 if !character.chars().any(char::is_control) {
@@ -1489,71 +1552,19 @@ impl Editor {
         Some(
             div()
                 .id("workspace-panel")
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(Self::on_workspace_background_right_click),
+                )
                 .h_full()
                 .w(px(panel_width))
                 .flex()
                 .flex_col()
                 .flex_shrink_0()
-                .bg(c.dialog_surface)
+                .bg(c.dialog_secondary_button_bg)
                 .border_r(px(d.dialog_border_width))
                 .border_color(c.dialog_border)
-                .child(
-                    div()
-                        .px(px(12.0))
-                        .pt(px(12.0))
-                        .pb(px(10.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.0))
-                        .border_b(px(d.dialog_border_width))
-                        .border_color(c.dialog_border)
-                        .child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(c.text_default)
-                                        .child(strings.workspace_panel_title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(2.0))
-                                        .child(open_folder_button)
-                                        .child(new_file_button)
-                                        .child(new_folder_button)
-                                        .child(rename_button)
-                                        .child(delete_button),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(4.0))
-                                .child(tab(
-                                    strings.workspace_tab_files.clone(),
-                                    WorkspaceTab::Files,
-                                    self.workspace.active_tab == WorkspaceTab::Files,
-                                ))
-                                .child(tab(
-                                    strings.workspace_tab_outline.clone(),
-                                    WorkspaceTab::Outline,
-                                    self.workspace.active_tab == WorkspaceTab::Outline,
-                                ))
-                                .child(tab(
-                                    strings.workspace_tab_recent.clone(),
-                                    WorkspaceTab::Recent,
-                                    self.workspace.active_tab == WorkspaceTab::Recent,
-                                )),
-                        )
-                        .child(search_field),
-                )
+                .children(self.workspace.show_filename_search.then_some(search_field))
                 .child(
                     div()
                         .id("workspace-panel-scroll")
@@ -1566,6 +1577,128 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+
+    pub(super) fn render_activity_rail(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let c = &theme.colors;
+        let editor = cx.entity().downgrade();
+        let button = |id: &'static str,
+                      symbol: &'static str,
+                      label: &'static str,
+                      selected: bool,
+                      tab: WorkspaceTab,
+                      editor: WeakEntity<Self>| {
+            div()
+                .id(id)
+                .w(px(34.0))
+                .h(px(34.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.0))
+                .bg(if selected {
+                    c.selection
+                } else {
+                    c.dialog_secondary_button_bg
+                })
+                .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                .text_color(if selected {
+                    c.dialog_primary_button_bg
+                } else {
+                    c.dialog_muted
+                })
+                .text_size(px(16.0))
+                .cursor_pointer()
+                .child(symbol)
+                .tooltip(move |_, cx| {
+                    cx.new(|_| WorkspaceTooltip {
+                        label: label.into(),
+                    })
+                    .into()
+                })
+                .on_click(move |_, _, cx| {
+                    let _ = editor.update(cx, |editor, cx| {
+                        editor.workspace.is_open = true;
+                        editor.set_workspace_tab(tab, cx);
+                    });
+                })
+        };
+        let search_editor = editor.clone();
+        div()
+            .id("workspace-activity-rail")
+            .w(px(50.0))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(10.0))
+            .pt(px(12.0))
+            .bg(c.dialog_secondary_button_bg)
+            .border_r(px(1.0))
+            .border_color(c.dialog_border)
+            .child(button(
+                "activity-files",
+                "▤",
+                "文件",
+                self.workspace.active_tab == WorkspaceTab::Files
+                    && !self.workspace.show_filename_search,
+                WorkspaceTab::Files,
+                editor.clone(),
+            ))
+            .child(
+                div()
+                    .id("activity-search")
+                    .w(px(34.0))
+                    .h(px(34.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(8.0))
+                    .bg(if self.workspace.show_filename_search {
+                        c.selection
+                    } else {
+                        c.dialog_secondary_button_bg
+                    })
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .text_color(if self.workspace.show_filename_search {
+                        c.dialog_primary_button_bg
+                    } else {
+                        c.dialog_muted
+                    })
+                    .text_size(px(17.0))
+                    .cursor_pointer()
+                    .child("⌕")
+                    .tooltip(|_, cx| {
+                        cx.new(|_| WorkspaceTooltip {
+                            label: "搜索文件".into(),
+                        })
+                        .into()
+                    })
+                    .on_click(move |_, window, cx| {
+                        let _ = search_editor.update(cx, |editor, cx| {
+                            editor.workspace.is_open = true;
+                            editor.workspace.active_tab = WorkspaceTab::Files;
+                            editor.workspace.show_filename_search = true;
+                            let focus = editor
+                                .workspace
+                                .filename_search_focus
+                                .get_or_insert_with(|| cx.focus_handle())
+                                .clone();
+                            window.focus(&focus);
+                            cx.notify();
+                        });
+                    }),
+            )
+            .child(button(
+                "activity-outline",
+                "☷",
+                "大纲",
+                self.workspace.active_tab == WorkspaceTab::Outline,
+                WorkspaceTab::Outline,
+                editor,
+            ))
+            .into_any_element()
     }
 
     fn render_workspace_files_tree(
@@ -1643,34 +1776,6 @@ impl Editor {
             .into_any_element()
     }
 
-    fn render_recent_workspaces(
-        &self,
-        theme: &Theme,
-        strings: &I18nStrings,
-        editor: &WeakEntity<Editor>,
-    ) -> AnyElement {
-        if self.workspace.recent_roots.is_empty() {
-            return self.render_workspace_empty_state("", &strings.workspace_empty_recent, theme);
-        }
-        let nodes = self
-            .workspace
-            .recent_roots
-            .iter()
-            .map(|path| WorkspaceTreeNode {
-                id: file_node_id(path),
-                label: path.to_string_lossy().into_owned(),
-                kind: WorkspaceTreeKind::RecentWorkspace(path.clone()),
-                children: Vec::new(),
-            })
-            .collect::<Vec<_>>();
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .children(self.render_workspace_nodes(&nodes, 0, theme, editor))
-            .into_any_element()
-    }
-
     fn render_workspace_empty_state(
         &self,
         title: &str,
@@ -1738,7 +1843,6 @@ impl Editor {
         editor: &WeakEntity<Editor>,
     ) -> AnyElement {
         let c = &theme.colors;
-        let t = &theme.typography;
         let is_expanded = self.workspace.expanded.contains(&node.id);
         let has_children = !node.children.is_empty();
         let selected = match (&self.workspace.selected, &node.kind) {
@@ -1751,16 +1855,14 @@ impl Editor {
             (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::CodeFile(path)) => {
                 selected == path
             }
-            (
-                Some(WorkspaceSelection::WorkspaceRoot(selected)),
-                WorkspaceTreeKind::RecentWorkspace(path),
-            ) => selected == path,
             (Some(WorkspaceSelection::Outline(selected)), _) => selected == &node.id,
             _ => false,
         };
         let node_id = node.id.clone();
         let click_editor = editor.clone();
         let click_kind = node.kind.clone();
+        let context_editor = editor.clone();
+        let context_kind = node.kind.clone();
         let arrow_node_id = node.id.clone();
         let arrow_editor = editor.clone();
         let arrow = if has_children {
@@ -1770,12 +1872,8 @@ impl Editor {
         };
 
         let icon = match &node.kind {
-            WorkspaceTreeKind::Directory(_) | WorkspaceTreeKind::RecentWorkspace(_) => {
-                Some((FOLDER_ICON, Hsla::from(rgba(0xf59e0bff))))
-            }
-            WorkspaceTreeKind::MarkdownFile(_) => {
-                Some((MARKDOWN_ICON, Hsla::from(rgba(0x2563ebff))))
-            }
+            WorkspaceTreeKind::Directory(_) => Some((FOLDER_ICON, Hsla::from(rgba(0xf59e0bff)))),
+            WorkspaceTreeKind::MarkdownFile(_) => Some((MARKDOWN_ICON, c.dialog_primary_button_bg)),
             WorkspaceTreeKind::CodeFile(_) => Some((CODE_ICON, c.dialog_muted)),
             WorkspaceTreeKind::Heading { .. } => None,
         };
@@ -1841,12 +1939,30 @@ impl Editor {
                     .min_w(px(0.0))
                     .overflow_hidden()
                     .truncate()
-                    .text_size(px(t.text_size * 0.9))
-                    .line_height(px(t.text_size * t.text_line_height))
+                    .text_size(px(12.0))
+                    .line_height(px(18.0))
                     .text_color(label_color)
                     .child(node.label.clone()),
             )
-            .on_click(move |_event, window, cx| {
+            .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+                let selection = match &context_kind {
+                    WorkspaceTreeKind::Directory(path) => {
+                        Some(WorkspaceSelection::Directory(path.clone()))
+                    }
+                    WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
+                        Some(WorkspaceSelection::File(path.clone()))
+                    }
+                    WorkspaceTreeKind::Heading { .. } => None,
+                };
+                let _ = context_editor.update(cx, |editor, cx| {
+                    editor.open_workspace_context_menu(event.position, selection, cx);
+                });
+                cx.stop_propagation();
+            })
+            .on_click(move |event, window, cx| {
+                if !event.standard_click() {
+                    return;
+                }
                 let node_id = node_id.clone();
                 let click_kind = click_kind.clone();
                 let _ = click_editor.update(cx, |editor, cx| match click_kind {
@@ -1859,12 +1975,6 @@ impl Editor {
                     }
                     WorkspaceTreeKind::CodeFile(path) => {
                         editor.open_workspace_file(path, window, cx);
-                    }
-                    WorkspaceTreeKind::RecentWorkspace(path) => {
-                        editor.workspace.selected =
-                            Some(WorkspaceSelection::WorkspaceRoot(path.clone()));
-                        editor.set_workspace_root(path, cx);
-                        editor.set_workspace_tab(WorkspaceTab::Files, cx);
                     }
                     WorkspaceTreeKind::Heading { .. } => editor.select_outline_node(node_id, cx),
                 });
@@ -2443,7 +2553,7 @@ mod tests {
         rewrite_relative_image_targets, scan_workspace_dir, workspace_panel_width_for_viewport,
     };
     use crate::components::Block;
-    use gpui::{EntityInputHandler, TestAppContext};
+    use gpui::{EntityInputHandler, TestAppContext, point, px};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -2547,6 +2657,8 @@ mod tests {
                 editor.open_workspace_file(path.clone(), window, cx)
             });
         });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
         editor.read_with(cx, |editor, cx| {
             assert!(editor.code_tab_active());
             assert_eq!(
@@ -2563,6 +2675,8 @@ mod tests {
                 editor.open_workspace_file(plain_path.clone(), window, cx)
             });
         });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
         editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.workspace.open_documents.len(), 2);
             assert_eq!(editor.workspace.active_document.as_ref(), Some(&plain_path));
@@ -2591,7 +2705,15 @@ mod tests {
         editor.read_with(cx, |editor, cx| {
             assert!(editor.code_tab_active());
             assert_eq!(editor.document.raw_source_text(cx), "select 1;");
-            assert!(editor.document.first_root().unwrap().read(cx).kind().is_code_block());
+            assert!(
+                editor
+                    .document
+                    .first_root()
+                    .unwrap()
+                    .read(cx)
+                    .kind()
+                    .is_code_block()
+            );
         });
         editor.update(cx, |editor, cx| editor.redo_document(cx));
         cx.update(|window, cx| {
@@ -2625,6 +2747,39 @@ mod tests {
             fs::read_to_string(&crlf_path).unwrap(),
             "class A {\r\n}\r\n"
         );
+    }
+
+    #[gpui::test]
+    async fn right_click_menu_renders_for_a_workspace_file(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!("maksher-menu-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.md");
+        fs::write(&path, "hello").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root, cx);
+            editor.open_workspace_context_menu(
+                point(px(100.0), px(100.0)),
+                Some(WorkspaceSelection::File(path)),
+                cx,
+            );
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.workspace.context_menu.unwrap().has_target);
+        });
     }
 
     #[test]
@@ -2799,8 +2954,8 @@ mod tests {
 
     #[test]
     fn workspace_panel_width_uses_ratio_with_bounds() {
-        assert_eq!(workspace_panel_width_for_viewport(1000.0), 240.0);
-        assert_eq!(workspace_panel_width_for_viewport(2000.0), 300.0);
-        assert_eq!(workspace_panel_width_for_viewport(4000.0), 360.0);
+        assert_eq!(workspace_panel_width_for_viewport(1000.0), 258.0);
+        assert_eq!(workspace_panel_width_for_viewport(2000.0), 320.0);
+        assert_eq!(workspace_panel_width_for_viewport(4000.0), 320.0);
     }
 }

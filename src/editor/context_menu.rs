@@ -110,6 +110,7 @@ impl Editor {
     }
 
     pub(super) fn dismiss_contextual_overlays(&mut self, cx: &mut Context<Self>) {
+        self.close_workspace_context_menu(cx);
         let had_menu = self.context_menu.take().is_some();
         let had_dialog = self.table_insert_dialog.take().is_some();
         let had_submenu_close = self.context_menu_submenu_close_task.take().is_some();
