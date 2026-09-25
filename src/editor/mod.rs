@@ -421,7 +421,7 @@ impl Editor {
         editor.rebuild_table_runtimes(cx); // Also refreshes image and reference contexts.
         editor.pending_focus = editor.first_focusable_entity_id(cx);
         editor.active_entity_id = editor.pending_focus;
-        editor.refresh_stable_document_snapshot(cx);
+        // The loaded source and initial cursor are already the first undo baseline.
         editor
     }
 

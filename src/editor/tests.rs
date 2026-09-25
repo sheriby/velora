@@ -3152,6 +3152,26 @@ async fn undo_reverts_recent_rendered_typing(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn undo_first_edit_after_marker_normalization_restores_content(cx: &mut TestAppContext) {
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "1) first".to_string(), None));
+
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("list root").clone();
+        editor.active_entity_id = Some(block.entity_id());
+        block.update(cx, |block, cx| {
+            block.prepare_undo_capture(crate::components::UndoCaptureKind::CoalescibleText, cx);
+            block.replace_text_in_visible_range(5..5, "!", None, false, cx);
+        });
+    });
+
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.document.markdown_text(cx), "1. first!");
+        editor.undo_document(cx);
+        assert_eq!(editor.document.markdown_text(cx), "1. first");
+    });
+}
+
+#[gpui::test]
 async fn consecutive_text_edits_within_window_coalesce_into_one_undo(cx: &mut TestAppContext) {
     let editor = cx.new(|cx| Editor::from_markdown(cx, "a".to_string(), None));
 
