@@ -151,6 +151,8 @@ pub(super) struct WorkspaceState {
     search_focus: Option<FocusHandle>,
     search_focus_pending: bool,
     search_results: Vec<WorkspaceSearchHit>,
+    document_search_source: Option<String>,
+    document_active_range: Option<Range<usize>>,
     search_pending: bool,
     search_generation: u64,
     context_menu: Option<WorkspaceContextMenu>,
@@ -181,6 +183,8 @@ impl Default for WorkspaceState {
             search_focus: None,
             search_focus_pending: false,
             search_results: Vec::new(),
+            document_search_source: None,
+            document_active_range: None,
             search_pending: false,
             search_generation: 0,
             context_menu: None,
@@ -238,6 +242,8 @@ impl Editor {
         self.workspace.search_selected_range = 0..0;
         self.workspace.search_marked_range = None;
         self.workspace.search_results.clear();
+        self.workspace.document_search_source = None;
+        self.workspace.document_active_range = None;
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         self.sync_workspace_file_tree();
@@ -1261,6 +1267,8 @@ impl Editor {
         self.workspace.search_selected_range = 0..0;
         self.workspace.search_marked_range = None;
         self.workspace.search_results.clear();
+        self.workspace.document_search_source = None;
+        self.workspace.document_active_range = None;
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         if changed {
@@ -1275,6 +1283,8 @@ impl Editor {
         let generation = self.workspace.search_generation;
         self.workspace.search_results.clear();
         self.workspace.search_active_index = None;
+        self.workspace.document_search_source = None;
+        self.workspace.document_active_range = None;
         let query = self.workspace.search_query.trim().to_string();
         let scope = self.workspace.search_scope;
         let tree = self.workspace.file_tree.clone();
@@ -1296,12 +1306,13 @@ impl Editor {
             if !current {
                 return;
             }
-            let results = match scope {
+            let (results, document_source) = match scope {
                 WorkspaceSearchScope::Workspace => {
                     let Some(tree) = tree else { return };
-                    background
+                    let results = background
                         .spawn(async move { search_workspace_files(&tree, &query, 200) })
-                        .await
+                        .await;
+                    (results, None)
                 }
                 WorkspaceSearchScope::Document => {
                     let Ok((source, path, label)) = editor.update(cx, |editor, cx| {
@@ -1320,16 +1331,20 @@ impl Editor {
                     }) else {
                         return;
                     };
-                    background
+                    let (results, source) = background
                         .spawn(async move {
-                            search_document_source(&source, &query, &path, &label, 200)
+                            let results =
+                                search_document_source(&source, &query, &path, &label, 200);
+                            (results, source)
                         })
-                        .await
+                        .await;
+                    (results, Some(source))
                 }
             };
             let _ = editor.update(cx, |editor, cx| {
                 if editor.workspace.search_generation == generation {
                     editor.workspace.search_results = results;
+                    editor.workspace.document_search_source = document_source;
                     editor.workspace.search_pending = false;
                     cx.notify();
                 }
@@ -1440,20 +1455,32 @@ impl Editor {
         if self.workspace.search_scope != WorkspaceSearchScope::Document {
             return;
         }
-        let count = self.workspace.search_results.len();
-        if count == 0 {
-            return;
-        }
-        let index = match (self.workspace.search_active_index, reverse) {
-            (None, false) => 0,
-            (None, true) => count - 1,
-            (Some(current), false) => (current + 1) % count,
-            (Some(current), true) => (current + count - 1) % count,
-        };
-        let Some(range) = self.workspace.search_results[index].source_range.clone() else {
+        let Some(source) = self.workspace.document_search_source.as_deref() else {
             return;
         };
-        self.workspace.search_active_index = Some(index);
+        let query = &self.workspace.search_query;
+        let from = self
+            .workspace
+            .document_active_range
+            .as_ref()
+            .map(|range| if reverse { range.start } else { range.end })
+            .unwrap_or(if reverse { source.len() } else { 0 });
+        let Some(range) = find_document_match_from(source, query, from, reverse).or_else(|| {
+            find_document_match_from(
+                source,
+                query,
+                if reverse { source.len() } else { 0 },
+                reverse,
+            )
+        }) else {
+            return;
+        };
+        self.workspace.search_active_index = self
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.source_range.as_ref() == Some(&range));
+        self.workspace.document_active_range = Some(range.clone());
         self.jump_to_document_search_range(range, cx);
     }
 
@@ -2227,6 +2254,8 @@ impl Editor {
                                 let _ = editor.update(cx, |editor, cx| {
                                     if let Some(range) = source_range.clone() {
                                         editor.workspace.search_active_index = Some(index);
+                                        editor.workspace.document_active_range =
+                                            Some(range.clone());
                                         editor.jump_to_document_search_range(range, cx);
                                     } else {
                                         editor.open_workspace_file(path.clone(), window, cx);
@@ -2922,6 +2951,50 @@ fn search_document_source(
     hits
 }
 
+fn find_document_match_from(
+    source: &str,
+    query: &str,
+    from: usize,
+    reverse: bool,
+) -> Option<Range<usize>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let mut from = from.min(source.len());
+    while !source.is_char_boundary(from) {
+        from -= 1;
+    }
+    if query.is_ascii() {
+        let last = source.len().checked_sub(query.len())?;
+        let matches = |start: usize| {
+            source.as_bytes()[start..start + query.len()].eq_ignore_ascii_case(query.as_bytes())
+        };
+        if reverse {
+            for start in (0..=from.saturating_sub(query.len()).min(last)).rev() {
+                if start + query.len() <= from && matches(start) {
+                    return Some(start..start + query.len());
+                }
+            }
+        } else {
+            for start in from..=last {
+                if matches(start) {
+                    return Some(start..start + query.len());
+                }
+            }
+        }
+        None
+    } else if reverse {
+        source[..from]
+            .rfind(query)
+            .map(|start| start..start + query.len())
+    } else {
+        source[from..]
+            .find(query)
+            .map(|local| from + local..from + local + query.len())
+    }
+}
+
 pub(super) fn is_code_file(path: &Path) -> bool {
     const CODE_EXTENSIONS: &[&str] = &[
         "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "json", "jsx", "kt",
@@ -3285,10 +3358,10 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 mod tests {
     use super::{
         Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
-        clamp_workspace_panel_width, create_workspace_file, create_workspace_folder, is_code_file,
-        path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
-        scan_workspace_dir, search_document_source, search_utf8_to_utf16, search_utf16_to_utf8,
-        search_workspace_files,
+        clamp_workspace_panel_width, create_workspace_file, create_workspace_folder,
+        find_document_match_from, is_code_file, path_is_affected, prune_outline_state,
+        remap_moved_path, rewrite_relative_image_targets, scan_workspace_dir,
+        search_document_source, search_utf8_to_utf16, search_utf16_to_utf8, search_workspace_files,
     };
     use crate::components::{Block, UndoCaptureKind};
     use gpui::{AppContext, ClipboardItem, EntityInputHandler, TestAppContext, point, px};
@@ -3661,6 +3734,56 @@ mod tests {
         let chinese = search_document_source(source, "你好", Path::new("note.md"), "note.md", 1);
         assert_eq!(chinese.len(), 1);
         assert_eq!(&source[chinese[0].source_range.clone().unwrap()], "你好");
+    }
+
+    #[test]
+    fn document_match_navigation_can_search_forward_and_backward() {
+        let source = "Alpha 你好 alpha";
+        assert_eq!(
+            find_document_match_from(source, "alpha", 0, false),
+            Some(0..5)
+        );
+        assert_eq!(
+            find_document_match_from(source, "alpha", 5, false),
+            Some(13..18)
+        );
+        assert_eq!(
+            find_document_match_from(source, "alpha", source.len(), true),
+            Some(13..18)
+        );
+        assert_eq!(
+            find_document_match_from(source, "你好", 0, false),
+            Some(6..12)
+        );
+    }
+
+    #[gpui::test]
+    async fn document_find_navigates_beyond_sidebar_result_limit(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let source = "a ".repeat(250);
+        let (editor, cx) = cx.add_window_view(move |_, cx| Editor::from_markdown(cx, source, None));
+        editor.update(cx, |editor, cx| {
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "a".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.workspace.search_results.len(), 200);
+            for _ in 0..201 {
+                editor.find_next_document_match(false, cx);
+            }
+            assert_eq!(editor.workspace.document_active_range, Some(400..401));
+            assert_eq!(editor.workspace.search_active_index, None);
+            editor.find_next_document_match(true, cx);
+            assert_eq!(editor.workspace.document_active_range, Some(398..399));
+            assert_eq!(editor.workspace.search_active_index, Some(199));
+        });
     }
 
     #[gpui::test]
