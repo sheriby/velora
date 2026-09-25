@@ -245,6 +245,9 @@ pub struct I18nStrings {
     pub preferences_shortcut_close_window: String,
     pub preferences_shortcut_dismiss_transient_ui: String,
     pub preferences_shortcut_toggle_view_mode: String,
+    pub preferences_shortcut_find_in_document: String,
+    pub preferences_shortcut_find_next_match: String,
+    pub preferences_shortcut_find_previous_match: String,
     pub preferences_shortcut_toggle_workspace: String,
     /// Workspace drawer Files tab.
     pub workspace_panel_title: String,
@@ -257,8 +260,11 @@ pub struct I18nStrings {
     pub workspace_empty_recent: String,
     /// Placeholder for filtering workspace files by name.
     pub workspace_search_placeholder: String,
+    pub workspace_document_find_placeholder: String,
+    pub workspace_current_document_label: String,
     /// Empty state when the filename filter has no matches.
     pub workspace_no_search_results: String,
+    pub workspace_no_document_find_results: String,
     /// Workspace action for creating a Markdown file.
     pub workspace_new_file: String,
     /// Workspace action for creating a folder.
@@ -511,6 +517,9 @@ struct I18nStringsDe {
     preferences_shortcut_close_window: Option<String>,
     preferences_shortcut_dismiss_transient_ui: Option<String>,
     preferences_shortcut_toggle_view_mode: Option<String>,
+    preferences_shortcut_find_in_document: Option<String>,
+    preferences_shortcut_find_next_match: Option<String>,
+    preferences_shortcut_find_previous_match: Option<String>,
     preferences_shortcut_toggle_workspace: Option<String>,
     workspace_panel_title: Option<String>,
     workspace_tab_files: Option<String>,
@@ -518,7 +527,10 @@ struct I18nStringsDe {
     workspace_tab_recent: Option<String>,
     workspace_empty_recent: Option<String>,
     workspace_search_placeholder: Option<String>,
+    workspace_document_find_placeholder: Option<String>,
+    workspace_current_document_label: Option<String>,
     workspace_no_search_results: Option<String>,
+    workspace_no_document_find_results: Option<String>,
     workspace_new_file: Option<String>,
     workspace_new_folder: Option<String>,
     workspace_rename: Option<String>,
@@ -717,6 +729,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_shortcut_close_window",
     "preferences_shortcut_dismiss_transient_ui",
     "preferences_shortcut_toggle_view_mode",
+    "preferences_shortcut_find_in_document",
+    "preferences_shortcut_find_next_match",
+    "preferences_shortcut_find_previous_match",
     "preferences_shortcut_toggle_workspace",
     "workspace_panel_title",
     "workspace_tab_files",
@@ -724,7 +739,10 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_tab_recent",
     "workspace_empty_recent",
     "workspace_search_placeholder",
+    "workspace_document_find_placeholder",
+    "workspace_current_document_label",
     "workspace_no_search_results",
+    "workspace_no_document_find_results",
     "workspace_new_file",
     "workspace_new_folder",
     "workspace_rename",
@@ -1167,6 +1185,15 @@ impl I18nStringsDe {
             preferences_shortcut_toggle_view_mode: self
                 .preferences_shortcut_toggle_view_mode
                 .unwrap_or(defaults.preferences_shortcut_toggle_view_mode),
+            preferences_shortcut_find_in_document: self
+                .preferences_shortcut_find_in_document
+                .unwrap_or(defaults.preferences_shortcut_find_in_document),
+            preferences_shortcut_find_next_match: self
+                .preferences_shortcut_find_next_match
+                .unwrap_or(defaults.preferences_shortcut_find_next_match),
+            preferences_shortcut_find_previous_match: self
+                .preferences_shortcut_find_previous_match
+                .unwrap_or(defaults.preferences_shortcut_find_previous_match),
             preferences_shortcut_toggle_workspace: self
                 .preferences_shortcut_toggle_workspace
                 .unwrap_or(defaults.preferences_shortcut_toggle_workspace),
@@ -1188,9 +1215,18 @@ impl I18nStringsDe {
             workspace_search_placeholder: self
                 .workspace_search_placeholder
                 .unwrap_or(defaults.workspace_search_placeholder),
+            workspace_document_find_placeholder: self
+                .workspace_document_find_placeholder
+                .unwrap_or(defaults.workspace_document_find_placeholder),
+            workspace_current_document_label: self
+                .workspace_current_document_label
+                .unwrap_or(defaults.workspace_current_document_label),
             workspace_no_search_results: self
                 .workspace_no_search_results
                 .unwrap_or(defaults.workspace_no_search_results),
+            workspace_no_document_find_results: self
+                .workspace_no_document_find_results
+                .unwrap_or(defaults.workspace_no_document_find_results),
             workspace_new_file: self
                 .workspace_new_file
                 .unwrap_or(defaults.workspace_new_file),
@@ -1488,6 +1524,9 @@ impl I18nStrings {
             preferences_shortcut_close_window: "关闭窗口".into(),
             preferences_shortcut_dismiss_transient_ui: "关闭临时界面".into(),
             preferences_shortcut_toggle_view_mode: "切换视图模式".into(),
+            preferences_shortcut_find_in_document: "查找当前文档".into(),
+            preferences_shortcut_find_next_match: "查找下一个".into(),
+            preferences_shortcut_find_previous_match: "查找上一个".into(),
             preferences_shortcut_toggle_workspace: "切换工作区".into(),
             workspace_panel_title: "资源管理器".into(),
             workspace_tab_files: "文件".into(),
@@ -1495,7 +1534,10 @@ impl I18nStrings {
             workspace_tab_recent: "最近".into(),
             workspace_empty_recent: "还没有最近打开的工作区".into(),
             workspace_search_placeholder: "搜索文件名与内容".into(),
+            workspace_document_find_placeholder: "查找当前文档".into(),
+            workspace_current_document_label: "当前文档".into(),
             workspace_no_search_results: "没有匹配的文件".into(),
+            workspace_no_document_find_results: "没有匹配的内容".into(),
             workspace_new_file: "新建 Markdown 文件".into(),
             workspace_new_folder: "新建文件夹".into(),
             workspace_rename: "重命名或移动".into(),
@@ -1724,6 +1766,9 @@ impl I18nStrings {
             preferences_shortcut_close_window: "Close Window".into(),
             preferences_shortcut_dismiss_transient_ui: "Dismiss Temporary UI".into(),
             preferences_shortcut_toggle_view_mode: "Toggle View Mode".into(),
+            preferences_shortcut_find_in_document: "Find in Document".into(),
+            preferences_shortcut_find_next_match: "Find Next".into(),
+            preferences_shortcut_find_previous_match: "Find Previous".into(),
             preferences_shortcut_toggle_workspace: "Toggle Workspace".into(),
             workspace_panel_title: "Explorer".into(),
             workspace_tab_files: "Files".into(),
@@ -1731,7 +1776,10 @@ impl I18nStrings {
             workspace_tab_recent: "Recent".into(),
             workspace_empty_recent: "No recent workspaces".into(),
             workspace_search_placeholder: "Search files and contents".into(),
+            workspace_document_find_placeholder: "Find in document".into(),
+            workspace_current_document_label: "Current Document".into(),
             workspace_no_search_results: "No matching files".into(),
+            workspace_no_document_find_results: "No matches in document".into(),
             workspace_new_file: "New Markdown File".into(),
             workspace_new_folder: "New Folder".into(),
             workspace_rename: "Rename or Move".into(),

@@ -12,7 +12,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{BlockKind, Editor, UndoSelectionSnapshot};
-use crate::i18n::I18nStrings;
+use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeManager};
 
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
@@ -97,6 +97,14 @@ struct WorkspaceSearchHit {
     label: String,
     line: Option<usize>,
     preview: String,
+    source_range: Option<Range<usize>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum WorkspaceSearchScope {
+    #[default]
+    Workspace,
+    Document,
 }
 
 #[derive(Clone, Copy)]
@@ -135,10 +143,13 @@ pub(super) struct WorkspaceState {
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
     search_query: String,
+    search_scope: WorkspaceSearchScope,
+    search_active_index: Option<usize>,
     search_selected_range: Range<usize>,
     search_marked_range: Option<Range<usize>>,
     show_search: bool,
     search_focus: Option<FocusHandle>,
+    search_focus_pending: bool,
     search_results: Vec<WorkspaceSearchHit>,
     search_pending: bool,
     search_generation: u64,
@@ -162,10 +173,13 @@ impl Default for WorkspaceState {
             open_documents: Vec::new(),
             active_document: None,
             search_query: String::new(),
+            search_scope: WorkspaceSearchScope::Workspace,
+            search_active_index: None,
             search_selected_range: 0..0,
             search_marked_range: None,
             show_search: false,
             search_focus: None,
+            search_focus_pending: false,
             search_results: Vec::new(),
             search_pending: false,
             search_generation: 0,
@@ -218,6 +232,8 @@ impl Editor {
         self.workspace.expanded.clear();
         self.workspace.active_tab = WorkspaceTab::Files;
         self.workspace.show_search = false;
+        self.workspace.search_scope = WorkspaceSearchScope::Workspace;
+        self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
         self.workspace.search_selected_range = 0..0;
         self.workspace.search_marked_range = None;
@@ -1034,6 +1050,7 @@ impl Editor {
         if self.workspace.is_open {
             self.sync_workspace_models(cx);
         }
+        self.refresh_document_find_after_edit(cx);
     }
 
     fn sync_workspace_models(&mut self, cx: &mut Context<Self>) {
@@ -1239,6 +1256,7 @@ impl Editor {
     fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
         let changed = self.workspace.active_tab != tab || self.workspace.show_search;
         self.workspace.show_search = false;
+        self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
         self.workspace.search_selected_range = 0..0;
         self.workspace.search_marked_range = None;
@@ -1256,17 +1274,15 @@ impl Editor {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         let generation = self.workspace.search_generation;
         self.workspace.search_results.clear();
+        self.workspace.search_active_index = None;
         let query = self.workspace.search_query.trim().to_string();
-        let Some(tree) = self
-            .workspace
-            .file_tree
-            .clone()
-            .filter(|_| !query.is_empty())
-        else {
+        let scope = self.workspace.search_scope;
+        let tree = self.workspace.file_tree.clone();
+        if query.is_empty() || (scope == WorkspaceSearchScope::Workspace && tree.is_none()) {
             self.workspace.search_pending = false;
             cx.notify();
             return;
-        };
+        }
         self.workspace.search_pending = true;
         let editor = cx.entity().downgrade();
         let background = cx.background_executor().clone();
@@ -1280,9 +1296,37 @@ impl Editor {
             if !current {
                 return;
             }
-            let results = background
-                .spawn(async move { search_workspace_files(&tree, &query, 200) })
-                .await;
+            let results = match scope {
+                WorkspaceSearchScope::Workspace => {
+                    let Some(tree) = tree else { return };
+                    background
+                        .spawn(async move { search_workspace_files(&tree, &query, 200) })
+                        .await
+                }
+                WorkspaceSearchScope::Document => {
+                    let Ok((source, path, label)) = editor.update(cx, |editor, cx| {
+                        let source = editor.current_document_source(cx);
+                        let path = editor.file_path.clone().unwrap_or_default();
+                        let label = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| {
+                                cx.global::<I18nManager>()
+                                    .strings()
+                                    .workspace_current_document_label
+                                    .clone()
+                            });
+                        (source, path, label)
+                    }) else {
+                        return;
+                    };
+                    background
+                        .spawn(async move {
+                            search_document_source(&source, &query, &path, &label, 200)
+                        })
+                        .await
+                }
+            };
             let _ = editor.update(cx, |editor, cx| {
                 if editor.workspace.search_generation == generation {
                     editor.workspace.search_results = results;
@@ -1312,6 +1356,105 @@ impl Editor {
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
         cx.notify();
+    }
+
+    fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        self.apply_selection_snapshot_in_current_mode(
+            &UndoSelectionSnapshot {
+                range,
+                reversed: false,
+            },
+            cx,
+        );
+        self.pending_scroll_active_block_into_view = true;
+        self.pending_scroll_recheck_after_layout = true;
+        cx.notify();
+    }
+
+    pub(crate) fn open_document_find(&mut self, cx: &mut Context<Self>) {
+        self.workspace.is_open = true;
+        self.workspace.active_tab = WorkspaceTab::Files;
+        self.workspace.show_search = true;
+        self.workspace.search_scope = WorkspaceSearchScope::Document;
+        self.workspace.search_selected_range = 0..self.workspace.search_query.len();
+        self.workspace.search_marked_range = None;
+        self.workspace.search_focus_pending = true;
+        self.schedule_workspace_search(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn on_find_in_document(
+        &mut self,
+        _: &crate::components::FindInDocument,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_document_find(cx);
+    }
+
+    pub(crate) fn on_find_next_match(
+        &mut self,
+        _: &crate::components::FindNextMatch,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.find_next_document_match(false, cx);
+    }
+
+    pub(crate) fn on_find_previous_match(
+        &mut self,
+        _: &crate::components::FindPreviousMatch,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.find_next_document_match(true, cx);
+    }
+
+    pub(super) fn refresh_document_find_after_edit(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.is_open
+            && self.workspace.show_search
+            && self.workspace.search_scope == WorkspaceSearchScope::Document
+            && !self.workspace.search_query.trim().is_empty()
+        {
+            self.schedule_workspace_search(cx);
+        }
+    }
+
+    pub(super) fn apply_pending_workspace_search_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.search_focus_pending {
+            let focus = self
+                .workspace
+                .search_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
+            window.focus(&focus);
+            self.workspace.search_focus_pending = false;
+        }
+    }
+
+    pub(crate) fn find_next_document_match(&mut self, reverse: bool, cx: &mut Context<Self>) {
+        if self.workspace.search_scope != WorkspaceSearchScope::Document {
+            return;
+        }
+        let count = self.workspace.search_results.len();
+        if count == 0 {
+            return;
+        }
+        let index = match (self.workspace.search_active_index, reverse) {
+            (None, false) => 0,
+            (None, true) => count - 1,
+            (Some(current), false) => (current + 1) % count,
+            (Some(current), true) => (current + count - 1) % count,
+        };
+        let Some(range) = self.workspace.search_results[index].source_range.clone() else {
+            return;
+        };
+        self.workspace.search_active_index = Some(index);
+        self.jump_to_document_search_range(range, cx);
     }
 
     fn toggle_workspace_node(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -1649,7 +1792,11 @@ impl Editor {
         let search_editor = editor.clone();
         let search_query = self.workspace.search_query.clone();
         let search_label = if search_query.is_empty() {
-            strings.workspace_search_placeholder.clone()
+            if self.workspace.search_scope == WorkspaceSearchScope::Document {
+                strings.workspace_document_find_placeholder.clone()
+            } else {
+                strings.workspace_search_placeholder.clone()
+            }
         } else {
             search_query.clone()
         };
@@ -1701,6 +1848,7 @@ impl Editor {
                             editor.workspace.search_selected_range = 0..0;
                             editor.workspace.search_marked_range = None;
                             editor.workspace.show_search = false;
+                            editor.workspace.search_focus_pending = false;
                             editor.schedule_workspace_search(cx);
                             cx.notify();
                         });
@@ -1748,6 +1896,12 @@ impl Editor {
                                 );
                             });
                         }
+                    }
+                    "enter" => {
+                        let reverse = event.keystroke.modifiers.shift;
+                        let _ = search_editor.update(cx, |editor, cx| {
+                            editor.find_next_document_match(reverse, cx);
+                        });
                     }
                     _ => return,
                 }
@@ -1923,6 +2077,8 @@ impl Editor {
                             editor.workspace.is_open = true;
                             editor.workspace.active_tab = WorkspaceTab::Files;
                             editor.workspace.show_search = true;
+                            editor.workspace.search_scope = WorkspaceSearchScope::Workspace;
+                            editor.schedule_workspace_search(cx);
                             let focus = editor
                                 .workspace
                                 .search_focus
@@ -1951,6 +2107,14 @@ impl Editor {
         strings: &I18nStrings,
         editor: &WeakEntity<Editor>,
     ) -> AnyElement {
+        if self.workspace.show_search
+            && self.workspace.search_scope == WorkspaceSearchScope::Document
+        {
+            if self.workspace.search_query.trim().is_empty() {
+                return div().w_full().into_any_element();
+            }
+            return self.render_workspace_search_results(theme, strings, editor);
+        }
         if self.workspace.root.is_none() {
             return self.render_workspace_empty_state(
                 &strings.workspace_no_file_title,
@@ -2000,7 +2164,11 @@ impl Editor {
         if self.workspace.search_results.is_empty() {
             return self.render_workspace_empty_state(
                 "",
-                &strings.workspace_no_search_results,
+                if self.workspace.search_scope == WorkspaceSearchScope::Document {
+                    &strings.workspace_no_document_find_results
+                } else {
+                    &strings.workspace_no_search_results
+                },
                 theme,
             );
         }
@@ -2017,6 +2185,10 @@ impl Editor {
                     .map(|(index, hit)| {
                         let path = hit.path.clone();
                         let line = hit.line;
+                        let source_range = hit.source_range.clone();
+                        let selected = self.workspace.search_scope
+                            == WorkspaceSearchScope::Document
+                            && self.workspace.search_active_index == Some(index);
                         let editor = editor.clone();
                         div()
                             .id(("workspace-search-hit", index))
@@ -2027,6 +2199,11 @@ impl Editor {
                             .flex_col()
                             .gap(px(2.0))
                             .rounded(px(5.0))
+                            .bg(if selected {
+                                theme.colors.selection
+                            } else {
+                                hsla(0.0, 0.0, 0.0, 0.0)
+                            })
                             .cursor_pointer()
                             .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
                             .child(
@@ -2048,11 +2225,16 @@ impl Editor {
                                     return;
                                 }
                                 let _ = editor.update(cx, |editor, cx| {
-                                    editor.open_workspace_file(path.clone(), window, cx);
-                                    if let Some(line) =
-                                        line.filter(|_| editor.file_path.as_ref() == Some(&path))
-                                    {
-                                        editor.jump_to_workspace_search_line(line, cx);
+                                    if let Some(range) = source_range.clone() {
+                                        editor.workspace.search_active_index = Some(index);
+                                        editor.jump_to_document_search_range(range, cx);
+                                    } else {
+                                        editor.open_workspace_file(path.clone(), window, cx);
+                                        if let Some(line) = line
+                                            .filter(|_| editor.file_path.as_ref() == Some(&path))
+                                        {
+                                            editor.jump_to_workspace_search_line(line, cx);
+                                        }
                                     }
                                 });
                             })
@@ -2657,6 +2839,7 @@ fn search_workspace_files(
                         label: label.clone(),
                         line: None,
                         preview: String::new(),
+                        source_range: None,
                     });
                 }
                 if hits.len() >= limit
@@ -2673,6 +2856,7 @@ fn search_workspace_files(
                                 label: label.clone(),
                                 line: Some(index + 1),
                                 preview: line.trim().chars().take(140).collect(),
+                                source_range: None,
                             });
                             file_hits += 1;
                             if file_hits == 3 || hits.len() >= limit {
@@ -2686,6 +2870,55 @@ fn search_workspace_files(
         }
     }
     visit(root, root_path, &query, limit, &mut hits);
+    hits
+}
+
+fn search_document_source(
+    source: &str,
+    query: &str,
+    path: &Path,
+    label: &str,
+    limit: usize,
+) -> Vec<WorkspaceSearchHit> {
+    let query = query.trim();
+    if query.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    let mut absolute = 0;
+    for (line_index, raw_line) in source.split_inclusive('\n').enumerate() {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let mut add_hit = |start: usize| {
+            hits.push(WorkspaceSearchHit {
+                path: path.to_path_buf(),
+                label: label.to_string(),
+                line: Some(line_index + 1),
+                preview: line.trim().chars().take(140).collect(),
+                source_range: Some(absolute + start..absolute + start + query.len()),
+            });
+            hits.len() == limit
+        };
+        if query.is_ascii() {
+            if let Some(last) = line.len().checked_sub(query.len()) {
+                for start in 0..=last {
+                    if line.as_bytes()[start..start + query.len()]
+                        .eq_ignore_ascii_case(query.as_bytes())
+                    {
+                        if add_hit(start) {
+                            return hits;
+                        }
+                    }
+                }
+            }
+        } else {
+            for (start, _) in line.match_indices(query) {
+                if add_hit(start) {
+                    return hits;
+                }
+            }
+        }
+        absolute += raw_line.len();
+    }
     hits
 }
 
@@ -3054,7 +3287,8 @@ mod tests {
         Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
         clamp_workspace_panel_width, create_workspace_file, create_workspace_folder, is_code_file,
         path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
-        scan_workspace_dir, search_utf8_to_utf16, search_utf16_to_utf8, search_workspace_files,
+        scan_workspace_dir, search_document_source, search_utf8_to_utf16, search_utf16_to_utf8,
+        search_workspace_files,
     };
     use crate::components::{Block, UndoCaptureKind};
     use gpui::{AppContext, ClipboardItem, EntityInputHandler, TestAppContext, point, px};
@@ -3411,6 +3645,170 @@ mod tests {
         assert!(search_workspace_files(&tree, "absent", 200).is_empty());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn document_search_finds_ascii_and_chinese_with_source_ranges() {
+        let source = "# Hello\n\n你好 Hello\n";
+        let hits = search_document_source(source, "hello", Path::new("note.md"), "note.md", 200);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].line, Some(1));
+        assert_eq!(hits[1].line, Some(3));
+        for hit in &hits {
+            let range = hit.source_range.clone().unwrap();
+            assert_eq!(&source[range], "Hello");
+        }
+        let chinese = search_document_source(source, "你好", Path::new("note.md"), "note.md", 1);
+        assert_eq!(chinese.len(), 1);
+        assert_eq!(&source[chinese[0].source_range.clone().unwrap()], "你好");
+    }
+
+    #[gpui::test]
+    async fn document_find_searches_unsaved_edits_and_selects_matches(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# Alpha\n\nBeta".into(), None));
+        editor.update(cx, |editor, cx| {
+            let paragraph = editor.document.root_blocks()[1].clone();
+            paragraph.update(cx, |paragraph, cx| {
+                paragraph.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+                paragraph.replace_text_in_visible_range(4..4, " alpha", None, false, cx);
+            });
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "alpha".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.workspace.search_results.len(), 2);
+            editor.find_next_document_match(false, cx);
+            assert_eq!(editor.workspace.search_active_index, Some(0));
+            let heading = editor.document.root_blocks()[0].read(cx);
+            assert_eq!(heading.selected_range, 0..5);
+            editor.find_next_document_match(false, cx);
+            assert_eq!(editor.workspace.search_active_index, Some(1));
+            let paragraph = editor.document.root_blocks()[1].read(cx);
+            assert_eq!(paragraph.selected_range, 5..10);
+        });
+        editor.update(cx, |editor, cx| {
+            let paragraph = editor.document.root_blocks()[1].clone();
+            paragraph.update(cx, |paragraph, cx| {
+                paragraph.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+                paragraph.replace_text_in_visible_range(5..10, "", None, false, cx);
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_results.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn document_find_refreshes_after_switching_tabs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-document-find-tabs-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("first.md");
+        let second = root.join("second.md");
+        fs::write(&first, "needle in first").unwrap();
+        fs::write(&second, "needle in second").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root, cx);
+                editor.open_workspace_file(first.clone(), window, cx);
+                editor.open_document_find(cx);
+                editor.workspace.search_query = "needle".into();
+                editor.schedule_workspace_search(cx);
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_results.len(), 1);
+            assert_eq!(editor.workspace.search_results[0].path, first);
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(second.clone(), window, cx);
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_results.len(), 1);
+            assert_eq!(editor.workspace.search_results[0].path, second);
+        });
+    }
+
+    #[gpui::test]
+    async fn cmd_f_opens_current_document_find_in_sidebar(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+            crate::app_menu::init(cx);
+        });
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, "hello\n\nhello".into(), None)
+        });
+        cx.update(|window, cx| {
+            window.activate_window();
+            window.draw(cx).clear();
+        });
+        cx.simulate_keystrokes("cmd-f");
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _cx| {
+            assert!(editor.workspace.is_open);
+            assert!(editor.workspace.show_search);
+            assert_eq!(
+                editor.workspace.search_scope,
+                super::WorkspaceSearchScope::Document
+            );
+        });
+        cx.simulate_input("hello");
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_results.len(), 2);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_active_index, Some(0));
+        });
+        cx.simulate_keystrokes("cmd-g");
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_active_index, Some(1));
+        });
+        cx.simulate_keystrokes("cmd-shift-g");
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.workspace.search_active_index, Some(0));
+        });
     }
 
     #[gpui::test]

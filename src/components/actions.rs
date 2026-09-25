@@ -73,6 +73,9 @@ actions!(
         ToggleViewMode,
         ToggleFocusMode,
         ToggleTypewriterMode,
+        FindInDocument,
+        FindNextMatch,
+        FindPreviousMatch,
         ToggleWorkspace,
     ]
 );
@@ -170,6 +173,9 @@ pub(crate) enum ShortcutCommand {
     CloseWindow,
     DismissTransientUi,
     ToggleViewMode,
+    FindInDocument,
+    FindNextMatch,
+    FindPreviousMatch,
     ToggleWorkspace,
 }
 
@@ -528,6 +534,27 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         context: None,
     },
     ShortcutDefinition {
+        command: ShortcutCommand::FindInDocument,
+        id: "find_in_document",
+        category: ShortcutCategory::Navigation,
+        default_keys: &["cmd-f", "ctrl-f"],
+        context: None,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::FindNextMatch,
+        id: "find_next_match",
+        category: ShortcutCategory::Navigation,
+        default_keys: &["cmd-g", "ctrl-g", "f3"],
+        context: None,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::FindPreviousMatch,
+        id: "find_previous_match",
+        category: ShortcutCategory::Navigation,
+        default_keys: &["cmd-shift-g", "ctrl-shift-g", "shift-f3"],
+        context: None,
+    },
+    ShortcutDefinition {
         command: ShortcutCommand::ToggleWorkspace,
         id: "toggle_workspace",
         category: ShortcutCategory::Navigation,
@@ -742,6 +769,9 @@ fn key_binding_for(
         ShortcutCommand::CloseWindow => KeyBinding::new(key, CloseWindow, context),
         ShortcutCommand::DismissTransientUi => KeyBinding::new(key, DismissTransientUi, context),
         ShortcutCommand::ToggleViewMode => KeyBinding::new(key, ToggleViewMode, context),
+        ShortcutCommand::FindInDocument => KeyBinding::new(key, FindInDocument, context),
+        ShortcutCommand::FindNextMatch => KeyBinding::new(key, FindNextMatch, context),
+        ShortcutCommand::FindPreviousMatch => KeyBinding::new(key, FindPreviousMatch, context),
         ShortcutCommand::ToggleWorkspace => KeyBinding::new(key, ToggleWorkspace, context),
     }
 }

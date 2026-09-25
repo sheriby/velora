@@ -1585,6 +1585,7 @@ impl Render for Editor {
         self.install_close_guard(cx, window);
         self.apply_pending_focus(window, cx);
         self.apply_pending_scroll_into_view(window, cx);
+        self.apply_pending_workspace_search_focus(window, cx);
         self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
@@ -2244,6 +2245,9 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_quit_application))
             .on_action(cx.listener(Self::on_close_window))
             .on_action(cx.listener(Self::on_toggle_view_mode_action))
+            .on_action(cx.listener(Self::on_find_in_document))
+            .on_action(cx.listener(Self::on_find_next_match))
+            .on_action(cx.listener(Self::on_find_previous_match))
             .on_action(cx.listener(Self::on_toggle_workspace_action))
             .on_action(cx.listener(Self::on_page_up))
             .on_action(cx.listener(Self::on_page_down))

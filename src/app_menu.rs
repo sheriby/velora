@@ -12,10 +12,10 @@ use gpui::*;
 
 use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
-    InstallCliTool, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
-    OpenRecentWorkspace, OpenWorkspaceFolder, QuitApplication, SaveDocument, SaveDocumentAs,
-    SelectLanguage, SelectTheme, ShowAbout, ToggleFocusMode, ToggleTypewriterMode, ToggleViewMode,
-    ToggleWorkspace, UninstallCliTool,
+    FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NewWindow, NoRecentFiles,
+    OpenFile, OpenPreferences, OpenRecentFile, OpenRecentWorkspace, OpenWorkspaceFolder,
+    QuitApplication, SaveDocument, SaveDocumentAs, SelectLanguage, SelectTheme, ShowAbout,
+    ToggleFocusMode, ToggleTypewriterMode, ToggleViewMode, ToggleWorkspace, UninstallCliTool,
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
@@ -443,6 +443,9 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<ToggleViewMode>()
         || action.as_any().is::<ToggleFocusMode>()
         || action.as_any().is::<ToggleTypewriterMode>()
+        || action.as_any().is::<FindInDocument>()
+        || action.as_any().is::<FindNextMatch>()
+        || action.as_any().is::<FindPreviousMatch>()
 }
 
 fn is_window_context_menu_action(action: &dyn Action) -> bool {
@@ -552,6 +555,16 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_focus_mode(cx));
     } else if action.as_any().is::<ToggleTypewriterMode>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_typewriter_mode(cx));
+    } else if action.as_any().is::<FindInDocument>() {
+        let _ = with_active_editor(cx, |editor, _, cx| editor.open_document_find(cx));
+    } else if action.as_any().is::<FindNextMatch>() {
+        let _ = with_active_editor(cx, |editor, _, cx| {
+            editor.find_next_document_match(false, cx)
+        });
+    } else if action.as_any().is::<FindPreviousMatch>() {
+        let _ = with_active_editor(cx, |editor, _, cx| {
+            editor.find_next_document_match(true, cx)
+        });
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -660,6 +673,12 @@ pub(crate) fn dispatch_menu_action_for_editor(
         let _ = target.update(cx, |editor, cx| editor.toggle_focus_mode(cx));
     } else if action.as_any().is::<ToggleTypewriterMode>() {
         let _ = target.update(cx, |editor, cx| editor.toggle_typewriter_mode(cx));
+    } else if action.as_any().is::<FindInDocument>() {
+        let _ = target.update(cx, |editor, cx| editor.open_document_find(cx));
+    } else if action.as_any().is::<FindNextMatch>() {
+        let _ = target.update(cx, |editor, cx| editor.find_next_document_match(false, cx));
+    } else if action.as_any().is::<FindPreviousMatch>() {
+        let _ = target.update(cx, |editor, cx| editor.find_next_document_match(true, cx));
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -947,6 +966,31 @@ fn build_menus(
                     },
                     ToggleTypewriterMode,
                 ),
+                MenuItem::separator(),
+                MenuItem::action(
+                    if current_language_id == "zh-CN" {
+                        "查找当前文档…"
+                    } else {
+                        "Find in Document…"
+                    },
+                    FindInDocument,
+                ),
+                MenuItem::action(
+                    if current_language_id == "zh-CN" {
+                        "查找下一个"
+                    } else {
+                        "Find Next"
+                    },
+                    FindNextMatch,
+                ),
+                MenuItem::action(
+                    if current_language_id == "zh-CN" {
+                        "查找上一个"
+                    } else {
+                        "Find Previous"
+                    },
+                    FindPreviousMatch,
+                ),
             ],
         },
         Menu {
@@ -1167,6 +1211,15 @@ pub(crate) fn init(cx: &mut App) {
     });
     cx.on_action(|_: &ToggleFocusMode, cx| {
         dispatch_menu_action(&ToggleFocusMode, cx);
+    });
+    cx.on_action(|_: &FindInDocument, cx| {
+        dispatch_menu_action(&FindInDocument, cx);
+    });
+    cx.on_action(|_: &FindNextMatch, cx| {
+        dispatch_menu_action(&FindNextMatch, cx);
+    });
+    cx.on_action(|_: &FindPreviousMatch, cx| {
+        dispatch_menu_action(&FindPreviousMatch, cx);
     });
     cx.on_action(|_: &ToggleTypewriterMode, cx| {
         dispatch_menu_action(&ToggleTypewriterMode, cx);
@@ -1408,6 +1461,9 @@ mod tests {
             action_name(&menus[VIEW_IDX].items[2]),
             "Toggle Typewriter Mode"
         );
+        assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "Find in Document…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[5]), "Find Next");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[6]), "Find Previous");
     }
 
     #[test]
@@ -1474,6 +1530,9 @@ mod tests {
         assert_eq!(action_name(&menus[WORKSPACE_IDX].items[3]), "切换工作区");
         assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "切换专注模式");
         assert_eq!(action_name(&menus[VIEW_IDX].items[2]), "切换打字机模式");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "查找当前文档…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[5]), "查找下一个");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[6]), "查找上一个");
     }
 
     #[test]
