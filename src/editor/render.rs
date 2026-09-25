@@ -9,7 +9,7 @@ use gpui::*;
 use super::{Editor, InfoDialogKind, MountedRun};
 use crate::app_menu::dispatch_menu_action_for_editor;
 use crate::components::CalloutVariant;
-use crate::components::{AddLanguageConfig, AddThemeConfig, Block, NoRecentFiles};
+use crate::components::{AddLanguageConfig, AddThemeConfig, Block, BlockKind, NoRecentFiles};
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeDimensions, ThemeManager};
 use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar};
@@ -72,18 +72,26 @@ struct RenderedRowSpacingInfo {
     is_callout_header: bool,
     footnote_anchor: Option<uuid::Uuid>,
     is_footnote_header: bool,
+    heading_level: Option<u8>,
+    is_list_item: bool,
 }
 
 impl RenderedRowSpacingInfo {
     fn from_block(block: &Block) -> Self {
+        let kind = block.kind();
         Self {
             quote_group_anchor: block.quote_group_anchor,
             visible_quote_group_anchor: block.visible_quote_group_anchor,
             callout_anchor: block.callout_anchor,
             callout_variant: block.callout_variant,
-            is_callout_header: block.kind().is_callout(),
+            is_callout_header: kind.is_callout(),
             footnote_anchor: block.footnote_anchor,
-            is_footnote_header: block.kind().is_footnote_definition(),
+            is_footnote_header: kind.is_footnote_definition(),
+            heading_level: match &kind {
+                BlockKind::Heading { level } => Some(*level),
+                _ => None,
+            },
+            is_list_item: kind.is_list_item(),
         }
     }
 }
@@ -92,6 +100,7 @@ fn rendered_row_top_gap(
     previous: Option<RenderedRowSpacingInfo>,
     current: RenderedRowSpacingInfo,
     default_gap: f32,
+    rendered_mode: bool,
 ) -> f32 {
     let Some(previous) = previous else {
         return 0.0;
@@ -100,7 +109,24 @@ fn rendered_row_top_gap(
     if previous.quote_group_anchor.is_some()
         && previous.quote_group_anchor == current.quote_group_anchor
     {
-        0.0
+        return 0.0;
+    }
+    if !rendered_mode {
+        return default_gap;
+    }
+
+    if let Some(level) = current.heading_level {
+        default_gap
+            * match level {
+                1 => 2.4,
+                2 => 1.9,
+                3 => 1.5,
+                _ => 1.25,
+            }
+    } else if previous.heading_level.is_some() {
+        default_gap * 0.75
+    } else if previous.is_list_item && current.is_list_item {
+        default_gap * 0.5
     } else {
         default_gap
     }
@@ -1647,7 +1673,12 @@ impl Render for Editor {
         while index < visible_blocks.len() {
             let first_visible = visible_blocks[index].clone();
             let first_spacing = spacing_for(index);
-            let top_gap = rendered_row_top_gap(previous_row_spacing, first_spacing, d.block_gap);
+            let top_gap = rendered_row_top_gap(
+                previous_row_spacing,
+                first_spacing,
+                d.block_gap,
+                self.view_mode == super::ViewMode::Rendered,
+            );
 
             if let (Some(callout_anchor), Some(callout_variant)) =
                 (first_spacing.callout_anchor, first_spacing.callout_variant)
@@ -2365,6 +2396,7 @@ mod tests {
                 ..RenderedRowSpacingInfo::default()
             },
             4.0,
+            true,
         );
         assert_eq!(gap, 0.0);
     }
@@ -2442,6 +2474,7 @@ mod tests {
                 ..RenderedRowSpacingInfo::default()
             },
             4.0,
+            true,
         );
         assert_eq!(gap, 0.0);
     }
@@ -2458,6 +2491,7 @@ mod tests {
                 ..RenderedRowSpacingInfo::default()
             },
             4.0,
+            true,
         );
         assert_eq!(gap, 4.0);
     }
@@ -2474,8 +2508,38 @@ mod tests {
                 ..RenderedRowSpacingInfo::default()
             },
             4.0,
+            true,
         );
         assert_eq!(gap, 4.0);
+    }
+
+    #[test]
+    fn rendered_headings_and_lists_have_distinct_vertical_rhythm() {
+        let paragraph = RenderedRowSpacingInfo::default();
+        let heading = RenderedRowSpacingInfo {
+            heading_level: Some(1),
+            ..paragraph
+        };
+        let list_item = RenderedRowSpacingInfo {
+            is_list_item: true,
+            ..paragraph
+        };
+        assert_eq!(
+            rendered_row_top_gap(Some(paragraph), heading, 8.0, true),
+            19.2
+        );
+        assert_eq!(
+            rendered_row_top_gap(Some(heading), paragraph, 8.0, true),
+            6.0
+        );
+        assert_eq!(
+            rendered_row_top_gap(Some(list_item), list_item, 8.0, true),
+            4.0
+        );
+        assert_eq!(
+            rendered_row_top_gap(Some(paragraph), heading, 8.0, false),
+            8.0
+        );
     }
 
     #[test]
