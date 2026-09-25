@@ -418,8 +418,7 @@ impl Editor {
             link_reference_definitions: Arc::default(),
             footnote_registry: Arc::default(),
         };
-        editor.rebuild_table_runtimes(cx);
-        editor.rebuild_image_runtimes(cx);
+        editor.rebuild_table_runtimes(cx); // Also refreshes image and reference contexts.
         editor.pending_focus = editor.first_focusable_entity_id(cx);
         editor.active_entity_id = editor.pending_focus;
         editor.refresh_stable_document_snapshot(cx);
