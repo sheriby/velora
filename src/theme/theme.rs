@@ -1816,6 +1816,33 @@ impl ThemeManager {
         &self.theme_catalog
     }
 
+    /// Colors used by the theme picker before a theme is applied.
+    pub fn preview_colors(&self, theme_id: &str) -> Option<(Hsla, Hsla, Hsla)> {
+        let theme = match theme_id {
+            BUILTIN_THEME_SYSTEM_ID => match self.system_appearance {
+                WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::default_theme(),
+                WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light_theme(),
+            },
+            BUILTIN_THEME_VELOTYPE_ID => Theme::default_theme(),
+            BUILTIN_THEME_VELOTYPE_LIGHT_ID => Theme::light_theme(),
+            BUILTIN_THEME_PAPER_ID => Theme::paper_theme(),
+            BUILTIN_THEME_FOREST_ID => Theme::forest_theme(),
+            BUILTIN_THEME_MIDNIGHT_ID => Theme::midnight_theme(),
+            BUILTIN_THEME_INK_ID => Theme::ink_theme(),
+            _ => self
+                .custom_themes
+                .iter()
+                .find(|entry| entry.id == theme_id)?
+                .theme
+                .clone(),
+        };
+        Some((
+            theme.colors.editor_background,
+            theme.colors.text_default,
+            theme.colors.text_link,
+        ))
+    }
+
     /// Loads and activates a theme from a file.
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let theme = Theme::from_file(path)?;

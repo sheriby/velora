@@ -1201,6 +1201,57 @@ impl PreferencesWindow {
             .on_click(cx.listener(on_click))
     }
 
+    fn theme_dropdown_item(
+        index: usize,
+        label: String,
+        selected: bool,
+        preview: (Hsla, Hsla, Hsla),
+        theme: &Theme,
+        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let t = &theme.typography;
+        let (surface, text, accent) = preview;
+        div()
+            .id(("preferences-theme-option", index))
+            .w(px(280.0))
+            .min_h(px(38.0))
+            .px(px(10.0))
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .rounded(px(d.menu_item_radius))
+            .cursor_pointer()
+            .bg(if selected {
+                c.selection
+            } else {
+                c.dialog_surface
+            })
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .text_size(px(t.dialog_body_size))
+            .text_color(c.dialog_body)
+            .child(
+                div()
+                    .w(px(36.0))
+                    .h(px(24.0))
+                    .px(px(5.0))
+                    .flex()
+                    .flex_col()
+                    .justify_center()
+                    .gap(px(3.0))
+                    .rounded(px(4.0))
+                    .border(px(1.0))
+                    .border_color(c.dialog_border)
+                    .bg(surface)
+                    .child(div().w(px(20.0)).h(px(3.0)).rounded(px(2.0)).bg(text))
+                    .child(div().w(px(12.0)).h(px(3.0)).rounded(px(2.0)).bg(accent)),
+            )
+            .child(label)
+            .on_click(cx.listener(on_click))
+    }
+
     fn labeled_row(&self, label: &str, control: impl IntoElement, theme: &Theme) -> Div {
         let c = &theme.colors;
         let t = &theme.typography;
@@ -1304,10 +1355,19 @@ impl PreferencesWindow {
             for (index, entry) in self.theme_options.clone().into_iter().enumerate() {
                 let selected = entry.id == self.selected_theme_id;
                 let name = self.theme_display_name(&entry, strings);
-                list = list.child(Self::dropdown_item(
-                    ("preferences-theme-option", index),
+                let preview = cx
+                    .global::<ThemeManager>()
+                    .preview_colors(&entry.id)
+                    .unwrap_or((
+                        theme.colors.editor_background,
+                        theme.colors.text_default,
+                        theme.colors.text_link,
+                    ));
+                list = list.child(Self::theme_dropdown_item(
+                    index,
                     name,
                     selected,
+                    preview,
                     theme,
                     move |this, _, _, cx| {
                         this.selected_theme_id = entry.id.clone();
