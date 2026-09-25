@@ -43,6 +43,7 @@
 - [界面原型](docs/design/界面原型.html)
 - [界面原型说明](docs/design/界面原型说明.md)
 - [主题与长文排版](docs/design/主题与长文排版.md)
+- [六套内置主题静态预览](docs/design/主题预览.png)
 - [Velora 更名与界面调整验收](docs/验收记录/2026-09-25-Velora-更名与界面调整.md)
 - [主题与排版开发验证](docs/验收记录/2026-09-25-主题与排版开发验证.md)
 - [第三方代码来源与许可](docs/third-party.md)
