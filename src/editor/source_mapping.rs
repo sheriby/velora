@@ -677,6 +677,26 @@ impl Editor {
         &self,
         cx: &App,
     ) -> (Vec<SourceTargetMapping>, HashMap<EntityId, Range<usize>>) {
+        self.build_source_target_mappings_until(cx, None)
+    }
+
+    /// Finds one caret mapping without visiting roots after the target block.
+    pub(super) fn source_mapping_for_entity(
+        &self,
+        entity_id: EntityId,
+        cx: &App,
+    ) -> Option<SourceTargetMapping> {
+        self.build_source_target_mappings_until(cx, Some(entity_id))
+            .0
+            .into_iter()
+            .find(|mapping| mapping.entity.entity_id() == entity_id)
+    }
+
+    fn build_source_target_mappings_until(
+        &self,
+        cx: &App,
+        target: Option<EntityId>,
+    ) -> (Vec<SourceTargetMapping>, HashMap<EntityId, Range<usize>>) {
         let mut mappings = Vec::new();
         let mut block_ranges = HashMap::new();
         let mut absolute = 0usize;
@@ -718,6 +738,7 @@ impl Editor {
                 absolute += pending_empty_roots;
             }
 
+            let prior_mapping_count = mappings.len();
             absolute += self.collect_single_block_source_mappings(
                 block,
                 0,
@@ -732,6 +753,13 @@ impl Editor {
             pending_empty_roots = 0;
             previous_was_list_item = current_is_list_item;
             absolute += 1;
+            if target.is_some_and(|id| {
+                mappings[prior_mapping_count..]
+                    .iter()
+                    .any(|mapping| mapping.entity.entity_id() == id)
+            }) {
+                break;
+            }
         }
 
         (mappings, block_ranges)

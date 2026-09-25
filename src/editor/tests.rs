@@ -87,6 +87,26 @@ async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn targeted_source_mapping_matches_later_blocks_and_table_cells(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "intro\n\n## heading\n\n| Name | Value |\n| --- | --- |\n| A | B |".into();
+    let (editor, cx) =
+        cx.add_window_view(move |_window, cx| Editor::from_markdown(cx, markdown, None));
+    editor.read_with(cx, |editor, cx| {
+        let all = editor.build_source_target_mappings(cx);
+        assert!(all.len() >= 4);
+        for expected in all.iter().skip(1) {
+            let actual = editor
+                .source_mapping_for_entity(expected.entity.entity_id(), cx)
+                .expect("later block or table cell should have a source mapping");
+            assert_eq!(actual.full_source_range, expected.full_source_range);
+            assert_eq!(actual.content_to_source, expected.content_to_source);
+            assert_eq!(actual.source_to_content, expected.source_to_content);
+        }
+    });
+}
+
 #[test]
 fn centered_column_ratio_stays_full_before_shrink_start() {
     let theme = Theme::default_theme();
