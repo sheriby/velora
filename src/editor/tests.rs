@@ -80,8 +80,16 @@ async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
     let start = Instant::now();
     redraw(cx);
     let first_draw = start.elapsed();
+    let mut steady_draws = Vec::with_capacity(12);
+    for _ in 0..12 {
+        let start = Instant::now();
+        redraw(cx);
+        steady_draws.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    steady_draws.sort_by(f64::total_cmp);
+    let p95 = steady_draws[11];
     println!(
-        "bytes={bytes} rows={rows} construct_ms={:.1} first_draw_ms={:.1}",
+        "bytes={bytes} rows={rows} construct_ms={:.1} first_draw_ms={:.1} steady_p95_ms={p95:.1}",
         construct.as_secs_f64() * 1000.0,
         first_draw.as_secs_f64() * 1000.0
     );

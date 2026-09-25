@@ -1217,16 +1217,16 @@ impl Editor {
         }
     }
 
-    fn sync_workspace_outline(&mut self, cx: &mut Context<Self>) {
-        let source = self.serialized_document_text(cx);
+    fn sync_workspace_outline(&mut self, _cx: &mut Context<Self>) {
+        let source = &self.last_stable_source_text;
         if self.workspace.outline_source.as_deref() == Some(source.as_str()) {
             return;
         }
 
-        let outline = build_outline_tree(&source);
+        let outline = build_outline_tree(source);
         prune_outline_state(&mut self.workspace, &outline);
         self.workspace.outline_tree = outline;
-        self.workspace.outline_source = Some(source);
+        self.workspace.outline_source = Some(source.clone());
     }
 
     fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
@@ -2834,8 +2834,8 @@ mod tests {
         path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
         scan_workspace_dir, search_workspace_files,
     };
-    use crate::components::Block;
-    use gpui::{EntityInputHandler, TestAppContext, point, px};
+    use crate::components::{Block, UndoCaptureKind};
+    use gpui::{AppContext, EntityInputHandler, TestAppContext, point, px};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -3265,6 +3265,25 @@ mod tests {
         assert_eq!(outline[0].children[0].label, "Child");
         assert_eq!(outline[0].children[0].children[0].label, "Grandchild");
         assert_eq!(outline[1].label, "Next");
+    }
+
+    #[gpui::test]
+    async fn outline_tracks_committed_heading_edits(cx: &mut TestAppContext) {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, "# Old".into(), None));
+        editor.update(cx, |editor, cx| {
+            editor.sync_workspace_outline(cx);
+            assert_eq!(editor.workspace.outline_tree[0].label, "Old");
+            let heading = editor.document.first_root().unwrap().clone();
+            heading.update(cx, |heading, cx| {
+                heading.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+                heading.replace_text_in_visible_range(0..3, "New", None, false, cx);
+            });
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            editor.sync_workspace_outline(cx);
+            assert_eq!(editor.workspace.outline_tree[0].label, "New");
+        });
     }
 
     #[test]
