@@ -89,8 +89,13 @@ impl Editor {
     }
 
     pub(super) fn refresh_stable_document_snapshot(&mut self, cx: &App) {
+        let source = self.current_document_source(cx);
+        self.set_stable_document_snapshot(source, cx);
+    }
+
+    fn set_stable_document_snapshot(&mut self, source: String, cx: &App) {
         self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
-        self.last_stable_source_text = self.current_document_source(cx);
+        self.last_stable_source_text = source;
     }
 
     pub(super) fn finalize_pending_undo_capture(&mut self, cx: &mut Context<Self>) {
@@ -117,11 +122,11 @@ impl Editor {
             } else {
                 last.kind = UndoCaptureKind::NonCoalescible;
             }
-            self.refresh_stable_document_snapshot(cx);
+            self.set_stable_document_snapshot(current_source, cx);
             return;
         }
         if current_source == pending.snapshot.source_text {
-            self.refresh_stable_document_snapshot(cx);
+            self.set_stable_document_snapshot(current_source, cx);
             return;
         }
 
@@ -144,7 +149,7 @@ impl Editor {
                 self.undo_history.drain(0..overflow);
             }
         }
-        self.refresh_stable_document_snapshot(cx);
+        self.set_stable_document_snapshot(current_source, cx);
     }
 
     pub(super) fn apply_selection_snapshot_in_current_mode(
