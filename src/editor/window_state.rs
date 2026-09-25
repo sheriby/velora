@@ -248,6 +248,11 @@ impl Editor {
         self.toggle_view_mode(cx);
     }
 
+    pub(crate) fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+        self.focus_mode = !self.focus_mode;
+        cx.notify();
+    }
+
     pub(crate) fn on_undo(
         &mut self,
         _: &crate::components::Undo,

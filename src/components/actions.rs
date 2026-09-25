@@ -71,6 +71,7 @@ actions!(
         UninstallCliTool,
         DismissTransientUi,
         ToggleViewMode,
+        ToggleFocusMode,
         ToggleWorkspace,
     ]
 );

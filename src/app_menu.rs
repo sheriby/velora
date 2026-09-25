@@ -14,7 +14,8 @@ use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     InstallCliTool, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
     OpenRecentWorkspace, OpenWorkspaceFolder, QuitApplication, SaveDocument, SaveDocumentAs,
-    SelectLanguage, SelectTheme, ShowAbout, ToggleViewMode, ToggleWorkspace, UninstallCliTool,
+    SelectLanguage, SelectTheme, ShowAbout, ToggleFocusMode, ToggleViewMode, ToggleWorkspace,
+    UninstallCliTool,
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
@@ -440,6 +441,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<OpenWorkspaceFolder>()
         || action.as_any().is::<OpenRecentWorkspace>()
         || action.as_any().is::<ToggleViewMode>()
+        || action.as_any().is::<ToggleFocusMode>()
 }
 
 fn is_window_context_menu_action(action: &dyn Action) -> bool {
@@ -545,6 +547,8 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, _, cx| editor.set_workspace_root(path, cx));
     } else if action.as_any().is::<ToggleViewMode>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_view_mode_from_ui(cx));
+    } else if action.as_any().is::<ToggleFocusMode>() {
+        let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_focus_mode(cx));
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -649,6 +653,8 @@ pub(crate) fn dispatch_menu_action_for_editor(
         let _ = target.update(cx, |editor, cx| editor.set_workspace_root(path, cx));
     } else if action.as_any().is::<ToggleViewMode>() {
         let _ = target.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
+    } else if action.as_any().is::<ToggleFocusMode>() {
+        let _ = target.update(cx, |editor, cx| editor.toggle_focus_mode(cx));
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -906,9 +912,27 @@ fn build_menus(
                 }),
                 MenuItem::separator(),
                 MenuItem::action(strings.menu_toggle_workspace.clone(), ToggleWorkspace),
+            ],
+        },
+        Menu {
+            name: if current_language_id == "zh-CN" {
+                "视图"
+            } else {
+                "View"
+            }
+            .into(),
+            items: vec![
                 MenuItem::action(
                     strings.preferences_shortcut_toggle_view_mode.clone(),
                     ToggleViewMode,
+                ),
+                MenuItem::action(
+                    if current_language_id == "zh-CN" {
+                        "切换专注模式"
+                    } else {
+                        "Toggle Focus Mode"
+                    },
+                    ToggleFocusMode,
                 ),
             ],
         },
@@ -1128,6 +1152,9 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ToggleViewMode, cx| {
         dispatch_menu_action(&ToggleViewMode, cx);
     });
+    cx.on_action(|_: &ToggleFocusMode, cx| {
+        dispatch_menu_action(&ToggleFocusMode, cx);
+    });
     cx.on_action(|_: &OpenPreferences, cx| {
         dispatch_menu_action(&OpenPreferences, cx);
     });
@@ -1239,8 +1266,8 @@ mod tests {
         );
     }
 
-    // On macOS the menu bar is: [velora app menu, File, Export, Language, Theme, Workspace, Help]
-    // On other platforms:       [File, Export, Language, Theme, Workspace, Help]
+    // On macOS the menu bar is: [velora app menu, File, Export, Language, Theme, Workspace, View, Help]
+    // On other platforms:       [File, Export, Language, Theme, Workspace, View, Help]
     #[cfg(target_os = "macos")]
     const EXPORT_IDX: usize = 2;
     #[cfg(not(target_os = "macos"))]
@@ -1262,9 +1289,14 @@ mod tests {
     const WORKSPACE_IDX: usize = 4;
 
     #[cfg(target_os = "macos")]
-    const HELP_IDX: usize = 6;
+    const VIEW_IDX: usize = 6;
     #[cfg(not(target_os = "macos"))]
-    const HELP_IDX: usize = 5;
+    const VIEW_IDX: usize = 5;
+
+    #[cfg(target_os = "macos")]
+    const HELP_IDX: usize = 7;
+    #[cfg(not(target_os = "macos"))]
+    const HELP_IDX: usize = 6;
 
     #[test]
     fn build_menus_uses_english_fallback_by_default() {
@@ -1287,13 +1319,22 @@ mod tests {
                 "Language",
                 "Theme",
                 "Workspace",
+                "View",
                 "Help"
             ]
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             menu_names,
-            vec!["File", "Export", "Language", "Theme", "Workspace", "Help"]
+            vec![
+                "File",
+                "Export",
+                "Language",
+                "Theme",
+                "Workspace",
+                "View",
+                "Help"
+            ]
         );
 
         // New Window belongs with file operations on macOS and remains the
@@ -1346,6 +1387,7 @@ mod tests {
             action_name(&menus[WORKSPACE_IDX].items[3]),
             "Toggle Workspace"
         );
+        assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "Toggle Focus Mode");
     }
 
     #[test]
@@ -1373,12 +1415,21 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(
             menu_names,
-            vec!["Velora", "文件", "导出", "语言", "主题", "工作区", "帮助"]
+            vec![
+                "Velora",
+                "文件",
+                "导出",
+                "语言",
+                "主题",
+                "工作区",
+                "视图",
+                "帮助"
+            ]
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             menu_names,
-            vec!["文件", "导出", "语言", "主题", "工作区", "帮助"]
+            vec!["文件", "导出", "语言", "主题", "工作区", "视图", "帮助"]
         );
 
         #[cfg(target_os = "macos")]
@@ -1401,6 +1452,7 @@ mod tests {
             "最近工作区"
         );
         assert_eq!(action_name(&menus[WORKSPACE_IDX].items[3]), "切换工作区");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "切换专注模式");
     }
 
     #[test]

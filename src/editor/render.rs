@@ -106,6 +106,19 @@ fn rendered_row_top_gap(
     }
 }
 
+fn focus_mode_row_opacity(
+    active: bool,
+    focused_visible_index: Option<usize>,
+    start: usize,
+    end: usize,
+) -> f32 {
+    if !active || focused_visible_index.is_none_or(|index| (start..end).contains(&index)) {
+        1.0
+    } else {
+        0.38
+    }
+}
+
 fn callout_colors(variant: CalloutVariant, theme: &Theme) -> (Hsla, Hsla) {
     let c = &theme.colors;
     match variant {
@@ -1535,6 +1548,20 @@ impl Render for Editor {
 
         let d = &theme.dimensions;
         let visible_blocks = self.document.visible_blocks().to_vec();
+        let focused_visible_index = self
+            .focused_edit_target_entity_id(window, cx)
+            .and_then(|id| {
+                self.document.visible_index_for_entity_id(id).or_else(|| {
+                    self.table_cell_binding(id).and_then(|binding| {
+                        self.document
+                            .visible_index_for_entity_id(binding.table_block.entity_id())
+                    })
+                })
+            });
+        let focus_mode_active = self.focus_mode
+            && self.view_mode == super::ViewMode::Rendered
+            && !self.code_tab_active()
+            && self.cross_block_selection.is_none();
         let editor = cx.entity().downgrade();
         let has_menus = cx
             .get_menus()
@@ -1697,6 +1724,12 @@ impl Render for Editor {
                         .border_l(px(d.callout_border_width))
                         .border_color(accent)
                         .bg(background)
+                        .opacity(focus_mode_row_opacity(
+                            focus_mode_active,
+                            focused_visible_index,
+                            index,
+                            group_end,
+                        ))
                         .children(group_children)
                         .into_any_element(),
                 );
@@ -1744,6 +1777,12 @@ impl Render for Editor {
                         .max_w(relative(1.0))
                         .flex_shrink_0()
                         .mt(px(top_gap))
+                        .opacity(focus_mode_row_opacity(
+                            focus_mode_active,
+                            focused_visible_index,
+                            index,
+                            group_end,
+                        ))
                         .child(footnote_group_shell(group_children, &theme, d))
                         .into_any_element(),
                 );
@@ -1758,6 +1797,12 @@ impl Render for Editor {
                 .max_w(relative(1.0))
                 .flex_shrink_0()
                 .mt(px(top_gap))
+                .opacity(focus_mode_row_opacity(
+                    focus_mode_active,
+                    focused_visible_index,
+                    index,
+                    index + 1,
+                ))
                 .child(entity.clone());
             let row = if self.view_mode == super::ViewMode::Rendered {
                 let row_editor = editor.clone();
@@ -1779,21 +1824,11 @@ impl Render for Editor {
 
         // The focused row is always kept mounted so its caret is not blurred; a
         // table cell maps to its containing table block's row.
-        let focus_row = self
-            .focused_edit_target_entity_id(window, cx)
-            .and_then(|id| {
-                self.document.visible_index_for_entity_id(id).or_else(|| {
-                    self.table_cell_binding(id).and_then(|binding| {
-                        self.document
-                            .visible_index_for_entity_id(binding.table_block.entity_id())
-                    })
-                })
-            })
-            .map(|visible_index| {
-                row_starts
-                    .partition_point(|&start| start <= visible_index)
-                    .saturating_sub(1)
-            });
+        let focus_row = focused_visible_index.map(|visible_index| {
+            row_starts
+                .partition_point(|&start| start <= visible_index)
+                .saturating_sub(1)
+        });
 
         // A row's first block keys its cached footprint.
         let row_first_ids: Vec<EntityId> = row_starts
@@ -2245,11 +2280,11 @@ impl Render for Editor {
 mod tests {
     use super::{
         NoRecentFiles, RenderedRowSpacingInfo, callout_row_top_gap, editor_text_font,
-        import_menu_split_index, in_window_menu_bar_height_for_target_os, menu_bar_button_width,
-        menu_items_visual_height_with_gaps, menu_panel_left, menu_panel_width_for_labels,
-        owned_menu_item_labels, rendered_row_top_gap, scrollable_import_menu_scroll_height,
-        submenu_bridge_geometry, supports_in_window_menu_for_target_os,
-        tibetan_font_fallbacks_for_target_os,
+        focus_mode_row_opacity, import_menu_split_index, in_window_menu_bar_height_for_target_os,
+        menu_bar_button_width, menu_items_visual_height_with_gaps, menu_panel_left,
+        menu_panel_width_for_labels, owned_menu_item_labels, rendered_row_top_gap,
+        scrollable_import_menu_scroll_height, submenu_bridge_geometry,
+        supports_in_window_menu_for_target_os, tibetan_font_fallbacks_for_target_os,
     };
     use crate::components::{AddLanguageConfig, AddThemeConfig};
     use crate::theme::Theme;
@@ -2295,6 +2330,14 @@ mod tests {
             4.0,
         );
         assert_eq!(gap, 0.0);
+    }
+
+    #[test]
+    fn focus_mode_fades_only_rows_outside_the_focused_group() {
+        assert_eq!(focus_mode_row_opacity(true, Some(3), 2, 5), 1.0);
+        assert_eq!(focus_mode_row_opacity(true, Some(3), 0, 2), 0.38);
+        assert_eq!(focus_mode_row_opacity(false, Some(3), 0, 2), 1.0);
+        assert_eq!(focus_mode_row_opacity(true, None, 0, 2), 1.0);
     }
 
     #[test]

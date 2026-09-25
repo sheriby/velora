@@ -65,6 +65,7 @@ pub struct Editor {
     table_cells: HashMap<EntityId, TableCellBinding>,
     /// Which view the editor is currently presenting.
     pub(crate) view_mode: ViewMode,
+    focus_mode: bool,
     /// Keeps ambiguous Markdown extensions in source mode until their syntax is removed.
     source_mode_fallback_required: bool,
     code_document: bool,
@@ -341,6 +342,7 @@ impl Editor {
             } else {
                 ViewMode::Rendered
             },
+            focus_mode: false,
             source_mode_fallback_required,
             code_document: false,
             code_uses_crlf: false,
