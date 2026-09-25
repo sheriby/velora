@@ -82,6 +82,12 @@ impl Editor {
         self.table_axis_preview = None;
         let visible = self.document.visible_blocks().to_vec();
         for block in &visible {
+            let has_table_state = block.entity.read_with(cx, |block, _cx| {
+                block.kind() == BlockKind::Table || block.table_runtime.is_some()
+            });
+            if !has_table_state {
+                continue;
+            }
             block
                 .entity
                 .update(cx, |block, _cx| block.clear_table_runtime());
