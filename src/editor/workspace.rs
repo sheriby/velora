@@ -4,12 +4,13 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use gpui::*;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 
-use super::{BlockKind, Editor};
+use super::{BlockKind, Editor, UndoSelectionSnapshot};
 use crate::i18n::I18nStrings;
 use crate::theme::{Theme, ThemeManager};
 
@@ -86,6 +87,14 @@ struct WorkspaceResizeDrag {
     start_width: f32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkspaceSearchHit {
+    path: PathBuf,
+    label: String,
+    line: Option<usize>,
+    preview: String,
+}
+
 #[derive(Clone, Copy)]
 enum WorkspaceMenuAction {
     NewFile,
@@ -121,9 +130,12 @@ pub(super) struct WorkspaceState {
     selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
-    filename_query: String,
-    show_filename_search: bool,
-    filename_search_focus: Option<FocusHandle>,
+    search_query: String,
+    show_search: bool,
+    search_focus: Option<FocusHandle>,
+    search_results: Vec<WorkspaceSearchHit>,
+    search_pending: bool,
+    search_generation: u64,
     context_menu: Option<WorkspaceContextMenu>,
     panel_width: Option<f32>,
     resize_drag: Option<WorkspaceResizeDrag>,
@@ -143,9 +155,12 @@ impl Default for WorkspaceState {
             selected: None,
             open_documents: Vec::new(),
             active_document: None,
-            filename_query: String::new(),
-            show_filename_search: false,
-            filename_search_focus: None,
+            search_query: String::new(),
+            show_search: false,
+            search_focus: None,
+            search_results: Vec::new(),
+            search_pending: false,
+            search_generation: 0,
             context_menu: None,
             panel_width: None,
             resize_drag: None,
@@ -188,18 +203,18 @@ impl Editor {
                 crate::app_menu::install_menus(cx);
             }
         }
+        self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
         self.workspace.file_error = None;
         self.workspace.expanded.clear();
+        self.workspace.active_tab = WorkspaceTab::Files;
+        self.workspace.show_search = false;
+        self.workspace.search_query.clear();
+        self.workspace.search_results.clear();
+        self.workspace.search_pending = false;
+        self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         self.sync_workspace_file_tree();
-        if self.workspace.selected.is_none() {
-            self.workspace.selected = self
-                .workspace
-                .root
-                .clone()
-                .map(WorkspaceSelection::Directory);
-        }
         self.sync_workspace_outline(cx);
         cx.notify();
     }
@@ -216,6 +231,9 @@ impl Editor {
     fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
         self.workspace.file_tree = None;
         self.sync_workspace_file_tree();
+        if self.workspace.show_search && !self.workspace.search_query.is_empty() {
+            self.schedule_workspace_search(cx);
+        }
         cx.notify();
     }
 
@@ -1209,14 +1227,79 @@ impl Editor {
     }
 
     fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
-        let changed = self.workspace.active_tab != tab || self.workspace.show_filename_search;
-        self.workspace.show_filename_search = false;
-        self.workspace.filename_query.clear();
+        let changed = self.workspace.active_tab != tab || self.workspace.show_search;
+        self.workspace.show_search = false;
+        self.workspace.search_query.clear();
+        self.workspace.search_results.clear();
+        self.workspace.search_pending = false;
+        self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         if changed {
             self.workspace.active_tab = tab;
             self.sync_workspace_models(cx);
             cx.notify();
         }
+    }
+
+    fn schedule_workspace_search(&mut self, cx: &mut Context<Self>) {
+        self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
+        let generation = self.workspace.search_generation;
+        self.workspace.search_results.clear();
+        let query = self.workspace.search_query.trim().to_string();
+        let Some(tree) = self
+            .workspace
+            .file_tree
+            .clone()
+            .filter(|_| !query.is_empty())
+        else {
+            self.workspace.search_pending = false;
+            cx.notify();
+            return;
+        };
+        self.workspace.search_pending = true;
+        let editor = cx.entity().downgrade();
+        let background = cx.background_executor().clone();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            background.timer(Duration::from_millis(120)).await;
+            let current = editor
+                .update(cx, |editor, _| {
+                    editor.workspace.search_generation == generation
+                })
+                .unwrap_or(false);
+            if !current {
+                return;
+            }
+            let results = background
+                .spawn(async move { search_workspace_files(&tree, &query, 200) })
+                .await;
+            let _ = editor.update(cx, |editor, cx| {
+                if editor.workspace.search_generation == generation {
+                    editor.workspace.search_results = results;
+                    editor.workspace.search_pending = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn jump_to_workspace_search_line(&mut self, line: usize, cx: &mut Context<Self>) {
+        let source = self.current_document_source(cx);
+        let offset = source
+            .split_inclusive('\n')
+            .take(line.saturating_sub(1))
+            .map(str::len)
+            .sum::<usize>()
+            .min(source.len());
+        self.apply_selection_snapshot_in_current_mode(
+            &UndoSelectionSnapshot {
+                range: offset..offset,
+                reversed: false,
+            },
+            cx,
+        );
+        self.pending_scroll_active_block_into_view = true;
+        self.pending_scroll_recheck_after_layout = true;
+        cx.notify();
     }
 
     fn toggle_workspace_node(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -1545,12 +1628,12 @@ impl Editor {
         };
         let search_focus = self
             .workspace
-            .filename_search_focus
+            .search_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
         let search_focus_for_click = search_focus.clone();
         let search_editor = editor.clone();
-        let search_query = self.workspace.filename_query.clone();
+        let search_query = self.workspace.search_query.clone();
         let search_label = if search_query.is_empty() {
             strings.workspace_search_placeholder.clone()
         } else {
@@ -1582,22 +1665,26 @@ impl Editor {
                 let modified =
                     event.keystroke.modifiers.secondary() || event.keystroke.modifiers.alt;
                 let _ = search_editor.update(cx, |editor, cx| {
+                    let before = editor.workspace.search_query.clone();
                     match key.as_str() {
                         "backspace" => {
-                            editor.workspace.filename_query.pop();
+                            editor.workspace.search_query.pop();
                         }
                         "escape" => {
-                            editor.workspace.filename_query.clear();
-                            editor.workspace.show_filename_search = false;
+                            editor.workspace.search_query.clear();
+                            editor.workspace.show_search = false;
                         }
                         _ if !modified => {
                             if let Some(character) = key_char {
                                 if !character.chars().any(char::is_control) {
-                                    editor.workspace.filename_query.push_str(&character);
+                                    editor.workspace.search_query.push_str(&character);
                                 }
                             }
                         }
                         _ => {}
+                    }
+                    if editor.workspace.search_query != before {
+                        editor.schedule_workspace_search(cx);
                     }
                     cx.notify();
                 });
@@ -1620,7 +1707,7 @@ impl Editor {
                 .bg(c.dialog_secondary_button_bg)
                 .border_r(px(d.dialog_border_width))
                 .border_color(c.dialog_border)
-                .children(self.workspace.show_filename_search.then_some(search_field))
+                .children(self.workspace.show_search.then_some(search_field))
                 .child(
                     div()
                         .id("workspace-panel-scroll")
@@ -1699,7 +1786,7 @@ impl Editor {
                         if toggle_if_active
                             && editor.workspace.is_open
                             && editor.workspace.active_tab == tab
-                            && !editor.workspace.show_filename_search
+                            && !editor.workspace.show_search
                         {
                             editor.workspace.is_open = false;
                             cx.notify();
@@ -1731,7 +1818,7 @@ impl Editor {
                 "文件",
                 self.workspace.is_open
                     && self.workspace.active_tab == WorkspaceTab::Files
-                    && !self.workspace.show_filename_search,
+                    && !self.workspace.show_search,
                 WorkspaceTab::Files,
                 true,
                 editor.clone(),
@@ -1745,21 +1832,17 @@ impl Editor {
                     .items_center()
                     .justify_center()
                     .rounded(px(8.0))
-                    .bg(
-                        if self.workspace.is_open && self.workspace.show_filename_search {
-                            c.selection
-                        } else {
-                            c.dialog_secondary_button_bg
-                        },
-                    )
+                    .bg(if self.workspace.is_open && self.workspace.show_search {
+                        c.selection
+                    } else {
+                        c.dialog_secondary_button_bg
+                    })
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .text_color(
-                        if self.workspace.is_open && self.workspace.show_filename_search {
-                            c.dialog_primary_button_bg
-                        } else {
-                            c.dialog_muted
-                        },
-                    )
+                    .text_color(if self.workspace.is_open && self.workspace.show_search {
+                        c.dialog_primary_button_bg
+                    } else {
+                        c.dialog_muted
+                    })
                     .text_size(px(17.0))
                     .cursor_pointer()
                     .child("⌕")
@@ -1773,10 +1856,10 @@ impl Editor {
                         let _ = search_editor.update(cx, |editor, cx| {
                             editor.workspace.is_open = true;
                             editor.workspace.active_tab = WorkspaceTab::Files;
-                            editor.workspace.show_filename_search = true;
+                            editor.workspace.show_search = true;
                             let focus = editor
                                 .workspace
-                                .filename_search_focus
+                                .search_focus
                                 .get_or_insert_with(|| cx.focus_handle())
                                 .clone();
                             window.focus(&focus);
@@ -1822,27 +1905,8 @@ impl Editor {
             return self.render_workspace_empty_state("", &strings.workspace_empty_files, theme);
         };
 
-        if !self.workspace.filename_query.trim().is_empty() {
-            let mut matches = Vec::new();
-            collect_matching_workspace_files(
-                root,
-                root,
-                &self.workspace.filename_query.to_lowercase(),
-                &mut matches,
-            );
-            if matches.is_empty() {
-                return self.render_workspace_empty_state(
-                    "",
-                    &strings.workspace_no_search_results,
-                    theme,
-                );
-            }
-            return div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .children(self.render_workspace_nodes(&matches, 0, theme, editor))
-                .into_any_element();
+        if self.workspace.show_search && !self.workspace.search_query.trim().is_empty() {
+            return self.render_workspace_search_results(theme, strings, editor);
         }
 
         div()
@@ -1850,6 +1914,84 @@ impl Editor {
             .flex()
             .flex_col()
             .children(self.render_workspace_nodes(std::slice::from_ref(root), 0, theme, editor))
+            .into_any_element()
+    }
+
+    fn render_workspace_search_results(
+        &self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        editor: &WeakEntity<Editor>,
+    ) -> AnyElement {
+        if self.workspace.search_pending {
+            return div()
+                .p(px(12.0))
+                .text_size(px(14.0))
+                .text_color(theme.colors.dialog_muted)
+                .child("…")
+                .into_any_element();
+        }
+        if self.workspace.search_results.is_empty() {
+            return self.render_workspace_empty_state(
+                "",
+                &strings.workspace_no_search_results,
+                theme,
+            );
+        }
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .children(
+                self.workspace
+                    .search_results
+                    .iter()
+                    .enumerate()
+                    .map(|(index, hit)| {
+                        let path = hit.path.clone();
+                        let line = hit.line;
+                        let editor = editor.clone();
+                        div()
+                            .id(("workspace-search-hit", index))
+                            .w_full()
+                            .px(px(10.0))
+                            .py(px(7.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .rounded(px(5.0))
+                            .cursor_pointer()
+                            .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(12.0))
+                                    .text_color(theme.colors.text_default)
+                                    .child(hit.label.clone()),
+                            )
+                            .children(hit.line.map(|line| {
+                                div()
+                                    .truncate()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.colors.dialog_muted)
+                                    .child(format!("{line}  {}", hit.preview))
+                            }))
+                            .on_click(move |event, window, cx| {
+                                if !event.standard_click() {
+                                    return;
+                                }
+                                let _ = editor.update(cx, |editor, cx| {
+                                    editor.open_workspace_file(path.clone(), window, cx);
+                                    if let Some(line) =
+                                        line.filter(|_| editor.file_path.as_ref() == Some(&path))
+                                    {
+                                        editor.jump_to_workspace_search_line(line, cx);
+                                    }
+                                });
+                            })
+                    }),
+            )
             .into_any_element()
     }
 
@@ -2404,49 +2546,88 @@ fn path_is_affected(path: &Path, target: &Path, target_is_directory: bool) -> bo
     }
 }
 
-fn collect_matching_workspace_files(
-    node: &WorkspaceTreeNode,
+fn search_workspace_files(
     root: &WorkspaceTreeNode,
     query: &str,
-    matches: &mut Vec<WorkspaceTreeNode>,
-) {
-    let query = query.to_lowercase();
-    match &node.kind {
-        WorkspaceTreeKind::Directory(_) => {
-            for child in &node.children {
-                collect_matching_workspace_files(child, root, &query, matches);
-            }
-        }
-        WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path)
-            if path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().to_lowercase().contains(&query)) =>
-        {
-            let root_path = match &root.kind {
-                WorkspaceTreeKind::Directory(path) => path.as_path(),
-                _ => Path::new(""),
-            };
-            let label = path
-                .strip_prefix(root_path)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .into_owned();
-            matches.push(WorkspaceTreeNode {
-                id: node.id.clone(),
-                label,
-                kind: node.kind.clone(),
-                children: Vec::new(),
-            });
-        }
-        _ => {}
+    limit: usize,
+) -> Vec<WorkspaceSearchHit> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() || limit == 0 {
+        return Vec::new();
     }
+    let root_path = match &root.kind {
+        WorkspaceTreeKind::Directory(path) => path.as_path(),
+        _ => return Vec::new(),
+    };
+    let mut hits = Vec::new();
+    fn visit(
+        node: &WorkspaceTreeNode,
+        root: &Path,
+        query: &str,
+        limit: usize,
+        hits: &mut Vec<WorkspaceSearchHit>,
+    ) {
+        if hits.len() >= limit {
+            return;
+        }
+        match &node.kind {
+            WorkspaceTreeKind::Directory(_) => {
+                for child in &node.children {
+                    visit(child, root, query, limit, hits);
+                    if hits.len() >= limit {
+                        break;
+                    }
+                }
+            }
+            WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
+                let label = path
+                    .strip_prefix(root)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned();
+                if label.to_lowercase().contains(query) {
+                    hits.push(WorkspaceSearchHit {
+                        path: path.clone(),
+                        label: label.clone(),
+                        line: None,
+                        preview: String::new(),
+                    });
+                }
+                if hits.len() >= limit
+                    || fs::metadata(path).is_ok_and(|metadata| metadata.len() > 20_000_000)
+                {
+                    return;
+                }
+                if let Ok(source) = fs::read_to_string(path) {
+                    let mut file_hits = 0;
+                    for (index, line) in source.lines().enumerate() {
+                        if line.to_lowercase().contains(query) {
+                            hits.push(WorkspaceSearchHit {
+                                path: path.clone(),
+                                label: label.clone(),
+                                line: Some(index + 1),
+                                preview: line.trim().chars().take(140).collect(),
+                            });
+                            file_hits += 1;
+                            if file_hits == 3 || hits.len() >= limit {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            WorkspaceTreeKind::Heading { .. } => {}
+        }
+    }
+    visit(root, root_path, &query, limit, &mut hits);
+    hits
 }
 
 pub(super) fn is_code_file(path: &Path) -> bool {
     const CODE_EXTENSIONS: &[&str] = &[
         "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "json", "jsx", "kt",
         "php", "py", "rb", "rs", "sh", "sql", "swift", "toml", "ts", "tsx", "xml", "yaml", "yml",
-        "zsh",
+        "zsh", "txt", "csv", "log", "ini", "conf", "lock",
     ];
 
     path.extension().is_some_and(|extension| {
@@ -2643,14 +2824,15 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 mod tests {
     use super::{
         Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
-        clamp_workspace_panel_width, collect_matching_workspace_files, create_workspace_file,
-        create_workspace_folder, is_code_file, path_is_affected, prune_outline_state,
-        remap_moved_path, rewrite_relative_image_targets, scan_workspace_dir,
+        clamp_workspace_panel_width, create_workspace_file, create_workspace_folder, is_code_file,
+        path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
+        scan_workspace_dir, search_workspace_files,
     };
     use crate::components::Block;
     use gpui::{EntityInputHandler, TestAppContext, point, px};
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     #[test]
     fn workspace_scan_includes_markdown_and_code_files() {
@@ -2658,7 +2840,7 @@ mod tests {
             std::env::temp_dir().join(format!("velotype-workspace-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("nested")).expect("create dirs");
         fs::write(root.join("a.md"), "a").expect("write md");
-        fs::write(root.join("a.txt"), "ignored").expect("write txt");
+        fs::write(root.join("a.txt"), "plain text").expect("write txt");
         fs::write(root.join("main.rs"), "fn main() {}").expect("write code");
         fs::write(root.join("nested").join("b.md"), "b").expect("write nested md");
 
@@ -2668,7 +2850,7 @@ mod tests {
             .iter()
             .map(|node| node.label.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(labels, vec!["nested", "a.md", "main.rs"]);
+        assert_eq!(labels, vec!["nested", "a.md", "a.txt", "main.rs"]);
         assert!(matches!(
             tree.children[0].kind,
             WorkspaceTreeKind::Directory(_)
@@ -2679,6 +2861,10 @@ mod tests {
         ));
         assert!(matches!(
             tree.children[2].kind,
+            WorkspaceTreeKind::CodeFile(_)
+        ));
+        assert!(matches!(
+            tree.children[3].kind,
             WorkspaceTreeKind::CodeFile(_)
         ));
 
@@ -2721,7 +2907,7 @@ mod tests {
                 extension.to_ascii_uppercase()
             ))));
         }
-        assert!(!is_code_file(Path::new("notes.txt")));
+        assert!(is_code_file(Path::new("notes.txt")));
     }
 
     #[gpui::test]
@@ -2835,6 +3021,19 @@ mod tests {
         editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.document.raw_source_text(cx), "class A {\n}\n");
         });
+        editor.update(cx, |editor, cx| editor.jump_to_workspace_search_line(2, cx));
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor
+                    .document
+                    .first_root()
+                    .unwrap()
+                    .read(cx)
+                    .selected_range
+                    .start,
+                "class A {\n".len()
+            );
+        });
         cx.update(|window, cx| {
             editor.update(cx, |editor, cx| editor.save_document(window, cx));
         });
@@ -2878,7 +3077,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_filename_search_matches_names_case_insensitively() {
+    fn workspace_search_matches_file_names_and_contents() {
         let root =
             std::env::temp_dir().join(format!("velora-workspace-search-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("src")).expect("create source dir");
@@ -2890,21 +3089,59 @@ mod tests {
         fs::write(root.join("src").join("main.rs"), "fn main() {}").expect("write code");
         let tree = scan_workspace_dir(&root).expect("scan tree");
 
-        let mut matches = Vec::new();
-        collect_matching_workspace_files(&tree, &tree, "MAIN", &mut matches);
-        assert_eq!(matches.len(), 1);
+        let matches = search_workspace_files(&tree, "MAIN", 200);
+        assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].label, "src/main.rs");
+        assert_eq!(matches[0].line, None);
+        assert_eq!(matches[1].line, Some(1));
 
-        matches.clear();
-        collect_matching_workspace_files(&tree, &tree, "readme", &mut matches);
+        let matches = search_workspace_files(&tree, "readme", 200);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].label, "README.md");
 
-        matches.clear();
-        collect_matching_workspace_files(&tree, &tree, "content", &mut matches);
-        assert!(matches.is_empty());
+        let matches = search_workspace_files(&tree, "content", 200);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].label, "README.md");
+        assert_eq!(matches[0].line, Some(1));
+        assert!(matches[0].preview.contains("content"));
+        assert!(search_workspace_files(&tree, "absent", 200).is_empty());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn workspace_search_returns_content_hits_after_typing(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root =
+            std::env::temp_dir().join(format!("velora-content-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("notes.md"), "first line\n独特的内容在这里\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root, cx);
+            editor.workspace.show_search = true;
+            editor.workspace.search_query = "独特".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.workspace.search_results.len(), 1);
+            assert_eq!(editor.workspace.search_results[0].line, Some(2));
+            assert_eq!(editor.workspace.search_results[0].label, "notes.md");
+        });
     }
 
     #[test]
