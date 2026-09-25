@@ -1090,6 +1090,90 @@ pub struct Theme {
     pub placeholders: Placeholders,
 }
 
+#[derive(Clone, Copy)]
+struct BuiltinPalette {
+    window: u32,
+    panel: u32,
+    panel_hover: u32,
+    text: u32,
+    muted: u32,
+    line: u32,
+    accent: u32,
+    selection: u32,
+    code: u32,
+    dark: bool,
+}
+
+fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> Theme {
+    let color = |value| Hsla::from(rgba(value));
+    let c = &mut theme.colors;
+    theme.name = name.into();
+    c.editor_background = color(palette.window);
+    c.source_mode_block_bg = color(palette.code);
+    c.text_default = color(palette.text);
+    c.text_placeholder = color(palette.muted);
+    c.text_link = color(palette.accent);
+    c.text_h1 = color(palette.text);
+    c.text_h2 = color(palette.text);
+    c.text_h3 = color(palette.text);
+    c.text_h4 = color(palette.text);
+    c.text_h5 = color(palette.text);
+    c.text_h6 = color(palette.text);
+    c.text_quote = color(palette.muted);
+    c.border_h1 = color(palette.line);
+    c.border_h2 = color(palette.line);
+    c.border_quote = color(palette.accent);
+    c.callout_note_bg = color(palette.panel);
+    c.callout_note_border = color(palette.accent);
+    c.callout_tip_bg = color(palette.panel);
+    c.callout_tip_border = color(palette.accent);
+    c.footnote_bg = color(palette.panel);
+    c.footnote_border = color(palette.line);
+    c.footnote_badge_bg = color(palette.code);
+    c.footnote_badge_text = color(palette.muted);
+    c.footnote_backref = color(palette.accent);
+    c.task_checkbox_checked_bg = color(palette.accent);
+    c.task_checkbox_check = color(if palette.dark { 0x171b22ff } else { 0xffffffff });
+    c.separator_color = color(palette.line);
+    c.code_bg = color(palette.code);
+    c.code_text = color(palette.text);
+    c.code_language_input_bg = color(palette.panel);
+    c.code_language_input_border = color(palette.line);
+    c.code_language_input_text = color(palette.text);
+    c.code_language_input_placeholder = color(palette.muted);
+    c.table_border = color(palette.line);
+    c.table_header_bg = color(palette.panel);
+    c.table_cell_bg = color(palette.window);
+    c.table_cell_active_outline = color(palette.accent);
+    c.table_axis_preview_bg = color(palette.selection);
+    c.table_axis_selected_bg = color(palette.selection);
+    c.table_append_button_bg = color(palette.panel);
+    c.table_append_button_hover = color(palette.panel_hover);
+    c.table_append_button_text = color(palette.text);
+    c.image_placeholder_bg = color(palette.code);
+    c.image_placeholder_border = color(palette.line);
+    c.image_placeholder_text = color(palette.muted);
+    c.image_caption_text = color(palette.muted);
+    c.cursor = color(palette.text);
+    c.selection = color(palette.selection);
+    c.dialog_surface = color(palette.window);
+    c.dialog_border = color(palette.line);
+    c.dialog_title = color(palette.text);
+    c.dialog_body = color(palette.text);
+    c.dialog_muted = color(palette.muted);
+    c.dialog_primary_button_bg = color(palette.accent);
+    c.dialog_primary_button_hover = color(palette.accent);
+    c.dialog_primary_button_text = color(if palette.dark { 0x171b22ff } else { 0xffffffff });
+    c.dialog_secondary_button_bg = color(palette.panel);
+    c.dialog_secondary_button_hover = color(palette.panel_hover);
+    c.dialog_secondary_button_text = color(palette.text);
+    c.status_bar_background = color(palette.panel);
+    c.status_bar_text = color(palette.text);
+    c.status_bar_text_dim = color(palette.muted);
+    c.status_bar_button_hover = color(palette.panel_hover);
+    theme
+}
+
 #[allow(unused)]
 impl Theme {
     /// Returns the built-in fallback theme used when no custom theme is loaded.
@@ -1435,6 +1519,112 @@ impl Theme {
         }
     }
 
+    pub fn paper_theme() -> Self {
+        let mut theme = recolor_builtin(
+            Self::light_theme(),
+            BUILTIN_THEME_PAPER_NAME,
+            BuiltinPalette {
+                window: 0xfffdf8ff,
+                panel: 0xf7f2e9ff,
+                panel_hover: 0xefe7dbff,
+                text: 0x2c2924ff,
+                muted: 0x756e65ff,
+                line: 0xe4dacbff,
+                accent: 0x9b603fff,
+                selection: 0xf1e1d4ff,
+                code: 0xf5efe6ff,
+                dark: false,
+            },
+        );
+        theme.typography.text_line_height = 1.72;
+        theme.typography.h1_size = 31.0;
+        theme.typography.h1_weight = FontWeightDef::Semibold;
+        theme.typography.h2_size = 23.0;
+        theme.typography.h2_weight = FontWeightDef::Semibold;
+        theme.dimensions.block_gap = 8.0;
+        theme.dimensions.h1_border_width = 0.0;
+        theme.dimensions.h1_margin_bottom = 10.0;
+        theme.dimensions.table_cell_padding_y = 9.0;
+        theme
+    }
+
+    pub fn forest_theme() -> Self {
+        let mut theme = recolor_builtin(
+            Self::light_theme(),
+            BUILTIN_THEME_FOREST_NAME,
+            BuiltinPalette {
+                window: 0xfbfcf8ff,
+                panel: 0xf2f6efff,
+                panel_hover: 0xe7efe4ff,
+                text: 0x263328ff,
+                muted: 0x637267ff,
+                line: 0xd7e3d5ff,
+                accent: 0x3f7954ff,
+                selection: 0xdfeee2ff,
+                code: 0xedf4ecff,
+                dark: false,
+            },
+        );
+        theme.typography.text_line_height = 1.64;
+        theme.typography.h1_size = 30.0;
+        theme.typography.h2_size = 22.0;
+        theme.dimensions.block_gap = 7.0;
+        theme.dimensions.table_cell_padding_y = 7.0;
+        theme
+    }
+
+    pub fn midnight_theme() -> Self {
+        let mut theme = recolor_builtin(
+            Self::default_theme(),
+            BUILTIN_THEME_MIDNIGHT_NAME,
+            BuiltinPalette {
+                window: 0x171d27ff,
+                panel: 0x1d2633ff,
+                panel_hover: 0x263244ff,
+                text: 0xe8edf4ff,
+                muted: 0x9caabeff,
+                line: 0x344254ff,
+                accent: 0x8bb6e9ff,
+                selection: 0x2d4868ff,
+                code: 0x202b3aff,
+                dark: true,
+            },
+        );
+        theme.typography.text_line_height = 1.68;
+        theme.typography.h1_size = 31.0;
+        theme.typography.h2_size = 23.0;
+        theme.dimensions.block_gap = 7.0;
+        theme
+    }
+
+    pub fn ink_theme() -> Self {
+        let mut theme = recolor_builtin(
+            Self::default_theme(),
+            BUILTIN_THEME_INK_NAME,
+            BuiltinPalette {
+                window: 0x171616ff,
+                panel: 0x201d1dff,
+                panel_hover: 0x2c2725ff,
+                text: 0xeee8ddff,
+                muted: 0xaea398ff,
+                line: 0x3b3430ff,
+                accent: 0xd6a079ff,
+                selection: 0x503d31ff,
+                code: 0x282422ff,
+                dark: true,
+            },
+        );
+        theme.typography.text_line_height = 1.7;
+        theme.typography.h1_size = 31.0;
+        theme.typography.h1_weight = FontWeightDef::Semibold;
+        theme.typography.h2_size = 23.0;
+        theme.typography.h2_weight = FontWeightDef::Semibold;
+        theme.dimensions.block_gap = 8.0;
+        theme.dimensions.h1_border_width = 0.0;
+        theme.dimensions.h1_margin_bottom = 10.0;
+        theme
+    }
+
     /// Parses a theme from JSON text.
     pub fn from_json(json: &str) -> anyhow::Result<Self> {
         Ok(serde_json::from_str(json)?)
@@ -1460,9 +1650,17 @@ pub struct ThemeCatalogEntry {
 }
 
 const BUILTIN_THEME_VELOTYPE_ID: &str = "velotype";
-const BUILTIN_THEME_VELOTYPE_NAME: &str = "Velora";
+const BUILTIN_THEME_VELOTYPE_NAME: &str = "Velora Dark";
 const BUILTIN_THEME_VELOTYPE_LIGHT_ID: &str = "velotype-light";
 const BUILTIN_THEME_VELOTYPE_LIGHT_NAME: &str = "Velora Light";
+const BUILTIN_THEME_PAPER_ID: &str = "paper";
+const BUILTIN_THEME_PAPER_NAME: &str = "Paper";
+const BUILTIN_THEME_FOREST_ID: &str = "forest";
+const BUILTIN_THEME_FOREST_NAME: &str = "Forest";
+const BUILTIN_THEME_MIDNIGHT_ID: &str = "midnight";
+const BUILTIN_THEME_MIDNIGHT_NAME: &str = "Midnight";
+const BUILTIN_THEME_INK_ID: &str = "ink";
+const BUILTIN_THEME_INK_NAME: &str = "Ink";
 const BUILTIN_THEME_SYSTEM_ID: &str = "system";
 const CUSTOM_THEME_ID: &str = "custom";
 
@@ -1479,6 +1677,22 @@ fn builtin_theme_catalog() -> Vec<ThemeCatalogEntry> {
         ThemeCatalogEntry {
             id: BUILTIN_THEME_VELOTYPE_LIGHT_ID.into(),
             name: BUILTIN_THEME_VELOTYPE_LIGHT_NAME.into(),
+        },
+        ThemeCatalogEntry {
+            id: BUILTIN_THEME_PAPER_ID.into(),
+            name: BUILTIN_THEME_PAPER_NAME.into(),
+        },
+        ThemeCatalogEntry {
+            id: BUILTIN_THEME_FOREST_ID.into(),
+            name: BUILTIN_THEME_FOREST_NAME.into(),
+        },
+        ThemeCatalogEntry {
+            id: BUILTIN_THEME_MIDNIGHT_ID.into(),
+            name: BUILTIN_THEME_MIDNIGHT_NAME.into(),
+        },
+        ThemeCatalogEntry {
+            id: BUILTIN_THEME_INK_ID.into(),
+            name: BUILTIN_THEME_INK_NAME.into(),
         },
     ]
 }
@@ -1632,6 +1846,26 @@ impl ThemeManager {
                 self.current_theme_id = BUILTIN_THEME_VELOTYPE_LIGHT_ID.into();
                 true
             }
+            id if id == BUILTIN_THEME_PAPER_ID => {
+                self.current = Arc::new(Theme::paper_theme());
+                self.current_theme_id = BUILTIN_THEME_PAPER_ID.into();
+                true
+            }
+            id if id == BUILTIN_THEME_FOREST_ID => {
+                self.current = Arc::new(Theme::forest_theme());
+                self.current_theme_id = BUILTIN_THEME_FOREST_ID.into();
+                true
+            }
+            id if id == BUILTIN_THEME_MIDNIGHT_ID => {
+                self.current = Arc::new(Theme::midnight_theme());
+                self.current_theme_id = BUILTIN_THEME_MIDNIGHT_ID.into();
+                true
+            }
+            id if id == BUILTIN_THEME_INK_ID => {
+                self.current = Arc::new(Theme::ink_theme());
+                self.current_theme_id = BUILTIN_THEME_INK_ID.into();
+                true
+            }
             id => {
                 let Some(entry) = self.custom_themes.iter().find(|entry| entry.id == id) else {
                     return false;
@@ -1733,6 +1967,14 @@ impl ThemeManager {
             BUILTIN_THEME_VELOTYPE_ID.into()
         } else if theme.name == BUILTIN_THEME_VELOTYPE_LIGHT_NAME {
             BUILTIN_THEME_VELOTYPE_LIGHT_ID.into()
+        } else if theme.name == BUILTIN_THEME_PAPER_NAME {
+            BUILTIN_THEME_PAPER_ID.into()
+        } else if theme.name == BUILTIN_THEME_FOREST_NAME {
+            BUILTIN_THEME_FOREST_ID.into()
+        } else if theme.name == BUILTIN_THEME_MIDNIGHT_NAME {
+            BUILTIN_THEME_MIDNIGHT_ID.into()
+        } else if theme.name == BUILTIN_THEME_INK_NAME {
+            BUILTIN_THEME_INK_ID.into()
         } else {
             CUSTOM_THEME_ID.into()
         }
@@ -1750,6 +1992,10 @@ impl ThemeManager {
             },
             BUILTIN_THEME_VELOTYPE_LIGHT_ID => BUILTIN_THEME_VELOTYPE_LIGHT_ID.into(),
             BUILTIN_THEME_VELOTYPE_ID => BUILTIN_THEME_VELOTYPE_ID.into(),
+            BUILTIN_THEME_PAPER_ID => BUILTIN_THEME_PAPER_ID.into(),
+            BUILTIN_THEME_FOREST_ID => BUILTIN_THEME_FOREST_ID.into(),
+            BUILTIN_THEME_MIDNIGHT_ID => BUILTIN_THEME_MIDNIGHT_ID.into(),
+            BUILTIN_THEME_INK_ID => BUILTIN_THEME_INK_ID.into(),
             id => self
                 .custom_themes
                 .iter()
@@ -1853,14 +2099,25 @@ fn resolved_custom_theme_base_id<'a>(
 }
 
 fn is_builtin_theme_id(theme_id: &str) -> bool {
-    theme_id == BUILTIN_THEME_VELOTYPE_ID || theme_id == BUILTIN_THEME_VELOTYPE_LIGHT_ID
+    matches!(
+        theme_id,
+        BUILTIN_THEME_VELOTYPE_ID
+            | BUILTIN_THEME_VELOTYPE_LIGHT_ID
+            | BUILTIN_THEME_PAPER_ID
+            | BUILTIN_THEME_FOREST_ID
+            | BUILTIN_THEME_MIDNIGHT_ID
+            | BUILTIN_THEME_INK_ID
+    )
 }
 
 fn custom_theme_base_theme(theme_id: &str) -> Theme {
-    if theme_id == BUILTIN_THEME_VELOTYPE_LIGHT_ID {
-        Theme::light_theme()
-    } else {
-        Theme::default_theme()
+    match theme_id {
+        BUILTIN_THEME_VELOTYPE_LIGHT_ID => Theme::light_theme(),
+        BUILTIN_THEME_PAPER_ID => Theme::paper_theme(),
+        BUILTIN_THEME_FOREST_ID => Theme::forest_theme(),
+        BUILTIN_THEME_MIDNIGHT_ID => Theme::midnight_theme(),
+        BUILTIN_THEME_INK_ID => Theme::ink_theme(),
+        _ => Theme::default_theme(),
     }
 }
 
@@ -2410,14 +2667,22 @@ mod tests {
     fn theme_manager_switches_builtin_themes() {
         let mut manager = ThemeManager::default();
         assert_eq!(manager.current_theme_id(), "velotype");
-        assert_eq!(manager.current().name, "Velora");
+        assert_eq!(manager.current().name, "Velora Dark");
         assert_eq!(
             manager
                 .available_themes()
                 .iter()
                 .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["System", "Velora", "Velora Light"]
+            vec![
+                "System",
+                "Velora Dark",
+                "Velora Light",
+                "Paper",
+                "Forest",
+                "Midnight",
+                "Ink",
+            ]
         );
 
         assert!(manager.set_theme_by_id("velotype-light"));
@@ -2430,7 +2695,57 @@ mod tests {
 
         assert!(manager.set_theme_by_id("velotype"));
         assert_eq!(manager.current_theme_id(), "velotype");
-        assert_eq!(manager.current().name, "Velora");
+        assert_eq!(manager.current().name, "Velora Dark");
+        for (id, name) in [
+            ("paper", "Paper"),
+            ("forest", "Forest"),
+            ("midnight", "Midnight"),
+            ("ink", "Ink"),
+        ] {
+            assert!(manager.set_theme_by_id(id));
+            assert_eq!(manager.current_theme_id(), id);
+            assert_eq!(manager.current().name, name);
+        }
         assert!(!manager.set_theme_by_id("missing"));
+    }
+
+    #[test]
+    fn builtin_writing_styles_have_distinct_surfaces_and_rhythm() {
+        let themes = [
+            Theme::light_theme(),
+            Theme::paper_theme(),
+            Theme::forest_theme(),
+            Theme::default_theme(),
+            Theme::midnight_theme(),
+            Theme::ink_theme(),
+        ];
+        for (index, theme) in themes.iter().enumerate() {
+            assert!(theme.typography.text_line_height >= 1.6);
+            assert!(theme.dimensions.block_gap >= 6.0);
+            assert_ne!(theme.colors.text_default, theme.colors.editor_background);
+            for previous in &themes[..index] {
+                assert_ne!(
+                    theme.colors.editor_background,
+                    previous.colors.editor_background
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn custom_theme_can_inherit_the_paper_style() {
+        let value = serde_json::json!({
+            "name": "Paper Variant",
+            "creator": "Test",
+            "base_theme_id": "paper",
+            "theme": { "typography": { "h1_size": 35.0 } }
+        });
+        let (entry, _) = super::custom_theme_from_value(value).unwrap();
+        assert_eq!(entry.base_theme_id, "paper");
+        assert_eq!(
+            entry.theme.colors.editor_background,
+            Theme::paper_theme().colors.editor_background
+        );
+        assert_eq!(entry.theme.typography.h1_size, 35.0);
     }
 }
