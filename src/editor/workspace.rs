@@ -724,11 +724,11 @@ impl Editor {
                                 editor.recovery_source_path = None;
                                 editor.is_recovered_document = false;
                                 editor.workspace.active_document = Some(tab.path.clone());
-                                editor.replace_document_from_markdown(
-                                    tab.markdown,
-                                    Some(tab.path),
-                                    cx,
-                                );
+                                if is_code_file(&tab.path) {
+                                    editor.replace_document_from_code_source(tab.markdown, tab.path, cx);
+                                } else {
+                                    editor.replace_document_from_markdown(tab.markdown, Some(tab.path), cx);
+                                }
                                 editor.document_dirty = tab.dirty;
                                 editor.file_version = Some(file_version);
                                 window.set_window_edited(tab.dirty);
