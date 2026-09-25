@@ -410,6 +410,7 @@ impl Editor {
             cx.notify();
         }
         self.schedule_autosave(cx);
+        self.refresh_document_find_after_edit(cx);
     }
 
     pub(super) fn request_active_block_scroll_into_view(&mut self, cx: &mut Context<Self>) {
