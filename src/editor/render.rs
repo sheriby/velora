@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use gpui::*;
 
-use super::{Editor, InfoDialogKind, MountedRun, workspace::workspace_panel_width_for_viewport};
+use super::{Editor, InfoDialogKind, MountedRun};
 use crate::app_menu::dispatch_menu_action_for_editor;
 use crate::components::CalloutVariant;
 use crate::components::{AddLanguageConfig, AddThemeConfig, Block, NoRecentFiles};
@@ -2098,6 +2098,15 @@ impl Render for Editor {
             .relative()
             .bg(theme.colors.editor_background)
             .font(editor_text_font(&fonts.markdown_family))
+            .on_mouse_move(cx.listener(Self::on_workspace_resize_mouse_move))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(Self::on_workspace_resize_mouse_up),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(Self::on_workspace_resize_mouse_up),
+            )
             .on_modifiers_changed(move |event, window, _| {
                 if event.modifiers.secondary() != follow_modifier_active {
                     window.refresh();
@@ -2164,7 +2173,7 @@ impl Render for Editor {
             base
         };
         let workspace_width =
-            workspace_panel_width_for_viewport(f32::from(window.viewport_size().width));
+            self.current_workspace_panel_width(f32::from(window.viewport_size().width), cx);
         let main_content = div()
             .w_full()
             .flex_1()

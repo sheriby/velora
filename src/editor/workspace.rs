@@ -18,9 +18,6 @@ const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
 const CHEVRON_DOWN_ICON: &str = "icon/workspace/chevron-down.svg";
-const WORKSPACE_PANEL_TARGET_RATIO: f32 = 0.18;
-const WORKSPACE_PANEL_MIN_WIDTH: f32 = 258.0;
-const WORKSPACE_PANEL_MAX_WIDTH: f32 = 320.0;
 const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
 const WORKSPACE_NODE_INDENT: f32 = 16.0;
 
@@ -84,6 +81,12 @@ struct WorkspaceContextMenu {
 }
 
 #[derive(Clone, Copy)]
+struct WorkspaceResizeDrag {
+    start_x: f32,
+    start_width: f32,
+}
+
+#[derive(Clone, Copy)]
 enum WorkspaceMenuAction {
     NewFile,
     NewFolder,
@@ -122,6 +125,8 @@ pub(super) struct WorkspaceState {
     show_filename_search: bool,
     filename_search_focus: Option<FocusHandle>,
     context_menu: Option<WorkspaceContextMenu>,
+    panel_width: Option<f32>,
+    resize_drag: Option<WorkspaceResizeDrag>,
 }
 
 impl Default for WorkspaceState {
@@ -142,6 +147,8 @@ impl Default for WorkspaceState {
             show_filename_search: false,
             filename_search_focus: None,
             context_menu: None,
+            panel_width: None,
+            resize_drag: None,
         }
     }
 }
@@ -1470,6 +1477,57 @@ impl Editor {
         })
     }
 
+    pub(super) fn current_workspace_panel_width(&self, viewport_width: f32, cx: &App) -> f32 {
+        let width = self
+            .workspace
+            .panel_width
+            .unwrap_or_else(|| crate::config::EditorSettings::workspace_sidebar_width(cx) as f32);
+        clamp_workspace_panel_width(width, viewport_width)
+    }
+
+    fn start_workspace_resize(&mut self, pointer_x: f32, width: f32, cx: &mut Context<Self>) {
+        self.workspace.resize_drag = Some(WorkspaceResizeDrag {
+            start_x: pointer_x,
+            start_width: width,
+        });
+        cx.notify();
+    }
+
+    pub(super) fn on_workspace_resize_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drag) = self.workspace.resize_drag else {
+            return;
+        };
+        let viewport = f32::from(window.viewport_size().width);
+        let width = clamp_workspace_panel_width(
+            drag.start_width + f32::from(event.position.x) - drag.start_x,
+            viewport,
+        );
+        self.workspace.panel_width = Some(width);
+        cx.notify();
+    }
+
+    pub(super) fn on_workspace_resize_mouse_up(
+        &mut self,
+        _event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.resize_drag.take().is_some() {
+            if let Some(width) = self.workspace.panel_width {
+                crate::config::EditorSettings::set_workspace_sidebar_width(
+                    cx,
+                    width.round() as u16,
+                );
+            }
+            cx.notify();
+        }
+    }
+
     pub(super) fn render_workspace_panel(
         &mut self,
         theme: &Theme,
@@ -1483,6 +1541,7 @@ impl Editor {
 
         self.sync_workspace_models(cx);
         let editor = cx.entity().downgrade();
+        let resize_editor = editor.clone();
         let c = &theme.colors;
         let d = &theme.dimensions;
 
@@ -1554,6 +1613,7 @@ impl Editor {
         Some(
             div()
                 .id("workspace-panel")
+                .relative()
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(Self::on_workspace_background_right_click),
@@ -1577,6 +1637,27 @@ impl Editor {
                         .py(px(6.0))
                         .child(body),
                 )
+                .child(
+                    div()
+                        .id("workspace-resize-handle")
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right_0()
+                        .w(px(6.0))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .hover(|this| this.bg(c.selection))
+                        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+                            let _ = resize_editor.update(cx, |editor, cx| {
+                                editor.start_workspace_resize(
+                                    f32::from(event.position.x),
+                                    panel_width,
+                                    cx,
+                                );
+                            });
+                            cx.stop_propagation();
+                        }),
+                )
                 .into_any_element(),
         )
     }
@@ -1589,6 +1670,7 @@ impl Editor {
                       label: &'static str,
                       selected: bool,
                       tab: WorkspaceTab,
+                      toggle_if_active: bool,
                       editor: WeakEntity<Self>| {
             div()
                 .id(id)
@@ -1620,8 +1702,18 @@ impl Editor {
                 })
                 .on_click(move |_, _, cx| {
                     let _ = editor.update(cx, |editor, cx| {
+                        if toggle_if_active
+                            && editor.workspace.is_open
+                            && editor.workspace.active_tab == tab
+                            && !editor.workspace.show_filename_search
+                        {
+                            editor.workspace.is_open = false;
+                            cx.notify();
+                            return;
+                        }
                         editor.workspace.is_open = true;
                         editor.set_workspace_tab(tab, cx);
+                        cx.notify();
                     });
                 })
         };
@@ -1643,9 +1735,11 @@ impl Editor {
                 "activity-files",
                 "▤",
                 "文件",
-                self.workspace.active_tab == WorkspaceTab::Files
+                self.workspace.is_open
+                    && self.workspace.active_tab == WorkspaceTab::Files
                     && !self.workspace.show_filename_search,
                 WorkspaceTab::Files,
+                true,
                 editor.clone(),
             ))
             .child(
@@ -1657,17 +1751,21 @@ impl Editor {
                     .items_center()
                     .justify_center()
                     .rounded(px(8.0))
-                    .bg(if self.workspace.show_filename_search {
-                        c.selection
-                    } else {
-                        c.dialog_secondary_button_bg
-                    })
+                    .bg(
+                        if self.workspace.is_open && self.workspace.show_filename_search {
+                            c.selection
+                        } else {
+                            c.dialog_secondary_button_bg
+                        },
+                    )
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .text_color(if self.workspace.show_filename_search {
-                        c.dialog_primary_button_bg
-                    } else {
-                        c.dialog_muted
-                    })
+                    .text_color(
+                        if self.workspace.is_open && self.workspace.show_filename_search {
+                            c.dialog_primary_button_bg
+                        } else {
+                            c.dialog_muted
+                        },
+                    )
                     .text_size(px(17.0))
                     .cursor_pointer()
                     .child("⌕")
@@ -1696,8 +1794,9 @@ impl Editor {
                 "activity-outline",
                 "☷",
                 "大纲",
-                self.workspace.active_tab == WorkspaceTab::Outline,
+                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Outline,
                 WorkspaceTab::Outline,
+                false,
                 editor,
             ))
             .into_any_element()
@@ -2432,9 +2531,9 @@ fn stable_node_hash(id: &str) -> u64 {
     hasher.finish()
 }
 
-pub(super) fn workspace_panel_width_for_viewport(viewport_width: f32) -> f32 {
-    let target = viewport_width * WORKSPACE_PANEL_TARGET_RATIO;
-    target.clamp(WORKSPACE_PANEL_MIN_WIDTH, WORKSPACE_PANEL_MAX_WIDTH)
+fn clamp_workspace_panel_width(width: f32, viewport_width: f32) -> f32 {
+    let maximum = (viewport_width - 320.0).clamp(180.0, 600.0);
+    width.clamp(180.0, maximum)
 }
 
 fn prune_outline_state(workspace: &mut WorkspaceState, outline: &[WorkspaceTreeNode]) {
@@ -2550,9 +2649,9 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 mod tests {
     use super::{
         Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
-        collect_matching_workspace_files, create_workspace_file, create_workspace_folder,
-        is_code_file, path_is_affected, prune_outline_state, remap_moved_path,
-        rewrite_relative_image_targets, scan_workspace_dir, workspace_panel_width_for_viewport,
+        clamp_workspace_panel_width, collect_matching_workspace_files, create_workspace_file,
+        create_workspace_folder, is_code_file, path_is_affected, prune_outline_state,
+        remap_moved_path, rewrite_relative_image_targets, scan_workspace_dir,
     };
     use crate::components::Block;
     use gpui::{EntityInputHandler, TestAppContext, point, px};
@@ -2955,9 +3054,9 @@ mod tests {
     }
 
     #[test]
-    fn workspace_panel_width_uses_ratio_with_bounds() {
-        assert_eq!(workspace_panel_width_for_viewport(1000.0), 258.0);
-        assert_eq!(workspace_panel_width_for_viewport(2000.0), 320.0);
-        assert_eq!(workspace_panel_width_for_viewport(4000.0), 320.0);
+    fn workspace_panel_width_stays_within_drag_bounds() {
+        assert_eq!(clamp_workspace_panel_width(100.0, 1080.0), 180.0);
+        assert_eq!(clamp_workspace_panel_width(320.0, 1080.0), 320.0);
+        assert_eq!(clamp_workspace_panel_width(500.0, 720.0), 400.0);
     }
 }

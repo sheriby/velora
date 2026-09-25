@@ -139,6 +139,7 @@ pub(crate) struct AppPreferences {
     pub(crate) show_table_headers: bool,
     pub(crate) image_paste_behavior: ImagePasteBehavior,
     pub(crate) fonts: FontPreferences,
+    pub(crate) workspace_sidebar_width: u16,
     pub(crate) keybindings: BTreeMap<String, Vec<String>>,
     pub(crate) status_bar: StatusBarPreferences,
 }
@@ -152,6 +153,7 @@ impl Default for AppPreferences {
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences::default(),
+            workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
         }
@@ -174,6 +176,7 @@ pub struct EditorSettings {
     show_table_headers: bool,
     status_bar_settings: StatusBarSettings,
     fonts: FontPreferences,
+    workspace_sidebar_width: u16,
 }
 
 impl Global for EditorSettings {}
@@ -197,9 +200,19 @@ impl EditorSettings {
                     .map(|preferences| preferences.fonts)
             })
             .unwrap_or_default();
+        let workspace_sidebar_width = cx
+            .try_global::<Self>()
+            .map(|settings| settings.workspace_sidebar_width)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.workspace_sidebar_width)
+            })
+            .unwrap_or(258);
         cx.set_global(Self {
             show_table_headers,
             fonts,
+            workspace_sidebar_width,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -222,6 +235,25 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.fonts.clone())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn workspace_sidebar_width(cx: &App) -> u16 {
+        cx.try_global::<Self>()
+            .map(|settings| settings.workspace_sidebar_width)
+            .unwrap_or(258)
+    }
+
+    pub(crate) fn set_workspace_sidebar_width(cx: &mut App, width: u16) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| {
+                settings.workspace_sidebar_width = width;
+            });
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.workspace_sidebar_width = width)
+        {
+            eprintln!("failed to save workspace sidebar width: {error}");
+        }
     }
 
     pub fn set_show_table_headers(cx: &mut App, show_table_headers: bool) {
@@ -286,6 +318,7 @@ struct EditorPreferencesFile {
     markdown_font_size: u16,
     code_font_family: String,
     code_font_size: u16,
+    workspace_sidebar_width: u16,
 }
 
 #[derive(Serialize)]
@@ -342,6 +375,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 markdown_font_size: value.fonts.markdown_size,
                 code_font_family: value.fonts.code_family.clone(),
                 code_font_size: value.fonts.code_size,
+                workspace_sidebar_width: value.workspace_sidebar_width,
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
             keybindings: normalize_shortcut_config(&value.keybindings),
@@ -496,6 +530,12 @@ fn app_preferences_from_toml_value(
         code_family: font_family("code_font_family", &font_defaults.code_family),
         code_size: font_size("code_font_size", font_defaults.code_size),
     };
+    let workspace_sidebar_width = editor
+        .and_then(|editor| editor.get("workspace_sidebar_width"))
+        .and_then(toml::Value::as_integer)
+        .and_then(|width| u16::try_from(width).ok())
+        .filter(|width| (180..=600).contains(width))
+        .unwrap_or(258);
 
     let status_bar = value
         .get("status_bar")
@@ -556,6 +596,7 @@ fn app_preferences_from_toml_value(
         show_table_headers,
         image_paste_behavior,
         fonts,
+        workspace_sidebar_width,
         keybindings,
         status_bar,
     }
@@ -2464,6 +2505,7 @@ mod tests {
                 code_family: "Menlo".into(),
                 code_size: 13,
             },
+            workspace_sidebar_width: 320,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
         };
@@ -2481,6 +2523,7 @@ mod tests {
         assert!(text.contains("show_table_headers = false"));
         assert!(text.contains("markdown_font_family = \"PingFang SC\""));
         assert!(text.contains("code_font_size = 13"));
+        assert!(text.contains("workspace_sidebar_width = 320"));
         assert!(text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2551,6 +2594,7 @@ mod tests {
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::None,
             fonts: FontPreferences::default(),
+            workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
         };
