@@ -1555,7 +1555,8 @@ impl Render for Editor {
         let centered_width = if self.code_tab_active() {
             (viewport_width - 72.0).max(1.0)
         } else {
-            Self::centered_column_width(viewport_width, &theme.dimensions).min(760.0)
+            Self::centered_column_width(viewport_width, &theme.dimensions)
+                .min(theme.dimensions.writing_max_width)
         };
         let current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).clamp(0.0, max_scroll_y);
         let scrollbar_geometry =

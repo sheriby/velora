@@ -242,6 +242,8 @@ pub struct ThemeColors {
 pub struct ThemeDimensions {
     /// Padding around the editor content area.
     pub editor_padding: f32,
+    /// Maximum width of the rendered Markdown writing column.
+    pub writing_max_width: f32,
     /// Vertical gap between adjacent blocks.
     pub block_gap: f32,
     /// Minimum height of every block.
@@ -848,6 +850,7 @@ impl<'de> Deserialize<'de> for ThemeColors {
 #[derive(Deserialize)]
 struct ThemeDimensionsDe {
     editor_padding: f32,
+    writing_max_width: Option<f32>,
     block_gap: f32,
     block_min_height: f32,
     block_padding_y: f32,
@@ -971,6 +974,7 @@ impl<'de> Deserialize<'de> for ThemeDimensions {
         let raw = ThemeDimensionsDe::deserialize(deserializer)?;
         Ok(Self {
             editor_padding: raw.editor_padding,
+            writing_max_width: raw.writing_max_width.unwrap_or(760.0),
             block_gap: raw.block_gap,
             block_min_height: raw.block_min_height,
             block_padding_y: raw.block_padding_y,
@@ -1286,6 +1290,7 @@ impl Theme {
             },
             dimensions: ThemeDimensions {
                 editor_padding: 24.0,
+                writing_max_width: 760.0,
                 block_gap: 6.0,
                 block_min_height: 28.0,
                 block_padding_y: 4.0,
@@ -1565,6 +1570,7 @@ impl Theme {
         theme.typography.h2_size = 23.0;
         theme.typography.h2_weight = FontWeightDef::Semibold;
         theme.dimensions.block_gap = 8.0;
+        theme.dimensions.writing_max_width = 700.0;
         theme.dimensions.h1_border_width = 0.0;
         theme.dimensions.h1_margin_bottom = 10.0;
         theme.dimensions.table_cell_padding_y = 9.0;
@@ -1650,6 +1656,7 @@ impl Theme {
         theme.typography.h2_size = 23.0;
         theme.typography.h2_weight = FontWeightDef::Semibold;
         theme.dimensions.block_gap = 8.0;
+        theme.dimensions.writing_max_width = 720.0;
         theme.dimensions.h1_border_width = 0.0;
         theme.dimensions.h1_margin_bottom = 10.0;
         theme
@@ -2227,9 +2234,14 @@ mod tests {
         let typography = value["typography"].as_object_mut().unwrap();
         typography.remove("body_font_family");
         typography.remove("heading_font_family");
+        value["dimensions"]
+            .as_object_mut()
+            .unwrap()
+            .remove("writing_max_width");
         let theme: Theme = serde_json::from_value(value).unwrap();
         assert_eq!(theme.typography.body_font_family, ".SystemUIFont");
         assert_eq!(theme.typography.heading_font_family, ".SystemUIFont");
+        assert_eq!(theme.dimensions.writing_max_width, 760.0);
     }
 
     #[test]
@@ -2771,6 +2783,8 @@ mod tests {
                 );
             }
         }
+        assert_eq!(Theme::paper_theme().dimensions.writing_max_width, 700.0);
+        assert_eq!(Theme::ink_theme().dimensions.writing_max_width, 720.0);
     }
 
     #[test]
