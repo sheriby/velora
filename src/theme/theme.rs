@@ -473,6 +473,12 @@ pub struct ThemeDimensions {
 /// All configurable typography settings (font sizes, weights, line heights).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeTypography {
+    /// Body font used when the user chooses to follow the theme.
+    #[serde(default = "default_body_font_family")]
+    pub body_font_family: String,
+    /// Heading font used by the writing theme.
+    #[serde(default = "default_heading_font_family")]
+    pub heading_font_family: String,
     /// Default body text font size.
     pub text_size: f32,
     /// Default body text line height as a ratio of font size.
@@ -515,6 +521,14 @@ pub struct ThemeTypography {
     pub dialog_button_size: f32,
     /// Dialog button font weight.
     pub dialog_button_weight: FontWeightDef,
+}
+
+fn default_body_font_family() -> String {
+    ".SystemUIFont".into()
+}
+
+fn default_heading_font_family() -> String {
+    ".SystemUIFont".into()
 }
 
 /// Placeholder text shown in empty interactive elements.
@@ -1387,6 +1401,8 @@ impl Theme {
                 status_bar_text_size: 11.0,
             },
             typography: ThemeTypography {
+                body_font_family: default_body_font_family(),
+                heading_font_family: default_heading_font_family(),
                 text_size: 17.0,
                 text_line_height: 1.6,
                 h1_size: 32.0,
@@ -1537,6 +1553,13 @@ impl Theme {
             },
         );
         theme.typography.text_line_height = 1.72;
+        let serif = if cfg!(target_os = "macos") {
+            "Songti SC"
+        } else {
+            "Georgia"
+        };
+        theme.typography.body_font_family = serif.into();
+        theme.typography.heading_font_family = serif.into();
         theme.typography.h1_size = 31.0;
         theme.typography.h1_weight = FontWeightDef::Semibold;
         theme.typography.h2_size = 23.0;
@@ -1615,6 +1638,13 @@ impl Theme {
             },
         );
         theme.typography.text_line_height = 1.7;
+        let serif = if cfg!(target_os = "macos") {
+            "Songti SC"
+        } else {
+            "Georgia"
+        };
+        theme.typography.body_font_family = serif.into();
+        theme.typography.heading_font_family = serif.into();
         theme.typography.h1_size = 31.0;
         theme.typography.h1_weight = FontWeightDef::Semibold;
         theme.typography.h2_size = 23.0;
@@ -2189,6 +2219,17 @@ mod tests {
 
         let theme = Theme::from_json(&legacy_json).expect("legacy theme should deserialize");
         assert!(theme.colors.source_mode_block_bg.a > 0.0);
+    }
+
+    #[test]
+    fn old_theme_files_default_to_system_fonts() {
+        let mut value = serde_json::to_value(Theme::default_theme()).unwrap();
+        let typography = value["typography"].as_object_mut().unwrap();
+        typography.remove("body_font_family");
+        typography.remove("heading_font_family");
+        let theme: Theme = serde_json::from_value(value).unwrap();
+        assert_eq!(theme.typography.body_font_family, ".SystemUIFont");
+        assert_eq!(theme.typography.heading_font_family, ".SystemUIFont");
     }
 
     #[test]

@@ -2090,6 +2090,11 @@ impl Render for Editor {
         // selection does not repaint.
         let follow_modifier_active = window.modifiers().secondary();
 
+        let body_font_family = if fonts.markdown_family == "theme" {
+            &theme.typography.body_font_family
+        } else {
+            &fonts.markdown_family
+        };
         let base = div()
             .w_full()
             .h_full()
@@ -2097,7 +2102,7 @@ impl Render for Editor {
             .flex_col()
             .relative()
             .bg(theme.colors.editor_background)
-            .font(editor_text_font(&fonts.markdown_family))
+            .font(editor_text_font(body_font_family))
             .on_mouse_move(cx.listener(Self::on_workspace_resize_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,

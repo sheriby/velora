@@ -20,7 +20,7 @@ use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar, velor
 
 const DEFAULT_THEME_ID: &str = "system";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
-const PREFERENCES_VERSION: i64 = 1;
+const PREFERENCES_VERSION: i64 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FontPreferences {
@@ -33,7 +33,7 @@ pub(crate) struct FontPreferences {
 impl Default for FontPreferences {
     fn default() -> Self {
         Self {
-            markdown_family: ".SystemUIFont".into(),
+            markdown_family: "theme".into(),
             markdown_size: 16,
             code_family: if cfg!(target_os = "windows") {
                 "Consolas"
@@ -425,21 +425,26 @@ fn load_preferences_from_toml_value(
         return (preferences, false);
     }
 
-    if value
-        .get("theme")
-        .and_then(|theme| theme.get("default_theme_id"))
-        .and_then(toml::Value::as_str)
-        == Some("velotype")
-    {
-        preferences.default_theme_id = DEFAULT_THEME_ID.into();
+    if version < 1 {
+        if value
+            .get("theme")
+            .and_then(|theme| theme.get("default_theme_id"))
+            .and_then(toml::Value::as_str)
+            == Some("velotype")
+        {
+            preferences.default_theme_id = DEFAULT_THEME_ID.into();
+        }
+        if value
+            .get("editor")
+            .and_then(|editor| editor.get("image_paste_behavior"))
+            .and_then(toml::Value::as_str)
+            == Some("none")
+        {
+            preferences.image_paste_behavior = ImagePasteBehavior::CopyToAssetsFolder;
+        }
     }
-    if value
-        .get("editor")
-        .and_then(|editor| editor.get("image_paste_behavior"))
-        .and_then(toml::Value::as_str)
-        == Some("none")
-    {
-        preferences.image_paste_behavior = ImagePasteBehavior::CopyToAssetsFolder;
+    if version < 2 && preferences.fonts.markdown_family == ".SystemUIFont" {
+        preferences.fonts.markdown_family = "theme".into();
     }
     (preferences, true)
 }
@@ -1315,6 +1320,7 @@ impl PreferencesWindow {
             dropdown = dropdown.child(list);
         }
         let markdown_font_options = [
+            "theme",
             ".SystemUIFont",
             "PingFang SC",
             "Noto Sans CJK SC",
@@ -1325,10 +1331,10 @@ impl PreferencesWindow {
         } else {
             ["Menlo", "Monaco", "SF Mono"]
         };
-        let markdown_font_label = if self.fonts.markdown_family == ".SystemUIFont" {
-            "系统默认字体".to_string()
-        } else {
-            self.fonts.markdown_family.clone()
+        let markdown_font_label = match self.fonts.markdown_family.as_str() {
+            "theme" => "跟随主题".to_string(),
+            ".SystemUIFont" => "系统字体".to_string(),
+            _ => self.fonts.markdown_family.clone(),
         };
         let mut markdown_font = div()
             .flex()
@@ -1345,10 +1351,10 @@ impl PreferencesWindow {
             for (index, family) in markdown_font_options.into_iter().enumerate() {
                 markdown_font = markdown_font.child(Self::dropdown_item(
                     ("preferences-markdown-font-option", index),
-                    if family == ".SystemUIFont" {
-                        "系统默认字体".into()
-                    } else {
-                        family.into()
+                    match family {
+                        "theme" => "跟随主题".into(),
+                        ".SystemUIFont" => "系统字体".into(),
+                        _ => family.into(),
                     },
                     self.fonts.markdown_family == family,
                     theme,
@@ -2393,7 +2399,7 @@ mod tests {
         );
         let migrated_text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config should be migrated");
-        assert!(migrated_text.contains("preferences_version = 1"));
+        assert!(migrated_text.contains("preferences_version = 2"));
         assert!(migrated_text.contains("default_theme_id = \"system\""));
         assert!(migrated_text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
 
@@ -2413,6 +2419,28 @@ mod tests {
         assert_eq!(preferences.default_theme_id, "velotype");
         assert_eq!(preferences.image_paste_behavior, ImagePasteBehavior::None);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn version_one_preferences_follow_theme_font_without_resetting_choices() {
+        let value: toml::Value = toml::from_str(
+            r#"
+                preferences_version = 1
+
+                [theme]
+                default_theme_id = "velotype"
+
+                [editor]
+                image_paste_behavior = "none"
+                markdown_font_family = ".SystemUIFont"
+            "#,
+        )
+        .unwrap();
+        let (preferences, migrated) = super::load_preferences_from_toml_value(&value, "en-US");
+        assert!(migrated);
+        assert_eq!(preferences.default_theme_id, "velotype");
+        assert_eq!(preferences.image_paste_behavior, ImagePasteBehavior::None);
+        assert_eq!(preferences.fonts.markdown_family, "theme");
     }
 
     #[test]

@@ -1857,6 +1857,13 @@ impl Render for Block {
             d,
             cx,
         );
+        let focused_base = if fonts.markdown_family == "theme"
+            && matches!(self.kind(), BlockKind::Heading { .. })
+        {
+            focused_base.font(font(t.heading_font_family.clone()))
+        } else {
+            focused_base
+        };
 
         if showing_rendered_image && self.kind() == BlockKind::Paragraph {
             let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
