@@ -46,6 +46,44 @@ impl Default for FontPreferences {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WritingWidthPreference {
+    #[default]
+    Theme,
+    Compact,
+    Standard,
+    Wide,
+}
+
+impl WritingWidthPreference {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Theme => "theme",
+            Self::Compact => "compact",
+            Self::Standard => "standard",
+            Self::Wide => "wide",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "compact" => Self::Compact,
+            "standard" => Self::Standard,
+            "wide" => Self::Wide,
+            _ => Self::Theme,
+        }
+    }
+
+    pub(crate) fn max_width(self, theme_width: f32) -> f32 {
+        match self {
+            Self::Theme => theme_width,
+            Self::Compact => 640.0,
+            Self::Standard => 760.0,
+            Self::Wide => 900.0,
+        }
+    }
+}
+
 /// A user-configurable button shown in the status bar.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StatusBarButton {
@@ -139,6 +177,7 @@ pub(crate) struct AppPreferences {
     pub(crate) show_table_headers: bool,
     pub(crate) image_paste_behavior: ImagePasteBehavior,
     pub(crate) fonts: FontPreferences,
+    pub(crate) writing_width: WritingWidthPreference,
     pub(crate) workspace_sidebar_width: u16,
     pub(crate) keybindings: BTreeMap<String, Vec<String>>,
     pub(crate) status_bar: StatusBarPreferences,
@@ -153,6 +192,7 @@ impl Default for AppPreferences {
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences::default(),
+            writing_width: WritingWidthPreference::Theme,
             workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
@@ -176,6 +216,7 @@ pub struct EditorSettings {
     show_table_headers: bool,
     status_bar_settings: StatusBarSettings,
     fonts: FontPreferences,
+    writing_width: WritingWidthPreference,
     workspace_sidebar_width: u16,
 }
 
@@ -209,9 +250,19 @@ impl EditorSettings {
                     .map(|preferences| preferences.workspace_sidebar_width)
             })
             .unwrap_or(258);
+        let writing_width = cx
+            .try_global::<Self>()
+            .map(|settings| settings.writing_width)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.writing_width)
+            })
+            .unwrap_or_default();
         cx.set_global(Self {
             show_table_headers,
             fonts,
+            writing_width,
             workspace_sidebar_width,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
@@ -234,6 +285,12 @@ impl EditorSettings {
     pub(crate) fn fonts(cx: &App) -> FontPreferences {
         cx.try_global::<Self>()
             .map(|settings| settings.fonts.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn writing_width(cx: &App) -> WritingWidthPreference {
+        cx.try_global::<Self>()
+            .map(|settings| settings.writing_width)
             .unwrap_or_default()
     }
 
@@ -318,6 +375,7 @@ struct EditorPreferencesFile {
     markdown_font_size: u16,
     code_font_family: String,
     code_font_size: u16,
+    writing_width: String,
     workspace_sidebar_width: u16,
 }
 
@@ -375,6 +433,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 markdown_font_size: value.fonts.markdown_size,
                 code_font_family: value.fonts.code_family.clone(),
                 code_font_size: value.fonts.code_size,
+                writing_width: value.writing_width.as_str().into(),
                 workspace_sidebar_width: value.workspace_sidebar_width,
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
@@ -535,6 +594,11 @@ fn app_preferences_from_toml_value(
         code_family: font_family("code_font_family", &font_defaults.code_family),
         code_size: font_size("code_font_size", font_defaults.code_size),
     };
+    let writing_width = editor
+        .and_then(|editor| editor.get("writing_width"))
+        .and_then(toml::Value::as_str)
+        .map(WritingWidthPreference::from_str)
+        .unwrap_or_default();
     let workspace_sidebar_width = editor
         .and_then(|editor| editor.get("workspace_sidebar_width"))
         .and_then(toml::Value::as_integer)
@@ -601,6 +665,7 @@ fn app_preferences_from_toml_value(
         show_table_headers,
         image_paste_behavior,
         fonts,
+        writing_width,
         workspace_sidebar_width,
         keybindings,
         status_bar,
@@ -729,6 +794,7 @@ pub(crate) fn save_preferences_from_window(
     default_theme_id: &str,
     image_paste_behavior: ImagePasteBehavior,
     fonts: &FontPreferences,
+    writing_width: WritingWidthPreference,
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
 ) -> anyhow::Result<AppPreferences> {
@@ -738,6 +804,7 @@ pub(crate) fn save_preferences_from_window(
         default_theme_id,
         image_paste_behavior,
         fonts,
+        writing_width,
         keybindings,
         status_bar,
         &dirs,
@@ -749,6 +816,7 @@ fn save_preferences_from_window_with_dirs(
     default_theme_id: &str,
     image_paste_behavior: ImagePasteBehavior,
     fonts: &FontPreferences,
+    writing_width: WritingWidthPreference,
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
     dirs: &VelotypeConfigDirs,
@@ -759,6 +827,7 @@ fn save_preferences_from_window_with_dirs(
     preferences.default_theme_id = default_theme_id.into();
     preferences.image_paste_behavior = image_paste_behavior;
     preferences.fonts = fonts.clone();
+    preferences.writing_width = writing_width;
     preferences.keybindings = normalize_shortcut_config(&keybindings);
     preferences.status_bar = status_bar.clone();
     save_app_preferences_with_dirs(&preferences, dirs)?;
@@ -795,6 +864,8 @@ pub(crate) struct PreferencesWindow {
     saved_theme_id: String,
     saved_image_paste_behavior: ImagePasteBehavior,
     saved_fonts: FontPreferences,
+    writing_width: WritingWidthPreference,
+    saved_writing_width: WritingWidthPreference,
     saved_keybindings: BTreeMap<String, Vec<String>>,
     theme_options: Vec<ThemeCatalogEntry>,
     focus_handle: FocusHandle,
@@ -802,6 +873,7 @@ pub(crate) struct PreferencesWindow {
     theme_dropdown_open: bool,
     image_dropdown_open: bool,
     markdown_font_dropdown_open: bool,
+    writing_width_dropdown_open: bool,
     code_font_dropdown_open: bool,
     recording_shortcut: Option<ShortcutCommand>,
     shortcut_error: Option<String>,
@@ -835,6 +907,7 @@ impl PreferencesWindow {
         let startup_open = preferences.startup_open;
         let image_paste_behavior = preferences.image_paste_behavior;
         let fonts = preferences.fonts;
+        let writing_width = preferences.writing_width;
         let keybindings = preferences.keybindings;
         Self {
             nav: PreferencesNav::File,
@@ -842,11 +915,13 @@ impl PreferencesWindow {
             selected_theme_id: selected_theme_id.clone(),
             image_paste_behavior,
             fonts: fonts.clone(),
+            writing_width,
             keybindings: keybindings.clone(),
             saved_startup_open: startup_open,
             saved_theme_id: selected_theme_id,
             saved_image_paste_behavior: image_paste_behavior,
             saved_fonts: fonts,
+            saved_writing_width: writing_width,
             saved_keybindings: keybindings,
             theme_options,
             focus_handle: cx.focus_handle(),
@@ -854,6 +929,7 @@ impl PreferencesWindow {
             theme_dropdown_open: false,
             image_dropdown_open: false,
             markdown_font_dropdown_open: false,
+            writing_width_dropdown_open: false,
             code_font_dropdown_open: false,
             recording_shortcut: None,
             shortcut_error: None,
@@ -897,6 +973,7 @@ impl PreferencesWindow {
             || self.selected_theme_id != self.saved_theme_id
             || self.image_paste_behavior != self.saved_image_paste_behavior
             || self.fonts != self.saved_fonts
+            || self.writing_width != self.saved_writing_width
             || normalize_shortcut_config(&self.keybindings)
                 != normalize_shortcut_config(&self.saved_keybindings)
             || self.status_bar_enabled != self.saved_status_bar_enabled
@@ -910,6 +987,7 @@ impl PreferencesWindow {
         self.nav = PreferencesNav::File;
         self.startup_dropdown_open = false;
         self.theme_dropdown_open = false;
+        self.writing_width_dropdown_open = false;
         self.image_dropdown_open = false;
         self.recording_shortcut = None;
         cx.notify();
@@ -919,6 +997,7 @@ impl PreferencesWindow {
         self.nav = PreferencesNav::Theme;
         self.startup_dropdown_open = false;
         self.theme_dropdown_open = false;
+        self.writing_width_dropdown_open = false;
         self.image_dropdown_open = false;
         self.recording_shortcut = None;
         cx.notify();
@@ -928,6 +1007,7 @@ impl PreferencesWindow {
         self.nav = PreferencesNav::Image;
         self.startup_dropdown_open = false;
         self.theme_dropdown_open = false;
+        self.writing_width_dropdown_open = false;
         self.image_dropdown_open = false;
         self.recording_shortcut = None;
         cx.notify();
@@ -937,6 +1017,7 @@ impl PreferencesWindow {
         self.nav = PreferencesNav::Shortcuts;
         self.startup_dropdown_open = false;
         self.theme_dropdown_open = false;
+        self.writing_width_dropdown_open = false;
         self.image_dropdown_open = false;
         self.shortcut_error = None;
         cx.notify();
@@ -946,6 +1027,7 @@ impl PreferencesWindow {
         self.nav = PreferencesNav::StatusBar;
         self.startup_dropdown_open = false;
         self.theme_dropdown_open = false;
+        self.writing_width_dropdown_open = false;
         self.image_dropdown_open = false;
         self.recording_shortcut = None;
         cx.notify();
@@ -960,8 +1042,22 @@ impl PreferencesWindow {
 
     fn toggle_theme_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.theme_dropdown_open = !self.theme_dropdown_open;
+        self.writing_width_dropdown_open = false;
         self.startup_dropdown_open = false;
         self.image_dropdown_open = false;
+        cx.notify();
+    }
+
+    fn toggle_writing_width_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.writing_width_dropdown_open = !self.writing_width_dropdown_open;
+        self.theme_dropdown_open = false;
+        self.markdown_font_dropdown_open = false;
+        self.code_font_dropdown_open = false;
         cx.notify();
     }
 
@@ -972,6 +1068,7 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) {
         self.markdown_font_dropdown_open = !self.markdown_font_dropdown_open;
+        self.writing_width_dropdown_open = false;
         self.code_font_dropdown_open = false;
         cx.notify();
     }
@@ -983,6 +1080,7 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) {
         self.code_font_dropdown_open = !self.code_font_dropdown_open;
+        self.writing_width_dropdown_open = false;
         self.markdown_font_dropdown_open = false;
         cx.notify();
     }
@@ -1019,6 +1117,7 @@ impl PreferencesWindow {
             &self.selected_theme_id,
             self.image_paste_behavior,
             &self.fonts,
+            self.writing_width,
             self.keybindings.clone(),
             &StatusBarPreferences {
                 enabled: self.status_bar_enabled,
@@ -1076,6 +1175,7 @@ impl PreferencesWindow {
             settings.status_bar_settings.status_bar_show_mode_switch =
                 preferences.status_bar.show_mode_switch;
             settings.fonts = preferences.fonts.clone();
+            settings.writing_width = preferences.writing_width;
         });
         cx.refresh_windows();
         window.activate_window();
@@ -1084,6 +1184,7 @@ impl PreferencesWindow {
         self.saved_theme_id = self.selected_theme_id.clone();
         self.saved_image_paste_behavior = self.image_paste_behavior;
         self.saved_fonts = self.fonts.clone();
+        self.saved_writing_width = self.writing_width;
         self.saved_keybindings = normalize_shortcut_config(&self.keybindings);
         self.saved_status_bar_enabled = self.status_bar_enabled;
         self.saved_status_bar_show_word_count = self.status_bar_show_word_count;
@@ -1379,6 +1480,52 @@ impl PreferencesWindow {
             }
             dropdown = dropdown.child(list);
         }
+        let chinese = cx.global::<I18nManager>().current_language_id() == "zh-CN";
+        let width_label = |width| match (chinese, width) {
+            (true, WritingWidthPreference::Theme) => "跟随主题",
+            (true, WritingWidthPreference::Compact) => "紧凑 · 640 px",
+            (true, WritingWidthPreference::Standard) => "标准 · 760 px",
+            (true, WritingWidthPreference::Wide) => "宽敞 · 900 px",
+            (false, WritingWidthPreference::Theme) => "Follow Theme",
+            (false, WritingWidthPreference::Compact) => "Compact · 640 px",
+            (false, WritingWidthPreference::Standard) => "Standard · 760 px",
+            (false, WritingWidthPreference::Wide) => "Wide · 900 px",
+        };
+        let mut writing_width = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-writing-width",
+                width_label(self.writing_width).into(),
+                theme,
+                Self::toggle_writing_width_dropdown,
+                cx,
+            ));
+        if self.writing_width_dropdown_open {
+            for (index, width) in [
+                WritingWidthPreference::Theme,
+                WritingWidthPreference::Compact,
+                WritingWidthPreference::Standard,
+                WritingWidthPreference::Wide,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                writing_width = writing_width.child(Self::dropdown_item(
+                    ("preferences-writing-width-option", index),
+                    width_label(width).into(),
+                    self.writing_width == width,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.writing_width = width;
+                        this.writing_width_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
         let markdown_font_options = [
             "theme",
             ".SystemUIFont",
@@ -1464,6 +1611,15 @@ impl PreferencesWindow {
             .items_center()
             .gap(px(16.0))
             .child(self.labeled_row(&strings.preferences_local_theme, dropdown, theme))
+            .child(self.labeled_row(
+                if chinese {
+                    "写作列宽"
+                } else {
+                    "Writing Width"
+                },
+                writing_width,
+                theme,
+            ))
             .child(self.labeled_row("Markdown 字体", markdown_font, theme))
             .child(self.font_size_row("Markdown 字号", self.fonts.markdown_size, true, theme, cx))
             .child(self.labeled_row("代码等宽字体", code_font, theme))
@@ -2380,9 +2536,10 @@ pub(crate) fn open_preferences_window(cx: &mut App) -> WindowHandle<PreferencesW
 mod tests {
     use super::{
         AppPreferences, EditorSettings, FontPreferences, ImagePasteBehavior, StartupOpenPreference,
-        StatusBarPreferences, load_or_create_app_preferences_with_dirs_and_locales,
-        open_preferences_window_with_state, read_app_preferences_with_dirs,
-        save_app_preferences_with_dirs, save_preferences_from_window_with_dirs,
+        StatusBarPreferences, WritingWidthPreference,
+        load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_state,
+        read_app_preferences_with_dirs, save_app_preferences_with_dirs,
+        save_preferences_from_window_with_dirs,
     };
     use crate::config::VelotypeConfigDirs;
     use crate::i18n::I18nManager;
@@ -2528,11 +2685,24 @@ mod tests {
         assert_eq!(preferences.startup_open, StartupOpenPreference::NewFile);
         assert_eq!(preferences.default_language_id, "en-US");
         assert_eq!(preferences.default_theme_id, "velotype-light");
+        assert_eq!(preferences.writing_width, WritingWidthPreference::Theme);
         assert_eq!(
             preferences.image_paste_behavior,
             ImagePasteBehavior::CopyToAssetsFolder
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn writing_width_presets_keep_theme_default_and_explicit_sizes() {
+        assert_eq!(WritingWidthPreference::Theme.max_width(700.0), 700.0);
+        assert_eq!(WritingWidthPreference::Compact.max_width(700.0), 640.0);
+        assert_eq!(WritingWidthPreference::Standard.max_width(700.0), 760.0);
+        assert_eq!(WritingWidthPreference::Wide.max_width(700.0), 900.0);
+        assert_eq!(
+            WritingWidthPreference::from_str("unknown"),
+            WritingWidthPreference::Theme
+        );
     }
 
     #[test]
@@ -2593,6 +2763,7 @@ mod tests {
                 code_family: "Menlo".into(),
                 code_size: 13,
             },
+            writing_width: WritingWidthPreference::Wide,
             workspace_sidebar_width: 320,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
@@ -2611,6 +2782,7 @@ mod tests {
         assert!(text.contains("show_table_headers = false"));
         assert!(text.contains("markdown_font_family = \"PingFang SC\""));
         assert!(text.contains("code_font_size = 13"));
+        assert!(text.contains("writing_width = \"wide\""));
         assert!(text.contains("workspace_sidebar_width = 320"));
         assert!(text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
         let _ = std::fs::remove_dir_all(root);
@@ -2682,6 +2854,7 @@ mod tests {
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::None,
             fonts: FontPreferences::default(),
+            writing_width: WritingWidthPreference::Theme,
             workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
@@ -2694,6 +2867,7 @@ mod tests {
             "velotype-light",
             ImagePasteBehavior::CopyToNamedAssetsFolder,
             &FontPreferences::default(),
+            WritingWidthPreference::Compact,
             BTreeMap::from([("save_document".to_string(), vec!["ctrl-alt-s".to_string()])]),
             &StatusBarPreferences::default(),
             &dirs,
@@ -2702,6 +2876,7 @@ mod tests {
         assert_eq!(saved.default_language_id, "zh-CN");
         assert_eq!(saved.startup_open, StartupOpenPreference::LastOpenedFile);
         assert_eq!(saved.default_theme_id, "velotype-light");
+        assert_eq!(saved.writing_width, WritingWidthPreference::Compact);
         assert_eq!(
             saved.image_paste_behavior,
             ImagePasteBehavior::CopyToNamedAssetsFolder

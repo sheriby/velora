@@ -1597,6 +1597,7 @@ impl Render for Editor {
 
         let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
         let fonts = crate::config::EditorSettings::fonts(cx);
+        let writing_width = crate::config::EditorSettings::writing_width(cx);
         theme.typography.text_size = fonts.markdown_size as f32;
         theme.typography.code_size = fonts.code_size as f32;
         let strings = cx.global::<I18nManager>().strings_arc();
@@ -1639,7 +1640,7 @@ impl Render for Editor {
             (viewport_width - 72.0).max(1.0)
         } else {
             Self::centered_column_width(viewport_width, &theme.dimensions)
-                .min(theme.dimensions.writing_max_width)
+                .min(writing_width.max_width(theme.dimensions.writing_max_width))
         };
         let current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).clamp(0.0, max_scroll_y);
         let scrollbar_geometry =
