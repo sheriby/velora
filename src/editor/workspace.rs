@@ -15,6 +15,9 @@ use crate::i18n::I18nStrings;
 use crate::theme::{Theme, ThemeManager};
 
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
+const ACTIVITY_FILES_ICON: &str = "icon/workspace/activity-files.svg";
+const ACTIVITY_SEARCH_ICON: &str = "icon/workspace/activity-search.svg";
+const ACTIVITY_OUTLINE_ICON: &str = "icon/workspace/activity-outline.svg";
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
@@ -1747,7 +1750,7 @@ impl Editor {
         let c = &theme.colors;
         let editor = cx.entity().downgrade();
         let button = |id: &'static str,
-                      symbol: &'static str,
+                      icon_path: &'static str,
                       label: &'static str,
                       selected: bool,
                       tab: WorkspaceTab,
@@ -1767,14 +1770,17 @@ impl Editor {
                     c.dialog_secondary_button_bg
                 })
                 .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .text_color(if selected {
-                    c.dialog_primary_button_bg
-                } else {
-                    c.dialog_muted
-                })
-                .text_size(px(16.0))
                 .cursor_pointer()
-                .child(symbol)
+                .child(
+                    svg()
+                        .path(icon_path)
+                        .size(px(18.0))
+                        .text_color(if selected {
+                            c.dialog_primary_button_bg
+                        } else {
+                            c.dialog_muted
+                        }),
+                )
                 .tooltip(move |_, cx| {
                     cx.new(|_| WorkspaceTooltip {
                         label: label.into(),
@@ -1814,7 +1820,7 @@ impl Editor {
             .border_color(c.dialog_border)
             .child(button(
                 "activity-files",
-                "▤",
+                ACTIVITY_FILES_ICON,
                 "文件",
                 self.workspace.is_open
                     && self.workspace.active_tab == WorkspaceTab::Files
@@ -1838,17 +1844,17 @@ impl Editor {
                         c.dialog_secondary_button_bg
                     })
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .text_color(if self.workspace.is_open && self.workspace.show_search {
-                        c.dialog_primary_button_bg
-                    } else {
-                        c.dialog_muted
-                    })
-                    .text_size(px(17.0))
                     .cursor_pointer()
-                    .child("⌕")
+                    .child(svg().path(ACTIVITY_SEARCH_ICON).size(px(18.0)).text_color(
+                        if self.workspace.is_open && self.workspace.show_search {
+                            c.dialog_primary_button_bg
+                        } else {
+                            c.dialog_muted
+                        },
+                    ))
                     .tooltip(|_, cx| {
                         cx.new(|_| WorkspaceTooltip {
-                            label: "搜索文件".into(),
+                            label: "搜索文件与内容".into(),
                         })
                         .into()
                     })
@@ -1869,7 +1875,7 @@ impl Editor {
             )
             .child(button(
                 "activity-outline",
-                "☷",
+                ACTIVITY_OUTLINE_ICON,
                 "大纲",
                 self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Outline,
                 WorkspaceTab::Outline,
