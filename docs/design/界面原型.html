@@ -63,26 +63,21 @@
       box-shadow: var(--shadow);
     }
     .titlebar {
-      height: 44px;
-      flex: 0 0 44px;
+      height: 40px;
+      flex: 0 0 40px;
       display: flex;
       align-items: center;
-      gap: 18px;
+      justify-content: center;
+      position: relative;
       padding: 0 16px;
       border-bottom: 1px solid var(--line);
       background: var(--window);
     }
-    .traffic { display: flex; gap: 8px; margin-right: 2px; }
+    .traffic { position: absolute; left: 16px; display: flex; gap: 8px; }
     .traffic i { width: 11px; height: 11px; border-radius: 50%; background: #ff6058; }
     .traffic i:nth-child(2) { background: #ffbd2e; }
     .traffic i:nth-child(3) { background: #28c840; }
-    .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -.2px; }
-    .brand-mark {
-      width: 20px; height: 20px; display: grid; place-items: center;
-      border-radius: 6px; color: white; background: #6558d3; font-size: 11px; font-weight: 750;
-    }
-    .crumb { display: flex; align-items: center; gap: 8px; color: var(--muted); }
-    .crumb strong { color: var(--text); font-weight: 550; }
+    .crumb { color: var(--text); font-size: 12px; font-weight: 550; }
     .spacer { flex: 1; }
     .workspace { flex: 1; min-height: 0; display: flex; }
     .activity {
@@ -164,8 +159,7 @@
   <main class="window">
     <header class="titlebar">
       <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
-      <div class="brand"><span class="brand-mark">v</span><span>Velora</span></div>
-      <div class="crumb"><span>/</span><strong>我的工作区</strong><span>/</span><span>产品设计</span></div>
+      <div class="crumb">设计方向.md</div>
     </header>
     <div class="workspace">
       <nav class="activity" aria-label="活动栏">

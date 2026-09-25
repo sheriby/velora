@@ -1446,24 +1446,18 @@ impl Editor {
     }
 
     pub(super) fn workspace_breadcrumb(&self) -> String {
-        let folder = self
-            .workspace
-            .root
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .map(|name| name.to_string_lossy().into_owned());
-        let file = self
-            .file_path
+        self.file_path
             .as_ref()
             .or(self.recovery_source_path.as_ref())
             .and_then(|path| path.file_name())
-            .map(|name| name.to_string_lossy().into_owned());
-        match (folder, file) {
-            (Some(folder), Some(file)) => format!("{folder} / {file}"),
-            (Some(folder), None) => folder,
-            (None, Some(file)) => file,
-            (None, None) => String::new(),
-        }
+            .or_else(|| {
+                self.workspace
+                    .root
+                    .as_ref()
+                    .and_then(|path| path.file_name())
+            })
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
     }
 
     pub(super) fn active_code_line_count(&self, cx: &App) -> Option<usize> {

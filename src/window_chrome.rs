@@ -4,15 +4,15 @@ use std::sync::OnceLock;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Bounds, ClickEvent, Context, Decorations, FontWeight, Hsla, MouseButton, Pixels,
-    SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowDecorations, WindowOptions, div, point, px, rgba, svg,
+    AnyElement, Bounds, ClickEvent, Context, Decorations, Hsla, MouseButton, Pixels, SharedString,
+    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowOptions, div, point, px, rgba, svg,
 };
 
 use crate::app_identity::VELORA_APP_ID;
 use crate::theme::{Theme, ThemeDimensions};
 
-const TITLEBAR_MIN_HEIGHT: f32 = 44.0;
+const TITLEBAR_MIN_HEIGHT: f32 = 40.0;
 const TITLEBAR_BUTTON_WIDTH: f32 = 46.0;
 const TITLEBAR_ICON_SIZE: f32 = 12.0;
 const MAC_TRAFFIC_LIGHT_RESERVED_WIDTH: f32 = 84.0;
@@ -308,37 +308,15 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
         .px(px(12.0))
         .flex()
         .items_center()
-        .gap(px(10.0))
+        .justify_center()
         .window_control_area(WindowControlArea::Drag)
-        .child(
-            div()
-                .w(px(20.0))
-                .h(px(20.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.0))
-                .bg(c.dialog_primary_button_bg)
-                .text_size(px(11.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(c.dialog_primary_button_text)
-                .child("v"),
-        )
-        .child(
-            div()
-                .text_size(px(13.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(c.text_default)
-                .child("Velora"),
-        )
-        .child(div().text_color(c.dialog_muted).child("/"))
         .child(
             div()
                 .min_w(px(0.0))
                 .truncate()
                 .text_size(px(theme.dimensions.menu_text_size))
                 .font_weight(t.dialog_button_weight.to_font_weight())
-                .text_color(c.dialog_muted)
+                .text_color(c.text_default)
                 .child(breadcrumb),
         );
 
