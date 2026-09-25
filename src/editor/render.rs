@@ -119,6 +119,15 @@ fn focus_mode_row_opacity(
     }
 }
 
+fn typewriter_target_scroll_offset(
+    current_offset: f32,
+    viewport_center: f32,
+    caret_center: f32,
+    max_offset: f32,
+) -> f32 {
+    (current_offset + viewport_center - caret_center).clamp(-max_offset.max(0.0), 0.0)
+}
+
 fn callout_colors(variant: CalloutVariant, theme: &Theme) -> (Hsla, Hsla) {
     let c = &theme.colors;
     match variant {
@@ -454,6 +463,27 @@ impl Editor {
         };
 
         let viewport = self.scroll_handle.bounds();
+        if self.typewriter_mode
+            && self.view_mode == super::ViewMode::Rendered
+            && !self.code_tab_active()
+            && self.cross_block_selection.is_none()
+        {
+            let mut offset = self.scroll_handle.offset();
+            let viewport_center = f32::from(viewport.top()) + f32::from(viewport.size.height) * 0.5;
+            let caret_center =
+                f32::from(active_bounds.top()) + f32::from(active_bounds.size.height) * 0.5;
+            let target = typewriter_target_scroll_offset(
+                f32::from(offset.y),
+                viewport_center,
+                caret_center,
+                f32::from(self.scroll_handle.max_offset().height),
+            );
+            if (target - f32::from(offset.y)).abs() > 0.5 {
+                offset.y = px(target);
+                self.scroll_handle.set_offset(offset);
+            }
+            return true;
+        }
         let padding = px(20.0);
         let top_limit = viewport.top() + padding;
         let bottom_limit = viewport.bottom() - padding;
@@ -1984,7 +2014,13 @@ impl Render for Editor {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_editor_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_editor_scroll_wheel))
             .p(px(d.editor_padding))
-            .pt(px(if self.code_tab_active() { 24.0 } else { 52.0 }))
+            .pt(px(if self.code_tab_active() {
+                24.0
+            } else if self.typewriter_mode && self.view_mode == super::ViewMode::Rendered {
+                (viewport_height * 0.5).max(52.0)
+            } else {
+                52.0
+            }))
             .pb(px(d.editor_padding
                 + scroll_trigger_padding
                 + scroll_beyond_bottom))
@@ -2285,6 +2321,7 @@ mod tests {
         menu_panel_width_for_labels, owned_menu_item_labels, rendered_row_top_gap,
         scrollable_import_menu_scroll_height, submenu_bridge_geometry,
         supports_in_window_menu_for_target_os, tibetan_font_fallbacks_for_target_os,
+        typewriter_target_scroll_offset,
     };
     use crate::components::{AddLanguageConfig, AddThemeConfig};
     use crate::theme::Theme;
@@ -2338,6 +2375,22 @@ mod tests {
         assert_eq!(focus_mode_row_opacity(true, Some(3), 0, 2), 0.38);
         assert_eq!(focus_mode_row_opacity(false, Some(3), 0, 2), 1.0);
         assert_eq!(focus_mode_row_opacity(true, None, 0, 2), 1.0);
+    }
+
+    #[test]
+    fn typewriter_scroll_centers_caret_within_document_limits() {
+        assert_eq!(
+            typewriter_target_scroll_offset(-120.0, 400.0, 600.0, 500.0),
+            -320.0
+        );
+        assert_eq!(
+            typewriter_target_scroll_offset(0.0, 400.0, 200.0, 500.0),
+            0.0
+        );
+        assert_eq!(
+            typewriter_target_scroll_offset(-200.0, 400.0, 700.0, 300.0),
+            -300.0
+        );
     }
 
     #[test]

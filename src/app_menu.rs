@@ -14,8 +14,8 @@ use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     InstallCliTool, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
     OpenRecentWorkspace, OpenWorkspaceFolder, QuitApplication, SaveDocument, SaveDocumentAs,
-    SelectLanguage, SelectTheme, ShowAbout, ToggleFocusMode, ToggleViewMode, ToggleWorkspace,
-    UninstallCliTool,
+    SelectLanguage, SelectTheme, ShowAbout, ToggleFocusMode, ToggleTypewriterMode, ToggleViewMode,
+    ToggleWorkspace, UninstallCliTool,
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
@@ -442,6 +442,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<OpenRecentWorkspace>()
         || action.as_any().is::<ToggleViewMode>()
         || action.as_any().is::<ToggleFocusMode>()
+        || action.as_any().is::<ToggleTypewriterMode>()
 }
 
 fn is_window_context_menu_action(action: &dyn Action) -> bool {
@@ -549,6 +550,8 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<ToggleFocusMode>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_focus_mode(cx));
+    } else if action.as_any().is::<ToggleTypewriterMode>() {
+        let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_typewriter_mode(cx));
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -655,6 +658,8 @@ pub(crate) fn dispatch_menu_action_for_editor(
         let _ = target.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<ToggleFocusMode>() {
         let _ = target.update(cx, |editor, cx| editor.toggle_focus_mode(cx));
+    } else if action.as_any().is::<ToggleTypewriterMode>() {
+        let _ = target.update(cx, |editor, cx| editor.toggle_typewriter_mode(cx));
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
@@ -934,6 +939,14 @@ fn build_menus(
                     },
                     ToggleFocusMode,
                 ),
+                MenuItem::action(
+                    if current_language_id == "zh-CN" {
+                        "切换打字机模式"
+                    } else {
+                        "Toggle Typewriter Mode"
+                    },
+                    ToggleTypewriterMode,
+                ),
             ],
         },
         Menu {
@@ -1154,6 +1167,9 @@ pub(crate) fn init(cx: &mut App) {
     });
     cx.on_action(|_: &ToggleFocusMode, cx| {
         dispatch_menu_action(&ToggleFocusMode, cx);
+    });
+    cx.on_action(|_: &ToggleTypewriterMode, cx| {
+        dispatch_menu_action(&ToggleTypewriterMode, cx);
     });
     cx.on_action(|_: &OpenPreferences, cx| {
         dispatch_menu_action(&OpenPreferences, cx);
@@ -1388,6 +1404,10 @@ mod tests {
             "Toggle Workspace"
         );
         assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "Toggle Focus Mode");
+        assert_eq!(
+            action_name(&menus[VIEW_IDX].items[2]),
+            "Toggle Typewriter Mode"
+        );
     }
 
     #[test]
@@ -1453,6 +1473,7 @@ mod tests {
         );
         assert_eq!(action_name(&menus[WORKSPACE_IDX].items[3]), "切换工作区");
         assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "切换专注模式");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[2]), "切换打字机模式");
     }
 
     #[test]

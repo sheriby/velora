@@ -72,6 +72,7 @@ actions!(
         DismissTransientUi,
         ToggleViewMode,
         ToggleFocusMode,
+        ToggleTypewriterMode,
         ToggleWorkspace,
     ]
 );

@@ -1011,6 +1011,10 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.typewriter_mode {
+            self.pending_scroll_active_block_into_view = false;
+            self.pending_scroll_recheck_after_layout = false;
+        }
         self.bump_scrollbar_visibility(cx);
     }
 

@@ -66,6 +66,7 @@ pub struct Editor {
     /// Which view the editor is currently presenting.
     pub(crate) view_mode: ViewMode,
     focus_mode: bool,
+    typewriter_mode: bool,
     /// Keeps ambiguous Markdown extensions in source mode until their syntax is removed.
     source_mode_fallback_required: bool,
     code_document: bool,
@@ -343,6 +344,7 @@ impl Editor {
                 ViewMode::Rendered
             },
             focus_mode: false,
+            typewriter_mode: false,
             source_mode_fallback_required,
             code_document: false,
             code_uses_crlf: false,

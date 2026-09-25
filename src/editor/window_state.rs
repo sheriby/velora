@@ -253,6 +253,13 @@ impl Editor {
         cx.notify();
     }
 
+    pub(crate) fn toggle_typewriter_mode(&mut self, cx: &mut Context<Self>) {
+        self.typewriter_mode = !self.typewriter_mode;
+        self.pending_scroll_active_block_into_view = true;
+        self.pending_scroll_recheck_after_layout = true;
+        cx.notify();
+    }
+
     pub(crate) fn on_undo(
         &mut self,
         _: &crate::components::Undo,
