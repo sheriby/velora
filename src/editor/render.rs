@@ -1664,15 +1664,18 @@ impl Render for Editor {
                 .read_with(cx, |block, _cx| RenderedRowSpacingInfo::from_block(block))
         };
         let mut previous_row_spacing = None;
-        // One entry per render row; off-screen rows are dropped after windowing.
-        let mut row_elements: Vec<AnyElement> = Vec::new();
+        // Ordinary rows only get GPUI elements after windowing chooses them.
+        enum RowElement {
+            Group(AnyElement),
+            Ordinary,
+        }
+        let mut row_elements: Vec<Option<RowElement>> = Vec::new();
         let mut row_starts: Vec<usize> = Vec::new();
         // Each row's leading `mt` gap; the top spacer subtracts the first mounted
         // row's, since that row re-applies it.
         let mut row_top_gaps: Vec<f32> = Vec::new();
         let mut index = 0usize;
         while index < visible_blocks.len() {
-            let first_visible = visible_blocks[index].clone();
             let first_spacing = spacing_for(index);
             let top_gap = rendered_row_top_gap(
                 previous_row_spacing,
@@ -1771,7 +1774,7 @@ impl Render for Editor {
                 let (accent, background) = callout_colors(callout_variant, &theme);
                 row_starts.push(index);
                 row_top_gaps.push(top_gap);
-                row_elements.push(
+                row_elements.push(Some(RowElement::Group(
                     div()
                         .w(px(centered_width))
                         .max_w(relative(1.0))
@@ -1794,7 +1797,7 @@ impl Render for Editor {
                         ))
                         .children(group_children)
                         .into_any_element(),
-                );
+                )));
                 previous_row_spacing = Some(spacing_for(group_end - 1));
                 index = group_end;
                 continue;
@@ -1833,7 +1836,7 @@ impl Render for Editor {
 
                 row_starts.push(index);
                 row_top_gaps.push(top_gap);
-                row_elements.push(
+                row_elements.push(Some(RowElement::Group(
                     div()
                         .w(px(centered_width))
                         .max_w(relative(1.0))
@@ -1847,39 +1850,15 @@ impl Render for Editor {
                         ))
                         .child(footnote_group_shell(group_children, &theme, d))
                         .into_any_element(),
-                );
+                )));
                 previous_row_spacing = Some(spacing_for(group_end - 1));
                 index = group_end;
                 continue;
             }
 
-            let entity = first_visible.entity.clone();
-            let row = div()
-                .w(px(centered_width))
-                .max_w(relative(1.0))
-                .flex_shrink_0()
-                .mt(px(top_gap))
-                .opacity(focus_mode_row_opacity(
-                    focus_mode_active,
-                    focused_visible_index,
-                    index,
-                    index + 1,
-                ))
-                .child(entity.clone());
-            let row = if self.view_mode == super::ViewMode::Rendered {
-                let row_editor = editor.clone();
-                let entity_id = entity.entity_id();
-                row.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                    let _ = row_editor.update(cx, |editor, cx| {
-                        editor.on_block_context_menu_mouse_down(entity_id, event, window, cx);
-                    });
-                })
-            } else {
-                row
-            };
             row_starts.push(index);
             row_top_gaps.push(top_gap);
-            row_elements.push(row.into_any_element());
+            row_elements.push(Some(RowElement::Ordinary));
             previous_row_spacing = Some(first_spacing);
             index += 1;
         }
@@ -1993,12 +1972,40 @@ impl Render for Editor {
             }
         };
 
-        let mut row_elements: Vec<Option<AnyElement>> =
-            row_elements.into_iter().map(Some).collect();
-        let mut take_row = |rows: &mut Vec<AnyElement>, row: usize| {
-            if let Some(element) = row_elements.get_mut(row).and_then(Option::take) {
-                rows.push(element);
+        let mut take_row = |rows: &mut Vec<AnyElement>, row: usize| match row_elements
+            .get_mut(row)
+            .and_then(Option::take)
+        {
+            Some(RowElement::Group(element)) => rows.push(element),
+            Some(RowElement::Ordinary) => {
+                let index = row_starts[row];
+                let entity = visible_blocks[index].entity.clone();
+                let element = div()
+                    .w(px(centered_width))
+                    .max_w(relative(1.0))
+                    .flex_shrink_0()
+                    .mt(px(row_top_gaps[row]))
+                    .opacity(focus_mode_row_opacity(
+                        focus_mode_active,
+                        focused_visible_index,
+                        index,
+                        index + 1,
+                    ))
+                    .child(entity.clone());
+                let element = if self.view_mode == super::ViewMode::Rendered {
+                    let row_editor = editor.clone();
+                    let entity_id = entity.entity_id();
+                    element.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                        let _ = row_editor.update(cx, |editor, cx| {
+                            editor.on_block_context_menu_mouse_down(entity_id, event, window, cx);
+                        });
+                    })
+                } else {
+                    element
+                };
+                rows.push(element.into_any_element());
             }
+            None => {}
         };
 
         if let Some(island) = island.filter(|_| island_before_run) {
