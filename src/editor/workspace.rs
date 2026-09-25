@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result};
 use gpui::*;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 
-use super::{BlockKind, Editor, code_viewer};
+use super::{BlockKind, Editor};
 use crate::i18n::I18nStrings;
 use crate::theme::{Theme, ThemeManager};
 
@@ -1177,7 +1177,11 @@ impl Editor {
         self.is_recovered_document = false;
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
-        self.replace_document_from_markdown(markdown, Some(path), cx);
+        if is_code_file(&path) {
+            self.replace_document_from_code_source(markdown, path, cx);
+        } else {
+            self.replace_document_from_markdown(markdown, Some(path), cx);
+        }
         self.document_dirty = dirty;
         self.file_version = Some(file_version);
         if dirty || self.has_dirty_workspace_documents() {
@@ -1272,49 +1276,33 @@ impl Editor {
         )
     }
 
-    fn open_code_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
-        self.workspace.file_error = None;
-        let error_path = path.clone();
-        let editor = cx.entity().downgrade();
-        let background = cx.background_executor().clone();
+    pub(super) fn code_tab_active(&self) -> bool {
+        self.code_document
+    }
 
-        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = background
-                .spawn(async move {
-                    let source = fs::read_to_string(&path)?;
-                    let language = path
-                        .extension()
-                        .map(|ext| ext.to_string_lossy().into_owned());
-                    let highlight =
-                        crate::components::markdown::code_highlight::highlight_code_block(
-                            language.as_deref(),
-                            &source,
-                        );
-                    Ok::<_, std::io::Error>((source, highlight))
-                })
-                .await;
+    pub(super) fn workspace_breadcrumb(&self) -> String {
+        let folder = self.workspace.root.as_ref().and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+        let file = self.file_path.as_ref().or(self.recovery_source_path.as_ref())
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+        match (folder, file) {
+            (Some(folder), Some(file)) => format!("{folder} / {file}"),
+            (Some(folder), None) => folder,
+            (None, Some(file)) => file,
+            (None, None) => String::new(),
+        }
+    }
 
-            match result {
-                Ok((source, highlight)) => {
-                    let _ = cx.update(move |app| {
-                        if let Err(err) =
-                            code_viewer::open_code_viewer_window(app, error_path, source, highlight)
-                        {
-                            eprintln!("failed to open code viewer: {err}");
-                        }
-                    });
-                }
-                Err(err) => {
-                    let message = format!("无法读取代码文件：{}", err);
-                    let _ = editor.update(cx, move |editor, cx| {
-                        editor.workspace.file_error = Some(message);
-                        cx.notify();
-                    });
-                }
+    pub(super) fn active_code_line_count(&self, cx: &App) -> Option<usize> {
+        self.code_tab_active().then(|| {
+            let source = self.document.raw_source_text(cx);
+            if source.is_empty() {
+                0
+            } else {
+                source.lines().count()
             }
         })
-        .detach();
     }
 
     pub(super) fn render_workspace_panel(
@@ -1870,7 +1858,7 @@ impl Editor {
                         editor.open_workspace_file(path, window, cx);
                     }
                     WorkspaceTreeKind::CodeFile(path) => {
-                        editor.open_code_file(path, cx);
+                        editor.open_workspace_file(path, window, cx);
                     }
                     WorkspaceTreeKind::RecentWorkspace(path) => {
                         editor.workspace.selected =
@@ -2249,7 +2237,7 @@ fn collect_matching_workspace_files(
     }
 }
 
-fn is_code_file(path: &Path) -> bool {
+pub(super) fn is_code_file(path: &Path) -> bool {
     const CODE_EXTENSIONS: &[&str] = &[
         "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "json", "jsx", "kt",
         "php", "py", "rb", "rs", "sh", "sql", "swift", "toml", "ts", "tsx", "xml", "yaml", "yml",
@@ -2454,7 +2442,8 @@ mod tests {
         is_code_file, path_is_affected, prune_outline_state, remap_moved_path,
         rewrite_relative_image_targets, scan_workspace_dir, workspace_panel_width_for_viewport,
     };
-    use gpui::{AppContext, TestAppContext};
+    use crate::components::Block;
+    use gpui::{EntityInputHandler, TestAppContext};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -2519,7 +2508,7 @@ mod tests {
     }
 
     #[test]
-    fn code_viewer_extensions_are_case_insensitive() {
+    fn code_file_extensions_are_case_insensitive() {
         for extension in ["rs", "sql", "swift", "kt", "xml"] {
             assert!(is_code_file(Path::new(&format!("source.{extension}"))));
             assert!(is_code_file(Path::new(&format!(
@@ -2531,7 +2520,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn opening_a_code_file_creates_a_separate_viewer_window(cx: &mut TestAppContext) {
+    async fn opening_code_files_keeps_them_in_the_editor(cx: &mut TestAppContext) {
         cx.update(|cx| {
             crate::i18n::I18nManager::init(cx);
             crate::theme::ThemeManager::init(cx);
@@ -2544,18 +2533,98 @@ mod tests {
         fs::write(&path, "fn main() { println!(\"hello\"); }").expect("write code file");
         let plain_path = root.join("query.sql");
         fs::write(&plain_path, "select 1;").expect("write plain code file");
+        let crlf_path = root.join("windows.cs");
+        fs::write(&crlf_path, "class A {\r\n}\r\n").expect("write CRLF code file");
         let cleanup_root = root.clone();
         cx.on_quit(move || {
             let _ = fs::remove_dir_all(cleanup_root);
         });
 
-        let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
-        editor.update(cx, |editor, cx| editor.open_code_file(path, cx));
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(path.clone(), window, cx)
+            });
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert!(editor.code_tab_active());
+            assert_eq!(
+                editor.document.raw_source_text(cx),
+                "fn main() { println!(\"hello\"); }"
+            );
+            let block = editor.document.first_root().unwrap().read(cx);
+            assert!(block.kind().is_code_block());
+            assert!(block.code_highlight_result().is_some());
+            assert_eq!(editor.workspace.open_documents.len(), 1);
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(plain_path.clone(), window, cx)
+            });
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.workspace.open_documents.len(), 2);
+            assert_eq!(editor.workspace.active_document.as_ref(), Some(&plain_path));
+            assert_eq!(editor.document.raw_source_text(cx), "select 1;");
+        });
+        let block = editor.read_with(cx, |editor, _| {
+            editor.document.first_root().unwrap().clone()
+        });
+        cx.update(|window, cx| {
+            block.update(cx, |block, cx| {
+                block.selected_range = 0..block.visible_len();
+                <Block as EntityInputHandler>::replace_text_in_range(
+                    block,
+                    None,
+                    "select 2;",
+                    window,
+                    cx,
+                );
+            });
+        });
         cx.run_until_parked();
-        editor.update(cx, |editor, cx| editor.open_code_file(plain_path, cx));
-        cx.run_until_parked();
-
-        assert_eq!(cx.windows().len(), 2);
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.document.raw_source_text(cx), "select 2;");
+        });
+        editor.update(cx, |editor, cx| editor.undo_document(cx));
+        editor.read_with(cx, |editor, cx| {
+            assert!(editor.code_tab_active());
+            assert_eq!(editor.document.raw_source_text(cx), "select 1;");
+            assert!(editor.document.first_root().unwrap().read(cx).kind().is_code_block());
+        });
+        editor.update(cx, |editor, cx| editor.redo_document(cx));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| editor.save_document(window, cx));
+        });
+        assert_eq!(fs::read_to_string(&plain_path).unwrap(), "select 2;");
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(path.clone(), window, cx)
+            });
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.workspace.open_documents.len(), 2);
+            assert_eq!(
+                editor.document.raw_source_text(cx),
+                "fn main() { println!(\"hello\"); }"
+            );
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(crlf_path.clone(), window, cx)
+            });
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.document.raw_source_text(cx), "class A {\n}\n");
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| editor.save_document(window, cx));
+        });
+        assert_eq!(
+            fs::read_to_string(&crlf_path).unwrap(),
+            "class A {\r\n}\r\n"
+        );
     }
 
     #[test]

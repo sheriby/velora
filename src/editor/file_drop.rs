@@ -6,7 +6,7 @@ use anyhow::{Context as AnyhowContext, Result};
 use gpui::*;
 
 use super::{Editor, ViewMode};
-use crate::components::BlockRecord;
+use crate::components::{BlockKind, BlockRecord};
 use crate::i18n::I18nManager;
 
 impl Editor {
@@ -112,7 +112,11 @@ impl Editor {
         if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
             eprintln!("failed to remove replaced document recovery snapshot: {error}");
         }
-        self.replace_document_from_markdown(markdown, Some(path.to_path_buf()), cx);
+        if super::workspace::is_code_file(path) {
+            self.replace_document_from_code_source(markdown, path.to_path_buf(), cx);
+        } else {
+            self.replace_document_from_markdown(markdown, Some(path.to_path_buf()), cx);
+        }
         crate::app_menu::record_recent_file_from_editor(path, cx);
         Ok(())
     }
@@ -123,11 +127,46 @@ impl Editor {
         file_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        self.replace_document_content(markdown, file_path, None, cx);
+    }
+
+    pub(super) fn replace_document_from_code_source(
+        &mut self,
+        source: String,
+        file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let language = file_path
+            .extension()
+            .map(|extension| extension.to_string_lossy().into_owned().into());
+        self.replace_document_content(source, Some(file_path), language, cx);
+    }
+
+    pub(super) fn replace_document_content(
+        &mut self,
+        markdown: String,
+        file_path: Option<PathBuf>,
+        code_language: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+        let is_code = code_language.is_some();
+        self.code_document = is_code;
+        self.code_uses_crlf = is_code && markdown.contains("\r\n");
         let source_mode_fallback_required =
-            Self::markdown_requires_source_mode_fallback(&normalized);
-        let mut roots = if source_mode_fallback_required {
-            let block = Self::new_block(cx, BlockRecord::paragraph(normalized.clone()));
+            !is_code && Self::markdown_requires_source_mode_fallback(&normalized);
+        let mut roots = if is_code || source_mode_fallback_required {
+            let record = if is_code {
+                BlockRecord::with_plain_text(
+                    BlockKind::CodeBlock {
+                        language: code_language,
+                    },
+                    normalized.clone(),
+                )
+            } else {
+                BlockRecord::paragraph(normalized.clone())
+            };
+            let block = Self::new_block(cx, record);
             block.update(cx, |block, _cx| block.set_source_document_mode());
             vec![block]
         } else {
@@ -141,7 +180,7 @@ impl Editor {
             .as_ref()
             .map(|_| super::persistence::file_content_version(&normalized));
         self.file_path = file_path;
-        self.view_mode = if source_mode_fallback_required {
+        self.view_mode = if is_code || source_mode_fallback_required {
             ViewMode::Source
         } else {
             ViewMode::Rendered

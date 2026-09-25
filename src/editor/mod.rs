@@ -24,7 +24,6 @@ use crate::components::{
     TableData, TableRuntime, UndoCaptureKind, serialize_table_cell_markdown,
 };
 mod close;
-mod code_viewer;
 mod context_menu;
 mod document;
 mod events;
@@ -68,6 +67,8 @@ pub struct Editor {
     pub(crate) view_mode: ViewMode,
     /// Keeps ambiguous Markdown extensions in source mode until their syntax is removed.
     source_mode_fallback_required: bool,
+    code_document: bool,
+    code_uses_crlf: bool,
     /// Deferred focus target applied during render when a [`Window`] is
     /// available.
     pending_focus: Option<EntityId>,
@@ -341,6 +342,8 @@ impl Editor {
                 ViewMode::Rendered
             },
             source_mode_fallback_required,
+            code_document: false,
+            code_uses_crlf: false,
             pending_focus,
             active_entity_id: pending_focus,
             pending_scroll_active_block_into_view: true,
@@ -423,7 +426,16 @@ impl Editor {
         cx: &mut Context<Self>,
         snapshot: crate::config::RecoverySnapshot,
     ) -> Self {
-        let mut editor = Self::from_markdown(cx, snapshot.markdown, None);
+        let code_language = snapshot
+            .source_path
+            .as_ref()
+            .filter(|path| workspace::is_code_file(path))
+            .and_then(|path| path.extension())
+            .map(|extension| extension.to_string_lossy().into_owned().into());
+        let mut editor = Self::from_markdown(cx, snapshot.markdown.clone(), None);
+        if code_language.is_some() {
+            editor.replace_document_content(snapshot.markdown, None, code_language, cx);
+        }
         editor.recovery_id = snapshot.id;
         editor.recovery_source_path = snapshot.source_path;
         editor.is_recovered_document = true;

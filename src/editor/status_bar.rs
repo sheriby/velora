@@ -44,7 +44,7 @@ impl Editor {
             ));
         }
 
-        if prefs.show_mode_switch {
+        if prefs.show_mode_switch && !self.code_tab_active() {
             left_items.push(render_mode_switch(
                 &mut self.status_bar,
                 self.view_mode,
@@ -63,7 +63,15 @@ impl Editor {
             ));
         }
 
-        if prefs.show_word_count {
+        if let Some(lines) = self.active_code_line_count(cx) {
+            right_items.push(
+                div()
+                    .text_size(px(d.status_bar_text_size))
+                    .text_color(c.status_bar_text_dim)
+                    .child(format!("{lines} 行"))
+                    .into_any_element(),
+            );
+        } else if prefs.show_word_count {
             let text = self.serialized_document_text(cx);
             let total_count = count_words(&text);
             let selection_count = self.selected_markdown_text(cx).as_deref().map(count_words);
