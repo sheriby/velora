@@ -5,7 +5,7 @@
 //! [`DocumentTree`], which centralizes structural mutations and cached visible
 //! order metadata.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -162,6 +162,7 @@ pub struct Editor {
     image_reference_definitions: Arc<ImageReferenceDefinitions>,
     link_reference_definitions: Arc<LinkReferenceDefinitions>,
     footnote_registry: Arc<FootnoteRegistry>,
+    runtime_context_sensitive_blocks: HashSet<EntityId>,
 }
 
 /// Runtime binding between a table block and one cell editor.
@@ -417,6 +418,7 @@ impl Editor {
             image_reference_definitions: Arc::default(),
             link_reference_definitions: Arc::default(),
             footnote_registry: Arc::default(),
+            runtime_context_sensitive_blocks: HashSet::new(),
         };
         editor.rebuild_table_runtimes(cx); // Also refreshes image and reference contexts.
         editor.pending_focus = editor.first_focusable_entity_id(cx);

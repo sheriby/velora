@@ -1314,7 +1314,9 @@ impl Editor {
         match event {
             BlockEvent::Changed => {
                 self.sync_table_record_from_runtime(&binding.table_block, cx);
-                self.rebuild_image_runtimes(cx);
+                if self.changed_block_needs_runtime_context_refresh(&binding.cell, cx) {
+                    self.rebuild_image_runtimes(cx);
+                }
                 self.mark_dirty(cx);
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture(cx);
@@ -1659,7 +1661,7 @@ impl Editor {
                 self.refresh_rendered_quote_metadata_if_needed(&block, cx);
                 if should_normalize_quote {
                     self.normalize_rendered_quote_structure(cx);
-                } else {
+                } else if self.changed_block_needs_runtime_context_refresh(&block, cx) {
                     self.rebuild_image_runtimes(cx);
                 }
                 if let Some(focus_id) = callout_focus_target {

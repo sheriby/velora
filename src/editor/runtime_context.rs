@@ -3,6 +3,36 @@
 use super::*;
 
 impl Editor {
+    fn block_may_change_document_references(block: &Block) -> bool {
+        if matches!(
+            block.kind(),
+            BlockKind::RawMarkdown
+                | BlockKind::HtmlBlock
+                | BlockKind::FootnoteDefinition
+                | BlockKind::Table
+        ) {
+            return true;
+        }
+        block.record.title.fragments.iter().any(|fragment| {
+            fragment.link.is_some()
+                || fragment.footnote.is_some()
+                || fragment.text.contains('[')
+                || fragment.text.contains('<')
+        })
+    }
+
+    pub(super) fn changed_block_needs_runtime_context_refresh(
+        &self,
+        block: &Entity<Block>,
+        cx: &App,
+    ) -> bool {
+        self.runtime_context_sensitive_blocks
+            .contains(&block.entity_id())
+            || block.read_with(cx, |block, _cx| {
+                Self::block_may_change_document_references(block)
+            })
+    }
+
     pub(super) fn current_edit_target_entity_id_from_state(&self, cx: &App) -> Option<EntityId> {
         self.active_entity_id
             .filter(|entity_id| self.focusable_entity_by_id(*entity_id).is_some())
@@ -206,8 +236,16 @@ impl Editor {
         self.image_reference_definitions = Arc::new(parse_image_reference_definitions(&markdown));
         self.link_reference_definitions = Arc::new(parse_link_reference_definitions(&markdown));
         self.rebuild_footnote_registry(cx);
+        self.runtime_context_sensitive_blocks.clear();
         let visible = self.document.visible_blocks().to_vec();
         for visible_block in visible {
+            let is_sensitive = visible_block.entity.read_with(cx, |block, _cx| {
+                Self::block_may_change_document_references(block)
+            });
+            if is_sensitive {
+                self.runtime_context_sensitive_blocks
+                    .insert(visible_block.entity.entity_id());
+            }
             self.sync_runtime_context_for_block(&visible_block.entity, base_dir.as_deref(), cx);
             if visible_block.entity.read(cx).kind() != BlockKind::Table {
                 continue;
@@ -216,10 +254,22 @@ impl Editor {
                 continue;
             };
             for cell in runtime.header {
+                if cell.read_with(cx, |block, _cx| {
+                    Self::block_may_change_document_references(block)
+                }) {
+                    self.runtime_context_sensitive_blocks
+                        .insert(cell.entity_id());
+                }
                 self.sync_runtime_context_for_block(&cell, base_dir.as_deref(), cx);
             }
             for row in runtime.rows {
                 for cell in row {
+                    if cell.read_with(cx, |block, _cx| {
+                        Self::block_may_change_document_references(block)
+                    }) {
+                        self.runtime_context_sensitive_blocks
+                            .insert(cell.entity_id());
+                    }
                     self.sync_runtime_context_for_block(&cell, base_dir.as_deref(), cx);
                 }
             }

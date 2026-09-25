@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gpui::{
@@ -9,9 +10,10 @@ use gpui::{
 
 use super::{Editor, MountedRun, ViewMode};
 use crate::components::{
-    Block, BlockKind, CloseWindow, FocusNext, ImageReferenceDefinitions, ImageResolvedSource,
-    InlineTextTree, Newline, QuitApplication, SaveDocument, TableCellInlineImageSegment,
-    TableColumnAlignment, UndoCaptureKind, parse_table_cell_inline_images, superscript_ordinal,
+    Block, BlockEvent, BlockKind, CloseWindow, FocusNext, ImageReferenceDefinitions,
+    ImageResolvedSource, InlineTextTree, Newline, QuitApplication, SaveDocument,
+    TableCellInlineImageSegment, TableColumnAlignment, UndoCaptureKind,
+    parse_table_cell_inline_images, superscript_ordinal,
 };
 use crate::export::ExportFormat;
 use crate::i18n::{I18nManager, I18nStrings};
@@ -92,6 +94,25 @@ async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
         "bytes={bytes} rows={rows} construct_ms={:.1} first_draw_ms={:.1} steady_p95_ms={p95:.1}",
         construct.as_secs_f64() * 1000.0,
         first_draw.as_secs_f64() * 1000.0
+    );
+
+    let start = Instant::now();
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        editor.active_entity_id = Some(first.entity_id());
+        first.update(cx, |block, cx| {
+            block.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+            block.replace_text_in_visible_range(0..0, "测", None, false, cx);
+        });
+    });
+    let edit_update = start.elapsed();
+    let start = Instant::now();
+    redraw(cx);
+    let edit_draw = start.elapsed();
+    println!(
+        "edit_update_ms={:.1} edit_draw_ms={:.1}",
+        edit_update.as_secs_f64() * 1000.0,
+        edit_draw.as_secs_f64() * 1000.0
     );
 }
 
@@ -2235,6 +2256,101 @@ async fn mixed_text_does_not_activate_image_runtime(cx: &mut TestAppContext) {
         let block = editor.document.first_root().expect("root block").clone();
         assert!(block.read(cx).image_runtime().is_none());
     });
+}
+
+#[gpui::test]
+async fn ordinary_edit_skips_global_context_but_image_edits_refresh_it(cx: &mut TestAppContext) {
+    let editor = cx.new(|cx| {
+        Editor::from_markdown(
+            cx,
+            "# Heading\n\n![old](https://example.com/old.png)".into(),
+            None,
+        )
+    });
+    let (heading, image, definitions) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.document.root_blocks()[0].clone(),
+            editor.document.root_blocks()[1].clone(),
+            editor.image_reference_definitions.clone(),
+        )
+    });
+
+    heading.update(cx, |heading, cx| {
+        heading.record.set_title(InlineTextTree::plain("Updated"));
+        heading.sync_render_cache();
+        cx.emit(BlockEvent::Changed);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(Arc::ptr_eq(
+            &definitions,
+            &editor.image_reference_definitions
+        ));
+    });
+
+    image.update(cx, |image, cx| {
+        image.record.set_title(InlineTextTree::plain("plain"));
+        image.sync_render_cache();
+        cx.emit(BlockEvent::Changed);
+    });
+    cx.run_until_parked();
+    assert!(image.read_with(cx, |image, _cx| image.image_runtime().is_none()));
+
+    image.update(cx, |image, cx| {
+        image
+            .record
+            .set_title(InlineTextTree::plain("![new](https://example.com/new.png)"));
+        image.sync_render_cache();
+        cx.emit(BlockEvent::Changed);
+    });
+    cx.run_until_parked();
+    image.read_with(cx, |image, _cx| {
+        assert_eq!(
+            image
+                .image_runtime()
+                .as_ref()
+                .map(|runtime| runtime.src.as_str()),
+            Some("https://example.com/new.png")
+        );
+    });
+}
+
+#[gpui::test]
+async fn editing_image_reference_definition_refreshes_existing_image(cx: &mut TestAppContext) {
+    let editor = cx.new(|cx| {
+        Editor::from_markdown(
+            cx,
+            "![photo][asset]\n\n[asset]: https://example.com/old.png".into(),
+            None,
+        )
+    });
+    let (image, definition) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.document.root_blocks()[0].clone(),
+            editor.document.root_blocks()[1].clone(),
+        )
+    });
+    assert_eq!(
+        image.read_with(cx, |image, _cx| image
+            .image_runtime()
+            .map(|runtime| runtime.src.clone())),
+        Some("https://example.com/old.png".into())
+    );
+
+    definition.update(cx, |definition, cx| {
+        definition.record.set_title(InlineTextTree::plain(
+            "[asset]: https://example.com/new.png",
+        ));
+        definition.sync_render_cache();
+        cx.emit(BlockEvent::Changed);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        image.read_with(cx, |image, _cx| image
+            .image_runtime()
+            .map(|runtime| runtime.src.clone())),
+        Some("https://example.com/new.png".into())
+    );
 }
 
 #[gpui::test]
