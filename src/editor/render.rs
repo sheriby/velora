@@ -24,7 +24,7 @@ pub(crate) fn open_about_github_url(cx: &mut App) {
     cx.open_url(ABOUT_GITHUB_URL);
 }
 
-fn editor_text_font() -> Font {
+fn editor_text_font(family: &str) -> Font {
     // FontFallbacks is internally `Arc<Vec<String>>` — building it once
     // per process and Arc-cloning per render is the right shape, since
     // editor_text_font() is called from Editor::render on every frame.
@@ -34,7 +34,7 @@ fn editor_text_font() -> Font {
             FontFallbacks::from_fonts(tibetan_font_fallbacks_for_target_os(std::env::consts::OS))
         })
         .clone();
-    let mut font = font(".SystemUIFont");
+    let mut font = font(family.to_string());
     font.fallbacks = Some(fallbacks);
     font
 }
@@ -1526,7 +1526,10 @@ impl Render for Editor {
         let viewport_size = viewport_bounds.size;
         self.sync_scroll_viewport(viewport_size, cx);
 
-        let theme = cx.global::<ThemeManager>().current_arc();
+        let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
+        let fonts = crate::config::EditorSettings::fonts(cx);
+        theme.typography.text_size = fonts.markdown_size as f32;
+        theme.typography.code_size = fonts.code_size as f32;
         let strings = cx.global::<I18nManager>().strings_arc();
         self.sync_window_title(window, &strings);
 
@@ -2091,7 +2094,7 @@ impl Render for Editor {
             .flex_col()
             .relative()
             .bg(theme.colors.editor_background)
-            .font(editor_text_font())
+            .font(editor_text_font(&fonts.markdown_family))
             .on_modifiers_changed(move |event, window, _| {
                 if event.modifiers.secondary() != follow_modifier_active {
                     window.refresh();
@@ -2278,7 +2281,10 @@ mod tests {
 
     #[test]
     fn editor_text_font_keeps_system_ui_as_primary_family() {
-        assert_eq!(editor_text_font().family.to_string(), ".SystemUIFont");
+        assert_eq!(
+            editor_text_font(".SystemUIFont").family.to_string(),
+            ".SystemUIFont"
+        );
     }
 
     #[test]

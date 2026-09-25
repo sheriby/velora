@@ -24,6 +24,30 @@ const DEFAULT_THEME_ID: &str = "system";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
 const PREFERENCES_VERSION: i64 = 1;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FontPreferences {
+    pub(crate) markdown_family: String,
+    pub(crate) markdown_size: u16,
+    pub(crate) code_family: String,
+    pub(crate) code_size: u16,
+}
+
+impl Default for FontPreferences {
+    fn default() -> Self {
+        Self {
+            markdown_family: ".SystemUIFont".into(),
+            markdown_size: 16,
+            code_family: if cfg!(target_os = "windows") {
+                "Consolas"
+            } else {
+                "Menlo"
+            }
+            .into(),
+            code_size: 14,
+        }
+    }
+}
+
 /// A user-configurable button shown in the status bar.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StatusBarButton {
@@ -116,6 +140,7 @@ pub(crate) struct AppPreferences {
     pub(crate) default_theme_id: String,
     pub(crate) show_table_headers: bool,
     pub(crate) image_paste_behavior: ImagePasteBehavior,
+    pub(crate) fonts: FontPreferences,
     pub(crate) keybindings: BTreeMap<String, Vec<String>>,
     pub(crate) status_bar: StatusBarPreferences,
 }
@@ -128,6 +153,7 @@ impl Default for AppPreferences {
             default_theme_id: DEFAULT_THEME_ID.into(),
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
+            fonts: FontPreferences::default(),
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
         }
@@ -149,6 +175,7 @@ struct StatusBarSettings {
 pub struct EditorSettings {
     show_table_headers: bool,
     status_bar_settings: StatusBarSettings,
+    fonts: FontPreferences,
 }
 
 impl Global for EditorSettings {}
@@ -163,8 +190,18 @@ impl EditorSettings {
     }
 
     fn set_global(cx: &mut App, show_table_headers: bool, status_bar: &StatusBarPreferences) {
+        let fonts = cx
+            .try_global::<Self>()
+            .map(|settings| settings.fonts.clone())
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.fonts)
+            })
+            .unwrap_or_default();
         cx.set_global(Self {
             show_table_headers,
+            fonts,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -181,6 +218,12 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.show_table_headers)
             .unwrap_or(true)
+    }
+
+    pub(crate) fn fonts(cx: &App) -> FontPreferences {
+        cx.try_global::<Self>()
+            .map(|settings| settings.fonts.clone())
+            .unwrap_or_default()
     }
 
     pub fn set_show_table_headers(cx: &mut App, show_table_headers: bool) {
@@ -241,6 +284,10 @@ struct StartupPreferencesFile {
 struct EditorPreferencesFile {
     show_table_headers: bool,
     image_paste_behavior: String,
+    markdown_font_family: String,
+    markdown_font_size: u16,
+    code_font_family: String,
+    code_font_size: u16,
 }
 
 #[derive(Serialize)]
@@ -293,6 +340,10 @@ impl From<&AppPreferences> for PreferencesFile {
             editor: EditorPreferencesFile {
                 show_table_headers: value.show_table_headers,
                 image_paste_behavior: value.image_paste_behavior.as_str().into(),
+                markdown_font_family: value.fonts.markdown_family.clone(),
+                markdown_font_size: value.fonts.markdown_size,
+                code_font_family: value.fonts.code_family.clone(),
+                code_font_size: value.fonts.code_size,
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
             keybindings: normalize_shortcut_config(&value.keybindings),
@@ -422,6 +473,31 @@ fn app_preferences_from_toml_value(
         .and_then(|value| value.as_str())
         .map(ImagePasteBehavior::from_str)
         .unwrap_or(ImagePasteBehavior::CopyToAssetsFolder);
+    let font_defaults = FontPreferences::default();
+    let editor = value.get("editor");
+    let font_family = |key: &str, default: &str| {
+        editor
+            .and_then(|editor| editor.get(key))
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|family| !family.is_empty())
+            .unwrap_or(default)
+            .to_string()
+    };
+    let font_size = |key: &str, default: u16| {
+        editor
+            .and_then(|editor| editor.get(key))
+            .and_then(toml::Value::as_integer)
+            .and_then(|size| u16::try_from(size).ok())
+            .filter(|size| (10..=36).contains(size))
+            .unwrap_or(default)
+    };
+    let fonts = FontPreferences {
+        markdown_family: font_family("markdown_font_family", &font_defaults.markdown_family),
+        markdown_size: font_size("markdown_font_size", font_defaults.markdown_size),
+        code_family: font_family("code_font_family", &font_defaults.code_family),
+        code_size: font_size("code_font_size", font_defaults.code_size),
+    };
 
     let status_bar = value
         .get("status_bar")
@@ -481,6 +557,7 @@ fn app_preferences_from_toml_value(
         default_theme_id,
         show_table_headers,
         image_paste_behavior,
+        fonts,
         keybindings,
         status_bar,
     }
@@ -607,6 +684,7 @@ pub(crate) fn save_preferences_from_window(
     startup_open: StartupOpenPreference,
     default_theme_id: &str,
     image_paste_behavior: ImagePasteBehavior,
+    fonts: &FontPreferences,
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
 ) -> anyhow::Result<AppPreferences> {
@@ -615,6 +693,7 @@ pub(crate) fn save_preferences_from_window(
         startup_open,
         default_theme_id,
         image_paste_behavior,
+        fonts,
         keybindings,
         status_bar,
         &dirs,
@@ -625,6 +704,7 @@ fn save_preferences_from_window_with_dirs(
     startup_open: StartupOpenPreference,
     default_theme_id: &str,
     image_paste_behavior: ImagePasteBehavior,
+    fonts: &FontPreferences,
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
     dirs: &VelotypeConfigDirs,
@@ -634,6 +714,7 @@ fn save_preferences_from_window_with_dirs(
     preferences.startup_open = startup_open;
     preferences.default_theme_id = default_theme_id.into();
     preferences.image_paste_behavior = image_paste_behavior;
+    preferences.fonts = fonts.clone();
     preferences.keybindings = normalize_shortcut_config(&keybindings);
     preferences.status_bar = status_bar.clone();
     save_app_preferences_with_dirs(&preferences, dirs)?;
@@ -664,16 +745,20 @@ pub(crate) struct PreferencesWindow {
     startup_open: StartupOpenPreference,
     selected_theme_id: String,
     image_paste_behavior: ImagePasteBehavior,
+    fonts: FontPreferences,
     keybindings: BTreeMap<String, Vec<String>>,
     saved_startup_open: StartupOpenPreference,
     saved_theme_id: String,
     saved_image_paste_behavior: ImagePasteBehavior,
+    saved_fonts: FontPreferences,
     saved_keybindings: BTreeMap<String, Vec<String>>,
     theme_options: Vec<ThemeCatalogEntry>,
     focus_handle: FocusHandle,
     startup_dropdown_open: bool,
     theme_dropdown_open: bool,
     image_dropdown_open: bool,
+    markdown_font_dropdown_open: bool,
+    code_font_dropdown_open: bool,
     recording_shortcut: Option<ShortcutCommand>,
     shortcut_error: Option<String>,
     status_bar_enabled: bool,
@@ -705,22 +790,27 @@ impl PreferencesWindow {
         };
         let startup_open = preferences.startup_open;
         let image_paste_behavior = preferences.image_paste_behavior;
+        let fonts = preferences.fonts;
         let keybindings = preferences.keybindings;
         Self {
             nav: PreferencesNav::File,
             startup_open,
             selected_theme_id: selected_theme_id.clone(),
             image_paste_behavior,
+            fonts: fonts.clone(),
             keybindings: keybindings.clone(),
             saved_startup_open: startup_open,
             saved_theme_id: selected_theme_id,
             saved_image_paste_behavior: image_paste_behavior,
+            saved_fonts: fonts,
             saved_keybindings: keybindings,
             theme_options,
             focus_handle: cx.focus_handle(),
             startup_dropdown_open: false,
             theme_dropdown_open: false,
             image_dropdown_open: false,
+            markdown_font_dropdown_open: false,
+            code_font_dropdown_open: false,
             recording_shortcut: None,
             shortcut_error: None,
             status_bar_enabled: preferences.status_bar.enabled,
@@ -762,6 +852,7 @@ impl PreferencesWindow {
         self.startup_open != self.saved_startup_open
             || self.selected_theme_id != self.saved_theme_id
             || self.image_paste_behavior != self.saved_image_paste_behavior
+            || self.fonts != self.saved_fonts
             || normalize_shortcut_config(&self.keybindings)
                 != normalize_shortcut_config(&self.saved_keybindings)
             || self.status_bar_enabled != self.saved_status_bar_enabled
@@ -830,6 +921,28 @@ impl PreferencesWindow {
         cx.notify();
     }
 
+    fn toggle_markdown_font_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.markdown_font_dropdown_open = !self.markdown_font_dropdown_open;
+        self.code_font_dropdown_open = false;
+        cx.notify();
+    }
+
+    fn toggle_code_font_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.code_font_dropdown_open = !self.code_font_dropdown_open;
+        self.markdown_font_dropdown_open = false;
+        cx.notify();
+    }
+
     fn toggle_image_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.image_dropdown_open = !self.image_dropdown_open;
         self.startup_dropdown_open = false;
@@ -861,6 +974,7 @@ impl PreferencesWindow {
             self.startup_open,
             &self.selected_theme_id,
             self.image_paste_behavior,
+            &self.fonts,
             self.keybindings.clone(),
             &StatusBarPreferences {
                 enabled: self.status_bar_enabled,
@@ -917,6 +1031,7 @@ impl PreferencesWindow {
                 preferences.status_bar.show_sidebar_toggle;
             settings.status_bar_settings.status_bar_show_mode_switch =
                 preferences.status_bar.show_mode_switch;
+            settings.fonts = preferences.fonts.clone();
         });
         cx.refresh_windows();
         window.activate_window();
@@ -924,6 +1039,7 @@ impl PreferencesWindow {
         self.saved_startup_open = self.startup_open;
         self.saved_theme_id = self.selected_theme_id.clone();
         self.saved_image_paste_behavior = self.image_paste_behavior;
+        self.saved_fonts = self.fonts.clone();
         self.saved_keybindings = normalize_shortcut_config(&self.keybindings);
         self.saved_status_bar_enabled = self.status_bar_enabled;
         self.saved_status_bar_show_word_count = self.status_bar_show_word_count;
@@ -1120,7 +1236,7 @@ impl PreferencesWindow {
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> impl IntoElement {
         let mut dropdown = div()
             .flex()
             .flex_col()
@@ -1159,7 +1275,160 @@ impl PreferencesWindow {
             }
             dropdown = dropdown.child(list);
         }
-        self.labeled_row(&strings.preferences_local_theme, dropdown, theme)
+        let markdown_font_options = [
+            ".SystemUIFont",
+            "PingFang SC",
+            "Noto Sans CJK SC",
+            "Georgia",
+        ];
+        let code_font_options = if cfg!(target_os = "windows") {
+            ["Consolas", "Courier New", "Cascadia Code"]
+        } else {
+            ["Menlo", "Monaco", "SF Mono"]
+        };
+        let markdown_font_label = if self.fonts.markdown_family == ".SystemUIFont" {
+            "系统默认字体".to_string()
+        } else {
+            self.fonts.markdown_family.clone()
+        };
+        let mut markdown_font = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-markdown-font",
+                markdown_font_label,
+                theme,
+                Self::toggle_markdown_font_dropdown,
+                cx,
+            ));
+        if self.markdown_font_dropdown_open {
+            for (index, family) in markdown_font_options.into_iter().enumerate() {
+                markdown_font = markdown_font.child(Self::dropdown_item(
+                    ("preferences-markdown-font-option", index),
+                    if family == ".SystemUIFont" {
+                        "系统默认字体".into()
+                    } else {
+                        family.into()
+                    },
+                    self.fonts.markdown_family == family,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.fonts.markdown_family = family.into();
+                        this.markdown_font_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+        let mut code_font = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-code-font",
+                self.fonts.code_family.clone(),
+                theme,
+                Self::toggle_code_font_dropdown,
+                cx,
+            ));
+        if self.code_font_dropdown_open {
+            for (index, family) in code_font_options.into_iter().enumerate() {
+                code_font = code_font.child(Self::dropdown_item(
+                    ("preferences-code-font-option", index),
+                    family.into(),
+                    self.fonts.code_family == family,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.fonts.code_family = family.into();
+                        this.code_font_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+        div()
+            .id("preferences-theme-page")
+            .w_full()
+            .max_h(px(390.0))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(16.0))
+            .child(self.labeled_row(&strings.preferences_local_theme, dropdown, theme))
+            .child(self.labeled_row("Markdown 字体", markdown_font, theme))
+            .child(self.font_size_row("Markdown 字号", self.fonts.markdown_size, true, theme, cx))
+            .child(self.labeled_row("代码等宽字体", code_font, theme))
+            .child(self.font_size_row("代码字号", self.fonts.code_size, false, theme, cx))
+    }
+
+    fn font_size_row(
+        &self,
+        label: &str,
+        size: u16,
+        markdown: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let c = &theme.colors;
+        let button = |id: &'static str, sign: &'static str, delta: i16, cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .w(px(36.0))
+                .h(px(32.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(c.dialog_border)
+                .bg(c.dialog_secondary_button_bg)
+                .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                .cursor_pointer()
+                .child(sign)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let current = if markdown {
+                        &mut this.fonts.markdown_size
+                    } else {
+                        &mut this.fonts.code_size
+                    };
+                    *current = ((*current as i16 + delta).clamp(10, 36)) as u16;
+                    cx.notify();
+                }))
+        };
+        self.labeled_row(
+            label,
+            div()
+                .w(px(280.0))
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(button(
+                    if markdown {
+                        "markdown-font-smaller"
+                    } else {
+                        "code-font-smaller"
+                    },
+                    "−",
+                    -1,
+                    cx,
+                ))
+                .child(div().w(px(52.0)).text_center().child(format!("{size} px")))
+                .child(button(
+                    if markdown {
+                        "markdown-font-larger"
+                    } else {
+                        "code-font-larger"
+                    },
+                    "+",
+                    1,
+                    cx,
+                )),
+            theme,
+        )
     }
 
     fn image_paste_behavior_label(
@@ -2023,7 +2292,7 @@ pub(crate) fn open_preferences_window(cx: &mut App) -> WindowHandle<PreferencesW
 #[cfg(test)]
 mod tests {
     use super::{
-        AppPreferences, EditorSettings, ImagePasteBehavior, StartupOpenPreference,
+        AppPreferences, EditorSettings, FontPreferences, ImagePasteBehavior, StartupOpenPreference,
         StatusBarPreferences, load_or_create_app_preferences_with_dirs_and_locales,
         open_preferences_window_with_state, read_app_preferences_with_dirs,
         save_app_preferences_with_dirs, save_preferences_from_window_with_dirs,
@@ -2209,6 +2478,12 @@ mod tests {
             default_theme_id: "velotype-light".into(),
             show_table_headers: false,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
+            fonts: FontPreferences {
+                markdown_family: "PingFang SC".into(),
+                markdown_size: 18,
+                code_family: "Menlo".into(),
+                code_size: 13,
+            },
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
         };
@@ -2224,6 +2499,8 @@ mod tests {
         assert!(text.contains("default_language_id = \"zh-CN\""));
         assert!(text.contains("default_theme_id = \"velotype-light\""));
         assert!(text.contains("show_table_headers = false"));
+        assert!(text.contains("markdown_font_family = \"PingFang SC\""));
+        assert!(text.contains("code_font_size = 13"));
         assert!(text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2293,6 +2570,7 @@ mod tests {
             default_theme_id: "velotype".into(),
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::None,
+            fonts: FontPreferences::default(),
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
         };
@@ -2303,6 +2581,7 @@ mod tests {
             StartupOpenPreference::LastOpenedFile,
             "velotype-light",
             ImagePasteBehavior::CopyToNamedAssetsFolder,
+            &FontPreferences::default(),
             BTreeMap::from([("save_document".to_string(), vec!["ctrl-alt-s".to_string()])]),
             &StatusBarPreferences::default(),
             &dirs,

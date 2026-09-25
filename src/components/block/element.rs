@@ -60,6 +60,7 @@ fn build_text_runs(
     link_color: Hsla,
     code_bg: Hsla,
     show_inline_code_backgrounds: bool,
+    code_font_family: &str,
 ) -> Vec<TextRun> {
     let spans = input.inline_spans();
     let mut boundaries = vec![0, display_text.len()];
@@ -102,6 +103,9 @@ fn build_text_runs(
             .unwrap_or(false);
 
         let mut font = base_run.font.clone();
+        if inline_style.code {
+            font.family = SharedString::from(code_font_family.to_string());
+        }
         if inline_style.bold && font.weight < FontWeight::BOLD {
             font.weight = FontWeight::BOLD;
         }
@@ -928,6 +932,7 @@ impl Element for BlockTextElement {
                     theme.colors.text_link,
                     theme.colors.code_bg,
                     show_inline_code_backgrounds,
+                    &crate::config::EditorSettings::fonts(cx).code_family,
                 )
             }
         } else {
@@ -1529,6 +1534,7 @@ mod tests {
                 Hsla::from(rgba(0x0066ccff)),
                 Hsla::from(rgba(0x111111ff)),
                 true,
+                "Menlo",
             );
             let marked_run = runs.last().expect("styled text should create a final run");
 

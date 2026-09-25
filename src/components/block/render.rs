@@ -1665,7 +1665,10 @@ impl Render for Block {
         let is_placeholder =
             focused && self.display_text().is_empty() && self.marked_range.is_none();
 
-        let theme = cx.global::<ThemeManager>().current_arc();
+        let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
+        let fonts = crate::config::EditorSettings::fonts(cx);
+        theme.typography.text_size = fonts.markdown_size as f32;
+        theme.typography.code_size = fonts.code_size as f32;
         let strings = cx.global::<I18nManager>().strings_arc();
         let c = &theme.colors;
         let d = &theme.dimensions;
@@ -1804,11 +1807,23 @@ impl Render for Block {
                     d,
                     cx,
                 )
-                .text_size(px(t.text_size))
+                .text_size(px(if self.kind().is_code_block() {
+                    t.code_size
+                } else {
+                    t.text_size
+                }))
                 .text_color(c.text_default)
                 .line_height(rems(t.text_line_height));
 
-            let source_base = if self.kind() == BlockKind::Comment {
+            let source_base = if self.kind().is_code_block() {
+                source_base.font(font(fonts.code_family.clone()))
+            } else {
+                source_base
+            };
+
+            let source_base = if self.kind().is_code_block() {
+                source_base
+            } else if self.kind() == BlockKind::Comment {
                 source_base.bg(c.comment_bg).rounded_sm()
             } else if focused {
                 source_base.bg(c.source_mode_block_bg).rounded_sm()
@@ -2326,6 +2341,7 @@ impl Render for Block {
                     SharedString::from(strings.code_language_placeholder.clone());
                 let code_panel = focused_base
                     .bg(c.code_bg)
+                    .font(font(fonts.code_family.clone()))
                     .rounded_sm()
                     .pl(px(d.code_block_padding_x))
                     .pr(px(d.code_block_padding_x))
