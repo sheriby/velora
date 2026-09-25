@@ -576,6 +576,19 @@ impl InlineTextTree {
     /// This is the export side of the I/O boundary; the internal fragment
     /// representation never stores raw marker characters.
     pub fn serialize_markdown(&self) -> String {
+        if let [fragment] = self.fragments.as_slice()
+            && fragment.style == InlineStyle::default()
+            && fragment.html_style.is_none()
+            && fragment.link.is_none()
+            && fragment.footnote.is_none()
+            && fragment.math.is_none()
+            && !fragment
+                .text
+                .bytes()
+                .any(|byte| matches!(byte, b'\\' | b'*' | b'_' | b'~' | b'^' | b'`' | b'<'))
+        {
+            return fragment.text.clone();
+        }
         self.markdown_offset_map().markdown
     }
 
@@ -3242,6 +3255,23 @@ mod tests {
         assert_eq!(tree.visible_text(), "1234567890abcd");
         assert_eq!(reparsed.visible_text(), tree.visible_text());
         assert_eq!(reparsed.render_cache().spans(), tree.render_cache().spans());
+    }
+
+    #[test]
+    fn plain_text_fast_serialization_matches_offset_mapping() {
+        for text in [
+            "",
+            "中文 English 和 emoji ✨",
+            "plain [brackets] and ![image](x.png)",
+            "literal * _ ~ ^ ` \\",
+            "<strong>literal tag</strong>",
+        ] {
+            let tree = InlineTextTree::plain(text);
+            assert_eq!(
+                tree.serialize_markdown(),
+                tree.markdown_offset_map().markdown()
+            );
+        }
     }
 
     #[test]
