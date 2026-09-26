@@ -510,6 +510,21 @@ impl Editor {
             }
             return true;
         }
+        // Outline/search jumps land the target at the viewport center. The
+        // scroll range already reserves half a viewport past the end, so
+        // trailing content can center too; top-of-document clamps to 0.
+        if self.pending_scroll_center_into_view {
+            let viewport_center = f32::from(viewport.top()) + f32::from(viewport.size.height) * 0.5;
+            let target_center =
+                f32::from(active_bounds.top()) + f32::from(active_bounds.size.height) * 0.5;
+            let mut offset = self.scroll_handle.offset();
+            offset.y += px(viewport_center - target_center);
+            let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
+            offset.y = offset.y.min(px(0.0)).max(-max_offset_y);
+            self.scroll_handle.set_offset(offset);
+            return true;
+        }
+
         let padding = px(20.0);
         let top_limit = viewport.top() + padding;
         let bottom_limit = viewport.bottom() - padding;
@@ -557,6 +572,7 @@ impl Editor {
         }
 
         self.pending_scroll_active_block_into_view = false;
+        self.pending_scroll_center_into_view = false;
         self.scroll_recheck_task = None;
     }
 

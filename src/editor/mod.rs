@@ -76,6 +76,9 @@ pub struct Editor {
     pending_focus: Option<EntityId>,
     active_entity_id: Option<EntityId>,
     pending_scroll_active_block_into_view: bool,
+    /// Jump-style scroll (outline/search): land the target at the viewport
+    /// center instead of the minimal scroll-into-view adjustment.
+    pending_scroll_center_into_view: bool,
     pending_scroll_recheck_after_layout: bool,
     pending_save: bool,
     pending_save_as: bool,
@@ -358,6 +361,7 @@ impl Editor {
             pending_focus,
             active_entity_id: pending_focus,
             pending_scroll_active_block_into_view: true,
+            pending_scroll_center_into_view: false,
             pending_scroll_recheck_after_layout: true,
             pending_save: false,
             pending_save_as: false,

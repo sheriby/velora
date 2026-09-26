@@ -1395,6 +1395,7 @@ impl Editor {
             cx,
         );
         self.pending_scroll_active_block_into_view = true;
+        self.pending_scroll_center_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
         cx.notify();
     }
