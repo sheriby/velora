@@ -4493,3 +4493,52 @@ async fn crash_recovery_drill_snapshot_restore_save(cx: &mut TestAppContext) {
         .iter()
         .any(|snapshot| snapshot.id == recovery_id));
 }
+
+#[gpui::test]
+async fn render_structure_snapshot_for_key_blocks(cx: &mut TestAppContext) {
+    // roadmap G7：关键块渲染结构的黄金快照。任何解析/渲染回归改动若
+    // 改变块序列或文本，需同步更新此快照并在 PR 中说明。
+    let source = "# Title\n\nBody with **bold**, `code` and [link](https://x).\n\n- one\n- two\n\n- [ ] task\n\n> quoted\n\n```rust\nlet x = 1;\n```\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+    editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        let snapshot: Vec<(String, String)> = visible
+            .iter()
+            .map(|visible| {
+                let block = visible.entity.read(cx);
+                (
+                    format!("{:?}", block.kind()),
+                    block.display_text().to_string(),
+                )
+            })
+            .collect();
+
+        let expected = vec![
+            ("Heading { level: 1 }".to_string(), "Title".to_string()),
+            (
+                "Paragraph".to_string(),
+                "Body with bold, code and link.".to_string(),
+            ),
+            (
+                "BulletedListItem".to_string(),
+                "one".to_string(),
+            ),
+            (
+                "BulletedListItem".to_string(),
+                "two".to_string(),
+            ),
+            (
+                "TaskListItem { checked: false }".to_string(),
+                "task".to_string(),
+            ),
+            ("Quote".to_string(), "quoted".to_string()),
+            (
+                "CodeBlock { language: Some(\"rust\") }".to_string(),
+                "let x = 1;".to_string(),
+            ),
+            ("Table".to_string(), "a | b | 1 | 2".to_string()),
+        ];
+        assert_eq!(snapshot, expected, "render structure snapshot mismatch");
+    });
+}
