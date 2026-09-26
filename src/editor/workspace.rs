@@ -1989,12 +1989,11 @@ impl Editor {
             .cloned()
             .collect();
 
-        let editor = cx.entity().downgrade();
-        let window_handle = window.window_handle();
         if dirty.is_empty() {
-            let _ = editor.update(cx, |editor, cx| {
-                editor.finish_close_workspace_tabs(&closing, false, window, cx);
-            });
+            // Already inside this Editor's update context (the click handler
+            // wraps everything in editor.update); re-entering update here
+            // would panic.
+            self.finish_close_workspace_tabs(&closing, false, window, cx);
             return;
         }
 
@@ -2030,7 +2029,7 @@ impl Editor {
             &buttons,
             cx,
         );
-        let prompt_window = window_handle.downcast::<Editor>();
+        let prompt_window = window.window_handle().downcast::<Editor>();
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let Ok(choice) = prompt.await else {
                 return;
@@ -2163,15 +2162,28 @@ impl Editor {
                     .items_center()
                     .justify_center()
                     .rounded(px(4.0))
-                    .hover(|this| this.bg(c.selection))
+                    .hover(|this| {
+                        // One step darker than the tab's own hover fill —
+                        // neutral, no loud accent colors.
+                        this.bg({
+                            let mut bg = c.dialog_secondary_button_hover;
+                            bg.l = (bg.l - 0.05).max(0.0);
+                            bg
+                        })
+                    })
                     .cursor_pointer()
-                    .child(
+                    .child({
+                        // Faded body color rather than dialog_muted: inactive
+                        // tabs show no other text, so the X needs to stand on
+                        // its own while staying quieter than the tab title.
+                        let mut idle_icon = c.text_default;
+                        idle_icon.a *= 0.6;
                         svg()
                             .path(TAB_CLOSE_ICON)
                             .size(px(10.0))
-                            .text_color(c.dialog_muted)
-                            .group_hover("doc-tab-close", |this| this.text_color(c.text_default)),
-                    )
+                            .text_color(idle_icon)
+                            .group_hover("doc-tab-close", |this| this.text_color(c.text_default))
+                    })
                     .on_click({
                         let close_editor = editor.clone();
                         move |_event, window, cx| {
