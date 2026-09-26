@@ -1302,6 +1302,9 @@ impl Editor {
 
         let outline = build_outline_tree(source);
         prune_outline_state(&mut self.workspace, &outline);
+        // Expand headings down to H3 by default so the outline is usable
+        // without clicking through every level; users can still collapse.
+        expand_outline_to_level(&outline, 2, &mut self.workspace.expanded);
         self.workspace.outline_tree = outline;
         self.workspace.outline_source = Some(source.clone());
     }
@@ -1696,9 +1699,29 @@ impl Editor {
         cx.notify();
     }
 
-    fn select_outline_node(&mut self, id: String, cx: &mut Context<Self>) {
-        self.workspace.selected = Some(WorkspaceSelection::Outline(id));
-        cx.notify();
+    /// Clicking an outline heading jumps to that heading and expands it so its
+    /// children become visible.
+    fn open_outline_node(&mut self, id: String, line: usize, cx: &mut Context<Self>) {
+        self.workspace.selected = Some(WorkspaceSelection::Outline(id.clone()));
+        self.workspace.expanded.insert(id);
+        // The outline is built from `last_stable_source_text`, so compute the
+        // heading's byte range against that same snapshot.
+        let source = self.last_stable_source_text.clone();
+        let line_start = source
+            .split_inclusive('\n')
+            .take(line)
+            .map(str::len)
+            .sum::<usize>()
+            .min(source.len());
+        let line_end = source[line_start..]
+            .find('\n')
+            .map(|offset| line_start + offset)
+            .unwrap_or(source.len());
+        if source.is_char_boundary(line_start) && source.is_char_boundary(line_end) {
+            self.jump_to_document_search_range(line_start..line_end, cx);
+        } else {
+            cx.notify();
+        }
     }
 
     pub(super) fn open_workspace_file(
@@ -3541,7 +3564,9 @@ impl Editor {
                     WorkspaceTreeKind::CodeFile(path) => {
                         editor.open_workspace_file(path, window, cx);
                     }
-                    WorkspaceTreeKind::Heading { .. } => editor.select_outline_node(node_id, cx),
+                    WorkspaceTreeKind::Heading { line, .. } => {
+                        editor.open_outline_node(node_id, line, cx)
+                    }
                 });
             })
             .into_any_element()
@@ -4653,6 +4678,23 @@ fn collect_node_ids(nodes: &[WorkspaceTreeNode], ids: &mut HashSet<String>) {
 
 fn is_outline_node_id(id: &str) -> bool {
     id.starts_with("outline:")
+}
+
+/// Marks every heading node at or above `max_level` expanded so the outline
+/// opens down to that level (level 2 = H1/H2 expanded, showing H3 leaves).
+fn expand_outline_to_level(
+    nodes: &[WorkspaceTreeNode],
+    max_level: u8,
+    expanded: &mut HashSet<String>,
+) {
+    for node in nodes {
+        if let WorkspaceTreeKind::Heading { level, .. } = &node.kind {
+            if *level <= max_level {
+                expanded.insert(node.id.clone());
+            }
+        }
+        expand_outline_to_level(&node.children, max_level, expanded);
+    }
 }
 
 fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
