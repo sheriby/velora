@@ -56,6 +56,24 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{name}.velora-{}.tmp", uuid::Uuid::new_v4()))
 }
 
+/// Atomic save (roadmap G1): write to a sibling temp file, fsync, then rename
+/// over the destination so a crash never leaves a half-written document.
+fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let temp_path = autosave_temp_path(path);
+    let mut file = std::fs::File::create(&temp_path)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    match std::fs::rename(&temp_path, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(error)
+        }
+    }
+}
+
 fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<()> {
     let markdown = std::fs::read_to_string(path)
         .with_context(|| format!("无法读取文件以检查外部修改：{}", path.display()))?;
@@ -498,7 +516,7 @@ impl Editor {
             return false;
         }
         let markdown = self.serialized_document_text(cx);
-        match std::fs::write(path, markdown) {
+        match write_atomic(path, &markdown) {
             Ok(_) => {
                 self.apply_successful_save(path.to_path_buf(), cx);
                 window.set_window_edited(false);
@@ -575,7 +593,7 @@ impl Editor {
                 path.set_extension("md");
             }
 
-            if let Err(err) = std::fs::write(&path, &markdown) {
+            if let Err(err) = write_atomic(&path, &markdown) {
                 if should_close_after_save {
                     let _ = weak_editor_for_write_error
                         .update(cx, |this, cx| this.abort_pending_close_after_save(cx));
@@ -662,6 +680,40 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::{safe_code_fence, safe_code_fence_with_info};
+
+    #[test]
+    fn atomic_write_replaces_content_and_leaves_no_temp() {
+        let root = std::env::temp_dir().join(format!("velora-atomic-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+        let path = root.join("doc.md");
+        std::fs::write(&path, "old").expect("seed");
+
+        write_atomic(&path, "new content").expect("atomic write");
+
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "new content");
+        let leftovers: Vec<_> = std::fs::read_dir(&root)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_write_failure_keeps_original_content() {
+        let root = std::env::temp_dir().join(format!("velora-atomic-fail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+        let path = root.join("doc.md");
+        std::fs::write(&path, "original").expect("seed");
+
+        // Target inside a missing subdirectory fails at temp-file creation.
+        let missing = root.join("missing").join("doc.md");
+        assert!(write_atomic(&missing, "nope").is_err());
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "original");
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn safe_code_fence_is_longer_than_any_inner_backtick_run() {
