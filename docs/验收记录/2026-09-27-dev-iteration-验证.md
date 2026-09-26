@@ -91,6 +91,13 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | G6 崩溃恢复演练 | crash_recovery_drill 四阶段 gpui 测试 | 通过 |
 | G7 渲染快照 | render_structure_snapshot 黄金快照（含列表组分隔空段、表格空 display_text 两处设计使然差异说明） | 通过 |
 
+## 第九批补充（E3 拖拽排序 / F1 单文件导出验证）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| E3 标签拖拽 | tab 全部 93 项用例 | 通过 |
+| F1 单文件 HTML | single_file_export_embeds_local_images_as_data_uris 测试 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
