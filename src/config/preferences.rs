@@ -228,6 +228,10 @@ pub(crate) struct AppPreferences {
     pub(crate) window_frame: Option<WindowFrame>,
     /// Session-wide text zoom in percent (60..=200).
     pub(crate) zoom_percent: i64,
+    /// Default window width when no remembered frame applies.
+    pub(crate) default_window_width: i64,
+    /// Default window height when no remembered frame applies.
+    pub(crate) default_window_height: i64,
 }
 
 impl Default for AppPreferences {
@@ -248,6 +252,8 @@ impl Default for AppPreferences {
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
+            default_window_width: 1080,
+            default_window_height: 720,
         }
     }
 }
@@ -273,6 +279,8 @@ pub struct EditorSettings {
     zoom_percent: i64,
     autosave_debounce_ms: u64,
     tree_sort: TreeSortPreference,
+    default_window_width: i64,
+    default_window_height: i64,
 }
 
 impl Global for EditorSettings {}
@@ -341,6 +349,17 @@ impl EditorSettings {
                     .map(|preferences| preferences.tree_sort)
             })
             .unwrap_or_default();
+        let (default_window_width, default_window_height) = cx
+            .try_global::<Self>()
+            .map(|settings| {
+                (settings.default_window_width, settings.default_window_height)
+            })
+            .or_else(|| {
+                read_app_preferences().ok().map(|preferences| {
+                    (preferences.default_window_width, preferences.default_window_height)
+                })
+            })
+            .unwrap_or((1080, 720));
         cx.set_global(Self {
             show_table_headers,
             fonts,
@@ -349,6 +368,8 @@ impl EditorSettings {
             zoom_percent,
             autosave_debounce_ms,
             tree_sort,
+            default_window_width,
+            default_window_height,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -427,6 +448,13 @@ impl EditorSettings {
         }) {
             eprintln!("failed to save zoom percent: {error}");
         }
+    }
+
+    /// Default editor window size used when no remembered frame applies.
+    pub(crate) fn default_window_size(cx: &App) -> (i64, i64) {
+        cx.try_global::<Self>()
+            .map(|settings| (settings.default_window_width, settings.default_window_height))
+            .unwrap_or((1080, 720))
     }
 
     pub(crate) fn set_workspace_sidebar_width(cx: &mut App, width: u16) {
@@ -557,6 +585,8 @@ struct WindowPreferencesFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     frame: Option<WindowFrameFile>,
     zoom_percent: i64,
+    default_window_width: i64,
+    default_window_height: i64,
 }
 
 #[derive(Serialize)]
@@ -613,6 +643,8 @@ impl From<&AppPreferences> for PreferencesFile {
                 remember_bounds: value.remember_window_bounds,
                 frame: value.window_frame.map(WindowFrameFile::from),
                 zoom_percent: value.zoom_percent,
+                default_window_width: value.default_window_width,
+                default_window_height: value.default_window_height,
             },
             keybindings: normalize_shortcut_config(&value.keybindings),
         }
@@ -877,6 +909,16 @@ fn app_preferences_from_toml_value(
         .and_then(toml::Value::as_integer)
         .filter(|percent| (60..=200).contains(percent))
         .unwrap_or(100);
+    let default_window_width = window
+        .and_then(|window| window.get("default_window_width"))
+        .and_then(toml::Value::as_integer)
+        .filter(|width| (480..=8_000).contains(width))
+        .unwrap_or(1080);
+    let default_window_height = window
+        .and_then(|window| window.get("default_window_height"))
+        .and_then(toml::Value::as_integer)
+        .filter(|height| (320..=4_000).contains(height))
+        .unwrap_or(720);
     let window_frame = window
         .and_then(|window| window.get("frame"))
         .and_then(|frame| {
@@ -909,6 +951,8 @@ fn app_preferences_from_toml_value(
         remember_window_bounds,
         window_frame,
         zoom_percent,
+        default_window_width,
+        default_window_height,
     }
 }
 
@@ -3020,6 +3064,8 @@ mod tests {
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
+            default_window_width: 1080,
+            default_window_height: 720,
         };
 
         save_app_preferences_with_dirs(&preferences, &dirs)
@@ -3119,6 +3165,8 @@ mod tests {
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
+            default_window_width: 1080,
+            default_window_height: 720,
         };
         save_app_preferences_with_dirs(&preferences, &dirs)
             .expect("preferences should save to config.toml");

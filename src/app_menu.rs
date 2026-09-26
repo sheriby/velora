@@ -62,7 +62,8 @@ fn window_title(file_path: Option<&Path>) -> SharedString {
 /// the window stays reachable on the current displays; otherwise centers the
 /// default size.
 fn restored_window_bounds(cx: &mut App) -> Bounds<Pixels> {
-    let default_size = size(px(1080.), px(720.));
+    let (default_w, default_h) = crate::config::EditorSettings::default_window_size(cx);
+    let default_size = size(px(default_w as f32), px(default_h as f32));
     let frame = crate::config::saved_window_frame()
         .ok()
         .flatten()
