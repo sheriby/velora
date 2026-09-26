@@ -114,6 +114,12 @@ async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
         edit_update.as_secs_f64() * 1000.0,
         edit_draw.as_secs_f64() * 1000.0
     );
+    let start = Instant::now();
+    let source_bytes = editor.read_with(cx, |editor, cx| editor.current_document_source(cx).len());
+    println!(
+        "serialized_bytes={source_bytes} serialize_ms={:.1}",
+        start.elapsed().as_secs_f64() * 1000.0
+    );
 }
 
 #[gpui::test]

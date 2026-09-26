@@ -20,7 +20,7 @@ use crate::components::{
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
     import_language_config_and_select, import_theme_config_and_select, open_preferences_window,
-    read_recent_files, record_recent_file, remove_recent_file,
+    read_recent_files, read_recent_folders, record_recent_file, remove_recent_file,
 };
 use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
@@ -387,9 +387,56 @@ fn recent_files_for_menu() -> Vec<PathBuf> {
     }
 }
 
+fn recent_folders_for_menu() -> Vec<PathBuf> {
+    match read_recent_folders() {
+        Ok(paths) => paths,
+        Err(err) => {
+            eprintln!("failed to read recent folder history: {err}");
+            Vec::new()
+        }
+    }
+}
+
+/// Interleaves the two recency lists so 打开最近 shows both files and
+/// folders, deduplicated, capped at 15 entries.
+fn merged_recent_entries(files: &[PathBuf], folders: &[PathBuf]) -> Vec<PathBuf> {
+    let mut merged = Vec::new();
+    let mut file_index = 0usize;
+    let mut folder_index = 0usize;
+    while merged.len() < 15 && (file_index < files.len() || folder_index < folders.len()) {
+        if file_index < files.len() {
+            let path = &files[file_index];
+            file_index += 1;
+            if !merged.contains(path) {
+                merged.push(path.clone());
+            }
+        }
+        if merged.len() == 15 {
+            break;
+        }
+        if folder_index < folders.len() {
+            let path = &folders[folder_index];
+            folder_index += 1;
+            if !merged.contains(path) {
+                merged.push(path.clone());
+            }
+        }
+    }
+    merged
+}
+
 fn open_recent_file(cx: &mut App, path: PathBuf) {
     let error_window = cx.active_window();
-    open_recent_file_with_error_window(cx, path, error_window);
+    // Re-enter the app context asynchronously before touching window handles.
+    // Dispatching directly inside the native-menu action stack hands us stale
+    // handles ("window not found"), while the 文件 → 打开文件 flow — which
+    // resolves its selection inside an AsyncApp::update — works fine.
+    cx.spawn(async move |cx| {
+        let _ = cx.update(move |cx| {
+            open_recent_file_with_error_window(cx, path, error_window);
+        });
+    })
+    .detach();
 }
 
 fn open_recent_file_with_error_window(
@@ -397,6 +444,12 @@ fn open_recent_file_with_error_window(
     path: PathBuf,
     error_window: Option<AnyWindowHandle>,
 ) {
+    // Folders route to the working-set flow before the file-existence check,
+    // otherwise every folder entry would be reported as "missing file".
+    if path.is_dir() {
+        open_recent_folder(cx, path, error_window);
+        return;
+    }
     if !path.is_file() {
         if let Err(err) = remove_recent_file(&path) {
             eprintln!("failed to remove missing recent file: {err}");
@@ -426,6 +479,25 @@ fn open_recent_file_with_error_window(
         return;
     }
     if let Err(err) = open_file_in_new_window(cx, &path) {
+        let title = cx
+            .global::<I18nManager>()
+            .strings()
+            .open_failed_title
+            .clone();
+        show_window_prompt(error_window, &title, &err.to_string(), cx);
+    }
+}
+
+fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindowHandle>) {
+    // 打开最近 replaces the focused window's working set outright — no
+    // confirmation dialog. A fresh window is only spawned when none exists.
+    if let Some(handle) = editor_window_for_folder_open(cx) {
+        let _ = handle.update(cx, |editor, _window, cx| {
+            editor.set_workspace_root(path, cx);
+        });
+        return;
+    }
+    if let Err(err) = open_workspace_window(cx, path) {
         let title = cx
             .global::<I18nManager>()
             .strings()
@@ -973,10 +1045,12 @@ fn build_menus(
 
 pub(crate) fn install_menus(cx: &mut App) {
     let recent_files = recent_files_for_menu();
+    let recent_folders = recent_folders_for_menu();
+    let recent_entries = merged_recent_entries(&recent_files, &recent_folders);
     let menus = build_menus(
         cx.global::<ThemeManager>(),
         cx.global::<I18nManager>(),
-        &recent_files,
+        &recent_entries,
     );
     cx.set_menus(menus);
 }
@@ -1399,12 +1473,12 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(
             submenu(&menus[1].items[3]).name.to_string(),
-            "Open Recent File"
+            "Open Recent"
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             submenu(&menus[0].items[3]).name.to_string(),
-            "Open Recent File"
+            "Open Recent"
         );
 
         // Close Window is colocated with New Window in the File menu.
@@ -1551,9 +1625,9 @@ mod tests {
         #[cfg(not(target_os = "macos"))]
         let recent_menu = submenu(&menus[0].items[3]);
 
-        assert_eq!(recent_menu.name.to_string(), "Open Recent File");
+        assert_eq!(recent_menu.name.to_string(), "Open Recent");
         assert_eq!(recent_menu.items.len(), 1);
-        assert_eq!(action_name(&recent_menu.items[0]), "No Recent Files");
+        assert_eq!(action_name(&recent_menu.items[0]), "No Recent Files or Folders");
         match &recent_menu.items[0] {
             MenuItem::Action { action, .. } => {
                 assert!(action.as_any().is::<NoRecentFiles>());

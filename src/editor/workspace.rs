@@ -246,6 +246,15 @@ impl Default for WorkspaceState {
 
 impl Editor {
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        // Canonicalize so recent-folder entries read as real absolute paths
+        // (a CLI "." would otherwise be recorded as "<cwd>/.").
+        let root = std::fs::canonicalize(&root).unwrap_or(root);
+        if crate::config::record_recent_folder(&root).is_ok()
+            && cx.try_global::<ThemeManager>().is_some()
+            && cx.try_global::<crate::i18n::I18nManager>().is_some()
+        {
+            crate::app_menu::install_menus(cx);
+        }
         self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;

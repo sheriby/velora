@@ -1,3 +1,4 @@
 tests/fixtures/perf/*.md
 /target/
 /dist/
+.DS_Store

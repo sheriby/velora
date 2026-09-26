@@ -21,6 +21,7 @@ pub(crate) use recovery::{
 };
 
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
+pub(crate) const RECENT_FOLDERS_LIMIT: usize = 10;
 
 /// velora 的跨平台配置目录。
 #[derive(Debug, Clone)]
@@ -60,6 +61,10 @@ impl VelotypeConfigDirs {
         self.root.join(".history")
     }
 
+    pub(crate) fn recent_folders_file(&self) -> PathBuf {
+        self.root.join("recent-folders.txt")
+    }
+
     pub(crate) fn app_config_file(&self) -> PathBuf {
         self.root.join("config.toml")
     }
@@ -75,6 +80,86 @@ pub(crate) fn read_recent_files() -> anyhow::Result<Vec<PathBuf>> {
 
 pub(crate) fn record_recent_file(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     record_recent_file_with_dirs(path, &VelotypeConfigDirs::from_system()?)
+}
+
+pub(crate) fn read_recent_folders() -> anyhow::Result<Vec<PathBuf>> {
+    read_recent_folders_with_dirs(&VelotypeConfigDirs::from_system()?)
+}
+
+pub(crate) fn record_recent_folder(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    record_recent_folder_with_dirs(path, &VelotypeConfigDirs::from_system()?)
+}
+
+fn read_recent_folders_with_dirs(dirs: &VelotypeConfigDirs) -> anyhow::Result<Vec<PathBuf>> {
+    let path = dirs.recent_folders_file();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read '{}'", path.display()));
+        }
+    };
+
+    Ok(normalize_recent_folders(text.lines().map(PathBuf::from)))
+}
+
+fn record_recent_folder_with_dirs(
+    path: &Path,
+    dirs: &VelotypeConfigDirs,
+) -> anyhow::Result<Vec<PathBuf>> {
+    if path.to_string_lossy().trim().is_empty() || !path.is_dir() {
+        bail!("recent folder path must be an existing directory");
+    }
+
+    let mut paths = read_recent_folders_with_dirs(dirs)?;
+    let path = path.to_path_buf();
+    paths.retain(|existing| !same_recent_path(existing, &path));
+    paths.insert(0, path);
+    paths.truncate(RECENT_FOLDERS_LIMIT);
+    write_recent_folders_with_dirs(&paths, dirs)?;
+    Ok(paths)
+}
+
+fn write_recent_folders_with_dirs(
+    paths: &[PathBuf],
+    dirs: &VelotypeConfigDirs,
+) -> anyhow::Result<()> {
+    let file = dirs.recent_folders_file();
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create '{}'", parent.display()))?;
+    }
+    let content = paths
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&file, content + "\n")
+        .with_context(|| format!("failed to write '{}'", file.display()))
+}
+
+fn normalize_recent_folders(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut normalized: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        let text = path.to_string_lossy();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        if !path.is_dir()
+            || normalized
+                .iter()
+                .any(|existing| same_recent_path(existing, &path))
+        {
+            continue;
+        }
+        normalized.push(path);
+        if normalized.len() == RECENT_FOLDERS_LIMIT {
+            break;
+        }
+    }
+    normalized
 }
 
 pub(crate) fn remove_recent_file(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
