@@ -241,40 +241,7 @@ impl Default for WorkspaceState {
 }
 
 impl Editor {
-    pub(crate) fn prompt_open_workspace_folder(&mut self, cx: &mut Context<Self>) {
-        let prompt_title = cx
-            .global::<crate::i18n::I18nManager>()
-            .strings()
-            .open_workspace_folder_prompt
-            .clone();
-        let prompt = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some(prompt_title.into()),
-        });
-        let editor = cx.entity().downgrade();
-
-        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let Ok(Ok(Some(mut paths))) = prompt.await else {
-                return;
-            };
-            let Some(root) = paths.pop() else {
-                return;
-            };
-            let _ = editor.update(cx, |editor, cx| editor.set_workspace_root(root, cx));
-        })
-        .detach();
-    }
-
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
-        if crate::config::record_recent_workspace(&root).is_ok() {
-            if cx.try_global::<ThemeManager>().is_some()
-                && cx.try_global::<crate::i18n::I18nManager>().is_some()
-            {
-                crate::app_menu::install_menus(cx);
-            }
-        }
         self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
@@ -617,8 +584,6 @@ impl Editor {
                     remap_moved_path(root, &source, &destination, source_is_directory)
                 }) {
                     editor.workspace.root = Some(root.clone());
-                    let _ = crate::config::record_recent_workspace(&root);
-                    crate::app_menu::install_menus(cx);
                 }
                 editor.workspace.selected = match editor.workspace.selected.take() {
                     Some(WorkspaceSelection::File(path)) => {
@@ -1023,7 +988,7 @@ impl Editor {
 
     pub(crate) fn on_toggle_workspace_action(
         &mut self,
-        _: &crate::components::ToggleWorkspace,
+        _: &crate::components::ToggleSidebar,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1096,9 +1061,6 @@ impl Editor {
         self.workspace.outline_source = None;
         if self.workspace.root.is_none() {
             self.workspace.root = self.workspace_root_for_current_file();
-            if let Some(root) = self.workspace.root.as_ref() {
-                let _ = crate::config::record_recent_workspace(root);
-            }
         }
         if self.workspace.is_open {
             self.sync_workspace_models(cx);

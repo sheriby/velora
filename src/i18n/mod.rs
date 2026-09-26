@@ -84,8 +84,6 @@ pub struct I18nStrings {
     pub menu_language: String,
     /// Top-level Theme menu label.
     pub menu_theme: String,
-    /// Top-level Workspace menu label.
-    pub menu_workspace: String,
     /// Top-level Help menu label.
     pub menu_help: String,
     /// Language menu item for importing a custom language pack.
@@ -98,8 +96,6 @@ pub struct I18nStrings {
     pub menu_close_window: String,
     /// File menu item for opening Markdown files.
     pub menu_open_file: String,
-    /// Workspace action for choosing a root folder.
-    pub menu_open_workspace_folder: String,
     /// File menu item for opening a recent file submenu.
     pub menu_open_recent_file: String,
     /// File menu item for opening app preferences.
@@ -124,12 +120,8 @@ pub struct I18nStrings {
     pub menu_install_cli_tool: String,
     /// Help menu item for uninstalling the CLI tool.
     pub menu_uninstall_cli_tool: String,
-    /// Workspace menu item for opening or closing the workspace drawer.
-    pub menu_toggle_workspace: String,
     /// Native file-dialog prompt for opening Markdown files.
     pub open_markdown_files_prompt: String,
-    /// Native file-dialog prompt for choosing a workspace folder.
-    pub open_workspace_folder_prompt: String,
     /// Native file-dialog prompt for importing a language pack.
     pub add_language_config_prompt: String,
     /// Native file-dialog prompt for importing a theme pack.
@@ -248,7 +240,7 @@ pub struct I18nStrings {
     pub preferences_shortcut_find_in_document: String,
     pub preferences_shortcut_find_next_match: String,
     pub preferences_shortcut_find_previous_match: String,
-    pub preferences_shortcut_toggle_workspace: String,
+    pub preferences_shortcut_toggle_sidebar: String,
     /// Workspace drawer Files tab.
     pub workspace_panel_title: String,
     pub workspace_tab_files: String,
@@ -256,8 +248,6 @@ pub struct I18nStrings {
     pub workspace_tab_outline: String,
     /// Workspace drawer recent roots tab.
     pub workspace_tab_recent: String,
-    /// Empty state for the recent-workspaces list.
-    pub workspace_empty_recent: String,
     /// Placeholder for filtering workspace files by name.
     pub workspace_search_placeholder: String,
     pub workspace_document_find_placeholder: String,
@@ -446,14 +436,12 @@ struct I18nStringsDe {
     menu_export: Option<String>,
     menu_language: Option<String>,
     menu_theme: Option<String>,
-    menu_workspace: Option<String>,
     menu_help: Option<String>,
     menu_add_language_config: Option<String>,
     menu_add_theme_config: Option<String>,
     menu_new_window: Option<String>,
     menu_close_window: Option<String>,
     menu_open_file: Option<String>,
-    menu_open_workspace_folder: Option<String>,
     menu_open_recent_file: Option<String>,
     menu_preferences: Option<String>,
     menu_no_recent_files: Option<String>,
@@ -466,9 +454,7 @@ struct I18nStringsDe {
     menu_about: Option<String>,
     menu_install_cli_tool: Option<String>,
     menu_uninstall_cli_tool: Option<String>,
-    menu_toggle_workspace: Option<String>,
     open_markdown_files_prompt: Option<String>,
-    open_workspace_folder_prompt: Option<String>,
     add_language_config_prompt: Option<String>,
     add_theme_config_prompt: Option<String>,
     open_failed_title: Option<String>,
@@ -560,12 +546,11 @@ struct I18nStringsDe {
     preferences_shortcut_find_in_document: Option<String>,
     preferences_shortcut_find_next_match: Option<String>,
     preferences_shortcut_find_previous_match: Option<String>,
-    preferences_shortcut_toggle_workspace: Option<String>,
+    preferences_shortcut_toggle_sidebar: Option<String>,
     workspace_panel_title: Option<String>,
     workspace_tab_files: Option<String>,
     workspace_tab_outline: Option<String>,
     workspace_tab_recent: Option<String>,
-    workspace_empty_recent: Option<String>,
     workspace_search_placeholder: Option<String>,
     workspace_document_find_placeholder: Option<String>,
     workspace_current_document_label: Option<String>,
@@ -678,14 +663,12 @@ const I18N_STRING_KEYS: &[&str] = &[
     "menu_export",
     "menu_language",
     "menu_theme",
-    "menu_workspace",
     "menu_help",
     "menu_add_language_config",
     "menu_add_theme_config",
     "menu_new_window",
     "menu_close_window",
     "menu_open_file",
-    "menu_open_workspace_folder",
     "menu_open_recent_file",
     "menu_preferences",
     "menu_no_recent_files",
@@ -698,9 +681,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "menu_about",
     "menu_install_cli_tool",
     "menu_uninstall_cli_tool",
-    "menu_toggle_workspace",
     "open_markdown_files_prompt",
-    "open_workspace_folder_prompt",
     "add_language_config_prompt",
     "add_theme_config_prompt",
     "open_failed_title",
@@ -792,12 +773,11 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_shortcut_find_in_document",
     "preferences_shortcut_find_next_match",
     "preferences_shortcut_find_previous_match",
-    "preferences_shortcut_toggle_workspace",
+    "preferences_shortcut_toggle_sidebar",
     "workspace_panel_title",
     "workspace_tab_files",
     "workspace_tab_outline",
     "workspace_tab_recent",
-    "workspace_empty_recent",
     "workspace_search_placeholder",
     "workspace_document_find_placeholder",
     "workspace_current_document_label",
@@ -962,7 +942,6 @@ impl I18nStringsDe {
             menu_export: self.menu_export.unwrap_or(defaults.menu_export),
             menu_language: self.menu_language.unwrap_or(defaults.menu_language),
             menu_theme: self.menu_theme.unwrap_or(defaults.menu_theme),
-            menu_workspace: self.menu_workspace.unwrap_or(defaults.menu_workspace),
             menu_help: self.menu_help.unwrap_or(defaults.menu_help),
             menu_add_language_config: self
                 .menu_add_language_config
@@ -973,9 +952,6 @@ impl I18nStringsDe {
             menu_new_window: self.menu_new_window.unwrap_or(defaults.menu_new_window),
             menu_close_window: self.menu_close_window.unwrap_or(defaults.menu_close_window),
             menu_open_file: self.menu_open_file.unwrap_or(defaults.menu_open_file),
-            menu_open_workspace_folder: self
-                .menu_open_workspace_folder
-                .unwrap_or(defaults.menu_open_workspace_folder),
             menu_open_recent_file: self
                 .menu_open_recent_file
                 .unwrap_or(defaults.menu_open_recent_file),
@@ -998,15 +974,9 @@ impl I18nStringsDe {
             menu_uninstall_cli_tool: self
                 .menu_uninstall_cli_tool
                 .unwrap_or(defaults.menu_uninstall_cli_tool),
-            menu_toggle_workspace: self
-                .menu_toggle_workspace
-                .unwrap_or(defaults.menu_toggle_workspace),
             open_markdown_files_prompt: self
                 .open_markdown_files_prompt
                 .unwrap_or(defaults.open_markdown_files_prompt),
-            open_workspace_folder_prompt: self
-                .open_workspace_folder_prompt
-                .unwrap_or(defaults.open_workspace_folder_prompt),
             add_language_config_prompt: self
                 .add_language_config_prompt
                 .unwrap_or(defaults.add_language_config_prompt),
@@ -1274,9 +1244,9 @@ impl I18nStringsDe {
             preferences_shortcut_find_previous_match: self
                 .preferences_shortcut_find_previous_match
                 .unwrap_or(defaults.preferences_shortcut_find_previous_match),
-            preferences_shortcut_toggle_workspace: self
-                .preferences_shortcut_toggle_workspace
-                .unwrap_or(defaults.preferences_shortcut_toggle_workspace),
+            preferences_shortcut_toggle_sidebar: self
+                .preferences_shortcut_toggle_sidebar
+                .unwrap_or(defaults.preferences_shortcut_toggle_sidebar),
             workspace_panel_title: self
                 .workspace_panel_title
                 .unwrap_or(defaults.workspace_panel_title),
@@ -1289,9 +1259,6 @@ impl I18nStringsDe {
             workspace_tab_recent: self
                 .workspace_tab_recent
                 .unwrap_or(defaults.workspace_tab_recent),
-            workspace_empty_recent: self
-                .workspace_empty_recent
-                .unwrap_or(defaults.workspace_empty_recent),
             workspace_search_placeholder: self
                 .workspace_search_placeholder
                 .unwrap_or(defaults.workspace_search_placeholder),
@@ -1548,14 +1515,12 @@ impl I18nStrings {
             menu_export: "导出".into(),
             menu_language: "语言".into(),
             menu_theme: "主题".into(),
-            menu_workspace: "工作区".into(),
             menu_help: "帮助".into(),
             menu_add_language_config: "添加语言配置".into(),
             menu_add_theme_config: "添加主题配置".into(),
             menu_new_window: "新建窗口".into(),
             menu_close_window: "关闭窗口".into(),
             menu_open_file: "打开文件".into(),
-            menu_open_workspace_folder: "打开工作区文件夹".into(),
             menu_open_recent_file: "打开最近文件".into(),
             menu_preferences: "偏好设置".into(),
             menu_no_recent_files: "无最近文件".into(),
@@ -1568,9 +1533,7 @@ impl I18nStrings {
             menu_about: "关于".into(),
             menu_install_cli_tool: "安装CLI命令".into(),
             menu_uninstall_cli_tool: "卸载CLI命令".into(),
-            menu_toggle_workspace: "切换工作区".into(),
             open_markdown_files_prompt: "打开 Markdown 文件".into(),
-            open_workspace_folder_prompt: "选择工作区文件夹".into(),
             add_language_config_prompt: "选择语言配置文件".into(),
             add_theme_config_prompt: "选择主题配置文件".into(),
             open_failed_title: "打开失败".into(),
@@ -1657,12 +1620,11 @@ impl I18nStrings {
             preferences_shortcut_find_in_document: "查找当前文档".into(),
             preferences_shortcut_find_next_match: "查找下一个".into(),
             preferences_shortcut_find_previous_match: "查找上一个".into(),
-            preferences_shortcut_toggle_workspace: "切换工作区".into(),
+            preferences_shortcut_toggle_sidebar: "切换侧边栏".into(),
             workspace_panel_title: "资源管理器".into(),
             workspace_tab_files: "文件".into(),
             workspace_tab_outline: "大纲".into(),
             workspace_tab_recent: "最近".into(),
-            workspace_empty_recent: "还没有最近打开的工作区".into(),
             workspace_search_placeholder: "搜索文件名与内容".into(),
             workspace_document_find_placeholder: "查找当前文档".into(),
             workspace_current_document_label: "当前文档".into(),
@@ -1800,14 +1762,12 @@ impl I18nStrings {
             menu_export: "Export".into(),
             menu_language: "Language".into(),
             menu_theme: "Theme".into(),
-            menu_workspace: "Workspace".into(),
             menu_help: "Help".into(),
             menu_add_language_config: "Add Language Config".into(),
             menu_add_theme_config: "Add Theme Config".into(),
             menu_new_window: "New Window".into(),
             menu_close_window: "Close Window".into(),
             menu_open_file: "Open File".into(),
-            menu_open_workspace_folder: "Open Workspace Folder".into(),
             menu_open_recent_file: "Open Recent File".into(),
             menu_preferences: "Preferences".into(),
             menu_no_recent_files: "No Recent Files".into(),
@@ -1820,9 +1780,7 @@ impl I18nStrings {
             menu_about: "About".into(),
             menu_install_cli_tool: "Install CLI Command".into(),
             menu_uninstall_cli_tool: "Uninstall CLI Command".into(),
-            menu_toggle_workspace: "Toggle Workspace".into(),
             open_markdown_files_prompt: "Open Markdown Files".into(),
-            open_workspace_folder_prompt: "Choose Workspace Folder".into(),
             add_language_config_prompt: "Choose Language Config".into(),
             add_theme_config_prompt: "Choose Theme Config".into(),
             open_failed_title: "Open Failed".into(),
@@ -1919,12 +1877,11 @@ impl I18nStrings {
             preferences_shortcut_find_in_document: "Find in Document".into(),
             preferences_shortcut_find_next_match: "Find Next".into(),
             preferences_shortcut_find_previous_match: "Find Previous".into(),
-            preferences_shortcut_toggle_workspace: "Toggle Workspace".into(),
+            preferences_shortcut_toggle_sidebar: "Toggle Sidebar".into(),
             workspace_panel_title: "Explorer".into(),
             workspace_tab_files: "Files".into(),
             workspace_tab_outline: "Outline".into(),
             workspace_tab_recent: "Recent".into(),
-            workspace_empty_recent: "No recent workspaces".into(),
             workspace_search_placeholder: "Search files and contents".into(),
             workspace_document_find_placeholder: "Find in document".into(),
             workspace_current_document_label: "Current Document".into(),

@@ -1846,8 +1846,8 @@ impl PreferencesWindow {
             ShortcutCommand::FindPreviousMatch => {
                 strings.preferences_shortcut_find_previous_match.clone()
             }
-            ShortcutCommand::ToggleWorkspace => {
-                strings.preferences_shortcut_toggle_workspace.clone()
+            ShortcutCommand::ToggleSidebar => {
+                strings.preferences_shortcut_toggle_sidebar.clone()
             }
         }
     }

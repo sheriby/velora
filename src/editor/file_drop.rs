@@ -38,6 +38,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Dropping a folder makes it the working set of this window.
+        if let Some(folder) = paths
+            .paths()
+            .iter()
+            .find(|path| path.is_dir())
+            .cloned()
+        {
+            self.set_workspace_root(folder, cx);
+            return;
+        }
+
         if let Some(path) = Self::first_dropped_markdown_path(paths.paths()) {
             self.request_dropped_markdown_replace(path, window, cx);
             return;

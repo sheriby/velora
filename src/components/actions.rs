@@ -55,7 +55,6 @@ actions!(
         SaveDocument,
         NewWindow,
         OpenFile,
-        OpenWorkspaceFolder,
         OpenPreferences,
         NoRecentFiles,
         SaveDocumentAs,
@@ -76,7 +75,7 @@ actions!(
         FindInDocument,
         FindNextMatch,
         FindPreviousMatch,
-        ToggleWorkspace,
+        ToggleSidebar,
     ]
 );
 
@@ -104,13 +103,6 @@ pub struct SelectLanguage {
 #[serde(deny_unknown_fields)]
 pub struct OpenRecentFile {
     /// Path stored in Velotype's recent-file history.
-    pub path: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, gpui::Action)]
-#[action(namespace = velotype)]
-#[serde(deny_unknown_fields)]
-pub struct OpenRecentWorkspace {
     pub path: String,
 }
 
@@ -176,7 +168,7 @@ pub(crate) enum ShortcutCommand {
     FindInDocument,
     FindNextMatch,
     FindPreviousMatch,
-    ToggleWorkspace,
+    ToggleSidebar,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -555,8 +547,8 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         context: None,
     },
     ShortcutDefinition {
-        command: ShortcutCommand::ToggleWorkspace,
-        id: "toggle_workspace",
+        command: ShortcutCommand::ToggleSidebar,
+        id: "toggle_sidebar",
         category: ShortcutCategory::Navigation,
         default_keys: &["ctrl-w"],
         context: None,
@@ -772,7 +764,7 @@ fn key_binding_for(
         ShortcutCommand::FindInDocument => KeyBinding::new(key, FindInDocument, context),
         ShortcutCommand::FindNextMatch => KeyBinding::new(key, FindNextMatch, context),
         ShortcutCommand::FindPreviousMatch => KeyBinding::new(key, FindPreviousMatch, context),
-        ShortcutCommand::ToggleWorkspace => KeyBinding::new(key, ToggleWorkspace, context),
+        ShortcutCommand::ToggleSidebar => KeyBinding::new(key, ToggleSidebar, context),
     }
 }
 
@@ -833,9 +825,9 @@ mod tests {
     }
 
     #[test]
-    fn toggle_workspace_has_default_shortcuts() {
+    fn toggle_sidebar_has_default_shortcuts() {
         assert_eq!(
-            resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::ToggleWorkspace),
+            resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::ToggleSidebar),
             vec!["ctrl-w".to_string()]
         );
     }
