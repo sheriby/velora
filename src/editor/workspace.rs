@@ -245,6 +245,21 @@ impl Default for WorkspaceState {
 }
 
 impl Editor {
+    /// Opens a welcome-page recent entry: folders replace the working set,
+    /// files open as a tab in this window.
+    pub(crate) fn open_recent_entry(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if path.is_dir() {
+            self.set_workspace_root(path.to_path_buf(), cx);
+        } else {
+            self.open_workspace_file(path.to_path_buf(), window, cx);
+        }
+    }
+
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         // Canonicalize so recent-folder entries read as real absolute paths
         // (a CLI "." would otherwise be recorded as "<cwd>/.").
@@ -1703,10 +1718,12 @@ impl Editor {
         // renderable. Non-text files still become the active tab; the content
         // area shows a centered placeholder.
         if !is_likely_text_file(&path) {
+            self.show_welcome = false;
             self.show_preview_unavailable(path.clone(), window, cx);
             return;
         }
         self.unsupported_preview_path = None;
+        self.show_welcome = false;
         if self.file_path.is_none() && self.document_dirty {
             self.request_dropped_markdown_replace(path, window, cx);
             return;
@@ -1811,6 +1828,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_welcome = false;
         if let Some(existing) = self
             .workspace
             .open_documents
@@ -2148,6 +2166,7 @@ impl Editor {
                 self.workspace.selected = None;
                 self.replace_document_from_markdown(String::new(), None, cx);
                 window.set_window_edited(false);
+                self.show_welcome = true;
             }
         }
         if self.document_dirty || self.has_dirty_workspace_documents() {

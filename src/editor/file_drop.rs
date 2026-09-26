@@ -38,6 +38,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_welcome = false;
         // Dropping a folder makes it the working set of this window.
         if let Some(folder) = paths
             .paths()

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use gpui::*;
 
 use super::{Editor, InfoDialogKind, MountedRun};
-use crate::app_menu::dispatch_menu_action_for_editor;
+use crate::app_menu::{dispatch_menu_action_for_editor, welcome_recent_entries};
 use crate::components::CalloutVariant;
 use crate::components::{AddLanguageConfig, AddThemeConfig, Block, BlockKind, NoRecentFiles};
 use crate::i18n::{I18nManager, I18nStrings};
@@ -1195,6 +1195,196 @@ impl Editor {
         }
     }
 
+    /// Full-area welcome page for windows opened without a document: brand
+    /// mark, quick actions, and recent entries.
+    fn render_welcome_page(
+        &self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let t = &theme.typography;
+
+        let recent = welcome_recent_entries();
+        let primary_button = div()
+            .id("welcome-new-document")
+            .h(px(d.dialog_button_height))
+            .px(px(d.dialog_button_padding_x + 8.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+            .bg(c.dialog_primary_button_bg)
+            .hover(|this| this.bg(c.dialog_primary_button_hover))
+            .active(|this| this.opacity(0.92))
+            .cursor_pointer()
+            .text_size(px(t.dialog_button_size))
+            .font_weight(t.dialog_button_weight.to_font_weight())
+            .text_color(c.dialog_primary_button_text)
+            .child(strings.welcome_new_document.clone())
+            .on_click(cx.listener(Self::on_welcome_new_document));
+        let open_button = div()
+            .id("welcome-open")
+            .h(px(d.dialog_button_height))
+            .px(px(d.dialog_button_padding_x + 8.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+            .border(px(d.dialog_border_width))
+            .border_color(c.dialog_border)
+            .bg(c.dialog_secondary_button_bg)
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .active(|this| this.opacity(0.92))
+            .cursor_pointer()
+            .text_size(px(t.dialog_button_size))
+            .font_weight(t.dialog_button_weight.to_font_weight())
+            .text_color(c.dialog_secondary_button_text)
+            .child(strings.welcome_open.clone())
+            .on_click(cx.listener(Self::on_welcome_open));
+
+        let mut column = div()
+            .w(px(360.0))
+            .max_w(relative(1.0))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(14.0))
+            .child(
+                img("icon/velora.png")
+                    .size(px(88.0))
+                    .object_fit(ObjectFit::Contain),
+            )
+            .child(
+                div()
+                    .text_size(px(24.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(c.text_default)
+                    .child("Velora"),
+            )
+            .child(
+                div()
+                    .text_size(px(t.text_size * 0.95))
+                    .text_color(c.dialog_muted)
+                    .child(strings.welcome_tagline.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .mt(px(6.0))
+                    .child(primary_button)
+                    .child(open_button),
+            );
+
+        if !recent.is_empty() {
+            let mut list = div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .mt(px(10.0))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(c.dialog_muted)
+                        .child(strings.welcome_recent.clone()),
+                );
+            for (index, path) in recent.iter().enumerate() {
+                let label = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                let folder_marker = path.is_dir();
+                let entry_path = path.clone();
+                list = list.child(
+                    div()
+                        .id(("welcome-recent-entry", index))
+                        .w_full()
+                        .px(px(10.0))
+                        .h(px(28.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .rounded(px(5.0))
+                        .cursor_pointer()
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .text_size(px(12.0))
+                        .text_color(c.dialog_body)
+                        .child(
+                            div()
+                                .max_w(px(240.0))
+                                .min_w(px(0.0))
+                                .truncate()
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .truncate()
+                                .text_size(px(10.5))
+                                .text_color(c.dialog_muted)
+                                .child(if folder_marker {
+                                    strings.workspace_folder_entry_label.clone()
+                                } else {
+                                    path.to_string_lossy().into_owned()
+                                }),
+                        )
+                        .on_click(cx.listener(move |editor, _event, window, cx| {
+                            editor.open_recent_entry(&entry_path, window, cx);
+                        })),
+                );
+            }
+            column = column.child(list);
+        }
+
+        div()
+            .id("welcome-page")
+            .w_full()
+            .h_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .bg(c.editor_background)
+            .child(column)
+            .child(
+                div()
+                    .mt(px(18.0))
+                    .text_size(px(11.0))
+                    .text_color(c.dialog_muted)
+                    .child(strings.welcome_shortcut_hint.clone()),
+            )
+            .into_any_element()
+    }
+
+    pub(crate) fn on_welcome_new_document(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_welcome = false;
+        self.replace_document_from_markdown(String::new(), None, cx);
+        self.pending_focus = self.first_focusable_entity_id(cx);
+        self.active_entity_id = self.pending_focus;
+        cx.notify();
+    }
+
+    pub(crate) fn on_welcome_open(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::app_menu::dispatch_menu_action(&crate::components::OpenFile, cx);
+    }
+
     /// In-app dialog asking whether a picked folder should replace this
     /// window's working set or open in a new window.
     fn render_folder_choice_overlay(
@@ -2334,7 +2524,9 @@ impl Render for Editor {
         let content_area = content_area.into_any_element();
         // A tab whose file the text editor can't preview replaces the whole
         // content area with a centered notice, VS Code style.
-        let content_area = if let Some(path) = self.unsupported_preview_path.as_ref() {
+        let content_area = if self.show_welcome {
+            self.render_welcome_page(&theme, &strings, cx)
+        } else if let Some(path) = self.unsupported_preview_path.as_ref() {
             let file_name = path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())

@@ -94,7 +94,12 @@ fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference
         }
     }
 
-    open_editor_window(cx, String::new(), None);
+    let handle = open_editor_window(cx, String::new(), None);
+    handle
+        .update(cx, |editor, _window, _cx| {
+            editor.show_welcome = true;
+        })
+        .ok();
 }
 
 fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
@@ -171,6 +176,9 @@ impl AssetSource for VeloraAssets {
             )))),
             "icon/workspace/generic-file.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/generic-file.svg"
+            )))),
+            "icon/velora.png" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/velora.png"
             )))),
             "icon/titlebar/chrome-close.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/titlebar/chrome-close.svg"

@@ -4196,3 +4196,65 @@ async fn toggle_view_mode_preserves_callout_table_cell_position(cx: &mut TestApp
         assert_eq!(editor.pending_focus, Some(restored_cell.entity_id()));
     });
 }
+
+#[gpui::test]
+async fn welcome_page_renders_and_dismisses_into_a_new_document(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = true;
+        cx.notify();
+    });
+    // The welcome overlay must render without panicking.
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    // 新建文档 dismisses the page and leaves an editable empty document.
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.on_welcome_new_document(&gpui::ClickEvent::default(), window, cx);
+        });
+        window.draw(cx).clear();
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(!editor.show_welcome);
+    });
+}
+
+#[gpui::test]
+async fn welcome_page_hides_once_a_document_opens(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-welcome-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let doc = root.join("welcome-sample.md");
+    std::fs::write(&doc, "# Welcome\n\nBody text.\n").expect("write doc");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = true;
+        editor.set_workspace_root(root.clone(), cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(doc.clone(), window, cx);
+        });
+        window.draw(cx).clear();
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(!editor.show_welcome);
+        assert_eq!(editor.file_path.as_deref(), Some(doc.as_path()));
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

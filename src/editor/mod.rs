@@ -129,6 +129,9 @@ pub struct Editor {
     /// Folder picked through 文件 → 打开文件 that is waiting for the user to
     /// choose between replacing this window's working set and a new window.
     pub(super) pending_folder_choice: Option<PathBuf>,
+    /// Window opened with no document (fresh workspace, empty startup): the
+    /// content area shows the welcome page instead of an empty editor.
+    pub(super) show_welcome: bool,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
     workspace: WorkspaceState,
@@ -398,6 +401,7 @@ impl Editor {
             info_dialog: None,
             unsupported_preview_path: None,
             pending_folder_choice: None,
+            show_welcome: false,
             update_check_in_progress: false,
             workspace: WorkspaceState::default(),
             status_bar: StatusBarState::default(),

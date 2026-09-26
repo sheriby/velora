@@ -105,6 +105,7 @@ pub(crate) fn open_workspace_window(cx: &mut App, root: PathBuf) -> anyhow::Resu
     let handle = open_editor_window(cx, String::new(), None);
     handle.update(cx, move |editor, _window, cx| {
         editor.set_workspace_root(root, cx);
+        editor.show_welcome = true;
     })?;
     Ok(())
 }
@@ -395,6 +396,13 @@ fn recent_folders_for_menu() -> Vec<PathBuf> {
             Vec::new()
         }
     }
+}
+
+/// Top few merged recent entries for the welcome page.
+pub(crate) fn welcome_recent_entries() -> Vec<PathBuf> {
+    let files = recent_files_for_menu();
+    let folders = recent_folders_for_menu();
+    merged_recent_entries(&files, &folders).into_iter().take(5).collect()
 }
 
 /// Interleaves the two recency lists so 打开最近 shows both files and

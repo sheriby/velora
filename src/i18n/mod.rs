@@ -311,6 +311,18 @@ pub struct I18nStrings {
     pub workspace_open_new_window_button: String,
     /// Center placeholder for files the text editor can't preview.
     pub workspace_preview_unavailable_message: String,
+    /// Welcome page tagline under the app name.
+    pub welcome_tagline: String,
+    /// Welcome page primary action.
+    pub welcome_new_document: String,
+    /// Welcome page secondary action.
+    pub welcome_open: String,
+    /// Welcome page recent-entries heading.
+    pub welcome_recent: String,
+    /// Welcome page keyboard hint footer.
+    pub welcome_shortcut_hint: String,
+    /// Marker label for folder entries in lists.
+    pub workspace_folder_entry_label: String,
     /// Message shown when picking or clicking a file type Velora can't open.
     pub workspace_open_unsupported_message: String,
     /// Tab context menu item for closing the tab.
@@ -596,6 +608,12 @@ struct I18nStringsDe {
     workspace_replace_current_button: Option<String>,
     workspace_open_new_window_button: Option<String>,
     workspace_preview_unavailable_message: Option<String>,
+    welcome_tagline: Option<String>,
+    welcome_new_document: Option<String>,
+    welcome_open: Option<String>,
+    welcome_recent: Option<String>,
+    welcome_shortcut_hint: Option<String>,
+    workspace_folder_entry_label: Option<String>,
     workspace_open_unsupported_message: Option<String>,
     tab_close: Option<String>,
     tab_close_others: Option<String>,
@@ -829,6 +847,12 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_replace_current_button",
     "workspace_open_new_window_button",
     "workspace_preview_unavailable_message",
+    "welcome_tagline",
+    "welcome_new_document",
+    "welcome_open",
+    "welcome_recent",
+    "welcome_shortcut_hint",
+    "workspace_folder_entry_label",
     "workspace_open_unsupported_message",
     "tab_close",
     "tab_close_others",
@@ -1372,6 +1396,18 @@ impl I18nStringsDe {
             workspace_preview_unavailable_message: self
                 .workspace_preview_unavailable_message
                 .unwrap_or(defaults.workspace_preview_unavailable_message),
+            welcome_tagline: self.welcome_tagline.unwrap_or(defaults.welcome_tagline),
+            welcome_new_document: self
+                .welcome_new_document
+                .unwrap_or(defaults.welcome_new_document),
+            welcome_open: self.welcome_open.unwrap_or(defaults.welcome_open),
+            welcome_recent: self.welcome_recent.unwrap_or(defaults.welcome_recent),
+            welcome_shortcut_hint: self
+                .welcome_shortcut_hint
+                .unwrap_or(defaults.welcome_shortcut_hint),
+            workspace_folder_entry_label: self
+                .workspace_folder_entry_label
+                .unwrap_or(defaults.workspace_folder_entry_label),
             workspace_open_unsupported_message: self
                 .workspace_open_unsupported_message
                 .unwrap_or(defaults.workspace_open_unsupported_message),
@@ -1699,6 +1735,12 @@ impl I18nStrings {
             workspace_replace_current_button: "替换当前工作区".into(),
             workspace_open_new_window_button: "打开新窗口".into(),
             workspace_preview_unavailable_message: "无法使用文本编辑器预览该文件".into(),
+            welcome_tagline: "为长文写作打造的 Markdown 编辑器".into(),
+            welcome_new_document: "新建文档".into(),
+            welcome_open: "打开文件或文件夹".into(),
+            welcome_recent: "最近打开".into(),
+            welcome_shortcut_hint: "⌘N 新建 · ⌘O 打开 · ⌘F 查找 · ⌘⇧F 全局搜索".into(),
+            workspace_folder_entry_label: "文件夹".into(),
             workspace_open_unsupported_message: "暂时无法打开该类型文件".into(),
             tab_close: "关闭".into(),
             tab_close_others: "关闭其他标签页".into(),
@@ -1963,6 +2005,12 @@ impl I18nStrings {
             workspace_open_new_window_button: "Open in New Window".into(),
             workspace_preview_unavailable_message:
                 "This file can't be previewed in the text editor".into(),
+            welcome_tagline: "A Markdown editor built for long-form writing".into(),
+            welcome_new_document: "New Document".into(),
+            welcome_open: "Open File or Folder".into(),
+            welcome_recent: "Recently Opened".into(),
+            welcome_shortcut_hint: "⌘N New · ⌘O Open · ⌘F Find · ⌘⇧F Search All".into(),
+            workspace_folder_entry_label: "Folder".into(),
             workspace_open_unsupported_message:
                 "This file type can't be opened in Velora yet".into(),
             tab_close: "Close".into(),
