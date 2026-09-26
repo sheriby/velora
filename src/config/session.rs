@@ -15,6 +15,9 @@ pub(crate) struct SessionState {
     pub(crate) tabs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) active: Option<String>,
+    /// Sidebar width remembered for this workspace root (roadmap E7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sidebar_width: Option<u16>,
 }
 
 pub(crate) fn read_session() -> anyhow::Result<SessionState> {
@@ -71,6 +74,7 @@ mod tests {
             root: Some("/tmp/workspace".into()),
             tabs: vec!["/tmp/workspace/a.md".into(), "/tmp/workspace/b.md".into()],
             active: Some("/tmp/workspace/b.md".into()),
+            sidebar_width: Some(300),
         };
         save_session_with_dirs(&session, &dirs).expect("save session");
         let loaded = read_session_with_dirs(&dirs).expect("read session");

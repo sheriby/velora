@@ -575,6 +575,7 @@ impl Editor {
                 .active_document
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
+            sidebar_width: self.workspace.panel_width.map(|width| width.round() as u16),
         };
         if let Err(error) = crate::config::save_session(&session) {
             eprintln!("failed to save session: {error}");
@@ -585,6 +586,13 @@ impl Editor {
         // Canonicalize so recent-folder entries read as real absolute paths
         // (a CLI "." would otherwise be recorded as "<cwd>/.").
         let root = std::fs::canonicalize(&root).unwrap_or(root);
+        // 恢复该工作区记忆的侧栏宽度（roadmap E7）。
+        if let Ok(session) = crate::config::read_session()
+            && session.root.as_deref() == Some(root.to_string_lossy().as_ref())
+            && let Some(width) = session.sidebar_width
+        {
+            self.workspace.panel_width = Some(width as f32);
+        }
         if crate::config::record_recent_folder(&root).is_ok()
             && cx.try_global::<ThemeManager>().is_some()
             && cx.try_global::<crate::i18n::I18nManager>().is_some()
