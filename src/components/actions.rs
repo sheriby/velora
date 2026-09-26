@@ -77,6 +77,7 @@ actions!(
         FindPreviousMatch,
         QuickOpen,
         OpenCommandPalette,
+        CopyAsHtml,
         CursorHistoryBack,
         CursorHistoryForward,
         ZoomIn,
@@ -800,6 +801,8 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
     }
     bindings.push(KeyBinding::new("cmd-p", QuickOpen, None));
     bindings.push(KeyBinding::new("ctrl-p", QuickOpen, None));
+    bindings.push(KeyBinding::new("cmd-shift-c", CopyAsHtml, None));
+    bindings.push(KeyBinding::new("ctrl-shift-c", CopyAsHtml, None));
     bindings.push(KeyBinding::new("cmd-shift-p", OpenCommandPalette, None));
     bindings.push(KeyBinding::new("ctrl-shift-p", OpenCommandPalette, None));
     bindings.push(KeyBinding::new("alt-cmd-left", CursorHistoryBack, None));

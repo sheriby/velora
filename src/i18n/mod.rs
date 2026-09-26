@@ -353,6 +353,8 @@ pub struct I18nStrings {
     pub command_find_previous: String,
     /// Command label: toggle source/rendered view.
     pub command_toggle_view_mode: String,
+    /// Export menu item: copy rendered HTML source to clipboard.
+    pub menu_copy_as_html: String,
     /// Workspace action: duplicate the selected file.
     pub workspace_duplicate: String,
     /// Hover tooltip prefix for footnote references.
@@ -669,6 +671,7 @@ struct I18nStringsDe {
     command_find_next: Option<String>,
     command_find_previous: Option<String>,
     command_toggle_view_mode: Option<String>,
+    menu_copy_as_html: Option<String>,
     workspace_duplicate: Option<String>,
     hover_footnote_prefix: Option<String>,
     hover_target_exists: Option<String>,
@@ -928,6 +931,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "command_find_next",
     "command_find_previous",
     "command_toggle_view_mode",
+    "menu_copy_as_html",
     "workspace_duplicate",
     "hover_footnote_prefix",
     "hover_target_exists",
@@ -1527,6 +1531,9 @@ impl I18nStringsDe {
             command_toggle_view_mode: self
                 .command_toggle_view_mode
                 .unwrap_or(defaults.command_toggle_view_mode),
+            menu_copy_as_html: self
+                .menu_copy_as_html
+                .unwrap_or(defaults.menu_copy_as_html),
             workspace_duplicate: self
                 .workspace_duplicate
                 .unwrap_or(defaults.workspace_duplicate),
@@ -1891,6 +1898,7 @@ impl I18nStrings {
             command_find_next: "查找下一个".into(),
             command_find_previous: "查找上一个".into(),
             command_toggle_view_mode: "切换视图模式".into(),
+            menu_copy_as_html: "复制为 HTML".into(),
             workspace_duplicate: "创建副本".into(),
             hover_footnote_prefix: "脚注".into(),
             hover_target_exists: "目标存在".into(),
@@ -2183,6 +2191,7 @@ impl I18nStrings {
             command_find_next: "Find Next".into(),
             command_find_previous: "Find Previous".into(),
             command_toggle_view_mode: "Toggle View Mode".into(),
+            menu_copy_as_html: "Copy as HTML".into(),
             workspace_duplicate: "Duplicate".into(),
             hover_footnote_prefix: "Footnote".into(),
             hover_target_exists: "target exists".into(),

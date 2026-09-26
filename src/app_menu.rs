@@ -15,8 +15,8 @@ use crate::components::{
     FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NewWindow, NoRecentFiles,
     OpenCommandPalette,
     OpenFile, OpenPreferences, OpenRecentFile, QuitApplication, SaveDocument, SaveDocumentAs,
-    SelectLanguage, SelectTheme, ShowAbout, ToggleFocusMode, ToggleSidebar, ToggleTypewriterMode,
-    ToggleViewMode, UninstallCliTool,
+    SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleSidebar,
+    ToggleTypewriterMode, ToggleViewMode, UninstallCliTool,
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
@@ -716,6 +716,8 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         open_editor_window(cx, String::new(), None);
     } else if action.as_any().is::<OpenFile>() {
         prompt_and_open_files(cx);
+    } else if action.as_any().is::<CopyAsHtml>() {
+        let _ = with_active_editor(cx, |editor, _window, cx| editor.copy_as_html(cx));
     } else if action.as_any().is::<ToggleViewMode>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<ToggleFocusMode>() {
@@ -1054,6 +1056,7 @@ fn build_menus(
             items: vec![
                 MenuItem::action(strings.menu_export_html.clone(), ExportHtml),
                 MenuItem::action(strings.menu_export_pdf.clone(), ExportPdf),
+                MenuItem::action(strings.menu_copy_as_html.clone(), CopyAsHtml),
             ],
         },
         Menu {

@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::theme::Theme;
 
-mod html;
+pub(crate) mod html;
 mod pdf;
 
 /// Export target selected from the app menu.

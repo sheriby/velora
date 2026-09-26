@@ -1195,6 +1195,15 @@ impl Editor {
         }
     }
 
+    pub(crate) fn on_copy_as_html(
+        &mut self,
+        _: &crate::components::CopyAsHtml,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.copy_as_html(cx);
+    }
+
     pub(crate) fn on_zoom_in(
         &mut self,
         _: &crate::components::ZoomIn,
@@ -2763,6 +2772,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_open_command_palette))
             .on_action(cx.listener(Self::on_cursor_history_back))
             .on_action(cx.listener(Self::on_cursor_history_forward))
+            .on_action(cx.listener(Self::on_copy_as_html))
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_zoom_reset))

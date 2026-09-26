@@ -1834,6 +1834,31 @@ impl Editor {
         let _ = window;
     }
 
+    /// F2 复制为 HTML：把选区（无选区时全文）渲染为 HTML 并写入剪贴板。
+    pub(crate) fn copy_as_html(&mut self, cx: &mut Context<Self>) {
+        let theme = cx.global::<ThemeManager>().current_arc();
+        let markdown = self
+            .selected_markdown_text(cx)
+            .unwrap_or_else(|| self.current_document_source(cx));
+        if markdown.trim().is_empty() {
+            return;
+        }
+        let base_dir = self.file_path.as_ref().and_then(|path| path.parent().map(Path::to_path_buf));
+        let title = self
+            .file_path
+            .as_ref()
+            .and_then(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "Velora".into());
+        let html = crate::export::html::render_html_with_base_dir(
+            &markdown,
+            &theme,
+            &title,
+            base_dir.as_deref(),
+        );
+        cx.write_to_clipboard(ClipboardItem::new_string(html));
+        cx.notify();
+    }
+
     /// ⌥⌘←: return to the previous recorded caret location.
     pub(crate) fn on_cursor_history_back(
         &mut self,
