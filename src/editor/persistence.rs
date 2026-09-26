@@ -679,7 +679,7 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use super::{safe_code_fence, safe_code_fence_with_info};
+    use super::{safe_code_fence, safe_code_fence_with_info, write_atomic};
 
     #[test]
     fn atomic_write_replaces_content_and_leaves_no_temp() {
