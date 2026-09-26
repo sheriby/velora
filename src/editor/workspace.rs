@@ -421,6 +421,94 @@ impl Editor {
             .unwrap_or_default()
     }
 
+    /// Outline-follows-scroll (roadmap C5): while the Outline tab is visible,
+    /// select the deepest heading at or above the topmost visible block.
+    /// Cheap per frame: block bounds are cached by the previous layout and the
+    /// source mapping is rebuilt only when the document revision changes.
+    pub(super) fn sync_outline_follow_scroll(
+        &mut self,
+        viewport_top: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.workspace.is_open || self.workspace.active_tab != WorkspaceTab::Outline {
+            return;
+        }
+        let offset = f32::from(self.scroll_handle.offset().y);
+        if !self.last_outline_follow_offset.is_nan()
+            && (offset - self.last_outline_follow_offset).abs() < 2.0
+        {
+            return;
+        }
+        self.last_outline_follow_offset = offset;
+
+        let revision = self.document_revision;
+        if self
+            .outline_follow_cache
+            .as_ref()
+            .map(|(cached_revision, _, _)| *cached_revision)
+            != Some(revision)
+        {
+            let (_, ranges) = self.build_source_target_mappings_with_block_ranges(cx);
+            let source = self.current_document_source(cx);
+            let newlines: Vec<usize> = source
+                .bytes()
+                .enumerate()
+                .filter(|(_, byte)| *byte == b'\n')
+                .map(|(offset, _)| offset)
+                .collect();
+            self.outline_follow_cache = Some((revision, ranges, newlines));
+        }
+        let Some((_, ranges, newlines)) = self.outline_follow_cache.as_ref() else {
+            return;
+        };
+
+        // First block whose body extends below the viewport top band.
+        let cutoff = viewport_top + px(48.0);
+        let mut target_source_start: Option<usize> = None;
+        for visible in self.document.visible_blocks() {
+            let Some(bounds) = visible.entity.read(cx).last_bounds else {
+                continue;
+            };
+            if bounds.bottom() > cutoff {
+                if let Some(range) = ranges.get(&visible.entity.entity_id()) {
+                    target_source_start = Some(range.start);
+                }
+                break;
+            }
+        }
+        let Some(source_start) = target_source_start else {
+            return;
+        };
+        let line = newlines.partition_point(|&newline_offset| newline_offset < source_start);
+
+        // Preorder walk visits headings in ascending source line order, so the
+        // last heading at or above the target is the deepest enclosing one.
+        let mut current: Option<String> = None;
+        {
+            let tree = &self.workspace.outline_tree;
+            fn visit(nodes: &[WorkspaceTreeNode], line: usize, current: &mut Option<String>) {
+                for node in nodes {
+                    if let WorkspaceTreeKind::Heading {
+                        line: heading_line, ..
+                    } = &node.kind
+                    {
+                        if *heading_line <= line {
+                            *current = Some(node.id.clone());
+                        }
+                    }
+                    visit(&node.children, line, current);
+                }
+            }
+            visit(tree, line, &mut current);
+        }
+        if let Some(id) = current
+            && self.workspace.selected != Some(WorkspaceSelection::Outline(id.clone()))
+        {
+            self.workspace.selected = Some(WorkspaceSelection::Outline(id));
+            cx.notify();
+        }
+    }
+
     /// Persists the open-tab set for session restore (roadmap A4). Cheap:
     /// a tiny JSON write, only invoked on structural changes.
     pub(crate) fn persist_session(&mut self, cx: &mut Context<Self>) {

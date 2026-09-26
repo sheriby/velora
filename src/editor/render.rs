@@ -2000,6 +2000,10 @@ impl Render for Editor {
         let viewport_bounds = self.scroll_handle.bounds();
         let viewport_size = viewport_bounds.size;
         self.sync_scroll_viewport(viewport_size, cx);
+        self.sync_outline_follow_scroll(
+            self.scroll_handle.bounds().top(),
+            cx,
+        );
 
         let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
         let fonts = crate::config::EditorSettings::fonts(cx);

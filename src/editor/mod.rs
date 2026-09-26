@@ -144,6 +144,12 @@ pub struct Editor {
     command_palette: Option<command_palette::CommandPaletteState>,
     /// Workspace change watcher (roadmap D3); `None` until a root is set.
     external_watcher: Option<notify::RecommendedWatcher>,
+    /// Cached block→source-range map + newline offsets for outline-follow
+    /// scroll (roadmap C5), keyed by document revision.
+    pub(super) outline_follow_cache:
+        Option<(u64, std::collections::HashMap<EntityId, std::ops::Range<usize>>, Vec<usize>)>,
+    /// Scroll offset at the last outline-follow update.
+    pub(super) last_outline_follow_offset: f32,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
     workspace: WorkspaceState,
@@ -418,6 +424,8 @@ impl Editor {
             quick_open: None,
             command_palette: None,
             external_watcher: None,
+            outline_follow_cache: None,
+            last_outline_follow_offset: f32::NAN,
             update_check_in_progress: false,
             workspace: WorkspaceState::default(),
             status_bar: StatusBarState::default(),
