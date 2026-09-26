@@ -323,6 +323,10 @@ pub struct I18nStrings {
     pub welcome_shortcut_hint: String,
     /// Marker label for folder entries in lists.
     pub workspace_folder_entry_label: String,
+    /// Quick switcher input placeholder.
+    pub quick_open_placeholder: String,
+    /// Quick switcher empty-state row.
+    pub quick_open_no_results: String,
     /// Message shown when picking or clicking a file type Velora can't open.
     pub workspace_open_unsupported_message: String,
     /// Tab context menu item for closing the tab.
@@ -614,6 +618,8 @@ struct I18nStringsDe {
     welcome_recent: Option<String>,
     welcome_shortcut_hint: Option<String>,
     workspace_folder_entry_label: Option<String>,
+    quick_open_placeholder: Option<String>,
+    quick_open_no_results: Option<String>,
     workspace_open_unsupported_message: Option<String>,
     tab_close: Option<String>,
     tab_close_others: Option<String>,
@@ -853,6 +859,8 @@ const I18N_STRING_KEYS: &[&str] = &[
     "welcome_recent",
     "welcome_shortcut_hint",
     "workspace_folder_entry_label",
+    "quick_open_placeholder",
+    "quick_open_no_results",
     "workspace_open_unsupported_message",
     "tab_close",
     "tab_close_others",
@@ -1408,6 +1416,12 @@ impl I18nStringsDe {
             workspace_folder_entry_label: self
                 .workspace_folder_entry_label
                 .unwrap_or(defaults.workspace_folder_entry_label),
+            quick_open_placeholder: self
+                .quick_open_placeholder
+                .unwrap_or(defaults.quick_open_placeholder),
+            quick_open_no_results: self
+                .quick_open_no_results
+                .unwrap_or(defaults.quick_open_no_results),
             workspace_open_unsupported_message: self
                 .workspace_open_unsupported_message
                 .unwrap_or(defaults.workspace_open_unsupported_message),
@@ -1741,6 +1755,8 @@ impl I18nStrings {
             welcome_recent: "最近打开".into(),
             welcome_shortcut_hint: "⌘N 新建 · ⌘O 打开 · ⌘F 查找 · ⌘⇧F 全局搜索".into(),
             workspace_folder_entry_label: "文件夹".into(),
+            quick_open_placeholder: "输入文件名模糊搜索…".into(),
+            quick_open_no_results: "没有匹配的文件".into(),
             workspace_open_unsupported_message: "暂时无法打开该类型文件".into(),
             tab_close: "关闭".into(),
             tab_close_others: "关闭其他标签页".into(),
@@ -2011,6 +2027,8 @@ impl I18nStrings {
             welcome_recent: "Recently Opened".into(),
             welcome_shortcut_hint: "⌘N New · ⌘O Open · ⌘F Find · ⌘⇧F Search All".into(),
             workspace_folder_entry_label: "Folder".into(),
+            quick_open_placeholder: "Type a file name…".into(),
+            quick_open_no_results: "No matching files".into(),
             workspace_open_unsupported_message:
                 "This file type can't be opened in Velora yet".into(),
             tab_close: "Close".into(),

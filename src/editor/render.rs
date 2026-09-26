@@ -2522,6 +2522,11 @@ impl Render for Editor {
         };
 
         let content_area = content_area.into_any_element();
+        let content_area = if self.quick_open.is_some() {
+            self.render_quick_open_overlay(&theme, cx)
+        } else {
+            content_area
+        };
         // A tab whose file the text editor can't preview replaces the whole
         // content area with a centered notice, VS Code style.
         let content_area = if self.show_welcome {
@@ -2688,6 +2693,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_find_previous_match))
             .on_action(cx.listener(Self::on_toggle_workspace_action))
             .on_action(cx.listener(Self::on_select_tab_index))
+            .on_action(cx.listener(Self::on_quick_open_action))
             .on_action(cx.listener(Self::on_page_up))
             .on_action(cx.listener(Self::on_page_down))
             .on_action(cx.listener(Self::on_jump_to_top))

@@ -338,6 +338,15 @@ impl Editor {
         }
     }
 
+    /// All markdown/code files of the workspace tree, for the quick switcher.
+    pub(super) fn workspace_text_files(&self) -> Vec<PathBuf> {
+        self.workspace
+            .file_tree
+            .as_ref()
+            .map(|tree| collect_workspace_files(tree))
+            .unwrap_or_default()
+    }
+
     /// Persists the open-tab set for session restore (roadmap A4). Cheap:
     /// a tiny JSON write, only invoked on structural changes.
     pub(crate) fn persist_session(&mut self, cx: &mut Context<Self>) {
