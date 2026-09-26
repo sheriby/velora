@@ -224,6 +224,7 @@ pub(crate) struct AppPreferences {
     pub(crate) autosave_debounce_ms: u64,
     /// File tree ordering: "name" | "mtime" | "type".
     pub(crate) tree_sort: TreeSortPreference,
+    pub(crate) new_file_template: String,
     pub(crate) remember_window_bounds: bool,
     pub(crate) window_frame: Option<WindowFrame>,
     /// Session-wide text zoom in percent (60..=200).
@@ -249,6 +250,7 @@ impl Default for AppPreferences {
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
             tree_sort: TreeSortPreference::default(),
+            new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
@@ -279,6 +281,7 @@ pub struct EditorSettings {
     zoom_percent: i64,
     autosave_debounce_ms: u64,
     tree_sort: TreeSortPreference,
+    new_file_template: String,
     default_window_width: i64,
     default_window_height: i64,
 }
@@ -349,6 +352,15 @@ impl EditorSettings {
                     .map(|preferences| preferences.tree_sort)
             })
             .unwrap_or_default();
+        let new_file_template = cx
+            .try_global::<Self>()
+            .map(|settings| settings.new_file_template.clone())
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.new_file_template)
+            })
+            .unwrap_or_default();
         let (default_window_width, default_window_height) = cx
             .try_global::<Self>()
             .map(|settings| {
@@ -368,6 +380,7 @@ impl EditorSettings {
             zoom_percent,
             autosave_debounce_ms,
             tree_sort,
+            new_file_template,
             default_window_width,
             default_window_height,
             status_bar_settings: StatusBarSettings {
@@ -411,6 +424,15 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.autosave_debounce_ms)
             .unwrap_or(800)
+    }
+
+    /// Template body for new Markdown files, with `{date}` expanded to the
+    /// local date (YYYY-MM-DD).
+    pub(crate) fn new_file_template() -> String {
+        let template = read_app_preferences()
+            .map(|preferences| preferences.new_file_template)
+            .unwrap_or_default();
+        template.replace("{date}", &crate::config::today_local_date())
     }
 
     /// File tree ordering (roadmap D2).
@@ -537,6 +559,8 @@ struct EditorPreferencesFile {
     workspace_sidebar_width: u16,
     autosave_debounce_ms: u64,
     tree_sort: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    new_file_template: String,
 }
 
 #[derive(Serialize)]
@@ -637,6 +661,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 workspace_sidebar_width: value.workspace_sidebar_width,
                 autosave_debounce_ms: value.autosave_debounce_ms,
                 tree_sort: value.tree_sort.as_str().into(),
+                new_file_template: value.new_file_template.clone(),
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
             window: WindowPreferencesFile {
@@ -840,6 +865,11 @@ fn app_preferences_from_toml_value(
         .and_then(toml::Value::as_str)
         .map(TreeSortPreference::from_str)
         .unwrap_or_default();
+    let new_file_template = editor
+        .and_then(|editor| editor.get("new_file_template"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let autosave_debounce_ms = editor
         .and_then(|editor| editor.get("autosave_debounce_ms"))
         .and_then(toml::Value::as_integer)
@@ -946,6 +976,7 @@ fn app_preferences_from_toml_value(
         workspace_sidebar_width,
         autosave_debounce_ms,
         tree_sort,
+        new_file_template,
         keybindings,
         status_bar,
         remember_window_bounds,
@@ -3061,6 +3092,7 @@ mod tests {
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
             tree_sort: TreeSortPreference::default(),
+            new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
@@ -3162,6 +3194,7 @@ mod tests {
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
             tree_sort: TreeSortPreference::default(),
+            new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,

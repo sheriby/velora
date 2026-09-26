@@ -4009,6 +4009,8 @@ impl Editor {
             );
         }
 
+        // 文件节点悬停显示 大小 · 修改时间（roadmap D7）。
+        let tooltip_text = tree_node_tooltip(&node);
         div()
             .id(("workspace-node", stable_node_hash(&node.id)))
             .h(px(WORKSPACE_NODE_HEIGHT))
@@ -4020,6 +4022,10 @@ impl Editor {
             .pl(px(6.0 + depth as f32 * WORKSPACE_NODE_INDENT))
             .pr(px(6.0))
             .rounded(px(4.0))
+            .tooltip(move |_, cx| {
+                let tooltip_text = tooltip_text.clone();
+                cx.new(|_| WorkspaceTooltip { label: tooltip_text }).into()
+            })
             .bg(if selected {
                 c.selection
             } else {
@@ -4149,11 +4155,14 @@ pub(super) fn is_markdown_file(path: &Path) -> bool {
 }
 
 fn create_workspace_file(path: &Path) -> std::io::Result<()> {
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map(|_| ())
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+    let template = crate::config::EditorSettings::new_file_template();
+    if !template.is_empty() {
+        let date = crate::config::today_local_date();
+        use std::io::Write;
+        file.write_all(template.replace("{date}", &date).as_bytes())?;
+    }
+    Ok(())
 }
 
 fn create_workspace_folder(path: &Path) -> std::io::Result<()> {
@@ -4907,6 +4916,12 @@ pub(super) fn is_code_file(path: &Path) -> bool {
     })
 }
 
+impl WorkspaceTreeNode {
+    fn kind_dir(&self) -> bool {
+        matches!(self.kind, WorkspaceTreeKind::Directory(_))
+    }
+}
+
 fn tree_node_path(node: &WorkspaceTreeNode) -> &Path {
     match &node.kind {
         WorkspaceTreeKind::Directory(path)
@@ -5295,6 +5310,63 @@ fn replace_in_source(source: &str, matcher: &SearchMatcher, replacement: &str) -
         }
     }
     updated
+}
+
+/// Hover tooltip text for a tree node: relative path, size, and modified time
+/// for files; just the path for directories (roadmap D7).
+fn tree_node_tooltip(node: &WorkspaceTreeNode) -> String {
+    let path = match &node.kind {
+        WorkspaceTreeKind::Directory(path)
+        | WorkspaceTreeKind::MarkdownFile(path)
+        | WorkspaceTreeKind::CodeFile(path)
+        | WorkspaceTreeKind::OtherFile(path) => path,
+        WorkspaceTreeKind::Heading { .. } => return node.label.clone(),
+    };
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return node.label.clone(),
+    };
+    if node.kind_dir() {
+        return node.label.clone();
+    }
+    let size = metadata.len();
+    let size_text = if size >= 1024 * 1024 {
+        format!("{:.1} MiB", size as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} KiB", size as f64 / 1024.0)
+    };
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| {
+            time.duration_since(std::time::UNIX_EPOCH).ok()
+        })
+        .map(|elapsed| {
+            let seconds = elapsed.as_secs();
+            chrono_like_date_string(seconds)
+        })
+        .unwrap_or_default();
+    format!("{} · {} · {modified}", node.label, size_text)
+}
+
+/// Minimal local-date rendering from a unix timestamp (UTC date, good enough
+/// for tooltips without pulling a time-zone database).
+fn chrono_like_date_string(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    // Civil-from-days algorithm (Howard Hinnant) for a UTC date.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    let seconds_of_day = seconds % 86_400;
+    let (hour, minute) = (seconds_of_day / 3600, (seconds_of_day % 3600) / 60);
+    format!("{y:04}-{m:02}-{d:02} {hour:02}:{minute:02}")
 }
 
 fn file_label(path: &Path) -> String {
