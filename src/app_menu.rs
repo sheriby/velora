@@ -13,6 +13,7 @@ use gpui::*;
 use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NewWindow, NoRecentFiles,
+    OpenCommandPalette,
     OpenFile, OpenPreferences, OpenRecentFile, QuitApplication, SaveDocument, SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, ToggleFocusMode, ToggleSidebar, ToggleTypewriterMode,
     ToggleViewMode, UninstallCliTool,
@@ -1102,6 +1103,14 @@ fn build_menus(
                 MenuItem::separator(),
                 MenuItem::action(
                     if current_language_id == "zh-CN" {
+                        "命令面板…"
+                    } else {
+                        "Command Palette…"
+                    },
+                    OpenCommandPalette,
+                ),
+                MenuItem::action(
+                    if current_language_id == "zh-CN" {
                         "查找当前文档…"
                     } else {
                         "Find in Document…"
@@ -1598,9 +1607,13 @@ mod tests {
             action_name(&menus[VIEW_IDX].items[4]),
             "Toggle Typewriter Mode"
         );
-        assert_eq!(action_name(&menus[VIEW_IDX].items[6]), "Find in Document…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "Find Next");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "Find Previous");
+        assert_eq!(
+            action_name(&menus[VIEW_IDX].items[6]),
+            "Command Palette…"
+        );
+        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "Find in Document…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "Find Next");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "Find Previous");
     }
 
     #[test]
@@ -1659,9 +1672,10 @@ mod tests {
         assert_eq!(action_name(&menus[VIEW_IDX].items[2]), "切换视图模式");
         assert_eq!(action_name(&menus[VIEW_IDX].items[3]), "切换专注模式");
         assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "切换打字机模式");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[6]), "查找当前文档…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "查找下一个");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "查找上一个");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[6]), "命令面板…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "查找当前文档…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "查找下一个");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "查找上一个");
     }
 
     #[test]

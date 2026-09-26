@@ -335,6 +335,22 @@ pub struct I18nStrings {
     pub tree_sort_mtime: String,
     /// File tree sort option: by type.
     pub tree_sort_type: String,
+    /// Command palette input placeholder.
+    pub command_palette_placeholder: String,
+    /// Command label: toggle focus mode.
+    pub command_toggle_focus_mode: String,
+    /// Command label: toggle typewriter mode.
+    pub command_toggle_typewriter_mode: String,
+    /// Command label: toggle sidebar.
+    pub command_toggle_sidebar: String,
+    /// Command label: find in document.
+    pub command_find_in_document: String,
+    /// Command label: find next match.
+    pub command_find_next: String,
+    /// Command label: find previous match.
+    pub command_find_previous: String,
+    /// Command label: toggle source/rendered view.
+    pub command_toggle_view_mode: String,
     /// Message shown when picking or clicking a file type Velora can't open.
     pub workspace_open_unsupported_message: String,
     /// Tab context menu item for closing the tab.
@@ -632,6 +648,14 @@ struct I18nStringsDe {
     tree_sort_name: Option<String>,
     tree_sort_mtime: Option<String>,
     tree_sort_type: Option<String>,
+    command_palette_placeholder: Option<String>,
+    command_toggle_focus_mode: Option<String>,
+    command_toggle_typewriter_mode: Option<String>,
+    command_toggle_sidebar: Option<String>,
+    command_find_in_document: Option<String>,
+    command_find_next: Option<String>,
+    command_find_previous: Option<String>,
+    command_toggle_view_mode: Option<String>,
     workspace_open_unsupported_message: Option<String>,
     tab_close: Option<String>,
     tab_close_others: Option<String>,
@@ -877,6 +901,14 @@ const I18N_STRING_KEYS: &[&str] = &[
     "tree_sort_name",
     "tree_sort_mtime",
     "tree_sort_type",
+    "command_palette_placeholder",
+    "command_toggle_focus_mode",
+    "command_toggle_typewriter_mode",
+    "command_toggle_sidebar",
+    "command_find_in_document",
+    "command_find_next",
+    "command_find_previous",
+    "command_toggle_view_mode",
     "workspace_open_unsupported_message",
     "tab_close",
     "tab_close_others",
@@ -1444,6 +1476,30 @@ impl I18nStringsDe {
             tree_sort_name: self.tree_sort_name.unwrap_or(defaults.tree_sort_name),
             tree_sort_mtime: self.tree_sort_mtime.unwrap_or(defaults.tree_sort_mtime),
             tree_sort_type: self.tree_sort_type.unwrap_or(defaults.tree_sort_type),
+            command_palette_placeholder: self
+                .command_palette_placeholder
+                .unwrap_or(defaults.command_palette_placeholder),
+            command_toggle_focus_mode: self
+                .command_toggle_focus_mode
+                .unwrap_or(defaults.command_toggle_focus_mode),
+            command_toggle_typewriter_mode: self
+                .command_toggle_typewriter_mode
+                .unwrap_or(defaults.command_toggle_typewriter_mode),
+            command_toggle_sidebar: self
+                .command_toggle_sidebar
+                .unwrap_or(defaults.command_toggle_sidebar),
+            command_find_in_document: self
+                .command_find_in_document
+                .unwrap_or(defaults.command_find_in_document),
+            command_find_next: self
+                .command_find_next
+                .unwrap_or(defaults.command_find_next),
+            command_find_previous: self
+                .command_find_previous
+                .unwrap_or(defaults.command_find_previous),
+            command_toggle_view_mode: self
+                .command_toggle_view_mode
+                .unwrap_or(defaults.command_toggle_view_mode),
             workspace_open_unsupported_message: self
                 .workspace_open_unsupported_message
                 .unwrap_or(defaults.workspace_open_unsupported_message),
@@ -1783,6 +1839,14 @@ impl I18nStrings {
             tree_sort_name: "名称".into(),
             tree_sort_mtime: "时间".into(),
             tree_sort_type: "类型".into(),
+            command_palette_placeholder: "输入命令…".into(),
+            command_toggle_focus_mode: "切换专注模式".into(),
+            command_toggle_typewriter_mode: "切换打字机模式".into(),
+            command_toggle_sidebar: "切换侧边栏".into(),
+            command_find_in_document: "查找当前文档…".into(),
+            command_find_next: "查找下一个".into(),
+            command_find_previous: "查找上一个".into(),
+            command_toggle_view_mode: "切换视图模式".into(),
             workspace_open_unsupported_message: "暂时无法打开该类型文件".into(),
             tab_close: "关闭".into(),
             tab_close_others: "关闭其他标签页".into(),
@@ -2059,6 +2123,14 @@ impl I18nStrings {
             tree_sort_name: "Name".into(),
             tree_sort_mtime: "Time".into(),
             tree_sort_type: "Type".into(),
+            command_palette_placeholder: "Type a command…".into(),
+            command_toggle_focus_mode: "Toggle Focus Mode".into(),
+            command_toggle_typewriter_mode: "Toggle Typewriter Mode".into(),
+            command_toggle_sidebar: "Toggle Sidebar".into(),
+            command_find_in_document: "Find in Document…".into(),
+            command_find_next: "Find Next".into(),
+            command_find_previous: "Find Previous".into(),
+            command_toggle_view_mode: "Toggle View Mode".into(),
             workspace_open_unsupported_message:
                 "This file type can't be opened in Velora yet".into(),
             tab_close: "Close".into(),

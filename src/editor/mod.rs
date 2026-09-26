@@ -42,6 +42,7 @@ mod tests;
 mod tree;
 mod update;
 mod window_state;
+mod command_palette;
 mod quick_open;
 mod watcher;
 mod workspace;
@@ -139,6 +140,8 @@ pub struct Editor {
     pub(super) search_highlighted_blocks: Vec<Entity<Block>>,
     /// Quick file switcher overlay (⌘P); `None` while closed.
     quick_open: Option<quick_open::QuickOpenState>,
+    /// Command palette overlay (⇧⌘P); `None` while closed.
+    command_palette: Option<command_palette::CommandPaletteState>,
     /// Workspace change watcher (roadmap D3); `None` until a root is set.
     external_watcher: Option<notify::RecommendedWatcher>,
     /// True while an online update check is running in the background.
@@ -413,6 +416,7 @@ impl Editor {
             show_welcome: false,
             search_highlighted_blocks: Vec::new(),
             quick_open: None,
+            command_palette: None,
             external_watcher: None,
             update_check_in_progress: false,
             workspace: WorkspaceState::default(),

@@ -2575,6 +2575,8 @@ impl Render for Editor {
         let content_area = content_area.into_any_element();
         let content_area = if self.quick_open.is_some() {
             self.render_quick_open_overlay(&theme, cx)
+        } else if self.command_palette.is_some() {
+            super::command_palette::render_command_palette_overlay(self, &theme, cx)
         } else {
             content_area
         };
@@ -2745,6 +2747,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_toggle_workspace_action))
             .on_action(cx.listener(Self::on_select_tab_index))
             .on_action(cx.listener(Self::on_quick_open_action))
+            .on_action(cx.listener(Self::on_open_command_palette))
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_zoom_reset))
