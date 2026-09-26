@@ -289,6 +289,22 @@ pub struct I18nStrings {
     pub workspace_empty_outline: String,
     /// Title shown when the workspace file tree cannot be scanned.
     pub workspace_scan_failed_title: String,
+    /// Tab context menu item for closing the tab.
+    pub tab_close: String,
+    /// Tab context menu item for closing all other tabs.
+    pub tab_close_others: String,
+    /// Tab context menu item for closing tabs to the left.
+    pub tab_close_left: String,
+    /// Tab context menu item for closing tabs to the right.
+    pub tab_close_right: String,
+    /// Tab context menu item for closing every tab.
+    pub tab_close_all: String,
+    /// Confirmation title when closing a tab with unsaved edits.
+    pub tab_close_dirty_title: String,
+    /// Confirmation message when one tab has unsaved edits.
+    pub tab_close_dirty_message_one: String,
+    /// Confirmation message template when several tabs have unsaved edits.
+    pub tab_close_dirty_message_many: String,
     /// Title of the link-opening confirmation prompt.
     pub open_link_title: String,
     /// Confirm button for the link-opening prompt.
@@ -543,6 +559,14 @@ struct I18nStringsDe {
     workspace_empty_files: Option<String>,
     workspace_empty_outline: Option<String>,
     workspace_scan_failed_title: Option<String>,
+    tab_close: Option<String>,
+    tab_close_others: Option<String>,
+    tab_close_left: Option<String>,
+    tab_close_right: Option<String>,
+    tab_close_all: Option<String>,
+    tab_close_dirty_title: Option<String>,
+    tab_close_dirty_message_one: Option<String>,
+    tab_close_dirty_message_many: Option<String>,
     open_link_title: Option<String>,
     open_link_open: Option<String>,
     open_link_cancel: Option<String>,
@@ -755,6 +779,14 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_empty_files",
     "workspace_empty_outline",
     "workspace_scan_failed_title",
+    "tab_close",
+    "tab_close_others",
+    "tab_close_left",
+    "tab_close_right",
+    "tab_close_all",
+    "tab_close_dirty_title",
+    "tab_close_dirty_message_one",
+    "tab_close_dirty_message_many",
     "open_link_title",
     "open_link_open",
     "open_link_cancel",
@@ -1259,6 +1291,24 @@ impl I18nStringsDe {
             workspace_scan_failed_title: self
                 .workspace_scan_failed_title
                 .unwrap_or(defaults.workspace_scan_failed_title),
+            tab_close: self.tab_close.unwrap_or(defaults.tab_close),
+            tab_close_others: self
+                .tab_close_others
+                .unwrap_or(defaults.tab_close_others),
+            tab_close_left: self.tab_close_left.unwrap_or(defaults.tab_close_left),
+            tab_close_right: self
+                .tab_close_right
+                .unwrap_or(defaults.tab_close_right),
+            tab_close_all: self.tab_close_all.unwrap_or(defaults.tab_close_all),
+            tab_close_dirty_title: self
+                .tab_close_dirty_title
+                .unwrap_or(defaults.tab_close_dirty_title),
+            tab_close_dirty_message_one: self
+                .tab_close_dirty_message_one
+                .unwrap_or(defaults.tab_close_dirty_message_one),
+            tab_close_dirty_message_many: self
+                .tab_close_dirty_message_many
+                .unwrap_or(defaults.tab_close_dirty_message_many),
             open_link_title: self.open_link_title.unwrap_or(defaults.open_link_title),
             open_link_open: self.open_link_open.unwrap_or(defaults.open_link_open),
             open_link_cancel: self.open_link_cancel.unwrap_or(defaults.open_link_cancel),
@@ -1551,6 +1601,14 @@ impl I18nStrings {
             workspace_empty_files: "没有可显示的 Markdown 文件".into(),
             workspace_empty_outline: "当前文档没有标题".into(),
             workspace_scan_failed_title: "无法读取工作区".into(),
+            tab_close: "关闭".into(),
+            tab_close_others: "关闭其他标签页".into(),
+            tab_close_left: "关闭左侧标签页".into(),
+            tab_close_right: "关闭右侧标签页".into(),
+            tab_close_all: "关闭所有标签页".into(),
+            tab_close_dirty_title: "有未保存的更改".into(),
+            tab_close_dirty_message_one: "“{name}”有未保存的更改，关闭前要保存吗？".into(),
+            tab_close_dirty_message_many: "{count} 个标签页有未保存的更改，要全部保存吗？".into(),
             open_link_title: "打开链接？".into(),
             open_link_open: "打开".into(),
             open_link_cancel: "取消".into(),
@@ -1793,6 +1851,14 @@ impl I18nStrings {
             workspace_empty_files: "No Markdown files to show".into(),
             workspace_empty_outline: "This document has no headings".into(),
             workspace_scan_failed_title: "Unable to Read Workspace".into(),
+            tab_close: "Close".into(),
+            tab_close_others: "Close Other Tabs".into(),
+            tab_close_left: "Close Tabs to the Left".into(),
+            tab_close_right: "Close Tabs to the Right".into(),
+            tab_close_all: "Close All Tabs".into(),
+            tab_close_dirty_title: "Unsaved Changes".into(),
+            tab_close_dirty_message_one: "“{name}” has unsaved changes. Save before closing?".into(),
+            tab_close_dirty_message_many: "{count} tabs have unsaved changes. Save them all?".into(),
             open_link_title: "Open link?".into(),
             open_link_open: "Open".into(),
             open_link_cancel: "Cancel".into(),

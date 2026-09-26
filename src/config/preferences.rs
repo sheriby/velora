@@ -2483,6 +2483,7 @@ impl Render for PreferencesWindow {
         if let Some(titlebar) = render_custom_titlebar(
             "preferences-titlebar",
             window_title,
+            None,
             &theme,
             window,
             cx,

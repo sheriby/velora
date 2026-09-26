@@ -23,6 +23,7 @@ const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
 const CHEVRON_DOWN_ICON: &str = "icon/workspace/chevron-down.svg";
+const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
 const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
 const WORKSPACE_NODE_INDENT: f32 = 16.0;
 
@@ -115,6 +116,21 @@ enum WorkspaceMenuAction {
     Delete,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TabMenuAction {
+    Close,
+    CloseOthers,
+    CloseLeft,
+    CloseRight,
+    CloseAll,
+}
+
+#[derive(Clone, Copy)]
+struct TabContextMenu {
+    position: Point<Pixels>,
+    target_index: usize,
+}
+
 pub(super) struct WorkspaceAutosaveDocument {
     pub(super) recovery_id: uuid::Uuid,
     pub(super) file_version: u64,
@@ -156,6 +172,7 @@ pub(super) struct WorkspaceState {
     search_pending: bool,
     search_generation: u64,
     context_menu: Option<WorkspaceContextMenu>,
+    tab_context_menu: Option<TabContextMenu>,
     panel_width: Option<f32>,
     resize_drag: Option<WorkspaceResizeDrag>,
 }
@@ -188,6 +205,7 @@ impl Default for WorkspaceState {
             search_pending: false,
             search_generation: 0,
             context_menu: None,
+            tab_context_menu: None,
             panel_width: None,
             resize_drag: None,
         }
@@ -1595,6 +1613,328 @@ impl Editor {
         cx.notify();
     }
 
+    fn open_tab_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        target_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_contextual_overlays(cx);
+        self.workspace.tab_context_menu = Some(TabContextMenu {
+            position,
+            target_index,
+        });
+        cx.notify();
+    }
+
+    pub(super) fn close_tab_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.tab_context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn render_tab_context_menu_overlay(
+        &self,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let menu = self.workspace.tab_context_menu?;
+        let target = self.workspace.open_documents.get(menu.target_index)?;
+        let target_path = target.path.clone();
+        let count = self.workspace.open_documents.len();
+        let strings = cx.global::<crate::i18n::I18nManager>().strings();
+        let mut actions = vec![(strings.tab_close.clone(), TabMenuAction::Close)];
+        if count > 1 {
+            actions.push((strings.tab_close_others.clone(), TabMenuAction::CloseOthers));
+            if menu.target_index > 0 {
+                actions.push((strings.tab_close_left.clone(), TabMenuAction::CloseLeft));
+            }
+            if menu.target_index + 1 < count {
+                actions.push((strings.tab_close_right.clone(), TabMenuAction::CloseRight));
+            }
+            actions.push((strings.tab_close_all.clone(), TabMenuAction::CloseAll));
+        }
+
+        let width = 200.0;
+        let height = actions.len() as f32 * 32.0 + 8.0;
+        let viewport = window.viewport_size();
+        let left = f32::from(menu.position.x)
+            .min((f32::from(viewport.width) - width - 8.0).max(8.0))
+            .max(8.0);
+        let top = f32::from(menu.position.y)
+            .min((f32::from(viewport.height) - height - 8.0).max(8.0))
+            .max(8.0);
+        let editor = cx.entity().downgrade();
+        let rows = actions
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, action))| {
+                let editor = editor.clone();
+                let target_path = target_path.clone();
+                div()
+                    .id(("tab-context-action", index))
+                    .h(px(32.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(5.0))
+                    .cursor_pointer()
+                    .text_size(px(12.0))
+                    .text_color(theme.colors.dialog_body)
+                    .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
+                    .child(label)
+                    .on_click(move |_, window, cx| {
+                        let _ = editor.update(cx, |editor, cx| {
+                            editor.workspace.tab_context_menu = None;
+                            editor.close_workspace_tabs_for_action(&target_path, action, window, cx);
+                            cx.notify();
+                        });
+                        cx.stop_propagation();
+                    })
+            })
+            .collect::<Vec<_>>();
+        let close_editor_left = editor.clone();
+        let close_editor_right = editor.clone();
+        Some(
+            div()
+                .id("tab-context-overlay")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = close_editor_left
+                        .update(cx, |editor, cx| editor.close_tab_context_menu(cx));
+                })
+                .on_mouse_down(MouseButton::Right, move |_, _, cx| {
+                    let _ = close_editor_right
+                        .update(cx, |editor, cx| editor.close_tab_context_menu(cx));
+                })
+                .child(
+                    div()
+                        .id("tab-context-panel")
+                        .absolute()
+                        .left(px(left))
+                        .top(px(top))
+                        .w(px(width))
+                        .p(px(4.0))
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(theme.colors.dialog_border)
+                        .bg(theme.colors.dialog_surface)
+                        .shadow_md()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Closes one tab, prompting before discarding unsaved edits.
+    pub(super) fn close_workspace_document(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_workspace_tabs(std::slice::from_ref(&path.to_path_buf()), window, cx);
+    }
+
+    fn close_workspace_tabs_for_action(
+        &mut self,
+        target: &Path,
+        action: TabMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths: Vec<PathBuf> = {
+            let tabs = &self.workspace.open_documents;
+            let Some(index) = tabs.iter().position(|tab| tab.path == target) else {
+                return;
+            };
+            match action {
+                TabMenuAction::Close => vec![target.to_path_buf()],
+                TabMenuAction::CloseOthers => tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(tab_index, _)| *tab_index != index)
+                    .map(|(_, tab)| tab.path.clone())
+                    .collect(),
+                TabMenuAction::CloseLeft => tabs[..index]
+                    .iter()
+                    .map(|tab| tab.path.clone())
+                    .collect(),
+                TabMenuAction::CloseRight => tabs[index + 1..]
+                    .iter()
+                    .map(|tab| tab.path.clone())
+                    .collect(),
+                TabMenuAction::CloseAll => tabs.iter().map(|tab| tab.path.clone()).collect(),
+            }
+        };
+        self.close_workspace_tabs(&paths, window, cx);
+    }
+
+    /// Closes the listed tabs. Unsaved edits are confirmed once for the whole
+    /// batch; saving writes each tab's cached markdown back to disk.
+    fn close_workspace_tabs(
+        &mut self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        // Capture the live editor content into its tab before deciding what is
+        // dirty, so closing the active document sees up-to-date state.
+        self.snapshot_current_document(cx);
+        self.dismiss_contextual_overlays(cx);
+
+        let closing: Vec<WorkspaceDocumentTab> = self
+            .workspace
+            .open_documents
+            .iter()
+            .filter(|tab| paths.contains(&tab.path))
+            .cloned()
+            .collect();
+        if closing.is_empty() {
+            return;
+        }
+        let dirty: Vec<WorkspaceDocumentTab> = closing
+            .iter()
+            .filter(|tab| tab.dirty)
+            .cloned()
+            .collect();
+
+        let editor = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        if dirty.is_empty() {
+            let _ = editor.update(cx, |editor, cx| {
+                editor.finish_close_workspace_tabs(&closing, false, window, cx);
+            });
+            return;
+        }
+
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        let (message, detail) = if dirty.len() == 1 {
+            let name = dirty[0]
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| dirty[0].path.to_string_lossy().into_owned());
+            (
+                strings.tab_close_dirty_message_one.replace("{name}", &name),
+                String::new(),
+            )
+        } else {
+            (
+                strings
+                    .tab_close_dirty_message_many
+                    .replace("{count}", &dirty.len().to_string()),
+                String::new(),
+            )
+        };
+        let detail = (!detail.is_empty()).then_some(detail);
+        let buttons = [
+            strings.unsaved_changes_save_and_close.as_str(),
+            strings.unsaved_changes_discard_and_close.as_str(),
+            strings.open_link_cancel.as_str(),
+        ];
+        let prompt = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            detail.as_deref(),
+            &buttons,
+            cx,
+        );
+        let prompt_window = window_handle.downcast::<Editor>();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let Ok(choice) = prompt.await else {
+                return;
+            };
+            if let Some(handle) = prompt_window {
+                let _ = handle.update(cx, |editor, window, cx| match choice {
+                    0 => editor.finish_close_workspace_tabs(&closing, true, window, cx),
+                    1 => editor.finish_close_workspace_tabs(&closing, false, window, cx),
+                    _ => {}
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Removes closed tabs from the strip, optionally saving their cached
+    /// content first, and activates the nearest remaining neighbour.
+    fn finish_close_workspace_tabs(
+        &mut self,
+        closing: &[WorkspaceDocumentTab],
+        save_first: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if save_first {
+            for tab in closing {
+                if !tab.dirty {
+                    continue;
+                }
+                match std::fs::write(&tab.path, tab.markdown.as_str()) {
+                    Ok(()) => {
+                        let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);
+                    }
+                    Err(err) => {
+                        self.workspace.file_error = Some(err.to_string());
+                    }
+                }
+            }
+        }
+
+        let closing_paths: Vec<PathBuf> = closing.iter().map(|tab| tab.path.clone()).collect();
+        let active_was_closed = closing_paths
+            .iter()
+            .any(|path| self.workspace.active_document.as_ref() == Some(path));
+        let first_closed_index = self
+            .workspace
+            .open_documents
+            .iter()
+            .position(|tab| closing_paths.contains(&tab.path));
+
+        self.workspace
+            .open_documents
+            .retain(|tab| !closing_paths.contains(&tab.path));
+
+        if active_was_closed {
+            let next_path = first_closed_index.and_then(|index| {
+                self.workspace
+                    .open_documents
+                    .get(index)
+                    .or_else(|| {
+                        index
+                            .checked_sub(1)
+                            .and_then(|previous| self.workspace.open_documents.get(previous))
+                    })
+                    .map(|tab| tab.path.clone())
+            });
+            // Detach the closing document from the editor first so snapshot /
+            // dirty-guard logic inside open_workspace_file cannot resurrect it.
+            self.file_path = None;
+            self.document_dirty = false;
+            if let Some(next_path) = next_path {
+                self.open_workspace_file(next_path, window, cx);
+            } else {
+                self.workspace.active_document = None;
+                self.workspace.selected = None;
+                self.replace_document_from_markdown(String::new(), None, cx);
+                window.set_window_edited(false);
+            }
+        }
+        if self.document_dirty || self.has_dirty_workspace_documents() {
+            self.schedule_autosave(cx);
+        }
+        cx.notify();
+    }
+
     pub(super) fn render_document_tabs(
         &mut self,
         theme: &Theme,
@@ -1611,9 +1951,11 @@ impl Editor {
             .workspace
             .open_documents
             .iter()
-            .map(|tab| {
+            .enumerate()
+            .map(|(index, tab)| {
                 let path = tab.path.clone();
                 let click_path = path.clone();
+                let close_path = path.clone();
                 let active = self.workspace.active_document.as_ref() == Some(&tab.path);
                 let dirty = if active {
                     self.document_dirty
@@ -1626,10 +1968,38 @@ impl Editor {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| tab.path.to_string_lossy().into_owned());
                 let tab_editor = editor.clone();
+                let context_editor = editor.clone();
+                let close_button = div()
+                    .id(("document-tab-close", index))
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .text_color(c.dialog_muted)
+                    .hover(|this| {
+                        this.bg(c.dialog_secondary_button_hover)
+                            .text_color(c.text_default)
+                    })
+                    .cursor_pointer()
+                    .child(svg().path(TAB_CLOSE_ICON).size(px(9.0)))
+                    .on_click({
+                        let close_editor = editor.clone();
+                        move |_event, window, cx| {
+                            let _ = close_editor.update(cx, |editor, cx| {
+                                editor.close_workspace_document(&close_path, window, cx);
+                            });
+                            cx.stop_propagation();
+                        }
+                    })
+                    .into_any_element();
                 div()
                     .id(("document-tab", stable_node_hash(&path.to_string_lossy())))
-                    .h(px(32.0))
+                    .h_full()
                     .min_w(px(120.0))
+                    .max_w(px(220.0))
                     .px(px(10.0))
                     .flex_shrink_0()
                     .flex()
@@ -1639,13 +2009,19 @@ impl Editor {
                     .border_r(px(1.0))
                     .border_color(c.dialog_border)
                     .bg(if active {
-                        c.dialog_surface
+                        c.editor_background
                     } else {
-                        c.dialog_secondary_button_bg
+                        hsla(0.0, 0.0, 0.0, 0.0)
                     })
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .hover(|this| {
+                        this.bg(if active {
+                            c.editor_background
+                        } else {
+                            c.dialog_secondary_button_hover
+                        })
+                    })
                     .cursor_pointer()
-                    .text_size(px(11.0))
+                    .text_size(px(12.0))
                     .text_color(if active {
                         c.text_default
                     } else {
@@ -1654,7 +2030,7 @@ impl Editor {
                     .children(active.then(|| {
                         div()
                             .absolute()
-                            .top_0()
+                            .bottom_0()
                             .left_0()
                             .right_0()
                             .h(px(2.0))
@@ -1674,17 +2050,28 @@ impl Editor {
                             .child(if is_code_file(&path) { "⌘" } else { "M" }),
                     )
                     .child(div().flex_1().min_w(px(0.0)).truncate().child(title))
-                    .children(dirty.then(|| {
+                    .child(if dirty && !active {
                         div()
                             .w(px(7.0))
                             .h(px(7.0))
+                            .mr(px(2.0))
+                            .flex_shrink_0()
                             .rounded(px(4.0))
                             .bg(c.dialog_primary_button_bg)
-                    }))
+                            .into_any_element()
+                    } else {
+                        close_button
+                    })
                     .on_click(move |_event, window, cx| {
                         let _ = tab_editor.update(cx, |editor, cx| {
                             editor.open_workspace_file(click_path.clone(), window, cx);
                         });
+                    })
+                    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                        let _ = context_editor.update(cx, |editor, cx| {
+                            editor.open_tab_context_menu(event.position, index, cx);
+                        });
+                        cx.stop_propagation();
                     })
                     .into_any_element()
             })
@@ -1693,14 +2080,10 @@ impl Editor {
         Some(
             div()
                 .id("document-tabs")
-                .w_full()
-                .h(px(32.0))
-                .flex_shrink_0()
+                .h_full()
+                .min_w(px(0.0))
                 .flex()
                 .overflow_x_scroll()
-                .bg(c.dialog_secondary_button_bg)
-                .border_b(px(theme.dimensions.dialog_border_width))
-                .border_color(c.dialog_border)
                 .children(tabs)
                 .into_any_element(),
         )

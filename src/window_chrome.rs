@@ -12,10 +12,12 @@ use gpui::{
 use crate::app_identity::VELORA_APP_ID;
 use crate::theme::{Theme, ThemeDimensions};
 
-const TITLEBAR_MIN_HEIGHT: f32 = 40.0;
+const TITLEBAR_MIN_HEIGHT: f32 = 36.0;
 const TITLEBAR_BUTTON_WIDTH: f32 = 46.0;
 const TITLEBAR_ICON_SIZE: f32 = 12.0;
 const MAC_TRAFFIC_LIGHT_RESERVED_WIDTH: f32 = 84.0;
+/// Reserved drag area between the last tab and the right window edge.
+const TITLEBAR_DRAG_FILLER_WIDTH: f32 = 40.0;
 const TITLEBAR_CLOSE_ICON: &str = "icon/titlebar/chrome-close.svg";
 const TITLEBAR_MAXIMIZE_ICON: &str = "icon/titlebar/chrome-maximize.svg";
 const TITLEBAR_MINIMIZE_ICON: &str = "icon/titlebar/chrome-minimize.svg";
@@ -156,7 +158,7 @@ pub(crate) fn titlebar_options_for_target_os(
         title: Some(title),
         appears_transparent: matches!(target_os, "macos" | "windows"),
         traffic_light_position: if target_os == "macos" {
-            Some(point(px(14.0), px(10.0)))
+            Some(point(px(14.0), px(12.0)))
         } else {
             None
         },
@@ -269,9 +271,11 @@ pub(crate) fn titlebar_maximize_icon(is_maximized: bool, is_fullscreen: bool) ->
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_custom_titlebar<T: 'static>(
     id: &'static str,
     title: SharedString,
+    tabs: Option<AnyElement>,
     theme: &Theme,
     window: &Window,
     cx: &mut Context<T>,
@@ -300,44 +304,62 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
         .map(|(_, name)| name)
         .unwrap_or("")
         .to_string();
-    let drag_title = div()
-        .id("window-titlebar-drag-title")
-        .h_full()
-        .flex_1()
-        .min_w(px(0.0))
-        .px(px(12.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .window_control_area(WindowControlArea::Drag)
-        .child(
-            div()
-                .min_w(px(0.0))
-                .truncate()
-                .text_size(px(theme.dimensions.menu_text_size))
-                .font_weight(t.dialog_button_weight.to_font_weight())
-                .text_color(c.text_default)
-                .child(breadcrumb),
-        );
+    let make_drag_title = || {
+        let drag_title = div()
+            .id("window-titlebar-drag-title")
+            .h_full()
+            .flex_1()
+            .min_w(px(0.0))
+            .px(px(12.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .window_control_area(WindowControlArea::Drag)
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .truncate()
+                    .text_size(px(theme.dimensions.menu_text_size))
+                    .font_weight(t.dialog_button_weight.to_font_weight())
+                    .text_color(c.text_default)
+                    .child(breadcrumb.clone()),
+            );
 
-    let drag_title = match drag_strategy {
-        TitlebarDragStrategy::PlatformHitTest => drag_title,
-        TitlebarDragStrategy::ExplicitMoveRequest => {
-            drag_title.on_mouse_down(MouseButton::Left, |event, window, cx| {
-                if event.click_count >= 2 {
-                    window.zoom_window();
-                } else {
-                    window.start_window_move();
-                }
-                cx.stop_propagation();
-            })
+        match drag_strategy {
+            TitlebarDragStrategy::PlatformHitTest => drag_title,
+            TitlebarDragStrategy::ExplicitMoveRequest => {
+                drag_title.on_mouse_down(MouseButton::Left, |event, window, cx| {
+                    if event.click_count >= 2 {
+                        window.zoom_window();
+                    } else {
+                        window.start_window_move();
+                    }
+                    cx.stop_propagation();
+                })
+            }
         }
-    }
-    .on_click(|event, window, _cx| {
-        if event.is_right_click() {
-            window.show_window_menu(event.position());
+        .on_click(|event, window, _cx| {
+            if event.is_right_click() {
+                window.show_window_menu(event.position());
+            }
+        })
+    };
+
+    // With document tabs the title moves out of the way (the active tab already
+    // names the document) and the tab strip fills the bar; empty space around
+    // the strip stays draggable.
+    let drag_filler = |flex_grow: bool| {
+        let filler = div()
+            .id("window-titlebar-drag-filler")
+            .h_full()
+            .window_control_area(WindowControlArea::Drag)
+            .min_w(px(12.0));
+        if flex_grow {
+            filler.flex_1()
+        } else {
+            filler.w(px(TITLEBAR_DRAG_FILLER_WIDTH)).flex_shrink_0()
         }
-    });
+    };
 
     let root = div()
         .id(id)
@@ -354,10 +376,16 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
         .border_color(c.dialog_border);
 
     let root = match layout.controls {
-        TitlebarControlMode::NativeTrafficLights => root
-            .child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full())
-            .child(drag_title)
-            .child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full()),
+        TitlebarControlMode::NativeTrafficLights => {
+            if let Some(tabs) = tabs {
+                root.child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full())
+                    .child(tabs)
+                    .child(drag_filler(true))
+            } else {                root.child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full())
+                    .child(make_drag_title())
+                    .child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full())
+            }
+        }
         TitlebarControlMode::AppControls => {
             let close_entity = entity.clone();
             let layout_buttons = button_layout_for_target_os(std::env::consts::OS);
@@ -484,7 +512,20 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                 right_row = right_row.child(btn);
             }
 
-            root.child(left_row).child(drag_title).child(right_row)
+            let middle: AnyElement = match tabs {
+                Some(tabs) => div()
+                    .h_full()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .child(tabs)
+                    .child(drag_filler(true))
+                    .into_any_element(),
+                None => make_drag_title().into_any_element(),
+            };
+
+            root.child(left_row).child(middle).child(right_row)
         }
     };
 

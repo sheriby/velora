@@ -2155,6 +2155,14 @@ impl Render for Editor {
 
         let content_area = content_area.into_any_element();
         let document_tabs = self.render_document_tabs(&theme, cx);
+        // Document tabs live inside the custom titlebar when it is visible;
+        // without one (macOS fullscreen, server-side decorations) they fall
+        // back to a standalone row above the editor column.
+        let (titlebar_tabs, column_tabs) = if titlebar_height > 0.0 {
+            (document_tabs, None)
+        } else {
+            (None, document_tabs)
+        };
         let content_area = div()
             .id("editor-column")
             .w_full()
@@ -2163,7 +2171,19 @@ impl Render for Editor {
             .min_w(px(0.0))
             .flex()
             .flex_col()
-            .children(document_tabs)
+            .children(column_tabs.map(|tabs| {
+                div()
+                    .id("document-tabs-fallback")
+                    .w_full()
+                    .h(px(36.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .bg(theme.colors.dialog_surface)
+                    .border_b(px(theme.dimensions.dialog_border_width))
+                    .border_color(theme.colors.dialog_border)
+                    .child(tabs)
+                    .into_any_element()
+            }))
             .child(content_area)
             .into_any_element();
         let content_area = if self.source_mode_fallback_required && !self.code_tab_active() {
@@ -2272,6 +2292,7 @@ impl Render for Editor {
         let base = if let Some(titlebar) = render_custom_titlebar(
             "editor-titlebar",
             format!("Velora - {}", self.workspace_breadcrumb()).into(),
+            titlebar_tabs,
             &theme,
             window,
             cx,
@@ -2338,6 +2359,11 @@ impl Render for Editor {
             } else {
                 base
             };
+        let base = if let Some(menu) = self.render_tab_context_menu_overlay(&theme, window, cx) {
+            base.child(menu)
+        } else {
+            base
+        };
         let base = if let Some(table_dialog) = self.render_table_insert_dialog_overlay(&theme, cx) {
             base.child(table_dialog)
         } else {
