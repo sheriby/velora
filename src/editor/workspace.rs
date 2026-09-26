@@ -2466,11 +2466,7 @@ impl Editor {
         let search_input = self.render_search_input(
             "workspace-search-query",
             self.workspace.search_query.clone(),
-            if self.workspace.search_query.is_empty() {
-                strings.workspace_search_placeholder.clone()
-            } else {
-                self.workspace.search_query.clone()
-            },
+            strings.workspace_search_placeholder.clone(),
             SearchInputKind::Query,
             query_focused,
             theme,
@@ -2486,11 +2482,7 @@ impl Editor {
             self.render_search_input(
                 "workspace-search-replace",
                 self.workspace.replace_query.clone(),
-                if self.workspace.replace_query.is_empty() {
-                    strings.search_replace_placeholder.clone()
-                } else {
-                    self.workspace.replace_query.clone()
-                },
+                strings.search_replace_placeholder.clone(),
                 SearchInputKind::Replace,
                 replace_focused,
                 theme,
@@ -2869,6 +2861,16 @@ impl Editor {
         let input_editor = cx.entity();
         let editor = cx.entity().downgrade();
 
+        // The placeholder disappears as soon as the field is focused, not
+        // just once text is typed.
+        let (label, muted) = if !value.is_empty() {
+            (value, false)
+        } else if focused {
+            (String::new(), true)
+        } else {
+            (placeholder, true)
+        };
+
         div()
             .id(id)
             .relative()
@@ -2888,12 +2890,12 @@ impl Editor {
             })
             .bg(c.editor_background)
             .text_size(px(12.0))
-            .text_color(if value.is_empty() {
+            .text_color(if muted {
                 c.dialog_muted
             } else {
                 c.text_default
             })
-            .child(placeholder)
+            .child(label)
             .child(
                 canvas(
                     |_, _, _| (),
