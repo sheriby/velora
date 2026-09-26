@@ -132,6 +132,9 @@ pub struct Editor {
     /// Window opened with no document (fresh workspace, empty startup): the
     /// content area shows the welcome page instead of an empty editor.
     pub(super) show_welcome: bool,
+    /// Blocks currently carrying in-document search highlights (roadmap B2);
+    /// tracked so the next sync can clear them cheaply.
+    pub(super) search_highlighted_blocks: Vec<Entity<Block>>,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
     workspace: WorkspaceState,
@@ -402,6 +405,7 @@ impl Editor {
             unsupported_preview_path: None,
             pending_folder_choice: None,
             show_welcome: false,
+            search_highlighted_blocks: Vec::new(),
             update_check_in_progress: false,
             workspace: WorkspaceState::default(),
             status_bar: StatusBarState::default(),

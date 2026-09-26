@@ -112,6 +112,9 @@ pub struct Block {
     pub(crate) code_language_last_bounds: Option<Bounds<Pixels>>,
     pub(crate) code_language_is_selecting: bool,
     pub selected_range: Range<usize>,
+    /// Content-local byte ranges highlighted as document search matches
+    /// (roadmap B2). Owned by the editor's search panel state.
+    pub(crate) search_highlight_ranges: Vec<Range<usize>>,
     pub selection_reversed: bool,
     pub(crate) editor_selection_range: Option<Range<usize>>,
     pub marked_range: Option<Range<usize>>,
@@ -218,6 +221,7 @@ impl Block {
             code_language_last_bounds: None,
             code_language_is_selecting: false,
             selected_range: 0..0,
+            search_highlight_ranges: Vec::new(),
             selection_reversed: false,
             editor_selection_range: None,
             marked_range: None,

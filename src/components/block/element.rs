@@ -853,6 +853,7 @@ pub struct PrepaintState {
     cursor: Option<PaintQuad>,
     selection: Vec<PaintQuad>,
     code_backgrounds: Vec<PaintQuad>,
+    search_highlights: Vec<PaintQuad>,
     line_height: Pixels,
     hitbox: Hitbox,
 }
@@ -1144,6 +1145,28 @@ impl Element for BlockTextElement {
             }
         }
 
+        // In-document search matches (roadmap B2): translucent quads under
+        // the text, computed like selection segments.
+        let mut search_highlights = Vec::new();
+        if !input.search_highlight_ranges.is_empty() {
+            let highlight_color = theme.colors.search_highlight_bg;
+            let text = input.display_text();
+            for range in &input.search_highlight_ranges {
+                for segment in range_segment_bounds(
+                    &lines,
+                    text_bounds,
+                    line_height,
+                    text,
+                    range.clone(),
+                    text_align,
+                ) {
+                    let mut quad = fill(segment, highlight_color);
+                    quad.corner_radii = Corners::all(px(2.0));
+                    search_highlights.push(quad);
+                }
+            }
+        }
+
         PrepaintState {
             lines,
             source_line_numbers,
@@ -1151,6 +1174,7 @@ impl Element for BlockTextElement {
             cursor: cursor_quad,
             selection: selection_quads,
             code_backgrounds: code_quads,
+            search_highlights,
             line_height,
             hitbox,
         }
@@ -1205,6 +1229,11 @@ impl Element for BlockTextElement {
         // Paint code backgrounds behind text.
         for code_bg in prepaint.code_backgrounds.drain(..) {
             window.paint_quad(code_bg);
+        }
+
+        // Search matches sit above code backgrounds and below the selection.
+        for highlight in prepaint.search_highlights.drain(..) {
+            window.paint_quad(highlight);
         }
 
         for selection in prepaint.selection.drain(..) {

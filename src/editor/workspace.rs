@@ -247,6 +247,67 @@ impl Default for WorkspaceState {
 impl Editor {
     /// Opens a welcome-page recent entry: folders replace the working set,
     /// files open as a tab in this window.
+    /// Recomputes in-document search highlight ranges (roadmap B2): clears
+    /// the previous blocks, then maps every match through the source→content
+    /// mappings onto the owning block.
+    pub(super) fn sync_document_search_highlights(&mut self, cx: &mut Context<Self>) {
+        let previous = std::mem::take(&mut self.search_highlighted_blocks);
+        for entity in &previous {
+            let _ = entity.update(cx, |block, _| block.search_highlight_ranges.clear());
+        }
+
+        let query = self.workspace.search_query.trim().to_string();
+        let active = self.workspace.is_open
+            && self.workspace.active_tab == WorkspaceTab::Search
+            && self.workspace.search_scope == WorkspaceSearchScope::Document
+            && !query.is_empty();
+        if !active {
+            cx.notify();
+            return;
+        }
+
+        let matcher = SearchMatcher::new(&query, self.search_options());
+        let source = self.current_document_source(cx);
+        let mappings = self.build_source_target_mappings(cx);
+        let mut highlighted = Vec::new();
+        for mapping in &mappings {
+            let Some(block_source) = source.get(mapping.full_source_range.clone()) else {
+                continue;
+            };
+            let matches = matcher.find_in_line(block_source);
+            if matches.is_empty() {
+                continue;
+            }
+            let mut ranges = Vec::with_capacity(matches.len());
+            for found in matches {
+                let local_start = found.start;
+                let local_end = found.end;
+                if local_end >= mapping.source_to_content.len() {
+                    continue;
+                }
+                let content_start = mapping.source_to_content[local_start];
+                let content_end = mapping.source_to_content[local_end];
+                if content_end > content_start {
+                    let range = mapping
+                        .entity
+                        .read(cx)
+                        .markdown_range_to_current_range(content_start..content_end);
+                    if !range.is_empty() {
+                        ranges.push(range);
+                    }
+                }
+            }
+            if ranges.is_empty() {
+                continue;
+            }
+            let entity = mapping.entity.clone();
+            entity.update(cx, |block, _| block.search_highlight_ranges = ranges);
+            highlighted.push(entity);
+        }
+        self.search_highlighted_blocks = highlighted;
+        cx.notify();
+    }
+
     pub(crate) fn open_recent_entry(
         &mut self,
         path: &Path,
@@ -1366,6 +1427,7 @@ impl Editor {
         let tree = self.workspace.file_tree.clone();
         if matcher.is_empty() || (scope == WorkspaceSearchScope::Workspace && tree.is_none()) {
             self.workspace.search_pending = false;
+            self.sync_document_search_highlights(cx);
             cx.notify();
             return;
         }
@@ -1431,6 +1493,7 @@ impl Editor {
                     editor.workspace.search_results = results;
                     editor.workspace.document_search_source = document_source;
                     editor.workspace.search_pending = false;
+                    editor.sync_document_search_highlights(cx);
                     cx.notify();
                 }
             });

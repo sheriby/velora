@@ -105,6 +105,8 @@ pub struct ThemeColors {
     pub callout_important_border: Hsla,
     /// Warning callout background.
     pub callout_warning_bg: Hsla,
+    /// Translucent fill for in-document search matches (roadmap B2).
+    pub search_highlight_bg: Hsla,
     /// Warning callout accent border/text colour.
     pub callout_warning_border: Hsla,
     /// Caution callout background.
@@ -570,6 +572,7 @@ struct ThemeColorsDe {
     callout_important_bg: Option<Hsla>,
     callout_important_border: Option<Hsla>,
     callout_warning_bg: Option<Hsla>,
+    search_highlight_bg: Option<Hsla>,
     callout_warning_border: Option<Hsla>,
     callout_caution_bg: Option<Hsla>,
     callout_caution_border: Option<Hsla>,
@@ -690,6 +693,9 @@ impl<'de> Deserialize<'de> for ThemeColors {
             callout_warning_bg: raw
                 .callout_warning_bg
                 .unwrap_or_else(|| Hsla::from(rgba(0xfb71851f))),
+            search_highlight_bg: raw
+                .search_highlight_bg
+                .unwrap_or_else(|| Hsla::from(rgba(0xffe06638))),
             callout_warning_border: raw
                 .callout_warning_border
                 .unwrap_or_else(|| Hsla::from(rgba(0xfb7185ff))),
@@ -1231,6 +1237,7 @@ impl Theme {
                 callout_important_bg: Hsla::from(rgba(0xa78bfa1f)),
                 callout_important_border: Hsla::from(rgba(0xa78bfaff)),
                 callout_warning_bg: Hsla::from(rgba(0xfce1001f)),
+                search_highlight_bg: Hsla::from(rgba(0xffe06638)),
                 callout_warning_border: Hsla::from(rgba(0xfce100ff)),
                 callout_caution_bg: Hsla::from(rgba(0xd134381f)),
                 callout_caution_border: Hsla::from(rgba(0xd13438ff)),
@@ -1478,6 +1485,7 @@ impl Theme {
                 callout_important_bg: Hsla::from(rgba(0x8764b814)),
                 callout_important_border: Hsla::from(rgba(0x8764b8ff)),
                 callout_warning_bg: Hsla::from(rgba(0xca501014)),
+                search_highlight_bg: Hsla::from(rgba(0xffd60a4d)),
                 callout_warning_border: Hsla::from(rgba(0xca5010ff)),
                 callout_caution_bg: Hsla::from(rgba(0xd1343814)),
                 callout_caution_border: Hsla::from(rgba(0xd13438ff)),
