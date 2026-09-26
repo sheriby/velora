@@ -338,6 +338,63 @@ impl Editor {
         }
     }
 
+    /// Reloads an externally modified open document when clean (roadmap D3).
+    pub(super) fn reload_externally_changed_document(
+        &mut self,
+        path: &Path,
+        cx: &mut Context<Self>,
+    ) {
+        let is_active = self.file_path.as_deref() == Some(path);
+        let Some((cached_markdown, dirty)) = self.cached_tab_content_for_path(path, cx) else {
+            return;
+        };
+        if dirty {
+            // Unsaved edits win; the save path already detects conflicts.
+            return;
+        }
+        let Ok(disk) = std::fs::read_to_string(path) else {
+            return;
+        };
+        if disk == cached_markdown {
+            return;
+        }
+        let file_version = super::persistence::file_content_version(&disk);
+        if let Some(tab) = self
+            .workspace
+            .open_documents
+            .iter_mut()
+            .find(|tab| tab.path == path)
+        {
+            tab.markdown = disk.clone();
+            tab.file_version = file_version;
+        }
+        if is_active {
+            let path = path.to_path_buf();
+            if is_markdown_file(&path) {
+                self.replace_document_from_markdown(disk, Some(path), cx);
+            } else {
+                self.replace_document_from_code_source(disk, path, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Cached markdown + dirty state for an open document path (watcher).
+    pub(super) fn cached_tab_content_for_path(
+        &self,
+        path: &Path,
+        cx: &App,
+    ) -> Option<(String, bool)> {
+        if self.file_path.as_deref() == Some(path) {
+            return Some((self.serialized_document_text(cx), self.document_dirty));
+        }
+        self.workspace
+            .open_documents
+            .iter()
+            .find(|tab| &tab.path == path)
+            .map(|tab| (tab.markdown.clone(), tab.dirty))
+    }
+
     /// All markdown/code files of the workspace tree, for the quick switcher.
     pub(super) fn workspace_text_files(&self) -> Vec<PathBuf> {
         self.workspace
@@ -402,6 +459,10 @@ impl Editor {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         self.sync_workspace_file_tree();
         self.sync_workspace_outline(cx);
+        let active_root = self.workspace.root.clone();
+        if let Some(active_root) = active_root.as_deref() {
+            super::watcher::start_watching(self, active_root, cx);
+        }
         self.persist_session(cx);
         cx.notify();
     }

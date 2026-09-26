@@ -43,6 +43,7 @@ mod tree;
 mod update;
 mod window_state;
 mod quick_open;
+mod watcher;
 mod workspace;
 
 use self::status_bar::StatusBarState;
@@ -138,6 +139,8 @@ pub struct Editor {
     pub(super) search_highlighted_blocks: Vec<Entity<Block>>,
     /// Quick file switcher overlay (⌘P); `None` while closed.
     quick_open: Option<quick_open::QuickOpenState>,
+    /// Workspace change watcher (roadmap D3); `None` until a root is set.
+    external_watcher: Option<notify::RecommendedWatcher>,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
     workspace: WorkspaceState,
@@ -410,6 +413,7 @@ impl Editor {
             show_welcome: false,
             search_highlighted_blocks: Vec::new(),
             quick_open: None,
+            external_watcher: None,
             update_check_in_progress: false,
             workspace: WorkspaceState::default(),
             status_bar: StatusBarState::default(),

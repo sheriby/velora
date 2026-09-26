@@ -57,6 +57,7 @@ code-highlight-config = [
 anyhow = "1"
 base64 = "0.23"
 regex = "1"
+notify = "6"
 uuid = "1.23"
 gpui = { version = "0.2", features = ["runtime_shaders"] }
 unicode-segmentation = "1.13"
