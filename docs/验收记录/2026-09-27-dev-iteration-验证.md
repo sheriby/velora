@@ -84,6 +84,13 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | E6 光标历史 | workspace 全部用例 | 通过 |
 | G4 大文件基准 | 10 MiB 打开实测 17.5s（debug，159,683 块 ≈109µs/块）；断言 ≤400µs/块 防回归；3s 预算依赖 G8 惰性建块 | 通过（预算记录在案） |
 
+## 第八批补充（G6 演练 / G7 快照）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| G6 崩溃恢复演练 | crash_recovery_drill 四阶段 gpui 测试 | 通过 |
+| G7 渲染快照 | render_structure_snapshot 黄金快照（含列表组分隔空段、表格空 display_text 两处设计使然差异说明） | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
