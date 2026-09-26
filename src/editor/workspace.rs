@@ -2101,12 +2101,24 @@ impl Editor {
         // no extension but are text, while a .md full of NUL bytes is not
         // renderable. Non-text files still become the active tab; the content
         // area shows a centered placeholder.
+        if has_utf16_bom(&path) {
+            let strings = cx.global::<I18nManager>().strings().clone();
+            self.show_welcome = false;
+            self.show_preview_unavailable_with_detail(
+                path.clone(),
+                Some(strings.encoding_not_supported.clone()),
+                window,
+                cx,
+            );
+            return;
+        }
         if !is_likely_text_file(&path) {
             self.show_welcome = false;
             self.show_preview_unavailable(path.clone(), window, cx);
             return;
         }
         self.unsupported_preview_path = None;
+        self.unsupported_preview_detail = None;
         self.show_welcome = false;
         if self.file_path.is_none() && self.document_dirty {
             self.request_dropped_markdown_replace(path, window, cx);
@@ -2214,6 +2226,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_preview_unavailable_with_detail(path, None, window, cx);
+    }
+
+    fn show_preview_unavailable_with_detail(
+        &mut self,
+        path: PathBuf,
+        detail: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.show_welcome = false;
         if let Some(existing) = self
             .workspace
@@ -2233,6 +2255,7 @@ impl Editor {
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
         self.reveal_path_in_tree(&path);
+        self.unsupported_preview_detail = detail;
         self.unsupported_preview_path = Some(path);
         self.file_path = None;
         self.document_dirty = false;
@@ -4820,6 +4843,22 @@ fn find_document_match_from(
     }
 }
 
+/// Detects a UTF-16 BOM (LE or BE). Such files are text, but the editor only
+/// renders UTF-8 — they get a specific placeholder instead of a parse error
+/// (roadmap G2).
+fn has_utf16_bom(path: &Path) -> bool {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut head = [0u8; 2];
+    match file.read_exact(&mut head) {
+        Ok(()) => head == [0xFF, 0xFE] || head == [0xFE, 0xFF],
+        Err(_) => false,
+    }
+}
+
 /// Heuristic text detection (same shape as Git's `is_text`): read up to the
 /// first 8 KiB and treat the file as text when it decodes as UTF-8 (lossy
 /// covers Latin-1-ish legacy files) and contains no NUL byte — the signature
@@ -5459,6 +5498,26 @@ mod tests {
                 0.."Old Title".len()
             );
         });
+    }
+
+    #[test]
+    fn utf16_bom_detection() {
+        let root = std::env::temp_dir().join(format!("velora-bom-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+
+        let le = root.join("le.txt");
+        std::fs::write(&le, [0xFF, 0xFE, b'a', 0x00]).expect("write LE");
+        assert!(has_utf16_bom(&le));
+
+        let be = root.join("be.txt");
+        std::fs::write(&be, [0xFE, 0xFF, 0x00, b'a']).expect("write BE");
+        assert!(has_utf16_bom(&be));
+
+        let utf8 = root.join("utf8.txt");
+        std::fs::write(&utf8, "plain utf-8 text").expect("write utf8");
+        assert!(!has_utf16_bom(&utf8));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn plain_matcher(query: &str) -> SearchMatcher {

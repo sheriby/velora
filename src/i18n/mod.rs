@@ -311,6 +311,8 @@ pub struct I18nStrings {
     pub workspace_open_new_window_button: String,
     /// Center placeholder for files the text editor can't preview.
     pub workspace_preview_unavailable_message: String,
+    /// Message for files using an encoding the editor can't render yet.
+    pub encoding_not_supported: String,
     /// Welcome page tagline under the app name.
     pub welcome_tagline: String,
     /// Welcome page primary action.
@@ -638,6 +640,7 @@ struct I18nStringsDe {
     workspace_replace_current_button: Option<String>,
     workspace_open_new_window_button: Option<String>,
     workspace_preview_unavailable_message: Option<String>,
+    encoding_not_supported: Option<String>,
     welcome_tagline: Option<String>,
     welcome_new_document: Option<String>,
     welcome_open: Option<String>,
@@ -892,6 +895,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_replace_current_button",
     "workspace_open_new_window_button",
     "workspace_preview_unavailable_message",
+    "encoding_not_supported",
     "welcome_tagline",
     "welcome_new_document",
     "welcome_open",
@@ -1456,6 +1460,9 @@ impl I18nStringsDe {
             workspace_preview_unavailable_message: self
                 .workspace_preview_unavailable_message
                 .unwrap_or(defaults.workspace_preview_unavailable_message),
+            encoding_not_supported: self
+                .encoding_not_supported
+                .unwrap_or(defaults.encoding_not_supported),
             welcome_tagline: self.welcome_tagline.unwrap_or(defaults.welcome_tagline),
             welcome_new_document: self
                 .welcome_new_document
@@ -1834,6 +1841,8 @@ impl I18nStrings {
             workspace_replace_current_button: "替换当前工作区".into(),
             workspace_open_new_window_button: "打开新窗口".into(),
             workspace_preview_unavailable_message: "无法使用文本编辑器预览该文件".into(),
+            encoding_not_supported: "该文件使用了暂不支持的编码（如 UTF-16），请先转换为 UTF-8"
+                .into(),
             welcome_tagline: "为长文写作打造的 Markdown 编辑器".into(),
             welcome_new_document: "新建文档".into(),
             welcome_open: "打开文件或文件夹".into(),
@@ -2119,6 +2128,9 @@ impl I18nStrings {
             workspace_open_new_window_button: "Open in New Window".into(),
             workspace_preview_unavailable_message:
                 "This file can't be previewed in the text editor".into(),
+            encoding_not_supported:
+                "This file uses an encoding we don't support yet (like UTF-16). Convert it to UTF-8 first."
+                    .into(),
             welcome_tagline: "A Markdown editor built for long-form writing".into(),
             welcome_new_document: "New Document".into(),
             welcome_open: "Open File or Folder".into(),

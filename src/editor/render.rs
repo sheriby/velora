@@ -2630,6 +2630,14 @@ impl Render for Editor {
                         .text_size(px(theme.typography.text_size * 0.9))
                         .child(strings.workspace_preview_unavailable_message.clone()),
                 )
+                .children(self.unsupported_preview_detail.as_ref().map(|detail| {
+                    div()
+                        .px(px(12.0))
+                        .text_size(px(theme.typography.text_size * 0.8))
+                        .text_color(theme.colors.dialog_muted)
+                        .text_align(TextAlign::Center)
+                        .child(detail.clone())
+                }))
                 .into_any_element()
         } else {
             content_area
