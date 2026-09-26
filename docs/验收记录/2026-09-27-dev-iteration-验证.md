@@ -47,6 +47,16 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | D2 排序 | 类型排序测试 | 通过 |
 | C5 大纲跟随 | workspace 全部用例 | 通过（视觉待复核） |
 
+## 第四批补充（C6/D5/D7/E8/G2）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| C6 大纲重命名 | gpui 测试：双击选中标题文本（0..9） | 通过 |
+| E8 面包屑 | 渲染烟雾测试 + 路径状态断言（canonicalize 修正） | 通过 |
+| D5 模板 | config 往返测试 | 通过 |
+| D7 树 tooltip | 编译 + workspace 用例 | 通过 |
+| G2 编码探测 | has_utf16_bom 单测（LE/BE/UTF-8） | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
