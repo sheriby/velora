@@ -351,6 +351,8 @@ pub struct I18nStrings {
     pub command_find_previous: String,
     /// Command label: toggle source/rendered view.
     pub command_toggle_view_mode: String,
+    /// Workspace action: duplicate the selected file.
+    pub workspace_duplicate: String,
     /// Message shown when picking or clicking a file type Velora can't open.
     pub workspace_open_unsupported_message: String,
     /// Tab context menu item for closing the tab.
@@ -656,6 +658,7 @@ struct I18nStringsDe {
     command_find_next: Option<String>,
     command_find_previous: Option<String>,
     command_toggle_view_mode: Option<String>,
+    workspace_duplicate: Option<String>,
     workspace_open_unsupported_message: Option<String>,
     tab_close: Option<String>,
     tab_close_others: Option<String>,
@@ -909,6 +912,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "command_find_next",
     "command_find_previous",
     "command_toggle_view_mode",
+    "workspace_duplicate",
     "workspace_open_unsupported_message",
     "tab_close",
     "tab_close_others",
@@ -1500,6 +1504,9 @@ impl I18nStringsDe {
             command_toggle_view_mode: self
                 .command_toggle_view_mode
                 .unwrap_or(defaults.command_toggle_view_mode),
+            workspace_duplicate: self
+                .workspace_duplicate
+                .unwrap_or(defaults.workspace_duplicate),
             workspace_open_unsupported_message: self
                 .workspace_open_unsupported_message
                 .unwrap_or(defaults.workspace_open_unsupported_message),
@@ -1847,6 +1854,7 @@ impl I18nStrings {
             command_find_next: "查找下一个".into(),
             command_find_previous: "查找上一个".into(),
             command_toggle_view_mode: "切换视图模式".into(),
+            workspace_duplicate: "创建副本".into(),
             workspace_open_unsupported_message: "暂时无法打开该类型文件".into(),
             tab_close: "关闭".into(),
             tab_close_others: "关闭其他标签页".into(),
@@ -2131,6 +2139,7 @@ impl I18nStrings {
             command_find_next: "Find Next".into(),
             command_find_previous: "Find Previous".into(),
             command_toggle_view_mode: "Toggle View Mode".into(),
+            workspace_duplicate: "Duplicate".into(),
             workspace_open_unsupported_message:
                 "This file type can't be opened in Velora yet".into(),
             tab_close: "Close".into(),

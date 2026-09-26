@@ -122,6 +122,7 @@ enum WorkspaceSearchScope {
 enum WorkspaceMenuAction {
     NewFile,
     NewFolder,
+    Duplicate,
     Rename,
     Delete,
 }
@@ -1190,6 +1191,14 @@ impl Editor {
                 strings.workspace_rename.clone(),
                 WorkspaceMenuAction::Rename,
             ));
+            if let Some(WorkspaceSelection::File(path)) = self.workspace.selected.as_ref() {
+                if !path.is_dir() {
+                    actions.push((
+                        strings.workspace_duplicate.clone(),
+                        WorkspaceMenuAction::Duplicate,
+                    ));
+                }
+            }
             actions.push((
                 strings.workspace_delete.clone(),
                 WorkspaceMenuAction::Delete,
@@ -1238,6 +1247,9 @@ impl Editor {
                                 }
                                 WorkspaceMenuAction::Rename => {
                                     editor.prompt_rename_or_move_selected(window, cx)
+                                }
+                                WorkspaceMenuAction::Duplicate => {
+                                    editor.duplicate_selected_file(window, cx)
                                 }
                                 WorkspaceMenuAction::Delete => {
                                     editor.prompt_delete_selected(window, cx)
@@ -1961,6 +1973,47 @@ impl Editor {
             self.workspace.expanded.insert(id.to_string());
         }
         cx.notify();
+    }
+
+    /// Creates a `name copy.ext` / `name copy 2.ext` duplicate of the selected
+    /// file beside it (roadmap D6).
+    pub(crate) fn duplicate_selected_file(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.selected_workspace_path() else {
+            return;
+        };
+        if source.is_dir() {
+            return;
+        }
+        let Ok(contents) = fs::read(&source) else {
+            return;
+        };
+        let stem = source
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let extension = source
+            .extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy()))
+            .unwrap_or_default();
+        let parent = source.parent().unwrap_or(Path::new(""));
+        let mut candidate = parent.join(format!("{stem} copy{extension}"));
+        let mut counter = 2u32;
+        while candidate.exists() {
+            candidate = parent.join(format!("{stem} copy {counter}{extension}"));
+            counter += 1;
+        }
+        if let Err(error) = fs::write(&candidate, contents) {
+            self.workspace.file_error = Some(error.to_string());
+            cx.notify();
+            return;
+        }
+        self.refresh_workspace_tree(cx);
+        cx.notify();
+        let _ = window;
     }
 
     /// Double-clicking an outline heading enters rename mode: the caret jumps
