@@ -139,6 +139,36 @@ impl StartupOpenPreference {
     }
 }
 
+/// File tree ordering (roadmap D2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TreeSortPreference {
+    /// Alphabetical by file name, directories first.
+    #[default]
+    Name,
+    /// Most recently modified first, directories first.
+    ModifiedTime,
+    /// Group by extension then name, directories first.
+    Type,
+}
+
+impl TreeSortPreference {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::ModifiedTime => "mtime",
+            Self::Type => "type",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "mtime" => Self::ModifiedTime,
+            "type" => Self::Type,
+            _ => Self::Name,
+        }
+    }
+}
+
 /// Where pasted clipboard images should be stored before inserting Markdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImagePasteBehavior {
@@ -192,6 +222,8 @@ pub(crate) struct AppPreferences {
     pub(crate) status_bar: StatusBarPreferences,
     /// Debounce before dirty changes are autosaved/recovery-snapshotted (ms).
     pub(crate) autosave_debounce_ms: u64,
+    /// File tree ordering: "name" | "mtime" | "type".
+    pub(crate) tree_sort: TreeSortPreference,
     pub(crate) remember_window_bounds: bool,
     pub(crate) window_frame: Option<WindowFrame>,
     /// Session-wide text zoom in percent (60..=200).
@@ -212,6 +244,7 @@ impl Default for AppPreferences {
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
+            tree_sort: TreeSortPreference::default(),
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
@@ -239,6 +272,7 @@ pub struct EditorSettings {
     workspace_sidebar_width: u16,
     zoom_percent: i64,
     autosave_debounce_ms: u64,
+    tree_sort: TreeSortPreference,
 }
 
 impl Global for EditorSettings {}
@@ -298,6 +332,15 @@ impl EditorSettings {
                     .map(|preferences| preferences.autosave_debounce_ms)
             })
             .unwrap_or(800);
+        let tree_sort = cx
+            .try_global::<Self>()
+            .map(|settings| settings.tree_sort)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.tree_sort)
+            })
+            .unwrap_or_default();
         cx.set_global(Self {
             show_table_headers,
             fonts,
@@ -305,6 +348,7 @@ impl EditorSettings {
             workspace_sidebar_width,
             zoom_percent,
             autosave_debounce_ms,
+            tree_sort,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -346,6 +390,24 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.autosave_debounce_ms)
             .unwrap_or(800)
+    }
+
+    /// File tree ordering (roadmap D2).
+    pub(crate) fn tree_sort(cx: &App) -> TreeSortPreference {
+        cx.try_global::<Self>()
+            .map(|settings| settings.tree_sort)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_tree_sort(cx: &mut App, sort: TreeSortPreference) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.tree_sort = sort);
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.tree_sort = sort)
+        {
+            eprintln!("failed to save tree sort: {error}");
+        }
     }
 
     /// Session-wide text zoom percent (60-200); cached mirror of [window]
@@ -446,6 +508,7 @@ struct EditorPreferencesFile {
     writing_width: String,
     workspace_sidebar_width: u16,
     autosave_debounce_ms: u64,
+    tree_sort: String,
 }
 
 #[derive(Serialize)]
@@ -543,6 +606,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 writing_width: value.writing_width.as_str().into(),
                 workspace_sidebar_width: value.workspace_sidebar_width,
                 autosave_debounce_ms: value.autosave_debounce_ms,
+                tree_sort: value.tree_sort.as_str().into(),
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
             window: WindowPreferencesFile {
@@ -739,6 +803,11 @@ fn app_preferences_from_toml_value(
         .and_then(|width| u16::try_from(width).ok())
         .filter(|width| (180..=600).contains(width))
         .unwrap_or(258);
+    let tree_sort = editor
+        .and_then(|editor| editor.get("tree_sort"))
+        .and_then(toml::Value::as_str)
+        .map(TreeSortPreference::from_str)
+        .unwrap_or_default();
     let autosave_debounce_ms = editor
         .and_then(|editor| editor.get("autosave_debounce_ms"))
         .and_then(toml::Value::as_integer)
@@ -834,6 +903,7 @@ fn app_preferences_from_toml_value(
         writing_width,
         workspace_sidebar_width,
         autosave_debounce_ms,
+        tree_sort,
         keybindings,
         status_bar,
         remember_window_bounds,
@@ -2712,7 +2782,7 @@ pub(crate) fn open_preferences_window(cx: &mut App) -> WindowHandle<PreferencesW
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use super::{TreeSortPreference, 
         AppPreferences, EditorSettings, FontPreferences, ImagePasteBehavior, StartupOpenPreference,
         StatusBarPreferences, WritingWidthPreference,
         load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_state,
@@ -2946,6 +3016,7 @@ mod tests {
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
+            tree_sort: TreeSortPreference::default(),
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
@@ -3044,6 +3115,7 @@ mod tests {
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
+            tree_sort: TreeSortPreference::default(),
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,

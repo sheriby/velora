@@ -327,6 +327,14 @@ pub struct I18nStrings {
     pub quick_open_placeholder: String,
     /// Quick switcher empty-state row.
     pub quick_open_no_results: String,
+    /// File tree sort control prefix.
+    pub tree_sort_prefix: String,
+    /// File tree sort option: by name.
+    pub tree_sort_name: String,
+    /// File tree sort option: by modification time.
+    pub tree_sort_mtime: String,
+    /// File tree sort option: by type.
+    pub tree_sort_type: String,
     /// Message shown when picking or clicking a file type Velora can't open.
     pub workspace_open_unsupported_message: String,
     /// Tab context menu item for closing the tab.
@@ -620,6 +628,10 @@ struct I18nStringsDe {
     workspace_folder_entry_label: Option<String>,
     quick_open_placeholder: Option<String>,
     quick_open_no_results: Option<String>,
+    tree_sort_prefix: Option<String>,
+    tree_sort_name: Option<String>,
+    tree_sort_mtime: Option<String>,
+    tree_sort_type: Option<String>,
     workspace_open_unsupported_message: Option<String>,
     tab_close: Option<String>,
     tab_close_others: Option<String>,
@@ -861,6 +873,10 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_folder_entry_label",
     "quick_open_placeholder",
     "quick_open_no_results",
+    "tree_sort_prefix",
+    "tree_sort_name",
+    "tree_sort_mtime",
+    "tree_sort_type",
     "workspace_open_unsupported_message",
     "tab_close",
     "tab_close_others",
@@ -1422,6 +1438,12 @@ impl I18nStringsDe {
             quick_open_no_results: self
                 .quick_open_no_results
                 .unwrap_or(defaults.quick_open_no_results),
+            tree_sort_prefix: self
+                .tree_sort_prefix
+                .unwrap_or(defaults.tree_sort_prefix),
+            tree_sort_name: self.tree_sort_name.unwrap_or(defaults.tree_sort_name),
+            tree_sort_mtime: self.tree_sort_mtime.unwrap_or(defaults.tree_sort_mtime),
+            tree_sort_type: self.tree_sort_type.unwrap_or(defaults.tree_sort_type),
             workspace_open_unsupported_message: self
                 .workspace_open_unsupported_message
                 .unwrap_or(defaults.workspace_open_unsupported_message),
@@ -1757,6 +1779,10 @@ impl I18nStrings {
             workspace_folder_entry_label: "文件夹".into(),
             quick_open_placeholder: "输入文件名模糊搜索…".into(),
             quick_open_no_results: "没有匹配的文件".into(),
+            tree_sort_prefix: "排序".into(),
+            tree_sort_name: "名称".into(),
+            tree_sort_mtime: "时间".into(),
+            tree_sort_type: "类型".into(),
             workspace_open_unsupported_message: "暂时无法打开该类型文件".into(),
             tab_close: "关闭".into(),
             tab_close_others: "关闭其他标签页".into(),
@@ -2029,6 +2055,10 @@ impl I18nStrings {
             workspace_folder_entry_label: "Folder".into(),
             quick_open_placeholder: "Type a file name…".into(),
             quick_open_no_results: "No matching files".into(),
+            tree_sort_prefix: "Sort".into(),
+            tree_sort_name: "Name".into(),
+            tree_sort_mtime: "Time".into(),
+            tree_sort_type: "Type".into(),
             workspace_open_unsupported_message:
                 "This file type can't be opened in Velora yet".into(),
             tab_close: "Close".into(),

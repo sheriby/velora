@@ -12,6 +12,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{BlockKind, Editor, UndoSelectionSnapshot};
+use crate::config::TreeSortPreference;
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeManager};
 
@@ -308,6 +309,22 @@ impl Editor {
         cx.notify();
     }
 
+    /// Cycles the file tree sort order (roadmap D2) and rescans.
+    pub(crate) fn on_cycle_tree_sort(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next = match crate::config::EditorSettings::tree_sort(cx) {
+            TreeSortPreference::Name => TreeSortPreference::ModifiedTime,
+            TreeSortPreference::ModifiedTime => TreeSortPreference::Type,
+            TreeSortPreference::Type => TreeSortPreference::Name,
+        };
+        crate::config::EditorSettings::set_tree_sort(cx, next);
+        self.refresh_workspace_tree(cx);
+    }
+
     /// ⌘1-⌘9: focus the Nth document tab (roadmap E5).
     pub(crate) fn on_select_tab_index(
         &mut self,
@@ -457,7 +474,7 @@ impl Editor {
         self.workspace.document_active_range = None;
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
-        self.sync_workspace_file_tree();
+        self.sync_workspace_file_tree(cx);
         self.sync_workspace_outline(cx);
         let active_root = self.workspace.root.clone();
         if let Some(active_root) = active_root.as_deref() {
@@ -478,7 +495,7 @@ impl Editor {
 
     fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
         self.workspace.file_tree = None;
-        self.sync_workspace_file_tree();
+        self.sync_workspace_file_tree(cx);
         if self.workspace.active_tab == WorkspaceTab::Search
             && !self.workspace.search_query.is_empty()
         {
@@ -1268,7 +1285,7 @@ impl Editor {
     }
 
     fn sync_workspace_models(&mut self, cx: &mut Context<Self>) {
-        self.sync_workspace_file_tree();
+        self.sync_workspace_file_tree(cx);
         self.sync_workspace_outline(cx);
         self.ensure_current_document_tab(cx);
     }
@@ -1410,7 +1427,7 @@ impl Editor {
             .map(|tab| (tab.markdown.clone(), tab.dirty, tab.file_version))
     }
 
-    fn sync_workspace_file_tree(&mut self) {
+    fn sync_workspace_file_tree(&mut self, cx: &mut Context<Self>) {
         let next_root = self
             .workspace
             .root
@@ -1440,7 +1457,8 @@ impl Editor {
             return;
         }
 
-        match scan_workspace_dir(&root) {
+        let tree_sort = crate::config::EditorSettings::tree_sort(cx);
+        match scan_workspace_dir(&root, tree_sort) {
             Ok(tree) => {
                 self.workspace.expanded.insert(tree.id.clone());
                 self.workspace.file_tree = Some(tree);
@@ -2661,6 +2679,8 @@ impl Editor {
 
         let search_header = (self.workspace.active_tab == WorkspaceTab::Search)
             .then(|| self.render_search_header(theme, strings, window, cx));
+        let tree_sort_header = (self.workspace.active_tab == WorkspaceTab::Files)
+            .then(|| self.render_tree_sort_header(theme, strings, cx));
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor),
@@ -2684,6 +2704,7 @@ impl Editor {
                 .border_r(px(d.dialog_border_width))
                 .border_color(c.dialog_border)
                 .children(search_header)
+                .children(tree_sort_header)
                 .child(
                     div()
                         .id("workspace-panel-scroll")
@@ -2717,6 +2738,40 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// Slim header above the file tree: click cycles the sort order.
+    fn render_tree_sort_header(
+        &self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let order = match crate::config::EditorSettings::tree_sort(cx) {
+            TreeSortPreference::Name => strings.tree_sort_name.clone(),
+            TreeSortPreference::ModifiedTime => strings.tree_sort_mtime.clone(),
+            TreeSortPreference::Type => strings.tree_sort_type.clone(),
+        };
+        div()
+            .id("workspace-tree-sort")
+            .w_full()
+            .px(px(8.0))
+            .py(px(4.0))
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(4.0))
+            .text_size(px(11.0))
+            .text_color(c.dialog_muted)
+            .cursor_pointer()
+            .hover(|this| this.text_color(c.text_default))
+            .child(format!(
+                "{} · {} ↻",
+                strings.tree_sort_prefix, order
+            ))
+            .on_click(cx.listener(Self::on_cycle_tree_sort))
+            .into_any_element()
     }
 
     /// VS Code-style search header: query input, collapsible replace input,
@@ -4637,7 +4692,17 @@ pub(super) fn is_code_file(path: &Path) -> bool {
     })
 }
 
-fn scan_workspace_dir(path: &Path) -> Result<WorkspaceTreeNode> {
+fn tree_node_path(node: &WorkspaceTreeNode) -> &Path {
+    match &node.kind {
+        WorkspaceTreeKind::Directory(path)
+        | WorkspaceTreeKind::MarkdownFile(path)
+        | WorkspaceTreeKind::CodeFile(path)
+        | WorkspaceTreeKind::OtherFile(path) => path,
+        WorkspaceTreeKind::Heading { .. } => Path::new(""),
+    }
+}
+
+fn scan_workspace_dir(path: &Path, sort: TreeSortPreference) -> Result<WorkspaceTreeNode> {
     let mut children = Vec::new();
     for entry in
         fs::read_dir(path).with_context(|| format!("failed to read '{}'", path.display()))?
@@ -4653,7 +4718,7 @@ fn scan_workspace_dir(path: &Path) -> Result<WorkspaceTreeNode> {
             ) {
                 continue;
             }
-            children.push(scan_workspace_dir(&entry_path)?);
+            children.push(scan_workspace_dir(&entry_path, sort)?);
         } else if file_type.is_file() && is_markdown_file(&entry_path) {
             children.push(WorkspaceTreeNode {
                 id: file_node_id(&entry_path),
@@ -4681,9 +4746,37 @@ fn scan_workspace_dir(path: &Path) -> Result<WorkspaceTreeNode> {
     children.sort_by(|left, right| {
         let left_dir = matches!(left.kind, WorkspaceTreeKind::Directory(_));
         let right_dir = matches!(right.kind, WorkspaceTreeKind::Directory(_));
-        right_dir
-            .cmp(&left_dir)
-            .then_with(|| left.label.to_lowercase().cmp(&right.label.to_lowercase()))
+        // Directories always group first; within a group the preference
+        // decides the key (roadmap D2).
+        right_dir.cmp(&left_dir).then_with(|| match sort {
+            TreeSortPreference::Name => left
+                .label
+                .to_lowercase()
+                .cmp(&right.label.to_lowercase()),
+            TreeSortPreference::ModifiedTime => {
+                let left_time = fs::metadata(tree_node_path(left))
+                    .ok()
+                    .and_then(|meta| meta.modified().ok());
+                let right_time = fs::metadata(tree_node_path(right))
+                    .ok()
+                    .and_then(|meta| meta.modified().ok());
+                // Newest first; missing metadata sorts last.
+                right_time.cmp(&left_time)
+            }
+            TreeSortPreference::Type => {
+                let left_ext = tree_node_path(left)
+                    .extension()
+                    .map(|e| e.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let right_ext = tree_node_path(right)
+                    .extension()
+                    .map(|e| e.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                left_ext.cmp(&right_ext).then_with(|| {
+                    left.label.to_lowercase().cmp(&right.label.to_lowercase())
+                })
+            }
+        })
     });
 
     Ok(WorkspaceTreeNode {
@@ -5141,9 +5234,10 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Editor, SearchMatcher, SearchOptions, WorkspaceSelection, WorkspaceState,
+        Editor, SearchMatcher, SearchOptions, TreeSortPreference, WorkspaceSelection,
+        WorkspaceState,
         WorkspaceTreeKind, build_outline_tree, clamp_workspace_panel_width,
-        create_workspace_file, create_workspace_folder, find_document_match_from, is_code_file,
+        create_workspace_file, create_workspace_folder, find_document_match_from, is_code_file, tree_node_path,
         path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
         scan_workspace_dir, search_document_source, search_utf8_to_utf16, search_utf16_to_utf8,
         search_workspace_files,
@@ -5244,7 +5338,7 @@ mod tests {
         fs::write(root.join("main.rs"), "fn main() {}").expect("write code");
         fs::write(root.join("nested").join("b.md"), "b").expect("write nested md");
 
-        let tree = scan_workspace_dir(&root).expect("scan tree");
+        let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
         let labels = tree
             .children
             .iter()
@@ -5268,6 +5362,22 @@ mod tests {
             WorkspaceTreeKind::CodeFile(_)
         ));
 
+        // Type sort groups files by extension before name (roadmap D2).
+        let typed = scan_workspace_dir(&root, TreeSortPreference::Type).expect("scan typed");
+        let extension_at = |index: usize| {
+            tree_node_path(&typed.children[index])
+                .extension()
+                .map(|extension| extension.to_string_lossy().into_owned())
+        };
+        let first = extension_at(0);
+        let second = extension_at(1);
+        if let (Some(first), Some(second)) = (first.clone(), second) {
+            assert!(
+                first <= second,
+                "extensions not ordered: {first} > {second}"
+            );
+        }
+
         let _ = fs::remove_dir_all(root);
     }
 
@@ -5287,7 +5397,7 @@ mod tests {
             fs::write(root.join(name), source).expect("write code sample");
         }
 
-        let tree = scan_workspace_dir(&root).expect("scan code workspace");
+        let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan code workspace");
         assert_eq!(tree.children.len(), 4);
         assert!(
             tree.children
@@ -5496,7 +5606,7 @@ mod tests {
         )
         .expect("write md");
         fs::write(root.join("src").join("main.rs"), "fn main() {}").expect("write code");
-        let tree = scan_workspace_dir(&root).expect("scan tree");
+        let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
 
         let matches = search_workspace_files(&tree, &SearchMatcher::new("MAIN", SearchOptions::default()), 200);
         assert_eq!(matches.len(), 2);
