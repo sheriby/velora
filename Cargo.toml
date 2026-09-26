@@ -193,6 +193,10 @@ name = "velora"
 path = "src/main.rs"
 bench = false
 
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+
 [build-dependencies]
 embed-resource = "3"
 

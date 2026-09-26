@@ -31,7 +31,7 @@ render_icon() {
     pixel_size="$1"
     output_name="$2"
     sips -s format png -z "$pixel_size" "$pixel_size" \
-        "$REPO_ROOT/assets/icon/velora-app.svg" \
+        "$REPO_ROOT/assets/icon/velora.png" \
         --out "$ICONSET_DIR/$output_name" >/dev/null
 }
 
