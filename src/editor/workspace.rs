@@ -5452,7 +5452,7 @@ mod tests {
         Editor, SearchMatcher, SearchOptions, TreeSortPreference, WorkspaceSelection,
         WorkspaceState,
         WorkspaceTreeKind, build_outline_tree, clamp_workspace_panel_width,
-        create_workspace_file, create_workspace_folder, find_document_match_from, is_code_file, tree_node_path,
+        create_workspace_file, create_workspace_folder, find_document_match_from, is_code_file, tree_node_path, has_utf16_bom,
         path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
         scan_workspace_dir, search_document_source, search_utf8_to_utf16, search_utf16_to_utf8,
         search_workspace_files,
