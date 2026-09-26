@@ -1963,6 +1963,32 @@ impl Editor {
         cx.notify();
     }
 
+    /// Double-clicking an outline heading enters rename mode: the caret jumps
+    /// to the heading with its title text selected, so typing replaces it
+    /// directly in the document (roadmap C6).
+    pub(crate) fn rename_outline_heading(&mut self, line: usize, cx: &mut Context<Self>) {
+        let source = self.last_stable_source_text.clone();
+        let line_start = source
+            .split_inclusive('\n')
+            .take(line)
+            .map(str::len)
+            .sum::<usize>()
+            .min(source.len());
+        let line_end = source[line_start..]
+            .find('\n')
+            .map(|offset| line_start + offset)
+            .unwrap_or(source.len());
+        let line_text = &source[line_start..line_end];
+        let marker_len = line_text.chars().take_while(|ch| *ch == '#').count();
+        let after_marker = &line_text[marker_len..];
+        let spaces = after_marker.len() - after_marker.trim_start().len();
+        let title_start = (line_start + marker_len + spaces).min(line_end);
+        if !source.is_char_boundary(title_start) {
+            return;
+        }
+        self.jump_to_document_search_range(title_start..line_end, cx);
+    }
+
     /// Clicking an outline heading jumps to that heading and expands it so its
     /// children become visible.
     fn open_outline_node(&mut self, id: String, line: usize, cx: &mut Context<Self>) {
@@ -3983,7 +4009,11 @@ impl Editor {
                         editor.open_workspace_file(path, window, cx);
                     }
                     WorkspaceTreeKind::Heading { line, .. } => {
-                        editor.open_outline_node(node_id, line, cx)
+                        if event.click_count() >= 2 {
+                            editor.rename_outline_heading(line, cx);
+                        } else {
+                            editor.open_outline_node(node_id, line, cx);
+                        }
                     }
                 });
             })
@@ -5350,7 +5380,35 @@ mod tests {
         assert_eq!(search_utf8_to_utf16(text, "中😀".len()), 3);
     }
 
-        fn plain_matcher(query: &str) -> SearchMatcher {
+        #[gpui::test]
+    async fn outline_rename_selects_heading_title(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.replace_document_from_markdown(
+                "## Old Title\n\nbody".into(),
+                None,
+                cx,
+            );
+            editor.sync_workspace_outline(cx);
+            editor.rename_outline_heading(0, cx);
+        });
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.first_root().expect("root");
+            // 渲染模式标题块的内容坐标即整个标题文本。
+            assert_eq!(
+                block.read(cx).selected_range.clone(),
+                0.."Old Title".len()
+            );
+        });
+    }
+
+    fn plain_matcher(query: &str) -> SearchMatcher {
         SearchMatcher::new(query, SearchOptions::default())
     }
 
