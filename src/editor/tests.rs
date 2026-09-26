@@ -4258,3 +4258,35 @@ async fn welcome_page_hides_once_a_document_opens(cx: &mut TestAppContext) {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[gpui::test]
+async fn status_bar_breadcrumb_renders_without_panicking(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-crumb-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let doc = root.join("nested").join("note.md");
+    std::fs::create_dir_all(doc.parent().unwrap()).expect("create nested");
+    std::fs::write(&doc, "# note\n").expect("write");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(doc.clone(), window, cx);
+        });
+    });
+    // 渲染含面包屑的状态栏不应 panic。
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.file_path.as_deref(), Some(doc.as_path()));
+        assert_eq!(editor.workspace_root_path(), Some(root.as_path()));
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

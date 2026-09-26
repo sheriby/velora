@@ -66,6 +66,9 @@ impl Editor {
             ));
         }
 
+        // 面包屑：工作区根 → 当前文档相对路径（roadmap E8）。点击在树中定位。
+        let breadcrumb = self.render_breadcrumb(theme, cx);
+
         let bar = div()
             .id("status-bar")
             .h(px(d.status_bar_height))
@@ -78,6 +81,7 @@ impl Editor {
             .bg(c.status_bar_background)
             .border_t(px(1.0))
             .border_color(c.dialog_border)
+            .child(breadcrumb)
             .child(
                 div()
                     .flex()
@@ -88,6 +92,49 @@ impl Editor {
             .into_any_element();
 
         Some(bar)
+    }
+
+    /// 工作区根/子路径/文件名 面包屑；无工作区根时隐藏。
+    fn render_breadcrumb(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let Some(document_path) = self.file_path.as_ref() else {
+            return div().into_any_element();
+        };
+        let Some(root) = self.workspace_root_path() else {
+            return div().into_any_element();
+        };
+        let Ok(relative) = document_path.strip_prefix(root) else {
+            return div().into_any_element();
+        };
+        let root_name = root
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        let relative_text = relative.to_string_lossy().into_owned();
+        let editor = cx.entity().downgrade();
+        let reveal_path = document_path.clone();
+
+        div()
+            .id("status-bar-breadcrumb")
+            .mr(px(d.status_bar_item_gap))
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .text_size(px(d.status_bar_text_size))
+            .text_color(c.status_bar_text_dim)
+            .cursor_pointer()
+            .hover(|this| this.text_color(c.status_bar_text))
+            .child(root_name)
+            .child("›")
+            .child(relative_text)
+            .on_click(move |_event, _window, cx| {
+                let _ = editor.update(cx, |editor, cx| {
+                    editor.reveal_path_in_tree(&reveal_path);
+                    cx.notify();
+                });
+            })
+            .into_any_element()
     }
 
     fn status_bar_preferences(&self, cx: &App) -> StatusBarPreferences {

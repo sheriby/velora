@@ -412,6 +412,11 @@ impl Editor {
             .map(|tab| (tab.markdown.clone(), tab.dirty))
     }
 
+    /// Current workspace root, if set.
+    pub(super) fn workspace_root_path(&self) -> Option<&Path> {
+        self.workspace.root.as_deref()
+    }
+
     /// All markdown/code files of the workspace tree, for the quick switcher.
     pub(super) fn workspace_text_files(&self) -> Vec<PathBuf> {
         self.workspace
