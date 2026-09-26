@@ -1330,7 +1330,14 @@ impl Editor {
                 WorkspaceSearchScope::Workspace => {
                     let Some(tree) = tree else { return };
                     let results = background
-                        .spawn(async move { search_workspace_files(&tree, &matcher, 200) })
+                        .spawn(async move {
+                            // A matcher bug must degrade to "no results", not
+                            // take the whole process down.
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                search_workspace_files(&tree, &matcher, 200)
+                            }))
+                            .unwrap_or_default()
+                        })
                         .await;
                     (results, None)
                 }
@@ -1353,8 +1360,10 @@ impl Editor {
                     };
                     let (results, source) = background
                         .spawn(async move {
-                            let results =
-                                search_document_source(&source, &matcher, &path, &label, 200);
+                            let results = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                                || search_document_source(&source, &matcher, &path, &label, 200),
+                            ))
+                            .unwrap_or_default();
                             (results, source)
                         })
                         .await;
@@ -2141,8 +2150,12 @@ impl Editor {
                     .unwrap_or_else(|| tab.path.to_string_lossy().into_owned());
                 let tab_editor = editor.clone();
                 let context_editor = editor.clone();
+                // The close button carries its own hover state: highlighting
+                // the whole tab was indistinguishable from the tab's own
+                // hover background, so the X lights up only under the pointer.
                 let close_button = div()
                     .id(("document-tab-close", index))
+                    .group("doc-tab-close")
                     .w(px(16.0))
                     .h(px(16.0))
                     .flex_shrink_0()
@@ -2150,14 +2163,14 @@ impl Editor {
                     .items_center()
                     .justify_center()
                     .rounded(px(4.0))
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .hover(|this| this.bg(c.selection))
                     .cursor_pointer()
                     .child(
                         svg()
                             .path(TAB_CLOSE_ICON)
                             .size(px(10.0))
                             .text_color(c.dialog_muted)
-                            .group_hover("doc-tab", |this| this.text_color(c.text_default)),
+                            .group_hover("doc-tab-close", |this| this.text_color(c.text_default)),
                     )
                     .on_click({
                         let close_editor = editor.clone();
@@ -3954,12 +3967,12 @@ fn case_insensitive_contains(haystack: &str, needle: &str) -> bool {
 /// comparison (haystack byte offsets stay stable because lowercase folding
 /// of a char never splits the position bookkeeping below).
 fn case_insensitive_ranges(line: &str, query: &str) -> Vec<Range<usize>> {
-    if query.is_empty() || line.is_empty() {
+    if query.is_empty() || line.is_empty() || line.len() < query.len() {
         return Vec::new();
     }
     if query.is_ascii() {
         let mut ranges = Vec::new();
-        let last = line.len().checked_sub(query.len()).unwrap_or(0);
+        let last = line.len() - query.len();
         let bytes = line.as_bytes();
         let mut start = 0;
         while start <= last {
