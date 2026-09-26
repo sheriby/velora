@@ -1882,6 +1882,27 @@ impl Editor {
         }
     }
 
+    /// Expands the file tree to the given path so it is visible (roadmap D1).
+    pub(super) fn reveal_path_in_tree(&mut self, path: &Path) {
+        let Some(root) = self.workspace.root.as_ref() else {
+            return;
+        };
+        let Ok(relative) = path.strip_prefix(root) else {
+            return;
+        };
+        // Directory node ids are `file:{path}` (see file_node_id); expand every
+        // ancestor of the target.
+        let mut ancestor = root.clone();
+        for component in relative.components().take(relative.components().count().saturating_sub(1)) {
+            if matches!(component, std::path::Component::Normal(_)) {
+                ancestor.push(component.as_os_str());
+                self.workspace
+                    .expanded
+                    .insert(format!("file:{}", ancestor.to_string_lossy()));
+            }
+        }
+    }
+
     pub(crate) fn open_workspace_file(
         &mut self,
         path: PathBuf,
@@ -1978,6 +1999,7 @@ impl Editor {
         self.is_recovered_document = false;
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
+        self.reveal_path_in_tree(&path);
         // Markdown rendering is for .md/.markdown only; every other text file
         // (code, dotfiles, plain text) opens as monospace source text.
         let markdown_file = is_markdown_file(&path)
@@ -2025,6 +2047,7 @@ impl Editor {
         });
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
+        self.reveal_path_in_tree(&path);
         self.unsupported_preview_path = Some(path);
         self.file_path = None;
         self.document_dirty = false;
