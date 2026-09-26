@@ -4544,3 +4544,32 @@ async fn render_structure_snapshot_for_key_blocks(cx: &mut TestAppContext) {
         assert_eq!(snapshot, expected, "render structure snapshot mismatch");
     });
 }
+
+#[gpui::test]
+async fn heading_fold_hides_section_content(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "## Section\n\nalpha\n\nbeta\n\n## Next\n\ngamma";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+    editor.update(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        assert_eq!(visible.len(), 5); // H, alpha, beta, H2, gamma
+        let heading = visible[0].entity.clone();
+        heading.update(cx, |block, _cx| block.folded = true);
+
+        let filtered = editor
+            .apply_heading_fold_filter(
+                editor.document.visible_blocks().to_vec(),
+                cx,
+            )
+            .iter()
+            .map(|visible| visible.entity.read(cx).display_text().to_string())
+            .collect::<Vec<_>>();
+
+        // 折叠章节内容 alpha/beta 被隐藏，下一同级标题保持可见。
+        assert_eq!(
+            filtered,
+            vec!["Section".to_string(), "Next".to_string(), "gamma".to_string()]
+        );
+    });
+}

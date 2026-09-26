@@ -117,6 +117,9 @@ pub struct Block {
     pub(crate) search_highlight_ranges: Vec<Range<usize>>,
     /// Pending `#tag` click forwarded to the editor (roadmap C4).
     pub(crate) tag_query: Option<String>,
+    /// Heading fold state (roadmap C7): when true, the section content below
+    /// this heading is hidden.
+    pub(crate) folded: bool,
     /// Pending `[[wikilink]]` click target (roadmap C3).
     pub(crate) wikilink_target: Option<String>,
     pub selection_reversed: bool,
@@ -227,6 +230,7 @@ impl Block {
             selected_range: 0..0,
             search_highlight_ranges: Vec::new(),
             tag_query: None,
+            folded: false,
             wikilink_target: None,
             selection_reversed: false,
             editor_selection_range: None,

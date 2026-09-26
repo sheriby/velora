@@ -332,6 +332,39 @@ impl Editor {
         self.refresh_workspace_tree(cx);
     }
 
+    /// 标题折叠（roadmap C7）：折叠标题之后的块隐藏，直到同级或更高
+    /// 级标题出现。
+    pub(super) fn apply_heading_fold_filter(
+        &self,
+        all: Vec<super::tree::VisibleBlock>,
+        cx: &App,
+    ) -> Vec<super::tree::VisibleBlock> {
+        let mut filtered = Vec::with_capacity(all.len());
+        let mut hide_below_level: Option<u8> = None;
+        for visible in all {
+            let block = visible.entity.read(cx);
+            match block.kind() {
+                BlockKind::Heading { level } => {
+                    if let Some(hide) = hide_below_level
+                        && level <= hide
+                    {
+                        hide_below_level = None;
+                    }
+                    if block.folded {
+                        hide_below_level = Some(level);
+                    }
+                    filtered.push(visible);
+                }
+                _ => {
+                    if hide_below_level.is_none() {
+                        filtered.push(visible);
+                    }
+                }
+            }
+        }
+        filtered
+    }
+
     /// ⌘1-⌘9: focus the Nth document tab (roadmap E5).
     pub(crate) fn on_select_tab_index(
         &mut self,
@@ -2199,11 +2232,40 @@ impl Editor {
             .find('\n')
             .map(|offset| line_start + offset)
             .unwrap_or(source.len());
+        // 折叠的标题被点击时先展开，使章节内容可见（roadmap C7）。
+        if let Some(heading) = self.heading_block_at_source_line(line, cx) {
+            heading.update(cx, |block, _cx| {
+                if block.folded {
+                    block.folded = false;
+                }
+            });
+        }
         if source.is_char_boundary(line_start) && source.is_char_boundary(line_end) {
             self.jump_to_document_search_range(line_start..line_end, cx);
         } else {
             cx.notify();
         }
+    }
+
+    /// Finds the heading block whose source line equals `line`.
+    fn heading_block_at_source_line(
+        &self,
+        line: usize,
+        cx: &App,
+    ) -> Option<Entity<super::Block>> {
+        let (_, ranges) = self.build_source_target_mappings_with_block_ranges(cx);
+        let source = self.current_document_source(cx);
+        let line_start = source
+            .split_inclusive('\n')
+            .take(line)
+            .map(str::len)
+            .sum::<usize>()
+            .min(source.len());
+        ranges
+            .iter()
+            .find(|(_, range)| range.contains(&line_start) || range.start == line_start)
+            .map(|(entity_id, _)| *entity_id)
+            .and_then(|entity_id| self.document.block_entity_at_location(entity_id, cx))
     }
 
     /// Expands the file tree to the given path so it is visible (roadmap D1).

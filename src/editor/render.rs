@@ -2028,7 +2028,8 @@ impl Render for Editor {
         self.sync_window_title(window, &strings);
 
         let d = &theme.dimensions;
-        let visible_blocks = self.document.visible_blocks().to_vec();
+        let visible_blocks =
+            self.apply_heading_fold_filter(self.document.visible_blocks().to_vec(), cx);
         let focused_visible_index = self
             .focused_edit_target_entity_id(window, cx)
             .and_then(|id| {
