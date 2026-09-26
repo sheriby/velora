@@ -37,6 +37,43 @@ use file_url::parse_file_url;
 use i18n::I18nManager;
 use theme::ThemeManager;
 
+/// Applies the velora.png artwork as the macOS Dock icon. Packaged builds
+/// already carry it through the bundle's icns; this covers bare `cargo run`
+/// launches where no bundle icon exists.
+#[cfg(target_os = "macos")]
+// objc 0.2's msg_send/class macros expand cfg(cargo-clippy) checks that
+// newer rustc flags as unexpected cfg values; the lint fires inside the
+// macro, so silence it at this function.
+#[allow(unexpected_cfgs)]
+fn apply_dock_icon() {
+    use objc::class;
+    use objc::msg_send;
+    use objc::sel;
+    use objc::sel_impl;
+
+    let bytes = include_bytes!("../assets/icon/velora.png");
+    unsafe {
+        let data: *mut objc::runtime::Object = msg_send![class!(NSData),
+            dataWithBytes: bytes.as_ptr() as *const std::ffi::c_void
+            length: bytes.len()
+        ];
+        if data.is_null() {
+            return;
+        }
+        let alloc: *mut objc::runtime::Object = msg_send![class!(NSImage), alloc];
+        let image: *mut objc::runtime::Object = msg_send![alloc, initWithData: data];
+        if image.is_null() {
+            return;
+        }
+        let app: *mut objc::runtime::Object =
+            msg_send![class!(NSApplication), sharedApplication];
+        if app.is_null() {
+            return;
+        }
+        let _: () = msg_send![app, setApplicationIconImage: image];
+    }
+}
+
 struct VeloraAssets;
 
 fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference) {
@@ -131,6 +168,9 @@ impl AssetSource for VeloraAssets {
             )))),
             "icon/workspace/tab-close.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/tab-close.svg"
+            )))),
+            "icon/workspace/generic-file.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/generic-file.svg"
             )))),
             "icon/titlebar/chrome-close.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/titlebar/chrome-close.svg"
@@ -247,6 +287,8 @@ fn main() {
     }
 
     app.run(move |cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        apply_dock_icon();
         let preferences = config::load_or_create_app_preferences().unwrap_or_else(|err| {
             eprintln!("failed to initialize app preferences: {err}");
             Default::default()

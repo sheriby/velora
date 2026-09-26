@@ -301,6 +301,18 @@ pub struct I18nStrings {
     pub search_replace_all: String,
     /// Result count template; `{n}` is replaced.
     pub search_result_count: String,
+    /// Generic OK button label.
+    pub dialog_ok: String,
+    /// Title for choosing where a picked folder opens.
+    pub workspace_folder_choice_title: String,
+    /// Button: replace the current window's working set with the folder.
+    pub workspace_replace_current_button: String,
+    /// Button: open the picked folder in a new window.
+    pub workspace_open_new_window_button: String,
+    /// Center placeholder for files the text editor can't preview.
+    pub workspace_preview_unavailable_message: String,
+    /// Message shown when picking or clicking a file type Velora can't open.
+    pub workspace_open_unsupported_message: String,
     /// Tab context menu item for closing the tab.
     pub tab_close: String,
     /// Tab context menu item for closing all other tabs.
@@ -579,6 +591,12 @@ struct I18nStringsDe {
     search_replace_current: Option<String>,
     search_replace_all: Option<String>,
     search_result_count: Option<String>,
+    dialog_ok: Option<String>,
+    workspace_folder_choice_title: Option<String>,
+    workspace_replace_current_button: Option<String>,
+    workspace_open_new_window_button: Option<String>,
+    workspace_preview_unavailable_message: Option<String>,
+    workspace_open_unsupported_message: Option<String>,
     tab_close: Option<String>,
     tab_close_others: Option<String>,
     tab_close_left: Option<String>,
@@ -806,6 +824,12 @@ const I18N_STRING_KEYS: &[&str] = &[
     "search_replace_current",
     "search_replace_all",
     "search_result_count",
+    "dialog_ok",
+    "workspace_folder_choice_title",
+    "workspace_replace_current_button",
+    "workspace_open_new_window_button",
+    "workspace_preview_unavailable_message",
+    "workspace_open_unsupported_message",
     "tab_close",
     "tab_close_others",
     "tab_close_left",
@@ -1335,6 +1359,22 @@ impl I18nStringsDe {
             search_result_count: self
                 .search_result_count
                 .unwrap_or(defaults.search_result_count),
+            dialog_ok: self.dialog_ok.unwrap_or(defaults.dialog_ok),
+            workspace_folder_choice_title: self
+                .workspace_folder_choice_title
+                .unwrap_or(defaults.workspace_folder_choice_title),
+            workspace_replace_current_button: self
+                .workspace_replace_current_button
+                .unwrap_or(defaults.workspace_replace_current_button),
+            workspace_open_new_window_button: self
+                .workspace_open_new_window_button
+                .unwrap_or(defaults.workspace_open_new_window_button),
+            workspace_preview_unavailable_message: self
+                .workspace_preview_unavailable_message
+                .unwrap_or(defaults.workspace_preview_unavailable_message),
+            workspace_open_unsupported_message: self
+                .workspace_open_unsupported_message
+                .unwrap_or(defaults.workspace_open_unsupported_message),
             tab_close: self.tab_close.unwrap_or(defaults.tab_close),
             tab_close_others: self
                 .tab_close_others
@@ -1654,6 +1694,12 @@ impl I18nStrings {
             search_replace_current: "替换".into(),
             search_replace_all: "全部替换".into(),
             search_result_count: "{n} 个结果".into(),
+            dialog_ok: "好".into(),
+            workspace_folder_choice_title: "在哪里打开该文件夹？".into(),
+            workspace_replace_current_button: "替换当前工作区".into(),
+            workspace_open_new_window_button: "打开新窗口".into(),
+            workspace_preview_unavailable_message: "无法使用文本编辑器预览该文件".into(),
+            workspace_open_unsupported_message: "暂时无法打开该类型文件".into(),
             tab_close: "关闭".into(),
             tab_close_others: "关闭其他标签页".into(),
             tab_close_left: "关闭左侧标签页".into(),
@@ -1911,6 +1957,14 @@ impl I18nStrings {
             search_replace_current: "Replace".into(),
             search_replace_all: "Replace All".into(),
             search_result_count: "{n} results".into(),
+            dialog_ok: "OK".into(),
+            workspace_folder_choice_title: "Where should this folder open?".into(),
+            workspace_replace_current_button: "Replace Current".into(),
+            workspace_open_new_window_button: "Open in New Window".into(),
+            workspace_preview_unavailable_message:
+                "This file can't be previewed in the text editor".into(),
+            workspace_open_unsupported_message:
+                "This file type can't be opened in Velora yet".into(),
             tab_close: "Close".into(),
             tab_close_others: "Close Other Tabs".into(),
             tab_close_left: "Close Tabs to the Left".into(),

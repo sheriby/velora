@@ -24,6 +24,7 @@ const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
 const CHEVRON_DOWN_ICON: &str = "icon/workspace/chevron-down.svg";
 const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
+const GENERIC_FILE_ICON: &str = "icon/workspace/generic-file.svg";
 const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
 const WORKSPACE_NODE_INDENT: f32 = 16.0;
 
@@ -40,6 +41,9 @@ pub(super) enum WorkspaceTreeKind {
     Directory(PathBuf),
     MarkdownFile(PathBuf),
     CodeFile(PathBuf),
+    /// Any non-Markdown, non-code file. Shown in the tree for completeness;
+    /// clicking it reports that the type can't be opened yet.
+    OtherFile(PathBuf),
     Heading { line: usize, level: u8 },
 }
 
@@ -1675,7 +1679,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn open_workspace_file(
+    pub(crate) fn open_workspace_file(
         &mut self,
         path: PathBuf,
         window: &mut Window,
@@ -1684,6 +1688,15 @@ impl Editor {
         if self.file_path.as_ref() == Some(&path) {
             return;
         }
+        // Sniff the content, not the extension: dotfiles like .gitignore have
+        // no extension but are text, while a .md full of NUL bytes is not
+        // renderable. Non-text files still become the active tab; the content
+        // area shows a centered placeholder.
+        if !is_likely_text_file(&path) {
+            self.show_preview_unavailable(path.clone(), window, cx);
+            return;
+        }
+        self.unsupported_preview_path = None;
         if self.file_path.is_none() && self.document_dirty {
             self.request_dropped_markdown_replace(path, window, cx);
             return;
@@ -1760,10 +1773,16 @@ impl Editor {
         self.is_recovered_document = false;
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
-        if is_code_file(&path) {
-            self.replace_document_from_code_source(markdown, path, cx);
-        } else {
+        // Markdown rendering is for .md/.markdown only; every other text file
+        // (code, dotfiles, plain text) opens as monospace source text.
+        let markdown_file = is_markdown_file(&path)
+            || path.extension().is_some_and(|extension| {
+                extension.to_string_lossy().eq_ignore_ascii_case("markdown")
+            });
+        if markdown_file {
             self.replace_document_from_markdown(markdown, Some(path), cx);
+        } else {
+            self.replace_document_from_code_source(markdown, path, cx);
         }
         self.document_dirty = dirty;
         self.file_version = Some(file_version);
@@ -1771,6 +1790,38 @@ impl Editor {
             self.schedule_autosave(cx);
         }
         window.set_window_edited(dirty);
+        cx.notify();
+    }
+
+    /// Makes the picked file the active tab but shows a centered
+    /// "can't preview" placeholder instead of editor content.
+    fn show_preview_unavailable(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(existing) = self
+            .workspace
+            .open_documents
+            .iter()
+            .position(|tab| tab.path == path)
+        {
+            self.workspace.open_documents.remove(existing);
+        }
+        self.workspace.open_documents.push(WorkspaceDocumentTab {
+            path: path.clone(),
+            recovery_id: uuid::Uuid::new_v4(),
+            file_version: 0,
+            markdown: String::new(),
+            dirty: false,
+        });
+        self.workspace.active_document = Some(path.clone());
+        self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
+        self.unsupported_preview_path = Some(path);
+        self.file_path = None;
+        self.document_dirty = false;
+        window.set_window_edited(false);
         cx.notify();
     }
 
@@ -2129,6 +2180,12 @@ impl Editor {
                     .unwrap_or_else(|| tab.path.to_string_lossy().into_owned());
                 let tab_editor = editor.clone();
                 let context_editor = editor.clone();
+                // Markdown glyph only for real markdown files; code files and
+                // extension-less dotfiles render as source, binaries show as
+                // placeholders — neither is markdown.
+                let tab_shows_code_icon = is_code_file(&path)
+                    || path.extension().is_none()
+                    || self.unsupported_preview_path.as_ref() == Some(&path);
                 // The close button carries its own hover state: highlighting
                 // the whole tab was indistinguishable from the tab's own
                 // hover background, so the X lights up only under the pointer.
@@ -2222,12 +2279,12 @@ impl Editor {
                             .text_center()
                             .text_size(px(9.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(if is_code_file(&path) {
+                            .text_color(if tab_shows_code_icon {
                                 c.dialog_muted
                             } else {
                                 c.dialog_primary_button_bg
                             })
-                            .child(if is_code_file(&path) { "⌘" } else { "M" }),
+                            .child(if tab_shows_code_icon { "⌘" } else { "M" }),
                     )
                     .child(div().flex_1().min_w(px(0.0)).truncate().child(title))
                     .children((dirty && !active).then(|| {
@@ -3433,6 +3490,7 @@ impl Editor {
             WorkspaceTreeKind::Directory(_) => Some((FOLDER_ICON, Hsla::from(rgba(0x4a93d8ff)))),
             WorkspaceTreeKind::MarkdownFile(_) => Some((MARKDOWN_ICON, c.dialog_primary_button_bg)),
             WorkspaceTreeKind::CodeFile(_) => Some((CODE_ICON, c.dialog_muted)),
+            WorkspaceTreeKind::OtherFile(_) => Some((GENERIC_FILE_ICON, c.dialog_muted)),
             WorkspaceTreeKind::Heading { .. } => None,
         };
 
@@ -3507,7 +3565,9 @@ impl Editor {
                     WorkspaceTreeKind::Directory(path) => {
                         Some(WorkspaceSelection::Directory(path.clone()))
                     }
-                    WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
+                    WorkspaceTreeKind::MarkdownFile(path)
+                    | WorkspaceTreeKind::CodeFile(path)
+                    | WorkspaceTreeKind::OtherFile(path) => {
                         Some(WorkspaceSelection::File(path.clone()))
                     }
                     WorkspaceTreeKind::Heading { .. } => None,
@@ -3534,6 +3594,9 @@ impl Editor {
                     WorkspaceTreeKind::CodeFile(path) => {
                         editor.open_workspace_file(path, window, cx);
                     }
+                    WorkspaceTreeKind::OtherFile(path) => {
+                        editor.open_workspace_file(path, window, cx);
+                    }
                     WorkspaceTreeKind::Heading { line, .. } => {
                         editor.open_outline_node(node_id, line, cx)
                     }
@@ -3543,7 +3606,7 @@ impl Editor {
     }
 }
 
-fn is_markdown_file(path: &Path) -> bool {
+pub(super) fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("md"))
 }
@@ -4143,6 +4206,23 @@ fn search_workspace_files(
                     }
                 }
             }
+            WorkspaceTreeKind::OtherFile(path) => {
+                let label = path
+                    .strip_prefix(root)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned();
+                if matcher.matches_filename(&label) {
+                    hits.push(WorkspaceSearchHit {
+                        path: path.clone(),
+                        label: label.clone(),
+                        line: None,
+                        match_range: None,
+                        source_range: None,
+                        preview: String::new(),
+                    });
+                }
+            }
             WorkspaceTreeKind::Heading { .. } => {}
         }
     }
@@ -4226,6 +4306,39 @@ fn find_document_match_from(
     }
 }
 
+/// Heuristic text detection (same shape as Git's `is_text`): read up to the
+/// first 8 KiB and treat the file as text when it decodes as UTF-8 (lossy
+/// covers Latin-1-ish legacy files) and contains no NUL byte — the signature
+/// of binary formats.
+fn is_likely_text_file(path: &Path) -> bool {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut head = [0u8; 8192];
+    let mut read = 0usize;
+    loop {
+        match file.read(&mut head[read..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                read += n;
+                if read == head.len() {
+                    break;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    let head = &head[..read];
+    // UTF-16 BOMs are text but not UTF-8; treat them as previewable anyway
+    // since the editor renders UTF-8 only.
+    if read >= 2 && (head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF])) {
+        return true;
+    }
+    !head.contains(&0) && std::str::from_utf8(head).is_ok()
+}
+
 pub(super) fn is_code_file(path: &Path) -> bool {
     const CODE_EXTENSIONS: &[&str] = &[
         "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "json", "jsx", "kt",
@@ -4270,6 +4383,13 @@ fn scan_workspace_dir(path: &Path) -> Result<WorkspaceTreeNode> {
                 id: file_node_id(&entry_path),
                 label: file_label(&entry_path),
                 kind: WorkspaceTreeKind::CodeFile(entry_path),
+                children: Vec::new(),
+            });
+        } else if file_type.is_file() {
+            children.push(WorkspaceTreeNode {
+                id: file_node_id(&entry_path),
+                label: file_label(&entry_path),
+                kind: WorkspaceTreeKind::OtherFile(entry_path),
                 children: Vec::new(),
             });
         }
@@ -4540,6 +4660,9 @@ fn collect_workspace_files(root: &WorkspaceTreeNode) -> Vec<PathBuf> {
             WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
                 files.push(path.clone());
             }
+            // Other files can't be opened, so they are never replacement
+            // targets for bulk replace.
+            WorkspaceTreeKind::OtherFile(_) => {}
             WorkspaceTreeKind::Heading { .. } => {}
         }
     }

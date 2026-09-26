@@ -120,6 +120,12 @@ pub struct Editor {
     drop_replace_restore_focus: Option<EntityId>,
     /// Optional informational dialog shown from the Help menu.
     info_dialog: Option<InfoDialogKind>,
+    /// Set while the active tab is a file the editor can't preview; the
+    /// content area renders a centered placeholder instead of blocks.
+    pub(super) unsupported_preview_path: Option<PathBuf>,
+    /// Folder picked through 文件 → 打开文件 that is waiting for the user to
+    /// choose between replacing this window's working set and a new window.
+    pub(super) pending_folder_choice: Option<PathBuf>,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
     workspace: WorkspaceState,
@@ -386,6 +392,8 @@ impl Editor {
             pending_drop_replace_after_save: false,
             drop_replace_restore_focus: None,
             info_dialog: None,
+            unsupported_preview_path: None,
+            pending_folder_choice: None,
             update_check_in_progress: false,
             workspace: WorkspaceState::default(),
             status_bar: StatusBarState::default(),
@@ -448,14 +456,28 @@ impl Editor {
         cx: &mut Context<Self>,
         snapshot: crate::config::RecoverySnapshot,
     ) -> Self {
+        // Markdown rendering is for .md/.markdown only; every other text file
+        // (code, dotfiles, plain text) restores as monospace source text.
+        let markdown_file = snapshot
+            .source_path
+            .as_ref()
+            .is_none_or(|path| {
+                workspace::is_markdown_file(path)
+                    || path
+                        .extension()
+                        .is_some_and(|extension| {
+                            extension.to_string_lossy().eq_ignore_ascii_case("markdown")
+                        })
+            });
         let code_language = snapshot
             .source_path
             .as_ref()
-            .filter(|path| workspace::is_code_file(path))
+            .filter(|_path| !markdown_file)
             .and_then(|path| path.extension())
-            .map(|extension| extension.to_string_lossy().into_owned().into());
+            .map(|extension| extension.to_string_lossy().into_owned().into())
+            .or_else(|| Some("text".into()));
         let mut editor = Self::from_markdown(cx, snapshot.markdown.clone(), None);
-        if code_language.is_some() {
+        if !markdown_file {
             editor.replace_document_content(snapshot.markdown, None, code_language, cx);
         }
         editor.recovery_id = snapshot.id;

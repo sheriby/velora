@@ -541,6 +541,9 @@ impl InlineTextTree {
                 // use a smaller monospace size than the surrounding body text;
                 // the single-size text element cannot express that per run.
                 || fragment.style.code
+                // `![alt](src)` spans inside a paragraph render as inline
+                // image widgets on the same mixed-segment path.
+                || fragment.text.contains("![")
         })
     }
 

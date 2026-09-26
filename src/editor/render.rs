@@ -1134,6 +1134,168 @@ impl Editor {
 
     /// Builds the unsaved-changes dialog with backdrop, message, and three
     /// action buttons (cancel, discard, save-and-close).
+    pub(crate) fn on_folder_choice_cancel(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending_folder_choice.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn on_folder_choice_backdrop(
+        &mut self,
+        _: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending_folder_choice.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn on_folder_choice_new_window(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(folder) = self.pending_folder_choice.take() {
+            let _ = crate::app_menu::open_workspace_window(cx, folder);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn on_folder_choice_replace(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(folder) = self.pending_folder_choice.take() {
+            self.set_workspace_root(folder, cx);
+        }
+    }
+
+    /// In-app dialog asking whether a picked folder should replace this
+    /// window's working set or open in a new window.
+    fn render_folder_choice_overlay(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let t = &theme.typography;
+        let strings = cx.global::<I18nManager>().strings();
+
+        div()
+            .id("folder-choice-overlay")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(c.dialog_backdrop)
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_folder_choice_backdrop))
+            .child(
+                div()
+                    .id("folder-choice-dialog")
+                    .w(px(d.dialog_width))
+                    .max_w(relative(1.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(d.dialog_gap))
+                    .p(px(d.dialog_padding))
+                    .bg(c.dialog_surface)
+                    .border(px(d.dialog_border_width))
+                    .border_color(c.dialog_border)
+                    .rounded(px(d.dialog_radius))
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .text_size(px(t.dialog_title_size))
+                            .font_weight(t.dialog_title_weight.to_font_weight())
+                            .text_color(c.dialog_title)
+                            .child(strings.workspace_folder_choice_title.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(d.dialog_button_gap))
+                            .child(
+                                div()
+                                    .id("folder-choice-cancel")
+                                    .h(px(d.dialog_button_height))
+                                    .px(px(d.dialog_button_padding_x))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+                                    .border(px(d.dialog_border_width))
+                                    .border_color(c.dialog_border)
+                                    .bg(c.dialog_secondary_button_bg)
+                                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                                    .active(|this| this.opacity(0.92))
+                                    .cursor_pointer()
+                                    .text_size(px(t.dialog_button_size))
+                                    .font_weight(t.dialog_button_weight.to_font_weight())
+                                    .text_color(c.dialog_secondary_button_text)
+                                    .child(strings.open_link_cancel.clone())
+                                    .on_click(cx.listener(Self::on_folder_choice_cancel)),
+                            )
+                            .child(
+                                div()
+                                    .id("folder-choice-new-window")
+                                    .h(px(d.dialog_button_height))
+                                    .px(px(d.dialog_button_padding_x))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+                                    .border(px(d.dialog_border_width))
+                                    .border_color(c.dialog_border)
+                                    .bg(c.dialog_secondary_button_bg)
+                                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                                    .active(|this| this.opacity(0.92))
+                                    .cursor_pointer()
+                                    .text_size(px(t.dialog_button_size))
+                                    .font_weight(t.dialog_button_weight.to_font_weight())
+                                    .text_color(c.dialog_secondary_button_text)
+                                    .child(strings.workspace_open_new_window_button.clone())
+                                    .on_click(cx.listener(Self::on_folder_choice_new_window)),
+                            )
+                            .child(
+                                div()
+                                    .id("folder-choice-replace")
+                                    .h(px(d.dialog_button_height))
+                                    .px(px(d.dialog_button_padding_x))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+                                    .bg(c.dialog_primary_button_bg)
+                                    .hover(|this| this.bg(c.dialog_primary_button_hover))
+                                    .active(|this| this.opacity(0.92))
+                                    .cursor_pointer()
+                                    .text_size(px(t.dialog_button_size))
+                                    .font_weight(t.dialog_button_weight.to_font_weight())
+                                    .text_color(c.dialog_primary_button_text)
+                                    .child(strings.workspace_replace_current_button.clone())
+                                    .on_click(cx.listener(Self::on_folder_choice_replace)),
+                            ),
+                    ),
+            )
+    }
+
     fn render_unsaved_changes_overlay(
         &self,
         theme: &Theme,
@@ -2154,6 +2316,54 @@ impl Render for Editor {
         };
 
         let content_area = content_area.into_any_element();
+        // A tab whose file the text editor can't preview replaces the whole
+        // content area with a centered notice, VS Code style.
+        let content_area = if let Some(path) = self.unsupported_preview_path.as_ref() {
+            let file_name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            div()
+                .id("unsupported-preview")
+                .w_full()
+                .h_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(10.0))
+                .text_color(theme.colors.dialog_muted)
+                .child(
+                    div()
+                        .w(px(44.0))
+                        .h(px(44.0))
+                        .rounded(px(22.0))
+                        .border_1()
+                        .border_color(theme.colors.dialog_border)
+                        .bg(theme.colors.dialog_secondary_button_bg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(26.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.colors.dialog_muted)
+                        .child("!"),
+                )
+                .child(
+                    div()
+                        .text_size(px(theme.typography.text_size))
+                        .text_color(theme.colors.text_default)
+                        .child(file_name),
+                )
+                .child(
+                    div()
+                        .text_size(px(theme.typography.text_size * 0.9))
+                        .child(strings.workspace_preview_unavailable_message.clone()),
+                )
+                .into_any_element()
+        } else {
+            content_area
+        };
         let document_tabs = self.render_document_tabs(&theme, cx);
         // Document tabs live inside the custom titlebar when it is visible;
         // without one (macOS fullscreen, server-side decorations) they fall
@@ -2375,6 +2585,8 @@ impl Render for Editor {
             base.child(self.render_drop_replace_overlay(&theme, cx))
         } else if self.show_unsaved_changes_dialog {
             base.child(self.render_unsaved_changes_overlay(&theme, cx))
+        } else if self.pending_folder_choice.is_some() {
+            base.child(self.render_folder_choice_overlay(&theme, cx).into_any_element())
         } else {
             base
         }

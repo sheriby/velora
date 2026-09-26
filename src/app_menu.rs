@@ -988,6 +988,15 @@ fn editor_window_for_folder_open(cx: &App) -> Option<WindowHandle<Editor>> {
         .find_map(|window| window.downcast::<Editor>())
 }
 
+/// Opens the in-app folder-destination dialog on the target window; the
+/// overlay itself renders from `Editor::pending_folder_choice`.
+fn prompt_folder_destination(cx: &mut App, target: WindowHandle<Editor>, folder: PathBuf) {
+    let _ = target.update(cx, |editor, _window, cx| {
+        editor.pending_folder_choice = Some(folder);
+        cx.notify();
+    });
+}
+
 fn prompt_and_open_files(cx: &mut App) {
     let error_window = cx.active_window();
     prompt_and_open_files_with_error_window(cx, error_window);
@@ -1009,17 +1018,26 @@ fn prompt_and_open_files_with_error_window(cx: &mut App, error_window: Option<An
     cx.spawn(async move |cx| match prompt.await {
         Ok(Ok(Some(paths))) => {
             let _ = cx.update(move |cx| {
+                let target = editor_window_for_folder_open(cx);
                 for path in paths {
                     if path.is_dir() {
-                        // A picked folder becomes the working set of the
-                        // focused editor window; with none we open a fresh one.
-                        if let Some(handle) = editor_window_for_folder_open(cx) {
-                            let _ = handle.update(cx, |editor, _window, cx| {
-                                editor.set_workspace_root(path, cx);
-                            });
-                        } else {
-                            let _ = open_workspace_window(cx, path);
+                        // A folder replaces the current working set or opens
+                        // fresh — VS Code style — so the current window is
+                        // never silently re-rooted.
+                        match target.as_ref() {
+                            Some(handle) => {
+                                prompt_folder_destination(cx, *handle, path);
+                            }
+                            None => {
+                                let _ = open_workspace_window(cx, path);
+                            }
                         }
+                        continue;
+                    }
+                    if let Some(handle) = &target {
+                        let _ = handle.update(cx, |editor, window, cx| {
+                            editor.open_workspace_file(path.clone(), window, cx);
+                        });
                         continue;
                     }
                     if let Err(err) = open_file_in_new_window(cx, &path) {

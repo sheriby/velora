@@ -147,9 +147,13 @@ impl Editor {
         file_path: PathBuf,
         cx: &mut Context<Self>,
     ) {
+        // Extension-less text files (dotfiles like .gitignore) must still load
+        // as code: a `None` language means "markdown" to
+        // `replace_document_content`, so give them an explicit `text` one.
         let language = file_path
             .extension()
-            .map(|extension| extension.to_string_lossy().into_owned().into());
+            .map(|extension| extension.to_string_lossy().into_owned().into())
+            .or_else(|| Some(SharedString::from("text")));
         self.replace_document_content(source, Some(file_path), language, cx);
     }
 
