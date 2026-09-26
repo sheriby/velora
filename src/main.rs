@@ -129,6 +129,9 @@ impl AssetSource for VeloraAssets {
             "icon/workspace/delete.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/delete.svg"
             )))),
+            "icon/workspace/tab-close.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/tab-close.svg"
+            )))),
             "icon/titlebar/chrome-close.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/titlebar/chrome-close.svg"
             )))),

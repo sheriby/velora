@@ -1978,13 +1978,15 @@ impl Editor {
                     .items_center()
                     .justify_center()
                     .rounded(px(4.0))
-                    .text_color(c.dialog_muted)
-                    .hover(|this| {
-                        this.bg(c.dialog_secondary_button_hover)
-                            .text_color(c.text_default)
-                    })
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
                     .cursor_pointer()
-                    .child(svg().path(TAB_CLOSE_ICON).size(px(9.0)))
+                    .child(
+                        svg()
+                            .path(TAB_CLOSE_ICON)
+                            .size(px(10.0))
+                            .text_color(c.dialog_muted)
+                            .group_hover("doc-tab", |this| this.text_color(c.text_default)),
+                    )
                     .on_click({
                         let close_editor = editor.clone();
                         move |_event, window, cx| {
@@ -1997,6 +1999,7 @@ impl Editor {
                     .into_any_element();
                 div()
                     .id(("document-tab", stable_node_hash(&path.to_string_lossy())))
+                    .group("doc-tab")
                     .h_full()
                     .min_w(px(120.0))
                     .max_w(px(220.0))
@@ -2050,18 +2053,15 @@ impl Editor {
                             .child(if is_code_file(&path) { "⌘" } else { "M" }),
                     )
                     .child(div().flex_1().min_w(px(0.0)).truncate().child(title))
-                    .child(if dirty && !active {
+                    .children((dirty && !active).then(|| {
                         div()
                             .w(px(7.0))
                             .h(px(7.0))
-                            .mr(px(2.0))
                             .flex_shrink_0()
                             .rounded(px(4.0))
                             .bg(c.dialog_primary_button_bg)
-                            .into_any_element()
-                    } else {
-                        close_button
-                    })
+                    }))
+                    .child(close_button)
                     .on_click(move |_event, window, cx| {
                         let _ = tab_editor.update(cx, |editor, cx| {
                             editor.open_workspace_file(click_path.clone(), window, cx);
