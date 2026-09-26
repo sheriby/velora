@@ -21,8 +21,25 @@ impl Editor {
 
         if self.on_window_should_close(window, cx) {
             self.close_dialog_restore_focus = None;
+            Self::persist_window_frame(window);
             window.remove_window();
         }
+    }
+
+    /// Saves the current window frame so the next launch can restore it
+    /// (roadmap A2). Called from every path that removes an editor window.
+    pub(crate) fn persist_window_frame(window: &Window) {
+        let frame = match window.window_bounds() {
+            gpui::WindowBounds::Windowed(bounds)
+            | gpui::WindowBounds::Maximized(bounds)
+            | gpui::WindowBounds::Fullscreen(bounds) => bounds,
+        };
+        let _ = crate::config::store_window_frame(crate::config::WindowFrame {
+            x: f32::from(frame.origin.x) as i32,
+            y: f32::from(frame.origin.y) as i32,
+            width: f32::from(frame.size.width) as i32,
+            height: f32::from(frame.size.height) as i32,
+        });
     }
 
     pub(crate) fn restore_focus_after_close_dialog(&mut self, cx: &mut Context<Self>) {
@@ -127,5 +144,8 @@ impl Editor {
         self.hide_unsaved_changes_dialog(cx);
         self.pending_save = true;
         cx.notify();
+        // The window closes after the save completes; persist the frame now
+        // while the window is still alive.
+        Self::persist_window_frame(window);
     }
 }

@@ -56,12 +56,52 @@ fn window_title(file_path: Option<&Path>) -> SharedString {
 }
 
 /// Opens an editor window for the given Markdown content and optional path.
+/// Restores the last window frame when remembering is enabled, clamped so
+/// the window stays reachable on the current displays; otherwise centers the
+/// default size.
+fn restored_window_bounds(cx: &mut App) -> Bounds<Pixels> {
+    let default_size = size(px(1080.), px(720.));
+    let frame = crate::config::saved_window_frame()
+        .ok()
+        .flatten()
+        .map(|frame| {
+            let mut bounds = Bounds::new(
+                point(px(frame.x as f32), px(frame.y as f32)),
+                size(
+                    px(frame.width as f32).max(px(480.0)),
+                    px(frame.height as f32).max(px(320.0)),
+                ),
+            );
+            if let Some(display) = cx.primary_display() {
+                let screen = display.bounds();
+                let left = f32::from(screen.left());
+                let top = f32::from(screen.top());
+                let right = f32::from(screen.right());
+                let bottom = f32::from(screen.bottom());
+                let width = f32::from(bounds.size.width);
+                let height = f32::from(bounds.size.height);
+                // Keep at least 120x80pt of the window reachable on screen.
+                let x = f32::from(bounds.origin.x).clamp(
+                    left - (width - 120.0).max(0.0),
+                    (right - 120.0).max(left),
+                );
+                let y = f32::from(bounds.origin.y).clamp(
+                    top - (height - 80.0).max(0.0),
+                    (bottom - 80.0).max(top),
+                );
+                bounds.origin = point(px(x), px(y));
+            }
+            bounds
+        });
+    frame.unwrap_or_else(|| Bounds::centered(None, default_size, cx))
+}
+
 pub(crate) fn open_editor_window(
     cx: &mut App,
     markdown: String,
     file_path: Option<PathBuf>,
 ) -> WindowHandle<Editor> {
-    let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
+    let bounds = restored_window_bounds(cx);
     let title = window_title(file_path.as_deref());
     let handle = cx
         .open_window(velora_window_options(title, bounds), move |_window, cx| {
@@ -86,7 +126,7 @@ pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnaps
         .recovered_document_title
         .clone();
     let title = format!("Velora - {recovered_title}");
-    let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
+    let bounds = restored_window_bounds(cx);
     let handle = cx
         .open_window(
             velora_window_options(title.into(), bounds),

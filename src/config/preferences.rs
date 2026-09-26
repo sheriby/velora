@@ -168,6 +168,15 @@ impl ImagePasteBehavior {
     }
 }
 
+/// Last window frame (logical pixels) persisted across launches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct WindowFrame {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+}
+
 /// User preferences persisted under the app config directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AppPreferences {
@@ -181,6 +190,8 @@ pub(crate) struct AppPreferences {
     pub(crate) workspace_sidebar_width: u16,
     pub(crate) keybindings: BTreeMap<String, Vec<String>>,
     pub(crate) status_bar: StatusBarPreferences,
+    pub(crate) remember_window_bounds: bool,
+    pub(crate) window_frame: Option<WindowFrame>,
 }
 
 impl Default for AppPreferences {
@@ -196,6 +207,8 @@ impl Default for AppPreferences {
             workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
+            remember_window_bounds: true,
+            window_frame: None,
         }
     }
 }
@@ -359,6 +372,7 @@ struct PreferencesFile {
     theme: ThemePreferencesFile,
     editor: EditorPreferencesFile,
     status_bar: StatusBarPreferencesFile,
+    window: WindowPreferencesFile,
     keybindings: BTreeMap<String, Vec<String>>,
 }
 
@@ -387,6 +401,43 @@ struct LanguagePreferencesFile {
 #[derive(Serialize)]
 struct ThemePreferencesFile {
     default_theme_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WindowFrameFile {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+impl From<WindowFrame> for WindowFrameFile {
+    fn from(value: WindowFrame) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
+impl From<WindowFrameFile> for WindowFrame {
+    fn from(value: WindowFrameFile) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct WindowPreferencesFile {
+    remember_bounds: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame: Option<WindowFrameFile>,
 }
 
 #[derive(Serialize)]
@@ -437,9 +488,34 @@ impl From<&AppPreferences> for PreferencesFile {
                 workspace_sidebar_width: value.workspace_sidebar_width,
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
+            window: WindowPreferencesFile {
+                remember_bounds: value.remember_window_bounds,
+                frame: value.window_frame.map(WindowFrameFile::from),
+            },
             keybindings: normalize_shortcut_config(&value.keybindings),
         }
     }
+}
+
+/// The persisted window frame, if window-bounds remembering is enabled and a
+/// usable frame was stored.
+pub(crate) fn saved_window_frame() -> anyhow::Result<Option<WindowFrame>> {
+    let preferences = read_app_preferences()?;
+    Ok(preferences
+        .remember_window_bounds
+        .then_some(())
+        .and_then(|()| preferences.window_frame))
+}
+
+/// Persists the window frame for the next launch (no-op when remembering is
+/// disabled in preferences).
+pub(crate) fn store_window_frame(frame: WindowFrame) -> anyhow::Result<()> {
+    update_app_preferences(|preferences| {
+        if preferences.remember_window_bounds {
+            preferences.window_frame = Some(frame);
+        }
+    })?;
+    Ok(())
 }
 
 pub(crate) fn read_app_preferences() -> anyhow::Result<AppPreferences> {
@@ -658,6 +734,27 @@ fn app_preferences_from_toml_value(
         })
         .unwrap_or_default();
 
+    let window = value.get("window");
+    let remember_window_bounds = window
+        .and_then(|window| window.get("remember_bounds"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(true);
+    let window_frame = window
+        .and_then(|window| window.get("frame"))
+        .and_then(|frame| {
+            let x = frame.get("x").and_then(toml::Value::as_integer)?;
+            let y = frame.get("y").and_then(toml::Value::as_integer)?;
+            let width = frame.get("width").and_then(toml::Value::as_integer)?;
+            let height = frame.get("height").and_then(toml::Value::as_integer)?;
+            Some(WindowFrame {
+                x: i32::try_from(x).ok()?,
+                y: i32::try_from(y).ok()?,
+                width: i32::try_from(width).ok()?,
+                height: i32::try_from(height).ok()?,
+            })
+        })
+        .filter(|frame| frame.width > 200 && frame.height > 200);
+
     AppPreferences {
         startup_open,
         default_language_id,
@@ -669,6 +766,8 @@ fn app_preferences_from_toml_value(
         workspace_sidebar_width,
         keybindings,
         status_bar,
+        remember_window_bounds,
+        window_frame,
     }
 }
 
@@ -2775,6 +2874,8 @@ mod tests {
             workspace_sidebar_width: 320,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
+            remember_window_bounds: true,
+            window_frame: None,
         };
 
         save_app_preferences_with_dirs(&preferences, &dirs)
@@ -2784,6 +2885,7 @@ mod tests {
 
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
+        assert!(text.contains("remember_bounds = true"));
         assert!(text.contains("open = \"last_opened_file\""));
         assert!(text.contains("default_language_id = \"zh-CN\""));
         assert!(text.contains("default_theme_id = \"velotype-light\""));
@@ -2809,6 +2911,7 @@ mod tests {
         assert!(dirs.app_config_file().exists());
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
+        assert!(text.contains("remember_bounds = true"));
         assert!(text.contains("[language]"));
         assert!(text.contains("default_language_id = \"zh-CN\""));
         let _ = std::fs::remove_dir_all(root);
@@ -2844,6 +2947,7 @@ mod tests {
         assert_eq!(preferences.default_theme_id, "velotype-light");
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
+        assert!(text.contains("remember_bounds = true"));
         assert!(text.contains("[language]"));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2866,6 +2970,8 @@ mod tests {
             workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
+            remember_window_bounds: true,
+            window_frame: None,
         };
         save_app_preferences_with_dirs(&preferences, &dirs)
             .expect("preferences should save to config.toml");

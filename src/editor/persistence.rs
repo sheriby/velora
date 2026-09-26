@@ -273,6 +273,7 @@ impl Editor {
             return;
         }
         if documents.is_empty() {
+            Self::persist_window_frame(window);
             window.remove_window();
             return;
         }
@@ -385,6 +386,7 @@ impl Editor {
                 let _ = cx.update_window(
                     window_handle,
                     |_view: AnyView, window: &mut Window, _cx: &mut App| {
+                        Editor::persist_window_frame(window);
                         window.remove_window();
                     },
                 );
@@ -610,6 +612,7 @@ impl Editor {
                                 this.save_dirty_workspace_documents_and_close(window, cx);
                             });
                         } else {
+                            Editor::persist_window_frame(window);
                             window.remove_window();
                         }
                     }
@@ -631,6 +634,7 @@ impl Editor {
             let should_close_after_save = self.pending_close_after_save;
             if self.save_to_existing_path(&path, window, cx) {
                 if should_close_after_save {
+                    Editor::persist_window_frame(window);
                     window.remove_window();
                 }
             } else if should_close_after_save {
