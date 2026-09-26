@@ -104,7 +104,13 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
         return ImageResolvedSource::Remote(SharedUri::from(source.to_string()));
     }
 
-    let path = Path::new(source);
+    // Markdown sources are frequently percent-encoded (`My%20pic.png`) or
+    // written as `file:///...` URLs; strip both before touching the filesystem.
+    let cleaned = source.strip_prefix("file://").unwrap_or(source);
+    let cleaned = cleaned.strip_prefix("localhost/").unwrap_or(cleaned);
+    let cleaned = percent_decode_path(cleaned).unwrap_or_else(|| cleaned.to_string());
+
+    let path = Path::new(&cleaned);
     if path.is_absolute() {
         return ImageResolvedSource::Local(path.to_path_buf());
     }
@@ -113,6 +119,40 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
         .map(|dir| dir.join(path))
         .unwrap_or_else(|| path.to_path_buf());
     ImageResolvedSource::Local(resolved)
+}
+
+/// Decodes `%XX` escapes; returns `None` when the source has no valid escapes
+/// or the result is not valid UTF-8, in which case the raw source is used.
+fn percent_decode_path(value: &str) -> Option<String> {
+    if !value.contains('%') {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(&hi) = bytes.get(i + 1)
+            && let Some(&lo) = bytes.get(i + 2)
+            && let (Some(hi), Some(lo)) = (hex_value(hi), hex_value(lo))
+        {
+            decoded.push((hi << 4) | lo);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub(crate) fn parse_standalone_image(markdown: &str) -> Option<ImageSyntax> {

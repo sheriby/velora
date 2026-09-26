@@ -363,6 +363,8 @@ pub struct I18nStrings {
     pub image_loading_without_alt: String,
     /// Loading label template for rendered images with alt text; `{alt}` is replaced.
     pub image_loading_with_alt_template: String,
+    /// Label shown when an image fails to load.
+    pub image_load_failed: String,
     /// Placeholder shown in the code-block language input when no language is set.
     pub code_language_placeholder: String,
     /// Label for the sidebar/files toggle button in the status bar.
@@ -596,6 +598,7 @@ struct I18nStringsDe {
     image_placeholder: Option<String>,
     image_loading_without_alt: Option<String>,
     image_loading_with_alt_template: Option<String>,
+    image_load_failed: Option<String>,
     code_language_placeholder: Option<String>,
     status_bar_files: Option<String>,
     status_bar_mode_source: Option<String>,
@@ -816,6 +819,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "image_placeholder",
     "image_loading_without_alt",
     "image_loading_with_alt_template",
+    "image_load_failed",
     "code_language_placeholder",
     "status_bar_files",
     "status_bar_mode_source",
@@ -1384,6 +1388,9 @@ impl I18nStringsDe {
             image_loading_with_alt_template: self
                 .image_loading_with_alt_template
                 .unwrap_or(defaults.image_loading_with_alt_template),
+            image_load_failed: self
+                .image_load_failed
+                .unwrap_or(defaults.image_load_failed),
             code_language_placeholder: self
                 .code_language_placeholder
                 .unwrap_or(defaults.code_language_placeholder),
@@ -1640,6 +1647,7 @@ impl I18nStrings {
             image_placeholder: "图片".into(),
             image_loading_without_alt: "正在加载图片...".into(),
             image_loading_with_alt_template: "正在加载 {alt}".into(),
+            image_load_failed: "无法加载图片".into(),
             code_language_placeholder: "语言".into(),
             status_bar_files: "侧边栏".into(),
             status_bar_mode_source: "源码".into(),
@@ -1891,6 +1899,7 @@ impl I18nStrings {
             image_placeholder: "Image".into(),
             image_loading_without_alt: "Loading image...".into(),
             image_loading_with_alt_template: "Loading {alt}".into(),
+            image_load_failed: "Failed to Load Image".into(),
             code_language_placeholder: "language".into(),
             status_bar_files: "Sidebar".into(),
             status_bar_mode_source: "Source".into(),

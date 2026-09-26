@@ -352,6 +352,9 @@ pub struct ThemeDimensions {
     pub image_radius: f32,
     /// Maximum height of rendered root-paragraph images.
     pub image_root_max_height: f32,
+    /// Maximum width of rendered root-paragraph images; wider images are
+    /// downscaled instead of filling the whole text column.
+    pub image_root_max_width: f32,
     /// Maximum height of rendered table-cell images.
     pub image_cell_max_height: f32,
     /// Default placeholder height for rendered root-paragraph images.
@@ -905,6 +908,7 @@ struct ThemeDimensionsDe {
     table_append_activation_band: Option<f32>,
     image_radius: Option<f32>,
     image_root_max_height: Option<f32>,
+    image_root_max_width: Option<f32>,
     image_cell_max_height: Option<f32>,
     image_root_placeholder_height: Option<f32>,
     image_cell_placeholder_height: Option<f32>,
@@ -1029,6 +1033,7 @@ impl<'de> Deserialize<'de> for ThemeDimensions {
             table_append_activation_band: raw.table_append_activation_band.unwrap_or(18.0),
             image_radius: raw.image_radius.unwrap_or(12.0),
             image_root_max_height: raw.image_root_max_height.unwrap_or(420.0),
+            image_root_max_width: raw.image_root_max_width.unwrap_or(480.0),
             image_cell_max_height: raw.image_cell_max_height.unwrap_or(180.0),
             image_root_placeholder_height: raw.image_root_placeholder_height.unwrap_or(260.0),
             image_cell_placeholder_height: raw.image_cell_placeholder_height.unwrap_or(120.0),
@@ -1349,6 +1354,7 @@ impl Theme {
                 table_append_activation_band: 18.0,
                 image_radius: 12.0,
                 image_root_max_height: 420.0,
+                image_root_max_width: 480.0,
                 image_cell_max_height: 180.0,
                 image_root_placeholder_height: 260.0,
                 image_cell_placeholder_height: 120.0,

@@ -72,6 +72,8 @@ fn fallback_image_label(alt: &str, strings: &I18nStrings) -> SharedString {
     }
 }
 
+/// Compact strip shown when an image fails to load. A full-size empty box
+/// reads as a rendering bug, so the failure state stays one line tall.
 fn render_image_placeholder(
     runtime: &ImageRuntime,
     width: Length,
@@ -82,21 +84,32 @@ fn render_image_placeholder(
     let c = &theme.colors;
     let d = &theme.dimensions;
     let t = &theme.typography;
+    let compact_height = height.min(px(72.0));
+    let label = fallback_image_label(&runtime.alt, strings);
     div()
         .w(width)
-        .h(height)
+        .h(compact_height)
         .flex()
         .items_center()
         .justify_center()
+        .gap(px(6.0))
         .rounded(px(d.image_radius))
         .border(px(1.0))
         .border_color(c.image_placeholder_border)
         .bg(c.image_placeholder_bg)
         .px(px(d.block_padding_x))
-        .text_center()
-        .text_size(px(t.text_size))
+        .text_size(px(t.text_size * 0.82))
         .text_color(c.image_placeholder_text)
-        .child(fallback_image_label(&runtime.alt, strings))
+        .child(SharedString::from(strings.image_load_failed.clone()))
+        .child(
+            div()
+                .min_w(px(0.0))
+                .max_w(px(360.0))
+                .truncate()
+                .text_size(px(t.code_size))
+                .text_color(c.dialog_muted)
+                .child(label),
+        )
         .into_any_element()
 }
 
@@ -110,9 +123,12 @@ fn render_loading_placeholder(
     let c = &theme.colors;
     let d = &theme.dimensions;
     let t = &theme.typography;
+    // Remote fetches can stall; cap the loading box so a hung image does not
+    // reserve a huge empty area.
+    let capped_height = height.min(px(120.0));
     div()
         .w(width)
-        .h(height)
+        .h(capped_height)
         .flex()
         .items_center()
         .justify_center()
@@ -809,6 +825,8 @@ impl Block {
     /// per whitespace-delimited word lets the row break between words and keeps
     /// adjacent visuals on the same visual line. Inline code and background
     /// highlights stay a single element so their pill/background is continuous.
+    /// `![alt](src)` fragments inside the run are promoted to inline image
+    /// widgets, mirroring how table cells render embedded images.
     fn render_inline_text_word_segments(
         &self,
         text: &str,
@@ -823,6 +841,81 @@ impl Block {
             .html_style
             .is_some_and(|style| style.background_color.is_some());
         let mut segments = Vec::new();
+        if text.contains("![") {
+            for segment in crate::components::markdown::image::parse_table_cell_inline_images(text)
+            {
+                match segment {
+                    crate::components::markdown::image::TableCellInlineImageSegment::Text(
+                        part,
+                    ) => self.push_text_word_segments(
+                        &part,
+                        span,
+                        theme,
+                        base_color,
+                        font_size,
+                        font_weight,
+                        has_background,
+                        &mut segments,
+                        cx,
+                    ),
+                    crate::components::markdown::image::TableCellInlineImageSegment::Image {
+                        syntax,
+                        ..
+                    } => {
+                        if let Some(runtime) = self.image_runtime_for_syntax(syntax.clone()) {
+                            segments.push(self.render_inline_image_content(
+                                &runtime,
+                                theme,
+                                &cx.global::<crate::i18n::I18nManager>().strings().clone(),
+                            ));
+                        } else {
+                            self.push_text_word_segments(
+                                &syntax.alt,
+                                span,
+                                theme,
+                                base_color,
+                                font_size,
+                                font_weight,
+                                has_background,
+                                &mut segments,
+                                cx,
+                            );
+                        }
+                    }
+                }
+            }
+            return segments;
+        }
+        self.push_text_word_segments(
+            text,
+            span,
+            theme,
+            base_color,
+            font_size,
+            font_weight,
+            has_background,
+            &mut segments,
+            cx,
+        );
+        segments
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_text_word_segments(
+        &self,
+        text: &str,
+        span: &crate::components::InlineSpan,
+        theme: &Theme,
+        base_color: Hsla,
+        font_size: f32,
+        font_weight: FontWeight,
+        has_background: bool,
+        segments: &mut Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) {
+        if text.is_empty() {
+            return;
+        }
         for word in inline_word_chunks(text, span.style.code, has_background) {
             segments.push(self.render_inline_text_segment(
                 word,
@@ -834,7 +927,6 @@ impl Block {
                 cx,
             ));
         }
-        segments
     }
 
     fn render_inline_text_segment(
@@ -1877,7 +1969,11 @@ impl Render for Block {
 
         if showing_rendered_image && self.kind() == BlockKind::Paragraph {
             let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-            let max_width = px(effective_image_width(self, viewport_width, d));
+            // Root images stay within a readable default width; wider artwork
+            // is downscaled instead of filling the entire text column.
+            let max_width = px(
+                effective_image_width(self, viewport_width, d).min(d.image_root_max_width),
+            );
             if let Some(runtime) = self.image_runtime() {
                 return focused_base
                     .child(self.render_image_content(
