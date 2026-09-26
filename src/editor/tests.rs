@@ -4286,7 +4286,10 @@ async fn status_bar_breadcrumb_renders_without_panicking(cx: &mut TestAppContext
     });
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.file_path.as_deref(), Some(doc.as_path()));
-        assert_eq!(editor.workspace_root_path(), Some(root.as_path()));
+        // set_workspace_root canonicalizes, so compare against the
+        // canonicalized root (/var ↔ /private/var on macOS).
+        let canonical = std::fs::canonicalize(&root).expect("canonicalize");
+        assert_eq!(editor.workspace_root_path(), Some(canonical.as_path()));
     });
     let _ = std::fs::remove_dir_all(root);
 }
