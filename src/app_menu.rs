@@ -20,7 +20,8 @@ use crate::components::{
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
     import_language_config_and_select, import_theme_config_and_select, open_preferences_window,
-    read_recent_files, read_recent_folders, record_recent_file, remove_recent_file,
+    read_recent_files, read_recent_folders, read_session, record_recent_file,
+    remove_recent_file,
 };
 use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
@@ -148,6 +149,47 @@ pub(crate) fn open_workspace_window(cx: &mut App, root: PathBuf) -> anyhow::Resu
         editor.show_welcome = true;
     })?;
     Ok(())
+}
+
+/// Restores the last session (workspace root + open tabs). Returns `false`
+/// when there is nothing to restore so callers can fall back to normal
+/// startup (roadmap A4).
+pub(crate) fn restore_last_session(cx: &mut App) -> bool {
+    let session = match read_session() {
+        Ok(session) => session,
+        Err(_) => return false,
+    };
+    let Some(root) = session
+        .root
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|root| root.is_dir())
+    else {
+        return false;
+    };
+    let mut tabs: Vec<PathBuf> = session
+        .tabs
+        .iter()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .collect();
+    // Reorder so the previously active tab opens last and ends up focused.
+    if let Some(active) = session.active.as_ref().map(PathBuf::from) {
+        if active.is_file() {
+            tabs.retain(|tab| tab != &active);
+            tabs.push(active);
+        }
+    }
+
+    let handle = open_editor_window(cx, String::new(), None);
+    let _ = handle.update(cx, |editor, window, cx| {
+        editor.show_welcome = tabs.is_empty();
+        editor.set_workspace_root(root, cx);
+        for tab in tabs {
+            editor.open_workspace_file(tab, window, cx);
+        }
+    });
+    true
 }
 
 pub(crate) fn open_file_in_new_window(cx: &mut App, path: &Path) -> anyhow::Result<()> {
@@ -654,6 +696,7 @@ pub(crate) fn request_quit_application(cx: &mut App) {
 
         let should_close = window
             .update(cx, |editor, window, cx| {
+                editor.persist_session(cx);
                 editor.on_window_should_close(window, cx)
             })
             .unwrap_or(false);

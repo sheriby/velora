@@ -30,7 +30,9 @@ mod net;
 mod theme;
 mod window_chrome;
 
-use app_menu::{init as init_app_menu, open_editor_window, open_workspace_window};
+use app_menu::{
+    init as init_app_menu, open_editor_window, open_workspace_window, restore_last_session,
+};
 use components::init_with_keybindings as init_editor;
 #[cfg(target_os = "macos")]
 use file_url::parse_file_url;
@@ -337,7 +339,9 @@ fn main() {
                         .await;
                     if !open_file_requested.load(Ordering::SeqCst) {
                         let _ = cx.update(move |cx| {
-                            open_startup_window(cx, startup_open);
+                            if !restore_last_session(cx) {
+                                open_startup_window(cx, startup_open);
+                            }
                             restore_recovery_windows(cx, &recovery_windows_restored);
                         });
                     }
@@ -347,7 +351,9 @@ fn main() {
 
             #[cfg(not(target_os = "macos"))]
             {
-                open_startup_window(cx, preferences.startup_open);
+                if !restore_last_session(cx) {
+                    open_startup_window(cx, preferences.startup_open);
+                }
                 restore_recovery_windows(cx, &recovery_windows_restored);
             }
 

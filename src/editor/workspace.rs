@@ -260,6 +260,33 @@ impl Editor {
         }
     }
 
+    /// Persists the open-tab set for session restore (roadmap A4). Cheap:
+    /// a tiny JSON write, only invoked on structural changes.
+    pub(crate) fn persist_session(&mut self, cx: &mut Context<Self>) {
+        self.snapshot_current_document(cx);
+        let session = crate::config::SessionState {
+            root: self
+                .workspace
+                .root
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+            tabs: self
+                .workspace
+                .open_documents
+                .iter()
+                .map(|tab| tab.path.to_string_lossy().into_owned())
+                .collect(),
+            active: self
+                .workspace
+                .active_document
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+        };
+        if let Err(error) = crate::config::save_session(&session) {
+            eprintln!("failed to save session: {error}");
+        }
+    }
+
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         // Canonicalize so recent-folder entries read as real absolute paths
         // (a CLI "." would otherwise be recorded as "<cwd>/.").
@@ -288,6 +315,7 @@ impl Editor {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         self.sync_workspace_file_tree();
         self.sync_workspace_outline(cx);
+        self.persist_session(cx);
         cx.notify();
     }
 
@@ -1817,6 +1845,7 @@ impl Editor {
             self.schedule_autosave(cx);
         }
         window.set_window_edited(dirty);
+        self.persist_session(cx);
         cx.notify();
     }
 
@@ -2172,6 +2201,7 @@ impl Editor {
         if self.document_dirty || self.has_dirty_workspace_documents() {
             self.schedule_autosave(cx);
         }
+        self.persist_session(cx);
         cx.notify();
     }
 

@@ -21,6 +21,7 @@ impl Editor {
 
         if self.on_window_should_close(window, cx) {
             self.close_dialog_restore_focus = None;
+            self.persist_session(cx);
             Self::persist_window_frame(window);
             window.remove_window();
         }

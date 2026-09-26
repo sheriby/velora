@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 
 pub(crate) mod preferences;
 mod recovery;
+mod session;
 
 pub(crate) use preferences::{
     EditorSettings, ImagePasteBehavior, StartupOpenPreference, WindowFrame,
@@ -20,6 +21,7 @@ pub(crate) use preferences::{
 pub(crate) use recovery::{
     RecoverySnapshot, read_recovery_snapshots, remove_recovery_snapshot, save_recovery_snapshot,
 };
+pub(crate) use session::{SessionState, read_session, save_session};
 
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
 pub(crate) const RECENT_FOLDERS_LIMIT: usize = 10;

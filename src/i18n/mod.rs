@@ -2679,8 +2679,11 @@ mod tests {
         assert_eq!(pack.strings.menu_export, "Export");
         assert_eq!(pack.strings.info_dialog_ok, "OK");
         assert_eq!(pack.strings.update_open_release, "Open Releases");
-        assert_eq!(pack.strings.menu_open_recent_file, "Open Recent File");
-        assert_eq!(pack.strings.menu_no_recent_files, "No Recent Files");
+        assert_eq!(pack.strings.menu_open_recent_file, "Open Recent");
+        assert_eq!(
+            pack.strings.menu_no_recent_files,
+            "No Recent Files or Folders"
+        );
         assert_eq!(
             pack.strings.recent_file_missing_title,
             "Recent File Missing"

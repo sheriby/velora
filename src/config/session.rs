@@ -1,0 +1,89 @@
+//! Last editor session persistence: workspace root + open tab set.
+
+use anyhow::Context as _;
+use serde::{Deserialize, Serialize};
+
+use super::VelotypeConfigDirs;
+
+/// Last editor session: the workspace root and the open tab set, restored on
+/// launch (roadmap A4).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub(crate) struct SessionState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) root: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) tabs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active: Option<String>,
+}
+
+pub(crate) fn read_session() -> anyhow::Result<SessionState> {
+    read_session_with_dirs(&VelotypeConfigDirs::from_system()?)
+}
+
+pub(crate) fn save_session(session: &SessionState) -> anyhow::Result<()> {
+    save_session_with_dirs(session, &VelotypeConfigDirs::from_system()?)
+}
+
+fn read_session_with_dirs(dirs: &VelotypeConfigDirs) -> anyhow::Result<SessionState> {
+    let path = session_file(dirs);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SessionState::default())
+        }
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read '{}'", path.display()));
+        }
+    };
+    serde_json::from_str(&text).with_context(|| format!("failed to parse '{}'", path.display()))
+}
+
+fn save_session_with_dirs(
+    session: &SessionState,
+    dirs: &VelotypeConfigDirs,
+) -> anyhow::Result<()> {
+    let path = session_file(dirs);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create '{}'", parent.display()))?;
+    }
+    let text = serde_json::to_string_pretty(session)?;
+    std::fs::write(&path, text + "\n")
+        .with_context(|| format!("failed to write '{}'", path.display()))
+}
+
+fn session_file(dirs: &VelotypeConfigDirs) -> std::path::PathBuf {
+    dirs.root.join("session.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SessionState, read_session_with_dirs, save_session_with_dirs};
+    use crate::config::VelotypeConfigDirs;
+
+    #[test]
+    fn session_roundtrips_through_disk() {
+        let root =
+            std::env::temp_dir().join(format!("velora-session-{}", uuid::Uuid::new_v4()));
+        let dirs = VelotypeConfigDirs::from_root(&root);
+        let session = SessionState {
+            root: Some("/tmp/workspace".into()),
+            tabs: vec!["/tmp/workspace/a.md".into(), "/tmp/workspace/b.md".into()],
+            active: Some("/tmp/workspace/b.md".into()),
+        };
+        save_session_with_dirs(&session, &dirs).expect("save session");
+        let loaded = read_session_with_dirs(&dirs).expect("read session");
+        assert_eq!(loaded, session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_session_file_reads_as_empty() {
+        let dirs = VelotypeConfigDirs::from_root(
+            std::env::temp_dir().join(format!("velora-session-empty-{}", uuid::Uuid::new_v4())),
+        );
+        let loaded = read_session_with_dirs(&dirs).expect("read session");
+        assert_eq!(loaded, SessionState::default());
+    }
+}
