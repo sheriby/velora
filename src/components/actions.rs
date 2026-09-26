@@ -77,6 +77,8 @@ actions!(
         FindPreviousMatch,
         QuickOpen,
         OpenCommandPalette,
+        CursorHistoryBack,
+        CursorHistoryForward,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -800,6 +802,10 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
     bindings.push(KeyBinding::new("ctrl-p", QuickOpen, None));
     bindings.push(KeyBinding::new("cmd-shift-p", OpenCommandPalette, None));
     bindings.push(KeyBinding::new("ctrl-shift-p", OpenCommandPalette, None));
+    bindings.push(KeyBinding::new("alt-cmd-left", CursorHistoryBack, None));
+    bindings.push(KeyBinding::new("ctrl-alt-left", CursorHistoryBack, None));
+    bindings.push(KeyBinding::new("alt-cmd-right", CursorHistoryForward, None));
+    bindings.push(KeyBinding::new("ctrl-alt-right", CursorHistoryForward, None));
     bindings.push(KeyBinding::new("cmd-=", ZoomIn, None));
     bindings.push(KeyBinding::new("cmd-+", ZoomIn, None));
     bindings.push(KeyBinding::new("cmd--", ZoomOut, None));

@@ -152,6 +152,9 @@ pub struct Editor {
         Option<(u64, std::collections::HashMap<EntityId, std::ops::Range<usize>>, Vec<usize>)>,
     /// Scroll offset at the last outline-follow update.
     pub(super) last_outline_follow_offset: f32,
+    /// Cursor position history (roadmap E6): jump points to return to.
+    pub(super) cursor_history_back: Vec<CursorLocation>,
+    pub(super) cursor_history_forward: Vec<CursorLocation>,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
     workspace: WorkspaceState,
@@ -313,7 +316,15 @@ pub(super) struct RenderedSelectAllCycle {
 }
 
 /// Mapping from one visible block's text range to canonical Markdown offsets.
-#[derive(Clone)]
+/// A remembered caret location for cursor-history navigation (roadmap E6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CursorLocation {
+    pub(super) path: Option<PathBuf>,
+    pub(super) range: std::ops::Range<usize>,
+}
+
+const CURSOR_HISTORY_LIMIT: usize = 100;
+
 pub(super) struct SourceTargetMapping {
     entity: Entity<Block>,
     full_source_range: std::ops::Range<usize>,
@@ -429,6 +440,8 @@ impl Editor {
             external_watcher: None,
             outline_follow_cache: None,
             last_outline_follow_offset: f32::NAN,
+            cursor_history_back: Vec::new(),
+            cursor_history_forward: Vec::new(),
             update_check_in_progress: false,
             workspace: WorkspaceState::default(),
             status_bar: StatusBarState::default(),

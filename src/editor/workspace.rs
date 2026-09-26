@@ -11,7 +11,8 @@ use gpui::*;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{BlockKind, Editor, UndoSelectionSnapshot};
+use super::{BlockKind, CursorLocation, Editor, UndoSelectionSnapshot, CURSOR_HISTORY_LIMIT};
+use crate::components::{CursorHistoryBack, CursorHistoryForward};
 use crate::config::TreeSortPreference;
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeManager};
@@ -1711,7 +1712,84 @@ impl Editor {
         .detach();
     }
 
+    /// Records the current caret location before a programmatic jump
+    /// (roadmap E6).
+    pub(super) fn push_cursor_location(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.capture_source_selection_snapshot(cx);
+        self.cursor_history_back.push(CursorLocation {
+            path: self.file_path.clone(),
+            range: snapshot.range,
+        });
+        if self.cursor_history_back.len() > CURSOR_HISTORY_LIMIT {
+            self.cursor_history_back.remove(0);
+        }
+        self.cursor_history_forward.clear();
+    }
+
+    /// ⌥⌘←: return to the previous recorded caret location.
+    pub(crate) fn on_cursor_history_back(
+        &mut self,
+        _: &CursorHistoryBack,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(location) = self.cursor_history_back.pop() else {
+            return;
+        };
+        let snapshot = self.capture_source_selection_snapshot(cx);
+        self.cursor_history_forward.push(CursorLocation {
+            path: self.file_path.clone(),
+            range: snapshot.range,
+        });
+        self.goto_cursor_location(location, window, cx);
+    }
+
+    /// ⌥⌘→: re-apply the most recently undone caret jump.
+    pub(crate) fn on_cursor_history_forward(
+        &mut self,
+        _: &CursorHistoryForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(location) = self.cursor_history_forward.pop() else {
+            return;
+        };
+        let snapshot = self.capture_source_selection_snapshot(cx);
+        self.cursor_history_back.push(CursorLocation {
+            path: self.file_path.clone(),
+            range: snapshot.range,
+        });
+        self.goto_cursor_location(location, window, cx);
+    }
+
+    fn goto_cursor_location(
+        &mut self,
+        location: CursorLocation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open_in_current = self.file_path.as_deref() == location.path.as_deref();
+        if !open_in_current
+            && let Some(path) = location.path.clone()
+            && path.is_file()
+        {
+            self.open_workspace_file(path, window, cx);
+        }
+        self.apply_selection_snapshot_in_current_mode(
+            &UndoSelectionSnapshot {
+                range: location.range,
+                reversed: false,
+            },
+            cx,
+        );
+        self.pending_scroll_active_block_into_view = true;
+        self.pending_scroll_center_into_view = true;
+        self.pending_scroll_recheck_after_layout = true;
+        cx.notify();
+    }
+
     fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        self.push_cursor_location(cx);
         self.apply_selection_snapshot_in_current_mode(
             &UndoSelectionSnapshot {
                 range,
