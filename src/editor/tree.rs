@@ -104,6 +104,21 @@ impl DocumentTree {
             .map(|visible| visible.entity.clone())
     }
 
+    /// Resolves a block entity through the full-tree location map; unlike
+    /// `block_entity_by_id` this also works for blocks outside the visible
+    /// window.
+    pub(super) fn block_entity_at_location(
+        &self,
+        entity_id: EntityId,
+        cx: &App,
+    ) -> Option<Entity<Block>> {
+        let location = self.find_block_location(entity_id)?;
+        match &location.parent {
+            Some(parent) => parent.read(cx).children.get(location.index).cloned(),
+            None => self.roots.get(location.index).cloned(),
+        }
+    }
+
     pub(super) fn find_block_location(&self, entity_id: EntityId) -> Option<BlockLocation> {
         self.snapshot.location_by_entity.get(&entity_id).cloned()
     }

@@ -289,6 +289,28 @@ pub struct I18nStrings {
     pub workspace_empty_outline: String,
     /// Title shown when the workspace file tree cannot be scanned.
     pub workspace_scan_failed_title: String,
+    /// Placeholder for the search panel's replace input.
+    pub search_replace_placeholder: String,
+    /// Toggle tooltip: distinguish upper and lower case.
+    pub search_case_sensitive: String,
+    /// Toggle tooltip: match whole words only.
+    pub search_whole_word: String,
+    /// Toggle tooltip: interpret the query as a regular expression.
+    pub search_regex: String,
+    /// Toggle tooltip: fuzzy (subsequence) matching.
+    pub search_fuzzy: String,
+    /// Short chip label for fuzzy matching.
+    pub search_fuzzy_short: String,
+    /// Scope switch: search the current document.
+    pub search_scope_document: String,
+    /// Scope switch: search every file in the workspace.
+    pub search_scope_workspace: String,
+    /// Replace button: replace the current match.
+    pub search_replace_current: String,
+    /// Replace button: replace every match.
+    pub search_replace_all: String,
+    /// Result count template; `{n}` is replaced.
+    pub search_result_count: String,
     /// Tab context menu item for closing the tab.
     pub tab_close: String,
     /// Tab context menu item for closing all other tabs.
@@ -561,6 +583,17 @@ struct I18nStringsDe {
     workspace_empty_files: Option<String>,
     workspace_empty_outline: Option<String>,
     workspace_scan_failed_title: Option<String>,
+    search_replace_placeholder: Option<String>,
+    search_case_sensitive: Option<String>,
+    search_whole_word: Option<String>,
+    search_regex: Option<String>,
+    search_fuzzy: Option<String>,
+    search_fuzzy_short: Option<String>,
+    search_scope_document: Option<String>,
+    search_scope_workspace: Option<String>,
+    search_replace_current: Option<String>,
+    search_replace_all: Option<String>,
+    search_result_count: Option<String>,
     tab_close: Option<String>,
     tab_close_others: Option<String>,
     tab_close_left: Option<String>,
@@ -782,6 +815,17 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_empty_files",
     "workspace_empty_outline",
     "workspace_scan_failed_title",
+    "search_replace_placeholder",
+    "search_case_sensitive",
+    "search_whole_word",
+    "search_regex",
+    "search_fuzzy",
+    "search_fuzzy_short",
+    "search_scope_document",
+    "search_scope_workspace",
+    "search_replace_current",
+    "search_replace_all",
+    "search_result_count",
     "tab_close",
     "tab_close_others",
     "tab_close_left",
@@ -1295,6 +1339,35 @@ impl I18nStringsDe {
             workspace_scan_failed_title: self
                 .workspace_scan_failed_title
                 .unwrap_or(defaults.workspace_scan_failed_title),
+            search_replace_placeholder: self
+                .search_replace_placeholder
+                .unwrap_or(defaults.search_replace_placeholder),
+            search_case_sensitive: self
+                .search_case_sensitive
+                .unwrap_or(defaults.search_case_sensitive),
+            search_whole_word: self
+                .search_whole_word
+                .unwrap_or(defaults.search_whole_word),
+            search_regex: self.search_regex.unwrap_or(defaults.search_regex),
+            search_fuzzy: self.search_fuzzy.unwrap_or(defaults.search_fuzzy),
+            search_fuzzy_short: self
+                .search_fuzzy_short
+                .unwrap_or(defaults.search_fuzzy_short),
+            search_scope_document: self
+                .search_scope_document
+                .unwrap_or(defaults.search_scope_document),
+            search_scope_workspace: self
+                .search_scope_workspace
+                .unwrap_or(defaults.search_scope_workspace),
+            search_replace_current: self
+                .search_replace_current
+                .unwrap_or(defaults.search_replace_current),
+            search_replace_all: self
+                .search_replace_all
+                .unwrap_or(defaults.search_replace_all),
+            search_result_count: self
+                .search_result_count
+                .unwrap_or(defaults.search_result_count),
             tab_close: self.tab_close.unwrap_or(defaults.tab_close),
             tab_close_others: self
                 .tab_close_others
@@ -1608,6 +1681,17 @@ impl I18nStrings {
             workspace_empty_files: "没有可显示的 Markdown 文件".into(),
             workspace_empty_outline: "当前文档没有标题".into(),
             workspace_scan_failed_title: "无法读取工作区".into(),
+            search_replace_placeholder: "替换".into(),
+            search_case_sensitive: "区分大小写".into(),
+            search_whole_word: "全字匹配".into(),
+            search_regex: "正则表达式".into(),
+            search_fuzzy: "模糊匹配（按字符顺序）".into(),
+            search_fuzzy_short: "模糊".into(),
+            search_scope_document: "当前文档".into(),
+            search_scope_workspace: "所有文件".into(),
+            search_replace_current: "替换".into(),
+            search_replace_all: "全部替换".into(),
+            search_result_count: "{n} 个结果".into(),
             tab_close: "关闭".into(),
             tab_close_others: "关闭其他标签页".into(),
             tab_close_left: "关闭左侧标签页".into(),
@@ -1859,6 +1943,17 @@ impl I18nStrings {
             workspace_empty_files: "No Markdown files to show".into(),
             workspace_empty_outline: "This document has no headings".into(),
             workspace_scan_failed_title: "Unable to Read Workspace".into(),
+            search_replace_placeholder: "Replace".into(),
+            search_case_sensitive: "Match Case".into(),
+            search_whole_word: "Match Whole Word".into(),
+            search_regex: "Use Regular Expression".into(),
+            search_fuzzy: "Fuzzy Match (subsequence)".into(),
+            search_fuzzy_short: "Fuzzy".into(),
+            search_scope_document: "Current Document".into(),
+            search_scope_workspace: "All Files".into(),
+            search_replace_current: "Replace".into(),
+            search_replace_all: "Replace All".into(),
+            search_result_count: "{n} results".into(),
             tab_close: "Close".into(),
             tab_close_others: "Close Other Tabs".into(),
             tab_close_left: "Close Tabs to the Left".into(),

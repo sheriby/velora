@@ -56,6 +56,7 @@ code-highlight-config = [
 [dependencies]
 anyhow = "1"
 base64 = "0.23"
+regex = "1"
 uuid = "1.23"
 gpui = { version = "0.2", features = ["runtime_shaders"] }
 unicode-segmentation = "1.13"
@@ -207,17 +208,11 @@ panic = "abort"
 strip = true
 
 [profile.dev]
-opt-level = 1
-debug = 1
+opt-level = 0        # 关键：日常开发不做优化
+debug = 1            # 保留行号信息，保持可调试
 incremental = true
-
-[profile.fastdev]
-inherits = "dev"
-opt-level = 2
-debug = 1
-incremental = true
-codegen-units = 16
-lto = false
+lto = false          # 关键：dev 不做 LTO，避免 dev 编译慢
+codegen-units = 256  # 可选：把 dev 的 codegen-units 调大，进一步并行化
 
 # Keep our own code in dev (fast incremental compile, debuggable), but
 # build the heavy framework/IO crates at release-level optimization so debug

@@ -31,6 +31,7 @@ const WORKSPACE_NODE_INDENT: f32 = 16.0;
 pub(super) enum WorkspaceTab {
     #[default]
     Files,
+    Search,
     Outline,
 }
 
@@ -97,8 +98,12 @@ struct WorkspaceSearchHit {
     path: PathBuf,
     label: String,
     line: Option<usize>,
-    preview: String,
+    /// Byte range of the match inside its line (used to select the match when
+    /// jumping and to open the hit's file at the right spot).
+    match_range: Option<Range<usize>>,
+    /// Absolute byte range in the current document (document-scope hits only).
     source_range: Option<Range<usize>>,
+    preview: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -129,6 +134,13 @@ enum TabMenuAction {
 struct TabContextMenu {
     position: Point<Pixels>,
     target_index: usize,
+}
+
+/// Which search-panel input a key/IME event targets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchInputKind {
+    Query,
+    Replace,
 }
 
 pub(super) struct WorkspaceAutosaveDocument {
@@ -163,7 +175,15 @@ pub(super) struct WorkspaceState {
     search_active_index: Option<usize>,
     search_selected_range: Range<usize>,
     search_marked_range: Option<Range<usize>>,
-    show_search: bool,
+    replace_query: String,
+    replace_visible: bool,
+    replace_focus: Option<FocusHandle>,
+    replace_selected_range: Range<usize>,
+    replace_marked_range: Option<Range<usize>>,
+    search_match_case: bool,
+    search_whole_word: bool,
+    search_use_regex: bool,
+    search_fuzzy: bool,
     search_focus: Option<FocusHandle>,
     search_focus_pending: bool,
     search_results: Vec<WorkspaceSearchHit>,
@@ -196,7 +216,15 @@ impl Default for WorkspaceState {
             search_active_index: None,
             search_selected_range: 0..0,
             search_marked_range: None,
-            show_search: false,
+            replace_query: String::new(),
+            replace_visible: false,
+            replace_focus: None,
+            replace_selected_range: 0..0,
+            replace_marked_range: None,
+            search_match_case: false,
+            search_whole_word: false,
+            search_use_regex: false,
+            search_fuzzy: false,
             search_focus: None,
             search_focus_pending: false,
             search_results: Vec::new(),
@@ -253,7 +281,6 @@ impl Editor {
         self.workspace.file_error = None;
         self.workspace.expanded.clear();
         self.workspace.active_tab = WorkspaceTab::Files;
-        self.workspace.show_search = false;
         self.workspace.search_scope = WorkspaceSearchScope::Workspace;
         self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
@@ -281,7 +308,9 @@ impl Editor {
     fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
         self.workspace.file_tree = None;
         self.sync_workspace_file_tree();
-        if self.workspace.show_search && !self.workspace.search_query.is_empty() {
+        if self.workspace.active_tab == WorkspaceTab::Search
+            && !self.workspace.search_query.is_empty()
+        {
             self.schedule_workspace_search(cx);
         }
         cx.notify();
@@ -1278,8 +1307,7 @@ impl Editor {
     }
 
     fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
-        let changed = self.workspace.active_tab != tab || self.workspace.show_search;
-        self.workspace.show_search = false;
+        let changed = self.workspace.active_tab != tab;
         self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
         self.workspace.search_selected_range = 0..0;
@@ -1296,6 +1324,15 @@ impl Editor {
         }
     }
 
+    fn search_options(&self) -> SearchOptions {
+        SearchOptions {
+            match_case: self.workspace.search_match_case,
+            whole_word: self.workspace.search_whole_word,
+            use_regex: self.workspace.search_use_regex,
+            fuzzy: self.workspace.search_fuzzy,
+        }
+    }
+
     fn schedule_workspace_search(&mut self, cx: &mut Context<Self>) {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         let generation = self.workspace.search_generation;
@@ -1303,10 +1340,10 @@ impl Editor {
         self.workspace.search_active_index = None;
         self.workspace.document_search_source = None;
         self.workspace.document_active_range = None;
-        let query = self.workspace.search_query.trim().to_string();
+        let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let scope = self.workspace.search_scope;
         let tree = self.workspace.file_tree.clone();
-        if query.is_empty() || (scope == WorkspaceSearchScope::Workspace && tree.is_none()) {
+        if matcher.is_empty() || (scope == WorkspaceSearchScope::Workspace && tree.is_none()) {
             self.workspace.search_pending = false;
             cx.notify();
             return;
@@ -1328,7 +1365,7 @@ impl Editor {
                 WorkspaceSearchScope::Workspace => {
                     let Some(tree) = tree else { return };
                     let results = background
-                        .spawn(async move { search_workspace_files(&tree, &query, 200) })
+                        .spawn(async move { search_workspace_files(&tree, &matcher, 200) })
                         .await;
                     (results, None)
                 }
@@ -1352,7 +1389,7 @@ impl Editor {
                     let (results, source) = background
                         .spawn(async move {
                             let results =
-                                search_document_source(&source, &query, &path, &label, 200);
+                                search_document_source(&source, &matcher, &path, &label, 200);
                             (results, source)
                         })
                         .await;
@@ -1406,8 +1443,7 @@ impl Editor {
 
     pub(crate) fn open_document_find(&mut self, cx: &mut Context<Self>) {
         self.workspace.is_open = true;
-        self.workspace.active_tab = WorkspaceTab::Files;
-        self.workspace.show_search = true;
+        self.workspace.active_tab = WorkspaceTab::Search;
         self.workspace.search_scope = WorkspaceSearchScope::Document;
         self.workspace.search_selected_range = 0..self.workspace.search_query.len();
         self.workspace.search_marked_range = None;
@@ -1445,7 +1481,7 @@ impl Editor {
 
     pub(super) fn refresh_document_find_after_edit(&mut self, cx: &mut Context<Self>) {
         if self.workspace.is_open
-            && self.workspace.show_search
+            && self.workspace.active_tab == WorkspaceTab::Search
             && self.workspace.search_scope == WorkspaceSearchScope::Document
             && !self.workspace.search_query.trim().is_empty()
         {
@@ -1473,24 +1509,26 @@ impl Editor {
         if self.workspace.search_scope != WorkspaceSearchScope::Document {
             return;
         }
-        let Some(source) = self.workspace.document_search_source.as_deref() else {
+        let Some(source) = self.workspace.document_search_source.clone() else {
             return;
         };
-        let query = &self.workspace.search_query;
+        let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let from = self
             .workspace
             .document_active_range
             .as_ref()
             .map(|range| if reverse { range.start } else { range.end })
             .unwrap_or(if reverse { source.len() } else { 0 });
-        let Some(range) = find_document_match_from(source, query, from, reverse).or_else(|| {
-            find_document_match_from(
-                source,
-                query,
-                if reverse { source.len() } else { 0 },
-                reverse,
-            )
-        }) else {
+        let Some(range) =
+            find_document_match_from(&source, &matcher, from, reverse).or_else(|| {
+                find_document_match_from(
+                    &source,
+                    &matcher,
+                    if reverse { source.len() } else { 0 },
+                    reverse,
+                )
+            })
+        else {
             return;
         };
         self.workspace.search_active_index = self
@@ -1500,6 +1538,155 @@ impl Editor {
             .position(|hit| hit.source_range.as_ref() == Some(&range));
         self.workspace.document_active_range = Some(range.clone());
         self.jump_to_document_search_range(range, cx);
+    }
+
+    /// Replaces the currently active document match (selected via a jump).
+    pub(super) fn replace_active_document_match(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(range) = self.workspace.document_active_range.clone() else {
+            return false;
+        };
+        let replacement = self.workspace.replace_query.clone();
+        self.apply_selection_snapshot_in_current_mode(
+            &UndoSelectionSnapshot {
+                range,
+                reversed: false,
+            },
+            cx,
+        );
+        self.replace_selected_block_text(&replacement, window, cx)
+    }
+
+    /// Replaces every current match in the open document, last-first so the
+    /// earlier byte offsets stay valid while editing.
+    pub(super) fn replace_all_document_matches(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let Some(source) = self.workspace.document_search_source.clone() else {
+            return 0;
+        };
+        let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
+        let replacement = self.workspace.replace_query.clone();
+        let mut ranges = Vec::new();
+        let mut absolute = 0usize;
+        for raw_line in source.split_inclusive('\n') {
+            let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+            for found in matcher.find_in_line(line) {
+                ranges.push(absolute + found.start..absolute + found.end);
+            }
+            absolute += raw_line.len();
+        }
+        let mut replaced = 0usize;
+        for range in ranges.iter().rev() {
+            self.apply_selection_snapshot_in_current_mode(
+                &UndoSelectionSnapshot {
+                    range: range.clone(),
+                    reversed: false,
+                },
+                cx,
+            );
+            if self.replace_selected_block_text(&replacement, window, cx) {
+                replaced += 1;
+            }
+        }
+        self.workspace.document_active_range = None;
+        replaced
+    }
+
+    /// Runs `replace_text_in_range` on the block that currently holds the
+    /// selection (set by `apply_selection_snapshot_in_current_mode`). The
+    /// target block may be outside the visible window, so it is resolved
+    /// through the full-tree location map instead of the visible snapshot.
+    fn replace_selected_block_text(
+        &mut self,
+        replacement: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(entity_id) = self.active_entity_id else {
+            return false;
+        };
+        let Some(block) = self.document.block_entity_at_location(entity_id, cx) else {
+            return false;
+        };
+        block.update(cx, |block, cx| {
+            block.replace_text_in_range(None, replacement, window, cx);
+        });
+        true
+    }
+
+    /// Replaces matches across every file in the workspace tree. Open tabs get
+    /// their cached markdown rewritten (and marked dirty); the active document
+    /// is replaced live through the block editor so undo still works.
+    pub(super) fn replace_all_workspace_matches(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let Some(tree) = self.workspace.file_tree.clone() else {
+            return 0;
+        };
+        let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
+        let replacement = self.workspace.replace_query.clone();
+        let active_path = self.file_path.clone();
+
+        let files = collect_workspace_files(&tree);
+        let mut total = 0usize;
+        for path in files {
+            if Some(&path) == active_path.as_ref() {
+                // The active document goes through the live editor path so the
+                // change is undoable and stays in sync with the block model.
+                let source = self.current_document_source(cx);
+                let scoped = SearchMatcher::new(
+                    self.workspace.search_query.trim(),
+                    self.search_options(),
+                );
+                let count = count_matches_in_source(&source, &scoped);
+                if count > 0 {
+                    self.workspace.document_search_source = Some(source);
+                    total += self.replace_all_document_matches(window, cx);
+                }
+                continue;
+            }
+            let open_tab_index = self
+                .workspace
+                .open_documents
+                .iter()
+                .position(|tab| tab.path == path);
+            let source = match open_tab_index {
+                Some(index) if self.workspace.open_documents[index].dirty => {
+                    self.workspace.open_documents[index].markdown.clone()
+                }
+                _ => match fs::read_to_string(&path) {
+                    Ok(source) => source,
+                    Err(_) => continue,
+                },
+            };
+            let updated = replace_in_source(&source, &matcher, &replacement);
+            if updated == source {
+                continue;
+            }
+            total += count_matches_in_source(&source, &matcher);
+            if fs::write(&path, &updated).is_ok() {
+                if let Some(index) = open_tab_index {
+                    let tab = &mut self.workspace.open_documents[index];
+                    tab.markdown = updated;
+                    tab.dirty = true;
+                    tab.file_version = super::persistence::file_content_version(&tab.markdown);
+                }
+            } else {
+                self.workspace.file_error = Some(format!("无法写入 {}", path.display()));
+            }
+        }
+        if total > 0 {
+            self.refresh_workspace_tree(cx);
+        }
+        total
     }
 
     fn toggle_workspace_node(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -2175,6 +2362,7 @@ impl Editor {
         theme: &Theme,
         strings: &I18nStrings,
         panel_width: f32,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if !self.workspace.is_open {
@@ -2187,136 +2375,13 @@ impl Editor {
         let c = &theme.colors;
         let d = &theme.dimensions;
 
+        let search_header = (self.workspace.active_tab == WorkspaceTab::Search)
+            .then(|| self.render_search_header(theme, strings, window, cx));
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor),
+            WorkspaceTab::Search => self.render_search_results(theme, strings, &editor),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor),
         };
-        let search_focus = self
-            .workspace
-            .search_focus
-            .get_or_insert_with(|| cx.focus_handle())
-            .clone();
-        let search_focus_for_click = search_focus.clone();
-        let search_focus_for_input = search_focus.clone();
-        let search_input_editor = cx.entity();
-        let search_editor = editor.clone();
-        let search_query = self.workspace.search_query.clone();
-        let search_label = if search_query.is_empty() {
-            if self.workspace.search_scope == WorkspaceSearchScope::Document {
-                strings.workspace_document_find_placeholder.clone()
-            } else {
-                strings.workspace_search_placeholder.clone()
-            }
-        } else {
-            search_query.clone()
-        };
-        let search_field = div()
-            .id("workspace-file-search")
-            .relative()
-            .track_focus(&search_focus)
-            .w_full()
-            .h(px(31.0))
-            .px(px(10.0))
-            .flex()
-            .items_center()
-            .rounded(px(7.0))
-            .border_1()
-            .border_color(c.dialog_border)
-            .bg(c.editor_background)
-            .text_size(px(12.0))
-            .text_color(if search_query.is_empty() {
-                c.dialog_muted
-            } else {
-                c.text_default
-            })
-            .child(search_label)
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, cx| {
-                        window.handle_input(
-                            &search_focus_for_input,
-                            ElementInputHandler::new(bounds, search_input_editor.clone()),
-                            cx,
-                        );
-                    },
-                )
-                .absolute()
-                .top_0()
-                .right_0()
-                .bottom_0()
-                .left_0(),
-            )
-            .on_click(move |_event, window, _cx| window.focus(&search_focus_for_click))
-            .on_key_down(move |event: &KeyDownEvent, _window, cx| {
-                let key = event.keystroke.key.to_ascii_lowercase();
-                let secondary = event.keystroke.modifiers.secondary();
-                match key.as_str() {
-                    "escape" => {
-                        let _ = search_editor.update(cx, |editor, cx| {
-                            editor.workspace.search_query.clear();
-                            editor.workspace.search_selected_range = 0..0;
-                            editor.workspace.search_marked_range = None;
-                            editor.workspace.show_search = false;
-                            editor.workspace.search_focus_pending = false;
-                            editor.schedule_workspace_search(cx);
-                            cx.notify();
-                        });
-                    }
-                    "a" if secondary => {
-                        let _ = search_editor.update(cx, |editor, cx| {
-                            editor.workspace.search_selected_range =
-                                0..editor.workspace.search_query.len();
-                            cx.notify();
-                        });
-                    }
-                    "backspace" => {
-                        let handled = search_editor.update(cx, |editor, cx| {
-                            if editor.workspace.search_marked_range.is_some() {
-                                return false;
-                            }
-                            let selected = editor.workspace.search_selected_range.clone();
-                            let range = if selected.start == selected.end {
-                                let before = &editor.workspace.search_query[..selected.start];
-                                let start = before
-                                    .grapheme_indices(true)
-                                    .last()
-                                    .map(|(start, _)| start)
-                                    .unwrap_or(selected.start);
-                                start..selected.start
-                            } else {
-                                selected
-                            };
-                            editor.replace_workspace_search_text(range, "", None, false, cx);
-                            true
-                        });
-                        if !matches!(handled, Ok(true)) {
-                            return;
-                        }
-                    }
-                    "v" if secondary => {
-                        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                            let _ = search_editor.update(cx, |editor, cx| {
-                                editor.replace_workspace_search_text(
-                                    editor.workspace.search_selected_range.clone(),
-                                    &text,
-                                    None,
-                                    false,
-                                    cx,
-                                );
-                            });
-                        }
-                    }
-                    "enter" => {
-                        let reverse = event.keystroke.modifiers.shift;
-                        let _ = search_editor.update(cx, |editor, cx| {
-                            editor.find_next_document_match(reverse, cx);
-                        });
-                    }
-                    _ => return,
-                }
-                cx.stop_propagation();
-            });
 
         Some(
             div()
@@ -2334,7 +2399,7 @@ impl Editor {
                 .bg(c.dialog_secondary_button_bg)
                 .border_r(px(d.dialog_border_width))
                 .border_color(c.dialog_border)
-                .children(self.workspace.show_search.then_some(search_field))
+                .children(search_header)
                 .child(
                     div()
                         .id("workspace-panel-scroll")
@@ -2368,6 +2433,574 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// VS Code-style search header: query input, collapsible replace input,
+    /// option toggles, and a document/workspace scope switch. Rendered above
+    /// the result list when the Search tab is active.
+    fn render_search_header(
+        &mut self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let editor = cx.entity().downgrade();
+
+        let query_focused = self
+            .workspace
+            .search_focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window));
+        let search_input = self.render_search_input(
+            "workspace-search-query",
+            self.workspace.search_query.clone(),
+            if self.workspace.search_query.is_empty() {
+                strings.workspace_search_placeholder.clone()
+            } else {
+                self.workspace.search_query.clone()
+            },
+            SearchInputKind::Query,
+            query_focused,
+            theme,
+            cx,
+        );
+        let replace_visible = self.workspace.replace_visible;
+        let replace_input = replace_visible.then(|| {
+            let replace_focused = self
+                .workspace
+                .replace_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window));
+            self.render_search_input(
+                "workspace-search-replace",
+                self.workspace.replace_query.clone(),
+                if self.workspace.replace_query.is_empty() {
+                    strings.search_replace_placeholder.clone()
+                } else {
+                    self.workspace.replace_query.clone()
+                },
+                SearchInputKind::Replace,
+                replace_focused,
+                theme,
+                cx,
+            )
+        });
+
+        let toggle_editor = editor.clone();
+        let toggle_button = div()
+            .id("workspace-search-toggle-replace")
+            .w(px(24.0))
+            .h(px(24.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(5.0))
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .cursor_pointer()
+            .text_color(if replace_visible {
+                c.dialog_primary_button_bg
+            } else {
+                c.dialog_muted
+            })
+            .child(
+                svg()
+                    .path(if replace_visible {
+                        CHEVRON_DOWN_ICON
+                    } else {
+                        CHEVRON_RIGHT_ICON
+                    })
+                    .size(px(14.0))
+                    .text_color(if replace_visible {
+                        c.dialog_primary_button_bg
+                    } else {
+                        c.dialog_muted
+                    }),
+            )
+            .tooltip(|_, cx| {
+                cx.new(|_| WorkspaceTooltip {
+                    label: "显示替换".into(),
+                })
+                .into()
+            })
+            .on_click(move |_, _, cx| {
+                let _ = toggle_editor.update(cx, |editor, cx| {
+                    editor.workspace.replace_visible = !editor.workspace.replace_visible;
+                    cx.notify();
+                });
+            });
+
+        let options_row = self.render_search_options_row(theme, strings, cx);
+
+        let header = div()
+            .id("workspace-search-header")
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .px(px(6.0))
+            .pt(px(8.0))
+            .pb(px(2.0))
+            .border_b(px(1.0))
+            .border_color(c.dialog_border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(search_input)
+                    .child(toggle_button),
+            )
+            .children(replace_input)
+            .child(options_row);
+        header.into_any_element()
+    }
+
+    /// Option toggles (case / whole word / regex / fuzzy), the scope switch,
+    /// and — for the document scope — the replace action buttons.
+    fn render_search_options_row(
+        &mut self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let editor = cx.entity().downgrade();
+
+        let toggle_chip = |editor: &WeakEntity<Self>,
+                           id: &'static str,
+                           label: String,
+                           selected: bool,
+                           tooltip: String| {
+            let chip_editor = editor.clone();
+            div()
+                .id(id)
+                .px(px(6.0))
+                .h(px(22.0))
+                .flex()
+                .items_center()
+                .rounded(px(4.0))
+                .border_1()
+                .border_color(if selected {
+                    c.dialog_primary_button_bg
+                } else {
+                    c.dialog_border
+                })
+                .bg(if selected {
+                    c.selection
+                } else {
+                    hsla(0.0, 0.0, 0.0, 0.0)
+                })
+                .text_size(px(11.0))
+                .text_color(if selected {
+                    c.dialog_primary_button_bg
+                } else {
+                    c.dialog_muted
+                })
+                .cursor_pointer()
+                .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                .tooltip(move |_, cx| {
+                    let tooltip = tooltip.clone();
+                    cx.new(|_| WorkspaceTooltip { label: tooltip }).into()
+                })
+                .child(label)
+                .on_click(move |_, _, cx| {
+                    let _ = chip_editor.update(cx, |editor, cx| {
+                        match id {
+                            "workspace-search-case" => {
+                                editor.workspace.search_match_case =
+                                    !editor.workspace.search_match_case;
+                            }
+                            "workspace-search-word" => {
+                                editor.workspace.search_whole_word =
+                                    !editor.workspace.search_whole_word;
+                            }
+                            "workspace-search-regex" => {
+                                editor.workspace.search_use_regex =
+                                    !editor.workspace.search_use_regex;
+                            }
+                            "workspace-search-fuzzy" => {
+                                editor.workspace.search_fuzzy = !editor.workspace.search_fuzzy;
+                            }
+                            _ => {}
+                        }
+                        editor.schedule_workspace_search(cx);
+                        cx.notify();
+                    });
+                })
+        };
+
+        let mut options = div()
+            .id("workspace-search-options")
+            .w_full()
+            .flex()
+            .items_center()
+            .flex_wrap()
+            .gap(px(4.0))
+            .child(toggle_chip(
+                &editor,
+                "workspace-search-case",
+                "Aa".to_string(),
+                self.workspace.search_match_case,
+                strings.search_case_sensitive.clone(),
+            ))
+            .child(toggle_chip(
+                &editor,
+                "workspace-search-word",
+                "ab".to_string(),
+                self.workspace.search_whole_word,
+                strings.search_whole_word.clone(),
+            ))
+            .child(toggle_chip(
+                &editor,
+                "workspace-search-regex",
+                ".*".to_string(),
+                self.workspace.search_use_regex,
+                strings.search_regex.clone(),
+            ))
+            .child(toggle_chip(
+                &editor,
+                "workspace-search-fuzzy",
+                strings.search_fuzzy_short.clone(),
+                self.workspace.search_fuzzy,
+                strings.search_fuzzy.clone(),
+            ));
+
+        // Scope switch: current document vs. whole workspace (the latter needs
+        // a scanned tree).
+        let scope = self.workspace.search_scope;
+        let has_tree = self.workspace.file_tree.is_some();
+        let scope_button =
+            |editor: &WeakEntity<Self>, id: &'static str, label: String, selected: bool| {
+                let scope_editor = editor.clone();
+                div()
+                    .id(id)
+                    .px(px(6.0))
+                    .h(px(22.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(4.0))
+                    .bg(if selected {
+                        c.selection
+                    } else {
+                        hsla(0.0, 0.0, 0.0, 0.0)
+                    })
+                    .text_size(px(11.0))
+                    .text_color(if selected {
+                        c.dialog_primary_button_bg
+                    } else {
+                        c.dialog_muted
+                    })
+                    .cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .child(label)
+                    .on_click(move |_, _, cx| {
+                        let _ = scope_editor.update(cx, |editor, cx| {
+                            editor.workspace.search_scope = match id {
+                                "workspace-scope-document" => WorkspaceSearchScope::Document,
+                                _ => WorkspaceSearchScope::Workspace,
+                            };
+                            editor.workspace.search_active_index = None;
+                            editor.workspace.document_active_range = None;
+                            editor.schedule_workspace_search(cx);
+                            cx.notify();
+                        });
+                    })
+            };
+        let match_count = self.workspace.search_results.len();
+        let count_label = if match_count > 0 && scope == WorkspaceSearchScope::Document {
+            Some(
+                strings
+                    .search_result_count
+                    .replace("{n}", &match_count.to_string()),
+            )
+        } else {
+            None
+        };
+
+        options = options.child(
+            div()
+                .id("workspace-search-scope-row")
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(scope_button(
+                    &editor,
+                    "workspace-scope-document",
+                    strings.search_scope_document.clone(),
+                    scope == WorkspaceSearchScope::Document,
+                ))
+                .child(scope_button(
+                    &editor,
+                    "workspace-scope-workspace",
+                    strings.search_scope_workspace.clone(),
+                    scope == WorkspaceSearchScope::Workspace,
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex()
+                        .justify_end()
+                        .children(count_label.map(|label| {
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(c.dialog_muted)
+                                .child(label)
+                        })),
+                ),
+        );
+
+        // Replace actions (document scope only for now; workspace replace
+        // lives behind the same buttons when the workspace scope is active).
+        if self.workspace.replace_visible && !self.workspace.replace_query.is_empty() {
+            let replace_editor = editor.clone();
+            let replace_all_editor = editor.clone();
+            let is_document_scope = scope == WorkspaceSearchScope::Document;
+            let replace_row = div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .id("workspace-search-replace-current")
+                        .px(px(8.0))
+                        .h(px(24.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(5.0))
+                        .border_1()
+                        .border_color(c.dialog_border)
+                        .text_size(px(11.0))
+                        .text_color(c.text_default)
+                        .cursor_pointer()
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .child(strings.search_replace_current.clone())
+                        .on_click(move |_, window, cx| {
+                            let _ = replace_editor.update(cx, |editor, cx| {
+                                if is_document_scope {
+                                    editor.replace_active_document_match(window, cx);
+                                }
+                                cx.notify();
+                            });
+                            cx.stop_propagation();
+                        }),
+                )
+                .child(
+                    div()
+                        .id("workspace-search-replace-all")
+                        .px(px(8.0))
+                        .h(px(24.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(5.0))
+                        .border_1()
+                        .border_color(c.dialog_border)
+                        .text_size(px(11.0))
+                        .text_color(c.text_default)
+                        .cursor_pointer()
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .child(strings.search_replace_all.clone())
+                        .on_click(move |_, window, cx| {
+                            let _ = replace_all_editor.update(cx, |editor, cx| {
+                                if is_document_scope {
+                                    editor.replace_all_document_matches(window, cx);
+                                } else {
+                                    let replaced =
+                                        editor.replace_all_workspace_matches(window, cx);
+                                    if replaced > 0 {
+                                        editor.schedule_workspace_search(cx);
+                                    }
+                                }
+                                cx.notify();
+                            });
+                            cx.stop_propagation();
+                        }),
+                );
+            options = options.child(replace_row);
+        }
+
+        options.into_any_element()
+    }
+
+    /// Shared single-line input used by the query and replace fields. Clicks
+    /// focus the field; key handling and IME route through `SearchInputKind`.
+    fn render_search_input(
+        &mut self,
+        id: &'static str,
+        value: String,
+        placeholder: String,
+        kind: SearchInputKind,
+        focused: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let focus = match kind {
+            SearchInputKind::Query => self
+                .workspace
+                .search_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone(),
+            SearchInputKind::Replace => self
+                .workspace
+                .replace_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone(),
+        };
+        let focus_for_click = focus.clone();
+        let focus_for_input = focus.clone();
+        let input_editor = cx.entity();
+        let editor = cx.entity().downgrade();
+
+        div()
+            .id(id)
+            .relative()
+            .track_focus(&focus)
+            .flex_1()
+            .min_w(px(0.0))
+            .h(px(28.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(if focused {
+                c.dialog_primary_button_bg
+            } else {
+                c.dialog_border
+            })
+            .bg(c.editor_background)
+            .text_size(px(12.0))
+            .text_color(if value.is_empty() {
+                c.dialog_muted
+            } else {
+                c.text_default
+            })
+            .child(placeholder)
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, cx| {
+                        window.handle_input(
+                            &focus_for_input,
+                            ElementInputHandler::new(bounds, input_editor.clone()),
+                            cx,
+                        );
+                    },
+                )
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .left_0(),
+            )
+            .on_click(move |_event, window, _cx| window.focus(&focus_for_click))
+            .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                let key = event.keystroke.key.to_ascii_lowercase();
+                let secondary = event.keystroke.modifiers.secondary();
+                match key.as_str() {
+                    "escape" => {
+                        let _ = editor.update(cx, |editor, cx| match kind {
+                            SearchInputKind::Query => {
+                                editor.workspace.search_query.clear();
+                                editor.workspace.search_selected_range = 0..0;
+                                editor.workspace.search_marked_range = None;
+                                editor.workspace.active_tab = WorkspaceTab::Files;
+                                editor.workspace.search_focus_pending = false;
+                                editor.schedule_workspace_search(cx);
+                            }
+                            SearchInputKind::Replace => {
+                                editor.workspace.replace_visible = false;
+                            }
+                        });
+                    }
+                    "a" if secondary => {
+                        let _ = editor.update(cx, |editor, cx| match kind {
+                            SearchInputKind::Query => {
+                                editor.workspace.search_selected_range =
+                                    0..editor.workspace.search_query.len();
+                            }
+                            SearchInputKind::Replace => {
+                                editor.workspace.replace_selected_range =
+                                    0..editor.workspace.replace_query.len();
+                            }
+                        });
+                    }
+                    "backspace" => {
+                        let handled = editor.update(cx, |editor, cx| {
+                            let (text, selected, marked) = match kind {
+                                SearchInputKind::Query => (
+                                    editor.workspace.search_query.clone(),
+                                    editor.workspace.search_selected_range.clone(),
+                                    editor.workspace.search_marked_range.clone(),
+                                ),
+                                SearchInputKind::Replace => (
+                                    editor.workspace.replace_query.clone(),
+                                    editor.workspace.replace_selected_range.clone(),
+                                    editor.workspace.replace_marked_range.clone(),
+                                ),
+                            };
+                            if marked.is_some() {
+                                return false;
+                            }
+                            let range = if selected.start == selected.end {
+                                let before = &text[..selected.start];
+                                let start = before
+                                    .grapheme_indices(true)
+                                    .last()
+                                    .map(|(start, _)| start)
+                                    .unwrap_or(selected.start);
+                                start..selected.start
+                            } else {
+                                selected
+                            };
+                            editor.replace_search_input_text(kind, range, "", None, false, cx);
+                            true
+                        });
+                        if !matches!(handled, Ok(true)) {
+                            return;
+                        }
+                    }
+                    "v" if secondary => {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                            let _ = editor.update(cx, |editor, cx| {
+                                let selected = match kind {
+                                    SearchInputKind::Query => {
+                                        editor.workspace.search_selected_range.clone()
+                                    }
+                                    SearchInputKind::Replace => {
+                                        editor.workspace.replace_selected_range.clone()
+                                    }
+                                };
+                                editor.replace_search_input_text(
+                                    kind, selected, &text, None, false, cx,
+                                );
+                            });
+                        }
+                    }
+                    "enter" => {
+                        let reverse = event.keystroke.modifiers.shift;
+                        let _ = editor.update(cx, |editor, cx| match kind {
+                            SearchInputKind::Query => {
+                                editor.find_next_document_match(reverse, cx);
+                            }
+                            SearchInputKind::Replace => {
+                                editor.replace_active_document_match(window, cx);
+                            }
+                        });
+                    }
+                    _ => return,
+                }
+                cx.stop_propagation();
+            })
+            .into_any_element()
     }
 
     pub(super) fn render_activity_rail(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -2416,7 +3049,6 @@ impl Editor {
                         if toggle_if_active
                             && editor.workspace.is_open
                             && editor.workspace.active_tab == tab
-                            && !editor.workspace.show_search
                         {
                             editor.workspace.is_open = false;
                             cx.notify();
@@ -2428,7 +3060,6 @@ impl Editor {
                     });
                 })
         };
-        let search_editor = editor.clone();
         div()
             .id("workspace-activity-rail")
             .w(px(50.0))
@@ -2446,59 +3077,20 @@ impl Editor {
                 "activity-files",
                 ACTIVITY_FILES_ICON,
                 "文件",
-                self.workspace.is_open
-                    && self.workspace.active_tab == WorkspaceTab::Files
-                    && !self.workspace.show_search,
+                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Files,
                 WorkspaceTab::Files,
                 true,
                 editor.clone(),
             ))
-            .child(
-                div()
-                    .id("activity-search")
-                    .w(px(34.0))
-                    .h(px(34.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(8.0))
-                    .bg(if self.workspace.is_open && self.workspace.show_search {
-                        c.selection
-                    } else {
-                        c.dialog_secondary_button_bg
-                    })
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .cursor_pointer()
-                    .child(svg().path(ACTIVITY_SEARCH_ICON).size(px(18.0)).text_color(
-                        if self.workspace.is_open && self.workspace.show_search {
-                            c.dialog_primary_button_bg
-                        } else {
-                            c.dialog_muted
-                        },
-                    ))
-                    .tooltip(|_, cx| {
-                        cx.new(|_| WorkspaceTooltip {
-                            label: "搜索文件与内容".into(),
-                        })
-                        .into()
-                    })
-                    .on_click(move |_, window, cx| {
-                        let _ = search_editor.update(cx, |editor, cx| {
-                            editor.workspace.is_open = true;
-                            editor.workspace.active_tab = WorkspaceTab::Files;
-                            editor.workspace.show_search = true;
-                            editor.workspace.search_scope = WorkspaceSearchScope::Workspace;
-                            editor.schedule_workspace_search(cx);
-                            let focus = editor
-                                .workspace
-                                .search_focus
-                                .get_or_insert_with(|| cx.focus_handle())
-                                .clone();
-                            window.focus(&focus);
-                            cx.notify();
-                        });
-                    }),
-            )
+            .child(button(
+                "activity-search",
+                ACTIVITY_SEARCH_ICON,
+                "搜索",
+                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Search,
+                WorkspaceTab::Search,
+                true,
+                editor.clone(),
+            ))
             .child(button(
                 "activity-outline",
                 ACTIVITY_OUTLINE_ICON,
@@ -2517,14 +3109,6 @@ impl Editor {
         strings: &I18nStrings,
         editor: &WeakEntity<Editor>,
     ) -> AnyElement {
-        if self.workspace.show_search
-            && self.workspace.search_scope == WorkspaceSearchScope::Document
-        {
-            if self.workspace.search_query.trim().is_empty() {
-                return div().w_full().into_any_element();
-            }
-            return self.render_workspace_search_results(theme, strings, editor);
-        }
         if self.workspace.root.is_none() {
             return self.render_workspace_empty_state(
                 &strings.workspace_no_file_title,
@@ -2545,10 +3129,6 @@ impl Editor {
             return self.render_workspace_empty_state("", &strings.workspace_empty_files, theme);
         };
 
-        if self.workspace.show_search && !self.workspace.search_query.trim().is_empty() {
-            return self.render_workspace_search_results(theme, strings, editor);
-        }
-
         div()
             .w_full()
             .flex()
@@ -2557,7 +3137,7 @@ impl Editor {
             .into_any_element()
     }
 
-    fn render_workspace_search_results(
+    fn render_search_results(
         &self,
         theme: &Theme,
         strings: &I18nStrings,
@@ -2582,77 +3162,165 @@ impl Editor {
                 theme,
             );
         }
+        let c = &theme.colors;
+        let is_document_scope = self.workspace.search_scope == WorkspaceSearchScope::Document;
+        let mut elements: Vec<AnyElement> = Vec::new();
+        let mut current_file: Option<PathBuf> = None;
+        let mut file_hit_count = 0usize;
+        for (index, hit) in self.workspace.search_results.iter().enumerate() {
+            // Workspace scope groups hits under a file header row; document
+            // scope lists matches flat with the file name on each row.
+            if !is_document_scope && current_file.as_ref() != Some(&hit.path) {
+                current_file = Some(hit.path.clone());
+                file_hit_count = self
+                    .workspace
+                    .search_results
+                    .iter()
+                    .filter(|other| other.path == hit.path)
+                    .count();
+                elements.push(
+                    div()
+                        .w_full()
+                        .px(px(6.0))
+                        .pt(px(6.0))
+                        .pb(px(2.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(
+                            svg()
+                                .path(if is_code_file(&hit.path) {
+                                    CODE_ICON
+                                } else {
+                                    MARKDOWN_ICON
+                                })
+                                .size(px(13.0))
+                                .text_color(c.dialog_primary_button_bg),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .truncate()
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(c.text_default)
+                                .child(hit.label.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(c.dialog_muted)
+                                .child(file_hit_count.to_string()),
+                        )
+                        .into_any_element(),
+                );
+            }
+            let selected = self.workspace.search_active_index == Some(index);
+            let hit_editor = editor.clone();
+            let show_file_label = is_document_scope;
+            let label = hit.label.clone();
+            let line_number = hit.line;
+            let preview = hit.preview.clone();
+            elements.push(
+                div()
+                    .id(("workspace-search-hit", index))
+                    .w_full()
+                    .pl(px(if is_document_scope { 10.0 } else { 24.0 }))
+                    .pr(px(6.0))
+                    .py(px(4.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(1.0))
+                    .rounded(px(5.0))
+                    .bg(if selected {
+                        c.selection
+                    } else {
+                        hsla(0.0, 0.0, 0.0, 0.0)
+                    })
+                    .cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .children(show_file_label.then(|| {
+                        div()
+                            .truncate()
+                            .text_size(px(11.0))
+                            .text_color(c.text_default)
+                            .child(label)
+                    }))
+                    .children(line_number.map(|line| {
+                        div()
+                            .flex()
+                            .gap(px(6.0))
+                            .min_w(px(0.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(c.dialog_muted)
+                                    .child(format!("{line}")),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .truncate()
+                                    .text_size(px(11.0))
+                                    .text_color(c.text_default)
+                                    .child(preview),
+                            )
+                    }))
+                    .on_click(move |event, window, cx| {
+                        if !event.standard_click() {
+                            return;
+                        }
+                        let _ = hit_editor.update(cx, |editor, cx| {
+                            editor.open_search_hit(index, window, cx);
+                        });
+                    })
+                    .into_any_element(),
+            );
+        }
         div()
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .children(
-                self.workspace
-                    .search_results
-                    .iter()
-                    .enumerate()
-                    .map(|(index, hit)| {
-                        let path = hit.path.clone();
-                        let line = hit.line;
-                        let source_range = hit.source_range.clone();
-                        let selected = self.workspace.search_scope
-                            == WorkspaceSearchScope::Document
-                            && self.workspace.search_active_index == Some(index);
-                        let editor = editor.clone();
-                        div()
-                            .id(("workspace-search-hit", index))
-                            .w_full()
-                            .px(px(10.0))
-                            .py(px(7.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .rounded(px(5.0))
-                            .bg(if selected {
-                                theme.colors.selection
-                            } else {
-                                hsla(0.0, 0.0, 0.0, 0.0)
-                            })
-                            .cursor_pointer()
-                            .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(12.0))
-                                    .text_color(theme.colors.text_default)
-                                    .child(hit.label.clone()),
-                            )
-                            .children(hit.line.map(|line| {
-                                div()
-                                    .truncate()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.colors.dialog_muted)
-                                    .child(format!("{line}  {}", hit.preview))
-                            }))
-                            .on_click(move |event, window, cx| {
-                                if !event.standard_click() {
-                                    return;
-                                }
-                                let _ = editor.update(cx, |editor, cx| {
-                                    if let Some(range) = source_range.clone() {
-                                        editor.workspace.search_active_index = Some(index);
-                                        editor.workspace.document_active_range =
-                                            Some(range.clone());
-                                        editor.jump_to_document_search_range(range, cx);
-                                    } else {
-                                        editor.open_workspace_file(path.clone(), window, cx);
-                                        if let Some(line) = line
-                                            .filter(|_| editor.file_path.as_ref() == Some(&path))
-                                        {
-                                            editor.jump_to_workspace_search_line(line, cx);
-                                        }
-                                    }
-                                });
-                            })
-                    }),
-            )
+            .gap(px(1.0))
+            .children(elements)
             .into_any_element()
+    }
+
+    /// Opens the hit's match: document-scope hits select the byte range in the
+    /// live document; workspace-scope hits open the file first, then select
+    /// the match using its line/column information.
+    fn open_search_hit(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(hit) = self.workspace.search_results.get(index) else {
+            return;
+        };
+        self.workspace.search_active_index = Some(index);
+        if let Some(range) = hit.source_range.clone() {
+            self.workspace.document_active_range = Some(range.clone());
+            self.jump_to_document_search_range(range, cx);
+            return;
+        }
+        let path = hit.path.clone();
+        let line = hit.line;
+        let match_range = hit.match_range.clone();
+        self.open_workspace_file(path.clone(), window, cx);
+        if self.file_path.as_ref() == Some(&path)
+            && let (Some(line), Some(match_range)) = (line, match_range)
+        {
+            let source = self.current_document_source(cx);
+            let line_start = source
+                .split_inclusive('\n')
+                .take(line.saturating_sub(1))
+                .map(str::len)
+                .sum::<usize>()
+                .min(source.len());
+            let start = (line_start + match_range.start).min(source.len());
+            let end = (line_start + match_range.end).min(source.len());
+            if source.is_char_boundary(start) && source.is_char_boundary(end) {
+                self.jump_to_document_search_range(start..end, cx);
+            }
+        }
     }
 
     fn render_workspace_outline_tree(
@@ -3206,13 +3874,211 @@ fn path_is_affected(path: &Path, target: &Path, target_is_directory: bool) -> bo
     }
 }
 
+/// Match options for workspace/document search, mirroring VS Code's toggles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct SearchOptions {
+    pub(super) match_case: bool,
+    pub(super) whole_word: bool,
+    pub(super) use_regex: bool,
+    pub(super) fuzzy: bool,
+}
+
+/// Compiled search query. Regex compilation failures degrade to a plain
+/// substring search so a bad pattern never silently kills search.
+pub(super) struct SearchMatcher {
+    query: String,
+    options: SearchOptions,
+    regex: Option<regex::Regex>,
+}
+
+impl SearchMatcher {
+    pub(super) fn new(query: &str, options: SearchOptions) -> Self {
+        let regex = if options.use_regex {
+            let mut builder = regex::RegexBuilder::new(query);
+            builder.case_insensitive(!options.match_case);
+            builder.build().ok()
+        } else {
+            None
+        };
+        Self {
+            query: query.to_string(),
+            options,
+            regex,
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.query.trim().is_empty() && self.regex.is_none()
+    }
+
+    /// Byte ranges of every match inside `line`.
+    pub(super) fn find_in_line(&self, line: &str) -> Vec<Range<usize>> {
+        if let Some(regex) = self.regex.as_ref() {
+            return regex
+                .find_iter(line)
+                .map(|m| m.start()..m.end())
+                .collect();
+        }
+        if self.options.fuzzy {
+            return fuzzy_subsequence_ranges(line, &self.query);
+        }
+        let mut ranges = if self.options.match_case {
+            line.match_indices(&self.query)
+                .map(|(start, matched)| start..start + matched.len())
+                .collect()
+        } else {
+            case_insensitive_ranges(line, &self.query)
+        };
+        if self.options.whole_word {
+            ranges.retain(|range| is_word_boundary(line, range));
+        }
+        ranges
+    }
+
+    /// Whether a filename matches (fuzzy subsequence or substring).
+    pub(super) fn matches_filename(&self, name: &str) -> bool {
+        if self.options.fuzzy {
+            return !fuzzy_subsequence_ranges(name, &self.query).is_empty();
+        }
+        if self.options.match_case {
+            name.contains(&self.query)
+        } else {
+            case_insensitive_contains(name, &self.query)
+        }
+    }
+}
+
+fn case_insensitive_contains(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.is_ascii() {
+        haystack
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+    } else {
+        !case_insensitive_ranges(haystack, needle).is_empty()
+    }
+}
+
+/// Case-insensitive byte ranges for one line. ASCII needles use a fast
+/// sliding compare; non-ASCII needles fall back to per-char lowercase
+/// comparison (haystack byte offsets stay stable because lowercase folding
+/// of a char never splits the position bookkeeping below).
+fn case_insensitive_ranges(line: &str, query: &str) -> Vec<Range<usize>> {
+    if query.is_empty() || line.is_empty() {
+        return Vec::new();
+    }
+    if query.is_ascii() {
+        let mut ranges = Vec::new();
+        let last = line.len().checked_sub(query.len()).unwrap_or(0);
+        let bytes = line.as_bytes();
+        let mut start = 0;
+        while start <= last {
+            if bytes[start..start + query.len()].eq_ignore_ascii_case(query.as_bytes()) {
+                ranges.push(start..start + query.len());
+                start += query.len();
+            } else {
+                start += 1;
+            }
+        }
+        return ranges;
+    }
+
+    let query_chars: Vec<char> = query.to_lowercase().chars().collect();
+    if query_chars.is_empty() {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let char_positions: Vec<(usize, char)> = line.char_indices().collect();
+    for start_index in 0..char_positions.len() {
+        let mut query_index = 0usize;
+        let mut cursor = start_index;
+        while cursor < char_positions.len() && query_index < query_chars.len() {
+            let (_, line_char) = char_positions[cursor];
+            let mut folded = line_char.to_lowercase();
+            let matches = match (folded.next(), folded.next()) {
+                (Some(first), None) => first == query_chars[query_index],
+                _ => line_char == query_chars[query_index],
+            };
+            if !matches {
+                break;
+            }
+            query_index += 1;
+            cursor += 1;
+        }
+        if query_index == query_chars.len() {
+            let start = char_positions[start_index].0;
+            let end = if cursor < char_positions.len() {
+                char_positions[cursor].0
+            } else {
+                line.len()
+            };
+            ranges.push(start..end);
+        }
+    }
+    ranges
+}
+
+/// fzf-style subsequence match: every query char must appear in order
+/// (case-insensitive); the returned range spans the first to last consumed
+/// char so the hit can be selected on jump.
+fn fuzzy_subsequence_ranges(line: &str, query: &str) -> Vec<Range<usize>> {
+    let query_chars: Vec<char> = query
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect();
+    if query_chars.is_empty() || line.is_empty() {
+        return Vec::new();
+    }
+    let positions: Vec<(usize, char)> = line.char_indices().collect();
+    let mut ranges = Vec::new();
+    for start_index in 0..positions.len() {
+        let mut query_index = 0usize;
+        let mut cursor = start_index;
+        while cursor < positions.len() && query_index < query_chars.len() {
+            let (_, line_char) = positions[cursor];
+            let folded = line_char.to_lowercase().next().unwrap_or(line_char);
+            if folded == query_chars[query_index] {
+                query_index += 1;
+            }
+            cursor += 1;
+        }
+        if query_index == query_chars.len() {
+            let start = positions[start_index].0;
+            let end = positions
+                .get(cursor)
+                .map(|(offset, _)| *offset)
+                .unwrap_or(line.len());
+            ranges.push(start..end);
+        }
+    }
+    ranges
+}
+
+fn is_word_boundary(line: &str, range: &Range<usize>) -> bool {
+    let word_char = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let before = line[..range.start]
+        .chars()
+        .next_back()
+        .map(word_char)
+        .unwrap_or(false);
+    let after = line[range.end..]
+        .chars()
+        .next()
+        .map(word_char)
+        .unwrap_or(false);
+    !before && !after
+}
+
 fn search_workspace_files(
     root: &WorkspaceTreeNode,
-    query: &str,
+    matcher: &SearchMatcher,
     limit: usize,
 ) -> Vec<WorkspaceSearchHit> {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() || limit == 0 {
+    if matcher.is_empty() || limit == 0 {
         return Vec::new();
     }
     let root_path = match &root.kind {
@@ -3223,7 +4089,7 @@ fn search_workspace_files(
     fn visit(
         node: &WorkspaceTreeNode,
         root: &Path,
-        query: &str,
+        matcher: &SearchMatcher,
         limit: usize,
         hits: &mut Vec<WorkspaceSearchHit>,
     ) {
@@ -3233,7 +4099,7 @@ fn search_workspace_files(
         match &node.kind {
             WorkspaceTreeKind::Directory(_) => {
                 for child in &node.children {
-                    visit(child, root, query, limit, hits);
+                    visit(child, root, matcher, limit, hits);
                     if hits.len() >= limit {
                         break;
                     }
@@ -3245,13 +4111,14 @@ fn search_workspace_files(
                     .unwrap_or(path)
                     .to_string_lossy()
                     .into_owned();
-                if label.to_lowercase().contains(query) {
+                if matcher.matches_filename(&label) {
                     hits.push(WorkspaceSearchHit {
                         path: path.clone(),
                         label: label.clone(),
                         line: None,
-                        preview: String::new(),
+                        match_range: None,
                         source_range: None,
+                        preview: String::new(),
                     });
                 }
                 if hits.len() >= limit
@@ -3261,14 +4128,17 @@ fn search_workspace_files(
                 }
                 if let Ok(source) = fs::read_to_string(path) {
                     let mut file_hits = 0;
-                    for (index, line) in source.lines().enumerate() {
-                        if line.to_lowercase().contains(query) {
+                    for (index, raw_line) in source.split_inclusive('\n').enumerate() {
+                        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+                        let matches = matcher.find_in_line(line);
+                        if let Some(first) = matches.first() {
                             hits.push(WorkspaceSearchHit {
                                 path: path.clone(),
                                 label: label.clone(),
                                 line: Some(index + 1),
-                                preview: line.trim().chars().take(140).collect(),
+                                match_range: Some(first.clone()),
                                 source_range: None,
+                                preview: line.trim().chars().take(140).collect(),
                             });
                             file_hits += 1;
                             if file_hits == 3 || hits.len() >= limit {
@@ -3281,52 +4151,35 @@ fn search_workspace_files(
             WorkspaceTreeKind::Heading { .. } => {}
         }
     }
-    visit(root, root_path, &query, limit, &mut hits);
+    visit(root, root_path, matcher, limit, &mut hits);
     hits
 }
 
 fn search_document_source(
     source: &str,
-    query: &str,
+    matcher: &SearchMatcher,
     path: &Path,
     label: &str,
     limit: usize,
 ) -> Vec<WorkspaceSearchHit> {
-    let query = query.trim();
-    if query.is_empty() || limit == 0 {
+    if matcher.is_empty() || limit == 0 {
         return Vec::new();
     }
     let mut hits = Vec::new();
-    let mut absolute = 0;
+    let mut absolute = 0usize;
     for (line_index, raw_line) in source.split_inclusive('\n').enumerate() {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        let mut add_hit = |start: usize| {
+        for range in matcher.find_in_line(line) {
             hits.push(WorkspaceSearchHit {
                 path: path.to_path_buf(),
                 label: label.to_string(),
                 line: Some(line_index + 1),
+                match_range: Some(range.start..range.end),
+                source_range: Some(absolute + range.start..absolute + range.end),
                 preview: line.trim().chars().take(140).collect(),
-                source_range: Some(absolute + start..absolute + start + query.len()),
             });
-            hits.len() == limit
-        };
-        if query.is_ascii() {
-            if let Some(last) = line.len().checked_sub(query.len()) {
-                for start in 0..=last {
-                    if line.as_bytes()[start..start + query.len()]
-                        .eq_ignore_ascii_case(query.as_bytes())
-                    {
-                        if add_hit(start) {
-                            return hits;
-                        }
-                    }
-                }
-            }
-        } else {
-            for (start, _) in line.match_indices(query) {
-                if add_hit(start) {
-                    return hits;
-                }
+            if hits.len() == limit {
+                return hits;
             }
         }
         absolute += raw_line.len();
@@ -3334,47 +4187,47 @@ fn search_document_source(
     hits
 }
 
+/// Next match at or after `from` (or before, when reversing) across the whole
+/// document source, wrapping around once.
 fn find_document_match_from(
     source: &str,
-    query: &str,
+    matcher: &SearchMatcher,
     from: usize,
     reverse: bool,
 ) -> Option<Range<usize>> {
-    let query = query.trim();
-    if query.is_empty() {
+    if matcher.is_empty() {
         return None;
     }
     let mut from = from.min(source.len());
     while !source.is_char_boundary(from) {
         from -= 1;
     }
-    if query.is_ascii() {
-        let last = source.len().checked_sub(query.len())?;
-        let matches = |start: usize| {
-            source.as_bytes()[start..start + query.len()].eq_ignore_ascii_case(query.as_bytes())
-        };
-        if reverse {
-            for start in (0..=from.saturating_sub(query.len()).min(last)).rev() {
-                if start + query.len() <= from && matches(start) {
-                    return Some(start..start + query.len());
-                }
-            }
-        } else {
-            for start in from..=last {
-                if matches(start) {
-                    return Some(start..start + query.len());
-                }
-            }
+
+    let mut ranges = Vec::new();
+    let mut absolute = 0usize;
+    for raw_line in source.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        for range in matcher.find_in_line(line) {
+            ranges.push(absolute + range.start..absolute + range.end);
         }
-        None
-    } else if reverse {
-        source[..from]
-            .rfind(query)
-            .map(|start| start..start + query.len())
+        absolute += raw_line.len();
+    }
+    if ranges.is_empty() {
+        return None;
+    }
+    if reverse {
+        ranges
+            .iter()
+            .rev()
+            .find(|range| range.start < from)
+            .or_else(|| ranges.last())
+            .cloned()
     } else {
-        source[from..]
-            .find(query)
-            .map(|local| from + local..from + local + query.len())
+        ranges
+            .iter()
+            .find(|range| range.start >= from)
+            .or_else(|| ranges.first())
+            .cloned()
     }
 }
 
@@ -3463,6 +4316,40 @@ fn search_utf8_to_utf16(text: &str, offset: usize) -> usize {
 }
 
 impl Editor {
+    fn active_search_input(&self, window: &Window) -> SearchInputKind {
+        if self
+            .workspace
+            .replace_focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            SearchInputKind::Replace
+        } else {
+            SearchInputKind::Query
+        }
+    }
+
+    fn input_text(&self, kind: SearchInputKind) -> &str {
+        match kind {
+            SearchInputKind::Query => &self.workspace.search_query,
+            SearchInputKind::Replace => &self.workspace.replace_query,
+        }
+    }
+
+    fn input_selection(&self, kind: SearchInputKind) -> Range<usize> {
+        match kind {
+            SearchInputKind::Query => self.workspace.search_selected_range.clone(),
+            SearchInputKind::Replace => self.workspace.replace_selected_range.clone(),
+        }
+    }
+
+    fn input_marked(&self, kind: SearchInputKind) -> Option<Range<usize>> {
+        match kind {
+            SearchInputKind::Query => self.workspace.search_marked_range.clone(),
+            SearchInputKind::Replace => self.workspace.replace_marked_range.clone(),
+        }
+    }
+
     fn replace_workspace_search_text(
         &mut self,
         range: Range<usize>,
@@ -3471,44 +4358,88 @@ impl Editor {
         marked: bool,
         cx: &mut Context<Self>,
     ) {
-        let old = self.workspace.search_query.clone();
-        let was_marked = self.workspace.search_marked_range.is_some();
+        self.replace_search_input_text(
+            SearchInputKind::Query,
+            range,
+            new_text,
+            selected_in_inserted,
+            marked,
+            cx,
+        );
+    }
+
+    /// Applies an edit to the focused search-panel input (query or replace)
+    /// and re-schedules the workspace search for query changes.
+    fn replace_search_input_text(
+        &mut self,
+        kind: SearchInputKind,
+        range: Range<usize>,
+        new_text: &str,
+        selected_in_inserted: Option<Range<usize>>,
+        marked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let (old, was_marked) = match kind {
+            SearchInputKind::Query => (
+                self.workspace.search_query.clone(),
+                self.workspace.search_marked_range.is_some(),
+            ),
+            SearchInputKind::Replace => (
+                self.workspace.replace_query.clone(),
+                self.workspace.replace_marked_range.is_some(),
+            ),
+        };
         let start = range.start.min(old.len());
         let end = range.end.min(old.len()).max(start);
         if !old.is_char_boundary(start) || !old.is_char_boundary(end) {
             return;
         }
         let inserted = new_text.replace(['\r', '\n'], " ");
-        self.workspace
-            .search_query
-            .replace_range(start..end, &inserted);
+        let updated = {
+            let mut updated = old.clone();
+            updated.replace_range(start..end, &inserted);
+            updated
+        };
         let inserted_end = start + inserted.len();
-        self.workspace.search_selected_range = selected_in_inserted
+        let selection = selected_in_inserted
             .map(|selection| {
                 start + selection.start.min(inserted.len())
                     ..start + selection.end.min(inserted.len())
             })
             .unwrap_or(inserted_end..inserted_end);
-        self.workspace.search_marked_range =
-            (marked && !inserted.is_empty()).then_some(start..inserted_end);
-        if !marked && (self.workspace.search_query != old || was_marked) {
-            self.schedule_workspace_search(cx);
+        let marked_range = (marked && !inserted.is_empty()).then_some(start..inserted_end);
+        match kind {
+            SearchInputKind::Query => {
+                self.workspace.search_query = updated;
+                self.workspace.search_selected_range = selection;
+                self.workspace.search_marked_range = marked_range;
+                if !marked && (self.workspace.search_query != old || was_marked) {
+                    self.schedule_workspace_search(cx);
+                }
+            }
+            SearchInputKind::Replace => {
+                self.workspace.replace_query = updated;
+                self.workspace.replace_selected_range = selection;
+                self.workspace.replace_marked_range = marked_range;
+            }
         }
         cx.notify();
     }
 }
 
-// Only the focused workspace search field registers this handler; document
-// blocks keep their own input handlers and IME state.
+// Only the focused workspace search fields register this handler; document
+// blocks keep their own input handlers and IME state. The query and replace
+// fields share the editor's handler, routed by which focus handle is active.
 impl EntityInputHandler for Editor {
     fn text_for_range(
         &mut self,
         range: Range<usize>,
         actual_range: &mut Option<Range<usize>>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
-        let text = &self.workspace.search_query;
+        let kind = self.active_search_input(window);
+        let text = self.input_text(kind);
         let start = search_utf16_to_utf8(text, range.start);
         let end = search_utf16_to_utf8(text, range.end).max(start);
         *actual_range = Some(search_utf8_to_utf16(text, start)..search_utf8_to_utf16(text, end));
@@ -3518,30 +4449,42 @@ impl EntityInputHandler for Editor {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let text = &self.workspace.search_query;
-        let range = &self.workspace.search_selected_range;
+        let kind = self.active_search_input(window);
+        let text = self.input_text(kind).to_string();
+        let range = self.input_selection(kind);
         Some(UTF16Selection {
-            range: search_utf8_to_utf16(text, range.start)..search_utf8_to_utf16(text, range.end),
+            range: search_utf8_to_utf16(&text, range.start)..search_utf8_to_utf16(&text, range.end),
             reversed: false,
         })
     }
 
     fn marked_text_range(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        let text = &self.workspace.search_query;
-        self.workspace.search_marked_range.as_ref().map(|range| {
-            search_utf8_to_utf16(text, range.start)..search_utf8_to_utf16(text, range.end)
+        let kind = self.active_search_input(window);
+        let text = self.input_text(kind).to_string();
+        self.input_marked(kind).map(|range| {
+            search_utf8_to_utf16(&text, range.start)..search_utf8_to_utf16(&text, range.end)
         })
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspace.search_marked_range.take().is_some() {
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let kind = self.active_search_input(window);
+        let was_marked = self.input_marked(kind).is_some();
+        match kind {
+            SearchInputKind::Query => {
+                self.workspace.search_marked_range = None;
+            }
+            SearchInputKind::Replace => {
+                self.workspace.replace_marked_range = None;
+            }
+        }
+        if was_marked {
             self.schedule_workspace_search(cx);
             cx.notify();
         }
@@ -3551,17 +4494,18 @@ impl EntityInputHandler for Editor {
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let query = &self.workspace.search_query;
+        let kind = self.active_search_input(window);
+        let query = self.input_text(kind).to_string();
         let range = range
             .map(|range| {
-                search_utf16_to_utf8(query, range.start)..search_utf16_to_utf8(query, range.end)
+                search_utf16_to_utf8(&query, range.start)..search_utf16_to_utf8(&query, range.end)
             })
-            .or_else(|| self.workspace.search_marked_range.clone())
-            .unwrap_or_else(|| self.workspace.search_selected_range.clone());
-        self.replace_workspace_search_text(range, text, None, false, cx);
+            .or_else(|| self.input_marked(kind))
+            .unwrap_or_else(|| self.input_selection(kind));
+        self.replace_search_input_text(kind, range, text, None, false, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -3569,20 +4513,21 @@ impl EntityInputHandler for Editor {
         range: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let query = &self.workspace.search_query;
+        let kind = self.active_search_input(window);
+        let query = self.input_text(kind).to_string();
         let range = range
             .map(|range| {
-                search_utf16_to_utf8(query, range.start)..search_utf16_to_utf8(query, range.end)
+                search_utf16_to_utf8(&query, range.start)..search_utf16_to_utf8(&query, range.end)
             })
-            .or_else(|| self.workspace.search_marked_range.clone())
-            .unwrap_or_else(|| self.workspace.search_selected_range.clone());
+            .or_else(|| self.input_marked(kind))
+            .unwrap_or_else(|| self.input_selection(kind));
         let selected = new_selected_range.map(|range| {
             search_utf16_to_utf8(new_text, range.start)..search_utf16_to_utf8(new_text, range.end)
         });
-        self.replace_workspace_search_text(range, new_text, selected, true, cx);
+        self.replace_search_input_text(kind, range, new_text, selected, true, cx);
     }
 
     fn bounds_for_range(
@@ -3603,6 +4548,62 @@ impl EntityInputHandler for Editor {
     ) -> Option<usize> {
         Some(self.workspace.search_query.encode_utf16().count())
     }
+}
+
+/// Flattens the markdown/code files of a workspace tree in display order.
+fn collect_workspace_files(root: &WorkspaceTreeNode) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    fn visit(node: &WorkspaceTreeNode, files: &mut Vec<PathBuf>) {
+        match &node.kind {
+            WorkspaceTreeKind::Directory(_) => {
+                for child in &node.children {
+                    visit(child, files);
+                }
+            }
+            WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
+                files.push(path.clone());
+            }
+            WorkspaceTreeKind::Heading { .. } => {}
+        }
+    }
+    visit(root, &mut files);
+    files
+}
+
+/// Number of matches in a whole source string.
+fn count_matches_in_source(source: &str, matcher: &SearchMatcher) -> usize {
+    let mut count = 0;
+    for raw_line in source.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        count += matcher.find_in_line(line).len();
+    }
+    count
+}
+
+/// Rewrites every match in `source` with `replacement`.
+fn replace_in_source(source: &str, matcher: &SearchMatcher, replacement: &str) -> String {
+    if matcher.is_empty() {
+        return source.to_string();
+    }
+    let mut updated = String::with_capacity(source.len());
+    for raw_line in source.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let trailing_newline = raw_line.len() - line.len();
+        let mut line_cursor = 0usize;
+        for range in matcher.find_in_line(line) {
+            if range.start < line_cursor {
+                continue;
+            }
+            updated.push_str(&line[line_cursor..range.start]);
+            updated.push_str(replacement);
+            line_cursor = range.end;
+        }
+        updated.push_str(&line[line_cursor..]);
+        if trailing_newline > 0 {
+            updated.push('\n');
+        }
+    }
+    updated
 }
 
 fn file_label(path: &Path) -> String {
@@ -3740,11 +4741,12 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Editor, WorkspaceSelection, WorkspaceState, WorkspaceTreeKind, build_outline_tree,
-        clamp_workspace_panel_width, create_workspace_file, create_workspace_folder,
-        find_document_match_from, is_code_file, path_is_affected, prune_outline_state,
-        remap_moved_path, rewrite_relative_image_targets, scan_workspace_dir,
-        search_document_source, search_utf8_to_utf16, search_utf16_to_utf8, search_workspace_files,
+        Editor, SearchMatcher, SearchOptions, WorkspaceSelection, WorkspaceState,
+        WorkspaceTreeKind, build_outline_tree, clamp_workspace_panel_width,
+        create_workspace_file, create_workspace_folder, find_document_match_from, is_code_file,
+        path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
+        scan_workspace_dir, search_document_source, search_utf8_to_utf16, search_utf16_to_utf8,
+        search_workspace_files,
     };
     use crate::components::{Block, UndoCaptureKind};
     use gpui::{AppContext, ClipboardItem, EntityInputHandler, TestAppContext, point, px};
@@ -3761,7 +4763,11 @@ mod tests {
         assert_eq!(search_utf8_to_utf16(text, "中😀".len()), 3);
     }
 
-    #[gpui::test]
+        fn plain_matcher(query: &str) -> SearchMatcher {
+        SearchMatcher::new(query, SearchOptions::default())
+    }
+
+#[gpui::test]
     async fn workspace_search_accepts_unicode_platform_input(cx: &mut TestAppContext) {
         cx.update(|cx| {
             crate::i18n::I18nManager::init(cx);
@@ -3772,7 +4778,7 @@ mod tests {
             cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
         cx.update(|window, cx| {
             editor.update(cx, |editor, cx| {
-                editor.workspace.show_search = true;
+                editor.workspace.active_tab = super::WorkspaceTab::Search;
                 let focus = editor
                     .workspace
                     .search_focus
@@ -3813,7 +4819,7 @@ mod tests {
             cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
         cx.update(|window, cx| {
             editor.update(cx, |editor, cx| {
-                editor.workspace.show_search = true;
+                editor.workspace.active_tab = super::WorkspaceTab::Search;
                 let generation = editor.workspace.search_generation;
                 editor.replace_and_mark_text_in_range(None, "ni", Some(2..2), window, cx);
                 assert_eq!(editor.workspace.search_query, "ni");
@@ -4083,22 +5089,22 @@ mod tests {
         fs::write(root.join("src").join("main.rs"), "fn main() {}").expect("write code");
         let tree = scan_workspace_dir(&root).expect("scan tree");
 
-        let matches = search_workspace_files(&tree, "MAIN", 200);
+        let matches = search_workspace_files(&tree, &SearchMatcher::new("MAIN", SearchOptions::default()), 200);
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].label, "src/main.rs");
         assert_eq!(matches[0].line, None);
         assert_eq!(matches[1].line, Some(1));
 
-        let matches = search_workspace_files(&tree, "readme", 200);
+        let matches = search_workspace_files(&tree, &SearchMatcher::new("readme", SearchOptions::default()), 200);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].label, "README.md");
 
-        let matches = search_workspace_files(&tree, "content", 200);
+        let matches = search_workspace_files(&tree, &SearchMatcher::new("content", SearchOptions::default()), 200);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].label, "README.md");
         assert_eq!(matches[0].line, Some(1));
         assert!(matches[0].preview.contains("content"));
-        assert!(search_workspace_files(&tree, "absent", 200).is_empty());
+        assert!(search_workspace_files(&tree, &SearchMatcher::new("absent", SearchOptions::default()), 200).is_empty());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -4106,7 +5112,7 @@ mod tests {
     #[test]
     fn document_search_finds_ascii_and_chinese_with_source_ranges() {
         let source = "# Hello\n\n你好 Hello\n";
-        let hits = search_document_source(source, "hello", Path::new("note.md"), "note.md", 200);
+        let hits = search_document_source(source, &SearchMatcher::new("hello", SearchOptions::default()), Path::new("note.md"), "note.md", 200);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].line, Some(1));
         assert_eq!(hits[1].line, Some(3));
@@ -4114,7 +5120,7 @@ mod tests {
             let range = hit.source_range.clone().unwrap();
             assert_eq!(&source[range], "Hello");
         }
-        let chinese = search_document_source(source, "你好", Path::new("note.md"), "note.md", 1);
+        let chinese = search_document_source(source, &SearchMatcher::new("你好", SearchOptions::default()), Path::new("note.md"), "note.md", 1);
         assert_eq!(chinese.len(), 1);
         assert_eq!(&source[chinese[0].source_range.clone().unwrap()], "你好");
     }
@@ -4123,19 +5129,19 @@ mod tests {
     fn document_match_navigation_can_search_forward_and_backward() {
         let source = "Alpha 你好 alpha";
         assert_eq!(
-            find_document_match_from(source, "alpha", 0, false),
+            find_document_match_from(source, &plain_matcher("alpha"), 0, false),
             Some(0..5)
         );
         assert_eq!(
-            find_document_match_from(source, "alpha", 5, false),
+            find_document_match_from(source, &plain_matcher("alpha"), 5, false),
             Some(13..18)
         );
         assert_eq!(
-            find_document_match_from(source, "alpha", source.len(), true),
+            find_document_match_from(source, &plain_matcher("alpha"), source.len(), true),
             Some(13..18)
         );
         assert_eq!(
-            find_document_match_from(source, "你好", 0, false),
+            find_document_match_from(source, &plain_matcher("你好"), 0, false),
             Some(6..12)
         );
     }
@@ -4289,7 +5295,7 @@ mod tests {
         cx.update(|window, cx| window.draw(cx).clear());
         editor.read_with(cx, |editor, _cx| {
             assert!(editor.workspace.is_open);
-            assert!(editor.workspace.show_search);
+            assert!(editor.workspace.active_tab == super::WorkspaceTab::Search);
             assert_eq!(
                 editor.workspace.search_scope,
                 super::WorkspaceSearchScope::Document
@@ -4338,7 +5344,7 @@ mod tests {
             cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
         editor.update(cx, |editor, cx| {
             editor.set_workspace_root(root, cx);
-            editor.workspace.show_search = true;
+            editor.workspace.active_tab = super::WorkspaceTab::Search;
             editor.workspace.search_query = "独特".into();
             editor.schedule_workspace_search(cx);
         });

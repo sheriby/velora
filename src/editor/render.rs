@@ -2324,7 +2324,7 @@ impl Render for Editor {
             .min_w(px(0.0));
         let main_content = main_content.child(self.render_activity_rail(&theme, cx));
         let main_content = if let Some(workspace_panel) =
-            self.render_workspace_panel(&theme, &strings, workspace_width, cx)
+            self.render_workspace_panel(&theme, &strings, workspace_width, window, cx)
         {
             main_content.child(workspace_panel)
         } else {
