@@ -416,6 +416,15 @@ fn open_recent_file_with_error_window(
         return;
     }
 
+    // Recent files open in the focused editor window by default — same as
+    // 文件 → 打开文件 — so the workspace keeps working in one window. A new
+    // window is only spawned when none exists to receive the file.
+    if let Some(handle) = editor_window_for_folder_open(cx) {
+        let _ = handle.update(cx, |editor, window, cx| {
+            editor.open_workspace_file(path, window, cx);
+        });
+        return;
+    }
     if let Err(err) = open_file_in_new_window(cx, &path) {
         let title = cx
             .global::<I18nManager>()
