@@ -128,6 +128,35 @@ enum WorkspaceMenuAction {
     Delete,
 }
 
+/// Drag payload for reordering document tabs (roadmap E3).
+#[derive(Clone)]
+pub(super) struct TabDrag {
+    pub(super) from_path: PathBuf,
+}
+
+/// 拖拽预览视图：被拖动标签的文件名。
+pub(super) struct DraggedTabPreview {
+    pub(super) label: SharedString,
+}
+
+impl Render for DraggedTabPreview {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<ThemeManager>().current_arc();
+        let c = &theme.colors;
+        div()
+            .px(px(10.0))
+            .py(px(4.0))
+            .rounded(px(6.0))
+            .bg(c.dialog_surface)
+            .border_1()
+            .border_color(c.dialog_border)
+            .shadow_md()
+            .text_size(px(12.0))
+            .text_color(c.text_default)
+            .child(self.label.clone())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TabMenuAction {
     Close,
@@ -1767,6 +1796,44 @@ impl Editor {
         self.cursor_history_forward.clear();
     }
 
+    /// 拖拽标签落到目标标签上：把被拖标签移动到目标位置（roadmap E3）。
+    pub(super) fn move_tab_to_position(
+        &mut self,
+        from_path: &Path,
+        to_path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if from_path == to_path {
+            return;
+        }
+        let Some(from) = self
+            .workspace
+            .open_documents
+            .iter()
+            .position(|tab| &tab.path == from_path)
+        else {
+            return;
+        };
+        let Some(to) = self
+            .workspace
+            .open_documents
+            .iter()
+            .position(|tab| tab.path == to_path)
+        else {
+            return;
+        };
+        let tab = self.workspace.open_documents.remove(from);
+        let mut insert_at = to;
+        if from < to {
+            insert_at = insert_at.saturating_sub(1);
+        }
+        self.workspace.open_documents.insert(insert_at, tab);
+        self.persist_session(cx);
+        cx.notify();
+        let _ = window;
+    }
+
     /// ⌥⌘←: return to the previous recorded caret location.
     pub(crate) fn on_cursor_history_back(
         &mut self,
@@ -2816,6 +2883,8 @@ impl Editor {
                 let path = tab.path.clone();
                 let click_path = path.clone();
                 let middle_click_path = path.clone();
+                let drag_from_path = path.clone();
+                let drop_target_path = path.clone();
                 let close_path = path.clone();
                 let active = self.workspace.active_document.as_ref() == Some(&tab.path);
                 let dirty = if active {
@@ -2950,6 +3019,34 @@ impl Editor {
                         let _ = tab_editor.update(cx, |editor, cx| {
                             editor.open_workspace_file(click_path.clone(), window, cx);
                         });
+                    })
+                    .on_drag(
+                        TabDrag {
+                            from_path: drag_from_path.clone(),
+                        },
+                        move |drag, _offset, _window, cx| {
+                            let label = drag
+                                .from_path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            cx.new(|_| DraggedTabPreview {
+                                label: label.into(),
+                            })
+                        },
+                    )
+                    .on_drop({
+                        let drop_editor = editor.clone();
+                        move |drag: &TabDrag, window, cx| {
+                        let _ = drop_editor.update(cx, |editor, cx| {
+                            editor.move_tab_to_position(
+                                &drag.from_path,
+                                &drop_target_path,
+                                window,
+                                cx,
+                            );
+                        });
+                        }
                     })
                     .on_mouse_down(MouseButton::Middle, {
                         let middle_editor = editor.clone();
