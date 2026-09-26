@@ -68,6 +68,13 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | G2 UTF-16 探测 | has_utf16_bom 单测（LE/BE/UTF-8） | 通过 |
 | D8 树过滤 | workspace 全部用例 | 通过 |
 
+## 第六批补充（E6/D8）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| E6 光标历史 | workspace 全部用例；⌥⌘←/→ 绑定注册 | 通过 |
+| D8 树过滤 | workspace 全部用例 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
