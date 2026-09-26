@@ -3,6 +3,7 @@
 pub(crate) mod code_highlight;
 pub(crate) mod footnote;
 pub(crate) mod html;
+pub(crate) mod html_paste;
 pub(crate) mod image;
 pub mod inline;
 pub(crate) mod link;

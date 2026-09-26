@@ -920,6 +920,10 @@ impl Block {
             let Some(text) = item.text() else {
                 return;
             };
+            // Clipboard HTML flavors convert to Markdown here (roadmap B3);
+            // plain-text clipboards pass through untouched.
+            #[cfg(target_os = "macos")]
+            let text = crate::components::markdown::html_paste::maybe_markdown_from_clipboard(&text);
             if let Some(source) = Self::pasted_image_source_from_text(&text) {
                 let (leading, trailing) = self.paste_image_split();
                 cx.emit(BlockEvent::RequestPasteImage {
