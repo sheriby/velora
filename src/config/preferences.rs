@@ -192,6 +192,8 @@ pub(crate) struct AppPreferences {
     pub(crate) status_bar: StatusBarPreferences,
     pub(crate) remember_window_bounds: bool,
     pub(crate) window_frame: Option<WindowFrame>,
+    /// Session-wide text zoom in percent (60..=200).
+    pub(crate) zoom_percent: i64,
 }
 
 impl Default for AppPreferences {
@@ -209,6 +211,7 @@ impl Default for AppPreferences {
             status_bar: StatusBarPreferences::default(),
             remember_window_bounds: true,
             window_frame: None,
+            zoom_percent: 100,
         }
     }
 }
@@ -231,6 +234,7 @@ pub struct EditorSettings {
     fonts: FontPreferences,
     writing_width: WritingWidthPreference,
     workspace_sidebar_width: u16,
+    zoom_percent: i64,
 }
 
 impl Global for EditorSettings {}
@@ -272,11 +276,21 @@ impl EditorSettings {
                     .map(|preferences| preferences.writing_width)
             })
             .unwrap_or_default();
+        let zoom_percent = cx
+            .try_global::<Self>()
+            .map(|settings| settings.zoom_percent)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.zoom_percent)
+            })
+            .unwrap_or(100);
         cx.set_global(Self {
             show_table_headers,
             fonts,
             writing_width,
             workspace_sidebar_width,
+            zoom_percent,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -311,6 +325,25 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.workspace_sidebar_width)
             .unwrap_or(258)
+    }
+
+    /// Session-wide text zoom percent (60-200); cached mirror of [window]
+    /// zoom_percent.
+    pub(crate) fn zoom_percent(cx: &App) -> i64 {
+        cx.try_global::<Self>()
+            .map(|settings| settings.zoom_percent)
+            .unwrap_or(100)
+    }
+
+    pub(crate) fn set_zoom_percent(cx: &mut App, percent: i64) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.zoom_percent = percent);
+        }
+        if let Err(error) = update_app_preferences(|preferences| {
+            preferences.zoom_percent = percent;
+        }) {
+            eprintln!("failed to save zoom percent: {error}");
+        }
     }
 
     pub(crate) fn set_workspace_sidebar_width(cx: &mut App, width: u16) {
@@ -438,6 +471,7 @@ struct WindowPreferencesFile {
     remember_bounds: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     frame: Option<WindowFrameFile>,
+    zoom_percent: i64,
 }
 
 #[derive(Serialize)]
@@ -491,6 +525,7 @@ impl From<&AppPreferences> for PreferencesFile {
             window: WindowPreferencesFile {
                 remember_bounds: value.remember_window_bounds,
                 frame: value.window_frame.map(WindowFrameFile::from),
+                zoom_percent: value.zoom_percent,
             },
             keybindings: normalize_shortcut_config(&value.keybindings),
         }
@@ -739,6 +774,11 @@ fn app_preferences_from_toml_value(
         .and_then(|window| window.get("remember_bounds"))
         .and_then(toml::Value::as_bool)
         .unwrap_or(true);
+    let zoom_percent = window
+        .and_then(|window| window.get("zoom_percent"))
+        .and_then(toml::Value::as_integer)
+        .filter(|percent| (60..=200).contains(percent))
+        .unwrap_or(100);
     let window_frame = window
         .and_then(|window| window.get("frame"))
         .and_then(|frame| {
@@ -768,6 +808,7 @@ fn app_preferences_from_toml_value(
         status_bar,
         remember_window_bounds,
         window_frame,
+        zoom_percent,
     }
 }
 
@@ -2876,6 +2917,7 @@ mod tests {
             status_bar: StatusBarPreferences::default(),
             remember_window_bounds: true,
             window_frame: None,
+            zoom_percent: 100,
         };
 
         save_app_preferences_with_dirs(&preferences, &dirs)
@@ -2972,6 +3014,7 @@ mod tests {
             status_bar: StatusBarPreferences::default(),
             remember_window_bounds: true,
             window_frame: None,
+            zoom_percent: 100,
         };
         save_app_preferences_with_dirs(&preferences, &dirs)
             .expect("preferences should save to config.toml");

@@ -76,6 +76,9 @@ actions!(
         FindNextMatch,
         FindPreviousMatch,
         QuickOpen,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
         ToggleSidebar,
     ]
 );
@@ -794,6 +797,10 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
     }
     bindings.push(KeyBinding::new("cmd-p", QuickOpen, None));
     bindings.push(KeyBinding::new("ctrl-p", QuickOpen, None));
+    bindings.push(KeyBinding::new("cmd-=", ZoomIn, None));
+    bindings.push(KeyBinding::new("cmd-+", ZoomIn, None));
+    bindings.push(KeyBinding::new("cmd--", ZoomOut, None));
+    bindings.push(KeyBinding::new("cmd-0", ZoomReset, None));
     // Fixed tab-switch bindings (⌘1-⌘9 / ⌃1-⌃9); intentionally outside the
     // customizable shortcut table.
     for index in 1u8..=9 {

@@ -1195,6 +1195,43 @@ impl Editor {
         }
     }
 
+    pub(crate) fn on_zoom_in(
+        &mut self,
+        _: &crate::components::ZoomIn,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Self::adjust_zoom(cx, 10);
+    }
+
+    pub(crate) fn on_zoom_out(
+        &mut self,
+        _: &crate::components::ZoomOut,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Self::adjust_zoom(cx, -10);
+    }
+
+    pub(crate) fn on_zoom_reset(
+        &mut self,
+        _: &crate::components::ZoomReset,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::config::EditorSettings::set_zoom_percent(cx, 100);
+        cx.refresh_windows();
+    }
+
+    fn adjust_zoom(cx: &mut Context<Self>, delta: i64) {
+        let current = crate::config::EditorSettings::zoom_percent(cx);
+        let next = (current + delta).clamp(60, 200);
+        if next != current {
+            crate::config::EditorSettings::set_zoom_percent(cx, next);
+            cx.refresh_windows();
+        }
+    }
+
     /// Full-area welcome page for windows opened without a document: brand
     /// mark, quick actions, and recent entries.
     fn render_welcome_page(
@@ -1969,6 +2006,20 @@ impl Render for Editor {
         let writing_width = crate::config::EditorSettings::writing_width(cx);
         theme.typography.text_size = fonts.markdown_size as f32;
         theme.typography.code_size = fonts.code_size as f32;
+        // Session-wide zoom (⌘+/⌘-/⌘0): scales the whole typographic scale,
+        // not just body text, so hierarchy stays consistent.
+        let zoom = crate::config::EditorSettings::zoom_percent(cx) as f32 / 100.0;
+        if (zoom - 1.0).abs() > f32::EPSILON {
+            let t = &mut theme.typography;
+            t.text_size *= zoom;
+            t.code_size *= zoom;
+            t.h1_size *= zoom;
+            t.h2_size *= zoom;
+            t.h3_size *= zoom;
+            t.h4_size *= zoom;
+            t.h5_size *= zoom;
+            t.h6_size *= zoom;
+        }
         let strings = cx.global::<I18nManager>().strings_arc();
         self.sync_window_title(window, &strings);
 
@@ -2694,6 +2745,9 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_toggle_workspace_action))
             .on_action(cx.listener(Self::on_select_tab_index))
             .on_action(cx.listener(Self::on_quick_open_action))
+            .on_action(cx.listener(Self::on_zoom_in))
+            .on_action(cx.listener(Self::on_zoom_out))
+            .on_action(cx.listener(Self::on_zoom_reset))
             .on_action(cx.listener(Self::on_page_up))
             .on_action(cx.listener(Self::on_page_down))
             .on_action(cx.listener(Self::on_jump_to_top))
