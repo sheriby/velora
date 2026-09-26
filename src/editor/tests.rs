@@ -4409,3 +4409,87 @@ async fn wikilink_opens_existing_workspace_file(cx: &mut TestAppContext) {
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[gpui::test]
+async fn crash_recovery_drill_snapshot_restore_save(cx: &mut TestAppContext) {
+    // roadmap G6：「写快照 → 崩溃 → 恢复 → 保存」全链路演练。
+    init_editor_test_app(cx);
+
+    let source_path = temp_markdown_path("crash-drill");
+    fs::write(&source_path, "saved before crash").expect("seed file");
+    let cleanup_source = source_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_source);
+    });
+
+    // Phase 1 — 编辑后写入恢复快照（与自动保存使用同一持久化函数）。
+    let (editor, cx) = cx.add_window_view({
+        let path = source_path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "saved before crash".into(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    let unsaved = "edited after save, not yet on disk";
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("block").clone();
+        block.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain(unsaved.to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    crate::config::save_recovery_snapshot(&crate::config::RecoverySnapshot {
+        id: recovery_id,
+        source_path: Some(source_path.clone()),
+        markdown: unsaved.into(),
+    })
+    .expect("write snapshot");
+    assert!(crate::config::read_recovery_snapshots()
+        .expect("read snapshots")
+        .iter()
+        .any(|snapshot| snapshot.id == recovery_id));
+
+    // Phase 2 — 崩溃：直接丢弃编辑器实体（不走任何关闭流程）。磁盘文件
+    // 仍是旧内容，只有恢复快照里有未保存编辑。
+    drop(editor);
+    assert_eq!(
+        fs::read_to_string(&source_path).expect("read disk"),
+        "saved before crash"
+    );
+
+    // Phase 3 — 恢复：from_recovery 打开未保存内容（dirty 副本）。
+    let (editor, cx) = cx.add_window_view({
+        let snapshot_path = source_path.clone();
+        move |_window, cx| {
+            Editor::from_recovery(
+                cx,
+                crate::config::RecoverySnapshot {
+                    id: recovery_id,
+                    source_path: Some(snapshot_path),
+                    markdown: unsaved.into(),
+                },
+            )
+        }
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.is_recovered_document);
+        assert_eq!(editor.document.markdown_text(cx), unsaved);
+    });
+
+    // Phase 4 — 保存：磁盘内容更新，恢复快照被清理。
+    // 真实应用中恢复文档经对话框另存到源路径；演练直接调用同一保存内核。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            assert!(editor.save_to_existing_path(&source_path, window, cx));
+        });
+    });
+    assert_eq!(
+        fs::read_to_string(&source_path).expect("read after save"),
+        unsaved
+    );
+    assert!(!crate::config::read_recovery_snapshots()
+        .expect("read snapshots")
+        .iter()
+        .any(|snapshot| snapshot.id == recovery_id));
+}
