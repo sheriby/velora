@@ -900,14 +900,9 @@ impl Editor {
                 return;
             };
             let delete_target = target.clone();
-            let result = background
-                .spawn(async move {
-                    if target_is_directory {
-                        std::fs::remove_dir_all(delete_target)
-                    } else {
-                        std::fs::remove_file(delete_target)
-                    }
-                })
+            let result = background.spawn(async move {
+                move_to_trash(&delete_target, target_is_directory)
+            })
                 .await;
             if let Err(err) = result {
                 Self::show_workspace_file_error(window_handle, format!("无法删除：{}", err), cx);
@@ -3848,7 +3843,53 @@ impl Editor {
     }
 }
 
-pub(super) fn is_markdown_file(path: &Path) -> bool {
+/// Moves a workspace item to the system trash so accidental deletions are
+/// recoverable (roadmap D4). Falls back to hard delete where trash semantics
+/// are unavailable.
+fn move_to_trash(target: &Path, is_directory: bool) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if home.is_empty() {
+            return fallback_delete(target, is_directory);
+        }
+        let trash_dir = PathBuf::from(home).join(".Trash");
+        std::fs::create_dir_all(&trash_dir)?;
+        let name = target
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "deleted".into());
+        let stem = target
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| name.clone());
+        let extension = target
+            .extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy()))
+            .unwrap_or_default();
+        let mut destination = trash_dir.join(&name);
+        let mut counter = 1u32;
+        while destination.exists() {
+            destination = trash_dir.join(format!("{stem} {counter}{extension}"));
+            counter += 1;
+        }
+        std::fs::rename(target, destination)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        fallback_delete(target, is_directory)
+    }
+}
+
+fn fallback_delete(target: &Path, is_directory: bool) -> std::io::Result<()> {
+    if is_directory {
+        std::fs::remove_dir_all(target)
+    } else {
+        std::fs::remove_file(target)
+    }
+}
+
+fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("md"))
 }
