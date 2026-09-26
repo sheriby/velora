@@ -789,6 +789,11 @@ pub enum BlockEvent {
     RequestDowngradeNestedListItemToChildParagraph,
     /// Toggle the checked state of a task-list item.
     ToggleTaskChecked,
+    /// A `#tag` word was clicked in rendered text; the editor should open the
+    /// search panel scoped to the workspace with this query (roadmap C4).
+    RequestSearchTag {
+        query: String,
+    },
     /// Prompt to open the clicked inline link destination.
     /// `prompt_target` preserves the raw syntax target shown to the user,
     /// while `open_target` is the resolved destination actually opened.

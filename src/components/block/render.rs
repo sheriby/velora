@@ -64,6 +64,17 @@ fn header_axis_emphasis(color: Hsla) -> Hsla {
     }
 }
 
+/// Detects a `#tag` word: `#` followed by at least one alphanumeric
+/// (including CJK), `_` or `-` character, with no whitespace.
+fn tag_query(word: &str) -> Option<String> {
+    let rest = word.strip_prefix('#')?;
+    let valid = !rest.is_empty()
+        && rest
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-');
+    valid.then(|| format!("#{rest}"))
+}
+
 fn fallback_image_label(alt: &str, strings: &I18nStrings) -> SharedString {
     if alt.trim().is_empty() {
         SharedString::from(strings.image_placeholder.clone())
@@ -1017,6 +1028,37 @@ impl Block {
         // falls through and focuses the block for editing. The wrapper element
         // gates the hand cursor on that same modifier, matching the normal-text
         // path where links render through `BlockTextElement`.
+        // `#tag` words render with link styling and open the workspace search
+        // panel for that tag when clicked (roadmap C4).
+        if span.link.is_none()
+            && !span.style.code
+            && let Some(query) = tag_query(text)
+        {
+            let tag_color = theme.colors.text_link;
+            element = element.text_color(tag_color).cursor_pointer();
+            return element
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |block, _event, _window, _cx| {
+                        block.tag_query = Some(query.clone());
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(
+                        move |block, event: &gpui::MouseUpEvent, _window, cx| {
+                        if event.click_count >= 1 {
+                            let query = block.tag_query.take();
+                            if let Some(query) = query {
+                                cx.emit(BlockEvent::RequestSearchTag { query });
+                            }
+                        }
+                        },
+                    ),
+                )
+                .into_any_element();
+        }
+
         if let Some(link) = span.link.clone() {
             let element = element
                 .on_mouse_down(
@@ -3179,6 +3221,23 @@ fn inline_word_chunks(text: &str, code: bool, has_background: bool) -> Vec<&str>
 
 #[cfg(test)]
 mod tests {
+    use super::tag_query;
+
+    #[test]
+    fn tag_query_accepts_words_and_rejects_empty_or_spaced() {
+        assert_eq!(
+            tag_query("#writing"),
+            Some("#writing".to_string())
+        );
+        assert_eq!(
+            tag_query("#中文标签"),
+            Some("#中文标签".to_string())
+        );
+        assert_eq!(tag_query("#"), None);
+        assert_eq!(tag_query("#has space"), None);
+        assert_eq!(tag_query("plain"), None);
+    }
+
     use super::{
         HtmlComputedStyle, column_axis_gutter_visible, html_node_visual_style, inline_word_chunks,
     };
