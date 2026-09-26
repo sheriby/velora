@@ -901,6 +901,36 @@ impl Block {
         }
     }
 
+    /// 把选中文本变成指向 `url` 的链接（B5 的可测试入口）。
+    pub(crate) fn paste_url_as_link(
+        &mut self,
+        url: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editor_selection_range.is_some() || self.selected_range.is_empty() {
+            return;
+        }
+        let selected = self.display_text()[self.selected_range.clone()].to_string();
+        self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        self.replace_text_in_visible_range(
+            self.selected_range.clone(),
+            &format!("[{selected}]({url})"),
+            None,
+            false,
+            cx,
+        );
+        cx.notify();
+        let _ = window;
+    }
+
+    /// Whether the pasted text is a bare http(s) URL.
+    fn is_bare_url(value: &str) -> bool {
+        !value.is_empty()
+            && !value.chars().any(char::is_whitespace)
+            && (value.starts_with("http://") || value.starts_with("https://"))
+    }
+
     pub(crate) fn on_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if self.kind().is_separator() && !self.uses_raw_text_editing() {
             return;
@@ -920,6 +950,15 @@ impl Block {
             let Some(text) = item.text() else {
                 return;
             };
+            // 选中文本后粘贴 URL → 生成 [选中](url) 链接（roadmap B5）。
+            let trimmed = text.trim();
+            if Self::is_bare_url(trimmed)
+                && self.editor_selection_range.is_none()
+                && !self.selected_range.is_empty()
+            {
+                self.paste_url_as_link(trimmed, window, cx);
+                return;
+            }
             // Clipboard HTML flavors convert to Markdown here (roadmap B3);
             // plain-text clipboards pass through untouched.
             #[cfg(target_os = "macos")]

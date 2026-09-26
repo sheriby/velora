@@ -2004,6 +2004,37 @@ async fn ime_replace_text_replaces_right_to_left_selection_in_source_raw_mode(
 }
 
 #[gpui::test]
+async fn pasting_url_over_selection_makes_link(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("alpha beta"),
+            ),
+        )
+    });
+
+    block.update(cx, |block, _cx| {
+        block.selected_range = 0..5; // "alpha"
+    });
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.paste_url_as_link("https://example.test", window, block_cx);
+        });
+    });
+
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(
+            block.display_text().to_string(),
+            "[alpha](https://example.test) beta"
+        );
+    });
+}
+
+#[gpui::test]
 async fn typed_wrap_symbol_wraps_selection(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let block = cx.new(|cx| {
