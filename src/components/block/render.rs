@@ -867,7 +867,11 @@ impl Block {
             InlineScript::Superscript => -font_size * 0.28,
             InlineScript::Subscript => font_size * 0.22,
         };
-        let display_font_size = if span.style.has_script() {
+        // Inline code drops to ~85% like GitHub's preview so the monospace
+        // glyphs stop towering over the surrounding proportional text.
+        let display_font_size = if span.style.code {
+            (font_size * 0.85).max(6.0)
+        } else if span.style.has_script() {
             (font_size * 0.72).max(6.0)
         } else {
             font_size
@@ -884,6 +888,12 @@ impl Block {
                 font_weight
             })
             .child(SharedString::from(text.to_string()));
+
+        if span.style.code {
+            element = element.font(font(
+                crate::config::EditorSettings::fonts(cx).code_family.clone(),
+            ));
+        }
 
         if script_offset != 0.0 {
             element = element.relative().top(px(script_offset));

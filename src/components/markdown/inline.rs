@@ -534,9 +534,14 @@ impl InlineTextTree {
     }
 
     pub(crate) fn has_mixed_inline_visuals(&self) -> bool {
-        self.fragments
-            .iter()
-            .any(|fragment| fragment.math.is_some() || fragment.style.has_script())
+        self.fragments.iter().any(|fragment| {
+            fragment.math.is_some()
+                || fragment.style.has_script()
+                // Inline code renders through the mixed-segment path so it can
+                // use a smaller monospace size than the surrounding body text;
+                // the single-size text element cannot express that per run.
+                || fragment.style.code
+        })
     }
 
     pub(crate) fn has_footnote_references(&self) -> bool {
