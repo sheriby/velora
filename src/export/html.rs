@@ -1335,4 +1335,34 @@ mod tests {
         assert!(html.contains("not a real mermaid diagram ::::"));
         assert!(!html.contains("data:image/svg+xml;base64,"));
     }
+
+    #[test]
+    fn single_file_export_embeds_local_images_as_data_uris() {
+        // roadmap F1：本地图片内嵌为 data URI，导出的单文件 HTML 离线可看，
+        // 且不再引用本地相对路径。
+        let root = std::env::temp_dir().join(format!("velora-export-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+        let image_path = root.join("banner.png");
+        // 最小 PNG 头（8 字节签名 + IHDR 长度），仅用于 base64 内嵌断言。
+        std::fs::write(&image_path, [0x89, b'P', b'N', b'G']).expect("write image");
+
+        let markdown = "![banner](./banner.png)";
+        let html = render_html_with_base_dir(
+            markdown,
+            &Theme::default_theme(),
+            "export",
+            Some(&root),
+        );
+
+        assert!(
+            html.contains("data:image/png;base64,"),
+            "local image should be embedded as a data URI"
+        );
+        assert!(
+            !html.contains("./banner.png"),
+            "local relative path should not remain in single-file export"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
