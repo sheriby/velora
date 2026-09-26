@@ -119,6 +119,26 @@ impl EntityInputHandler for Block {
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        // Wrap a non-empty selection with the typed paired symbol (roadmap
+        // B4): typing `*` over a selection becomes *selection*, etc.
+        if let Some((open, close)) = wrap_pair_for(new_text)
+            && !visible_range.is_empty()
+            && !self.display_text()[visible_range.clone()].contains('\n')
+        {
+            let selected = self.display_text()[visible_range.clone()].to_string();
+            let wrapped = format!("{open}{selected}{close}");
+            self.replace_text_in_visible_range(
+                visible_range.clone(),
+                &wrapped,
+                None,
+                false,
+                cx,
+            );
+            let inner_start = visible_range.start + open.len();
+            self.selected_range = inner_start..inner_start + selected.len();
+            cx.notify();
+            return;
+        }
         self.replace_text_in_visible_range(visible_range, new_text, None, false, cx);
     }
 
@@ -247,5 +267,20 @@ impl EntityInputHandler for Block {
         };
         let utf8_index = ranges[line_idx].start + utf8_offset_in_line;
         Some(Self::utf8_to_utf16_in(self.display_text(), utf8_index))
+    }
+}
+
+/// Paired symbols that wrap a selection instead of replacing it (roadmap B4).
+fn wrap_pair_for(text: &str) -> Option<(&'static str, &'static str)> {
+    match text {
+        "*" => Some(("*", "*")),
+        "_" => Some(("_", "_")),
+        "`" => Some(("`", "`")),
+        "\"" => Some(("\"", "\"")),
+        "'" => Some(("'", "'")),
+        "(" => Some(("(", ")")),
+        "[" => Some(("[", "]")),
+        "{" => Some(("{", "}")),
+        _ => None,
     }
 }

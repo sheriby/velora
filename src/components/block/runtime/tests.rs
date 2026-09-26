@@ -2004,6 +2004,101 @@ async fn ime_replace_text_replaces_right_to_left_selection_in_source_raw_mode(
 }
 
 #[gpui::test]
+async fn typed_wrap_symbol_wraps_selection(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("alpha beta"),
+            ),
+        )
+    });
+
+    block.update(cx, |block, _cx| {
+        block.selected_range = 0..5; // "alpha"
+    });
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "*", window, block_cx,
+            );
+        });
+    });
+
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(block.display_text().to_string(), "*alpha* beta");
+        // The selection stays on the wrapped text so continued typing replaces
+        // the inner content, not the markers.
+        assert_eq!(block.selected_range.clone(), 1..6);
+    });
+}
+
+#[gpui::test]
+async fn typed_paren_wraps_selection_with_matched_close(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("alpha beta"),
+            ),
+        )
+    });
+
+    block.update(cx, |block, _cx| {
+        block.selected_range = 6..10; // "beta"
+    });
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "(", window, block_cx,
+            );
+        });
+    });
+
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(block.display_text().to_string(), "alpha (beta)");
+        assert_eq!(block.selected_range.clone(), 7..11);
+    });
+}
+
+#[gpui::test]
+async fn wrap_symbol_with_empty_selection_still_replaces(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("alpha"),
+            ),
+        )
+    });
+
+    block.update(cx, |block, _cx| {
+        block.selected_range = 2..2;
+    });
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "*", window, block_cx,
+            );
+        });
+    });
+
+    assert_eq!(
+        block.read_with(cx, |block, _cx| block.display_text().to_string()),
+        "al*pha"
+    );
+}
+
+#[gpui::test]
 async fn source_document_mode_enables_line_numbers(cx: &mut TestAppContext) {
     let block = cx.new(|cx| {
         let mut block = Block::with_record(
