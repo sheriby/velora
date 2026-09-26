@@ -66,6 +66,59 @@ fn header_axis_emphasis(color: Hsla) -> Hsla {
 
 /// Detects a `#tag` word: `#` followed by at least one alphanumeric
 /// (including CJK), `_` or `-` character, with no whitespace.
+/// 悬停预览 tooltip（roadmap C8/C9）：脚注与链接目标预览。
+pub(crate) struct HoverPreviewTooltip {
+    pub(crate) label: SharedString,
+}
+
+impl Render for HoverPreviewTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.global::<ThemeManager>().current_arc();
+        div()
+            .px(px(8.0))
+            .py(px(5.0))
+            .rounded(px(6.0))
+            .bg(theme.colors.dialog_surface)
+            .border_1()
+            .border_color(theme.colors.dialog_border)
+            .shadow_md()
+            .text_size(px(11.5))
+            .text_color(theme.colors.dialog_title)
+            .child(self.label.clone())
+    }
+}
+
+/// 链接/脚注悬停 tooltip 文案（roadmap C9/C8）。
+fn segment_hash(text: &str, range_start: usize) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in text.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash ^= range_start as u64;
+    hash = hash.wrapping_mul(0x100000001b3);
+    hash
+}
+
+fn hover_preview_label(
+    footnote_id: Option<&str>,
+    open_target: &str,
+    is_remote: bool,
+    strings: &I18nStrings,
+) -> String {
+    if let Some(id) = footnote_id {
+        return format!("{} [^{}]", strings.hover_footnote_prefix, id);
+    }
+    if is_remote {
+        return open_target.to_string();
+    }
+    let exists = std::path::Path::new(open_target).exists();
+    if exists {
+        format!("\u{2713} {open_target} \u{2014} {}", strings.hover_target_exists)
+    } else {
+        format!("\u{2717} {open_target} \u{2014} {}", strings.hover_target_missing)
+    }
+}
 /// Detects a `[[target]]` wikilink inside a rendered word/segment and returns
 /// the trimmed target name (roadmap C3).
 fn wikilink_target(word: &str) -> Option<String> {
@@ -1010,6 +1063,39 @@ impl Block {
 
         if script_offset != 0.0 {
             element = element.relative().top(px(script_offset));
+        }
+
+        // 悬停预览（roadmap C8/C9）：脚注显示脚注标签；链接显示目标与
+        // 存在性。tooltip 闭包仅在悬停时执行，存在性检查零常驻开销。
+        if let Some(footnote) = span.footnote.as_ref() {
+            let footnote_id = footnote.id.clone();
+            let strings = cx.global::<I18nManager>().strings().clone();
+            let seg_id = ("hover-footnote", segment_hash(text, span.range.start));
+            let tooltip_text =
+                hover_preview_label(Some(&footnote_id), "", false, &strings);
+            return element
+                .id(seg_id)
+                .tooltip(move |_, cx| {
+                    cx.new(|_| HoverPreviewTooltip {
+                        label: tooltip_text.clone().into(),
+                    })
+                    .into()
+                })
+                .into_any_element();
+        } else if let Some(link) = span.link.as_ref() {
+            let open_target = link.open_target.clone();
+            let is_remote =
+                open_target.starts_with("http://") || open_target.starts_with("https://");
+            let strings = cx.global::<I18nManager>().strings().clone();
+            let label =
+                hover_preview_label(None, &open_target, is_remote, &strings);
+            let seg_id = ("hover-link", segment_hash(text, span.range.start));
+            return element
+                .id(seg_id)
+                .tooltip(move |_, cx| {
+                    cx.new(|_| HoverPreviewTooltip { label: label.clone().into() }).into()
+                })
+                .into_any_element();
         }
 
         if span.style.underline || span.link.is_some() || span.footnote.is_some() {

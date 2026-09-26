@@ -355,6 +355,12 @@ pub struct I18nStrings {
     pub command_toggle_view_mode: String,
     /// Workspace action: duplicate the selected file.
     pub workspace_duplicate: String,
+    /// Hover tooltip prefix for footnote references.
+    pub hover_footnote_prefix: String,
+    /// Hover tooltip marker: local target exists.
+    pub hover_target_exists: String,
+    /// Hover tooltip marker: local target missing.
+    pub hover_target_missing: String,
     /// 文件树过滤输入占位。
     pub tree_filter_placeholder: String,
     /// Message shown when picking or clicking a file type Velora can't open.
@@ -664,6 +670,9 @@ struct I18nStringsDe {
     command_find_previous: Option<String>,
     command_toggle_view_mode: Option<String>,
     workspace_duplicate: Option<String>,
+    hover_footnote_prefix: Option<String>,
+    hover_target_exists: Option<String>,
+    hover_target_missing: Option<String>,
     tree_filter_placeholder: Option<String>,
     workspace_open_unsupported_message: Option<String>,
     tab_close: Option<String>,
@@ -920,6 +929,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "command_find_previous",
     "command_toggle_view_mode",
     "workspace_duplicate",
+    "hover_footnote_prefix",
+    "hover_target_exists",
+    "hover_target_missing",
     "tree_filter_placeholder",
     "workspace_open_unsupported_message",
     "tab_close",
@@ -1518,6 +1530,15 @@ impl I18nStringsDe {
             workspace_duplicate: self
                 .workspace_duplicate
                 .unwrap_or(defaults.workspace_duplicate),
+            hover_footnote_prefix: self
+                .hover_footnote_prefix
+                .unwrap_or(defaults.hover_footnote_prefix),
+            hover_target_exists: self
+                .hover_target_exists
+                .unwrap_or(defaults.hover_target_exists),
+            hover_target_missing: self
+                .hover_target_missing
+                .unwrap_or(defaults.hover_target_missing),
             tree_filter_placeholder: self
                 .tree_filter_placeholder
                 .unwrap_or(defaults.tree_filter_placeholder),
@@ -1871,6 +1892,9 @@ impl I18nStrings {
             command_find_previous: "查找上一个".into(),
             command_toggle_view_mode: "切换视图模式".into(),
             workspace_duplicate: "创建副本".into(),
+            hover_footnote_prefix: "脚注".into(),
+            hover_target_exists: "目标存在".into(),
+            hover_target_missing: "目标不存在".into(),
             tree_filter_placeholder: "过滤文件名…".into(),
             workspace_open_unsupported_message: "暂时无法打开该类型文件".into(),
             tab_close: "关闭".into(),
@@ -2160,6 +2184,9 @@ impl I18nStrings {
             command_find_previous: "Find Previous".into(),
             command_toggle_view_mode: "Toggle View Mode".into(),
             workspace_duplicate: "Duplicate".into(),
+            hover_footnote_prefix: "Footnote".into(),
+            hover_target_exists: "target exists".into(),
+            hover_target_missing: "target missing".into(),
             tree_filter_placeholder: "Filter file names…".into(),
             workspace_open_unsupported_message:
                 "This file type can't be opened in Velora yet".into(),
