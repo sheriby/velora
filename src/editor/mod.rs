@@ -137,7 +137,7 @@ pub struct Editor {
     /// tracked so the next sync can clear them cheaply.
     pub(super) search_highlighted_blocks: Vec<Entity<Block>>,
     /// Quick file switcher overlay (⌘P); `None` while closed.
-    pub(super) quick_open: Option<quick_open::QuickOpenState>,
+    quick_open: Option<quick_open::QuickOpenState>,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
     workspace: WorkspaceState,
