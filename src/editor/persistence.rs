@@ -102,8 +102,11 @@ impl Editor {
         let window_handle = self.window_handle;
         self.autosave_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let debounce = cx
+                    .update(|cx| crate::config::EditorSettings::autosave_debounce_ms(cx))
+                    .unwrap_or(800);
                 cx.background_executor()
-                    .timer(std::time::Duration::from_millis(800))
+                    .timer(std::time::Duration::from_millis(debounce))
                     .await;
 
                 let snapshot = editor

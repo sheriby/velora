@@ -190,6 +190,8 @@ pub(crate) struct AppPreferences {
     pub(crate) workspace_sidebar_width: u16,
     pub(crate) keybindings: BTreeMap<String, Vec<String>>,
     pub(crate) status_bar: StatusBarPreferences,
+    /// Debounce before dirty changes are autosaved/recovery-snapshotted (ms).
+    pub(crate) autosave_debounce_ms: u64,
     pub(crate) remember_window_bounds: bool,
     pub(crate) window_frame: Option<WindowFrame>,
     /// Session-wide text zoom in percent (60..=200).
@@ -209,6 +211,7 @@ impl Default for AppPreferences {
             workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
+            autosave_debounce_ms: 800,
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
@@ -235,6 +238,7 @@ pub struct EditorSettings {
     writing_width: WritingWidthPreference,
     workspace_sidebar_width: u16,
     zoom_percent: i64,
+    autosave_debounce_ms: u64,
 }
 
 impl Global for EditorSettings {}
@@ -285,12 +289,22 @@ impl EditorSettings {
                     .map(|preferences| preferences.zoom_percent)
             })
             .unwrap_or(100);
+        let autosave_debounce_ms = cx
+            .try_global::<Self>()
+            .map(|settings| settings.autosave_debounce_ms)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.autosave_debounce_ms)
+            })
+            .unwrap_or(800);
         cx.set_global(Self {
             show_table_headers,
             fonts,
             writing_width,
             workspace_sidebar_width,
             zoom_percent,
+            autosave_debounce_ms,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -325,6 +339,13 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.workspace_sidebar_width)
             .unwrap_or(258)
+    }
+
+    /// Debounce before autosave/recovery snapshots fire (roadmap G3).
+    pub(crate) fn autosave_debounce_ms(cx: &App) -> u64 {
+        cx.try_global::<Self>()
+            .map(|settings| settings.autosave_debounce_ms)
+            .unwrap_or(800)
     }
 
     /// Session-wide text zoom percent (60-200); cached mirror of [window]
@@ -424,6 +445,7 @@ struct EditorPreferencesFile {
     code_font_size: u16,
     writing_width: String,
     workspace_sidebar_width: u16,
+    autosave_debounce_ms: u64,
 }
 
 #[derive(Serialize)]
@@ -520,6 +542,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 code_font_size: value.fonts.code_size,
                 writing_width: value.writing_width.as_str().into(),
                 workspace_sidebar_width: value.workspace_sidebar_width,
+                autosave_debounce_ms: value.autosave_debounce_ms,
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
             window: WindowPreferencesFile {
@@ -716,6 +739,12 @@ fn app_preferences_from_toml_value(
         .and_then(|width| u16::try_from(width).ok())
         .filter(|width| (180..=600).contains(width))
         .unwrap_or(258);
+    let autosave_debounce_ms = editor
+        .and_then(|editor| editor.get("autosave_debounce_ms"))
+        .and_then(toml::Value::as_integer)
+        .and_then(|ms| u64::try_from(ms).ok())
+        .filter(|ms| (100..=30_000).contains(ms))
+        .unwrap_or(800);
 
     let status_bar = value
         .get("status_bar")
@@ -804,6 +833,7 @@ fn app_preferences_from_toml_value(
         fonts,
         writing_width,
         workspace_sidebar_width,
+        autosave_debounce_ms,
         keybindings,
         status_bar,
         remember_window_bounds,
@@ -2915,6 +2945,7 @@ mod tests {
             workspace_sidebar_width: 320,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
+            autosave_debounce_ms: 800,
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
@@ -3012,6 +3043,7 @@ mod tests {
             workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
+            autosave_debounce_ms: 800,
             remember_window_bounds: true,
             window_frame: None,
             zoom_percent: 100,
