@@ -3889,7 +3889,7 @@ fn fallback_delete(target: &Path, is_directory: bool) -> std::io::Result<()> {
     }
 }
 
-fn is_markdown_file(path: &Path) -> bool {
+pub(super) fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("md"))
 }
