@@ -98,6 +98,12 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | E3 标签拖拽 | tab 全部 93 项用例 | 通过 |
 | F1 单文件 HTML | single_file_export_embeds_local_images_as_data_uris 测试 | 通过 |
 
+## 第十批补充（F2 复制为 HTML）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| F2 复制为 HTML | 既有渲染测试覆盖 HTML 生成；⇧⌘C 绑定与导出菜单项注册；剪贴板写入走 ClipboardItem | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
