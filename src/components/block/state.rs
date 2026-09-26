@@ -794,6 +794,11 @@ pub enum BlockEvent {
     RequestSearchTag {
         query: String,
     },
+    /// A `[[wikilink]]` was clicked; open the named workspace file, creating
+    /// it when missing (roadmap C3).
+    RequestOpenWikilink {
+        target: String,
+    },
     /// Prompt to open the clicked inline link destination.
     /// `prompt_target` preserves the raw syntax target shown to the user,
     /// while `open_target` is the resolved destination actually opened.

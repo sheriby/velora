@@ -117,6 +117,8 @@ pub struct Block {
     pub(crate) search_highlight_ranges: Vec<Range<usize>>,
     /// Pending `#tag` click forwarded to the editor (roadmap C4).
     pub(crate) tag_query: Option<String>,
+    /// Pending `[[wikilink]]` click target (roadmap C3).
+    pub(crate) wikilink_target: Option<String>,
     pub selection_reversed: bool,
     pub(crate) editor_selection_range: Option<Range<usize>>,
     pub marked_range: Option<Range<usize>>,
@@ -225,6 +227,7 @@ impl Block {
             selected_range: 0..0,
             search_highlight_ranges: Vec::new(),
             tag_query: None,
+            wikilink_target: None,
             selection_reversed: false,
             editor_selection_range: None,
             marked_range: None,

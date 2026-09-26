@@ -1814,6 +1814,48 @@ impl Editor {
         cx.notify();
     }
 
+    /// Opens the workspace file named `target` (with `.md` appended when
+    /// missing); creates it at the workspace root when no match exists
+    /// (roadmap C3).
+    pub(crate) fn open_wikilink(
+        &mut self,
+        target: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let needle = target.to_lowercase();
+        let found = self.workspace_text_files().into_iter().find(|path| {
+            let stem = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_lowercase());
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_lowercase());
+            stem.as_deref() == Some(needle.as_str())
+                || name.as_deref() == Some(needle.as_str())
+        });
+        if let Some(path) = found {
+            self.open_workspace_file(path, window, cx);
+            return;
+        }
+        // Create `<target>.md` at the workspace root.
+        let path = self
+            .workspace
+            .root
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+            .join(format!("{target}.md"));
+        if !path.exists() {
+            if let Err(error) = fs::write(&path, format!("# {target}\n")) {
+                self.workspace.file_error = Some(error.to_string());
+                cx.notify();
+                return;
+            }
+            self.refresh_workspace_tree(cx);
+        }
+        self.open_workspace_file(path, window, cx);
+    }
+
     /// `#tag` 点击：打开搜索面板并以工作区范围列出同类（roadmap C4）。
     pub(crate) fn open_tag_search(&mut self, query: String, cx: &mut Context<Self>) {
         self.workspace.is_open = true;

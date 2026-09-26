@@ -1718,6 +1718,21 @@ impl Editor {
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
+            BlockEvent::RequestOpenWikilink { target } => {
+                // `[[wikilink]]` 点击：打开工作区同名文件，缺失则在根目录创建
+                // （roadmap C3）。defer 到当前更新完成后执行（打开流程需要
+                // &mut Window，且不能在本次窗口更新内重入）。
+                if let Some(any_handle) = self.window_handle
+                    && let Some(handle) = any_handle.downcast::<Editor>()
+                {
+                    let deferred_target = target.clone();
+                    cx.defer(move |cx| {
+                        let _ = handle.update(cx, |editor, window, cx| {
+                            editor.open_wikilink(deferred_target.clone(), window, cx);
+                        });
+                    });
+                }
+            }
             BlockEvent::RequestSearchTag { query } => {
                 // `#tag` 点击：打开搜索面板并列出工作区同类（roadmap C4）。
                 self.open_tag_search(query.to_string(), cx);

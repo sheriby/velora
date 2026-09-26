@@ -66,6 +66,16 @@ fn header_axis_emphasis(color: Hsla) -> Hsla {
 
 /// Detects a `#tag` word: `#` followed by at least one alphanumeric
 /// (including CJK), `_` or `-` character, with no whitespace.
+/// Detects a `[[target]]` wikilink inside a rendered word/segment and returns
+/// the trimmed target name (roadmap C3).
+fn wikilink_target(word: &str) -> Option<String> {
+    let start = word.find("[[")?;
+    let inner = &word[start + 2..];
+    let end = inner.find("]]")?;
+    let target = inner[..end].trim();
+    (!target.is_empty()).then(|| target.to_string())
+}
+
 fn tag_query(word: &str) -> Option<String> {
     let rest = word.strip_prefix('#')?;
     let valid = !rest.is_empty()
@@ -1028,6 +1038,39 @@ impl Block {
         // falls through and focuses the block for editing. The wrapper element
         // gates the hand cursor on that same modifier, matching the normal-text
         // path where links render through `BlockTextElement`.
+        // `[[wikilink]]` 词渲染为链接样式，点击打开/创建工作区内同名文件
+        // （roadmap C3）。
+        if span.link.is_none()
+            && !span.style.code
+            && let Some(target) = wikilink_target(text)
+        {
+            let wikilink_color = theme.colors.text_link;
+            let wikilink_element = element
+                .text_color(wikilink_color)
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |block, _event, _window, _cx| {
+                        block.wikilink_target = Some(target.clone());
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(
+                        move |block, event: &gpui::MouseUpEvent, _window, cx| {
+                            if event.click_count >= 1 {
+                                let target = block.wikilink_target.take();
+                                if let Some(target) = target {
+                                    cx.emit(BlockEvent::RequestOpenWikilink { target });
+                                }
+                            }
+                        },
+                    ),
+                )
+                .into_any_element();
+            return wikilink_element;
+        }
+
         // `#tag` words render with link styling and open the workspace search
         // panel for that tag when clicked (roadmap C4).
         if span.link.is_none()
@@ -3221,7 +3264,21 @@ fn inline_word_chunks(text: &str, code: bool, has_background: bool) -> Vec<&str>
 
 #[cfg(test)]
 mod tests {
-    use super::tag_query;
+    use super::{tag_query, wikilink_target};
+
+    #[test]
+    fn wikilink_target_extracts_trimmed_target() {
+        assert_eq!(
+            wikilink_target("[[meeting notes]]"),
+            Some("meeting notes".to_string())
+        );
+        assert_eq!(
+            wikilink_target("前缀 [[note]] 后缀"),
+            Some("note".to_string())
+        );
+        assert_eq!(wikilink_target("[[ ]]"), None);
+        assert_eq!(wikilink_target("no brackets"), None);
+    }
 
     #[test]
     fn tag_query_accepts_words_and_rejects_empty_or_spaced() {

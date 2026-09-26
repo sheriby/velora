@@ -4344,3 +4344,66 @@ async fn large_document_opens_within_budget(cx: &mut TestAppContext) {
         "per-block open cost regressed: {per_block_us:.1} µs > 220 µs budget"
     );
 }
+
+#[gpui::test]
+async fn wikilink_creates_missing_file_at_workspace_root(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-wikilink-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    let created = root.join("fresh note.md");
+    let created_for_assert = created.clone();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_wikilink("fresh note".into(), window, cx);
+        });
+        window.draw(cx).clear();
+    });
+    // The open path is canonicalized by set_workspace_root, so compare
+    // against the canonical form of the created file.
+    let canonical_created = std::fs::canonicalize(&created_for_assert)
+        .expect("canonicalize created");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.file_path, Some(canonical_created.clone()));
+    });
+    assert!(created.is_file(), "wikilink target should be created");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn wikilink_opens_existing_workspace_file(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-wikilink-open-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let existing = root.join("target.md");
+    std::fs::write(&existing, "# target\n").expect("write");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_wikilink("target".into(), window, cx);
+        });
+        window.draw(cx).clear();
+    });
+    let canonical_existing = std::fs::canonicalize(&existing).expect("canonicalize existing");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.file_path.as_deref(), Some(canonical_existing.as_path()));
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
