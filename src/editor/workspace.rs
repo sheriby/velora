@@ -1382,26 +1382,6 @@ impl Editor {
         .detach();
     }
 
-    fn jump_to_workspace_search_line(&mut self, line: usize, cx: &mut Context<Self>) {
-        let source = self.current_document_source(cx);
-        let offset = source
-            .split_inclusive('\n')
-            .take(line.saturating_sub(1))
-            .map(str::len)
-            .sum::<usize>()
-            .min(source.len());
-        self.apply_selection_snapshot_in_current_mode(
-            &UndoSelectionSnapshot {
-                range: offset..offset,
-                reversed: false,
-            },
-            cx,
-        );
-        self.pending_scroll_active_block_into_view = true;
-        self.pending_scroll_recheck_after_layout = true;
-        cx.notify();
-    }
-
     fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         self.apply_selection_snapshot_in_current_mode(
             &UndoSelectionSnapshot {
@@ -2674,7 +2654,6 @@ impl Editor {
         // Scope switch: current document vs. whole workspace (the latter needs
         // a scanned tree).
         let scope = self.workspace.search_scope;
-        let has_tree = self.workspace.file_tree.is_some();
         let scope_button =
             |editor: &WeakEntity<Self>, id: &'static str, label: String, selected: bool| {
                 let scope_editor = editor.clone();
@@ -2934,15 +2913,18 @@ impl Editor {
                         });
                     }
                     "a" if secondary => {
-                        let _ = editor.update(cx, |editor, cx| match kind {
-                            SearchInputKind::Query => {
-                                editor.workspace.search_selected_range =
-                                    0..editor.workspace.search_query.len();
+                        let _ = editor.update(cx, |editor, cx| {
+                            match kind {
+                                SearchInputKind::Query => {
+                                    editor.workspace.search_selected_range =
+                                        0..editor.workspace.search_query.len();
+                                }
+                                SearchInputKind::Replace => {
+                                    editor.workspace.replace_selected_range =
+                                        0..editor.workspace.replace_query.len();
+                                }
                             }
-                            SearchInputKind::Replace => {
-                                editor.workspace.replace_selected_range =
-                                    0..editor.workspace.replace_query.len();
-                            }
+                            cx.notify();
                         });
                     }
                     "backspace" => {
@@ -3178,13 +3160,12 @@ impl Editor {
         let is_document_scope = self.workspace.search_scope == WorkspaceSearchScope::Document;
         let mut elements: Vec<AnyElement> = Vec::new();
         let mut current_file: Option<PathBuf> = None;
-        let mut file_hit_count = 0usize;
         for (index, hit) in self.workspace.search_results.iter().enumerate() {
             // Workspace scope groups hits under a file header row; document
             // scope lists matches flat with the file name on each row.
             if !is_document_scope && current_file.as_ref() != Some(&hit.path) {
                 current_file = Some(hit.path.clone());
-                file_hit_count = self
+                let file_hit_count = self
                     .workspace
                     .search_results
                     .iter()
@@ -4364,24 +4345,6 @@ impl Editor {
         }
     }
 
-    fn replace_workspace_search_text(
-        &mut self,
-        range: Range<usize>,
-        new_text: &str,
-        selected_in_inserted: Option<Range<usize>>,
-        marked: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.replace_search_input_text(
-            SearchInputKind::Query,
-            range,
-            new_text,
-            selected_in_inserted,
-            marked,
-            cx,
-        );
-    }
-
     /// Applies an edit to the focused search-panel input (query or replace)
     /// and re-schedules the workspace search for query changes.
     fn replace_search_input_text(
@@ -5052,7 +5015,16 @@ mod tests {
         editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.document.raw_source_text(cx), "class A {\n}\n");
         });
-        editor.update(cx, |editor, cx| editor.jump_to_workspace_search_line(2, cx));
+        editor.update(cx, |editor, cx| {
+            let source = editor.current_document_source(cx);
+            let offset = source
+                .split_inclusive('\n')
+                .take(1)
+                .map(str::len)
+                .sum::<usize>()
+                .min(source.len());
+            editor.jump_to_document_search_range(offset..offset, cx);
+        });
         editor.read_with(cx, |editor, cx| {
             assert_eq!(
                 editor
