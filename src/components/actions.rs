@@ -97,6 +97,16 @@ pub struct SelectLanguage {
     pub language_id: String,
 }
 
+/// Switches to the Nth document tab (1-based; ⌘1-⌘9, roadmap E5). Not part
+/// of the user-customizable shortcut table.
+#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, gpui::Action)]
+#[action(namespace = velotype)]
+#[serde(deny_unknown_fields)]
+pub struct SelectTabIndex {
+    /// 1-based tab position from the left.
+    pub index: u8,
+}
+
 /// Opens a previously recorded Markdown file path.
 #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, gpui::Action)]
 #[action(namespace = velotype)]
@@ -780,6 +790,17 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
             keys.iter()
                 .map(|key| key_binding_for(definition.command, key, definition.context)),
         );
+    }
+    // Fixed tab-switch bindings (⌘1-⌘9 / ⌃1-⌃9); intentionally outside the
+    // customizable shortcut table.
+    for index in 1u8..=9 {
+        for prefix in ["cmd", "ctrl"] {
+            bindings.push(KeyBinding::new(
+                &format!("{prefix}-{index}"),
+                SelectTabIndex { index },
+                None,
+            ));
+        }
     }
     bindings
 }

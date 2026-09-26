@@ -308,6 +308,23 @@ impl Editor {
         cx.notify();
     }
 
+    /// ⌘1-⌘9: focus the Nth document tab (roadmap E5).
+    pub(crate) fn on_select_tab_index(
+        &mut self,
+        action: &crate::components::SelectTabIndex,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = usize::from(action.index).checked_sub(1);
+        let Some(path) = index
+            .and_then(|index| self.workspace.open_documents.get(index))
+            .map(|tab| tab.path.clone())
+        else {
+            return;
+        };
+        self.open_workspace_file(path, window, cx);
+    }
+
     pub(crate) fn open_recent_entry(
         &mut self,
         path: &Path,
@@ -2288,6 +2305,7 @@ impl Editor {
             .map(|(index, tab)| {
                 let path = tab.path.clone();
                 let click_path = path.clone();
+                let middle_click_path = path.clone();
                 let close_path = path.clone();
                 let active = self.workspace.active_document.as_ref() == Some(&tab.path);
                 let dirty = if active {
@@ -2422,6 +2440,15 @@ impl Editor {
                         let _ = tab_editor.update(cx, |editor, cx| {
                             editor.open_workspace_file(click_path.clone(), window, cx);
                         });
+                    })
+                    .on_mouse_down(MouseButton::Middle, {
+                        let middle_editor = editor.clone();
+                        move |_event, window, cx| {
+                            let _ = middle_editor.update(cx, |editor, cx| {
+                                editor.close_workspace_document(&middle_click_path, window, cx);
+                            });
+                            cx.stop_propagation();
+                        }
                     })
                     .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
                         let _ = context_editor.update(cx, |editor, cx| {
