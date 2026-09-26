@@ -1014,6 +1014,25 @@ impl Editor {
 
         while index < lines.len() {
             let line = &lines[index];
+            // YAML frontmatter: a `---` fence pair at the very top of the
+            // document is preserved byte-exact as an opaque block instead of
+            // being parsed as setext headings / thematic breaks (roadmap C1).
+            if index == 0
+                && roots.is_empty()
+                && line.trim_end_matches('\r') == "---"
+                && let Some(close) = (1..lines.len()).find(|&close_index| {
+                    lines[close_index].trim_end_matches('\r') == "---"
+                })
+            {
+                let front_matter = lines[..=close].join("\n");
+                roots.push(Self::new_block(
+                    cx,
+                    BlockRecord::raw_markdown(front_matter),
+                ));
+                index = close + 1;
+                continue;
+            }
+
             if line.trim().is_empty() {
                 let blank_start = index;
                 while index < lines.len() && lines[index].trim().is_empty() {
@@ -1928,6 +1947,41 @@ mod tests {
         ];
         let opener = parse_opening_fence(&lines[0]).expect("opening fence");
         assert_eq!(find_matching_closing_fence(&lines, 0, &opener), None);
+    }
+
+    #[gpui::test]
+    async fn yaml_frontmatter_is_preserved_as_an_opaque_block(cx: &mut TestAppContext) {
+        let source = "---\ntitle: Notes\ntags: [writing]\n---\n\n# Heading\n\nBody.";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert!(visible.len() >= 2);
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::RawMarkdown);
+            assert_eq!(
+                visible[0].entity.read(cx).display_text(),
+                "---\ntitle: Notes\ntags: [writing]\n---"
+            );
+            assert!(visible
+                .iter()
+                .any(|block| block.entity.read(cx).kind() == BlockKind::Heading { level: 1 }));
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn opening_thematic_break_is_not_frontmatter(cx: &mut TestAppContext) {
+        let source = "---\n\ntext after";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert!(
+                !visible
+                    .iter()
+                    .any(|block| block.entity.read(cx).kind() == BlockKind::RawMarkdown)
+            );
+        });
     }
 
     #[gpui::test]
