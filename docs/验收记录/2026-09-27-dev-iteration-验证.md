@@ -57,6 +57,17 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | D7 树 tooltip | 编译 + workspace 用例 | 通过 |
 | G2 编码探测 | has_utf16_bom 单测（LE/BE/UTF-8） | 通过 |
 
+## 第五批补充（D8/D5/D7/G2/E8/C6）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| C6 大纲双击重命名 | gpui 测试（标题选区 0..9） | 通过 |
+| E8 面包屑 | 渲染烟雾测试 | 通过 |
+| D5 新建模板 | config 往返测试 | 通过 |
+| D7 树 tooltip | 编译 + workspace 用例 | 通过 |
+| G2 UTF-16 探测 | has_utf16_bom 单测（LE/BE/UTF-8） | 通过 |
+| D8 树过滤 | workspace 全部用例 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
