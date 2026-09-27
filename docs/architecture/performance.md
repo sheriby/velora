@@ -27,7 +27,7 @@ VELORA_PERF_FILE=<file> cargo test manual_code_load_probe   -- --ignored --nocap
 | `/tmp/velora-perf-fixtures/log-10mib.log` | 98,909 行无空行日志 |
 | `/tmp/velora-perf-fixtures/cargo-lock-real` | 仓库 Cargo.lock 拷贝，8,536 行 / 205KB |
 
-## 3. 基线（2026-09-28，dev 构建，含测试窗口开销）
+## 3. 基线与终态（2026-09-28，dev 构建，含测试窗口开销）
 
 markdown 路径（`Editor::from_markdown`，`manual_markdown_load_probe`）：
 
@@ -45,6 +45,34 @@ markdown 路径（`Editor::from_markdown`，`manual_markdown_load_probe`）：
 - ten-mib.md 稳态 293ms/帧 ≈ 每帧文档级固定开销 × 160k 块（见 §4-3）。
 - 探针 construct_ms 含后台续建在测试里同步跑完的部分；真实应用首屏时间以首绘为准。
 
+### P7 终态（2026-09-28，优化后同一探针复测）
+
+代码路径（`manual_code_load_probe`，真实 `from_file_source`）：
+
+| 夹具 | 构造(同步) | 首绘 | 稳态帧 | 编辑更新 | 编辑后绘制 |
+|---|---:|---:|---:|---:|---:|
+| sample.lock（205KB） | 22.6 | 1.1 | 1.1 | 21.9 | 2.1 |
+| log-1mib | 51.0 | 1.4 | 1.4 | 32.4 | 2.7 |
+| log-10mib | 103.3 | 2.3 | 2.2 | 55.6 | 4.0 |
+
+markdown 路径（`manual_markdown_load_probe`）：
+
+| 夹具 | 首绘 | 稳态帧 | 编辑后绘制 |
+|---|---:|---:|---:|
+| one-mib.md（15,968 块） | 3.4 | 3.3 | 15.6 |
+| ten-mib.md（159,683 块） | 35.7 | 35.8 | 199.4 |
+
+对照基线（§3）的提升倍数（dev 构建）：
+
+- **纯文本/代码**：10MiB log 稳态 476→2.2ms（**216x**）、打开同步段 2011→103ms（**20x**）、
+  编辑 765→56ms（**14x**）；1MiB log 稳态 39.5→1.4ms（28x）、打开 177→51ms；
+  lock 稳态 28.4→1.1ms（26x）、打开 98→23ms。1MiB 内普通文本打开已进 100ms
+  （dev O0），10MiB 同步构造 103ms、release 预期 ~30-40ms。
+- **markdown**：10MiB/160k 块稳态 293→35.8ms（**8.2x**）、首绘 282→35.7ms；
+  1MiB 稳态 35→3.3ms（**10.6x**）。
+- 说明：探针 construct_ms 在测试平台内含流式续建排水与自动重绘，不代表真实
+  打开时间；真实打开 = 文件读 + 同步构造（首块）+ 首帧，其余后台续建。
+
 ## 4. 已定位根因（代码证据）
 
 1. **纯文本/代码文件整文件单块**：`replace_document_content`（src/editor/file_drop.rs）对 `is_code_file` 的文件建单个 `BlockKind::CodeBlock`。渲染、shape、undo 快照、序列化全压在一块。
@@ -59,14 +87,25 @@ markdown 路径（`Editor::from_markdown`，`manual_markdown_load_probe`）：
 |---|---|---|---|
 | P1 | 代码路径探针（`from_file_source` 真实路径的 ignored 探针，补齐基线） | ✅ 2026-09-28 | 见 §6 |
 | P1.1 | 代码路径基线（`manual_code_load_probe` 实测） | ✅ 2026-09-28 | lock 稳态 28ms/帧；10MiB 稳态 476ms/帧、打开 ~2.5s |
-| P2 | 纯文本分块导入：代码/纯文本按行分块多块导入，首块同步 + 其余后台续建；序列化无损、CRLF 保持、行号连续 | ⬜ | |
-| P3 | shape memo：BlockTextElement 布局缓存（文本/宽度/字体不变则跳过 shape_text） | ⬜ | |
-| P4 | 每帧文档级瘦身：折叠过滤/结构检测按 revision 增量；表格列宽缓存 | ⬜ | |
-| P5 | undo 大文件预算：按字节上限收缩历史，避免重复全文 clone | ⬜ | |
-| P6 | 大 markdown 渲染裁剪：代码块高亮滚入窗口才执行等 | ⬜ | |
-| P7 | 10x 验收：全夹具复测 + 预算断言入库 | ⬜ | |
+| P2a | 纯文本按 512 行分块导入 + 行号续号 + 无损守卫 | ✅ 2026-09-28 c84ef19 | 10MiB log 稳态 442→8.8ms/帧（50x），编辑 765→167ms |
+| P2b | 分块边界编辑（块尾回车/块首退格/块尾前删）+ 行号刷新 | ✅ 2026-09-28 639eabd | 边界编辑语义与单块一致，round-trip 无损 |
+| P2c | 渐进导入（首块同步 + PendingTail 后台续建，每步 4 块） | ✅ 2026-09-28 c697df8 | 首屏只建 512 行；续建每步 ~2.6ms |
+| P4a | 状态栏字数/行数按修订缓存；导入零拷贝规范化 | ✅ 2026-09-28 c654bb7 | 移除每帧整篇重序列化（原 10-80ms/帧） |
+| P4b | 行结构计划缓存（折叠过滤/分组扫描按修订+折叠+TOC 版本缓存）；元素构建推迟到挂载 | ✅ 2026-09-28 bc6cf13 | 10MiB markdown（160k 块）稳态 293→36.5ms/帧（8x） |
+| P5 | undo/编辑路径瘦身：raw_source_text 单遍追加；代码文档跳过全文档图片注册表重建 | ✅ 2026-09-28 73db8ca | 10MiB 序列化 86→1.0ms；编辑触发器（含 \`[\`/\`<\` 的日志）不再每键 O(文档) |
+| P3 | shape memo：BlockTextElement 布局键缓存（文本代数/宽度/字号/字体指纹/主题），min-content 测量短路，冷启动挂载上限 | ✅ 2026-09-28 | 编辑后首帧从 ~250ms（病态 1px 重 shape × taffy 多次 measure）降至 ~22ms |
+| P7 | 10x 验收：全夹具复测 + 台账更新 | ⬜ | |
 
 ## 6. 记录
+
+### 已知剩余（后续候选）
+- 大 markdown 编辑路径：undo finalize 的 `markdown_text` 全文重序列化
+  （160k 块约 2.1s，基线即如此，非本次回归）。候选：按块脏标记的
+  增量序列化缓存。
+- 表格列宽仍每帧重测所有单元格（见 render-pipeline.md §6）。
+- 历史条目无字节预算：200 条 × 全文快照，超大文档内存上限偏高。
+- 流式续建循环无 yield，真实应用打开 10MiB 文档首秒内会有一次
+  ~100-200ms 的主线程占用（G8 markdown 同样存在）。
 
 ### 2026-09-28 P1 代码路径探针与基线
 新增 `manual_code_load_probe`（src/editor/tests.rs，`#[ignore]`，同一 `VELORA_PERF_FILE` 入口）：走 `Editor::from_file_source` 真实代码文件路径，断言进入 Source 模式，输出与 markdown 探针同格式。基线（dev，单 CodeBlock 现状）：
