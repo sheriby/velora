@@ -121,7 +121,16 @@ pub(crate) fn render_latex_to_svg(
         },
     );
     svg = recolor_default_black(&svg, &svg_color(text_color));
-    Ok(svg)
+    Ok(normalize_svg_size_units_to_px(&svg))
+}
+
+/// ratex 把根标签的 `width`/`height` 标成 `pt`，而 usvg/gpui（以及浏览器）会按
+/// 96/72 把 pt 换成 px，于是公式比请求的字号大 1/3（用户报修：块级公式明显过大）。
+/// 它的坐标空间本身就是「1 单位 = 该字号下的 1px」，所以把单位改写成 `px`。
+fn normalize_svg_size_units_to_px(svg: &str) -> String {
+    let head_end = svg.find('>').unwrap_or(svg.len());
+    let (head, rest) = svg.split_at(head_end);
+    format!("{}{}", head.replace("pt\"", "px\""), rest)
 }
 
 /// Stable cache key for formula content and visual parameters.
@@ -130,6 +139,8 @@ pub(crate) fn latex_cache_key(latex: &str, text_color: Hsla, font_size: f32) -> 
     latex.hash(&mut hasher);
     svg_color(text_color).hash(&mut hasher);
     font_size.to_bits().hash(&mut hasher);
+    // 缓存格式版本：SVG 尺寸单位由 `pt` 改为 `px` 后，旧文件必须整体失效重生成。
+    "ratex-svg-px-v2".hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
 
@@ -180,6 +191,36 @@ fn recolor_default_black(svg: &str, color: &str) -> String {
 mod tests {
     use super::*;
     use gpui::rgba;
+
+    #[test]
+    fn svg_root_uses_pixel_size_units() {
+        // ratex 输出 `pt`，usvg/浏览器按 96/72 换算，公式会整体比请求字号大 1/3；
+        // 根标签尺寸必须是 `px`，字号设置才等于看到的字号。
+        let svg = render_latex_to_svg("x^2", Hsla::default(), 16.0).expect("svg");
+        let head = &svg[..svg.find('>').expect("svg root tag")];
+        assert!(head.contains("px\""), "根标签尺寸应为 px: {head}");
+        assert!(!head.contains("pt\""), "根标签不应残留 pt 单位: {head}");
+        // 1 单位 = 该字号下的 1px：字号翻倍，尺寸也翻倍。
+        let height_at = |size: f32| {
+            let svg = render_latex_to_svg("\\frac{1}{3}", Hsla::default(), size).expect("svg");
+            let head = &svg[..svg.find('>').expect("svg root tag")];
+            let after = head.split_once("height=\"").expect("height attr").1;
+            let value: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+                .collect();
+            value.parse::<f32>().expect("numeric height")
+        };
+        let single_em_height = height_at(16.0);
+        assert!(
+            single_em_height > 24.0 && single_em_height < 48.0,
+            "16px 字号的 \\frac{{1}}{{3}} 高度应在 1.5~3em（含留白）之间，实测 {single_em_height}"
+        );
+        assert!(
+            (height_at(32.0) - single_em_height * 2.0).abs() < 0.5,
+            "尺寸应随字号线性变化"
+        );
+    }
 
     #[test]
     fn parses_single_line_display_math() {
