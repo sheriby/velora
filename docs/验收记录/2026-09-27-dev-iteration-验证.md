@@ -262,6 +262,17 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 顺带 | 命中行与文件头都补 `debug_selector`（`workspace-search-hit-{i}` / `workspace-search-file-{i}`），后续 UI 断言可直接定位 | 通过 |
 | 全量回归 | `cargo test` 905 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
 
+## 第二十七批补充（用户报修：点击搜索结果后侧栏闪一下——先空白再恢复）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 用户报修：点击搜索结果（文件名现在可点了，见第二十六批）后，搜索面板先变空白，随后结果又重新出现 | 已复现（状态层） |
+| 根因 | `schedule_workspace_search` 一进入就把 `search_results.clear()` 掉再置 `search_pending`，而去抖窗口是 120ms，期间面板渲染 `…` 占位（看起来就是一片空白）；文件树刷新（watcher）等任何重新调度都会走这条路，点击打开文件后正好容易撞上 | 已定位 |
+| 修复 | ① 重新搜索期间**保留上一次结果**，新结果落地后整体替换（仅当没有任何结果可显示时才用 `…` 占位）；② 查询被清空时立即清空结果，避免留下过期结果 | 通过 |
+| 用例 | `re_search_keeps_previous_results_visible`：建工作区搜索（3 条命中）→ 调 `refresh_workspace_tree` 模拟 watcher 触发的重新调度 → 断言 pending 期间结果仍是 3 条、面板仍渲染出文件头与命中行（`debug_bounds`）、120ms 后结果一致 → 再清空查询，断言结果立即为空且不 pending | 通过（**正控**：恢复「进函数就清空」后状态断言实测失败 left:0/right:3；把 pending 判断改回「pending 就显示 …」后面板断言实测失败） |
+| 顺带修门禁空心 | 排查正控时发现 `debug_bounds` 在 gpui 里**跨帧累积**（`Frame::clear()` 没清 `debug_bounds`），于是「元素还在不在」这类断言会读到早已消失元素的旧边界——正控一度因此假绿。本地补丁 `vendor/gpui/src/window.rs` 在逐帧 `clear()` 里补 `debug_bounds.clear()`，此后查询的是当前帧；原有 4 处 debug_bounds 用例（TOC 条目、折叠 chevron、代码复制按钮、长块护栏）全部复跑通过 | 通过 |
+| 全量回归 | `cargo test` 906 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

@@ -773,6 +773,10 @@ impl Frame {
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.tab_stops.clear();
+        // 本地补丁：逐帧清掉 debug_bounds，保证测试里查到的边界属于「当前这一帧」；
+        // 不清会让已消失的元素（例如重新搜索时被占位替换的结果行）继续被查到，
+        // 门禁于是变成空心（绿了但没测到东西）。
+        self.debug_bounds.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]

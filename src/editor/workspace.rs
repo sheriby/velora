@@ -1953,7 +1953,6 @@ impl Editor {
     fn schedule_workspace_search(&mut self, cx: &mut Context<Self>) {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         let generation = self.workspace.search_generation;
-        self.workspace.search_results.clear();
         self.workspace.search_active_index = None;
         self.workspace.document_search_source = None;
         self.workspace.document_active_range = None;
@@ -1961,11 +1960,14 @@ impl Editor {
         let scope = self.workspace.search_scope;
         let tree = self.workspace.file_tree.clone();
         if matcher.is_empty() || (scope == WorkspaceSearchScope::Workspace && tree.is_none()) {
+            self.workspace.search_results.clear();
             self.workspace.search_pending = false;
             self.sync_document_search_highlights(cx);
             cx.notify();
             return;
         }
+        // 去抖窗口里保留上一次的结果，新结果落地后再整体替换：清空会让侧栏
+        // 先闪成空白再恢复（用户报修，watcher 刷新文件树等任何重新调度都会触发）。
         self.workspace.search_pending = true;
         let editor = cx.entity().downgrade();
         let background = cx.background_executor().clone();
@@ -4673,7 +4675,9 @@ impl Editor {
         strings: &I18nStrings,
         editor: &WeakEntity<Editor>,
     ) -> AnyElement {
-        if self.workspace.search_pending {
+        // 只在还没有任何结果可显示时才用「…」占位：重新搜索期间继续显示上一次
+        // 的结果，避免侧栏闪空（用户报修）。
+        if self.workspace.search_pending && self.workspace.search_results.is_empty() {
             return div()
                 .p(px(12.0))
                 .text_size(px(14.0))
@@ -7531,6 +7535,80 @@ mod tests {
                 "点文件头应打开对应的 Markdown 文件"
             );
             assert!(editor.unsupported_preview_path.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn re_search_keeps_previous_results_visible(cx: &mut TestAppContext) {
+        // 用户报修：点击搜索结果后侧栏闪一下——先空白再恢复。触发重新搜索的来源
+        // 很多（watcher 刷新文件树、重新调度等），但闪空的根因是重新搜索一开始就
+        // 清空 `search_results`，面板在 120ms 去抖窗口里只剩「…」。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-search-keep-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("assets").join("velotype-banner.png"), [0u8, 1, 2, 3]).unwrap();
+        fs::write(root.join("velotype-notes.md"), "开头\nvelotype 命中行\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+            editor.workspace.active_tab = super::WorkspaceTab::Search;
+            editor.workspace.search_query = "velotype".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        let baseline = editor.read_with(cx, |editor, _| editor.workspace.search_results.len());
+        assert_eq!(baseline, 3);
+
+        // 模拟「打开文件后 watcher 触发文件树刷新」：这会重新调度搜索。
+        editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.workspace.search_pending, "重新搜索应处于进行中");
+            assert_eq!(
+                editor.workspace.search_results.len(),
+                baseline,
+                "重新搜索期间应继续显示旧结果，而不是先清空"
+            );
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(
+            cx.debug_bounds("workspace-search-file-0").is_some(),
+            "重新搜索期间侧栏不应闪成空白"
+        );
+        assert!(cx.debug_bounds("workspace-search-hit-2").is_some());
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            assert!(!editor.workspace.search_pending);
+            assert_eq!(editor.workspace.search_results.len(), baseline);
+        });
+
+        // 查询被清空时必须立刻丢掉旧结果（面板回到空态），不能留着过期结果。
+        editor.update(cx, |editor, cx| {
+            editor.workspace.search_query.clear();
+            editor.schedule_workspace_search(cx);
+        });
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.workspace.search_results.is_empty());
+            assert!(!editor.workspace.search_pending);
         });
     }
 

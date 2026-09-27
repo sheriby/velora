@@ -11,7 +11,7 @@
 | 项 | 状态 |
 |----|------|
 | Roadmap 完成 | **66 / 66 行已标 ✅**（A7 标「✅(应用侧)」：应用侧闭环，剩余为解锁后的人工确认；C1/C8/C10 等为 v1 形态并标注） |
-| 测试 | 905 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
+| 测试 | 906 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
 | 编译 | `cargo build` 零错误零警告（dev profile） |
 | 远程 | `origin/dev` 已推送（最新提交见 `git log -1`）；main 未动 |
 | 工作树 | 仅 `?? .zcodeignore`（按用户要求**不提交**） |
@@ -43,6 +43,7 @@
 - **A2 报修补齐** 窗口位置/大小记忆：三条退出路径（应用内关闭 / 平台红灯关闭 / ⌘Q）都落盘，移除统一走 `Editor::close_editor_window`（源码守卫用例）；⌘Q 此前还会因窗口借用导致 `window.update` 失败而**静默不退出**，改为 `cx.defer` 延后执行
 - **A3/H1 报修补齐** 设置新增窗口位置项：窗口页「打开位置」（记住上次位置 / 居中打开）与「记住窗口位置与大小」开关（从文件页移入），config.toml `[window] open_position`；「居中打开」使默认窗口尺寸真正生效
 - **搜索结果报修补齐** 工作区搜索的文件头整行可点（打开该文件/跳到该组首条命中），文件名命中不再渲染成一条看不见的空行（此前只有那条细条能点）
+- **搜索闪空白报修补齐** 重新搜索期间保留上一次结果（此前一进 `schedule_workspace_search` 就清空，120ms 去抖窗口里侧栏只剩 `…` 占位，看起来就是闪一下空白）；查询清空时才立即丢结果
 
 ### 剩余人工项
 
@@ -142,6 +143,7 @@
 8. **`Context::emit` 是延迟效果**：事件先入 `pending_effects`，订阅者在该实体 lease 释放后才被调用，所以事件处理器里可以安全 `read`/`update` 发出事件的那个块（C7 chevron 依赖这一点）。
 9. **`Entity::update` 不会自动 notify**：渲染期跨实体写字段是安全的（不 notify ⇒ 无自触发重渲染循环），需要重绘必须显式 `cx.notify()`。
 10. **元素级 UI 验证手法**：元素加 test-only `debug_selector` + `VisualTestContext::debug_bounds("名字")` 取真实布局，再用 `simulate_click(bounds.center(), Modifiers::none())` 端到端点击；锁屏环境下这比截图可靠（C7 用例见 tests.rs）。
+11. **`debug_bounds` 现在是逐帧的**：上游 gpui 的 `Frame::clear()` 没清 `debug_bounds`，导致「元素还在不在」的断言会读到早已消失元素的旧边界（正控假绿过）。已本地补丁为逐帧清空（`vendor/gpui/src/window.rs`）；写这类断言前记得先 `window.draw(cx)` 再查。
 
 ## 四、验证方式
 
