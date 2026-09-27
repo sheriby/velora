@@ -3656,12 +3656,24 @@ impl Editor {
 
     pub(super) fn active_code_line_count(&self, cx: &App) -> Option<usize> {
         self.code_tab_active().then(|| {
-            let source = self.document.raw_source_text(cx);
-            if source.is_empty() {
-                1
-            } else {
-                source.split('\n').count()
+            // P4a：按修订缓存；逐块统计换行片段数，禁止整篇重新序列化
+            // （此前每帧 raw_source_text 一次，10 MiB 文档是每帧的灾难）。
+            let revision = self.document_revision;
+            if let Some((cached_revision, lines)) = self.code_line_count_cache.get()
+                && cached_revision == revision
+            {
+                return lines;
             }
+            let mut pieces = 0usize;
+            for visible in self.document.visible_blocks() {
+                pieces += visible.entity.read(cx).display_text().split('\n').count();
+            }
+            if let Some(tail) = self.document.pending_tail() {
+                pieces += tail.lines.len() - tail.next_line;
+            }
+            let lines = pieces.max(1);
+            self.code_line_count_cache.set(Some((revision, lines)));
+            lines
         })
     }
 

@@ -110,6 +110,12 @@ pub struct Editor {
     /// their running sum stays correct as the document scrolls. Filled as rows
     /// paint; unknown rows use a minimum-height estimate.
     row_stride_cache: HashMap<EntityId, f32>,
+    /// 状态栏整篇字数缓存（P4a）：键 document_revision。渲染每帧读取，
+    /// 全文扫描只允许在每次修订后发生一次。
+    word_count_cache: std::cell::Cell<Option<(u64, usize)>>,
+    /// 状态栏代码文档行数缓存（P4a）：键 document_revision，避免每帧
+    /// 重新序列化整篇文档只为数行数。
+    code_line_count_cache: std::cell::Cell<Option<(u64, usize)>>,
     /// Content column the cached footprints were measured at. Rows rewrap when it
     /// changes, so entries from another width are discarded rather than reused.
     row_stride_width: Option<f32>,
@@ -482,6 +488,8 @@ impl Editor {
             last_scroll_viewport_size: None,
             prev_visible_block_ids: Vec::new(),
             row_stride_cache: HashMap::new(),
+            word_count_cache: std::cell::Cell::default(),
+            code_line_count_cache: std::cell::Cell::default(),
             row_stride_width: None,
             prev_mounted_run: None,
             close_guard_installed: false,

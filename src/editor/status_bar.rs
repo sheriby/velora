@@ -14,6 +14,19 @@ pub(super) struct StatusBarState {
 }
 
 impl Editor {
+    /// 状态栏整篇字数（P4a：按 document_revision 缓存，避免每帧全文扫描）。
+    pub(super) fn cached_total_word_count(&self) -> usize {
+        let revision = self.document_revision;
+        if let Some((cached_revision, count)) = self.word_count_cache.get()
+            && cached_revision == revision
+        {
+            return count;
+        }
+        let count = count_words(&self.last_stable_source_text);
+        self.word_count_cache.set(Some((revision, count)));
+        count
+    }
+
     pub(super) fn render_status_bar(
         &mut self,
         theme: &Theme,
@@ -47,7 +60,7 @@ impl Editor {
                     .into_any_element(),
             );
         } else if prefs.show_word_count {
-            let total_count = count_words(&self.last_stable_source_text);
+            let total_count = self.cached_total_word_count();
             let selection_count = self.selected_markdown_text(cx).as_deref().map(count_words);
             right_items.push(render_word_count(
                 selection_count,

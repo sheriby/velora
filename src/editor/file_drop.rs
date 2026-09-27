@@ -213,10 +213,17 @@ impl Editor {
         code_language: Option<SharedString>,
         cx: &mut Context<Self>,
     ) {
-        let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+        // P6 顺手项：LF 文档（常见日志/代码）零拷贝直通，避免两次全文分配。
+        let had_cr = markdown.contains('\r');
+        let had_crlf = markdown.contains("\r\n");
+        let normalized = if had_cr {
+            markdown.replace("\r\n", "\n").replace('\r', "\n")
+        } else {
+            markdown
+        };
         let is_code = code_language.is_some();
         self.code_document = is_code;
-        self.code_uses_crlf = is_code && markdown.contains("\r\n");
+        self.code_uses_crlf = is_code && had_crlf;
         let source_mode_fallback_required =
             !is_code && Self::markdown_requires_source_mode_fallback(&normalized);
         let mut pending_code_tail = None;
@@ -261,6 +268,8 @@ impl Editor {
             ViewMode::Rendered
         };
         self.source_mode_fallback_required = source_mode_fallback_required;
+        // 导入视为一次修订：按 revision 缓存的统计（字数/行数等）全部失效。
+        self.document_revision = self.document_revision.wrapping_add(1);
         self.document.replace_roots(roots, cx);
         if let Some(tail) = pending_code_tail {
             self.document.set_pending_tail(Some(tail));
@@ -299,7 +308,8 @@ impl Editor {
         self.last_selection_snapshot = Self::empty_selection_snapshot();
         self.last_stable_source_text = normalized;
         self.history_restore_in_progress = false;
-        self.refresh_stable_document_snapshot(cx);
+        // 导入路径无需再全文重序列化一遍：last_stable_source_text 就是
+        // 刚刚建块的源文本（无损导入不变量），刷新只会白付一次 O(n)。
         self.sync_workspace_after_document_path_change(cx);
         cx.notify();
     }
