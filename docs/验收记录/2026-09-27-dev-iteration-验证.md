@@ -326,6 +326,19 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 全量回归 | `cargo build` 0 警告；`cargo test` 915 通过 0 失败 1 ignored | 通过 |
 | 待人工目视 | 重启 `cargo run` 后确认：块级积分式明显小于改前、与正文比例接近 Typora/KaTeX；行内公式与行高协调；导出 HTML 里的公式同尺寸 | 待复核 |
 
+## 第三十二批补充（用户报修：长文件树滚到下面点文件，树刷新并自动置顶）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 侧栏文件树较长、向下滚动后点一个文件：树刷新并跳回顶部 | 已复现（用例可稳定复现：偏移 -600px → 0） |
+| 根因链 | 打开文件 → `file_drop.rs` → `sync_workspace_after_document_path_change`（`workspace.rs:1639`）无条件把 `workspace.file_tree` 与 `tree_scan_root` 清成 `None` → 复用「已扫描」守卫失效，重新起后台扫描；重扫落地的那一帧侧栏树体只剩「…」占位（内容高 ≈30px），而 gpui 的 `div` 在 `clamp_scroll_position` 里按新的 `scroll_max`（此时为 0）把记住的滚动偏移夹到 0 **并写回共享状态**，扫描完成后偏移已经没了 ⇒ 看起来就是「刷新后自动置顶」 | 已定位 |
+| 修复 | 同一根目录下不再丢树：只有 `previous_root != self.workspace.root`（真的换工作区）才清 `file_tree`/`tree_scan_root`；重扫照旧发起，内容仍然更新。与 `refresh_workspace_tree`（保留旧树直到新扫描落地）口径一致 | 通过 |
+| 可观测性 | `WorkspaceState` 新增 `tree_scroll_handle: ScrollHandle`，侧栏滚动容器加 `.track_scroll(...)`；滚动位置从此可断言（此前偏移只藏在 gpui 元素状态里） | 通过 |
+| 用例 | `clicking_a_file_keeps_the_tree_scroll_offset`：80 个 md 的工作区 + 260px 高窗口 → `simulate_event(ScrollWheelEvent)` 滚下去（断言 `offset().y < 0`，实测 -600px）→ `open_workspace_file` → 重扫落地前那一帧断言 ① `file_tree.is_some()` ② 偏移未变 → `run_until_parked` 后再断言偏移仍未变 | 通过 |
+| 正控 | 把守卫改回「无条件丢树」（`if previous_root != root \|\| true`）⇒ 状态断言失败；再把状态断言摘掉单跑 ⇒ 偏移断言失败（`left: -0px / right: -600px`）。两条断言各自都是承重的 | 通过 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 916 通过 0 失败 1 ignored | 通过 |
+| 待人工目视 | 真机滚到长树中部点开文件：树不再跳顶；换开另一个目录的工作区时树仍会正常重建 | 待复核 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

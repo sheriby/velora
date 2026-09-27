@@ -263,6 +263,8 @@ pub(super) struct WorkspaceState {
     tree_filter_focus: Option<FocusHandle>,
     panel_width: Option<f32>,
     resize_drag: Option<WorkspaceResizeDrag>,
+    /// 侧栏文件树滚动位置：让「点文件后重扫不跳回顶部」可断言（用户报修）。
+    pub(crate) tree_scroll_handle: ScrollHandle,
 }
 
 impl Default for WorkspaceState {
@@ -311,6 +313,7 @@ impl Default for WorkspaceState {
             tree_filter_focus: None,
             panel_width: None,
             resize_drag: None,
+            tree_scroll_handle: ScrollHandle::new(),
         }
     }
 }
@@ -1636,12 +1639,19 @@ impl Editor {
                 self.workspace.active_document = Some(path);
             }
         }
-        self.workspace.file_tree = None;
-        self.workspace.tree_scan_root = None;
+        // 只有工作区根目录真的换了才丢树：同一根目录下点开一个文件时把树清空，
+        // 会让侧栏在后台重扫的那一帧只剩「…」占位（内容高度≈30px），gpui 的
+        // div 会把记住的滚动偏移按新的 scroll_max 夹到 0 并写回，于是长树滚到
+        // 下面再点文件就自动置顶（用户报修）。重扫照旧会刷新内容。
+        let previous_root = self.workspace.root.clone();
         self.clear_workspace_file_error();
         self.workspace.outline_source = None;
         if self.workspace.root.is_none() {
             self.workspace.root = self.workspace_root_for_current_file();
+        }
+        if previous_root != self.workspace.root {
+            self.workspace.file_tree = None;
+            self.workspace.tree_scan_root = None;
         }
         if self.workspace.is_open {
             self.sync_workspace_models(cx);
@@ -3684,6 +3694,7 @@ impl Editor {
                         .flex_1()
                         .min_h(px(0.0))
                         .overflow_y_scroll()
+                        .track_scroll(&self.workspace.tree_scroll_handle)
                         .px(px(4.0))
                         .py(px(6.0))
                         .child(body),
@@ -6666,7 +6677,10 @@ mod tests {
         search_workspace_files,
     };
     use crate::components::{Block, UndoCaptureKind};
-    use gpui::{AppContext, ClipboardItem, EntityInputHandler, Modifiers, TestAppContext, point, px};
+    use gpui::{
+        AppContext, ClipboardItem, EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
+        TestAppContext, TouchPhase, point, px,
+    };
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -7536,6 +7550,86 @@ mod tests {
             );
             assert!(editor.unsupported_preview_path.is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn clicking_a_file_keeps_the_tree_scroll_offset(cx: &mut TestAppContext) {
+        // 用户报修：长文件树滚到下面后点一个文件，树会刷新并自动置顶。
+        // 根因是打开文件时把已扫描的树清成 None，重扫落地前的那一帧侧栏只剩
+        // 「…」（内容高度 ≈30px），gpui 的 div 会把记住的偏移按新的 scroll_max
+        // 夹到 0 并写回，重扫完成后偏移已经没了。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-tree-scroll-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..80 {
+            fs::write(
+                root.join(format!("note-{index:02}.md")),
+                format!("# note {index}\n"),
+            )
+            .unwrap();
+        }
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+        });
+        cx.run_until_parked();
+        // 压矮窗口，让 80 行的树必须滚动才有下方内容。
+        cx.update(|window, _cx| window.resize(gpui::size(px(320.0), px(260.0))));
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(60.0), px(200.0)),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-600.0))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::default(),
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        let scrolled =
+            editor.read_with(cx, |editor, _| editor.workspace.tree_scroll_handle.offset().y);
+        assert!(
+            scrolled < px(0.0),
+            "滚轮应把长树滚下去（gpui 的偏移向下为负），实测 {scrolled:?}"
+        );
+
+        let target = root.join("note-70.md");
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(target.clone(), window, cx);
+            });
+        });
+        // 重扫落地前的那一帧：树不能被丢掉。
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor.workspace.file_tree.is_some(),
+                "同一根目录下点开文件不应丢掉已扫描的树"
+            );
+        });
+        let after_click =
+            editor.read_with(cx, |editor, _| editor.workspace.tree_scroll_handle.offset().y);
+        assert_eq!(after_click, scrolled, "点文件那一刻滚动位置不应被重置");
+
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        let settled =
+            editor.read_with(cx, |editor, _| editor.workspace.tree_scroll_handle.offset().y);
+        assert_eq!(settled, scrolled, "重扫落地后滚动位置仍应保持");
     }
 
     #[gpui::test]
