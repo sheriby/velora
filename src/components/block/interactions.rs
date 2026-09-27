@@ -303,6 +303,15 @@ impl Block {
             if !self.selected_range.is_empty() {
                 self.replace_text_in_range(None, "", window, cx);
             }
+            if self.cursor_offset() == self.visible_len() {
+                // 源码分块文档：块尾的换行由块边界表示。交给编辑器在本块
+                // 之后插一个空块（尾部块尾回车 = 追加文件末换行，语义相同）。
+                cx.emit(BlockEvent::RequestNewline {
+                    trailing: InlineTextTree::plain(String::new()),
+                    source_already_mutated: false,
+                });
+                return;
+            }
             self.replace_text_in_range(None, "\n", window, cx);
             return;
         }
@@ -449,6 +458,13 @@ impl Block {
         }
 
         if self.is_source_raw_mode() {
+            if self.selected_range.is_empty() && self.cursor_offset() == 0 {
+                // 源码分块文档：块首退格 = 删除与前一块之间的边界换行。
+                cx.emit(BlockEvent::RequestMergeIntoPrev {
+                    content: self.record.title.clone(),
+                });
+                return;
+            }
             if self.selected_range.is_empty() {
                 self.select_to(self.previous_boundary(self.cursor_offset()), cx);
             }
@@ -539,6 +555,11 @@ impl Block {
         }
 
         if self.is_source_raw_mode() {
+            if self.selected_range.is_empty() && self.cursor_offset() == self.visible_len() {
+                // 源码分块文档：块尾前向删除 = 删除与下一块之间的边界换行。
+                cx.emit(BlockEvent::RequestMergeFromNext);
+                return;
+            }
             if self.selected_range.is_empty() {
                 self.select_to(self.next_boundary(self.cursor_offset()), cx);
             }

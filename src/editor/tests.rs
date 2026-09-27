@@ -10,9 +10,9 @@ use gpui::{
 
 use super::{Editor, MountedRun, ViewMode};
 use crate::components::{
-    Block, BlockEvent, BlockKind, BlockRecord, CloseWindow, FocusNext, ImageReferenceDefinitions,
-    ImageResolvedSource, InlineTextTree, Newline, QuitApplication, SaveDocument,
-    TableCellInlineImageSegment, TableColumnAlignment, UndoCaptureKind,
+    Block, BlockEvent, BlockKind, BlockRecord, CloseWindow, Delete, DeleteBack, FocusNext,
+    ImageReferenceDefinitions, ImageResolvedSource, InlineTextTree, Newline, QuitApplication,
+    SaveDocument, TableCellInlineImageSegment, TableColumnAlignment, UndoCaptureKind,
     parse_table_cell_inline_images, superscript_ordinal,
 };
 use crate::export::ExportFormat;
@@ -273,6 +273,136 @@ async fn small_code_files_stay_single_chunk(cx: &mut TestAppContext) {
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.document.visible_blocks().len(), 1);
     });
+}
+
+/// 700 行 + 行尾换行 → 701 个行片段 → 512/189 两块。
+fn chunk_boundary_source() -> String {
+    let mut source = String::new();
+    for index in 0..700 {
+        source.push_str(&format!("line-{index}\n"));
+    }
+    source
+}
+
+#[gpui::test]
+async fn backspace_at_chunk_start_merges_previous_chunk(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = chunk_boundary_source();
+    let path = std::env::temp_dir().join(format!("velora-chunk-bs-{}.log", std::process::id()));
+    fs::write(&path, &source).expect("write chunk fixture");
+    let expected_source = source.clone();
+    let expected_merged = source.replace("line-511\nline-512", "line-511line-512");
+
+    let editor =
+        cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
+    editor
+        .update(cx, |editor, window, cx| {
+            let blocks = editor.document.flatten_visible_blocks();
+            assert_eq!(blocks.len(), 2);
+            let second = blocks[1].entity.clone();
+            second.update(cx, |block, cx| {
+                block.selected_range = 0..0;
+                block.on_delete_back(&DeleteBack, window, cx);
+            });
+        })
+        .expect("editor window should be open");
+    cx.run_until_parked();
+
+    editor
+        .read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.document.visible_blocks().len(),
+                1,
+                "块首退格应并入前块"
+            );
+            assert_eq!(editor.current_document_source(cx), expected_merged);
+        })
+        .expect("editor window should be open");
+
+    editor
+        .update(cx, |editor, _window, cx| editor.undo_document(cx))
+        .expect("editor window should be open");
+    cx.run_until_parked();
+    editor
+        .read_with(cx, |editor, cx| {
+            assert_eq!(editor.document.visible_blocks().len(), 2, "undo 恢复分块");
+            assert_eq!(editor.current_document_source(cx), expected_source);
+        })
+        .expect("editor window should be open");
+}
+
+#[gpui::test]
+async fn enter_at_chunk_end_inserts_boundary_chunk(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = chunk_boundary_source();
+    let path = std::env::temp_dir().join(format!("velora-chunk-enter-{}.log", std::process::id()));
+    fs::write(&path, &source).expect("write chunk fixture");
+    let expected_source = source.replace("line-511\nline-512", "line-511\n\nline-512");
+
+    let editor =
+        cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
+    editor
+        .update(cx, |editor, window, cx| {
+            let blocks = editor.document.flatten_visible_blocks();
+            assert_eq!(blocks.len(), 2);
+            let first = blocks[0].entity.clone();
+            let end = first.read(cx).display_text().len();
+            first.update(cx, |block, cx| {
+                block.selected_range = end..end;
+                block.on_newline(&Newline, window, cx);
+            });
+        })
+        .expect("editor window should be open");
+    cx.run_until_parked();
+
+    editor
+        .read_with(cx, |editor, cx| {
+            let blocks = editor.document.visible_blocks();
+            assert_eq!(blocks.len(), 3, "块尾回车应插入一个空块");
+            let starts: Vec<usize> = blocks
+                .iter()
+                .map(|visible| visible.entity.read(cx).source_line_start())
+                .collect();
+            assert_eq!(starts, vec![1, 513, 514], "行号续号应随插入刷新");
+            assert_eq!(editor.current_document_source(cx), expected_source);
+        })
+        .expect("editor window should be open");
+}
+
+#[gpui::test]
+async fn delete_at_chunk_end_merges_next_chunk(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = chunk_boundary_source();
+    let path = std::env::temp_dir().join(format!("velora-chunk-del-{}.log", std::process::id()));
+    fs::write(&path, &source).expect("write chunk fixture");
+    let expected_merged = source.replace("line-511\nline-512", "line-511line-512");
+
+    let editor =
+        cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
+    editor
+        .update(cx, |editor, window, cx| {
+            let blocks = editor.document.flatten_visible_blocks();
+            assert_eq!(blocks.len(), 2);
+            let first = blocks[0].entity.clone();
+            let end = first.read(cx).display_text().len();
+            first.update(cx, |block, cx| {
+                block.selected_range = end..end;
+                block.on_delete(&Delete, window, cx);
+            });
+        })
+        .expect("editor window should be open");
+    cx.run_until_parked();
+
+    editor
+        .read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.document.visible_blocks().len(),
+                1,
+                "块尾前删应并入后块"
+            );
+            assert_eq!(editor.current_document_source(cx), expected_merged);
+        })
+        .expect("editor window should be open");
 }
 
 #[gpui::test]

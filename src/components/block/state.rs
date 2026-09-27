@@ -758,6 +758,9 @@ pub enum BlockEvent {
     /// The user pressed Backspace at the start of this block; its entire
     /// content should be appended to the previous block.
     RequestMergeIntoPrev { content: InlineTextTree },
+    /// 源码分块文档中，用户在块尾按了 Delete（前向删除）：下一个块的
+    /// 内容应并入本块（删掉块边界换行）。
+    RequestMergeFromNext,
     /// A multi-line paste was detected; the editor must split the pasted
     /// lines into separate blocks and re-attach the leading/trailing text
     /// to the correct positions.

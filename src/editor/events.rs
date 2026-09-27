@@ -186,6 +186,7 @@ impl Editor {
                 | BlockEvent::RequestQuoteBreak
                 | BlockEvent::RequestCalloutBreak
                 | BlockEvent::RequestMergeIntoPrev { .. }
+                | BlockEvent::RequestMergeFromNext
                 | BlockEvent::RequestPasteMultiline { .. }
                 | BlockEvent::RequestPasteImage { .. }
                 | BlockEvent::RequestIndent
@@ -1742,10 +1743,14 @@ impl Editor {
                     );
                 }
                 let current_kind = block.read(cx).kind();
-                let new_block = Self::new_block(
-                    cx,
-                    BlockRecord::new(current_kind.newline_sibling_kind(), trailing.clone()),
-                );
+                // 源码分块文档：新块与当前块同类（CodeBlock/原始段落），
+                // 才能保持整篇源码等宽直编的形态。
+                let sibling_kind = if self.view_mode == super::ViewMode::Source {
+                    current_kind.clone()
+                } else {
+                    current_kind.newline_sibling_kind()
+                };
+                let new_block = Self::new_block(cx, BlockRecord::new(sibling_kind, trailing.clone()));
                 if self.view_mode == super::ViewMode::Source {
                     new_block.update(cx, |block, _cx| block.set_source_document_mode());
                 }
@@ -1896,6 +1901,47 @@ impl Editor {
                 } else {
                     self.rebuild_image_runtimes(cx);
                 }
+                self.mark_dirty(cx);
+                self.finalize_pending_undo_capture(cx);
+                cx.notify();
+            }
+            BlockEvent::RequestMergeFromNext => {
+                // 源码分块文档：块尾前向删除，把下一块并入本块（即删除
+                // 块边界换行）。光标落在接缝处。
+                let Some(next) = visible_before.get(current_visible_index + 1) else {
+                    return;
+                };
+                let next = next.entity.clone();
+                self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+
+                let cursor_pos = block.read(cx).display_text().len();
+                let adopted_children = super::tree::DocumentTree::take_children(&next, cx);
+                let removed_entity_id = next.entity_id();
+                let next_title = next.read(cx).record.title.clone();
+
+                self.document.with_structure_mutation(cx, |document, cx| {
+                    block.update(cx, {
+                        let next_title = next_title.clone();
+                        let adopted_children = adopted_children.clone();
+                        move |block, cx| {
+                            let mut merged = block.record.title.clone();
+                            merged.append_tree(next_title);
+                            block.record.set_title(merged);
+                            block.sync_render_cache();
+                            block.children.extend(adopted_children);
+                            block.selected_range = cursor_pos..cursor_pos;
+                            block.selection_reversed = false;
+                            block.marked_range = None;
+                            block.vertical_motion_x = None;
+                            block.cursor_blink_epoch = Instant::now();
+                            cx.notify();
+                        }
+                    });
+                    let _ = document.remove_block_by_id_raw(removed_entity_id, cx);
+                });
+
+                self.focus_block(block.entity_id());
+                self.rebuild_image_runtimes(cx);
                 self.mark_dirty(cx);
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();

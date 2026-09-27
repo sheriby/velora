@@ -418,8 +418,24 @@ impl Editor {
             self.pending_window_title_refresh = true;
             cx.notify();
         }
+        self.refresh_source_line_starts(cx);
         self.schedule_autosave(cx);
         self.refresh_document_find_after_edit(cx);
+    }
+
+    /// 源码分块文档的行号续号：文本/结构变化后重算每块的首行行号
+    /// （分块见 `build_source_document_roots`；渲染模式文档没有行号槽）。
+    fn refresh_source_line_starts(&mut self, cx: &mut Context<Self>) {
+        if !(self.code_document || self.source_mode_fallback_required) {
+            return;
+        }
+        let mut next_line = 1usize;
+        for visible in self.document.flatten_visible_blocks() {
+            next_line = visible.entity.update(cx, |block, _cx| {
+                block.set_source_line_start(next_line);
+                next_line + block.display_text().split('\n').count()
+            });
+        }
     }
 
     pub(super) fn request_active_block_scroll_into_view(&mut self, cx: &mut Context<Self>) {
