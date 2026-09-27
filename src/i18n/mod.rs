@@ -451,6 +451,8 @@ pub struct I18nStrings {
     pub image_load_failed: String,
     /// Placeholder shown in the code-block language input when no language is set.
     pub code_language_placeholder: String,
+    /// 代码块「复制代码」按钮文案（roadmap B9）。
+    pub code_copy_button: String,
     /// Label for the sidebar/files toggle button in the status bar.
     pub status_bar_files: String,
     /// Label for source mode in the status bar mode switch.
@@ -728,6 +730,7 @@ struct I18nStringsDe {
     image_loading_with_alt_template: Option<String>,
     image_load_failed: Option<String>,
     code_language_placeholder: Option<String>,
+    code_copy_button: Option<String>,
     status_bar_files: Option<String>,
     status_bar_mode_source: Option<String>,
     status_bar_mode_rendered: Option<String>,
@@ -992,6 +995,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "image_loading_with_alt_template",
     "image_load_failed",
     "code_language_placeholder",
+    "code_copy_button",
     "status_bar_files",
     "status_bar_mode_source",
     "status_bar_mode_rendered",
@@ -1676,6 +1680,9 @@ impl I18nStringsDe {
             code_language_placeholder: self
                 .code_language_placeholder
                 .unwrap_or(defaults.code_language_placeholder),
+            code_copy_button: self
+                .code_copy_button
+                .unwrap_or(defaults.code_copy_button),
             status_bar_files: self.status_bar_files.unwrap_or(defaults.status_bar_files),
             status_bar_mode_source: self
                 .status_bar_mode_source
@@ -1977,6 +1984,7 @@ impl I18nStrings {
             image_loading_with_alt_template: "正在加载 {alt}".into(),
             image_load_failed: "无法加载图片".into(),
             code_language_placeholder: "语言".into(),
+            code_copy_button: "复制".into(),
             status_bar_files: "侧边栏".into(),
             status_bar_mode_source: "源码".into(),
             status_bar_mode_rendered: "渲染".into(),
@@ -2276,6 +2284,7 @@ impl I18nStrings {
             image_loading_with_alt_template: "Loading {alt}".into(),
             image_load_failed: "Failed to Load Image".into(),
             code_language_placeholder: "language".into(),
+            code_copy_button: "Copy".into(),
             status_bar_files: "Sidebar".into(),
             status_bar_mode_source: "Source".into(),
             status_bar_mode_rendered: "Rendered".into(),

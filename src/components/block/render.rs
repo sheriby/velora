@@ -2796,11 +2796,48 @@ impl Render for Block {
                     let input_height = d.code_language_input_height
                         + d.code_language_input_padding_y * 2.0
                         + d.code_language_input_border_width * 2.0;
+                    let code_copied = self
+                        .code_copied_at
+                        .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(1200));
+                    let copy_label: SharedString = if code_copied {
+                        "\u{2713}".into()
+                    } else {
+                        strings.code_copy_button.clone().into()
+                    };
                     div()
                         .w_full()
                         .relative()
                         .pb(px(input_height + d.code_language_input_gap))
                         .child(code_panel)
+                        .child(
+                            // 「复制代码块内容」（roadmap B9）：语言输入框左侧。
+                            div()
+                                .id("code-copy-button")
+                                .debug_selector(|| "code-copy-button".to_string())
+                                .absolute()
+                                .right(px(
+                                    d.code_language_input_width + d.code_language_input_gap * 2.0
+                                ))
+                                .bottom(px(0.0))
+                                .occlude()
+                                .h(px(input_height))
+                                .px(px(d.code_language_input_padding_x))
+                                .flex()
+                                .items_center()
+                                .rounded(px(d.code_language_input_radius))
+                                .border(px(d.code_language_input_border_width))
+                                .border_color(c.code_language_input_border)
+                                .bg(c.code_language_input_bg)
+                                .text_size(px((t.code_size - 1.0).max(10.0)))
+                                .text_color(c.code_language_input_text)
+                                .cursor(CursorStyle::PointingHand)
+                                .hover(|style| style.bg(c.dialog_secondary_button_hover))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(Self::on_code_copy_button),
+                                )
+                                .child(copy_label),
+                        )
                         .child(
                             div()
                                 .absolute()

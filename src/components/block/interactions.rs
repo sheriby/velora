@@ -3,7 +3,7 @@
 //! in [`crate::components::actions`] and delegates structural changes to the
 //! parent editor via `BlockEvent` emissions.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::*;
 
@@ -1579,6 +1579,34 @@ impl Block {
             }
             self.select_to(self.index_for_mouse_position(event.position), cx);
         }
+    }
+
+    /// 「复制代码块内容」（roadmap B9）：写入剪贴板并短暂显示 ✓ 反馈。
+    pub(crate) fn on_code_copy_button(
+        &mut self,
+        _: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        let code = self.display_text().to_string();
+        if code.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(code));
+        self.code_copied_at = Some(Instant::now());
+        cx.notify();
+        cx.spawn(async move |block, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1200))
+                .await;
+            let _ = block.update(cx, |block, cx| {
+                if block.code_copied_at.take().is_some() {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn on_task_checkbox_mouse_down(

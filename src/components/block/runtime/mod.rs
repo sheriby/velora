@@ -193,6 +193,8 @@ pub struct Block {
     link_reference_definitions: Arc<LinkReferenceDefinitions>,
     footnote_registry: Arc<FootnoteRegistry>,
     pub(crate) list_group_separator_candidate: bool,
+    /// 「复制代码」按钮的反馈时间戳（roadmap B9）：短时间内显示 ✓。
+    pub(crate) code_copied_at: Option<Instant>,
     numbered_list_restart_requested: bool,
     quote_reparse_requested: bool,
 }
@@ -295,6 +297,7 @@ impl Block {
             link_reference_definitions: Arc::default(),
             footnote_registry: Arc::default(),
             list_group_separator_candidate: false,
+            code_copied_at: None,
             numbered_list_restart_requested: false,
             quote_reparse_requested: false,
         };

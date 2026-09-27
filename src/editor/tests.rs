@@ -3342,6 +3342,39 @@ async fn undo_reverts_recent_rendered_typing(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn code_block_copy_button_copies_code_to_clipboard(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "```rust\nlet x = 1;\n```";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.into(), None));
+    // 语言输入框与复制按钮在聚焦时显示。
+    editor.update(cx, |editor, _cx| {
+        let block = editor.document.first_root().expect("code block").clone();
+        editor.active_entity_id = Some(block.entity_id());
+        editor.pending_focus = Some(block.entity_id());
+    });
+    redraw(cx);
+
+    let bounds = cx
+        .debug_bounds("code-copy-button")
+        .expect("focused code block shows the copy button");
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    redraw(cx);
+
+    let clipboard = cx.update(|_window, cx| {
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .map(|text| text.to_string())
+    });
+    assert_eq!(clipboard.as_deref(), Some("let x = 1;"));
+    editor.read_with(cx, |editor, _cx| {
+        // 点击复制不顺带移动光标/选中文字。
+        let block = editor.document.first_root().expect("code block");
+        assert!(block.read(_cx).selected_range.is_empty());
+    });
+}
+
+#[gpui::test]
 async fn undo_after_view_mode_switch_keeps_text(cx: &mut TestAppContext) {
     let editor = cx.new(|cx| Editor::from_markdown(cx, "alpha".to_string(), None));
 
