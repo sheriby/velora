@@ -251,6 +251,17 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 测试隔离（顺带发现） | 窗口 frame 用例共用进程级配置目录时会互相污染：整套并发跑测时 `window_open_position_setting_controls_how_windows_open` 实测读到别的用例（关闭窗口时同样落盘 frame）写下的 (0,0,1920,1080)。新增 `crate::config::override_test_config_root`（线程局部覆盖 + Drop 守卫），三条 frame 用例各自独占临时目录 | 通过（修前整套必失败、修后整套通过） |
 | 全量回归 | `cargo test` 904 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
 
+## 第二十六批补充（用户报修：搜索结果里文件名本身点不了，只有下方一条空行能点）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 用户截图：工作区搜索（「所有文件」范围）列出 `assets/icon/velotype-*.png` 等，每行只有文件名与命中数；能点的只有文件名下方一条看不见的细条 | 已复现 |
+| 根因 | 文件名命中（`WorkspaceSearchHit.line == None`、无预览）会渲染成一条 `py(4)` 且**没有任何子元素**的空行——它就是那条可点的细条；而真正显示文件名的「文件头」行完全没有点击处理。于是看起来只剩下面那小条能点 | 已定位 |
+| 修复 | ① 文件头整行可点：加 `cursor_pointer`/悬停底色/选中底色与点击处理，点击打开该组第一条命中（文件名命中→打开文件；内容命中→跳到该处匹配）；② 文件名命中不再渲染独立空行，由文件头代表（`line.is_none()` 直接跳过） | 通过 |
+| 用例 | `search_result_file_header_opens_the_file_and_has_no_empty_row`：造 png（文件名命中）+ md（文件名命中 + 内容命中），断言结果顺序与类型 → 断言文件名命中索引**没有**命中行元素而内容命中索引有 → 断言文件头点击区高度 > 16pt（原空行只有 8pt）→ 点文件头实际打开 png（不可预览占位路径）与 md（`file_path`） | 通过（**正控**：恢复空行后「不应再有空行」断言必失败；去掉文件头点击处理后「点文件名应打开该文件」断言必失败，实测 left: None） |
+| 顺带 | 命中行与文件头都补 `debug_selector`（`workspace-search-hit-{i}` / `workspace-search-file-{i}`），后续 UI 断言可直接定位 | 通过 |
+| 全量回归 | `cargo test` 905 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

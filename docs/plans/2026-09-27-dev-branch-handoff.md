@@ -11,7 +11,7 @@
 | 项 | 状态 |
 |----|------|
 | Roadmap 完成 | **66 / 66 行已标 ✅**（A7 标「✅(应用侧)」：应用侧闭环，剩余为解锁后的人工确认；C1/C8/C10 等为 v1 形态并标注） |
-| 测试 | 904 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
+| 测试 | 905 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
 | 编译 | `cargo build` 零错误零警告（dev profile） |
 | 远程 | `origin/dev` 已推送（最新提交见 `git log -1`）；main 未动 |
 | 工作树 | 仅 `?? .zcodeignore`（按用户要求**不提交**） |
@@ -42,6 +42,7 @@
 - **A7（应用侧）** 窗口标题同步：新窗口首帧推送标题（此前新建窗口原生标题为空），编辑加前缀标记、保存去标记，用例 `window_title_tracks_file_and_edited_state`；测试平台的 `get_title` 补实现以支持断言
 - **A2 报修补齐** 窗口位置/大小记忆：三条退出路径（应用内关闭 / 平台红灯关闭 / ⌘Q）都落盘，移除统一走 `Editor::close_editor_window`（源码守卫用例）；⌘Q 此前还会因窗口借用导致 `window.update` 失败而**静默不退出**，改为 `cx.defer` 延后执行
 - **A3/H1 报修补齐** 设置新增窗口位置项：窗口页「打开位置」（记住上次位置 / 居中打开）与「记住窗口位置与大小」开关（从文件页移入），config.toml `[window] open_position`；「居中打开」使默认窗口尺寸真正生效
+- **搜索结果报修补齐** 工作区搜索的文件头整行可点（打开该文件/跳到该组首条命中），文件名命中不再渲染成一条看不见的空行（此前只有那条细条能点）
 
 ### 剩余人工项
 

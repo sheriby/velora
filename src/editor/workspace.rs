@@ -4707,8 +4707,15 @@ impl Editor {
                     .iter()
                     .filter(|other| other.path == hit.path)
                     .count();
+                // 文件头整行可点击并代表该组第一条命中（用户报修：此前文件名
+                // 本身点不了，只有它下面一条没有内容的空行能点）。文件名命中
+                // 没有行号，点击就只是打开这个文件；内容命中则跳到该处匹配。
+                let header_selected = self.workspace.search_active_index == Some(index);
+                let header_editor = editor.clone();
                 elements.push(
                     div()
+                        .id(("workspace-search-file", index))
+                        .debug_selector(move || format!("workspace-search-file-{index}"))
                         .w_full()
                         .px(px(6.0))
                         .pt(px(6.0))
@@ -4716,6 +4723,14 @@ impl Editor {
                         .flex()
                         .items_center()
                         .gap(px(4.0))
+                        .rounded(px(5.0))
+                        .bg(if header_selected {
+                            c.selection
+                        } else {
+                            hsla(0.0, 0.0, 0.0, 0.0)
+                        })
+                        .cursor_pointer()
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
                         .child(
                             svg()
                                 .path(if is_code_file(&hit.path) {
@@ -4742,8 +4757,21 @@ impl Editor {
                                 .text_color(c.dialog_muted)
                                 .child(file_hit_count.to_string()),
                         )
+                        .on_click(move |event, window, cx| {
+                            if !event.standard_click() {
+                                return;
+                            }
+                            let _ = header_editor.update(cx, |editor, cx| {
+                                editor.open_search_hit(index, window, cx);
+                            });
+                        })
                         .into_any_element(),
                 );
+            }
+            // 文件名命中只由文件头代表：再渲染一行没有行号、没有预览的行
+            // 只会得到一条看得见点不着（或看不见）的空条。
+            if !is_document_scope && hit.line.is_none() {
+                continue;
             }
             let selected = self.workspace.search_active_index == Some(index);
             let hit_editor = editor.clone();
@@ -4754,6 +4782,7 @@ impl Editor {
             elements.push(
                 div()
                     .id(("workspace-search-hit", index))
+                    .debug_selector(move || format!("workspace-search-hit-{index}"))
                     .w_full()
                     .pl(px(if is_document_scope { 10.0 } else { 24.0 }))
                     .pr(px(6.0))
@@ -6633,7 +6662,7 @@ mod tests {
         search_workspace_files,
     };
     use crate::components::{Block, UndoCaptureKind};
-    use gpui::{AppContext, ClipboardItem, EntityInputHandler, TestAppContext, point, px};
+    use gpui::{AppContext, ClipboardItem, EntityInputHandler, Modifiers, TestAppContext, point, px};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -7389,6 +7418,119 @@ mod tests {
             assert_eq!(editor.workspace.search_results.len(), 1);
             assert_eq!(editor.workspace.search_results[0].line, Some(2));
             assert_eq!(editor.workspace.search_results[0].label, "notes.md");
+        });
+    }
+
+    #[gpui::test]
+    async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut TestAppContext) {
+        // 用户报修：搜索结果里文件名本身点不了，只有它下面一条没有内容的空行能点。
+        // 原因是文件名命中（line=None）也渲染了一行（py(4) 且无内容），而文件头
+        // 完全没有点击处理。现在文件头整行可点并代表该组第一条命中。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-search-header-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("assets")).unwrap();
+        // 含 NUL 才能稳定判成不可预览文件（用户截图里的 png 场景）。
+        fs::write(root.join("assets").join("velotype-banner.png"), [0u8, 1, 2, 3]).unwrap();
+        fs::write(root.join("velotype-notes.md"), "开头\nvelotype 命中行\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+            editor.workspace.active_tab = super::WorkspaceTab::Search;
+            editor.workspace.search_query = "velotype".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        let hits = editor.read_with(cx, |editor, _| {
+            editor
+                .workspace
+                .search_results
+                .iter()
+                .map(|hit| (hit.label.clone(), hit.line))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            hits,
+            vec![
+                ("assets/velotype-banner.png".to_string(), None),
+                ("velotype-notes.md".to_string(), None),
+                ("velotype-notes.md".to_string(), Some(2)),
+            ],
+            "目录在前，文件名命中在前，内容命中带行号"
+        );
+
+        // 文件名命中不再有独立空行；内容命中仍然渲染自己的行。
+        assert!(
+            cx.debug_bounds("workspace-search-hit-0").is_none(),
+            "文件名命中不应再渲染一条看不见的空行"
+        );
+        assert!(
+            cx.debug_bounds("workspace-search-hit-1").is_none(),
+            "文件名命中不应再渲染一条看不见的空行"
+        );
+        assert!(cx.debug_bounds("workspace-search-hit-2").is_some());
+
+        let header = cx
+            .debug_bounds("workspace-search-file-0")
+            .expect("首个文件头应渲染为可点击行");
+        assert!(
+            header.size.height > px(16.0),
+            "点击区应覆盖整行文件头，实测高度 {:?}",
+            header.size.height
+        );
+        assert!(header.size.width > px(60.0));
+
+        cx.simulate_click(header.center(), Modifiers::none());
+        cx.update(|window, cx| window.draw(cx).clear());
+        // macOS 的 /var 会被打开流程规范化为 /private/var，断言前统一 canonicalize。
+        let banner = fs::canonicalize(root.join("assets").join("velotype-banner.png"))
+            .expect("canonical banner path");
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor
+                    .unsupported_preview_path
+                    .as_ref()
+                    .and_then(|path| fs::canonicalize(path).ok()),
+                Some(banner.clone()),
+                "点文件名应打开该文件（png 走不可预览占位）"
+            );
+        });
+
+        // 同一组里既有文件名命中又有内容命中时，文件头也负责打开文件。
+        let notes_header = cx
+            .debug_bounds("workspace-search-file-1")
+            .expect("第二个文件头应渲染");
+        cx.simulate_click(notes_header.center(), Modifiers::none());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let notes = fs::canonicalize(root.join("velotype-notes.md")).expect("canonical notes path");
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor
+                    .file_path
+                    .as_ref()
+                    .and_then(|path| fs::canonicalize(path).ok()),
+                Some(notes.clone()),
+                "点文件头应打开对应的 Markdown 文件"
+            );
+            assert!(editor.unsupported_preview_path.is_none());
         });
     }
 
