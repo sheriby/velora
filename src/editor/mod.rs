@@ -460,7 +460,10 @@ impl Editor {
             pending_open_link: None,
             pending_window_edited: false,
             pending_window_unedited: false,
-            pending_window_title_refresh: false,
+            // A fresh window pushes its title on the first frame, so a window
+            // created while the display is locked still gets the right title as
+            // soon as frames resume (roadmap A7).
+            pending_window_title_refresh: true,
             document_dirty: false,
             document_revision: 0,
             long_source_block_hint: None,

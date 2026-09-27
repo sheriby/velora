@@ -203,6 +203,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().title = Some(title.to_owned());
     }
 
+    fn get_title(&self) -> String {
+        self.0.lock().title.clone().unwrap_or_default()
+    }
+
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}

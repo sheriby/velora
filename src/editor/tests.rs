@@ -1122,6 +1122,55 @@ async fn window_save_action_saves_current_editor_without_global_menu_route(
 }
 
 #[gpui::test]
+async fn window_title_tracks_file_and_edited_state(cx: &mut TestAppContext) {
+    // roadmap A7 的可自动验证面：标题（含「已编辑」前缀标记）由渲染帧同步到窗口，
+    // 编辑后立刻带上标记、保存后去掉；锁屏期间的系统显示延迟属平台行为，留人工复核。
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("window-title-sync");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+
+    let file_name = path
+        .file_name()
+        .expect("temp path has a file name")
+        .to_string_lossy()
+        .to_string();
+    let clean_title = format!("Velora - {file_name}");
+    let dirty_marker = cx.update(|cx| cx.global::<I18nManager>().strings().dirty_title_marker.clone());
+    assert!(!dirty_marker.is_empty(), "脏标记文案不应为空");
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        let markdown = "alpha".to_string();
+        move |_window, cx| Editor::from_markdown(cx, markdown, Some(path))
+    });
+    redraw(cx);
+    assert_eq!(cx.update(|window, _cx| window.window_title()), clean_title);
+
+    cx.simulate_input(" x");
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| assert!(editor.document_dirty));
+    assert_eq!(
+        cx.update(|window, _cx| window.window_title()),
+        format!("{dirty_marker} {clean_title}"),
+        "编辑后窗口标题应带已编辑标记"
+    );
+
+    cx.dispatch_action(SaveDocument);
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| assert!(!editor.document_dirty));
+    assert_eq!(
+        cx.update(|window, _cx| window.window_title()),
+        clean_title,
+        "保存后窗口标题应去掉已编辑标记"
+    );
+}
+
+#[gpui::test]
 async fn export_html_writes_rendered_document_without_changing_editor_state(
     cx: &mut TestAppContext,
 ) {
