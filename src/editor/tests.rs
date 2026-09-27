@@ -5558,6 +5558,35 @@ async fn heading_fold_chevron_marks_only_foldable_headings(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn broken_image_placeholder_stays_compact_inside_the_column(cx: &mut TestAppContext) {
+    // 用户报修：callout 列表项里的图片读不出来时，占位框按「视口估算宽度」画成
+    // 一条横穿整屏的空心条，冲出 callout 右边界。占位框现在贴着文字收紧，
+    // 上限只到所在列的可用宽度。
+    init_editor_test_app(cx);
+    let markdown = "> [!IMPORTANT] 混合块\n>\n> - bold\n> - ![image](missing-image.png)\n";
+    let (_editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.into(), None));
+    // 宽窗口：旧实现按视口估算出 definite 宽度，占位框会拉成一条空心长条。
+    cx.update(|window, _cx| window.resize(gpui::size(px(1400.0), px(900.0))));
+    redraw(cx);
+
+    let viewport_width = cx.update(|window, _cx| window.viewport_size().width);
+    let bounds = cx
+        .debug_bounds("image-placeholder")
+        .expect("broken image should render a placeholder box");
+    assert!(
+        bounds.size.width <= px(400.0),
+        "占位框应贴着文字收紧，实测宽度 {:?}",
+        bounds.size.width
+    );
+    assert!(
+        bounds.right() < viewport_width,
+        "占位框右边 {:?} 不应超出视口宽度 {viewport_width:?}",
+        bounds.right()
+    );
+}
+
+#[gpui::test]
 async fn heading_fold_chevron_renders_and_click_toggles_fold(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let markdown = "## Section\n\nalpha\n\n## Empty";

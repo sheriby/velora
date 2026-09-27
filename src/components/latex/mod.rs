@@ -10,7 +10,9 @@ use anyhow::{Context as _, anyhow};
 use directories::ProjectDirs;
 use gpui::{Hsla, Rgba};
 
-const DISPLAY_MATH_SCALE: f32 = 1.25;
+/// 块级公式与行内公式同字号（用户报修：`$$ ... $$` 渲染出来明显偏大）。
+/// KaTeX/Typora 的 display 模式只改变极限位置，不放大字号。
+const DISPLAY_MATH_SCALE: f32 = INLINE_MATH_SCALE;
 const INLINE_MATH_SCALE: f32 = 1.12;
 
 /// Parsed display-math source preserved from Markdown.
@@ -205,8 +207,10 @@ mod tests {
     }
 
     #[test]
-    fn display_math_font_size_scales_base_text_size() {
-        assert_eq!(display_math_font_size(20.0), 25.0);
+    fn display_math_font_size_matches_inline_math() {
+        // 用户报修：块级公式字号明显大于正文/行内公式，两者应同字号。
+        assert_eq!(display_math_font_size(20.0), inline_math_font_size(20.0));
+        assert!((display_math_font_size(20.0) - 22.4).abs() < 0.001);
     }
 
     #[test]

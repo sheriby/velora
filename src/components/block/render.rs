@@ -194,8 +194,10 @@ fn render_image_placeholder(
     let compact_height = height.min(px(72.0));
     let label = fallback_image_label(&runtime.alt, strings);
     div()
-        .w(width)
+        .min_w(px(0.0))
+        .max_w(width)
         .h(compact_height)
+        .debug_selector(|| "image-placeholder".to_string())
         .flex()
         .items_center()
         .justify_center()
@@ -234,7 +236,8 @@ fn render_loading_placeholder(
     // reserve a huge empty area.
     let capped_height = height.min(px(120.0));
     div()
-        .w(width)
+        .min_w(px(0.0))
+        .max_w(width)
         .h(capped_height)
         .flex()
         .items_center()
@@ -331,23 +334,6 @@ fn container_image_width_budget(block: &Block, viewport_width: f32, d: &ThemeDim
 fn effective_image_width(block: &Block, viewport_width: f32, d: &ThemeDimensions) -> f32 {
     let list_inset = d.nested_block_indent * block.render_depth as f32;
     (container_image_width_budget(block, viewport_width, d) - d.block_padding_x * 2.0 - list_inset)
-        .max(160.0)
-}
-
-fn effective_list_item_image_width(block: &Block, viewport_width: f32, d: &ThemeDimensions) -> f32 {
-    let marker_width = match block.kind() {
-        BlockKind::BulletedListItem => d.list_marker_width,
-        BlockKind::TaskListItem { .. } => d.list_marker_width.max(d.task_checkbox_size),
-        BlockKind::NumberedListItem => d.ordered_list_marker_width,
-        _ => 0.0,
-    };
-    let list_inset = d.nested_block_indent * block.render_depth as f32;
-
-    (container_image_width_budget(block, viewport_width, d)
-        - d.block_padding_x * 2.0
-        - list_inset
-        - marker_width
-        - d.list_marker_gap)
         .max(160.0)
 }
 
@@ -2472,9 +2458,10 @@ impl Render for Block {
                         .min_w(px(d.list_marker_width))
                         .child(SharedString::new(bulleted_list_marker(self.render_depth))),
                     if showing_rendered_image {
-                        let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-                        let max_width =
-                            px(effective_list_item_image_width(self, viewport_width, d));
+                        // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：
+                        // 按视口估算量不到 callout/嵌套的真实容器，图片与占位框会
+                        // 冲出右边界（用户报修）。
+                        let max_width = relative(1.0);
                         if let Some(runtime) = self.image_runtime() {
                             div().flex_grow().child(self.render_image_content(
                                 runtime,
@@ -2568,10 +2555,7 @@ impl Render for Block {
                                     }),
                             ),
                         if showing_rendered_image {
-                            let viewport_width =
-                                f32::from(window.viewport_size().width.max(px(1.0)));
-                            let max_width =
-                                px(effective_list_item_image_width(self, viewport_width, d));
+                            let max_width = relative(1.0);
                             if let Some(runtime) = self.image_runtime() {
                                 div().flex_grow().child(self.render_image_content(
                                     runtime,
@@ -2633,9 +2617,10 @@ impl Render for Block {
                             self.list_ordinal.unwrap_or(1),
                         ))),
                     if showing_rendered_image {
-                        let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-                        let max_width =
-                            px(effective_list_item_image_width(self, viewport_width, d));
+                        // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：
+                        // 按视口估算量不到 callout/嵌套的真实容器，图片与占位框会
+                        // 冲出右边界（用户报修）。
+                        let max_width = relative(1.0);
                         if let Some(runtime) = self.image_runtime() {
                             div().flex_grow().child(self.render_image_content(
                                 runtime,

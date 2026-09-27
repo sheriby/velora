@@ -299,6 +299,20 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 正控 | 去掉 image.rs 的代码段跳过 ⇒ 用例①失败；把 `promotes_inline_images` 改回只看 `![` ⇒ 用例③失败；全部复原后复跑通过 | 通过 |
 | 全量回归 | `cargo build` 0 警告；`cargo test` 913 通过 0 失败 1 ignored | 通过 |
 
+## 第三十批补充（用户报修：块级公式字号太大；图片占位框冲出容器）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | ① `$$ \int_0^1 x^2 dx = \frac{1}{3} $$` 渲染出的字号明显大于正文与行内公式；② callout 列表项里 `![image](missing.png)` 的「无法加载图片」占位框被拉成横穿整屏的空心长条，冲出 callout 右边界 | 均已复现 |
+| 根因（公式） | `DISPLAY_MATH_SCALE = 1.25` 而 `INLINE_MATH_SCALE = 1.12`：块级公式额外放大 12%。KaTeX/Typora 的 display 模式只改变极限位置，不放大字号 | 已定位 |
+| 修复（公式） | `DISPLAY_MATH_SCALE = INLINE_MATH_SCALE`（1.12），行内与块级同字号 | 通过 |
+| 根因（图片） | 列表项图片宽度按**视口**估算成 definite 像素（`effective_list_item_image_width`：centered 列宽 − padding − 缩进 − 记号，callout 内缩只在 `callout_depth > 0` 时扣），量不到真实容器；占位框再按 `.w(该宽度)` 画死，于是冲出 callout | 已定位 |
+| 修复（图片） | ① 三处列表项图片路径（无序/有序/任务）的宽度上限改为 `relative(1.0)`——按所在列封顶，交 taffy 按实际容器算；② 失败/加载占位框由 `.w(width)` 改为 `.min_w(0)+.max_w(width)`，贴着文字收紧，不再拉成空心长条；③ 删掉不再使用的 `effective_list_item_image_width` | 通过 |
+| 用例 | ① `display_math_font_size_matches_inline_math`：块级与行内字号相等（原断言 25.0 已按新口径改）；② `broken_image_placeholder_stays_compact_inside_the_column`：1400pt 宽窗口渲染「callout + 列表 + 读不出来的图片」，用 `debug_bounds("image-placeholder")` 断言占位框宽度 ≤400pt 且右边不超出视口 | 通过 |
+| 正控 | 把占位框改回 `.w(width)` 并按旧的视口估算 definite 宽度 ⇒ 实测宽度 900pt、原点左移到 784，用例失败（阈值 400）；恢复后 233pt 通过 | 通过 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 914 通过 0 失败 1 ignored | 通过 |
+| 待人工目视 | 解锁后确认：块级公式与行内公式观感同字号、不再压过正文；callout 列表里的坏图/远端加载中的占位框是小号贴字框，真实宽图按列宽缩放不冲出边界 | 待复核 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
