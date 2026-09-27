@@ -120,8 +120,15 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 
 | 项目 | 验证方式 | 结论 |
 |------|----------|------|
-| C7 chevron UI | 新增 2 个 gpui 用例：`heading_fold_chevron_marks_only_foldable_headings`（含内容/空章节标题的 foldable 判定）、`heading_fold_chevron_toggle_hides_section_and_refocuses_heading`（事件折叠后章节隐藏 + 光标回退标题） | 通过 |
-| 全量回归 | `cargo test` 833 通过（831 基线 + 2 新增）；唯一失败仍为基线偶发项 | 通过（视觉待解锁复核） |
+| C7 chevron UI | 新增 3 个 gpui 用例：`heading_fold_chevron_marks_only_foldable_headings`（含内容/空章节标题的 foldable 判定）、`heading_fold_chevron_toggle_hides_section_and_refocuses_heading`（事件折叠后章节隐藏 + 光标回退标题）、`heading_fold_chevron_renders_and_click_toggles_fold`（debug_bounds 取真实布局 + simulate_click 点击 chevron 端到端折叠） | 通过 |
+| 全量回归 | `cargo test` 834 通过（831 基线 + 3 新增）；唯一失败仍为基线偶发项 | 通过（视觉待解锁复核） |
+
+## 第十四批补充（D9 文件树扫描异步化）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| D9 后台扫描 | 扫描改在 background executor 执行，代数校验丢弃过期结果；新增 3 个 gpui 用例：`workspace_tree_scan_is_async_and_applies_result`（调用栈内不产出树、pump 后落地）、`workspace_tree_scan_discards_stale_root_results`（换根丢弃旧结果）、`reopening_workspace_root_rescans_after_tree_is_cleared`（同根重开必须重扫） | 通过 |
+| 全量回归 | `cargo test` 838 通过 0 失败（831 基线 + 3 C7 + 3 D9 + 重开用例；基线偶发项本轮通过） | 通过（视觉待解锁复核） |
 
 ## 已知事项
 
