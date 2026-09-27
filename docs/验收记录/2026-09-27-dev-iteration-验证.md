@@ -116,6 +116,13 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 |------|----------|------|
 | H1 文件页三控件 | config 33 项测试（含新三项持久化断言） | 通过 |
 
+## 第十三批补充（C7 标题行内折叠 chevron）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| C7 chevron UI | 新增 2 个 gpui 用例：`heading_fold_chevron_marks_only_foldable_headings`（含内容/空章节标题的 foldable 判定）、`heading_fold_chevron_toggle_hides_section_and_refocuses_heading`（事件折叠后章节隐藏 + 光标回退标题） | 通过 |
+| 全量回归 | `cargo test` 833 通过（831 基线 + 2 新增）；唯一失败仍为基线偶发项 | 通过（视觉待解锁复核） |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
