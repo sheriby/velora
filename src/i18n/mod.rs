@@ -353,6 +353,12 @@ pub struct I18nStrings {
     pub command_find_previous: String,
     /// Command label: toggle source/rendered view.
     pub command_toggle_view_mode: String,
+    /// 文件页：文件树排序行标签。
+    pub preferences_file_tree_sort: String,
+    /// 文件页：自动保存间隔行标签。
+    pub preferences_file_autosave_debounce: String,
+    /// 文件页：记住窗口大小开关标签。
+    pub preferences_file_remember_window: String,
     /// Export menu item: copy rendered HTML source to clipboard.
     pub menu_copy_as_html: String,
     /// Workspace action: duplicate the selected file.
@@ -671,6 +677,9 @@ struct I18nStringsDe {
     command_find_next: Option<String>,
     command_find_previous: Option<String>,
     command_toggle_view_mode: Option<String>,
+    preferences_file_tree_sort: Option<String>,
+    preferences_file_autosave_debounce: Option<String>,
+    preferences_file_remember_window: Option<String>,
     menu_copy_as_html: Option<String>,
     workspace_duplicate: Option<String>,
     hover_footnote_prefix: Option<String>,
@@ -931,6 +940,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "command_find_next",
     "command_find_previous",
     "command_toggle_view_mode",
+    "preferences_file_tree_sort",
+    "preferences_file_autosave_debounce",
+    "preferences_file_remember_window",
     "menu_copy_as_html",
     "workspace_duplicate",
     "hover_footnote_prefix",
@@ -1531,6 +1543,15 @@ impl I18nStringsDe {
             command_toggle_view_mode: self
                 .command_toggle_view_mode
                 .unwrap_or(defaults.command_toggle_view_mode),
+            preferences_file_tree_sort: self
+                .preferences_file_tree_sort
+                .unwrap_or(defaults.preferences_file_tree_sort),
+            preferences_file_autosave_debounce: self
+                .preferences_file_autosave_debounce
+                .unwrap_or(defaults.preferences_file_autosave_debounce),
+            preferences_file_remember_window: self
+                .preferences_file_remember_window
+                .unwrap_or(defaults.preferences_file_remember_window),
             menu_copy_as_html: self
                 .menu_copy_as_html
                 .unwrap_or(defaults.menu_copy_as_html),
@@ -1898,6 +1919,9 @@ impl I18nStrings {
             command_find_next: "查找下一个".into(),
             command_find_previous: "查找上一个".into(),
             command_toggle_view_mode: "切换视图模式".into(),
+            preferences_file_tree_sort: "文件树排序".into(),
+            preferences_file_autosave_debounce: "自动保存间隔".into(),
+            preferences_file_remember_window: "记住窗口大小与位置".into(),
             menu_copy_as_html: "复制为 HTML".into(),
             workspace_duplicate: "创建副本".into(),
             hover_footnote_prefix: "脚注".into(),
@@ -2191,6 +2215,9 @@ impl I18nStrings {
             command_find_next: "Find Next".into(),
             command_find_previous: "Find Previous".into(),
             command_toggle_view_mode: "Toggle View Mode".into(),
+            preferences_file_tree_sort: "File tree sort".into(),
+            preferences_file_autosave_debounce: "Autosave interval".into(),
+            preferences_file_remember_window: "Remember window size and position".into(),
             menu_copy_as_html: "Copy as HTML".into(),
             workspace_duplicate: "Duplicate".into(),
             hover_footnote_prefix: "Footnote".into(),

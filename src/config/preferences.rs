@@ -435,6 +435,17 @@ impl EditorSettings {
         template.replace("{date}", &crate::config::today_local_date())
     }
 
+    pub(crate) fn set_autosave_debounce_ms(cx: &mut App, ms: u64) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.autosave_debounce_ms = ms);
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.autosave_debounce_ms = ms)
+        {
+            eprintln!("failed to save autosave debounce: {error}");
+        }
+    }
+
     /// File tree ordering (roadmap D2).
     pub(crate) fn tree_sort(cx: &App) -> TreeSortPreference {
         cx.try_global::<Self>()
@@ -1112,6 +1123,9 @@ pub(crate) fn save_preferences_from_window(
     writing_width: WritingWidthPreference,
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
+    tree_sort: TreeSortPreference,
+    autosave_debounce_ms: u64,
+    remember_window_bounds: bool,
 ) -> anyhow::Result<AppPreferences> {
     let dirs = VelotypeConfigDirs::from_system()?;
     save_preferences_from_window_with_dirs(
@@ -1122,10 +1136,14 @@ pub(crate) fn save_preferences_from_window(
         writing_width,
         keybindings,
         status_bar,
+        tree_sort,
+        autosave_debounce_ms,
+        remember_window_bounds,
         &dirs,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn save_preferences_from_window_with_dirs(
     startup_open: StartupOpenPreference,
     default_theme_id: &str,
@@ -1134,6 +1152,9 @@ fn save_preferences_from_window_with_dirs(
     writing_width: WritingWidthPreference,
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
+    tree_sort: TreeSortPreference,
+    autosave_debounce_ms: u64,
+    remember_window_bounds: bool,
     dirs: &VelotypeConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
     let mut preferences =
@@ -1143,6 +1164,9 @@ fn save_preferences_from_window_with_dirs(
     preferences.image_paste_behavior = image_paste_behavior;
     preferences.fonts = fonts.clone();
     preferences.writing_width = writing_width;
+    preferences.tree_sort = tree_sort;
+    preferences.autosave_debounce_ms = autosave_debounce_ms;
+    preferences.remember_window_bounds = remember_window_bounds;
     preferences.keybindings = normalize_shortcut_config(&keybindings);
     preferences.status_bar = status_bar.clone();
     save_app_preferences_with_dirs(&preferences, dirs)?;
@@ -1192,6 +1216,14 @@ pub(crate) struct PreferencesWindow {
     code_font_dropdown_open: bool,
     recording_shortcut: Option<ShortcutCommand>,
     shortcut_error: Option<String>,
+    tree_sort: TreeSortPreference,
+    autosave_debounce_ms: u64,
+    remember_window_bounds: bool,
+    saved_tree_sort: TreeSortPreference,
+    saved_autosave_debounce_ms: u64,
+    saved_remember_window_bounds: bool,
+    tree_sort_dropdown_open: bool,
+    autosave_dropdown_open: bool,
     status_bar_enabled: bool,
     status_bar_show_word_count: bool,
     status_bar_show_cursor_position: bool,
@@ -1224,6 +1256,9 @@ impl PreferencesWindow {
         let fonts = preferences.fonts;
         let writing_width = preferences.writing_width;
         let keybindings = preferences.keybindings;
+        let tree_sort = preferences.tree_sort;
+        let autosave_debounce_ms = preferences.autosave_debounce_ms;
+        let remember_window_bounds = preferences.remember_window_bounds;
         Self {
             nav: PreferencesNav::File,
             startup_open,
@@ -1238,6 +1273,14 @@ impl PreferencesWindow {
             saved_fonts: fonts,
             saved_writing_width: writing_width,
             saved_keybindings: keybindings,
+            tree_sort,
+            autosave_debounce_ms,
+            remember_window_bounds,
+            saved_tree_sort: tree_sort,
+            saved_autosave_debounce_ms: autosave_debounce_ms,
+            saved_remember_window_bounds: remember_window_bounds,
+            tree_sort_dropdown_open: false,
+            autosave_dropdown_open: false,
             theme_options,
             focus_handle: cx.focus_handle(),
             startup_dropdown_open: false,
@@ -1296,6 +1339,19 @@ impl PreferencesWindow {
             || self.status_bar_show_cursor_position != self.saved_status_bar_show_cursor_position
             || self.status_bar_show_sidebar_toggle != self.saved_status_bar_show_sidebar_toggle
             || self.status_bar_show_mode_switch != self.saved_status_bar_show_mode_switch
+            || self.tree_sort != self.saved_tree_sort
+            || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
+            || self.remember_window_bounds != self.saved_remember_window_bounds
+    }
+
+    fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.tree_sort_dropdown_open = !self.tree_sort_dropdown_open;
+        cx.notify();
+    }
+
+    fn toggle_autosave_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.autosave_dropdown_open = !self.autosave_dropdown_open;
+        cx.notify();
     }
 
     fn set_nav_file(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1442,6 +1498,9 @@ impl PreferencesWindow {
                 show_mode_switch: self.status_bar_show_mode_switch,
                 custom_buttons: Vec::new(),
             },
+            self.tree_sort,
+            self.autosave_debounce_ms,
+            self.remember_window_bounds,
         ) {
             Ok(preferences) => preferences,
             Err(err) => {
@@ -1459,6 +1518,9 @@ impl PreferencesWindow {
             }
         };
 
+        // 同步新设置到全局缓存并刷新（roadmap H1）。
+        EditorSettings::set_tree_sort(cx, self.tree_sort);
+        EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
         self.apply_saved_preferences(preferences, window, cx);
     }
 
@@ -1739,7 +1801,107 @@ impl PreferencesWindow {
                     cx,
                 ));
         }
-        self.labeled_row(&strings.preferences_startup_option, dropdown, theme)
+        let tree_sort_selected = match self.tree_sort {
+            TreeSortPreference::Name => strings.tree_sort_name.clone(),
+            TreeSortPreference::ModifiedTime => strings.tree_sort_mtime.clone(),
+            TreeSortPreference::Type => strings.tree_sort_type.clone(),
+        };
+        let mut tree_sort_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-tree-sort-dropdown",
+                tree_sort_selected,
+                theme,
+                Self::toggle_tree_sort_dropdown,
+                cx,
+            ));
+        if self.tree_sort_dropdown_open {
+            let options = [
+                (TreeSortPreference::Name, strings.tree_sort_name.clone()),
+                (TreeSortPreference::ModifiedTime, strings.tree_sort_mtime.clone()),
+                (TreeSortPreference::Type, strings.tree_sort_type.clone()),
+            ];
+            for (index, (sort, label)) in options.into_iter().enumerate() {
+                let is_selected = self.tree_sort == sort;
+                let sort_value = sort;
+                tree_sort_dropdown = tree_sort_dropdown.child(
+                    Self::dropdown_item(
+                        gpui::SharedString::from(format!("preferences-tree-sort-{index}")),
+                        label,
+                        is_selected,
+                        theme,
+                        move |this, _, _, cx| {
+                            this.tree_sort = sort_value;
+                            this.tree_sort_dropdown_open = false;
+                            cx.notify();
+                        },
+                        cx,
+                    ),
+                );
+            }
+        }
+
+        let debounce_selected = format!("{} ms", self.autosave_debounce_ms);
+        let mut debounce_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-autosave-dropdown",
+                debounce_selected.clone().into(),
+                theme,
+                Self::toggle_autosave_dropdown,
+                cx,
+            ));
+        if self.autosave_dropdown_open {
+            for ms in [800u64, 2000u64, 5000u64] {
+                let is_selected = self.autosave_debounce_ms == ms;
+                debounce_dropdown = debounce_dropdown.child(
+                    Self::dropdown_item(
+                        gpui::SharedString::from(format!("preferences-autosave-{ms}")),
+                        format!("{ms} ms"),
+                        is_selected,
+                        theme,
+                        move |this, _, _, cx| {
+                            this.autosave_debounce_ms = ms;
+                            this.autosave_dropdown_open = false;
+                            cx.notify();
+                        },
+                        cx,
+                    ),
+                );
+            }
+        }
+
+        let remember_toggle = crate::components::switch::Switch::new("preferences-remember-window")
+            .checked(self.remember_window_bounds)
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.remember_window_bounds = !this.remember_window_bounds;
+                cx.notify();
+            }));
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.0))
+            .child(self.labeled_row(&strings.preferences_startup_option, dropdown, theme))
+            .child(self.labeled_row(
+                &strings.preferences_file_tree_sort,
+                tree_sort_dropdown,
+                theme,
+            ))
+            .child(self.labeled_row(
+                &strings.preferences_file_autosave_debounce,
+                debounce_dropdown,
+                theme,
+            ))
+            .child(self.labeled_row(
+                &strings.preferences_file_remember_window,
+                remember_toggle,
+                theme,
+            ))
     }
 
     fn render_theme_page(
@@ -3212,9 +3374,15 @@ mod tests {
             WritingWidthPreference::Compact,
             BTreeMap::from([("save_document".to_string(), vec!["ctrl-alt-s".to_string()])]),
             &StatusBarPreferences::default(),
+            TreeSortPreference::Name,
+            800,
+            true,
             &dirs,
         )
         .expect("window preferences should save");
+        assert_eq!(saved.tree_sort, TreeSortPreference::Name);
+        assert_eq!(saved.autosave_debounce_ms, 800);
+        assert!(saved.remember_window_bounds);
         assert_eq!(saved.default_language_id, "zh-CN");
         assert_eq!(saved.startup_open, StartupOpenPreference::LastOpenedFile);
         assert_eq!(saved.default_theme_id, "velotype-light");
