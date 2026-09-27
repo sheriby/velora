@@ -110,6 +110,8 @@ impl Editor {
         let (default_dir, suggested_name) = self.export_dialog_defaults(format);
         let prompt = cx.prompt_for_new_path(&default_dir, Some(&suggested_name));
         let window_handle = window.window_handle();
+        let editor = cx.entity().downgrade();
+        let _ = window_handle;
 
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut path = match prompt.await {
@@ -117,12 +119,7 @@ impl Editor {
                 Ok(Ok(None)) | Err(_) => return,
                 Ok(Err(err)) => {
                     let detail = err.to_string();
-                    let _ = cx.update_window(
-                        window_handle,
-                        move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                            show_export_error(window, cx, &detail);
-                        },
-                    );
+                    show_export_error(editor.clone(), cx, &detail);
                     return;
                 }
             };
@@ -149,12 +146,7 @@ impl Editor {
 
             if let Err(err) = spawn_result {
                 let detail = format!("failed to start export task: {err}");
-                let _ = cx.update_window(
-                    window_handle,
-                    move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                        show_export_error(window, cx, &detail);
-                    },
-                );
+                show_export_error(editor.clone(), cx, &detail);
                 return;
             }
 
@@ -162,26 +154,18 @@ impl Editor {
                 .await
                 .unwrap_or_else(|_| Err("export task stopped before reporting a result".into()));
             if let Err(detail) = result {
-                let _ = cx.update_window(
-                    window_handle,
-                    move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                        show_export_error(window, cx, &detail);
-                    },
-                );
+                show_export_error(editor.clone(), cx, &detail);
             }
         })
         .detach();
     }
 }
 
-fn show_export_error(window: &mut Window, cx: &mut App, detail: &str) {
-    let strings = cx.global::<I18nManager>().strings().clone();
-    let buttons = [strings.info_dialog_ok.as_str()];
-    let _ = window.prompt(
-        PromptLevel::Critical,
-        &strings.export_failed_title,
-        Some(detail),
-        &buttons,
-        cx,
-    );
+/// 导出失败提示走应用内模态（用户要求：全软件不用系统原生弹窗）。
+fn show_export_error(editor: WeakEntity<Editor>, cx: &mut AsyncApp, detail: &str) {
+    let detail: SharedString = detail.to_string().into();
+    let _ = editor.update(cx, move |editor, cx| {
+        let title = cx.global::<I18nManager>().strings().export_failed_title.clone();
+        editor.show_message_modal(title.clone(), detail.clone(), cx);
+    });
 }

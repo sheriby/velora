@@ -506,26 +506,15 @@ impl Editor {
         {
             let detail = error.to_string();
             let strings = cx.global::<I18nManager>().strings().clone();
-            let buttons = [strings.info_dialog_ok.as_str()];
+            // 应用内模态，不用系统原生弹窗（用户要求）。
             if detail.starts_with("检测到外部修改") {
                 self.report_workspace_file_error(detail.clone(), cx);
                 let message = format!("{}\n\n{}", strings.external_change_message, path.display());
-                let _ = window.prompt(
-                    PromptLevel::Warning,
-                    &strings.external_change_title,
-                    Some(&message),
-                    &buttons,
-                    cx,
-                );
+                self.show_message_modal(strings.external_change_title.clone(), message, cx);
             } else {
-                let _ = window.prompt(
-                    PromptLevel::Critical,
-                    &strings.save_failed_title,
-                    Some(&detail),
-                    &buttons,
-                    cx,
-                );
+                self.show_message_modal(strings.save_failed_title.clone(), detail.clone(), cx);
             }
+            let _ = window;
             return false;
         }
         let markdown = self.serialized_document_text(cx);
@@ -538,14 +527,8 @@ impl Editor {
             Err(err) => {
                 let detail = err.to_string();
                 let strings = cx.global::<I18nManager>().strings().clone();
-                let buttons = [strings.info_dialog_ok.as_str()];
-                let _ = window.prompt(
-                    PromptLevel::Critical,
-                    &strings.save_failed_title,
-                    Some(&detail),
-                    &buttons,
-                    cx,
-                );
+                self.show_message_modal(strings.save_failed_title.clone(), detail, cx);
+                let _ = window;
                 false
             }
         }
@@ -584,20 +567,11 @@ impl Editor {
                             .update(cx, |this, cx| this.abort_pending_close_after_save(cx));
                     }
                     let detail = err.to_string();
-                    let _ = cx.update_window(
-                        window_handle,
-                        move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                            let strings = cx.global::<I18nManager>().strings().clone();
-                            let buttons = [strings.info_dialog_ok.as_str()];
-                            let _ = window.prompt(
-                                PromptLevel::Critical,
-                                &strings.save_failed_title,
-                                Some(&detail),
-                                &buttons,
-                                cx,
-                            );
-                        },
-                    );
+                    let _ = weak_editor_for_error.update(cx, move |this, cx| {
+                        let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+                        this.show_message_modal(title, detail.clone(), cx);
+                    });
+                    let _ = window_handle;
                     return;
                 }
             };
@@ -612,20 +586,11 @@ impl Editor {
                         .update(cx, |this, cx| this.abort_pending_close_after_save(cx));
                 }
                 let detail = err.to_string();
-                let _ = cx.update_window(
-                    window_handle,
-                    move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                        let strings = cx.global::<I18nManager>().strings().clone();
-                        let buttons = [strings.info_dialog_ok.as_str()];
-                        let _ = window.prompt(
-                            PromptLevel::Critical,
-                            &strings.save_failed_title,
-                            Some(&detail),
-                            &buttons,
-                            cx,
-                        );
-                    },
-                );
+                let _ = weak_editor_for_write_error.update(cx, move |this, cx| {
+                    let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+                    this.show_message_modal(title, detail.clone(), cx);
+                });
+                let _ = window_handle;
                 return;
             }
 

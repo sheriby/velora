@@ -352,6 +352,20 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 全量回归 | `cargo build` 0 警告；`cargo test` 922 通过 0 失败 1 ignored | 通过 |
 | 下一步（同一诉求的剩余部分） | 用户要求「整个软件禁止系统原生弹窗」：仍有 38 处 `window.prompt`（未保存更改、导出错误、拖放失败、外部变更冲突等），需先做应用内模态组件再逐处迁移 | 待做 |
 
+## 第三十四批补充（用户要求：整个软件禁止系统原生弹窗）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 需求 | 用户原话：「我们整个软件当中禁止用这种系统原生的弹窗」。gpui 的 `window.prompt` 在 macOS 上就是原生 NSAlert，全仓原有 38 处调用 | 已明确 |
+| 新增组件 | `src/editor/modal.rs`：应用内模态 `ModalSpec{title, detail, buttons, default_index, cancel_index}` + `Editor::show_modal / show_message_modal / dismiss_modal / cancel_modal / modal_is_open`，渲染挂在既有 overlay 链上（`info_dialog` 之后、拖放替换之前），外观复用 `dialog_*` token；按钮带 `debug_selector("editor-modal-button-{i}")` | 通过 |
+| 迁移 | 38 处原生弹窗全部改完：① 单按钮提示（保存失败/导出失败/打印失败/CLI 安装卸载/图片粘贴失败/外部变更/拖放打开失败）→ `show_message_modal`；② 多按钮决策（删除文件确认、关闭多个未保存标签）→ `show_modal` + 一次性回调（回调签名带 `&mut Editor`，可在里层继续开下一个模态，如删除后链式流程）；③ 偏好设置保存失败 → 改为该页顶部**内联**红字（`PreferencesWindow::save_error`），不弹任何框 | 通过 |
+| 异步落点 | 后台任务里原先用 `cx.update_window(handle, \|_view: AnyView, window, cx\| window.prompt(...))`（拿不到 Editor 实体）；新增 `show_async_message_modal(window_handle, cx, build)` 走 `WindowHandle<Editor>::update`，其余异步点改用弱/强 `Editor` 实体句柄更新 | 通过 |
+| 事件冒泡坑 | 按钮按下会冒泡到遮罩：遮罩的取消处理把回调里刚开的下一个模态一起关掉。按钮与遮罩监听都补 `cx.stop_propagation()` | 已修正（用例覆盖） |
+| 用例 | ① `in_app_modal_buttons_close_it_and_run_the_callback`：两按钮模态渲染 → 点按钮 0 → 旧模态关闭且回调确实按 choice 跑了（用只有一个按钮的新模态作可观测标记）→ 再点关闭；② `in_app_modal_backdrop_click_cancels`：点遮罩 = 取消位，且不会误开新模态；③ `app_source_never_uses_native_prompts`：源码扫描守卫，遍历 `src/` 断言不存在 `.prompt(`（`prompt_for_*` 文件/目录选择器除外）；④ 上一批的链接用例继续覆盖 `open_link_target` | 通过 |
+| 正控 | 在 `modal.rs` 里临时加一处 `window.prompt(...)` ⇒ 守卫用例失败并精确报出 `src/editor/modal.rs:235`；删除后复跑通过。按钮/遮罩用例在去掉 `stop_propagation` 时会失败（第二个模态被连带关掉） | 通过 |
+| 已知限制（记入 roadmap 后续项） | 模态目前只支持鼠标（按钮 + 遮罩取消），Esc/Enter 键盘路径未接：焦点在渲染期抢（含 `window.defer` 延后一帧）都拿不到按键派发，`modal_has_focus` 为真但 `on_key_down` 不触发，故本批不保留未验证的按键代码 | 待后续 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 925 通过 0 失败 1 ignored | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

@@ -12,6 +12,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{BlockKind, CursorLocation, Editor, UndoSelectionSnapshot, CURSOR_HISTORY_LIMIT};
+use crate::editor::modal::ModalSpec;
 use crate::components::{CursorHistoryBack, CursorHistoryForward, TocEntry};
 use crate::config::TreeSortPreference;
 use crate::i18n::{I18nManager, I18nStrings};
@@ -316,6 +317,22 @@ impl Default for WorkspaceState {
             tree_scroll_handle: ScrollHandle::new(),
         }
     }
+}
+
+/// 后台任务里往某个编辑器窗口弹应用内模态（取代系统原生弹窗）。
+fn show_async_message_modal(
+    window_handle: AnyWindowHandle,
+    cx: &mut AsyncApp,
+    build: impl FnOnce(&crate::i18n::I18nStrings) -> (String, String),
+) {
+    let Some(handle) = window_handle.downcast::<Editor>() else {
+        return;
+    };
+    let _ = handle.update(cx, move |editor, _window, cx| {
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        let (title, detail) = build(&strings);
+        editor.show_message_modal(title, detail, cx);
+    });
 }
 
 /// 「<名> copy[ 序号]」式唯一副本路径（roadmap D6，与右键「创建副本」共用）。
@@ -841,20 +858,9 @@ impl Editor {
         detail: String,
         cx: &mut AsyncApp,
     ) {
-        let _ = cx.update_window(
-            window_handle,
-            move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-                let buttons = [strings.info_dialog_ok.as_str()];
-                let _ = window.prompt(
-                    PromptLevel::Critical,
-                    &strings.open_failed_title,
-                    Some(&detail),
-                    &buttons,
-                    cx,
-                );
-            },
-        );
+        show_async_message_modal(window_handle, cx, move |strings| {
+            (strings.open_failed_title.clone(), detail.clone())
+        });
     }
 
     pub(super) fn show_external_change_error(
@@ -862,21 +868,12 @@ impl Editor {
         detail: String,
         cx: &mut AsyncApp,
     ) {
-        let _ = cx.update_window(
-            window_handle,
-            move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-                let message = format!("{}\n\n{}", strings.external_change_message, detail);
-                let buttons = [strings.info_dialog_ok.as_str()];
-                let _ = window.prompt(
-                    PromptLevel::Warning,
-                    &strings.external_change_title,
-                    Some(&message),
-                    &buttons,
-                    cx,
-                );
-            },
-        );
+        show_async_message_modal(window_handle, cx, move |strings| {
+            (
+                strings.external_change_title.clone(),
+                format!("{}\n\n{}", strings.external_change_message, detail),
+            )
+        });
     }
 
     pub(super) fn show_workspace_save_error(
@@ -884,20 +881,9 @@ impl Editor {
         detail: String,
         cx: &mut AsyncApp,
     ) {
-        let _ = cx.update_window(
-            window_handle,
-            move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-                let buttons = [strings.info_dialog_ok.as_str()];
-                let _ = window.prompt(
-                    PromptLevel::Critical,
-                    &strings.save_failed_title,
-                    Some(&detail),
-                    &buttons,
-                    cx,
-                );
-            },
-        );
+        show_async_message_modal(window_handle, cx, move |strings| {
+            (strings.save_failed_title.clone(), detail.clone())
+        });
     }
 
     pub(super) fn report_workspace_file_error(&mut self, detail: String, cx: &mut Context<Self>) {
@@ -1229,26 +1215,28 @@ impl Editor {
             detail.push_str("\n");
             detail.push_str(&strings.workspace_delete_unsaved_message);
         }
-        let buttons = [
-            strings.workspace_delete.as_str(),
-            strings.open_link_cancel.as_str(),
-        ];
-        let prompt = window.prompt(
-            PromptLevel::Warning,
-            &strings.workspace_delete_confirm_title,
-            Some(&detail),
-            &buttons,
-            cx,
-        );
         let editor = cx.entity().downgrade();
         let window_handle = window.window_handle();
         let background = cx.background_executor().clone();
         let delete_policy = crate::config::EditorSettings::delete_policy(cx);
+        let title = strings.workspace_delete_confirm_title.clone();
+        let confirm_label = strings.workspace_delete.clone();
+        let cancel_label = strings.open_link_cancel.clone();
 
+        // 删除确认走应用内模态（用户要求：全软件不用系统原生弹窗）。
+        self.show_modal(
+            ModalSpec {
+                title: title.into(),
+                detail: Some(detail.into()),
+                buttons: vec![confirm_label.into(), cancel_label.into()],
+                default_index: 0,
+                cancel_index: 1,
+            },
+            move |choice, _editor, _window, cx| {
+                if choice != 0 {
+                    return;
+                }
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let Ok(0) = prompt.await else {
-                return;
-            };
             let delete_target = target.clone();
             let delete_policy = delete_policy;
             let result = background.spawn(async move {
@@ -1363,6 +1351,9 @@ impl Editor {
             );
         })
         .detach();
+            },
+            cx,
+        );
     }
 
     fn selected_workspace_path(&self) -> Option<PathBuf> {
@@ -3229,32 +3220,26 @@ impl Editor {
             )
         };
         let detail = (!detail.is_empty()).then_some(detail);
-        let buttons = [
-            strings.unsaved_changes_save_and_close.as_str(),
-            strings.unsaved_changes_discard_and_close.as_str(),
-            strings.open_link_cancel.as_str(),
-        ];
-        let prompt = window.prompt(
-            PromptLevel::Warning,
-            &message,
-            detail.as_deref(),
-            &buttons,
+        // 关闭多个未保存标签的确认同样走应用内模态（用户要求：不用系统原生弹窗）。
+        self.show_modal(
+            ModalSpec {
+                title: message.into(),
+                detail: detail.map(Into::into),
+                buttons: vec![
+                    strings.unsaved_changes_save_and_close.clone().into(),
+                    strings.unsaved_changes_discard_and_close.clone().into(),
+                    strings.open_link_cancel.clone().into(),
+                ],
+                default_index: 0,
+                cancel_index: 2,
+            },
+            move |choice, editor, window, cx| match choice {
+                0 => editor.finish_close_workspace_tabs(&closing, true, window, cx),
+                1 => editor.finish_close_workspace_tabs(&closing, false, window, cx),
+                _ => {}
+            },
             cx,
         );
-        let prompt_window = window.window_handle().downcast::<Editor>();
-        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let Ok(choice) = prompt.await else {
-                return;
-            };
-            if let Some(handle) = prompt_window {
-                let _ = handle.update(cx, |editor, window, cx| match choice {
-                    0 => editor.finish_close_workspace_tabs(&closing, true, window, cx),
-                    1 => editor.finish_close_workspace_tabs(&closing, false, window, cx),
-                    _ => {}
-                });
-            }
-        })
-        .detach();
     }
 
     /// Removes closed tabs from the strip, optionally saving their cached

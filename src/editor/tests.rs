@@ -5587,6 +5587,119 @@ async fn broken_image_placeholder_stays_compact_inside_the_column(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn in_app_modal_buttons_close_it_and_run_the_callback(cx: &mut TestAppContext) {
+    // 用户要求：全软件不用系统原生弹窗。模态必须可点、可关、回调拿到正确序号。
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# 标题\n".into(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_modal(
+            crate::editor::modal::ModalSpec {
+                title: "确认删除".into(),
+                detail: Some("note.md".into()),
+                buttons: vec!["删除".into(), "取消".into()],
+                default_index: 0,
+                cancel_index: 1,
+            },
+            |choice, editor, _window, cx| {
+                if choice == 0 {
+                    // 用一个只有单个按钮的模态标记「回调确实按 choice 跑了」。
+                    editor.show_message_modal("已删除", "", cx);
+                }
+            },
+            cx,
+        );
+    });
+    redraw(cx);
+    assert!(cx.debug_bounds("editor-modal-button-0").is_some(), "模态应渲染第一个按钮");
+    assert!(cx.debug_bounds("editor-modal-button-1").is_some(), "模态应渲染取消按钮");
+
+    let first = cx.debug_bounds("editor-modal-button-0").expect("button 0");
+    cx.simulate_click(first.center(), Modifiers::none());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("editor-modal-button-1").is_none(),
+        "点「删除」后旧模态应关闭，回调里新开的模态只有一个按钮"
+    );
+    assert!(cx.debug_bounds("editor-modal-button-0").is_some());
+
+    let second = cx.debug_bounds("editor-modal-button-0").expect("button of second modal");
+    cx.simulate_click(second.center(), Modifiers::none());
+    redraw(cx);
+    assert!(cx.debug_bounds("editor-modal-button-0").is_none());
+    editor.read_with(cx, |editor, _| assert!(!editor.modal_is_open()));
+}
+
+#[gpui::test]
+async fn in_app_modal_backdrop_click_cancels(cx: &mut TestAppContext) {
+    // 取消语义：点遮罩 = 按取消位（键盘 Esc/Enter 另计，见 roadmap 后续项）。
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# 标题\n".into(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_modal(
+            crate::editor::modal::ModalSpec {
+                title: "确认".into(),
+                detail: None,
+                buttons: vec!["确定".into(), "取消".into()],
+                default_index: 0,
+                cancel_index: 1,
+            },
+            |choice, editor, _window, cx| {
+                if choice != 1 {
+                    editor.show_message_modal("不该发生", "", cx);
+                }
+            },
+            cx,
+        );
+    });
+    redraw(cx);
+    assert!(cx.debug_bounds("editor-modal-button-1").is_some());
+
+    // 遮罩左上角（面板之外）按下 = 取消。
+    cx.simulate_click(gpui::point(px(6.0), px(6.0)), Modifiers::none());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("editor-modal-button-0").is_none(),
+        "点遮罩应关闭模态，且回调按取消位走（不再开新模态）"
+    );
+    editor.read_with(cx, |editor, _| assert!(!editor.modal_is_open()));
+}
+
+#[gpui::test]
+async fn app_source_never_uses_native_prompts(_cx: &mut TestAppContext) {
+    // 用户要求：整个软件禁止系统原生弹窗。这条守卫挡住以后新增 `window.prompt`。
+    let mut offenders = Vec::new();
+    collect_prompt_offenders(std::path::Path::new("src"), &mut offenders);
+    assert!(
+        offenders.is_empty(),
+        "src/ 里不应再出现系统原生弹窗调用 window.prompt：{offenders:?}"
+    );
+}
+
+fn collect_prompt_offenders(dir: &std::path::Path, offenders: &mut Vec<String>) {
+    for entry in fs::read_dir(dir).expect("source dir should be readable") {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            collect_prompt_offenders(&path, offenders);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("source file should be readable");
+        for (index, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // `prompt_for_*` 是原生文件/目录选择器，不属于消息框。
+            if line.contains(".prompt(") && !line.contains("prompt_for_") {
+                offenders.push(format!("{}:{}", path.display(), index + 1));
+            }
+        }
+    }
+}
+
+#[gpui::test]
 async fn heading_fold_chevron_renders_and_click_toggles_fold(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let markdown = "## Section\n\nalpha\n\n## Empty";

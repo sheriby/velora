@@ -295,7 +295,6 @@ pub(crate) fn install_cli_tool(cx: &mut App) {
     use std::process::Command;
 
     let bin_link = "/usr/local/bin/velora";
-    let strings = cx.global::<I18nManager>().strings();
 
     let current_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -340,18 +339,7 @@ do shell script "rm -f " & quoted form of linkPath & linefeed & "ln -s " & quote
                      the 'velora' command will stop working\n\
                      automatically (no cleanup needed)."
                 );
-                if let Some(window) = cx.active_window() {
-                    let ok = strings.info_dialog_ok.clone();
-                    let _ = window.update(cx, |_view, window, cx| {
-                        let _ = window.prompt(
-                            PromptLevel::Info,
-                            &title,
-                            Some(&detail),
-                            &[ok.as_str()],
-                            cx,
-                        );
-                    });
-                }
+                show_message_on_active_editor(cx, title, &detail);
             } else {
                 // User pressed Cancel on the admin password dialog
                 // or the link creation failed for another reason.
@@ -377,7 +365,6 @@ pub(crate) fn uninstall_cli_tool(cx: &mut App) {
     use std::process::Command;
 
     let bin_link = "/usr/local/bin/velora";
-    let strings = cx.global::<I18nManager>().strings();
 
     if !is_cli_symlink_current_app() {
         show_install_cli_error(cx, "CLI command is not installed for this app.");
@@ -393,20 +380,11 @@ do shell script "rm -f " & quoted form of linkPath with administrator privileges
     match Command::new("osascript").arg("-e").arg(&script).output() {
         Ok(output) => {
             if output.status.success() {
-                let title = "CLI Command Uninstalled";
-                let detail = "CLI command has been removed successfully.".to_string();
-                if let Some(window) = cx.active_window() {
-                    let ok = strings.info_dialog_ok.clone();
-                    let _ = window.update(cx, |_view, window, cx| {
-                        let _ = window.prompt(
-                            PromptLevel::Info,
-                            &title,
-                            Some(&detail),
-                            &[ok.as_str()],
-                            cx,
-                        );
-                    });
-                }
+                show_message_on_active_editor(
+                    cx,
+                    "CLI Command Uninstalled",
+                    "CLI command has been removed successfully.",
+                );
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                 let detail = if stderr.contains("User canceled") || stderr.contains("(-128)") {
@@ -442,23 +420,7 @@ pub(crate) fn uninstall_cli_tool(cx: &mut App) {
 }
 
 fn show_install_cli_error(cx: &mut App, detail: &str) {
-    let strings = cx.global::<I18nManager>().strings();
-    let title = "Install Command-Line Tool Failed";
-
-    if let Some(window) = cx.active_window() {
-        let ok = strings.info_dialog_ok.clone();
-        let _ = window.update(cx, |_view, window, cx| {
-            let _ = window.prompt(
-                PromptLevel::Critical,
-                title,
-                Some(detail),
-                &[ok.as_str()],
-                cx,
-            );
-        });
-    } else {
-        eprintln!("{title}: {detail}");
-    }
+    show_message_on_active_editor(cx, "Install Command-Line Tool Failed", detail);
 }
 
 pub(crate) fn record_recent_file_from_editor(path: &Path, cx: &mut App) {
@@ -466,15 +428,30 @@ pub(crate) fn record_recent_file_from_editor(path: &Path, cx: &mut App) {
 }
 
 fn show_window_prompt(window: Option<AnyWindowHandle>, title: &str, detail: &str, cx: &mut App) {
-    if let Some(window) = window {
-        let ok = cx.global::<I18nManager>().strings().info_dialog_ok.clone();
-        let _ = window.update(cx, |_view, window, cx| {
-            let buttons = [ok.as_str()];
-            let _ = window.prompt(PromptLevel::Critical, title, Some(detail), &buttons, cx);
-        });
-    } else {
+    // 应用内模态，不用系统原生弹窗（用户要求）。
+    show_message_on_active_editor_in(window, title, detail, cx);
+}
+
+/// 在指定（或当前）编辑器窗口里弹应用内模态提示；拿不到编辑器窗口时退回 stderr。
+fn show_message_on_active_editor_in(
+    window: Option<AnyWindowHandle>,
+    title: &str,
+    detail: &str,
+    cx: &mut App,
+) {
+    let Some(handle) = window.and_then(|window| window.downcast::<Editor>()) else {
         eprintln!("{title}: {detail}");
-    }
+        return;
+    };
+    let title = title.to_string();
+    let detail = detail.to_string();
+    let _ = handle.update(cx, move |editor, _window, cx| {
+        editor.show_message_modal(title.clone(), detail.clone(), cx);
+    });
+}
+
+fn show_message_on_active_editor(cx: &mut App, title: &str, detail: &str) {
+    show_message_on_active_editor_in(cx.active_window(), title, detail, cx);
 }
 
 fn with_active_editor<R>(
@@ -500,13 +477,22 @@ fn request_update_check_on_active_editor(cx: &mut App) {
 /// roadmap F4 打印：先把当前文档写成临时导出 HTML（含 F3 主题配置），
 /// 再在后台线程渲染为临时 PDF 并交给系统预览/打印，避免阻塞 UI。
 fn print_document(editor: &Editor, window: &mut Window, cx: &mut Context<Editor>) {
-    let window_handle = window.window_handle();
     let html_path = crate::export::print::print_temp_html_path();
     if let Err(err) = editor.export_document_to_path(ExportFormat::Html, &html_path, cx) {
-        show_export_error(window, cx, &err.to_string());
+        let title = cx
+            .global::<I18nManager>()
+            .strings()
+            .export_failed_title
+            .clone();
+        let editor = cx.entity();
+        let _ = window;
+        let _ = editor.update(cx, |editor, cx| {
+            editor.show_message_modal(title, err.to_string(), cx);
+        });
         return;
     }
 
+    let editor_entity = cx.entity();
     cx.spawn(async move |_this: WeakEntity<Editor>, cx: &mut AsyncApp| {
         let (sender, receiver) = oneshot::channel();
         let spawn_result = std::thread::Builder::new()
@@ -520,12 +506,7 @@ fn print_document(editor: &Editor, window: &mut Window, cx: &mut Context<Editor>
 
         if let Err(err) = spawn_result {
             let detail = format!("failed to start print task: {err}");
-            let _ = cx.update_window(
-                window_handle,
-                move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                    show_export_error(window, cx, &detail);
-                },
-            );
+            show_export_error(editor_entity.clone(), cx, &detail);
             return;
         }
 
@@ -533,27 +514,23 @@ fn print_document(editor: &Editor, window: &mut Window, cx: &mut Context<Editor>
             .await
             .unwrap_or_else(|_| Err("print task stopped before reporting a result".into()));
         if let Err(detail) = result {
-            let _ = cx.update_window(
-                window_handle,
-                move |_view: AnyView, window: &mut Window, cx: &mut App| {
-                    show_export_error(window, cx, &detail);
-                },
-            );
+            show_export_error(editor_entity.clone(), cx, &detail);
         }
     })
     .detach();
 }
 
-fn show_export_error(window: &mut Window, cx: &mut App, detail: &str) {
-    let strings = cx.global::<I18nManager>().strings().clone();
-    let buttons = [strings.info_dialog_ok.as_str()];
-    let _ = window.prompt(
-        PromptLevel::Critical,
-        &strings.export_failed_title,
-        Some(detail),
-        &buttons,
-        cx,
-    );
+/// 打印/导出失败提示走应用内模态（用户要求：全软件不用系统原生弹窗）。
+fn show_export_error(editor: Entity<Editor>, cx: &mut AsyncApp, detail: &str) {
+    let detail = detail.to_string();
+    let _ = editor.update(cx, move |editor, cx| {
+        let title = cx
+            .global::<I18nManager>()
+            .strings()
+            .export_failed_title
+            .clone();
+        editor.show_message_modal(title, detail, cx);
+    });
 }
 
 fn recent_files_for_menu() -> Vec<PathBuf> {

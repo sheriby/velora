@@ -487,19 +487,14 @@ impl Editor {
         ))
     }
 
-    pub(super) fn show_image_paste_error(&self, err: anyhow::Error, cx: &mut Context<Self>) {
+    pub(super) fn show_image_paste_error(&mut self, err: anyhow::Error, cx: &mut Context<Self>) {
+        // 应用内模态（用户要求：全软件不用系统原生弹窗）。
         let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-        if let Some(window) = cx.active_window() {
-            let ok = strings.info_dialog_ok.clone();
-            let title = strings.image_paste_failed_title.clone();
-            let detail = err.to_string();
-            let _ = window.update(cx, |_view, window, cx| {
-                let buttons = [ok.as_str()];
-                let _ = window.prompt(PromptLevel::Critical, &title, Some(&detail), &buttons, cx);
-            });
-        } else {
-            eprintln!("{}: {err}", strings.image_paste_failed_title);
-        }
+        self.show_message_modal(
+            strings.image_paste_failed_title.clone(),
+            err.to_string(),
+            cx,
+        );
     }
 
     fn inserted_image_tree_for_block(block: &super::Block, markdown: &str) -> InlineTextTree {

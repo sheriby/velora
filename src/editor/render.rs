@@ -2853,6 +2853,11 @@ impl Render for Editor {
         };
         if let Some(kind) = self.info_dialog {
             base.child(self.render_info_dialog_overlay(&theme, kind, cx))
+        } else if self.modal_is_open() {
+            match self.render_modal_overlay(&theme, cx) {
+                Some(overlay) => base.child(overlay),
+                None => base,
+            }
         } else if self.show_drop_replace_dialog {
             base.child(self.render_drop_replace_overlay(&theme, cx))
         } else if self.show_unsaved_changes_dialog {

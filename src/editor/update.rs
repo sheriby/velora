@@ -4,7 +4,7 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui::*;
 
-use super::{Editor, InfoDialogKind};
+use super::{Editor, InfoDialogKind, modal::ModalSpec};
 use crate::i18n::I18nManager;
 use crate::net::update::{self as update_check, UpdateCheckResult, UpdateVersionInfo};
 
@@ -45,87 +45,71 @@ impl Editor {
                 editor.hide_info_dialog(cx);
             });
 
-            let _ = cx.update_window(
-                window_handle,
-                move |_view: AnyView, window: &mut Window, cx: &mut App| match result {
-                    Ok(UpdateCheckResult::UpdateAvailable(info)) => {
-                        show_update_available_prompt(window, cx, &info);
-                    }
-                    Ok(UpdateCheckResult::UpToDate(info)) => {
-                        show_up_to_date_prompt(window, cx, &info);
-                    }
-                    Err(error) => {
-                        show_update_failed_prompt(window, cx, &error.to_string());
-                    }
-                },
-            );
+            let _ = window_handle;
+            // 更新检查结果一律用应用内模态呈现（用户要求：不用系统原生弹窗）。
+            let _ = weak_editor.update(cx, |editor, cx| match result {
+                Ok(UpdateCheckResult::UpdateAvailable(info)) => {
+                    show_update_available_prompt(editor, cx, &info);
+                }
+                Ok(UpdateCheckResult::UpToDate(info)) => {
+                    show_up_to_date_prompt(editor, cx, &info);
+                }
+                Err(error) => {
+                    show_update_failed_prompt(editor, cx, &error.to_string());
+                }
+            });
         })
         .detach();
     }
 }
 
-fn show_update_available_prompt(window: &mut Window, cx: &mut App, info: &UpdateVersionInfo) {
+fn show_update_available_prompt(
+    editor: &mut Editor,
+    cx: &mut Context<Editor>,
+    info: &UpdateVersionInfo,
+) {
     let strings = cx.global::<I18nManager>().strings().clone();
     let detail = format_update_message(
         &strings.update_available_message_template,
         &info.current_version,
         &info.latest_version,
     );
-    let buttons = [
-        strings.update_open_release.as_str(),
-        strings.update_later.as_str(),
-    ];
-    let prompt = window.prompt(
-        PromptLevel::Info,
-        &strings.update_available_title,
-        Some(&detail),
-        &buttons,
+    editor.show_modal(
+        ModalSpec {
+            title: strings.update_available_title.clone().into(),
+            detail: Some(detail.into()),
+            buttons: vec![
+                strings.update_open_release.clone().into(),
+                strings.update_later.clone().into(),
+            ],
+            default_index: 0,
+            cancel_index: 1,
+        },
+        move |choice, _editor, _window, cx| {
+            if choice == 0 {
+                cx.open_url(update_check::RELEASES_URL);
+            }
+        },
         cx,
     );
-    let window_handle = window.window_handle();
-    cx.spawn(async move |cx| {
-        let Ok(choice) = prompt.await else {
-            return;
-        };
-        if choice == 0 {
-            let _ = cx.update_window(window_handle, |_view: AnyView, _window, cx| {
-                cx.open_url(update_check::RELEASES_URL);
-            });
-        }
-    })
-    .detach();
 }
 
-fn show_up_to_date_prompt(window: &mut Window, cx: &mut App, info: &UpdateVersionInfo) {
+fn show_up_to_date_prompt(editor: &mut Editor, cx: &mut Context<Editor>, info: &UpdateVersionInfo) {
     let strings = cx.global::<I18nManager>().strings().clone();
     let detail = format_update_message(
         &strings.update_up_to_date_message_template,
         &info.current_version,
         &info.latest_version,
     );
-    let buttons = [strings.info_dialog_ok.as_str()];
-    let _ = window.prompt(
-        PromptLevel::Info,
-        &strings.update_up_to_date_title,
-        Some(&detail),
-        &buttons,
-        cx,
-    );
+    editor.show_message_modal(strings.update_up_to_date_title.clone(), detail, cx);
 }
 
-fn show_update_failed_prompt(window: &mut Window, cx: &mut App, detail: &str) {
+fn show_update_failed_prompt(editor: &mut Editor, cx: &mut Context<Editor>, detail: &str) {
     let strings = cx.global::<I18nManager>().strings().clone();
     let message = strings
         .update_failed_message_template
         .replace("{error}", detail);
-    let buttons = [strings.info_dialog_ok.as_str()];
-    let _ = window.prompt(
-        PromptLevel::Critical,
-        &strings.update_failed_title,
-        Some(&message),
-        &buttons,
-        cx,
-    );
+    editor.show_message_modal(strings.update_failed_title.clone(), message, cx);
 }
 
 fn format_update_message(template: &str, current_version: &str, latest_version: &str) -> String {

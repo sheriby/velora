@@ -26,6 +26,7 @@ use crate::components::{
 };
 mod close;
 mod context_menu;
+mod modal;
 mod document;
 mod events;
 mod export;
@@ -124,6 +125,8 @@ pub struct Editor {
     show_drop_replace_dialog: bool,
     pending_drop_replace_after_save: bool,
     drop_replace_restore_focus: Option<EntityId>,
+    /// 应用内模态（取代系统原生 window.prompt，用户要求全软件不用原生弹窗）。
+    modal: Option<modal::EditorModal>,
     /// Optional informational dialog shown from the Help menu.
     info_dialog: Option<InfoDialogKind>,
     /// Set while the active tab is a file the editor can't preview; the
@@ -484,6 +487,7 @@ impl Editor {
             show_drop_replace_dialog: false,
             pending_drop_replace_after_save: false,
             drop_replace_restore_focus: None,
+            modal: None,
             info_dialog: None,
             unsupported_preview_path: None,
             unsupported_preview_detail: None,

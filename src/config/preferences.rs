@@ -1571,6 +1571,8 @@ pub(crate) struct PreferencesWindow {
     code_font_dropdown_open: bool,
     recording_shortcut: Option<ShortcutCommand>,
     shortcut_error: Option<String>,
+    /// 保存失败时在本页顶部内联显示，不弹系统原生对话框（用户要求）。
+    save_error: Option<String>,
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
@@ -1691,6 +1693,7 @@ impl PreferencesWindow {
             code_font_dropdown_open: false,
             recording_shortcut: None,
             shortcut_error: None,
+            save_error: None,
             status_bar_enabled: preferences.status_bar.enabled,
             status_bar_show_word_count: preferences.status_bar.show_word_count,
             status_bar_show_cursor_position: preferences.status_bar.show_cursor_position,
@@ -1945,6 +1948,7 @@ impl PreferencesWindow {
             return;
         }
 
+        self.save_error = None;
         let preferences = match save_preferences_from_window(
             self.startup_open,
             &self.selected_theme_id,
@@ -1974,15 +1978,12 @@ impl PreferencesWindow {
             Ok(preferences) => preferences,
             Err(err) => {
                 let strings = cx.global::<I18nManager>().strings().clone();
-                let ok = strings.info_dialog_ok;
-                let buttons = [ok.as_str()];
-                let _ = window.prompt(
-                    PromptLevel::Critical,
-                    &strings.preferences_save_failed_title,
-                    Some(&err.to_string()),
-                    &buttons,
-                    cx,
-                );
+                self.save_error = Some(format!(
+                    "{}: {}",
+                    strings.preferences_save_failed_title,
+                    err
+                ));
+                cx.notify();
                 return;
             }
         };
@@ -3215,6 +3216,16 @@ impl PreferencesWindow {
             .flex_col()
             .items_center()
             .gap(px(8.0));
+        if let Some(error) = &self.save_error {
+            page = page.child(
+                div()
+                    .w_full()
+                    .flex_shrink_0()
+                    .text_size(px(t.dialog_body_size))
+                    .text_color(c.dialog_danger_button_bg)
+                    .child(error.clone()),
+            );
+        }
         if let Some(error) = &self.shortcut_error {
             page = page.child(
                 div()
