@@ -356,6 +356,14 @@ impl Editor {
         }
     }
 
+    /// Stable 8-hex-char digest of pasted image bytes for `YYYY-MM-DD-hash` names.
+    fn pasted_image_hash(bytes: &[u8]) -> String {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        format!("{:08x}", hasher.finish() as u32)
+    }
+
     fn unique_file_path(dir: &Path, preferred_name: &str) -> PathBuf {
         let preferred = Path::new(preferred_name);
         let stem = preferred
@@ -429,7 +437,9 @@ impl Editor {
             }
             PastedImageSource::ClipboardImage(image) => {
                 let file_name = format!(
-                    "pasted-image.{}",
+                    "{}-{}.{}",
+                    crate::config::today_local_date(),
+                    Self::pasted_image_hash(&image.bytes),
                     Self::clipboard_image_extension(image.format)
                 );
                 let target = Self::unique_file_path(&target_dir, &file_name);
@@ -2448,6 +2458,44 @@ mod tests {
                 Some(Path::new("/workspace")),
             ),
             Some(PathBuf::from("/workspace/docs"))
+        );
+    }
+
+    #[test]
+    fn pasted_image_hash_is_stable_and_content_sensitive() {
+        let first = Editor::pasted_image_hash(b"image-bytes-a");
+        let second = Editor::pasted_image_hash(b"image-bytes-a");
+        let other = Editor::pasted_image_hash(b"image-bytes-b");
+
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+        assert_eq!(first.len(), 8);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn clipboard_image_name_uses_date_and_hash_template() {
+        let name = format!(
+            "{}-{}.png",
+            crate::config::today_local_date(),
+            Editor::pasted_image_hash(b"png-bytes")
+        );
+        let (stem, extension) = name.split_once('.').expect("extension");
+        assert_eq!(extension, "png");
+        let mut parts = stem.splitn(3, '-');
+        let year = parts.next().expect("year");
+        let month = parts.next().expect("month");
+        let rest = parts.next().expect("day+hash");
+        let (day, hash) = rest.split_once('-').expect("day and hash");
+        assert_eq!(year.len(), 4);
+        assert_eq!(month.len(), 2);
+        assert_eq!(day.len(), 2);
+        assert_eq!(hash.len(), 8);
+        assert!(
+            year.chars()
+                .chain(month.chars())
+                .chain(day.chars())
+                .all(|ch| ch.is_ascii_digit())
         );
     }
 
