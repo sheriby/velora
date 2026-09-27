@@ -104,7 +104,7 @@ Velora 当前两侧都缺一批高频能力，以下按「P0 日常刚需 → P1
 | F2 ✅ | 复制为 HTML | 导出菜单 复制为 HTML（⇧⌘C）：选区/全文渲染为完整 HTML 写入剪贴板；纯文本 flavor 为 HTML 源码，另写 text/html flavor（gpui macOS pasteboard 扩展） | 编译+用例 |
 | F3 ✅ | 导出主题选择 | config.toml `[export] theme = "current"|"light"|"dark"`，导出 HTML/PDF 按配置解析主题；深色主题导出用例 + 配置往返用例 | 深色主题导出正常 |
 | F4 ✅ | 打印 | 导出菜单「打印…」：文档先落临时导出 HTML，后台线程注入打印版式并用 Chromium 渲染 PDF，交系统预览（macOS `open -a Preview`；Linux xdg-open；Windows start）；失败走既有错误弹窗 | 命令构造/错误路径用例；真实打印需手动验证 |
-| F5 | 导出图片（PNG 长图） | 全文渲染为单张长图 | 清晰度可接受 |
+| F5 ✅ | 导出图片（PNG 长图） | 导出菜单「图片（PNG 长图）」：浏览器版式 HTML 落临时文件，无头 Chromium 用 CDP 固定 1000px 视口（设备像素比 2）后按 DOM 实测内容高度整页截图（`capture_beyond_viewport`），得到单张长图；3.5 万像素高的长文实测输出 2000×35110 正常 | 长图高度随文档增长用例 + 人工目视（文字锐利、无裁切） |
 
 ### G. 可靠性与性能（P1，贯穿）
 

@@ -12,9 +12,9 @@ use anyhow::{Context as _, anyhow};
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::page::PrintToPdfParams;
 use futures::StreamExt;
-use uuid::Uuid;
 
 use crate::export::html::render_chromium_pdf_html_with_base_dir;
+use crate::export::{TempHtmlFile, file_url_from_path, unique_temp_path};
 use crate::theme::Theme;
 
 const CHROMIUM_VIEWPORT_WIDTH: u32 = 1280;
@@ -48,10 +48,8 @@ pub(crate) fn render_pdf_from_html(html: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 async fn render_pdf_html_async(html: &str) -> anyhow::Result<Vec<u8>> {
-    let temp = PdfTempFiles::create(html)?;
-    let result = render_pdf_from_html_file_async(temp.html_path.clone()).await;
-    temp.cleanup();
-    result
+    let temp = TempHtmlFile::create(html)?;
+    render_pdf_from_html_file_async(temp.path().to_path_buf()).await
 }
 
 async fn render_pdf_from_html_file_async(html_path: PathBuf) -> anyhow::Result<Vec<u8>> {
@@ -117,41 +115,10 @@ fn chromium_pdf_params() -> PrintToPdfParams {
     params
 }
 
-fn file_url_from_path(path: &Path) -> anyhow::Result<url::Url> {
-    url::Url::from_file_path(path)
-        .map_err(|_| anyhow!("failed to convert '{}' to a file URL", path.display()))
-}
-
-fn unique_temp_path(prefix: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()))
-}
-
-struct PdfTempFiles {
-    html_path: PathBuf,
-}
-
-impl PdfTempFiles {
-    fn create(html: &str) -> anyhow::Result<Self> {
-        let html_path = unique_temp_path("velotype-export").with_extension("html");
-        fs::write(&html_path, html)
-            .with_context(|| format!("failed to write temporary HTML '{}'", html_path.display()))?;
-        Ok(Self { html_path })
-    }
-
-    fn cleanup(&self) {
-        let _ = fs::remove_file(&self.html_path);
-    }
-}
-
-impl Drop for PdfTempFiles {
-    fn drop(&mut self) {
-        self.cleanup();
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{chromium_pdf_params, file_url_from_path, render_pdf, render_pdf_from_html};
+    use super::{chromium_pdf_params, render_pdf, render_pdf_from_html};
+    use crate::export::file_url_from_path;
     use crate::export::html::{prepare_print_html, render_chromium_pdf_html_with_base_dir, render_html};
     use crate::theme::Theme;
 

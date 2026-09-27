@@ -60,6 +60,7 @@ actions!(
         SaveDocumentAs,
         ExportHtml,
         ExportPdf,
+        ExportPng,
         PrintDocument,
         AddLanguageConfig,
         AddThemeConfig,

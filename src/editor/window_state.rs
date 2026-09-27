@@ -314,6 +314,15 @@ impl Editor {
         self.export_document_via_prompt(crate::export::ExportFormat::Pdf, window, cx);
     }
 
+    pub(crate) fn on_export_png(
+        &mut self,
+        _: &crate::components::ExportPng,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_document_via_prompt(crate::export::ExportFormat::Png, window, cx);
+    }
+
     pub(crate) fn on_quit_application(
         &mut self,
         _: &crate::components::QuitApplication,

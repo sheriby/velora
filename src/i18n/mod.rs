@@ -112,6 +112,8 @@ pub struct I18nStrings {
     pub menu_export_html: String,
     /// Export menu item for writing a PDF document.
     pub menu_export_pdf: String,
+    /// Export menu item for writing the whole document as one long PNG image.
+    pub menu_export_png: String,
     /// Export menu item for printing the document through the system print/preview.
     pub menu_print: String,
     /// Help menu item for checking updates.
@@ -544,6 +546,7 @@ struct I18nStringsDe {
     menu_quit: Option<String>,
     menu_export_html: Option<String>,
     menu_export_pdf: Option<String>,
+    menu_export_png: Option<String>,
     menu_print: Option<String>,
     menu_check_updates: Option<String>,
     menu_about: Option<String>,
@@ -825,6 +828,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "menu_quit",
     "menu_export_html",
     "menu_export_pdf",
+    "menu_export_png",
     "menu_print",
     "menu_check_updates",
     "menu_about",
@@ -1166,6 +1170,7 @@ impl I18nStringsDe {
             menu_quit: self.menu_quit.unwrap_or(defaults.menu_quit),
             menu_export_html: self.menu_export_html.unwrap_or(defaults.menu_export_html),
             menu_export_pdf: self.menu_export_pdf.unwrap_or(defaults.menu_export_pdf),
+            menu_export_png: self.menu_export_png.unwrap_or(defaults.menu_export_png),
             menu_print: self.menu_print.unwrap_or(defaults.menu_print),
             menu_check_updates: self
                 .menu_check_updates
@@ -1873,6 +1878,7 @@ impl I18nStrings {
             menu_quit: "退出".into(),
             menu_export_html: "HTML".into(),
             menu_export_pdf: "PDF".into(),
+            menu_export_png: "图片（PNG 长图）".into(),
             menu_print: "打印…".into(),
             menu_check_updates: "检查更新".into(),
             menu_about: "关于".into(),
@@ -2177,6 +2183,7 @@ impl I18nStrings {
             menu_quit: "Quit".into(),
             menu_export_html: "HTML".into(),
             menu_export_pdf: "PDF".into(),
+            menu_export_png: "Image (PNG)".into(),
             menu_print: "Print…".into(),
             menu_check_updates: "Check for Updates".into(),
             menu_about: "About".into(),

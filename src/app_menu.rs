@@ -13,8 +13,8 @@ use gpui::*;
 
 use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
-    FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NewWindow, NoRecentFiles,
-    OpenCommandPalette,
+    ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
+    NewWindow, OpenCommandPalette,
     OpenFile, OpenPreferences, OpenRecentFile, PrintDocument, QuitApplication, SaveDocument,
     SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
@@ -689,6 +689,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<SaveDocumentAs>()
         || action.as_any().is::<ExportHtml>()
         || action.as_any().is::<ExportPdf>()
+        || action.as_any().is::<ExportPng>()
         || action.as_any().is::<PrintDocument>()
         || action.as_any().is::<QuitApplication>()
         || action.as_any().is::<CloseWindow>()
@@ -842,6 +843,10 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, window, cx| {
             editor.export_document_via_prompt(ExportFormat::Pdf, window, cx)
         });
+    } else if action.as_any().is::<ExportPng>() {
+        let _ = with_active_editor(cx, |editor, window, cx| {
+            editor.export_document_via_prompt(ExportFormat::Png, window, cx)
+        });
     } else if action.as_any().is::<PrintDocument>() {
         let _ = with_active_editor(cx, |editor, window, cx| {
             print_document(editor, window, cx);
@@ -959,6 +964,10 @@ pub(crate) fn dispatch_menu_action_for_editor(
     } else if action.as_any().is::<ExportPdf>() {
         let _ = target.update(cx, |editor, cx| {
             editor.export_document_via_prompt(ExportFormat::Pdf, window, cx);
+        });
+    } else if action.as_any().is::<ExportPng>() {
+        let _ = target.update(cx, |editor, cx| {
+            editor.export_document_via_prompt(ExportFormat::Png, window, cx);
         });
     } else if action.as_any().is::<PrintDocument>() {
         let _ = target.update(cx, |editor, cx| {
@@ -1159,6 +1168,7 @@ fn build_menus(
             items: vec![
                 MenuItem::action(strings.menu_export_html.clone(), ExportHtml),
                 MenuItem::action(strings.menu_export_pdf.clone(), ExportPdf),
+                MenuItem::action(strings.menu_export_png.clone(), ExportPng),
                 MenuItem::action(strings.menu_print.clone(), PrintDocument),
                 MenuItem::action(strings.menu_copy_as_html.clone(), CopyAsHtml),
             ],
@@ -1545,6 +1555,9 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ExportPdf, cx| {
         dispatch_menu_action(&ExportPdf, cx);
     });
+    cx.on_action(|_: &ExportPng, cx| {
+        dispatch_menu_action(&ExportPng, cx);
+    });
     cx.on_action(|_: &PrintDocument, cx| {
         dispatch_menu_action(&PrintDocument, cx);
     });
@@ -1582,7 +1595,7 @@ mod tests {
     use super::{applescript_string_literal, build_menus};
     use crate::components::{
         AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, CopyAsHtml, ExportHtml,
-        ExportPdf, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
+        ExportPdf, ExportPng, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
         PrintDocument, QuitApplication,
         SaveDocument, SelectLanguage, SelectTheme, ShowAbout,
     };
@@ -1714,8 +1727,9 @@ mod tests {
 
         assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "Print…");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "Copy as HTML");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "Image (PNG)");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "Print…");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[4]), "Copy as HTML");
         assert_eq!(action_name(&menus[LANGUAGE_IDX].items[0]), "简体中文");
         assert_eq!(
             action_name(&menus[LANGUAGE_IDX].items[1]),
@@ -1785,8 +1799,9 @@ mod tests {
         assert_eq!(action_name(&menus[0].items[0]), "新建窗口");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "打印…");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "复制为 HTML");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "图片（PNG 长图）");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "打印…");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[4]), "复制为 HTML");
         assert_eq!(
             action_name(&menus[LANGUAGE_IDX].items[0]),
             "\u{2713} 简体中文"
@@ -1823,14 +1838,22 @@ mod tests {
             _ => panic!("expected export pdf action item"),
         }
 
-        // roadmap F4：打印菜单项存在且分发 PrintDocument，复制为 HTML 顺延到第 4 项。
+        // roadmap F5：PNG 长图菜单项排在 PDF 之后。
         match &menus[EXPORT_IDX].items[2] {
+            MenuItem::Action { action, .. } => {
+                assert!(action.as_any().is::<ExportPng>());
+            }
+            _ => panic!("expected export png action item"),
+        }
+
+        // roadmap F4：打印菜单项存在且分发 PrintDocument，复制为 HTML 顺延到第 5 项。
+        match &menus[EXPORT_IDX].items[3] {
             MenuItem::Action { action, .. } => {
                 assert!(action.as_any().is::<PrintDocument>());
             }
             _ => panic!("expected print action item"),
         }
-        match &menus[EXPORT_IDX].items[3] {
+        match &menus[EXPORT_IDX].items[4] {
             MenuItem::Action { action, .. } => {
                 assert!(action.as_any().is::<CopyAsHtml>());
             }

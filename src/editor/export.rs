@@ -61,6 +61,9 @@ impl Editor {
             ExportFormat::Pdf => {
                 document_export::render_pdf(markdown, theme, title, source_base_dir)
             }
+            ExportFormat::Png => {
+                document_export::render_png(markdown, theme, title, source_base_dir)
+            }
         }
     }
 

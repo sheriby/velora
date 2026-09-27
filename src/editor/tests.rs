@@ -1154,6 +1154,45 @@ async fn export_html_writes_rendered_document_without_changing_editor_state(
 }
 
 #[gpui::test]
+async fn export_png_writes_long_image_without_changing_editor_state(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let export_path = temp_export_path("rendered-export-png", "png");
+    let cleanup_path = export_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# Title\n\nbody".to_string(), None)
+    });
+
+    let export_result = editor.update(cx, |editor, cx| {
+        editor.mark_dirty(cx);
+        let result = editor.export_document_to_path(ExportFormat::Png, &export_path, cx);
+        assert!(editor.document_dirty);
+        assert!(editor.file_path.is_none());
+        result
+    });
+
+    match export_result {
+        Ok(()) => {
+            let png = fs::read(&export_path).expect("read exported png");
+            assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+        }
+        // Chrome 缺失时只要求给出可行动的错误，磁盘上不产生半成品。
+        Err(err) => {
+            let message = err.to_string();
+            assert!(
+                message.contains("Chromium") || message.contains("Chrome"),
+                "unexpected PNG export error: {message}"
+            );
+            assert!(!export_path.exists());
+        }
+    }
+}
+
+#[gpui::test]
 async fn export_html_uses_source_mode_raw_text(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 

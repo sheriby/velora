@@ -170,6 +170,16 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | G5 启动计时 | `VELORA_STARTUP_TIMING=1` 分阶段输出；改动前后同机对比（debug 构建，从进程进入到首个窗口）：**1420ms → 657ms**。阶段：app.run 入口 236ms（二进制装载+GPUI 初始化）、preferences 239ms、i18n/主题/设置 246ms、编辑器+快捷键 248ms、首个窗口 657ms；其中菜单构建从启动路径移出（延后一帧）、macOS 150ms 宽限期取消、会话标签仅同步打开活动标签 | 通过（解锁后可复测首帧可见时间） |
 | 全量回归 | `cargo test` 880 通过 0 失败 | 通过 |
 
+## 第十九批补充（F3 导出主题 / F4 打印 / F5 PNG 长图）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| F3 导出主题 | `export_theme_preference_round_trips_through_config_file`（`[export] theme` 落盘往返）+ `resolve_export_theme_reads_configured_preference` + 三个渲染用例：暗色偏好渲染暗背景 token、浅色偏好渲染浅背景 token、`current` 保持当前主题输出 | 通过 |
+| F4 打印 | `print_temp_paths_are_unique_and_typed`（临时路径唯一且带类型后缀）、`print_open_command_uses_preview_on_macos` / `print_open_command_uses_platform_default_viewer`（平台命令构造）、`open_command_reports_spawn_failure` 与 `open_command_reports_non_zero_exit`（失败可诊断）；`render_pdf_from_print_html_uses_chromium_print_pipeline` 断言打印 HTML 复用 Chromium 打印管线（Chrome 缺失时报同款可行动错误）；菜单结构测试断言「打印…」分发 `PrintDocument` | 通过（真实打印需人工点一次菜单） |
+| F5 PNG 长图 | 纯函数与管线用例：`long_image_params_capture_full_page_as_png`（PNG 格式 + 内容尺寸裁剪 + `capture_beyond_viewport`）、`device_metrics_size_rounds_fractional_content_up`（向上取整防末行裁切）、`long_image_html_uses_browser_layout`（走浏览器版式而非打印分页）；端到端 `long_image_height_covers_content_beyond_the_viewport`（200 段 vs 400 段：宽度恒为 2000px、高度超过首屏 4 倍且随段落数近线性增长，证明末段未被裁掉），**正控**：把裁剪高度写死为 1000px 后该用例必失败（实测报「长图高度 2000 未超出首屏」）；编辑器层 `export_png_writes_long_image_without_changing_editor_state`；菜单结构 + zh/en 菜单文案用例随新项更新 | 通过（人工目视：2000×2084 长图文字锐利、底部元素与留白完整；20 万像素级长文 2000×35110 正常输出） |
+| 全量回归 | `cargo test` 887 通过 0 失败 1 忽略；`cargo build` 0 警告 | 通过 |
+| 说明 | `window_size` 在新版无头模式下不决定页面视口（实测仍为 800px 宽），长图视口改由 CDP `Emulation.setDeviceMetricsOverride` 固定；内容高度取自 DOM（`body` 绘制高度），不用 `LayoutMetrics.css_content_size`（后者对短文档会返回视口高度，导致长图底部多出空白） | 已记录 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

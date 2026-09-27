@@ -2760,6 +2760,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_save_document_as))
             .on_action(cx.listener(Self::on_export_html))
             .on_action(cx.listener(Self::on_export_pdf))
+            .on_action(cx.listener(Self::on_export_png))
             .on_action(cx.listener(Self::on_quit_application))
             .on_action(cx.listener(Self::on_close_window))
             .on_action(cx.listener(Self::on_toggle_view_mode_action))
