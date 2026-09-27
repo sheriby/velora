@@ -2238,6 +2238,53 @@ mod tests {
     use gpui::{WindowAppearance, rgba};
 
     #[test]
+    fn theme_token_documentation_covers_every_token() {
+        // roadmap H3：主题 token 全表文档化；结构体新增字段必须同步 docs/主题变量.md。
+        let doc = include_str!("../../docs/主题变量.md");
+        let json = Theme::default_theme().to_json().expect("theme json");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse theme json");
+
+        let mut documented = std::collections::BTreeSet::new();
+        for line in doc.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("| `")
+                && let Some((token, _)) = rest.split_once("`")
+            {
+                documented.insert(token.to_string());
+            }
+        }
+
+        let mut missing = Vec::new();
+        for section in ["colors", "dimensions", "typography", "placeholders"] {
+            let Some(map) = value.get(section).and_then(|section| section.as_object()) else {
+                continue;
+            };
+            for key in map.keys() {
+                if !documented.contains(key) {
+                    missing.push(format!("{section}.{key}"));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "主题文档缺少 token：{missing:?}");
+
+        let mut unknown = Vec::new();
+        for token in &documented {
+            let known = ["colors", "dimensions", "typography", "placeholders"]
+                .iter()
+                .any(|section| {
+                    value
+                        .get(section)
+                        .and_then(|section| section.get(token))
+                        .is_some()
+                });
+            if !known {
+                unknown.push(token.clone());
+            }
+        }
+        assert!(unknown.is_empty(), "主题文档包含不存在的 token：{unknown:?}");
+    }
+
+    #[test]
     fn system_theme_tracks_window_appearance_changes() {
         let mut manager = ThemeManager::default();
         manager.set_system_appearance(WindowAppearance::Dark);
