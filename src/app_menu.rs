@@ -1621,19 +1621,20 @@ mod tests {
             "\u{2713} English"
         );
         assert_eq!(action_name(&menus[VIEW_IDX].items[0]), "Toggle Sidebar");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[2]), "Toggle View Mode");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[3]), "Toggle Focus Mode");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "Toggle Full Screen");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[3]), "Toggle View Mode");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "Toggle Focus Mode");
         assert_eq!(
-            action_name(&menus[VIEW_IDX].items[4]),
+            action_name(&menus[VIEW_IDX].items[5]),
             "Toggle Typewriter Mode"
         );
         assert_eq!(
-            action_name(&menus[VIEW_IDX].items[6]),
+            action_name(&menus[VIEW_IDX].items[7]),
             "Command Palette…"
         );
-        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "Find in Document…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "Find Next");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "Find Previous");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "Find in Document…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "Find Next");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[10]), "Find Previous");
     }
 
     #[test]
@@ -1689,13 +1690,14 @@ mod tests {
         );
         assert_eq!(action_name(&menus[LANGUAGE_IDX].items[1]), "English");
         assert_eq!(action_name(&menus[VIEW_IDX].items[0]), "切换侧边栏");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[2]), "切换视图模式");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[3]), "切换专注模式");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "切换打字机模式");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[6]), "命令面板…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "查找当前文档…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "查找下一个");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "查找上一个");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "切换全屏");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[3]), "切换视图模式");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "切换专注模式");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[5]), "切换打字机模式");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "命令面板…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "查找当前文档…");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "查找下一个");
+        assert_eq!(action_name(&menus[VIEW_IDX].items[10]), "查找上一个");
     }
 
     #[test]
