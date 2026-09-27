@@ -186,13 +186,37 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
     }
 
     let handle = open_editor_window(cx, String::new(), None);
-    let _ = handle.update(cx, |editor, window, cx| {
-        editor.show_welcome = tabs.is_empty();
-        editor.set_workspace_root(root, cx);
-        for tab in tabs {
-            editor.open_workspace_file(tab, window, cx);
-        }
-    });
+    // 活动标签先同步打开（决定窗口内容与焦点），其余标签分散到后续事件循环打开，
+    // 避免恢复大量标签阻塞首帧（roadmap G5）。
+    let mut deferred: Vec<PathBuf> = Vec::new();
+    if let Some(active) = tabs.last().cloned() {
+        tabs.pop();
+        deferred = tabs;
+        let _ = handle.update(cx, |editor, window, cx| {
+            editor.show_welcome = false;
+            editor.set_workspace_root(root, cx);
+            editor.open_workspace_file(active, window, cx);
+        });
+    } else {
+        let _ = handle.update(cx, |editor, _window, cx| {
+            editor.show_welcome = true;
+            editor.set_workspace_root(root, cx);
+        });
+    }
+    if !deferred.is_empty() {
+        cx.spawn(async move |cx| {
+            for tab in deferred {
+                // 让出一帧，保证首帧先渲染。
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(16))
+                    .await;
+                let _ = handle.update(cx, |editor, window, cx| {
+                    editor.open_workspace_file(tab, window, cx);
+                });
+            }
+        })
+        .detach();
+    }
     true
 }
 

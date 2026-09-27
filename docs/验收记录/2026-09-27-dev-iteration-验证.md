@@ -161,6 +161,15 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | H4 语言包外置 | 既有「导入→写入用户 languages 目录→启动加载」链路补齐目录直放用例 `loads_language_pack_dropped_into_user_directory`（含未覆盖字符串回退英文） | 通过 |
 | E10 恢复合并 | 启动恢复时若会话已打开同一文件，把快照未保存内容并入该标签（快照 id 转移给标签），不再另开窗口；用例 `recovery_snapshot_merges_into_open_session_tab` 断言正文/脏标记/recovery_id 转移与磁盘旧内容不变 | 通过 |
 
+## 第十八批补充（H2 策略 / G5 启动计时）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| H2 外部变更策略 | `manual_external_change_policy_keeps_buffer_until_user_reload`：manual 时 `reload_externally_changed_document` 不替换正文，改回 auto 后重载生效 | 通过 |
+| H2 删除策略 | `permanent_delete_removes_file_and_directory`：永久删除文件与目录；配置往返断言 `delete_policy = "permanent"` / `external_change_policy = "manual"` 落盘 | 通过 |
+| G5 启动计时 | `VELORA_STARTUP_TIMING=1` 分阶段输出；改动前后同机对比（debug 构建，从进程进入到首个窗口）：**1420ms → 657ms**。阶段：app.run 入口 236ms（二进制装载+GPUI 初始化）、preferences 239ms、i18n/主题/设置 246ms、编辑器+快捷键 248ms、首个窗口 657ms；其中菜单构建从启动路径移出（延后一帧）、macOS 150ms 宽限期取消、会话标签仅同步打开活动标签 | 通过（解锁后可复测首帧可见时间） |
+| 全量回归 | `cargo test` 880 通过 0 失败 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

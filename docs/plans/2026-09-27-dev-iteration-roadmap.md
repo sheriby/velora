@@ -114,7 +114,7 @@ Velora 当前两侧都缺一批高频能力，以下按「P0 日常刚需 → P1
 | G2 ✅(v1) | 编码探测与 UTF-8 转换提示 | UTF-16 LE/BE BOM 检测→特定占位提示（请转换为 UTF-8）；GBK 等 v2 引入 encoding_rs | UTF-16 单测 |
 | G3 ✅ | 自动保存防抖可配置 | config.toml [editor] autosave_debounce_ms（100-30000ms）；H1 已暴露到文件页下拉 | 配置生效 |
 | G4 ✅ | 大文件性能基准 | 10 MiB 打开测试（gitignored fixture）：debug 实测 17.5s/160k 块 ≈109µs/块，断言 ≤220µs/块 防回归；3s 预算需惰性建块（新 G8 待办） | 记录到验收文档 |
-| G5 | 启动时间优化 | 延迟初始化非关键服务，冷启动 < 1s | 计时记录 |
+| G5 ✅ | 启动时间优化 | `VELORA_STARTUP_TIMING=1` 分阶段计时；macOS 去掉 150ms open-file 宽限（改为「空欢迎窗口在文件事件到达时让位」）、菜单栏延后一个事件循环安装、会话标签只同步打开活动标签其余分散到后续帧；实测（debug）首个窗口 **657ms**，此前 1420ms | 计时记录 |
 | G6 ✅ | 崩溃恢复演练自动化 | crash_recovery_drill 四阶段：写快照→模拟崩溃（磁盘保持旧内容）→from_recovery 恢复 dirty 副本→保存并断言快照清理 | 测试通过 |
 | G7 ✅ | 渲染回归快照测试 | render_structure_snapshot_for_key_blocks：标题/段落(行内)/列表/分隔空段/任务/引用/代码块/表格 的块序列+文本黄金快照 | 快照测试 |
 

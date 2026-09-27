@@ -138,6 +138,30 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
     }
 }
 
+/// 关闭仍是空白欢迎态的启动窗口（未打开文件、未编辑、无标签），
+/// 供 Finder/`open` 文件事件到达时让位（roadmap G5）。
+#[cfg(target_os = "macos")]
+fn close_pristine_startup_windows(cx: &mut App) {
+    let handles = cx.windows();
+    for handle in handles {
+        let Some(editor) = handle.downcast::<components::Editor>() else {
+            continue;
+        };
+        let pristine = editor
+            .update(cx, |editor, window, _cx| {
+                let pristine = editor.is_pristine_startup_window();
+                if pristine {
+                    window.remove_window();
+                }
+                pristine
+            })
+            .unwrap_or(false);
+        if pristine {
+            return;
+        }
+    }
+}
+
 /// 把恢复快照并入已打开该文件路径的会话窗口（roadmap E10）。
 fn merge_snapshot_into_open_session(
     cx: &mut App,
@@ -237,7 +261,22 @@ impl AssetSource for VeloraAssets {
     }
 }
 
+/// 启动计时（roadmap G5）：设 VELORA_STARTUP_TIMING=1 时把各阶段耗时打到 stderr。
+fn startup_timing_enabled() -> bool {
+    std::env::var_os("VELORA_STARTUP_TIMING").is_some_and(|value| value != "0")
+}
+
+fn log_startup_phase(start: std::time::Instant, phase: &str) {
+    if startup_timing_enabled() {
+        eprintln!(
+            "[startup] {phase}: {:.1}ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+}
+
 fn main() {
+    let startup_start = std::time::Instant::now();
     let args: Vec<String> = std::env::args().collect();
 
     // Parse command-line arguments
@@ -333,16 +372,28 @@ fn main() {
     app.run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
         apply_dock_icon();
+        log_startup_phase(startup_start, "app.run entered");
         let preferences = config::load_or_create_app_preferences().unwrap_or_else(|err| {
             eprintln!("failed to initialize app preferences: {err}");
             Default::default()
         });
+        log_startup_phase(startup_start, "preferences loaded");
         I18nManager::init_with_language_id(cx, &preferences.default_language_id);
         ThemeManager::init_with_theme_id(cx, &preferences.default_theme_id);
         config::EditorSettings::init(cx, preferences.show_table_headers);
+        log_startup_phase(startup_start, "i18n/theme/settings ready");
         net::install_http_client(cx);
         init_editor(cx, &preferences.keybindings);
-        init_app_menu(cx);
+        log_startup_phase(startup_start, "editor installed");
+        // 菜单栏在首帧之后再安装：macOS 菜单不需要在窗口出现前就绪，
+        // 延后一个事件循环省下菜单构建时间（roadmap G5）。
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(16))
+                .await;
+            let _ = cx.update(|cx| init_app_menu(cx));
+        })
+        .detach();
         let recovery_windows_restored = Arc::new(AtomicBool::new(false));
 
         #[cfg(target_os = "macos")]
@@ -352,6 +403,7 @@ fn main() {
             while let Some(path) = open_file_rx.next().await {
                 let recovery_windows_restored = recovery_windows_restored_for_open.clone();
                 let _ = cx.update(move |cx| {
+                    close_pristine_startup_windows(cx);
                     if let Err(err) = app_menu::open_file_in_new_window(cx, &path) {
                         eprintln!("failed to open '{}': {err}", path.display());
                     }
@@ -364,23 +416,15 @@ fn main() {
         if input_paths.is_empty() {
             #[cfg(target_os = "macos")]
             {
+                // 直接开窗（roadmap G5：不再等 150ms 的 open-file 宽限期）；
+                // 若随后收到 Finder/`open` 的文件事件，先关掉这个未被使用的
+                // 启动窗口再打开目标文件，语义与原来的宽限期一致。
                 let startup_open = preferences.startup_open;
-                let open_file_requested = open_file_requested.clone();
-                let recovery_windows_restored = recovery_windows_restored.clone();
-                cx.spawn(async move |cx| {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(150))
-                        .await;
-                    if !open_file_requested.load(Ordering::SeqCst) {
-                        let _ = cx.update(move |cx| {
-                            if !restore_last_session(cx) {
-                                open_startup_window(cx, startup_open);
-                            }
-                            restore_recovery_windows(cx, &recovery_windows_restored);
-                        });
-                    }
-                })
-                .detach();
+                if !restore_last_session(cx) {
+                    open_startup_window(cx, startup_open);
+                }
+                restore_recovery_windows(cx, &recovery_windows_restored);
+                log_startup_phase(startup_start, "first window opened");
             }
 
             #[cfg(not(target_os = "macos"))]
@@ -389,6 +433,7 @@ fn main() {
                     open_startup_window(cx, preferences.startup_open);
                 }
                 restore_recovery_windows(cx, &recovery_windows_restored);
+                log_startup_phase(startup_start, "first window opened");
             }
 
             return;
@@ -431,5 +476,6 @@ fn main() {
         restore_recovery_windows(cx, &recovery_windows_restored);
         app_menu::install_menus(cx);
         cx.refresh_windows();
+        log_startup_phase(startup_start, "first window opened");
     });
 }
