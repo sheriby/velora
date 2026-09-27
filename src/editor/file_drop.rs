@@ -274,9 +274,28 @@ impl Editor {
             roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
         }
 
-        self.file_version = file_path
-            .as_ref()
-            .map(|_| super::persistence::file_content_version(&normalized));
+        // P7：内容哈希移出同步打开路径（10MiB 全文 SipHash ~15-25ms），
+        // 后台计算后写回；保存/自动保存在此期间按未登记（None）处理。
+        self.file_version = None;
+        let open_generation = self.open_generation.wrapping_add(1);
+        self.open_generation = open_generation;
+        if file_path.is_some() {
+            let hash_input = normalized.clone();
+            let hash_generation = open_generation;
+            cx.spawn(async move |this, cx| {
+                let version = cx
+                    .background_spawn(async move {
+                        super::persistence::file_content_version_normalized(&hash_input)
+                    })
+                    .await;
+                let _ = this.update(cx, |editor, _cx| {
+                    if editor.open_generation == hash_generation && editor.file_version.is_none() {
+                        editor.file_version = Some(version);
+                    }
+                });
+            })
+            .detach();
+        }
         self.file_path = file_path;
         self.view_mode = if is_code || source_mode_fallback_required {
             ViewMode::Source

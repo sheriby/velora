@@ -356,7 +356,7 @@ impl DocumentTree {
     /// snapshot exactly once for that mutation batch.
     /// P6a：同步物化原始字节尾部（代码/纯文本文档流式续建用）。
     pub(super) fn flush_pending_source(&mut self, cx: &mut Context<Editor>) {
-        let Some(mut tail) = self.pending_source.take() else {
+        let Some(tail) = self.pending_source.take() else {
             return;
         };
         let kind = self

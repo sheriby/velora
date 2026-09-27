@@ -85,8 +85,14 @@ fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<()>
 
 pub(super) fn file_content_version(markdown: &str) -> u64 {
     let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+    file_content_version_normalized(&normalized)
+}
+
+/// P7：对已规范化文本直接哈希（调用方保证输入无 `\r`），
+/// 免掉一次全文拷贝。
+pub(super) fn file_content_version_normalized(markdown: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
-    normalized.hash(&mut hasher);
+    markdown.hash(&mut hasher);
     hasher.finish()
 }
 
