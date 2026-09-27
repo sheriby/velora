@@ -572,6 +572,12 @@ impl Editor {
             // Unsaved edits win; the save path already detects conflicts.
             return;
         }
+        // 外部变更策略（roadmap H2）：manual 模式不自动重载，交由用户手动刷新。
+        if crate::config::EditorSettings::external_change_policy(cx)
+            == crate::config::ExternalChangePolicy::Manual
+        {
+            return;
+        }
         let Ok(disk) = std::fs::read_to_string(path) else {
             return;
         };
@@ -1217,14 +1223,23 @@ impl Editor {
         let editor = cx.entity().downgrade();
         let window_handle = window.window_handle();
         let background = cx.background_executor().clone();
+        let delete_policy = crate::config::EditorSettings::delete_policy(cx);
 
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let Ok(0) = prompt.await else {
                 return;
             };
             let delete_target = target.clone();
+            let delete_policy = delete_policy;
             let result = background.spawn(async move {
-                move_to_trash(&delete_target, target_is_directory)
+                match delete_policy {
+                    crate::config::DeletePolicy::Permanent => {
+                        permanent_delete(&delete_target, target_is_directory)
+                    }
+                    crate::config::DeletePolicy::Trash => {
+                        move_to_trash(&delete_target, target_is_directory)
+                    }
+                }
             })
                 .await;
             if let Err(err) = result {
@@ -5048,6 +5063,15 @@ impl Editor {
                 });
             })
             .into_any_element()
+    }
+}
+
+/// 永久删除（roadmap H2 的「永久删除」策略）。
+pub(crate) fn permanent_delete(target: &Path, is_directory: bool) -> std::io::Result<()> {
+    if is_directory {
+        std::fs::remove_dir_all(target)
+    } else {
+        std::fs::remove_file(target)
     }
 }
 

@@ -3386,6 +3386,82 @@ async fn toc_block_renders_entries_and_jumps_to_heading(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn manual_external_change_policy_keeps_buffer_until_user_reload(cx: &mut TestAppContext) {
+    // roadmap H2：外部变更策略 manual 时不自动重载，auto 时重载。
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("external-policy");
+    fs::write(&path, "disk v1").expect("seed");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "disk v1".into(), Some(path))
+    });
+
+    cx.update(|_window, cx| {
+        // 安装 EditorSettings 全局（否则 setter 只落盘、不改内存）。
+        crate::config::EditorSettings::init(cx, true);
+        crate::config::EditorSettings::set_external_change_policy(
+            cx,
+            crate::config::ExternalChangePolicy::Manual,
+        );
+    });
+    fs::write(&path, "disk v2").expect("external write");
+    editor.update(cx, |editor, cx| {
+        editor.reload_externally_changed_document(&path, cx);
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "disk v1",
+            "manual policy must not reload externally changed documents"
+        );
+    });
+
+    cx.update(|_window, cx| {
+        crate::config::EditorSettings::set_external_change_policy(
+            cx,
+            crate::config::ExternalChangePolicy::Auto,
+        );
+    });
+    editor.update(cx, |editor, cx| {
+        editor.reload_externally_changed_document(&path, cx);
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "disk v2",
+            "auto policy reloads unedited documents"
+        );
+    });
+    // 复原默认策略，避免影响同进程其他用例读取配置。
+    cx.update(|_window, cx| {
+        crate::config::EditorSettings::set_external_change_policy(
+            cx,
+            crate::config::ExternalChangePolicy::Auto,
+        );
+    });
+}
+
+#[test]
+fn permanent_delete_removes_file_and_directory() {
+    // roadmap H2：永久删除策略的落盘行为。
+    let root = std::env::temp_dir().join(format!("velora-permadelete-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("nested")).expect("create nested");
+    let file = root.join("gone.md");
+    fs::write(&file, "bye").expect("write file");
+
+    crate::editor::workspace::permanent_delete(&file, false).expect("delete file");
+    assert!(!file.exists());
+    crate::editor::workspace::permanent_delete(&root.join("nested"), true).expect("delete dir");
+    assert!(!root.join("nested").exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[gpui::test]
 async fn recovery_snapshot_merges_into_open_session_tab(cx: &mut TestAppContext) {
     // roadmap E10：会话已打开同一文件时，恢复快照并入标签而不是另开窗口。
     init_editor_test_app(cx);

@@ -169,6 +169,58 @@ impl TreeSortPreference {
     }
 }
 
+/// 外部变更策略（roadmap H2）：默认自动重载未编辑的文档。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExternalChangePolicy {
+    /// 未编辑的文档在外部变更后自动重载（默认）。
+    #[default]
+    Auto,
+    /// 不自动重载；保存冲突时仍走既有提示。
+    Manual,
+}
+
+impl ExternalChangePolicy {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Manual => "manual",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "manual" => Self::Manual,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// 删除策略（roadmap H2）：默认移入系统废纸篓。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DeletePolicy {
+    /// 移入系统废纸篓，可找回（默认，D4 行为）。
+    #[default]
+    Trash,
+    /// 直接删除，不进废纸篓。
+    Permanent,
+}
+
+impl DeletePolicy {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Trash => "trash",
+            Self::Permanent => "permanent",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "permanent" => Self::Permanent,
+            _ => Self::Trash,
+        }
+    }
+}
+
 /// Where pasted clipboard images should be stored before inserting Markdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImagePasteBehavior {
@@ -248,6 +300,10 @@ pub(crate) struct AppPreferences {
     pub(crate) show_table_headers: bool,
     /// Typographic quote/dash substitution while typing (default off).
     pub(crate) smart_punctuation: bool,
+    /// 外部变更策略（roadmap H2）。
+    pub(crate) external_change_policy: ExternalChangePolicy,
+    /// 删除策略（roadmap H2）。
+    pub(crate) delete_policy: DeletePolicy,
     pub(crate) image_paste_behavior: ImagePasteBehavior,
     pub(crate) fonts: FontPreferences,
     pub(crate) writing_width: WritingWidthPreference,
@@ -278,6 +334,8 @@ impl Default for AppPreferences {
             export_theme: ExportThemePreference::Current,
             show_table_headers: true,
             smart_punctuation: false,
+            external_change_policy: ExternalChangePolicy::Auto,
+            delete_policy: DeletePolicy::Trash,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences::default(),
             writing_width: WritingWidthPreference::Theme,
@@ -311,6 +369,8 @@ struct StatusBarSettings {
 pub struct EditorSettings {
     show_table_headers: bool,
     smart_punctuation: bool,
+    external_change_policy: ExternalChangePolicy,
+    delete_policy: DeletePolicy,
     status_bar_settings: StatusBarSettings,
     fonts: FontPreferences,
     writing_width: WritingWidthPreference,
@@ -419,9 +479,29 @@ impl EditorSettings {
                 })
             })
             .unwrap_or((1080, 720));
+        let external_change_policy = cx
+            .try_global::<Self>()
+            .map(|settings| settings.external_change_policy)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.external_change_policy)
+            })
+            .unwrap_or_default();
+        let delete_policy = cx
+            .try_global::<Self>()
+            .map(|settings| settings.delete_policy)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.delete_policy)
+            })
+            .unwrap_or_default();
         cx.set_global(Self {
             show_table_headers,
             smart_punctuation,
+            external_change_policy,
+            delete_policy,
             fonts,
             writing_width,
             workspace_sidebar_width,
@@ -519,6 +599,42 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.tree_sort)
             .unwrap_or_default()
+    }
+
+    /// 外部变更策略（roadmap H2）；默认自动重载。
+    pub(crate) fn external_change_policy(cx: &App) -> ExternalChangePolicy {
+        cx.try_global::<Self>()
+            .map(|settings| settings.external_change_policy)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_external_change_policy(cx: &mut App, policy: ExternalChangePolicy) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.external_change_policy = policy);
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.external_change_policy = policy)
+        {
+            eprintln!("failed to save external change policy: {error}");
+        }
+    }
+
+    /// 删除策略（roadmap H2）；默认移入废纸篓。
+    pub(crate) fn delete_policy(cx: &App) -> DeletePolicy {
+        cx.try_global::<Self>()
+            .map(|settings| settings.delete_policy)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_delete_policy(cx: &mut App, policy: DeletePolicy) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.delete_policy = policy);
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.delete_policy = policy)
+        {
+            eprintln!("failed to save delete policy: {error}");
+        }
     }
 
     pub(crate) fn set_tree_sort(cx: &mut App, sort: TreeSortPreference) {
@@ -656,6 +772,8 @@ struct StartupPreferencesFile {
 struct EditorPreferencesFile {
     show_table_headers: bool,
     smart_punctuation: bool,
+    external_change_policy: String,
+    delete_policy: String,
     image_paste_behavior: String,
     markdown_font_family: String,
     markdown_font_size: u16,
@@ -767,6 +885,8 @@ impl From<&AppPreferences> for PreferencesFile {
             editor: EditorPreferencesFile {
                 show_table_headers: value.show_table_headers,
                 smart_punctuation: value.smart_punctuation,
+                external_change_policy: value.external_change_policy.as_str().into(),
+                delete_policy: value.delete_policy.as_str().into(),
                 image_paste_behavior: value.image_paste_behavior.as_str().into(),
                 markdown_font_family: value.fonts.markdown_family.clone(),
                 markdown_font_size: value.fonts.markdown_size,
@@ -944,6 +1064,18 @@ fn app_preferences_from_toml_value(
         .and_then(|editor| editor.get("smart_punctuation"))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    let external_change_policy = value
+        .get("editor")
+        .and_then(|editor| editor.get("external_change_policy"))
+        .and_then(|value| value.as_str())
+        .map(ExternalChangePolicy::from_str)
+        .unwrap_or_default();
+    let delete_policy = value
+        .get("editor")
+        .and_then(|editor| editor.get("delete_policy"))
+        .and_then(|value| value.as_str())
+        .map(DeletePolicy::from_str)
+        .unwrap_or_default();
     let image_paste_behavior = value
         .get("editor")
         .and_then(|editor| editor.get("image_paste_behavior"))
@@ -1098,6 +1230,8 @@ fn app_preferences_from_toml_value(
         export_theme,
         show_table_headers,
         smart_punctuation,
+        external_change_policy,
+        delete_policy,
         image_paste_behavior,
         fonts,
         writing_width,
@@ -1254,6 +1388,8 @@ pub(crate) fn save_preferences_from_window(
     zoom_percent: i64,
     default_window_width: i64,
     default_window_height: i64,
+    external_change_policy: ExternalChangePolicy,
+    delete_policy: DeletePolicy,
 ) -> anyhow::Result<AppPreferences> {
     let dirs = VelotypeConfigDirs::from_system()?;
     save_preferences_from_window_with_dirs(
@@ -1271,6 +1407,8 @@ pub(crate) fn save_preferences_from_window(
         zoom_percent,
         default_window_width,
         default_window_height,
+        external_change_policy,
+        delete_policy,
         &dirs,
     )
 }
@@ -1291,6 +1429,8 @@ fn save_preferences_from_window_with_dirs(
     zoom_percent: i64,
     default_window_width: i64,
     default_window_height: i64,
+    external_change_policy: ExternalChangePolicy,
+    delete_policy: DeletePolicy,
     dirs: &VelotypeConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
     let mut preferences =
@@ -1304,6 +1444,8 @@ fn save_preferences_from_window_with_dirs(
     preferences.autosave_debounce_ms = autosave_debounce_ms;
     preferences.remember_window_bounds = remember_window_bounds;
     preferences.smart_punctuation = smart_punctuation;
+    preferences.external_change_policy = external_change_policy;
+    preferences.delete_policy = delete_policy;
     preferences.zoom_percent = zoom_percent.clamp(60, 200);
     preferences.default_window_width = default_window_width.clamp(480, 4096);
     preferences.default_window_height = default_window_height.clamp(360, 4096);
@@ -1364,8 +1506,12 @@ pub(crate) struct PreferencesWindow {
     zoom_percent: i64,
     default_window_width: i64,
     default_window_height: i64,
+    external_change_policy: ExternalChangePolicy,
+    delete_policy: DeletePolicy,
     zoom_dropdown_open: bool,
     window_size_dropdown_open: bool,
+    external_change_dropdown_open: bool,
+    delete_policy_dropdown_open: bool,
     saved_tree_sort: TreeSortPreference,
     saved_autosave_debounce_ms: u64,
     saved_remember_window_bounds: bool,
@@ -1373,6 +1519,8 @@ pub(crate) struct PreferencesWindow {
     saved_zoom_percent: i64,
     saved_default_window_width: i64,
     saved_default_window_height: i64,
+    saved_external_change_policy: ExternalChangePolicy,
+    saved_delete_policy: DeletePolicy,
     tree_sort_dropdown_open: bool,
     autosave_dropdown_open: bool,
     status_bar_enabled: bool,
@@ -1414,6 +1562,8 @@ impl PreferencesWindow {
         let zoom_percent = preferences.zoom_percent;
         let default_window_width = preferences.default_window_width;
         let default_window_height = preferences.default_window_height;
+        let external_change_policy = preferences.external_change_policy;
+        let delete_policy = preferences.delete_policy;
         Self {
             nav: PreferencesNav::File,
             startup_open,
@@ -1435,8 +1585,12 @@ impl PreferencesWindow {
             zoom_percent,
             default_window_width,
             default_window_height,
+            external_change_policy,
+            delete_policy,
             zoom_dropdown_open: false,
             window_size_dropdown_open: false,
+            external_change_dropdown_open: false,
+            delete_policy_dropdown_open: false,
             saved_tree_sort: tree_sort,
             saved_autosave_debounce_ms: autosave_debounce_ms,
             saved_remember_window_bounds: remember_window_bounds,
@@ -1444,6 +1598,8 @@ impl PreferencesWindow {
             saved_zoom_percent: zoom_percent,
             saved_default_window_width: default_window_width,
             saved_default_window_height: default_window_height,
+            saved_external_change_policy: external_change_policy,
+            saved_delete_policy: delete_policy,
             tree_sort_dropdown_open: false,
             autosave_dropdown_open: false,
             theme_options,
@@ -1511,6 +1667,8 @@ impl PreferencesWindow {
             || self.zoom_percent != self.saved_zoom_percent
             || self.default_window_width != self.saved_default_window_width
             || self.default_window_height != self.saved_default_window_height
+            || self.external_change_policy != self.saved_external_change_policy
+            || self.delete_policy != self.saved_delete_policy
     }
 
     fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1520,6 +1678,26 @@ impl PreferencesWindow {
 
     fn toggle_autosave_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.autosave_dropdown_open = !self.autosave_dropdown_open;
+        cx.notify();
+    }
+
+    fn toggle_external_change_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.external_change_dropdown_open = !self.external_change_dropdown_open;
+        cx.notify();
+    }
+
+    fn toggle_delete_policy_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_policy_dropdown_open = !self.delete_policy_dropdown_open;
         cx.notify();
     }
 
@@ -1696,6 +1874,8 @@ impl PreferencesWindow {
             self.zoom_percent,
             self.default_window_width,
             self.default_window_height,
+            self.external_change_policy,
+            self.delete_policy,
         ) {
             Ok(preferences) => preferences,
             Err(err) => {
@@ -1718,6 +1898,8 @@ impl PreferencesWindow {
         EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
         EditorSettings::set_smart_punctuation(cx, self.smart_punctuation);
         EditorSettings::set_zoom_percent(cx, self.zoom_percent);
+        EditorSettings::set_external_change_policy(cx, self.external_change_policy);
+        EditorSettings::set_delete_policy(cx, self.delete_policy);
         cx.update_global::<EditorSettings, _>(|settings, _cx| {
             settings.default_window_width = self.default_window_width;
             settings.default_window_height = self.default_window_height;
@@ -1776,6 +1958,8 @@ impl PreferencesWindow {
         self.saved_zoom_percent = self.zoom_percent;
         self.saved_default_window_width = self.default_window_width;
         self.saved_default_window_height = self.default_window_height;
+        self.saved_external_change_policy = self.external_change_policy;
+        self.saved_delete_policy = self.delete_policy;
         cx.notify();
     }
 
@@ -2090,6 +2274,96 @@ impl PreferencesWindow {
                 cx.notify();
             }));
 
+        let external_change_selected = match self.external_change_policy {
+            ExternalChangePolicy::Auto => strings.preferences_external_change_auto.clone(),
+            ExternalChangePolicy::Manual => strings.preferences_external_change_manual.clone(),
+        };
+        let mut external_change_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-external-change-dropdown",
+                external_change_selected,
+                theme,
+                Self::toggle_external_change_dropdown,
+                cx,
+            ));
+        if self.external_change_dropdown_open {
+            for (policy, label) in [
+                (
+                    ExternalChangePolicy::Auto,
+                    strings.preferences_external_change_auto.clone(),
+                ),
+                (
+                    ExternalChangePolicy::Manual,
+                    strings.preferences_external_change_manual.clone(),
+                ),
+            ] {
+                let is_selected = self.external_change_policy == policy;
+                external_change_dropdown = external_change_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!(
+                        "preferences-external-change-{}",
+                        policy.as_str()
+                    )),
+                    label,
+                    is_selected,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.external_change_policy = policy;
+                        this.external_change_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        let delete_policy_selected = match self.delete_policy {
+            DeletePolicy::Trash => strings.preferences_delete_policy_trash.clone(),
+            DeletePolicy::Permanent => strings.preferences_delete_policy_permanent.clone(),
+        };
+        let mut delete_policy_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-delete-policy-dropdown",
+                delete_policy_selected,
+                theme,
+                Self::toggle_delete_policy_dropdown,
+                cx,
+            ));
+        if self.delete_policy_dropdown_open {
+            for (policy, label) in [
+                (
+                    DeletePolicy::Trash,
+                    strings.preferences_delete_policy_trash.clone(),
+                ),
+                (
+                    DeletePolicy::Permanent,
+                    strings.preferences_delete_policy_permanent.clone(),
+                ),
+            ] {
+                let is_selected = self.delete_policy == policy;
+                delete_policy_dropdown = delete_policy_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!(
+                        "preferences-delete-policy-{}",
+                        policy.as_str()
+                    )),
+                    label,
+                    is_selected,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.delete_policy = policy;
+                        this.delete_policy_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
         let smart_punctuation_toggle =
             crate::components::switch::Switch::new("preferences-smart-punctuation")
                 .checked(self.smart_punctuation)
@@ -2121,6 +2395,16 @@ impl PreferencesWindow {
             .child(self.labeled_row(
                 &strings.preferences_smart_punctuation,
                 smart_punctuation_toggle,
+                theme,
+            ))
+            .child(self.labeled_row(
+                &strings.preferences_file_external_change,
+                external_change_dropdown,
+                theme,
+            ))
+            .child(self.labeled_row(
+                &strings.preferences_file_delete_policy,
+                delete_policy_dropdown,
                 theme,
             ))
     }
@@ -3348,11 +3632,12 @@ pub(crate) fn open_preferences_window(cx: &mut App) -> WindowHandle<PreferencesW
 #[cfg(test)]
 mod tests {
     use super::{
-        AppPreferences, EditorSettings, ExportThemePreference, FontPreferences, ImagePasteBehavior,
-        PreferencesNav, StartupOpenPreference, StatusBarPreferences, TreeSortPreference,
-        WritingWidthPreference, load_or_create_app_preferences_with_dirs_and_locales,
-        open_preferences_window_with_state, read_app_preferences_with_dirs,
-        save_app_preferences_with_dirs, save_preferences_from_window_with_dirs,
+        AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
+        ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
+        StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WritingWidthPreference,
+        load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_state,
+        read_app_preferences_with_dirs, save_app_preferences_with_dirs,
+        save_preferences_from_window_with_dirs,
     };
     use crate::config::VelotypeConfigDirs;
     use crate::i18n::I18nManager;
@@ -3500,6 +3785,8 @@ mod tests {
         assert_eq!(preferences.default_theme_id, "velotype-light");
         assert_eq!(preferences.export_theme, ExportThemePreference::Current);
         assert!(!preferences.smart_punctuation);
+        assert_eq!(preferences.external_change_policy, ExternalChangePolicy::Auto);
+        assert_eq!(preferences.delete_policy, DeletePolicy::Trash);
         assert_eq!(preferences.writing_width, WritingWidthPreference::Theme);
         assert_eq!(
             preferences.image_paste_behavior,
@@ -3573,6 +3860,8 @@ mod tests {
             export_theme: ExportThemePreference::Dark,
             show_table_headers: false,
             smart_punctuation: true,
+            external_change_policy: ExternalChangePolicy::Manual,
+            delete_policy: DeletePolicy::Permanent,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences {
                 markdown_family: "PingFang SC".into(),
@@ -3599,6 +3888,12 @@ mod tests {
         let loaded = read_app_preferences_with_dirs(&dirs).expect("preferences should read back");
         assert_eq!(loaded, preferences);
         assert!(loaded.smart_punctuation);
+        assert_eq!(loaded.external_change_policy, ExternalChangePolicy::Manual);
+        assert_eq!(loaded.delete_policy, DeletePolicy::Permanent);
+        let text =
+            std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
+        assert!(text.contains("external_change_policy = \"manual\""));
+        assert!(text.contains("delete_policy = \"permanent\""));
 
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
@@ -3682,6 +3977,8 @@ mod tests {
         let preferences = AppPreferences {
             startup_open: StartupOpenPreference::NewFile,
             smart_punctuation: false,
+            external_change_policy: ExternalChangePolicy::Auto,
+            delete_policy: DeletePolicy::Trash,
             default_language_id: "zh-CN".into(),
             default_theme_id: "velotype".into(),
             export_theme: ExportThemePreference::Dark,
@@ -3719,6 +4016,8 @@ mod tests {
             110,
             1280,
             800,
+            ExternalChangePolicy::Manual,
+            DeletePolicy::Permanent,
             &dirs,
         )
         .expect("window preferences should save");
@@ -3728,6 +4027,8 @@ mod tests {
         assert_eq!(saved.zoom_percent, 110);
         assert_eq!(saved.default_window_width, 1280);
         assert_eq!(saved.default_window_height, 800);
+        assert_eq!(saved.external_change_policy, ExternalChangePolicy::Manual);
+        assert_eq!(saved.delete_policy, DeletePolicy::Permanent);
         assert_eq!(saved.default_language_id, "zh-CN");
         assert_eq!(saved.startup_open, StartupOpenPreference::LastOpenedFile);
         assert_eq!(saved.default_theme_id, "velotype-light");

@@ -363,6 +363,12 @@ pub struct I18nStrings {
     pub preferences_file_autosave_debounce: String,
     /// 文件页：记住窗口大小开关标签。
     pub preferences_file_remember_window: String,
+    pub preferences_file_external_change: String,
+    pub preferences_external_change_auto: String,
+    pub preferences_external_change_manual: String,
+    pub preferences_file_delete_policy: String,
+    pub preferences_delete_policy_trash: String,
+    pub preferences_delete_policy_permanent: String,
     pub preferences_smart_punctuation: String,
     pub status_bar_long_block_source: String,
     /// Export menu item: copy rendered HTML source to clipboard.
@@ -698,6 +704,12 @@ struct I18nStringsDe {
     preferences_file_tree_sort: Option<String>,
     preferences_file_autosave_debounce: Option<String>,
     preferences_file_remember_window: Option<String>,
+    preferences_file_external_change: Option<String>,
+    preferences_external_change_auto: Option<String>,
+    preferences_external_change_manual: Option<String>,
+    preferences_file_delete_policy: Option<String>,
+    preferences_delete_policy_trash: Option<String>,
+    preferences_delete_policy_permanent: Option<String>,
     preferences_smart_punctuation: Option<String>,
     status_bar_long_block_source: Option<String>,
     menu_copy_as_html: Option<String>,
@@ -973,6 +985,12 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_file_tree_sort",
     "preferences_file_autosave_debounce",
     "preferences_file_remember_window",
+    "preferences_file_external_change",
+    "preferences_external_change_auto",
+    "preferences_external_change_manual",
+    "preferences_file_delete_policy",
+    "preferences_delete_policy_trash",
+    "preferences_delete_policy_permanent",
     "preferences_smart_punctuation",
     "status_bar_long_block_source",
     "menu_copy_as_html",
@@ -1596,6 +1614,24 @@ impl I18nStringsDe {
             preferences_file_remember_window: self
                 .preferences_file_remember_window
                 .unwrap_or(defaults.preferences_file_remember_window),
+            preferences_file_external_change: self
+                .preferences_file_external_change
+                .unwrap_or(defaults.preferences_file_external_change),
+            preferences_external_change_auto: self
+                .preferences_external_change_auto
+                .unwrap_or(defaults.preferences_external_change_auto),
+            preferences_external_change_manual: self
+                .preferences_external_change_manual
+                .unwrap_or(defaults.preferences_external_change_manual),
+            preferences_file_delete_policy: self
+                .preferences_file_delete_policy
+                .unwrap_or(defaults.preferences_file_delete_policy),
+            preferences_delete_policy_trash: self
+                .preferences_delete_policy_trash
+                .unwrap_or(defaults.preferences_delete_policy_trash),
+            preferences_delete_policy_permanent: self
+                .preferences_delete_policy_permanent
+                .unwrap_or(defaults.preferences_delete_policy_permanent),
             preferences_smart_punctuation: self
                 .preferences_smart_punctuation
                 .unwrap_or(defaults.preferences_smart_punctuation),
@@ -1999,6 +2035,12 @@ impl I18nStrings {
             preferences_file_tree_sort: "文件树排序".into(),
             preferences_file_autosave_debounce: "自动保存间隔".into(),
             preferences_file_remember_window: "记住窗口大小与位置".into(),
+            preferences_file_external_change: "外部变更".into(),
+            preferences_external_change_auto: "自动重载（未编辑时）".into(),
+            preferences_external_change_manual: "不自动重载".into(),
+            preferences_file_delete_policy: "删除方式".into(),
+            preferences_delete_policy_trash: "移入废纸篓".into(),
+            preferences_delete_policy_permanent: "永久删除".into(),
             preferences_smart_punctuation: "智能标点".into(),
             status_bar_long_block_source: "长段落·源码渲染".into(),
             menu_copy_as_html: "复制为 HTML".into(),
@@ -2307,6 +2349,12 @@ impl I18nStrings {
             preferences_file_tree_sort: "File tree sort".into(),
             preferences_file_autosave_debounce: "Autosave interval".into(),
             preferences_file_remember_window: "Remember window size and position".into(),
+            preferences_file_external_change: "External Changes".into(),
+            preferences_external_change_auto: "Reload when unedited".into(),
+            preferences_external_change_manual: "Never reload automatically".into(),
+            preferences_file_delete_policy: "Delete Behavior".into(),
+            preferences_delete_policy_trash: "Move to Trash".into(),
+            preferences_delete_policy_permanent: "Delete permanently".into(),
             preferences_smart_punctuation: "Smart Punctuation".into(),
             status_bar_long_block_source: "Long block: source".into(),
             menu_copy_as_html: "Copy as HTML".into(),

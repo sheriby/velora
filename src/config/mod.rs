@@ -13,8 +13,8 @@ mod recovery;
 mod session;
 
 pub(crate) use preferences::{
-    EditorSettings, ExportThemePreference, ImagePasteBehavior, StartupOpenPreference,
-    TreeSortPreference, WindowFrame,
+    DeletePolicy, EditorSettings, ExportThemePreference, ExternalChangePolicy, ImagePasteBehavior,
+    StartupOpenPreference, TreeSortPreference, WindowFrame,
     apply_configured_language, apply_configured_theme, export_theme_preference,
     first_existing_recent_markdown_file,
     import_language_config_and_select, import_theme_config_and_select,
