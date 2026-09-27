@@ -1394,9 +1394,8 @@ pub(crate) mod shader_resources {
     #[cfg(debug_assertions)]
     use windows::{
         Win32::Graphics::Direct3D::{
-            D3D_INCLUDE_TYPE,
             Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompile},
-            ID3DBlob, ID3DInclude, ID3DInclude_Impl,
+            ID3DBlob, ID3DInclude,
         },
         core::PCSTR,
     };
@@ -1501,46 +1500,6 @@ pub(crate) mod shader_resources {
     #[cfg(debug_assertions)]
     const ALPHA_CORRECTION_HLSL: &str = include_str!("alpha_correction.hlsl");
 
-    /// 本地补丁：内存版 `#include` 处理器，内容取自内嵌 HLSL 源码。
-    #[cfg(debug_assertions)]
-    #[windows::core::implement(ID3DInclude)]
-    struct EmbeddedIncludeHandler;
-
-    #[cfg(debug_assertions)]
-    #[allow(non_snake_case)]
-    impl ID3DInclude_Impl for EmbeddedIncludeHandler_Impl {
-        fn Open(
-            &self,
-            _includetype: D3D_INCLUDE_TYPE,
-            pfilename: &PCSTR,
-            _pparentdata: *const core::ffi::c_void,
-            ppdata: *mut *mut core::ffi::c_void,
-            pbytes: *mut u32,
-        ) -> windows::core::Result<()> {
-            let file_name = unsafe {
-                std::ffi::CStr::from_ptr(pfilename.as_ptr() as *const _).to_string_lossy()
-            };
-            let content = match file_name.as_ref() {
-                "alpha_correction.hlsl" => ALPHA_CORRECTION_HLSL,
-                _ => {
-                    return Err(windows::core::Error::new(
-                        windows::Win32::Foundation::E_FAIL,
-                        format!("embedded shader include not found: {file_name}"),
-                    ));
-                }
-            };
-            unsafe {
-                *ppdata = content.as_ptr() as *mut _;
-                *pbytes = content.len() as u32;
-            }
-            Ok(())
-        }
-
-        fn Close(&self, _pdata: *const core::ffi::c_void) -> windows::core::Result<()> {
-            Ok(())
-        }
-    }
-
     #[cfg(debug_assertions)]
     pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
@@ -1566,14 +1525,21 @@ pub(crate) mod shader_resources {
             let mut compile_blob = None;
             let mut error_blob = None;
 
-            let include_handler: ID3DInclude = EmbeddedIncludeHandler.into();
+            // pInclude 传 None 时 D3DCompile 拒绝一切 #include 指令，所以内嵌
+            // 源码在调用前先就地展开 include；展开后若仍有 include，说明新增了
+            // 未覆盖的依赖，直接报错而不是退回磁盘路径。
+            let expanded =
+                source.replace("#include \"alpha_correction.hlsl\"", ALPHA_CORRECTION_HLSL);
+            if expanded.contains("#include") {
+                anyhow::bail!("embedded shader source still contains #include directives");
+            }
 
             let ret = D3DCompile(
-                source.as_ptr() as *const _,
-                source.len(),
+                expanded.as_ptr() as *const _,
+                expanded.len(),
                 PCSTR::from_raw(b"embedded_shaders.hlsl\0".as_ptr()),
                 None,
-                &include_handler,
+                None::<&ID3DInclude>,
                 PCSTR::from_raw(entry.as_ptr()),
                 PCSTR::from_raw(target.as_ptr()),
                 D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
