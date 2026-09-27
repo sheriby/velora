@@ -234,6 +234,23 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 顺带修正 | `large_document_opens_within_budget` 的 3s 判据在整套并发跑测时受 CPU 争用影响（同一次实测 3.96s 而单独跑为 1.23s），改为形状判据：首块块数有界（≤4000）+ 打开耗时乘以 5 仍小于整篇建块耗时；单机实测值改用 eprintln 记录（打开 1.39s / 整篇 25.1s / 157.5 µs·块） | 通过 |
 | 全量回归 | `cargo test` 900 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
 
+## 第二十五批补充（用户报修：窗口位置与大小「根本没有实现」，且缺少对应设置）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 用户报修：调整窗口位置/大小后关闭，下一次 `cargo run` 又回到调整前；且设置里没有窗口位置/大小相关项 | 已复现 |
+| 根因一（红灯关闭） | macOS 红灯关闭走平台关闭回调：`on_window_should_close` 判定「干净文档」后直接 `return true`，平台随即销毁窗口，**这条路径上没有任何落盘**；只有应用内关闭（⌘W/菜单）才写过 frame | 已定位 |
+| 根因二（⌘Q 静默失效） | ⌘Q 由窗口内的处理者（`Editor::on_quit_application`）触发，此时该窗口正被借用；`request_quit_application` 内对同一窗口的 `window.update` 必然返回 Err（gpui `update_window_id` 对已在更新栈上的窗口取不到槽位），于是整段退出逻辑提前返回——既不退出、也不落盘 | 已定位 |
+| 根因三（丢弃关闭） | 「放弃并关闭」路径直接 `window.remove_window()`，绕过了落盘 | 已定位 |
+| 修复 | ① 窗口移除统一走 `Editor::close_editor_window`（先落盘再移除）；② `on_window_should_close` 在允许关闭前落盘（覆盖平台红灯关闭）；③ `request_quit_application` 改为 `cx.defer` 延后到本轮更新结束后执行（窗口已放回，逐窗口询问与落盘都正常）；④ 删除行「放弃并关闭」改走统一出口 | 通过 |
+| 守卫用例 | `quitting_the_app_remembers_each_window_frame`：哨兵 frame 1111×777 → 建窗口 → 缩放到 1200×820 → 窗口内派发 ⌘Q → 断言落盘为 1200×820；`platform_close_remembers_the_window_frame`：`on_window_should_close` 允许关闭后断言落盘为当前尺寸；`every_editor_window_removal_remembers_the_frame`：源码扫描（`close.rs` 恰好 1 处 `window.remove_window()`、其余窗口模块 0 处），挡住「新写一条关闭路径忘了记 frame」 | 通过（**正控**：去掉 defer 后 ⌘Q 用例必失败；去掉 should_close 落盘后两条用例同时失败；去掉退出前落盘后用例仍通过，据此删掉了冗余的整体扫描并保留单点落盘） |
+| 新增设置（用户要的「窗口位置与大小设置」） | 偏好设置「窗口」页新增 **打开位置**（`记住上次位置` 默认 / `居中打开`）与 **记住窗口位置与大小** 开关（从文件页移入），写入 config.toml `[window] open_position`；`居中打开` 时忽略记住的 frame，按「默认窗口尺寸」在主屏居中——默认尺寸设置由此真正生效 | 通过 |
+| 设置用例 | `window_open_position_setting_controls_how_windows_open`：哨兵 frame (40,60,1000,700) + `记住上次位置` → 开窗即恢复该 frame；切 `居中打开` → 断言开窗为测试主屏（1920×1080）居中、尺寸=默认 1080×720（即 (420,180,1080,720)）；**正控**：临时忽略打开位置设置后必失败 | 通过 |
+| config 往返 | `saves_and_reads_preferences` 覆盖 `open_position = "center"` 落盘与回读；`legacy_preferences_are_normalized_with_language` 断言老配置缺该键时按 `remember`（记住上次位置）处理并补写 | 通过 |
+| 设置页用例 | `window_page_exposes_zoom_and_default_size_controls` 扩展为覆盖窗口页四个控件（缩放/默认尺寸/打开位置/记住开关）与未保存态 | 通过 |
+| 测试隔离（顺带发现） | 窗口 frame 用例共用进程级配置目录时会互相污染：整套并发跑测时 `window_open_position_setting_controls_how_windows_open` 实测读到别的用例（关闭窗口时同样落盘 frame）写下的 (0,0,1920,1080)。新增 `crate::config::override_test_config_root`（线程局部覆盖 + Drop 守卫），三条 frame 用例各自独占临时目录 | 通过（修前整套必失败、修后整套通过） |
+| 全量回归 | `cargo test` 904 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
@@ -241,3 +258,5 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 - 2026-09-27 23:5x 起机器自动锁屏，后续原生截图需解锁后补拍；
   已改为 gpui 测试验证渲染路径。
 - 执行中发现 4 个新增项：D9 / E9 / E10 / G8 已完成（第十四 / 二十 / 二十二批）；A7 应用侧已闭环（第二十三批），仅剩「锁屏期间新建窗口的显示时序」这一平台行为需解锁后人工确认一次。
+- 第二十五批只覆盖逻辑与配置层（gpui 用例 + config 往返）；macOS 上「拖动窗口 → 红灯关闭 → 重开」的观感需解锁后人工复核一次。
+- 窗口 frame 的落盘时机（关窗/退出）不覆盖强制杀进程（`kill -9`）——强制退出前最后的位置调整不会保存。

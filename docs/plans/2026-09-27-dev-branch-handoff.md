@@ -11,9 +11,9 @@
 | 项 | 状态 |
 |----|------|
 | Roadmap 完成 | **66 / 66 行已标 ✅**（A7 标「✅(应用侧)」：应用侧闭环，剩余为解锁后的人工确认；C1/C8/C10 等为 v1 形态并标注） |
-| 测试 | 900 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
+| 测试 | 904 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
 | 编译 | `cargo build` 零错误零警告（dev profile） |
-| 远程 | `origin/dev` 已推送（G8 提交 `e79bb72`，本行随文档更新提交在其后）；main 未动 |
+| 远程 | `origin/dev` 已推送（最新提交见 `git log -1`）；main 未动 |
 | 工作树 | 仅 `?? .zcodeignore`（按用户要求**不提交**） |
 | 运行 | `cargo run`（dev profile）；debug 构建位于 `target/debug/velora` |
 
@@ -40,10 +40,13 @@
 - **H5** 命令注册表：`src/commands.rs` 统一菜单与命令面板的命令清单，两条守卫用例（菜单=注册表、每条命令必须有处理者），修掉 5 条点了没反应的命令
 - **G8** 渐进建块：超大文档只同步建首块，其余在后台续建；10 MiB 夹具打开 **17.5s → 1.23s**，续建后与整篇导入逐字节一致（`FIRST_CHUNK_ROOTS=2000` / `STEADY_CHUNK_ROOTS=250`；列表收集器可在顶层条目边界分批）
 - **A7（应用侧）** 窗口标题同步：新窗口首帧推送标题（此前新建窗口原生标题为空），编辑加前缀标记、保存去标记，用例 `window_title_tracks_file_and_edited_state`；测试平台的 `get_title` 补实现以支持断言
+- **A2 报修补齐** 窗口位置/大小记忆：三条退出路径（应用内关闭 / 平台红灯关闭 / ⌘Q）都落盘，移除统一走 `Editor::close_editor_window`（源码守卫用例）；⌘Q 此前还会因窗口借用导致 `window.update` 失败而**静默不退出**，改为 `cx.defer` 延后执行
+- **A3/H1 报修补齐** 设置新增窗口位置项：窗口页「打开位置」（记住上次位置 / 居中打开）与「记住窗口位置与大小」开关（从文件页移入），config.toml `[window] open_position`；「居中打开」使默认窗口尺寸真正生效
 
 ### 剩余人工项
 
 1. **A7 的锁屏时序复核**：锁屏/休眠期间新建窗口「何时显示」属系统合成行为，需解锁后目视确认一次；应用侧已保证解锁后第一帧就带正确标题与编辑标记
+2. **A2 的窗口拖拽观感复核**：拖动窗口 / 改尺寸后红灯关闭、重开，应保持调整后的位置与大小（逻辑与配置层已由用例覆盖）；「打开位置=居中打开」时每次开窗都按默认尺寸居中
 
 ## 二、本会话已完成项（会话期 165 次提交，均附测试/断言）
 
@@ -122,10 +125,10 @@
 | `src/export/html.rs` | HTML 导出（图片 data URI 内嵌已具备） |
 
 ### 设置项全景（config.toml）
-- `[window]`：remember_bounds / frame / zoom_percent / default_window_width / default_window_height
+- `[window]`：remember_bounds / frame / open_position / zoom_percent / default_window_width / default_window_height
 - `[editor]`：workspace_sidebar_width / tree_sort / autosave_debounce_ms / new_file_template（`{date}` 占位）
 - 会话：`session.json`（root/tabs/active/sidebar_width）
-- 偏好 UI 已暴露：启动行为、主题、字体、树排序、防抖间隔、记住窗口（File 页）；**尚未暴露**：zoom_percent、default_window_size
+- 偏好 UI 已暴露：启动行为、主题、字体、树排序、防抖间隔、界面缩放、默认窗口尺寸、打开位置、记住窗口位置与大小（后者与打开位置同在「窗口」页）
 
 ### 重要约定/陷阱
 1. **GPUI 限制**：TextRun 无逐 run 字号（inline code 缩放走渲染路径）；svg 不继承父 div 的 text_color（必须直接设在 svg 上）；Div 链式 `.id()` 后类型变 Stateful，`if/else` 分支类型需一致（用 into_any_element）。

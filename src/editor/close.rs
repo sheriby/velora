@@ -22,13 +22,24 @@ impl Editor {
         if self.on_window_should_close(window, cx) {
             self.close_dialog_restore_focus = None;
             self.persist_session(cx);
-            Self::persist_window_frame(window);
-            window.remove_window();
+            Self::close_editor_window(window);
         }
     }
 
+    /// Remembers the window frame and removes the window (roadmap A2).
+    ///
+    /// Every path that removes an editor window goes through here: the frame is
+    /// only readable while the window is alive, and forgetting it in one path
+    /// (the quit action, discarding unsaved changes, …) silently lost the user's
+    /// window position and size.
+    pub(crate) fn close_editor_window(window: &mut Window) {
+        Self::persist_window_frame(window);
+        window.remove_window();
+    }
+
     /// Saves the current window frame so the next launch can restore it
-    /// (roadmap A2). Called from every path that removes an editor window.
+    /// (roadmap A2). Called from [`Self::close_editor_window`] and from
+    /// `on_window_should_close` before the platform closes the window.
     pub(crate) fn persist_window_frame(window: &Window) {
         let frame = match window.window_bounds() {
             gpui::WindowBounds::Windowed(bounds)
@@ -76,6 +87,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.document_dirty && !self.has_dirty_workspace_documents() {
+            // 平台自己发起的关闭（macOS 红灯）不经过任何应用内关闭入口，
+            // 这里是最后能读到该窗口 frame 的地方（roadmap A2）。
+            Self::persist_window_frame(window);
             return true;
         }
 
@@ -123,7 +137,7 @@ impl Editor {
         if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
             eprintln!("failed to remove discarded document recovery snapshot: {error}");
         }
-        window.remove_window();
+        Self::close_editor_window(window);
     }
 
     pub(crate) fn on_save_and_close(

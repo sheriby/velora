@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gpui::{
     AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, KeyDownEvent, Keystroke,
-    Modifiers, TestAppContext, VisualTestContext, px,
+    Modifiers, TestAppContext, VisualTestContext, WindowBounds, WindowHandle, px,
 };
 
 use super::{Editor, MountedRun, ViewMode};
@@ -53,6 +53,25 @@ fn activate_visual_window(cx: &mut VisualTestContext) -> AnyWindowHandle {
     cx.run_until_parked();
     cx.cx
         .update(|cx| cx.active_window().expect("window should be active"))
+}
+
+/// 读取窗口 frame 为 (x, y, width, height)，用于窗口位置/大小断言。
+fn windowed_rect(handle: &WindowHandle<Editor>, cx: &mut TestAppContext) -> (i32, i32, i32, i32) {
+    handle
+        .update(cx, |_editor, window, _cx| {
+            let bounds = match window.window_bounds() {
+                WindowBounds::Windowed(bounds)
+                | WindowBounds::Maximized(bounds)
+                | WindowBounds::Fullscreen(bounds) => bounds,
+            };
+            (
+                f32::from(bounds.origin.x) as i32,
+                f32::from(bounds.origin.y) as i32,
+                f32::from(bounds.size.width) as i32,
+                f32::from(bounds.size.height) as i32,
+            )
+        })
+        .expect("window should be open")
 }
 
 #[gpui::test]
@@ -1168,6 +1187,170 @@ async fn window_title_tracks_file_and_edited_state(cx: &mut TestAppContext) {
         clean_title,
         "保存后窗口标题应去掉已编辑标记"
     );
+}
+
+/// 窗口 frame 用例需要独占配置目录：关闭/退出窗口的用例都会往 config.toml
+/// 写 frame，共用进程级目录时并行执行会互相覆盖（实测会让断言读到别的用例的 frame）。
+fn isolated_window_frame_config(test_name: &str) -> (PathBuf, crate::config::TestConfigRootGuard) {
+    let root = std::env::temp_dir().join(format!(
+        "velora-{test_name}-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let guard = crate::config::override_test_config_root(&root);
+    (root, guard)
+}
+
+#[gpui::test]
+async fn quitting_the_app_remembers_each_window_frame(cx: &mut TestAppContext) {
+    let (root, _root_guard) = isolated_window_frame_config("window-frame-quit");
+    // roadmap A2：⌘Q 也必须记住窗口位置与大小。此前只有关闭单窗口才落盘，
+    // 「调完位置直接退出」会把调整丢掉（用户报修）。先放一个哨兵 frame，
+    // 用来区分「退出路径没写盘」与「写盘写对了」。
+    init_editor_test_app(cx);
+    crate::config::store_window_frame(crate::config::WindowFrame {
+        x: 11,
+        y: 13,
+        width: 1111,
+        height: 777,
+    })
+    .expect("seed sentinel frame");
+
+    let (_editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, _cx| window.resize(gpui::size(px(1200.0), px(820.0))));
+    redraw(cx);
+
+    // 走用户真实路径：⌘Q 在窗口内派发，窗口正处于借用状态。
+    cx.dispatch_action(QuitApplication);
+    cx.run_until_parked();
+
+    let stored = crate::config::saved_window_frame()
+        .expect("read window frame")
+        .expect("quitting should store the window frame");
+    assert_ne!(
+        (stored.width, stored.height),
+        (1111, 777),
+        "退出路径没有落盘：读到的还是哨兵 frame"
+    );
+    assert_eq!(
+        (stored.width, stored.height),
+        (1200, 820),
+        "退出时应记住退出前的窗口尺寸"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn platform_close_remembers_the_window_frame(cx: &mut TestAppContext) {
+    let (root, _root_guard) = isolated_window_frame_config("window-frame-platform-close");
+    // 平台自己发起的关闭（macOS 红灯）不经过应用内任何关闭入口，
+    // 只有 on_window_should_close 能在窗口还活着时落盘（用户报修场景）。
+    init_editor_test_app(cx);
+    crate::config::store_window_frame(crate::config::WindowFrame {
+        x: 3,
+        y: 5,
+        width: 999,
+        height: 666,
+    })
+    .expect("seed sentinel frame");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, _cx| window.resize(gpui::size(px(1280.0), px(860.0))));
+    redraw(cx);
+
+    let allowed = cx.update(|window, cx| {
+        editor
+            .clone()
+            .update(cx, |editor, cx| editor.on_window_should_close(window, cx))
+    });
+    assert!(allowed, "干净文档应允许平台关闭窗口");
+
+    let stored = crate::config::saved_window_frame()
+        .expect("read window frame")
+        .expect("平台关闭路径应落盘窗口 frame");
+    assert_eq!(
+        (stored.width, stored.height),
+        (1280, 860),
+        "平台关闭前应记住当时的窗口尺寸"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn window_open_position_setting_controls_how_windows_open(cx: &mut TestAppContext) {
+    let (root, _root_guard) = isolated_window_frame_config("window-open-position");
+    // 用户报修：窗口位置与大小既记不住、也没有对应设置项。这里锁定设置语义：
+    // 「记住上次位置」恢复 frame；「居中打开」忽略 frame，按默认窗口尺寸在主屏居中
+    // （默认窗口尺寸由此真正生效）。
+    init_editor_test_app(cx);
+    crate::config::store_window_frame(crate::config::WindowFrame {
+        x: 40,
+        y: 60,
+        width: 1000,
+        height: 700,
+    })
+    .expect("seed frame");
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+
+    cx.update(|cx| {
+        crate::config::EditorSettings::set_window_open_position(
+            cx,
+            crate::config::WindowOpenPosition::Remember,
+        );
+    });
+    let remembered = cx.update(|cx| crate::app_menu::open_editor_window(cx, String::new(), None));
+    cx.run_until_parked();
+    assert_eq!(
+        windowed_rect(&remembered, cx),
+        (40, 60, 1000, 700),
+        "打开位置=记住上次位置 时应恢复记住的 frame"
+    );
+
+    cx.update(|cx| {
+        crate::config::EditorSettings::set_window_open_position(
+            cx,
+            crate::config::WindowOpenPosition::Center,
+        );
+    });
+    let centered = cx.update(|cx| crate::app_menu::open_editor_window(cx, String::new(), None));
+    cx.run_until_parked();
+    // 测试平台主屏 1920×1080，默认窗口尺寸 1080×720 → 居中原点 (420, 180)。
+    assert_eq!(
+        windowed_rect(&centered, cx),
+        (420, 180, 1080, 720),
+        "打开位置=居中打开 时应按默认窗口尺寸居中，忽略记住的 frame"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn every_editor_window_removal_remembers_the_frame() {
+    // 用户报修：调整窗口位置/大小后关闭、下一次启动又回到旧位置。
+    // 窗口移除统一走 Editor::close_editor_window（先落盘再移除），
+    // 这条守卫挡住「新写一条关闭路径时忘了记 frame」。
+    assert_eq!(
+        include_str!("close.rs")
+            .matches("window.remove_window()")
+            .count(),
+        1,
+        "窗口移除应只在 Editor::close_editor_window 里发生"
+    );
+    for (name, source) in [
+        ("persistence.rs", include_str!("persistence.rs")),
+        ("workspace.rs", include_str!("workspace.rs")),
+        ("window_state.rs", include_str!("window_state.rs")),
+        ("events.rs", include_str!("events.rs")),
+        ("file_drop.rs", include_str!("file_drop.rs")),
+        ("render.rs", include_str!("render.rs")),
+    ] {
+        assert_eq!(
+            source.matches("remove_window()").count(),
+            0,
+            "{name} 里移除窗口应改用 Editor::close_editor_window"
+        );
+    }
 }
 
 #[gpui::test]

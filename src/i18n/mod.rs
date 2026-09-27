@@ -371,8 +371,8 @@ pub struct I18nStrings {
     pub preferences_file_tree_sort: String,
     /// 文件页：自动保存间隔行标签。
     pub preferences_file_autosave_debounce: String,
-    /// 文件页：记住窗口大小开关标签。
-    pub preferences_file_remember_window: String,
+    /// 窗口页：记住窗口位置与大小开关标签。
+    pub preferences_window_remember_bounds: String,
     pub preferences_file_external_change: String,
     pub preferences_external_change_auto: String,
     pub preferences_external_change_manual: String,
@@ -493,6 +493,12 @@ pub struct I18nStrings {
     pub preferences_nav_window: String,
     pub preferences_window_zoom: String,
     pub preferences_window_default_size: String,
+    /// 窗口页：新窗口打开位置标签。
+    pub preferences_window_open_position: String,
+    /// 窗口页：打开位置「记住上次位置」。
+    pub preferences_window_open_position_remember: String,
+    /// 窗口页：打开位置「每次居中」。
+    pub preferences_window_open_position_center: String,
     /// Label for the status bar enabled toggle.
     pub preferences_status_bar_enabled: String,
     /// Label for the word count toggle.
@@ -718,7 +724,7 @@ struct I18nStringsDe {
     command_zoom_reset: Option<String>,
     preferences_file_tree_sort: Option<String>,
     preferences_file_autosave_debounce: Option<String>,
-    preferences_file_remember_window: Option<String>,
+    preferences_window_remember_bounds: Option<String>,
     preferences_file_external_change: Option<String>,
     preferences_external_change_auto: Option<String>,
     preferences_external_change_manual: Option<String>,
@@ -786,6 +792,9 @@ struct I18nStringsDe {
     preferences_nav_window: Option<String>,
     preferences_window_zoom: Option<String>,
     preferences_window_default_size: Option<String>,
+    preferences_window_open_position: Option<String>,
+    preferences_window_open_position_remember: Option<String>,
+    preferences_window_open_position_center: Option<String>,
     preferences_status_bar_enabled: Option<String>,
     preferences_status_bar_show_word_count: Option<String>,
     preferences_status_bar_show_cursor_position: Option<String>,
@@ -1004,7 +1013,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "command_zoom_reset",
     "preferences_file_tree_sort",
     "preferences_file_autosave_debounce",
-    "preferences_file_remember_window",
+    "preferences_window_remember_bounds",
     "preferences_file_external_change",
     "preferences_external_change_auto",
     "preferences_external_change_manual",
@@ -1072,6 +1081,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_nav_window",
     "preferences_window_zoom",
     "preferences_window_default_size",
+    "preferences_window_open_position",
+    "preferences_window_open_position_remember",
+    "preferences_window_open_position_center",
     "preferences_status_bar_enabled",
     "preferences_status_bar_show_word_count",
     "preferences_status_bar_show_cursor_position",
@@ -1640,9 +1652,9 @@ impl I18nStringsDe {
             preferences_file_autosave_debounce: self
                 .preferences_file_autosave_debounce
                 .unwrap_or(defaults.preferences_file_autosave_debounce),
-            preferences_file_remember_window: self
-                .preferences_file_remember_window
-                .unwrap_or(defaults.preferences_file_remember_window),
+            preferences_window_remember_bounds: self
+                .preferences_window_remember_bounds
+                .unwrap_or(defaults.preferences_window_remember_bounds),
             preferences_file_external_change: self
                 .preferences_file_external_change
                 .unwrap_or(defaults.preferences_file_external_change),
@@ -1820,6 +1832,15 @@ impl I18nStringsDe {
             preferences_window_default_size: self
                 .preferences_window_default_size
                 .unwrap_or(defaults.preferences_window_default_size),
+            preferences_window_open_position: self
+                .preferences_window_open_position
+                .unwrap_or(defaults.preferences_window_open_position),
+            preferences_window_open_position_remember: self
+                .preferences_window_open_position_remember
+                .unwrap_or(defaults.preferences_window_open_position_remember),
+            preferences_window_open_position_center: self
+                .preferences_window_open_position_center
+                .unwrap_or(defaults.preferences_window_open_position_center),
             preferences_status_bar_enabled: self
                 .preferences_status_bar_enabled
                 .unwrap_or(defaults.preferences_status_bar_enabled),
@@ -1931,6 +1952,9 @@ impl I18nStrings {
             preferences_nav_window: "窗口".into(),
             preferences_window_zoom: "界面缩放".into(),
             preferences_window_default_size: "默认窗口尺寸".into(),
+            preferences_window_open_position: "打开位置".into(),
+            preferences_window_open_position_remember: "记住上次位置".into(),
+            preferences_window_open_position_center: "居中打开".into(),
             preferences_startup_option: "启动选项".into(),
             preferences_startup_new_file: "新 md 文件".into(),
             preferences_startup_last_opened_file: "上一次打开的 md 文件".into(),
@@ -2068,7 +2092,7 @@ impl I18nStrings {
             command_zoom_reset: "重置缩放".into(),
             preferences_file_tree_sort: "文件树排序".into(),
             preferences_file_autosave_debounce: "自动保存间隔".into(),
-            preferences_file_remember_window: "记住窗口大小与位置".into(),
+            preferences_window_remember_bounds: "记住窗口大小与位置".into(),
             preferences_file_external_change: "外部变更".into(),
             preferences_external_change_auto: "自动重载（未编辑时）".into(),
             preferences_external_change_manual: "不自动重载".into(),
@@ -2239,6 +2263,9 @@ impl I18nStrings {
             preferences_nav_window: "Window".into(),
             preferences_window_zoom: "Interface Zoom".into(),
             preferences_window_default_size: "Default Window Size".into(),
+            preferences_window_open_position: "Open Position".into(),
+            preferences_window_open_position_remember: "Last position".into(),
+            preferences_window_open_position_center: "Centered".into(),
             preferences_startup_option: "Startup Option".into(),
             preferences_startup_new_file: "New Markdown File".into(),
             preferences_startup_last_opened_file: "Last Opened Markdown File".into(),
@@ -2387,7 +2414,7 @@ impl I18nStrings {
             command_zoom_reset: "Reset Zoom".into(),
             preferences_file_tree_sort: "File tree sort".into(),
             preferences_file_autosave_debounce: "Autosave interval".into(),
-            preferences_file_remember_window: "Remember window size and position".into(),
+            preferences_window_remember_bounds: "Remember window size and position".into(),
             preferences_file_external_change: "External Changes".into(),
             preferences_external_change_auto: "Reload when unedited".into(),
             preferences_external_change_manual: "Never reload automatically".into(),

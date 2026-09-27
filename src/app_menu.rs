@@ -68,6 +68,13 @@ fn window_title(file_path: Option<&Path>) -> SharedString {
 fn restored_window_bounds(cx: &mut App) -> Bounds<Pixels> {
     let (default_w, default_h) = crate::config::EditorSettings::default_window_size(cx);
     let default_size = size(px(default_w as f32), px(default_h as f32));
+    // 「打开位置 = 居中打开」时忽略记住的 frame，按默认窗口尺寸居中，
+    // 让设置里的尺寸选项真正生效（用户报修：缺窗口位置/大小设置）。
+    if crate::config::EditorSettings::window_open_position(cx)
+        == crate::config::WindowOpenPosition::Center
+    {
+        return Bounds::centered(None, default_size, cx);
+    }
     let frame = crate::config::saved_window_frame()
         .ok()
         .flatten()
@@ -775,6 +782,13 @@ fn request_close_current_editor_window(cx: &mut App) {
 }
 
 pub(crate) fn request_quit_application(cx: &mut App) {
+    // 退出常由窗口内的操作触发（⌘Q 按键、应用内菜单点击），此时该窗口正被借用，
+    // 任何对该窗口的 `window.update` 都会失败并让退出静默中断；延后到本轮更新
+    // 结束后再执行，旧窗口已放回，逐窗口询问与落盘都能正常进行。
+    cx.defer(perform_quit_application);
+}
+
+fn perform_quit_application(cx: &mut App) {
     let candidates = current_window_candidates(cx);
     if candidates.is_empty() {
         cx.quit();
@@ -786,6 +800,8 @@ pub(crate) fn request_quit_application(cx: &mut App) {
             continue;
         };
 
+        // 允许关闭的窗口在 on_window_should_close 里顺手落盘 frame（roadmap A2），
+        // 因此退出路径不需要再扫一遍窗口。
         let should_close = window
             .update(cx, |editor, window, cx| {
                 editor.persist_session(cx);

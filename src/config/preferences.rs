@@ -221,6 +221,32 @@ impl DeletePolicy {
     }
 }
 
+/// 新窗口的打开位置（用户报修：缺少窗口位置设置）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WindowOpenPosition {
+    /// 用上次关闭时记住的位置与大小（默认，roadmap A2 行为）。
+    #[default]
+    Remember,
+    /// 每次都在主屏居中，并按「默认窗口尺寸」打开。
+    Center,
+}
+
+impl WindowOpenPosition {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Remember => "remember",
+            Self::Center => "center",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "center" => Self::Center,
+            _ => Self::Remember,
+        }
+    }
+}
+
 /// Where pasted clipboard images should be stored before inserting Markdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImagePasteBehavior {
@@ -317,6 +343,8 @@ pub(crate) struct AppPreferences {
     pub(crate) new_file_template: String,
     pub(crate) remember_window_bounds: bool,
     pub(crate) window_frame: Option<WindowFrame>,
+    /// 新窗口打开位置（roadmap A2 报修补齐的设置项）。
+    pub(crate) window_open_position: WindowOpenPosition,
     /// Session-wide text zoom in percent (60..=200).
     pub(crate) zoom_percent: i64,
     /// Default window width when no remembered frame applies.
@@ -347,6 +375,7 @@ impl Default for AppPreferences {
             new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
+            window_open_position: WindowOpenPosition::default(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -381,6 +410,7 @@ pub struct EditorSettings {
     new_file_template: String,
     default_window_width: i64,
     default_window_height: i64,
+    window_open_position: WindowOpenPosition,
 }
 
 impl Global for EditorSettings {}
@@ -479,6 +509,15 @@ impl EditorSettings {
                 })
             })
             .unwrap_or((1080, 720));
+        let window_open_position = cx
+            .try_global::<Self>()
+            .map(|settings| settings.window_open_position)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.window_open_position)
+            })
+            .unwrap_or_default();
         let external_change_policy = cx
             .try_global::<Self>()
             .map(|settings| settings.external_change_policy)
@@ -511,6 +550,7 @@ impl EditorSettings {
             new_file_template,
             default_window_width,
             default_window_height,
+            window_open_position,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -672,6 +712,26 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| (settings.default_window_width, settings.default_window_height))
             .unwrap_or((1080, 720))
+    }
+
+    /// 新窗口打开位置（roadmap A2 报修补齐），[window] open_position 的内存镜像。
+    pub(crate) fn window_open_position(cx: &App) -> WindowOpenPosition {
+        cx.try_global::<Self>()
+            .map(|settings| settings.window_open_position)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_window_open_position(cx: &mut App, position: WindowOpenPosition) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| {
+                settings.window_open_position = position;
+            });
+        }
+        if let Err(error) = update_app_preferences(|preferences| {
+            preferences.window_open_position = position;
+        }) {
+            eprintln!("failed to save window open position: {error}");
+        }
     }
 
     pub(crate) fn set_workspace_sidebar_width(cx: &mut App, width: u16) {
@@ -837,6 +897,7 @@ struct WindowPreferencesFile {
     remember_bounds: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     frame: Option<WindowFrameFile>,
+    open_position: String,
     zoom_percent: i64,
     default_window_width: i64,
     default_window_height: i64,
@@ -902,6 +963,7 @@ impl From<&AppPreferences> for PreferencesFile {
             window: WindowPreferencesFile {
                 remember_bounds: value.remember_window_bounds,
                 frame: value.window_frame.map(WindowFrameFile::from),
+                open_position: value.window_open_position.as_str().into(),
                 zoom_percent: value.zoom_percent,
                 default_window_width: value.default_window_width,
                 default_window_height: value.default_window_height,
@@ -1192,6 +1254,11 @@ fn app_preferences_from_toml_value(
         .and_then(|window| window.get("remember_bounds"))
         .and_then(toml::Value::as_bool)
         .unwrap_or(true);
+    let window_open_position = window
+        .and_then(|window| window.get("open_position"))
+        .and_then(toml::Value::as_str)
+        .map(WindowOpenPosition::from_str)
+        .unwrap_or_default();
     let zoom_percent = window
         .and_then(|window| window.get("zoom_percent"))
         .and_then(toml::Value::as_integer)
@@ -1243,6 +1310,7 @@ fn app_preferences_from_toml_value(
         status_bar,
         remember_window_bounds,
         window_frame,
+        window_open_position,
         zoom_percent,
         default_window_width,
         default_window_height,
@@ -1384,6 +1452,7 @@ pub(crate) fn save_preferences_from_window(
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
+    window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
     zoom_percent: i64,
     default_window_width: i64,
@@ -1403,6 +1472,7 @@ pub(crate) fn save_preferences_from_window(
         tree_sort,
         autosave_debounce_ms,
         remember_window_bounds,
+        window_open_position,
         smart_punctuation,
         zoom_percent,
         default_window_width,
@@ -1425,6 +1495,7 @@ fn save_preferences_from_window_with_dirs(
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
+    window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
     zoom_percent: i64,
     default_window_width: i64,
@@ -1443,6 +1514,7 @@ fn save_preferences_from_window_with_dirs(
     preferences.tree_sort = tree_sort;
     preferences.autosave_debounce_ms = autosave_debounce_ms;
     preferences.remember_window_bounds = remember_window_bounds;
+    preferences.window_open_position = window_open_position;
     preferences.smart_punctuation = smart_punctuation;
     preferences.external_change_policy = external_change_policy;
     preferences.delete_policy = delete_policy;
@@ -1502,6 +1574,7 @@ pub(crate) struct PreferencesWindow {
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
+    window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
     zoom_percent: i64,
     default_window_width: i64,
@@ -1510,11 +1583,13 @@ pub(crate) struct PreferencesWindow {
     delete_policy: DeletePolicy,
     zoom_dropdown_open: bool,
     window_size_dropdown_open: bool,
+    window_open_position_dropdown_open: bool,
     external_change_dropdown_open: bool,
     delete_policy_dropdown_open: bool,
     saved_tree_sort: TreeSortPreference,
     saved_autosave_debounce_ms: u64,
     saved_remember_window_bounds: bool,
+    saved_window_open_position: WindowOpenPosition,
     saved_smart_punctuation: bool,
     saved_zoom_percent: i64,
     saved_default_window_width: i64,
@@ -1558,6 +1633,7 @@ impl PreferencesWindow {
         let tree_sort = preferences.tree_sort;
         let autosave_debounce_ms = preferences.autosave_debounce_ms;
         let remember_window_bounds = preferences.remember_window_bounds;
+        let window_open_position = preferences.window_open_position;
         let smart_punctuation = preferences.smart_punctuation;
         let zoom_percent = preferences.zoom_percent;
         let default_window_width = preferences.default_window_width;
@@ -1581,6 +1657,7 @@ impl PreferencesWindow {
             tree_sort,
             autosave_debounce_ms,
             remember_window_bounds,
+            window_open_position,
             smart_punctuation,
             zoom_percent,
             default_window_width,
@@ -1589,11 +1666,13 @@ impl PreferencesWindow {
             delete_policy,
             zoom_dropdown_open: false,
             window_size_dropdown_open: false,
+            window_open_position_dropdown_open: false,
             external_change_dropdown_open: false,
             delete_policy_dropdown_open: false,
             saved_tree_sort: tree_sort,
             saved_autosave_debounce_ms: autosave_debounce_ms,
             saved_remember_window_bounds: remember_window_bounds,
+            saved_window_open_position: window_open_position,
             saved_smart_punctuation: smart_punctuation,
             saved_zoom_percent: zoom_percent,
             saved_default_window_width: default_window_width,
@@ -1663,6 +1742,7 @@ impl PreferencesWindow {
             || self.tree_sort != self.saved_tree_sort
             || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
             || self.remember_window_bounds != self.saved_remember_window_bounds
+            || self.window_open_position != self.saved_window_open_position
             || self.smart_punctuation != self.saved_smart_punctuation
             || self.zoom_percent != self.saved_zoom_percent
             || self.default_window_width != self.saved_default_window_width
@@ -1715,6 +1795,19 @@ impl PreferencesWindow {
     ) {
         self.window_size_dropdown_open = !self.window_size_dropdown_open;
         self.zoom_dropdown_open = false;
+        self.window_open_position_dropdown_open = false;
+        cx.notify();
+    }
+
+    fn toggle_window_open_position_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.window_open_position_dropdown_open = !self.window_open_position_dropdown_open;
+        self.zoom_dropdown_open = false;
+        self.window_size_dropdown_open = false;
         cx.notify();
     }
 
@@ -1870,6 +1963,7 @@ impl PreferencesWindow {
             self.tree_sort,
             self.autosave_debounce_ms,
             self.remember_window_bounds,
+            self.window_open_position,
             self.smart_punctuation,
             self.zoom_percent,
             self.default_window_width,
@@ -1900,6 +1994,7 @@ impl PreferencesWindow {
         EditorSettings::set_zoom_percent(cx, self.zoom_percent);
         EditorSettings::set_external_change_policy(cx, self.external_change_policy);
         EditorSettings::set_delete_policy(cx, self.delete_policy);
+        EditorSettings::set_window_open_position(cx, self.window_open_position);
         cx.update_global::<EditorSettings, _>(|settings, _cx| {
             settings.default_window_width = self.default_window_width;
             settings.default_window_height = self.default_window_height;
@@ -1936,6 +2031,7 @@ impl PreferencesWindow {
                 preferences.status_bar.show_mode_switch;
             settings.fonts = preferences.fonts.clone();
             settings.writing_width = preferences.writing_width;
+            settings.window_open_position = preferences.window_open_position;
         });
         cx.refresh_windows();
         window.activate_window();
@@ -1954,6 +2050,7 @@ impl PreferencesWindow {
         self.saved_tree_sort = self.tree_sort;
         self.saved_autosave_debounce_ms = self.autosave_debounce_ms;
         self.saved_remember_window_bounds = self.remember_window_bounds;
+        self.saved_window_open_position = self.window_open_position;
         self.saved_smart_punctuation = self.smart_punctuation;
         self.saved_zoom_percent = self.zoom_percent;
         self.saved_default_window_width = self.default_window_width;
@@ -2267,13 +2364,6 @@ impl PreferencesWindow {
             }
         }
 
-        let remember_toggle = crate::components::switch::Switch::new("preferences-remember-window")
-            .checked(self.remember_window_bounds)
-            .on_click(cx.listener(|this, _event, _window, cx| {
-                this.remember_window_bounds = !this.remember_window_bounds;
-                cx.notify();
-            }));
-
         let external_change_selected = match self.external_change_policy {
             ExternalChangePolicy::Auto => strings.preferences_external_change_auto.clone(),
             ExternalChangePolicy::Manual => strings.preferences_external_change_manual.clone(),
@@ -2385,11 +2475,6 @@ impl PreferencesWindow {
             .child(self.labeled_row(
                 &strings.preferences_file_autosave_debounce,
                 debounce_dropdown,
-                theme,
-            ))
-            .child(self.labeled_row(
-                &strings.preferences_file_remember_window,
-                remember_toggle,
                 theme,
             ))
             .child(self.labeled_row(
@@ -3214,6 +3299,60 @@ impl PreferencesWindow {
             }
         }
 
+        let open_position_selected = match self.window_open_position {
+            WindowOpenPosition::Remember => {
+                strings.preferences_window_open_position_remember.clone()
+            }
+            WindowOpenPosition::Center => strings.preferences_window_open_position_center.clone(),
+        };
+        let mut open_position_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-window-open-position-dropdown",
+                open_position_selected,
+                theme,
+                Self::toggle_window_open_position_dropdown,
+                cx,
+            ));
+        if self.window_open_position_dropdown_open {
+            for (position, label) in [
+                (
+                    WindowOpenPosition::Remember,
+                    strings.preferences_window_open_position_remember.clone(),
+                ),
+                (
+                    WindowOpenPosition::Center,
+                    strings.preferences_window_open_position_center.clone(),
+                ),
+            ] {
+                let is_selected = self.window_open_position == position;
+                open_position_dropdown = open_position_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!(
+                        "preferences-window-open-position-{}",
+                        position.as_str()
+                    )),
+                    label,
+                    is_selected,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.window_open_position = position;
+                        this.window_open_position_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        let remember_toggle = crate::components::switch::Switch::new("preferences-remember-window")
+            .checked(self.remember_window_bounds)
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.remember_window_bounds = !this.remember_window_bounds;
+                cx.notify();
+            }));
+
         div()
             .flex()
             .flex_col()
@@ -3222,6 +3361,16 @@ impl PreferencesWindow {
             .child(self.labeled_row(
                 &strings.preferences_window_default_size,
                 size_dropdown,
+                theme,
+            ))
+            .child(self.labeled_row(
+                &strings.preferences_window_open_position,
+                open_position_dropdown,
+                theme,
+            ))
+            .child(self.labeled_row(
+                &strings.preferences_window_remember_bounds,
+                remember_toggle,
                 theme,
             ))
     }
@@ -3634,7 +3783,8 @@ mod tests {
     use super::{
         AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
-        StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WritingWidthPreference,
+        StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
+        WritingWidthPreference,
         load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_state,
         read_app_preferences_with_dirs, save_app_preferences_with_dirs,
         save_preferences_from_window_with_dirs,
@@ -3878,6 +4028,7 @@ mod tests {
             new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
+            window_open_position: WindowOpenPosition::Center,
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -3898,6 +4049,7 @@ mod tests {
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
         assert!(text.contains("remember_bounds = true"));
+        assert!(text.contains("open_position = \"center\""));
         assert!(text.contains("open = \"last_opened_file\""));
         assert!(text.contains("default_language_id = \"zh-CN\""));
         assert!(text.contains("default_theme_id = \"velotype-light\""));
@@ -3960,9 +4112,12 @@ mod tests {
         );
         assert_eq!(preferences.default_language_id, "en-US");
         assert_eq!(preferences.default_theme_id, "velotype-light");
+        // 老配置没有 open_position 键时按「记住上次位置」处理。
+        assert_eq!(preferences.window_open_position, WindowOpenPosition::Remember);
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
         assert!(text.contains("remember_bounds = true"));
+        assert!(text.contains("open_position = \"remember\""));
         assert!(text.contains("[language]"));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -3994,6 +4149,7 @@ mod tests {
             new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
+            window_open_position: WindowOpenPosition::default(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -4012,6 +4168,7 @@ mod tests {
             TreeSortPreference::Name,
             800,
             true,
+            WindowOpenPosition::Center,
             false,
             110,
             1280,
@@ -4046,7 +4203,8 @@ mod tests {
 
     #[gpui::test]
     async fn window_page_exposes_zoom_and_default_size_controls(cx: &mut TestAppContext) {
-        // roadmap H1 批次二：偏好设置新增「窗口」分组页（缩放 + 默认窗口尺寸）。
+        // roadmap H1 批次二：偏好设置「窗口」分组页（缩放 + 默认窗口尺寸）；
+        // 用户报修补齐：打开位置下拉与「记住窗口位置与大小」开关也放在这一页。
         init_preferences_test_app(cx);
         let handle = cx.update(|cx| {
             open_preferences_window_with_state(
@@ -4063,17 +4221,23 @@ mod tests {
                 assert_eq!(preferences.zoom_percent, 100);
                 assert_eq!(preferences.default_window_width, 1080);
                 assert_eq!(preferences.default_window_height, 720);
+                assert_eq!(
+                    preferences.window_open_position,
+                    WindowOpenPosition::Remember
+                );
 
-                // 切到窗口页并展开两个下拉（渲染路径由窗口自身的绘制触发）。
+                // 切到窗口页并展开三个下拉（渲染路径由窗口自身的绘制触发）。
                 preferences.nav = PreferencesNav::Window;
                 preferences.zoom_dropdown_open = true;
                 preferences.window_size_dropdown_open = true;
+                preferences.window_open_position_dropdown_open = true;
                 cx.notify();
 
                 // 改动进入未保存状态并可通过保存路径持久化。
                 preferences.zoom_percent = 125;
                 preferences.default_window_width = 1280;
                 preferences.default_window_height = 800;
+                preferences.window_open_position = WindowOpenPosition::Center;
                 assert!(preferences.has_unsaved_changes());
             })
             .expect("preferences window should update");

@@ -14,7 +14,7 @@ mod session;
 
 pub(crate) use preferences::{
     DeletePolicy, EditorSettings, ExportThemePreference, ExternalChangePolicy, ImagePasteBehavior,
-    StartupOpenPreference, TreeSortPreference, WindowFrame,
+    StartupOpenPreference, TreeSortPreference, WindowFrame, WindowOpenPosition,
     apply_configured_language, apply_configured_theme, export_theme_preference,
     first_existing_recent_markdown_file,
     import_language_config_and_select, import_theme_config_and_select,
@@ -61,6 +61,37 @@ pub(crate) struct VelotypeConfigDirs {
 #[cfg(test)]
 static TEST_CONFIG_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
+#[cfg(test)]
+thread_local! {
+    /// 单个用例的配置目录覆盖：窗口 frame 这类「读写同一份 config.toml」的用例
+    /// 需要独占目录，否则并行的其他用例（关闭窗口时也会落盘 frame）会互相污染。
+    static TEST_CONFIG_ROOT_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 让当前线程上的配置读写落在 `root` 目录，返回的守卫在 drop 时恢复。
+#[cfg(test)]
+pub(crate) fn override_test_config_root(root: impl Into<PathBuf>) -> TestConfigRootGuard {
+    let root = root.into();
+    let previous = TEST_CONFIG_ROOT_OVERRIDE.with(|slot| slot.replace(Some(root)));
+    TestConfigRootGuard { previous }
+}
+
+#[cfg(test)]
+pub(crate) struct TestConfigRootGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl Drop for TestConfigRootGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        TEST_CONFIG_ROOT_OVERRIDE.with(|slot| {
+            *slot.borrow_mut() = previous;
+        });
+    }
+}
+
 impl VelotypeConfigDirs {
     /// Resolves the platform-specific app config directory.
     ///
@@ -72,6 +103,9 @@ impl VelotypeConfigDirs {
         // 写入绝不能落到真实用户配置目录（曾导致启动时恢复出几十个窗口）。
         #[cfg(test)]
         {
+            if let Some(root) = TEST_CONFIG_ROOT_OVERRIDE.with(|slot| slot.borrow().clone()) {
+                return Ok(Self { root });
+            }
             let root = TEST_CONFIG_ROOT.get_or_init(|| {
                 std::env::temp_dir().join(format!("velora-test-config-{}", std::process::id()))
             });
