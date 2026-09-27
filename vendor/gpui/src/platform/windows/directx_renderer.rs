@@ -1394,10 +1394,11 @@ pub(crate) mod shader_resources {
     #[cfg(debug_assertions)]
     use windows::{
         Win32::Graphics::Direct3D::{
-            Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
-            ID3DBlob,
+            D3D_INCLUDE_TYPE,
+            Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompile},
+            ID3DBlob, ID3DInclude, ID3DInclude_Impl,
         },
-        core::{HSTRING, PCSTR},
+        core::PCSTR,
     };
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -1488,17 +1489,65 @@ pub(crate) mod shader_resources {
         }
     }
 
+    /// 本地补丁：debug/releasewin 构建下着色器在运行时编译，源码经 `include_str!`
+    /// 内嵌进二进制。旧实现依赖 `CARGO_MANIFEST_DIR` 磁盘路径，而 macOS 交叉编译
+    /// 出的产物中该路径是编译机的 mac 路径，在 Windows 上 `canonicalize()` 必然
+    /// 失败，导致 DirectWriteTextSystem 初始化一并失败（“Error creating
+    /// DirectWriteTextSystem”）。内嵌后不再依赖任何磁盘路径。
+    #[cfg(debug_assertions)]
+    const SHADERS_HLSL: &str = include_str!("shaders.hlsl");
+    #[cfg(debug_assertions)]
+    const COLOR_TEXT_RASTER_HLSL: &str = include_str!("color_text_raster.hlsl");
+    #[cfg(debug_assertions)]
+    const ALPHA_CORRECTION_HLSL: &str = include_str!("alpha_correction.hlsl");
+
+    /// 本地补丁：内存版 `#include` 处理器，内容取自内嵌 HLSL 源码。
+    #[cfg(debug_assertions)]
+    #[windows::core::implement(ID3DInclude)]
+    struct EmbeddedIncludeHandler;
+
+    #[cfg(debug_assertions)]
+    #[allow(non_snake_case)]
+    impl ID3DInclude_Impl for EmbeddedIncludeHandler_Impl {
+        fn Open(
+            &self,
+            _includetype: D3D_INCLUDE_TYPE,
+            pfilename: &PCSTR,
+            _pparentdata: *const core::ffi::c_void,
+            ppdata: *mut *mut core::ffi::c_void,
+            pbytes: *mut u32,
+        ) -> windows::core::Result<()> {
+            let file_name = unsafe {
+                std::ffi::CStr::from_ptr(pfilename.as_ptr() as *const _).to_string_lossy()
+            };
+            let content = match file_name.as_ref() {
+                "alpha_correction.hlsl" => ALPHA_CORRECTION_HLSL,
+                _ => {
+                    return Err(windows::core::Error::new(
+                        windows::Win32::Foundation::E_FAIL,
+                        format!("embedded shader include not found: {file_name}"),
+                    ));
+                }
+            };
+            unsafe {
+                *ppdata = content.as_ptr() as *mut _;
+                *pbytes = content.len() as u32;
+            }
+            Ok(())
+        }
+
+        fn Close(&self, _pdata: *const core::ffi::c_void) -> windows::core::Result<()> {
+            Ok(())
+        }
+    }
+
     #[cfg(debug_assertions)]
     pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
-            use windows::Win32::Graphics::{
-                Direct3D::ID3DInclude, Hlsl::D3D_COMPILE_STANDARD_FILE_INCLUDE,
-            };
-
-            let shader_name = if matches!(entry, ShaderModule::EmojiRasterization) {
-                "color_text_raster.hlsl"
+            let source = if matches!(entry, ShaderModule::EmojiRasterization) {
+                COLOR_TEXT_RASTER_HLSL
             } else {
-                "shaders.hlsl"
+                SHADERS_HLSL
             };
 
             let entry = format!(
@@ -1516,24 +1565,17 @@ pub(crate) mod shader_resources {
 
             let mut compile_blob = None;
             let mut error_blob = None;
-            let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join(&format!("src/platform/windows/{}", shader_name))
-                .canonicalize()?;
 
-            let entry_point = PCSTR::from_raw(entry.as_ptr());
-            let target_cstr = PCSTR::from_raw(target.as_ptr());
+            let include_handler: ID3DInclude = EmbeddedIncludeHandler.into();
 
-            // really dirty trick because winapi bindings are unhappy otherwise
-            let include_handler = &std::mem::transmute::<usize, ID3DInclude>(
-                D3D_COMPILE_STANDARD_FILE_INCLUDE as usize,
-            );
-
-            let ret = D3DCompileFromFile(
-                &HSTRING::from(shader_path.to_str().unwrap()),
+            let ret = D3DCompile(
+                source.as_ptr() as *const _,
+                source.len(),
+                PCSTR::from_raw(b"embedded_shaders.hlsl\0".as_ptr()),
                 None,
-                include_handler,
-                entry_point,
-                target_cstr,
+                &include_handler,
+                PCSTR::from_raw(entry.as_ptr()),
+                PCSTR::from_raw(target.as_ptr()),
                 D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
                 0,
                 &mut compile_blob,
