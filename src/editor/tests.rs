@@ -749,6 +749,66 @@ async fn autosave_waits_until_ime_composition_is_committed(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn external_autosave_conflict_survives_workspace_rescan(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("autosave-conflict-rescan");
+    fs::write(&path, "alpha").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain("our edits".to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    fs::write(&path, "external edits").expect("write external changes");
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.has_external_autosave_conflict());
+    });
+
+    // 工作区重新扫描会清空普通错误提示，但外部修改冲突必须保留，
+    // 否则自动保存会重新放开并覆盖磁盘上的新内容。
+    editor.update(cx, |editor, cx| {
+        let root = path.parent().expect("temp dir").to_path_buf();
+        editor.set_workspace_root(root, cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.has_external_autosave_conflict(),
+            "conflict flag must survive a workspace rescan"
+        );
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(
+        fs::read_to_string(&path).expect("read external file"),
+        "external edits",
+        "autosave must not overwrite the externally modified file"
+    );
+}
+
+#[gpui::test]
 async fn autosave_does_not_overwrite_external_file_changes(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 

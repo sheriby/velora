@@ -200,6 +200,9 @@ pub(super) struct WorkspaceState {
     root: Option<PathBuf>,
     file_tree: Option<WorkspaceTreeNode>,
     file_error: Option<String>,
+    /// 外部修改冲突（自动保存检测到磁盘内容变了）：独立于 `file_error`，
+    /// 只有该文件被重新加载才清除，扫描或普通错误清空不得影响它。
+    external_change_conflict: Option<(PathBuf, String)>,
     outline_tree: Vec<WorkspaceTreeNode>,
     outline_source: Option<String>,
     expanded: HashSet<String>,
@@ -249,6 +252,7 @@ impl Default for WorkspaceState {
             root: None,
             file_tree: None,
             file_error: None,
+            external_change_conflict: None,
             outline_tree: Vec::new(),
             outline_source: None,
             expanded: HashSet::new(),
@@ -657,7 +661,7 @@ impl Editor {
         self.workspace.file_tree = None;
         // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
         self.workspace.tree_scan_root = None;
-        self.workspace.file_error = None;
+        self.clear_workspace_file_error();
         self.workspace.expanded.clear();
         self.workspace.active_tab = WorkspaceTab::Files;
         self.workspace.search_scope = WorkspaceSearchScope::Workspace;
@@ -1482,7 +1486,7 @@ impl Editor {
         }
         self.workspace.file_tree = None;
         self.workspace.tree_scan_root = None;
-        self.workspace.file_error = None;
+        self.clear_workspace_file_error();
         self.workspace.outline_source = None;
         if self.workspace.root.is_none() {
             self.workspace.root = self.workspace_root_for_current_file();
@@ -1598,9 +1602,38 @@ impl Editor {
     }
 
     pub(super) fn has_external_autosave_conflict(&self) -> bool {
-        self.workspace.file_error.as_deref().is_some_and(|detail| {
-            detail.starts_with("检测到外部修改") || detail.starts_with("无法读取文件以检查外部修改")
-        })
+        self.workspace.external_change_conflict.is_some()
+    }
+
+    /// 记录外部修改冲突：自动保存不得覆盖磁盘上的新内容，直到该文件重新加载。
+    pub(super) fn report_external_change_conflict(
+        &mut self,
+        path: PathBuf,
+        detail: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.external_change_conflict = Some((path, detail.clone()));
+        self.report_workspace_file_error(detail, cx);
+    }
+
+    /// 清空工作区错误提示；外部修改冲突未解决时保留提示。
+    pub(super) fn clear_workspace_file_error(&mut self) {
+        if self.workspace.external_change_conflict.is_none() {
+            self.workspace.file_error = None;
+        }
+    }
+
+    /// 该文件重新读盘成功即视为冲突解除。
+    pub(super) fn clear_external_change_conflict_for(&mut self, path: &Path) {
+        let conflicted = self
+            .workspace
+            .external_change_conflict
+            .as_ref()
+            .is_some_and(|(conflict_path, _)| conflict_path == path);
+        if conflicted {
+            self.workspace.external_change_conflict = None;
+            self.workspace.file_error = None;
+        }
     }
 
     pub(super) fn workspace_recovery_ids(&self) -> Vec<uuid::Uuid> {
@@ -1662,7 +1695,7 @@ impl Editor {
         }
 
         self.workspace.root = next_root.clone();
-        self.workspace.file_error = None;
+        self.clear_workspace_file_error();
 
         let Some(root) = next_root else {
             self.workspace.file_tree = None;
@@ -2535,6 +2568,10 @@ impl Editor {
                 }
             }
         };
+        // 从磁盘重新读取成功即视为用户接受磁盘内容，该文件的冲突解除。
+        if !dirty {
+            self.clear_external_change_conflict_for(&path);
+        }
         if !self
             .workspace
             .open_documents

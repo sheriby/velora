@@ -210,7 +210,22 @@ impl Editor {
                                 }
                                 let detail = error.to_string();
                                 eprintln!("failed to save recovery snapshot: {detail}");
-                                editor.report_workspace_file_error(detail.clone(), cx);
+                                if detail.starts_with("检测到外部修改")
+                                    || detail.starts_with("无法读取文件以检查外部修改")
+                                {
+                                    let conflict_path = documents
+                                        .iter()
+                                        .find_map(|document| document.path.clone());
+                                    if let Some(conflict_path) = conflict_path {
+                                        editor.report_external_change_conflict(
+                                            conflict_path,
+                                            detail.clone(),
+                                            cx,
+                                        );
+                                    }
+                                } else {
+                                    editor.report_workspace_file_error(detail.clone(), cx);
+                                }
                                 return Some(detail);
                             }
                         }
