@@ -24,7 +24,7 @@ use super::{
 use super::{CodeHighlightResult, highlight_code_block};
 use super::{
     ImageReferenceDefinitions, ImageResolvedSource, ImageSyntax, LinkReferenceDefinitions,
-    parse_standalone_image, resolve_image_source,
+    parse_standalone_image, resolve_image_source, standalone_image_width_percent,
 };
 use crate::components::markdown::inline::{
     InlineFragment, InlineInsertionAttributes, InlineLinkHit, InlineRenderCache, InlineSpan,

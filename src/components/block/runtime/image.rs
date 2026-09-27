@@ -49,21 +49,28 @@ impl Block {
     }
 
     pub(super) fn sync_image_runtime(&mut self) {
-        let next_runtime = if self.can_present_as_image() {
-            self.standalone_image_markdown_for_runtime()
-                .and_then(|markdown| parse_standalone_image(&markdown))
-                .and_then(|syntax| {
-                    self.compute_image_runtime(self.image_base_dir.as_deref(), syntax)
-                })
-        } else {
-            None
-        };
+        let markdown = self
+            .can_present_as_image()
+            .then(|| self.standalone_image_markdown_for_runtime())
+            .flatten();
+        let next_runtime = markdown
+            .as_deref()
+            .and_then(parse_standalone_image)
+            .and_then(|syntax| {
+                self.compute_image_runtime(self.image_base_dir.as_deref(), syntax)
+            });
 
         if next_runtime.is_none() {
             self.image_edit_expanded = false;
             self.image_expand_requested = false;
         }
         self.image_runtime = next_runtime;
+        // 宽度因子以源码中的 `{width=NN%}` 为准（roadmap C10 v2）。
+        self.image_width_factor = markdown
+            .as_deref()
+            .and_then(standalone_image_width_percent)
+            .map(|percent| (percent as f32 / 100.0).clamp(0.2, 1.0))
+            .unwrap_or(1.0);
     }
 
     fn standalone_image_markdown_for_runtime(&self) -> Option<String> {

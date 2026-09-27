@@ -155,7 +155,39 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+/// Splits a trailing `{width=NN%}` attribute off a standalone image, as written
+/// back by the resize handle (roadmap C10 v2). Returns the remaining markdown
+/// plus the parsed percent when the attribute is well-formed.
+pub(crate) fn split_standalone_image_width(markdown: &str) -> (&str, Option<u8>) {
+    let trimmed = markdown.trim_end();
+    let Some(open) = trimmed.rfind('{') else {
+        return (markdown, None);
+    };
+    let Some(inner) = trimmed[open + 1..].strip_suffix('}') else {
+        return (markdown, None);
+    };
+    let Some(value) = inner.strip_prefix("width=") else {
+        return (markdown, None);
+    };
+    let Some(number) = value.strip_suffix('%') else {
+        return (markdown, None);
+    };
+    let Ok(percent) = number.trim().parse::<u8>() else {
+        return (markdown, None);
+    };
+    if !(1..=100).contains(&percent) {
+        return (markdown, None);
+    }
+    (&trimmed[..open], Some(percent))
+}
+
+/// Percent from a trailing `{width=NN%}` attribute, when present.
+pub(crate) fn standalone_image_width_percent(markdown: &str) -> Option<u8> {
+    split_standalone_image_width(markdown).1
+}
+
 pub(crate) fn parse_standalone_image(markdown: &str) -> Option<ImageSyntax> {
+    let (markdown, _) = split_standalone_image_width(markdown);
     if markdown.contains('\n') || markdown.contains('\r') {
         return None;
     }
@@ -865,6 +897,47 @@ mod tests {
         assert!(parse_standalone_image("[![alt](./img.png)](https://example.com)").is_none());
         assert!(parse_standalone_image("![][]").is_none());
         assert!(parse_standalone_image("![]").is_none());
+    }
+
+    #[test]
+    fn parses_image_with_trailing_width_attribute() {
+        let parsed = parse_standalone_image("![alt](./img.png){width=60%}").expect("image syntax");
+        assert_eq!(parsed.alt, "alt");
+        assert_eq!(
+            parsed.target,
+            ImageTarget::Direct {
+                src: "./img.png".to_string(),
+                title: None,
+            }
+        );
+        assert_eq!(
+            super::standalone_image_width_percent("![alt](./img.png){width=60%}"),
+            Some(60)
+        );
+        assert_eq!(
+            super::standalone_image_width_percent("![alt](./img.png)"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_width_attribute() {
+        assert_eq!(
+            super::standalone_image_width_percent("![alt](./img.png){width=0%}"),
+            None
+        );
+        assert_eq!(
+            super::standalone_image_width_percent("![alt](./img.png){width=101%}"),
+            None
+        );
+        assert_eq!(
+            super::standalone_image_width_percent("![alt](./img.png){width=abc%}"),
+            None
+        );
+        assert_eq!(
+            super::standalone_image_width_percent("![alt](./img.png){height=60%}"),
+            None
+        );
     }
 
     #[test]

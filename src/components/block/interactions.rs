@@ -1491,7 +1491,11 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.image_resize_drag = None;
+        if let Some(drag) = self.image_resize_drag.take()
+            && (self.image_width_factor - drag.base_factor).abs() > 0.005
+        {
+            self.write_image_width_back_to_source(cx);
+        }
         self.is_selecting = false;
 
         // Cmd/Ctrl+click follows a rendered link, using the same open-link
@@ -1579,6 +1583,32 @@ impl Block {
             }
             self.select_to(self.index_for_mouse_position(event.position), cx);
         }
+    }
+
+    /// 缩放结束后把宽度因子写回源码 `{width=NN%}`（roadmap C10 v2）；
+    /// 100% 时移除属性以保持源码干净。
+    pub(crate) fn write_image_width_back_to_source(&mut self, cx: &mut Context<Self>) {
+        if self.image_runtime().is_none() {
+            return;
+        }
+        let current = self.display_text().to_string();
+        let (base, _) = crate::components::markdown::image::split_standalone_image_width(&current);
+        let base = base.trim().to_string();
+        if base.is_empty() {
+            return;
+        }
+        let percent = (self.image_width_factor * 100.0).round().clamp(20.0, 100.0) as u32;
+        let next = if percent >= 100 {
+            base
+        } else {
+            format!("{base}{{width={percent}%}}")
+        };
+        if next == current {
+            return;
+        }
+        self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        let len = self.visible_len();
+        self.replace_text_in_visible_range(0..len, &next, None, false, cx);
     }
 
     /// 「复制代码块内容」（roadmap B9）：写入剪贴板并短暂显示 ✓ 反馈。
