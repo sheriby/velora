@@ -302,8 +302,6 @@ fn decode_entities(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::html_to_markdown_or;
-
     #[test]
     fn headings_paragraph_and_emphasis_convert() {
         let markdown = super::html_to_markdown_or(
