@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
+#[cfg(not(test))]
 use directories::ProjectDirs;
 use serde_json::{Map, Value};
 
@@ -55,6 +56,10 @@ pub(crate) struct VelotypeConfigDirs {
     root: PathBuf,
 }
 
+/// 测试构建的配置目录覆盖（进程级，首次解析时确定）。
+#[cfg(test)]
+static TEST_CONFIG_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 impl VelotypeConfigDirs {
     /// Resolves the platform-specific app config directory.
     ///
@@ -62,11 +67,23 @@ impl VelotypeConfigDirs {
     /// language and theme packs are stored under the OS location returned by
     /// `directories::ProjectDirs`.
     pub(crate) fn from_system() -> anyhow::Result<Self> {
-        let dirs = ProjectDirs::from("app", "velora", "velora")
-            .context("failed to resolve the velora config directory")?;
-        Ok(Self {
-            root: dirs.config_dir().to_path_buf(),
-        })
+        // 测试构建一律走进程级临时目录：单元测试触发的偏好/会话/恢复快照
+        // 写入绝不能落到真实用户配置目录（曾导致启动时恢复出几十个窗口）。
+        #[cfg(test)]
+        {
+            let root = TEST_CONFIG_ROOT.get_or_init(|| {
+                std::env::temp_dir().join(format!("velora-test-config-{}", std::process::id()))
+            });
+            return Ok(Self { root: root.clone() });
+        }
+        #[cfg(not(test))]
+        {
+            let dirs = ProjectDirs::from("app", "velora", "velora")
+                .context("failed to resolve the velora config directory")?;
+            Ok(Self {
+                root: dirs.config_dir().to_path_buf(),
+            })
+        }
     }
 
     /// Creates a directory set from a caller-provided root for tests.
