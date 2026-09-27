@@ -282,16 +282,32 @@ impl DocumentTree {
     }
 
     pub(super) fn raw_source_text(&self, cx: &App) -> String {
-        let mut lines = self
-            .snapshot
-            .visible
-            .iter()
-            .map(|visible| visible.entity.read(cx).display_text().to_string())
-            .collect::<Vec<_>>();
-        if let Some(tail) = &self.pending {
-            lines.extend(tail.lines[tail.next_line..].iter().cloned());
+        // P5：单遍追加。旧实现先把每块文本克隆成 String 再 join——超大
+        // 文档一次序列化要付两倍字节量的搬运。
+        let mut capacity = 0usize;
+        for visible in &self.snapshot.visible {
+            capacity += visible.entity.read(cx).display_text().len() + 1;
         }
-        lines.join("\n")
+        if let Some(tail) = &self.pending {
+            for line in &tail.lines[tail.next_line..] {
+                capacity += line.len() + 1;
+            }
+        }
+        let mut out = String::with_capacity(capacity);
+        for visible in &self.snapshot.visible {
+            out.push_str(visible.entity.read(cx).display_text());
+            out.push('\n');
+        }
+        if let Some(tail) = &self.pending {
+            for line in &tail.lines[tail.next_line..] {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        if !out.is_empty() {
+            out.pop();
+        }
+        out
     }
 
     pub(super) fn insert_blocks_at(
