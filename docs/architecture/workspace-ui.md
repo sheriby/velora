@@ -1,0 +1,68 @@
+# Workspace & UI（工作区、配置、主题与命令系统）
+
+> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支。
+> **行号会漂移，函数名不会**。相关文档：[overview.md](./overview.md)、[editor-core.md](./editor-core.md)、[render-pipeline.md](./render-pipeline.md)、[testing-and-build.md](./testing-and-build.md)
+
+## 1. 启动（src/main.rs）
+
+- `main()`：解析 `-v/-h/-d(--detach)` + 文件/目录参数；macOS detach 会重新拉起自身。`Application::new().with_assets(VeloraAssets)`——SVG 图标按精确路径 `include_bytes!` 内嵌。
+- `app.run` 体内顺序：Dock 图标 → `config::load_or_create_app_preferences` → `I18nManager::init_with_language_id` → `ThemeManager::init_with_theme_id` → `EditorSettings::init` → `net::install_http_client` → `components::init_with_keybindings`。**菜单延迟 16ms 安装**（首帧后计时器，G5）。
+- 首窗口：无参数 → `restore_last_session`（session.json；活动标签同步开，其余每 16ms 一个）；否则 `open_startup_window`（尊重「打开上次文件」偏好，否则欢迎页）。随后 `restore_recovery_windows`（磁盘内容一致的快照跳过，否则合并/打开恢复窗口）。
+- 文件参数 → `open_editor_window`（app_menu.rs）：恢复并钳制窗口 frame → `Editor::from_file_source`；目录参数 → `open_workspace_window` + `set_workspace_root`。
+- `VELORA_STARTUP_TIMING=1`：分阶段耗时到 stderr。
+
+## 2. Workspace 是嵌入状态，不是独立实体
+
+**没有单独的 Workspace GPUI 实体**。`Editor` 内嵌 `workspace: WorkspaceState`（src/editor/workspace.rs）：
+
+- `active_tab: {Files, Search, Outline}`、`root`、`file_tree: Option<WorkspaceTreeNode>`（递归 children）、`outline_tree`/`toc_entries`、`expanded: HashSet<String>`、`open_documents: Vec<WorkspaceDocumentTab>`、搜索/替换全套状态、`panel_width` 等。
+- **标签是快照不是 Editor 实体**：`WorkspaceDocumentTab { path, recovery_id, file_version, markdown, dirty }`。单个 Editor 在切换激活标签时换入换出 `DocumentTree` 内容（`snapshot_current_document` 序列化回标签）。
+- 打开文件流：树节点点击 → `open_workspace_file`：UTF-16 BOM/文本嗅探（`has_utf16_bom`/`is_likely_text_file`）→ 推标签 → `reveal_path_in_tree` 展开祖先 → `replace_document_from_markdown` 或 `replace_document_from_code_source`（分流见 editor-core.md §2）→ 调度 autosave + `persist_session`。
+- `set_workspace_root`：canonicalize、按根恢复侧栏宽、剪枝根外标签、启动 watcher、持久化会话。
+
+## 3. 文件树与监听
+
+- `scan_workspace_dir`：递归 `fs::read_dir`，跳过 `.git/target/node_modules/.worktrees/dist`；分类 Markdown/Code/Other；排序（名称/时间/类型，`TreeSortPreference`）。
+- **异步扫描**：`sync_workspace_file_tree_inner` 用 `cx.background_spawn` + 代数计数器（`tree_scan_generation`），过期结果丢弃；过滤模式渲染扁平命中列表（≤50）。
+- **监听**（src/editor/watcher.rs）：notify 递归 watcher，Modify/Create 事件经 mpsc 泵到 `reload_externally_changed_document`（只重载干净标签）。
+
+## 4. 命令/动作系统
+
+- 动作声明：`actions!(velora, [...])`（src/components/actions.rs）；带载荷动作（选主题/语言/标签页/最近文件）走 `#[action(namespace = velora)]`。
+- `SHORTCUT_DEFINITIONS`：每条命令 id/分类/默认键/`context: "BlockEditor"`；`resolved_keybindings` 合并 config.toml `[keybindings]` 覆盖，再追加固定绑定（⌘P/⇧⌘P/⌘1-9/缩放/光标历史）。
+- **命令注册表**（src/commands.rs）：`CommandSpec { id, CommandMenu, label: fn(&I18nStrings), action }`，静态 `COMMANDS` 表是**菜单与命令面板的唯一事实源**（有守卫测试）。
+- 菜单（app_menu.rs）：`build_menus`（macOS 六菜单；非 macOS App 并入 File）→ `install_menus`；~30 个 `cx.on_action` 处理者 → `dispatch_menu_action`（if/else 链，有源码扫描守卫）。退出走 `cx.defer`（让应用内未保存对话框工作）。
+
+## 5. 配置层（src/config/）
+
+- 根目录：`VeloraConfigDirs::from_system`（`directories::ProjectDirs`，app.velora.velora）；子项 `languages_dir`/`themes_dir`/`.history`/recent 文件/`config.toml`/`recovery_dir`。测试用 `override_test_config_root` 重定向。
+- **config.toml**：启动/语言/主题/导出/快捷键/editor 段；运行时镜像是 `EditorSettings` Global（渲染路径零磁盘 IO）； setter 同时更新全局 + 持久化。窗口 frame 存取 `saved_window_frame`/`store_window_frame`。
+- **session.json**：`SessionState { root, tabs, active, sidebar_width }`；`persist_session` 在每次结构性标签变化时写；启动恢复 + 按根侧栏宽恢复。
+- **recovery/*.json**：`RecoverySnapshot { id, source_path, markdown }`，原子写；autosave 周期落盘脏标签。
+- 最近列表：文件 20 条/文件夹 10 条；语言包导入支持 JSONC（剥注释）。
+
+## 6. 主题系统（src/theme/）
+
+- `Theme = { name, colors(61), dimensions(244), typography(482), placeholders }`；serde 带 fallback 合并（旧字段缺失不炸）。内置 6 主题 + `system`（跟随窗口外观，`observe_window_appearance` 驱动）。
+- `ThemeManager` Global：启动从 `themes_dir` 加载自定义主题；`current_arc()` O(1) Arc 给渲染热路径。组件直接读 `theme.colors.*`/`dimensions.*`。
+- `Editor::render` 每帧 clone 主题一次并应用字体偏好 + 缩放到 typography（缩放是整套字号乘系数）。
+
+## 7. i18n（src/i18n/mod.rs，~3000 行）
+
+- `I18nStrings`（~137 个 String 字段）内置 `zh_cn()`/`en_us()`；外部 JSON(C) 包从 `languages_dir` 加载并 fallback 补全。
+- `I18nManager` Global：`strings()`/`strings_arc()`（热路径零拷贝）。
+- **新增字符串的登记点**：struct 字段、zh_cn()、en_us()、（如需）catalog——漏一处会解析错误；菜单文案走 `CommandSpec.label` 闭包。
+
+## 8. 侧栏三面板的防重算设计
+
+- **状态栏**（status_bar.rs）：字数/阅读时长读 `last_stable_source_text`（稳定快照，非实时序列化）；长块提示按 `(document_revision, bool)` 缓存；行列号仅 Source 模式算。
+- **大纲**：`sync_workspace_outline` 仅当 `outline_source != last_stable_source_text` 才重建（`build_outline_tree` 用 pulldown-cmark，围栏代码安全）；滚动跟随高亮按字节偏移分区 + `outline_follow_cache`（按 revision 键）。
+- **搜索**：`schedule_workspace_search` 代数计数 + 120ms 去抖；工作区域走缓存的树、文档域走源码，均在 background executor + catch_unwind；结果上限 200；**重搜期间保留旧结果**（防闪空白）；文档内命中经 `sync_document_search_highlights` 画进块。
+- ⌘P 快速切换（quick_open.rs）：过滤 `workspace_text_files()`，上限 12，IME 输入路由经 Editor 的 input handler。
+- ⇧⌘P 命令面板（command_palette.rs）：条目来自 `commands::commands()`；派发走真实 `window.dispatch_action`（与菜单/快捷键同路径）。
+
+## 9. 窗口 chrome 与覆盖层
+
+- window_chrome.rs：macOS 原生红绿灯；Windows/Linux `WindowDecorations::Client` + 自绘 AppControls；拖拽区 `WindowControlArea::Drag`；Linux GNOME 读 gsettings button-layout；标签条并入标题栏。
+- modal.rs：所有提示走应用内模态（`ModalSpec`/`show_modal`，源码审计测试禁原生弹窗）；context_menu.rs 右键菜单；quick_open/command_palette 浮层。
+- 事件路由：`on_editor_key_down_capture`（src/editor/events.rs 捕获阶段）→ 焦点块 → 覆盖层（`OverlayInputKind`）。
