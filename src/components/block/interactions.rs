@@ -1491,6 +1491,7 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.image_resize_drag = None;
         self.is_selecting = false;
 
         // Cmd/Ctrl+click follows a rendered link, using the same open-link
@@ -1560,6 +1561,14 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 图片拖拽缩放进行中（roadmap C10）：水平位移换算为宽度因子。
+        if let Some(drag) = self.image_resize_drag.as_mut() {
+            let delta = f32::from(event.position.x) - drag.start_x;
+            self.image_width_factor =
+                (drag.base_factor + delta / 400.0).clamp(0.2, 1.0);
+            cx.notify();
+            return;
+        }
         if self.is_selecting {
             // A stale selecting flag can survive a missed mouse-up. Only extend
             // the selection while the platform still reports an active drag.

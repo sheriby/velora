@@ -526,14 +526,17 @@ impl Block {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_image_content(
         &self,
         runtime: &ImageRuntime,
         max_width: Length,
         max_height: Pixels,
         placeholder_height: Pixels,
+        resizable: bool,
         theme: &Theme,
         strings: &I18nStrings,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
@@ -572,6 +575,37 @@ impl Block {
             )
         });
 
+        let image_host = if resizable {
+            div()
+                .relative()
+                .child(image)
+                .child(
+                    div()
+                        .id("image-resize-handle")
+                        .absolute()
+                        .right(px(-3.0))
+                        .bottom(px(-3.0))
+                        .size(px(14.0))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(c.dialog_border)
+                        .bg(c.dialog_secondary_button_bg)
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|block, event: &MouseDownEvent, _window, _cx| {
+                                block.image_resize_drag = Some(crate::editor::ImageResizeDrag {
+                                    start_x: f32::from(event.position.x),
+                                    base_factor: block.image_width_factor,
+                                });
+                            }),
+                        ),
+                )
+        } else {
+            div().child(image)
+        };
+
         let mut container = div()
             .w_full()
             .flex()
@@ -579,7 +613,7 @@ impl Block {
             .items_center()
             .justify_center()
             .gap(px(d.image_caption_gap))
-            .child(image);
+            .child(image_host);
 
         if let Some(title) = runtime
             .title
@@ -1713,8 +1747,10 @@ impl Block {
             Length::Definite(relative(zoom)),
             px(theme.dimensions.image_root_max_height * zoom),
             px(theme.dimensions.image_root_placeholder_height * zoom),
+            false,
             theme,
             &strings,
+            cx,
         );
         if let Some(bg) = node_style.background {
             div().w_full().bg(bg).child(content).into_any_element()
@@ -2017,8 +2053,10 @@ impl Render for Block {
                         Length::Definite(relative(1.0)),
                         px(d.image_cell_max_height),
                         px(d.image_cell_placeholder_height),
+                        false,
                         &theme,
                         &strings,
+                        cx,
                     ))
                     .into_any_element();
             }
@@ -2141,9 +2179,11 @@ impl Render for Block {
         if showing_rendered_image && self.kind() == BlockKind::Paragraph {
             let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
             // Root images stay within a readable default width; wider artwork
-            // is downscaled instead of filling the entire text column.
+            // is downscaled instead of filling the entire text column. The
+            // session drag factor scales it further (roadmap C10).
             let max_width = px(
-                effective_image_width(self, viewport_width, d).min(d.image_root_max_width),
+                (effective_image_width(self, viewport_width, d).min(d.image_root_max_width))
+                    * self.image_width_factor,
             );
             if let Some(runtime) = self.image_runtime() {
                 return focused_base
@@ -2152,8 +2192,10 @@ impl Render for Block {
                         max_width.into(),
                         px(d.image_root_max_height),
                         px(d.image_root_placeholder_height),
+                        true,
                         &theme,
                         &strings,
+                        cx,
                     ))
                     .into_any_element();
             }
@@ -2297,8 +2339,10 @@ impl Render for Block {
                                 max_width.into(),
                                 px(d.image_root_max_height),
                                 px(d.image_root_placeholder_height),
+                                false,
                                 &theme,
                                 &strings,
+                                cx,
                             ))
                         } else {
                             div().min_w(px(0.0)).flex_grow().child(
@@ -2392,8 +2436,10 @@ impl Render for Block {
                                     max_width.into(),
                                     px(d.image_root_max_height),
                                     px(d.image_root_placeholder_height),
+                                    false,
                                     &theme,
                                     &strings,
+                                    cx,
                                 ))
                             } else {
                                 div().min_w(px(0.0)).flex_grow().child(
@@ -2454,8 +2500,10 @@ impl Render for Block {
                                 max_width.into(),
                                 px(d.image_root_max_height),
                                 px(d.image_root_placeholder_height),
+                                false,
                                 &theme,
                                 &strings,
+                                cx,
                             ))
                         } else {
                             div().min_w(px(0.0)).flex_grow().child(

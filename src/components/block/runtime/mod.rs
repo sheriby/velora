@@ -120,6 +120,10 @@ pub struct Block {
     /// Heading fold state (roadmap C7): when true, the section content below
     /// this heading is hidden.
     pub(crate) folded: bool,
+    /// 会话内图片宽度缩放因子（roadmap C10 拖拽缩放），1.0 = 默认。
+    pub(crate) image_width_factor: f32,
+    /// Active image resize drag: pointer X at drag start + factor at start.
+    pub(crate) image_resize_drag: Option<crate::editor::ImageResizeDrag>,
     /// Pending `[[wikilink]]` click target (roadmap C3).
     pub(crate) wikilink_target: Option<String>,
     pub selection_reversed: bool,
@@ -231,6 +235,8 @@ impl Block {
             search_highlight_ranges: Vec::new(),
             tag_query: None,
             folded: false,
+            image_width_factor: 1.0,
+            image_resize_drag: None,
             wikilink_target: None,
             selection_reversed: false,
             editor_selection_range: None,
