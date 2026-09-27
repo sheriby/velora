@@ -207,6 +207,7 @@ impl DocumentTree {
             }
             None => (0, false),
         };
+        let base_index = self.roots.len();
         Self::sync_block_list(
             &roots,
             None,
@@ -226,7 +227,17 @@ impl DocumentTree {
                 previous_was_list_item,
             },
         );
-        self.roots.extend(roots);
+        self.roots.extend(roots.clone());
+        // 增量注册时 `sync_block_list` 只看到本批新块，`location.index`
+        // 从 0 起算；顶层根块的真实下标要从既有 roots 数量起算，否则
+        // 后续按 id 定位删除/插入会命中错误块。
+        for (offset, block) in roots.iter().enumerate() {
+            if let Some(location) = self.snapshot.location_by_entity.get_mut(&block.entity_id()) {
+                if location.parent.is_none() {
+                    location.index = base_index + offset;
+                }
+            }
+        }
     }
 
     /// Materializes every remaining pending line.
