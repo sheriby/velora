@@ -3342,6 +3342,50 @@ async fn undo_reverts_recent_rendered_typing(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn toc_block_renders_entries_and_jumps_to_heading(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "# Title\n\n[TOC]\n\n## Section\n\nbody";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.into(), None));
+    redraw(cx);
+
+    let (toc_block, section_heading) = editor.update(cx, |editor, _cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        assert_eq!(visible.len(), 4); // Title, TOC, Section, body
+        (visible[1].entity.clone(), visible[2].entity.clone())
+    });
+    editor.read_with(cx, |_editor, cx| {
+        let entries = &toc_block.read(cx).toc_entries;
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "Title");
+        assert_eq!(entries[1].title, "Section");
+        assert_eq!(entries[1].line, 4);
+    });
+
+    // 目录条目按层级渲染并可点击。
+    let bounds = cx
+        .debug_bounds("toc-entry-1")
+        .expect("second TOC entry is rendered");
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.active_entity_id,
+            Some(section_heading.entity_id()),
+            "clicking a TOC entry focuses the target heading"
+        );
+        // 光标落在 `## Section` 这一行上（"# Title\n\n[TOC]\n\n" 共 16 字节，
+        // 渲染态把整行选区收敛到标题文字末尾，即第 26 字节）。
+        let caret = editor.capture_source_selection_snapshot(cx).range.start;
+        assert!(
+            (16..=26).contains(&caret),
+            "caret should land on the heading line, got {caret}"
+        );
+    });
+}
+
+#[gpui::test]
 async fn code_block_copy_button_copies_code_to_clipboard(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let markdown = "```rust\nlet x = 1;\n```";

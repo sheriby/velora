@@ -195,8 +195,19 @@ pub struct Block {
     pub(crate) list_group_separator_candidate: bool,
     /// 「复制代码」按钮的反馈时间戳（roadmap B9）：短时间内显示 ✓。
     pub(crate) code_copied_at: Option<Instant>,
+    /// 正文为 `[TOC]` 时由编辑器填入的目录条目（roadmap C2）。
+    pub(crate) toc_entries: Vec<TocEntry>,
     numbered_list_restart_requested: bool,
     quote_reparse_requested: bool,
+}
+
+/// 目录（TOC）条目（roadmap C2）：编辑器按当前标题结构写入 `[TOC]` 块。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TocEntry {
+    pub(crate) level: u8,
+    pub(crate) title: String,
+    /// 标题所在源码行（0 起）。
+    pub(crate) line: usize,
 }
 
 /// Cached standalone image presentation state for a block.
@@ -298,6 +309,7 @@ impl Block {
             footnote_registry: Arc::default(),
             list_group_separator_candidate: false,
             code_copied_at: None,
+            toc_entries: Vec::new(),
             numbered_list_restart_requested: false,
             quote_reparse_requested: false,
         };

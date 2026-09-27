@@ -3423,6 +3423,45 @@ impl Render for Block {
                 };
                 focused_base.w_full().child(child).into_any_element()
             }
+            BlockKind::Paragraph if !self.toc_entries.is_empty() => {
+                // `[TOC]` 占位段落渲染为可点击目录（roadmap C2）。条目按层级
+                // 缩进，点击跳转到对应标题行。
+                let text_size = t.text_size;
+                let rows: Vec<AnyElement> = self
+                    .toc_entries
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        let line = entry.line;
+                        let indent = (entry.level.saturating_sub(1) as f32) * 14.0;
+                        div()
+                            .id(("toc-entry", index))
+                            .debug_selector(move || format!("toc-entry-{index}"))
+                            .pl(px(indent))
+                            .cursor(CursorStyle::PointingHand)
+                            .text_color(c.text_link)
+                            .hover(|style| style.text_color(c.text_default))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |_block, _event, _window, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(BlockEvent::RequestJumpToHeadingLine { line });
+                                }),
+                            )
+                            .child(SharedString::from(entry.title.clone()))
+                            .into_any_element()
+                    })
+                    .collect();
+                focused_base
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .text_size(px(text_size))
+                    .line_height(rems(t.text_line_height))
+                    .children(rows)
+                    .into_any_element()
+            }
             BlockKind::Paragraph
             | BlockKind::Comment
             | BlockKind::RawMarkdown

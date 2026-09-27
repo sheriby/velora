@@ -736,6 +736,8 @@ pub enum BlockEvent {
     /// `folded` and re-renders; view-only state, so the document is not
     /// marked dirty.
     RequestToggleFold,
+    /// A `[TOC]` entry was clicked (roadmap C2): jump to that heading line.
+    RequestJumpToHeadingLine { line: usize },
     /// The user pressed Enter; a new block should be created after this
     /// one with the given trailing text.
     RequestNewline {

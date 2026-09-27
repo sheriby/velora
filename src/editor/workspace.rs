@@ -12,7 +12,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{BlockKind, CursorLocation, Editor, UndoSelectionSnapshot, CURSOR_HISTORY_LIMIT};
-use crate::components::{CursorHistoryBack, CursorHistoryForward};
+use crate::components::{CursorHistoryBack, CursorHistoryForward, TocEntry};
 use crate::config::TreeSortPreference;
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeManager};
@@ -205,6 +205,8 @@ pub(super) struct WorkspaceState {
     external_change_conflict: Option<(PathBuf, String)>,
     outline_tree: Vec<WorkspaceTreeNode>,
     outline_source: Option<String>,
+    /// 扁平标题清单（roadmap C2）：供正文里的 `[TOC]` 块渲染目录。
+    toc_entries: Vec<TocEntry>,
     expanded: HashSet<String>,
     selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
@@ -255,6 +257,7 @@ impl Default for WorkspaceState {
             external_change_conflict: None,
             outline_tree: Vec::new(),
             outline_source: None,
+            toc_entries: Vec::new(),
             expanded: HashSet::new(),
             selected: None,
             open_documents: Vec::new(),
@@ -376,13 +379,49 @@ impl Editor {
     /// 标题折叠（roadmap C7）：折叠标题之后的块隐藏，直到同级或更高
     /// 级标题出现。顺带刷新每个标题的 `foldable`（其后方是否有章节内容），
     /// 供标题行内的折叠 chevron 决定是否显示。
+    /// 跳到源码行并选中该行（roadmap C2 的 `[TOC]` 条目点击）。
+    pub(super) fn jump_to_source_line(&mut self, line: usize, cx: &mut Context<Self>) {
+        let source = self.last_stable_source_text.clone();
+        let line_start = source
+            .split_inclusive('\n')
+            .take(line)
+            .map(str::len)
+            .sum::<usize>()
+            .min(source.len());
+        let line_end = source[line_start..]
+            .find('\n')
+            .map(|offset| line_start + offset)
+            .unwrap_or(source.len());
+        if source.is_char_boundary(line_start) && source.is_char_boundary(line_end) {
+            self.jump_to_document_search_range(line_start..line_end, cx);
+        }
+    }
+
     pub(super) fn apply_heading_fold_filter(
         &self,
         all: Vec<super::tree::VisibleBlock>,
         cx: &mut Context<Self>,
     ) -> Vec<super::tree::VisibleBlock> {
         for (index, visible) in all.iter().enumerate() {
-            let level = match visible.entity.read(cx).kind() {
+            let (kind, is_toc, had_toc) = {
+                let block = visible.entity.read(cx);
+                (
+                    block.kind(),
+                    block.display_text().trim().eq_ignore_ascii_case("[toc]"),
+                    !block.toc_entries.is_empty(),
+                )
+            };
+            if is_toc {
+                let entries = self.workspace.toc_entries.clone();
+                visible
+                    .entity
+                    .update(cx, |block, _cx| block.toc_entries = entries);
+            } else if had_toc {
+                visible
+                    .entity
+                    .update(cx, |block, _cx| block.toc_entries.clear());
+            }
+            let level = match kind {
                 BlockKind::Heading { level } => level,
                 _ => continue,
             };
@@ -1766,6 +1805,7 @@ impl Editor {
         // Expand headings down to H3 by default so the outline is usable
         // without clicking through every level; users can still collapse.
         expand_outline_to_level(&outline, 2, &mut self.workspace.expanded);
+        self.workspace.toc_entries = flatten_outline_entries(&outline);
         self.workspace.outline_tree = outline;
         self.workspace.outline_source = Some(source.clone());
     }
@@ -6100,6 +6140,25 @@ fn expand_outline_to_level(
         }
         expand_outline_to_level(&node.children, max_level, expanded);
     }
+}
+
+/// 把大纲树压平为 `[TOC]` 块用的条目列表（roadmap C2），保持文档顺序。
+fn flatten_outline_entries(nodes: &[WorkspaceTreeNode]) -> Vec<TocEntry> {
+    fn visit(nodes: &[WorkspaceTreeNode], entries: &mut Vec<TocEntry>) {
+        for node in nodes {
+            if let WorkspaceTreeKind::Heading { line, level } = node.kind {
+                entries.push(TocEntry {
+                    level,
+                    title: node.label.clone(),
+                    line,
+                });
+            }
+            visit(&node.children, entries);
+        }
+    }
+    let mut entries = Vec::new();
+    visit(nodes, &mut entries);
+    entries
 }
 
 fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {

@@ -1723,6 +1723,9 @@ impl Editor {
                 }
                 cx.notify();
             }
+            BlockEvent::RequestJumpToHeadingLine { line } => {
+                self.jump_to_source_line(*line, cx);
+            }
             BlockEvent::RequestNewline {
                 trailing,
                 source_already_mutated,
