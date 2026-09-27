@@ -250,6 +250,17 @@ pub(crate) fn parse_table_cell_inline_images(markdown: &str) -> Vec<TableCellInl
     let mut found_image = false;
 
     while cursor < markdown.len() {
+        // 行内代码里的 `![alt](src)` 是字面文本：CommonMark 不解析代码段内部的
+        // 语法，整段直接跳过（用户报修：表格单元格里被反引号包住的图片语法
+        // 渲染成了「无法加载图片」占位框）。
+        if markdown.as_bytes()[cursor] == b'`'
+            && !is_escaped(markdown, cursor)
+            && let Some(end) = inline_code_span_end(markdown, cursor)
+        {
+            cursor = end;
+            continue;
+        }
+
         if markdown[cursor..].starts_with("![")
             && !is_escaped(markdown, cursor)
             && let Some((image_markdown, syntax, end)) = parse_inline_image_at(markdown, cursor)
@@ -296,6 +307,35 @@ pub(crate) fn parse_table_cell_inline_images(markdown: &str) -> Vec<TableCellInl
     } else {
         vec![TableCellInlineImageSegment::Text(markdown.to_string())]
     }
+}
+
+fn inline_code_span_end(markdown: &str, start: usize) -> Option<usize> {
+    let bytes = markdown.as_bytes();
+    let mut opening_end = start;
+    while opening_end < bytes.len() && bytes[opening_end] == b'`' {
+        opening_end += 1;
+    }
+    let run_len = opening_end - start;
+    let mut cursor = opening_end;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'`' && !is_escaped(markdown, cursor) {
+            let mut end = cursor;
+            while end < bytes.len() && bytes[end] == b'`' {
+                end += 1;
+            }
+            if end - cursor == run_len {
+                return Some(end);
+            }
+            cursor = end;
+            continue;
+        }
+        cursor += markdown[cursor..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
+    }
+    None
 }
 
 fn parse_inline_image_at(markdown: &str, start: usize) -> Option<(String, ImageSyntax, usize)> {
@@ -938,6 +978,32 @@ mod tests {
             super::standalone_image_width_percent("![alt](./img.png){height=60%}"),
             None
         );
+    }
+
+    #[test]
+    fn table_cell_inline_images_ignore_inline_code_content() {
+        // 行内代码内部是字面文本：`![alt](path)` 不能被提升为图片段
+        let only_code = parse_table_cell_inline_images("源码 `![alt](path){width=NN%}`，100%");
+        assert_eq!(
+            only_code,
+            vec![TableCellInlineImageSegment::Text(
+                "源码 `![alt](path){width=NN%}`，100%".to_string()
+            )],
+        );
+
+        // 代码段之外的图片照常提升为图片段
+        let segments = parse_table_cell_inline_images("`![a](x.png)` 与 ![b](y.png)");
+        assert!(
+            segments.iter().any(|segment| matches!(
+                segment,
+                TableCellInlineImageSegment::Text(text) if text.contains("`![a](x.png)`")
+            )),
+            "代码段内的图片语法应留在文本段里: {segments:?}"
+        );
+        assert!(matches!(
+            segments.last(),
+            Some(TableCellInlineImageSegment::Image { .. })
+        ));
     }
 
     #[test]

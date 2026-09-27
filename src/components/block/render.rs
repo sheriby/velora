@@ -113,6 +113,14 @@ fn inline_display_font_size(
     }
 }
 
+/// 该段文本里的 `![alt](src)` 是否应提升为行内图片控件。
+///
+/// 行内代码内部是字面文本，不解析任何 Markdown（用户报修：表格单元格里被反引号
+/// 包住的图片语法渲染成了「无法加载图片」占位框）。
+fn promotes_inline_images(text: &str, style: &crate::components::InlineStyle) -> bool {
+    !style.code && text.contains("![")
+}
+
 /// 链接/脚注悬停 tooltip 文案（roadmap C9/C8）。
 fn segment_hash(text: &str, range_start: usize) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
@@ -989,7 +997,7 @@ impl Block {
             .html_style
             .is_some_and(|style| style.background_color.is_some());
         let mut segments = Vec::new();
-        if text.contains("![") {
+        if promotes_inline_images(text, &span.style) {
             for segment in crate::components::markdown::image::parse_table_cell_inline_images(text)
             {
                 match segment {
@@ -3608,8 +3616,20 @@ fn inline_word_chunks(text: &str, code: bool, has_background: bool) -> Vec<&str>
 
 #[cfg(test)]
 mod tests {
-    use super::{inline_display_font_size, tag_query, wikilink_target};
+    use super::{
+        inline_display_font_size, promotes_inline_images, tag_query, wikilink_target,
+    };
     use crate::components::{InlineScript, InlineSpan, InlineStyle};
+
+    #[test]
+    fn inline_code_content_never_becomes_an_image_widget() {
+        let code = InlineStyle {
+            code: true,
+            ..InlineStyle::default()
+        };
+        assert!(!promotes_inline_images("![alt](path){width=NN%}", &code));
+        assert!(promotes_inline_images("![alt](path)", &InlineStyle::default()));
+    }
 
     #[test]
     fn inline_code_uses_the_code_font_size_while_scripts_shrink() {

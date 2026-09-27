@@ -538,8 +538,9 @@ impl InlineTextTree {
             fragment.math.is_some()
                 || fragment.style.has_script()
                 // `![alt](src)` spans inside a paragraph render as inline
-                // image widgets on the same mixed-segment path.
-                || fragment.text.contains("![")
+                // image widgets on the same mixed-segment path. Not inside
+                // inline code: code-span content is literal text.
+                || (!fragment.style.code && fragment.text.contains("!["))
         })
     }
 
@@ -3263,6 +3264,20 @@ mod tests {
         assert!(InlineTextTree::from_markdown("alpha $x$ beta").has_mixed_inline_visuals());
         assert!(InlineTextTree::from_markdown("alpha^sup^ beta").has_mixed_inline_visuals());
         assert!(InlineTextTree::from_markdown("alpha ![a](b.png) beta").has_mixed_inline_visuals());
+        // 代码段内部不解析任何 Markdown：这里的 `![` 只是字面文本（用户报修：
+        // 表格单元格里被反引号包住的图片语法渲染成了「无法加载图片」占位框）。
+        assert!(
+            !InlineTextTree::from_markdown("源码 `![alt](path){width=NN%}`，100%")
+                .has_mixed_inline_visuals(),
+            "行内代码里的图片语法是字面文本"
+        );
+        let tree = InlineTextTree::from_markdown("前 `![alt](p.png) [a](b) $c$ ^d^` 后");
+        assert_eq!(
+            tree.visible_text(),
+            "前 ![alt](p.png) [a](b) $c$ ^d^ 后",
+            "代码段内容必须原样保留，不被当作图片/链接/数学/上下标解析"
+        );
+        assert_eq!(tree.serialize_markdown(), "前 `![alt](p.png) [a](b) $c$ ^d^` 后");
     }
 
     #[test]

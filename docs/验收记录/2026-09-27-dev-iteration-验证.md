@@ -288,6 +288,17 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 全量回归 | `cargo build` 0 警告；`cargo test` 911 通过 0 失败 1 ignored | 通过 |
 | 待人工目视 | 锁屏解除后确认：含行内代码段落点击前后字号不再变化；把「代码字号」调到明显小于/接近正文字号（如 12 与 16）时行内代码随之变化；围栏代码块与导出 HTML 不受影响 | 待复核 |
 
+## 第二十九批补充（用户报修：行内代码内部不该再解析任何 Markdown）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 用户截图：roadmap 表格单元格里 `` `![alt](path){width=NN%}` `` 的**代码内容**被渲染成「无法加载图片 alt」占位框 | 已复现 |
+| 根因 | 解析层是对的（代码段内容原样保留、序列化可往返），坏在**渲染期二次扫描**：表格单元格按 `serialize_markdown()` 调 `parse_table_cell_inline_images` 提升行内图片，段落「混合分段」路径也对每段文本重扫 `![`，两者都不认得反引号，于是把代码里的图片语法当真图片处理 | 已定位 |
+| 修复 | ① `parse_table_cell_inline_images` 先跳过完整反引号代码段（`inline_code_span_end` 按 CommonMark「等长反引号串成对」扫描，未闭合的反引号按字面文本继续）；② 段落路径的判定抽成 `promotes_inline_images(text, style)`，`style.code` 一律不提升；③ `has_mixed_inline_visuals` 的 `![` 判据同样排除代码段（纯代码里的 `![` 不再把整块拖进混合分段路径） | 通过 |
+| 用例 | ① `table_cell_inline_images_ignore_inline_code_content`：整格只有代码里的图片语法 ⇒ 单条文本段；代码段外的 `![b](y.png)` ⇒ 仍提升为图片段；② `inline_code_does_not_force_the_mixed_visual_path` 扩到代码段内部：`![alt](p.png) [a](b) $c$ ^d^` 全部原样保留（visible_text 与 serialize_markdown 逐字符断言）；③ `inline_code_content_never_becomes_an_image_widget`：`promotes_inline_images` 对代码段为假、对正文段为真 | 通过 |
+| 正控 | 去掉 image.rs 的代码段跳过 ⇒ 用例①失败；把 `promotes_inline_images` 改回只看 `![` ⇒ 用例③失败；全部复原后复跑通过 | 通过 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 913 通过 0 失败 1 ignored | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
