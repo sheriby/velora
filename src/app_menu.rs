@@ -11,14 +11,16 @@ use anyhow::Context as _;
 use futures::channel::oneshot;
 use gpui::*;
 
+use crate::commands::{CommandMenu, CommandSpec};
 use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
-    NewWindow, OpenCommandPalette,
-    OpenFile, OpenPreferences, OpenRecentFile, PrintDocument, QuitApplication, SaveDocument,
+    NewWindow, OpenCommandPalette, OpenFile, OpenPreferences, OpenRecentFile, PrintDocument,
+    QuitApplication, SaveDocument,
     SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
-    ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UninstallCliTool,
+    ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UninstallCliTool, ZoomIn, ZoomOut,
+    ZoomReset,
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
@@ -28,7 +30,7 @@ use crate::config::{
 };
 use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
-use crate::i18n::I18nManager;
+use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::ThemeManager;
 use crate::window_chrome::velora_window_options;
 
@@ -806,6 +808,10 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         prompt_and_open_files(cx);
     } else if action.as_any().is::<CopyAsHtml>() {
         let _ = with_active_editor(cx, |editor, _window, cx| editor.copy_as_html(cx));
+    } else if action.as_any().is::<OpenCommandPalette>() {
+        let _ = with_active_editor(cx, |editor, window, cx| {
+            editor.toggle_command_palette(window, cx);
+        });
     } else if action.as_any().is::<ToggleViewMode>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<ToggleFocusMode>() {
@@ -902,6 +908,12 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
             window.toggle_fullscreen();
             window.refresh();
         });
+    } else if action.as_any().is::<ZoomIn>() {
+        let _ = with_active_editor(cx, |editor, _window, cx| editor.zoom_by(10, cx));
+    } else if action.as_any().is::<ZoomOut>() {
+        let _ = with_active_editor(cx, |editor, _window, cx| editor.zoom_by(-10, cx));
+    } else if action.as_any().is::<ZoomReset>() {
+        let _ = with_active_editor(cx, |editor, _window, cx| editor.zoom_reset(cx));
     } else if action.as_any().is::<QuitApplication>() {
         request_quit_application(cx);
     } else if action.as_any().is::<CloseWindow>() {
@@ -1001,6 +1013,66 @@ pub(crate) fn dispatch_menu_action_for_editor(
     }
 }
 
+/// 由命令注册表构造某个菜单的动作条目（含分隔线，roadmap H5）。
+fn command_menu_items(strings: &I18nStrings, menu: CommandMenu) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    for spec in crate::commands::commands_for(menu) {
+        if spec.separator_before && !items.is_empty() {
+            items.push(MenuItem::separator());
+        }
+        items.push(command_menu_item(strings, spec));
+    }
+    items
+}
+
+fn command_menu_item(strings: &I18nStrings, spec: &CommandSpec) -> MenuItem {
+    MenuItem::Action {
+        name: spec.label(strings).into(),
+        action: spec.boxed_action(),
+        os_action: None,
+    }
+}
+
+/// 按 id 取注册命令（非 macOS 折叠应用菜单时用）。
+#[cfg(not(target_os = "macos"))]
+fn command_spec(id: &str) -> &'static CommandSpec {
+    crate::commands::commands()
+        .iter()
+        .find(|spec| spec.id == id)
+        .expect("command registry should keep the id")
+}
+
+/// 文件菜单：注册表 File 分组，并把「打开最近」子菜单接在「打开文件」之后。
+///
+/// 非 macOS 没有应用菜单，App 分组的偏好设置与退出并入文件菜单
+/// （顺序沿用既有版本：偏好设置紧跟最近打开，退出在最后）。
+fn file_menu_items(strings: &I18nStrings, recent_items: Vec<MenuItem>) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    let mut recent_items = Some(recent_items);
+    for spec in crate::commands::commands_for(CommandMenu::File) {
+        if spec.separator_before && !items.is_empty() {
+            items.push(MenuItem::separator());
+        }
+        items.push(command_menu_item(strings, spec));
+        if spec.id == "open_file" {
+            if let Some(recent_items) = recent_items.take() {
+                items.push(MenuItem::submenu(Menu {
+                    name: strings.menu_open_recent_file.clone().into(),
+                    items: recent_items,
+                }));
+            }
+            #[cfg(not(target_os = "macos"))]
+            items.push(command_menu_item(strings, command_spec("preferences")));
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        items.push(MenuItem::separator());
+        items.push(command_menu_item(strings, command_spec("quit")));
+    }
+    items
+}
+
 fn build_menus(
     theme_manager: &ThemeManager,
     i18n_manager: &I18nManager,
@@ -1089,26 +1161,11 @@ fn build_menus(
         vec![
             Menu {
                 name: "Velora".into(),
-                items: vec![
-                    MenuItem::action(strings.menu_preferences.clone(), OpenPreferences),
-                    MenuItem::separator(),
-                    MenuItem::action(strings.menu_quit.clone(), QuitApplication),
-                ],
+                items: command_menu_items(&strings, CommandMenu::App),
             },
             Menu {
-                name: strings.menu_file.into(),
-                items: vec![
-                    MenuItem::action(strings.menu_new_window.clone(), NewWindow),
-                    MenuItem::action(strings.menu_close_window.clone(), CloseWindow),
-                    MenuItem::action(strings.menu_open_file.clone(), OpenFile),
-                    MenuItem::submenu(Menu {
-                        name: strings.menu_open_recent_file.clone().into(),
-                        items: recent_items,
-                    }),
-                    MenuItem::separator(),
-                    MenuItem::action(strings.menu_save.clone(), SaveDocument),
-                    MenuItem::action(strings.menu_save_as.clone(), SaveDocumentAs),
-                ],
+                name: strings.menu_file.clone().into(),
+                items: file_menu_items(&strings, recent_items),
             },
         ]
     };
@@ -1116,22 +1173,8 @@ fn build_menus(
     #[cfg(not(target_os = "macos"))]
     let initial_menus = {
         vec![Menu {
-            name: strings.menu_file.into(),
-            items: vec![
-                MenuItem::action(strings.menu_new_window.clone(), NewWindow),
-                MenuItem::action(strings.menu_close_window.clone(), CloseWindow),
-                MenuItem::action(strings.menu_open_file.clone(), OpenFile),
-                MenuItem::submenu(Menu {
-                    name: strings.menu_open_recent_file.clone().into(),
-                    items: recent_items,
-                }),
-                MenuItem::action(strings.menu_preferences.clone(), OpenPreferences),
-                MenuItem::separator(),
-                MenuItem::action(strings.menu_save.clone(), SaveDocument),
-                MenuItem::action(strings.menu_save_as.clone(), SaveDocumentAs),
-                MenuItem::separator(),
-                MenuItem::action(strings.menu_quit.clone(), QuitApplication),
-            ],
+            name: strings.menu_file.clone().into(),
+            items: file_menu_items(&strings, recent_items),
         }]
     };
 
@@ -1155,30 +1198,24 @@ fn build_menus(
             ));
         }
         items.push(MenuItem::separator());
-        items.push(MenuItem::action(strings.menu_about.clone(), ShowAbout));
+        items.extend(command_menu_items(&strings, CommandMenu::Help));
         items
     };
     #[cfg(not(target_os = "macos"))]
-    let help_items = vec![MenuItem::action(strings.menu_about.clone(), ShowAbout)];
+    let help_items = command_menu_items(&strings, CommandMenu::Help);
 
     let mut menus = initial_menus;
     menus.extend([
         Menu {
-            name: strings.menu_export.into(),
-            items: vec![
-                MenuItem::action(strings.menu_export_html.clone(), ExportHtml),
-                MenuItem::action(strings.menu_export_pdf.clone(), ExportPdf),
-                MenuItem::action(strings.menu_export_png.clone(), ExportPng),
-                MenuItem::action(strings.menu_print.clone(), PrintDocument),
-                MenuItem::action(strings.menu_copy_as_html.clone(), CopyAsHtml),
-            ],
+            name: strings.menu_export.clone().into(),
+            items: command_menu_items(&strings, CommandMenu::Export),
         },
         Menu {
-            name: strings.menu_language.into(),
+            name: strings.menu_language.clone().into(),
             items: language_items,
         },
         Menu {
-            name: strings.menu_theme.into(),
+            name: strings.menu_theme.clone().into(),
             items: theme_items,
         },
         Menu {
@@ -1188,77 +1225,10 @@ fn build_menus(
                 "View"
             }
             .into(),
-            items: vec![
-                MenuItem::action(
-                    if current_language_id == "zh-CN" {
-                        "切换侧边栏"
-                    } else {
-                        "Toggle Sidebar"
-                    },
-                    ToggleSidebar,
-                ),
-                MenuItem::action(
-                    strings.preferences_shortcut_toggle_fullscreen.clone(),
-                    ToggleFullscreen,
-                ),
-                MenuItem::separator(),
-                MenuItem::action(
-                    strings.preferences_shortcut_toggle_view_mode.clone(),
-                    ToggleViewMode,
-                ),
-                MenuItem::action(
-                    if current_language_id == "zh-CN" {
-                        "切换专注模式"
-                    } else {
-                        "Toggle Focus Mode"
-                    },
-                    ToggleFocusMode,
-                ),
-                MenuItem::action(
-                    if current_language_id == "zh-CN" {
-                        "切换打字机模式"
-                    } else {
-                        "Toggle Typewriter Mode"
-                    },
-                    ToggleTypewriterMode,
-                ),
-                MenuItem::separator(),
-                MenuItem::action(
-                    if current_language_id == "zh-CN" {
-                        "命令面板…"
-                    } else {
-                        "Command Palette…"
-                    },
-                    OpenCommandPalette,
-                ),
-                MenuItem::action(
-                    if current_language_id == "zh-CN" {
-                        "查找当前文档…"
-                    } else {
-                        "Find in Document…"
-                    },
-                    FindInDocument,
-                ),
-                MenuItem::action(
-                    if current_language_id == "zh-CN" {
-                        "查找下一个"
-                    } else {
-                        "Find Next"
-                    },
-                    FindNextMatch,
-                ),
-                MenuItem::action(
-                    if current_language_id == "zh-CN" {
-                        "查找上一个"
-                    } else {
-                        "Find Previous"
-                    },
-                    FindPreviousMatch,
-                ),
-            ],
+            items: command_menu_items(&strings, CommandMenu::View),
         },
         Menu {
-            name: strings.menu_help.into(),
+            name: strings.menu_help.clone().into(),
             items: help_items,
         },
     ]);
@@ -1573,6 +1543,21 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAbout, cx| {
         dispatch_menu_action(&ShowAbout, cx);
     });
+    cx.on_action(|_: &CopyAsHtml, cx| {
+        dispatch_menu_action(&CopyAsHtml, cx);
+    });
+    cx.on_action(|_: &OpenCommandPalette, cx| {
+        dispatch_menu_action(&OpenCommandPalette, cx);
+    });
+    cx.on_action(|_: &ZoomIn, cx| {
+        dispatch_menu_action(&ZoomIn, cx);
+    });
+    cx.on_action(|_: &ZoomOut, cx| {
+        dispatch_menu_action(&ZoomOut, cx);
+    });
+    cx.on_action(|_: &ZoomReset, cx| {
+        dispatch_menu_action(&ZoomReset, cx);
+    });
     cx.on_action(|_: &ToggleSidebar, cx| {
         dispatch_menu_action(&ToggleSidebar, cx);
     });
@@ -1859,6 +1844,42 @@ mod tests {
             }
             _ => panic!("expected copy as html action item"),
         }
+    }
+
+    /// roadmap H5：菜单与命令面板同源于命令注册表——逐条对照视图菜单
+    /// （文案 + 动作 + 分隔线位置），多一条少一条都会失败。
+    #[test]
+    fn view_menu_matches_the_command_registry() {
+        let theme_manager = ThemeManager::default();
+        let i18n_manager = I18nManager::default();
+        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
+        let strings = i18n_manager.strings();
+        let items = &menus[VIEW_IDX].items;
+
+        let mut index = 0;
+        for spec in crate::commands::commands_for(crate::commands::CommandMenu::View) {
+            if spec.separator_before && index > 0 {
+                assert!(
+                    matches!(items[index], MenuItem::Separator),
+                    "{} 前应有分隔线",
+                    spec.id
+                );
+                index += 1;
+            }
+            match items.get(index) {
+                Some(MenuItem::Action { name, action, .. }) => {
+                    assert_eq!(name.as_ref(), spec.label(strings).as_str(), "{} 文案", spec.id);
+                    assert!(
+                        action.as_ref().partial_eq(spec.boxed_action().as_ref()),
+                        "{} 动作类型不一致",
+                        spec.id
+                    );
+                }
+                _ => panic!("视图菜单缺少条目 {}", spec.id),
+            }
+            index += 1;
+        }
+        assert_eq!(index, items.len(), "视图菜单存在注册表之外的条目");
     }
 
     #[test]

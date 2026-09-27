@@ -5301,3 +5301,26 @@ async fn quick_open_composition_commit_backspace_and_escape_edit_the_query(
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[gpui::test]
+async fn every_registered_command_has_a_handler(cx: &mut TestAppContext) {
+    // roadmap H5：注册表里的每条命令都必须有处理者——菜单项与命令面板条目
+    // 都经 Action 派发，没有处理者的命令会变成「点了没反应」（菜单里还会变灰）。
+    // 这里用菜单启用判定 is_action_available 逐条把守。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (_editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, String::new(), None)
+    });
+    redraw(cx);
+
+    let mut missing = Vec::new();
+    for spec in crate::commands::commands() {
+        let action = spec.boxed_action();
+        if !cx.update(|_window, cx| cx.is_action_available(action.as_ref())) {
+            missing.push(spec.id);
+        }
+    }
+
+    assert!(missing.is_empty(), "以下命令没有处理者：{missing:?}");
+}

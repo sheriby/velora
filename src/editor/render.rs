@@ -1210,7 +1210,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::adjust_zoom(cx, 10);
+        self.zoom_by(10, cx);
     }
 
     pub(crate) fn on_zoom_out(
@@ -1219,7 +1219,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::adjust_zoom(cx, -10);
+        self.zoom_by(-10, cx);
     }
 
     pub(crate) fn on_zoom_reset(
@@ -1228,17 +1228,23 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        crate::config::EditorSettings::set_zoom_percent(cx, 100);
-        cx.refresh_windows();
+        self.zoom_reset(cx);
     }
 
-    fn adjust_zoom(cx: &mut Context<Self>, delta: i64) {
+    /// 按百分比步进调整界面缩放（roadmap H5：菜单与命令面板共用）。
+    pub(crate) fn zoom_by(&mut self, delta: i64, cx: &mut Context<Self>) {
         let current = crate::config::EditorSettings::zoom_percent(cx);
         let next = (current + delta).clamp(60, 200);
         if next != current {
             crate::config::EditorSettings::set_zoom_percent(cx, next);
             cx.refresh_windows();
         }
+    }
+
+    /// 缩放回到 100%。
+    pub(crate) fn zoom_reset(&mut self, cx: &mut Context<Self>) {
+        crate::config::EditorSettings::set_zoom_percent(cx, 100);
+        cx.refresh_windows();
     }
 
     /// Full-area welcome page for windows opened without a document: brand

@@ -190,6 +190,17 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 顺带修复 | escape 之前关不掉快捷切换器与命令面板：全局快捷键 `escape`→`DismissTransientUi` 先于浮层自身的 key_down 被分发并消费，现由 `on_dismiss_transient_ui` 统一调用 `close_quick_open`/`close_command_palette` | 通过（用例内 escape 断言） |
 | 全量回归 | `cargo test` 889 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
 
+## 第二十一批补充（H5 命令注册表统一化）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| H5 注册表 | 新增 `src/commands.rs`：`CommandSpec{id, menu, separator_before, label(i18n), action}` + `commands()/commands_for()`；菜单的 App/File/Export/View/Help 分组与命令面板条目都由注册表生成（面板此前是 18 条手写子集） | 通过 |
+| 结构一致 | `view_menu_matches_the_command_registry`：逐条对照视图菜单与注册表（文案、动作类型 `partial_eq`、分隔线位置、条目总数），多一条少一条都失败；**正控**：构建器临时跳过 `zoom_reset` 后该用例必失败 | 通过 |
+| 无死命令 | `every_registered_command_has_a_handler`：对注册表每条命令断言 `cx.is_action_available`（菜单启用判定），把守「有菜单项/面板条目但没有处理者」。此用例在修复前实测抓出 5 条：复制为 HTML、命令面板、放大、缩小、重置缩放——前三条此前在命令面板里点了没反应（面板直接调 `dispatch_menu_action`，绕过视图级处理者） | 通过 |
+| 死命令修复 | 命令面板改为 `window.dispatch_action`（与菜单项/快捷键同链路）；补齐 `OpenCommandPalette` 派发分支与 5 条全局监听（复制为 HTML、命令面板、缩放三件套）；缩放逻辑抽成 `Editor::zoom_by/zoom_reset` 供菜单与快捷键共用；视图菜单新增 放大/缩小/重置缩放（此前仅面板有且无效） | 通过 |
+| i18n | 新增 `menu_open_command_palette`（视图菜单与面板共用）与 `command_zoom_in/out/reset`（原面板为写死英文 `⌘+ Zoom In`） | 通过 |
+| 全量回归 | `cargo test` 894 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

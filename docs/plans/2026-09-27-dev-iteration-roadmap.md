@@ -126,7 +126,7 @@ Velora 当前两侧都缺一批高频能力，以下按「P0 日常刚需 → P1
 | H2 ✅ | 设置界面：文件分组 | 文件页新增「外部变更」（自动重载/不自动重载）与「删除方式」（移入废纸篓/永久删除）两个下拉，写入 config.toml [editor] external_change_policy / delete_policy；策略在 watcher 重载路径与删除路径生效 | config 往返 + gpui 行为用例 |
 | H3 ✅ | 主题 CSS 变量文档 | `docs/主题变量.md` 全量 token 表（colors 89 / dimensions 116 / typography 23 / placeholders 1），由测试 `theme_token_documentation_covers_every_token` 双向守护（缺漏/多余 token 都会失败） | 文档存在 + 漂移测试 |
 | H4 ✅ | 语言包外置 | 既有「导入→写入用户 languages 目录→启动加载」链路；补目录直放用例证明加载与未覆盖字符串回退 | 覆盖生效 |
-| H5 | 插件式命令注册 | 命令面板/菜单的命令注册表统一化，供后续扩展 | 架构落地 |
+| H5 ✅ | 插件式命令注册 | `src/commands.rs` 命令注册表：每条命令声明 id/所属菜单/分隔位置/i18n 文案/动作构造器，菜单按分组消费、命令面板列出全部条目（漂移不可能再出现）；顺带修掉 5 条「点了没反应」的命令（复制为 HTML、命令面板、放大/缩小/重置缩放缺派发或面板绕过视图处理者） | 菜单=注册表逐条对照用例 + 每条命令必须有处理者用例（is_action_available），均做正控 |
 
 ---
 

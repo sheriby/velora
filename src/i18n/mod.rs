@@ -116,6 +116,8 @@ pub struct I18nStrings {
     pub menu_export_png: String,
     /// Export menu item for printing the document through the system print/preview.
     pub menu_print: String,
+    /// View menu / command palette entry for opening the command palette.
+    pub menu_open_command_palette: String,
     /// Help menu item for checking updates.
     pub menu_check_updates: String,
     /// Help menu item for showing About information.
@@ -359,6 +361,12 @@ pub struct I18nStrings {
     pub command_find_previous: String,
     /// Command label: toggle source/rendered view.
     pub command_toggle_view_mode: String,
+    /// Command palette entry for zooming the interface in.
+    pub command_zoom_in: String,
+    /// Command palette entry for zooming the interface out.
+    pub command_zoom_out: String,
+    /// Command palette entry for resetting the interface zoom.
+    pub command_zoom_reset: String,
     /// 文件页：文件树排序行标签。
     pub preferences_file_tree_sort: String,
     /// 文件页：自动保存间隔行标签。
@@ -548,6 +556,7 @@ struct I18nStringsDe {
     menu_export_pdf: Option<String>,
     menu_export_png: Option<String>,
     menu_print: Option<String>,
+    menu_open_command_palette: Option<String>,
     menu_check_updates: Option<String>,
     menu_about: Option<String>,
     menu_install_cli_tool: Option<String>,
@@ -704,6 +713,9 @@ struct I18nStringsDe {
     command_find_next: Option<String>,
     command_find_previous: Option<String>,
     command_toggle_view_mode: Option<String>,
+    command_zoom_in: Option<String>,
+    command_zoom_out: Option<String>,
+    command_zoom_reset: Option<String>,
     preferences_file_tree_sort: Option<String>,
     preferences_file_autosave_debounce: Option<String>,
     preferences_file_remember_window: Option<String>,
@@ -830,6 +842,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "menu_export_pdf",
     "menu_export_png",
     "menu_print",
+    "menu_open_command_palette",
     "menu_check_updates",
     "menu_about",
     "menu_install_cli_tool",
@@ -986,6 +999,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "command_find_next",
     "command_find_previous",
     "command_toggle_view_mode",
+    "command_zoom_in",
+    "command_zoom_out",
+    "command_zoom_reset",
     "preferences_file_tree_sort",
     "preferences_file_autosave_debounce",
     "preferences_file_remember_window",
@@ -1172,6 +1188,9 @@ impl I18nStringsDe {
             menu_export_pdf: self.menu_export_pdf.unwrap_or(defaults.menu_export_pdf),
             menu_export_png: self.menu_export_png.unwrap_or(defaults.menu_export_png),
             menu_print: self.menu_print.unwrap_or(defaults.menu_print),
+            menu_open_command_palette: self
+                .menu_open_command_palette
+                .unwrap_or(defaults.menu_open_command_palette),
             menu_check_updates: self
                 .menu_check_updates
                 .unwrap_or(defaults.menu_check_updates),
@@ -1610,6 +1629,11 @@ impl I18nStringsDe {
             command_toggle_view_mode: self
                 .command_toggle_view_mode
                 .unwrap_or(defaults.command_toggle_view_mode),
+            command_zoom_in: self.command_zoom_in.unwrap_or(defaults.command_zoom_in),
+            command_zoom_out: self.command_zoom_out.unwrap_or(defaults.command_zoom_out),
+            command_zoom_reset: self
+                .command_zoom_reset
+                .unwrap_or(defaults.command_zoom_reset),
             preferences_file_tree_sort: self
                 .preferences_file_tree_sort
                 .unwrap_or(defaults.preferences_file_tree_sort),
@@ -1880,6 +1904,7 @@ impl I18nStrings {
             menu_export_pdf: "PDF".into(),
             menu_export_png: "图片（PNG 长图）".into(),
             menu_print: "打印…".into(),
+            menu_open_command_palette: "命令面板…".into(),
             menu_check_updates: "检查更新".into(),
             menu_about: "关于".into(),
             menu_install_cli_tool: "安装CLI命令".into(),
@@ -2038,6 +2063,9 @@ impl I18nStrings {
             command_find_next: "查找下一个".into(),
             command_find_previous: "查找上一个".into(),
             command_toggle_view_mode: "切换视图模式".into(),
+            command_zoom_in: "放大".into(),
+            command_zoom_out: "缩小".into(),
+            command_zoom_reset: "重置缩放".into(),
             preferences_file_tree_sort: "文件树排序".into(),
             preferences_file_autosave_debounce: "自动保存间隔".into(),
             preferences_file_remember_window: "记住窗口大小与位置".into(),
@@ -2185,6 +2213,7 @@ impl I18nStrings {
             menu_export_pdf: "PDF".into(),
             menu_export_png: "Image (PNG)".into(),
             menu_print: "Print…".into(),
+            menu_open_command_palette: "Command Palette…".into(),
             menu_check_updates: "Check for Updates".into(),
             menu_about: "About".into(),
             menu_install_cli_tool: "Install CLI Command".into(),
@@ -2353,6 +2382,9 @@ impl I18nStrings {
             command_find_next: "Find Next".into(),
             command_find_previous: "Find Previous".into(),
             command_toggle_view_mode: "Toggle View Mode".into(),
+            command_zoom_in: "Zoom In".into(),
+            command_zoom_out: "Zoom Out".into(),
+            command_zoom_reset: "Reset Zoom".into(),
             preferences_file_tree_sort: "File tree sort".into(),
             preferences_file_autosave_debounce: "Autosave interval".into(),
             preferences_file_remember_window: "Remember window size and position".into(),

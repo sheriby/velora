@@ -5,7 +5,7 @@ use gpui::*;
 
 use super::Editor;
 use crate::components::*;
-use crate::i18n::I18nManager;
+use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::Theme;
 
 /// Overlay state. `None` while closed.
@@ -17,17 +17,18 @@ pub(in crate::editor) struct CommandPaletteState {
 }
 
 /// One executable command: display label (already localized) + the action it
-/// dispatches.
+/// dispatches. Built from the shared command registry (roadmap H5), so the
+/// palette and the app menus always list the same commands.
 struct CommandEntry {
     label: String,
     action: Box<dyn Action>,
 }
 
 impl CommandEntry {
-    fn new(label: String, action: impl Action + Clone) -> Self {
+    fn from_spec(spec: &crate::commands::CommandSpec, strings: &I18nStrings) -> Self {
         Self {
-            label,
-            action: Box::new(action),
+            label: spec.label(strings),
+            action: spec.boxed_action(),
         }
     }
 }
@@ -39,6 +40,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.toggle_command_palette(window, cx);
+    }
+
+    /// 打开/关闭命令面板（roadmap H5：菜单与快捷键共用同一入口）。
+    pub(crate) fn toggle_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.command_palette.take().is_some() {
             cx.notify();
             return;
@@ -60,35 +66,10 @@ impl Editor {
 
     fn command_entries(&self, cx: &Context<Self>) -> Vec<CommandEntry> {
         let strings = cx.global::<I18nManager>().strings();
-        vec![
-            CommandEntry::new(strings.menu_save.clone(), SaveDocument),
-            CommandEntry::new(strings.menu_save_as.clone(), SaveDocumentAs),
-            CommandEntry::new(strings.menu_export_html.clone(), ExportHtml),
-            CommandEntry::new(strings.menu_export_pdf.clone(), ExportPdf),
-            CommandEntry::new(strings.menu_open_file.clone(), OpenFile),
-            CommandEntry::new(strings.menu_new_window.clone(), NewWindow),
-            CommandEntry::new(strings.menu_close_window.clone(), CloseWindow),
-            CommandEntry::new(
-                strings.command_toggle_view_mode.clone(),
-                ToggleViewMode,
-            ),
-            CommandEntry::new(
-                strings.command_toggle_focus_mode.clone(),
-                ToggleFocusMode,
-            ),
-            CommandEntry::new(
-                strings.command_toggle_typewriter_mode.clone(),
-                ToggleTypewriterMode,
-            ),
-            CommandEntry::new(strings.command_toggle_sidebar.clone(), ToggleSidebar),
-            CommandEntry::new(strings.command_find_in_document.clone(), FindInDocument),
-            CommandEntry::new(strings.command_find_next.clone(), FindNextMatch),
-            CommandEntry::new(strings.command_find_previous.clone(), FindPreviousMatch),
-            CommandEntry::new("⌘+ Zoom In".into(), ZoomIn),
-            CommandEntry::new("⌘- Zoom Out".into(), ZoomOut),
-            CommandEntry::new("⌘0 Zoom Reset".into(), ZoomReset),
-            CommandEntry::new(strings.menu_preferences.clone(), OpenPreferences),
-        ]
+        crate::commands::commands()
+            .iter()
+            .map(|spec| CommandEntry::from_spec(spec, strings))
+            .collect()
     }
 
     fn filtered_commands(&self, cx: &Context<Self>) -> Vec<CommandEntry> {
@@ -215,11 +196,13 @@ pub(super) fn render_command_palette_overlay(
                         c.dialog_body
                     })
                     .child(entry.label.clone())
-                    .on_click(move |_event, _window, cx| {
+                    .on_click(move |_event, window, cx| {
                         let _ = dispatch_editor.update(cx, |editor, _cx| {
                             editor.command_palette = None;
                         });
-                        crate::app_menu::dispatch_menu_action(action.as_ref(), cx);
+                        // 走标准动作派发：与菜单项、快捷键同一条链路，
+                        // 视图级处理者（缩放、复制为 HTML 等）也会生效。
+                        window.dispatch_action(action.boxed_clone(), cx);
                     })
                     .into_any_element(),
             );
