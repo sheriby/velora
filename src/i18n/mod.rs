@@ -241,6 +241,8 @@ pub struct I18nStrings {
     pub preferences_shortcut_find_next_match: String,
     pub preferences_shortcut_find_previous_match: String,
     pub preferences_shortcut_toggle_sidebar: String,
+    /// 快捷键名：切换全屏（roadmap A6）。
+    pub preferences_shortcut_toggle_fullscreen: String,
     /// Workspace drawer Files tab.
     pub workspace_panel_title: String,
     pub workspace_tab_files: String,
@@ -623,6 +625,7 @@ struct I18nStringsDe {
     preferences_shortcut_find_next_match: Option<String>,
     preferences_shortcut_find_previous_match: Option<String>,
     preferences_shortcut_toggle_sidebar: Option<String>,
+    preferences_shortcut_toggle_fullscreen: Option<String>,
     workspace_panel_title: Option<String>,
     workspace_tab_files: Option<String>,
     workspace_tab_outline: Option<String>,
@@ -888,6 +891,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_shortcut_find_next_match",
     "preferences_shortcut_find_previous_match",
     "preferences_shortcut_toggle_sidebar",
+    "preferences_shortcut_toggle_fullscreen",
     "workspace_panel_title",
     "workspace_tab_files",
     "workspace_tab_outline",
@@ -1399,6 +1403,9 @@ impl I18nStringsDe {
             preferences_shortcut_toggle_sidebar: self
                 .preferences_shortcut_toggle_sidebar
                 .unwrap_or(defaults.preferences_shortcut_toggle_sidebar),
+            preferences_shortcut_toggle_fullscreen: self
+                .preferences_shortcut_toggle_fullscreen
+                .unwrap_or(defaults.preferences_shortcut_toggle_fullscreen),
             workspace_panel_title: self
                 .workspace_panel_title
                 .unwrap_or(defaults.workspace_panel_title),
@@ -1873,6 +1880,7 @@ impl I18nStrings {
             preferences_shortcut_find_next_match: "查找下一个".into(),
             preferences_shortcut_find_previous_match: "查找上一个".into(),
             preferences_shortcut_toggle_sidebar: "切换侧边栏".into(),
+            preferences_shortcut_toggle_fullscreen: "切换全屏".into(),
             workspace_panel_title: "资源管理器".into(),
             workspace_tab_files: "文件".into(),
             workspace_tab_outline: "大纲".into(),
@@ -2169,6 +2177,7 @@ impl I18nStrings {
             preferences_shortcut_find_next_match: "Find Next".into(),
             preferences_shortcut_find_previous_match: "Find Previous".into(),
             preferences_shortcut_toggle_sidebar: "Toggle Sidebar".into(),
+            preferences_shortcut_toggle_fullscreen: "Toggle Full Screen".into(),
             workspace_panel_title: "Explorer".into(),
             workspace_tab_files: "Files".into(),
             workspace_tab_outline: "Outline".into(),

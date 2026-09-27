@@ -15,8 +15,8 @@ use crate::components::{
     FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NewWindow, NoRecentFiles,
     OpenCommandPalette,
     OpenFile, OpenPreferences, OpenRecentFile, QuitApplication, SaveDocument, SaveDocumentAs,
-    SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleSidebar,
-    ToggleTypewriterMode, ToggleViewMode, UninstallCliTool,
+    SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
+    ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UninstallCliTool,
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
@@ -611,6 +611,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<InstallCliTool>()
         || action.as_any().is::<UninstallCliTool>()
         || action.as_any().is::<ToggleSidebar>()
+        || action.as_any().is::<ToggleFullscreen>()
         || action.as_any().is::<ToggleViewMode>()
         || action.as_any().is::<ToggleFocusMode>()
         || action.as_any().is::<ToggleTypewriterMode>()
@@ -801,6 +802,11 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, window, cx| {
             editor.toggle_workspace_drawer(window, cx);
         });
+    } else if action.as_any().is::<ToggleFullscreen>() {
+        let _ = with_active_editor(cx, |_editor, window, _cx| {
+            window.toggle_fullscreen();
+            window.refresh();
+        });
     } else if action.as_any().is::<QuitApplication>() {
         request_quit_application(cx);
     } else if action.as_any().is::<CloseWindow>() {
@@ -886,6 +892,9 @@ pub(crate) fn dispatch_menu_action_for_editor(
         let _ = target.update(cx, |editor, cx| {
             editor.toggle_workspace_drawer(window, cx);
         });
+    } else if action.as_any().is::<ToggleFullscreen>() {
+        window.toggle_fullscreen();
+        window.refresh();
     }
 }
 
@@ -1082,6 +1091,10 @@ fn build_menus(
                         "Toggle Sidebar"
                     },
                     ToggleSidebar,
+                ),
+                MenuItem::action(
+                    strings.preferences_shortcut_toggle_fullscreen.clone(),
+                    ToggleFullscreen,
                 ),
                 MenuItem::separator(),
                 MenuItem::action(
@@ -1451,6 +1464,9 @@ pub(crate) fn init(cx: &mut App) {
     });
     cx.on_action(|_: &ToggleSidebar, cx| {
         dispatch_menu_action(&ToggleSidebar, cx);
+    });
+    cx.on_action(|_: &ToggleFullscreen, cx| {
+        dispatch_menu_action(&ToggleFullscreen, cx);
     });
     cx.on_action(|_: &QuitApplication, cx| {
         dispatch_menu_action(&QuitApplication, cx);

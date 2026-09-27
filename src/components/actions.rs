@@ -84,6 +84,7 @@ actions!(
         ZoomOut,
         ZoomReset,
         ToggleSidebar,
+        ToggleFullscreen,
     ]
 );
 
@@ -187,6 +188,7 @@ pub(crate) enum ShortcutCommand {
     FindNextMatch,
     FindPreviousMatch,
     ToggleSidebar,
+    ToggleFullscreen,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -571,6 +573,13 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         default_keys: &["ctrl-w"],
         context: None,
     },
+    ShortcutDefinition {
+        command: ShortcutCommand::ToggleFullscreen,
+        id: "toggle_fullscreen",
+        category: ShortcutCategory::Navigation,
+        default_keys: &["ctrl-cmd-f", "f11"],
+        context: None,
+    },
 ];
 
 pub(crate) fn shortcut_definitions() -> &'static [ShortcutDefinition] {
@@ -783,6 +792,7 @@ fn key_binding_for(
         ShortcutCommand::FindNextMatch => KeyBinding::new(key, FindNextMatch, context),
         ShortcutCommand::FindPreviousMatch => KeyBinding::new(key, FindPreviousMatch, context),
         ShortcutCommand::ToggleSidebar => KeyBinding::new(key, ToggleSidebar, context),
+        ShortcutCommand::ToggleFullscreen => KeyBinding::new(key, ToggleFullscreen, context),
     }
 }
 
@@ -872,6 +882,14 @@ mod tests {
         assert_eq!(
             resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::ToggleSidebar),
             vec!["ctrl-w".to_string()]
+        );
+    }
+
+    #[test]
+    fn toggle_fullscreen_has_default_shortcuts() {
+        assert_eq!(
+            resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::ToggleFullscreen),
+            vec!["ctrl-cmd-f".to_string(), "f11".to_string()]
         );
     }
 

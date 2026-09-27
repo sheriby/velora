@@ -2326,6 +2326,9 @@ impl PreferencesWindow {
             ShortcutCommand::ToggleSidebar => {
                 strings.preferences_shortcut_toggle_sidebar.clone()
             }
+            ShortcutCommand::ToggleFullscreen => {
+                strings.preferences_shortcut_toggle_fullscreen.clone()
+            }
         }
     }
 
