@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gpui::{
     AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, KeyDownEvent, Keystroke,
-    TestAppContext, VisualTestContext,
+    Modifiers, TestAppContext, VisualTestContext, px,
 };
 
 use super::{Editor, MountedRun, ViewMode};
@@ -4590,6 +4590,44 @@ async fn heading_fold_chevron_marks_only_foldable_headings(cx: &mut TestAppConte
             .collect::<Vec<_>>();
         // Section / Child / Next 后方有章节内容；Empty 紧跟同级标题，没有可折叠内容。
         assert_eq!(foldable, vec![true, true, false, true]);
+    });
+}
+
+#[gpui::test]
+async fn heading_fold_chevron_renders_and_click_toggles_fold(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "## Section\n\nalpha\n\n## Empty";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown.into(), None)
+    });
+    redraw(cx);
+
+    // 含章节内容的标题在左侧留白渲染 chevron，空章节标题不渲染。
+    let bounds = cx
+        .debug_bounds("heading-fold-chevron")
+        .expect("foldable heading should render a fold chevron");
+    assert!(bounds.size.width > px(0.0) && bounds.size.height > px(0.0));
+
+    let (heading, empty_heading) = editor.update(cx, |editor, _cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        assert_eq!(visible.len(), 3); // Section, alpha, Empty
+        (visible[0].entity.clone(), visible[2].entity.clone())
+    });
+    assert!(heading.read_with(cx, |block, _cx| block.foldable));
+    assert!(!empty_heading.read_with(cx, |block, _cx| block.foldable));
+
+    // 点击 chevron 中心：章节折叠，块级 mouse-down 不改变光标。
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        assert!(heading.read(cx).folded);
+        let filtered = editor
+            .apply_heading_fold_filter(editor.document.visible_blocks().to_vec(), cx)
+            .iter()
+            .map(|visible| visible.entity.read(cx).display_text().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(filtered, vec!["Section".to_string(), "Empty".to_string()]);
     });
 }
 

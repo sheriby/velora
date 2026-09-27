@@ -1891,6 +1891,7 @@ impl Block {
         let folded = self.folded;
         let chevron = div()
             .id("heading-fold-chevron")
+            .debug_selector(|| "heading-fold-chevron".to_string())
             .absolute()
             .left(px(-HEADING_FOLD_CHEVRON_GUTTER))
             .top(px(0.0))
