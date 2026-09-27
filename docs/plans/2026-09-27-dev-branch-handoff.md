@@ -10,9 +10,10 @@
 
 | 项 | 状态 |
 |----|------|
-| Roadmap 完成 | **48 / 62 项**（其中 B9/B10/D6 为 ✅(部分)）；另 4 项执行中发现待办（D9/E9/E10/A7） |
-| 测试 | 835 通过（基线 831 + C7 新增 4）；唯一失败 `editor::tests::autosave_does_not_overwrite_external_file_changes` 为 **main 基线（9254d49）即存在的偶发用例**，与 dev 改动无关 |
+| Roadmap 完成 | **48 / 62 项**（其中 B9/B10/D6 为 ✅(部分)）；执行发现项 4 项中 **D9 已完成**（E9/E10/A7 待办） |
+| 测试 | 838 通过 0 失败（基线 831 + C7 新增 3 + D9 新增 3 + 重开用例；基线偶发项本轮通过） |
 | 编译 | `cargo build` 零错误零警告（dev profile）；test 目标警告已清零（0379ae0） |
+| 远程 | `origin/dev` 已推送（fb11800）；main 未动 |
 | 工作树 | 干净（`?? .zcodeignore` 按用户要求**不要提交**） |
 | 运行 | `cargo run`（dev profile）；debug 构建位于 `target/debug/velora` |
 
@@ -70,8 +71,10 @@
 
 ### 续接会话（2026-09-27 白天）
 - **C7 chevron** 标题行内折叠按钮（左侧留白绝对定位，点击折叠/展开；折叠时光标被隐藏则回退标题）— 2f957fc + 4e245ac（端到端点击用例）
+- **D9 文件树扫描异步化**（background executor + 代数校验 + 扫描中占位；3 个 gpui 用例）— 4d84521
 - test 目标 unused import 警告清零 — 0379ae0
-- roadmap 标记同步（C6/E8/B1/B7/B11 补 ✅；B9/B10/D6 标 ✅(部分)；剩余清单按代码证据重写）+ 验收记录第十三批 — 52964c4
+- roadmap 标记同步（C6/E8/B1/B7/B11 补 ✅；B9/B10/D6 标 ✅(部分)；剩余清单按代码证据重写）+ 验收记录第十三/十四批 — 52964c4 / fb11800
+- `origin/dev` 建分支并推送 — fb11800
 
 ## 三、架构要点（接手必读）
 
@@ -107,7 +110,7 @@
 9. **`Entity::update` 不会自动 notify**：渲染期跨实体写字段是安全的（不 notify ⇒ 无自触发重渲染循环），需要重绘必须显式 `cx.notify()`。
 10. **元素级 UI 验证手法**：元素加 test-only `debug_selector` + `VisualTestContext::debug_bounds("名字")` 取真实布局，再用 `simulate_click(bounds.center(), Modifiers::none())` 端到端点击；锁屏环境下这比截图可靠（C7 用例见 tests.rs）。
 
-## 四、剩余项（roadmap 未完成 14 项 + 部分完成 5 项 + 执行中发现 4 项）
+## 四、剩余项（roadmap 未完成 13 项 + 部分完成 6 项 + 执行中发现 3 项）
 
 ### P0/P1 尾巴（roadmap 内）
 - **A6** 全屏切换 F11 / ⌘⌃F（菜单项 + 快捷键 + 标题栏态；当前仅有窗口最大化图标）— ABSENT
@@ -116,15 +119,14 @@
 - **B12** 长段落性能护栏（单块超 2 万字降级源码渲染 + 状态栏提示）— ABSENT
 - **C2** TOC 块（`[TOC]` 渲染为可点击目录）— ABSENT
 - **G5** 启动时间优化（冷启动 < 1s 计时记录）— ABSENT
-- **G8** 惰性建块（G4 3s 预算的关键：当前一次性建 16 万块实体）
-- **D9** 树扫描异步化（超大目录阻塞首帧；/tmp 实测复现）
+- **G8** 惰性建块（G4 3s 预算的关键：当前一次性建 16 万块实体；文件树侧已由 D9 异步化）
 
 ### P2（roadmap 内）
 - **F3** 导出主题选择、**F4** 打印、**F5** PNG 长图（需离屏渲染，工程量最大）
 - **H1 批次二**：zoom_percent / default_window_size 未暴露到偏好 UI，且缺「窗口」分组页（偏好窗口当前五页：File/Theme/Image/Shortcuts/StatusBar）
 - **H2** 设置文件分组完善、**H3** 主题变量文档、**H4** 语言包外置 JSON、**H5** 命令注册表统一
 
-### 部分完成（roadmap 标 ✅(部分)，补完即可收口）
+### 部分完成（roadmap 标 ✅(部分) 或已有 v1，补完即可收口）
 - **B9** 代码块：现为可编辑语言输入框 + 复制语言名；缺只读徽标与「复制代码块内容」
 - **B10** 图片粘贴：目标目录可配置；命名仍为 `pasted-image.<ext>`+序号，缺 `YYYY-MM-DD-hash` 模板
 - **D6** 文件树：已有右键「创建副本」；缺剪贴板 复制/粘贴 到树（含图片）
@@ -140,7 +142,7 @@
 
 ```bash
 cargo build                      # 零警告零错误
-cargo test                       # 835 通过；唯一失败=基线偶发项
+cargo test                       # 838 通过 0 失败（基线偶发项偶有失败，见陷阱 7）
 cargo test large_document        # G4 基准（需 node scripts/generate-fixtures.mjs tests/fixtures/perf 生成 10MiB fixture，gitignored）
 cargo run .                      # 以仓库为工作区打开（可验证欢迎页/树过滤/排序/拖拽/搜索/大纲）
 ```
@@ -156,5 +158,5 @@ UI 视觉验证注意：机器锁屏（约 1 小时无操作）后截图全黑�
 
 1. 读 `docs/plans/2026-09-27-dev-iteration-roadmap.md`（62 项全景+状态标记；已按代码证据校对）
 2. 读本文件第三节「架构要点」避免重复踩坑
-3. 下一批建议：**D9 树扫描异步化 / G8 惰性建块**（直接影响大文档与超大目录可用性）→ **C10 v2** → P2（F3/F4 → H1 批次二 → H2-H5 → F5）→ 部分完成收口（B9/B10/D6/E3/F2 增强/B11 用例）
+3. 下一批建议：**G8 惰性建块**（大文档 3s 预算的关键）→ **C10 v2** → P2（F3/F4 → H1 批次二 → H2-H5 → F5）→ 部分完成收口（B9/B10/D6/E3/F2 增强/B11 用例）→ 未实现项 A6/B6/B8/B12/C2/G5
 4. 每项：实现 → 测试 → `cargo build` 零警告 → 独立提交（feat/fix(scope): 中文描述）→ 更新 roadmap 状态标记
