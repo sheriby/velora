@@ -6,7 +6,7 @@
 //! theme name on every render frame, for every visible block. Post-commit,
 //! `current_arc()` returns an `Arc<Theme>` clone (atomic increment).
 //!
-//! The real `Theme` type is private to the velotype bin crate, so this bench
+//! The real `Theme` type is private to the velora bin crate, so this bench
 //! uses `MockTheme` (`benches/common/mod.rs`) with the same allocation
 //! profile — the algorithmic comparison (deep clone vs Arc bump) is what
 //! moves.

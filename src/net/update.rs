@@ -11,21 +11,21 @@ use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
 use semver::Version;
 
 pub(crate) const GITHUB_CARGO_TOML_URL: &str =
-    "https://raw.githubusercontent.com/manyougz/velotype/refs/heads/main/Cargo.toml";
+    "https://raw.githubusercontent.com/sheriby/velora/refs/heads/main/Cargo.toml";
 pub(crate) const GITEE_CARGO_TOML_URL: &str =
-    "https://raw.giteeusercontent.com/manyougz/velotype/raw/main/Cargo.toml";
-pub(crate) const RELEASES_URL: &str = "https://github.com/manyougz/velotype/releases";
+    "https://raw.giteeusercontent.com/sheriby/velora/raw/main/Cargo.toml";
+pub(crate) const RELEASES_URL: &str = "https://github.com/sheriby/velora/releases";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const UPDATE_ACCEPT: &str = "text/plain,application/toml,*/*;q=0.8";
 const UPDATE_USER_AGENT: &str = concat!(
-    "Velotype/",
+    "Velora/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/manyougz/velotype)"
+    " (+https://github.com/sheriby/velora)"
 );
 
-/// Remote endpoint used to retrieve the published Velotype manifest.
+/// Remote endpoint used to retrieve the published release manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UpdateSource {
     /// GitHub raw content endpoint.
@@ -263,7 +263,7 @@ mod tests {
     fn extracts_package_version_from_cargo_toml() {
         let manifest = r#"
             [package]
-            name = "velotype"
+            name = "velora-dark"
             version = "0.2.2"
         "#;
 
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn rejects_invalid_or_missing_versions() {
         assert!(extract_package_version("not toml").is_err());
-        assert!(extract_package_version("[package]\nname = \"velotype\"").is_err());
+        assert!(extract_package_version("[package]\nname = \"velora\"").is_err());
 
         let error = check_latest_version_with("0.2.1", |_| {
             Ok("[package]\nversion = \"not-a-version\"".to_string())

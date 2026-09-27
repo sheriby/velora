@@ -25,14 +25,8 @@ Velora 是以长篇 Markdown 写作为主的桌面编辑器。首版先发布 ma
 
 ## 方案选择
 
-选择 **Rust + GPUI 新应用结构，选择性抽取 Velotype 编辑实现**。velora 自己管理窗口、工作区、标签、文件操作、保存和恢复；从 Velotype 固定提交一次性抽取 Markdown 解析/序列化、块编辑、选择、历史和渲染所需代码。之后只按需要手动移植上游修复，不建立持续同步机制。
+选择 **Rust + GPUI 的新应用结构**。velora 自己管理窗口、工作区、标签、文件操作、保存和恢复，并实现 Markdown 解析/序列化、块编辑、选择、历史与渲染。
 
-考虑过另外两条路线：
-
-1. 完整 fork Velotype：能最快继承现有原生编辑器，但也会继承应用级窗口、菜单和工作区结构，改造边界不清。
-2. 从头实现原生编辑器，只借鉴思路：结构最自由，但富文本、Markdown 往返和输入法都要重做，交付风险最高。
-
-Velotype 的本地基线固定为提交 `ed65977be94f2f2703037fcb8b6cbab2e7579571`。它使用 Rust + GPUI，已有富文本与源码模式、块模型、图片粘贴、主题和大文档可视区域裁剪。其编辑核心与应用层紧密相连：`Editor` 同时持有文档、焦点、滚动、菜单及窗口状态，`DocumentTree` 直接依赖 `Context<Editor>`。抽取因此是需要验证的重构，不能把复制若干文件视为完成。[Velotype 编辑器](https://github.com/manyougz/velotype/blob/ed65977be94f2f2703037fcb8b6cbab2e7579571/src/editor/mod.rs)、[DocumentTree](https://github.com/manyougz/velotype/blob/ed65977be94f2f2703037fcb8b6cbab2e7579571/src/editor/tree.rs)。
 
 ## 架构与数据流
 
@@ -45,15 +39,15 @@ Velotype 的本地基线固定为提交 `ed65977be94f2f2703037fcb8b6cbab2e757957
 
 ## 可行性关口
 
-当前开发阶段先实现可用的 velora 编辑窗口，完成打开 Markdown、富文本输入、中文拼音、撤销、保存和源码回退。开发验证使用 debug 构建，不做 release 编译。核心功能可用后，再对未修改的 Velotype 和 velora 做同机性能测量；若抽取必须长期保留大部分 Velotype 应用层，或性能明显退化，再重议复用边界。
+当前开发阶段先实现可用的 velora 编辑窗口，完成打开 Markdown、富文本输入、中文拼音、撤销、保存和源码回退。开发验证使用 debug 构建，不做 release 编译。核心功能可用后，再对未修改的 Velora 和 velora 做同机性能测量；若抽取必须长期保留大部分 Velora 应用层，或性能明显退化，再重议复用边界。
 
-基准机为当前 Mac mini M4、16 GB。实际生产构建使用固定的 1 MB 和 10 MB Markdown 样本，测从进程启动到可输入、从打开文件到可输入，以及长文输入延迟。velora 目标为：冷启动 ≤1 秒；打开 1 MB ≤1 秒；打开 10 MB ≤5 秒；输入响应 p95 ≤50 毫秒。Velotype 仓库中的局部渲染基准只能帮助定位瓶颈，不能替代整机测量。
+基准机为当前 Mac mini M4、16 GB。实际生产构建使用固定的 1 MB 和 10 MB Markdown 样本，测从进程启动到可输入、从打开文件到可输入，以及长文输入延迟。velora 目标为：冷启动 ≤1 秒；打开 1 MB ≤1 秒；打开 10 MB ≤5 秒；输入响应 p95 ≤50 毫秒。Velora 仓库中的局部渲染基准只能帮助定位瓶颈，不能替代整机测量。
 
 ## 验收与风险
 
-- 中文拼音验收覆盖候选词位置、组合输入、跨块编辑、撤销、保存和重开，均不能丢字。Velotype 的路线图仍将更完整的 IME 行为列为待办，所以它是早期关口。
+- 中文拼音验收覆盖候选词位置、组合输入、跨块编辑、撤销、保存和重开，均不能丢字。Velora 的路线图仍将更完整的 IME 行为列为待办，所以它是早期关口。
 - Markdown 固定样本覆盖受支持语法的读取、编辑、保存、重开、语义往返与不支持语法回退；文件测试覆盖外部修改冲突、原子写入和意外退出恢复。
 - macOS 在真实安装包中验收界面原型、工作区、代码编辑、主题及性能。Windows 首版只构建内部安装包，不宣称运行体验已验证。
 - macOS `.app` 与 `.pkg` 可由 fastdev 脚本生成；Windows x64 使用 GNU 交叉编译和 NSIS 构建内部安装包。Windows 实机运行仍需后续验收。
-- Velotype 标为 Apache-2.0。抽取时保留对应许可和版权声明，记录固定来源提交与修改范围；Velora 使用自己的名称与视觉资产。分发前核对依赖及 NOTICE 要求。参见 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)。
+- 应用以 Apache-2.0 许可发布，使用自己的名称与视觉资产；分发前核对依赖及 NOTICE 要求。
 - 先前未提交的 Tauri 脚手架已按用户要求删除；后续只按本 GPUI 设计推进。

@@ -36,7 +36,7 @@ pub(crate) fn render_pdf(
 pub(crate) fn render_pdf_from_html(html: &str) -> anyhow::Result<Vec<u8>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_name("velotype-pdf-export")
+        .thread_name("velora-pdf-export")
         .build()
         .context("failed to create PDF export runtime")?;
 
@@ -53,7 +53,7 @@ async fn render_pdf_html_async(html: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 async fn render_pdf_from_html_file_async(html_path: PathBuf) -> anyhow::Result<Vec<u8>> {
-    let user_data_dir = unique_temp_path("velotype-chromium-profile");
+    let user_data_dir = unique_temp_path("velora-chromium-profile");
     fs::create_dir_all(&user_data_dir)
         .with_context(|| format!("failed to create '{}'", user_data_dir.display()))?;
 
@@ -154,11 +154,11 @@ mod tests {
 
     #[test]
     fn file_url_from_path_supports_local_paths() {
-        let path = std::env::temp_dir().join("velotype pdf test.html");
+        let path = std::env::temp_dir().join("velora pdf test.html");
         let url = file_url_from_path(&path).expect("file url");
 
         assert_eq!(url.scheme(), "file");
-        assert!(url.as_str().contains("velotype%20pdf%20test.html"));
+        assert!(url.as_str().contains("velora%20pdf%20test.html"));
     }
 
     #[test]

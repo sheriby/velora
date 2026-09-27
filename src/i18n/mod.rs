@@ -1,5 +1,5 @@
 //! Localised UI strings and runtime language selection.
-//! 基于 Velotype 修改：应用名称相关文案改为 velora。
+//! 应用名称相关文案为 velora。
 //!
 //! This module owns language packs, system-locale matching, and the global
 //! manager used by menus and editor UI. Visual styling remains in `theme`.
@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 use crate::config::{
-    VelotypeConfigDirs, object_without_empty_values, prune_empty_json_values, read_json_or_jsonc,
+    VeloraConfigDirs, object_without_empty_values, prune_empty_json_values, read_json_or_jsonc,
     sanitize_config_file_stem,
 };
 
@@ -1902,8 +1902,8 @@ impl I18nStrings {
             update_open_release: "前往下载".into(),
             update_later: "稍后".into(),
             help_about_title: "关于 Velora".into(),
-            help_about_message: "一款基于 GPUI 的原生 Markdown 编辑器。编辑核心基于 Velotype，并保留其 Apache-2.0 许可。".into(),
-            help_about_github_label: "编辑核心来源".into(),
+            help_about_message: "一款基于 GPUI 的原生 Markdown 编辑器。第三方来源与许可信息见项目文档。".into(),
+            help_about_github_label: "项目仓库".into(),
             help_about_star_message: "第三方来源与许可信息见项目文档。".into(),
             menu_file: "文件".into(),
             menu_export: "导出".into(),
@@ -2214,8 +2214,8 @@ impl I18nStrings {
             update_open_release: "Open Releases".into(),
             update_later: "Later".into(),
             help_about_title: "About Velora".into(),
-            help_about_message: "A native Markdown editor built with GPUI. The editing core is based on Velotype under Apache-2.0.".into(),
-            help_about_github_label: "Editor core source".into(),
+            help_about_message: "A native Markdown editor built with GPUI. Third-party sources and licenses are documented in the project.".into(),
+            help_about_github_label: "Project repository".into(),
             help_about_star_message: "Third-party sources and licenses are documented in the project.".into(),
             menu_file: "File".into(),
             menu_export: "Export".into(),
@@ -2681,7 +2681,7 @@ impl I18nManager {
     /// Installs a specific UI language into GPUI's global state.
     pub fn init_with_language_id(cx: &mut App, language_id: &str) {
         let mut manager = Self::new_with_language_id(BUILTIN_LANGUAGE_EN_US_ID);
-        if let Ok(dirs) = VelotypeConfigDirs::from_system()
+        if let Ok(dirs) = VeloraConfigDirs::from_system()
             && let Err(err) = manager.load_custom_languages_from_dirs(&dirs)
         {
             eprintln!("failed to load custom languages: {err}");
@@ -2751,14 +2751,14 @@ impl I18nManager {
 
     /// Imports a user language pack, persists a normalized copy, and activates it.
     pub fn import_language_config(&mut self, path: impl AsRef<Path>) -> anyhow::Result<String> {
-        let dirs = VelotypeConfigDirs::from_system()?;
+        let dirs = VeloraConfigDirs::from_system()?;
         self.import_language_config_with_dirs(path, &dirs)
     }
 
     fn import_language_config_with_dirs(
         &mut self,
         path: impl AsRef<Path>,
-        dirs: &VelotypeConfigDirs,
+        dirs: &VeloraConfigDirs,
     ) -> anyhow::Result<String> {
         let raw = read_json_or_jsonc(path.as_ref())?;
         let (pack, normalized) = custom_language_pack_from_value(raw)?;
@@ -2775,7 +2775,7 @@ impl I18nManager {
         Ok(imported_id)
     }
 
-    fn load_custom_languages_from_dirs(&mut self, dirs: &VelotypeConfigDirs) -> anyhow::Result<()> {
+    fn load_custom_languages_from_dirs(&mut self, dirs: &VeloraConfigDirs) -> anyhow::Result<()> {
         let languages_dir = dirs.languages_dir();
         if !languages_dir.exists() {
             return Ok(());
@@ -2886,7 +2886,7 @@ fn required_string(object: &Map<String, Value>, key: &str) -> anyhow::Result<Str
 #[cfg(test)]
 mod tests {
     use super::{I18nLanguagePack, I18nManager, I18nStrings, language_id_for_locale_preferences};
-    use crate::config::VelotypeConfigDirs;
+    use crate::config::VeloraConfigDirs;
     use crate::theme::ThemeManager;
 
     #[test]
@@ -2907,7 +2907,7 @@ mod tests {
             "正在检查 Velora 的最新版本..."
         );
         assert_eq!(strings.update_open_release, "前往下载");
-        assert_eq!(strings.help_about_github_label, "编辑核心来源");
+        assert_eq!(strings.help_about_github_label, "项目仓库");
         assert_eq!(
             strings.help_about_star_message,
             "第三方来源与许可信息见项目文档。"
@@ -2956,10 +2956,10 @@ mod tests {
         let mut theme_manager = ThemeManager::default();
         let mut i18n_manager = I18nManager::new_with_language_id("zh-CN");
 
-        assert!(theme_manager.set_theme_by_id("velotype"));
+        assert!(theme_manager.set_theme_by_id("velora-dark"));
         assert!(!i18n_manager.set_language_by_id("missing"));
 
-        assert_eq!(theme_manager.current_theme_id(), "velotype");
+        assert_eq!(theme_manager.current_theme_id(), "velora-dark");
         assert_eq!(i18n_manager.current_language_id(), "zh-CN");
         assert_eq!(i18n_manager.strings().menu_file, "文件");
     }
@@ -2986,7 +2986,7 @@ mod tests {
 
     #[test]
     fn imports_jsonc_language_pack_and_persists_normalized_json() {
-        let root = std::env::temp_dir().join(format!("velotype-i18n-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("velora-i18n-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("temp root should be created");
         let source = root.join("language.jsonc");
         std::fs::write(
@@ -3004,7 +3004,7 @@ mod tests {
         )
         .expect("language config should be written");
 
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let mut manager = I18nManager::default();
         let imported_id = manager
             .import_language_config_with_dirs(&source, &dirs)
@@ -3033,8 +3033,8 @@ mod tests {
     #[test]
     fn loads_language_pack_dropped_into_user_directory() {
         // roadmap H4：用户目录中直接放置的语言包在启动/初始化时被加载并生效。
-        let root = std::env::temp_dir().join(format!("velotype-i18n-{}", uuid::Uuid::new_v4()));
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let root = std::env::temp_dir().join(format!("velora-i18n-{}", uuid::Uuid::new_v4()));
+        let dirs = VeloraConfigDirs::from_root(&root);
         std::fs::create_dir_all(dirs.languages_dir()).expect("languages dir should exist");
         std::fs::write(
             dirs.languages_dir().join("ko-KR.json"),
@@ -3066,7 +3066,7 @@ mod tests {
 
     #[test]
     fn custom_language_cannot_override_builtin_language_id() {
-        let root = std::env::temp_dir().join(format!("velotype-i18n-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("velora-i18n-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("temp root should be created");
         let source = root.join("language.json");
         std::fs::write(
@@ -3079,7 +3079,7 @@ mod tests {
         )
         .expect("language config should be written");
 
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let mut manager = I18nManager::default();
         let err = manager
             .import_language_config_with_dirs(&source, &dirs)
@@ -3111,7 +3111,7 @@ mod tests {
         assert_eq!(pack.strings.menu_export, "导出");
         assert_eq!(pack.strings.info_dialog_ok, "确定");
         assert_eq!(pack.strings.update_open_release, "前往下载");
-        assert_eq!(pack.strings.help_about_github_label, "编辑核心来源");
+        assert_eq!(pack.strings.help_about_github_label, "项目仓库");
         assert_eq!(
             pack.strings.help_about_star_message,
             "第三方来源与许可信息见项目文档。"
@@ -3145,7 +3145,7 @@ mod tests {
             pack.strings.recent_file_missing_title,
             "Recent File Missing"
         );
-        assert_eq!(pack.strings.help_about_github_label, "Editor core source");
+        assert_eq!(pack.strings.help_about_github_label, "Project repository");
         assert_eq!(
             pack.strings.help_about_star_message,
             "Third-party sources and licenses are documented in the project."

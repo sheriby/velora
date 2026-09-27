@@ -14,7 +14,7 @@ use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeDimensions, ThemeManager};
 use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar};
 
-pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/manyougz/velotype";
+pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";
 
 /// Rows within this many pixels of the viewport stay mounted, so a fast flick
 /// paints them before they scroll in instead of showing a blank edge.

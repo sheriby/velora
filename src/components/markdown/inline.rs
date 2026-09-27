@@ -1,5 +1,5 @@
 //! Attribute-based inline Markdown tree for block titles and table cells.
-//! 基于 Velotype 修改：测试夹具改放在 velora 的 tests/fixtures 目录。
+//! 测试夹具放在 velora 的 tests/fixtures 目录。
 //!
 //! The runtime model stores only text fragments and formatting attributes.
 //! Markdown markers are parsed at the I/O boundary and regenerated on save,
@@ -3866,7 +3866,7 @@ mod tests {
 
     #[test]
     fn resolves_reference_link_examples_from_test_markdown() {
-        let markdown = include_str!("../../../tests/fixtures/velotype-original.md");
+        let markdown = include_str!("../../../tests/fixtures/markdown-baseline.md");
         let definitions = super::super::link::parse_link_reference_definitions(markdown);
         let tree = InlineTextTree::from_markdown_with_link_references(
             "[reference link][ref-link] [collapsed reference][] [shortcut reference]",

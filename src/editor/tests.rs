@@ -32,7 +32,7 @@ fn temp_markdown_path(test_name: &str) -> PathBuf {
         .expect("system clock before unix epoch")
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "velotype-{test_name}-{}-{nanos}.md",
+        "velora-{test_name}-{}-{nanos}.md",
         std::process::id()
     ))
 }
@@ -499,14 +499,14 @@ async fn document_present_on_the_first_frame_is_measured_at_the_real_width(
 }
 
 #[test]
-fn about_dialog_body_lines_use_velora_brand_and_source_attribution() {
+fn about_dialog_body_lines_use_velora_brand_and_repository_link() {
     let strings = I18nStrings::zh_cn();
     let lines = Editor::about_dialog_body_lines(&strings);
 
     assert_eq!(lines[0], format!("Velora {}", env!("CARGO_PKG_VERSION")));
     assert_eq!(
         lines[2],
-        format!("编辑核心来源: {}", super::render::ABOUT_GITHUB_URL)
+        format!("项目仓库: {}", super::render::ABOUT_GITHUB_URL)
     );
     assert_eq!(lines[3], "第三方来源与许可信息见项目文档。");
 }

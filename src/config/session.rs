@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
-use super::VelotypeConfigDirs;
+use super::VeloraConfigDirs;
 
 /// Last editor session: the workspace root and the open tab set, restored on
 /// launch (roadmap A4).
@@ -21,14 +21,14 @@ pub(crate) struct SessionState {
 }
 
 pub(crate) fn read_session() -> anyhow::Result<SessionState> {
-    read_session_with_dirs(&VelotypeConfigDirs::from_system()?)
+    read_session_with_dirs(&VeloraConfigDirs::from_system()?)
 }
 
 pub(crate) fn save_session(session: &SessionState) -> anyhow::Result<()> {
-    save_session_with_dirs(session, &VelotypeConfigDirs::from_system()?)
+    save_session_with_dirs(session, &VeloraConfigDirs::from_system()?)
 }
 
-fn read_session_with_dirs(dirs: &VelotypeConfigDirs) -> anyhow::Result<SessionState> {
+fn read_session_with_dirs(dirs: &VeloraConfigDirs) -> anyhow::Result<SessionState> {
     let path = session_file(dirs);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -44,7 +44,7 @@ fn read_session_with_dirs(dirs: &VelotypeConfigDirs) -> anyhow::Result<SessionSt
 
 fn save_session_with_dirs(
     session: &SessionState,
-    dirs: &VelotypeConfigDirs,
+    dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<()> {
     let path = session_file(dirs);
     if let Some(parent) = path.parent() {
@@ -56,20 +56,20 @@ fn save_session_with_dirs(
         .with_context(|| format!("failed to write '{}'", path.display()))
 }
 
-fn session_file(dirs: &VelotypeConfigDirs) -> std::path::PathBuf {
+fn session_file(dirs: &VeloraConfigDirs) -> std::path::PathBuf {
     dirs.root.join("session.json")
 }
 
 #[cfg(test)]
 mod tests {
     use super::{SessionState, read_session_with_dirs, save_session_with_dirs};
-    use crate::config::VelotypeConfigDirs;
+    use crate::config::VeloraConfigDirs;
 
     #[test]
     fn session_roundtrips_through_disk() {
         let root =
             std::env::temp_dir().join(format!("velora-session-{}", uuid::Uuid::new_v4()));
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let session = SessionState {
             root: Some("/tmp/workspace".into()),
             tabs: vec!["/tmp/workspace/a.md".into(), "/tmp/workspace/b.md".into()],
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn missing_session_file_reads_as_empty() {
-        let dirs = VelotypeConfigDirs::from_root(
+        let dirs = VeloraConfigDirs::from_root(
             std::env::temp_dir().join(format!("velora-session-empty-{}", uuid::Uuid::new_v4())),
         );
         let loaded = read_session_with_dirs(&dirs).expect("read session");

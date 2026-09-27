@@ -47,7 +47,7 @@ pub(super) struct TempHtmlFile {
 
 impl TempHtmlFile {
     pub(super) fn create(html: &str) -> anyhow::Result<Self> {
-        let path = unique_temp_path("velotype-export").with_extension("html");
+        let path = unique_temp_path("velora-export").with_extension("html");
         fs::write(&path, html)
             .with_context(|| format!("failed to write temporary HTML '{}'", path.display()))?;
         Ok(Self { path })

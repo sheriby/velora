@@ -1033,7 +1033,7 @@ mod tests {
         render_html, render_html_with_base_dir,
     };
     use crate::config::preferences::{read_app_preferences_with_dirs, save_app_preferences_with_dirs};
-    use crate::config::{ExportThemePreference, VelotypeConfigDirs};
+    use crate::config::{ExportThemePreference, VeloraConfigDirs};
     use crate::export::{resolve_export_theme, resolve_export_theme_choice};
     use crate::theme::Theme;
     use std::fs;
@@ -1045,7 +1045,7 @@ mod tests {
         // 使用内置深色主题的背景色 token，即使当前应用主题是浅色。
         let root = std::env::temp_dir().join(format!("velora-export-theme-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create temp config dir");
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         fs::write(
             dirs.app_config_file(),
             "[export]\ntheme = \"dark\"\n",
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn export_theme_preference_round_trips_through_config_file() {
         let root = std::env::temp_dir().join(format!("velora-export-theme-{}", Uuid::new_v4()));
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = crate::config::preferences::AppPreferences {
             export_theme: ExportThemePreference::Light,
             ..Default::default()
@@ -1238,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_velotype_comment_blocks_as_visible_escaped_text() {
+    fn renders_html_comment_blocks_as_visible_escaped_text() {
         let markdown = "<!--\n<strong>not html</strong>\n-->";
         let html = render_html(markdown, &Theme::default_theme(), "Doc");
 
@@ -1328,7 +1328,7 @@ mod tests {
 
     #[test]
     fn exports_local_image_as_data_uri_when_base_dir_is_available() {
-        let root = std::env::temp_dir().join(format!("velotype-html-export-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("velora-html-export-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create temp export dir");
         fs::write(
             root.join("diagram.svg"),
@@ -1350,7 +1350,7 @@ mod tests {
 
     #[test]
     fn exports_standalone_html_image_with_sanitized_zoom() {
-        let root = std::env::temp_dir().join(format!("velotype-html-export-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("velora-html-export-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create temp export dir");
         fs::write(root.join("diagram.png"), [137, 80, 78, 71]).expect("write local image");
 
@@ -1371,7 +1371,7 @@ mod tests {
 
     #[test]
     fn export_keeps_missing_local_image_path() {
-        let root = std::env::temp_dir().join(format!("velotype-html-export-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("velora-html-export-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create temp export dir");
 
         let html = render_html_with_base_dir(

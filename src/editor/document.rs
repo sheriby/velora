@@ -1,7 +1,7 @@
 //! Markdown-to-editor-tree deserialization.
-//! 基于 Velotype 修改：测试夹具改放在 velora 的 tests/fixtures 目录。
+//! 测试夹具放在 velora 的 tests/fixtures 目录。
 //!
-//! Raw Markdown is parsed into the subset of native block structures Velotype
+//! Raw Markdown is parsed into the subset of native block structures Velora
 //! can edit safely. Syntax that exceeds the current runtime model is preserved
 //! as raw Markdown blocks so it can round-trip without loss.
 
@@ -3855,7 +3855,7 @@ mod tests {
     async fn test_md_fixture_keeps_mixed_supported_and_raw_sections_visible(
         cx: &mut TestAppContext,
     ) {
-        let markdown = include_str!("../../tests/fixtures/velotype-original.md").to_string();
+        let markdown = include_str!("../../tests/fixtures/markdown-baseline.md").to_string();
         let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
 
         editor.update(cx, |editor, cx| {

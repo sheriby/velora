@@ -43,7 +43,7 @@ pub(crate) fn render_png(
 pub(crate) fn render_png_from_html(html: &str) -> anyhow::Result<Vec<u8>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_name("velotype-png-export")
+        .thread_name("velora-png-export")
         .build()
         .context("failed to create PNG export runtime")?;
 
@@ -60,7 +60,7 @@ async fn render_png_html_async(html: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 async fn render_png_from_html_file_async(html_path: &Path) -> anyhow::Result<Vec<u8>> {
-    let user_data_dir = unique_temp_path("velotype-chromium-profile");
+    let user_data_dir = unique_temp_path("velora-chromium-profile");
     fs::create_dir_all(&user_data_dir)
         .with_context(|| format!("failed to create '{}'", user_data_dir.display()))?;
 

@@ -1,5 +1,5 @@
 //! Native application menu, app-level actions, and window close routing.
-//! 基于 Velotype 修改：应用名称及命令路径改为 velora，并隐藏原项目更新入口。
+//! 应用名称与命令路径为 velora，更新入口默认隐藏。
 //!
 //! This module owns menu construction and the actions that operate on the
 //! active editor window. The Quit action is routed to the current window so the
@@ -1058,8 +1058,8 @@ fn build_menus(
         .map(|entry| {
             let name = match entry.id.as_str() {
                 "system" => strings.preferences_theme_system.clone(),
-                "velotype" => strings.preferences_theme_dark.clone(),
-                "velotype-light" => strings.preferences_theme_light.clone(),
+                "velora-dark" => strings.preferences_theme_dark.clone(),
+                "velora-light" => strings.preferences_theme_light.clone(),
                 _ => entry.name.clone(),
             };
             let label = if entry.id.as_str() == current_theme_id {
@@ -1966,7 +1966,7 @@ mod tests {
         assert!(super::is_window_context_menu_action(&QuitApplication));
         assert!(super::is_window_context_menu_action(&CloseWindow));
         assert!(!super::is_window_context_menu_action(&SelectTheme {
-            theme_id: "velotype".into(),
+            theme_id: "velora-dark".into(),
         }));
         assert!(!super::is_window_context_menu_action(&SelectLanguage {
             language_id: "en-US".into(),
@@ -2024,7 +2024,7 @@ mod tests {
     #[test]
     fn theme_menu_marks_selected_builtin_light_theme() {
         let mut theme_manager = ThemeManager::default();
-        assert!(theme_manager.set_theme_by_id("velotype-light"));
+        assert!(theme_manager.set_theme_by_id("velora-light"));
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
         let theme_items = &menus[THEME_IDX].items;
@@ -2038,7 +2038,7 @@ mod tests {
                     .as_any()
                     .downcast_ref::<SelectTheme>()
                     .expect("light theme item should dispatch SelectTheme");
-                assert_eq!(action.theme_id, "velotype-light");
+                assert_eq!(action.theme_id, "velora-light");
             }
             _ => panic!("expected light theme action item"),
         }

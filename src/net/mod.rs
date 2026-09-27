@@ -133,7 +133,7 @@ fn apply_missing_default_headers(
 
 impl HttpClient for ReqwestTransportHttpClient {
     fn type_name(&self) -> &'static str {
-        "velotype_reqwest_transport_http_client"
+        "velora_reqwest_transport_http_client"
     }
 
     fn user_agent(&self) -> Option<&HeaderValue> {
@@ -173,7 +173,7 @@ mod tests {
         HeaderMap, HeaderValue, PRAGMA, USER_AGENT,
     };
 
-    const TEST_USER_AGENT: &str = "VelotypeTest/1.0";
+    const TEST_USER_AGENT: &str = "VeloraTest/1.0";
 
     #[test]
     fn default_image_headers_include_browser_like_fetch_context() {

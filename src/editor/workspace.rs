@@ -6967,7 +6967,7 @@ mod tests {
     #[test]
     fn workspace_scan_includes_markdown_and_code_files() {
         let root =
-            std::env::temp_dir().join(format!("velotype-workspace-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("velora-workspace-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("nested")).expect("create dirs");
         fs::write(root.join("a.md"), "a").expect("write md");
         fs::write(root.join("a.txt"), "plain text").expect("write txt");
@@ -7529,8 +7529,8 @@ mod tests {
         ));
         fs::create_dir_all(root.join("assets")).unwrap();
         // 含 NUL 才能稳定判成不可预览文件（用户截图里的 png 场景）。
-        fs::write(root.join("assets").join("velotype-banner.png"), [0u8, 1, 2, 3]).unwrap();
-        fs::write(root.join("velotype-notes.md"), "开头\nvelotype 命中行\n").unwrap();
+        fs::write(root.join("assets").join("velora-banner.png"), [0u8, 1, 2, 3]).unwrap();
+        fs::write(root.join("velora-notes.md"), "开头\nvelora 命中行\n").unwrap();
         cx.on_quit({
             let root = root.clone();
             move || {
@@ -7544,7 +7544,7 @@ mod tests {
             editor.set_workspace_root(root.clone(), cx);
             editor.workspace.is_open = true;
             editor.workspace.active_tab = super::WorkspaceTab::Search;
-            editor.workspace.search_query = "velotype".into();
+            editor.workspace.search_query = "velora".into();
             editor.schedule_workspace_search(cx);
         });
         cx.executor().advance_clock(Duration::from_millis(150));
@@ -7562,9 +7562,9 @@ mod tests {
         assert_eq!(
             hits,
             vec![
-                ("assets/velotype-banner.png".to_string(), None),
-                ("velotype-notes.md".to_string(), None),
-                ("velotype-notes.md".to_string(), Some(2)),
+                ("assets/velora-banner.png".to_string(), None),
+                ("velora-notes.md".to_string(), None),
+                ("velora-notes.md".to_string(), Some(2)),
             ],
             "目录在前，文件名命中在前，内容命中带行号"
         );
@@ -7593,7 +7593,7 @@ mod tests {
         cx.simulate_click(header.center(), Modifiers::none());
         cx.update(|window, cx| window.draw(cx).clear());
         // macOS 的 /var 会被打开流程规范化为 /private/var，断言前统一 canonicalize。
-        let banner = fs::canonicalize(root.join("assets").join("velotype-banner.png"))
+        let banner = fs::canonicalize(root.join("assets").join("velora-banner.png"))
             .expect("canonical banner path");
         editor.read_with(cx, |editor, _| {
             assert_eq!(
@@ -7612,7 +7612,7 @@ mod tests {
             .expect("第二个文件头应渲染");
         cx.simulate_click(notes_header.center(), Modifiers::none());
         cx.update(|window, cx| window.draw(cx).clear());
-        let notes = fs::canonicalize(root.join("velotype-notes.md")).expect("canonical notes path");
+        let notes = fs::canonicalize(root.join("velora-notes.md")).expect("canonical notes path");
         editor.read_with(cx, |editor, _| {
             assert_eq!(
                 editor
@@ -7894,8 +7894,8 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(root.join("assets")).unwrap();
-        fs::write(root.join("assets").join("velotype-banner.png"), [0u8, 1, 2, 3]).unwrap();
-        fs::write(root.join("velotype-notes.md"), "开头\nvelotype 命中行\n").unwrap();
+        fs::write(root.join("assets").join("velora-banner.png"), [0u8, 1, 2, 3]).unwrap();
+        fs::write(root.join("velora-notes.md"), "开头\nvelora 命中行\n").unwrap();
         cx.on_quit({
             let root = root.clone();
             move || {
@@ -7909,7 +7909,7 @@ mod tests {
             editor.set_workspace_root(root.clone(), cx);
             editor.workspace.is_open = true;
             editor.workspace.active_tab = super::WorkspaceTab::Search;
-            editor.workspace.search_query = "velotype".into();
+            editor.workspace.search_query = "velora".into();
             editor.schedule_workspace_search(cx);
         });
         cx.executor().advance_clock(Duration::from_millis(150));

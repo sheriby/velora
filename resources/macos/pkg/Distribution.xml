@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 基于 Velotype 修改：安装包名称与标识改为 velora。 -->
+<!-- 安装包名称与标识为 velora。 -->
 <installer-gui-script minSpecVersion="1">
     <title>Velora</title>
     <welcome>Velora 是一款基于 Rust 与 GPUI 的 Markdown 编辑器。</welcome>

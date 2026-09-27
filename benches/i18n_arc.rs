@@ -7,7 +7,7 @@
 //! was 137 allocations. Post-commit, `strings_arc()` returns an
 //! `Arc<I18nStrings>` clone (atomic increment).
 //!
-//! The real `I18nStrings` is private to the velotype bin; this bench uses
+//! The real `I18nStrings` is private to the velora bin; this bench uses
 //! `MockI18nStrings` (137 `String` fields, same allocation profile).
 
 use std::hint::black_box;

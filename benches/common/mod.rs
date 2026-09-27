@@ -5,7 +5,7 @@
 //! helpers below have to live under a *subdirectory* (`common/`) and each
 //! bench file pulls them in with `mod common;`.
 //!
-//! velotype is a bin crate, so benches can't import private items — the
+//! velora is a bin crate, so benches can't import private items — the
 //! mocks below mirror the production types' allocation profile so the
 //! algorithmic comparison stays faithful (e.g. `MockTheme` is sized to match
 //! the real `Theme`; `MockI18nStrings` has 137 `String` fields like the
@@ -38,7 +38,7 @@ impl MockTheme {
             colors: [(0.1, 0.2, 0.3, 1.0); 84],
             dimensions: [12.0; 110],
             typography: [14.0; 22],
-            name: String::from("Velotype"),
+            name: String::from("Velora"),
         }
     }
 }

@@ -1,5 +1,5 @@
 //! velora - a block-based Markdown editor built with GPUI.
-//! 基于 Velotype 修改：应用入口与命令名称改为 velora。
+//! 应用入口与命令名称为 velora。
 //!
 //! Reads file paths from command-line arguments and opens one GPUI window per
 //! file. With no arguments, a single empty window is created.

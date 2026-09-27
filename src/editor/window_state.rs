@@ -1,5 +1,5 @@
 //! Window-level editor state such as scrolling, mode switching, and menus.
-//! 基于 Velotype 修改：窗口标题显示 velora。
+//! 窗口标题显示 velora。
 
 use super::*;
 

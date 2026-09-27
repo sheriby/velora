@@ -8,7 +8,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use serde::{Deserialize, Serialize};
 
-use super::{VelotypeConfigDirs, read_recent_files};
+use super::{VeloraConfigDirs, read_recent_files};
 use crate::components::{
     ShortcutCategory, ShortcutCommand, ShortcutDefinition, install_keybindings,
     normalize_shortcut_config, normalize_shortcut_keys, resolved_shortcut_keys,
@@ -282,9 +282,9 @@ pub(crate) enum ExportThemePreference {
     /// 沿用当前应用主题（默认，保持既有导出行为）。
     #[default]
     Current,
-    /// 内置浅色主题（velotype-light）。
+    /// 内置浅色主题。
     Light,
-    /// 内置深色主题（velotype）。
+    /// 内置深色主题。
     Dark,
 }
 
@@ -995,11 +995,11 @@ pub(crate) fn store_window_frame(frame: WindowFrame) -> anyhow::Result<()> {
 }
 
 pub(crate) fn read_app_preferences() -> anyhow::Result<AppPreferences> {
-    read_app_preferences_with_dirs(&VelotypeConfigDirs::from_system()?)
+    read_app_preferences_with_dirs(&VeloraConfigDirs::from_system()?)
 }
 
 pub(crate) fn read_app_preferences_with_dirs(
-    dirs: &VelotypeConfigDirs,
+    dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
     let path = dirs.app_config_file();
     let text = match std::fs::read_to_string(&path) {
@@ -1037,11 +1037,12 @@ fn load_preferences_from_toml_value(
     }
 
     if version < 1 {
-        if value
+        // 早期配置里的主题标识可能已不存在：认不出来就回到默认主题。
+        if let Some(stored) = value
             .get("theme")
             .and_then(|theme| theme.get("default_theme_id"))
             .and_then(toml::Value::as_str)
-            == Some("velotype")
+            && !matches!(stored, "system" | "velora-dark" | "velora-light")
         {
             preferences.default_theme_id = DEFAULT_THEME_ID.into();
         }
@@ -1061,7 +1062,7 @@ fn load_preferences_from_toml_value(
 }
 
 pub(crate) fn load_or_create_app_preferences() -> anyhow::Result<AppPreferences> {
-    let dirs = VelotypeConfigDirs::from_system()?;
+    let dirs = VeloraConfigDirs::from_system()?;
     load_or_create_app_preferences_with_dirs_and_locales(&dirs, sys_locale::get_locales())
 }
 
@@ -1326,7 +1327,7 @@ where
 }
 
 fn load_or_create_app_preferences_with_dirs_and_locales<I, S>(
-    dirs: &VelotypeConfigDirs,
+    dirs: &VeloraConfigDirs,
     locales: I,
 ) -> anyhow::Result<AppPreferences>
 where
@@ -1355,12 +1356,12 @@ where
 }
 
 pub(crate) fn save_app_preferences(preferences: &AppPreferences) -> anyhow::Result<()> {
-    save_app_preferences_with_dirs(preferences, &VelotypeConfigDirs::from_system()?)
+    save_app_preferences_with_dirs(preferences, &VeloraConfigDirs::from_system()?)
 }
 
 pub(crate) fn save_app_preferences_with_dirs(
     preferences: &AppPreferences,
-    dirs: &VelotypeConfigDirs,
+    dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<()> {
     let path = dirs.app_config_file();
     if let Some(parent) = path.parent() {
@@ -1460,7 +1461,7 @@ pub(crate) fn save_preferences_from_window(
     external_change_policy: ExternalChangePolicy,
     delete_policy: DeletePolicy,
 ) -> anyhow::Result<AppPreferences> {
-    let dirs = VelotypeConfigDirs::from_system()?;
+    let dirs = VeloraConfigDirs::from_system()?;
     save_preferences_from_window_with_dirs(
         startup_open,
         default_theme_id,
@@ -1502,7 +1503,7 @@ fn save_preferences_from_window_with_dirs(
     default_window_height: i64,
     external_change_policy: ExternalChangePolicy,
     delete_policy: DeletePolicy,
-    dirs: &VelotypeConfigDirs,
+    dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
     let mut preferences =
         load_or_create_app_preferences_with_dirs_and_locales(dirs, sys_locale::get_locales())?;
@@ -1715,8 +1716,8 @@ impl PreferencesWindow {
     ) -> String {
         match entry.id.as_str() {
             "system" => strings.preferences_theme_system.clone(),
-            "velotype" => strings.preferences_theme_dark.clone(),
-            "velotype-light" => strings.preferences_theme_light.clone(),
+            "velora-dark" => strings.preferences_theme_dark.clone(),
+            "velora-light" => strings.preferences_theme_light.clone(),
             _ => entry.name.clone(),
         }
     }
@@ -3800,7 +3801,7 @@ mod tests {
         read_app_preferences_with_dirs, save_app_preferences_with_dirs,
         save_preferences_from_window_with_dirs,
     };
-    use crate::config::VelotypeConfigDirs;
+    use crate::config::VeloraConfigDirs;
     use crate::i18n::I18nManager;
     use crate::theme::{ThemeCatalogEntry, ThemeManager};
     use gpui::TestAppContext;
@@ -3809,7 +3810,7 @@ mod tests {
     fn init_preferences_test_app(cx: &mut TestAppContext) {
         cx.update(|cx| {
             I18nManager::init_with_language_id(cx, "en-US");
-            ThemeManager::init_with_theme_id(cx, "velotype");
+            ThemeManager::init_with_theme_id(cx, "velora-dark");
             crate::components::init(cx);
             EditorSettings::init(cx, true);
         });
@@ -3822,11 +3823,11 @@ mod tests {
                 name: "System".into(),
             },
             ThemeCatalogEntry {
-                id: "velotype".into(),
+                id: "velora-dark".into(),
                 name: "Velora".into(),
             },
             ThemeCatalogEntry {
-                id: "velotype-light".into(),
+                id: "velora-light".into(),
                 name: "Velora Light".into(),
             },
         ]
@@ -3835,10 +3836,10 @@ mod tests {
     #[test]
     fn missing_preferences_file_returns_defaults() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-missing-{}",
+            "velora-preferences-missing-{}",
             uuid::Uuid::new_v4()
         ));
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let preferences =
             read_app_preferences_with_dirs(&dirs).expect("missing preferences should load");
         assert_eq!(preferences, AppPreferences::default());
@@ -3849,16 +3850,16 @@ mod tests {
     #[test]
     fn migrates_legacy_default_theme_and_image_paste_behavior_once() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-migration-{}",
+            "velora-preferences-migration-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("temp root should exist");
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         std::fs::write(
             dirs.app_config_file(),
             r#"
                 [theme]
-                default_theme_id = "velotype"
+                default_theme_id = "old-unknown-theme"
 
                 [editor]
                 image_paste_behavior = "none"
@@ -3882,7 +3883,7 @@ mod tests {
         let current_preferences = migrated_text
             .replace(
                 "default_theme_id = \"system\"",
-                "default_theme_id = \"velotype\"",
+                "default_theme_id = \"velora-dark\"",
             )
             .replace(
                 "image_paste_behavior = \"copy_to_assets_folder\"",
@@ -3892,7 +3893,7 @@ mod tests {
             .expect("current explicit preferences should be written");
         let preferences = read_app_preferences_with_dirs(&dirs)
             .expect("versioned preferences should load without migration");
-        assert_eq!(preferences.default_theme_id, "velotype");
+        assert_eq!(preferences.default_theme_id, "velora-dark");
         assert_eq!(preferences.image_paste_behavior, ImagePasteBehavior::None);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -3904,7 +3905,7 @@ mod tests {
                 preferences_version = 1
 
                 [theme]
-                default_theme_id = "velotype"
+                default_theme_id = "velora-dark"
 
                 [editor]
                 image_paste_behavior = "none"
@@ -3914,7 +3915,7 @@ mod tests {
         .unwrap();
         let (preferences, migrated) = super::load_preferences_from_toml_value(&value, "en-US");
         assert!(migrated);
-        assert_eq!(preferences.default_theme_id, "velotype");
+        assert_eq!(preferences.default_theme_id, "velora-dark");
         assert_eq!(preferences.image_paste_behavior, ImagePasteBehavior::None);
         assert_eq!(preferences.fonts.markdown_family, "theme");
     }
@@ -3922,11 +3923,11 @@ mod tests {
     #[test]
     fn partial_or_invalid_preferences_fall_back_by_field() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-partial-{}",
+            "velora-preferences-partial-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("temp root should exist");
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         std::fs::write(
             dirs.app_config_file(),
             r#"
@@ -3934,7 +3935,7 @@ mod tests {
                 open = "not-valid"
 
                 [theme]
-                default_theme_id = "velotype-light"
+                default_theme_id = "velora-light"
             "#,
         )
         .expect("preferences should be written");
@@ -3943,7 +3944,7 @@ mod tests {
             read_app_preferences_with_dirs(&dirs).expect("partial preferences should load");
         assert_eq!(preferences.startup_open, StartupOpenPreference::NewFile);
         assert_eq!(preferences.default_language_id, "en-US");
-        assert_eq!(preferences.default_theme_id, "velotype-light");
+        assert_eq!(preferences.default_theme_id, "velora-light");
         assert_eq!(preferences.export_theme, ExportThemePreference::Current);
         assert!(!preferences.smart_punctuation);
         assert_eq!(preferences.external_change_policy, ExternalChangePolicy::Auto);
@@ -3971,11 +3972,11 @@ mod tests {
     #[test]
     fn invalid_image_paste_behavior_falls_back_to_none() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-image-invalid-{}",
+            "velora-preferences-image-invalid-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("temp root should exist");
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         std::fs::write(
             dirs.app_config_file(),
             r#"
@@ -3993,11 +3994,11 @@ mod tests {
     #[test]
     fn damaged_preferences_file_returns_defaults() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-damaged-{}",
+            "velora-preferences-damaged-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("temp root should exist");
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         std::fs::write(dirs.app_config_file(), "not = [valid")
             .expect("preferences should be written");
 
@@ -4010,14 +4011,14 @@ mod tests {
     #[test]
     fn saves_and_reads_preferences() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-save-{}",
+            "velora-preferences-save-{}",
             uuid::Uuid::new_v4()
         ));
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = AppPreferences {
             startup_open: StartupOpenPreference::LastOpenedFile,
             default_language_id: "zh-CN".into(),
-            default_theme_id: "velotype-light".into(),
+            default_theme_id: "velora-light".into(),
             export_theme: ExportThemePreference::Dark,
             show_table_headers: false,
             smart_punctuation: true,
@@ -4063,7 +4064,7 @@ mod tests {
         assert!(text.contains("open_position = \"center\""));
         assert!(text.contains("open = \"last_opened_file\""));
         assert!(text.contains("default_language_id = \"zh-CN\""));
-        assert!(text.contains("default_theme_id = \"velotype-light\""));
+        assert!(text.contains("default_theme_id = \"velora-light\""));
         assert!(text.contains("show_table_headers = false"));
         assert!(text.contains("markdown_font_family = \"PingFang SC\""));
         assert!(text.contains("code_font_size = 13"));
@@ -4079,10 +4080,10 @@ mod tests {
     #[test]
     fn missing_preferences_file_is_created_with_detected_language() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-create-{}",
+            "velora-preferences-create-{}",
             uuid::Uuid::new_v4()
         ));
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = load_or_create_app_preferences_with_dirs_and_locales(&dirs, ["zh-HK"])
             .expect("preferences should be created");
         assert_eq!(preferences.default_language_id, "zh-CN");
@@ -4098,11 +4099,11 @@ mod tests {
     #[test]
     fn legacy_preferences_are_normalized_with_language() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-legacy-{}",
+            "velora-preferences-legacy-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("temp root should exist");
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         std::fs::write(
             dirs.app_config_file(),
             r#"
@@ -4110,7 +4111,7 @@ mod tests {
                 open = "last_opened_file"
 
                 [theme]
-                default_theme_id = "velotype-light"
+                default_theme_id = "velora-light"
             "#,
         )
         .expect("legacy preferences should be written");
@@ -4122,7 +4123,7 @@ mod tests {
             StartupOpenPreference::LastOpenedFile
         );
         assert_eq!(preferences.default_language_id, "en-US");
-        assert_eq!(preferences.default_theme_id, "velotype-light");
+        assert_eq!(preferences.default_theme_id, "velora-light");
         // 老配置没有 open_position 键时按「记住上次位置」处理。
         assert_eq!(preferences.window_open_position, WindowOpenPosition::Remember);
         let text =
@@ -4136,17 +4137,17 @@ mod tests {
     #[test]
     fn saving_preferences_window_preserves_language() {
         let root = std::env::temp_dir().join(format!(
-            "velotype-preferences-window-{}",
+            "velora-preferences-window-{}",
             uuid::Uuid::new_v4()
         ));
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = AppPreferences {
             startup_open: StartupOpenPreference::NewFile,
             smart_punctuation: false,
             external_change_policy: ExternalChangePolicy::Auto,
             delete_policy: DeletePolicy::Trash,
             default_language_id: "zh-CN".into(),
-            default_theme_id: "velotype".into(),
+            default_theme_id: "velora-dark".into(),
             export_theme: ExportThemePreference::Dark,
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::None,
@@ -4170,7 +4171,7 @@ mod tests {
 
         let saved = save_preferences_from_window_with_dirs(
             StartupOpenPreference::LastOpenedFile,
-            "velotype-light",
+            "velora-light",
             ImagePasteBehavior::CopyToNamedAssetsFolder,
             &FontPreferences::default(),
             WritingWidthPreference::Compact,
@@ -4199,7 +4200,7 @@ mod tests {
         assert_eq!(saved.delete_policy, DeletePolicy::Permanent);
         assert_eq!(saved.default_language_id, "zh-CN");
         assert_eq!(saved.startup_open, StartupOpenPreference::LastOpenedFile);
-        assert_eq!(saved.default_theme_id, "velotype-light");
+        assert_eq!(saved.default_theme_id, "velora-light");
         assert_eq!(saved.writing_width, WritingWidthPreference::Compact);
         assert_eq!(
             saved.image_paste_behavior,

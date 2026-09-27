@@ -824,7 +824,7 @@ mod tests {
 
         let toml = highlight_code_block(
             Some("toml"),
-            "[package]\nname = \"velotype\"\nversion = \"0.1.0\"\n",
+            "[package]\nname = \"velora\"\nversion = \"0.1.0\"\n",
         )
         .expect("toml should produce a result");
         assert!(!toml.spans.is_empty());

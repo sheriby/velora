@@ -1,5 +1,5 @@
 //! LaTeX display-math parsing and RaTeX SVG rendering helpers.
-//! 基于 Velotype 修改：缓存写入 velora 独立目录。
+//! 缓存写入 velora 独立目录。
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;

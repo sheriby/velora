@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::VelotypeConfigDirs;
+use super::VeloraConfigDirs;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub(crate) struct RecoverySnapshot {
@@ -16,7 +16,7 @@ pub(crate) struct RecoverySnapshot {
 }
 
 pub(crate) fn save_recovery_snapshot(snapshot: &RecoverySnapshot) -> Result<()> {
-    save_recovery_snapshot_with_dir(snapshot, &VelotypeConfigDirs::from_system()?.recovery_dir())
+    save_recovery_snapshot_with_dir(snapshot, &VeloraConfigDirs::from_system()?.recovery_dir())
 }
 
 fn save_recovery_snapshot_with_dir(snapshot: &RecoverySnapshot, dir: &Path) -> Result<()> {
@@ -37,7 +37,7 @@ fn save_recovery_snapshot_with_dir(snapshot: &RecoverySnapshot, dir: &Path) -> R
 }
 
 pub(crate) fn read_recovery_snapshots() -> Result<Vec<RecoverySnapshot>> {
-    read_recovery_snapshots_from_dir(&VelotypeConfigDirs::from_system()?.recovery_dir())
+    read_recovery_snapshots_from_dir(&VeloraConfigDirs::from_system()?.recovery_dir())
 }
 
 fn read_recovery_snapshots_from_dir(dir: &Path) -> Result<Vec<RecoverySnapshot>> {
@@ -79,7 +79,7 @@ fn read_recovery_snapshots_from_dir(dir: &Path) -> Result<Vec<RecoverySnapshot>>
 }
 
 pub(crate) fn remove_recovery_snapshot(id: Uuid) -> Result<()> {
-    remove_recovery_snapshot_from_dir(id, &VelotypeConfigDirs::from_system()?.recovery_dir())
+    remove_recovery_snapshot_from_dir(id, &VeloraConfigDirs::from_system()?.recovery_dir())
 }
 
 fn remove_recovery_snapshot_from_dir(id: Uuid, dir: &Path) -> Result<()> {

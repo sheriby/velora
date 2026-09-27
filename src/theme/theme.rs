@@ -1,5 +1,5 @@
 //! Theme data structures and defaults.
-//! 基于 Velotype 修改：内置主题的显示名称改为 velora。
+//! 内置主题的显示名称为 velora。
 //!
 //! The theme layer keeps visual tokens out of editor logic so rendering and
 //! interaction code can depend on stable semantic names instead of hard-coded
@@ -14,7 +14,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 use crate::config::{
-    VelotypeConfigDirs, merge_non_empty_json_values, object_without_empty_values,
+    VeloraConfigDirs, merge_non_empty_json_values, object_without_empty_values,
     prune_empty_json_values, read_json_or_jsonc, sanitize_config_file_stem,
 };
 
@@ -1212,7 +1212,7 @@ impl Theme {
     /// Returns the built-in fallback theme used when no custom theme is loaded.
     pub fn default_theme() -> Self {
         Self {
-            name: BUILTIN_THEME_VELOTYPE_NAME.into(),
+            name: BUILTIN_THEME_DARK_NAME.into(),
             colors: ThemeColors {
                 editor_background: Hsla::from(rgba(0x1b1d24ff)),
                 source_mode_block_bg: Hsla::from(rgba(0x292929ff)),
@@ -1460,7 +1460,7 @@ impl Theme {
     pub fn light_theme() -> Self {
         let base = Self::default_theme();
         Self {
-            name: BUILTIN_THEME_VELOTYPE_LIGHT_NAME.into(),
+            name: BUILTIN_THEME_LIGHT_NAME.into(),
             colors: ThemeColors {
                 editor_background: Hsla::from(rgba(0xffffffff)),
                 source_mode_block_bg: Hsla::from(rgba(0xf3f2f1ff)),
@@ -1704,10 +1704,10 @@ pub struct ThemeCatalogEntry {
     pub name: String,
 }
 
-const BUILTIN_THEME_VELOTYPE_ID: &str = "velotype";
-const BUILTIN_THEME_VELOTYPE_NAME: &str = "Velora Dark";
-const BUILTIN_THEME_VELOTYPE_LIGHT_ID: &str = "velotype-light";
-const BUILTIN_THEME_VELOTYPE_LIGHT_NAME: &str = "Velora Light";
+const BUILTIN_THEME_DARK_ID: &str = "velora-dark";
+const BUILTIN_THEME_DARK_NAME: &str = "Velora Dark";
+const BUILTIN_THEME_LIGHT_ID: &str = "velora-light";
+const BUILTIN_THEME_LIGHT_NAME: &str = "Velora Light";
 const BUILTIN_THEME_PAPER_ID: &str = "paper";
 const BUILTIN_THEME_PAPER_NAME: &str = "Paper";
 const BUILTIN_THEME_FOREST_ID: &str = "forest";
@@ -1726,12 +1726,12 @@ fn builtin_theme_catalog() -> Vec<ThemeCatalogEntry> {
             name: "System".into(),
         },
         ThemeCatalogEntry {
-            id: BUILTIN_THEME_VELOTYPE_ID.into(),
-            name: BUILTIN_THEME_VELOTYPE_NAME.into(),
+            id: BUILTIN_THEME_DARK_ID.into(),
+            name: BUILTIN_THEME_DARK_NAME.into(),
         },
         ThemeCatalogEntry {
-            id: BUILTIN_THEME_VELOTYPE_LIGHT_ID.into(),
-            name: BUILTIN_THEME_VELOTYPE_LIGHT_NAME.into(),
+            id: BUILTIN_THEME_LIGHT_ID.into(),
+            name: BUILTIN_THEME_LIGHT_NAME.into(),
         },
         ThemeCatalogEntry {
             id: BUILTIN_THEME_PAPER_ID.into(),
@@ -1779,7 +1779,7 @@ impl Default for ThemeManager {
     fn default() -> Self {
         Self {
             current: Arc::new(Theme::default_theme()),
-            current_theme_id: BUILTIN_THEME_VELOTYPE_ID.into(),
+            current_theme_id: BUILTIN_THEME_DARK_ID.into(),
             system_appearance: WindowAppearance::Light,
             custom_themes: Vec::new(),
             theme_catalog: builtin_theme_catalog(),
@@ -1800,7 +1800,7 @@ impl ThemeManager {
     /// Installs a specific theme into GPUI's global state.
     pub fn init_with_theme_id(cx: &mut App, theme_id: &str) {
         let mut manager = Self::default();
-        if let Ok(dirs) = VelotypeConfigDirs::from_system()
+        if let Ok(dirs) = VeloraConfigDirs::from_system()
             && let Err(err) = manager.load_custom_themes_from_dirs(&dirs)
         {
             eprintln!("failed to load custom themes: {err}");
@@ -1841,8 +1841,8 @@ impl ThemeManager {
                 WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::default_theme(),
                 WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light_theme(),
             },
-            BUILTIN_THEME_VELOTYPE_ID => Theme::default_theme(),
-            BUILTIN_THEME_VELOTYPE_LIGHT_ID => Theme::light_theme(),
+            BUILTIN_THEME_DARK_ID => Theme::default_theme(),
+            BUILTIN_THEME_LIGHT_ID => Theme::light_theme(),
             BUILTIN_THEME_PAPER_ID => Theme::paper_theme(),
             BUILTIN_THEME_FOREST_ID => Theme::forest_theme(),
             BUILTIN_THEME_MIDNIGHT_ID => Theme::midnight_theme(),
@@ -1918,14 +1918,14 @@ impl ThemeManager {
                 });
                 true
             }
-            id if id == BUILTIN_THEME_VELOTYPE_ID => {
+            id if id == BUILTIN_THEME_DARK_ID => {
                 self.current = Arc::new(Theme::default_theme());
-                self.current_theme_id = BUILTIN_THEME_VELOTYPE_ID.into();
+                self.current_theme_id = BUILTIN_THEME_DARK_ID.into();
                 true
             }
-            id if id == BUILTIN_THEME_VELOTYPE_LIGHT_ID => {
+            id if id == BUILTIN_THEME_LIGHT_ID => {
                 self.current = Arc::new(Theme::light_theme());
-                self.current_theme_id = BUILTIN_THEME_VELOTYPE_LIGHT_ID.into();
+                self.current_theme_id = BUILTIN_THEME_LIGHT_ID.into();
                 true
             }
             id if id == BUILTIN_THEME_PAPER_ID => {
@@ -1961,14 +1961,14 @@ impl ThemeManager {
 
     /// Imports a user theme pack, persists a normalized copy, and activates it.
     pub fn import_theme_config(&mut self, path: impl AsRef<Path>) -> anyhow::Result<String> {
-        let dirs = VelotypeConfigDirs::from_system()?;
+        let dirs = VeloraConfigDirs::from_system()?;
         self.import_theme_config_with_dirs(path, &dirs)
     }
 
     fn import_theme_config_with_dirs(
         &mut self,
         path: impl AsRef<Path>,
-        dirs: &VelotypeConfigDirs,
+        dirs: &VeloraConfigDirs,
     ) -> anyhow::Result<String> {
         let raw = read_json_or_jsonc(path.as_ref())?;
         let default_base_theme_id = self.theme_import_base_theme_id();
@@ -1991,7 +1991,7 @@ impl ThemeManager {
         Ok(imported_id)
     }
 
-    fn load_custom_themes_from_dirs(&mut self, dirs: &VelotypeConfigDirs) -> anyhow::Result<()> {
+    fn load_custom_themes_from_dirs(&mut self, dirs: &VeloraConfigDirs) -> anyhow::Result<()> {
         let themes_dir = dirs.themes_dir();
         if !themes_dir.exists() {
             return Ok(());
@@ -2045,10 +2045,10 @@ impl ThemeManager {
     }
 
     fn theme_id_for_loaded_theme(&self, theme: &Theme) -> String {
-        if theme.name == BUILTIN_THEME_VELOTYPE_NAME {
-            BUILTIN_THEME_VELOTYPE_ID.into()
-        } else if theme.name == BUILTIN_THEME_VELOTYPE_LIGHT_NAME {
-            BUILTIN_THEME_VELOTYPE_LIGHT_ID.into()
+        if theme.name == BUILTIN_THEME_DARK_NAME {
+            BUILTIN_THEME_DARK_ID.into()
+        } else if theme.name == BUILTIN_THEME_LIGHT_NAME {
+            BUILTIN_THEME_LIGHT_ID.into()
         } else if theme.name == BUILTIN_THEME_PAPER_NAME {
             BUILTIN_THEME_PAPER_ID.into()
         } else if theme.name == BUILTIN_THEME_FOREST_NAME {
@@ -2066,14 +2066,14 @@ impl ThemeManager {
         match self.current_theme_id.as_str() {
             BUILTIN_THEME_SYSTEM_ID => match self.system_appearance {
                 WindowAppearance::Dark | WindowAppearance::VibrantDark => {
-                    BUILTIN_THEME_VELOTYPE_ID.into()
+                    BUILTIN_THEME_DARK_ID.into()
                 }
                 WindowAppearance::Light | WindowAppearance::VibrantLight => {
-                    BUILTIN_THEME_VELOTYPE_LIGHT_ID.into()
+                    BUILTIN_THEME_LIGHT_ID.into()
                 }
             },
-            BUILTIN_THEME_VELOTYPE_LIGHT_ID => BUILTIN_THEME_VELOTYPE_LIGHT_ID.into(),
-            BUILTIN_THEME_VELOTYPE_ID => BUILTIN_THEME_VELOTYPE_ID.into(),
+            BUILTIN_THEME_LIGHT_ID => BUILTIN_THEME_LIGHT_ID.into(),
+            BUILTIN_THEME_DARK_ID => BUILTIN_THEME_DARK_ID.into(),
             BUILTIN_THEME_PAPER_ID => BUILTIN_THEME_PAPER_ID.into(),
             BUILTIN_THEME_FOREST_ID => BUILTIN_THEME_FOREST_ID.into(),
             BUILTIN_THEME_MIDNIGHT_ID => BUILTIN_THEME_MIDNIGHT_ID.into(),
@@ -2083,13 +2083,13 @@ impl ThemeManager {
                 .iter()
                 .find(|entry| entry.id == id)
                 .map(|entry| entry.base_theme_id.clone())
-                .unwrap_or_else(|| BUILTIN_THEME_VELOTYPE_ID.into()),
+                .unwrap_or_else(|| BUILTIN_THEME_DARK_ID.into()),
         }
     }
 }
 
 fn custom_theme_from_value(value: Value) -> anyhow::Result<(CustomThemeEntry, Value)> {
-    custom_theme_from_value_with_default_base(value, BUILTIN_THEME_VELOTYPE_ID)
+    custom_theme_from_value_with_default_base(value, BUILTIN_THEME_DARK_ID)
 }
 
 fn custom_theme_from_value_with_default_base(
@@ -2175,7 +2175,7 @@ fn resolved_custom_theme_base_id<'a>(
             if is_builtin_theme_id(default_base_theme_id) {
                 default_base_theme_id
             } else {
-                BUILTIN_THEME_VELOTYPE_ID
+                BUILTIN_THEME_DARK_ID
             }
         })
 }
@@ -2183,8 +2183,8 @@ fn resolved_custom_theme_base_id<'a>(
 fn is_builtin_theme_id(theme_id: &str) -> bool {
     matches!(
         theme_id,
-        BUILTIN_THEME_VELOTYPE_ID
-            | BUILTIN_THEME_VELOTYPE_LIGHT_ID
+        BUILTIN_THEME_DARK_ID
+            | BUILTIN_THEME_LIGHT_ID
             | BUILTIN_THEME_PAPER_ID
             | BUILTIN_THEME_FOREST_ID
             | BUILTIN_THEME_MIDNIGHT_ID
@@ -2194,7 +2194,7 @@ fn is_builtin_theme_id(theme_id: &str) -> bool {
 
 fn custom_theme_base_theme(theme_id: &str) -> Theme {
     match theme_id {
-        BUILTIN_THEME_VELOTYPE_LIGHT_ID => Theme::light_theme(),
+        BUILTIN_THEME_LIGHT_ID => Theme::light_theme(),
         BUILTIN_THEME_PAPER_ID => Theme::paper_theme(),
         BUILTIN_THEME_FOREST_ID => Theme::forest_theme(),
         BUILTIN_THEME_MIDNIGHT_ID => Theme::midnight_theme(),
@@ -2234,7 +2234,7 @@ fn required_string(object: &Map<String, Value>, key: &str) -> anyhow::Result<Str
 #[cfg(test)]
 mod tests {
     use super::{Theme, ThemeManager};
-    use crate::config::VelotypeConfigDirs;
+    use crate::config::VeloraConfigDirs;
     use gpui::{WindowAppearance, rgba};
 
     #[test]
@@ -2301,7 +2301,7 @@ mod tests {
             Theme::light_theme().colors.editor_background
         );
 
-        assert!(manager.set_theme_by_id("velotype"));
+        assert!(manager.set_theme_by_id("velora-dark"));
         manager.set_system_appearance(WindowAppearance::Dark);
         assert_eq!(
             manager.current().colors.editor_background,
@@ -2628,7 +2628,7 @@ mod tests {
 
     #[test]
     fn imports_partial_jsonc_theme_and_persists_normalized_json() {
-        let root = std::env::temp_dir().join(format!("velotype-theme-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("velora-theme-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("temp root should be created");
         let source = root.join("theme.jsonc");
         std::fs::write(
@@ -2651,7 +2651,7 @@ mod tests {
         )
         .expect("theme config should be written");
 
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let mut manager = ThemeManager::default();
         let imported_id = manager
             .import_theme_config_with_dirs(&source, &dirs)
@@ -2676,7 +2676,7 @@ mod tests {
             .expect("normalized theme config should exist");
         assert!(normalized.contains("\"name\": \"Night Writer\""));
         assert!(normalized.contains("\"creator\": \"Ada\""));
-        assert!(normalized.contains("\"base_theme_id\": \"velotype\""));
+        assert!(normalized.contains("\"base_theme_id\": \"velora-dark\""));
         assert!(normalized.contains("\"block_gap\": 12.0"));
         assert!(!normalized.contains("menu_text_size"));
         assert!(!normalized.contains("empty_editing"));
@@ -2690,7 +2690,7 @@ mod tests {
         let value = serde_json::json!({
             "name": "Day Writer",
             "creator": "Ada",
-            "base_theme_id": "velotype-light",
+            "base_theme_id": "velora-light",
             "theme": {
                 "dimensions": {
                     "menu_panel_radius": 12.0
@@ -2705,7 +2705,7 @@ mod tests {
             super::custom_theme_from_value(value).expect("theme should import");
         let light = Theme::light_theme();
 
-        assert_eq!(entry.base_theme_id, "velotype-light");
+        assert_eq!(entry.base_theme_id, "velora-light");
         assert_eq!(
             entry.theme.colors.editor_background,
             light.colors.editor_background
@@ -2717,7 +2717,7 @@ mod tests {
             normalized
                 .get("base_theme_id")
                 .and_then(|value| value.as_str()),
-            Some("velotype-light")
+            Some("velora-light")
         );
         assert!(
             normalized
@@ -2744,7 +2744,7 @@ mod tests {
         let (entry, normalized) =
             super::custom_theme_from_value(value).expect("invalid base should not fail import");
 
-        assert_eq!(entry.base_theme_id, "velotype");
+        assert_eq!(entry.base_theme_id, "velora-dark");
         assert_eq!(
             entry.theme.colors.editor_background,
             Theme::default_theme().colors.editor_background
@@ -2753,14 +2753,14 @@ mod tests {
             normalized
                 .get("base_theme_id")
                 .and_then(|value| value.as_str()),
-            Some("velotype")
+            Some("velora-dark")
         );
     }
 
     #[test]
     fn importing_without_base_uses_current_builtin_theme_as_base() {
         let root =
-            std::env::temp_dir().join(format!("velotype-light-theme-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("velora-light-theme-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("temp root should be created");
         let source = root.join("theme.jsonc");
         std::fs::write(
@@ -2777,9 +2777,9 @@ mod tests {
         )
         .expect("theme config should be written");
 
-        let dirs = VelotypeConfigDirs::from_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
         let mut manager = ThemeManager::default();
-        assert!(manager.set_theme_by_id("velotype-light"));
+        assert!(manager.set_theme_by_id("velora-light"));
         let imported_id = manager
             .import_theme_config_with_dirs(&source, &dirs)
             .expect("theme config should import");
@@ -2793,7 +2793,7 @@ mod tests {
 
         let normalized = std::fs::read_to_string(dirs.themes_dir().join("Light_Radius_Ada.json"))
             .expect("normalized theme config should exist");
-        assert!(normalized.contains("\"base_theme_id\": \"velotype-light\""));
+        assert!(normalized.contains("\"base_theme_id\": \"velora-light\""));
 
         let mut reloaded = ThemeManager::default();
         reloaded
@@ -2811,7 +2811,7 @@ mod tests {
     #[test]
     fn theme_manager_switches_builtin_themes() {
         let mut manager = ThemeManager::default();
-        assert_eq!(manager.current_theme_id(), "velotype");
+        assert_eq!(manager.current_theme_id(), "velora-dark");
         assert_eq!(manager.current().name, "Velora Dark");
         assert_eq!(
             manager
@@ -2830,16 +2830,16 @@ mod tests {
             ]
         );
 
-        assert!(manager.set_theme_by_id("velotype-light"));
-        assert_eq!(manager.current_theme_id(), "velotype-light");
+        assert!(manager.set_theme_by_id("velora-light"));
+        assert_eq!(manager.current_theme_id(), "velora-light");
         assert_eq!(manager.current().name, "Velora Light");
         assert_eq!(
             manager.current().colors.editor_background,
             rgba(0xffffffff).into()
         );
 
-        assert!(manager.set_theme_by_id("velotype"));
-        assert_eq!(manager.current_theme_id(), "velotype");
+        assert!(manager.set_theme_by_id("velora-dark"));
+        assert_eq!(manager.current_theme_id(), "velora-dark");
         assert_eq!(manager.current().name, "Velora Dark");
         for (id, name) in [
             ("paper", "Paper"),

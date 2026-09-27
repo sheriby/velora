@@ -321,13 +321,13 @@ end
 
 ```yaml
 service:
-  name: velotype
+  name: velora
   enabled: true
 ```
 
 ```toml
 [package]
-name = "velotype"
+name = "velora-dark"
 edition = "2024"
 ```
 
