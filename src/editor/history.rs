@@ -298,23 +298,19 @@ impl Editor {
                 self.rebuild_image_runtimes(cx);
             }
             ViewMode::Source => {
-                let record = if self.code_tab_active() {
+                let kind = if self.code_tab_active() {
                     let language = self
                         .file_path
                         .as_ref()
                         .or(self.recovery_source_path.as_ref())
                         .and_then(|path| path.extension())
                         .map(|extension| extension.to_string_lossy().into_owned().into());
-                    BlockRecord::with_plain_text(
-                        BlockKind::CodeBlock { language },
-                        entry.source_text.clone(),
-                    )
+                    BlockKind::CodeBlock { language }
                 } else {
-                    BlockRecord::paragraph(entry.source_text.clone())
+                    BlockKind::Paragraph
                 };
-                let block = Self::new_block(cx, record);
-                block.update(cx, |block, _cx| block.set_source_document_mode());
-                self.document.replace_roots(vec![block], cx);
+                let roots = Self::build_source_document_roots(kind, &entry.source_text, cx);
+                self.document.replace_roots(roots, cx);
                 self.table_cells.clear();
             }
         }

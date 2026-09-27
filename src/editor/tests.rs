@@ -213,6 +213,69 @@ async fn manual_code_load_probe(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn code_source_chunks_round_trip_and_continue_line_numbers(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut source = String::new();
+    for index in 0..1_200 {
+        source.push_str(&format!("line-{index}\n"));
+    }
+    let path = std::env::temp_dir().join(format!("velora-chunk-roundtrip-{}.log", std::process::id()));
+    fs::write(&path, &source).expect("write chunk fixture");
+    let expected_source = source.clone();
+
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_file_source(cx, source.clone(), Some(path.clone()))
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert!(matches!(editor.view_mode, ViewMode::Source));
+        let blocks = editor.document.visible_blocks();
+        assert_eq!(blocks.len(), 3, "1200 行 + 行尾换行应切成 512/512/177 三块");
+
+        let mut expected_start = 1usize;
+        for visible in blocks {
+            visible.entity.read_with(cx, |block, _cx| {
+                assert_eq!(block.source_line_start(), expected_start);
+            });
+            expected_start += visible.entity.read_with(cx, |block, _cx| {
+                block.display_text().split('\n').count()
+            });
+        }
+
+        let serialized = editor.current_document_source(cx);
+        assert_eq!(serialized, expected_source, "分块序列化必须逐字节还原源码");
+    });
+}
+
+#[gpui::test]
+async fn code_source_with_crlf_round_trips_through_chunks(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let crlf_source = "alpha\n\nbravo\n".to_string().replace('\n', "\r\n");
+    let expected_source = crlf_source.clone();
+    let path = std::env::temp_dir().join(format!("velora-chunk-crlf-{}.txt", std::process::id()));
+
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_file_source(cx, crlf_source.clone(), Some(path.clone()))
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.code_uses_crlf, "应记录 CRLF 标记");
+        let serialized = editor.serialized_document_text(cx);
+        assert_eq!(serialized, expected_source, "保存序列化必须还原 CRLF");
+    });
+}
+
+#[gpui::test]
+async fn small_code_files_stay_single_chunk(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "one\ntwo\nthree\n".to_string();
+    let path = std::env::temp_dir().join(format!("velora-chunk-small-{}.toml", std::process::id()));
+    let (editor, cx) =
+        cx.add_window_view(move |_window, cx| Editor::from_file_source(cx, source, Some(path)));
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.document.visible_blocks().len(), 1);
+    });
+}
+
+#[gpui::test]
 async fn targeted_source_mapping_matches_later_blocks_and_table_cells(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let markdown = "intro\n\n## heading\n\n| Name | Value |\n| --- | --- |\n| A | B |".into();

@@ -6,8 +6,54 @@ use anyhow::{Context as AnyhowContext, Result};
 use gpui::*;
 
 use super::{Editor, ViewMode};
-use crate::components::{BlockKind, BlockRecord};
+use crate::components::{Block, BlockKind, BlockRecord};
 use crate::i18n::I18nManager;
+
+/// 源码文档分块的每块行数（docs/architecture/performance.md P2）。视口
+/// 窗口化以块为粒度裁剪，块太大则单块即窗口；512 行约几十 KB，足以让
+/// 10 MiB 日志保持几十个块，又不至于让块数量本身成为开销。
+const SOURCE_DOCUMENT_CHUNK_LINES: usize = 512;
+
+/// 把源码文本按行切成若干块。各块文本不含块间换行符：把分块结果用
+/// `'\n'` 连接即可逐字节还原输入（空文本返回单个空块）。
+pub(super) fn split_source_document_chunks(source: &str) -> Vec<String> {
+    let lines: Vec<&str> = source.split('\n').collect();
+    if lines.len() <= SOURCE_DOCUMENT_CHUNK_LINES {
+        return vec![source.to_string()];
+    }
+    lines
+        .chunks(SOURCE_DOCUMENT_CHUNK_LINES)
+        .map(|group| group.join("\n"))
+        .collect()
+}
+
+impl Editor {
+    /// 构建源码模式（整文件直编）的根块列表：按行分块 + 连续源码行号。
+    /// 导入（`replace_document_content`）与 undo 恢复共用，保证 undo 后
+    /// 不会退化回整文件单块。
+    pub(super) fn build_source_document_roots(
+        kind: BlockKind,
+        source: &str,
+        cx: &mut Context<Self>,
+    ) -> Vec<Entity<Block>> {
+        let mut blocks = Vec::new();
+        for chunk in split_source_document_chunks(source) {
+            let record = BlockRecord::with_plain_text(kind.clone(), chunk);
+            let block = Self::new_block(cx, record);
+            block.update(cx, |block, _cx| block.set_source_document_mode());
+            blocks.push(block);
+        }
+        let mut next_line = 1usize;
+        for block in &blocks {
+            let line_count = block.update(cx, |block, _cx| {
+                block.set_source_line_start(next_line);
+                block.display_text().split('\n').count()
+            });
+            next_line += line_count;
+        }
+        blocks
+    }
+}
 
 impl Editor {
     pub(super) fn is_markdown_file_path(path: &Path) -> bool {
@@ -172,19 +218,17 @@ impl Editor {
         let source_mode_fallback_required =
             !is_code && Self::markdown_requires_source_mode_fallback(&normalized);
         let mut roots = if is_code || source_mode_fallback_required {
-            let record = if is_code {
-                BlockRecord::with_plain_text(
-                    BlockKind::CodeBlock {
-                        language: code_language,
-                    },
-                    normalized.clone(),
-                )
+            // 大纯文本文件不再整文件压进单块：按行分块让视口窗口化能裁剪
+            // 屏外内容（docs/architecture/performance.md P2）。各块文本不含
+            // 块间换行符，`raw_source_text` 用 '\n' 连接即逐字节还原。
+            let chunk_kind = if is_code {
+                BlockKind::CodeBlock {
+                    language: code_language,
+                }
             } else {
-                BlockRecord::paragraph(normalized.clone())
+                BlockKind::Paragraph
             };
-            let block = Self::new_block(cx, record);
-            block.update(cx, |block, _cx| block.set_source_document_mode());
-            vec![block]
+            Self::build_source_document_roots(chunk_kind, &normalized, cx)
         } else {
             Self::build_root_blocks_from_markdown(cx, &normalized)
         };
@@ -460,5 +504,60 @@ impl Editor {
         let strings = cx.global::<I18nManager>().strings().clone();
         self.show_message_modal(strings.open_failed_title.clone(), detail, cx);
         let _ = window;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_source_document_chunks;
+
+    #[test]
+    fn small_sources_stay_one_chunk() {
+        assert_eq!(split_source_document_chunks(""), vec![""]);
+        assert_eq!(split_source_document_chunks("a"), vec!["a"]);
+        assert_eq!(split_source_document_chunks("a\nb\n"), vec!["a\nb\n"]);
+    }
+
+    #[test]
+    fn chunks_join_back_to_the_original_bytes() {
+        for line_count in [0usize, 1, 511, 512, 513, 1_024, 1_025, 2_000] {
+            let mut source = String::new();
+            for index in 0..line_count {
+                source.push_str(&format!("line-{index}\n"));
+            }
+            let chunks = split_source_document_chunks(&source);
+            let total_lines: usize = chunks
+                .iter()
+                .map(|chunk| chunk.split('\n').count())
+                .sum();
+            if line_count == 0 {
+                assert_eq!(chunks, vec![""]);
+            } else {
+                assert!(
+                    chunks.len() > 1 || line_count <= 512,
+                    "line_count={line_count} chunks={}",
+                    chunks.len()
+                );
+            }
+            assert_eq!(
+                chunks.join("\n"),
+                source,
+                "line_count={line_count}: 分块用换行连接必须还原原文"
+            );
+            assert!(total_lines >= line_count);
+            for window in chunks.windows(2) {
+                assert!(
+                    !window[0].ends_with('\n'),
+                    "非末块不得以换行结尾（块间换行由序列化连接补上）"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_interior_lines_preserved_across_chunks() {
+        let source = "a\n\n\nb\n";
+        let chunks = split_source_document_chunks(source);
+        assert_eq!(chunks.join("\n"), source);
     }
 }

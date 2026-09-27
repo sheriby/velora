@@ -168,6 +168,8 @@ pub struct Block {
     /// suppressed; the block stores raw text for source-mode editing.
     pub(crate) edit_mode: EditMode,
     show_source_line_numbers: bool,
+    /// 1-based 文档行号，本块第一行对应的行号（源码文档按行分块后行号槽续号用）。
+    source_line_start: usize,
     pub(crate) table_runtime: Option<TableRuntime>,
     pub(crate) table_cell_position: Option<TableCellPosition>,
     pub(crate) table_cell_alignment: Option<TableColumnAlignment>,
@@ -283,6 +285,7 @@ impl Block {
             collapsed_caret_affinity: CollapsedCaretAffinity::Default,
             edit_mode,
             show_source_line_numbers: false,
+            source_line_start: 1,
             table_runtime: None,
             table_cell_position: None,
             table_cell_alignment: None,
@@ -328,6 +331,15 @@ impl Block {
 
     pub(crate) fn show_source_line_numbers(&self) -> bool {
         self.show_source_line_numbers
+    }
+
+    /// 本块第一行在整篇源码文档中的 1-based 行号（分块导入后行号槽续号）。
+    pub(crate) fn source_line_start(&self) -> usize {
+        self.source_line_start
+    }
+
+    pub(crate) fn set_source_line_start(&mut self, start: usize) {
+        self.source_line_start = start.max(1);
     }
 
     pub(crate) fn take_quote_reparse_requested(&mut self) -> bool {

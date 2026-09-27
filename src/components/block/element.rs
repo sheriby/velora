@@ -950,8 +950,11 @@ impl Element for BlockTextElement {
 
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
+        let source_line_start = input.source_line_start();
         let source_line_number_gutter_width = show_source_line_numbers
-            .then(|| source_line_number_gutter_width(source_line_count, font_size))
+            .then(|| {
+                source_line_number_gutter_width(source_line_start + source_line_count, font_size)
+            })
             .unwrap_or(px(0.0));
 
         let shared_lines = Rc::new(RefCell::new(None));
@@ -1029,12 +1032,13 @@ impl Element for BlockTextElement {
         let lines = request_layout.borrow_mut().take().unwrap_or_default();
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let source_line_number_gutter_width = show_source_line_numbers
-            .then(|| source_line_number_gutter_width(lines.len().max(1), font_size))
+            .then(|| source_line_number_gutter_width(lines.len().max(1) + input.source_line_start() - 1, font_size))
             .unwrap_or(px(0.0));
         let text_bounds = source_text_bounds(bounds, source_line_number_gutter_width);
         let source_line_numbers = if show_source_line_numbers {
             let run_color = theme.colors.text_placeholder;
-            (1..=lines.len().max(1))
+            let line_start = input.source_line_start();
+            (line_start..line_start + lines.len().max(1))
                 .map(|line_number| {
                     let label = line_number.to_string();
                     window.text_system().shape_line(
