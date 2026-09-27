@@ -130,6 +130,7 @@ impl<T: ReceiveData> DataOffer<T> {
                 let id = hash(&bytes);
                 return Some(ClipboardItem {
                     entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
+                    html: None,
                 });
             }
         }

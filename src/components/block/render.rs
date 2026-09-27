@@ -789,6 +789,21 @@ impl Block {
         font_weight: FontWeight,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // 长块护栏（roadmap B12）：未聚焦时整块按源码文本渲染，跳过行内样式
+        // 与混合可视元素的逐段布局；聚焦后仍走文本元素以保证可编辑。
+        if !focused && !is_placeholder && self.exceeds_long_block_source_limit() {
+            return div()
+                .id("block-long-source")
+                .debug_selector(|| "block-long-source".to_string())
+                .w_full()
+                .min_w(px(0.0))
+                .text_size(px(font_size))
+                .line_height(rems(theme.typography.text_line_height))
+                .text_color(text_color)
+                .child(SharedString::from(self.display_text().to_string()))
+                .into_any_element();
+        }
+
         // Mixed inline visuals are display-only. Once focused, the text element
         // takes over so caret movement, projection markers, and IME ranges stay
         // anchored to editable text rather than rendered SVG/script offsets.

@@ -3385,6 +3385,56 @@ async fn toc_block_renders_entries_and_jumps_to_heading(cx: &mut TestAppContext)
     });
 }
 
+#[test]
+fn copy_as_html_item_carries_html_flavor() {
+    // roadmap F2 增强：纯文本 flavor 保留 HTML 源码，同时附带 text/html flavor。
+    let html = "<h1>Title</h1>".to_string();
+    let item = crate::editor::workspace::copy_as_html_clipboard_item(html.clone());
+    assert_eq!(item.html(), Some(html.as_str()));
+}
+
+#[gpui::test]
+async fn copy_as_html_writes_html_source_to_clipboard(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# Title\n\nbody".into(), None)
+    });
+    editor.update(cx, |editor, cx| editor.copy_as_html(cx));
+    let text = cx.update(|_window, cx| {
+        cx.read_from_clipboard().and_then(|item| item.text())
+    });
+    let text = text.expect("clipboard should hold HTML source");
+    assert!(text.contains("<h1"), "expected rendered HTML, got: {text}");
+}
+
+#[gpui::test]
+async fn long_paragraph_renders_as_plain_source(cx: &mut TestAppContext) {
+    // roadmap B12：单块超阈值时渲染态降级为源码文本。
+    init_editor_test_app(cx);
+    let long_line = "x".repeat(crate::components::LONG_BLOCK_SOURCE_LIMIT + 1);
+    let markdown = format!("# Title\n\n{long_line}\n\nshort");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds("block-long-source").is_some(),
+        "over-limit block falls back to the plain source element"
+    );
+    let blocks = editor.read_with(cx, |editor, _cx| editor.document.visible_blocks().to_vec());
+    let long_block = &blocks[1].entity;
+    assert!(
+        long_block.read_with(cx, |block, _cx| block.exceeds_long_block_source_limit()),
+        "the over-limit block reports the degraded state"
+    );
+    assert!(
+        !blocks[2]
+            .entity
+            .read_with(cx, |block, _cx| block.exceeds_long_block_source_limit()),
+        "short blocks keep the rich render path"
+    );
+}
+
 #[gpui::test]
 async fn code_block_copy_button_copies_code_to_clipboard(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

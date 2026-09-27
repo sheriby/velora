@@ -60,6 +60,17 @@ impl Editor {
             }
         }
 
+        if self.long_source_block_hint(cx) {
+            right_items.push(
+                div()
+                    .id("status-long-block-hint")
+                    .text_size(px(d.status_bar_text_size))
+                    .text_color(c.status_bar_text_dim)
+                    .child(strings.status_bar_long_block_source.clone())
+                    .into_any_element(),
+            );
+        }
+
         for button in &prefs.custom_buttons {
             right_items.push(render_custom_button(
                 &mut self.status_bar,
@@ -95,6 +106,19 @@ impl Editor {
             .into_any_element();
 
         Some(bar)
+    }
+
+    /// 文档是否含超长单块（roadmap B12）；按文档修订缓存，避免逐帧扫描。
+    fn long_source_block_hint(&mut self, _cx: &mut Context<Self>) -> bool {
+        let revision = self.document_revision;
+        match self.long_source_block_hint {
+            Some((cached, value)) if cached == revision => value,
+            _ => {
+                let value = document_has_long_source_block(&self.last_stable_source_text);
+                self.long_source_block_hint = Some((revision, value));
+                value
+            }
+        }
     }
 
     /// 工作区根/子路径/文件名 面包屑；无工作区根时隐藏。
@@ -156,6 +180,13 @@ impl Editor {
         let col = text[last_newline..clamped].graphemes(true).count() + 1;
         (line, col)
     }
+}
+
+/// 是否存在超过长块阈值的源码行（roadmap B12）。
+fn document_has_long_source_block(source: &str) -> bool {
+    source
+        .split('\n')
+        .any(|line| line.len() > crate::components::LONG_BLOCK_SOURCE_LIMIT)
 }
 
 fn render_cursor((line, col): (usize, usize), theme: &Theme) -> AnyElement {
@@ -318,7 +349,20 @@ fn is_cjk_char(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_words, reading_minutes};
+    use super::{count_words, document_has_long_source_block, reading_minutes};
+
+    #[test]
+    fn long_source_block_hint_tracks_single_long_line() {
+        let short = "alpha\nbeta";
+        let long_line = "x".repeat(crate::components::LONG_BLOCK_SOURCE_LIMIT);
+        let just_over = format!("x{}", "y".repeat(crate::components::LONG_BLOCK_SOURCE_LIMIT));
+        let multi_line_long = format!("a\n{just_over}");
+
+        assert!(!document_has_long_source_block(short));
+        assert!(!document_has_long_source_block(&long_line));
+        assert!(document_has_long_source_block(&just_over));
+        assert!(document_has_long_source_block(&multi_line_long));
+    }
 
     #[test]
     fn empty_text_has_zero_words() {

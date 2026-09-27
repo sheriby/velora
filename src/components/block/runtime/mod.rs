@@ -360,6 +360,11 @@ impl Block {
         self.sync_image_runtime();
     }
 
+    /// 单块源码超过阈值时渲染态降级为源码文本（roadmap B12）。
+    pub(crate) fn exceeds_long_block_source_limit(&self) -> bool {
+        self.display_text().len() > crate::components::LONG_BLOCK_SOURCE_LIMIT
+    }
+
     pub(crate) fn uses_raw_text_editing(&self) -> bool {
         self.edit_mode.uses_raw_text_editing()
     }

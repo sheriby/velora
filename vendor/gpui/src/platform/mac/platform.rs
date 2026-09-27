@@ -18,8 +18,8 @@ use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
         NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
+        NSPasteboardTypeHTML, NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD,
+        NSPasteboardTypeString, NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -1027,6 +1027,40 @@ impl Platform for MacPlatform {
     fn write_to_clipboard(&self, item: ClipboardItem) {
         use crate::ClipboardEntry;
 
+        if let Some(html) = item.html() {
+            unsafe {
+                let state = self.0.lock();
+                state.pasteboard.clearContents();
+
+                let text = item
+                    .entries
+                    .first()
+                    .and_then(|entry| match entry {
+                        ClipboardEntry::String(string) => Some(string.text.clone()),
+                        ClipboardEntry::Image(_) => None,
+                    })
+                    .unwrap_or_else(|| html.to_string());
+                let text_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    text.as_ptr() as *const c_void,
+                    text.len() as u64,
+                );
+                state
+                    .pasteboard
+                    .setData_forType(text_bytes, NSPasteboardTypeString);
+
+                let html_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    html.as_ptr() as *const c_void,
+                    html.len() as u64,
+                );
+                state
+                    .pasteboard
+                    .setData_forType(html_bytes, NSPasteboardTypeHTML);
+            }
+            return;
+        }
+
         unsafe {
             // We only want to use NSAttributedString if there are multiple entries to write.
             if item.entries.len() <= 1 {
@@ -1267,6 +1301,7 @@ impl MacPlatform {
 
             ClipboardItem {
                 entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
+                html: None,
             }
         }
     }
@@ -1344,6 +1379,7 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
 
                 Some(ClipboardItem {
                     entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
+                    html: None,
                 })
             }
         } else {

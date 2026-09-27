@@ -1,5 +1,8 @@
 //! Shared UI components and Markdown editing primitives.
 
+/// 单块源码超过该字节长度时，渲染态降级为纯源码文本（roadmap B12）。
+pub(crate) const LONG_BLOCK_SOURCE_LIMIT: usize = 20_000;
+
 mod actions;
 mod block;
 pub(crate) mod latex;

@@ -259,6 +259,7 @@ where
         if let Some(entry) = f(*item_format) {
             return Some(ClipboardItem {
                 entries: vec![entry],
+                html: None,
             });
         }
     }

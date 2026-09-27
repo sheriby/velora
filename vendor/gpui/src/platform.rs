@@ -1503,6 +1503,8 @@ impl Default for CursorStyle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
     entries: Vec<ClipboardEntry>,
+    /// Optional rich HTML flavor written alongside the plain-text entry.
+    html: Option<String>,
 }
 
 /// Either a ClipboardString or a ClipboardImage
@@ -1519,7 +1521,21 @@ impl ClipboardItem {
     pub fn new_string(text: String) -> Self {
         Self {
             entries: vec![ClipboardEntry::String(ClipboardString::new(text))],
+            html: None,
         }
+    }
+
+    /// Create a new string clipboard item that also advertises an HTML flavor.
+    pub fn new_string_with_html(text: String, html: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::String(ClipboardString::new(text))],
+            html: Some(html),
+        }
+    }
+
+    /// HTML flavor to write alongside the plain text, when present.
+    pub fn html(&self) -> Option<&str> {
+        self.html.as_deref()
     }
 
     /// Create a new ClipboardItem::String with the given text and associated metadata
@@ -1529,6 +1545,7 @@ impl ClipboardItem {
                 text,
                 metadata: Some(metadata),
             })],
+            html: None,
         }
     }
 
@@ -1538,6 +1555,7 @@ impl ClipboardItem {
             entries: vec![ClipboardEntry::String(
                 ClipboardString::new(text).with_json_metadata(metadata),
             )],
+            html: None,
         }
     }
 
@@ -1545,6 +1563,7 @@ impl ClipboardItem {
     pub fn new_image(image: &Image) -> Self {
         Self {
             entries: vec![ClipboardEntry::Image(image.clone())],
+            html: None,
         }
     }
 
@@ -1608,6 +1627,7 @@ impl From<ClipboardEntry> for ClipboardItem {
     fn from(value: ClipboardEntry) -> Self {
         Self {
             entries: vec![value],
+            html: None,
         }
     }
 }
