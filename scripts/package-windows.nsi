@@ -27,7 +27,7 @@ UninstPage instfiles
 
 Section "安装 Velora" SEC_MAIN
   SetOutPath "$INSTDIR"
-  File "${REPO_ROOT}\target\x86_64-pc-windows-gnu\fastdev\velora.exe"
+  File "${REPO_ROOT}\target\x86_64-pc-windows-gnu\release\velora.exe"
   File "${REPO_ROOT}\LICENSE-APACHE"
 
   WriteRegStr HKCU "Software\velora" "InstallDir" "$INSTDIR"

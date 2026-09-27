@@ -16,8 +16,8 @@ fi
 
 cd "$REPO_ROOT"
 mkdir -p dist
-cargo build --profile fastdev --target "$TARGET"
-file "target/$TARGET/fastdev/velora.exe" | rg -q "PE32\+ executable.*x86-64.*Windows"
+cargo build --release --target "$TARGET"
+file "target/$TARGET/release/velora.exe" | rg -q "PE32\+ executable.*x86-64.*Windows"
 makensis -DVELORA_VERSION="$VERSION" -DREPO_ROOT="$REPO_ROOT" scripts/package-windows.nsi
 test -s "dist/velora-$VERSION-windows-x64-setup.exe"
 echo "已生成：$REPO_ROOT/dist/velora-$VERSION-windows-x64-setup.exe"

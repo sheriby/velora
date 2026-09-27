@@ -16,8 +16,8 @@ trap cleanup EXIT
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources" \
     "$ICONSET_DIR" "$OUTPUT_DIR"
 
-cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --profile fastdev
-cp "$REPO_ROOT/target/fastdev/velora" "$APP_BUNDLE/Contents/MacOS/velora"
+cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --release
+cp "$REPO_ROOT/target/release/velora" "$APP_BUNDLE/Contents/MacOS/velora"
 cp "$REPO_ROOT/resources/macos/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \

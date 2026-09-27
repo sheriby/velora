@@ -1,52 +1,135 @@
 # Velora
 
-面向长篇写作的原生 Markdown 编辑器。首版以 macOS 为主要开发和运行平台，使用 Rust 与 GPUI；Markdown 默认以富文本形式编辑，也可切换到源码模式。AI 功能不在首版范围内。
+**A native Markdown editor built for long-form writing.**
+WYSIWYG by default, source mode when you want it — written in Rust with GPUI.
 
-## 首版功能
+**English** · [简体中文](README_CN.md)
 
-- 打开一个文件夹作为工作区，浏览 Markdown 与代码文件；
-- Markdown 与代码文件都在同一个窗口以标签页编辑；
-- Rust、JavaScript/TypeScript、C/C++、C#、Go、Java、PHP、Python、Ruby、HTML/CSS、JSON、YAML、TOML 和 Bash 提供语法高亮；SQL、Swift、Kotlin、XML 等也可打开并按纯文本编辑；
-- 已识别且可界定的 `:::` 扩展块按原文显示和编辑；未闭合 `:::`、`!!!`/`???` 提示语法会切到源码模式并说明原因；其他第三方插件语法不保证自动识别；
-- 在左侧切换文件、搜索与大纲；搜索同时匹配文件名和文件内容，`Cmd/Ctrl+F` 可查找当前未保存文档，`Cmd/Ctrl+G` 可继续导航全文匹配，搜索框支持中文组合输入、粘贴与退格；文件树可拖动调整宽度，再点文件图标可收起；从 macOS 菜单栏打开或切换最近工作区；
-- 通过文件树右键菜单新建、重命名、移动和删除文件或文件夹；
-- 粘贴或拖入图片时复制到资源目录并插入相对路径；
-- 自动保存打开的脏标签；检测到外部文件修改时暂停写回并保留恢复快照；
-- 意外退出后把未完成内容作为恢复副本打开；
-- 内置 Velora 浅色/深色、Paper、Forest、Midnight、Ink 多套主题，也可跟随系统外观；设置可调整正文与代码字体、字号和 Markdown 写作列宽；“视图”菜单提供专注模式与打字机模式。
+---
 
-## macOS 开发
+Velora opens your writing folder as a workspace, renders Markdown as you type, and stays fast on manuscripts that measure in megabytes. Code files live in the same window with syntax highlighting, and every prompt is an in-app modal — no native dialogs interrupting the flow.
 
-开发时使用 fastdev，不使用 release profile。命令：
+## Screenshots
 
-    cargo run --profile fastdev -- /路径/到/工作区
-    cargo check --profile fastdev
-    cargo test --profile fastdev editor::workspace::tests:: -- --test-threads=1
+![The Velora workspace: file tree, tab, and live WYSIWYG Markdown editing](docs/验收记录/2026-09-25-velora-macos-原生界面.png)
 
-项目的 .cargo/config.toml 使用 sccache 作为 Rust 编译缓存。首次构建仍需编译 GPUI 依赖。
+![The six built-in themes: Velora Light, Paper, Forest, Velora Dark, Midnight and Ink](docs/design/主题预览.png)
 
-## macOS 内部安装包
+## ✨ Features
 
-在 macOS 开发机执行 scripts/package-macos.sh，会用 fastdev 构建生成 dist/velora.app 和 dist/velora-0.1.0.pkg。安装包未签名或公证，仅用于本机和小范围内部试用。
+### Writing & editing
 
-## Windows 内部安装包
+- **WYSIWYG + source modes** — Markdown renders as you type; switch to raw source at any time, and undo history survives mode switches.
+- **A full block set** — headings, ordered/bulleted/task lists, tables, code blocks, quotes, footnotes, callouts, horizontal rules and images; inline bold/italic, inline code, links and strikethrough.
+- **Math & diagrams in place** — LaTeX formulas and Mermaid diagrams render directly inside the document.
+- **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link; drag the resize handle and the width is written back as `{width=NN%}`.
+- **Editing conveniences** — lists continue on `Enter`; typing a paired character wraps the selection; pasting a URL over a selection creates a link; HTML copied from a browser or Word is converted to Markdown on paste.
+- **Smart punctuation** (off by default, one switch in Settings) — context-aware curly quotes and `--` → em dash.
+- **VS Code–style find & replace** — case, whole-word, regex and fuzzy matching; every match is highlighted in the body while the panel is open.
+- **Syntax highlighting** — Rust, JavaScript/TypeScript, C/C++, C#, Go, Java, PHP, Python, Ruby, HTML/CSS, JSON, YAML, TOML and Bash; other text files open and edit as plain text.
 
-在 macOS 交叉构建 Windows x64 内部安装包时，需要 MinGW-w64、NSIS 和 x86_64-pc-windows-gnu Rust target。执行 scripts/package-windows.sh 会先编译 Windows 可执行文件，再生成 dist/velora-0.1.0-windows-x64-setup.exe。安装器使用 per-user 安装；Windows 实机运行尚未验收。
+### Workspace & knowledge
 
-## 当前验证范围
+- **Folder = workspace** — the file tree supports new / rename / duplicate / copy-paste / delete (to the system Trash), sorting by name, modification time or type, a filter box for quick lookup, and hover tooltips with size and mtime.
+- **Global search** matches file names *and* contents, with workspace-wide replace.
+- **Outline pane** — click to jump, follows scrolling to highlight the current section, double-click or `F2` renames the heading in the body.
+- **Knowledge links** — `[[wikilinks]]` open or create the note; `#tags` jump into a workspace search; `[TOC]` renders as a clickable table of contents.
+- **Frontmatter & structure** — YAML frontmatter is preserved verbatim; headings fold; links and footnote references show hover previews.
+- **Links that behave** — `Cmd/Ctrl+click` goes straight to the target: external URLs to the browser, local files in-app, `#anchors` within the document.
+- **External changes** — a clean tab reloads automatically when its file changes on disk; edited tabs get a conflict prompt instead of a silent overwrite.
 
-当前提交的 `fastdev` 全量测试为 806 项通过、0 失败，另有 1 项手动性能诊断默认跳过。10 MiB 样本的构建与首次绘制单次约需 2.90 秒，连续测试绘制 p95 约 39.5 毫秒；普通编辑更新仍约需 337 毫秒。这些数据不能代替真实窗口可输入与输入响应验收。macOS `.app`、`.pkg` 和 Windows x64 内部安装器已用当前代码重新构建；Windows 实机运行尚未验收。最新布局可看[界面原型图](docs/design/界面原型-最新.png)，但当前远程图形会话无法获取真实原生窗口截图；整机性能阈值仍待验收。
+### Navigation & windows
 
-## 设计文档
+- **⌘P quick switcher** with IME-friendly input, **⇧⌘P command palette** covering every command.
+- **Tabs merged into the title bar** — drag to reorder, `⌘1–9` to jump, middle-click to close, right-click for bulk close.
+- **Cursor history** — `⌥⌘←` / `⌥⌘→` walk back and forward across files.
+- **Session & windows** — welcome page for empty workspaces, previous session's tabs restored on launch, window size and position remembered, `⌘+` / `⌘−` / `⌘0` zoom, fullscreen toggle.
+- **Status bar** — word and selection counts, estimated reading time, clickable breadcrumb path.
 
-- [Velora 原生编辑器设计](docs/plans/2026-09-24-velora-gpui-editor-design.md)
-- [界面原型](docs/design/界面原型.html)
-- [界面原型说明](docs/design/界面原型说明.md)
-- [主题与长文排版](docs/design/主题与长文排版.md)
-- [文内查找](docs/design/文内查找.md)
-- [六套内置主题静态预览](docs/design/主题预览.png)
-- [Velora 更名与界面调整验收](docs/验收记录/2026-09-25-Velora-更名与界面调整.md)
-- [主题与排版开发验证](docs/验收记录/2026-09-25-主题与排版开发验证.md)
-- [大文件初始化诊断](docs/benchmarks/2026-09-25-大文件诊断.md)
-- [首版开发验证记录](docs/验收记录/2026-09-25-首版开发验证.md)
+### Reliability & performance
 
+- **Your text survives** — autosave with a configurable debounce, atomic writes (temp file + rename), and automatic recovery of unsaved content after a crash.
+- **Big documents stay fast** — a 10 MiB, \~160,000-block manuscript opens in about 1.2 s (debug build): the first screen builds synchronously while the rest streams in through background chunks.
+- **Fast startup** — initialization is spread across frames; roughly 0.7 s to the first window in a debug build.
+- **Guarded by tests** — 900+ automated tests, golden snapshots of rendered block structure, and a per-block import budget that fails CI on regression.
+
+### Export
+
+- **Formats** — single-file HTML with images embedded as data URIs, PDF, full-height PNG capture, system printing, and copy-as-HTML.
+- **Export theme** — pick *current*, *light* or *dark* for anything you export.
+- **Chromium requirement** — PDF, printing and PNG rendering go through a headless Chromium. Have Chrome, Chromium or Edge installed, or point the `CHROME` environment variable at a browser binary.
+
+### Look & feel
+
+- **Six built-in themes** — Velora Light / Dark, Paper, Forest, Midnight and Ink — plus automatic switching with the system appearance; custom theme packs load from the user directory.
+- **Focus & typewriter modes**, adjustable body/code fonts and sizes, and a configurable writing measure.
+- **Bilingual UI** — Simplified Chinese and English built in; external language packs load by dropping them into the user directory.
+- **In-app preferences** — one window for files, themes, images, shortcuts, window and status-bar options.
+
+## ⌨️ Keyboard shortcuts
+
+macOS keys shown; Ctrl-based equivalents work on other platforms. Shortcuts are customizable in Settings → Shortcuts.
+
+| Keys | Action |
+| --- | --- |
+| `⌘P` | Quick file switcher |
+| `⇧⌘P` | Command palette |
+| `⌘F` | Find & replace (`⌘G` next match, `⇧⌘G` previous) |
+| `⌃Tab` | Toggle WYSIWYG / source mode |
+| `⌘B` / `⌘I` / `⌘U` / `` ⌘` `` | Bold / italic / underline / inline code |
+| `⌘S` / `⇧⌘S` | Save / save as |
+| `⇧⌘C` | Copy selection or document as HTML |
+| `⌥⌘P` | Print |
+| `⌘1`–`⌘9` | Switch to tab N |
+| `⌥⌘←` / `⌥⌘→` | Cursor history: back / forward |
+| `⌘+` / `⌘−` / `⌘0` | Zoom in / out / reset |
+| `⌃⌘F` / `F11` | Toggle fullscreen |
+| `⌃W` | Toggle sidebar |
+| `⌘N` / `⌘O` | New window / open file |
+
+## 🚀 Building from source
+
+Requires **Rust 1.88 or newer**.
+
+The repository's `.cargo/config.toml` wires `sccache` in as the compiler cache wrapper, so make sure it is installed first:
+
+```bash
+cargo install --locked sccache --version 0.17.0
+```
+
+Then:
+
+```bash
+cargo build
+cargo run                       # launch with an empty window
+cargo run /path/to/workspace    # open a folder as a workspace
+cargo test
+```
+
+## 📦 Release packages
+
+- **macOS** — run `scripts/package-macos.sh` to produce `dist/velora.app` and `dist/velora-0.1.0.pkg`. The package is unsigned and unnotarized, intended for local and small-scale internal use.
+- **Windows** — `scripts/package-windows.sh` cross-builds an x64 installer from macOS (needs MinGW-w64 and NSIS) and produces `dist/velora-0.1.0-windows-x64-setup.exe`. On-device Windows validation is scheduled for the next release.
+
+## ⚙️ Configuration
+
+Configuration lives in the OS app-config directory (`~/Library/Application Support/velora/` on macOS):
+
+| File / folder | Purpose |
+| --- | --- |
+| `config.toml` | Preferences — most entries are editable in the preferences window |
+| `session.json` | Per-workspace open tabs, active tab and sidebar width |
+| `languages/` | External language packs |
+| `themes/` | External theme packs |
+
+The main `config.toml` sections:
+
+| Section | Keys | Controls |
+| --- | --- | --- |
+| `[window]` | `default_window_width`, `default_window_height`, `open_position`, `remember_bounds`, `zoom_percent` | Default size, centered vs. remembered opening position, window memory, UI zoom |
+| `[editor]` | `tree_sort`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width` | File-tree sort, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width |
+| `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |
+
+## 📄 License
+
+[Apache-2.0](LICENSE-APACHE)
