@@ -3385,6 +3385,71 @@ async fn toc_block_renders_entries_and_jumps_to_heading(cx: &mut TestAppContext)
     });
 }
 
+#[gpui::test]
+async fn tree_copy_then_paste_duplicates_file_into_selected_folder(cx: &mut TestAppContext) {
+    // roadmap D6：树右键 复制 → 目标目录 粘贴 生成副本。
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-tree-paste-{}", uuid::Uuid::new_v4()));
+    let sub = root.join("notes");
+    std::fs::create_dir_all(&sub).expect("create sub");
+    let doc = root.join("alpha.md");
+    std::fs::write(&doc, "# Alpha\n").expect("write doc");
+
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, String::new(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.select_workspace_path_for_test(doc.clone(), cx);
+        editor.copy_selected_workspace_file(cx);
+        assert_eq!(editor.tree_clipboard.as_deref(), Some(doc.as_path()));
+        editor.select_workspace_path_for_test(sub.clone(), cx);
+        editor.paste_into_workspace_tree(cx);
+    });
+
+    let pasted = sub.join("alpha copy.md");
+    assert!(pasted.exists(), "paste should create the copy in the folder");
+    assert_eq!(std::fs::read_to_string(&pasted).unwrap(), "# Alpha\n");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn tree_paste_writes_clipboard_image_with_date_hash_name(cx: &mut TestAppContext) {
+    // roadmap D6：剪贴板图片粘贴到树，沿用 B10 命名模板。
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-tree-img-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, String::new(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.tree_clipboard = None;
+        cx.write_to_clipboard(gpui::ClipboardItem::new_image(&gpui::Image::from_bytes(
+            gpui::ImageFormat::Png,
+            vec![0x89, b'P', b'N', b'G'],
+        )));
+        editor.select_workspace_path_for_test(root.clone(), cx);
+        editor.paste_into_workspace_tree(cx);
+    });
+
+    let entries: Vec<_> = std::fs::read_dir(&root)
+        .expect("read root")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    let image_name = entries
+        .iter()
+        .find(|name| name.ends_with(".png"))
+        .unwrap_or_else(|| panic!("expected a pasted png, got {entries:?}"));
+    let stem = image_name.trim_end_matches(".png");
+    let parts: Vec<&str> = stem.rsplitn(2, '-').collect();
+    assert_eq!(parts[0].len(), 8, "hash suffix: {stem}");
+    assert!(parts[0].chars().all(|ch| ch.is_ascii_hexdigit()));
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn copy_as_html_item_carries_html_flavor() {
     // roadmap F2 增强：纯文本 flavor 保留 HTML 源码，同时附带 text/html flavor。

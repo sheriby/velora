@@ -124,6 +124,8 @@ enum WorkspaceMenuAction {
     NewFile,
     NewFolder,
     Duplicate,
+    Copy,
+    Paste,
     Rename,
     Delete,
 }
@@ -293,6 +295,65 @@ impl Default for WorkspaceState {
             panel_width: None,
             resize_drag: None,
         }
+    }
+}
+
+/// 「<名> copy[ 序号]」式唯一副本路径（roadmap D6，与右键「创建副本」共用）。
+pub(crate) fn unique_workspace_copy_path(dir: &Path, source: &Path) -> PathBuf {
+    let stem = source
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let extension = source
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    let mut candidate = dir.join(format!("{stem} copy{extension}"));
+    let mut counter = 2u32;
+    while candidate.exists() {
+        candidate = dir.join(format!("{stem} copy {counter}{extension}"));
+        counter += 1;
+    }
+    candidate
+}
+
+fn unique_workspace_file_name(dir: &Path, preferred_name: &str) -> PathBuf {
+    let preferred = Path::new(preferred_name);
+    let stem = preferred
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("image");
+    let extension = preferred
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    let mut candidate = dir.join(preferred_name);
+    let mut counter = 2u32;
+    while candidate.exists() {
+        candidate = dir.join(format!("{stem} {counter}{extension}"));
+        counter += 1;
+    }
+    candidate
+}
+
+/// 剪贴板图片字节的 8 位十六进制摘要（与编辑器粘贴命名一致，roadmap D6/B10）。
+pub(crate) fn pasted_image_bytes_hash(bytes: &[u8]) -> String {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:08x}", hasher.finish() as u32)
+}
+
+pub(crate) fn clipboard_image_extension(format: gpui::ImageFormat) -> &'static str {
+    match format {
+        gpui::ImageFormat::Png => "png",
+        gpui::ImageFormat::Jpeg => "jpg",
+        gpui::ImageFormat::Webp => "webp",
+        gpui::ImageFormat::Gif => "gif",
+        gpui::ImageFormat::Svg => "svg",
+        gpui::ImageFormat::Bmp => "bmp",
+        gpui::ImageFormat::Tiff => "tiff",
     }
 }
 
@@ -1349,6 +1410,10 @@ impl Editor {
                         strings.workspace_duplicate.clone(),
                         WorkspaceMenuAction::Duplicate,
                     ));
+                    actions.push((
+                        strings.workspace_copy.clone(),
+                        WorkspaceMenuAction::Copy,
+                    ));
                 }
             }
             actions.push((
@@ -1356,6 +1421,10 @@ impl Editor {
                 WorkspaceMenuAction::Delete,
             ));
         }
+        actions.push((
+            strings.workspace_paste.clone(),
+            WorkspaceMenuAction::Paste,
+        ));
         let width = 180.0;
         let height = actions.len() as f32 * 32.0 + 8.0;
         let viewport = window.viewport_size();
@@ -1402,6 +1471,12 @@ impl Editor {
                                 }
                                 WorkspaceMenuAction::Duplicate => {
                                     editor.duplicate_selected_file(window, cx)
+                                }
+                                WorkspaceMenuAction::Copy => {
+                                    editor.copy_selected_workspace_file(cx)
+                                }
+                                WorkspaceMenuAction::Paste => {
+                                    editor.paste_into_workspace_tree(cx)
                                 }
                                 WorkspaceMenuAction::Delete => {
                                     editor.prompt_delete_selected(window, cx)
@@ -2410,21 +2485,8 @@ impl Editor {
         let Ok(contents) = fs::read(&source) else {
             return;
         };
-        let stem = source
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let extension = source
-            .extension()
-            .map(|extension| format!(".{}", extension.to_string_lossy()))
-            .unwrap_or_default();
         let parent = source.parent().unwrap_or(Path::new(""));
-        let mut candidate = parent.join(format!("{stem} copy{extension}"));
-        let mut counter = 2u32;
-        while candidate.exists() {
-            candidate = parent.join(format!("{stem} copy {counter}{extension}"));
-            counter += 1;
-        }
+        let candidate = unique_workspace_copy_path(parent, &source);
         if let Err(error) = fs::write(&candidate, contents) {
             self.workspace.file_error = Some(error.to_string());
             cx.notify();
@@ -2433,6 +2495,115 @@ impl Editor {
         self.refresh_workspace_tree(cx);
         cx.notify();
         let _ = window;
+    }
+
+    /// 测试用：按路径设置树选中项（等价于点击该节点）。
+    #[cfg(test)]
+    pub(crate) fn select_workspace_path_for_test(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.selected = Some(if path.is_dir() {
+            WorkspaceSelection::Directory(path)
+        } else {
+            WorkspaceSelection::File(path)
+        });
+        cx.notify();
+    }
+
+    /// 树右键「复制」：记录源文件并写入系统剪贴板（roadmap D6）。
+    pub(crate) fn copy_selected_workspace_file(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = self.selected_workspace_path() else {
+            return;
+        };
+        if source.is_dir() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            source.to_string_lossy().into_owned(),
+        ));
+        self.tree_clipboard = Some(source);
+        cx.notify();
+    }
+
+    /// 树右键「粘贴」：把已复制的文件或剪贴板图片落到目标目录（roadmap D6）。
+    pub(crate) fn paste_into_workspace_tree(&mut self, cx: &mut Context<Self>) {
+        let Some(target_dir) = self.workspace_paste_target_dir() else {
+            return;
+        };
+        if let Err(error) = fs::create_dir_all(&target_dir) {
+            self.workspace.file_error = Some(error.to_string());
+            cx.notify();
+            return;
+        }
+
+        if let Some(source) = self.tree_clipboard.clone().filter(|path| path.is_file()) {
+            match fs::read(&source) {
+                Ok(contents) => {
+                    let candidate = unique_workspace_copy_path(&target_dir, &source);
+                    if let Err(error) = fs::write(&candidate, contents) {
+                        self.workspace.file_error = Some(error.to_string());
+                    } else {
+                        self.refresh_workspace_tree(cx);
+                    }
+                    cx.notify();
+                    return;
+                }
+                Err(error) => {
+                    self.workspace.file_error = Some(error.to_string());
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+
+        let image = cx.read_from_clipboard().and_then(|item| {
+            item.entries().iter().find_map(|entry| match entry {
+                gpui::ClipboardEntry::Image(image) => Some(image.clone()),
+                gpui::ClipboardEntry::String(_) => None,
+            })
+        });
+        let Some(image) = image else {
+            self.workspace.file_error = Some(
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .workspace_paste_empty
+                    .clone(),
+            );
+            cx.notify();
+            return;
+        };
+
+        let file_name = format!(
+            "{}-{}.{}",
+            crate::config::today_local_date(),
+            pasted_image_bytes_hash(&image.bytes),
+            clipboard_image_extension(image.format)
+        );
+        let candidate = unique_workspace_file_name(&target_dir, &file_name);
+        if let Err(error) = fs::write(&candidate, &image.bytes) {
+            self.workspace.file_error = Some(error.to_string());
+        } else {
+            self.refresh_workspace_tree(cx);
+        }
+        cx.notify();
+    }
+
+    /// 粘贴目标目录：选中目录用其本身，选中文件用其父目录，否则工作区根。
+    fn workspace_paste_target_dir(&self) -> Option<PathBuf> {
+        match self.workspace.selected.as_ref() {
+            Some(WorkspaceSelection::Directory(path)) => Some(path.clone()),
+            Some(WorkspaceSelection::File(path)) => {
+                if path.is_dir() {
+                    Some(path.clone())
+                } else {
+                    path.parent().map(Path::to_path_buf)
+                }
+            }
+            Some(WorkspaceSelection::WorkspaceRoot(path)) => Some(path.clone()),
+            _ => self.workspace.root.clone(),
+        }
     }
 
     /// Double-clicking an outline heading enters rename mode: the caret jumps

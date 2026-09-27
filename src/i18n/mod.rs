@@ -367,6 +367,9 @@ pub struct I18nStrings {
     pub menu_copy_as_html: String,
     /// Workspace action: duplicate the selected file.
     pub workspace_duplicate: String,
+    pub workspace_copy: String,
+    pub workspace_paste: String,
+    pub workspace_paste_empty: String,
     /// Hover tooltip prefix for footnote references.
     pub hover_footnote_prefix: String,
     /// Hover tooltip marker: local target exists.
@@ -693,6 +696,9 @@ struct I18nStringsDe {
     status_bar_long_block_source: Option<String>,
     menu_copy_as_html: Option<String>,
     workspace_duplicate: Option<String>,
+    workspace_copy: Option<String>,
+    workspace_paste: Option<String>,
+    workspace_paste_empty: Option<String>,
     hover_footnote_prefix: Option<String>,
     hover_target_exists: Option<String>,
     hover_target_missing: Option<String>,
@@ -961,6 +967,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "status_bar_long_block_source",
     "menu_copy_as_html",
     "workspace_duplicate",
+    "workspace_copy",
+    "workspace_paste",
+    "workspace_paste_empty",
     "hover_footnote_prefix",
     "hover_target_exists",
     "hover_target_missing",
@@ -1585,6 +1594,11 @@ impl I18nStringsDe {
             workspace_duplicate: self
                 .workspace_duplicate
                 .unwrap_or(defaults.workspace_duplicate),
+            workspace_copy: self.workspace_copy.unwrap_or(defaults.workspace_copy),
+            workspace_paste: self.workspace_paste.unwrap_or(defaults.workspace_paste),
+            workspace_paste_empty: self
+                .workspace_paste_empty
+                .unwrap_or(defaults.workspace_paste_empty),
             hover_footnote_prefix: self
                 .hover_footnote_prefix
                 .unwrap_or(defaults.hover_footnote_prefix),
@@ -1960,6 +1974,9 @@ impl I18nStrings {
             status_bar_long_block_source: "长段落·源码渲染".into(),
             menu_copy_as_html: "复制为 HTML".into(),
             workspace_duplicate: "创建副本".into(),
+            workspace_copy: "复制".into(),
+            workspace_paste: "粘贴".into(),
+            workspace_paste_empty: "剪贴板没有可粘贴的文件或图片".into(),
             hover_footnote_prefix: "脚注".into(),
             hover_target_exists: "目标存在".into(),
             hover_target_missing: "目标不存在".into(),
@@ -2261,6 +2278,9 @@ impl I18nStrings {
             status_bar_long_block_source: "Long block: source".into(),
             menu_copy_as_html: "Copy as HTML".into(),
             workspace_duplicate: "Duplicate".into(),
+            workspace_copy: "Copy".into(),
+            workspace_paste: "Paste".into(),
+            workspace_paste_empty: "Nothing to paste: clipboard holds no file or image".into(),
             hover_footnote_prefix: "Footnote".into(),
             hover_target_exists: "target exists".into(),
             hover_target_missing: "target missing".into(),

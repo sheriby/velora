@@ -93,6 +93,8 @@ pub struct Editor {
     document_revision: u64,
     /// 长块护栏提示缓存：(文档修订, 是否含超长块)（roadmap B12）。
     long_source_block_hint: Option<(u64, bool)>,
+    /// 文件树「复制」暂存的源文件路径（roadmap D6）。
+    pub(crate) tree_clipboard: Option<std::path::PathBuf>,
     autosave_task: Option<Task<()>>,
     recovery_id: uuid::Uuid,
     recovery_source_path: Option<PathBuf>,
@@ -415,6 +417,7 @@ impl Editor {
             document_dirty: false,
             document_revision: 0,
             long_source_block_hint: None,
+            tree_clipboard: None,
             autosave_task: None,
             recovery_id: uuid::Uuid::new_v4(),
             recovery_source_path: None,

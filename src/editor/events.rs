@@ -302,17 +302,6 @@ impl Editor {
             .map(Path::to_path_buf)
     }
 
-    fn clipboard_image_extension(format: ImageFormat) -> &'static str {
-        match format {
-            ImageFormat::Png => "png",
-            ImageFormat::Jpeg => "jpg",
-            ImageFormat::Webp => "webp",
-            ImageFormat::Gif => "gif",
-            ImageFormat::Svg => "svg",
-            ImageFormat::Bmp => "bmp",
-            ImageFormat::Tiff => "tiff",
-        }
-    }
 
     fn image_target_dir(
         &self,
@@ -440,7 +429,7 @@ impl Editor {
                     "{}-{}.{}",
                     crate::config::today_local_date(),
                     Self::pasted_image_hash(&image.bytes),
-                    Self::clipboard_image_extension(image.format)
+                    super::workspace::clipboard_image_extension(image.format)
                 );
                 let target = Self::unique_file_path(&target_dir, &file_name);
                 fs::write(&target, &image.bytes)
