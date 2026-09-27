@@ -374,6 +374,9 @@ impl Editor {
     /// Root blocks imported per streaming step while the rest of a huge
     /// document arrives.
     const STEADY_CHUNK_ROOTS: usize = 250;
+    /// 代码/纯文本文档每个流式步骤 materialize 的分块数（每块
+    /// `SOURCE_DOCUMENT_CHUNK_LINES` 行）。
+    const CODE_CHUNKS_PER_STEP: usize = 4;
 
     pub fn from_markdown(
         cx: &mut Context<Self>,
@@ -578,6 +581,47 @@ impl Editor {
         let Some(tail) = self.document.pending_tail().cloned() else {
             return false;
         };
+
+        // 代码/纯文本文档：每个步骤按 SOURCE_DOCUMENT_CHUNK_LINES 行粒度
+        // 建最多 CODE_CHUNKS_PER_STEP 个等宽 CodeBlock，块粒度与整开一致。
+        if self.code_document {
+            let step_lines =
+                file_drop::SOURCE_DOCUMENT_CHUNK_LINES * Self::CODE_CHUNKS_PER_STEP;
+            let step_end = (tail.next_line + step_lines).min(tail.lines.len());
+            let kind = self
+                .document
+                .first_root()
+                .map(|block| block.read(cx).kind())
+                .unwrap_or(BlockKind::Paragraph);
+            let mut roots = Vec::new();
+            let mut next_line = tail.next_line;
+            while next_line < step_end {
+                let take = file_drop::SOURCE_DOCUMENT_CHUNK_LINES.min(step_end - next_line);
+                let text = tail.lines[next_line..next_line + take].join("\n");
+                let line_start = next_line + 1;
+                let block = Self::new_block(cx, BlockRecord::with_plain_text(kind.clone(), text));
+                block.update(cx, |block, _cx| {
+                    block.set_source_document_mode();
+                    block.set_source_line_start(line_start);
+                });
+                roots.push(block);
+                next_line += take;
+            }
+            self.document.append_roots(roots, cx);
+
+            if next_line < tail.lines.len() {
+                self.document.set_pending_tail(Some(PendingTail {
+                    lines: tail.lines,
+                    next_line,
+                    previous_root_is_list_item: false,
+                }));
+                cx.notify();
+                return true;
+            }
+            self.document.set_pending_tail(None);
+            self.finish_pending_materialization(cx);
+            return false;
+        }
 
         let (roots, consumed) = Self::build_root_block_chunk(
             cx,

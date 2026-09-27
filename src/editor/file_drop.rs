@@ -1,10 +1,12 @@
 //! External Markdown file drops for replacing the current editor window.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context as AnyhowContext, Result};
 use gpui::*;
 
+use super::tree::PendingTail;
 use super::{Editor, ViewMode};
 use crate::components::{Block, BlockKind, BlockRecord};
 use crate::i18n::I18nManager;
@@ -12,7 +14,7 @@ use crate::i18n::I18nManager;
 /// 源码文档分块的每块行数（docs/architecture/performance.md P2）。视口
 /// 窗口化以块为粒度裁剪，块太大则单块即窗口；512 行约几十 KB，足以让
 /// 10 MiB 日志保持几十个块，又不至于让块数量本身成为开销。
-const SOURCE_DOCUMENT_CHUNK_LINES: usize = 512;
+pub(super) const SOURCE_DOCUMENT_CHUNK_LINES: usize = 512;
 
 /// 把源码文本按行切成若干块。各块文本不含块间换行符：把分块结果用
 /// `'\n'` 连接即可逐字节还原输入（空文本返回单个空块）。
@@ -217,10 +219,12 @@ impl Editor {
         self.code_uses_crlf = is_code && markdown.contains("\r\n");
         let source_mode_fallback_required =
             !is_code && Self::markdown_requires_source_mode_fallback(&normalized);
+        let mut pending_code_tail = None;
         let mut roots = if is_code || source_mode_fallback_required {
             // 大纯文本文件不再整文件压进单块：按行分块让视口窗口化能裁剪
             // 屏外内容（docs/architecture/performance.md P2）。各块文本不含
             // 块间换行符，`raw_source_text` 用 '\n' 连接即逐字节还原。
+            // 首块同步建、其余经 PendingTail 后台续建（P2c）。
             let chunk_kind = if is_code {
                 BlockKind::CodeBlock {
                     language: code_language,
@@ -228,7 +232,18 @@ impl Editor {
             } else {
                 BlockKind::Paragraph
             };
-            Self::build_source_document_roots(chunk_kind, &normalized, cx)
+            let lines = Arc::new(Self::split_markdown_lines(&normalized));
+            let first_lines = lines.len().min(SOURCE_DOCUMENT_CHUNK_LINES);
+            let first_text = lines[..first_lines].join("\n");
+            let built = Self::build_source_document_roots(chunk_kind, &first_text, cx);
+            if is_code && first_lines < lines.len() {
+                pending_code_tail = Some(PendingTail {
+                    lines,
+                    next_line: first_lines,
+                    previous_root_is_list_item: false,
+                });
+            }
+            built
         } else {
             Self::build_root_blocks_from_markdown(cx, &normalized)
         };
@@ -247,6 +262,10 @@ impl Editor {
         };
         self.source_mode_fallback_required = source_mode_fallback_required;
         self.document.replace_roots(roots, cx);
+        if let Some(tail) = pending_code_tail {
+            self.document.set_pending_tail(Some(tail));
+            self.start_pending_materialization_task(cx);
+        }
         self.table_cells.clear();
         self.rebuild_table_runtimes(cx);
         self.rebuild_image_runtimes(cx);

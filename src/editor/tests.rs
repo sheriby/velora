@@ -226,6 +226,7 @@ async fn code_source_chunks_round_trip_and_continue_line_numbers(cx: &mut TestAp
     let (editor, cx) = cx.add_window_view(move |_window, cx| {
         Editor::from_file_source(cx, source.clone(), Some(path.clone()))
     });
+    cx.run_until_parked();
     editor.read_with(cx, |editor, cx| {
         assert!(matches!(editor.view_mode, ViewMode::Source));
         let blocks = editor.document.visible_blocks();
@@ -295,6 +296,7 @@ async fn backspace_at_chunk_start_merges_previous_chunk(cx: &mut TestAppContext)
 
     let editor =
         cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
+    cx.run_until_parked();
     editor
         .update(cx, |editor, window, cx| {
             let blocks = editor.document.flatten_visible_blocks();
@@ -341,6 +343,7 @@ async fn enter_at_chunk_end_inserts_boundary_chunk(cx: &mut TestAppContext) {
 
     let editor =
         cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
+    cx.run_until_parked();
     editor
         .update(cx, |editor, window, cx| {
             let blocks = editor.document.flatten_visible_blocks();
@@ -379,6 +382,7 @@ async fn delete_at_chunk_end_merges_next_chunk(cx: &mut TestAppContext) {
 
     let editor =
         cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
+    cx.run_until_parked();
     editor
         .update(cx, |editor, window, cx| {
             let blocks = editor.document.flatten_visible_blocks();
@@ -6309,4 +6313,55 @@ async fn every_registered_command_has_a_handler(cx: &mut TestAppContext) {
     }
 
     assert!(missing.is_empty(), "以下命令没有处理者：{missing:?}");
+}
+
+#[gpui::test]
+async fn tmp_debug_merge_state(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = chunk_boundary_source();
+    let path = std::env::temp_dir().join(format!("velora-chunk-dbg-{}.log", std::process::id()));
+    fs::write(&path, &source).expect("write chunk fixture");
+
+    let editor =
+        cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
+    cx.run_until_parked();
+    editor
+        .read_with(cx, |editor, _cx| {
+            for (index, visible) in editor.document.visible_blocks().iter().enumerate() {
+                let text = visible.entity.read(_cx).display_text();
+                println!("before block[{index}] id={:?} len={}", visible.entity.entity_id(), text.len());
+            }
+        })
+        .expect("open");
+    editor
+        .update(cx, |editor, window, cx| {
+            let blocks = editor.document.flatten_visible_blocks();
+            let second = blocks[1].entity.clone();
+            second.update(cx, |block, cx| {
+                block.selected_range = 0..0;
+                block.on_delete_back(&DeleteBack, window, cx);
+            });
+        })
+        .expect("edit");
+    editor
+        .read_with(cx, |editor, _cx| {
+            let blocks = editor.document.visible_blocks();
+            println!("pre-park: {} blocks", blocks.len());
+            for (index, visible) in blocks.iter().enumerate() {
+                let text = visible.entity.read(_cx).display_text();
+                println!("pre-park block[{index}] id={:?} len={}", visible.entity.entity_id(), text.len());
+            }
+        })
+        .expect("read");
+    cx.run_until_parked();
+    editor
+        .read_with(cx, |editor, _cx| {
+            let blocks = editor.document.visible_blocks();
+            println!("after merge: {} blocks", blocks.len());
+            for (index, visible) in blocks.iter().enumerate() {
+                let text = visible.entity.read(_cx).display_text();
+                println!("block[{index}] id={:?} len={}", visible.entity.entity_id(), text.len());
+            }
+        })
+        .expect("read");
 }
