@@ -204,6 +204,50 @@ impl Editor {
         self.pending_scroll_active_block_into_view = true;
     }
 
+    /// 折叠标题后，若当前编辑目标落在被隐藏的章节区间内，把焦点移回标题：
+    /// 隐藏块不再渲染，键盘事件会静默丢失（roadmap C7）。
+    fn refocus_caret_hidden_by_fold(
+        &mut self,
+        heading: &Entity<super::Block>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) = self.current_edit_target_from_state(cx) else {
+            return;
+        };
+        if target.entity_id() == heading.entity_id() {
+            return;
+        }
+        let visible = self.document.visible_blocks();
+        let Some(heading_index) = visible
+            .iter()
+            .position(|visible| visible.entity.entity_id() == heading.entity_id())
+        else {
+            return;
+        };
+        let Some(target_index) = visible
+            .iter()
+            .position(|visible| visible.entity.entity_id() == target.entity_id())
+        else {
+            return;
+        };
+        if target_index <= heading_index {
+            return;
+        }
+        let level = match heading.read(cx).kind() {
+            BlockKind::Heading { level } => level,
+            _ => return,
+        };
+        let inside_section = visible[heading_index + 1..target_index]
+            .iter()
+            .all(|visible| match visible.entity.read(cx).kind() {
+                BlockKind::Heading { level: inner } => inner > level,
+                _ => true,
+            });
+        if inside_section {
+            self.focus_block(heading.entity_id());
+        }
+    }
+
     fn reset_block_cursor(block: &Entity<super::Block>, cursor: usize, cx: &mut Context<Self>) {
         block.update(cx, move |block, cx| {
             block.selected_range = cursor..cursor;
@@ -1670,6 +1714,14 @@ impl Editor {
                 self.mark_dirty(cx);
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture(cx);
+            }
+            BlockEvent::RequestToggleFold => {
+                let folding_on = !block.read(cx).folded;
+                block.update(cx, |block, _cx| block.folded = folding_on);
+                if folding_on {
+                    self.refocus_caret_hidden_by_fold(&block, cx);
+                }
+                cx.notify();
             }
             BlockEvent::RequestNewline {
                 trailing,

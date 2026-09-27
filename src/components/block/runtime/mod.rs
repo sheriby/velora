@@ -120,6 +120,10 @@ pub struct Block {
     /// Heading fold state (roadmap C7): when true, the section content below
     /// this heading is hidden.
     pub(crate) folded: bool,
+    /// Whether this heading owns section content, i.e. folding it would hide
+    /// anything. Recomputed by the editor's fold filter each render; the
+    /// chevron only renders when true (or when already folded).
+    pub(crate) foldable: bool,
     /// 会话内图片宽度缩放因子（roadmap C10 拖拽缩放），1.0 = 默认。
     pub(crate) image_width_factor: f32,
     /// Active image resize drag: pointer X at drag start + factor at start.
@@ -235,6 +239,7 @@ impl Block {
             search_highlight_ranges: Vec::new(),
             tag_query: None,
             folded: false,
+            foldable: false,
             image_width_factor: 1.0,
             image_resize_drag: None,
             wikilink_target: None,

@@ -27,6 +27,12 @@ const BULLET_HOLLOW: &str = "\u{25E6}";
 const BULLET_SQUARE: &str = "\u{25A1}";
 const TASK_CHECKMARK: &str = "\u{2713}";
 
+// 标题折叠 chevron（roadmap C7）：位于标题行左侧留白内的按钮。
+const HEADING_FOLD_CHEVRON_RIGHT: &str = "icon/workspace/chevron-right.svg";
+const HEADING_FOLD_CHEVRON_DOWN: &str = "icon/workspace/chevron-down.svg";
+const HEADING_FOLD_CHEVRON_GUTTER: f32 = 18.0;
+const HEADING_FOLD_CHEVRON_ICON_SIZE: f32 = 12.0;
+
 fn bulleted_list_marker(depth: usize) -> &'static str {
     match depth {
         0 => BULLET_FILLED,
@@ -1867,6 +1873,55 @@ impl Block {
         container.into_any_element()
     }
 
+    /// 标题折叠 chevron（roadmap C7）：绝对定位在标题行左侧留白里，不改变
+    /// 正文起始位置；只有含章节内容的标题（或已折叠的标题）才渲染它。
+    /// 点击只发出事件，折叠状态由编辑器统一翻转，避免顺带移动光标。
+    fn heading_fold_row(
+        &self,
+        row: Stateful<Div>,
+        text: AnyElement,
+        font_size: f32,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        if !self.foldable && !self.folded {
+            return row.child(text);
+        }
+        let c = &theme.colors;
+        let folded = self.folded;
+        let chevron = div()
+            .id("heading-fold-chevron")
+            .absolute()
+            .left(px(-HEADING_FOLD_CHEVRON_GUTTER))
+            .top(px(0.0))
+            .w(px(HEADING_FOLD_CHEVRON_GUTTER))
+            .h(px(font_size * 1.4))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .cursor(CursorStyle::PointingHand)
+            .hover(|style| style.bg(c.dialog_secondary_button_hover))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_block, _event, _window, cx| {
+                    cx.stop_propagation();
+                    cx.emit(BlockEvent::RequestToggleFold);
+                }),
+            )
+            .child(
+                svg()
+                    .path(if folded {
+                        HEADING_FOLD_CHEVRON_RIGHT
+                    } else {
+                        HEADING_FOLD_CHEVRON_DOWN
+                    })
+                    .size(px(HEADING_FOLD_CHEVRON_ICON_SIZE))
+                    .text_color(c.dialog_muted),
+            );
+        row.child(div().relative().w_full().child(chevron).child(text))
+    }
+
     fn render_shell(
         &self,
         block_id: ElementId,
@@ -2212,15 +2267,8 @@ impl Render for Block {
                         .rounded(px(999.0)),
                 )
                 .into_any_element(),
-            BlockKind::Heading { level: 1 } => focused_base
-                .text_size(px(t.h1_size))
-                .font_weight(t.h1_weight.to_font_weight())
-                .text_color(c.text_h1)
-                .pb(px(d.h1_padding_bottom))
-                .mb(px(d.h1_margin_bottom))
-                .border_b(px(d.h1_border_width))
-                .border_color(c.border_h1)
-                .child(self.render_text_or_mixed_inline_visuals(
+            BlockKind::Heading { level: 1 } => {
+                let text = self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
                     is_placeholder,
@@ -2230,17 +2278,25 @@ impl Render for Block {
                     t.h1_size,
                     t.h1_weight.to_font_weight(),
                     cx,
-                ))
-                .into_any_element(),
-            BlockKind::Heading { level: 2 } => focused_base
-                .text_size(px(t.h2_size))
-                .font_weight(t.h2_weight.to_font_weight())
-                .text_color(c.text_h2)
-                .pb(px(d.h1_padding_bottom))
-                .mb(px(d.h1_margin_bottom))
-                .border_b(px(d.h1_border_width))
-                .border_color(c.border_h2)
-                .child(self.render_text_or_mixed_inline_visuals(
+                );
+                self.heading_fold_row(
+                    focused_base
+                        .text_size(px(t.h1_size))
+                        .font_weight(t.h1_weight.to_font_weight())
+                        .text_color(c.text_h1)
+                        .pb(px(d.h1_padding_bottom))
+                        .mb(px(d.h1_margin_bottom))
+                        .border_b(px(d.h1_border_width))
+                        .border_color(c.border_h1),
+                    text,
+                    t.h1_size,
+                    &theme,
+                    cx,
+                )
+                .into_any_element()
+            }
+            BlockKind::Heading { level: 2 } => {
+                let text = self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
                     is_placeholder,
@@ -2250,13 +2306,25 @@ impl Render for Block {
                     t.h2_size,
                     t.h2_weight.to_font_weight(),
                     cx,
-                ))
-                .into_any_element(),
-            BlockKind::Heading { level: 3 } => focused_base
-                .text_size(px(t.h3_size))
-                .font_weight(t.h3_weight.to_font_weight())
-                .text_color(c.text_h3)
-                .child(self.render_text_or_mixed_inline_visuals(
+                );
+                self.heading_fold_row(
+                    focused_base
+                        .text_size(px(t.h2_size))
+                        .font_weight(t.h2_weight.to_font_weight())
+                        .text_color(c.text_h2)
+                        .pb(px(d.h1_padding_bottom))
+                        .mb(px(d.h1_margin_bottom))
+                        .border_b(px(d.h1_border_width))
+                        .border_color(c.border_h2),
+                    text,
+                    t.h2_size,
+                    &theme,
+                    cx,
+                )
+                .into_any_element()
+            }
+            BlockKind::Heading { level: 3 } => {
+                let text = self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
                     is_placeholder,
@@ -2266,13 +2334,21 @@ impl Render for Block {
                     t.h3_size,
                     t.h3_weight.to_font_weight(),
                     cx,
-                ))
-                .into_any_element(),
-            BlockKind::Heading { level: 4 } => focused_base
-                .text_size(px(t.h4_size))
-                .font_weight(t.h4_weight.to_font_weight())
-                .text_color(c.text_h4)
-                .child(self.render_text_or_mixed_inline_visuals(
+                );
+                self.heading_fold_row(
+                    focused_base
+                        .text_size(px(t.h3_size))
+                        .font_weight(t.h3_weight.to_font_weight())
+                        .text_color(c.text_h3),
+                    text,
+                    t.h3_size,
+                    &theme,
+                    cx,
+                )
+                .into_any_element()
+            }
+            BlockKind::Heading { level: 4 } => {
+                let text = self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
                     is_placeholder,
@@ -2282,13 +2358,21 @@ impl Render for Block {
                     t.h4_size,
                     t.h4_weight.to_font_weight(),
                     cx,
-                ))
-                .into_any_element(),
-            BlockKind::Heading { level: 5 } => focused_base
-                .text_size(px(t.h5_size))
-                .font_weight(t.h5_weight.to_font_weight())
-                .text_color(c.text_h5)
-                .child(self.render_text_or_mixed_inline_visuals(
+                );
+                self.heading_fold_row(
+                    focused_base
+                        .text_size(px(t.h4_size))
+                        .font_weight(t.h4_weight.to_font_weight())
+                        .text_color(c.text_h4),
+                    text,
+                    t.h4_size,
+                    &theme,
+                    cx,
+                )
+                .into_any_element()
+            }
+            BlockKind::Heading { level: 5 } => {
+                let text = self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
                     is_placeholder,
@@ -2298,13 +2382,21 @@ impl Render for Block {
                     t.h5_size,
                     t.h5_weight.to_font_weight(),
                     cx,
-                ))
-                .into_any_element(),
-            BlockKind::Heading { level: 6 } => focused_base
-                .text_size(px(t.h6_size))
-                .font_weight(t.h6_weight.to_font_weight())
-                .text_color(c.text_h6)
-                .child(self.render_text_or_mixed_inline_visuals(
+                );
+                self.heading_fold_row(
+                    focused_base
+                        .text_size(px(t.h5_size))
+                        .font_weight(t.h5_weight.to_font_weight())
+                        .text_color(c.text_h5),
+                    text,
+                    t.h5_size,
+                    &theme,
+                    cx,
+                )
+                .into_any_element()
+            }
+            BlockKind::Heading { level: 6 } => {
+                let text = self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
                     is_placeholder,
@@ -2314,8 +2406,19 @@ impl Render for Block {
                     t.h6_size,
                     t.h6_weight.to_font_weight(),
                     cx,
-                ))
-                .into_any_element(),
+                );
+                self.heading_fold_row(
+                    focused_base
+                        .text_size(px(t.h6_size))
+                        .font_weight(t.h6_weight.to_font_weight())
+                        .text_color(c.text_h6),
+                    text,
+                    t.h6_size,
+                    &theme,
+                    cx,
+                )
+                .into_any_element()
+            }
             BlockKind::BulletedListItem => focused_base
                 .text_size(px(t.text_size))
                 .text_color(c.text_default)

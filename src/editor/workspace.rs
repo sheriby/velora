@@ -362,12 +362,28 @@ impl Editor {
     }
 
     /// 标题折叠（roadmap C7）：折叠标题之后的块隐藏，直到同级或更高
-    /// 级标题出现。
+    /// 级标题出现。顺带刷新每个标题的 `foldable`（其后方是否有章节内容），
+    /// 供标题行内的折叠 chevron 决定是否显示。
     pub(super) fn apply_heading_fold_filter(
         &self,
         all: Vec<super::tree::VisibleBlock>,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> Vec<super::tree::VisibleBlock> {
+        for (index, visible) in all.iter().enumerate() {
+            let level = match visible.entity.read(cx).kind() {
+                BlockKind::Heading { level } => level,
+                _ => continue,
+            };
+            let has_section = all.get(index + 1).is_some_and(|next| {
+                match next.entity.read(cx).kind() {
+                    BlockKind::Heading { level: next_level } => next_level > level,
+                    _ => true,
+                }
+            });
+            visible
+                .entity
+                .update(cx, |block, _cx| block.foldable = has_section);
+        }
         let mut filtered = Vec::with_capacity(all.len());
         let mut hide_below_level: Option<u8> = None;
         for visible in all {

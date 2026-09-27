@@ -4573,3 +4573,59 @@ async fn heading_fold_hides_section_content(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn heading_fold_chevron_marks_only_foldable_headings(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "## Section\n\nalpha\n\n### Child\n\nbeta\n\n## Empty\n\n## Next\n\ngamma";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+    editor.update(cx, |editor, cx| {
+        editor.apply_heading_fold_filter(editor.document.visible_blocks().to_vec(), cx);
+        let visible = editor.document.visible_blocks().to_vec();
+        let foldable = visible
+            .iter()
+            .filter(|visible| matches!(visible.entity.read(cx).kind(), BlockKind::Heading { .. }))
+            .map(|visible| visible.entity.read(cx).foldable)
+            .collect::<Vec<_>>();
+        // Section / Child / Next 后方有章节内容；Empty 紧跟同级标题，没有可折叠内容。
+        assert_eq!(foldable, vec![true, true, false, true]);
+    });
+}
+
+#[gpui::test]
+async fn heading_fold_chevron_toggle_hides_section_and_refocuses_heading(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "## Section\n\nalpha\n\n## Next\n\ngamma";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+    let (heading, paragraph) = editor.update(cx, |editor, _cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        (visible[0].entity.clone(), visible[1].entity.clone())
+    });
+    // 光标停留在章节内的 alpha 段落上。
+    editor.update(cx, |editor, _cx| {
+        editor.active_entity_id = Some(paragraph.entity_id());
+    });
+
+    // chevron 点击：块发出折叠请求，编辑器统一翻转折叠状态。
+    heading.update(cx, |_block, cx| cx.emit(BlockEvent::RequestToggleFold));
+
+    editor.update(cx, |editor, cx| {
+        assert!(heading.read(cx).folded);
+        // 折叠后光标所在段落被隐藏，焦点回到标题，避免输入静默丢失。
+        assert_eq!(editor.pending_focus, Some(heading.entity_id()));
+        assert_eq!(editor.active_entity_id, Some(heading.entity_id()));
+        let filtered = editor
+            .apply_heading_fold_filter(editor.document.visible_blocks().to_vec(), cx)
+            .iter()
+            .map(|visible| visible.entity.read(cx).display_text().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            filtered,
+            vec!["Section".to_string(), "Next".to_string(), "gamma".to_string()]
+        );
+    });
+}

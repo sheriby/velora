@@ -732,6 +732,10 @@ pub enum BlockEvent {
     /// The block's content or kind changed; the editor should mark the
     /// document dirty and optionally scroll to keep the block visible.
     Changed,
+    /// The heading's fold chevron was clicked (roadmap C7). The editor flips
+    /// `folded` and re-renders; view-only state, so the document is not
+    /// marked dirty.
+    RequestToggleFold,
     /// The user pressed Enter; a new block should be created after this
     /// one with the given trailing text.
     RequestNewline {
