@@ -64,7 +64,7 @@ fn tibetan_font_fallbacks_for_target_os(target_os: &str) -> Vec<String> {
 
 /// Adjacent-row metadata used to collapse spacing inside visual groups.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct RenderedRowSpacingInfo {
+pub(crate) struct RenderedRowSpacingInfo {
     quote_group_anchor: Option<uuid::Uuid>,
     visible_quote_group_anchor: Option<uuid::Uuid>,
     callout_anchor: Option<uuid::Uuid>,
@@ -92,6 +92,61 @@ impl RenderedRowSpacingInfo {
                 _ => None,
             },
             is_list_item: kind.is_list_item(),
+        }
+    }
+}
+
+/// P4b：行结构计划——折叠过滤与分组扫描的一次性产物，按
+/// (document_revision, fold_state_version, 渲染模式) 缓存。未变更帧直接
+/// 复用，不再对全文档做逐块实体读取；元素只在行真正挂载时构建。
+pub(crate) struct RenderedRowPlan {
+    pub revision: u64,
+    pub fold_version: u64,
+    pub toc_version: u64,
+    pub rendered_mode: bool,
+    pub rows: Vec<RenderedRowPlanRow>,
+}
+
+pub(crate) struct RenderedRowPlanRow {
+    /// 行首块在可见块序列中的下标（透明度/窗口计算用）。
+    pub visible_start: usize,
+    pub first_id: EntityId,
+    pub body: RenderedRowBody,
+}
+
+pub(crate) enum RenderedRowBody {
+    Ordinary {
+        entity: Entity<Block>,
+        spacing: RenderedRowSpacingInfo,
+    },
+    /// Callout 组（callout_variant = Some）或独立脚注组（None）。成员自带
+    /// 行距信息与锚点，元素构建推迟到行挂载时。
+    Group {
+        callout_variant: Option<CalloutVariant>,
+        members: Vec<RenderedGroupMember>,
+    },
+}
+
+pub(crate) struct RenderedGroupMember {
+    pub entity: Entity<Block>,
+    pub spacing: RenderedRowSpacingInfo,
+}
+
+impl RenderedRowPlanRow {
+    fn first_spacing(&self) -> RenderedRowSpacingInfo {
+        match &self.body {
+            RenderedRowBody::Ordinary { spacing, .. } => *spacing,
+            RenderedRowBody::Group { members, .. } => members[0].spacing,
+        }
+    }
+
+    fn last_spacing(&self) -> RenderedRowSpacingInfo {
+        match &self.body {
+            RenderedRowBody::Ordinary { spacing, .. } => *spacing,
+            RenderedRowBody::Group { members, .. } => members
+                .last()
+                .map(|member| member.spacing)
+                .unwrap_or_default(),
         }
     }
 }
@@ -437,6 +492,96 @@ fn footnote_group_shell(
 }
 
 impl Editor {
+    /// P4b：对可见块序列做一次折叠过滤后的分组扫描，产出可复用的行计划。
+    /// 只读块元数据，不构建任何元素。
+    fn build_rendered_row_plan(
+        visible: &[super::tree::VisibleBlock],
+        revision: u64,
+        fold_version: u64,
+        toc_version: u64,
+        rendered_mode: bool,
+        cx: &mut Context<Self>,
+    ) -> RenderedRowPlan {
+        let spacing_of = |visible: &super::tree::VisibleBlock| -> RenderedRowSpacingInfo {
+            RenderedRowSpacingInfo::from_block(visible.entity.read(cx))
+        };
+        let mut rows: Vec<RenderedRowPlanRow> = Vec::with_capacity(visible.len());
+        let mut index = 0usize;
+        while index < visible.len() {
+            let first_spacing = spacing_of(&visible[index]);
+            let first_id = visible[index].entity.entity_id();
+            if let (Some(callout_anchor), Some(callout_variant)) = (
+                first_spacing.callout_anchor,
+                first_spacing.callout_variant,
+            ) {
+                let mut members = Vec::new();
+                let mut group_end = index;
+                while group_end < visible.len()
+                    && spacing_of(&visible[group_end]).callout_anchor == Some(callout_anchor)
+                {
+                    members.push(RenderedGroupMember {
+                        entity: visible[group_end].entity.clone(),
+                        spacing: spacing_of(&visible[group_end]),
+                    });
+                    group_end += 1;
+                }
+                rows.push(RenderedRowPlanRow {
+                    visible_start: index,
+                    first_id,
+                    body: RenderedRowBody::Group {
+                        callout_variant: Some(callout_variant),
+                        members,
+                    },
+                });
+                index = group_end;
+                continue;
+            }
+
+            if let Some(footnote_anchor) = first_spacing.footnote_anchor {
+                let mut members = Vec::new();
+                let mut group_end = index;
+                while group_end < visible.len()
+                    && spacing_of(&visible[group_end]).footnote_anchor == Some(footnote_anchor)
+                {
+                    members.push(RenderedGroupMember {
+                        entity: visible[group_end].entity.clone(),
+                        spacing: spacing_of(&visible[group_end]),
+                    });
+                    group_end += 1;
+                }
+                rows.push(RenderedRowPlanRow {
+                    visible_start: index,
+                    first_id,
+                    body: RenderedRowBody::Group {
+                        callout_variant: None,
+                        members,
+                    },
+                });
+                index = group_end;
+                continue;
+            }
+
+            rows.push(RenderedRowPlanRow {
+                visible_start: index,
+                first_id,
+                body: RenderedRowBody::Ordinary {
+                    entity: visible[index].entity.clone(),
+                    spacing: first_spacing,
+                },
+            });
+            index += 1;
+        }
+
+        RenderedRowPlan {
+            revision,
+            fold_version,
+            toc_version,
+            rendered_mode,
+            rows,
+        }
+    }
+
+    /// 状态栏整篇字数
     fn on_titlebar_close(
         &mut self,
         event: &ClickEvent,
@@ -2025,8 +2170,43 @@ impl Render for Editor {
         self.sync_window_title(window, &strings);
 
         let d = &theme.dimensions;
-        let visible_blocks =
-            self.apply_heading_fold_filter(self.document.visible_blocks().to_vec(), cx);
+        // P4b：键命中时整帧复用行结构计划；未命中（编辑/折叠/大纲/模式
+        // 切换后的第一帧）才做一次全文档扫描。
+        let rendered_mode = self.view_mode == super::ViewMode::Rendered;
+        let plan_key = (
+            self.document_revision,
+            self.fold_state_version,
+            self.toc_state_version,
+            rendered_mode,
+        );
+        let cached_plan = self
+            .rendered_row_plan
+            .clone()
+            .filter(|plan| {
+                plan.revision == plan_key.0
+                    && plan.fold_version == plan_key.1
+                    && plan.toc_version == plan_key.2
+                    && plan.rendered_mode == plan_key.3
+            });
+        let plan_rebuilt = cached_plan.is_none();
+        let rendered_row_plan = match cached_plan {
+            Some(plan) => plan,
+            None => {
+                let visible_blocks =
+                    self.apply_heading_fold_filter(self.document.visible_blocks().to_vec(), cx);
+                let plan = std::sync::Arc::new(Self::build_rendered_row_plan(
+                    &visible_blocks,
+                    plan_key.0,
+                    plan_key.1,
+                    plan_key.2,
+                    rendered_mode,
+                    cx,
+                ));
+                self.rendered_row_plan = Some(plan.clone());
+                plan
+            }
+        };
+        let rows = &rendered_row_plan.rows;
         let focused_visible_index = self
             .focused_edit_target_entity_id(window, cx)
             .and_then(|id| {
@@ -2080,211 +2260,24 @@ impl Render for Editor {
         // Vec<RenderedRowSpacingInfo> sized to all visible blocks. For long
         // documents this skips a ~tens-of-KB allocation per frame; per-block
         // entity.read_with is a cheap immutable lock + 7-field struct copy.
-        let spacing_for = |index: usize| -> RenderedRowSpacingInfo {
-            visible_blocks[index]
-                .entity
-                .read_with(cx, |block, _cx| RenderedRowSpacingInfo::from_block(block))
-        };
-        let mut previous_row_spacing = None;
-        // Ordinary rows only get GPUI elements after windowing chooses them.
-        enum RowElement {
-            Group(AnyElement),
-            Ordinary,
-        }
-        let mut row_elements: Vec<Option<RowElement>> = Vec::new();
-        let mut row_starts: Vec<usize> = Vec::new();
         // Each row's leading `mt` gap; the top spacer subtracts the first mounted
-        // row's, since that row re-applies it.
-        let mut row_top_gaps: Vec<f32> = Vec::new();
-        let mut index = 0usize;
-        while index < visible_blocks.len() {
-            let first_spacing = spacing_for(index);
-            let top_gap = rendered_row_top_gap(
+        // row's, since that row re-applies it. 全部来自计划，纯浮点运算。
+        let mut previous_row_spacing = None;
+        let mut row_starts: Vec<usize> = Vec::with_capacity(rows.len());
+        let mut row_top_gaps: Vec<f32> = Vec::with_capacity(rows.len());
+        let mut row_first_ids: Vec<EntityId> = Vec::with_capacity(rows.len());
+        for row in rows {
+            row_first_ids.push(row.first_id);
+            row_starts.push(row.visible_start);
+            let first_spacing = row.first_spacing();
+            row_top_gaps.push(rendered_row_top_gap(
                 previous_row_spacing,
                 first_spacing,
                 d.block_gap,
-                self.view_mode == super::ViewMode::Rendered,
-            );
-
-            if let (Some(callout_anchor), Some(callout_variant)) =
-                (first_spacing.callout_anchor, first_spacing.callout_variant)
-            {
-                let mut group_children = Vec::new();
-                let mut group_end = index;
-                let mut previous_callout_row = None;
-                while group_end < visible_blocks.len()
-                    && spacing_for(group_end).callout_anchor == Some(callout_anchor)
-                {
-                    let row_spacing = spacing_for(group_end);
-                    if let Some(footnote_anchor) = row_spacing.footnote_anchor {
-                        let mut footnote_children = Vec::new();
-                        let mut footnote_end = group_end;
-                        let mut previous_footnote_row = None;
-                        while footnote_end < visible_blocks.len()
-                            && spacing_for(footnote_end).callout_anchor == Some(callout_anchor)
-                            && spacing_for(footnote_end).footnote_anchor == Some(footnote_anchor)
-                        {
-                            let footnote_spacing = spacing_for(footnote_end);
-                            let entity = visible_blocks[footnote_end].entity.clone();
-                            let row = div()
-                                .w_full()
-                                .flex_shrink_0()
-                                .mt(px(footnote_row_top_gap(previous_footnote_row, d.block_gap)))
-                                .child(entity.clone());
-                            let row = if self.view_mode == super::ViewMode::Rendered {
-                                let row_editor = editor.clone();
-                                let entity_id = entity.entity_id();
-                                row.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                                    let _ = row_editor.update(cx, |editor, cx| {
-                                        editor.on_block_context_menu_mouse_down(
-                                            entity_id, event, window, cx,
-                                        );
-                                    });
-                                })
-                            } else {
-                                row
-                            };
-                            footnote_children.push(row.into_any_element());
-                            previous_footnote_row = Some(footnote_spacing);
-                            footnote_end += 1;
-                        }
-
-                        group_children.push(
-                            div()
-                                .w_full()
-                                .flex_shrink_0()
-                                .mt(px(callout_row_top_gap(
-                                    previous_callout_row,
-                                    row_spacing,
-                                    d,
-                                )))
-                                .child(footnote_group_shell(footnote_children, &theme, d))
-                                .into_any_element(),
-                        );
-                        previous_callout_row = Some(spacing_for(footnote_end - 1));
-                        group_end = footnote_end;
-                        continue;
-                    }
-
-                    let entity = visible_blocks[group_end].entity.clone();
-                    let row = div()
-                        .w_full()
-                        .flex_shrink_0()
-                        .mt(px(callout_row_top_gap(
-                            previous_callout_row,
-                            row_spacing,
-                            d,
-                        )))
-                        .child(entity.clone());
-                    let row = if self.view_mode == super::ViewMode::Rendered {
-                        let row_editor = editor.clone();
-                        let entity_id = entity.entity_id();
-                        row.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                            let _ = row_editor.update(cx, |editor, cx| {
-                                editor
-                                    .on_block_context_menu_mouse_down(entity_id, event, window, cx);
-                            });
-                        })
-                    } else {
-                        row
-                    };
-                    group_children.push(row.into_any_element());
-                    previous_callout_row = Some(row_spacing);
-                    group_end += 1;
-                }
-
-                let (accent, background) = callout_colors(callout_variant, &theme);
-                row_starts.push(index);
-                row_top_gaps.push(top_gap);
-                row_elements.push(Some(RowElement::Group(
-                    div()
-                        .w(px(centered_width))
-                        .max_w(relative(1.0))
-                        .flex_shrink_0()
-                        .mt(px(top_gap))
-                        .flex()
-                        .flex_col()
-                        .gap(px(0.0))
-                        .px(px(d.callout_padding_x))
-                        .py(px(d.callout_padding_y))
-                        .rounded(px(d.callout_radius))
-                        .border_l(px(d.callout_border_width))
-                        .border_color(accent)
-                        .bg(background)
-                        .opacity(focus_mode_row_opacity(
-                            focus_mode_active,
-                            focused_visible_index,
-                            index,
-                            group_end,
-                        ))
-                        .children(group_children)
-                        .into_any_element(),
-                )));
-                previous_row_spacing = Some(spacing_for(group_end - 1));
-                index = group_end;
-                continue;
-            }
-
-            if let Some(footnote_anchor) = first_spacing.footnote_anchor {
-                let mut group_children = Vec::new();
-                let mut group_end = index;
-                let mut previous_footnote_row = None;
-                while group_end < visible_blocks.len()
-                    && spacing_for(group_end).footnote_anchor == Some(footnote_anchor)
-                {
-                    let row_spacing = spacing_for(group_end);
-                    let entity = visible_blocks[group_end].entity.clone();
-                    let row = div()
-                        .w_full()
-                        .flex_shrink_0()
-                        .mt(px(footnote_row_top_gap(previous_footnote_row, d.block_gap)))
-                        .child(entity.clone());
-                    let row = if self.view_mode == super::ViewMode::Rendered {
-                        let row_editor = editor.clone();
-                        let entity_id = entity.entity_id();
-                        row.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                            let _ = row_editor.update(cx, |editor, cx| {
-                                editor
-                                    .on_block_context_menu_mouse_down(entity_id, event, window, cx);
-                            });
-                        })
-                    } else {
-                        row
-                    };
-                    group_children.push(row.into_any_element());
-                    previous_footnote_row = Some(row_spacing);
-                    group_end += 1;
-                }
-
-                row_starts.push(index);
-                row_top_gaps.push(top_gap);
-                row_elements.push(Some(RowElement::Group(
-                    div()
-                        .w(px(centered_width))
-                        .max_w(relative(1.0))
-                        .flex_shrink_0()
-                        .mt(px(top_gap))
-                        .opacity(focus_mode_row_opacity(
-                            focus_mode_active,
-                            focused_visible_index,
-                            index,
-                            group_end,
-                        ))
-                        .child(footnote_group_shell(group_children, &theme, d))
-                        .into_any_element(),
-                )));
-                previous_row_spacing = Some(spacing_for(group_end - 1));
-                index = group_end;
-                continue;
-            }
-
-            row_starts.push(index);
-            row_top_gaps.push(top_gap);
-            row_elements.push(Some(RowElement::Ordinary));
-            previous_row_spacing = Some(first_spacing);
-            index += 1;
+                rendered_mode,
+            ));
+            previous_row_spacing = Some(row.last_spacing());
         }
-
         // The focused row is always kept mounted so its caret is not blurred; a
         // table cell maps to its containing table block's row.
         let focus_row = focused_visible_index.map(|visible_index| {
@@ -2294,23 +2287,18 @@ impl Render for Editor {
         });
 
         // A row's first block keys its cached footprint.
-        let row_first_ids: Vec<EntityId> = row_starts
-            .iter()
-            .map(|&start| visible_blocks[start].entity.entity_id())
-            .collect();
 
         // On a structural edit the row indices no longer match last frame, so the
         // cache refresh below is skipped; its block-keyed entries still hold.
-        let structural_change = visible_blocks.len() != self.prev_visible_block_ids.len()
-            || visible_blocks
-                .iter()
-                .zip(&self.prev_visible_block_ids)
-                .any(|(visible, prev)| visible.entity.entity_id() != *prev);
+        // P4b：只有计划重建的帧才需要比较（其余帧 id 序列必然一致）。
+        let structural_change = plan_rebuilt
+            && (rows.len() != self.prev_visible_block_ids.len()
+                || rows
+                    .iter()
+                    .zip(&self.prev_visible_block_ids)
+                    .any(|(row, prev)| row.first_id != *prev));
         if structural_change {
-            self.prev_visible_block_ids = visible_blocks
-                .iter()
-                .map(|v| v.entity.entity_id())
-                .collect();
+            self.prev_visible_block_ids = rows.iter().map(|row| row.first_id).collect();
         }
 
         // A footprint only holds for the column it was measured at. The first
@@ -2394,40 +2382,207 @@ impl Render for Editor {
             }
         };
 
-        let mut take_row = |rows: &mut Vec<AnyElement>, row: usize| match row_elements
-            .get_mut(row)
-            .and_then(Option::take)
-        {
-            Some(RowElement::Group(element)) => rows.push(element),
-            Some(RowElement::Ordinary) => {
-                let index = row_starts[row];
-                let entity = visible_blocks[index].entity.clone();
-                let element = div()
-                    .w(px(centered_width))
-                    .max_w(relative(1.0))
-                    .flex_shrink_0()
-                    .mt(px(row_top_gaps[row]))
-                    .opacity(focus_mode_row_opacity(
-                        focus_mode_active,
-                        focused_visible_index,
-                        index,
-                        index + 1,
-                    ))
-                    .child(entity.clone());
-                let element = if self.view_mode == super::ViewMode::Rendered {
-                    let row_editor = editor.clone();
-                    let entity_id = entity.entity_id();
-                    element.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                        let _ = row_editor.update(cx, |editor, cx| {
-                            editor.on_block_context_menu_mouse_down(entity_id, event, window, cx);
-                        });
-                    })
-                } else {
-                    element
-                };
-                rows.push(element.into_any_element());
+        // P4b：行元素只在挂载时从计划构建（旧实现在扫描期为所有组行
+        // 预构建元素再丢弃，是超大文档的每帧浪费）。
+        let build_row_element = |row: usize| -> AnyElement {
+            match &rows[row].body {
+                RenderedRowBody::Ordinary { entity, .. } => {
+                    let index = rows[row].visible_start;
+                    let element = div()
+                        .w(px(centered_width))
+                        .max_w(relative(1.0))
+                        .flex_shrink_0()
+                        .mt(px(row_top_gaps[row]))
+                        .opacity(focus_mode_row_opacity(
+                            focus_mode_active,
+                            focused_visible_index,
+                            index,
+                            index + 1,
+                        ))
+                        .child(entity.clone());
+                    let element = if rendered_mode {
+                        let row_editor = editor.clone();
+                        let entity_id = entity.entity_id();
+                        element.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            let _ = row_editor.update(cx, |editor, cx| {
+                                editor
+                                    .on_block_context_menu_mouse_down(entity_id, event, window, cx);
+                            });
+                        })
+                    } else {
+                        element
+                    };
+                    element.into_any_element()
+                }
+                RenderedRowBody::Group {
+                    callout_variant,
+                    members,
+                } => {
+                    let index = rows[row].visible_start;
+                    let group_end = index + members.len();
+                    if let Some(variant) = callout_variant {
+                        let mut group_children: Vec<AnyElement> = Vec::new();
+                        let mut member_index = 0usize;
+                        let mut previous_callout_row: Option<RenderedRowSpacingInfo> = None;
+                        while member_index < members.len() {
+                            let member = &members[member_index];
+                            if let Some(footnote_anchor) = member.spacing.footnote_anchor {
+                                let mut footnote_children: Vec<AnyElement> = Vec::new();
+                                let mut previous_footnote_row: Option<RenderedRowSpacingInfo> =
+                                    None;
+                                let footnote_start = member_index;
+                                while member_index < members.len()
+                                    && members[member_index].spacing.footnote_anchor
+                                        == Some(footnote_anchor)
+                                {
+                                    let inner = &members[member_index];
+                                    let row = div()
+                                        .w_full()
+                                        .flex_shrink_0()
+                                        .mt(px(footnote_row_top_gap(
+                                            previous_footnote_row,
+                                            d.block_gap,
+                                        )))
+                                        .child(inner.entity.clone());
+                                    let row = if rendered_mode {
+                                        let row_editor = editor.clone();
+                                        let entity_id = inner.entity.entity_id();
+                                        row.on_mouse_down(
+                                            MouseButton::Right,
+                                            move |event, window, cx| {
+                                                let _ = row_editor.update(cx, |editor, cx| {
+                                                    editor.on_block_context_menu_mouse_down(
+                                                        entity_id, event, window, cx,
+                                                    );
+                                                });
+                                            },
+                                        )
+                                    } else {
+                                        row
+                                    };
+                                    footnote_children.push(row.into_any_element());
+                                    previous_footnote_row = Some(inner.spacing);
+                                    member_index += 1;
+                                }
+
+                                group_children.push(
+                                    div()
+                                        .w_full()
+                                        .flex_shrink_0()
+                                        .mt(px(callout_row_top_gap(
+                                            previous_callout_row,
+                                            members[footnote_start].spacing,
+                                            d,
+                                        )))
+                                        .child(footnote_group_shell(
+                                            footnote_children,
+                                            &theme,
+                                            d,
+                                        ))
+                                        .into_any_element(),
+                                );
+                                previous_callout_row = Some(members[member_index - 1].spacing);
+                                continue;
+                            }
+
+                            let row = div()
+                                .w_full()
+                                .flex_shrink_0()
+                                .mt(px(callout_row_top_gap(
+                                    previous_callout_row,
+                                    member.spacing,
+                                    d,
+                                )))
+                                .child(member.entity.clone());
+                            let row = if rendered_mode {
+                                let row_editor = editor.clone();
+                                let entity_id = member.entity.entity_id();
+                                row.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                                    let _ = row_editor.update(cx, |editor, cx| {
+                                        editor.on_block_context_menu_mouse_down(
+                                            entity_id, event, window, cx,
+                                        );
+                                    });
+                                })
+                            } else {
+                                row
+                            };
+                            group_children.push(row.into_any_element());
+                            previous_callout_row = Some(member.spacing);
+                            member_index += 1;
+                        }
+
+                        let (accent, background) = callout_colors(*variant, &theme);
+                        div()
+                            .w(px(centered_width))
+                            .max_w(relative(1.0))
+                            .flex_shrink_0()
+                            .mt(px(row_top_gaps[row]))
+                            .flex()
+                            .flex_col()
+                            .gap(px(0.0))
+                            .px(px(d.callout_padding_x))
+                            .py(px(d.callout_padding_y))
+                            .rounded(px(d.callout_radius))
+                            .border_l(px(d.callout_border_width))
+                            .border_color(accent)
+                            .bg(background)
+                            .opacity(focus_mode_row_opacity(
+                                focus_mode_active,
+                                focused_visible_index,
+                                index,
+                                group_end,
+                            ))
+                            .children(group_children)
+                            .into_any_element()
+                    } else {
+                        let mut group_children: Vec<AnyElement> = Vec::new();
+                        let mut previous_footnote_row: Option<RenderedRowSpacingInfo> = None;
+                        for member in members {
+                            let row = div()
+                                .w_full()
+                                .flex_shrink_0()
+                                .mt(px(footnote_row_top_gap(
+                                    previous_footnote_row,
+                                    d.block_gap,
+                                )))
+                                .child(member.entity.clone());
+                            let row = if rendered_mode {
+                                let row_editor = editor.clone();
+                                let entity_id = member.entity.entity_id();
+                                row.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                                    let _ = row_editor.update(cx, |editor, cx| {
+                                        editor.on_block_context_menu_mouse_down(
+                                            entity_id, event, window, cx,
+                                        );
+                                    });
+                                })
+                            } else {
+                                row
+                            };
+                            group_children.push(row.into_any_element());
+                            previous_footnote_row = Some(member.spacing);
+                        }
+
+                        div()
+                            .w(px(centered_width))
+                            .max_w(relative(1.0))
+                            .flex_shrink_0()
+                            .mt(px(row_top_gaps[row]))
+                            .opacity(focus_mode_row_opacity(
+                                focus_mode_active,
+                                focused_visible_index,
+                                index,
+                                group_end,
+                            ))
+                            .child(footnote_group_shell(group_children, &theme, d))
+                            .into_any_element()
+                    }
+                }
             }
-            None => {}
+        };
+        let take_row = |rows: &mut Vec<AnyElement>, row: usize| {
+            rows.push(build_row_element(row));
         };
 
         if let Some(island) = island.filter(|_| island_before_run) {

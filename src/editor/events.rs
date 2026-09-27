@@ -1710,6 +1710,7 @@ impl Editor {
             BlockEvent::RequestToggleFold => {
                 let folding_on = !block.read(cx).folded;
                 block.update(cx, |block, _cx| block.folded = folding_on);
+                self.fold_state_version = self.fold_state_version.wrapping_add(1);
                 if folding_on {
                     self.refocus_caret_hidden_by_fold(&block, cx);
                 }

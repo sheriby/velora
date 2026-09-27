@@ -116,6 +116,13 @@ pub struct Editor {
     /// 状态栏代码文档行数缓存（P4a）：键 document_revision，避免每帧
     /// 重新序列化整篇文档只为数行数。
     code_line_count_cache: std::cell::Cell<Option<(u64, usize)>>,
+    /// 行结构计划缓存（P4b）：键 (document_revision, fold_state_version,
+    /// 渲染模式)，见 render::RenderedRowPlan。
+    rendered_row_plan: Option<std::sync::Arc<render::RenderedRowPlan>>,
+    /// 折叠状态版本：任何 folded 变更都递增，使行计划重建。
+    fold_state_version: u64,
+    /// TOC 条目版本：大纲重建后递增（[TOC] 块的条目同步随行计划进行）。
+    toc_state_version: u64,
     /// Content column the cached footprints were measured at. Rows rewrap when it
     /// changes, so entries from another width are discarded rather than reused.
     row_stride_width: Option<f32>,
@@ -490,6 +497,9 @@ impl Editor {
             row_stride_cache: HashMap::new(),
             word_count_cache: std::cell::Cell::default(),
             code_line_count_cache: std::cell::Cell::default(),
+            rendered_row_plan: None,
+            fold_state_version: 0,
+            toc_state_version: 0,
             row_stride_width: None,
             prev_mounted_run: None,
             close_guard_installed: false,

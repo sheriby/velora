@@ -2007,6 +2007,7 @@ impl Editor {
         // without clicking through every level; users can still collapse.
         expand_outline_to_level(&outline, 2, &mut self.workspace.expanded);
         self.workspace.toc_entries = flatten_outline_entries(&outline);
+        self.toc_state_version = self.toc_state_version.wrapping_add(1);
         self.workspace.outline_tree = outline;
         self.workspace.outline_source = Some(source.clone());
     }
@@ -2853,6 +2854,7 @@ impl Editor {
             heading.update(cx, |block, _cx| {
                 if block.folded {
                     block.folded = false;
+                    self.fold_state_version = self.fold_state_version.wrapping_add(1);
                 }
             });
         }
