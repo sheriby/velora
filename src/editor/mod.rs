@@ -14,7 +14,7 @@ use gpui::*;
 
 use self::context_menu::{ContextMenuState, TableInsertDialogState};
 use self::document::ChunkCursor;
-use self::tree::{DocumentTree, PendingTail};
+use self::tree::{DocumentTree, PendingSourceTail, PendingTail};
 use crate::components::{
     Block, BlockKind, BlockRecord, FootnoteDefinitionBinding, FootnoteReferenceLocation,
     FootnoteRegistry, FootnoteResolvedOccurrence, ImageReferenceDefinitions, InlineTextTree,
@@ -573,7 +573,10 @@ impl Editor {
     /// between steps, so frames, scrolling and typing keep running while a huge
     /// document finishes loading (roadmap G8).
     fn start_pending_materialization_task(&mut self, cx: &mut Context<Self>) {
-        if self.document.pending_tail().is_none() || self.pending_materialization_task.is_some() {
+        if self.document.pending_tail().is_none()
+            && self.document.pending_source().is_none()
+            || self.pending_materialization_task.is_some()
+        {
             return;
         }
 
@@ -596,50 +599,17 @@ impl Editor {
 
     /// Imports one more chunk of the pending tail. Returns whether work remains.
     fn materialize_next_pending_chunk(&mut self, cx: &mut Context<Self>) -> bool {
+        // 代码/纯文本文档：原始字节尾部按行切块续建（P6a）。
+        if self.code_document {
+            if self.document.pending_source().is_some() {
+                return self.materialize_next_pending_source_chunk(cx);
+            }
+            return false;
+        }
+
         let Some(tail) = self.document.pending_tail().cloned() else {
             return false;
         };
-
-        // 代码/纯文本文档：每个步骤按 SOURCE_DOCUMENT_CHUNK_LINES 行粒度
-        // 建最多 CODE_CHUNKS_PER_STEP 个等宽 CodeBlock，块粒度与整开一致。
-        if self.code_document {
-            let step_lines =
-                file_drop::SOURCE_DOCUMENT_CHUNK_LINES * Self::CODE_CHUNKS_PER_STEP;
-            let step_end = (tail.next_line + step_lines).min(tail.lines.len());
-            let kind = self
-                .document
-                .first_root()
-                .map(|block| block.read(cx).kind())
-                .unwrap_or(BlockKind::Paragraph);
-            let mut roots = Vec::new();
-            let mut next_line = tail.next_line;
-            while next_line < step_end {
-                let take = file_drop::SOURCE_DOCUMENT_CHUNK_LINES.min(step_end - next_line);
-                let text = tail.lines[next_line..next_line + take].join("\n");
-                let line_start = next_line + 1;
-                let block = Self::new_block(cx, BlockRecord::with_plain_text(kind.clone(), text));
-                block.update(cx, |block, _cx| {
-                    block.set_source_document_mode();
-                    block.set_source_line_start(line_start);
-                });
-                roots.push(block);
-                next_line += take;
-            }
-            self.document.append_roots(roots, cx);
-
-            if next_line < tail.lines.len() {
-                self.document.set_pending_tail(Some(PendingTail {
-                    lines: tail.lines,
-                    next_line,
-                    previous_root_is_list_item: false,
-                }));
-                cx.notify();
-                return true;
-            }
-            self.document.set_pending_tail(None);
-            self.finish_pending_materialization(cx);
-            return false;
-        }
 
         let (roots, consumed) = Self::build_root_block_chunk(
             cx,
@@ -684,6 +654,80 @@ impl Editor {
         }
     }
 
+    /// P6a：代码文档的流式续建步骤——从原始字节尾部按
+    /// SOURCE_DOCUMENT_CHUNK_LINES 行粒度切最多 CODE_CHUNKS_PER_STEP 块。
+    fn materialize_next_pending_source_chunk(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(mut tail) = self.document.take_pending_source() else {
+            return false;
+        };
+        let kind = self
+            .document
+            .first_root()
+            .map(|block| block.read(cx).kind())
+            .unwrap_or(BlockKind::Paragraph);
+        let mut roots = Vec::new();
+        let mut offset = 0usize;
+        let mut line_start = tail.next_line + 1;
+        for _ in 0..Self::CODE_CHUNKS_PER_STEP {
+            match file_drop::scan_chunk_end(
+                tail.source.as_bytes(),
+                offset,
+                file_drop::SOURCE_DOCUMENT_CHUNK_LINES,
+            ) {
+                Some(end) => {
+                    // 末块保留文件末换行（空行片段），与整开切分语义一致。
+                    let is_last = end == tail.source.len();
+                    let text = if is_last {
+                        &tail.source[offset..]
+                    } else {
+                        &tail.source[offset..end - 1]
+                    };
+                    let block =
+                        Self::new_block(cx, BlockRecord::with_plain_text(kind.clone(), text));
+                    let chunk_line_start = line_start;
+                    block.update(cx, |block, _cx| {
+                        block.set_source_document_mode();
+                        block.set_source_line_start(chunk_line_start);
+                    });
+                    roots.push(block);
+                    line_start += text.split('\n').count();
+                    offset = end;
+                }
+                None => {
+                    let text = &tail.source[offset..];
+                    if !text.is_empty() {
+                        let block = Self::new_block(
+                            cx,
+                            BlockRecord::with_plain_text(kind.clone(), text),
+                        );
+                        let chunk_line_start = line_start;
+                        block.update(cx, |block, _cx| {
+                            block.set_source_document_mode();
+                            block.set_source_line_start(chunk_line_start);
+                        });
+                        roots.push(block);
+                        line_start += text.split('\n').count();
+                    }
+                    offset = tail.source.len();
+                    break;
+                }
+            }
+        }
+        self.document.append_roots(roots, cx);
+
+        if offset < tail.source.len() {
+            let rest = tail.source.split_off(offset);
+            self.document.set_pending_source(Some(PendingSourceTail {
+                source: rest,
+                next_line: line_start - 1,
+            }));
+            cx.notify();
+            return true;
+        }
+        self.finish_pending_materialization(cx);
+        false
+    }
+
     /// Runs the document-wide passes a fresh open would have run, now that the
     /// whole document is materialized.
     fn finish_pending_materialization(&mut self, cx: &mut Context<Self>) {
@@ -695,6 +739,7 @@ impl Editor {
     /// whole document (structural edits, document-wide search).
     pub(crate) fn flush_pending_materialization(&mut self, cx: &mut Context<Self>) {
         self.document.flush_pending_tail(cx);
+        self.document.flush_pending_source(cx);
     }
 
     pub(crate) fn from_file_source(

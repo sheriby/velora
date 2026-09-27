@@ -1,15 +1,26 @@
 //! External Markdown file drops for replacing the current editor window.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::{Context as AnyhowContext, Result};
 use gpui::*;
 
-use super::tree::PendingTail;
+use super::tree::PendingSourceTail;
 use super::{Editor, ViewMode};
 use crate::components::{Block, BlockKind, BlockRecord};
 use crate::i18n::I18nManager;
+
+/// P6a：从 `offset` 起跳过 `lines` 个换行，返回其后的字节下标；
+/// 不足 `lines` 个换行时返回 `None`（剩余即文件末块）。
+pub(super) fn scan_chunk_end(source: &[u8], offset: usize, lines: usize) -> Option<usize> {
+    let mut cursor = offset;
+    for _ in 0..lines {
+        let rest = &source[cursor..];
+        let position = rest.iter().position(|&byte| byte == b'\n')?;
+        cursor += position + 1;
+    }
+    Some(cursor)
+}
 
 /// 源码文档分块的每块行数（docs/architecture/performance.md P2）。视口
 /// 窗口化以块为粒度裁剪，块太大则单块即窗口；512 行约几十 KB，足以让
@@ -239,17 +250,22 @@ impl Editor {
             } else {
                 BlockKind::Paragraph
             };
-            let lines = Arc::new(Self::split_markdown_lines(&normalized));
-            let first_lines = lines.len().min(SOURCE_DOCUMENT_CHUNK_LINES);
-            let first_text = lines[..first_lines].join("\n");
-            let built = Self::build_source_document_roots(chunk_kind, &first_text, cx);
-            if is_code && first_lines < lines.len() {
-                pending_code_tail = Some(PendingTail {
-                    lines,
-                    next_line: first_lines,
-                    previous_root_is_list_item: false,
-                });
-            }
+            // P6a：不再把全文切成近十万个 String——只同步建首块，剩余
+            // 原始字节进 PendingSourceTail 后台按行切块续建。
+            let built = match scan_chunk_end(
+                normalized.as_bytes(),
+                0,
+                SOURCE_DOCUMENT_CHUNK_LINES,
+            ) {
+                Some(end) if is_code && end < normalized.len() => {
+                    pending_code_tail = Some(PendingSourceTail {
+                        source: normalized[end..].to_string(),
+                        next_line: SOURCE_DOCUMENT_CHUNK_LINES,
+                    });
+                    Self::build_source_document_roots(chunk_kind, &normalized[..end - 1], cx)
+                }
+                _ => Self::build_source_document_roots(chunk_kind, &normalized, cx),
+            };
             built
         } else {
             Self::build_root_blocks_from_markdown(cx, &normalized)
@@ -272,7 +288,7 @@ impl Editor {
         self.document_revision = self.document_revision.wrapping_add(1);
         self.document.replace_roots(roots, cx);
         if let Some(tail) = pending_code_tail {
-            self.document.set_pending_tail(Some(tail));
+            self.document.set_pending_source(Some(tail));
             self.start_pending_materialization_task(cx);
         }
         self.table_cells.clear();

@@ -518,10 +518,28 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Vec<super::tree::VisibleBlock> {
         for (index, visible) in all.iter().enumerate() {
-            let (kind, is_toc, had_toc) = {
+            // P4b 后这里只在行计划重建时运行，但仍是 O(文档)：先做最廉价
+            // 的类型判断，[TOC] 全文 trim 比较只可能命中 Paragraph。
+            let kind = visible.entity.read(cx).kind();
+            if !matches!(kind, BlockKind::Paragraph) {
+                let level = match kind {
+                    BlockKind::Heading { level } => level,
+                    _ => continue,
+                };
+                let has_section = all.get(index + 1).is_some_and(|next| {
+                    match next.entity.read(cx).kind() {
+                        BlockKind::Heading { level: next_level } => next_level > level,
+                        _ => true,
+                    }
+                });
+                visible
+                    .entity
+                    .update(cx, |block, _cx| block.foldable = has_section);
+                continue;
+            }
+            let (is_toc, had_toc) = {
                 let block = visible.entity.read(cx);
                 (
-                    block.kind(),
                     block.display_text().trim().eq_ignore_ascii_case("[toc]"),
                     !block.toc_entries.is_empty(),
                 )
@@ -3672,6 +3690,9 @@ impl Editor {
             }
             if let Some(tail) = self.document.pending_tail() {
                 pieces += tail.lines.len() - tail.next_line;
+            }
+            if let Some(tail) = self.document.pending_source() {
+                pieces += tail.source.split('\n').count().saturating_sub(1);
             }
             let lines = pieces.max(1);
             self.code_line_count_cache.set(Some((revision, lines)));

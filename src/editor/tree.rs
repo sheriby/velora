@@ -35,6 +35,15 @@ pub(super) struct PendingTail {
     pub(super) previous_root_is_list_item: bool,
 }
 
+/// P6a：代码/纯文本文档的流式续建尾部——不再把全文切成 9.8 万个
+/// String，保留原始字节，materialize 时按行扫描切块。`source` 以分隔
+/// 换行符开头（与最后一块的连接符），`next_line` 是已消费的行片段数。
+#[derive(Clone)]
+pub(super) struct PendingSourceTail {
+    pub source: String,
+    pub next_line: usize,
+}
+
 /// Ordinal/blank-run carry-over for [`DocumentTree::append_roots`].
 #[derive(Clone, Copy, Default)]
 struct SyncSeeds {
@@ -83,6 +92,8 @@ pub(super) struct DocumentTree {
     roots: Vec<Entity<Block>>,
     snapshot: VisibleTreeSnapshot,
     pending: Option<PendingTail>,
+    /// P6a：代码/纯文本文档的原始字节尾部（与 `pending` 互斥使用）。
+    pending_source: Option<PendingSourceTail>,
 }
 
 impl DocumentTree {
@@ -91,6 +102,7 @@ impl DocumentTree {
             roots,
             snapshot: VisibleTreeSnapshot::default(),
             pending: None,
+            pending_source: None,
         }
     }
 
@@ -100,6 +112,18 @@ impl DocumentTree {
 
     pub(super) fn set_pending_tail(&mut self, pending: Option<PendingTail>) {
         self.pending = pending;
+    }
+
+    pub(super) fn pending_source(&self) -> Option<&PendingSourceTail> {
+        self.pending_source.as_ref()
+    }
+
+    pub(super) fn take_pending_source(&mut self) -> Option<PendingSourceTail> {
+        self.pending_source.take()
+    }
+
+    pub(super) fn set_pending_source(&mut self, pending: Option<PendingSourceTail>) {
+        self.pending_source = pending;
     }
 
     pub(super) fn first_root(&self) -> Option<&Entity<Block>> {
@@ -293,6 +317,9 @@ impl DocumentTree {
                 capacity += line.len() + 1;
             }
         }
+        if let Some(tail) = &self.pending_source {
+            capacity += tail.source.len();
+        }
         let mut out = String::with_capacity(capacity);
         for visible in &self.snapshot.visible {
             out.push_str(visible.entity.read(cx).display_text());
@@ -304,7 +331,10 @@ impl DocumentTree {
                 out.push('\n');
             }
         }
-        if !out.is_empty() {
+        if let Some(tail) = &self.pending_source {
+            // source 以边界换行开头，逐字拼接即还原原文。
+            out.push_str(&tail.source);
+        } else if !out.is_empty() {
             out.pop();
         }
         out
@@ -324,12 +354,69 @@ impl DocumentTree {
 
     /// Runs a tree mutation and then eagerly rebuilds metadata and the visible
     /// snapshot exactly once for that mutation batch.
+    /// P6a：同步物化原始字节尾部（代码/纯文本文档流式续建用）。
+    pub(super) fn flush_pending_source(&mut self, cx: &mut Context<Editor>) {
+        let Some(mut tail) = self.pending_source.take() else {
+            return;
+        };
+        let kind = self
+            .first_root()
+            .map(|block| block.read(cx).kind())
+            .unwrap_or(crate::components::BlockKind::Paragraph);
+        let chunk_lines = super::file_drop::SOURCE_DOCUMENT_CHUNK_LINES;
+        let mut offset = 0usize;
+        let mut line_start = tail.next_line + 1;
+        let mut roots = Vec::new();
+        loop {
+            match super::file_drop::scan_chunk_end(tail.source.as_bytes(), offset, chunk_lines) {
+                Some(end) => {
+                    let is_last = end == tail.source.len();
+                    let text = if is_last {
+                        &tail.source[offset..]
+                    } else {
+                        &tail.source[offset..end - 1]
+                    };
+                    let block = Editor::new_block(cx, crate::components::BlockRecord::with_plain_text(kind.clone(), text));
+                    let chunk_line_start = line_start;
+                    block.update(cx, |block, _cx| {
+                        block.set_source_document_mode();
+                        block.set_source_line_start(chunk_line_start);
+                    });
+                    roots.push(block);
+                    line_start += text.split('\n').count();
+                    offset = end;
+                    if is_last {
+                        break;
+                    }
+                }
+                None => {
+                    let text = &tail.source[offset..];
+                    if !text.is_empty() {
+                        let block = Editor::new_block(
+                            cx,
+                            crate::components::BlockRecord::with_plain_text(kind, text),
+                        );
+                        let chunk_line_start = line_start;
+                        block.update(cx, |block, _cx| {
+                            block.set_source_document_mode();
+                            block.set_source_line_start(chunk_line_start);
+                        });
+                        roots.push(block);
+                    }
+                    break;
+                }
+            }
+        }
+        self.append_roots(roots, cx);
+    }
+
     pub(super) fn with_structure_mutation<R>(
         &mut self,
         cx: &mut Context<Editor>,
         mutate: impl FnOnce(&mut Self, &mut Context<Editor>) -> R,
     ) -> R {
         self.flush_pending_tail(cx);
+        self.flush_pending_source(cx);
         let result = mutate(self, cx);
         self.rebuild_metadata_and_snapshot(cx);
         result
