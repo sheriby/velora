@@ -663,40 +663,69 @@ impl PlatformTextSystem for NoopTextSystem {
         Ok((raster_bounds.size, Vec::new()))
     }
 
-    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
-        let mut position = px(0.);
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         let metrics = self.font_metrics(FontId(0));
-        let em_width = font_size
-            * self
-                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
-                .unwrap()
-                .width
+        let em_ratio = self
+            .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
+            .unwrap()
+            .width
             / metrics.units_per_em as f32;
-        let mut glyphs = Vec::new();
-        for (ix, c) in text.char_indices() {
-            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
-                glyphs.push(ShapedGlyph {
-                    id: glyph,
-                    position: point(position, px(0.)),
-                    index: ix,
-                    is_emoji: glyph.0 == 2,
-                });
-                if glyph.0 == 2 {
-                    position += em_width * 2.0;
-                } else {
-                    position += em_width;
-                }
-            } else {
-                position += em_width
-            }
-        }
-        let mut runs = Vec::default();
-        if !glyphs.is_empty() {
-            runs.push(ShapedRun {
-                font_id: FontId(0),
-                glyphs,
-            });
+
+        // 本地补丁：逐段字号覆盖（见 `TextRun::font_size`）。这个占位实现只
+        // 按字号缩放步进、按字号切段，够测试断言用；真实平台见 mac/windows。
+        let fallback = [FontRun {
+            len: text.len(),
+            font_id: FontId(0),
+            font_size: None,
+        }];
+        let runs = if runs.is_empty() || runs.iter().map(|run| run.len).sum::<usize>() != text.len() {
+            &fallback[..]
         } else {
+            runs
+        };
+
+        let mut position = px(0.);
+        let mut offset = 0usize;
+        let mut shaped_runs: Vec<ShapedRun> = Vec::new();
+        let mut run_glyphs: Vec<ShapedGlyph> = Vec::new();
+        let mut current_font_size: Option<Pixels> = None;
+        for run in runs {
+            if !run_glyphs.is_empty() && run.font_size != current_font_size {
+                shaped_runs.push(ShapedRun {
+                    font_id: FontId(0),
+                    font_size: current_font_size,
+                    glyphs: std::mem::take(&mut run_glyphs),
+                });
+            }
+            current_font_size = run.font_size;
+
+            let em_width = run.font_size.unwrap_or(font_size) * em_ratio;
+            for (ix, c) in text[offset..offset + run.len].char_indices() {
+                if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
+                    run_glyphs.push(ShapedGlyph {
+                        id: glyph,
+                        position: point(position, px(0.)),
+                        index: offset + ix,
+                        is_emoji: glyph.0 == 2,
+                    });
+                    if glyph.0 == 2 {
+                        position += em_width * 2.0;
+                    } else {
+                        position += em_width;
+                    }
+                } else {
+                    position += em_width
+                }
+            }
+            offset += run.len;
+        }
+        if !run_glyphs.is_empty() {
+            shaped_runs.push(ShapedRun {
+                font_id: FontId(0),
+                font_size: current_font_size,
+                glyphs: run_glyphs,
+            });
+        } else if shaped_runs.is_empty() {
             position = px(0.);
         }
 
@@ -705,15 +734,44 @@ impl PlatformTextSystem for NoopTextSystem {
             width: position,
             ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
             descent: font_size * (metrics.descent / metrics.units_per_em as f32),
-            runs,
+            runs: shaped_runs,
             len: text.len(),
         }
     }
 }
 
+/// 本地补丁：velora 测试用的入口——用真实平台的文本系统排版一行。
+/// 测试平台自带 `NoopTextSystem`，拿不到真实字号处理（mac 走 CoreText）。
+#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+pub fn shape_line_with_platform_text_system(
+    text: SharedString,
+    font_size: Pixels,
+    runs: &[crate::TextRun],
+) -> LineLayout {
+    let text_system = crate::MacTextSystem::new();
+    let mut font_runs: Vec<FontRun> = Vec::with_capacity(runs.len());
+    for run in runs {
+        let font_id = text_system
+            .font_id(&run.font)
+            .expect("platform text system should resolve the font");
+        match font_runs.last_mut() {
+            Some(font_run)
+                if font_run.font_id == font_id && font_run.font_size == run.font_size =>
+            {
+                font_run.len += run.len;
+            }
+            _ => font_runs.push(FontRun {
+                len: run.len,
+                font_id,
+                font_size: run.font_size,
+            }),
+        }
+    }
+    text_system.layout_line(&text, font_size, &font_runs)
+}
+
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub(crate) enum AtlasKey {
-    Glyph(RenderGlyphParams),
+pub(crate) enum AtlasKey {    Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
     Image(RenderImageParams),
 }

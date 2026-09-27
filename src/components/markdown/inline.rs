@@ -537,10 +537,6 @@ impl InlineTextTree {
         self.fragments.iter().any(|fragment| {
             fragment.math.is_some()
                 || fragment.style.has_script()
-                // Inline code renders through the mixed-segment path so it can
-                // use a smaller monospace size than the surrounding body text;
-                // the single-size text element cannot express that per run.
-                || fragment.style.code
                 // `![alt](src)` spans inside a paragraph render as inline
                 // image widgets on the same mixed-segment path.
                 || fragment.text.contains("![")
@@ -3253,6 +3249,21 @@ mod tests {
         InlineScript, InlineStyle, InlineTextTree, LinkReferenceDefinitions, StyleFlag,
     };
     use crate::components::HtmlCssColor;
+
+    #[test]
+    fn inline_code_does_not_force_the_mixed_visual_path() {
+        // 行内代码曾为了缩小字号而走「混合分段」渲染路径（逐词一个元素），
+        // 该路径只在失焦时使用，聚焦后换成可编辑文本，于是点击时字号跳变。
+        // 现在行内代码不再触发该路径：显示与编辑由同一套文本元素渲染。
+        assert!(
+            !InlineTextTree::from_markdown("alpha `code` beta").has_mixed_inline_visuals(),
+            "行内代码不应再触发混合分段路径"
+        );
+        // 数学、上下标、行内图片仍然需要混合路径（它们有真正的非文本视觉）。
+        assert!(InlineTextTree::from_markdown("alpha $x$ beta").has_mixed_inline_visuals());
+        assert!(InlineTextTree::from_markdown("alpha^sup^ beta").has_mixed_inline_visuals());
+        assert!(InlineTextTree::from_markdown("alpha ![a](b.png) beta").has_mixed_inline_visuals());
+    }
 
     #[test]
     fn parses_supported_styles_and_serializes_canonically() {

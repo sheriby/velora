@@ -578,7 +578,8 @@ impl DirectWriteState {
                         font_info.font_face.GetWeight(),
                         font_info.font_face.GetStyle(),
                         DWRITE_FONT_STRETCH_NORMAL,
-                        font_size.0,
+                        // 本地补丁：首段也允许逐段字号覆盖（见 `TextRun::font_size`）。
+                        first_run.font_size.unwrap_or(font_size).0,
                         &HSTRING::from(&self.components.locale),
                     )?
                     .cast()?;
@@ -636,7 +637,8 @@ impl DirectWriteState {
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
-                text_layout.SetFontSize(font_size.0, text_range)?;
+                // 本地补丁：逐段字号覆盖（见 `TextRun::font_size`）。
+                text_layout.SetFontSize(run.font_size.unwrap_or(font_size).0, text_range)?;
                 text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
                 text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
                 text_layout.SetTypography(&font_info.features, text_range)?;
@@ -648,6 +650,7 @@ impl DirectWriteState {
                 index_converter: StringIndexConverter::new(text),
                 runs: &mut runs,
                 width: 0.0,
+                font_size,
             };
             text_layout.Draw(
                 Some(&renderer_context as *const _ as _),
@@ -1349,6 +1352,8 @@ struct RendererContext<'t, 'a, 'b> {
     index_converter: StringIndexConverter<'a>,
     runs: &'b mut Vec<ShapedRun>,
     width: f32,
+    /// 本地补丁：整行字号，用来判断某个字形段是否带逐段字号覆盖。
+    font_size: Pixels,
 }
 
 #[derive(Debug)]
@@ -1520,7 +1525,18 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             }
             glyph_idx += cluster_glyph_count;
         }
-        context.runs.push(ShapedRun { font_id, glyphs });
+        // 本地补丁：逐段字号覆盖（见 `TextRun::font_size`），DirectWrite 按
+        // 字形段的 em 大小回报，和整行字号一致时记 `None`。
+        let run_font_size = if (glyphrun.fontEmSize - context.font_size.0).abs() < 0.01 {
+            None
+        } else {
+            Some(px(glyphrun.fontEmSize))
+        };
+        context.runs.push(ShapedRun {
+            font_id,
+            font_size: run_font_size,
+            glyphs,
+        });
         Ok(())
     }
 

@@ -440,6 +440,9 @@ impl MacTextSystemState {
         let mut string = CFMutableAttributedString::new();
         let mut max_ascent = 0.0f32;
         let mut max_descent = 0.0f32;
+        // 本地补丁：记录每段在属性串里的 UTF16 区间与字号覆盖，供后面按
+        // CoreText 切出的字形段回查字号（见 `TextRun::font_size`）。
+        let mut size_ranges: Vec<(isize, isize, Option<Pixels>)> = Vec::new();
 
         {
             let mut ix_converter = StringIndexConverter::new(&text);
@@ -464,12 +467,14 @@ impl MacTextSystemState {
                     );
                 }
                 let utf16_end = string.char_len();
+                size_ranges.push((utf16_start, utf16_end, run.font_size));
 
                 let cf_range = CFRange::init(utf16_start, utf16_end - utf16_start);
                 let font = &self.fonts[run.font_id.0];
 
+                let run_font_size = run.font_size.unwrap_or(font_size);
                 let font_metrics = font.metrics();
-                let font_scale = font_size.0 / font_metrics.units_per_em as f32;
+                let font_scale = run_font_size.0 / font_metrics.units_per_em as f32;
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
@@ -477,7 +482,9 @@ impl MacTextSystemState {
                     string.set_attribute(
                         cf_range,
                         kCTFontAttributeName,
-                        &font.native_font().clone_with_font_size(font_size.into()),
+                        &font
+                            .native_font()
+                            .clone_with_font_size(run_font_size.into()),
                     );
                 }
             }
@@ -497,11 +504,27 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
+            // 本地补丁：CoreText 会按属性（含字号）切字形段，这里用该段首个
+            // 字形的 UTF16 下标回查字号覆盖；越界时退回整行字号。
+            let run_font_size = run
+                .string_indices()
+                .first()
+                .and_then(|&utf16_ix| {
+                    size_ranges
+                        .iter()
+                        .rev()
+                        .find(|(start, _, _)| *start <= utf16_ix)
+                        .and_then(|(_, _, size)| *size)
+                });
+
             let mut glyphs = match runs.last_mut() {
-                Some(run) if run.font_id == font_id => &mut run.glyphs,
+                Some(run) if run.font_id == font_id && run.font_size == run_font_size => {
+                    &mut run.glyphs
+                }
                 _ => {
                     runs.push(ShapedRun {
                         font_id,
+                        font_size: run_font_size,
                         glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
                     });
                     &mut runs.last_mut().unwrap().glyphs
@@ -719,6 +742,7 @@ mod tests {
         let mut style = FontRun {
             font_id,
             len: line.len(),
+            font_size: None,
         };
 
         let layout = fonts.layout_line(line, px(16.), &[style]);
@@ -740,10 +764,12 @@ mod tests {
             FontRun {
                 len: "\u{feff}".len(),
                 font_id,
+                font_size: None,
             },
             FontRun {
                 len: "ab".len(),
                 font_id,
+                font_size: None,
             },
         ];
         let layout = fonts.layout_line(line, px(16.), font_runs);
@@ -762,8 +788,16 @@ mod tests {
 
         let text = "hello world";
         let font_runs = &[
-            FontRun { font_id, len: 5 }, // "hello"
-            FontRun { font_id, len: 6 }, // " world"
+            FontRun {
+                font_id,
+                len: 5,
+                font_size: None,
+            }, // "hello"
+            FontRun {
+                font_id,
+                len: 6,
+                font_size: None,
+            }, // " world"
         ];
 
         let layout = fonts.layout_line(text, px(16.), font_runs);
@@ -783,11 +817,16 @@ mod tests {
         // Test with different font runs - should not insert ZWNJ
         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
         let font_runs_different = &[
-            FontRun { font_id, len: 5 }, // "hello"
+            FontRun {
+                font_id,
+                len: 5,
+                font_size: None,
+            }, // "hello"
             // " world"
             FontRun {
                 font_id: font_id2,
                 len: 6,
+                font_size: None,
             },
         ];
 
@@ -812,15 +851,31 @@ mod tests {
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello";
-        let font_runs = &[FontRun { font_id, len: 5 }];
+        let font_runs = &[FontRun {
+            font_id,
+            len: 5,
+            font_size: None,
+        }];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());
 
         let text = "abc";
         let font_runs = &[
-            FontRun { font_id, len: 1 }, // "a"
-            FontRun { font_id, len: 1 }, // "b"
-            FontRun { font_id, len: 1 }, // "c"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "a"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "b"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "c"
         ];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());
@@ -842,5 +897,43 @@ mod tests {
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, 0);
         assert!(layout.runs.is_empty());
+    }
+
+    // 本地补丁：逐段字号覆盖要真的参与排版与绘制信息（见 `TextRun::font_size`）。
+    #[test]
+    fn test_layout_line_per_run_font_size() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+
+        let text = "abcd";
+        let plain = FontRun {
+            font_id,
+            len: 2,
+            font_size: None,
+        };
+        let smaller = FontRun {
+            font_id,
+            len: 2,
+            font_size: Some(px(8.)),
+        };
+
+        let baseline = fonts.layout_line(text, px(16.), &[FontRun { len: 4, ..plain }]);
+        let mixed = fonts.layout_line(text, px(16.), &[plain, smaller]);
+
+        // 两段字号不同，CoreText 会切成两段字形；小字号那段更窄。
+        assert_eq!(mixed.runs.len(), 2);
+        assert_eq!(mixed.runs[0].font_size, None);
+        assert_eq!(mixed.runs[1].font_size, Some(px(8.)));
+        assert!(
+            mixed.width < baseline.width,
+            "expected mixed line width {} < {}",
+            mixed.width,
+            baseline.width
+        );
+        let smaller_glyph_x = mixed.runs[1].glyphs[0].position.x;
+        assert!(
+            smaller_glyph_x < px(16.),
+            "expected the smaller run to advance less than the 16px body glyphs, got {smaller_glyph_x}"
+        );
     }
 }

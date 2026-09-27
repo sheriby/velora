@@ -441,6 +441,9 @@ impl CosmicTextSystemState {
             } else {
                 runs.push(ShapedRun {
                     font_id,
+                    // 本地补丁：这条路径的 cosmic-text 只按整行字号排版，
+                    // 逐段字号覆盖（`TextRun::font_size`）暂未接入。
+                    font_size: None,
                     glyphs: vec![shaped_glyph],
                 });
             }

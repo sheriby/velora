@@ -61,6 +61,7 @@ fn build_text_runs(
     code_bg: Hsla,
     show_inline_code_backgrounds: bool,
     code_font_family: &str,
+    code_font_size: Pixels,
 ) -> Vec<TextRun> {
     let spans = input.inline_spans();
     let mut boundaries = vec![0, display_text.len()];
@@ -153,6 +154,9 @@ fn build_text_runs(
             background_color,
             underline,
             strikethrough,
+            // 行内代码跟随「代码块字体大小」设置（用户报修：显示态与编辑态
+            // 必须同字号，否则点击进入编辑的瞬间字号会跳变）。
+            font_size: inline_style.code.then_some(code_font_size),
         });
     }
 
@@ -231,6 +235,7 @@ fn build_code_text_runs(
                 wavy: false,
             }),
             strikethrough: None,
+            font_size: None,
         });
     }
 
@@ -699,6 +704,7 @@ impl Element for CodeLanguageInputElement {
             background_color: None,
             underline: None,
             strikethrough: None,
+            font_size: None,
         };
 
         let runs = if let Some(marked_range) = input
@@ -913,6 +919,7 @@ impl Element for BlockTextElement {
             background_color: None,
             underline: None,
             strikethrough: None,
+            font_size: None,
         };
 
         let runs: Vec<TextRun> = if !is_placeholder {
@@ -934,6 +941,7 @@ impl Element for BlockTextElement {
                     theme.colors.code_bg,
                     show_inline_code_backgrounds,
                     &crate::config::EditorSettings::fonts(cx).code_family,
+                    px(crate::config::EditorSettings::fonts(cx).code_size as f32),
                 )
             }
         } else {
@@ -1039,6 +1047,7 @@ impl Element for BlockTextElement {
                             background_color: None,
                             underline: None,
                             strikethrough: None,
+                            font_size: None,
                         }],
                         None,
                     )
@@ -1321,6 +1330,7 @@ mod tests {
                         background_color: None,
                         underline: None,
                         strikethrough: None,
+                        font_size: None,
                     }],
                     Some(width),
                     None,
@@ -1554,6 +1564,7 @@ mod tests {
                 background_color: None,
                 underline: None,
                 strikethrough: None,
+                font_size: None,
             };
             let runs = super::build_text_runs(
                 block,
@@ -1564,6 +1575,7 @@ mod tests {
                 Hsla::from(rgba(0x111111ff)),
                 true,
                 "Menlo",
+                px(13.0),
             );
             let marked_run = runs.last().expect("styled text should create a final run");
 
@@ -1575,6 +1587,163 @@ mod tests {
                 Some(Hsla::from(rgba(0xffff00ff)))
             );
         });
+    }
+
+    #[gpui::test]
+    async fn inline_code_runs_use_the_code_font_size(cx: &mut TestAppContext) {
+        // 用户报修：点击含行内代码的行，代码字号跳回正文。这要求可编辑文本
+        // 也带上逐段字号（vendored gpui 本地补丁），且行内代码跟随
+        // 「代码块字体大小」设置——显示态（分段路径）与编辑态（本路径）同值。
+        let cx = cx.add_empty_window();
+        let block = cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::Paragraph,
+                    InlineTextTree::from_markdown("plain `code` tail"),
+                ),
+            )
+        });
+
+        cx.update(|window, app| {
+            let display_text: SharedString = block.read(app).display_text().to_string().into();
+            let base_run = TextRun {
+                len: display_text.len(),
+                font: font(".SystemUIFont"),
+                color: Hsla::from(rgba(0xffffffff)),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+                font_size: None,
+            };
+            let runs = block.read_with(app, |block, _| {
+                super::build_text_runs(
+                    block,
+                    &display_text,
+                    &base_run,
+                    px(1.0),
+                    Hsla::from(rgba(0x0066ccff)),
+                    Hsla::from(rgba(0x111111ff)),
+                    true,
+                    "Menlo",
+                    px(13.0),
+                )
+            });
+
+            let code_run = runs
+                .iter()
+                .find(|run| run.font_size.is_some())
+                .expect("行内代码段应带字号覆盖");
+            assert_eq!(code_run.len, "code".len());
+            assert_eq!(code_run.font_size, Some(px(13.0)));
+            assert!(
+                runs.iter().filter(|run| run.font_size.is_none()).count() >= 2,
+                "代码段两侧的正文段不带字号覆盖"
+            );
+
+            let lines = window
+                .text_system()
+                .shape_text(display_text.clone(), px(16.0), &runs, None, None)
+                .expect("text should shape");
+            let layout = &lines[0];
+            let code_shaped = layout
+                .runs()
+                .iter()
+                .find(|run| run.font_size == Some(px(13.0)))
+                .expect("整形结果应保留代码段字号");
+            let body_shaped = layout
+                .runs()
+                .iter()
+                .find(|run| run.font_size.is_none())
+                .expect("整形结果应保留正文段");
+
+            let advance = |run: &gpui::ShapedRun| {
+                let first = run.glyphs.first().expect("run should have glyphs");
+                let last = run.glyphs.last().expect("run should have glyphs");
+                (last.position.x - first.position.x) / (run.glyphs.len().max(2) - 1) as f32
+            };
+            assert!(
+                advance(code_shaped) < advance(body_shaped),
+                "代码段步进 {:?} 应小于正文段 {:?}",
+                advance(code_shaped),
+                advance(body_shaped)
+            );
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_platform_text_system_applies_per_run_font_size() {
+        // 真实 CoreText 的逐段字号：步进必须按字号缩放，且 ShapedRun 要带上字号
+        // 供绘制取用（测试平台的 NoopTextSystem 只是模拟这条契约）。
+        let run_with = |len: usize, family: &'static str, font_size: Option<gpui::Pixels>| TextRun {
+            len,
+            font: font(family),
+            color: Hsla::from(rgba(0xffffffff)),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            font_size,
+        };
+        let text = "plain code";
+        let runs = [
+            run_with("plain ".len(), "Menlo", None),
+            run_with("code".len(), "Menlo", Some(px(13.0))),
+        ];
+        let layout = gpui::shape_line_with_platform_text_system(text.into(), px(16.0), &runs);
+
+        let advance = |run: &gpui::ShapedRun| {
+            let first = run.glyphs.first().expect("run should have glyphs");
+            let last = run.glyphs.last().expect("run should have glyphs");
+            (last.position.x - first.position.x) / (run.glyphs.len().max(2) - 1) as f32
+        };
+        let code_run = layout
+            .runs
+            .iter()
+            .find(|run| run.font_size == Some(px(13.0)) && !run.glyphs.is_empty())
+            .expect("CoreText 排版结果应保留逐段字号");
+        assert_eq!(code_run.glyphs.len(), "code".len());
+        let body_run = layout
+            .runs
+            .iter()
+            .find(|run| run.font_size.is_none() && !run.glyphs.is_empty())
+            .expect("正文段不带字号覆盖");
+        assert!(
+            advance(code_run) < advance(body_run) * 0.9,
+            "13px 代码段步进 {:?} 应明显小于 16px 正文段步进 {:?}",
+            advance(code_run),
+            advance(body_run)
+        );
+    }
+
+    #[test]
+    fn vendored_text_system_keeps_the_per_run_font_size_patch() {
+        // 行内代码跟随「代码块字体大小」依赖 vendored gpui 的本地补丁：逐段字号
+        // 必须一路走到各平台排版层。mac 这条路径需要 Metal 工具链才能编译测试
+        // （本机没有），这里守住补丁本身，升级 vendored 副本时不会被悄悄覆盖。
+        let mac = include_str!("../../../vendor/gpui/src/platform/mac/text_system.rs");
+        assert!(
+            mac.contains("run.font_size.unwrap_or(font_size)"),
+            "mac 排版层应把逐段字号用于字体实例"
+        );
+        assert!(
+            mac.contains("clone_with_font_size(run_font_size.into())"),
+            "mac 排版层应按逐段字号创建 CTFont"
+        );
+        assert!(
+            mac.contains("font_size: run_font_size"),
+            "mac 排版层应把逐段字号写回 ShapedRun"
+        );
+
+        let windows = include_str!("../../../vendor/gpui/src/platform/windows/direct_write.rs");
+        assert!(
+            windows.contains("run.font_size.unwrap_or(font_size).0"),
+            "windows 排版层应把逐段字号写进 DirectWrite 布局"
+        );
+        assert!(
+            windows.contains("Some(px(glyphrun.fontEmSize))"),
+            "windows 绘制层应把逐段字号写回 ShapedRun"
+        );
     }
 
     #[gpui::test]

@@ -433,8 +433,9 @@ fn measure_cell_preferred_width(
         background_color: None,
         underline: None,
         strikethrough: None,
+        font_size: None,
     };
-    let runs = measurement_runs(&cache, &base_run);
+    let runs = measurement_runs(&cache, &base_run, px(theme.typography.code_size));
     let font_size = px(theme.typography.text_size);
 
     let text_width = window
@@ -456,6 +457,7 @@ fn measure_cell_preferred_width(
 fn measurement_runs(
     cache: &crate::components::InlineRenderCache,
     base_run: &TextRun,
+    code_font_size: Pixels,
 ) -> Vec<TextRun> {
     let mut boundaries = vec![0, cache.visible_text().len()];
     for span in cache.spans() {
@@ -489,6 +491,9 @@ fn measurement_runs(
             background_color: None,
             underline: None,
             strikethrough: None,
+            // 行内代码按「代码块字体大小」排版，量宽也要跟着走，
+            // 否则含行内代码的列会按正文字号估宽。
+            font_size: inline_style.code.then_some(code_font_size),
         });
     }
 

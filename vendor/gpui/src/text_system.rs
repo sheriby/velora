@@ -457,6 +457,7 @@ impl WindowTextSystem {
                 let font_id = self.resolve_font(&run.font);
                 if let Some(font_run) = font_runs.last_mut()
                     && font_id == font_run.font_id
+                    && font_run.font_size == run.font_size
                     && !decoration_changed
                 {
                     font_run.len += run_len_within_line;
@@ -464,6 +465,7 @@ impl WindowTextSystem {
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id,
+                        font_size: run.font_size,
                     });
                 }
 
@@ -560,6 +562,7 @@ impl WindowTextSystem {
 
             if let Some(font_run) = font_runs.last_mut()
                 && Some(font_run.font_id) == last_font
+                && font_run.font_size == run.font_size
                 && !decoration_changed
             {
                 font_run.len += run.len;
@@ -569,6 +572,7 @@ impl WindowTextSystem {
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
+                    font_size: run.font_size,
                 });
             }
         }
@@ -743,6 +747,8 @@ pub struct TextRun {
     pub underline: Option<UnderlineStyle>,
     /// The strikethrough style (if any)
     pub strikethrough: Option<StrikethroughStyle>,
+    /// 本地补丁：本段字号覆盖，`None` 表示沿用 `shape_*` 调用传入的字号。
+    pub font_size: Option<Pixels>,
 }
 
 #[cfg(all(target_os = "macos", test))]

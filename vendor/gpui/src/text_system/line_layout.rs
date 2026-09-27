@@ -33,6 +33,8 @@ pub struct LineLayout {
 pub struct ShapedRun {
     /// The font id for this run
     pub font_id: FontId,
+    /// 本地补丁：本段字号覆盖，`None` 表示按 `LineLayout::font_size` 绘制。
+    pub font_size: Option<Pixels>,
     /// The glyphs that make up this run
     pub glyphs: Vec<ShapedGlyph>,
 }
@@ -593,10 +595,33 @@ impl LineLayoutCache {
 }
 
 /// A run of text with a single font.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug)]
 pub struct FontRun {
     pub(crate) len: usize,
     pub(crate) font_id: FontId,
+    /// 本地补丁：本段字号覆盖，`None` 表示沿用整行字号。
+    pub(crate) font_size: Option<Pixels>,
+}
+
+// `Pixels` 只有 `PartialEq`（f32 负载），这里按位比较补齐 `Eq`/`Hash`，
+// 保证带字号覆盖的缓存键与 `RenderGlyphParams` 的既有做法一致。
+impl PartialEq for FontRun {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self.font_id == other.font_id
+            && self.font_size.map(|size| size.0.to_bits())
+                == other.font_size.map(|size| size.0.to_bits())
+    }
+}
+
+impl Eq for FontRun {}
+
+impl Hash for FontRun {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.len.hash(state);
+        self.font_id.hash(state);
+        self.font_size.map(|size| size.0.to_bits()).hash(state);
+    }
 }
 
 trait AsCacheKeyRef {

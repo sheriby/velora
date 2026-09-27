@@ -145,6 +145,9 @@
 10. **元素级 UI 验证手法**：元素加 test-only `debug_selector` + `VisualTestContext::debug_bounds("名字")` 取真实布局，再用 `simulate_click(bounds.center(), Modifiers::none())` 端到端点击；锁屏环境下这比截图可靠（C7 用例见 tests.rs）。
 11. **提交前 `cargo build` 与 `cargo test` 两条都要跑**：`vendor/gpui` 里带 `#[cfg(any(test, feature = "test-support"))]` 的字段/代码只在测试构建下存在（dev-dependency 启用了 test-support），只跑 `cargo test` 会漏掉生产构建的错误（曾让 `cargo run` 直接编译失败）。
 12. **`debug_bounds` 现在是逐帧的**：上游 gpui 的 `Frame::clear()` 没清 `debug_bounds`，导致「元素还在不在」的断言会读到早已消失元素的旧边界（正控假绿过）。已本地补丁为逐帧清空（`vendor/gpui/src/window.rs`）；写这类断言前记得先 `window.draw(cx)` 再查。
+13. **可编辑文本可以带逐段字号**：`gpui::TextRun` 新增 `font_size: Option<Pixels>`（本地补丁，`None`=沿用元素字号，旧行为逐字节不变）。行内代码据此跟随「代码字号」设置（B13）。要新增按字号分段的样式，在 `build_text_runs` 里给该段 `font_size`，不要再把它塞进「混合分段」路径。
+14. **测试平台不是真实文本系统**：`cargo test` 用 `NoopTextSystem`（等宽模拟，已同步支持逐段字号断言）；真实 CoreText 路径只能在 macOS 用 `gpui::shape_line_with_platform_text_system`（test-support 门控的本地补丁入口）验证，用例见 `mac_platform_text_system_applies_per_run_font_size`。`cargo test -p gpui` / 在 `vendor/gpui` 里跑 gpui 自带测试**跑不通**（不是 workspace 成员，且本地 `ClipboardItem.html` 补丁让其独立测试构建编译失败），别把它当门禁。
+15. **linux 文本系统暂不认逐段字号**：`vendor/gpui/src/platform/linux/text_system.rs` 仍按整行字号排版（cosmic-text 单字号），代码里已注明；Windows 已接 DirectWrite 按段 `SetFontSize`，但本机无法编译验证，下一版做 Windows 验收时先复核这条。
 
 ## 四、验证方式
 

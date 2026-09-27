@@ -274,6 +274,20 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 全量回归 | `cargo test` 906 通过 0 失败 1 ignored | 通过 |
 | 补丁打包口径（事后修正） | 该批提交时只跑了 `cargo test`，漏跑 `cargo build`：`debug_bounds` 字段带 `#[cfg(any(test, feature = "test-support"))]`，测试构建（dev-dependency 打开了 test-support）能编过，而 `cargo run` / `cargo build` 的生产构建报 E0609。修复为 `clear()` 里补同样的 cfg 门（提交 `fix(build)`），并把「提交前 `cargo build` + `cargo test` 两条都跑」写进交接文档约定 | 已修正 |
 
+## 第二十八批补充（用户报修：点击含行内代码的行会跳字号；行内代码应跟「代码字号」设置）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 用户报修两条：① 未聚焦时行内代码显示为 0.85× 正文，点击进去编辑那一刻字号跳回正文；② 既然已有「代码块字体大小」设置，行内代码应直接用该设置 | 已复现 |
+| 根因 | 显示态与编辑态走两套机制：含行内代码的块走「混合分段」flex 路径（每段可有独立字号），而聚焦后的可编辑文本是一个 `TextRun` 列表 + 整行单一字号——gpui 的 `TextRun` 没有逐段字号，两套字号不可能一致，所以 0.85× 只能停在显示态、一进编辑就跳。也正因如此，行内代码当年被迫留在混合分段路径里（`has_mixed_inline_visuals` 带 `style.code`） | 已定位 |
+| 本地补丁（逐段字号） | `gpui::TextRun` 新增 `font_size: Option<Pixels>`（`None` 沿用元素字号 ⇒ 既有渲染逐字节不变）：`FontRun` 带字号并进缓存键（`Pixels` 只有 `PartialEq`，按 `to_bits` 手写 `Eq`/`Hash`，与 `RenderGlyphParams` 同法）；mac `layout_line` 按段 `clone_with_font_size` 并按段字号算 ascent/descent，CoreText 切出的字形段按段首字形 UTF16 下标回查字号写进 `ShapedRun`；`text_system/line.rs` 的字形/emoji 绘制与背景、下划线基准都取该段字号；windows DirectWrite 同步（按段 `SetFontSize`、`glyphrun.fontEmSize` 回写）；linux 仍是 cosmic-text 单字号（代码内已注明）；测试占位平台 `NoopTextSystem` 按字号缩放步进并切段，让断言跑得动 | 通过 |
+| 应用侧修复 | ① 行内代码退出混合分段路径（`src/components/markdown/inline.rs`），聚焦前后同一个文本元素、同一套字号；② 编辑态 `build_text_runs` 给代码段带 `font_size = 代码字号`（`src/components/block/element.rs`）；③ 混合块（数学/上下标/行内图片同块）里代码段的显示字号也取「代码字号」（`inline_display_font_size` 新增入参）；④ 表格列宽按代码字号量宽（`src/components/markdown/table.rs`），避免含行内代码的列按正文字号估宽 | 通过 |
+| 用例 | ① `mac_platform_text_system_applies_per_run_font_size`：真实 CoreText（走 test-support 门控的 `gpui::shape_line_with_platform_text_system` 入口）——同一 Menlo，16px 正文段与 13px 代码段，代码段步进 < 正文段步进 90%，且 `ShapedRun` 带 `Some(13)` 供绘制取用；② `inline_code_runs_use_the_code_font_size`：编辑态 `build_text_runs` 的代码段带 `Some(13)`、两侧正文段不带覆盖，整形结果按字号切段且代码段更窄；③ `inline_code_uses_the_code_font_size_while_scripts_shrink`：混合块显示字号（代码=代码字号、上标=72%、正文=正文）；④ `vendored_text_system_keeps_the_per_run_font_size_patch`：源码守卫，守住 mac/windows 的逐段字号补丁不被 vendored 副本更新悄悄覆盖 | 通过 |
+| 正控 | ① 去掉 `TextRun → FontRun` 的字号传递（`vendor/gpui/src/text_system.rs`）⇒ 用例②「整形结果应保留代码段字号」失败；② mac 排版层改回整行字号（`clone_with_font_size(font_size)`）⇒ 用例①失败；③ mac 不回写 `ShapedRun` 字号（`font_size: None`）⇒ 用例①失败；④ 显示态 helper 把代码段退回正文字号 ⇒ 用例③失败（实测 left: 16.0 / right: 13.0）；全部复原后复跑通过 | 通过 |
+| 门禁环境说明 | `cargo test -p gpui` 与在 `vendor/gpui` 内跑 gpui 自带测试都跑不通（gpui 非 workspace 成员；其独立测试构建还受本地 `ClipboardItem.html` 补丁影响），所以真实平台断言放在 velora 用例里，通过 test-support 门控入口调用真实 mac 文本系统 | 已记录 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 911 通过 0 失败 1 ignored | 通过 |
+| 待人工目视 | 锁屏解除后确认：含行内代码段落点击前后字号不再变化；把「代码字号」调到明显小于/接近正文字号（如 12 与 16）时行内代码随之变化；围栏代码块与导出 HTML 不受影响 | 待复核 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

@@ -94,6 +94,25 @@ impl Render for HoverPreviewTooltip {
     }
 }
 
+/// 行内片段在「混合分段」渲染路径（数学/上下标/行内图片同块）里用的显示字号。
+///
+/// 行内代码跟随「代码块字体大小」设置，上标/下标缩小到 72%，其余跟随正文。
+/// 可编辑文本的 `TextRun` 现在也能带逐段字号（vendored gpui 本地补丁），显示态
+/// 与编辑态用同一套字号规则，点击进入编辑不再跳变（用户报修）。
+fn inline_display_font_size(
+    span: &crate::components::InlineSpan,
+    font_size: f32,
+    code_font_size: f32,
+) -> f32 {
+    if span.style.code {
+        code_font_size.max(1.0)
+    } else if span.style.has_script() {
+        (font_size * 0.72).max(6.0)
+    } else {
+        font_size
+    }
+}
+
 /// 链接/脚注悬停 tooltip 文案（roadmap C9/C8）。
 fn segment_hash(text: &str, range_start: usize) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
@@ -1088,15 +1107,11 @@ impl Block {
             InlineScript::Superscript => -font_size * 0.28,
             InlineScript::Subscript => font_size * 0.22,
         };
-        // Inline code drops to ~85% like GitHub's preview so the monospace
-        // glyphs stop towering over the surrounding proportional text.
-        let display_font_size = if span.style.code {
-            (font_size * 0.85).max(6.0)
-        } else if span.style.has_script() {
-            (font_size * 0.72).max(6.0)
-        } else {
-            font_size
-        };
+        let display_font_size = inline_display_font_size(
+            span,
+            font_size,
+            crate::config::EditorSettings::fonts(cx).code_size as f32,
+        );
 
         let mut element = div()
             .min_w(px(0.0))
@@ -3593,7 +3608,34 @@ fn inline_word_chunks(text: &str, code: bool, has_background: bool) -> Vec<&str>
 
 #[cfg(test)]
 mod tests {
-    use super::{tag_query, wikilink_target};
+    use super::{inline_display_font_size, tag_query, wikilink_target};
+    use crate::components::{InlineScript, InlineSpan, InlineStyle};
+
+    #[test]
+    fn inline_code_uses_the_code_font_size_while_scripts_shrink() {
+        // 用户报修：点击含行内代码的行，代码字号会跳回正文大小；且行内代码
+        // 应当跟随「代码块字体大小」设置。显示态与编辑态现在同字号。
+        let span_with = |style: InlineStyle| InlineSpan {
+            range: 0..1,
+            style,
+            html_style: None,
+            link: None,
+            footnote: None,
+            math: None,
+        };
+        let code_span = span_with(InlineStyle {
+            code: true,
+            ..InlineStyle::default()
+        });
+        assert_eq!(inline_display_font_size(&code_span, 16.0, 13.0), 13.0);
+        let superscript = span_with(InlineStyle {
+            script: InlineScript::Superscript,
+            ..InlineStyle::default()
+        });
+        assert_eq!(inline_display_font_size(&superscript, 16.0, 13.0), 11.52);
+        let plain = span_with(InlineStyle::default());
+        assert_eq!(inline_display_font_size(&plain, 16.0, 13.0), 16.0);
+    }
 
     #[test]
     fn wikilink_target_extracts_trimmed_target() {
