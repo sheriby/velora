@@ -258,6 +258,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.dismiss_contextual_overlays(cx);
+        // escape 由全局快捷键路由到这里，浮层面板自己的 key_down 收不到。
+        self.close_quick_open(cx);
+        self.close_command_palette(cx);
     }
 
     pub(super) fn on_context_menu_insert_hover(

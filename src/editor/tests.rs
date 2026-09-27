@@ -5193,3 +5193,111 @@ async fn heading_fold_chevron_toggle_hides_section_and_refocuses_heading(
         );
     });
 }
+
+/// 断言快捷切换器只剩一个结果，且文件名匹配（工作区根会被规范化成 /private 前缀）。
+fn assert_quick_open_result(results: &[PathBuf], expected_name: &str) {
+    assert_eq!(results.len(), 1, "expected one match, got {results:?}");
+    assert_eq!(
+        results[0].file_name().and_then(|name| name.to_str()),
+        Some(expected_name)
+    );
+}
+
+#[gpui::test]
+async fn quick_open_accepts_ime_text_for_non_ascii_file_names(cx: &mut TestAppContext) {
+    // roadmap E9：⌘P 输入接 EntityInputHandler，中文文件名可直接用输入法拼写。
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-quick-open-ime-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let notes = root.join("笔记.md");
+    std::fs::write(&notes, "# 笔记\n").expect("write notes");
+    std::fs::write(root.join("alpha.md"), "# Alpha\n").expect("write alpha");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx)
+    });
+    redraw(cx);
+
+    // 输入法提交路径：key_char → replace_text_in_range（同 macOS insertText）。
+    cx.simulate_input("笔记");
+
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.quick_open.as_ref().expect("quick open stays open");
+        assert_eq!(state.query, "笔记");
+        assert_eq!(state.selected_range, 6..6);
+        assert_eq!(state.marked_range, None);
+        assert_quick_open_result(&state.results, "笔记.md");
+    });
+
+    // 纯 ASCII 也必须只插入一次（输入处理器接管后不再走手动按键插入）。
+    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_input("alpha");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.quick_open.as_ref().expect("quick open stays open");
+        assert_eq!(state.query, "alpha");
+        assert_eq!(state.selected_range, 5..5);
+        assert_quick_open_result(&state.results, "alpha.md");
+    });
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn quick_open_composition_commit_backspace_and_escape_edit_the_query(
+    cx: &mut TestAppContext,
+) {
+    // roadmap E9：组合期标记由输入法接管，提交覆盖组合串；退格按字素删除。
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-quick-open-ime-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let notes = root.join("笔记.md");
+    std::fs::write(&notes, "# 笔记\n").expect("write notes");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx)
+    });
+    redraw(cx);
+
+    // 拼音组合中：marked_range 覆盖组合串，结果先按拼音过滤。
+    editor.update_in(cx, |editor, window, cx| {
+        editor.replace_and_mark_text_in_range(None, "biji", Some(0..4), window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.quick_open.as_ref().expect("quick open stays open");
+        assert_eq!(state.query, "biji");
+        assert_eq!(state.marked_range, Some(0..4));
+    });
+
+    // 提交：输入法用候选词覆盖组合串，并刷新结果。
+    editor.update_in(cx, |editor, window, cx| {
+        editor.replace_text_in_range(None, "笔记", window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.quick_open.as_ref().expect("quick open stays open");
+        assert_eq!(state.query, "笔记");
+        assert_eq!(state.marked_range, None);
+        assert_quick_open_result(&state.results, "笔记.md");
+    });
+
+    // 退格删掉整个汉字（按字素，而不是按字节）。
+    cx.simulate_keystrokes("backspace");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.quick_open.as_ref().expect("quick open stays open");
+        assert_eq!(state.query, "笔");
+        assert_eq!(state.selected_range, 3..3);
+    });
+
+    // escape 关闭面板并清空查询。
+    cx.simulate_keystrokes("escape");
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.quick_open.is_none());
+    });
+
+    let _ = std::fs::remove_dir_all(root);
+}

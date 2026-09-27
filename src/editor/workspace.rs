@@ -181,6 +181,23 @@ enum SearchInputKind {
     Replace,
 }
 
+/// Which single-line overlay input the editor's input handler serves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OverlayInputKind {
+    Query,
+    Replace,
+    QuickOpen,
+}
+
+impl From<SearchInputKind> for OverlayInputKind {
+    fn from(kind: SearchInputKind) -> Self {
+        match kind {
+            SearchInputKind::Query => Self::Query,
+            SearchInputKind::Replace => Self::Replace,
+        }
+    }
+}
+
 pub(super) struct WorkspaceAutosaveDocument {
     pub(super) recovery_id: uuid::Uuid,
     pub(super) file_version: u64,
@@ -4375,7 +4392,7 @@ impl Editor {
                             } else {
                                 selected
                             };
-                            editor.replace_search_input_text(kind, range, "", None, false, cx);
+                            editor.replace_overlay_input_text(kind, range, "", None, false, cx);
                             true
                         });
                         if !matches!(handled, Ok(true)) {
@@ -4393,7 +4410,7 @@ impl Editor {
                                         editor.workspace.replace_selected_range.clone()
                                     }
                                 };
-                                editor.replace_search_input_text(
+                                editor.replace_overlay_input_text(
                                     kind, selected, &text, None, false, cx,
                                 );
                             });
@@ -6018,59 +6035,91 @@ fn search_utf8_to_utf16(text: &str, offset: usize) -> usize {
 }
 
 impl Editor {
-    fn active_search_input(&self, window: &Window) -> SearchInputKind {
+    fn active_overlay_input(&self, window: &Window) -> OverlayInputKind {
+        if self
+            .quick_open
+            .as_ref()
+            .and_then(|state| state.focus.as_ref())
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            return OverlayInputKind::QuickOpen;
+        }
         if self
             .workspace
             .replace_focus
             .as_ref()
             .is_some_and(|focus| focus.is_focused(window))
         {
-            SearchInputKind::Replace
+            OverlayInputKind::Replace
         } else {
-            SearchInputKind::Query
+            OverlayInputKind::Query
         }
     }
 
-    fn input_text(&self, kind: SearchInputKind) -> &str {
+    fn input_text(&self, kind: OverlayInputKind) -> &str {
         match kind {
-            SearchInputKind::Query => &self.workspace.search_query,
-            SearchInputKind::Replace => &self.workspace.replace_query,
+            OverlayInputKind::Query => &self.workspace.search_query,
+            OverlayInputKind::Replace => &self.workspace.replace_query,
+            OverlayInputKind::QuickOpen => self
+                .quick_open
+                .as_ref()
+                .map(|state| state.query.as_str())
+                .unwrap_or_default(),
         }
     }
 
-    fn input_selection(&self, kind: SearchInputKind) -> Range<usize> {
+    fn input_selection(&self, kind: OverlayInputKind) -> Range<usize> {
         match kind {
-            SearchInputKind::Query => self.workspace.search_selected_range.clone(),
-            SearchInputKind::Replace => self.workspace.replace_selected_range.clone(),
+            OverlayInputKind::Query => self.workspace.search_selected_range.clone(),
+            OverlayInputKind::Replace => self.workspace.replace_selected_range.clone(),
+            OverlayInputKind::QuickOpen => self
+                .quick_open
+                .as_ref()
+                .map(|state| state.selected_range.clone())
+                .unwrap_or_default(),
         }
     }
 
-    fn input_marked(&self, kind: SearchInputKind) -> Option<Range<usize>> {
+    fn input_marked(&self, kind: OverlayInputKind) -> Option<Range<usize>> {
         match kind {
-            SearchInputKind::Query => self.workspace.search_marked_range.clone(),
-            SearchInputKind::Replace => self.workspace.replace_marked_range.clone(),
+            OverlayInputKind::Query => self.workspace.search_marked_range.clone(),
+            OverlayInputKind::Replace => self.workspace.replace_marked_range.clone(),
+            OverlayInputKind::QuickOpen => self
+                .quick_open
+                .as_ref()
+                .and_then(|state| state.marked_range.clone()),
         }
     }
 
-    /// Applies an edit to the focused search-panel input (query or replace)
-    /// and re-schedules the workspace search for query changes.
-    fn replace_search_input_text(
+    /// Applies an edit to the focused single-line overlay input (search query,
+    /// search replace, or quick switcher) and refreshes what that input drives.
+    fn replace_overlay_input_text(
         &mut self,
-        kind: SearchInputKind,
+        kind: impl Into<OverlayInputKind>,
         range: Range<usize>,
         new_text: &str,
         selected_in_inserted: Option<Range<usize>>,
         marked: bool,
         cx: &mut Context<Self>,
     ) {
+        let kind = kind.into();
         let (old, was_marked) = match kind {
-            SearchInputKind::Query => (
+            OverlayInputKind::Query => (
                 self.workspace.search_query.clone(),
                 self.workspace.search_marked_range.is_some(),
             ),
-            SearchInputKind::Replace => (
+            OverlayInputKind::Replace => (
                 self.workspace.replace_query.clone(),
                 self.workspace.replace_marked_range.is_some(),
+            ),
+            OverlayInputKind::QuickOpen => (
+                self.quick_open
+                    .as_ref()
+                    .map(|state| state.query.clone())
+                    .unwrap_or_default(),
+                self.quick_open
+                    .as_ref()
+                    .is_some_and(|state| state.marked_range.is_some()),
             ),
         };
         let start = range.start.min(old.len());
@@ -6093,7 +6142,7 @@ impl Editor {
             .unwrap_or(inserted_end..inserted_end);
         let marked_range = (marked && !inserted.is_empty()).then_some(start..inserted_end);
         match kind {
-            SearchInputKind::Query => {
+            OverlayInputKind::Query => {
                 self.workspace.search_query = updated;
                 self.workspace.search_selected_range = selection;
                 self.workspace.search_marked_range = marked_range;
@@ -6101,13 +6150,42 @@ impl Editor {
                     self.schedule_workspace_search(cx);
                 }
             }
-            SearchInputKind::Replace => {
+            OverlayInputKind::Replace => {
                 self.workspace.replace_query = updated;
                 self.workspace.replace_selected_range = selection;
                 self.workspace.replace_marked_range = marked_range;
             }
+            OverlayInputKind::QuickOpen => {
+                if let Some(state) = self.quick_open.as_mut() {
+                    state.query = updated;
+                    state.selected_range = selection;
+                    state.marked_range = marked_range;
+                    state.selected = 0;
+                }
+                if !marked && (self.input_text(kind) != old.as_str() || was_marked) {
+                    self.refresh_quick_open_results(cx);
+                }
+            }
         }
         cx.notify();
+    }
+
+    /// Applies an edit to the quick switcher query (roadmap E9).
+    pub(super) fn replace_quick_open_input_text(
+        &mut self,
+        range: Range<usize>,
+        new_text: &str,
+        selected_in_inserted: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_overlay_input_text(
+            OverlayInputKind::QuickOpen,
+            range,
+            new_text,
+            selected_in_inserted,
+            false,
+            cx,
+        );
     }
 }
 
@@ -6122,7 +6200,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
-        let kind = self.active_search_input(window);
+        let kind = self.active_overlay_input(window);
         let text = self.input_text(kind);
         let start = search_utf16_to_utf8(text, range.start);
         let end = search_utf16_to_utf8(text, range.end).max(start);
@@ -6136,7 +6214,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let kind = self.active_search_input(window);
+        let kind = self.active_overlay_input(window);
         let text = self.input_text(kind).to_string();
         let range = self.input_selection(kind);
         Some(UTF16Selection {
@@ -6150,7 +6228,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        let kind = self.active_search_input(window);
+        let kind = self.active_overlay_input(window);
         let text = self.input_text(kind).to_string();
         self.input_marked(kind).map(|range| {
             search_utf8_to_utf16(&text, range.start)..search_utf8_to_utf16(&text, range.end)
@@ -6158,18 +6236,27 @@ impl EntityInputHandler for Editor {
     }
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let kind = self.active_search_input(window);
+        let kind = self.active_overlay_input(window);
         let was_marked = self.input_marked(kind).is_some();
         match kind {
-            SearchInputKind::Query => {
+            OverlayInputKind::Query => {
                 self.workspace.search_marked_range = None;
             }
-            SearchInputKind::Replace => {
+            OverlayInputKind::Replace => {
                 self.workspace.replace_marked_range = None;
+            }
+            OverlayInputKind::QuickOpen => {
+                if let Some(state) = self.quick_open.as_mut() {
+                    state.marked_range = None;
+                }
             }
         }
         if was_marked {
-            self.schedule_workspace_search(cx);
+            match kind {
+                OverlayInputKind::Query => self.schedule_workspace_search(cx),
+                OverlayInputKind::Replace => {}
+                OverlayInputKind::QuickOpen => self.refresh_quick_open_results(cx),
+            }
             cx.notify();
         }
     }
@@ -6181,7 +6268,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let kind = self.active_search_input(window);
+        let kind = self.active_overlay_input(window);
         let query = self.input_text(kind).to_string();
         let range = range
             .map(|range| {
@@ -6189,7 +6276,7 @@ impl EntityInputHandler for Editor {
             })
             .or_else(|| self.input_marked(kind))
             .unwrap_or_else(|| self.input_selection(kind));
-        self.replace_search_input_text(kind, range, text, None, false, cx);
+        self.replace_overlay_input_text(kind, range, text, None, false, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -6200,7 +6287,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let kind = self.active_search_input(window);
+        let kind = self.active_overlay_input(window);
         let query = self.input_text(kind).to_string();
         let range = range
             .map(|range| {
@@ -6211,7 +6298,7 @@ impl EntityInputHandler for Editor {
         let selected = new_selected_range.map(|range| {
             search_utf16_to_utf8(new_text, range.start)..search_utf16_to_utf8(new_text, range.end)
         });
-        self.replace_search_input_text(kind, range, new_text, selected, true, cx);
+        self.replace_overlay_input_text(kind, range, new_text, selected, true, cx);
     }
 
     fn bounds_for_range(
@@ -6227,10 +6314,11 @@ impl EntityInputHandler for Editor {
     fn character_index_for_point(
         &mut self,
         _point: Point<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        Some(self.workspace.search_query.encode_utf16().count())
+        let kind = self.active_overlay_input(window);
+        Some(self.input_text(kind).encode_utf16().count())
     }
 }
 

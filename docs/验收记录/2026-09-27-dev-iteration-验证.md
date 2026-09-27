@@ -180,6 +180,16 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 全量回归 | `cargo test` 887 通过 0 失败 1 忽略；`cargo build` 0 警告 | 通过 |
 | 说明 | `window_size` 在新版无头模式下不决定页面视口（实测仍为 800px 宽），长图视口改由 CDP `Emulation.setDeviceMetricsOverride` 固定；内容高度取自 DOM（`body` 绘制高度），不用 `LayoutMetrics.css_content_size`（后者对短文档会返回视口高度，导致长图底部多出空白） | 已记录 |
 
+## 第二十批补充（E9 快速切换器 IME）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| E9 输入法接线 | 快捷切换器的单行输入改走编辑器输入处理器（与搜索框共用 `OverlayInputKind` 路由，新增 `QuickOpen` 分支）；用例 `quick_open_accepts_ime_text_for_non_ascii_file_names`：`simulate_input("笔记")` 走 key_char→`replace_text_in_range` 路径，断言查询/字节选区/结果（只剩 `笔记.md`）；同用例补 ASCII 断言（`⌘A` + `alpha` 只插入一次，防止「手动插入 + 输入处理器」双写） | 通过 |
+| 组合与编辑 | `quick_open_composition_commit_backspace_and_escape_edit_the_query`：组合期 `marked_range=0..4`（拼音 `biji`）→ 提交 `笔记` 覆盖组合串并刷新结果 → 退格按字素删除（`笔记`→`笔`，选区 3..3）→ escape 关闭面板 | 通过 |
+| 正控 | 把输入处理器的 `canvas`+`handle_input` 临时删除后重跑：`quick_open_accepts_ime_text_for_non_ascii_file_names` 必失败（查询为空字符串），确认用例真的在测接线 | 通过 |
+| 顺带修复 | escape 之前关不掉快捷切换器与命令面板：全局快捷键 `escape`→`DismissTransientUi` 先于浮层自身的 key_down 被分发并消费，现由 `on_dismiss_transient_ui` 统一调用 `close_quick_open`/`close_command_palette` | 通过（用例内 escape 断言） |
+| 全量回归 | `cargo test` 889 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

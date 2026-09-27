@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use gpui::*;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::Editor;
 use crate::i18n::I18nManager;
@@ -16,6 +17,8 @@ pub(in crate::editor) struct QuickOpenState {
     pub(super) focus: Option<FocusHandle>,
     pub(super) selected: usize,
     pub(super) results: Vec<PathBuf>,
+    pub(super) selected_range: std::ops::Range<usize>,
+    pub(super) marked_range: Option<std::ops::Range<usize>>,
 }
 
 impl Editor {
@@ -59,12 +62,7 @@ impl Editor {
             );
         } else {
             let first = state.selected.saturating_sub(5);
-            for (offset, path) in results
-                .iter()
-                .skip(first)
-                .take(12)
-                .enumerate()
-            {
+            for (offset, path) in results.iter().skip(first).take(12).enumerate() {
                 let index = first + offset;
                 let selected = index == state.selected;
                 let label = path
@@ -162,6 +160,7 @@ impl Editor {
                     .child(
                         div()
                             .id("quick-open-input")
+                            .relative()
                             .track_focus(&focus)
                             .w_full()
                             .h(px(34.0))
@@ -183,6 +182,26 @@ impl Editor {
                             } else {
                                 state.query.clone()
                             })
+                            // 输入走编辑器的单行输入处理器：与搜索框共用 IME 路由，
+                            // 中文文件名可直接用输入法拼写（roadmap E9）。
+                            .child(
+                                canvas(|_, _, _| (), {
+                                    let focus = focus.clone();
+                                    let input_editor = cx.entity();
+                                    move |bounds, _, window, cx| {
+                                        window.handle_input(
+                                            &focus,
+                                            ElementInputHandler::new(bounds, input_editor.clone()),
+                                            cx,
+                                        );
+                                    }
+                                })
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .bottom_0()
+                                .left_0(),
+                            )
                             .on_key_down(cx.listener(Self::on_quick_open_key_down)),
                     )
                     .children(rows),
@@ -269,58 +288,75 @@ impl Editor {
         self.open_workspace_file(path, window, cx);
     }
 
-    /// Handles keystrokes on the quick-open overlay. IME composition is not
-    /// wired for v1: file-name matching is ASCII-oriented, and an empty query
-    /// lists every workspace file for arrow-key browsing.
+    /// Handles keystrokes on the quick-open overlay. Typing goes through the
+    /// editor's `EntityInputHandler` (see `OverlayInputKind::QuickOpen`), so
+    /// IME composition works for non-ASCII file names; this handler only owns
+    /// navigation, confirm, delete, and clipboard shortcuts.
     pub(super) fn on_quick_open_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let key = event.keystroke.key.clone();
+        let key = event.keystroke.key.to_ascii_lowercase();
+        let secondary = event.keystroke.modifiers.secondary();
         match key.as_str() {
             "escape" => {
                 self.close_quick_open(cx);
-                return;
             }
             "up" => {
                 self.quick_open_move_selection(-1, cx);
-                return;
             }
             "down" => {
                 self.quick_open_move_selection(1, cx);
-                return;
             }
             "enter" => {
                 self.quick_open_confirm(window, cx);
-                return;
             }
             "backspace" => {
-                if let Some(state) = self.quick_open.as_mut() {
-                    state.query.pop();
+                // 组合期间由输入法自己处理退格，避免双删。
+                let Some(state) = self.quick_open.as_ref() else {
+                    return;
+                };
+                if state.marked_range.is_some() {
+                    return;
                 }
-                self.refresh_quick_open_results(cx);
-                return;
+                let text = state.query.clone();
+                let selected = state.selected_range.clone();
+                let end = selected.end.min(text.len());
+                let range = if selected.start == selected.end {
+                    let start = text[..end]
+                        .grapheme_indices(true)
+                        .last()
+                        .map(|(start, _)| start)
+                        .unwrap_or(end);
+                    start..end
+                } else {
+                    selected.start.min(text.len())..end
+                };
+                self.replace_quick_open_input_text(range, "", None, cx);
             }
-            "space" => {
+            "a" if secondary => {
                 if let Some(state) = self.quick_open.as_mut() {
-                    state.query.push(' ');
+                    state.marked_range = None;
+                    state.selected_range = 0..state.query.len();
                 }
-                self.refresh_quick_open_results(cx);
-                return;
+                cx.notify();
             }
-            "shift" | "control" | "alt" | "meta" | "capslock" | "tab" => return,
-            _ => {}
-        }
-        if key.len() == 1 && key.chars().all(|ch| ch.is_ascii_graphic()) {
-            if let Some(state) = self.quick_open.as_mut() {
-                state.query.push_str(&key);
+            "v" if secondary => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    let range = self
+                        .quick_open
+                        .as_ref()
+                        .map(|state| state.selected_range.clone())
+                        .unwrap_or_default();
+                    self.replace_quick_open_input_text(range, &text, None, cx);
+                }
             }
-            self.refresh_quick_open_results(cx);
+            _ => return,
         }
+        cx.stop_propagation();
     }
-
 }
 
 /// Case-insensitive in-order subsequence containment.
