@@ -805,13 +805,9 @@ pub enum BlockEvent {
     RequestOpenWikilink {
         target: String,
     },
-    /// Prompt to open the clicked inline link destination.
-    /// `prompt_target` preserves the raw syntax target shown to the user,
-    /// while `open_target` is the resolved destination actually opened.
-    RequestOpenLink {
-        prompt_target: String,
-        open_target: String,
-    },
+    /// 打开被点击的行内链接目标（`open_target` 是解析后的落点）。
+    /// 编辑器直接跳转，不再弹确认框。
+    RequestOpenLink { open_target: String },
     /// Jump from a rendered footnote reference to the corresponding
     /// in-place footnote definition block.
     RequestJumpToFootnoteDefinition { id: String },

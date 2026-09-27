@@ -603,37 +603,6 @@ impl Editor {
         }
     }
 
-    fn sync_pending_open_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(link) = self.pending_open_link.take() else {
-            return;
-        };
-
-        let strings = cx.global::<I18nManager>().strings_arc();
-        let buttons = [
-            strings.open_link_open.as_str(),
-            strings.open_link_cancel.as_str(),
-        ];
-        let prompt = window.prompt(
-            PromptLevel::Info,
-            &strings.open_link_title,
-            Some(&link.prompt_target),
-            &buttons,
-            cx,
-        );
-        let window_handle = window.window_handle();
-        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let Ok(choice) = prompt.await else {
-                return;
-            };
-            if choice == 0 {
-                let _ = cx.update_window(window_handle, |_view: AnyView, _window, cx| {
-                    cx.open_url(&link.open_target);
-                });
-            }
-        })
-        .detach();
-    }
-
     fn sync_window_edited_state(&mut self, window: &mut Window) {
         if self.pending_window_unedited {
             self.pending_window_unedited = false;
@@ -2009,7 +1978,6 @@ impl Render for Editor {
         self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
-        self.sync_pending_open_link(window, cx);
         self.sync_window_edited_state(window);
 
         let viewport_bounds = self.scroll_handle.bounds();

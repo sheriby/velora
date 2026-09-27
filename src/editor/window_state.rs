@@ -587,17 +587,57 @@ impl Editor {
         }
     }
 
-    pub(crate) fn request_open_link_prompt(
+    /// 链接跳转要 `&mut Window`，且不能在本次窗口更新里重入，因此与 wikilink
+    /// 一样延后到当前更新结束后执行。
+    pub(crate) fn defer_open_link(&mut self, open_target: String, cx: &mut Context<Self>) {
+        let Some(any_handle) = self.window_handle else {
+            return;
+        };
+        let Some(handle) = any_handle.downcast::<Editor>() else {
+            return;
+        };
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |editor, window, cx| {
+                editor.open_link_target(open_target.clone(), window, cx);
+            });
+        });
+    }
+
+    /// Cmd/Ctrl+点击链接：直接跳转，不弹确认框（用户要求：全软件不用系统原生弹窗）。
+    /// 外部协议（http/https/mailto/tel/ftp）交默认浏览器；本地文档在应用内打开；
+    /// `#锚点` 在当前文档内跳到对应标题。
+    pub(crate) fn open_link_target(
         &mut self,
-        prompt_target: String,
         open_target: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.pending_open_link = Some(PendingOpenLink {
-            prompt_target,
-            open_target,
-        });
-        cx.notify();
+        match classify_link_target(&open_target) {
+            LinkTarget::External(url) => cx.open_url(&url),
+            LinkTarget::Anchor(anchor) => self.jump_to_heading_anchor(&anchor, cx),
+            LinkTarget::Local { path, anchor } => {
+                let resolved = resolve_local_link_path(self.file_path.as_deref(), &path);
+                if !resolved.exists() {
+                    // 目标不存在：什么都不做。既不弹系统确认框，也不把当前文档
+                    // 换成「无法预览」占位（那会改掉用户正在看的东西）。
+                    return;
+                }
+                if let Some(anchor) = anchor
+                    && self.file_path.as_deref() == Some(resolved.as_path())
+                {
+                    self.jump_to_heading_anchor(&anchor, cx);
+                    return;
+                }
+                self.open_workspace_file(resolved, window, cx);
+            }
+        }
+    }
+
+    fn jump_to_heading_anchor(&mut self, anchor: &str, cx: &mut Context<Self>) {
+        let source = self.last_stable_source_text.clone();
+        if let Some(line) = heading_line_for_anchor(&source, anchor) {
+            self.jump_to_source_line(line, cx);
+        }
     }
 
     pub(crate) fn close_menu_bar(&mut self, cx: &mut Context<Self>) {
@@ -615,5 +655,298 @@ impl Editor {
         if had_open_menu || had_open_submenu || had_hover_state || had_pending_close {
             cx.notify();
         }
+    }
+}
+
+/// 链接目标的分类结果（`Cmd/Ctrl+点击` 直接跳转，不弹确认框）。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum LinkTarget {
+    /// 交默认浏览器/系统处理器打开的外部协议。
+    External(String),
+    /// 当前文档内的 `#锚点`。
+    Anchor(String),
+    /// 本地文档路径（绝对或相对当前文档/工作区），可带 `#锚点`。
+    Local { path: String, anchor: Option<String> },
+}
+
+const EXTERNAL_LINK_SCHEMES: [&str; 5] = ["http:", "https:", "mailto:", "tel:", "ftp:"];
+
+/// 把 Markdown 链接目标分成外部链接 / 文内锚点 / 本地路径。
+pub(crate) fn classify_link_target(target: &str) -> LinkTarget {
+    let trimmed = target.trim();
+    if let Some(anchor) = trimmed.strip_prefix('#') {
+        return LinkTarget::Anchor(percent_decode(anchor));
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    if EXTERNAL_LINK_SCHEMES
+        .iter()
+        .any(|scheme| lowered.starts_with(scheme))
+    {
+        return LinkTarget::External(trimmed.to_string());
+    }
+    let raw = lowered
+        .strip_prefix("file:")
+        .map(|_| trimmed[5..].trim_start_matches('/').to_string())
+        .unwrap_or_else(|| trimmed.to_string());
+    let (path_part, anchor) = split_link_anchor(&raw);
+    // Windows 的 `C:/x.md` 被 strip 掉斜杠后会丢掉盘符冒号后的分隔，这里补回。
+    let path = percent_decode(path_part);
+    let path = match lowered.strip_prefix("file:") {
+        Some(_) if path.len() > 2 && path.as_bytes()[1] == b':' => format!("/{path}"),
+        _ => path,
+    };
+    LinkTarget::Local {
+        path,
+        anchor: anchor.map(percent_decode),
+    }
+}
+
+fn split_link_anchor(target: &str) -> (&str, Option<&str>) {
+    match target.find('#') {
+        Some(index) => (&target[..index], Some(&target[index + 1..])),
+        None => (target, None),
+    }
+}
+
+/// 只做链接里常见的百分号转义（`My%20File.md` → `My File.md`）。按**字节**还原，
+/// 再整体按 UTF-8 解码，否则中文锚点（`%E6%A0%87%E9%A2%98`）会被拆成半个字符。
+fn percent_decode(text: &str) -> String {
+    if !text.contains('%') {
+        return text.to_string();
+    }
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (
+                (bytes[index + 1] as char).to_digit(16),
+                (bytes[index + 2] as char).to_digit(16),
+            )
+        {
+            out.push((hi * 16 + lo) as u8);
+            index += 3;
+            continue;
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
+}
+
+/// 本地链接的落点：绝对路径直接用，相对路径按当前文档目录（无文档时按工作区根）解析。
+pub(crate) fn resolve_local_link_path(document_path: Option<&Path>, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        return candidate;
+    }
+    let base = document_path
+        .and_then(|path| path.parent())
+        .map(|dir| dir.to_path_buf());
+    base.unwrap_or_else(|| PathBuf::from("."))
+        .join(candidate)
+}
+
+/// 按标题文本找它在源文本里的行号（GitHub 风格锚点的宽松匹配：忽略大小写、
+/// 空白与标点，保留 `-`/`_` 与 CJK）。
+pub(crate) fn heading_line_for_anchor(source: &str, anchor: &str) -> Option<usize> {
+    let needle = heading_slug(anchor)?;
+    source.lines().enumerate().find_map(|(index, line)| {
+        let text = line.trim_start();
+        let hashes = text.len() - text.trim_start_matches('#').len();
+        if hashes == 0 || hashes > 6 {
+            return None;
+        }
+        (heading_slug(text[hashes..].trim())? == needle).then_some(index)
+    })
+}
+
+fn heading_slug(text: &str) -> Option<String> {
+    // GitHub 风格：小写、空白转 `-`、丢掉其它标点（CJK 直接保留）。
+    let slug: String = text
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                Some(c)
+            } else if c.is_whitespace() {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect();
+    (!slug.is_empty()).then_some(slug)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LinkTarget, classify_link_target, heading_line_for_anchor, resolve_local_link_path};
+    use crate::editor::Editor;
+    use gpui::TestAppContext;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn link_targets_are_classified_without_asking_the_user() {
+        assert_eq!(
+            classify_link_target("https://example.com/a?b=1"),
+            LinkTarget::External("https://example.com/a?b=1".to_string())
+        );
+        assert_eq!(
+            classify_link_target("mailto:someone@example.com"),
+            LinkTarget::External("mailto:someone@example.com".to_string())
+        );
+        assert_eq!(
+            classify_link_target("#设计与来源"),
+            LinkTarget::Anchor("设计与来源".to_string())
+        );
+        assert_eq!(
+            classify_link_target("docs/plans/2026-09-24-design.md"),
+            LinkTarget::Local {
+                path: "docs/plans/2026-09-24-design.md".to_string(),
+                anchor: None,
+            }
+        );
+        // 本地路径可以带锚点，百分号转义要还原。
+        assert_eq!(
+            classify_link_target("./My%20Notes.md#%E6%A0%87%E9%A2%98"),
+            LinkTarget::Local {
+                path: "./My Notes.md".to_string(),
+                anchor: Some("标题".to_string()),
+            }
+        );
+        assert_eq!(
+            classify_link_target("/abs/path/other.md"),
+            LinkTarget::Local {
+                path: "/abs/path/other.md".to_string(),
+                anchor: None,
+            }
+        );
+    }
+
+    #[test]
+    fn relative_links_resolve_against_the_current_document() {
+        let document = PathBuf::from("/work/notes/index.md");
+        assert_eq!(
+            resolve_local_link_path(Some(&document), "docs/plans/x.md"),
+            PathBuf::from("/work/notes/docs/plans/x.md")
+        );
+        assert_eq!(
+            resolve_local_link_path(Some(&document), "/abs/x.md"),
+            PathBuf::from("/abs/x.md")
+        );
+    }
+
+    #[test]
+    fn anchors_match_headings_loosely() {
+        let source = "# 设计与来源\n\n- 正文\n\n## Math style (extension)\n";
+        assert_eq!(heading_line_for_anchor(source, "设计与来源"), Some(0));
+        assert_eq!(
+            heading_line_for_anchor(source, "math-style-extension"),
+            Some(4)
+        );
+        assert_eq!(heading_line_for_anchor(source, "不存在的标题"), None);
+    }
+
+    #[gpui::test]
+    async fn external_links_go_to_the_default_browser(cx: &mut TestAppContext) {
+        init_app(cx);
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, "看 [官网](https://example.com) 吧\n".into(), None)
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_link_target("https://example.com".to_string(), window, cx);
+            });
+        });
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://example.com"),
+            "网页链接应直接交给默认浏览器"
+        );
+    }
+
+    #[gpui::test]
+    async fn local_document_links_open_inside_the_app(cx: &mut TestAppContext) {
+        init_app(cx);
+        let root = std::env::temp_dir().join(format!("velora-link-open-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("docs")).unwrap();
+        let current = root.join("index.md");
+        let target = root.join("docs").join("target.md");
+        fs::write(&current, "# 首页\n\nsee [target](docs/target.md)\n").unwrap();
+        fs::write(&target, "# 目标文档\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, format!("# 首页\n\nsee [target](docs/target.md)\n"), Some(current))
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_link_target("docs/target.md".to_string(), window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.file_path.as_deref(),
+                Some(target.as_path()),
+                "本地文档链接应在应用内打开"
+            );
+            assert!(editor.unsupported_preview_path.is_none());
+        });
+        assert!(
+            cx.opened_url().is_none(),
+            "本地文档不该交给浏览器，实测 {:?}",
+            cx.opened_url()
+        );
+    }
+
+    #[gpui::test]
+    async fn missing_local_link_changes_nothing(cx: &mut TestAppContext) {
+        init_app(cx);
+        let root = std::env::temp_dir().join(format!("velora-link-miss-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let current = root.join("index.md");
+        fs::write(&current, "# 首页\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# 首页\n".into(), Some(current)));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_link_target("gone.md".to_string(), window, cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.file_path.as_deref(),
+                Some(root.join("index.md").as_path()),
+                "点开到不存在的目标不该改变当前文档"
+            );
+            assert!(editor.unsupported_preview_path.is_none());
+        });
+        assert!(cx.opened_url().is_none(), "缺失的本地路径不该丢给浏览器");
+    }
+
+    fn init_app(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
     }
 }

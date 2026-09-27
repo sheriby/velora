@@ -2972,7 +2972,7 @@ impl Editor {
         self.show_preview_unavailable_with_detail(path, None, window, cx);
     }
 
-    fn show_preview_unavailable_with_detail(
+    pub(crate) fn show_preview_unavailable_with_detail(
         &mut self,
         path: PathBuf,
         detail: Option<String>,

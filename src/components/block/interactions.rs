@@ -1472,7 +1472,7 @@ impl Block {
         }
     }
 
-    /// Open a rendered inline link's destination through the editor prompt.
+    /// Open a rendered inline link's destination directly (no confirmation).
     pub(crate) fn open_rendered_link(
         &mut self,
         link: &super::InlineLinkHit,
@@ -1480,7 +1480,6 @@ impl Block {
     ) {
         cx.stop_propagation();
         cx.emit(BlockEvent::RequestOpenLink {
-            prompt_target: link.prompt_target.clone(),
             open_target: link.open_target.clone(),
         });
     }

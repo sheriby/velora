@@ -1364,11 +1364,8 @@ impl Editor {
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture(cx);
             }
-            BlockEvent::RequestOpenLink {
-                prompt_target,
-                open_target,
-            } => {
-                self.request_open_link_prompt(prompt_target.clone(), open_target.clone(), cx);
+            BlockEvent::RequestOpenLink { open_target } => {
+                self.defer_open_link(open_target.clone(), cx);
             }
             BlockEvent::RequestJumpToFootnoteDefinition { id, .. } => {
                 let _ = self.jump_to_footnote_definition(id, cx);
@@ -2197,11 +2194,8 @@ impl Editor {
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
-            BlockEvent::RequestOpenLink {
-                prompt_target,
-                open_target,
-            } => {
-                self.request_open_link_prompt(prompt_target.clone(), open_target.clone(), cx);
+            BlockEvent::RequestOpenLink { open_target } => {
+                self.defer_open_link(open_target.clone(), cx);
             }
             BlockEvent::RequestJumpToFootnoteDefinition { id, .. } => {
                 let _ = self.jump_to_footnote_definition(id, cx);

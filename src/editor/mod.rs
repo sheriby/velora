@@ -51,13 +51,6 @@ mod workspace;
 use self::status_bar::StatusBarState;
 use self::workspace::WorkspaceState;
 
-/// Link navigation request deferred until a `Window` is available.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PendingOpenLink {
-    pub(crate) prompt_target: String,
-    pub(crate) open_target: String,
-}
-
 /// Top-level controller that owns editor-wide state and delegates tree
 /// mutations to [`DocumentTree`].
 ///
@@ -86,7 +79,6 @@ pub struct Editor {
     pending_scroll_recheck_after_layout: bool,
     pending_save: bool,
     pending_save_as: bool,
-    pending_open_link: Option<PendingOpenLink>,
     pending_window_edited: bool,
     pending_window_unedited: bool,
     pending_window_title_refresh: bool,
@@ -457,7 +449,6 @@ impl Editor {
             pending_scroll_recheck_after_layout: true,
             pending_save: false,
             pending_save_as: false,
-            pending_open_link: None,
             pending_window_edited: false,
             pending_window_unedited: false,
             // A fresh window pushes its title on the first frame, so a window

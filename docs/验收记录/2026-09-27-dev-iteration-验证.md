@@ -339,6 +339,19 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 全量回归 | `cargo build` 0 警告；`cargo test` 916 通过 0 失败 1 ignored | 通过 |
 | 待人工目视 | 真机滚到长树中部点开文件：树不再跳顶；换开另一个目录的工作区时树仍会正常重建 | 待复核 |
 
+## 第三十三批补充（用户报修：Cmd/Ctrl+点击链接被系统确认框挡住，本地文档链接跳不过去）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 用户截图：Cmd+点击 `docs/plans/2026-09-24-velora-gpui-editor-design.md` 弹出「打开链接？」系统确认框，点「打开」也只是把本地路径丢给 `open_url`（打不开应用内文档） | 已复现 |
+| 根因 | 链接点击走 `request_open_link_prompt` → `pending_open_link` → `sync_pending_open_link` 里 `window.prompt(...)`，确认后无条件 `cx.open_url(open_target)`：既弹了系统原生框，又不区分本地文档与网页 | 已定位 |
+| 修复 | 删掉确认链路（`PendingOpenLink`/`pending_open_link`/`sync_pending_open_link`，`BlockEvent::RequestOpenLink` 只带 `open_target`），新增 `Editor::open_link_target`（经 `defer_open_link` 延后执行以拿到 `&mut Window`）：`classify_link_target` 分三类 ⇒ ① `http/https/mailto/tel/ftp` 交默认浏览器；② `#锚点` 在本文内跳到对应标题（`heading_line_for_anchor`，GitHub 风格宽松匹配，支持 CJK 与百分号转义）；③ 其余按本地文档：相对当前文档目录（无文档时相对工作区）解析，存在则 `open_workspace_file` 在应用内打开，带 `#锚点` 且指向当前文档则直接跳标题；目标不存在则什么都不做（不弹窗、不改当前文档、不新开标签） | 通过 |
+| 用例 | 6 条（`src/editor/window_state.rs`）：`link_targets_are_classified_without_asking_the_user`（含 `./My%20Notes.md#%E6%A0%87%E9%A2%98` 还原）、`relative_links_resolve_against_the_current_document`、`anchors_match_headings_loosely`（CJK 标题 + `Math style (extension)` → `math-style-extension`）、`external_links_go_to_the_default_browser`（`cx.opened_url()`）、`local_document_links_open_inside_the_app`（真实临时目录，断言 `file_path` 切到目标且 `opened_url` 为空）、`missing_local_link_changes_nothing` | 通过 |
+| 正控 | 把本地分支改成无条件 `cx.open_url(path)`（即旧落点）⇒ 应用内打开与「不存在的目标什么都不做」两条用例同时失败；恢复后 6 条全绿 | 通过 |
+| 顺带修的门禁漏洞 | `percent_decode` 首版按 `char` 逐字节还原，中文锚点被拆成半个字符（`标题` → `æ æ¥`），由用例抓到后改为按字节缓冲再整体 UTF-8 解码 | 已修正 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 922 通过 0 失败 1 ignored | 通过 |
+| 下一步（同一诉求的剩余部分） | 用户要求「整个软件禁止系统原生弹窗」：仍有 38 处 `window.prompt`（未保存更改、导出错误、拖放失败、外部变更冲突等），需先做应用内模态组件再逐处迁移 | 待做 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
