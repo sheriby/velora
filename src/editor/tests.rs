@@ -4632,6 +4632,88 @@ async fn heading_fold_chevron_renders_and_click_toggles_fold(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn workspace_tree_scan_is_async_and_applies_result(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-async-tree-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("nested")).expect("create nested");
+    std::fs::write(root.join("nested").join("note.md"), "# note\n").expect("write");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        // 扫描不再同步发生在调用栈内（roadmap D9）。
+        assert!(editor.workspace_text_files().is_empty());
+    });
+
+    cx.run_until_parked();
+    let expected =
+        std::fs::canonicalize(root.join("nested").join("note.md")).expect("canonicalize");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn workspace_tree_scan_discards_stale_root_results(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root_a = std::env::temp_dir().join(format!("velora-tree-a-{}", uuid::Uuid::new_v4()));
+    let root_b = std::env::temp_dir().join(format!("velora-tree-b-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root_a).expect("create a");
+    std::fs::create_dir_all(&root_b).expect("create b");
+    std::fs::write(root_a.join("a.md"), "# a\n").expect("write a");
+    std::fs::write(root_b.join("b.md"), "# b\n").expect("write b");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root_a.clone(), cx);
+        // 第一次扫描尚未落地就切到新根：旧结果必须被丢弃。
+        editor.set_workspace_root(root_b.clone(), cx);
+    });
+
+    cx.run_until_parked();
+    let expected_b = std::fs::canonicalize(root_b.join("b.md")).expect("canonicalize");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace_text_files(), vec![expected_b.clone()]);
+    });
+    let _ = std::fs::remove_dir_all(root_a);
+    let _ = std::fs::remove_dir_all(root_b);
+}
+
+#[gpui::test]
+async fn reopening_workspace_root_rescans_after_tree_is_cleared(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-tree-reopen-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    std::fs::write(root.join("a.md"), "# a\n").expect("write");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    let expected = std::fs::canonicalize(root.join("a.md")).expect("canonicalize");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
+    });
+
+    // 再次打开同一文件夹：旧树先清空，随后必须重新扫描出结果，
+    // 不能因为"该根已扫描过"而卡在空树（roadmap D9 缓存标记）。
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        assert!(editor.workspace_text_files().is_empty());
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[gpui::test]
 async fn heading_fold_chevron_toggle_hides_section_and_refocuses_heading(
     cx: &mut TestAppContext,
 ) {

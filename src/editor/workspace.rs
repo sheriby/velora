@@ -227,6 +227,11 @@ pub(super) struct WorkspaceState {
     document_active_range: Option<Range<usize>>,
     search_pending: bool,
     search_generation: u64,
+    /// 文件树后台扫描（roadmap D9）：任务句柄 + 代数，用于丢弃过期结果。
+    tree_scan_task: Option<Task<()>>,
+    tree_scan_generation: u64,
+    /// 当前已持有（或正在等待）扫描结果的根：避免每帧重复发起扫描。
+    tree_scan_root: Option<PathBuf>,
     context_menu: Option<WorkspaceContextMenu>,
     tab_context_menu: Option<TabContextMenu>,
     /// 文件树过滤框（roadmap D8）：非空时树显示扁平匹配列表。
@@ -271,6 +276,9 @@ impl Default for WorkspaceState {
             document_active_range: None,
             search_pending: false,
             search_generation: 0,
+            tree_scan_task: None,
+            tree_scan_generation: 0,
+            tree_scan_root: None,
             context_menu: None,
             tab_context_menu: None,
             tree_filter: String::new(),
@@ -647,6 +655,8 @@ impl Editor {
         self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
+        // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
+        self.workspace.tree_scan_root = None;
         self.workspace.file_error = None;
         self.workspace.expanded.clear();
         self.workspace.active_tab = WorkspaceTab::Files;
@@ -680,8 +690,8 @@ impl Editor {
     }
 
     fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
-        self.workspace.file_tree = None;
-        self.sync_workspace_file_tree(cx);
+        // 保留旧树直到新扫描落地，避免侧栏在扫描期间闪空。
+        self.sync_workspace_file_tree_inner(true, cx);
         if self.workspace.active_tab == WorkspaceTab::Search
             && !self.workspace.search_query.is_empty()
         {
@@ -1166,6 +1176,7 @@ impl Editor {
                         }) {
                             editor.workspace.root = None;
                             editor.workspace.file_tree = None;
+                            editor.workspace.tree_scan_root = None;
                         }
                         editor.workspace.selected = None;
                         if active_deleted {
@@ -1470,6 +1481,7 @@ impl Editor {
             }
         }
         self.workspace.file_tree = None;
+        self.workspace.tree_scan_root = None;
         self.workspace.file_error = None;
         self.workspace.outline_source = None;
         if self.workspace.root.is_none() {
@@ -1625,12 +1637,23 @@ impl Editor {
     }
 
     fn sync_workspace_file_tree(&mut self, cx: &mut Context<Self>) {
+        self.sync_workspace_file_tree_inner(false, cx);
+    }
+
+    /// 扫描工作区目录并更新文件树。扫描在后台线程执行（roadmap D9），
+    /// 超大目录不再阻塞首帧；结果按代数校验，过期扫描直接丢弃。
+    fn sync_workspace_file_tree_inner(&mut self, force: bool, cx: &mut Context<Self>) {
         let next_root = self
             .workspace
             .root
             .clone()
             .or_else(|| self.workspace_root_for_current_file());
-        if self.workspace.root == next_root && self.workspace.file_tree.is_some() {
+        // 该根已有结果（树或错误）或扫描在途：不重复发起扫描，
+        // 否则渲染期每帧都会重启扫描（roadmap D9）。
+        if !force
+            && self.workspace.root == next_root
+            && self.workspace.tree_scan_root == next_root
+        {
             self.workspace.selected = self
                 .file_path
                 .as_ref()
@@ -1639,35 +1662,64 @@ impl Editor {
         }
 
         self.workspace.root = next_root.clone();
-        self.workspace.file_tree = None;
         self.workspace.file_error = None;
 
         let Some(root) = next_root else {
+            self.workspace.file_tree = None;
             self.workspace.selected = None;
+            self.workspace.tree_scan_root = None;
             return;
         };
 
         // Validate the root path
         if root.as_os_str().is_empty() {
             self.workspace.file_error = Some("Invalid workspace path: empty path".to_string());
+            self.workspace.file_tree = None;
             self.workspace.selected = None;
+            self.workspace.tree_scan_root = None;
             return;
         }
 
         let tree_sort = crate::config::EditorSettings::tree_sort(cx);
-        match scan_workspace_dir(&root, tree_sort) {
-            Ok(tree) => {
-                self.workspace.expanded.insert(tree.id.clone());
-                self.workspace.file_tree = Some(tree);
-                self.workspace.selected = self
-                    .file_path
-                    .as_ref()
-                    .map(|path| WorkspaceSelection::File(path.clone()));
-            }
-            Err(err) => {
-                self.workspace.file_error = Some(err.to_string());
-            }
-        }
+        self.workspace.tree_scan_root = Some(root.clone());
+        self.workspace.tree_scan_generation = self.workspace.tree_scan_generation.wrapping_add(1);
+        let generation = self.workspace.tree_scan_generation;
+        let editor = cx.entity().downgrade();
+        let scan_root = root.clone();
+        let scan = cx.background_spawn(async move { scan_workspace_dir(&scan_root, tree_sort) });
+        // Dropping the previous task cancels a scan that is no longer relevant.
+        self.workspace.tree_scan_task = Some(cx.spawn(
+            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let result = scan.await;
+                editor
+                    .update(cx, |editor, cx| {
+                        if editor.workspace.tree_scan_generation != generation {
+                            return;
+                        }
+                        match result {
+                            Ok(tree) => {
+                                editor.workspace.expanded.insert(tree.id.clone());
+                                editor.workspace.file_tree = Some(tree);
+                                editor.workspace.selected = editor
+                                    .file_path
+                                    .as_ref()
+                                    .map(|path| WorkspaceSelection::File(path.clone()));
+                                // 扫描期间发起的工作区搜索此时才有文件列表可用。
+                                if editor.workspace.active_tab == WorkspaceTab::Search
+                                    && !editor.workspace.search_query.is_empty()
+                                {
+                                    editor.schedule_workspace_search(cx);
+                                }
+                            }
+                            Err(err) => {
+                                editor.workspace.file_error = Some(err.to_string());
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            },
+        ));
     }
 
     fn sync_workspace_outline(&mut self, _cx: &mut Context<Self>) {
@@ -4215,6 +4267,18 @@ impl Editor {
         }
 
         let Some(root) = self.workspace.file_tree.as_ref() else {
+            // 后台扫描进行中（roadmap D9）：与搜索面板一致显示处理中占位，
+            // 而不是误报「空文件夹」。
+            if self.workspace.tree_scan_root.is_some()
+                && self.workspace.tree_scan_root.as_ref() == self.workspace.root.as_ref()
+            {
+                return div()
+                    .p(px(12.0))
+                    .text_size(px(14.0))
+                    .text_color(theme.colors.dialog_muted)
+                    .child("…")
+                    .into_any_element();
+            }
             return self.render_workspace_empty_state("", &strings.workspace_empty_files, theme);
         };
 
