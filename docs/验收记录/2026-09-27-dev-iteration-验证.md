@@ -208,7 +208,7 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | G8 分块导入 | `from_markdown` 只同步建首块（`FIRST_CHUNK_ROOTS = 2000` 个根块），其余由 `cx.spawn` 任务按 `STEADY_CHUNK_ROOTS = 250` 续建；追加走新增的 `DocumentTree::append_roots` 增量快照（不重跑整树 DFS）。列表是唯一可能无限长的构造（无空行的 10 MiB 夹具整体被解析成一个大列表），`collect_list_blocks` 因此接受剩余根块预算并在顶层条目边界停下 | 通过 |
 | 等价性（核心） | `progressive_import_matches_single_pass_import`：以预算 1/2/3/5/8 分块导入同一份含 frontmatter、懒惰续行、未闭合反引号、空行串、列表紧跟段落、表格、围栏、公式、结尾无换行的文档，与 `usize::MAX`（整篇一次建完）逐字节比较 `markdown_text`、可见块数、`raw_source_text`；**未建完期间**的文本重新导入后也必须与整篇导入一致（证明中途保存不丢内容） | 通过 |
 | 续建与保存 | `streamed_document_saves_complete_text_to_disk`：预算 2 打开的文档在窗口内续建完成后，输入字符 + ⌘S 落盘内容 == `markdown_text`（含尾段）；`structural_edit_flushes_the_pending_import`：结构编辑（`insert_blocks_at`）先补建完剩余块（`pending_tail` 变 None），块数 = 整篇 + 1 且尾段内容仍在 | 通过 |
-| 10 MiB 预算 | `large_document_opens_within_budget`（gitignored 夹具）：打开（首块）**1.23s**（此前一次性建块 17.5s），断言 < 3s；断言打开即存在挂起尾段（**正控**：把首块预算临时改成 `usize::MAX` 后该断言必失败）；续建完成后 159,683 块、文本与整篇导入逐字节一致，总成本 138.9 µs/块（≤ 400 µs 防回归） | 通过 |
+| 10 MiB 预算 | `large_document_opens_within_budget`（gitignored 夹具）：打开（首块）**1.23s**（此前一次性建块 17.5s）；判据为首块块数有界（≤4000）+ 打开耗时 ×5 仍小于整篇建块耗时 + 打开即存在挂起尾段（**正控**：把首块预算临时改成 `usize::MAX` 后「先只建首块」断言必失败）；续建完成后 159,683 块、文本与整篇导入逐字节一致，总成本 138.9 µs/块（≤ 400 µs 防回归） | 通过（第二十四批把绝对 3s 判据换成形状判据，避免并发跑测误报） |
 | 拼接规则 | 未建完的尾段以原文行参与序列化（已建块正常序列化），连接处空行按「上一根块是列表项且尾段首行是列表标记 → 不加空行，否则加一行」计算，与整篇序列化的列表组规则同源；编号列表序号与列表组空行经 `SyncSeeds` / `PendingTail` 跨批延续 | 通过（开发中实撞：预算 5 时连接处多算 1 个空行 → 等价性用例失败，修好后通过） |
 | 冲刷点 | 结构变更入口（`with_structure_mutation` / `insert_blocks_at` / `remove_block_by_id_raw`）与文档内搜索（`open_document_find`）先补建完剩余块；`replace_roots` 丢弃挂起尾段（替换整篇文档的语义） | 通过 |
 | 已知取舍 | 续建期间滚动只能到已建块末尾；对未建区域做文字编辑会落在已建末尾（续建完成后与整篇导入的文本一致，不丢内容）；导出 / 自动恢复读的是拼接后的完整文本 | 已记录 |
@@ -222,6 +222,17 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | A7 用例 | `window_title_tracks_file_and_edited_state`：打开即 `Velora - <文件名>` → 输入后 `<已编辑标记> Velora - <文件名>` → ⌘S 后回到干净标题；测试平台的窗口补实现 `get_title`（此前 `window_title()` 恒为空串，断言无从下手） | 通过（**正控**：去掉首帧推送后首条断言实测失败 `left: ""`） |
 | 剩余人工项 | 锁屏 / 休眠期间「新建窗口何时显示」属系统合成行为（macOS 不向锁定中的会话合成新窗口），需解锁后目视确认一次；应用侧已保证解锁后的第一帧就带上正确标题与编辑标记 | 已记录 |
 | 全量回归 | `cargo test` 898 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+
+## 第二十四批补充（用户报修：大于 8 KiB 的中文文件显示「无法使用文本编辑器预览该文件」）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 用户报修 `docs/plans/2026-09-24-velora-velotype-feasibility.md`（8.4 KiB，UTF-8）打开即显示占位「无法使用文本编辑器预览该文件」 | 已复现 |
+| 根因 | `is_likely_text_file` 取前 8192 字节做 `str::from_utf8` 校验：中文按 3 字节/字，8192 字节边界大概率切在字符中间，**截断**导致校验失败 → 整篇判成二进制 → 只显示占位。仓库内 77 个 > 8 KiB 文件里 3 个被误判（含用户报的那个与本次交接文档、`src/components/block/runtime/mod.rs`），真正非法 UTF-8 的为 0 | 已定位 |
+| 修复 | 截断错误（`Utf8Error::error_len() == None`，即窗口只切掉最后一个字符）视为文本前缀；含 NUL 或窗口内出现非截断的非法 UTF-8 仍判二进制 | 通过 |
+| 用例 | `text_sniffing_accepts_a_prefix_cut_mid_character`：构造 8191 字节 + 三字节汉字（并在用例内断言前提「8192 字节确实切在字符中间」），另带两个反例（NUL 文件、窗口内非法 UTF-8 仍判二进制）；`opening_a_large_cjk_markdown_file_shows_the_editor`：经工作区打开该文件后不出现占位、正文含尾段 | 通过（**正控**：还原修复后两条同时失败，端到端用例实测报「长中文 md 文件应正常打开，不该显示『无法预览』占位」） |
+| 顺带修正 | `large_document_opens_within_budget` 的 3s 判据在整套并发跑测时受 CPU 争用影响（同一次实测 3.96s 而单独跑为 1.23s），改为形状判据：首块块数有界（≤4000）+ 打开耗时乘以 5 仍小于整篇建块耗时；单机实测值改用 eprintln 记录（打开 1.39s / 整篇 25.1s / 157.5 µs·块） | 通过 |
+| 全量回归 | `cargo test` 900 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
 
 ## 已知事项
 

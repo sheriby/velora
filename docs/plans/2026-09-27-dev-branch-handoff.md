@@ -11,7 +11,7 @@
 | 项 | 状态 |
 |----|------|
 | Roadmap 完成 | **66 / 66 行已标 ✅**（A7 标「✅(应用侧)」：应用侧闭环，剩余为解锁后的人工确认；C1/C8/C10 等为 v1 形态并标注） |
-| 测试 | 898 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
+| 测试 | 900 通过 0 失败 1 ignored（ignored 为手动大文件诊断项；基线偶发项 `crash_recovery_drill_snapshot_restore_save` 本轮未复现） |
 | 编译 | `cargo build` 零错误零警告（dev profile） |
 | 远程 | `origin/dev` 已推送（G8 提交 `e79bb72`，本行随文档更新提交在其后）；main 未动 |
 | 工作树 | 仅 `?? .zcodeignore`（按用户要求**不提交**） |
@@ -57,6 +57,7 @@
 7. 崩溃修复（重入 update）、X hover — f217ecf/7dac94e/ab52f83
 8. 搜索聚焦隐藏占位符 — 4882e0c
 9. 清零编译警告 — 0d3915e
+10. 大文件被误判为非文本而无法预览（用户报修，2026-09-27 深夜会话）：`is_likely_text_file` 的 8 KiB 截断导致中文文档判成二进制，改为「截断错误视为文本前缀」+ 两条用例（含正控）
 
 ### dev 迭代会话（本 handoff 主体，12 个功能批次）
 - **A1** 欢迎页（空工作区/空启动显示品牌+最近文件+操作入口）— 7e795da

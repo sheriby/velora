@@ -5899,7 +5899,18 @@ fn is_likely_text_file(path: &Path) -> bool {
     if read >= 2 && (head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF])) {
         return true;
     }
-    !head.contains(&0) && std::str::from_utf8(head).is_ok()
+    if head.contains(&0) {
+        return false;
+    }
+    match std::str::from_utf8(head) {
+        Ok(_) => true,
+        // A read window that ends inside a multi-byte character is still a text
+        // prefix: `error_len() == None` means the only problem is that the
+        // window cut the last character (an 8 KiB window over CJK text hits
+        // this constantly). Treating it as binary hid whole documents behind
+        // the "can't preview" notice.
+        Err(error) => error.error_len().is_none(),
+    }
 }
 
 pub(super) fn is_code_file(path: &Path) -> bool {
@@ -6616,6 +6627,7 @@ mod tests {
         WorkspaceState,
         WorkspaceTreeKind, build_outline_tree, clamp_workspace_panel_width,
         create_workspace_file, create_workspace_folder, find_document_match_from, is_code_file, tree_node_path, has_utf16_bom,
+        is_likely_text_file,
         path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
         scan_workspace_dir, search_document_source, search_utf8_to_utf16, search_utf16_to_utf8,
         search_workspace_files,
@@ -6752,6 +6764,83 @@ mod tests {
                 assert_eq!(editor.workspace.search_generation, generation + 1);
             });
         });
+    }
+
+    /// 一份长于 8 KiB、且第 8192 个字节正好落在三字节汉字中间的 Markdown。
+    fn long_cjk_markdown() -> String {
+        let mut content = String::from("# 长篇中文文档\n\n");
+        while content.len() + "中文内容。".len() <= 8191 {
+            content.push_str("中文内容。");
+        }
+        while content.len() < 8191 {
+            content.push('a');
+        }
+        assert_eq!(content.len(), 8191);
+        content.push('中');
+        content.push_str("\n\n结尾段落\n");
+        content
+    }
+
+    #[test]
+    fn text_sniffing_accepts_a_prefix_cut_mid_character() {
+        // 用户报修：8 KiB 读取窗切在多字节字符中间时，窗口内不是合法 UTF-8，
+        // 于是整篇中文文档被判成二进制，只显示「无法使用文本编辑器预览该文件」。
+        let root = std::env::temp_dir().join(format!("velora-sniff-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create dir");
+        let path = root.join("长篇.md");
+        fs::write(&path, long_cjk_markdown()).expect("write markdown");
+
+        let bytes = fs::read(&path).expect("read back");
+        assert!(bytes.len() > 8192, "用例前提：文件要长于读取窗");
+        assert!(
+            std::str::from_utf8(&bytes[..8192]).is_err(),
+            "用例前提：8192 字节必须切在多字节字符中间"
+        );
+        assert!(is_likely_text_file(&path), "切在多字节字符中间的文本前缀仍是文本");
+
+        let binary = root.join("blob.bin");
+        fs::write(&binary, [0u8, 1, 2, 3, 0, 5]).expect("write binary");
+        assert!(!is_likely_text_file(&binary), "含 NUL 的文件不该被当成文本");
+        let invalid = root.join("invalid.md");
+        fs::write(&invalid, [b'a', 0xE5, 0x20, 0x20, 0x20]).expect("write invalid utf8");
+        assert!(
+            !is_likely_text_file(&invalid),
+            "窗口内的非法 UTF-8（非截断）仍应是二进制"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn opening_a_large_cjk_markdown_file_shows_the_editor(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!("velora-cjk-open-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create dir");
+        let path = root.join("长篇.md");
+        fs::write(&path, long_cjk_markdown()).expect("write markdown");
+
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(path.clone(), window, cx);
+            });
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.unsupported_preview_path.is_none(),
+                "长中文 md 文件应正常打开，不该显示「无法预览」占位"
+            );
+            assert_eq!(editor.file_path.as_ref(), Some(&path));
+            assert!(editor.document.markdown_text(cx).contains("结尾段落"));
+        });
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
