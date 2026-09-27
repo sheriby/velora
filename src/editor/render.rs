@@ -596,6 +596,19 @@ impl Editor {
         }
     }
 
+    /// 切换工作区后补开最近剩下的标签（`set_workspace_root` 当时没有 Window）。
+    fn sync_pending_workspace_tab_activation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.pending_workspace_tab_activation.take() else {
+            return;
+        };
+        self.show_welcome = false;
+        self.open_workspace_file(path, window, cx);
+    }
+
     fn sync_pending_save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending_save_as && !self.has_marked_document_text(cx) {
             self.pending_save_as = false;
@@ -1978,6 +1991,7 @@ impl Render for Editor {
         self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
+        self.sync_pending_workspace_tab_activation(window, cx);
         self.sync_window_edited_state(window);
 
         let viewport_bounds = self.scroll_handle.bounds();

@@ -336,6 +336,14 @@ fn show_async_message_modal(
 }
 
 /// 「<名> copy[ 序号]」式唯一副本路径（roadmap D6，与右键「创建副本」共用）。
+/// 标签路径是否落在工作区根目录内（两边都尽力规范化，失败则按原样比较）。
+fn path_is_within_root(root: &Path, path: &Path) -> bool {
+    let normalize = |value: &Path| -> PathBuf {
+        std::fs::canonicalize(value).unwrap_or_else(|_| value.to_path_buf())
+    };
+    normalize(path).starts_with(normalize(root))
+}
+
 pub(crate) fn unique_workspace_copy_path(dir: &Path, source: &Path) -> PathBuf {
     let stem = source
         .file_stem()
@@ -806,6 +814,9 @@ impl Editor {
             crate::app_menu::install_menus(cx);
         }
         self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
+        // 切换工作区 = 换一套工作集：不属于新根目录的标签必须收起（用户报修：
+        // 换了工作区之后顶栏还留着上一个工作区的标签）。
+        self.prune_workspace_tabs_outside_root(&root);
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
         // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
@@ -831,6 +842,79 @@ impl Editor {
         }
         self.persist_session(cx);
         cx.notify();
+    }
+
+    /// 收起落在新工作区之外的标签；脏标签先写回自己的文件，内容不丢。
+    /// 若当前文档被收起：还有标签就延后打开最近的那个（需要 `&mut Window`），
+    /// 没有标签就清空文档并回到欢迎页。
+    fn prune_workspace_tabs_outside_root(&mut self, root: &Path) {
+        let stale = self
+            .workspace
+            .open_documents
+            .iter()
+            .filter(|tab| !path_is_within_root(root, &tab.path))
+            .cloned()
+            .collect::<Vec<_>>();
+        if stale.is_empty() {
+            return;
+        }
+        let stale_paths = stale
+            .iter()
+            .map(|tab| tab.path.clone())
+            .collect::<Vec<PathBuf>>();
+        for tab in &stale {
+            if !tab.dirty {
+                continue;
+            }
+            match std::fs::write(&tab.path, tab.markdown.as_str()) {
+                Ok(()) => {
+                    let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);
+                }
+                Err(err) => {
+                    self.workspace.file_error = Some(format!(
+                        "无法保存「{}」：{err}",
+                        tab.path.display()
+                    ));
+                }
+            }
+        }
+        self.workspace
+            .open_documents
+            .retain(|tab| !stale_paths.contains(&tab.path));
+
+        // 「正在看的那篇」可能只体现在 file_path 上（active_document 由
+        // ensure_current_document_tab 在渲染时才补齐），两者都要算。
+        let current_was_stale = self
+            .file_path
+            .clone()
+            .or_else(|| self.workspace.active_document.clone())
+            .is_some_and(|current| stale_paths.iter().any(|path| *path == current));
+        if !current_was_stale {
+            return;
+        }
+        match self
+            .workspace
+            .open_documents
+            .iter()
+            .find(|_tab| true)
+            .map(|tab| tab.path.clone())
+        {
+            Some(next) => {
+                // 真正的打开动作要等下一帧（那时才拿得到 Window）。
+                self.file_path = None;
+                self.document_dirty = false;
+                self.workspace.active_document = None;
+                self.pending_workspace_tab_activation = Some(next);
+            }
+            None => {
+                self.workspace.active_document = None;
+                self.file_path = None;
+                self.document_dirty = false;
+                self.pending_workspace_tab_activation = None;
+                self.show_welcome = true;
+                self.pending_window_unedited = true;
+            }
+        }
     }
 
     fn selected_workspace_directory(&self) -> Option<PathBuf> {
@@ -7535,6 +7619,179 @@ mod tests {
             );
             assert!(editor.unsupported_preview_path.is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn switching_workspace_drops_the_previous_workspaces_tabs(cx: &mut TestAppContext) {
+        // 用户报修：切换工作区之后，顶栏还留着上一个工作区的标签。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root_a = std::env::temp_dir().join(format!("velora-switch-a-{}", uuid::Uuid::new_v4()));
+        let root_b = std::env::temp_dir().join(format!("velora-switch-b-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root_a).unwrap();
+        fs::create_dir_all(&root_b).unwrap();
+        let alpha = root_a.join("alpha.md");
+        let beta = root_a.join("beta.md");
+        fs::write(&alpha, "# alpha\n").unwrap();
+        fs::write(&beta, "# beta\n").unwrap();
+        let gamma = root_b.join("gamma.md");
+        fs::write(&gamma, "# gamma\n").unwrap();
+        cx.on_quit({
+            let (root_a, root_b) = (root_a.clone(), root_b.clone());
+            move || {
+                let _ = fs::remove_dir_all(root_a);
+                let _ = fs::remove_dir_all(root_b);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root_a.clone(), cx);
+            });
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(alpha.clone(), window, cx);
+                editor.open_workspace_file(beta.clone(), window, cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.workspace.open_documents.len(), 2, "切换前应有两个标签");
+        });
+
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root_b.clone(), cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor.workspace.open_documents.is_empty(),
+                "上一个工作区的标签必须全部收起，实测 {:?}",
+                editor.workspace.open_documents.iter().map(|tab| tab.path.clone()).collect::<Vec<_>>()
+            );
+            assert!(editor.workspace.active_document.is_none());
+            assert!(editor.show_welcome, "没有可留的标签时应回到欢迎页");
+        });
+    }
+
+    #[gpui::test]
+    async fn switching_workspace_keeps_inner_tabs_and_reopens_one(cx: &mut TestAppContext) {
+        // 新根目录是旧根的子目录：子目录里的标签要留下，且活动标签被收起时
+        // 下一帧补开剩下的那个。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!("velora-switch-inner-{}", uuid::Uuid::new_v4()));
+        let inner = root.join("sub");
+        fs::create_dir_all(&inner).unwrap();
+        let outer = root.join("outer.md");
+        let inside = inner.join("inside.md");
+        fs::write(&outer, "# outer\n").unwrap();
+        fs::write(&inside, "# inside\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root.clone(), cx);
+            });
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(inside.clone(), window, cx);
+                editor.open_workspace_file(outer.clone(), window, cx);
+            });
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(inner.clone(), cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            let kept = editor
+                .workspace
+                .open_documents
+                .iter()
+                .map(|tab| tab.path.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(kept, vec![inside.clone()], "只应留下新根目录内的标签");
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            // 活动标签被收起后，补开剩下的那个（延后一帧，那时才拿得到 Window）。
+            assert_eq!(
+                editor.file_path.as_deref(),
+                Some(inside.as_path()),
+                "应补开新根目录内剩下的标签，file_path={:?} active={:?}",
+                editor.file_path,
+                editor.workspace.active_document
+            );
+            assert!(editor.pending_workspace_tab_activation.is_none());
+            assert!(!editor.show_welcome, "还有标签时不该回到欢迎页");
+        });
+    }
+
+    #[gpui::test]
+    async fn switching_workspace_saves_dirty_stale_tabs_instead_of_losing_them(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root_a = std::env::temp_dir().join(format!("velora-switch-dirty-a-{}", uuid::Uuid::new_v4()));
+        let root_b = std::env::temp_dir().join(format!("velora-switch-dirty-b-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root_a).unwrap();
+        fs::create_dir_all(&root_b).unwrap();
+        let doc = root_a.join("notes.md");
+        fs::write(&doc, "# 原文\n").unwrap();
+        cx.on_quit({
+            let (root_a, root_b) = (root_a.clone(), root_b.clone());
+            move || {
+                let _ = fs::remove_dir_all(root_a);
+                let _ = fs::remove_dir_all(root_b);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root_a.clone(), cx);
+            });
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(doc.clone(), window, cx);
+            });
+        });
+        // 造一个未保存的脏标签。
+        editor.update(cx, |editor, _cx| {
+            editor.workspace.open_documents[0].dirty = true;
+            editor.workspace.open_documents[0].markdown = "# 未保存的修改\n".into();
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root_b.clone(), cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.workspace.open_documents.is_empty(), "脏标签也应被收起");
+        });
+        assert_eq!(
+            fs::read_to_string(&doc).unwrap(),
+            "# 未保存的修改\n",
+            "切换工作区不能吞掉未保存的内容"
+        );
     }
 
     #[gpui::test]

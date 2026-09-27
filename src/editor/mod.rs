@@ -127,6 +127,8 @@ pub struct Editor {
     drop_replace_restore_focus: Option<EntityId>,
     /// 应用内模态（取代系统原生 window.prompt，用户要求全软件不用原生弹窗）。
     modal: Option<modal::EditorModal>,
+    /// 切换工作区后，下一帧（拿得到 `&mut Window` 时）要打开的标签页。
+    pending_workspace_tab_activation: Option<PathBuf>,
     /// Optional informational dialog shown from the Help menu.
     info_dialog: Option<InfoDialogKind>,
     /// Set while the active tab is a file the editor can't preview; the
@@ -488,6 +490,7 @@ impl Editor {
             pending_drop_replace_after_save: false,
             drop_replace_restore_focus: None,
             modal: None,
+            pending_workspace_tab_activation: None,
             info_dialog: None,
             unsupported_preview_path: None,
             unsupported_preview_detail: None,

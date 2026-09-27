@@ -379,6 +379,19 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 全量回归 | `cargo build` 0 警告；`cargo test` 927 通过 0 失败 1 ignored | 通过 |
 | 待人工目视 | 菜单「文件 → 打开最近」子菜单与欢迎页「最近打开」列表：只出现工作区文件夹，不再出现单个 .md | 待复核 |
 
+## 第三十六批补充（用户报修：切换工作区后顶栏还留着上一个工作区的标签）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 在窗口里打开工作区 A 的若干文件 → 「打开最近 / 打开文件夹」切到工作区 B → 顶栏标签仍是 A 的那些 | 已复现 |
+| 根因 | `set_workspace_root` 重置了文件树/搜索/大纲/会话，却从不处理 `workspace.open_documents`（标签工作集）与当前文档，所以旧标签整套留着 | 已定位 |
+| 修复 | 切换根目录时收起**不在新根内**的标签：脏标签先写回自己的文件（并删掉恢复快照），内容不丢；若正在看的那篇被收起 ⇒ 还有剩下的标签就延后一帧补开最近剩下的那个（`pending_workspace_tab_activation` + 渲染期 `sync_pending_workspace_tab_activation`，因为 `set_workspace_root` 当时没有 `&mut Window`），一篇不剩就清空文档回到欢迎页并去掉窗口「已编辑」标记 | 通过 |
+| 判定口径 | `path_is_within_root`：两边都 `canonicalize`（失败退回原路径）后做前缀比较；「正在看的那篇」取 `file_path`，为空再退到 `workspace.active_document`（后者要等 `ensure_current_document_tab` 在渲染时补齐） | 通过 |
+| 用例 | ① `switching_workspace_drops_the_previous_workspaces_tabs`：A 开两个标签 → 切到 B → 标签清空、`active_document` 为空、回到欢迎页；② `switching_workspace_keeps_inner_tabs_and_reopens_one`：新根是旧根子目录 → 只留子目录内标签，画一帧后自动补开它且不回欢迎页；③ `switching_workspace_saves_dirty_stale_tabs_instead_of_losing_them`：脏标签被收起前先把内容写回磁盘 | 通过 |
+| 正控 | 注释掉 `prune_workspace_tabs_outside_root` 调用 ⇒ 三条用例同时失败；恢复后全绿 | 通过 |
+| 会话恢复不受影响 | `restore_last_session` / `open_workspace_window` 都是先设根再开标签，新根内的标签不会被误删 | 通过 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 930 通过 0 失败 1 ignored | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
