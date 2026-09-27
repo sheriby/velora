@@ -252,6 +252,8 @@ pub(super) struct WorkspaceState {
     document_active_range: Option<Range<usize>>,
     search_pending: bool,
     search_generation: u64,
+    /// 顶栏标签条横向滚动（诊断/断言用）。
+    pub(crate) tabs_scroll_handle: ScrollHandle,
     /// 文件树后台扫描（roadmap D9）：任务句柄 + 代数，用于丢弃过期结果。
     tree_scan_task: Option<Task<()>>,
     tree_scan_generation: u64,
@@ -305,6 +307,7 @@ impl Default for WorkspaceState {
             document_active_range: None,
             search_pending: false,
             search_generation: 0,
+            tabs_scroll_handle: ScrollHandle::new(),
             tree_scan_task: None,
             tree_scan_generation: 0,
             tree_scan_root: None,
@@ -3488,6 +3491,7 @@ impl Editor {
                     .into_any_element();
                 div()
                     .id(("document-tab", stable_node_hash(&path.to_string_lossy())))
+                    .debug_selector(move || format!("document-tab-{index}"))
                     .group("doc-tab")
                     .h_full()
                     .min_w(px(120.0))
@@ -3624,6 +3628,7 @@ impl Editor {
                 .h_full()
                 .min_w(px(0.0))
                 .flex()
+                .track_scroll(&self.workspace.tabs_scroll_handle)
                 .overflow_x_scroll()
                 .children(tabs)
                 .into_any_element(),

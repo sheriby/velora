@@ -377,13 +377,23 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
 
     let root = match layout.controls {
         TitlebarControlMode::NativeTrafficLights => {
+            // 红绿灯预留位不能被压缩：标签多了整行溢出时，taffy 会按
+            // flex_shrink 把这个空档挤掉，第一个标签就滑到窗口按钮下面
+            // （用户报修：第一个标签一直在左移）。
+            let traffic_light_spacer = || {
+                div()
+                    .w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH))
+                    .h_full()
+                    .flex_shrink_0()
+            };
             if let Some(tabs) = tabs {
-                root.child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full())
+                root.child(traffic_light_spacer())
                     .child(tabs)
                     .child(drag_filler(true))
-            } else {                root.child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full())
+            } else {
+                root.child(traffic_light_spacer())
                     .child(make_drag_title())
-                    .child(div().w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH)).h_full())
+                    .child(traffic_light_spacer())
             }
         }
         TitlebarControlMode::AppControls => {
@@ -397,6 +407,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                     div()
                         .id("window-titlebar-minimize")
                         .w(px(TITLEBAR_BUTTON_WIDTH))
+                        .flex_shrink_0()
                         .h_full()
                         .flex()
                         .items_center()
@@ -426,6 +437,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                     div()
                         .id("window-titlebar-maximize")
                         .w(px(TITLEBAR_BUTTON_WIDTH))
+                        .flex_shrink_0()
                         .h_full()
                         .flex()
                         .items_center()
@@ -457,6 +469,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                 div()
                     .id("window-titlebar-close")
                     .w(px(TITLEBAR_BUTTON_WIDTH))
+                    .flex_shrink_0()
                     .h_full()
                     .flex()
                     .items_center()

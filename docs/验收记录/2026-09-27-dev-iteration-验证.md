@@ -392,6 +392,19 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 会话恢复不受影响 | `restore_last_session` / `open_workspace_window` 都是先设根再开标签，新根内的标签不会被误删 | 通过 |
 | 全量回归 | `cargo build` 0 警告；`cargo test` 930 通过 0 失败 1 ignored | 通过 |
 
+## 第三十七批补充（用户报修：标签开多了第一个标签一直往左移，压到红绿灯下面）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 问题复现 | 12 个长文件名标签 + 1615px 宽窗口，在测试里量首标签左边界：单标签时 x=84px（红绿灯预留位），加满 12 个后 x=**59px** ⇒ 与用户截图一致（首标签被红绿灯压住） | 已复现（实测数值） |
+| 根因 | 标题行是 `flex` 行：`[红绿灯预留 84px] [标签条] [可伸缩拖拽区]`。预留位和应用绘制的窗口按钮都没写 `flex_shrink_0`，标签总宽超出窗口时 taffy 按 flex_shrink 把这些固定宽度的空档挤扁 ⇒ 标签条整体左移，且每多一个标签挤得更多（“一直在左移”） | 已定位 |
+| 修复 | `window_chrome.rs`：macOS 红绿灯预留位（两处）与非 mac 的窗口按钮（最小化/最大化/关闭，`TITLEBAR_BUTTON_WIDTH` 三处）一律 `flex_shrink_0()`；标签溢出交给标签条自己横向滚动（`document-tabs` 已有 `overflow_x_scroll` + `min_w(0)`，标签本身已是 `flex_shrink_0`） | 通过 |
+| 可观测性 | `WorkspaceState` 加 `tabs_scroll_handle: ScrollHandle`，标签条 `.track_scroll(...)`（同侧栏 `tree_scroll_handle` 的做法），溢出量与滚动位置可断言 | 通过 |
+| 用例 | `many_tabs_never_slide_under_the_window_controls`：先量单标签时首标签 x；再加到 12 个长名标签，断言 ① x 不变 ② x ≥ 84（不进红绿灯区）③ 溢出时 `max_offset().width > 0`（标签条确实可横向滚动） | 通过 |
+| 正控 | 去掉预留位的 `flex_shrink_0` ⇒ 断言失败并打印「84px → 59px」，与用户现象同量级；恢复后通过 | 通过 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 931 通过 0 失败 1 ignored | 通过 |
+| 待人工目视 | 真机开 10+ 个长名标签：首标签固定在红绿灯右侧不动，标签超出窗口右缘时可横向滚动 | 待复核 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

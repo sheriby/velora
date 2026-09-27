@@ -5587,6 +5587,66 @@ async fn broken_image_placeholder_stays_compact_inside_the_column(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext) {
+    // 用户报修：标签开多了，第一个标签一直在左移，最后压到红绿灯下面。
+    // 根因是标题行的红绿灯预留位（和应用绘制的窗口按钮）没有 flex_shrink_0，
+    // 整行溢出时被 taffy 挤扁。
+    init_editor_test_app(cx);
+    let root = temp_markdown_path("tab-strip-overflow");
+    fs::create_dir_all(&root).unwrap();
+    let mut paths = Vec::new();
+    for index in 0..12 {
+        let path = root.join(format!("doc-with-a-much-longer-name-{index:02}.md"));
+        fs::write(&path, format!("# doc {index}\n")).unwrap();
+        paths.push(path);
+    }
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, _cx| window.resize(gpui::size(px(1615.0), px(900.0))));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+        });
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(paths[0].clone(), window, cx);
+        });
+    });
+    redraw(cx);
+    let first_with_one_tab = cx
+        .debug_bounds("document-tab-0")
+        .expect("单个标签应渲染在标题行里")
+        .origin
+        .x;
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            for path in &paths[1..] {
+                editor.open_workspace_file(path.clone(), window, cx);
+            }
+        });
+    });
+    redraw(cx);
+    let first_with_many = cx.debug_bounds("document-tab-0").expect("首标签仍应存在");
+    assert_eq!(
+        first_with_many.origin.x, first_with_one_tab,
+        "加满标签后第一个标签不该左移（{first_with_one_tab} → {:?}）",
+        first_with_many.origin.x
+    );
+    assert!(
+        first_with_many.origin.x >= px(84.0),
+        "第一个标签不该进入 macOS 红绿灯预留区（84px），实测 {:?}",
+        first_with_many.origin.x
+    );
+    let max_offset = editor.read_with(cx, |editor, _| {
+        editor.workspace.tabs_scroll_handle.max_offset()
+    });
+    assert!(
+        max_offset.width > px(0.0),
+        "溢出的标签条应该可以横向滚动，实测 max_offset {max_offset:?}"
+    );
+}
+
+#[gpui::test]
 async fn in_app_modal_buttons_close_it_and_run_the_callback(cx: &mut TestAppContext) {
     // 用户要求：全软件不用系统原生弹窗。模态必须可点、可关、回调拿到正确序号。
     init_editor_test_app(cx);
