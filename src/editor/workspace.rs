@@ -3165,6 +3165,21 @@ impl Editor {
                             })
                         },
                     )
+                    .drag_over::<TabDrag>({
+                        let drag_hover_path = path.clone();
+                        move |style, drag, _window, cx| {
+                            if drag.from_path == drag_hover_path {
+                                return style;
+                            }
+                            // 拖拽中的目标位置高亮（roadmap E3）：左侧强调边 +
+                            // 悬浮底色，明确落点。
+                            let theme = cx.global::<ThemeManager>().current_arc();
+                            style
+                                .border_l(px(2.0))
+                                .border_color(theme.colors.dialog_primary_button_bg)
+                                .bg(theme.colors.dialog_secondary_button_hover)
+                        }
+                    })
                     .on_drop({
                         let drop_editor = editor.clone();
                         move |drag: &TabDrag, window, cx| {
