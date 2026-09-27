@@ -142,6 +142,77 @@ async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "手动大文件诊断；设置 VELORA_PERF_FILE 后单独运行"]
+async fn manual_code_load_probe(cx: &mut TestAppContext) {
+    let path = std::env::var("VELORA_PERF_FILE").expect("需要设置 VELORA_PERF_FILE");
+    let source_path = PathBuf::from(&path);
+    let source = fs::read_to_string(&source_path).expect("性能样本必须是 UTF-8 文本");
+    let bytes = source.len();
+    init_editor_test_app(cx);
+
+    let start = Instant::now();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        let start = Instant::now();
+        let editor = Editor::from_file_source(cx, source, Some(source_path));
+        println!(
+            "editor_constructor_ms={:.1}",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        editor
+    });
+    let construct = start.elapsed();
+    let (mode, rows) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.view_mode,
+            editor.document.visible_blocks().len(),
+        )
+    });
+    assert!(matches!(mode, ViewMode::Source), "代码文件应进入 Source 模式");
+
+    let start = Instant::now();
+    redraw(cx);
+    let first_draw = start.elapsed();
+    let mut steady_draws = Vec::with_capacity(12);
+    for _ in 0..12 {
+        let start = Instant::now();
+        redraw(cx);
+        steady_draws.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    steady_draws.sort_by(f64::total_cmp);
+    let p95 = steady_draws[11];
+    println!(
+        "bytes={bytes} rows={rows} construct_ms={:.1} first_draw_ms={:.1} steady_p95_ms={p95:.1}",
+        construct.as_secs_f64() * 1000.0,
+        first_draw.as_secs_f64() * 1000.0,
+    );
+
+    let start = Instant::now();
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        editor.active_entity_id = Some(first.entity_id());
+        first.update(cx, |block, cx| {
+            block.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+            block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+        });
+    });
+    let edit_update = start.elapsed();
+    let start = Instant::now();
+    redraw(cx);
+    let edit_draw = start.elapsed();
+    println!(
+        "edit_update_ms={:.1} edit_draw_ms={:.1}",
+        edit_update.as_secs_f64() * 1000.0,
+        edit_draw.as_secs_f64() * 1000.0
+    );
+    let start = Instant::now();
+    let source_bytes = editor.read_with(cx, |editor, cx| editor.current_document_source(cx).len());
+    println!(
+        "serialized_bytes={source_bytes} serialize_ms={:.1}",
+        start.elapsed().as_secs_f64() * 1000.0
+    );
+}
+
+#[gpui::test]
 async fn targeted_source_mapping_matches_later_blocks_and_table_cells(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let markdown = "intro\n\n## heading\n\n| Name | Value |\n| --- | --- |\n| A | B |".into();
