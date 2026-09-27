@@ -130,6 +130,16 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | D9 后台扫描 | 扫描改在 background executor 执行，代数校验丢弃过期结果；新增 3 个 gpui 用例：`workspace_tree_scan_is_async_and_applies_result`（调用栈内不产出树、pump 后落地）、`workspace_tree_scan_discards_stale_root_results`（换根丢弃旧结果）、`reopening_workspace_root_rescans_after_tree_is_cleared`（同根重开必须重扫） | 通过 |
 | 全量回归 | `cargo test` 838 通过 0 失败（831 基线 + 3 C7 + 3 D9 + 重开用例；基线偶发项本轮通过） | 通过（视觉待解锁复核） |
 
+## 第十五批补充（B8 阅读时间 / B11 用例 / 偶发失败定位）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| B8 阅读时间 | `reading_time_is_rounded_up_at_300_words_per_minute`（0→隐藏、1→1、300→1、301→2、1500→5） | 通过 |
+| B11 撤销跨模式 | 新增 `undo_after_view_mode_switch_keeps_text`：切换前后撤销/重做均不丢字 | 通过 |
+| 偶发失败定位 | `autosave_does_not_overwrite_external_file_changes` 失败根因＝冲突标记寄存在 `workspace.file_error` 上、被文件树扫描清空；改为独立 `external_change_conflict` 状态后连跑 20 次 0 失败；新增 `external_autosave_conflict_survives_workspace_rescan` 并做旧实现正控（旧实现下必失败） | 通过 |
+| 测试隔离 | 测试构建配置目录改指进程级临时目录（此前测试把偏好/会话/恢复快照写进真实用户目录，导致 `cargo run` 恢复出几十个窗口） | 通过 |
+| 全量回归 | `cargo test` 841 通过 0 失败 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`
