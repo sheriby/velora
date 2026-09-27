@@ -459,6 +459,8 @@ pub struct I18nStrings {
     pub status_bar_mode_rendered: String,
     /// Suffix shown after the word count number.
     pub status_bar_word_count_suffix: String,
+    /// Suffix shown after the estimated reading time in minutes (roadmap B8).
+    pub status_bar_reading_time_suffix: String,
     /// Nav label for the status bar preferences tab.
     pub preferences_nav_status_bar: String,
     /// Label for the status bar enabled toggle.
@@ -730,6 +732,7 @@ struct I18nStringsDe {
     status_bar_mode_source: Option<String>,
     status_bar_mode_rendered: Option<String>,
     status_bar_word_count_suffix: Option<String>,
+    status_bar_reading_time_suffix: Option<String>,
     preferences_nav_status_bar: Option<String>,
     preferences_status_bar_enabled: Option<String>,
     preferences_status_bar_show_word_count: Option<String>,
@@ -993,6 +996,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "status_bar_mode_source",
     "status_bar_mode_rendered",
     "status_bar_word_count_suffix",
+    "status_bar_reading_time_suffix",
     "preferences_nav_status_bar",
     "preferences_status_bar_enabled",
     "preferences_status_bar_show_word_count",
@@ -1682,6 +1686,9 @@ impl I18nStringsDe {
             status_bar_word_count_suffix: self
                 .status_bar_word_count_suffix
                 .unwrap_or(defaults.status_bar_word_count_suffix),
+            status_bar_reading_time_suffix: self
+                .status_bar_reading_time_suffix
+                .unwrap_or(defaults.status_bar_reading_time_suffix),
             preferences_nav_status_bar: self
                 .preferences_nav_status_bar
                 .unwrap_or(defaults.preferences_nav_status_bar),
@@ -1974,6 +1981,7 @@ impl I18nStrings {
             status_bar_mode_source: "源码".into(),
             status_bar_mode_rendered: "渲染".into(),
             status_bar_word_count_suffix: "字".into(),
+            status_bar_reading_time_suffix: "分钟阅读".into(),
             ..Self::en_us()
         };
         strings.image_paste_failed_title = "图片粘贴失败".into();
@@ -2272,6 +2280,7 @@ impl I18nStrings {
             status_bar_mode_source: "Source".into(),
             status_bar_mode_rendered: "Rendered".into(),
             status_bar_word_count_suffix: "words".into(),
+            status_bar_reading_time_suffix: "min read".into(),
             preferences_nav_status_bar: "Status Bar".into(),
             preferences_status_bar_enabled: "Show Status Bar".into(),
             preferences_status_bar_show_word_count: "Word Count".into(),

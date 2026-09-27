@@ -3342,6 +3342,34 @@ async fn undo_reverts_recent_rendered_typing(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn undo_after_view_mode_switch_keeps_text(cx: &mut TestAppContext) {
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "alpha".to_string(), None));
+
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("root").clone();
+        editor.active_entity_id = Some(block.entity_id());
+        block.update(cx, |block, cx| {
+            block.prepare_undo_capture(crate::components::UndoCaptureKind::CoalescibleText, cx);
+            block.replace_text_in_visible_range(5..5, " beta", None, false, cx);
+        });
+    });
+
+    // 源码/渲染模式来回切换后，撤销历史仍应完整可用（roadmap B11）。
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.document.markdown_text(cx), "alpha beta");
+        editor.toggle_view_mode(cx);
+        assert!(matches!(editor.view_mode, ViewMode::Source));
+        editor.undo_document(cx);
+        assert_eq!(editor.document.markdown_text(cx), "alpha");
+        editor.toggle_view_mode(cx);
+        assert!(matches!(editor.view_mode, ViewMode::Rendered));
+        assert_eq!(editor.document.markdown_text(cx), "alpha");
+        editor.redo_document(cx);
+        assert_eq!(editor.document.markdown_text(cx), "alpha beta");
+    });
+}
+
+#[gpui::test]
 async fn undo_first_edit_after_marker_normalization_restores_content(cx: &mut TestAppContext) {
     let editor = cx.new(|cx| Editor::from_markdown(cx, "1) first".to_string(), None));
 

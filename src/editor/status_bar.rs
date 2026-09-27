@@ -55,6 +55,9 @@ impl Editor {
                 theme,
                 strings,
             ));
+            if let Some(minutes) = reading_minutes(total_count) {
+                right_items.push(render_reading_time(minutes, theme, strings));
+            }
         }
 
         for button in &prefs.custom_buttons {
@@ -193,6 +196,29 @@ fn render_word_count(
         .into_any_element()
 }
 
+/// Estimated reading time in minutes at 300 words/minute (roadmap B8).
+/// Returns `None` for an empty document so the status bar stays quiet.
+pub fn reading_minutes(word_count: usize) -> Option<usize> {
+    if word_count == 0 {
+        return None;
+    }
+    Some(word_count.div_ceil(300).max(1))
+}
+
+fn render_reading_time(minutes: usize, theme: &Theme, strings: &I18nStrings) -> AnyElement {
+    let c = &theme.colors;
+    let d = &theme.dimensions;
+
+    div()
+        .text_size(px(d.status_bar_text_size))
+        .text_color(c.status_bar_text_dim)
+        .child(format!(
+            "{} {}",
+            minutes, strings.status_bar_reading_time_suffix
+        ))
+        .into_any_element()
+}
+
 fn render_custom_button(
     state: &mut StatusBarState,
     button: &StatusBarButton,
@@ -292,11 +318,20 @@ fn is_cjk_char(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::count_words;
+    use super::{count_words, reading_minutes};
 
     #[test]
     fn empty_text_has_zero_words() {
         assert_eq!(count_words(""), 0);
+    }
+
+    #[test]
+    fn reading_time_is_rounded_up_at_300_words_per_minute() {
+        assert_eq!(reading_minutes(0), None);
+        assert_eq!(reading_minutes(1), Some(1));
+        assert_eq!(reading_minutes(300), Some(1));
+        assert_eq!(reading_minutes(301), Some(2));
+        assert_eq!(reading_minutes(1500), Some(5));
     }
 
     #[test]
