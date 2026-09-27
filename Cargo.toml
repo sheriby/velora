@@ -212,6 +212,14 @@ opt-level = "s"
 panic = "abort"
 strip = true
 
+# Windows 交叉编译专用。vendored gpui 的 DirectX 渲染器在 debug_assertions
+# 关闭时要求用 fxc.exe 预烘焙着色器（只有原生 Windows 构建能生成），交叉
+# 编译无法提供；开启 debug-assertions 使其与既有 debug 产物一样走运行时
+# 编译路径。macOS 发布包仍使用上面的 release。
+[profile.releasewin]
+inherits = "release"
+debug-assertions = true
+
 [profile.dev]
 opt-level = 0        # 关键：日常开发不做优化
 debug = 1            # 保留行号信息，保持可调试
