@@ -361,6 +361,7 @@ pub struct I18nStrings {
     pub preferences_file_autosave_debounce: String,
     /// 文件页：记住窗口大小开关标签。
     pub preferences_file_remember_window: String,
+    pub preferences_smart_punctuation: String,
     /// Export menu item: copy rendered HTML source to clipboard.
     pub menu_copy_as_html: String,
     /// Workspace action: duplicate the selected file.
@@ -687,6 +688,7 @@ struct I18nStringsDe {
     preferences_file_tree_sort: Option<String>,
     preferences_file_autosave_debounce: Option<String>,
     preferences_file_remember_window: Option<String>,
+    preferences_smart_punctuation: Option<String>,
     menu_copy_as_html: Option<String>,
     workspace_duplicate: Option<String>,
     hover_footnote_prefix: Option<String>,
@@ -953,6 +955,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "preferences_file_tree_sort",
     "preferences_file_autosave_debounce",
     "preferences_file_remember_window",
+    "preferences_smart_punctuation",
     "menu_copy_as_html",
     "workspace_duplicate",
     "hover_footnote_prefix",
@@ -1567,6 +1570,9 @@ impl I18nStringsDe {
             preferences_file_remember_window: self
                 .preferences_file_remember_window
                 .unwrap_or(defaults.preferences_file_remember_window),
+            preferences_smart_punctuation: self
+                .preferences_smart_punctuation
+                .unwrap_or(defaults.preferences_smart_punctuation),
             menu_copy_as_html: self
                 .menu_copy_as_html
                 .unwrap_or(defaults.menu_copy_as_html),
@@ -1944,6 +1950,7 @@ impl I18nStrings {
             preferences_file_tree_sort: "文件树排序".into(),
             preferences_file_autosave_debounce: "自动保存间隔".into(),
             preferences_file_remember_window: "记住窗口大小与位置".into(),
+            preferences_smart_punctuation: "智能标点".into(),
             menu_copy_as_html: "复制为 HTML".into(),
             workspace_duplicate: "创建副本".into(),
             hover_footnote_prefix: "脚注".into(),
@@ -2243,6 +2250,7 @@ impl I18nStrings {
             preferences_file_tree_sort: "File tree sort".into(),
             preferences_file_autosave_debounce: "Autosave interval".into(),
             preferences_file_remember_window: "Remember window size and position".into(),
+            preferences_smart_punctuation: "Smart Punctuation".into(),
             menu_copy_as_html: "Copy as HTML".into(),
             workspace_duplicate: "Duplicate".into(),
             hover_footnote_prefix: "Footnote".into(),

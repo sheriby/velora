@@ -114,17 +114,27 @@ impl EntityInputHandler for Block {
             UndoCaptureKind::CoalescibleText
         };
         self.prepare_undo_capture(undo_kind, cx);
-        let visible_range = range_utf16
+        let mut visible_range = range_utf16
             .as_ref()
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        let smart_punctuation = crate::config::EditorSettings::smart_punctuation(cx)
+            && !self.kind().is_code_block()
+            && !self.uses_raw_text_editing();
         // Wrap a non-empty selection with the typed paired symbol (roadmap
         // B4): typing `*` over a selection becomes *selection*, etc.
-        if let Some((open, close)) = wrap_pair_for(new_text)
+        if let Some((mut open, mut close)) = wrap_pair_for(new_text)
             && !visible_range.is_empty()
             && !self.display_text()[visible_range.clone()].contains('\n')
         {
+            if smart_punctuation && new_text == "\"" {
+                open = "\u{201c}";
+                close = "\u{201d}";
+            } else if smart_punctuation && new_text == "'" {
+                open = "\u{2018}";
+                close = "\u{2019}";
+            }
             let selected = self.display_text()[visible_range.clone()].to_string();
             let wrapped = format!("{open}{selected}{close}");
             self.replace_text_in_visible_range(
@@ -139,7 +149,23 @@ impl EntityInputHandler for Block {
             cx.notify();
             return;
         }
-        self.replace_text_in_visible_range(visible_range, new_text, None, false, cx);
+        let replacement = if smart_punctuation {
+            smart_punctuation_replacement(new_text, &self.display_text()[..visible_range.start])
+                .map(|(consumed_prefix, replacement)| {
+                    visible_range.start -= consumed_prefix;
+                    replacement
+                })
+        } else {
+            None
+        };
+        match replacement {
+            Some(replacement) => {
+                self.replace_text_in_visible_range(visible_range, &replacement, None, false, cx)
+            }
+            None => {
+                self.replace_text_in_visible_range(visible_range, new_text, None, false, cx)
+            }
+        }
     }
 
     fn replace_and_mark_text_in_range(
@@ -270,6 +296,41 @@ impl EntityInputHandler for Block {
     }
 }
 
+/// Typographic substitution applied while typing (roadmap B6). Returns the
+/// replacement plus how many bytes before the insertion point it consumes
+/// (`--` becomes one em dash).
+fn smart_punctuation_replacement(text: &str, before: &str) -> Option<(usize, String)> {
+    let preceding = before.chars().next_back();
+    match text {
+        "\"" => Some((
+            0,
+            if is_opening_quote_context(preceding) {
+                "\u{201c}".to_string()
+            } else {
+                "\u{201d}".to_string()
+            },
+        )),
+        "'" => Some((
+            0,
+            if is_opening_quote_context(preceding) {
+                "\u{2018}".to_string()
+            } else {
+                "\u{2019}".to_string()
+            },
+        )),
+        "-" if preceding == Some('-') => Some((1, "\u{2014}".to_string())),
+        _ => None,
+    }
+}
+
+fn is_opening_quote_context(preceding: Option<char>) -> bool {
+    const OPENERS: &str = "([{<\u{201c}\u{2018}\u{300c}\u{300e}\u{ff08}\u{3010}\u{300a}\u{3008}\u{3001}\u{3002}\u{ff0c}\u{ff1a}\u{ff1b}\u{ff01}\u{ff1f}\u{2026},;:.!?";
+    match preceding {
+        None => true,
+        Some(ch) => ch.is_whitespace() || OPENERS.contains(ch),
+    }
+}
+
 /// Paired symbols that wrap a selection instead of replacing it (roadmap B4).
 fn wrap_pair_for(text: &str) -> Option<(&'static str, &'static str)> {
     match text {
@@ -282,5 +343,125 @@ fn wrap_pair_for(text: &str) -> Option<(&'static str, &'static str)> {
         "[" => Some(("[", "]")),
         "{" => Some(("{", "}")),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Block, smart_punctuation_replacement};
+    use crate::components::{BlockKind, BlockRecord, InlineTextTree};
+    use crate::config::EditorSettings;
+    use gpui::{Entity, EntityInputHandler, TestAppContext, VisualTestContext};
+
+    #[test]
+    fn smart_punctuation_maps_quotes_and_dashes() {
+        assert_eq!(
+            smart_punctuation_replacement("\"", ""),
+            Some((0, "\u{201c}".to_string()))
+        );
+        assert_eq!(
+            smart_punctuation_replacement("\"", "word"),
+            Some((0, "\u{201d}".to_string()))
+        );
+        assert_eq!(
+            smart_punctuation_replacement("\"", "中文"),
+            Some((0, "\u{201d}".to_string()))
+        );
+        assert_eq!(
+            smart_punctuation_replacement("\"", "，"),
+            Some((0, "\u{201c}".to_string()))
+        );
+        assert_eq!(
+            smart_punctuation_replacement("'", "word"),
+            Some((0, "\u{2019}".to_string()))
+        );
+        assert_eq!(
+            smart_punctuation_replacement("-", "-"),
+            Some((1, "\u{2014}".to_string()))
+        );
+        assert_eq!(smart_punctuation_replacement("-", "a"), None);
+        assert_eq!(smart_punctuation_replacement("x", "a"), None);
+    }
+
+    fn typing_block<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+    ) -> (Entity<Block>, &'a mut VisualTestContext) {
+        cx.add_window_view(|_window, cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain(text)),
+            )
+        })
+    }
+
+    #[gpui::test]
+    async fn typing_with_smart_punctuation_substitutes_quotes_and_dashes(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            EditorSettings::install_test_settings(cx, true);
+        });
+        let (block, cx) = typing_block(cx, "word");
+
+        cx.update(|window, cx| {
+            block.update(cx, |block, block_cx| {
+                block.selected_range = 4..4;
+                <Block as EntityInputHandler>::replace_text_in_range(
+                    block, None, "\"", window, block_cx,
+                );
+            });
+        });
+        assert_eq!(
+            block.read_with(cx, |block, _| block.display_text().to_string()),
+            "word\u{201d}"
+        );
+
+        cx.update(|window, cx| {
+            block.update(cx, |block, block_cx| {
+                <Block as EntityInputHandler>::replace_text_in_range(
+                    block, None, "-", window, block_cx,
+                );
+                <Block as EntityInputHandler>::replace_text_in_range(
+                    block, None, "-", window, block_cx,
+                );
+            });
+        });
+        assert_eq!(
+            block.read_with(cx, |block, _| block.display_text().to_string()),
+            "word\u{201d}\u{2014}"
+        );
+
+    }
+
+    #[gpui::test]
+    async fn typing_without_smart_punctuation_keeps_straight_quotes(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            EditorSettings::install_test_settings(cx, false);
+        });
+        let (block, cx) = typing_block(cx, "word");
+
+        cx.update(|window, cx| {
+            block.update(cx, |block, block_cx| {
+                block.selected_range = 4..4;
+                <Block as EntityInputHandler>::replace_text_in_range(
+                    block, None, "\"", window, block_cx,
+                );
+                <Block as EntityInputHandler>::replace_text_in_range(
+                    block, None, "-", window, block_cx,
+                );
+                <Block as EntityInputHandler>::replace_text_in_range(
+                    block, None, "-", window, block_cx,
+                );
+            });
+        });
+        assert_eq!(
+            block.read_with(cx, |block, _| block.display_text().to_string()),
+            "word\"--"
+        );
     }
 }

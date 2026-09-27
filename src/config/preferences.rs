@@ -214,6 +214,8 @@ pub(crate) struct AppPreferences {
     pub(crate) default_language_id: String,
     pub(crate) default_theme_id: String,
     pub(crate) show_table_headers: bool,
+    /// Typographic quote/dash substitution while typing (default off).
+    pub(crate) smart_punctuation: bool,
     pub(crate) image_paste_behavior: ImagePasteBehavior,
     pub(crate) fonts: FontPreferences,
     pub(crate) writing_width: WritingWidthPreference,
@@ -242,6 +244,7 @@ impl Default for AppPreferences {
             default_language_id: DEFAULT_LANGUAGE_ID.into(),
             default_theme_id: DEFAULT_THEME_ID.into(),
             show_table_headers: true,
+            smart_punctuation: false,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences::default(),
             writing_width: WritingWidthPreference::Theme,
@@ -274,6 +277,7 @@ struct StatusBarSettings {
 /// value back to the preferences file.
 pub struct EditorSettings {
     show_table_headers: bool,
+    smart_punctuation: bool,
     status_bar_settings: StatusBarSettings,
     fonts: FontPreferences,
     writing_width: WritingWidthPreference,
@@ -290,14 +294,24 @@ impl Global for EditorSettings {}
 
 impl EditorSettings {
     pub fn init(cx: &mut App, show_table_headers: bool) {
-        let status_bar = read_app_preferences()
-            .ok()
-            .map(|p| p.status_bar)
+        let preferences = read_app_preferences().ok();
+        let status_bar = preferences
+            .as_ref()
+            .map(|p| p.status_bar.clone())
             .unwrap_or_default();
-        Self::set_global(cx, show_table_headers, &status_bar);
+        let smart_punctuation = preferences
+            .as_ref()
+            .map(|p| p.smart_punctuation)
+            .unwrap_or(false);
+        Self::set_global(cx, show_table_headers, smart_punctuation, &status_bar);
     }
 
-    fn set_global(cx: &mut App, show_table_headers: bool, status_bar: &StatusBarPreferences) {
+    fn set_global(
+        cx: &mut App,
+        show_table_headers: bool,
+        smart_punctuation: bool,
+        status_bar: &StatusBarPreferences,
+    ) {
         let fonts = cx
             .try_global::<Self>()
             .map(|settings| settings.fonts.clone())
@@ -374,6 +388,7 @@ impl EditorSettings {
             .unwrap_or((1080, 720));
         cx.set_global(Self {
             show_table_headers,
+            smart_punctuation,
             fonts,
             writing_width,
             workspace_sidebar_width,
@@ -399,6 +414,26 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.show_table_headers)
             .unwrap_or(true)
+    }
+
+    /// Installs the settings global without touching the config file. Lets
+    /// tests exercise setting-dependent behavior without cross-test file races.
+    #[cfg(test)]
+    pub(crate) fn install_test_settings(cx: &mut App, smart_punctuation: bool) {
+        Self::set_global(
+            cx,
+            true,
+            smart_punctuation,
+            &StatusBarPreferences::default(),
+        );
+    }
+
+    /// Whether typed straight quotes/dashes become typographic forms.
+    /// Defaults to `false` when the global has not been installed.
+    pub fn smart_punctuation(cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .map(|settings| settings.smart_punctuation)
+            .unwrap_or(false)
     }
 
     pub(crate) fn fonts(cx: &App) -> FontPreferences {
@@ -515,7 +550,7 @@ impl EditorSettings {
                 custom_buttons: Vec::new(),
             })
             .unwrap_or_default();
-        Self::set_global(cx, show_table_headers, &status_bar);
+        Self::set_global(cx, show_table_headers, Self::smart_punctuation(cx), &status_bar);
         match read_app_preferences() {
             Ok(mut preferences) => {
                 preferences.show_table_headers = show_table_headers;
@@ -524,6 +559,31 @@ impl EditorSettings {
                 }
             }
             Err(err) => eprintln!("failed to read table header preference: {err}"),
+        }
+    }
+
+    pub fn set_smart_punctuation(cx: &mut App, smart_punctuation: bool) {
+        let status_bar = cx
+            .try_global::<Self>()
+            .map(|s| StatusBarPreferences {
+                enabled: s.status_bar_settings.status_bar_enabled,
+                show_word_count: s.status_bar_settings.status_bar_show_word_count,
+                show_cursor_position: s.status_bar_settings.status_bar_show_cursor_position,
+                show_sidebar_toggle: s.status_bar_settings.status_bar_show_sidebar_toggle,
+                show_mode_switch: s.status_bar_settings.status_bar_show_mode_switch,
+                custom_buttons: Vec::new(),
+            })
+            .unwrap_or_default();
+        let show_table_headers = Self::show_table_headers(cx);
+        Self::set_global(cx, show_table_headers, smart_punctuation, &status_bar);
+        match read_app_preferences() {
+            Ok(mut preferences) => {
+                preferences.smart_punctuation = smart_punctuation;
+                if let Err(err) = save_app_preferences(&preferences) {
+                    eprintln!("failed to save smart punctuation preference: {err}");
+                }
+            }
+            Err(err) => eprintln!("failed to read smart punctuation preference: {err}"),
         }
     }
 
@@ -561,6 +621,7 @@ struct StartupPreferencesFile {
 #[derive(Serialize)]
 struct EditorPreferencesFile {
     show_table_headers: bool,
+    smart_punctuation: bool,
     image_paste_behavior: String,
     markdown_font_family: String,
     markdown_font_size: u16,
@@ -663,6 +724,7 @@ impl From<&AppPreferences> for PreferencesFile {
             },
             editor: EditorPreferencesFile {
                 show_table_headers: value.show_table_headers,
+                smart_punctuation: value.smart_punctuation,
                 image_paste_behavior: value.image_paste_behavior.as_str().into(),
                 markdown_font_family: value.fonts.markdown_family.clone(),
                 markdown_font_size: value.fonts.markdown_size,
@@ -829,6 +891,11 @@ fn app_preferences_from_toml_value(
         .and_then(|editor| editor.get("show_table_headers"))
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
+    let smart_punctuation = value
+        .get("editor")
+        .and_then(|editor| editor.get("smart_punctuation"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let image_paste_behavior = value
         .get("editor")
         .and_then(|editor| editor.get("image_paste_behavior"))
@@ -981,6 +1048,7 @@ fn app_preferences_from_toml_value(
         default_language_id,
         default_theme_id,
         show_table_headers,
+        smart_punctuation,
         image_paste_behavior,
         fonts,
         writing_width,
@@ -1126,6 +1194,7 @@ pub(crate) fn save_preferences_from_window(
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
+    smart_punctuation: bool,
 ) -> anyhow::Result<AppPreferences> {
     let dirs = VelotypeConfigDirs::from_system()?;
     save_preferences_from_window_with_dirs(
@@ -1139,6 +1208,7 @@ pub(crate) fn save_preferences_from_window(
         tree_sort,
         autosave_debounce_ms,
         remember_window_bounds,
+        smart_punctuation,
         &dirs,
     )
 }
@@ -1155,6 +1225,7 @@ fn save_preferences_from_window_with_dirs(
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
+    smart_punctuation: bool,
     dirs: &VelotypeConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
     let mut preferences =
@@ -1167,6 +1238,7 @@ fn save_preferences_from_window_with_dirs(
     preferences.tree_sort = tree_sort;
     preferences.autosave_debounce_ms = autosave_debounce_ms;
     preferences.remember_window_bounds = remember_window_bounds;
+    preferences.smart_punctuation = smart_punctuation;
     preferences.keybindings = normalize_shortcut_config(&keybindings);
     preferences.status_bar = status_bar.clone();
     save_app_preferences_with_dirs(&preferences, dirs)?;
@@ -1219,9 +1291,11 @@ pub(crate) struct PreferencesWindow {
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
+    smart_punctuation: bool,
     saved_tree_sort: TreeSortPreference,
     saved_autosave_debounce_ms: u64,
     saved_remember_window_bounds: bool,
+    saved_smart_punctuation: bool,
     tree_sort_dropdown_open: bool,
     autosave_dropdown_open: bool,
     status_bar_enabled: bool,
@@ -1259,6 +1333,7 @@ impl PreferencesWindow {
         let tree_sort = preferences.tree_sort;
         let autosave_debounce_ms = preferences.autosave_debounce_ms;
         let remember_window_bounds = preferences.remember_window_bounds;
+        let smart_punctuation = preferences.smart_punctuation;
         Self {
             nav: PreferencesNav::File,
             startup_open,
@@ -1276,9 +1351,11 @@ impl PreferencesWindow {
             tree_sort,
             autosave_debounce_ms,
             remember_window_bounds,
+            smart_punctuation,
             saved_tree_sort: tree_sort,
             saved_autosave_debounce_ms: autosave_debounce_ms,
             saved_remember_window_bounds: remember_window_bounds,
+            saved_smart_punctuation: smart_punctuation,
             tree_sort_dropdown_open: false,
             autosave_dropdown_open: false,
             theme_options,
@@ -1342,6 +1419,7 @@ impl PreferencesWindow {
             || self.tree_sort != self.saved_tree_sort
             || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
             || self.remember_window_bounds != self.saved_remember_window_bounds
+            || self.smart_punctuation != self.saved_smart_punctuation
     }
 
     fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1501,6 +1579,7 @@ impl PreferencesWindow {
             self.tree_sort,
             self.autosave_debounce_ms,
             self.remember_window_bounds,
+            self.smart_punctuation,
         ) {
             Ok(preferences) => preferences,
             Err(err) => {
@@ -1521,6 +1600,7 @@ impl PreferencesWindow {
         // 同步新设置到全局缓存并刷新（roadmap H1）。
         EditorSettings::set_tree_sort(cx, self.tree_sort);
         EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
+        EditorSettings::set_smart_punctuation(cx, self.smart_punctuation);
         self.apply_saved_preferences(preferences, window, cx);
     }
 
@@ -1568,6 +1648,10 @@ impl PreferencesWindow {
         self.saved_status_bar_show_cursor_position = self.status_bar_show_cursor_position;
         self.saved_status_bar_show_sidebar_toggle = self.status_bar_show_sidebar_toggle;
         self.saved_status_bar_show_mode_switch = self.status_bar_show_mode_switch;
+        self.saved_tree_sort = self.tree_sort;
+        self.saved_autosave_debounce_ms = self.autosave_debounce_ms;
+        self.saved_remember_window_bounds = self.remember_window_bounds;
+        self.saved_smart_punctuation = self.smart_punctuation;
         cx.notify();
     }
 
@@ -1882,6 +1966,14 @@ impl PreferencesWindow {
                 cx.notify();
             }));
 
+        let smart_punctuation_toggle =
+            crate::components::switch::Switch::new("preferences-smart-punctuation")
+                .checked(self.smart_punctuation)
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    this.smart_punctuation = !this.smart_punctuation;
+                    cx.notify();
+                }));
+
         div()
             .flex()
             .flex_col()
@@ -1900,6 +1992,11 @@ impl PreferencesWindow {
             .child(self.labeled_row(
                 &strings.preferences_file_remember_window,
                 remember_toggle,
+                theme,
+            ))
+            .child(self.labeled_row(
+                &strings.preferences_smart_punctuation,
+                smart_punctuation_toggle,
                 theme,
             ))
     }
@@ -3173,6 +3270,7 @@ mod tests {
         assert_eq!(preferences.startup_open, StartupOpenPreference::NewFile);
         assert_eq!(preferences.default_language_id, "en-US");
         assert_eq!(preferences.default_theme_id, "velotype-light");
+        assert!(!preferences.smart_punctuation);
         assert_eq!(preferences.writing_width, WritingWidthPreference::Theme);
         assert_eq!(
             preferences.image_paste_behavior,
@@ -3244,6 +3342,7 @@ mod tests {
             default_language_id: "zh-CN".into(),
             default_theme_id: "velotype-light".into(),
             show_table_headers: false,
+            smart_punctuation: true,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences {
                 markdown_family: "PingFang SC".into(),
@@ -3269,6 +3368,7 @@ mod tests {
             .expect("preferences should save to config.toml");
         let loaded = read_app_preferences_with_dirs(&dirs).expect("preferences should read back");
         assert_eq!(loaded, preferences);
+        assert!(loaded.smart_punctuation);
 
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
@@ -3348,6 +3448,7 @@ mod tests {
         let dirs = VelotypeConfigDirs::from_root(&root);
         let preferences = AppPreferences {
             startup_open: StartupOpenPreference::NewFile,
+            smart_punctuation: false,
             default_language_id: "zh-CN".into(),
             default_theme_id: "velotype".into(),
             show_table_headers: true,
@@ -3380,6 +3481,7 @@ mod tests {
             TreeSortPreference::Name,
             800,
             true,
+            false,
             &dirs,
         )
         .expect("window preferences should save");
