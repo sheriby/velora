@@ -201,6 +201,19 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | i18n | 新增 `menu_open_command_palette`（视图菜单与面板共用）与 `command_zoom_in/out/reset`（原面板为写死英文 `⌘+ Zoom In`） | 通过 |
 | 全量回归 | `cargo test` 894 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
 
+## 第二十二批补充（G8 渐进建块）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| G8 分块导入 | `from_markdown` 只同步建首块（`FIRST_CHUNK_ROOTS = 2000` 个根块），其余由 `cx.spawn` 任务按 `STEADY_CHUNK_ROOTS = 250` 续建；追加走新增的 `DocumentTree::append_roots` 增量快照（不重跑整树 DFS）。列表是唯一可能无限长的构造（无空行的 10 MiB 夹具整体被解析成一个大列表），`collect_list_blocks` 因此接受剩余根块预算并在顶层条目边界停下 | 通过 |
+| 等价性（核心） | `progressive_import_matches_single_pass_import`：以预算 1/2/3/5/8 分块导入同一份含 frontmatter、懒惰续行、未闭合反引号、空行串、列表紧跟段落、表格、围栏、公式、结尾无换行的文档，与 `usize::MAX`（整篇一次建完）逐字节比较 `markdown_text`、可见块数、`raw_source_text`；**未建完期间**的文本重新导入后也必须与整篇导入一致（证明中途保存不丢内容） | 通过 |
+| 续建与保存 | `streamed_document_saves_complete_text_to_disk`：预算 2 打开的文档在窗口内续建完成后，输入字符 + ⌘S 落盘内容 == `markdown_text`（含尾段）；`structural_edit_flushes_the_pending_import`：结构编辑（`insert_blocks_at`）先补建完剩余块（`pending_tail` 变 None），块数 = 整篇 + 1 且尾段内容仍在 | 通过 |
+| 10 MiB 预算 | `large_document_opens_within_budget`（gitignored 夹具）：打开（首块）**1.23s**（此前一次性建块 17.5s），断言 < 3s；断言打开即存在挂起尾段（**正控**：把首块预算临时改成 `usize::MAX` 后该断言必失败）；续建完成后 159,683 块、文本与整篇导入逐字节一致，总成本 138.9 µs/块（≤ 400 µs 防回归） | 通过 |
+| 拼接规则 | 未建完的尾段以原文行参与序列化（已建块正常序列化），连接处空行按「上一根块是列表项且尾段首行是列表标记 → 不加空行，否则加一行」计算，与整篇序列化的列表组规则同源；编号列表序号与列表组空行经 `SyncSeeds` / `PendingTail` 跨批延续 | 通过（开发中实撞：预算 5 时连接处多算 1 个空行 → 等价性用例失败，修好后通过） |
+| 冲刷点 | 结构变更入口（`with_structure_mutation` / `insert_blocks_at` / `remove_block_by_id_raw`）与文档内搜索（`open_document_find`）先补建完剩余块；`replace_roots` 丢弃挂起尾段（替换整篇文档的语义） | 通过 |
+| 已知取舍 | 续建期间滚动只能到已建块末尾；对未建区域做文字编辑会落在已建末尾（续建完成后与整篇导入的文本一致，不丢内容）；导出 / 自动恢复读的是拼接后的完整文本 | 已记录 |
+| 全量回归 | `cargo test` 897 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

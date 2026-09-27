@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 use gpui::*;
 
 use self::context_menu::{ContextMenuState, TableInsertDialogState};
-use self::tree::DocumentTree;
+use self::document::ChunkCursor;
+use self::tree::{DocumentTree, PendingTail};
 use crate::components::{
     Block, BlockKind, BlockRecord, FootnoteDefinitionBinding, FootnoteReferenceLocation,
     FootnoteRegistry, FootnoteResolvedOccurrence, ImageReferenceDefinitions, InlineTextTree,
@@ -96,6 +97,9 @@ pub struct Editor {
     /// 文件树「复制」暂存的源文件路径（roadmap D6）。
     pub(crate) tree_clipboard: Option<std::path::PathBuf>,
     autosave_task: Option<Task<()>>,
+    /// Background task importing the rest of a document that was opened with a
+    /// partial block tree (roadmap G8).
+    pending_materialization_task: Option<Task<()>>,
     recovery_id: uuid::Uuid,
     recovery_source_path: Option<PathBuf>,
     is_recovered_document: bool,
@@ -366,27 +370,70 @@ impl Editor {
     const HISTORY_LIMIT: usize = 200;
     const HISTORY_COALESCE_WINDOW: Duration = Duration::from_millis(1_000);
     const RENDERED_SELECT_ALL_CYCLE_WINDOW: Duration = Duration::from_millis(750);
+    /// Root blocks imported before the first frame is shown. Documents at or
+    /// below this size are built in one pass, exactly as before; larger ones
+    /// stream the remainder in from a background task (roadmap G8).
+    const FIRST_CHUNK_ROOTS: usize = 2_000;
+    /// Root blocks imported per streaming step while the rest of a huge
+    /// document arrives.
+    const STEADY_CHUNK_ROOTS: usize = 250;
 
     pub fn from_markdown(
         cx: &mut Context<Self>,
         markdown: String,
         file_path: Option<PathBuf>,
     ) -> Self {
+        Self::from_markdown_with_chunk_budget(cx, markdown, file_path, Self::FIRST_CHUNK_ROOTS)
+    }
+
+    /// Builds an editor that imports at most `first_chunk_roots` root blocks up
+    /// front and streams the rest in (roadmap G8).
+    ///
+    /// Tests pass a tiny budget to exercise many chunk boundaries on a small
+    /// document; `usize::MAX` builds everything synchronously.
+    pub(crate) fn from_markdown_with_chunk_budget(
+        cx: &mut Context<Self>,
+        markdown: String,
+        file_path: Option<PathBuf>,
+        first_chunk_roots: usize,
+    ) -> Self {
         let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
         let source_mode_fallback_required =
             Self::markdown_requires_source_mode_fallback(&normalized);
+        let mut pending_tail = None;
         let mut roots = if source_mode_fallback_required {
             let block = Self::new_block(cx, BlockRecord::paragraph(normalized.clone()));
             block.update(cx, |block, _cx| block.set_source_document_mode());
             vec![block]
         } else {
-            Self::build_root_blocks_from_markdown(cx, &normalized)
+            let lines = Arc::new(Self::split_markdown_lines(&normalized));
+            let (roots, next_line) = Self::build_root_block_chunk(
+                cx,
+                &lines,
+                ChunkCursor {
+                    root_budget: first_chunk_roots.max(1),
+                    is_document_start: true,
+                    previous_root_is_list_item: false,
+                },
+            );
+            if next_line < lines.len() {
+                pending_tail = Some(PendingTail {
+                    previous_root_is_list_item: roots
+                        .last()
+                        .map(|block| block.read(cx).kind().is_list_item())
+                        .unwrap_or(false),
+                    next_line,
+                    lines,
+                });
+            }
+            roots
         };
         if roots.is_empty() {
             roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
         }
 
         let mut document = DocumentTree::new(roots);
+        document.set_pending_tail(pending_tail);
         document.rebuild_metadata_and_snapshot(cx);
         let pending_focus = document.first_root().map(|block| block.entity_id());
 
@@ -419,6 +466,7 @@ impl Editor {
             long_source_block_hint: None,
             tree_clipboard: None,
             autosave_task: None,
+            pending_materialization_task: None,
             recovery_id: uuid::Uuid::new_v4(),
             recovery_source_path: None,
             is_recovered_document: false,
@@ -492,8 +540,98 @@ impl Editor {
         editor.rebuild_table_runtimes(cx); // Also refreshes image and reference contexts.
         editor.pending_focus = editor.first_focusable_entity_id(cx);
         editor.active_entity_id = editor.pending_focus;
+        editor.start_pending_materialization_task(cx);
         // The loaded source and initial cursor are already the first undo baseline.
         editor
+    }
+
+    /// Streams the rest of a partially imported document into the tree.
+    ///
+    /// Each step builds one chunk on the main thread and hands control back
+    /// between steps, so frames, scrolling and typing keep running while a huge
+    /// document finishes loading (roadmap G8).
+    fn start_pending_materialization_task(&mut self, cx: &mut Context<Self>) {
+        if self.document.pending_tail().is_none() || self.pending_materialization_task.is_some() {
+            return;
+        }
+
+        self.pending_materialization_task = Some(cx.spawn(
+            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                loop {
+                    let Ok(more) = this
+                        .update(cx, |editor, cx| editor.materialize_next_pending_chunk(cx))
+                    else {
+                        return;
+                    };
+                    if !more {
+                        break;
+                    }
+                }
+                let _ = this.update(cx, |editor, _cx| editor.pending_materialization_task = None);
+            },
+        ));
+    }
+
+    /// Imports one more chunk of the pending tail. Returns whether work remains.
+    fn materialize_next_pending_chunk(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(tail) = self.document.pending_tail().cloned() else {
+            return false;
+        };
+
+        let (roots, consumed) = Self::build_root_block_chunk(
+            cx,
+            &tail.lines[tail.next_line..],
+            ChunkCursor {
+                root_budget: Self::STEADY_CHUNK_ROOTS,
+                is_document_start: false,
+                previous_root_is_list_item: tail.previous_root_is_list_item,
+            },
+        );
+        debug_assert!(consumed > 0, "a chunk with a non-zero budget always advances");
+        let previous_root_is_list_item = roots
+            .last()
+            .map(|block| block.read(cx).kind().is_list_item())
+            .unwrap_or(tail.previous_root_is_list_item);
+        let tables = roots
+            .iter()
+            .filter(|block| block.read(cx).kind() == BlockKind::Table)
+            .cloned()
+            .collect::<Vec<_>>();
+        let next_line = tail.next_line + consumed;
+        self.document.append_roots(roots, cx);
+        for block in tables {
+            let Some(table) = block.read(cx).record.table.clone() else {
+                continue;
+            };
+            self.install_table_runtime_for_block(&block, &table, cx);
+        }
+
+        if next_line < tail.lines.len() {
+            self.document.set_pending_tail(Some(PendingTail {
+                lines: tail.lines,
+                next_line,
+                previous_root_is_list_item,
+            }));
+            cx.notify();
+            true
+        } else {
+            self.document.set_pending_tail(None);
+            self.finish_pending_materialization(cx);
+            false
+        }
+    }
+
+    /// Runs the document-wide passes a fresh open would have run, now that the
+    /// whole document is materialized.
+    fn finish_pending_materialization(&mut self, cx: &mut Context<Self>) {
+        self.rebuild_table_runtimes(cx);
+        cx.notify();
+    }
+
+    /// Materializes every remaining pending line, for callers that must see the
+    /// whole document (structural edits, document-wide search).
+    pub(crate) fn flush_pending_materialization(&mut self, cx: &mut Context<Self>) {
+        self.document.flush_pending_tail(cx);
     }
 
     pub(crate) fn from_file_source(

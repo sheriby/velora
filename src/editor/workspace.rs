@@ -2191,6 +2191,9 @@ impl Editor {
     }
 
     pub(crate) fn open_document_find(&mut self, cx: &mut Context<Self>) {
+        // Document search scans blocks, so a partially imported huge document
+        // must finish importing first (roadmap G8).
+        self.flush_pending_materialization(cx);
         self.workspace.is_open = true;
         self.workspace.active_tab = WorkspaceTab::Search;
         self.workspace.search_scope = WorkspaceSearchScope::Document;

@@ -6,12 +6,41 @@
 //! focus, scroll, or mutation event.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use gpui::*;
 
 use super::Editor;
+use super::document::{ChunkCursor, line_is_list_marker};
 use crate::components::serialize_table_markdown_lines;
 use crate::components::{Block, BlockKind, CalloutVariant, parse_standalone_image};
+
+/// Part of a document whose lines have not been turned into blocks yet.
+///
+/// A huge document is imported in chunks (roadmap G8): the editor holds the
+/// untouched line array plus a cursor, materializes more roots as it goes, and
+/// serializes the not-yet-built remainder verbatim so saves and exports stay
+/// complete at any moment.
+#[derive(Clone)]
+pub(super) struct PendingTail {
+    /// Every line of the document, not just the tail: a later chunk must see the
+    /// same forward context a single full pass would (paragraph continuation and
+    /// setext detection scan ahead).
+    pub(super) lines: Arc<Vec<String>>,
+    /// Index of the first line that has not been consumed by a chunk.
+    pub(super) next_line: usize,
+    /// Whether the last built root is a list item, so a blank run opening the
+    /// next chunk counts preserved empty paragraphs the same way a full pass
+    /// would.
+    pub(super) previous_root_is_list_item: bool,
+}
+
+/// Ordinal/blank-run carry-over for [`DocumentTree::append_roots`].
+#[derive(Clone, Copy, Default)]
+struct SyncSeeds {
+    numbered_list_ordinal: usize,
+    previous_was_list_item: bool,
+}
 
 /// A block together with its position in the current visible DFS order.
 #[derive(Clone)]
@@ -53,6 +82,7 @@ impl VisibleTreeSnapshot {
 pub(super) struct DocumentTree {
     roots: Vec<Entity<Block>>,
     snapshot: VisibleTreeSnapshot,
+    pending: Option<PendingTail>,
 }
 
 impl DocumentTree {
@@ -60,7 +90,16 @@ impl DocumentTree {
         Self {
             roots,
             snapshot: VisibleTreeSnapshot::default(),
+            pending: None,
         }
+    }
+
+    pub(super) fn pending_tail(&self) -> Option<&PendingTail> {
+        self.pending.as_ref()
+    }
+
+    pub(super) fn set_pending_tail(&mut self, pending: Option<PendingTail>) {
+        self.pending = pending;
     }
 
     pub(super) fn first_root(&self) -> Option<&Entity<Block>> {
@@ -145,22 +184,103 @@ impl DocumentTree {
 
     pub(super) fn replace_roots(&mut self, roots: Vec<Entity<Block>>, cx: &mut Context<Editor>) {
         self.roots = roots;
+        // The replacement defines the whole document, so any not-yet-built tail
+        // belongs to the previous content.
+        self.pending = None;
         self.rebuild_metadata_and_snapshot(cx);
+    }
+
+    /// Appends freshly built roots and extends the cached snapshot instead of
+    /// re-running the full DFS, so streaming a huge document stays linear.
+    pub(super) fn append_roots(&mut self, roots: Vec<Entity<Block>>, cx: &mut Context<Editor>) {
+        if roots.is_empty() {
+            return;
+        }
+
+        let (numbered_list_ordinal, previous_was_list_item) = match self.roots.last() {
+            Some(last) => {
+                let last = last.read(cx);
+                (
+                    last.list_ordinal.unwrap_or(0),
+                    last.kind().is_list_item(),
+                )
+            }
+            None => (0, false),
+        };
+        Self::sync_block_list(
+            &roots,
+            None,
+            None,
+            0,
+            0,
+            None,
+            None,
+            0,
+            None,
+            None,
+            None,
+            cx,
+            &mut self.snapshot,
+            SyncSeeds {
+                numbered_list_ordinal,
+                previous_was_list_item,
+            },
+        );
+        self.roots.extend(roots);
+    }
+
+    /// Materializes every remaining pending line.
+    ///
+    /// Structural edits and document-wide scans (search, outline) call this
+    /// first: they must operate on the whole document, and the join of built
+    /// roots plus pending lines is only guaranteed to serialize like a full pass
+    /// while nothing has moved underneath it.
+    pub(super) fn flush_pending_tail(&mut self, cx: &mut Context<Editor>) {
+        while let Some(tail) = self.pending.clone() {
+            let (roots, consumed) = Editor::build_root_block_chunk(
+                cx,
+                &tail.lines[tail.next_line..],
+                ChunkCursor {
+                    root_budget: usize::MAX,
+                    is_document_start: false,
+                    previous_root_is_list_item: tail.previous_root_is_list_item,
+                },
+            );
+            let previous_root_is_list_item = roots
+                .last()
+                .map(|block| block.read(cx).kind().is_list_item())
+                .unwrap_or(tail.previous_root_is_list_item);
+            let next_line = tail.next_line + consumed;
+            self.append_roots(roots, cx);
+            self.pending = if next_line < tail.lines.len() {
+                Some(PendingTail {
+                    lines: tail.lines.clone(),
+                    next_line,
+                    previous_root_is_list_item,
+                })
+            } else {
+                None
+            };
+        }
     }
 
     pub(super) fn markdown_text(&self, cx: &App) -> String {
         let mut lines = Vec::new();
-        Self::collect_root_markdown_lines(&self.roots, cx, &mut lines);
+        Self::collect_root_markdown_lines(&self.roots, cx, &mut lines, self.pending.as_ref());
         lines.join("\n")
     }
 
     pub(super) fn raw_source_text(&self, cx: &App) -> String {
-        self.snapshot
+        let mut lines = self
+            .snapshot
             .visible
             .iter()
             .map(|visible| visible.entity.read(cx).display_text().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect::<Vec<_>>();
+        if let Some(tail) = &self.pending {
+            lines.extend(tail.lines[tail.next_line..].iter().cloned());
+        }
+        lines.join("\n")
     }
 
     pub(super) fn insert_blocks_at(
@@ -182,6 +302,7 @@ impl DocumentTree {
         cx: &mut Context<Editor>,
         mutate: impl FnOnce(&mut Self, &mut Context<Editor>) -> R,
     ) -> R {
+        self.flush_pending_tail(cx);
         let result = mutate(self, cx);
         self.rebuild_metadata_and_snapshot(cx);
         result
@@ -211,6 +332,7 @@ impl DocumentTree {
             None,
             cx,
             &mut self.snapshot,
+            SyncSeeds::default(),
         );
     }
 
@@ -254,6 +376,7 @@ impl DocumentTree {
         entity_id: EntityId,
         cx: &mut Context<Editor>,
     ) -> Option<(Entity<Block>, BlockLocation)> {
+        self.flush_pending_tail(cx);
         let location = self.find_block_location(entity_id)?;
         let removed = if let Some(parent) = location.parent.clone() {
             let mut removed = None;
@@ -309,9 +432,10 @@ impl DocumentTree {
         inherited_footnote_anchor: Option<uuid::Uuid>,
         cx: &mut Context<Editor>,
         snapshot: &mut VisibleTreeSnapshot,
+        seeds: SyncSeeds,
     ) {
-        let mut numbered_list_ordinal = 0;
-        let mut previous_was_list_item = false;
+        let mut numbered_list_ordinal = seeds.numbered_list_ordinal;
+        let mut previous_was_list_item = seeds.previous_was_list_item;
         for (index, block) in blocks.iter().enumerate() {
             let entity_id = block.entity_id();
             let visible_index = snapshot.visible.len();
@@ -425,6 +549,7 @@ impl DocumentTree {
                     footnote_anchor,
                     cx,
                     snapshot,
+                    SyncSeeds::default(),
                 );
                 snapshot
                     .last_visible_descendant_by_entity
@@ -446,7 +571,12 @@ impl DocumentTree {
             && block.children.is_empty()
     }
 
-    fn collect_root_markdown_lines(blocks: &[Entity<Block>], cx: &App, lines: &mut Vec<String>) {
+    fn collect_root_markdown_lines(
+        blocks: &[Entity<Block>],
+        cx: &App,
+        lines: &mut Vec<String>,
+        tail: Option<&PendingTail>,
+    ) {
         let mut pending_empty_roots = 0usize;
         let mut wrote_non_empty_root = false;
         let mut previous_was_list_item = false;
@@ -474,6 +604,27 @@ impl DocumentTree {
             wrote_non_empty_root = true;
             pending_empty_roots = 0;
             previous_was_list_item = current_is_list_item;
+        }
+
+        if let Some(tail) = tail {
+            // The not-yet-built remainder takes the place of the next non-empty
+            // root, so it gets the same separator a parsed root would: a blank
+            // run kept 1:1 after a list item continues that list group with no
+            // extra blank line, every other junction gets one.
+            let next_is_list_item = tail
+                .lines
+                .get(tail.next_line)
+                .is_some_and(|line| line_is_list_marker(line));
+            let separator_count = if !wrote_non_empty_root {
+                pending_empty_roots
+            } else if previous_was_list_item && next_is_list_item {
+                pending_empty_roots
+            } else {
+                pending_empty_roots + 1
+            };
+            lines.extend(std::iter::repeat_n(String::new(), separator_count));
+            lines.extend(tail.lines[tail.next_line..].iter().cloned());
+            return;
         }
 
         if wrote_non_empty_root {

@@ -26,6 +26,33 @@ use crate::components::{is_mermaid_info_string, parse_display_math_source};
 /// only a matching closing fence can terminate the block.
 type FenceInfo = CodeFenceOpening;
 
+/// Resumption state for building one run of root blocks from a line array.
+///
+/// A huge document is imported in chunks so the editor can show and scroll the
+/// first blocks while the rest streams in (roadmap G8). Each call to
+/// [`Editor::build_root_block_chunk`] gets one cursor; the returned line index
+/// tells the next call where to resume.
+#[derive(Clone, Copy)]
+pub(super) struct ChunkCursor {
+    /// Soft bound on roots built by this call. `usize::MAX` builds everything.
+    pub(super) root_budget: usize,
+    /// Whether the line slice begins at the top of the document. Frontmatter
+    /// detection and the leading blank run are document-start only.
+    pub(super) is_document_start: bool,
+    /// Whether the previous chunk ended on a list item, which decides the
+    /// list-group blank rule for a blank run at the start of this chunk.
+    pub(super) previous_root_is_list_item: bool,
+}
+
+impl ChunkCursor {
+    /// Builds the whole line slice in one call.
+    pub(super) const WHOLE_DOCUMENT: Self = Self {
+        root_budget: usize::MAX,
+        is_document_start: true,
+        previous_root_is_list_item: false,
+    };
+}
+
 /// HTML block form recognized by the Markdown importer.
 enum HtmlBlockStart {
     /// HTML comment region beginning with `<!--`.
@@ -296,6 +323,15 @@ fn dedent_lines(lines: &[String], columns: usize) -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+/// Whether a line opens a list item, using the same oracle the importer uses
+/// when it decides whether a blank run continues the current list.
+///
+/// The serializer needs it for a not-yet-built tail: the separator before the
+/// tail follows the same list-group rule as the separator before a parsed root.
+pub(super) fn line_is_list_marker(line: &str) -> bool {
+    parse_list_marker(line).is_some()
 }
 
 fn parse_list_marker(line: &str) -> Option<ListMarker> {
@@ -947,7 +983,9 @@ fn build_native_footnote_definition_block(
         }
     }
 
-    let children = Editor::build_blocks_from_lines_internal(cx, &body_lines, false);
+    let children =
+        Editor::build_blocks_from_lines_internal(cx, &body_lines, false, ChunkCursor::WHOLE_DOCUMENT)
+            .0;
     let block = Editor::new_block(
         cx,
         BlockRecord::new(BlockKind::FootnoteDefinition, InlineTextTree::plain(id)),
@@ -989,7 +1027,27 @@ impl Editor {
             .split('\n')
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
-        Self::build_blocks_from_lines_internal(cx, &lines, true)
+        Self::build_blocks_from_lines_internal(cx, &lines, true, ChunkCursor::WHOLE_DOCUMENT).0
+    }
+
+    /// Splits normalized Markdown into lines once, so a document can be built in
+    /// several chunks that all read the same line array.
+    pub(super) fn split_markdown_lines(markdown: &str) -> Vec<String> {
+        markdown.split('\n').map(ToOwned::to_owned).collect()
+    }
+
+    /// Builds the next chunk of root blocks from the remaining document lines.
+    ///
+    /// `lines` must be the untouched remainder of the document (a suffix of the
+    /// same array a full pass would read): the importer decides "paragraph
+    /// continues through this blank line / block start" by scanning forward, so
+    /// a truncated slice would parse differently near the cut.
+    pub(super) fn build_root_block_chunk(
+        cx: &mut Context<Self>,
+        lines: &[String],
+        cursor: ChunkCursor,
+    ) -> (Vec<Entity<super::Block>>, usize) {
+        Self::build_blocks_from_lines_internal(cx, lines, true, cursor)
     }
 
     /// Builds runtime blocks from Markdown lines.
@@ -1001,23 +1059,35 @@ impl Editor {
         cx: &mut Context<Self>,
         lines: &[String],
     ) -> Vec<Entity<super::Block>> {
-        Self::build_blocks_from_lines_internal(cx, lines, true)
+        Self::build_blocks_from_lines_internal(cx, lines, true, ChunkCursor::WHOLE_DOCUMENT).0
     }
 
     fn build_blocks_from_lines_internal(
         cx: &mut Context<Self>,
         lines: &[String],
         allow_root_footnote_definitions: bool,
-    ) -> Vec<Entity<super::Block>> {
+        cursor: ChunkCursor,
+    ) -> (Vec<Entity<super::Block>>, usize) {
         let mut roots = Vec::new();
         let mut index = 0;
 
         while index < lines.len() {
             let line = &lines[index];
+            // Incremental chunking (roadmap G8): stop once this chunk has built
+            // `root_budget` roots, but only where resuming later stays
+            // equivalent to one full-document pass. A cut in front of a blank
+            // run would move the run's preserved empty paragraphs into the next
+            // chunk, and a cut right after a list item leaves the next chunk
+            // starting with a list whose serializer blank rule depends on the
+            // previous root.
+            if roots.len() >= cursor.root_budget && !line.trim().is_empty() {
+                break;
+            }
             // YAML frontmatter: a `---` fence pair at the very top of the
             // document is preserved byte-exact as an opaque block instead of
             // being parsed as setext headings / thematic breaks (roadmap C1).
-            if index == 0
+            if cursor.is_document_start
+                && index == 0
                 && roots.is_empty()
                 && line.trim_end_matches('\r') == "---"
                 && let Some(close) = (1..lines.len()).find(|&close_index| {
@@ -1040,20 +1110,22 @@ impl Editor {
                 }
 
                 let blank_run_len = index - blank_start;
-                let previous_root_is_list_item = roots
-                    .last()
-                    .map(|block: &Entity<super::Block>| block.read(cx).kind().is_list_item())
-                    .unwrap_or(false);
+                let previous_root_is_list_item = Self::last_root_is_list_item(
+                    &roots,
+                    cx,
+                    cursor.previous_root_is_list_item,
+                );
                 let next_root_is_list_item = lines
                     .get(index)
                     .is_some_and(|line| parse_list_marker(line).is_some());
-                let preserved_empty_blocks = if roots.is_empty() {
-                    blank_run_len
-                } else if previous_root_is_list_item && next_root_is_list_item {
-                    blank_run_len
-                } else {
-                    blank_run_len.saturating_sub(1)
-                };
+                let preserved_empty_blocks =
+                    if roots.is_empty() && cursor.is_document_start {
+                        blank_run_len
+                    } else if previous_root_is_list_item && next_root_is_list_item {
+                        blank_run_len
+                    } else {
+                        blank_run_len.saturating_sub(1)
+                    };
 
                 for _ in 0..preserved_empty_blocks {
                     roots.push(native_block(cx, BlockKind::Paragraph, String::new()));
@@ -1149,7 +1221,12 @@ impl Editor {
             }
 
             if parse_list_marker(line).is_some() {
-                let (blocks, next_index) = Self::collect_list_blocks(cx, lines, index);
+                // A list is the one construct that can be arbitrarily long (a
+                // whole document without blank lines parses as one list), so the
+                // collector takes the remaining root budget and can stop between
+                // top-level items.
+                let remaining = cursor.root_budget.saturating_sub(roots.len()).max(1);
+                let (blocks, next_index) = Self::collect_list_blocks(cx, lines, index, remaining);
                 roots.extend(blocks);
                 index = next_index;
                 continue;
@@ -1214,7 +1291,18 @@ impl Editor {
             index = paragraph.1;
         }
 
+        (roots, index)
+    }
+
+    fn last_root_is_list_item(
+        roots: &[Entity<super::Block>],
+        cx: &App,
+        fallback: bool,
+    ) -> bool {
         roots
+            .last()
+            .map(|block| block.read(cx).kind().is_list_item())
+            .unwrap_or(fallback)
     }
 
     fn collect_paragraph_block(
@@ -1394,7 +1482,7 @@ impl Editor {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
-                let (list_blocks, consumed) = Self::collect_list_blocks(cx, lines, index);
+                let (list_blocks, consumed) = Self::collect_list_blocks(cx, lines, index, usize::MAX);
                 if list_blocks
                     .iter()
                     .any(|block| block.read(cx).kind() == BlockKind::RawMarkdown)
@@ -1589,7 +1677,7 @@ impl Editor {
             }
 
             if parse_list_marker(line).is_some() {
-                let (list_blocks, consumed) = Self::collect_list_blocks(cx, lines, index);
+                let (list_blocks, consumed) = Self::collect_list_blocks(cx, lines, index, usize::MAX);
                 if list_blocks
                     .iter()
                     .any(|block| block.read(cx).kind() == BlockKind::RawMarkdown)
@@ -1667,11 +1755,18 @@ impl Editor {
         cx: &mut Context<Self>,
         lines: &[String],
         start: usize,
+        item_budget: usize,
     ) -> (Vec<Entity<super::Block>>, usize) {
         let mut roots = Vec::new();
         let mut index = start;
 
         while index < lines.len() {
+            // Stop on a top-level item boundary once this call has built its
+            // share; the next chunk resumes at this marker line, which parses
+            // the same way a full pass would (every item is self-contained).
+            if roots.len() >= item_budget {
+                break;
+            }
             let Some(marker) = parse_list_marker(&lines[index]) else {
                 break;
             };
@@ -1698,7 +1793,7 @@ impl Editor {
 
                     if parse_list_marker(&anchor_dedented[0]).is_some() {
                         let (children, consumed) =
-                            Self::collect_list_blocks(cx, &anchor_dedented, 0);
+                            Self::collect_list_blocks(cx, &anchor_dedented, 0, usize::MAX);
                         attach_child_blocks(&block, children, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
