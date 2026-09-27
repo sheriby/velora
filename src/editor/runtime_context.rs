@@ -26,6 +26,12 @@ impl Editor {
         block: &Entity<Block>,
         cx: &App,
     ) -> bool {
+        // P5：源码直编文档（.log/.lock/.toml 等整文件等宽编辑）没有
+        // markdown 引用语义，编辑后无需全文档重建图片/链接/脚注注册表
+        // ——此前含 `[`/`<` 的日志文本会让每次按键都触发 O(文档) 重建。
+        if self.code_document {
+            return false;
+        }
         self.runtime_context_sensitive_blocks
             .contains(&block.entity_id())
             || block.read_with(cx, |block, _cx| {
