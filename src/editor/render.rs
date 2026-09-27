@@ -2356,6 +2356,7 @@ impl Render for Editor {
             viewport_height,
             RENDER_OVERDRAW_PX,
             focus_row,
+            estimate,
         );
 
         let island = render_window.focus_island;

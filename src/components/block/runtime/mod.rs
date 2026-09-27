@@ -163,6 +163,11 @@ pub struct Block {
     /// instead of re-allocating per frame. Refreshed in `sync_render_cache`,
     /// `rebuild_inline_projection`, and `clear_inline_projection`.
     cached_display_text: SharedString,
+    /// 文本代数：cached_display_text 内容变化时递增（P3 shape 备忘键）。
+    display_generation: u64,
+    /// P3：跨帧 shape 备忘。键命中时布局闭包跳过 build_text_runs 与
+    /// shape_text（taffy 一次布局会对同一元素多次 measure）。
+    pub(crate) shape_memo: Option<ShapeMemoEntry>,
     collapsed_caret_affinity: CollapsedCaretAffinity,
     /// When true, block-level shortcuts and inline formatting are
     /// suppressed; the block stores raw text for source-mode editing.
@@ -282,6 +287,8 @@ impl Block {
             projection: None,
             projection_cache_key: None,
             cached_display_text: SharedString::default(),
+            display_generation: 0,
+            shape_memo: None,
             collapsed_caret_affinity: CollapsedCaretAffinity::Default,
             edit_mode,
             show_source_line_numbers: false,
@@ -423,7 +430,22 @@ impl Block {
         let current = self.current_cache().visible_text();
         if self.cached_display_text.as_ref() != current {
             self.cached_display_text = SharedString::from(current.to_string());
+            self.display_generation = self.display_generation.wrapping_add(1);
+            self.shape_memo = None;
         }
+    }
+
+    /// P3：读取 shape 备忘（键由 BlockTextElement 布局时计算）。
+    pub(crate) fn shape_memo_entry(&self) -> Option<ShapeMemoEntry> {
+        self.shape_memo.clone()
+    }
+
+    pub(crate) fn set_shape_memo(&mut self, entry: ShapeMemoEntry) {
+        self.shape_memo = Some(entry);
+    }
+
+    pub(crate) fn display_generation(&self) -> u64 {
+        self.display_generation
     }
 
     pub(crate) fn inline_tree_from_markdown_with_context(&self, markdown: &str) -> InlineTextTree {
@@ -1688,6 +1710,7 @@ impl Block {
         mark_inserted_text: bool,
         cx: &mut Context<Self>,
     ) {
+
         if self.kind().is_separator() && !self.uses_raw_text_editing() {
             return;
         }
@@ -2326,3 +2349,21 @@ impl Block {
 
 #[cfg(test)]
 mod tests;
+
+
+/// P3：shape 备忘的键：文本代数 + 换行宽 + 基准字号 + 字体指纹 + 主题代数。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ShapeMemoKey {
+    pub generation: u64,
+    pub wrap_width: Option<u32>,
+    pub font_size: u32,
+    pub font_fingerprint: u64,
+    pub theme_fingerprint: u64,
+}
+
+/// P3：shape 备忘的值：整块已换行行布局（Arc 共享，跨帧零拷贝复用）。
+#[derive(Clone)]
+pub(crate) struct ShapeMemoEntry {
+    pub key: ShapeMemoKey,
+    pub lines: std::sync::Arc<Vec<gpui::WrappedLine>>,
+}

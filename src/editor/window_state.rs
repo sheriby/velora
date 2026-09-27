@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// P4b：stride 大多未知时的单帧最大挂载行数。
+const COLD_RUN_MAX_ROWS: usize = 12;
+
 impl Editor {
     pub(super) fn scrollbar_geometry(
         viewport_height: f32,
@@ -80,6 +83,7 @@ impl Editor {
         viewport_height: f32,
         overdraw: f32,
         focus_row: Option<usize>,
+        estimate: f32,
     ) -> RenderWindow {
         let n = strides.len();
         if n == 0 {
@@ -114,6 +118,22 @@ impl Editor {
             cursor = bottom;
         }
         let total = cursor;
+
+        // P4b 冷启动保护：绝大多数 stride 还是估计值时，行高被严重低估
+        // （一行真实 9000px 估计 16px），带状扫描会一口气挂载几十个巨行。
+        // 限制首帧挂载数，让 stride 逐帧学习后自然放宽。
+        let known = strides.iter().filter(|&&stride| stride > estimate).count();
+        if known * 2 < n {
+            let cap_start = run_start;
+            if run_end > cap_start + COLD_RUN_MAX_ROWS {
+                run_end = cap_start + COLD_RUN_MAX_ROWS;
+                bottom_of_end = strides
+                    .iter()
+                    .take(run_end)
+                    .map(|stride| stride.max(0.0))
+                    .sum();
+            }
+        }
 
         // Nothing hit the band: the scroll offset is past everything the strides
         // account for, because rows the window has yet to mount are still lower

@@ -502,7 +502,7 @@ fn uniform_strides(count: usize, height: f32) -> Vec<f32> {
 fn rendered_window_culls_offscreen_rows() {
     // 100 rows of 50px (total 5000). Scroll 2000, viewport 400 -> band [2000, 2400].
     let strides = uniform_strides(100, 50.0);
-    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None);
+    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None, 16.0);
 
     // Row i spans [50i, 50i+50). bottom>=2000 -> i>=39; top<=2400 -> i<=48.
     assert_eq!(window.run_start, 39);
@@ -515,7 +515,7 @@ fn rendered_window_culls_offscreen_rows() {
 fn rendered_window_keeps_focus_row_mounted() {
     let strides = uniform_strides(100, 50.0);
     // Viewport at the top, caret parked far below at row 80.
-    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, Some(80));
+    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, Some(80), 16.0);
 
     // The caret rides its own island; the rows above it stay culled.
     assert_eq!(window.run_start, 0);
@@ -530,7 +530,7 @@ fn rendered_window_focus_above_run_does_not_widen_it() {
     // Reading downward leaves the caret at the top of the document, so the rows
     // between it and the viewport must stay culled.
     let strides = uniform_strides(100, 50.0);
-    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(0));
+    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(0), 16.0);
 
     assert_eq!(window.run_start, 39);
     assert_eq!(window.run_end, 49);
@@ -543,7 +543,7 @@ fn rendered_window_focus_above_run_does_not_widen_it() {
 #[test]
 fn rendered_window_focus_inside_run_needs_no_island() {
     let strides = uniform_strides(100, 50.0);
-    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(42));
+    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(42), 16.0);
 
     assert_eq!(window.run_start, 39);
     assert_eq!(window.run_end, 49);
@@ -555,8 +555,8 @@ fn rendered_window_tracks_current_scroll_offset() {
     // Scrolling by one row's height shifts the mounted run by exactly one row.
     let strides = uniform_strides(100, 50.0);
 
-    let low = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None);
-    let high = Editor::rendered_window(&strides, 2050.0, 400.0, 0.0, None);
+    let low = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None, 16.0);
+    let high = Editor::rendered_window(&strides, 2050.0, 400.0, 0.0, None, 16.0);
 
     assert_eq!(low.run_start, 39);
     assert_eq!(low.run_end, 49);
@@ -568,12 +568,12 @@ fn rendered_window_tracks_current_scroll_offset() {
 fn rendered_window_has_no_spacer_at_document_edges() {
     let strides = uniform_strides(50, 40.0); // total 2000
 
-    let at_top = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None);
+    let at_top = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None, 16.0);
     assert_eq!(at_top.run_start, 0);
     assert_eq!(at_top.top_h, 0.0);
     assert!(at_top.bottom_h > 0.0);
 
-    let at_bottom = Editor::rendered_window(&strides, 1600.0, 400.0, 0.0, None);
+    let at_bottom = Editor::rendered_window(&strides, 1600.0, 400.0, 0.0, None, 16.0);
     assert_eq!(at_bottom.run_end, 50);
     assert_eq!(at_bottom.bottom_h, 0.0);
     assert!(at_bottom.top_h > 0.0);
@@ -589,7 +589,7 @@ fn rendered_window_preserves_total_height() {
         (3000.0, 500.0, None),
         (37.0 * 150.0, 37.0 * 5.0, Some(10usize)),
     ] {
-        let window = Editor::rendered_window(&strides, scroll_y, viewport_height, 200.0, focus);
+        let window = Editor::rendered_window(&strides, scroll_y, viewport_height, 200.0, focus, 16.0);
         let rendered: f32 = strides[window.run_start..window.run_end].iter().sum();
         let island: f32 = window
             .focus_island
@@ -607,7 +607,7 @@ fn rendered_window_estimated_row_keeps_culling_active() {
     let mut strides = uniform_strides(100, 50.0);
     strides[60] = 20.0;
 
-    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None);
+    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None, 16.0);
     assert_eq!(window.run_start, 0);
     assert!(
         window.run_end < strides.len(),
@@ -621,7 +621,7 @@ fn rendered_window_all_estimated_windows_near_top() {
     // first rows, so the viewport is never blank while heights are learned.
     let strides = uniform_strides(500, 20.0);
 
-    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None);
+    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None, 16.0);
     assert_eq!(window.run_start, 0);
     assert!(window.run_end < strides.len());
     // A viewport-plus-band worth of rows, not the whole document.
@@ -633,7 +633,7 @@ fn rendered_window_scrolled_past_estimates_mounts_trailing_run() {
     // Rows the window has never mounted are lower bounds, so the scroll offset
     // can sit past their running sum. The tail must still fill the viewport.
     let strides = uniform_strides(100, 20.0); // total 2000
-    let window = Editor::rendered_window(&strides, 9000.0, 400.0, 200.0, None);
+    let window = Editor::rendered_window(&strides, 9000.0, 400.0, 200.0, None, 16.0);
 
     assert_eq!(window.run_end, 100);
     assert_eq!(window.bottom_h, 0.0);
@@ -6365,3 +6365,4 @@ async fn tmp_debug_merge_state(cx: &mut TestAppContext) {
         })
         .expect("read");
 }
+

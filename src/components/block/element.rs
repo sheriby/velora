@@ -1,10 +1,14 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+
+thread_local! {
+    static MEASURE_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::*;
 
-use super::{Block, InlineFootnoteHit, InlineLinkHit, code_highlight_color};
+use super::{Block, InlineFootnoteHit, InlineLinkHit, ShapeMemoEntry, ShapeMemoKey, code_highlight_color};
 use crate::components::HtmlCssColor;
 use crate::theme::{ThemeColors, ThemeManager};
 
@@ -681,6 +685,7 @@ impl Element for CodeLanguageInputElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+
         let theme = cx.global::<ThemeManager>().current_arc();
         let input = self.input.read(cx);
         let content = input.code_language_text().to_string();
@@ -853,7 +858,7 @@ impl BlockTextElement {
 
 /// Prepared text layout and paint geometry for one `BlockTextElement` frame.
 pub struct PrepaintState {
-    lines: Vec<WrappedLine>,
+    lines: std::sync::Arc<Vec<WrappedLine>>,
     source_line_numbers: Vec<ShapedLine>,
     source_line_number_gutter_width: Pixels,
     cursor: Option<PaintQuad>,
@@ -873,7 +878,7 @@ impl IntoElement for BlockTextElement {
 }
 
 impl Element for BlockTextElement {
-    type RequestLayoutState = Rc<RefCell<Option<Vec<WrappedLine>>>>;
+    type RequestLayoutState = Rc<RefCell<Option<std::sync::Arc<Vec<WrappedLine>>>>>;
     type PrepaintState = PrepaintState;
 
     fn id(&self) -> Option<ElementId> {
@@ -957,7 +962,34 @@ impl Element for BlockTextElement {
             })
             .unwrap_or(px(0.0));
 
-        let shared_lines = Rc::new(RefCell::new(None));
+        // P3：shape 备忘键。任何影响 shape 结果的输入都进键：文本代数、
+        // 换行宽、基准字号、字体（偏好 + 主题排版）、主题（run 颜色烘焙）。
+        use std::hash::{Hash, Hasher};
+        let mut fingerprint_hasher = std::hash::DefaultHasher::new();
+        let font_prefs = crate::config::EditorSettings::fonts(cx);
+        font_prefs.markdown_family.hash(&mut fingerprint_hasher);
+        font_prefs.markdown_size.hash(&mut fingerprint_hasher);
+        font_prefs.code_family.hash(&mut fingerprint_hasher);
+        font_prefs.code_size.hash(&mut fingerprint_hasher);
+        let style_font = style.font();
+        style_font.family.hash(&mut fingerprint_hasher);
+        style_font.weight.hash(&mut fingerprint_hasher);
+        style_font.style.hash(&mut fingerprint_hasher);
+        let font_fingerprint = fingerprint_hasher.finish();
+        let theme_fingerprint =
+            std::sync::Arc::as_ptr(&theme) as usize as u64;
+        let memo_key_base = ShapeMemoKey {
+            generation: input.display_generation(),
+            wrap_width: None,
+            font_size: f32::from(font_size).to_bits(),
+            font_fingerprint,
+            theme_fingerprint,
+        };
+        let cached_memo = input.shape_memo_entry();
+        let input_entity = self.input.clone();
+
+        let shared_lines: Rc<RefCell<Option<std::sync::Arc<Vec<WrappedLine>>>>> =
+            Rc::new(RefCell::new(None));
         let shared_lines_clone = shared_lines.clone();
 
         let mut layout_style = Style::default();
@@ -967,7 +999,7 @@ impl Element for BlockTextElement {
 
         let layout_id = window.request_measured_layout(
             layout_style,
-            move |known_dimensions, available_space, window, _cx| {
+            move |known_dimensions, available_space, window, closure_cx| {
                 let wrap_width = known_dimensions.width.or(match available_space.width {
                     AvailableSpace::Definite(x) => Some(x),
                     AvailableSpace::MinContent => Some(px(1.0)),
@@ -976,6 +1008,33 @@ impl Element for BlockTextElement {
                 let text_wrap_width =
                     wrap_width.map(|width| (width - source_line_number_gutter_width).max(px(1.0)));
 
+                let mut key = memo_key_base;
+                key.wrap_width = text_wrap_width.map(|width| f32::from(width).to_bits());
+                // P3：min-content 测量（≈1px 宽）会让整块文本按每字符一行
+                // 病态换行（53KB → 数万行）。最小宽度对布局无意义（块宽由
+                // centered_width 固定），直接返回保守下界，跳过 shape。
+                if text_wrap_width.is_some_and(|width| width <= px(2.0)) {
+                    let estimate_lines = display_text.split('\n').count().max(1) as f32;
+                    return Size::new(
+                        px(1.0),
+                        px(estimate_lines * f32::from(line_height)),
+                    );
+                }
+                if let Some(memo) = cached_memo.as_ref()
+                    && memo.key == key
+                {
+                    // P3：键命中，跳过 build_text_runs 产物与 shape_text。
+                    let lines = memo.lines.clone();
+                    let mut total_size: Size<Pixels> = Size::default();
+                    for line in lines.iter() {
+                        let ls = line.size(line_height);
+                        total_size.height += ls.height;
+                        total_size.width = total_size.width.max(ls.width);
+                    }
+                    total_size.width += source_line_number_gutter_width;
+                    *shared_lines_clone.borrow_mut() = Some(lines);
+                    return total_size;
+                }
                 match window.text_system().shape_text(
                     display_text.clone(),
                     font_size,
@@ -985,13 +1044,22 @@ impl Element for BlockTextElement {
                 ) {
                     Ok(lines) => {
                         let mut total_size: Size<Pixels> = Size::default();
-                        for line in &lines {
+                        for line in lines.iter() {
                             let ls = line.size(line_height);
                             total_size.height += ls.height;
                             total_size.width = total_size.width.max(ls.width);
                         }
                         total_size.width += source_line_number_gutter_width;
-                        *shared_lines_clone.borrow_mut() = Some(lines.into_vec());
+                        let lines = std::sync::Arc::new(lines.into_vec());
+                        // 立即写入备忘：同一次布局内 taffy 可能多次 measure，
+                        // 迟写会让每次 measure 都重新 shape。
+                        input_entity.update(closure_cx, |block, _block_cx| {
+                            block.set_shape_memo(ShapeMemoEntry {
+                                key,
+                                lines: lines.clone(),
+                            });
+                        });
+                        *shared_lines_clone.borrow_mut() = Some(lines);
                         total_size
                     }
                     Err(_) => Size::default(),
@@ -1276,7 +1344,7 @@ impl Element for BlockTextElement {
         }
 
         let mut y_offset = Pixels::default();
-        for line in &lines {
+        for line in lines.iter() {
             let origin_x = aligned_line_left(line, text_bounds, text_align);
             line.paint(
                 point(origin_x, text_bounds.origin.y + y_offset),
@@ -1297,7 +1365,7 @@ impl Element for BlockTextElement {
         }
 
         self.input.update(cx, |input, _cx| {
-            input.last_layout = Some(lines);
+            input.last_layout = Some((*lines).clone());
             input.last_bounds = Some(text_bounds);
             input.last_line_height = line_height;
         });
