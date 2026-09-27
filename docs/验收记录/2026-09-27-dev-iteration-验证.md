@@ -271,7 +271,8 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 修复 | ① 重新搜索期间**保留上一次结果**，新结果落地后整体替换（仅当没有任何结果可显示时才用 `…` 占位）；② 查询被清空时立即清空结果，避免留下过期结果 | 通过 |
 | 用例 | `re_search_keeps_previous_results_visible`：建工作区搜索（3 条命中）→ 调 `refresh_workspace_tree` 模拟 watcher 触发的重新调度 → 断言 pending 期间结果仍是 3 条、面板仍渲染出文件头与命中行（`debug_bounds`）、120ms 后结果一致 → 再清空查询，断言结果立即为空且不 pending | 通过（**正控**：恢复「进函数就清空」后状态断言实测失败 left:0/right:3；把 pending 判断改回「pending 就显示 …」后面板断言实测失败） |
 | 顺带修门禁空心 | 排查正控时发现 `debug_bounds` 在 gpui 里**跨帧累积**（`Frame::clear()` 没清 `debug_bounds`），于是「元素还在不在」这类断言会读到早已消失元素的旧边界——正控一度因此假绿。本地补丁 `vendor/gpui/src/window.rs` 在逐帧 `clear()` 里补 `debug_bounds.clear()`，此后查询的是当前帧；原有 4 处 debug_bounds 用例（TOC 条目、折叠 chevron、代码复制按钮、长块护栏）全部复跑通过 | 通过 |
-| 全量回归 | `cargo test` 906 通过 0 失败 1 ignored；`cargo build` 0 警告 | 通过 |
+| 全量回归 | `cargo test` 906 通过 0 失败 1 ignored | 通过 |
+| 补丁打包口径（事后修正） | 该批提交时只跑了 `cargo test`，漏跑 `cargo build`：`debug_bounds` 字段带 `#[cfg(any(test, feature = "test-support"))]`，测试构建（dev-dependency 打开了 test-support）能编过，而 `cargo run` / `cargo build` 的生产构建报 E0609。修复为 `clear()` 里补同样的 cfg 门（提交 `fix(build)`），并把「提交前 `cargo build` + `cargo test` 两条都跑」写进交接文档约定 | 已修正 |
 
 ## 已知事项
 

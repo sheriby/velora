@@ -143,7 +143,8 @@
 8. **`Context::emit` 是延迟效果**：事件先入 `pending_effects`，订阅者在该实体 lease 释放后才被调用，所以事件处理器里可以安全 `read`/`update` 发出事件的那个块（C7 chevron 依赖这一点）。
 9. **`Entity::update` 不会自动 notify**：渲染期跨实体写字段是安全的（不 notify ⇒ 无自触发重渲染循环），需要重绘必须显式 `cx.notify()`。
 10. **元素级 UI 验证手法**：元素加 test-only `debug_selector` + `VisualTestContext::debug_bounds("名字")` 取真实布局，再用 `simulate_click(bounds.center(), Modifiers::none())` 端到端点击；锁屏环境下这比截图可靠（C7 用例见 tests.rs）。
-11. **`debug_bounds` 现在是逐帧的**：上游 gpui 的 `Frame::clear()` 没清 `debug_bounds`，导致「元素还在不在」的断言会读到早已消失元素的旧边界（正控假绿过）。已本地补丁为逐帧清空（`vendor/gpui/src/window.rs`）；写这类断言前记得先 `window.draw(cx)` 再查。
+11. **提交前 `cargo build` 与 `cargo test` 两条都要跑**：`vendor/gpui` 里带 `#[cfg(any(test, feature = "test-support"))]` 的字段/代码只在测试构建下存在（dev-dependency 启用了 test-support），只跑 `cargo test` 会漏掉生产构建的错误（曾让 `cargo run` 直接编译失败）。
+12. **`debug_bounds` 现在是逐帧的**：上游 gpui 的 `Frame::clear()` 没清 `debug_bounds`，导致「元素还在不在」的断言会读到早已消失元素的旧边界（正控假绿过）。已本地补丁为逐帧清空（`vendor/gpui/src/window.rs`）；写这类断言前记得先 `window.draw(cx)` 再查。
 
 ## 四、验证方式
 
