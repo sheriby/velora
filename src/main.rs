@@ -127,8 +127,42 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
             }
             continue;
         }
+        // 会话里已打开同一文件时，把未保存内容合并进该标签而不是另开窗口
+        // （roadmap E10）。
+        if let Some(path) = snapshot.source_path.clone()
+            && merge_snapshot_into_open_session(cx, &path, &snapshot.markdown, snapshot.id)
+        {
+            continue;
+        }
         app_menu::open_recovered_editor_window(cx, snapshot);
     }
+}
+
+/// 把恢复快照并入已打开该文件路径的会话窗口（roadmap E10）。
+fn merge_snapshot_into_open_session(
+    cx: &mut App,
+    path: &std::path::Path,
+    markdown: &str,
+    recovery_id: uuid::Uuid,
+) -> bool {
+    for handle in cx.windows() {
+        let Some(editor) = handle.downcast::<components::Editor>() else {
+            continue;
+        };
+        let merged = editor
+            .update(cx, |editor, window, cx| {
+                editor
+                    .workspace_open_document_paths()
+                    .iter()
+                    .any(|open| open == path)
+                    && editor.merge_recovery_snapshot(path, markdown, recovery_id, window, cx)
+            })
+            .unwrap_or(false);
+        if merged {
+            return true;
+        }
+    }
+    false
 }
 
 impl AssetSource for VeloraAssets {

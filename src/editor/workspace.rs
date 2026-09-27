@@ -2497,6 +2497,70 @@ impl Editor {
         let _ = window;
     }
 
+    /// 已打开文档的路径集合（崩溃恢复合并用，roadmap E10）。
+    pub(crate) fn workspace_open_document_paths(&self) -> Vec<PathBuf> {
+        self.workspace
+            .open_documents
+            .iter()
+            .map(|tab| tab.path.clone())
+            .collect()
+    }
+
+    /// 崩溃恢复合并（roadmap E10）：把恢复快照的未保存内容并入已打开的会话标签，
+    /// 避免同一文件既出现在会话标签又弹出恢复窗口。快照 id 转移给该标签，保存后
+    /// 由既有清理逻辑删除。返回 true 表示已合并。
+    pub(crate) fn merge_recovery_snapshot(
+        &mut self,
+        path: &Path,
+        markdown: &str,
+        recovery_id: uuid::Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self
+            .workspace
+            .open_documents
+            .iter()
+            .any(|tab| tab.path == path)
+        {
+            return false;
+        }
+        if self.file_path.as_deref() != Some(path) {
+            self.open_workspace_file(path.to_path_buf(), window, cx);
+        }
+        if self.file_path.as_deref() != Some(path) {
+            return false;
+        }
+        self.replace_document_from_markdown(markdown.to_string(), Some(path.to_path_buf()), cx);
+        self.recovery_id = recovery_id;
+        self.mark_dirty(cx);
+        if let Some(tab) = self
+            .workspace
+            .open_documents
+            .iter_mut()
+            .find(|tab| tab.path == path)
+        {
+            tab.markdown = markdown.to_string();
+            tab.dirty = true;
+            tab.recovery_id = recovery_id;
+        }
+        cx.notify();
+        true
+    }
+
+    /// 测试用：读取会话标签的 (dirty, recovery_id, markdown)。
+    #[cfg(test)]
+    pub(crate) fn workspace_tab_state_for_test(
+        &self,
+        path: &Path,
+    ) -> Option<(bool, uuid::Uuid, String)> {
+        self.workspace
+            .open_documents
+            .iter()
+            .find(|tab| tab.path == path)
+            .map(|tab| (tab.dirty, tab.recovery_id, tab.markdown.clone()))
+    }
+
     /// 测试用：按路径设置树选中项（等价于点击该节点）。
     #[cfg(test)]
     pub(crate) fn select_workspace_path_for_test(

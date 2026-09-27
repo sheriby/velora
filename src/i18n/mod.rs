@@ -112,6 +112,8 @@ pub struct I18nStrings {
     pub menu_export_html: String,
     /// Export menu item for writing a PDF document.
     pub menu_export_pdf: String,
+    /// Export menu item for printing the document through the system print/preview.
+    pub menu_print: String,
     /// Help menu item for checking updates.
     pub menu_check_updates: String,
     /// Help menu item for showing About information.
@@ -533,6 +535,7 @@ struct I18nStringsDe {
     menu_quit: Option<String>,
     menu_export_html: Option<String>,
     menu_export_pdf: Option<String>,
+    menu_print: Option<String>,
     menu_check_updates: Option<String>,
     menu_about: Option<String>,
     menu_install_cli_tool: Option<String>,
@@ -804,6 +807,7 @@ const I18N_STRING_KEYS: &[&str] = &[
     "menu_quit",
     "menu_export_html",
     "menu_export_pdf",
+    "menu_print",
     "menu_check_updates",
     "menu_about",
     "menu_install_cli_tool",
@@ -1135,6 +1139,7 @@ impl I18nStringsDe {
             menu_quit: self.menu_quit.unwrap_or(defaults.menu_quit),
             menu_export_html: self.menu_export_html.unwrap_or(defaults.menu_export_html),
             menu_export_pdf: self.menu_export_pdf.unwrap_or(defaults.menu_export_pdf),
+            menu_print: self.menu_print.unwrap_or(defaults.menu_print),
             menu_check_updates: self
                 .menu_check_updates
                 .unwrap_or(defaults.menu_check_updates),
@@ -1814,6 +1819,7 @@ impl I18nStrings {
             menu_quit: "退出".into(),
             menu_export_html: "HTML".into(),
             menu_export_pdf: "PDF".into(),
+            menu_print: "打印…".into(),
             menu_check_updates: "检查更新".into(),
             menu_about: "关于".into(),
             menu_install_cli_tool: "安装CLI命令".into(),
@@ -2106,6 +2112,7 @@ impl I18nStrings {
             menu_quit: "Quit".into(),
             menu_export_html: "HTML".into(),
             menu_export_pdf: "PDF".into(),
+            menu_print: "Print…".into(),
             menu_check_updates: "Check for Updates".into(),
             menu_about: "About".into(),
             menu_install_cli_tool: "Install CLI Command".into(),
@@ -2879,6 +2886,40 @@ mod tests {
         assert!(normalized.contains("\"menu_file\": \"ファイル\""));
         assert!(!normalized.contains("menu_export"));
         assert!(!normalized.contains("author"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn loads_language_pack_dropped_into_user_directory() {
+        // roadmap H4：用户目录中直接放置的语言包在启动/初始化时被加载并生效。
+        let root = std::env::temp_dir().join(format!("velotype-i18n-{}", uuid::Uuid::new_v4()));
+        let dirs = VelotypeConfigDirs::from_root(&root);
+        std::fs::create_dir_all(dirs.languages_dir()).expect("languages dir should exist");
+        std::fs::write(
+            dirs.languages_dir().join("ko-KR.json"),
+            r#"{
+                "id": "ko-KR",
+                "name": "한국어",
+                "strings": { "menu_file": "파일" }
+            }"#,
+        )
+        .expect("language pack should be written");
+
+        let mut manager = I18nManager::default();
+        manager
+            .load_custom_languages_from_dirs(&dirs)
+            .expect("user language dir should load");
+        assert!(
+            manager
+                .available_languages()
+                .iter()
+                .any(|entry| entry.id == "ko-KR" && entry.name == "한국어")
+        );
+        assert!(manager.set_language_by_id("ko-KR"));
+        assert_eq!(manager.strings().menu_file, "파일");
+        // 未覆盖的字符串回退到英文默认值。
+        assert_eq!(manager.strings().menu_export, "Export");
 
         let _ = std::fs::remove_dir_all(root);
     }

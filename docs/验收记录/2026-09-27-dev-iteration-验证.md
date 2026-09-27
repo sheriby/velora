@@ -140,6 +140,27 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 测试隔离 | 测试构建配置目录改指进程级临时目录（此前测试把偏好/会话/恢复快照写进真实用户目录，导致 `cargo run` 恢复出几十个窗口） | 通过 |
 | 全量回归 | `cargo test` 841 通过 0 失败 | 通过 |
 
+## 第十六批补充（A6/B10/C10 v2/B6 智能标点与全屏）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| A6 全屏切换 | 菜单项 + 快捷键（ctrl-cmd-f / f11）注册；`toggle_fullscreen_has_default_shortcuts` 断言默认键位；菜单结构测试随新项顺延索引（`build_menus_uses_*`） | 通过（标题栏沿用既有 is_fullscreen 逻辑） |
+| B10 图片命名模板 | `pasted_image_hash_is_stable_and_content_sensitive` + `clipboard_image_name_uses_date_and_hash_template`（`YYYY-MM-DD-<8位哈希>.<ext>`，冲突仍追加序号） | 通过 |
+| C10 v2 宽度写回 | 解析端 `parses_image_with_trailing_width_attribute` / `rejects_malformed_width_attribute`；渲染端 `image_width_attribute_seeds_resize_factor`、`resizing_image_writes_width_attribute_back_to_markdown`（40% 写回）、`resizing_image_back_to_full_width_removes_attribute`（100% 移除） | 通过 |
+| B6 智能标点 | 纯函数单测（开合引号上下文、`--`→破折号）+ gpui 用例：开启后 `"`→`”`、`--`→`—`，关闭后保持直引号；`save/read` 往返断言 `smart_punctuation = true` 落盘；偏好文件页新增开关 | 通过 |
+| 全量回归 | `cargo test` 854 通过 0 失败（含 `crash_recovery_drill_snapshot_restore_save` 基线偶发项本轮通过） | 通过 |
+
+## 第十七批补充（B12/F2 增强/D6/H3/H4/E10）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| B12 长块护栏 | `long_paragraph_renders_as_plain_source`（20k+ 字节块渲染 `block-long-source` 元素且状态栏提示逻辑成立）+ `long_source_block_hint_tracks_single_long_line`（边界：等于阈值不触发） | 通过 |
+| F2 增强 | gpui 剪贴板项新增 HTML flavor：`copy_as_html_writes_html_source_to_clipboard`（纯文本仍为 HTML 源码）+ `copy_as_html_item_carries_html_flavor`（`html()` 返回富文本载荷） | 通过（macOS 写 `NSPasteboardTypeHTML`） |
+| D6 树剪贴板 | `tree_copy_then_paste_duplicates_file_into_selected_folder`（复制→选目标目录→粘贴生成 `alpha copy.md`）+ `tree_paste_writes_clipboard_image_with_date_hash_name`（剪贴板图片按 B10 模板落盘） | 通过 |
+| H3 主题变量文档 | `docs/主题变量.md` 全量 token 表；`theme_token_documentation_covers_every_token` 双向校验（缺 token / 多余 token 都失败），并用假 token 做正控验证 | 通过 |
+| H4 语言包外置 | 既有「导入→写入用户 languages 目录→启动加载」链路补齐目录直放用例 `loads_language_pack_dropped_into_user_directory`（含未覆盖字符串回退英文） | 通过 |
+| E10 恢复合并 | 启动恢复时若会话已打开同一文件，把快照未保存内容并入该标签（快照 id 转移给标签），不再另开窗口；用例 `recovery_snapshot_merges_into_open_session_tab` 断言正文/脏标记/recovery_id 转移与磁盘旧内容不变 | 通过 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

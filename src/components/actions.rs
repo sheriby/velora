@@ -60,6 +60,7 @@ actions!(
         SaveDocumentAs,
         ExportHtml,
         ExportPdf,
+        PrintDocument,
         AddLanguageConfig,
         AddThemeConfig,
         QuitApplication,
@@ -178,6 +179,7 @@ pub(crate) enum ShortcutCommand {
     ExitCodeBlock,
     SaveDocument,
     SaveDocumentAs,
+    PrintDocument,
     NewWindow,
     OpenFile,
     QuitApplication,
@@ -504,6 +506,14 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         context: None,
     },
     ShortcutDefinition {
+        // ⌘P 已用于快速打开（QuickOpen），打印使用 ⌥⌘P。
+        command: ShortcutCommand::PrintDocument,
+        id: "print_document",
+        category: ShortcutCategory::File,
+        default_keys: &["alt-cmd-p", "ctrl-alt-p"],
+        context: None,
+    },
+    ShortcutDefinition {
         command: ShortcutCommand::NewWindow,
         id: "new_window",
         category: ShortcutCategory::File,
@@ -782,6 +792,7 @@ fn key_binding_for(
         ShortcutCommand::ExitCodeBlock => KeyBinding::new(key, ExitCodeBlock, context),
         ShortcutCommand::SaveDocument => KeyBinding::new(key, SaveDocument, context),
         ShortcutCommand::SaveDocumentAs => KeyBinding::new(key, SaveDocumentAs, context),
+        ShortcutCommand::PrintDocument => KeyBinding::new(key, PrintDocument, context),
         ShortcutCommand::NewWindow => KeyBinding::new(key, NewWindow, context),
         ShortcutCommand::OpenFile => KeyBinding::new(key, OpenFile, context),
         ShortcutCommand::QuitApplication => KeyBinding::new(key, QuitApplication, context),
@@ -866,6 +877,23 @@ mod tests {
         assert_eq!(
             resolved_shortcut_keys(&config, ShortcutCommand::SaveDocument),
             vec!["ctrl-alt-s".to_string()]
+        );
+    }
+
+    #[test]
+    fn print_document_has_default_shortcuts_outside_command_palette_key() {
+        // 打印注册为可自定义命令；⌘P 留给快速打开，默认键为 ⌥⌘P / ⌃⌥P。
+        assert_eq!(
+            resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::PrintDocument),
+            vec!["alt-cmd-p".to_string(), "ctrl-alt-p".to_string()]
+        );
+        assert!(
+            shortcut_conflict_for(
+                ShortcutCommand::PrintDocument,
+                &["alt-cmd-p".to_string(), "ctrl-alt-p".to_string()],
+                &BTreeMap::new()
+            )
+            .is_none()
         );
     }
 

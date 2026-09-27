@@ -8,13 +8,15 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use futures::channel::oneshot;
 use gpui::*;
 
 use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NewWindow, NoRecentFiles,
     OpenCommandPalette,
-    OpenFile, OpenPreferences, OpenRecentFile, QuitApplication, SaveDocument, SaveDocumentAs,
+    OpenFile, OpenPreferences, OpenRecentFile, PrintDocument, QuitApplication, SaveDocument,
+    SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
     ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UninstallCliTool,
 };
@@ -462,6 +464,65 @@ fn request_update_check_on_active_editor(cx: &mut App) {
     });
 }
 
+/// roadmap F4 打印：先把当前文档写成临时导出 HTML（含 F3 主题配置），
+/// 再在后台线程渲染为临时 PDF 并交给系统预览/打印，避免阻塞 UI。
+fn print_document(editor: &Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    let window_handle = window.window_handle();
+    let html_path = crate::export::print::print_temp_html_path();
+    if let Err(err) = editor.export_document_to_path(ExportFormat::Html, &html_path, cx) {
+        show_export_error(window, cx, &err.to_string());
+        return;
+    }
+
+    cx.spawn(async move |_this: WeakEntity<Editor>, cx: &mut AsyncApp| {
+        let (sender, receiver) = oneshot::channel();
+        let spawn_result = std::thread::Builder::new()
+            .name("velora-print".to_string())
+            .spawn(move || {
+                let result = crate::export::print::print_pdf_from_export_html(&html_path)
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .map_err(|err| err.to_string());
+                let _ = sender.send(result);
+            });
+
+        if let Err(err) = spawn_result {
+            let detail = format!("failed to start print task: {err}");
+            let _ = cx.update_window(
+                window_handle,
+                move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                    show_export_error(window, cx, &detail);
+                },
+            );
+            return;
+        }
+
+        let result = receiver
+            .await
+            .unwrap_or_else(|_| Err("print task stopped before reporting a result".into()));
+        if let Err(detail) = result {
+            let _ = cx.update_window(
+                window_handle,
+                move |_view: AnyView, window: &mut Window, cx: &mut App| {
+                    show_export_error(window, cx, &detail);
+                },
+            );
+        }
+    })
+    .detach();
+}
+
+fn show_export_error(window: &mut Window, cx: &mut App, detail: &str) {
+    let strings = cx.global::<I18nManager>().strings().clone();
+    let buttons = [strings.info_dialog_ok.as_str()];
+    let _ = window.prompt(
+        PromptLevel::Critical,
+        &strings.export_failed_title,
+        Some(detail),
+        &buttons,
+        cx,
+    );
+}
+
 fn recent_files_for_menu() -> Vec<PathBuf> {
     match read_recent_files() {
         Ok(paths) => paths,
@@ -604,6 +665,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<SaveDocumentAs>()
         || action.as_any().is::<ExportHtml>()
         || action.as_any().is::<ExportPdf>()
+        || action.as_any().is::<PrintDocument>()
         || action.as_any().is::<QuitApplication>()
         || action.as_any().is::<CloseWindow>()
         || action.as_any().is::<CheckForUpdates>()
@@ -756,6 +818,10 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, window, cx| {
             editor.export_document_via_prompt(ExportFormat::Pdf, window, cx)
         });
+    } else if action.as_any().is::<PrintDocument>() {
+        let _ = with_active_editor(cx, |editor, window, cx| {
+            print_document(editor, window, cx);
+        });
     } else if let Some(action) = action.as_any().downcast_ref::<SelectTheme>() {
         match apply_configured_theme(cx, &action.theme_id) {
             Ok(changed) => {
@@ -869,6 +935,10 @@ pub(crate) fn dispatch_menu_action_for_editor(
     } else if action.as_any().is::<ExportPdf>() {
         let _ = target.update(cx, |editor, cx| {
             editor.export_document_via_prompt(ExportFormat::Pdf, window, cx);
+        });
+    } else if action.as_any().is::<PrintDocument>() {
+        let _ = target.update(cx, |editor, cx| {
+            print_document(editor, window, cx);
         });
     } else if action.as_any().is::<QuitApplication>() {
         request_quit_application(cx);
@@ -1065,6 +1135,7 @@ fn build_menus(
             items: vec![
                 MenuItem::action(strings.menu_export_html.clone(), ExportHtml),
                 MenuItem::action(strings.menu_export_pdf.clone(), ExportPdf),
+                MenuItem::action(strings.menu_print.clone(), PrintDocument),
                 MenuItem::action(strings.menu_copy_as_html.clone(), CopyAsHtml),
             ],
         },
@@ -1450,6 +1521,9 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ExportPdf, cx| {
         dispatch_menu_action(&ExportPdf, cx);
     });
+    cx.on_action(|_: &PrintDocument, cx| {
+        dispatch_menu_action(&PrintDocument, cx);
+    });
     cx.on_action(|action: &SelectTheme, cx| {
         dispatch_menu_action(action, cx);
     });
@@ -1483,8 +1557,9 @@ pub(crate) fn init(cx: &mut App) {
 mod tests {
     use super::{applescript_string_literal, build_menus};
     use crate::components::{
-        AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
-        NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile, QuitApplication,
+        AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, CopyAsHtml, ExportHtml,
+        ExportPdf, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
+        PrintDocument, QuitApplication,
         SaveDocument, SelectLanguage, SelectTheme, ShowAbout,
     };
     use crate::i18n::I18nManager;
@@ -1615,6 +1690,8 @@ mod tests {
 
         assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "Print…");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "Copy as HTML");
         assert_eq!(action_name(&menus[LANGUAGE_IDX].items[0]), "简体中文");
         assert_eq!(
             action_name(&menus[LANGUAGE_IDX].items[1]),
@@ -1684,6 +1761,8 @@ mod tests {
         assert_eq!(action_name(&menus[0].items[0]), "新建窗口");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "打印…");
+        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "复制为 HTML");
         assert_eq!(
             action_name(&menus[LANGUAGE_IDX].items[0]),
             "\u{2713} 简体中文"
@@ -1718,6 +1797,20 @@ mod tests {
                 assert!(action.as_any().is::<ExportPdf>());
             }
             _ => panic!("expected export pdf action item"),
+        }
+
+        // roadmap F4：打印菜单项存在且分发 PrintDocument，复制为 HTML 顺延到第 4 项。
+        match &menus[EXPORT_IDX].items[2] {
+            MenuItem::Action { action, .. } => {
+                assert!(action.as_any().is::<PrintDocument>());
+            }
+            _ => panic!("expected print action item"),
+        }
+        match &menus[EXPORT_IDX].items[3] {
+            MenuItem::Action { action, .. } => {
+                assert!(action.as_any().is::<CopyAsHtml>());
+            }
+            _ => panic!("expected copy as html action item"),
         }
     }
 

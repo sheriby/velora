@@ -198,6 +198,36 @@ impl ImagePasteBehavior {
     }
 }
 
+/// 导出主题（roadmap F3）：跟随当前主题，或固定使用内置浅色/深色主题。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExportThemePreference {
+    /// 沿用当前应用主题（默认，保持既有导出行为）。
+    #[default]
+    Current,
+    /// 内置浅色主题（velotype-light）。
+    Light,
+    /// 内置深色主题（velotype）。
+    Dark,
+}
+
+impl ExportThemePreference {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            _ => Self::Current,
+        }
+    }
+}
+
 /// Last window frame (logical pixels) persisted across launches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WindowFrame {
@@ -213,6 +243,8 @@ pub(crate) struct AppPreferences {
     pub(crate) startup_open: StartupOpenPreference,
     pub(crate) default_language_id: String,
     pub(crate) default_theme_id: String,
+    /// HTML/PDF 导出使用的主题（roadmap F3）。
+    pub(crate) export_theme: ExportThemePreference,
     pub(crate) show_table_headers: bool,
     /// Typographic quote/dash substitution while typing (default off).
     pub(crate) smart_punctuation: bool,
@@ -243,6 +275,7 @@ impl Default for AppPreferences {
             startup_open: StartupOpenPreference::NewFile,
             default_language_id: DEFAULT_LANGUAGE_ID.into(),
             default_theme_id: DEFAULT_THEME_ID.into(),
+            export_theme: ExportThemePreference::Current,
             show_table_headers: true,
             smart_punctuation: false,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
@@ -607,6 +640,7 @@ struct PreferencesFile {
     startup: StartupPreferencesFile,
     language: LanguagePreferencesFile,
     theme: ThemePreferencesFile,
+    export: ExportPreferencesFile,
     editor: EditorPreferencesFile,
     status_bar: StatusBarPreferencesFile,
     window: WindowPreferencesFile,
@@ -643,6 +677,11 @@ struct LanguagePreferencesFile {
 #[derive(Serialize)]
 struct ThemePreferencesFile {
     default_theme_id: String,
+}
+
+#[derive(Serialize)]
+struct ExportPreferencesFile {
+    theme: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -721,6 +760,9 @@ impl From<&AppPreferences> for PreferencesFile {
             },
             theme: ThemePreferencesFile {
                 default_theme_id: value.default_theme_id.clone(),
+            },
+            export: ExportPreferencesFile {
+                theme: value.export_theme.as_str().into(),
             },
             editor: EditorPreferencesFile {
                 show_table_headers: value.show_table_headers,
@@ -867,6 +909,12 @@ fn app_preferences_from_toml_value(
         .filter(|id| !id.is_empty())
         .unwrap_or(DEFAULT_THEME_ID)
         .to_string();
+    let export_theme = value
+        .get("export")
+        .and_then(|export| export.get("theme"))
+        .and_then(toml::Value::as_str)
+        .map(ExportThemePreference::from_str)
+        .unwrap_or_default();
     let keybindings = value
         .get("keybindings")
         .and_then(|keybindings| keybindings.as_table())
@@ -1047,6 +1095,7 @@ fn app_preferences_from_toml_value(
         startup_open,
         default_language_id,
         default_theme_id,
+        export_theme,
         show_table_headers,
         smart_punctuation,
         image_paste_behavior,
@@ -1118,6 +1167,13 @@ pub(crate) fn save_app_preferences_with_dirs(
     }
     let text = toml::to_string_pretty(&PreferencesFile::from(preferences))?;
     std::fs::write(&path, text).with_context(|| format!("failed to write '{}'", path.display()))
+}
+
+/// 导出主题偏好（roadmap F3）；读取失败时按「当前主题」导出。
+pub(crate) fn export_theme_preference() -> ExportThemePreference {
+    read_app_preferences()
+        .map(|preferences| preferences.export_theme)
+        .unwrap_or_default()
 }
 
 pub(crate) fn first_existing_recent_markdown_file() -> Option<PathBuf> {
@@ -2401,6 +2457,7 @@ impl PreferencesWindow {
             ShortcutCommand::SaveDocumentAs => {
                 strings.preferences_shortcut_save_document_as.clone()
             }
+            ShortcutCommand::PrintDocument => strings.menu_print.clone(),
             ShortcutCommand::NewWindow => strings.preferences_shortcut_new_window.clone(),
             ShortcutCommand::OpenFile => strings.preferences_shortcut_open_file.clone(),
             ShortcutCommand::QuitApplication => {
@@ -3120,7 +3177,8 @@ pub(crate) fn open_preferences_window(cx: &mut App) -> WindowHandle<PreferencesW
 #[cfg(test)]
 mod tests {
     use super::{TreeSortPreference, 
-        AppPreferences, EditorSettings, FontPreferences, ImagePasteBehavior, StartupOpenPreference,
+        AppPreferences, EditorSettings, ExportThemePreference, FontPreferences, ImagePasteBehavior,
+        StartupOpenPreference,
         StatusBarPreferences, WritingWidthPreference,
         load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_state,
         read_app_preferences_with_dirs, save_app_preferences_with_dirs,
@@ -3270,6 +3328,7 @@ mod tests {
         assert_eq!(preferences.startup_open, StartupOpenPreference::NewFile);
         assert_eq!(preferences.default_language_id, "en-US");
         assert_eq!(preferences.default_theme_id, "velotype-light");
+        assert_eq!(preferences.export_theme, ExportThemePreference::Current);
         assert!(!preferences.smart_punctuation);
         assert_eq!(preferences.writing_width, WritingWidthPreference::Theme);
         assert_eq!(
@@ -3341,6 +3400,7 @@ mod tests {
             startup_open: StartupOpenPreference::LastOpenedFile,
             default_language_id: "zh-CN".into(),
             default_theme_id: "velotype-light".into(),
+            export_theme: ExportThemePreference::Dark,
             show_table_headers: false,
             smart_punctuation: true,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
@@ -3382,6 +3442,9 @@ mod tests {
         assert!(text.contains("writing_width = \"wide\""));
         assert!(text.contains("workspace_sidebar_width = 320"));
         assert!(text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
+        // roadmap F3：[export] theme 随其他偏好一起持久化。
+        assert!(text.contains("[export]"));
+        assert!(text.contains("theme = \"dark\""));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3451,6 +3514,7 @@ mod tests {
             smart_punctuation: false,
             default_language_id: "zh-CN".into(),
             default_theme_id: "velotype".into(),
+            export_theme: ExportThemePreference::Dark,
             show_table_headers: true,
             image_paste_behavior: ImagePasteBehavior::None,
             fonts: FontPreferences::default(),

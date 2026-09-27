@@ -903,8 +903,15 @@ fn chromium_pdf_theme_css(theme: &Theme) -> String {
         document_layout_css(),
         ".vlt-document {\n  width: auto;\n  max-width: none;\n  margin: 0;\n  padding: 0;\n}",
     );
-    css.push_str(
-        r#"
+    css.push_str(CHROMIUM_PRINT_CSS);
+    css
+}
+
+/// 供系统打印/预览使用的打印版式覆盖（roadmap F4）。
+///
+/// 与 `chromium_pdf_theme_css` 共用同一段规则，保证「打印」与「导出 PDF」
+/// 两条路径在打印媒体下版式一致。
+const CHROMIUM_PRINT_CSS: &str = r#"
 
 @page {
   size: A4;
@@ -953,9 +960,14 @@ fn chromium_pdf_theme_css(theme: &Theme) -> String {
     break-inside: avoid;
   }
 }
-"#,
-    );
-    css
+"#;
+
+/// 为浏览器导出 HTML 注入打印版式；缺少 `<style>` 时原样返回。
+pub(crate) fn prepare_print_html(html: &str) -> String {
+    match html.rfind("</style>") {
+        Some(index) => format!("{}{}{}", &html[..index], CHROMIUM_PRINT_CSS, &html[index..]),
+        None => html.to_string(),
+    }
 }
 
 fn body_font_stack() -> &'static str {
@@ -1017,12 +1029,116 @@ fn escape_html(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_tibetan_text, css_color, render_chromium_pdf_html_with_base_dir, render_html,
-        render_html_with_base_dir,
+        contains_tibetan_text, css_color, prepare_print_html, render_chromium_pdf_html_with_base_dir,
+        render_html, render_html_with_base_dir,
     };
+    use crate::config::preferences::{read_app_preferences_with_dirs, save_app_preferences_with_dirs};
+    use crate::config::{ExportThemePreference, VelotypeConfigDirs};
+    use crate::export::{resolve_export_theme, resolve_export_theme_choice};
     use crate::theme::Theme;
     use std::fs;
     use uuid::Uuid;
+
+    #[test]
+    fn export_theme_dark_preference_renders_dark_background_token() {
+        // roadmap F3：config.toml 里 `[export] theme = "dark"` 时，导出 HTML
+        // 使用内置深色主题的背景色 token，即使当前应用主题是浅色。
+        let root = std::env::temp_dir().join(format!("velora-export-theme-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create temp config dir");
+        let dirs = VelotypeConfigDirs::from_root(&root);
+        fs::write(
+            dirs.app_config_file(),
+            "[export]\ntheme = \"dark\"\n",
+        )
+        .expect("write config.toml");
+
+        let preferences = read_app_preferences_with_dirs(&dirs).expect("read preferences");
+        assert_eq!(preferences.export_theme, ExportThemePreference::Dark);
+
+        let theme = resolve_export_theme_choice(&Theme::light_theme(), preferences.export_theme);
+        let html = render_html("# Title\n\ntext", &theme, "Doc");
+
+        assert!(html.contains("color-scheme: dark;"));
+        assert!(html.contains(&format!(
+            "--vlt-bg: {};",
+            css_color(Theme::default_theme().colors.editor_background)
+        )));
+        assert!(!html.contains(&format!(
+            "--vlt-bg: {};",
+            css_color(Theme::light_theme().colors.editor_background)
+        )));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_theme_light_preference_renders_light_background_token() {
+        let theme = resolve_export_theme_choice(&Theme::default_theme(), ExportThemePreference::Light);
+        let html = render_html("# Title\n\ntext", &theme, "Doc");
+
+        assert!(html.contains("color-scheme: light;"));
+        assert!(html.contains(&format!(
+            "--vlt-bg: {};",
+            css_color(Theme::light_theme().colors.editor_background)
+        )));
+    }
+
+    #[test]
+    fn export_theme_default_keeps_current_theme_output() {
+        // 默认 current 行为与现状一致：沿用调用方传入的当前主题。
+        assert_eq!(
+            ExportThemePreference::default(),
+            ExportThemePreference::Current
+        );
+        let current = Theme::light_theme();
+        let resolved = resolve_export_theme_choice(&current, ExportThemePreference::Current);
+
+        assert_eq!(
+            render_html("# Title\n\ntext", &resolved, "Doc"),
+            render_html("# Title\n\ntext", &current, "Doc")
+        );
+        assert_eq!(resolved.colors.editor_background, current.colors.editor_background);
+    }
+
+    #[test]
+    fn resolve_export_theme_reads_configured_preference() {
+        // 无配置文件时回退为「当前主题」。
+        let current = Theme::light_theme();
+        assert_eq!(
+            resolve_export_theme(&current).colors.editor_background,
+            current.colors.editor_background
+        );
+    }
+
+    #[test]
+    fn export_theme_preference_round_trips_through_config_file() {
+        let root = std::env::temp_dir().join(format!("velora-export-theme-{}", Uuid::new_v4()));
+        let dirs = VelotypeConfigDirs::from_root(&root);
+        let preferences = crate::config::preferences::AppPreferences {
+            export_theme: ExportThemePreference::Light,
+            ..Default::default()
+        };
+
+        save_app_preferences_with_dirs(&preferences, &dirs).expect("save preferences");
+        let text = fs::read_to_string(dirs.app_config_file()).expect("read config.toml");
+        assert!(text.contains("[export]"));
+        assert!(text.contains("theme = \"light\""));
+        assert_eq!(
+            read_app_preferences_with_dirs(&dirs).expect("read preferences"),
+            preferences
+        );
+
+        fs::write(dirs.app_config_file(), "[export]\ntheme = \"neon\"\n")
+            .expect("write invalid theme");
+        assert_eq!(
+            read_app_preferences_with_dirs(&dirs)
+                .expect("read preferences")
+                .export_theme,
+            ExportThemePreference::Current
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn renders_complete_html_document_with_theme_css() {
@@ -1364,5 +1480,60 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepare_print_html_injects_page_and_print_overrides() {
+        // roadmap F4：打印用 HTML 在导出 HTML 基础上注入 @page 与打印覆盖规则。
+        let html = prepare_print_html(
+            "<!doctype html>\n<html>\n<head>\n<style>\n.vlt-document { width: min(100% - 48px, 920px); }\n</style>\n</head>\n<body><main class=\"vlt-document\"><h1>Title</h1></main></body>\n</html>\n",
+        );
+
+        assert!(html.contains("@page"));
+        assert!(html.contains("size: A4"));
+        assert!(html.contains("margin: 15mm"));
+        assert!(html.contains("@media print"));
+        assert!(html.contains("print-color-adjust: exact;"));
+        assert!(html.contains("break-inside: avoid;"));
+        assert!(html.contains(".vlt-document"));
+        assert!(html.contains("<h1>Title</h1>"));
+        // 注入位置在样式表内部，且原有屏幕样式保持在前。
+        assert!(html.find("@page").expect("page rule") < html.find("</style>").expect("style end"));
+        assert!(
+            html.find(".vlt-document { width: min(100% - 48px, 920px); }")
+                .expect("screen layout")
+                < html.find("@page").expect("page rule")
+        );
+    }
+
+    #[test]
+    fn prepare_print_html_without_style_returns_input_unchanged() {
+        let html = prepare_print_html("<p>no stylesheet</p>");
+
+        assert_eq!(html, "<p>no stylesheet</p>");
+    }
+
+    #[test]
+    fn print_html_matches_chromium_pdf_print_rules() {
+        // 打印路径与 PDF 导出路径共用同一段打印规则，避免两条路径版式漂移。
+        let markdown = "# Title\n\nbody";
+        let print_html = prepare_print_html(&render_html(markdown, &Theme::default_theme(), "Doc"));
+        let pdf_html = render_chromium_pdf_html_with_base_dir(
+            markdown,
+            &Theme::default_theme(),
+            "Doc",
+            None,
+        );
+
+        for rule in [
+            "@page",
+            "size: A4",
+            "margin: 15mm",
+            "print-color-adjust: exact;",
+            "break-inside: avoid;",
+        ] {
+            assert!(print_html.contains(rule), "print html missing '{rule}'");
+            assert!(pdf_html.contains(rule), "pdf html missing '{rule}'");
+        }
     }
 }

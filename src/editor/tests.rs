@@ -3386,6 +3386,55 @@ async fn toc_block_renders_entries_and_jumps_to_heading(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn recovery_snapshot_merges_into_open_session_tab(cx: &mut TestAppContext) {
+    // roadmap E10：会话已打开同一文件时，恢复快照并入标签而不是另开窗口。
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("merge-recovery");
+    fs::write(&path, "disk version\n").expect("seed file");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "disk version\n".into(), Some(path))
+    });
+    let snapshot_id = uuid::Uuid::new_v4();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            // 注册为会话标签（模拟 A4 会话恢复已打开该文件）。
+            editor.snapshot_current_document(cx);
+            assert!(
+                editor
+                    .workspace_open_document_paths()
+                    .iter()
+                    .any(|open| open == &path)
+            );
+
+            assert!(editor.merge_recovery_snapshot(
+                &path,
+                "unsaved edits\n",
+                snapshot_id,
+                window,
+                cx,
+            ));
+            assert_eq!(editor.document.markdown_text(cx).trim_end(), "unsaved edits");
+            assert!(editor.document_dirty);
+            assert_eq!(editor.recovery_id, snapshot_id);
+            let (dirty, tab_recovery_id, markdown) = editor
+                .workspace_tab_state_for_test(&path)
+                .expect("tab");
+            assert!(dirty);
+            assert_eq!(tab_recovery_id, snapshot_id);
+            assert_eq!(markdown.trim_end(), "unsaved edits");
+        });
+    });
+    // 磁盘仍是旧内容，未保存内容留在内存标签里。
+    assert_eq!(fs::read_to_string(&path).unwrap(), "disk version\n");
+}
+
+#[gpui::test]
 async fn tree_copy_then_paste_duplicates_file_into_selected_folder(cx: &mut TestAppContext) {
     // roadmap D6：树右键 复制 → 目标目录 粘贴 生成副本。
     init_editor_test_app(cx);

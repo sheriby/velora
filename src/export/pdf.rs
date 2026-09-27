@@ -28,6 +28,12 @@ pub(crate) fn render_pdf(
     title: &str,
     base_path: Option<&Path>,
 ) -> anyhow::Result<Vec<u8>> {
+    let html = render_chromium_pdf_html_with_base_dir(markdown, theme, title, base_path);
+    render_pdf_from_html(&html)
+}
+
+/// Renders PDF bytes from a prepared HTML document (roadmap F4 打印路径).
+pub(crate) fn render_pdf_from_html(html: &str) -> anyhow::Result<Vec<u8>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("velotype-pdf-export")
@@ -35,23 +41,14 @@ pub(crate) fn render_pdf(
         .context("failed to create PDF export runtime")?;
 
     runtime.block_on(async move {
-        tokio::time::timeout(
-            PDF_TIMEOUT,
-            render_pdf_async(markdown, theme, title, base_path),
-        )
-        .await
-        .map_err(|_| anyhow!("PDF export timed out while waiting for Chromium"))?
+        tokio::time::timeout(PDF_TIMEOUT, render_pdf_html_async(html))
+            .await
+            .map_err(|_| anyhow!("PDF export timed out while waiting for Chromium"))?
     })
 }
 
-pub(crate) async fn render_pdf_async(
-    markdown: &str,
-    theme: &Theme,
-    title: &str,
-    base_path: Option<&Path>,
-) -> anyhow::Result<Vec<u8>> {
-    let html = render_chromium_pdf_html_with_base_dir(markdown, theme, title, base_path);
-    let temp = PdfTempFiles::create(&html)?;
+async fn render_pdf_html_async(html: &str) -> anyhow::Result<Vec<u8>> {
+    let temp = PdfTempFiles::create(html)?;
     let result = render_pdf_from_html_file_async(temp.html_path.clone()).await;
     temp.cleanup();
     result
@@ -154,8 +151,8 @@ impl Drop for PdfTempFiles {
 
 #[cfg(test)]
 mod tests {
-    use super::{chromium_pdf_params, file_url_from_path, render_pdf};
-    use crate::export::html::render_chromium_pdf_html_with_base_dir;
+    use super::{chromium_pdf_params, file_url_from_path, render_pdf, render_pdf_from_html};
+    use crate::export::html::{prepare_print_html, render_chromium_pdf_html_with_base_dir, render_html};
     use crate::theme::Theme;
 
     #[test]
@@ -208,6 +205,24 @@ mod tests {
                         || message.contains("Chrome")
                         || message.contains("CHROME"),
                     "unexpected PDF export error: {message}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn render_pdf_from_print_html_uses_chromium_print_pipeline() {
+        // roadmap F4：打印路径复用的 HTML→PDF 入口，Chrome 缺失时报同样的可行动错误。
+        let html = prepare_print_html(&render_html("# Title\n\nBody", &Theme::default_theme(), "Doc"));
+        match render_pdf_from_html(&html) {
+            Ok(pdf) => assert!(pdf.starts_with(b"%PDF")),
+            Err(err) => {
+                let message = err.to_string();
+                assert!(
+                    message.contains("Chromium")
+                        || message.contains("Chrome")
+                        || message.contains("CHROME"),
+                    "unexpected print PDF error: {message}"
                 );
             }
         }
