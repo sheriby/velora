@@ -1251,6 +1251,9 @@ pub(crate) fn save_preferences_from_window(
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
     smart_punctuation: bool,
+    zoom_percent: i64,
+    default_window_width: i64,
+    default_window_height: i64,
 ) -> anyhow::Result<AppPreferences> {
     let dirs = VelotypeConfigDirs::from_system()?;
     save_preferences_from_window_with_dirs(
@@ -1265,6 +1268,9 @@ pub(crate) fn save_preferences_from_window(
         autosave_debounce_ms,
         remember_window_bounds,
         smart_punctuation,
+        zoom_percent,
+        default_window_width,
+        default_window_height,
         &dirs,
     )
 }
@@ -1282,6 +1288,9 @@ fn save_preferences_from_window_with_dirs(
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
     smart_punctuation: bool,
+    zoom_percent: i64,
+    default_window_width: i64,
+    default_window_height: i64,
     dirs: &VelotypeConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
     let mut preferences =
@@ -1295,6 +1304,9 @@ fn save_preferences_from_window_with_dirs(
     preferences.autosave_debounce_ms = autosave_debounce_ms;
     preferences.remember_window_bounds = remember_window_bounds;
     preferences.smart_punctuation = smart_punctuation;
+    preferences.zoom_percent = zoom_percent.clamp(60, 200);
+    preferences.default_window_width = default_window_width.clamp(480, 4096);
+    preferences.default_window_height = default_window_height.clamp(360, 4096);
     preferences.keybindings = normalize_shortcut_config(&keybindings);
     preferences.status_bar = status_bar.clone();
     save_app_preferences_with_dirs(&preferences, dirs)?;
@@ -1317,6 +1329,7 @@ enum PreferencesNav {
     Image,
     Shortcuts,
     StatusBar,
+    Window,
 }
 
 /// Independent preferences window view.
@@ -1348,10 +1361,18 @@ pub(crate) struct PreferencesWindow {
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
     smart_punctuation: bool,
+    zoom_percent: i64,
+    default_window_width: i64,
+    default_window_height: i64,
+    zoom_dropdown_open: bool,
+    window_size_dropdown_open: bool,
     saved_tree_sort: TreeSortPreference,
     saved_autosave_debounce_ms: u64,
     saved_remember_window_bounds: bool,
     saved_smart_punctuation: bool,
+    saved_zoom_percent: i64,
+    saved_default_window_width: i64,
+    saved_default_window_height: i64,
     tree_sort_dropdown_open: bool,
     autosave_dropdown_open: bool,
     status_bar_enabled: bool,
@@ -1390,6 +1411,9 @@ impl PreferencesWindow {
         let autosave_debounce_ms = preferences.autosave_debounce_ms;
         let remember_window_bounds = preferences.remember_window_bounds;
         let smart_punctuation = preferences.smart_punctuation;
+        let zoom_percent = preferences.zoom_percent;
+        let default_window_width = preferences.default_window_width;
+        let default_window_height = preferences.default_window_height;
         Self {
             nav: PreferencesNav::File,
             startup_open,
@@ -1408,10 +1432,18 @@ impl PreferencesWindow {
             autosave_debounce_ms,
             remember_window_bounds,
             smart_punctuation,
+            zoom_percent,
+            default_window_width,
+            default_window_height,
+            zoom_dropdown_open: false,
+            window_size_dropdown_open: false,
             saved_tree_sort: tree_sort,
             saved_autosave_debounce_ms: autosave_debounce_ms,
             saved_remember_window_bounds: remember_window_bounds,
             saved_smart_punctuation: smart_punctuation,
+            saved_zoom_percent: zoom_percent,
+            saved_default_window_width: default_window_width,
+            saved_default_window_height: default_window_height,
             tree_sort_dropdown_open: false,
             autosave_dropdown_open: false,
             theme_options,
@@ -1476,6 +1508,9 @@ impl PreferencesWindow {
             || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
             || self.remember_window_bounds != self.saved_remember_window_bounds
             || self.smart_punctuation != self.saved_smart_punctuation
+            || self.zoom_percent != self.saved_zoom_percent
+            || self.default_window_width != self.saved_default_window_width
+            || self.default_window_height != self.saved_default_window_height
     }
 
     fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -1485,6 +1520,23 @@ impl PreferencesWindow {
 
     fn toggle_autosave_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.autosave_dropdown_open = !self.autosave_dropdown_open;
+        cx.notify();
+    }
+
+    fn toggle_zoom_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_dropdown_open = !self.zoom_dropdown_open;
+        self.window_size_dropdown_open = false;
+        cx.notify();
+    }
+
+    fn toggle_window_size_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.window_size_dropdown_open = !self.window_size_dropdown_open;
+        self.zoom_dropdown_open = false;
         cx.notify();
     }
 
@@ -1525,6 +1577,11 @@ impl PreferencesWindow {
         self.writing_width_dropdown_open = false;
         self.image_dropdown_open = false;
         self.shortcut_error = None;
+        cx.notify();
+    }
+
+    fn set_nav_window(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.nav = PreferencesNav::Window;
         cx.notify();
     }
 
@@ -1636,6 +1693,9 @@ impl PreferencesWindow {
             self.autosave_debounce_ms,
             self.remember_window_bounds,
             self.smart_punctuation,
+            self.zoom_percent,
+            self.default_window_width,
+            self.default_window_height,
         ) {
             Ok(preferences) => preferences,
             Err(err) => {
@@ -1657,6 +1717,11 @@ impl PreferencesWindow {
         EditorSettings::set_tree_sort(cx, self.tree_sort);
         EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
         EditorSettings::set_smart_punctuation(cx, self.smart_punctuation);
+        EditorSettings::set_zoom_percent(cx, self.zoom_percent);
+        cx.update_global::<EditorSettings, _>(|settings, _cx| {
+            settings.default_window_width = self.default_window_width;
+            settings.default_window_height = self.default_window_height;
+        });
         self.apply_saved_preferences(preferences, window, cx);
     }
 
@@ -1708,6 +1773,9 @@ impl PreferencesWindow {
         self.saved_autosave_debounce_ms = self.autosave_debounce_ms;
         self.saved_remember_window_bounds = self.remember_window_bounds;
         self.saved_smart_punctuation = self.smart_punctuation;
+        self.saved_zoom_percent = self.zoom_percent;
+        self.saved_default_window_width = self.default_window_width;
+        self.saved_default_window_height = self.default_window_height;
         cx.notify();
     }
 
@@ -2791,6 +2859,89 @@ impl PreferencesWindow {
         page.child(content)
     }
 
+    fn render_window_page(
+        &self,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let zoom_selected = format!("{}%", self.zoom_percent);
+        let mut zoom_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-zoom-dropdown",
+                zoom_selected.into(),
+                theme,
+                Self::toggle_zoom_dropdown,
+                cx,
+            ));
+        if self.zoom_dropdown_open {
+            for percent in [80i64, 90, 100, 110, 125, 150] {
+                let is_selected = self.zoom_percent == percent;
+                zoom_dropdown = zoom_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!("preferences-zoom-{percent}")),
+                    format!("{percent}%"),
+                    is_selected,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.zoom_percent = percent;
+                        this.zoom_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        let size_selected = format!(
+            "{} × {}",
+            self.default_window_width, self.default_window_height
+        );
+        let mut size_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-window-size-dropdown",
+                size_selected.into(),
+                theme,
+                Self::toggle_window_size_dropdown,
+                cx,
+            ));
+        if self.window_size_dropdown_open {
+            for (width, height) in [(900i64, 600i64), (1080, 720), (1280, 800), (1440, 900)] {
+                let is_selected =
+                    self.default_window_width == width && self.default_window_height == height;
+                size_dropdown = size_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!("preferences-window-size-{width}x{height}")),
+                    format!("{width} × {height}"),
+                    is_selected,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.default_window_width = width;
+                        this.default_window_height = height;
+                        this.window_size_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.0))
+            .child(self.labeled_row(&strings.preferences_window_zoom, zoom_dropdown, theme))
+            .child(self.labeled_row(
+                &strings.preferences_window_default_size,
+                size_dropdown,
+                theme,
+            ))
+    }
+
     fn render_status_bar_page(
         &self,
         theme: &Theme,
@@ -2955,6 +3106,14 @@ impl Render for PreferencesWindow {
                                 &theme,
                                 Self::set_nav_status_bar,
                                 cx,
+                            ))
+                            .child(self.nav_button(
+                                "preferences-nav-window",
+                                strings.preferences_nav_window.clone(),
+                                self.nav == PreferencesNav::Window,
+                                &theme,
+                                Self::set_nav_window,
+                                cx,
                             )),
                     ),
             )
@@ -2996,6 +3155,9 @@ impl Render for PreferencesWindow {
                                         }
                                         PreferencesNav::StatusBar => {
                                             strings.preferences_nav_status_bar.clone()
+                                        }
+                                        PreferencesNav::Window => {
+                                            strings.preferences_nav_window.clone()
                                         }
                                     }),
                             )
@@ -3041,6 +3203,15 @@ impl Render for PreferencesWindow {
                                     .items_center()
                                     .justify_center()
                                     .child(self.render_status_bar_page(&theme, &strings, cx))
+                                    .into_any_element(),
+                                PreferencesNav::Window => div()
+                                    .w_full()
+                                    .flex_1()
+                                    .min_h(px(0.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(self.render_window_page(&theme, &strings, cx))
                                     .into_any_element(),
                             }),
                     )
@@ -3176,13 +3347,12 @@ pub(crate) fn open_preferences_window(cx: &mut App) -> WindowHandle<PreferencesW
 
 #[cfg(test)]
 mod tests {
-    use super::{TreeSortPreference, 
+    use super::{
         AppPreferences, EditorSettings, ExportThemePreference, FontPreferences, ImagePasteBehavior,
-        StartupOpenPreference,
-        StatusBarPreferences, WritingWidthPreference,
-        load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_state,
-        read_app_preferences_with_dirs, save_app_preferences_with_dirs,
-        save_preferences_from_window_with_dirs,
+        PreferencesNav, StartupOpenPreference, StatusBarPreferences, TreeSortPreference,
+        WritingWidthPreference, load_or_create_app_preferences_with_dirs_and_locales,
+        open_preferences_window_with_state, read_app_preferences_with_dirs,
+        save_app_preferences_with_dirs, save_preferences_from_window_with_dirs,
     };
     use crate::config::VelotypeConfigDirs;
     use crate::i18n::I18nManager;
@@ -3546,12 +3716,18 @@ mod tests {
             800,
             true,
             false,
+            110,
+            1280,
+            800,
             &dirs,
         )
         .expect("window preferences should save");
         assert_eq!(saved.tree_sort, TreeSortPreference::Name);
         assert_eq!(saved.autosave_debounce_ms, 800);
         assert!(saved.remember_window_bounds);
+        assert_eq!(saved.zoom_percent, 110);
+        assert_eq!(saved.default_window_width, 1280);
+        assert_eq!(saved.default_window_height, 800);
         assert_eq!(saved.default_language_id, "zh-CN");
         assert_eq!(saved.startup_open, StartupOpenPreference::LastOpenedFile);
         assert_eq!(saved.default_theme_id, "velotype-light");
@@ -3565,6 +3741,41 @@ mod tests {
             Some(&vec!["ctrl-alt-s".to_string()])
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn window_page_exposes_zoom_and_default_size_controls(cx: &mut TestAppContext) {
+        // roadmap H1 批次二：偏好设置新增「窗口」分组页（缩放 + 默认窗口尺寸）。
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        cx.run_until_parked();
+
+        handle
+            .update(cx, |preferences, _window, cx| {
+                assert_eq!(preferences.zoom_percent, 100);
+                assert_eq!(preferences.default_window_width, 1080);
+                assert_eq!(preferences.default_window_height, 720);
+
+                // 切到窗口页并展开两个下拉（渲染路径由窗口自身的绘制触发）。
+                preferences.nav = PreferencesNav::Window;
+                preferences.zoom_dropdown_open = true;
+                preferences.window_size_dropdown_open = true;
+                cx.notify();
+
+                // 改动进入未保存状态并可通过保存路径持久化。
+                preferences.zoom_percent = 125;
+                preferences.default_window_width = 1280;
+                preferences.default_window_height = 800;
+                assert!(preferences.has_unsaved_changes());
+            })
+            .expect("preferences window should update");
     }
 
     #[gpui::test]

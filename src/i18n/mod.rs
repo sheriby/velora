@@ -474,6 +474,9 @@ pub struct I18nStrings {
     pub status_bar_reading_time_suffix: String,
     /// Nav label for the status bar preferences tab.
     pub preferences_nav_status_bar: String,
+    pub preferences_nav_window: String,
+    pub preferences_window_zoom: String,
+    pub preferences_window_default_size: String,
     /// Label for the status bar enabled toggle.
     pub preferences_status_bar_enabled: String,
     /// Label for the word count toggle.
@@ -753,6 +756,9 @@ struct I18nStringsDe {
     status_bar_word_count_suffix: Option<String>,
     status_bar_reading_time_suffix: Option<String>,
     preferences_nav_status_bar: Option<String>,
+    preferences_nav_window: Option<String>,
+    preferences_window_zoom: Option<String>,
+    preferences_window_default_size: Option<String>,
     preferences_status_bar_enabled: Option<String>,
     preferences_status_bar_show_word_count: Option<String>,
     preferences_status_bar_show_cursor_position: Option<String>,
@@ -1025,6 +1031,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "status_bar_word_count_suffix",
     "status_bar_reading_time_suffix",
     "preferences_nav_status_bar",
+    "preferences_nav_window",
+    "preferences_window_zoom",
+    "preferences_window_default_size",
     "preferences_status_bar_enabled",
     "preferences_status_bar_show_word_count",
     "preferences_status_bar_show_cursor_position",
@@ -1737,6 +1746,15 @@ impl I18nStringsDe {
             preferences_nav_status_bar: self
                 .preferences_nav_status_bar
                 .unwrap_or(defaults.preferences_nav_status_bar),
+            preferences_nav_window: self
+                .preferences_nav_window
+                .unwrap_or(defaults.preferences_nav_window),
+            preferences_window_zoom: self
+                .preferences_window_zoom
+                .unwrap_or(defaults.preferences_window_zoom),
+            preferences_window_default_size: self
+                .preferences_window_default_size
+                .unwrap_or(defaults.preferences_window_default_size),
             preferences_status_bar_enabled: self
                 .preferences_status_bar_enabled
                 .unwrap_or(defaults.preferences_status_bar_enabled),
@@ -1841,6 +1859,11 @@ impl I18nStrings {
             preferences_nav_file: "文件".into(),
             preferences_nav_theme: "主题".into(),
             preferences_nav_shortcuts: "快捷键".into(),
+            preferences_nav_image: "图片".into(),
+            preferences_nav_status_bar: "状态栏".into(),
+            preferences_nav_window: "窗口".into(),
+            preferences_window_zoom: "界面缩放".into(),
+            preferences_window_default_size: "默认窗口尺寸".into(),
             preferences_startup_option: "启动选项".into(),
             preferences_startup_new_file: "新 md 文件".into(),
             preferences_startup_last_opened_file: "上一次打开的 md 文件".into(),
@@ -2135,6 +2158,9 @@ impl I18nStrings {
             preferences_nav_theme: "Theme".into(),
             preferences_nav_image: "Image".into(),
             preferences_nav_shortcuts: "Shortcuts".into(),
+            preferences_nav_window: "Window".into(),
+            preferences_window_zoom: "Interface Zoom".into(),
+            preferences_window_default_size: "Default Window Size".into(),
             preferences_startup_option: "Startup Option".into(),
             preferences_startup_new_file: "New Markdown File".into(),
             preferences_startup_last_opened_file: "Last Opened Markdown File".into(),
