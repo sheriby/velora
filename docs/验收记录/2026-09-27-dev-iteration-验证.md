@@ -366,6 +366,19 @@ E1 快速切换器、E4 中键关标签、E5 ⌘1-9 切标签、G3 自动保存�
 | 已知限制（记入 roadmap 后续项） | 模态目前只支持鼠标（按钮 + 遮罩取消），Esc/Enter 键盘路径未接：焦点在渲染期抢（含 `window.defer` 延后一帧）都拿不到按键派发，`modal_has_focus` 为真但 `on_key_down` 不触发，故本批不保留未验证的按键代码 | 待后续 |
 | 全量回归 | `cargo build` 0 警告；`cargo test` 925 通过 0 失败 1 ignored | 通过 |
 
+## 第三十五批补充（用户要求：「打开最近」只允许出现工作区，不允许出现文件）
+
+| 项目 | 验证方式 | 结论 |
+|------|----------|------|
+| 需求 | 用户原话：「"打开最近" 只允许出现工作区 也就是文件夹不允许出现文件」 | 已明确 |
+| 现状 | 菜单与欢迎页共用 `merged_recent_entries(files, folders)`：把「最近文件」和「最近文件夹」交错合并（去重、截 15 条），所以单个 md 也会出现在「打开最近」里 | 已定位 |
+| 修复 | 删掉双表合并，改为 `recent_menu_entries(&recent_folders)`：`install_menus` 与 `welcome_recent_entries()` 两个入口都只吃工作区历史（去重 + 截 15 条，欢迎页再取前 5）；`recent_files_for_menu` 与 `merged_recent_entries` 整体移除，`app_menu.rs` 不再引用 `read_recent_files`。文件历史仍保留给启动时「重开上次文档」（`first_existing_recent_markdown_file`）使用，不受影响 | 通过 |
+| 打开行为 | 工作区条目走 `open_recent_file` → `path.is_dir()` → `open_recent_folder`（替换当前窗口工作集，无确认框），行为不变 | 通过 |
+| 用例 | ① `recent_menu_entries_list_workspaces_only`：工作区列表原样、去重、截到 15 条；② `recent_menu_never_reads_the_file_history`：源码扫描守卫，`app_menu.rs` 里不得再出现文件历史读取函数或旧的交错合并函数 | 通过 |
+| 正控 | 在 `app_menu.rs` 里临时写一处文件历史读取的字面量 ⇒ 守卫用例失败并给出准确断言；删除后复跑通过 | 通过 |
+| 全量回归 | `cargo build` 0 警告；`cargo test` 927 通过 0 失败 1 ignored | 通过 |
+| 待人工目视 | 菜单「文件 → 打开最近」子菜单与欢迎页「最近打开」列表：只出现工作区文件夹，不再出现单个 .md | 待复核 |
+
 ## 已知事项
 
 - 全量测试唯一失败项 `autosave_does_not_overwrite_external_file_changes`

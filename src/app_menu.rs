@@ -25,7 +25,7 @@ use crate::components::{
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
     import_language_config_and_select, import_theme_config_and_select, open_preferences_window,
-    read_recent_files, read_recent_folders, read_session, record_recent_file,
+    read_recent_folders, read_session, record_recent_file,
     remove_recent_file,
 };
 use crate::editor::{Editor, InfoDialogKind};
@@ -533,16 +533,6 @@ fn show_export_error(editor: Entity<Editor>, cx: &mut AsyncApp, detail: &str) {
     });
 }
 
-fn recent_files_for_menu() -> Vec<PathBuf> {
-    match read_recent_files() {
-        Ok(paths) => paths,
-        Err(err) => {
-            eprintln!("failed to read recent file history: {err}");
-            Vec::new()
-        }
-    }
-}
-
 fn recent_folders_for_menu() -> Vec<PathBuf> {
     match read_recent_folders() {
         Ok(paths) => paths,
@@ -553,39 +543,27 @@ fn recent_folders_for_menu() -> Vec<PathBuf> {
     }
 }
 
-/// Top few merged recent entries for the welcome page.
-pub(crate) fn welcome_recent_entries() -> Vec<PathBuf> {
-    let files = recent_files_for_menu();
-    let folders = recent_folders_for_menu();
-    merged_recent_entries(&files, &folders).into_iter().take(5).collect()
-}
-
-/// Interleaves the two recency lists so 打开最近 shows both files and
-/// folders, deduplicated, capped at 15 entries.
-fn merged_recent_entries(files: &[PathBuf], folders: &[PathBuf]) -> Vec<PathBuf> {
-    let mut merged = Vec::new();
-    let mut file_index = 0usize;
-    let mut folder_index = 0usize;
-    while merged.len() < 15 && (file_index < files.len() || folder_index < folders.len()) {
-        if file_index < files.len() {
-            let path = &files[file_index];
-            file_index += 1;
-            if !merged.contains(path) {
-                merged.push(path.clone());
-            }
+/// 「打开最近」的条目 = 最近打开过的工作区（文件夹），不含单个文件。
+/// 文件历史仍供其它界面使用，但这个菜单只列工作区（用户要求）。
+fn recent_menu_entries(folders: &[PathBuf]) -> Vec<PathBuf> {
+    let mut entries: Vec<PathBuf> = Vec::new();
+    for path in folders {
+        if !entries.contains(path) {
+            entries.push(path.clone());
         }
-        if merged.len() == 15 {
+        if entries.len() == 15 {
             break;
         }
-        if folder_index < folders.len() {
-            let path = &folders[folder_index];
-            folder_index += 1;
-            if !merged.contains(path) {
-                merged.push(path.clone());
-            }
-        }
     }
-    merged
+    entries
+}
+
+/// Top few recent workspaces for the welcome page.
+pub(crate) fn welcome_recent_entries() -> Vec<PathBuf> {
+    recent_menu_entries(&recent_folders_for_menu())
+        .into_iter()
+        .take(5)
+        .collect()
 }
 
 fn open_recent_file(cx: &mut App, path: PathBuf) {
@@ -1229,9 +1207,7 @@ fn build_menus(
 }
 
 pub(crate) fn install_menus(cx: &mut App) {
-    let recent_files = recent_files_for_menu();
-    let recent_folders = recent_folders_for_menu();
-    let recent_entries = merged_recent_entries(&recent_files, &recent_folders);
+    let recent_entries = recent_menu_entries(&recent_folders_for_menu());
     let menus = build_menus(
         cx.global::<ThemeManager>(),
         cx.global::<I18nManager>(),
@@ -1570,7 +1546,7 @@ pub(crate) fn init(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{applescript_string_literal, build_menus};
+    use super::{applescript_string_literal, build_menus, recent_menu_entries};
     use crate::components::{
         AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, CopyAsHtml, ExportHtml,
         ExportPdf, ExportPng, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
@@ -1915,6 +1891,35 @@ mod tests {
             }
             _ => panic!("expected empty recent-file action item"),
         }
+    }
+
+    #[test]
+    fn recent_menu_entries_list_workspaces_only() {
+        // 用户要求：「打开最近」只允许出现工作区（文件夹），不允许出现文件。
+        let folders = vec![PathBuf::from("/work/alpha"), PathBuf::from("/work/beta")];
+        assert_eq!(recent_menu_entries(&folders), folders);
+        let duplicated = vec![PathBuf::from("/work/a"), PathBuf::from("/work/a")];
+        assert_eq!(recent_menu_entries(&duplicated), vec![PathBuf::from("/work/a")]);
+        let many: Vec<PathBuf> = (0..20).map(|index| PathBuf::from(format!("/w/{index}"))).collect();
+        assert_eq!(recent_menu_entries(&many).len(), 15);
+    }
+
+    #[test]
+    fn recent_menu_never_reads_the_file_history() {
+        // 结构守卫：菜单与工作区两个入口都只吃 recent-folders；一旦有人把文件
+        // 历史接回「打开最近」，这里就会读到文件历史的读取函数与旧的双表合并。
+        let source = include_str!("app_menu.rs");
+        // 断言文本里不能出现被搜索的字面量，所以拼出来。
+        let file_history_reader = concat!("read_recent_", "files");
+        let legacy_merge = concat!("merged_", "recent_entries");
+        assert!(
+            !source.contains(file_history_reader),
+            "app_menu.rs 不应再读文件历史（「打开最近」只列工作区）"
+        );
+        assert!(
+            !source.contains(legacy_merge),
+            "旧的「文件+文件夹交错合并」应整体移除"
+        );
     }
 
     #[test]
