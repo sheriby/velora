@@ -138,6 +138,19 @@ impl EntityMap {
             .unwrap_or_else(|| double_lease_panic::<T>("read"))
     }
 
+    /// Reads an entity without recording it in the frame's accessed set.
+    ///
+    /// 本地补丁（P7，velora）：用于每帧对全文档块做只读查询的热路径
+    /// （如状态栏选区扫描）——16 万次 accessed 集合插入会吞掉 ~30ms。
+    /// 仅限「不参与渲染失效」的查询。
+    pub fn read_untracked<T: 'static>(&self, entity: &Entity<T>) -> &T {
+        self.assert_valid_context(entity);
+        self.entities
+            .get(entity.entity_id)
+            .and_then(|entity| entity.downcast_ref())
+            .unwrap_or_else(|| double_lease_panic::<T>("read_untracked"))
+    }
+
     fn assert_valid_context(&self, entity: &AnyEntity) {
         debug_assert!(
             Weak::ptr_eq(&entity.entity_map, &Arc::downgrade(&self.ref_counts)),
@@ -415,6 +428,12 @@ impl<T: 'static> Entity<T> {
     /// Grab a reference to this entity from the context.
     pub fn read<'a>(&self, cx: &'a App) -> &'a T {
         cx.entities.read(self)
+    }
+
+    /// P7（velora 本地补丁）：跳过 accessed 集合的无追踪读，见
+    /// [`EntityMap::read_untracked`]。
+    pub fn read_untracked<'a>(&self, cx: &'a App) -> &'a T {
+        cx.entities.read_untracked(self)
     }
 
     /// Read the entity referenced by this handle with the given function.

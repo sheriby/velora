@@ -884,8 +884,10 @@ impl Editor {
         }
 
         // Fall back to a single block with a non-collapsed selection range.
+        // P7：untracked 读——每帧全文档扫描时跳过 accessed 集合插入
+        // （160k 块 × ~0.2µs 的纯追踪开销曾是稳态帧的大头）。
         for visible in self.document.visible_blocks() {
-            let block = visible.entity.read(cx);
+            let block = visible.entity.read_untracked(cx);
             if block.selected_range.is_empty() {
                 continue;
             }

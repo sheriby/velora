@@ -45,6 +45,27 @@ markdown 路径（`Editor::from_markdown`，`manual_markdown_load_probe`）：
 - ten-mib.md 稳态 293ms/帧 ≈ 每帧文档级固定开销 × 160k 块（见 §4-3）。
 - 探针 construct_ms 含后台续建在测试里同步跑完的部分；真实应用首屏时间以首绘为准。
 
+### P7 边缘指标收敛（2026-09-28 第二轮复测，read_untracked + 哈希后台化后）
+
+代码路径（`manual_code_load_probe`）：
+
+| 夹具 | 同步构造 | 首绘 | 稳态帧 | 编辑更新 |
+|---|---:|---:|---:|---:|
+| sample.lock | 4.5 | 1.1 | 1.2 | 22.7 |
+| log-1mib | **12.1** | 1.3 | 1.3 | 31.1 |
+| log-10mib | **99.7（≤100 达标）** | 2.2 | 2.3 | 54.7 |
+
+markdown 路径（`manual_markdown_load_probe`）：
+
+| 夹具 | 首绘 | 稳态帧 |
+|---|---:|---:|
+| one-mib.md（15,968 块） | 1.4 | **1.3（基线 35 → 26.9x）** |
+| ten-mib.md（159,683 块） | 10.8 | **10.8（基线 293 → 27.1x，≥10x 达标）** |
+
+收敛手段：`file_content_version` 后台化 + 规范化直通哈希；vendored gpui
+新增 `Entity::read_untracked`（跳过 accessed 集合登记）——状态栏选区
+扫描每帧 16 万次集合插入曾是 160k 块文档稳态帧的最大单项。
+
 ### P7 终态（2026-09-28，优化后同一探针复测）
 
 代码路径（`manual_code_load_probe`，真实 `from_file_source`）：
