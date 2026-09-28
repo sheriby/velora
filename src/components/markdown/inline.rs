@@ -1400,6 +1400,19 @@ impl NormalizeBuilder {
         }
     }
 
+    /// 推测性解析的快照。正文扫完仍未闭合时用 `rollback` 回到快照，否则这次尝试
+    /// 已经写进 builder 的正文会留在输出里，调用方又把整段重新输出一遍（内容翻倍）。
+    fn mark(&self) -> (usize, usize) {
+        (self.fragments.len(), self.normalized_len)
+    }
+
+    /// 回到 `mark` 时的状态。`visible_to_normalized` 不用备份：调用方会从起始位置
+    /// 重新输出同一批 token，同一批边界会被重新写一遍。
+    fn rollback(&mut self, mark: (usize, usize)) {
+        self.fragments.truncate(mark.0);
+        self.normalized_len = mark.1;
+    }
+
     fn emit_token(
         &mut self,
         token: &CharToken,
@@ -1636,6 +1649,7 @@ fn parse_until(
 
             if let Some(delimiter) = match_open_delimiter(tokens, index) {
                 if has_closing_delimiter(tokens, index, delimiter) {
+                    let mark = builder.mark();
                     for token in &tokens[index..index + delimiter.token_len()] {
                         builder.drop_token(token);
                     }
@@ -1655,6 +1669,9 @@ fn parse_until(
                         index = parsed.next_index;
                         continue;
                     }
+                    // 预判有闭合、正文扫描却全部拒绝时回滚这次尝试，让定界符按字面
+                    // 文本走（不回滚会同时留下正文和重扫的字面文本）。
+                    builder.rollback(mark);
                 } else if delimiter.token_len() > 1 {
                     // Keep an unclosed multi-character opener (`**`, `__`, `~~`,
                     // backtick run) literal as one unit. Emitting just its first
@@ -2564,7 +2581,13 @@ fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimiter: Delimite
                 cursor += 1;
                 continue;
             }
-            return true;
+            // 与 `parse_until` 用同一套闭合判定。否则这里报“有闭合”、正文扫描却拒
+            // 绝全部候选（例如 `_a_b` 里的下划线不能闭合），正文就会被输出两次。
+            if can_close_emphasis(tokens, cursor) {
+                return true;
+            }
+            cursor += 1;
+            continue;
         }
 
         cursor += 1;
@@ -2772,6 +2795,24 @@ fn escape_literal_text_with_offset_map(text: &str) -> InlineMarkdownOffsetMap {
         }
 
         if text[index..].starts_with('_') {
+            // 词中下划线串既不能开启也不能关闭强调（CommonMark 侧翼规则），转义只会把
+            // 用户的 `topic_embedding_attention` 改写成 `topic\_embedding\_attention`。
+            // 按整串输出：逐字符走会把串拆开，串内第二个下划线会被当成标点而被转义。
+            let run_len = text[index..].bytes().take_while(|byte| *byte == b'_').count();
+            let prev = text[..index].chars().next_back();
+            let next = text[index + run_len..].chars().next();
+            if prev.is_some_and(is_emphasis_word_char) && next.is_some_and(is_emphasis_word_char)
+            {
+                let start = escaped.len();
+                escaped.push_str(&text[index..index + run_len]);
+                markdown_to_visible.resize(escaped.len() + 1, index);
+                for local in 0..=escaped.len() - start {
+                    markdown_to_visible[start + local] = index;
+                }
+                index += run_len;
+                continue;
+            }
+
             let start = escaped.len();
             escaped.push_str("\\_");
             markdown_to_visible.resize(escaped.len() + 1, index);
@@ -3225,10 +3266,90 @@ pub(crate) fn clamp_range_to_char_boundaries(text: &str, range: Range<usize>) ->
 }
 
 fn can_open_emphasis(tokens: &[CharToken], index: usize, len: usize) -> bool {
-    tokens
-        .get(index + len)
-        .map(|token| !token.ch.is_whitespace())
-        .unwrap_or(false)
+    let Some(next) = tokens.get(index + len) else {
+        return false;
+    };
+    if next.ch.is_whitespace() {
+        return false;
+    }
+    if tokens[index].ch != '_' {
+        return true;
+    }
+    let (prev, run_next) = emphasis_run_bounds(tokens, index);
+    underscore_can_open(prev, run_next)
+}
+
+/// 定界符串是同一字符的极大连续串，侧翼判定看整串前后的字符。按字符逐个判会把
+/// `foo__bar__baz` 里串内第二个下划线当成独立定界符（它前面是标点意义上的 `_`），
+/// 于是整串被拆开。返回 (串前字符, 串后字符)。
+fn emphasis_run_bounds(tokens: &[CharToken], index: usize) -> (Option<char>, Option<char>) {
+    let ch = tokens[index].ch;
+    let mut start = index;
+    while start > 0 && tokens[start - 1].ch == ch {
+        start -= 1;
+    }
+    let mut end = index;
+    while end + 1 < tokens.len() && tokens[end + 1].ch == ch {
+        end += 1;
+    }
+    (
+        start.checked_sub(1).map(|prev| tokens[prev].ch),
+        tokens.get(end + 1).map(|token| token.ch),
+    )
+}
+
+/// `_` 的开启条件（CommonMark 侧翼规则）：左侧成翼，且不同时右侧成翼，除非前面是标点。
+/// 没有这条限制时 `topic_embedding_attention` 会解析成 文本 + 斜体 + 文本，
+/// 存盘时整段被重写成 `*` 定界符（用户报修）。
+fn underscore_can_open(prev: Option<char>, next: Option<char>) -> bool {
+    let Some(next) = next else {
+        return false;
+    };
+    let left_flanking = !is_emphasis_punctuation(next)
+        || prev.is_none_or(|ch| ch.is_whitespace() || is_emphasis_punctuation(ch));
+    if !left_flanking {
+        return false;
+    }
+    let right_flanking = prev.is_some_and(|ch| !ch.is_whitespace())
+        && (prev.is_some_and(|ch| !is_emphasis_punctuation(ch))
+            || next.is_whitespace()
+            || is_emphasis_punctuation(next));
+    !right_flanking || prev.is_some_and(is_emphasis_punctuation)
+}
+
+/// `_` 的关闭条件，与 `underscore_can_open` 镜像。
+fn underscore_can_close(prev: Option<char>, next: Option<char>) -> bool {
+    let Some(prev) = prev else {
+        return false;
+    };
+    if prev.is_whitespace() {
+        return false;
+    }
+    let right_flanking = !is_emphasis_punctuation(prev)
+        || next.is_none_or(|ch| ch.is_whitespace() || is_emphasis_punctuation(ch));
+    if !right_flanking {
+        return false;
+    }
+    let left_flanking = next.is_some_and(|ch| !ch.is_whitespace())
+        && (next.is_some_and(|ch| !is_emphasis_punctuation(ch))
+            || prev.is_whitespace()
+            || is_emphasis_punctuation(prev));
+    !left_flanking || next.is_some_and(is_emphasis_punctuation)
+}
+
+/// 侧翼规则需要的「标点」分类。标准库没有 Unicode 标点分类，这里近似：ASCII 走
+/// 自己的标点表，其余字符除了字母、数字、空白都算标点（全角标点、日文标点等成立）。
+fn is_emphasis_punctuation(ch: char) -> bool {
+    if ch.is_ascii() {
+        ch.is_ascii_punctuation()
+    } else {
+        !ch.is_alphanumeric() && !ch.is_whitespace()
+    }
+}
+
+/// 强调意义上的「词内字符」：既不是空白也不是标点。
+fn is_emphasis_word_char(ch: char) -> bool {
+    !ch.is_whitespace() && !is_emphasis_punctuation(ch)
 }
 
 fn can_open_script(tokens: &[CharToken], index: usize, marker: char) -> bool {
@@ -3248,7 +3369,14 @@ fn can_open_script(tokens: &[CharToken], index: usize, marker: char) -> bool {
 }
 
 fn can_close_emphasis(tokens: &[CharToken], index: usize) -> bool {
-    index > 0 && !tokens[index - 1].ch.is_whitespace()
+    if index == 0 {
+        return false;
+    }
+    if tokens[index].ch != '_' {
+        return !tokens[index - 1].ch.is_whitespace();
+    }
+    let (prev, next) = emphasis_run_bounds(tokens, index);
+    underscore_can_close(prev, next)
 }
 
 #[cfg(test)]
@@ -4241,5 +4369,61 @@ mod tests {
         let cache = tree.render_cache();
         assert!(!cache.style_at(0).code);
         assert_eq!(tree.serialize_markdown(), "\\`not code\\`");
+    }
+
+    #[test]
+    fn intraword_underscores_stay_literal() {
+        // 用户报修：`**topic_embedding_attention 有轨迹无产物**` 渲染成
+        // `**topic*embedding*attention 有轨迹无产物**`，存盘后原文被改写。
+        for source in [
+            "**topic_embedding_attention 有轨迹无产物**",
+            "**topic_embedding_attention**",
+            "topic_embedding_attention",
+            "a_b_c",
+            "**a_b**",
+            "中文_强调_中文",
+            "foo__bar__baz",
+            "snake_case_name",
+        ] {
+            let tree = InlineTextTree::from_markdown(source);
+            assert_eq!(
+                tree.serialize_markdown(),
+                source,
+                "词中下划线必须原样保留（不解析成强调、不补反斜杠），输入 {source:?}"
+            );
+            assert_eq!(tree.visible_text(), source.replace("**", ""), "可见文本");
+        }
+    }
+
+    #[test]
+    fn unclosed_underscore_span_keeps_text_uncopied() {
+        // 正文扫描拒绝所有闭合候选时，不能既留下正文又重扫整段（内容会翻倍）。
+        for source in ["_a_b", "_x_1", "_private_var", "_foo_bar baz"] {
+            let tree = InlineTextTree::from_markdown(source);
+            assert_eq!(tree.visible_text(), source, "可见文本不得重复，输入 {source:?}");
+        }
+        // 没关闭的串仍是字面量；末尾能找到合法闭合的才是斜体（与 CommonMark 一致）。
+        assert_eq!(InlineTextTree::from_markdown("_a_b_").visible_text(), "a_b");
+    }
+
+    #[test]
+    fn underscore_emphasis_outside_words_still_parses() {
+        // 放宽词中规则不能误伤真正的下划线强调。
+        assert_eq!(
+            InlineTextTree::from_markdown("_italic_").serialize_markdown(),
+            "*italic*"
+        );
+        assert_eq!(
+            InlineTextTree::from_markdown("__bold__").serialize_markdown(),
+            "**bold**"
+        );
+        assert_eq!(
+            InlineTextTree::from_markdown("(_强调_)").serialize_markdown(),
+            "(*强调*)"
+        );
+        assert_eq!(
+            InlineTextTree::from_markdown("`_a_b_`").serialize_markdown(),
+            "`_a_b_`"
+        );
     }
 }
