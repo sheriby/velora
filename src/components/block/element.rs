@@ -1420,13 +1420,9 @@ impl Element for BlockTextElement {
         };
 
         if hovering_link {
-            // The hand cursor only appears while the Cmd/Ctrl follow modifier is
-            // held (matching the gesture that opens the link); a plain hover keeps
-            // the text cursor. The editor root repaints on follow-modifier
-            // toggles, so this re-evaluates even when the pointer stays still.
-            if window.modifiers().secondary() {
-                window.set_cursor_style(CursorStyle::PointingHand, &prepaint.hitbox);
-            }
+            // 悬停在链接上就显示小手，提示可点击；Cmd/Ctrl+点击仍由
+            // `on_mouse_up` 负责跟随链接。
+            window.set_cursor_style(CursorStyle::PointingHand, &prepaint.hitbox);
         }
 
         if focus_handle.is_focused(window) {

@@ -2920,14 +2920,6 @@ impl Render for Editor {
             content_area
         };
 
-        // Repaint when the Cmd/Ctrl follow modifier toggles so a hovered link's
-        // hand cursor updates without moving the pointer. `ModifiersChanged` is
-        // dispatched along the focused element's path to the root, and this root
-        // is an ancestor of every block, so one listener here covers a link in any
-        // block while editing. Gated to the secondary modifier so Shift during
-        // selection does not repaint.
-        let follow_modifier_active = window.modifiers().secondary();
-
         let body_font_family = if fonts.markdown_family == "theme" {
             &theme.typography.body_font_family
         } else {
@@ -2950,11 +2942,6 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(Self::on_workspace_resize_mouse_up),
             )
-            .on_modifiers_changed(move |event, window, _| {
-                if event.modifiers.secondary() != follow_modifier_active {
-                    window.refresh();
-                }
-            })
             .capture_action(cx.listener(Self::on_copy_capture))
             .capture_action(cx.listener(Self::on_cut_capture))
             .capture_action(cx.listener(Self::on_delete_capture))

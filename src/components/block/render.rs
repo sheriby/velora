@@ -3538,13 +3538,11 @@ impl Render for Block {
 /// everything else is split on whitespace with each word keeping its trailing
 /// space, so the `flex_wrap` row can break between words instead of pushing the
 /// next inline visual onto its own line.
-/// Wraps a rendered inline link run so the hand cursor only appears while the
-/// Cmd/Ctrl follow modifier is held. Links in mixed inline-visual blocks (math,
-/// scripts, inline images) render as plain divs, so this sets `PointingHand`
-/// when its hitbox is hovered and the modifier is down, like `BlockTextElement`
-/// does for normal text. The editor root repaints on follow-modifier toggles,
-/// so the cursor re-evaluates without the pointer moving. Layout and painting
-/// are delegated to the child.
+/// Wraps a rendered inline link run so the hand cursor appears on plain hover.
+/// Links in mixed inline-visual blocks (math, scripts, inline images) render as
+/// plain divs, so this sets `PointingHand` whenever its hitbox is hovered, like
+/// `BlockTextElement` does for normal text. Layout and painting are delegated
+/// to the child.
 struct LinkFollowCursor {
     child: AnyElement,
 }
@@ -3602,9 +3600,7 @@ impl Element for LinkFollowCursor {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if hitbox.is_hovered(window) && window.modifiers().secondary() {
-            // The editor root repaints on follow-modifier toggles, so the hand
-            // cursor re-evaluates here even while the pointer stays still.
+        if hitbox.is_hovered(window) {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
         self.child.paint(window, cx);
