@@ -7244,3 +7244,44 @@ async fn tree_filter_appends_once_per_keystroke(cx: &mut TestAppContext) {
         assert!(editor.workspace.tree_filter.is_empty(), "Esc 清空过滤词");
     });
 }
+
+#[gpui::test]
+async fn status_bar_view_mode_toggle_switches_mode(cx: &mut TestAppContext) {
+    // 用户需求：右下角的「分钟阅读」换成源码切换按钮，点击切换视图模式。
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# hello\n\nworld\n".to_string(), None)
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.view_mode, crate::editor::ViewMode::Rendered);
+    });
+
+    let bounds = cx
+        .debug_bounds("status-bar-view-mode-toggle")
+        .expect("状态栏应渲染视图切换按钮");
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.view_mode,
+            crate::editor::ViewMode::Source,
+            "点击切换按钮应进入源码模式"
+        );
+    });
+
+    let bounds = cx
+        .debug_bounds("status-bar-view-mode-toggle")
+        .expect("源码模式下按钮仍在");
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.view_mode,
+            crate::editor::ViewMode::Rendered,
+            "再次点击应切回渲染模式"
+        );
+    });
+}
+

@@ -366,7 +366,7 @@ pub(crate) struct ImageResizeDrag {
 }
 
 /// The two editing views the editor can present.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewMode {
     /// Rich rendered view where each block is styled by its semantic kind.
     Rendered,

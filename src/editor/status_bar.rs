@@ -69,10 +69,10 @@ impl Editor {
                 theme,
                 strings,
             ));
-            if let Some(minutes) = reading_minutes(total_count) {
-                right_items.push(render_reading_time(minutes, theme, strings));
-            }
         }
+
+        // 右下角的模式切换按钮（用户需求：阅读时长信息换成源码切换）。
+        right_items.push(self.render_view_mode_toggle(theme, strings, cx));
 
         if self.long_source_block_hint(cx) {
             right_items.push(
@@ -241,27 +241,35 @@ fn render_word_count(
         .into_any_element()
 }
 
-/// Estimated reading time in minutes at 300 words/minute (roadmap B8).
-/// Returns `None` for an empty document so the status bar stays quiet.
-pub fn reading_minutes(word_count: usize) -> Option<usize> {
-    if word_count == 0 {
-        return None;
+/// 右下角的视图模式切换按钮：渲染态显示「切换到源码」，源码态显示
+/// 「切换到渲染」，点击即切换（用户需求）。
+impl Editor {
+    fn render_view_mode_toggle(
+        &mut self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let label = match self.view_mode {
+            super::ViewMode::Rendered => strings.view_mode_switch_to_source.clone(),
+            super::ViewMode::Source => strings.view_mode_switch_to_rendered.clone(),
+        };
+        let editor = cx.entity().downgrade();
+        div()
+            .id("status-bar-view-mode-toggle")
+            .debug_selector(|| "status-bar-view-mode-toggle".to_string())
+            .text_size(px(d.status_bar_text_size))
+            .text_color(c.status_bar_text_dim)
+            .cursor_pointer()
+            .hover(|this| this.text_color(c.status_bar_text))
+            .child(label)
+            .on_click(move |_event, _window, cx| {
+                let _ = editor.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
+            })
+            .into_any_element()
     }
-    Some(word_count.div_ceil(300).max(1))
-}
-
-fn render_reading_time(minutes: usize, theme: &Theme, strings: &I18nStrings) -> AnyElement {
-    let c = &theme.colors;
-    let d = &theme.dimensions;
-
-    div()
-        .text_size(px(d.status_bar_text_size))
-        .text_color(c.status_bar_text_dim)
-        .child(format!(
-            "{} {}",
-            minutes, strings.status_bar_reading_time_suffix
-        ))
-        .into_any_element()
 }
 
 fn render_custom_button(
@@ -363,7 +371,7 @@ fn is_cjk_char(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_words, document_has_long_source_block, reading_minutes};
+    use super::{count_words, document_has_long_source_block};
 
     #[test]
     fn long_source_block_hint_tracks_single_long_line() {
@@ -381,15 +389,6 @@ mod tests {
     #[test]
     fn empty_text_has_zero_words() {
         assert_eq!(count_words(""), 0);
-    }
-
-    #[test]
-    fn reading_time_is_rounded_up_at_300_words_per_minute() {
-        assert_eq!(reading_minutes(0), None);
-        assert_eq!(reading_minutes(1), Some(1));
-        assert_eq!(reading_minutes(300), Some(1));
-        assert_eq!(reading_minutes(301), Some(2));
-        assert_eq!(reading_minutes(1500), Some(5));
     }
 
     #[test]
