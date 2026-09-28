@@ -270,6 +270,7 @@ impl TableColumnLayout {
         let column_count = preferred_widths.len();
         let safe_table_width = table_width.max(1.0);
         let equal_share = safe_table_width / column_count as f32;
+        // 所有列的内容都塞得进平均份额时保持等宽，内容均匀的表格看起来更整齐。
         if preferred_widths
             .iter()
             .all(|preferred| *preferred <= equal_share + f32::EPSILON)
@@ -277,72 +278,56 @@ impl TableColumnLayout {
             return Self::equal(column_count);
         }
 
-        let floor_width = min_column_width
-            .max(0.0)
-            .min(safe_table_width / column_count as f32);
-        let weights = preferred_widths
-            .iter()
-            .map(|preferred| preferred.max(equal_share))
-            .collect::<Vec<_>>();
-        let mut assigned_widths = vec![0.0; column_count];
-        let mut remaining_indices = (0..column_count).collect::<Vec<_>>();
-        let mut remaining_width = safe_table_width;
+        // 逐轮分配：每列先拿最小宽度，然后在剩余空间里「先满足内容窄的列，再平分」。
+        // 按内容宽度做权重不行：一列内容特別长时会把权重全吃走，其余列被压到只剩
+        // 几个字符（用户报修：宽表格的前几列挤成一团）。
+        let floor_width = min_column_width.max(0.0).min(equal_share);
+        let mut widths = vec![floor_width; column_count];
+        let mut remaining = (safe_table_width - floor_width * column_count as f32).max(0.0);
+        let mut pending = (0..column_count).collect::<Vec<_>>();
 
-        loop {
-            if remaining_indices.is_empty() {
-                break;
-            }
-
-            let weight_sum = remaining_indices
-                .iter()
-                .map(|index| weights[*index])
-                .sum::<f32>();
-            if weight_sum <= f32::EPSILON {
-                let share = remaining_width / remaining_indices.len() as f32;
-                for index in remaining_indices {
-                    assigned_widths[index] = share;
-                }
-                break;
-            }
-
-            let mut newly_floored = Vec::new();
-            for index in &remaining_indices {
-                let width = remaining_width * (weights[*index] / weight_sum);
-                if width < floor_width - f32::EPSILON {
-                    newly_floored.push(*index);
-                } else {
-                    assigned_widths[*index] = width;
+        while !pending.is_empty() && remaining > f32::EPSILON {
+            let share = remaining / pending.len() as f32;
+            let mut satisfied = Vec::new();
+            for index in &pending {
+                let capacity = (preferred_widths[*index] - widths[*index]).max(0.0);
+                if capacity <= share + f32::EPSILON {
+                    satisfied.push(*index);
+                    widths[*index] += capacity;
+                    remaining -= capacity;
                 }
             }
-
-            if newly_floored.is_empty() {
-                break;
-            }
-
-            if newly_floored.len() == remaining_indices.len() {
-                let share = remaining_width / remaining_indices.len() as f32;
-                for index in remaining_indices {
-                    assigned_widths[index] = share;
+            if satisfied.is_empty() {
+                // 没有列能被完全满足：剩下的列平分剩余空间。
+                for index in &pending {
+                    widths[*index] += share;
                 }
+                remaining = 0.0;
                 break;
             }
-
-            for index in &newly_floored {
-                assigned_widths[*index] = floor_width;
-                remaining_width -= floor_width;
-            }
-            remaining_indices.retain(|index| !newly_floored.contains(index));
+            pending.retain(|index| !satisfied.contains(index));
         }
 
-        let assigned_sum = assigned_widths.iter().sum::<f32>();
+        // 所有列都拿到内容宽度后还有剩余：按内容权重摊开，表格铺满容器宽度。
+        if remaining > f32::EPSILON {
+            let weight_sum = preferred_widths.iter().copied().sum::<f32>();
+            if weight_sum <= f32::EPSILON {
+                for width in &mut widths {
+                    *width += remaining / column_count as f32;
+                }
+            } else {
+                for (width, preferred) in widths.iter_mut().zip(preferred_widths) {
+                    *width += remaining * (preferred / weight_sum);
+                }
+            }
+        }
+
+        let assigned_sum = widths.iter().sum::<f32>();
         if assigned_sum <= f32::EPSILON {
             return Self::equal(column_count);
         }
 
-        let fractions = assigned_widths
-            .into_iter()
-            .map(|width| width / assigned_sum)
-            .collect::<Vec<_>>();
+        let fractions = widths.into_iter().map(|width| width / assigned_sum).collect();
         Self { fractions }
     }
 }
@@ -1014,6 +999,28 @@ mod tests {
         assert_close(fractions[0], 1.0 / 3.0);
         assert_close(fractions[1], 1.0 / 3.0);
         assert_close(fractions[2], 1.0 / 3.0);
+    }
+
+    #[test]
+    fn wide_cell_does_not_squeeze_narrow_columns() {
+        // 用户报修：最后一列内容极长的 5 列表格，前三列被挤成几个字符。列宽应该
+        // 先满足内容少的列，剩下的空间才归长列。
+        let layout = TableColumnLayout::from_preferred_widths(
+            &[260.0, 60.0, 150.0, 60.0, 3000.0],
+            1000.0,
+            60.0,
+        );
+        let widths = layout
+            .fractions()
+            .iter()
+            .map(|fraction| fraction * 1000.0)
+            .collect::<Vec<_>>();
+        assert_close(widths[0], 260.0);
+        assert_close(widths[1], 60.0);
+        assert_close(widths[2], 150.0);
+        assert_close(widths[3], 60.0);
+        assert_close(widths[4], 470.0);
+        assert_close(widths.iter().sum::<f32>(), 1000.0);
     }
 
     #[test]
