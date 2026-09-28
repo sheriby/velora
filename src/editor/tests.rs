@@ -7038,3 +7038,27 @@ async fn cjk_wrapping_does_not_start_lines_with_punctuation(cx: &mut TestAppCont
     }
     assert!(wrapped_lines > 100, "折行样本太少（{wrapped_lines}），测试没跑够");
 }
+
+#[gpui::test]
+async fn blank_line_block_renders_as_a_small_gap(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 松列表（- a / 空行 / - b）：空行块原本占一整行高 + 上下 padding，加起来
+    // 比正文一行还高（用户报修：空行太大）。空行块应该只剩下一个块间距的高度。
+    let (_editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "- a\n\n- b\n".to_string(), None)
+    });
+    redraw(cx);
+    let blank = cx.debug_bounds("block-blank-line").expect("没有找到空行块");
+    let normal = cx.debug_bounds("block-shell").expect("没有找到正文块");
+    assert!(
+        blank.size.height <= px(20.0),
+        "空行块高度 {:.1}px，还是太大",
+        f32::from(blank.size.height)
+    );
+    assert!(
+        blank.size.height < normal.size.height,
+        "空行块 {:.1}px 不比正文块 {:.1}px 矮",
+        f32::from(blank.size.height),
+        f32::from(normal.size.height)
+    );
+}

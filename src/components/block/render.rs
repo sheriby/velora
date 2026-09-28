@@ -1969,16 +1969,42 @@ impl Block {
         row.child(div().relative().w_full().child(chevron).child(text))
     }
 
+    /// 空行块（空段落、未聚焦、非源码模式）渲染时收窄到只剩一个块间距。
+    ///
+    /// 松列表 `- xx` / 空行 / `- xx` 里，空行块原本占「一行高（约 27px）+ 上下
+    /// padding（8px）」= 35px，加上相邻块间距就是 47px，比正文一行还高，看着就是
+    /// 一个巨大的空行（用户报修）。收窄后空行只贡献一个 `block_gap`，松列表项目
+    /// 之间是正常的段间距。聚焦后恢复整行高度，否则光标和输入框看不见。
+    fn collapses_to_blank_gap(&self, focused: bool, source_mode: bool) -> bool {
+        !focused
+            && !source_mode
+            && self.kind() == BlockKind::Paragraph
+            && self.marked_range.is_none()
+            && self.display_text().trim().is_empty()
+    }
+
     fn render_shell(
         &self,
         block_id: ElementId,
         source_mode: bool,
+        focused: bool,
         cursor_style: CursorStyle,
         padding_left: f32,
         padding_right: f32,
         dimensions: &ThemeDimensions,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let collapsed_blank_line = self.collapses_to_blank_gap(focused, source_mode);
+        let min_height = if collapsed_blank_line {
+            dimensions.block_gap
+        } else {
+            dimensions.block_min_height
+        };
+        let padding_y = if collapsed_blank_line {
+            0.0
+        } else {
+            dimensions.block_padding_y
+        };
         let base = div()
             .id(block_id)
             .key_context(BLOCK_EDITOR_CONTEXT)
@@ -2017,11 +2043,20 @@ impl Block {
             .w_full()
             .min_w(px(0.0))
             .flex_shrink_0()
-            .min_h(px(dimensions.block_min_height))
-            .py(px(dimensions.block_padding_y))
+            .min_h(px(min_height))
+            .py(px(padding_y))
             .pl(px(padding_left))
             .pr(px(padding_right))
             .cursor(cursor_style);
+
+        // 测试用的调试选择器：单元测试用 debug_bounds 断言空行块真的收窄了。
+        // 只在带调试断言的构建里开着，release 不背这个开销。
+        #[cfg(debug_assertions)]
+        let base = if collapsed_blank_line {
+            base.debug_selector(|| "block-blank-line".to_string())
+        } else {
+            base.debug_selector(|| "block-shell".to_string())
+        };
 
         if source_mode {
             base
@@ -2125,6 +2160,7 @@ impl Render for Block {
                 .render_shell(
                     block_id,
                     false,
+                    focused,
                     if showing_rendered_image {
                         CursorStyle::PointingHand
                     } else {
@@ -2220,6 +2256,7 @@ impl Render for Block {
                 .render_shell(
                     block_id.clone(),
                     true,
+                    focused,
                     CursorStyle::IBeam,
                     d.block_padding_x,
                     d.block_padding_x,
@@ -2255,9 +2292,27 @@ impl Render for Block {
                 .into_any_element();
         }
 
+        // 空行块不渲染内容：空的文本元素自带一行高，会把 min_h 撑开（用户报修：
+        // 松列表里的空行比正文一行还高）。
+        if self.collapses_to_blank_gap(focused, false) {
+            return self
+                .render_shell(
+                    block_id,
+                    false,
+                    focused,
+                    CursorStyle::IBeam,
+                    depth_padding,
+                    d.block_padding_x,
+                    d,
+                    cx,
+                )
+                .into_any_element();
+        }
+
         let focused_base = self.render_shell(
             block_id.clone(),
             false,
+            focused,
             if showing_rendered_image {
                 CursorStyle::PointingHand
             } else {
