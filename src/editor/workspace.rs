@@ -262,7 +262,7 @@ pub(super) struct WorkspaceState {
     context_menu: Option<WorkspaceContextMenu>,
     tab_context_menu: Option<TabContextMenu>,
     /// 文件树过滤框（roadmap D8）：非空时树显示扁平匹配列表。
-    tree_filter: String,
+    pub(super) tree_filter: String,
     tree_filter_focus: Option<FocusHandle>,
     panel_width: Option<f32>,
     resize_drag: Option<WorkspaceResizeDrag>,
@@ -3838,7 +3838,7 @@ impl Editor {
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
-        _window: &Window,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
@@ -3850,6 +3850,9 @@ impl Editor {
             .clone();
         let focus_for_click = focus.clone();
         let editor = cx.entity().downgrade();
+        // 聚焦即给出高亮描边并清掉占位符：否则看起来像不可点击的静态文字
+        // （用户报修）。
+        let focused = focus.is_focused(window);
         div()
             .id("workspace-tree-filter")
             .relative()
@@ -3862,16 +3865,25 @@ impl Editor {
             .items_center()
             .rounded(px(5.0))
             .border_1()
-            .border_color(c.dialog_border)
+            .border_color(if focused {
+                c.dialog_primary_button_bg
+            } else {
+                c.dialog_border
+            })
             .bg(c.editor_background)
             .text_size(px(11.0))
-            .text_color(if query.is_empty() {
+            .text_color(if query.is_empty() && !focused {
                 c.dialog_muted
             } else {
                 c.text_default
             })
+            .cursor(CursorStyle::IBeam)
             .child(if query.is_empty() {
-                strings.tree_filter_placeholder.clone()
+                if focused {
+                    String::new()
+                } else {
+                    strings.tree_filter_placeholder.clone()
+                }
             } else {
                 query.clone()
             })
@@ -3885,32 +3897,6 @@ impl Editor {
                     let _ = editor.update(cx, |editor, cx| {
                         editor.on_tree_filter_key_down(event, cx);
                     });
-                }
-            })
-            .on_key_down(move |event: &KeyDownEvent, _window, cx| {
-                let key = event.keystroke.key.clone();
-                match key.as_str() {
-                    "escape" => {
-                        let _ = editor.update(cx, |editor, cx| {
-                            editor.workspace.tree_filter.clear();
-                            editor.workspace.tree_filter_focus = None;
-                            cx.notify();
-                        });
-                    }
-                    "backspace" => {
-                        let _ = editor.update(cx, |editor, cx| {
-                            editor.workspace.tree_filter.pop();
-                            cx.notify();
-                        });
-                    }
-                    _ => {
-                        if key.len() == 1 && key.chars().all(|ch| ch.is_ascii_graphic()) {
-                            let _ = editor.update(cx, |editor, cx| {
-                                editor.workspace.tree_filter.push_str(&key.to_lowercase());
-                                cx.notify();
-                            });
-                        }
-                    }
                 }
             })
             .into_any_element()
