@@ -218,6 +218,10 @@ impl TableData {
     }
 }
 
+/// 内容窄的列钉宽时多给的余量（像素）。像素取整和边框描边之后，内容刚好等于列
+/// 宽的文字仍可能折行，留一点点余量；不会超过该列当前的均分份额。
+const EXTRA_COLUMN_SLACK: f32 = 4.0;
+
 /// Responsive width fractions shared by every row of a native table.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableColumnLayout {
@@ -270,17 +274,13 @@ impl TableColumnLayout {
         let column_count = preferred_widths.len();
         let safe_table_width = table_width.max(1.0);
         let equal_share = safe_table_width / column_count as f32;
-        // 所有列的内容都塞得进平均份额时保持等宽，内容均匀的表格看起来更整齐。
-        if preferred_widths
-            .iter()
-            .all(|preferred| *preferred <= equal_share + f32::EPSILON)
-        {
-            return Self::equal(column_count);
-        }
 
-        // 逐轮分配：每列先拿最小宽度，然后在剩余空间里「先满足内容窄的列，再平分」。
-        // 按内容宽度做权重不行：一列内容特別长时会把权重全吃走，其余列被压到只剩
-        // 几个字符（用户报修：宽表格的前几列挤成一团）。
+        // 水位法（用户方案）：先把空间平分，然后把内容装得下的列钉在「内容宽 +
+        // 一点点」上，钉住后腾出的空间在还缺空间的列之间重新平分，反复迭代。
+        //
+        // 两种直觉做法都是错的：按内容宽度做权重，一列内容特別长时会把权重全吃
+        // 走，其余列被压到只剩几个字符；把内容窄的列拉到平均份额，它白白占着空
+        // 位，宽列反倒被压到内容宽度以下换行（用户报修）。
         let floor_width = min_column_width.max(0.0).min(equal_share);
         let mut widths = vec![floor_width; column_count];
         let mut remaining = (safe_table_width - floor_width * column_count as f32).max(0.0);
@@ -288,17 +288,31 @@ impl TableColumnLayout {
 
         while !pending.is_empty() && remaining > f32::EPSILON {
             let share = remaining / pending.len() as f32;
+            let squeezed = pending
+                .iter()
+                .any(|index| preferred_widths[*index] > widths[*index] + share + f32::EPSILON);
+            if !squeezed {
+                // 没有列再缺空间：剩余空间平分给还没定宽的列，表格铺满容器宽度。
+                for index in &pending {
+                    widths[*index] += share;
+                }
+                remaining = 0.0;
+                break;
+            }
+
+            // 内容塞得进当前份额的列钉住：内容宽 + 一点点余量，但不超过自己的份额。
             let mut satisfied = Vec::new();
             for index in &pending {
                 let capacity = (preferred_widths[*index] - widths[*index]).max(0.0);
                 if capacity <= share + f32::EPSILON {
                     satisfied.push(*index);
-                    widths[*index] += capacity;
-                    remaining -= capacity;
+                    let slack = (share - capacity).min(EXTRA_COLUMN_SLACK).max(0.0);
+                    widths[*index] += capacity + slack;
+                    remaining -= capacity + slack;
                 }
             }
             if satisfied.is_empty() {
-                // 没有列能被完全满足：剩下的列平分剩余空间。
+                // 没有列能被完全满足：剩下的列平分剩余空间，内容都会换行。
                 for index in &pending {
                     widths[*index] += share;
                 }
@@ -308,17 +322,11 @@ impl TableColumnLayout {
             pending.retain(|index| !satisfied.contains(index));
         }
 
-        // 所有列都拿到内容宽度后还有剩余：按内容权重摊开，表格铺满容器宽度。
+        // 所有列都钉住后还有剩余：平分掉，表格铺满容器宽度。
         if remaining > f32::EPSILON {
-            let weight_sum = preferred_widths.iter().copied().sum::<f32>();
-            if weight_sum <= f32::EPSILON {
-                for width in &mut widths {
-                    *width += remaining / column_count as f32;
-                }
-            } else {
-                for (width, preferred) in widths.iter_mut().zip(preferred_widths) {
-                    *width += remaining * (preferred / weight_sum);
-                }
+            let share = remaining / column_count as f32;
+            for width in &mut widths {
+                *width += share;
             }
         }
 
@@ -960,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn equal_share_fast_path_keeps_columns_uniform() {
+    fn roomy_table_keeps_columns_uniform() {
         let layout = TableColumnLayout::from_preferred_widths(&[32.0, 64.0, 48.0], 360.0, 60.0);
         let fractions = layout.fractions();
         assert_eq!(fractions.len(), 3);
@@ -1002,6 +1010,48 @@ mod tests {
     }
 
     #[test]
+    fn narrow_column_does_not_steal_the_average_share() {
+        // 用户报修：一列内容很短、另外两列内容装不下时，短的列不该拿到平均份额
+        // （1000/3≈333），而应该只拿「内容宽 + 一点点」，腾出的空间给宽列。
+        let layout =
+            TableColumnLayout::from_preferred_widths(&[60.0, 500.0, 500.0], 1000.0, 60.0);
+        let widths = layout
+            .fractions()
+            .iter()
+            .map(|fraction| fraction * 1000.0)
+            .collect::<Vec<_>>();
+        assert!(widths[0] <= 70.0, "窄列 {:.1} 宽于内容宽度", widths[0]);
+        assert_close(widths[1], widths[2]);
+        assert!(
+            widths[1] > 1000.0 / 3.0 + 60.0,
+            "宽列只拿到 {:.1}，没比平均份额多",
+            widths[1]
+        );
+        assert_close(widths.iter().sum::<f32>(), 1000.0);
+    }
+
+    #[test]
+    fn leftover_is_split_between_wide_columns_not_dumped_on_the_last_one() {
+        // 钉住窄列后剩余空间在还缺空间的宽列之间平分；绝不能出现「最后一列独吞
+        // 全部剩余」的情况。
+        let layout =
+            TableColumnLayout::from_preferred_widths(&[60.0, 500.0, 500.0], 1000.0, 60.0);
+        let widths = layout
+            .fractions()
+            .iter()
+            .map(|fraction| fraction * 1000.0)
+            .collect::<Vec<_>>();
+        assert!(widths[0] <= 70.0, "窄列 {:.1} 宽于内容宽度", widths[0]);
+        assert_close(widths[1], widths[2]);
+        assert!(
+            widths[2] < 500.0,
+            "最后一列拿到 {:.1}，把剩余全吞了",
+            widths[2]
+        );
+        assert_close(widths.iter().sum::<f32>(), 1000.0);
+    }
+
+    #[test]
     fn wide_cell_does_not_squeeze_narrow_columns() {
         // 用户报修：最后一列内容极长的 5 列表格，前三列被挤成几个字符。列宽应该
         // 先满足内容少的列，剩下的空间才归长列。
@@ -1015,11 +1065,11 @@ mod tests {
             .iter()
             .map(|fraction| fraction * 1000.0)
             .collect::<Vec<_>>();
-        assert_close(widths[0], 260.0);
-        assert_close(widths[1], 60.0);
-        assert_close(widths[2], 150.0);
-        assert_close(widths[3], 60.0);
-        assert_close(widths[4], 470.0);
+        assert_close(widths[0], 264.0);
+        assert_close(widths[1], 64.0);
+        assert_close(widths[2], 154.0);
+        assert_close(widths[3], 64.0);
+        assert_close(widths[4], 454.0);
         assert_close(widths.iter().sum::<f32>(), 1000.0);
     }
 

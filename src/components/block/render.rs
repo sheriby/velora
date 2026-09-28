@@ -2969,27 +2969,13 @@ impl Render for Block {
                 };
 
                 let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-                let table_width = effective_table_width(self, viewport_width, d);
-                let column_layout = self
-                    .record
-                    .table
-                    .as_ref()
-                    .map(|table| TableColumnLayout::measure(table, table_width, window, &theme))
-                    .unwrap_or_else(|| TableColumnLayout::equal(runtime.header.len()));
-                let preview_marker = self.table_axis_preview;
-                let selected_marker = self.table_axis_selection;
-                let body_row_count = runtime.rows.len();
                 let append_extent = px(d.table_append_button_extent);
                 let append_inset = px(d.table_append_button_inset);
                 let activation_band = px(d.table_append_activation_band);
-                let top_gutter = if column_axis_gutter_visible(preview_marker, selected_marker) {
-                    activation_band
-                } else {
-                    px(0.0)
-                };
-                let column_append_top = top_gutter + activation_band;
                 let column_control_visible = self.table_append_column_hovered;
                 let row_control_visible = self.table_append_row_hovered;
+                // 悬停出现的追加按钮会让行容器收窄（下方的 `pr(right_gutter)`），
+                // 列宽必须按收窄后的宽度算，否则被钉在内容宽度上的列会在悬停时换行。
                 let right_gutter = if column_control_visible {
                     append_extent + append_inset
                 } else {
@@ -3000,6 +2986,24 @@ impl Render for Block {
                 } else {
                     px(0.0)
                 };
+                let table_width = (effective_table_width(self, viewport_width, d)
+                    - f32::from(right_gutter))
+                    .max(1.0);
+                let column_layout = self
+                    .record
+                    .table
+                    .as_ref()
+                    .map(|table| TableColumnLayout::measure(table, table_width, window, &theme))
+                    .unwrap_or_else(|| TableColumnLayout::equal(runtime.header.len()));
+                let preview_marker = self.table_axis_preview;
+                let selected_marker = self.table_axis_selection;
+                let body_row_count = runtime.rows.len();
+                let top_gutter = if column_axis_gutter_visible(preview_marker, selected_marker) {
+                    activation_band
+                } else {
+                    px(0.0)
+                };
+                let column_append_top = top_gutter + activation_band;
                 let weak_table_block = cx.entity().downgrade();
 
                 let header_cells = runtime.header;
