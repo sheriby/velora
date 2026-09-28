@@ -101,14 +101,21 @@ async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
     let start = Instant::now();
     redraw(cx);
     let first_draw = start.elapsed();
-    let mut steady_draws = Vec::with_capacity(12);
-    for _ in 0..12 {
+    let steady_count = std::env::var("VELORA_STEADY_COUNT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
+    let mut steady_draws = Vec::with_capacity(steady_count);
+    for _ in 0..steady_count {
         let start = Instant::now();
         redraw(cx);
         steady_draws.push(start.elapsed().as_secs_f64() * 1000.0);
+        if steady_count > 100 {
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
     }
     steady_draws.sort_by(f64::total_cmp);
-    let p95 = steady_draws[11];
+    let p95 = steady_draws[steady_draws.len() - 1];
     println!(
         "bytes={bytes} rows={rows} construct_ms={:.1} first_draw_ms={:.1} steady_p95_ms={p95:.1}",
         construct.as_secs_f64() * 1000.0,
@@ -172,14 +179,21 @@ async fn manual_code_load_probe(cx: &mut TestAppContext) {
     let start = Instant::now();
     redraw(cx);
     let first_draw = start.elapsed();
-    let mut steady_draws = Vec::with_capacity(12);
-    for _ in 0..12 {
+    let steady_count = std::env::var("VELORA_STEADY_COUNT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
+    let mut steady_draws = Vec::with_capacity(steady_count);
+    for _ in 0..steady_count {
         let start = Instant::now();
         redraw(cx);
         steady_draws.push(start.elapsed().as_secs_f64() * 1000.0);
+        if steady_count > 100 {
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
     }
     steady_draws.sort_by(f64::total_cmp);
-    let p95 = steady_draws[11];
+    let p95 = steady_draws[steady_draws.len() - 1];
     println!(
         "bytes={bytes} rows={rows} construct_ms={:.1} first_draw_ms={:.1} steady_p95_ms={p95:.1}",
         construct.as_secs_f64() * 1000.0,

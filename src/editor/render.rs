@@ -104,7 +104,14 @@ pub(crate) struct RenderedRowPlan {
     pub fold_version: u64,
     pub toc_version: u64,
     pub rendered_mode: bool,
+    pub block_gap: f32,
     pub rows: Vec<RenderedRowPlanRow>,
+    /// P7：行元数据预计算（普通行距/起始下标/行首 id），未变更帧零重算。
+    pub visible_starts: Vec<usize>,
+    pub gaps: Vec<f32>,
+    pub first_ids: Vec<EntityId>,
+    /// 每行 footprint；学习更新原地写回，未变更帧免 160k 次哈希查找。
+    pub strides: std::rc::Rc<std::cell::RefCell<Vec<f32>>>,
 }
 
 pub(crate) struct RenderedRowPlanRow {
@@ -495,13 +502,21 @@ impl Editor {
     /// P4b：对可见块序列做一次折叠过滤后的分组扫描，产出可复用的行计划。
     /// 只读块元数据，不构建任何元素。
     fn build_rendered_row_plan(
+        &self,
         visible: &[super::tree::VisibleBlock],
         revision: u64,
         fold_version: u64,
         toc_version: u64,
         rendered_mode: bool,
+        block_gap: f32,
         cx: &mut Context<Self>,
     ) -> RenderedRowPlan {
+        let estimate = cx
+            .global::<crate::theme::ThemeManager>()
+            .current_arc()
+            .dimensions
+            .block_min_height
+            .max(1.0);
         let spacing_of = |visible: &super::tree::VisibleBlock| -> RenderedRowSpacingInfo {
             RenderedRowSpacingInfo::from_block(visible.entity.read(cx))
         };
@@ -572,12 +587,46 @@ impl Editor {
             index += 1;
         }
 
+        // P7：行元数据与 stride 初值在构建期一次算好，未变更帧零重算。
+        let row_count = rows.len();
+        let mut visible_starts = Vec::with_capacity(row_count);
+        let mut gaps = Vec::with_capacity(row_count);
+        let mut first_ids = Vec::with_capacity(row_count);
+        let mut previous_row_spacing = None;
+        for row in &rows {
+            visible_starts.push(row.visible_start);
+            first_ids.push(row.first_id);
+            let first_spacing = row.first_spacing();
+            gaps.push(rendered_row_top_gap(
+                previous_row_spacing,
+                first_spacing,
+                block_gap,
+                rendered_mode,
+            ));
+            previous_row_spacing = Some(row.last_spacing());
+        }
+        let strides = rows
+            .iter()
+            .map(|row| self.row_stride_cache.get(&row.first_id).copied())
+            .collect::<Vec<Option<f32>>>();
+        let strides = std::rc::Rc::new(std::cell::RefCell::new(
+            strides
+                .into_iter()
+                .map(|stride| stride.unwrap_or(estimate))
+                .collect::<Vec<f32>>(),
+        ));
+
         RenderedRowPlan {
             revision,
             fold_version,
             toc_version,
             rendered_mode,
+            block_gap,
             rows,
+            visible_starts,
+            gaps,
+            first_ids,
+            strides,
         }
     }
 
@@ -2118,6 +2167,7 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+
         self.window_handle = Some(window.window_handle());
         if self.system_appearance_subscription.is_none() {
             self.system_appearance_subscription =
@@ -2178,6 +2228,7 @@ impl Render for Editor {
             self.fold_state_version,
             self.toc_state_version,
             rendered_mode,
+            d.block_gap,
         );
         let cached_plan = self
             .rendered_row_plan
@@ -2187,6 +2238,7 @@ impl Render for Editor {
                     && plan.fold_version == plan_key.1
                     && plan.toc_version == plan_key.2
                     && plan.rendered_mode == plan_key.3
+                    && plan.block_gap == plan_key.4
             });
         let plan_rebuilt = cached_plan.is_none();
         let rendered_row_plan = match cached_plan {
@@ -2194,12 +2246,13 @@ impl Render for Editor {
             None => {
                 let visible_blocks =
                     self.apply_heading_fold_filter(self.document.visible_blocks().to_vec(), cx);
-                let plan = std::sync::Arc::new(Self::build_rendered_row_plan(
+                let plan = std::sync::Arc::new(self.build_rendered_row_plan(
                     &visible_blocks,
                     plan_key.0,
                     plan_key.1,
                     plan_key.2,
                     rendered_mode,
+                    plan_key.4,
                     cx,
                 ));
                 self.rendered_row_plan = Some(plan.clone());
@@ -2260,24 +2313,11 @@ impl Render for Editor {
         // Vec<RenderedRowSpacingInfo> sized to all visible blocks. For long
         // documents this skips a ~tens-of-KB allocation per frame; per-block
         // entity.read_with is a cheap immutable lock + 7-field struct copy.
-        // Each row's leading `mt` gap; the top spacer subtracts the first mounted
-        // row's, since that row re-applies it. 全部来自计划，纯浮点运算。
-        let mut previous_row_spacing = None;
-        let mut row_starts: Vec<usize> = Vec::with_capacity(rows.len());
-        let mut row_top_gaps: Vec<f32> = Vec::with_capacity(rows.len());
-        let mut row_first_ids: Vec<EntityId> = Vec::with_capacity(rows.len());
-        for row in rows {
-            row_first_ids.push(row.first_id);
-            row_starts.push(row.visible_start);
-            let first_spacing = row.first_spacing();
-            row_top_gaps.push(rendered_row_top_gap(
-                previous_row_spacing,
-                first_spacing,
-                d.block_gap,
-                rendered_mode,
-            ));
-            previous_row_spacing = Some(row.last_spacing());
-        }
+        // P7：行元数据（起始下标/行距/行首 id/footprint）全部来自计划，
+        // 未变更帧零重算。
+        let row_starts = &rendered_row_plan.visible_starts;
+        let row_top_gaps = &rendered_row_plan.gaps;
+        let row_first_ids = &rendered_row_plan.first_ids;
         // The focused row is always kept mounted so its caret is not blurred; a
         // table cell maps to its containing table block's row.
         let focus_row = focused_visible_index.map(|visible_index| {
@@ -2330,6 +2370,10 @@ impl Render for Editor {
                         let stride = f32::from(next_bounds.top() - bounds.top());
                         if stride > 0.0 && stride.is_finite() {
                             self.row_stride_cache.insert(row_first_ids[row], stride);
+                            if let Some(slot) = rendered_row_plan.strides.borrow_mut().get_mut(row)
+                            {
+                                *slot = stride;
+                            }
                         }
                     }
                 }
@@ -2339,10 +2383,7 @@ impl Render for Editor {
         // Unmeasured rows use the minimum block height: a lower bound, so the
         // window over-mounts rather than ever landing on a spacer.
         let estimate = d.block_min_height.max(1.0);
-        let strides: Vec<f32> = row_first_ids
-            .iter()
-            .map(|id| self.row_stride_cache.get(id).copied().unwrap_or(estimate))
-            .collect();
+        let strides = rendered_row_plan.strides.borrow();
 
         // Bound the cache against block churn, only when it outgrows the live rows.
         if self.row_stride_cache.len() > row_first_ids.len().saturating_mul(2) {
