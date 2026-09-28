@@ -20,7 +20,7 @@ use crate::components::{
     render_mermaid_svg_for_display, resolve_image_source, style_for_node,
 };
 use crate::i18n::{I18nManager, I18nStrings};
-use crate::theme::{Theme, ThemeDimensions, ThemeManager};
+use crate::theme::{Theme, ThemeColors, ThemeDimensions, ThemeManager};
 
 // Unicode bullet glyphs for nested list depths.
 // 一级实心圆、二级空心圆、三级及以上实心方块（对齐浏览器 `ul` 的
@@ -71,6 +71,16 @@ fn header_axis_emphasis(color: Hsla) -> Hsla {
         a: color.a + (1.0 - color.a) * 0.5,
         ..color
     }
+}
+
+fn table_cell_colors(base: Hsla, highlight: TableAxisHighlight, focused: bool, colors: &ThemeColors) -> (Hsla, Hsla) {
+    let tint = match highlight {
+        TableAxisHighlight::None => hsla(0.0, 0.0, 0.0, 0.0),
+        TableAxisHighlight::Preview => Hsla { a: colors.table_axis_preview_bg.a.min(0.06), ..colors.table_axis_preview_bg },
+        TableAxisHighlight::Selected => Hsla { a: colors.table_axis_selected_bg.a.min(0.10), ..colors.table_axis_selected_bg },
+    };
+    let border = if focused { colors.table_cell_active_outline } else { colors.table_border };
+    (base.blend(tint), border)
 }
 
 /// Detects a `#tag` word: `#` followed by at least one alphanumeric
@@ -2148,20 +2158,7 @@ impl Render for Block {
             } else {
                 c.table_cell_bg
             };
-            let bg = match highlight {
-                TableAxisHighlight::None => base_bg,
-                TableAxisHighlight::Preview => c.table_axis_preview_bg,
-                TableAxisHighlight::Selected => c.table_axis_selected_bg,
-            };
-            let border_color = if focused {
-                c.table_cell_active_outline
-            } else {
-                match highlight {
-                    TableAxisHighlight::None => c.table_border,
-                    TableAxisHighlight::Preview => c.table_axis_preview_bg,
-                    TableAxisHighlight::Selected => c.table_axis_selected_bg,
-                }
-            };
+            let (bg, border_color) = table_cell_colors(base_bg, highlight, focused, c);
             let cell_base = self
                 .render_shell(
                     block_id,
@@ -3097,10 +3094,10 @@ impl Render for Block {
                                 kind: TableAxisKind::Column,
                                 index: column,
                             };
-                            let band_bg = if selected_marker == Some(marker) {
-                                c.table_axis_selected_bg
+                            let indicator = if selected_marker == Some(marker) {
+                                Hsla { a: 0.8, ..c.table_cell_active_outline }
                             } else if preview_marker == Some(marker) {
-                                c.table_axis_preview_bg
+                                Hsla { a: 0.4, ..c.table_cell_active_outline }
                             } else {
                                 hsla(0.0, 0.0, 0.0, 0.0)
                             };
@@ -3120,10 +3117,11 @@ impl Render for Block {
                                             )
                                             .into(),
                                         ))
+                                        .relative()
                                         .w_full()
                                         .h_full()
-                                        .rounded(px(6.0))
-                                        .bg(band_bg)
+                                        .child(div().absolute().bottom_0().left(px(4.0)).right(px(4.0))
+                                            .h(px(2.0)).bg(indicator))
                                         .cursor_pointer()
                                         .on_hover(move |hovered, _window, cx| {
                                             let _ = hover_block.update(cx, |_block, cx| {
@@ -3832,6 +3830,21 @@ mod tests {
                 index: 0,
             }),
         ));
+    }
+
+    #[test]
+    fn table_axis_highlight_keeps_grid_and_header_distinct() {
+        use crate::components::TableAxisHighlight;
+        for theme in [Theme::forest_theme(), Theme::light_theme(), Theme::default_theme()] {
+            for highlight in [TableAxisHighlight::Preview, TableAxisHighlight::Selected] {
+                let colors = &theme.colors;
+                let (body, border) = super::table_cell_colors(colors.table_cell_bg, highlight, false, colors);
+                let (header, _) = super::table_cell_colors(colors.table_header_bg, highlight, false, colors);
+                assert_eq!(border, colors.table_border, "列高亮必须保留网格线");
+                assert_ne!(body, header, "选中列也应保留表头与正文的层次");
+                assert_ne!(body, border, "网格线不能与背景融成一片");
+            }
+        }
     }
 
     fn assert_color_near(color: Hsla, red: u8, green: u8, blue: u8, alpha: u8) {

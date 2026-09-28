@@ -1180,8 +1180,8 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.table_header_bg = color(palette.panel);
     c.table_cell_bg = color(palette.window);
     c.table_cell_active_outline = color(palette.accent);
-    c.table_axis_preview_bg = color(palette.selection);
-    c.table_axis_selected_bg = color(palette.selection);
+    c.table_axis_preview_bg = color((palette.accent & 0xffffff00) | 0x0f);
+    c.table_axis_selected_bg = color((palette.accent & 0xffffff00) | 0x19);
     c.table_append_button_bg = color(palette.panel);
     c.table_append_button_hover = color(palette.panel_hover);
     c.table_append_button_text = color(palette.text);
