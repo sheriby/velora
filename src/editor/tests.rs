@@ -6898,3 +6898,63 @@ async fn typing_consecutive_backslashes_keeps_every_one(cx: &mut TestAppContext)
         );
     });
 }
+
+#[gpui::test]
+async fn typing_backslashes_in_link_blocks_does_not_multiply(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let count_backslashes = |value: &str| value.matches('\\').count();
+
+    // 用户报修：行首是自动链接的块里按反斜杠，可见数量按「两倍加一」翻倍
+    // （1 -> 3 -> 7）。这三类块都走 markdown 源直编路径。
+    for source in [
+        "<https://example.com> tail",
+        "[a][b] tail",
+        "[a](https://example.com) tail",
+    ] {
+        let (editor, cx) = cx.add_window_view({
+            let source = source.to_string();
+            move |_window, cx| Editor::from_markdown(cx, source, None)
+        });
+        cx.simulate_keystrokes("home");
+        redraw(cx);
+        for typed in 1..=3 {
+            cx.simulate_input("\\");
+            redraw(cx);
+            editor.read_with(cx, |editor, cx| {
+                let block = editor.document.visible_blocks()[0].entity.clone();
+                let screen = block.read(cx).display_text();
+                let file = editor.document.markdown_text(cx);
+                assert_eq!(
+                    count_backslashes(&screen),
+                    typed,
+                    "{source:?} 输入 {typed} 次后可见反斜杠数量（屏幕 {screen:?}）"
+                );
+                assert_eq!(
+                    count_backslashes(&file),
+                    typed * 2,
+                    "{source:?} 输入 {typed} 次后源文件反斜杠数量（文件 {file:?}）"
+                );
+            });
+        }
+    }
+
+    // 光标贴在自动链接末尾（行尾）时同样不能把插入点落进 `<...>` 里。
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "tail <https://example.com>".to_string(), None)
+    });
+    cx.simulate_keystrokes("end");
+    redraw(cx);
+    for typed in 1..=2 {
+        cx.simulate_input("\\");
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.clone();
+            let screen = block.read(cx).display_text();
+            assert_eq!(
+                count_backslashes(&screen),
+                typed,
+                "行尾输入 {typed} 次后可见反斜杠数量（屏幕 {screen:?}）"
+            );
+        });
+    }
+}

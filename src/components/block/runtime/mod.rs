@@ -27,8 +27,8 @@ use super::{
     parse_standalone_image, resolve_image_source, standalone_image_width_percent,
 };
 use crate::components::markdown::inline::{
-    InlineFragment, InlineInsertionAttributes, InlineLinkHit, InlineRenderCache, InlineSpan,
-    InlineStyle, InlineTextTree, StyleFlag, clamp_to_char_boundary,
+    InlineFragment, InlineInsertionAttributes, InlineLink, InlineLinkHit, InlineRenderCache,
+    InlineSpan, InlineStyle, InlineTextTree, StyleFlag, clamp_to_char_boundary,
 };
 use crate::components::{
     TableAxisHighlight, TableAxisMarker, TableCellPosition, TableColumnAlignment, TableRuntime,
@@ -89,6 +89,28 @@ impl EditMode {
 }
 
 impl EventEmitter<BlockEvent> for Block {}
+
+/// 把可见文本拼进 markdown 时的转义：只有反斜杠要再转义一次。其余标记字符
+/// （`*`、`` ` ``、`~` 等）保持原样，与渲染路径的实时标记解析一致。
+fn escape_markdown_insertion(text: &str) -> String {
+    if text.contains('\\') {
+        text.replace('\\', "\\\\")
+    } else {
+        text.to_string()
+    }
+}
+
+/// 可见文本偏移 → 拼进 markdown 后的偏移（反斜杠占两个字符）。
+fn markdown_insertion_offset(text: &str, visible_offset: usize) -> usize {
+    let mut visible_offset = visible_offset.min(text.len());
+    while visible_offset > 0 && !text.is_char_boundary(visible_offset) {
+        visible_offset -= 1;
+    }
+    text[..visible_offset]
+        .chars()
+        .map(|ch| if ch == '\\' { 2 } else { ch.len_utf8() })
+        .sum()
+}
 
 /// A single editable block in the document tree.
 ///
@@ -767,7 +789,12 @@ impl Block {
         let markdown_range = self.current_range_to_markdown_range(visible_range.clone());
         let mut markdown = self.record.title.serialize_markdown();
         let replaced_text = markdown[markdown_range.clone()].to_string();
-        markdown.replace_range(markdown_range.clone(), new_text);
+        // 键入的文本按可见字符拼进 markdown，反斜杠要再转义一次：否则它会与
+        // `serialize_markdown` 重新转义出来的旧反斜杠叠加，每按一次数量翻倍
+        // （用户报修：行首是自动链接的块里按反斜杠，可见文本 1→3→7）。
+        let inserted_markdown = escape_markdown_insertion(new_text);
+        let inserted_markdown_len = inserted_markdown.len();
+        markdown.replace_range(markdown_range.clone(), &inserted_markdown);
 
         let next_title = InlineTextTree::from_markdown_with_link_references(
             &markdown,
@@ -775,14 +802,17 @@ impl Block {
         );
         let map = next_title.markdown_offset_map();
         let selected_markdown = selected_range_relative.as_ref().map(|relative| {
-            markdown_range.start + relative.start..markdown_range.start + relative.end
+            let start =
+                markdown_range.start + markdown_insertion_offset(new_text, relative.start);
+            let end = markdown_range.start + markdown_insertion_offset(new_text, relative.end);
+            start..end
         });
         let cursor_markdown = selected_markdown
             .as_ref()
             .map(|range| range.end)
-            .unwrap_or(markdown_range.start + new_text.len());
+            .unwrap_or(markdown_range.start + inserted_markdown_len);
         let marked_markdown = if mark_inserted_text && !new_text.is_empty() {
-            Some(markdown_range.start..markdown_range.start + new_text.len())
+            Some(markdown_range.start..markdown_range.start + inserted_markdown_len)
         } else {
             None
         };
@@ -1104,7 +1134,16 @@ impl Block {
             return range.start.min(self.visible_len())..range.end.min(self.visible_len());
         }
 
-        if let Some(link_run) = self.projected_link_run_fully_covering_range(&range) {
+        // 带标记的块里，行尾/初始光标可能落在可见文本之外（标记占位没换算回来），
+        // 先收敛到可见范围，否则映射会落到 `<...>` 内部这样的地方。
+        let visible_len = self.visible_len();
+        let range = range.start.min(visible_len)..range.end.min(visible_len);
+        // 自动链接的「标签」就是 URL，不能按可编辑标签映射（那会把插入点放进 `<...>`
+        // 里），交给下面的边界处理。
+        if let Some(link_run) = self
+            .projected_link_run_fully_covering_range(&range)
+            .filter(|run| !matches!(run.link, InlineLink::Autolink { .. }))
+        {
             let map = self.record.title.markdown_offset_map();
             let label_markdown_start = map.visible_to_markdown_offset(link_run.clean_range.start);
             let run_markdown_start =
@@ -1144,11 +1183,42 @@ impl Block {
             return run_markdown_start + mapped_start..run_markdown_start + mapped_end;
         }
 
-        let clean_range = self.current_to_clean_range(range);
+        let clean_range = self.current_to_clean_range(range.clone());
+        if let Some(mapped) = self.autolink_boundary_markdown_range(&clean_range) {
+            return mapped;
+        }
         self.record
             .title
             .markdown_offset_map()
             .visible_to_markdown_range(clean_range)
+    }
+
+    /// 光标贴在自动链接的可见文本边缘时，把插入点映射到 `<`/`>` 之外。
+    /// 自动链接的「标签」就是 URL 本身，插到里面会把链接写坏，转义字符也会直接落进
+    /// 显示文本（用户报修：行首自动链接前按反斜杠，可见数量翻倍）。
+    fn autolink_boundary_markdown_range(&self, clean_range: &Range<usize>) -> Option<Range<usize>> {
+        if clean_range.start != clean_range.end {
+            return None;
+        }
+        let map = self.record.title.markdown_offset_map();
+        let mut visible_start = 0;
+        for fragment in &self.record.title.fragments {
+            let visible_end = visible_start + fragment.text.len();
+            if let Some(link @ InlineLink::Autolink { .. }) = fragment.link.as_ref() {
+                if clean_range.start == visible_start {
+                    let label_start = map.visible_to_markdown_offset(visible_start);
+                    let offset = label_start.saturating_sub(link.open_marker().len());
+                    return Some(offset..offset);
+                }
+                if clean_range.start == visible_end {
+                    let label_end = map.visible_to_markdown_offset(visible_end);
+                    let offset = label_end + link.close_marker().len();
+                    return Some(offset..offset);
+                }
+            }
+            visible_start = visible_end;
+        }
+        None
     }
 
     pub(crate) fn markdown_range_to_current_range(&self, range: Range<usize>) -> Range<usize> {
