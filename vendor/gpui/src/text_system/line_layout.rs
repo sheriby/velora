@@ -127,22 +127,28 @@ impl LineLayout {
         None
     }
 
-    fn compute_wrap_boundaries(
+    pub(crate) fn compute_wrap_boundaries(
         &self,
         text: &str,
         wrap_width: Pixels,
         max_lines: Option<usize>,
+        allowed_breaks: Option<&[usize]>,
+        emergency_breaks: Option<&[usize]>,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
         let mut first_non_whitespace_ix = None;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
+        let mut last_emergency_ix = None;
+        let mut last_emergency_x = px(0.);
         let mut last_boundary = WrapBoundary {
             run_ix: 0,
             glyph_ix: 0,
         };
         let mut last_boundary_x = px(0.);
         let mut prev_ch = '\0';
+        let mut break_indices = allowed_breaks.map(|indices| indices.iter().copied().peekable());
+        let mut emergency_indices = emergency_breaks.map(|indices| indices.iter().copied().peekable());
         let mut glyphs = self
             .runs
             .iter()
@@ -166,26 +172,58 @@ impl LineLayout {
 
             // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
             // but there are some differences, so we have to duplicate the code here.
-            if LineWrapper::is_word_char(ch) {
-                if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
+            let mut can_wrap =
+                !LineWrapper::cannot_start_line(ch) && !LineWrapper::cannot_end_line(prev_ch);
+            let mut can_force_wrap = can_wrap;
+            if let Some(indices) = emergency_indices.as_mut() {
+                let index = self.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+                while indices.peek().is_some_and(|candidate| *candidate < index) {
+                    indices.next();
                 }
-            } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
+                let allowed = indices.peek() == Some(&index);
+                if allowed {
+                    indices.next();
                 }
+                can_force_wrap &= allowed;
+            }
+            if let Some(indices) = break_indices.as_mut() {
+                let index = self.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+                while indices.peek().is_some_and(|candidate| *candidate < index) {
+                    indices.next();
+                }
+                let allowed = indices.peek() == Some(&index);
+                if allowed {
+                    indices.next();
+                }
+                can_wrap &= allowed;
+            }
+            if ch != ' '
+                && first_non_whitespace_ix.is_some()
+                && can_wrap
+                && (allowed_breaks.is_some() || !LineWrapper::is_word_char(ch) || prev_ch == ' ')
+            {
+                last_candidate_ix = Some(boundary);
+                last_candidate_x = x;
             }
 
             if ch != ' ' && first_non_whitespace_ix.is_none() {
                 first_non_whitespace_ix = Some(boundary);
             }
 
+            if emergency_breaks.is_some() && can_force_wrap && boundary > last_boundary {
+                last_emergency_ix = Some(boundary);
+                last_emergency_x = x;
+            }
+
             let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
             let width = next_x - last_boundary_x;
 
-            if width > wrap_width && boundary > last_boundary {
+            // Without a legal candidate, keep punctuation with its neighbour even if
+            // the pair is wider than the available line.
+            if width > wrap_width
+                && boundary > last_boundary
+                && (last_candidate_ix.is_some() || last_emergency_ix.is_some() || can_force_wrap)
+            {
                 // When used line_clamp, we should limit the number of lines.
                 if let Some(max_lines) = max_lines
                     && boundaries.len() >= max_lines - 1
@@ -196,9 +234,15 @@ impl LineLayout {
                 if let Some(last_candidate_ix) = last_candidate_ix.take() {
                     last_boundary = last_candidate_ix;
                     last_boundary_x = last_candidate_x;
+                } else if let Some(last_emergency_ix) = last_emergency_ix.take() {
+                    last_boundary = last_emergency_ix;
+                    last_boundary_x = last_emergency_x;
                 } else {
                     last_boundary = boundary;
                     last_boundary_x = x;
+                }
+                if last_emergency_ix.is_some_and(|candidate| candidate <= last_boundary) {
+                    last_emergency_ix = None;
                 }
                 boundaries.push(last_boundary);
             }
@@ -505,7 +549,7 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
+                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines, None, None)
             } else {
                 SmallVec::new()
             };

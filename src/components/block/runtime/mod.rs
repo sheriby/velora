@@ -2458,6 +2458,8 @@ mod tests;
 pub(crate) struct ShapeMemoKey {
     pub generation: u64,
     pub wrap_width: Option<u32>,
+    pub wrap_prose: bool,
+    pub space_prose: bool,
     pub font_size: u32,
     pub font_fingerprint: u64,
     pub theme_fingerprint: u64,

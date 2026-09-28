@@ -1645,11 +1645,11 @@ impl Block {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        let code = self.display_text().to_string();
+        let code = self.record.title.visible_text();
         if code.is_empty() {
             return;
         }
-        cx.write_to_clipboard(ClipboardItem::new_string(code));
+        cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
         self.code_copied_at = Some(Instant::now());
         cx.notify();
         cx.spawn(async move |block, cx| {

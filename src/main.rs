@@ -223,6 +223,12 @@ impl AssetSource for VeloraAssets {
             "icon/workspace/new-file.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/new-file.svg"
             )))),
+            "icon/workspace/copy.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/copy.svg"
+            )))),
+            "icon/workspace/check.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/check.svg"
+            )))),
             "icon/workspace/new-folder.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/new-folder.svg"
             )))),

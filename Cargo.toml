@@ -60,6 +60,7 @@ notify = "6"
 uuid = "1.23"
 gpui = { version = "0.2", features = ["runtime_shaders"] }
 unicode-segmentation = "1.13"
+icu_segmenter = { version = "2.3", default-features = false, features = ["compiled_data"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"

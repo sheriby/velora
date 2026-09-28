@@ -490,6 +490,9 @@ pub struct ThemeTypography {
     pub text_size: f32,
     /// Default body text line height as a ratio of font size.
     pub text_line_height: f32,
+    /// Tracking between prose characters, in em; code retains its fixed spacing.
+    #[serde(default)]
+    pub text_letter_spacing: f32,
     /// H1 heading font size.
     pub h1_size: f32,
     /// H1 heading font weight.
@@ -1427,6 +1430,7 @@ impl Theme {
                 heading_font_family: default_heading_font_family(),
                 text_size: 17.0,
                 text_line_height: 1.6,
+                text_letter_spacing: 0.0125,
                 h1_size: 32.0,
                 h1_weight: FontWeightDef::Bold,
                 h2_size: 24.0,
@@ -1600,22 +1604,34 @@ impl Theme {
             Self::light_theme(),
             BUILTIN_THEME_FOREST_NAME,
             BuiltinPalette {
-                window: 0xfbfcf8ff,
-                panel: 0xf2f6efff,
-                panel_hover: 0xe7efe4ff,
-                text: 0x263328ff,
-                muted: 0x637267ff,
-                line: 0xd7e3d5ff,
-                accent: 0x3f7954ff,
-                selection: 0xdfeee2ff,
-                code: 0xedf4ecff,
+                window: 0xfdfffcff,
+                panel: 0xf5f8f3ff,
+                panel_hover: 0xe8f0e3ff,
+                text: 0x303831ff,
+                muted: 0x657269ff,
+                line: 0xdde7d8ff,
+                accent: 0x287a3dff,
+                selection: 0xdcecd6ff,
+                code: 0xeff5eaff,
                 dark: false,
             },
         );
-        theme.typography.text_line_height = 1.64;
+        theme.typography.text_line_height = 1.78;
+        theme.typography.text_letter_spacing = 0.02;
+        theme.colors.text_h1 = Hsla::from(rgba(0x245c35ff));
+        theme.colors.code_text = Hsla::from(rgba(0x4a6352ff));
+        theme.colors.text_h2 = Hsla::from(rgba(0x28663aff));
+        theme.colors.text_h3 = Hsla::from(rgba(0x2c7040ff));
+        theme.colors.text_h4 = theme.colors.text_h3;
+        theme.colors.text_h5 = theme.colors.text_h3;
+        theme.colors.text_h6 = theme.colors.text_h3;
         theme.typography.h1_size = 30.0;
         theme.typography.h2_size = 22.0;
-        theme.dimensions.block_gap = 7.0;
+        theme.dimensions.block_gap = 10.0;
+        theme.dimensions.centered_min_ratio = 0.76;
+        theme.dimensions.code_bg_pad_x = 2.0;
+        theme.dimensions.code_block_padding_x = 14.0;
+        theme.dimensions.code_block_padding_y = 12.0;
         theme.dimensions.table_cell_padding_y = 7.0;
         theme
     }

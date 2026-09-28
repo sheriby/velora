@@ -491,6 +491,7 @@ impl WindowTextSystem {
                 layout,
                 decoration_runs,
                 text: line_text,
+                horizontal_spacing: Arc::default(),
             });
 
             // Skip `\n` character.

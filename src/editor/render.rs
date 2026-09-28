@@ -1794,7 +1794,7 @@ impl Editor {
                                 div()
                                     .text_size(px(t.dialog_body_size))
                                     .font_weight(t.dialog_body_weight.to_font_weight())
-                                    .line_height(rems(t.text_line_height))
+                                    .line_height(relative(t.text_line_height))
                                     .text_color(c.dialog_body)
                                     .child(strings.unsaved_changes_message.clone()),
                             )
@@ -1926,7 +1926,7 @@ impl Editor {
                                 div()
                                     .text_size(px(t.dialog_body_size))
                                     .font_weight(t.dialog_body_weight.to_font_weight())
-                                    .line_height(rems(t.text_line_height))
+                                    .line_height(relative(t.text_line_height))
                                     .text_color(c.dialog_body)
                                     .child(strings.drop_replace_message.clone()),
                             )
@@ -2040,7 +2040,7 @@ impl Editor {
         let body_style = |this: Div| {
             this.text_size(px(t.dialog_body_size))
                 .font_weight(t.dialog_body_weight.to_font_weight())
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .text_color(c.dialog_body)
         };
 

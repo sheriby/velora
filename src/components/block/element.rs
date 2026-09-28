@@ -8,13 +8,90 @@ use std::rc::Rc;
 
 use gpui::*;
 
-use super::{Block, InlineFootnoteHit, InlineLinkHit, ShapeMemoEntry, ShapeMemoKey, code_highlight_color};
+use super::{
+    Block, BlockKind, InlineFootnoteHit, InlineLinkHit, ShapeMemoEntry, ShapeMemoKey,
+    code_highlight_color,
+};
 use crate::components::HtmlCssColor;
 use crate::theme::{ThemeColors, ThemeManager};
 
 const SOURCE_LINE_NUMBER_MIN_DIGITS: usize = 2;
 const SOURCE_LINE_NUMBER_GAP: f32 = 12.0;
 const SOURCE_LINE_NUMBER_DIGIT_WIDTH_RATIO: f32 = 0.62;
+
+fn prose_line_breaks(text: &str) -> Vec<usize> {
+    use icu_segmenter::options::{LineBreakOptions, LineBreakStrictness, LineBreakWordOption};
+    use icu_segmenter::{LineSegmenter, LineSegmenterBorrowed};
+    static SEGMENTER: std::sync::OnceLock<LineSegmenterBorrowed<'static>> =
+        std::sync::OnceLock::new();
+    let segmenter = SEGMENTER.get_or_init(|| {
+        let mut options = LineBreakOptions::default();
+        options.strictness = Some(LineBreakStrictness::Strict);
+        options.word_option = Some(LineBreakWordOption::Normal);
+        LineSegmenter::new_dictionary(options)
+    });
+    segmenter.segment_str(text).collect()
+}
+
+fn prose_spacing(
+    text: &str,
+    code_ranges: &[Range<usize>],
+    letter_spacing: Pixels,
+    code_gap: Pixels,
+    autospace: Pixels,
+) -> Vec<(usize, Pixels)> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let is_han = |c: char| matches!(c, '\u{3400}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' | '\u{20000}'..='\u{323af}');
+    let is_latin = |c: char| c.is_ascii_alphanumeric() || matches!(c, '\u{00c0}'..='\u{024f}');
+    let mut ranges = code_ranges.iter().peekable();
+    let mut previous: Option<(char, Option<usize>)> = None;
+    let mut spacing = Vec::new();
+    for (index, grapheme) in text.grapheme_indices(true) {
+        while ranges.peek().is_some_and(|range| range.end <= index) {
+            ranges.next();
+        }
+        let code = ranges.peek().filter(|range| range.contains(&index)).map(|range| range.start);
+        let character = grapheme.chars().next().unwrap();
+        if let Some((before, previous_code)) = previous {
+            let mut gap = px(0.0);
+            if previous_code != code {
+                if previous_code.is_some() { gap += code_gap; }
+                if code.is_some() { gap += code_gap; }
+            }
+            if previous_code.is_none() && code.is_none()
+                && !before.is_whitespace() && !character.is_whitespace()
+            {
+                gap += letter_spacing;
+            }
+            if !(previous_code.is_some() && code.is_some())
+                && ((is_han(before) && is_latin(character)) || (is_latin(before) && is_han(character)))
+            {
+                gap += autospace;
+            }
+            if gap > px(0.0) { spacing.push((index, gap)); }
+        }
+        previous = Some((character, code));
+    }
+    if previous.is_some_and(|(_, code)| code.is_some()) {
+        spacing.push((text.len(), code_gap));
+    }
+    spacing
+}
+
+fn inline_code_background_bounds(
+    segment: Bounds<Pixels>,
+    baseline: Pixels,
+    ascent: Pixels,
+    descent: Pixels,
+    padding: Point<Pixels>,
+) -> Bounds<Pixels> {
+    Bounds::from_corners(
+        point(segment.left() - padding.x,
+            (segment.top() + baseline - ascent - padding.y).max(segment.top() + px(1.0))),
+        point(segment.right() + padding.x,
+            (segment.top() + baseline + descent + padding.y).min(segment.bottom() - px(1.0))),
+    )
+}
 
 fn source_line_count(text: &str) -> usize {
     text.split('\n').count().max(1)
@@ -62,7 +139,7 @@ fn build_text_runs(
     base_run: &TextRun,
     underline_thickness: Pixels,
     link_color: Hsla,
-    code_bg: Hsla,
+    code_text: Hsla,
     show_inline_code_backgrounds: bool,
     code_font_family: &str,
     code_font_size: Pixels,
@@ -110,6 +187,9 @@ fn build_text_runs(
         let mut font = base_run.font.clone();
         if inline_style.code {
             font.family = SharedString::from(code_font_family.to_string());
+            if show_inline_code_backgrounds && font.weight < FontWeight::MEDIUM {
+                font.weight = FontWeight::MEDIUM;
+            }
         }
         if inline_style.bold && font.weight < FontWeight::BOLD {
             font.weight = FontWeight::BOLD;
@@ -120,6 +200,8 @@ fn build_text_runs(
 
         let mut run_color = if is_link || is_footnote {
             link_color
+        } else if inline_style.code && show_inline_code_backgrounds {
+            code_text
         } else {
             base_run.color
         };
@@ -140,11 +222,8 @@ fn build_text_runs(
             thickness: underline_thickness,
         });
 
-        let mut background_color = if show_inline_code_backgrounds && inline_style.code {
-            Some(code_bg)
-        } else {
-            base_run.background_color
-        };
+        // Inline code is painted as separate rounded fragments below the text.
+        let mut background_color = base_run.background_color;
         if let Some(style) = html_style
             && let Some(color) = style.background_color
         {
@@ -903,6 +982,12 @@ impl Element for BlockTextElement {
         let show_inline_code_backgrounds = !input.is_source_raw_mode();
         let show_source_line_numbers = input.show_source_line_numbers();
         let source_line_count = source_line_count(shared_text.as_ref());
+        let wrap_prose = !is_placeholder
+            && !input.is_source_raw_mode()
+            && (input.kind() == BlockKind::Paragraph || input.kind().is_list_item());
+        let code_ranges: Vec<_> = input.inline_spans().iter().filter(|span| span.style.code)
+            .map(|span| span.range.clone()).collect();
+        let space_prose = !is_placeholder && !input.is_source_raw_mode() && !input.kind().is_code_block();
         let style = window.text_style();
 
         let (display_text, text_color): (SharedString, Hsla) = if is_placeholder {
@@ -943,7 +1028,7 @@ impl Element for BlockTextElement {
                     &run,
                     px(theme.dimensions.underline_thickness),
                     theme.colors.text_link,
-                    theme.colors.code_bg,
+                    theme.colors.text_link,
                     show_inline_code_backgrounds,
                     &crate::config::EditorSettings::fonts(cx).code_family,
                     px(crate::config::EditorSettings::fonts(cx).code_size as f32),
@@ -954,7 +1039,10 @@ impl Element for BlockTextElement {
         };
 
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let line_height = window.line_height();
+        let letter_spacing = font_size * theme.typography.text_letter_spacing;
+        let code_gap = px(theme.dimensions.code_bg_pad_x) + font_size * 0.125;
+        let code_size = runs.iter().filter_map(|run| run.font_size).fold(px(0.0), Pixels::max);
+        let line_height = window.line_height().max(code_size * 1.35);
         let source_line_start = input.source_line_start();
         let source_line_number_gutter_width = show_source_line_numbers
             .then(|| {
@@ -981,6 +1069,8 @@ impl Element for BlockTextElement {
         let memo_key_base = ShapeMemoKey {
             generation: input.display_generation(),
             wrap_width: None,
+            wrap_prose,
+            space_prose,
             font_size: f32::from(font_size).to_bits(),
             font_fingerprint,
             theme_fingerprint,
@@ -1042,7 +1132,31 @@ impl Element for BlockTextElement {
                     text_wrap_width,
                     None,
                 ) {
-                    Ok(lines) => {
+                    Ok(mut lines) => {
+                        let mut line_start = 0;
+                        for line in lines.iter_mut() {
+                            if space_prose {
+                                let line_end = line_start + line.len();
+                                let ranges: Vec<_> = code_ranges.iter()
+                                    .filter(|range| range.start < line_end && line_start < range.end)
+                                    .map(|range| range.start.saturating_sub(line_start)..range.end.min(line_end) - line_start)
+                                    .collect();
+                                let spacing = prose_spacing(&line.text, &ranges, letter_spacing, code_gap, font_size * 0.25);
+                                line.add_horizontal_spacing(&spacing);
+                            }
+                            if wrap_prose || space_prose {
+                                if line
+                                    .wrap_width
+                                    .is_some_and(|width| line.unwrapped_layout.width > width)
+                                {
+                                    use unicode_segmentation::UnicodeSegmentation;
+                                    let emergency_breaks: Vec<_> = line.text.grapheme_indices(true)
+                                        .map(|(index, _)| index).collect();
+                                    line.wrap_at_boundaries(&prose_line_breaks(&line.text), &emergency_breaks);
+                                }
+                            }
+                            line_start += line.len() + 1;
+                        }
                         let mut total_size: Size<Pixels> = Size::default();
                         for line in lines.iter() {
                             let ls = line.size(line_height);
@@ -1090,7 +1204,10 @@ impl Element for BlockTextElement {
             .clone()
             .unwrap_or_else(|| input.selected_range.clone());
         let cursor = input.cursor_offset();
-        let line_height = window.line_height();
+        let code_size = if input.inline_spans().iter().any(|span| span.style.code) {
+            px(crate::config::EditorSettings::fonts(cx).code_size as f32)
+        } else { px(0.0) };
+        let line_height = window.line_height().max(code_size * 1.35);
         let focused = input.focus_handle.is_focused(window);
         let show_inline_code_backgrounds = !input.is_source_raw_mode();
         let show_source_line_numbers = input.show_source_line_numbers();
@@ -1197,6 +1314,7 @@ impl Element for BlockTextElement {
         let mut code_quads = Vec::new();
         if show_inline_code_backgrounds && !self.is_placeholder {
             let text = input.display_text();
+            let hard_ranges = hard_line_ranges(text);
             let code_color = theme.colors.code_bg;
             let pad_x = px(theme.dimensions.code_bg_pad_x);
             let pad_y = px(theme.dimensions.code_bg_pad_y);
@@ -1213,10 +1331,23 @@ impl Element for BlockTextElement {
                     span.range.clone(),
                     text_align,
                 ) {
-                    let quad_bounds = Bounds::from_corners(
-                        point(segment.left() - pad_x, segment.top() - pad_y),
-                        point(segment.right() + pad_x, segment.bottom() + pad_y),
+                    let (line_idx, _) = wrapped_line_for_y(
+                        &lines, line_height, segment.top() - text_bounds.top(),
+                    ).expect("code fragment belongs to a shaped line");
+                    let layout = &lines[line_idx];
+                    let row_idx = ((segment.top() - text_bounds.top() - wrapped_line_top(&lines, line_height, line_idx)) / line_height) as usize;
+                    let row_end = wrap_boundary_offset(layout, row_idx).unwrap_or(layout.len());
+                    let end = span.range.end.saturating_sub(hard_ranges[line_idx].start).min(row_end);
+                    let code_run = layout.runs().iter().find(|run| run.font_size.is_some())
+                        .expect("inline code has a font-size run");
+                    let code_size = code_run.font_size.unwrap();
+                    let code_ascent = cx.text_system().ascent(code_run.font_id, code_size);
+                    let code_descent = px(f32::from(cx.text_system().descent(code_run.font_id, code_size)).abs());
+                    let baseline = (line_height - layout.ascent() - layout.descent()) / 2.0 + layout.ascent();
+                    let mut quad_bounds = inline_code_background_bounds(
+                        segment, baseline, code_ascent, code_descent, point(pad_x, pad_y),
                     );
+                    quad_bounds.size.width -= layout.spacing_before(end);
                     code_quads.push({
                         let mut q = fill(quad_bounds, code_color);
                         q.corner_radii = Corners::all(radius);
@@ -1383,6 +1514,65 @@ mod tests {
         AppContext, Bounds, Hsla, Modifiers, MouseButton, MouseDownEvent, SharedString,
         TestAppContext, TextAlign, TextRun, VisualTestContext, font, point, px, rgba, size,
     };
+
+    #[test]
+    fn prose_wrapping_preserves_punctuation_and_graphemes() {
+        use unicode_segmentation::UnicodeSegmentation;
+        let text = "alpha! commas, periods. questions? semicolons; colons: (closing) [bracket] {brace} 中文（右括号）👩‍💻e\u{301} words";
+        let breaks = super::prose_line_breaks(text);
+        let graphemes: Vec<_> = text.grapheme_indices(true).map(|(ix, _)| ix).collect();
+        assert!(!breaks.contains(&1), "普通英文单词内部不应断行");
+        for ix in breaks.into_iter().filter(|ix| *ix > 0 && *ix < text.len()) {
+            assert!(graphemes.contains(&ix), "不能拆开 emoji 或组合字符");
+            let first = text[ix..].chars().next().unwrap();
+            assert!(
+                !"!！,，.。?？;；:：)]}）】”’".contains(first),
+                "成熟断行器也必须应用严格标点禁则：{first:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrapped_inline_code_backgrounds_leave_space_between_rows() {
+        let row = Bounds::new(point(px(0.0), px(0.0)), size(px(160.0), px(28.0)));
+        let next_row = Bounds::new(point(px(0.0), px(28.0)), row.size);
+        let first = super::inline_code_background_bounds(row, px(22.0), px(13.0), px(4.0), point(px(2.0), px(1.0)));
+        let second = super::inline_code_background_bounds(next_row, px(22.0), px(13.0), px(4.0), point(px(2.0), px(1.0)));
+        assert!(first.bottom() < second.top(), "多行代码背景不能粘连");
+        assert!(first.size.height >= px(17.0), "背景必须覆盖代码字形");
+        assert!(first.size.height < row.size.height, "背景不能使用整行高度");
+    }
+
+    #[test]
+    fn prose_spacing_keeps_code_fixed_and_adds_margins_and_autospace() {
+        let text = "中文hello文 abc";
+        let code = "中文".len().."中文hello".len();
+        let spacing = super::prose_spacing(text, &[code.clone()], px(0.25), px(4.0), px(4.0));
+        assert!(spacing.contains(&(code.start, px(8.0))), "代码前应保留 margin/padding 和中西间距");
+        assert!(spacing.contains(&(code.end, px(8.0))), "代码后应保留 margin/padding 和中西间距");
+        assert!(!spacing.iter().any(|(index, _)| code.start < *index && *index < code.end), "代码内部仍须等宽");
+        assert!(spacing.contains(&(text.len() - 1, px(0.25))), "正文应有独立字距");
+    }
+
+    #[gpui::test]
+    async fn prose_spacing_keeps_text_indices_and_hit_testing(cx: &mut TestAppContext) {
+        use unicode_segmentation::UnicodeSegmentation;
+        let cx = cx.add_empty_window();
+        let text = "中文hello世界 abc continuation";
+        let mut lines = shaped_lines(text, px(130.0), cx);
+        let indices: Vec<_> = lines[0].runs().iter().flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index)).collect();
+        let spacing = super::prose_spacing(text, &[], px(0.3), px(4.0), px(4.0));
+        lines[0].add_horizontal_spacing(&spacing);
+        let emergency: Vec<_> = text.grapheme_indices(true).map(|(index, _)| index).collect();
+        lines[0].wrap_at_boundaries(&super::prose_line_breaks(text), &emergency);
+        assert_eq!(lines[0].text.as_ref(), text, "排版不应写入空格");
+        assert_eq!(indices, lines[0].runs().iter().flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index)).collect::<Vec<_>>());
+        for index in indices {
+            if lines[0].wrap_boundaries().iter().any(|boundary| lines[0].runs()[boundary.run_ix].glyphs[boundary.glyph_ix].index == index) { continue; }
+            let position = lines[0].position_for_index(index, px(28.0)).unwrap();
+            assert_eq!(lines[0].closest_index_for_position(position, px(28.0)).unwrap(), index, "字距变化后点击位置必须仍匹配原文");
+        }
+    }
 
     fn shaped_lines(
         text: &str,

@@ -115,9 +115,71 @@ pub struct WrappedLine {
     /// The text that was shaped for this line.
     pub text: SharedString,
     pub(crate) decoration_runs: SmallVec<[DecorationRun; 32]>,
+    pub(crate) horizontal_spacing: Arc<[(usize, Pixels)]>,
 }
 
 impl WrappedLine {
+    /// Add visual spacing before byte offsets without changing the editable text.
+    pub fn add_horizontal_spacing(&mut self, spacing: &[(usize, Pixels)]) {
+        if spacing.is_empty() {
+            return;
+        }
+        let original = &self.layout.unwrapped_layout;
+        let mut runs = original.runs.clone();
+        let mut offsets = spacing.iter().peekable();
+        let mut shift = px(0.0);
+        for glyph in runs.iter_mut().flat_map(|run| run.glyphs.iter_mut()) {
+            while offsets.peek().is_some_and(|(index, _)| *index <= glyph.index) {
+                shift += offsets.next().unwrap().1;
+            }
+            glyph.position.x += shift;
+        }
+        let total = spacing.iter().fold(px(0.0), |sum, (_, amount)| sum + *amount);
+        self.layout = Arc::new(WrappedLineLayout {
+            unwrapped_layout: Arc::new(LineLayout {
+                font_size: original.font_size,
+                width: original.width + total,
+                ascent: original.ascent,
+                descent: original.descent,
+                runs,
+                len: original.len,
+            }),
+            wrap_boundaries: self.layout.wrap_boundaries.clone(),
+            wrap_width: self.layout.wrap_width,
+        });
+        self.horizontal_spacing = Arc::from(spacing);
+    }
+
+    /// Visual spacing inserted at this original text offset.
+    pub fn spacing_before(&self, index: usize) -> Pixels {
+        self.horizontal_spacing.binary_search_by_key(&index, |(index, _)| *index)
+            .map(|position| self.horizontal_spacing[position].1)
+            .unwrap_or(px(0.0))
+    }
+
+    /// Reflow using sorted UTF-8 byte indices supplied by a line segmenter.
+    /// Glyph positions are shared so drawing, caret and hit testing use one layout.
+    pub fn wrap_at_boundaries(&mut self, allowed_breaks: &[usize], emergency_breaks: &[usize]) {
+        let Some(width) = self.layout.wrap_width else {
+            return;
+        };
+        if self.layout.unwrapped_layout.width <= width {
+            return;
+        }
+        let wrap_boundaries = self.layout.unwrapped_layout.compute_wrap_boundaries(
+            &self.text,
+            width,
+            None,
+            Some(allowed_breaks),
+            Some(emergency_breaks),
+        );
+        self.layout = Arc::new(WrappedLineLayout {
+            unwrapped_layout: self.layout.unwrapped_layout.clone(),
+            wrap_boundaries,
+            wrap_width: Some(width),
+        });
+    }
+
     /// The length of the underlying, unwrapped layout, in utf-8 bytes.
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {

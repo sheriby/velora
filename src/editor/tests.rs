@@ -4643,20 +4643,17 @@ async fn long_paragraph_renders_as_plain_source(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn code_block_copy_button_copies_code_to_clipboard(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    let markdown = "```rust\nlet x = 1;\n```";
+    let markdown = "正文先获得焦点。\n\n```rust\nlet x = 1;\n```";
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.into(), None));
-    // 语言输入框与复制按钮在聚焦时显示。
-    editor.update(cx, |editor, _cx| {
-        let block = editor.document.first_root().expect("code block").clone();
-        editor.active_entity_id = Some(block.entity_id());
-        editor.pending_focus = Some(block.entity_id());
-    });
     redraw(cx);
 
     let bounds = cx
         .debug_bounds("code-copy-button")
-        .expect("focused code block shows the copy button");
+        .expect("未聚焦代码块也应显示复制按钮");
+    let header = cx.debug_bounds("code-block-header").expect("代码块顶栏");
+    assert!(header.contains(&bounds.center()), "复制按钮应在顶部同一行");
+    assert!(bounds.center().x > header.center().x, "复制按钮应在右侧");
     cx.simulate_click(bounds.center(), Modifiers::none());
     redraw(cx);
 
@@ -4668,9 +4665,23 @@ async fn code_block_copy_button_copies_code_to_clipboard(cx: &mut TestAppContext
     assert_eq!(clipboard.as_deref(), Some("let x = 1;"));
     editor.read_with(cx, |editor, _cx| {
         // 点击复制不顺带移动光标/选中文字。
-        let block = editor.document.first_root().expect("code block");
+        let block = &editor.document.visible_blocks()[1].entity;
         assert!(block.read(_cx).selected_range.is_empty());
     });
+}
+
+#[gpui::test]
+async fn code_block_copy_button_preserves_literal_backticks(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "正文\n\n````text\n    keep indentation\nliteral ``` stays\n中文也保留\n````";
+    let (_editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown.into(), None)
+    });
+    redraw(cx);
+    let button = cx.debug_bounds("code-copy-button").expect("复制按钮常驻");
+    cx.simulate_click(button.center(), Modifiers::none());
+    let clipboard = cx.update(|_window, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(clipboard.as_deref(), Some("    keep indentation\nliteral ``` stays\n中文也保留"));
 }
 
 #[gpui::test]
@@ -7037,6 +7048,119 @@ async fn cjk_wrapping_does_not_start_lines_with_punctuation(cx: &mut TestAppCont
         }
     }
     assert!(wrapped_lines > 100, "折行样本太少（{wrapped_lines}），测试没跑够");
+}
+
+#[gpui::test]
+async fn shaped_text_wrapping_respects_punctuation_rules(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let cx = cx.add_empty_window();
+    // 编辑器走 shape_text，而不是 LineWrapper；覆盖截图中的中英文混排和窄行回退。
+    let texts = [
+        "Velora 把你的写作文件夹作为工作区打开，边打字边渲染 Markdown，在以 MiB 计的长篇手稿上依然流畅。代码文件在同一窗口内以语法高亮编辑，所有确认与提示都是应用内模态——不会有系统弹窗打断写作。",
+        "这是一段中文，含有逗号、顿号；冒号：句号。问号？感叹号！以及连续标点？！和省略号……末尾。",
+        "中文（Markdown）和“Velora”以及《Rust》文字【混排】结束。",
+        "甲，乙。丙？！丁……戊",
+        "（Markdown）“Velora”《Rust》【GPUI】",
+    ];
+    let mut wrapped_lines = 0usize;
+    for text in texts {
+        let run = gpui::TextRun {
+            len: text.len(),
+            font: gpui::Font {
+                family: ".SystemUIFont".into(),
+                features: gpui::FontFeatures::default(),
+                fallbacks: None,
+                weight: gpui::FontWeight::NORMAL,
+                style: gpui::FontStyle::Normal,
+            },
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            font_size: None,
+        };
+        for width in (1..920).step_by(2) {
+            cx.update(|window, _cx| {
+                let lines = window
+                    .text_system()
+                    .shape_text(
+                        text.into(),
+                        px(18.0),
+                        &[run.clone()],
+                        Some(px(width as f32)),
+                        None,
+                    )
+                    .expect("text should shape");
+                for line in lines {
+                    let mut previous_ix = 0;
+                    for boundary in line.wrap_boundaries() {
+                        let ix = line.unwrapped_layout.runs[boundary.run_ix].glyphs
+                            [boundary.glyph_ix]
+                            .index;
+                        assert!(ix > previous_ix, "{width}px 换行断点必须递增");
+                        previous_ix = ix;
+                        let first = line.text[ix..].chars().next().unwrap();
+                        let last = line.text[..ix].chars().next_back().unwrap();
+                        assert!(
+                            !"，、；：。？！…）】》”’".contains(first),
+                            "{width}px 实际排版让标点出现在行首 {first:?}：{}",
+                            &line.text[ix..]
+                        );
+                        assert!(
+                            !"（【《“‘".contains(last),
+                            "{width}px 实际排版让起始符号出现在行末 {last:?}：{}",
+                            &line.text[..ix]
+                        );
+                        wrapped_lines += 1;
+                    }
+                }
+            });
+        }
+    }
+    assert!(wrapped_lines > 100, "必须实际产生足够的软换行");
+}
+
+#[gpui::test]
+async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "持有 `image_reference_definitions/link_reference_definitions/footnote_registry`（共享），以及 `table_cells: HashMap<EntityId, TableCellBinding>`。这是 mixed text! 含有 commas, periods. questions? semicolons; colons: 以及右括号 (closing) [bracket] {brace} 和中文（右括号）【方括号】《书名》、“右引号”，都不该落在行首。";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown.to_string(), None)
+    });
+    for width in [480.0, 640.0, 820.0] {
+        cx.simulate_resize(gpui::size(px(width), px(800.0)));
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.read(cx);
+            let lines = block.last_layout.as_ref().expect("正文应完成排版");
+            let mut wraps = 0;
+            for line in lines {
+                let available = line.wrap_width.expect("正文应有换行宽度");
+                let mut start_x = px(0.0);
+                for boundary in line.wrap_boundaries() {
+                    let glyph = &line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix];
+                    let first = line.text[glyph.index..].trim_start().chars().next().unwrap();
+                    assert!(
+                        !"!！,，.。?？;；:：)]}>）］｝】》〉」』”’…、".contains(first),
+                        "{width}px 行首出现 {first:?}：{}", &line.text[glyph.index..]
+                    );
+                    let row_width = glyph.position.x - start_x;
+                    assert!(row_width <= available + px(0.5), "正文不应溢出");
+                    for word in ["mixed", "text", "commas", "periods", "questions", "semicolons", "colons", "closing", "bracket", "brace"] {
+                        for (start, _) in line.text.match_indices(word) {
+                            assert!(
+                                !(start < glyph.index && glyph.index < start + word.len()),
+                                "{width}px 普通英文单词 {word} 被拆开"
+                            );
+                        }
+                    }
+                    start_x = glyph.position.x;
+                    wraps += 1;
+                }
+            }
+            assert!(wraps > 2, "应实际覆盖多行中英文混排");
+        });
+    }
 }
 
 #[gpui::test]

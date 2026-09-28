@@ -721,6 +721,8 @@ body {{
   font-family: {};
   font-size: {}px;
   line-height: {};
+  letter-spacing: {}em;
+  text-autospace: ideograph-alpha ideograph-numeric;
 }}
 {}
 p, ul, ol, blockquote, pre, table, hr {{ margin: 0 0 1rem; }}
@@ -759,20 +761,27 @@ blockquote.markdown-alert-warning {{ background-color: var(--vlt-callout-warning
 blockquote.markdown-alert-caution {{ background-color: var(--vlt-callout-caution-bg); border-color: var(--vlt-callout-caution-border); }}
 code {{
   background-color: var(--vlt-code-bg);
-  color: var(--vlt-code-text);
+  color: var(--vlt-link);
+  font-weight: 500;
+  letter-spacing: normal;
+  margin: 0 0.125em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
   border-radius: 4px;
-  padding: 0.12em 0.32em;
+  padding: 0.12em {}px;
   font-family: {};
   font-size: {}px;
 }}
 pre {{
+  letter-spacing: normal;
   {}
   background-color: var(--vlt-code-bg);
   color: var(--vlt-code-text);
   border-radius: {}px;
   padding: 1rem;
 }}
-pre code {{ padding: 0; background-color: transparent; }}
+pre code {{ padding: 0; margin: 0; background-color: transparent; color: inherit; font-weight: normal; }}
+strong code {{ font-weight: 700; }}
 .vlt-comment {{
   white-space: pre-wrap;
   background-color: var(--vlt-comment-bg);
@@ -871,6 +880,7 @@ hr {{ border: 0; border-top: 1px solid; border-color: var(--vlt-border); }}
         body_font_stack(),
         t.text_size,
         t.text_line_height,
+        t.text_letter_spacing,
         document_layout_css(),
         css_font_weight(&t.h1_weight),
         css_color(c.text_h1),
@@ -888,6 +898,7 @@ hr {{ border: 0; border-top: 1px solid; border-color: var(--vlt-border); }}
         css_color(c.text_h6),
         t.h6_size,
         d.callout_radius,
+        d.code_bg_pad_x,
         "\"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace",
         t.code_size,
         pre_overflow,

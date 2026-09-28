@@ -5,6 +5,7 @@
 //! fallback renders as plain text.
 
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 
 const BLOCK_EDITOR_CONTEXT: &str = "BlockEditor";
 
@@ -677,7 +678,7 @@ impl Block {
             return div()
                 .w_full()
                 .text_size(px(t.text_size))
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .text_color(c.text_default)
                 .child(SharedString::from(raw.to_string()))
                 .into_any_element();
@@ -707,7 +708,7 @@ impl Block {
                 .px(px(d.block_padding_x))
                 .py(px(d.block_padding_y))
                 .text_size(px(t.text_size))
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .text_color(c.text_default)
                 .child(SharedString::from(raw.to_string()))
                 .child(
@@ -734,7 +735,7 @@ impl Block {
             return div()
                 .w_full()
                 .text_size(px(t.text_size))
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .text_color(c.text_default)
                 .child(SharedString::from(raw.to_string()))
                 .into_any_element();
@@ -788,7 +789,7 @@ impl Block {
                 .px(px(d.block_padding_x))
                 .py(px(d.block_padding_y))
                 .text_size(px(t.text_size))
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .text_color(c.text_default)
                 .child(SharedString::from(raw.to_string()))
                 .child(
@@ -822,7 +823,7 @@ impl Block {
                 .w_full()
                 .min_w(px(0.0))
                 .text_size(px(font_size))
-                .line_height(rems(theme.typography.text_line_height))
+                .line_height(relative(theme.typography.text_line_height))
                 .text_color(text_color)
                 .child(SharedString::from(self.display_text().to_string()))
                 .into_any_element();
@@ -882,7 +883,7 @@ impl Block {
             .items_center()
             .gap(px(0.0))
             .text_size(px(font_size))
-            .line_height(rems(theme.typography.text_line_height))
+            .line_height(relative(theme.typography.text_line_height))
             .children(self.render_inline_tree_children(
                 tree,
                 theme,
@@ -1098,6 +1099,8 @@ impl Block {
 
         let mut color = if span.link.is_some() || span.footnote.is_some() {
             theme.colors.text_link
+        } else if span.style.code {
+            theme.colors.text_link
         } else {
             base_color
         };
@@ -1121,10 +1124,12 @@ impl Block {
         let mut element = div()
             .min_w(px(0.0))
             .text_size(px(display_font_size))
-            .line_height(rems(theme.typography.text_line_height))
+            .line_height(relative(theme.typography.text_line_height))
             .text_color(color)
             .font_weight(if span.style.bold {
                 FontWeight::BOLD
+            } else if span.style.code {
+                if font_weight < FontWeight::MEDIUM { FontWeight::MEDIUM } else { font_weight }
             } else {
                 font_weight
             })
@@ -1437,7 +1442,7 @@ impl Block {
                 .items_center()
                 .gap(px(6.0))
                 .text_size(px(theme.typography.text_size))
-                .line_height(rems(theme.typography.text_line_height))
+                .line_height(relative(theme.typography.text_line_height))
                 .children(children)
                 .into_any_element(),
         )
@@ -1930,6 +1935,7 @@ impl Block {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let row = row.line_height(relative(1.25));
         if !self.foldable && !self.folded {
             return row.child(text);
         }
@@ -1942,7 +1948,7 @@ impl Block {
             .left(px(-HEADING_FOLD_CHEVRON_GUTTER))
             .top(px(0.0))
             .w(px(HEADING_FOLD_CHEVRON_GUTTER))
-            .h(px(font_size * 1.4))
+            .h(px(font_size * 1.25))
             .flex()
             .items_center()
             .justify_center()
@@ -2176,13 +2182,12 @@ impl Render for Block {
                 .min_h(px(d.table_cell_min_height))
                 .px(px(d.table_cell_padding_x))
                 .py(px(d.table_cell_padding_y))
-                .rounded(px(2.0))
                 .border(px(1.0))
                 .border_color(border_color)
                 .bg(bg)
                 .text_size(px(t.text_size))
                 .text_color(c.text_default)
-                .line_height(rems(t.text_line_height));
+                .line_height(relative(t.text_line_height));
 
             let cell_base = if style_as_header {
                 cell_base.font_weight(FontWeight::MEDIUM)
@@ -2269,7 +2274,7 @@ impl Render for Block {
                     t.text_size
                 }))
                 .text_color(c.text_default)
-                .line_height(rems(t.text_line_height));
+                .line_height(relative(t.text_line_height));
 
             let source_base = if self.kind().is_code_block() {
                 source_base.font(font(fonts.code_family.clone()))
@@ -2530,7 +2535,7 @@ impl Render for Block {
             BlockKind::BulletedListItem => focused_base
                 .text_size(px(t.text_size))
                 .text_color(c.text_default)
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .w_full()
                 .flex()
                 .flex_row()
@@ -2539,6 +2544,7 @@ impl Render for Block {
                 .children([
                     div()
                         .min_w(px(d.list_marker_width))
+                        .text_color(c.text_link)
                         .child(SharedString::new(bulleted_list_marker(self.render_depth))),
                     if showing_rendered_image {
                         // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：
@@ -2594,7 +2600,7 @@ impl Render for Block {
                 focused_base
                     .text_size(px(t.text_size))
                     .text_color(c.text_default)
-                    .line_height(rems(t.text_line_height))
+                    .line_height(relative(t.text_line_height))
                     .w_full()
                     .flex()
                     .flex_row()
@@ -2686,7 +2692,7 @@ impl Render for Block {
             BlockKind::NumberedListItem => focused_base
                 .text_size(px(t.text_size))
                 .text_color(c.text_default)
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .w_full()
                 .flex()
                 .flex_row()
@@ -2750,7 +2756,7 @@ impl Render for Block {
             BlockKind::Quote => focused_base
                 .text_size(px(t.text_size))
                 .text_color(c.text_quote)
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .child(self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
@@ -2884,13 +2890,17 @@ impl Render for Block {
                 let code_panel = focused_base
                     .bg(c.code_bg)
                     .font(font(fonts.code_family.clone()))
-                    .rounded_sm()
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(c.table_border)
+                    .shadow_sm()
                     .pl(px(d.code_block_padding_x))
                     .pr(px(d.code_block_padding_x))
-                    .py(px(d.code_block_padding_y))
+                    .pt(px(48.0))
+                    .pb(px(d.code_block_padding_y))
                     .text_size(px(t.code_size))
                     .text_color(c.code_text)
-                    .line_height(rems(t.text_line_height))
+                    .line_height(relative(1.5))
                     .child(
                         div()
                             .min_w(px(0.0))
@@ -2898,57 +2908,74 @@ impl Render for Block {
                             .child(BlockTextElement::new(cx.entity(), is_placeholder)),
                     );
 
-                if show_language_input {
+                {
                     let input_height = d.code_language_input_height
                         + d.code_language_input_padding_y * 2.0
                         + d.code_language_input_border_width * 2.0;
                     let code_copied = self
                         .code_copied_at
                         .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(1200));
-                    let copy_label: SharedString = if code_copied {
-                        "\u{2713}".into()
+                    let copy_icon = if code_copied {
+                        "icon/workspace/check.svg"
                     } else {
-                        strings.code_copy_button.clone().into()
+                        "icon/workspace/copy.svg"
                     };
+                    let copy_tooltip: SharedString = strings.code_copy_button.clone().into();
                     div()
                         .w_full()
                         .relative()
-                        .pb(px(input_height + d.code_language_input_gap))
                         .child(code_panel)
                         .child(
-                            // 「复制代码块内容」（roadmap B9）：语言输入框左侧。
+                            div()
+                                .debug_selector(|| "code-block-header".to_string())
+                                .absolute()
+                                .left(px(d.code_block_padding_x))
+                                .right(px(d.code_block_padding_x))
+                                .top(px(6.0))
+                                .h(px(input_height))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .children([0xff5f57ff, 0xffbd2eff, 0x28c840ff].map(|color| {
+                                    div().size(px(9.0)).rounded_full().bg(rgba(color))
+                                })),
+                        )
+                        .child(
+                            div().absolute().top(px(40.0))
+                                .left(px(d.code_block_padding_x)).right(px(d.code_block_padding_x))
+                                .h(px(1.0)).bg(c.table_border),
+                        )
+                        .child(
                             div()
                                 .id("code-copy-button")
                                 .debug_selector(|| "code-copy-button".to_string())
                                 .absolute()
-                                .right(px(
-                                    d.code_language_input_width + d.code_language_input_gap * 2.0
-                                ))
-                                .bottom(px(0.0))
+                                .right(px(d.code_block_padding_x))
+                                .top(px(6.0))
                                 .occlude()
                                 .h(px(input_height))
-                                .px(px(d.code_language_input_padding_x))
+                                .w(px(input_height))
                                 .flex()
                                 .items_center()
-                                .rounded(px(d.code_language_input_radius))
-                                .border(px(d.code_language_input_border_width))
-                                .border_color(c.code_language_input_border)
-                                .bg(c.code_language_input_bg)
-                                .text_size(px((t.code_size - 1.0).max(10.0)))
-                                .text_color(c.code_language_input_text)
+                                .justify_center()
+                                .rounded(px(4.0))
                                 .cursor(CursorStyle::PointingHand)
                                 .hover(|style| style.bg(c.dialog_secondary_button_hover))
+                                .tooltip(move |_, cx| {
+                                    cx.new(|_| HoverPreviewTooltip { label: copy_tooltip.clone() }).into()
+                                })
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(Self::on_code_copy_button),
                                 )
-                                .child(copy_label),
+                                .child(svg().path(copy_icon).size(px(14.0))
+                                    .text_color(if code_copied { c.text_link } else { c.text_placeholder })),
                         )
-                        .child(
+                        .when(show_language_input, |panel| panel.child(
                             div()
                                 .absolute()
-                                .right(px(d.code_language_input_gap))
-                                .bottom(px(0.0))
+                                .left(px(d.code_block_padding_x + 48.0))
+                                .top(px(6.0))
                                 .occlude()
                                 .key_context(BLOCK_EDITOR_CONTEXT)
                                 .track_focus(&self.code_language_focus_handle)
@@ -2997,10 +3024,8 @@ impl Render for Block {
                                     cx.entity(),
                                     language_placeholder,
                                 )),
-                        )
+                        ))
                         .into_any_element()
-                } else {
-                    code_panel.into_any_element()
                 }
             }
             BlockKind::Table => {
@@ -3008,7 +3033,7 @@ impl Render for Block {
                     return focused_base
                         .text_size(px(t.text_size))
                         .text_color(c.text_default)
-                        .line_height(rems(t.text_line_height))
+                        .line_height(relative(t.text_line_height))
                         .child(self.render_text_or_mixed_inline_visuals(
                             &theme,
                             focused,
@@ -3485,7 +3510,12 @@ impl Render for Block {
                         .pr(right_gutter)
                         .pb(bottom_gutter)
                         .gap(px(0.0))
-                        .children(rows)
+                        .child(
+                            div().w_full().flex().flex_col()
+                                .shadow_sm()
+                                .bg(c.table_cell_bg)
+                                .children(rows),
+                        )
                         .child(column_edge_band)
                         .child(row_edge_band)
                         .child(column_control)
@@ -3505,7 +3535,7 @@ impl Render for Block {
                 focused_base
                     .text_size(px(t.text_size))
                     .text_color(c.text_default)
-                    .line_height(rems(t.text_line_height))
+                    .line_height(relative(t.text_line_height))
                     .child(self.render_html_document(&html, &theme, cx))
                     .into_any_element()
             }
@@ -3568,7 +3598,7 @@ impl Render for Block {
                     .flex_col()
                     .gap(px(2.0))
                     .text_size(px(text_size))
-                    .line_height(rems(t.text_line_height))
+                    .line_height(relative(t.text_line_height))
                     .children(rows)
                     .into_any_element()
             }
@@ -3578,7 +3608,7 @@ impl Render for Block {
             | BlockKind::Heading { .. } => focused_base
                 .text_size(px(t.text_size))
                 .text_color(c.text_default)
-                .line_height(rems(t.text_line_height))
+                .line_height(relative(t.text_line_height))
                 .child(self.render_text_or_mixed_inline_visuals(
                     &theme,
                     focused,
@@ -3882,7 +3912,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn code_language_input_docks_to_right_edge(cx: &mut TestAppContext) {
+    async fn code_language_input_sits_in_header_above_code(cx: &mut TestAppContext) {
         cx.update(|cx| {
             I18nManager::init(cx);
             ThemeManager::init(cx);
@@ -3916,12 +3946,9 @@ mod tests {
             )
         });
         assert!(language_bounds.left() > text_bounds.left());
-        assert!(language_bounds.top() > text_bounds.bottom());
-        let right_gap = f32::from(language_bounds.right() - text_bounds.right());
-        assert!(
-            right_gap.abs() <= 12.0,
-            "expected language input to sit near the code block right edge; right_gap={right_gap}, text_bounds={text_bounds:?}, language_bounds={language_bounds:?}"
-        );
+        assert!(language_bounds.bottom() < text_bounds.top());
+        let copy_bounds = cx.debug_bounds("code-copy-button").expect("顶部复制按钮");
+        assert!(language_bounds.right() < copy_bounds.left());
         assert!(language_bounds.size.width <= px(156.0));
     }
 }
