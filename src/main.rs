@@ -5,6 +5,8 @@
 //! file. With no arguments, a single empty window is created.
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+// editor/workspace 的测试模块类型层级较深，默认 128 会爆递归限制。
+#![recursion_limit = "256"]
 
 use std::borrow::Cow;
 use std::path::PathBuf;

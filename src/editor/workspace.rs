@@ -93,7 +93,7 @@ struct WorkspaceDocumentTab {
 
 /// 打开文件时的标签模式（用户需求：单击预览、双击固定）。
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum WorkspaceOpenMode {
+pub(super) enum WorkspaceOpenMode {
     /// 仅激活已有标签（点标签栏）：不改动其固定/预览状态。
     Activate,
     /// 单击打开：新建预览标签；已修改的预览不会被后续切换替换。
@@ -2109,15 +2109,7 @@ impl Editor {
             let (results, document_source) = match scope {
                 WorkspaceSearchScope::Workspace => {
                     let Some(tree) = tree else { return };
-                    let results = background
-                        .spawn(async move {
-                            // A matcher bug must degrade to "no results", not
-                            // take the whole process down.
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                search_workspace_files(&tree, &matcher, 200)
-                            }))
-                            .unwrap_or_default()
-                        })
+                    let results = search_workspace_files(&tree, &matcher, 200, &background)
                         .await;
                     (results, None)
                 }
@@ -2953,7 +2945,7 @@ impl Editor {
     }
 
     /// 按「单击预览 / 双击固定」的模式打开工作区文件（用户需求）。
-    pub(crate) fn open_workspace_file_in_mode(
+    pub(super) fn open_workspace_file_in_mode(
         &mut self,
         path: PathBuf,
         mode: WorkspaceOpenMode,
@@ -5728,6 +5720,7 @@ pub(super) struct SearchOptions {
 
 /// Compiled search query. Regex compilation failures degrade to a plain
 /// substring search so a bad pattern never silently kills search.
+#[derive(Clone)]
 pub(super) struct SearchMatcher {
     query: String,
     options: SearchOptions,
@@ -5817,9 +5810,14 @@ fn case_insensitive_ranges(line: &str, query: &str) -> Vec<Range<usize>> {
         let mut ranges = Vec::new();
         let last = line.len() - query.len();
         let bytes = line.as_bytes();
+        let first = query.as_bytes()[0];
         let mut start = 0;
         while start <= last {
-            if bytes[start..start + query.len()].eq_ignore_ascii_case(query.as_bytes()) {
+            // 先比对首字节再展开整窗：不命中位置只做一次单字节大小写不敏感
+            // 比较，避免每个位置都比完整窗口。
+            if bytes[start].eq_ignore_ascii_case(&first)
+                && bytes[start..start + query.len()].eq_ignore_ascii_case(query.as_bytes())
+            {
                 ranges.push(start..start + query.len());
                 start += query.len();
             } else {
@@ -5916,102 +5914,241 @@ fn is_word_boundary(line: &str, range: &Range<usize>) -> bool {
     !before && !after
 }
 
-fn search_workspace_files(
-    root: &WorkspaceTreeNode,
-    matcher: &SearchMatcher,
-    limit: usize,
-) -> Vec<WorkspaceSearchHit> {
-    if matcher.is_empty() || limit == 0 {
-        return Vec::new();
-    }
+/// 工作区搜索的待扫文件（树序）。`searchable` 为 false 的文件（非文本）只
+/// 匹配文件名，不读内容。
+#[derive(Clone)]
+struct WorkspaceSearchFile {
+    path: PathBuf,
+    label: String,
+    searchable: bool,
+}
+
+/// 按树序收集待搜索文件，供并行分片使用。
+fn collect_workspace_search_files(root: &WorkspaceTreeNode) -> Vec<WorkspaceSearchFile> {
     let root_path = match &root.kind {
         WorkspaceTreeKind::Directory(path) => path.as_path(),
         _ => return Vec::new(),
     };
-    let mut hits = Vec::new();
-    fn visit(
-        node: &WorkspaceTreeNode,
-        root: &Path,
-        matcher: &SearchMatcher,
-        limit: usize,
-        hits: &mut Vec<WorkspaceSearchHit>,
-    ) {
-        if hits.len() >= limit {
-            return;
-        }
+    let mut files = Vec::new();
+    fn visit(node: &WorkspaceTreeNode, root: &Path, files: &mut Vec<WorkspaceSearchFile>) {
         match &node.kind {
             WorkspaceTreeKind::Directory(_) => {
                 for child in &node.children {
-                    visit(child, root, matcher, limit, hits);
-                    if hits.len() >= limit {
-                        break;
-                    }
+                    visit(child, root, files);
                 }
             }
             WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
-                let label = path
-                    .strip_prefix(root)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .into_owned();
-                if matcher.matches_filename(&label) {
-                    hits.push(WorkspaceSearchHit {
-                        path: path.clone(),
-                        label: label.clone(),
-                        line: None,
-                        match_range: None,
-                        source_range: None,
-                        preview: String::new(),
-                    });
-                }
-                if hits.len() >= limit
-                    || fs::metadata(path).is_ok_and(|metadata| metadata.len() > 20_000_000)
-                {
-                    return;
-                }
-                if let Ok(source) = fs::read_to_string(path) {
-                    let mut file_hits = 0;
-                    for (index, raw_line) in source.split_inclusive('\n').enumerate() {
-                        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-                        let matches = matcher.find_in_line(line);
-                        if let Some(first) = matches.first() {
-                            hits.push(WorkspaceSearchHit {
-                                path: path.clone(),
-                                label: label.clone(),
-                                line: Some(index + 1),
-                                match_range: Some(first.clone()),
-                                source_range: None,
-                                preview: line.trim().chars().take(140).collect(),
-                            });
-                            file_hits += 1;
-                            if file_hits == 3 || hits.len() >= limit {
-                                break;
-                            }
-                        }
-                    }
-                }
+                files.push(WorkspaceSearchFile {
+                    path: path.clone(),
+                    label: search_file_label(path, root),
+                    searchable: true,
+                });
             }
             WorkspaceTreeKind::OtherFile(path) => {
-                let label = path
-                    .strip_prefix(root)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .into_owned();
-                if matcher.matches_filename(&label) {
-                    hits.push(WorkspaceSearchHit {
-                        path: path.clone(),
-                        label: label.clone(),
-                        line: None,
-                        match_range: None,
-                        source_range: None,
-                        preview: String::new(),
-                    });
-                }
+                files.push(WorkspaceSearchFile {
+                    path: path.clone(),
+                    label: search_file_label(path, root),
+                    searchable: false,
+                });
             }
             WorkspaceTreeKind::Heading { .. } => {}
         }
     }
-    visit(root, root_path, matcher, limit, &mut hits);
+    visit(root, root_path, &mut files);
+    files
+}
+
+fn search_file_label(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// 文件内容缓存：上一轮搜过的文件本轮直接走内存，只付一次 stat 的代价校验
+/// 是否过期（用户报修：工作区变大后每敲一键都全树重读磁盘，比 VS Code 慢得
+/// 多）。容量超限时按最久未用驱逐。
+const SEARCH_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
+const SEARCH_CACHE_MAX_FILE_BYTES: u64 = 20_000_000;
+
+struct SearchContentCacheEntry {
+    mtime: std::time::SystemTime,
+    contents: std::sync::Arc<str>,
+    last_used: std::time::Instant,
+}
+
+fn search_content_cache() -> &'static std::sync::Mutex<
+    HashMap<PathBuf, SearchContentCacheEntry>,
+> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<PathBuf, SearchContentCacheEntry>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 读取文件内容用于搜索：命中缓存（mtime 未变）零拷贝返回；未命中读盘一次
+/// 并入缓存。非 UTF-8 文件返回 None（跳过内容搜索）。
+fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.len() > SEARCH_CACHE_MAX_FILE_BYTES {
+        return None;
+    }
+    let mtime = metadata.modified().ok()?;
+
+    {
+        let cache = search_content_cache();
+        let Ok(cache) = cache.lock() else {
+            return None;
+        };
+        if let Some(entry) = cache.get(path) {
+            if entry.mtime == mtime {
+                return Some(entry.contents.clone());
+            }
+        }
+    }
+
+    // 读盘不持锁：并行分片时不能让一把缓存锁把所有 worker 串行化。
+    let bytes = fs::read(path).ok()?;
+    let contents: std::sync::Arc<str> = match String::from_utf8(bytes) {
+        Ok(text) => std::sync::Arc::from(text),
+        Err(_) => return None,
+    };
+
+    if let Ok(mut cache) = search_content_cache().lock() {
+        if let Some(existing) = cache.get(path) {
+            if existing.mtime == mtime {
+                return Some(existing.contents.clone());
+            }
+        }
+        // 粗粒度总量记账：超限就把最久未用的条目逐出，直到放得下。单文件
+        // 上限 20MB 远小于总上限，刚插入的条目不会被自己挤掉。
+        let inserted = contents.len();
+        if inserted <= SEARCH_CACHE_MAX_BYTES {
+            while cache.len() * 4 > SEARCH_CACHE_MAX_BYTES
+                || cache.values().map(|entry| entry.contents.len()).sum::<usize>()
+                    > SEARCH_CACHE_MAX_BYTES - inserted
+            {
+                let oldest = cache
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.last_used)
+                    .map(|(key, _)| key.clone());
+                match oldest {
+                    Some(key) => {
+                        cache.remove(&key);
+                    }
+                    None => break,
+                }
+            }
+            cache.insert(
+                path.to_path_buf(),
+                SearchContentCacheEntry {
+                    mtime,
+                    contents: contents.clone(),
+                    last_used: std::time::Instant::now(),
+                },
+            );
+        }
+    }
+    Some(contents)
+}
+
+/// 单文件搜索：文件名匹配 +（文本文件的）内容匹配。与旧版逐文件逻辑一致。
+fn search_single_file(
+    file: &WorkspaceSearchFile,
+    matcher: &SearchMatcher,
+    limit: usize,
+    hits: &mut Vec<WorkspaceSearchHit>,
+) {
+    if hits.len() >= limit {
+        return;
+    }
+    if matcher.matches_filename(&file.label) {
+        hits.push(WorkspaceSearchHit {
+            path: file.path.clone(),
+            label: file.label.clone(),
+            line: None,
+            match_range: None,
+            source_range: None,
+            preview: String::new(),
+        });
+        if hits.len() >= limit {
+            return;
+        }
+    }
+    if !file.searchable {
+        return;
+    }
+    let Some(source) = cached_file_source(&file.path) else {
+        return;
+    };
+    let mut file_hits = 0;
+    for (index, raw_line) in source.split_inclusive('\n').enumerate() {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let matches = matcher.find_in_line(line);
+        if let Some(first) = matches.first() {
+            hits.push(WorkspaceSearchHit {
+                path: file.path.clone(),
+                label: file.label.clone(),
+                line: Some(index + 1),
+                match_range: Some(first.clone()),
+                source_range: None,
+                preview: line.trim().chars().take(140).collect(),
+            });
+            file_hits += 1;
+            if file_hits == 3 || hits.len() >= limit {
+                break;
+            }
+        }
+    }
+}
+
+/// 工作区搜索：文件列表按 CPU 核数分片，在后台线程池并行扫描；结果按分片
+/// 顺序合并保持树序稳定。上一轮读过且未变更的文件内容直接命中缓存，不再
+/// 逐个重读磁盘（用户报修：大工作区搜索远慢于 VS Code）。
+async fn search_workspace_files(
+    root: &WorkspaceTreeNode,
+    matcher: &SearchMatcher,
+    limit: usize,
+    background: &gpui::BackgroundExecutor,
+) -> Vec<WorkspaceSearchHit> {
+    if matcher.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let files = collect_workspace_search_files(root);
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(4)
+        .min(files.len());
+    let chunk_size = files.len().div_ceil(workers);
+    let matcher = std::sync::Arc::new(matcher.clone());
+    let mut tasks = Vec::new();
+    for chunk in files.chunks(chunk_size) {
+        let chunk = chunk.to_vec();
+        let matcher = matcher.clone();
+        tasks.push(background.spawn(async move {
+            // 分片体是同步扫描，panic 隔离在这里完成（一个分片炸掉只丢自己的
+            // 结果，降级为"无结果"而不是拖垮整个搜索）。
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut hits = Vec::new();
+                for file in &chunk {
+                    search_single_file(file, &matcher, limit, &mut hits);
+                }
+                hits
+            }))
+            .unwrap_or_default()
+        }));
+    }
+    let mut hits = Vec::new();
+    for task in tasks {
+        if hits.len() >= limit {
+            break;
+        }
+        hits.extend(task.await);
+    }
+    hits.truncate(limit);
     hits
 }
 
@@ -6859,6 +6996,9 @@ fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
 }
 
 #[cfg(test)]
+mod search_bench;
+
+#[cfg(test)]
 mod tests {
     use super::{
         Editor, SearchMatcher, SearchOptions, TreeSortPreference, WorkspaceSelection,
@@ -7353,8 +7493,9 @@ mod tests {
         });
     }
 
-    #[test]
-    fn workspace_search_matches_file_names_and_contents() {
+    #[gpui::test]
+    async fn workspace_search_matches_file_names_and_contents(cx: &mut TestAppContext) {
+        let background = cx.executor();
         let root =
             std::env::temp_dir().join(format!("velora-workspace-search-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("src")).expect("create source dir");
@@ -7366,22 +7507,58 @@ mod tests {
         fs::write(root.join("src").join("main.rs"), "fn main() {}").expect("write code");
         let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
 
-        let matches = search_workspace_files(&tree, &SearchMatcher::new("MAIN", SearchOptions::default()), 200);
+        let matches = search_workspace_files(&tree, &SearchMatcher::new("MAIN", SearchOptions::default()), 200, &background).await;
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].label, "src/main.rs");
         assert_eq!(matches[0].line, None);
         assert_eq!(matches[1].line, Some(1));
 
-        let matches = search_workspace_files(&tree, &SearchMatcher::new("readme", SearchOptions::default()), 200);
+        let matches = search_workspace_files(&tree, &SearchMatcher::new("readme", SearchOptions::default()), 200, &background).await;
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].label, "README.md");
 
-        let matches = search_workspace_files(&tree, &SearchMatcher::new("content", SearchOptions::default()), 200);
+        let matches = search_workspace_files(&tree, &SearchMatcher::new("content", SearchOptions::default()), 200, &background).await;
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].label, "README.md");
         assert_eq!(matches[0].line, Some(1));
         assert!(matches[0].preview.contains("content"));
-        assert!(search_workspace_files(&tree, &SearchMatcher::new("absent", SearchOptions::default()), 200).is_empty());
+        assert!(search_workspace_files(&tree, &SearchMatcher::new("absent", SearchOptions::default()), 200, &background).await.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn workspace_search_cache_picks_up_modified_content(cx: &mut TestAppContext) {
+        // 内容缓存：mtime 未变走内存；文件被改写后必须反映新内容（用户报修
+        // 的性能优化不能牺牲正确性）。
+        let background = cx.executor();
+        let root =
+            std::env::temp_dir().join(format!("velora-search-cache-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("create dir");
+        let note = root.join("note.md");
+        fs::write(&note, "alpha only").expect("write");
+
+        let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+        let matcher = SearchMatcher::new("alpha", SearchOptions::default());
+        assert_eq!(search_workspace_files(&tree, &matcher, 200, &background).await.len(), 1);
+        // 第二轮：命中缓存仍能找到。
+        assert_eq!(search_workspace_files(&tree, &matcher, 200, &background).await.len(), 1);
+
+        // 改写文件后缓存必须失效。
+        fs::write(&note, "beta instead").expect("rewrite");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("rescan tree");
+        let fresh = SearchMatcher::new("beta", SearchOptions::default());
+        assert_eq!(
+            search_workspace_files(&tree, &fresh, 200, &background).await.len(),
+            1,
+            "改写后应搜到新内容"
+        );
+        let stale = SearchMatcher::new("alpha", SearchOptions::default());
+        assert!(
+            search_workspace_files(&tree, &stale, 200, &background).await.is_empty(),
+            "改写后不应再搜到旧内容"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -8344,3 +8521,5 @@ mod tests {
         assert_eq!(clamp_workspace_panel_width(500.0, 720.0), 400.0);
     }
 }
+
+
