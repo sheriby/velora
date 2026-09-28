@@ -70,8 +70,9 @@ chromiumoxide = { version = "0.9.1", default-features = false, features = ["byte
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 url = "2"
 pulldown-cmark = "0.13"
-html5ever = "0.39"
-markup5ever_rcdom = "0.39"
+html5ever = "0.38"
+markup5ever_rcdom = "0.38"
+htmd = "0.5"
 cssparser = "0.37"
 directories = "6"
 ratex-layout = "0.1.9"

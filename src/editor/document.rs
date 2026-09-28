@@ -869,12 +869,15 @@ fn comment_block(cx: &mut Context<Editor>, markdown: String) -> Entity<super::Bl
 
 fn html_or_raw_block(cx: &mut Context<Editor>, markdown: String) -> Entity<super::Block> {
     let document = parse_html_document(&markdown);
-    if document.safety == HtmlSafetyClass::Semantic {
+    // A stray closing tag parses to an empty document. It stays a block so the
+    // source round-trips byte for byte, and `Block::renders_nothing` keeps it
+    // out of the rendered view.
+    if document.safety == HtmlSafetyClass::RawTextBlock {
+        raw_block(cx, markdown)
+    } else {
         let mut record = BlockRecord::html(markdown);
         record.html = Some(document);
         Editor::new_block(cx, record)
-    } else {
-        raw_block(cx, markdown)
     }
 }
 
@@ -3565,7 +3568,10 @@ mod tests {
             assert_eq!(roots.len(), 3);
             assert_eq!(roots[0].read(cx).kind(), BlockKind::HtmlBlock);
             assert_eq!(roots[1].read(cx).kind(), BlockKind::Table);
-            assert_eq!(roots[2].read(cx).kind(), BlockKind::RawMarkdown);
+            // The stray closing tag keeps its text but draws no row.
+            let stray = roots[2].read(cx);
+            assert_eq!(stray.kind(), BlockKind::HtmlBlock);
+            assert!(stray.renders_nothing());
 
             let text = editor.document.markdown_text(cx);
             assert!(text.contains("| 日期 | 版本 |"), "actual: {text}");

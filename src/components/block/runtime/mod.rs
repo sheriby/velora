@@ -332,6 +332,16 @@ impl Block {
         self.record.kind.clone()
     }
 
+    /// True when the block draws nothing in rendered mode: an HTML block whose
+    /// fragment has no renderable nodes (stray closing tags). Source mode still
+    /// edits the same text as part of the single source block.
+    pub(crate) fn renders_nothing(&self) -> bool {
+        self.record
+            .html
+            .as_ref()
+            .is_some_and(|document| document.renders_nothing())
+    }
+
     pub(crate) fn is_source_raw_mode(&self) -> bool {
         self.edit_mode == EditMode::SourceRaw
     }

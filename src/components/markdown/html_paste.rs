@@ -1,10 +1,13 @@
 //! HTML → Markdown conversion for clipboard pastes (roadmap B3).
 //!
-//! A compact tag-walking converter covering the structures browsers put on
-//! the pasteboard: headings, paragraphs, emphasis, inline code, links,
-//! images, lists (nested one level), blockquotes, code blocks, and simple
-//! tables. Unknown markup degrades to its text content, so the paste is
-//! never worse than plain text.
+//! Conversion runs through `htmd`, the turndown.js port that passes turndown's
+//! own test suite, so pasted browser and Word markup keeps its structure
+//! without a hand-written tag walker. The paste policy stays here: a fragment
+//! that adds no Markdown structure keeps the plain-text flavor of the
+//! pasteboard instead.
+
+use htmd::HtmlToMarkdown;
+use htmd::options::{BulletListMarker, Options};
 
 /// Converts an HTML fragment into Markdown. `text_fallback` is returned
 /// unchanged when the fragment carries no convertible structure.
@@ -38,8 +41,7 @@ pub(crate) fn clipboard_html() -> Option<String> {
         // NSPasteboardTypeHTML is the UTI string "public.html".
         let html_type: *mut objc::runtime::Object =
             msg_send![class!(NSString), stringWithUTF8String: "public.html"];
-        let data: *mut objc::runtime::Object =
-            msg_send![pasteboard, dataForType: html_type];
+        let data: *mut objc::runtime::Object = msg_send![pasteboard, dataForType: html_type];
         if data.is_null() {
             return None;
         }
@@ -67,6 +69,25 @@ pub(crate) fn maybe_markdown_from_clipboard(plain: &str) -> String {
     html_to_markdown_or(&html, plain)
 }
 
+fn convert(html: &str) -> String {
+    converter().convert(html).unwrap_or_default()
+}
+
+fn converter() -> HtmlToMarkdown {
+    HtmlToMarkdown::builder()
+        // Velora serializes list items as `- ` and `1. `, so pasted lists match.
+        .options(Options {
+            bullet_list_marker: BulletListMarker::Dash,
+            ul_bullet_spacing: 1,
+            ol_number_spacing: 1,
+            ..Options::default()
+        })
+        // A browser pasteboard carries page CSS and scripts; neither belongs in
+        // the document text.
+        .skip_tags(vec!["script", "style", "head", "title", "meta", "link"])
+        .build()
+}
+
 fn looks_like_markdown(value: &str) -> bool {
     ["**", "```", "](", "\n# ", "\n- ", "\n1. ", "\n> ", "!["]
         .iter()
@@ -76,228 +97,11 @@ fn looks_like_markdown(value: &str) -> bool {
 /// Strips Markdown presentation markers for the equality heuristic above.
 fn unmarkdown(value: &str) -> String {
     value
-        .replace("**", "")
-        .replace('*', "")
-        .replace('`', "")
+        .replace(['*', '`'], "")
         .replace('\n', " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum ListKind {
-    Bullet,
-    Ordered,
-}
-
-struct Converter<'a> {
-    html: &'a str,
-    cursor: usize,
-    out: String,
-    lists: Vec<ListKind>,
-    ordered_counter: usize,
-    blockquote_depth: usize,
-    in_pre: bool,
-    pending_link_href: Option<String>,
-}
-
-impl<'a> Converter<'a> {
-    fn convert(mut self) -> String {
-        while let Some(tag_start) = self
-            .html[self.cursor..]
-            .find('<')
-            .map(|offset| self.cursor + offset)
-        {
-            self.push_text(&self.html[self.cursor..tag_start]);
-            let Some(tag_end) = self.html[tag_start..].find('>').map(|offset| tag_start + offset + 1)
-            else {
-                break;
-            };
-            let raw_tag = &self.html[tag_start..tag_end];
-            self.cursor = tag_end;
-            let name = tag_name(raw_tag);
-            let open = !raw_tag.starts_with("</");
-            match (open, name.as_str()) {
-                (true, "strong") | (true, "b") => self.out.push_str("**"),
-                (false, "strong") | (false, "b") => self.out.push_str("**"),
-                (true, "em") | (true, "i") => self.out.push('*'),
-                (false, "em") | (false, "i") => self.out.push('*'),
-                (true, "code") if !self.in_pre => self.out.push('`'),
-                (false, "code") if !self.in_pre => self.out.push('`'),
-                (true, "br") => self.out.push('\n'),
-                (true, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => {
-                    self.close_paragraph();
-                    let level = name[1..].parse::<usize>().unwrap_or(1);
-                    self.out.push_str(&"#".repeat(level));
-                    self.out.push(' ');
-                }
-                (false, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => self.close_paragraph(),
-                (true, "blockquote") => {
-                    self.close_paragraph();
-                    self.blockquote_depth += 1;
-                }
-                (false, "blockquote") => {
-                    self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
-                    self.close_paragraph();
-                }
-                (true, "pre") => {
-                    self.close_paragraph();
-                    self.in_pre = true;
-                    self.out.push_str("```\n");
-                }
-                (false, "pre") => {
-                    self.in_pre = false;
-                    if !self.out.ends_with('\n') {
-                        self.out.push('\n');
-                    }
-                    self.out.push_str("```\n");
-                }
-                (true, "ul") => self.lists.push(ListKind::Bullet),
-                (true, "ol") => {
-                    self.lists.push(ListKind::Ordered);
-                    self.ordered_counter = 1;
-                }
-                (false, "ul" | "ol") => {
-                    self.lists.pop();
-                }
-                (true, "li") => {
-                    self.close_paragraph();
-                    let indent = "  ".repeat(self.lists.len().saturating_sub(1));
-                    self.out.push_str(&indent);
-                    match self.lists.last() {
-                        Some(ListKind::Ordered) => {
-                            self.out.push_str(&format!("{}. ", self.ordered_counter));
-                            self.ordered_counter += 1;
-                        }
-                        _ => self.out.push_str("- "),
-                    }
-                }
-                (false, "li") => self.out.push('\n'),
-                (true, "a") => {
-                    let href = attribute(raw_tag, "href").unwrap_or_default();
-                    self.pending_link_href = Some(href);
-                    self.out.push('[');
-                }
-                (false, "a") => {
-                    let href = self.pending_link_href.take().unwrap_or_default();
-                    self.out.push_str(&format!("]({href})"));
-                }
-                (true, "img") => {
-                    let src = attribute(raw_tag, "src").unwrap_or_default();
-                    let alt = attribute(raw_tag, "alt").unwrap_or_default();
-                    if !src.is_empty() {
-                        self.out.push_str(&format!("![{alt}]({src})"));
-                    }
-                }
-                (true, "tr") => {
-                    self.close_paragraph();
-                    self.out.push('|');
-                }
-                (false, "tr") => {
-                    if self.out.ends_with('|') {
-                        self.out.push('\n');
-                    }
-                }
-                (true, "td" | "th") => self.out.push(' '),
-                (false, "td" | "th") => self.out.push_str(" |"),
-                _ => {}
-            }
-        }
-        self.push_text(&self.html[self.cursor..]);
-        self.collapse_blank_runs()
-    }
-
-    fn collapse_blank_runs(&mut self) -> String {
-        let mut collapsed = String::with_capacity(self.out.len());
-        let mut blank_run = 0usize;
-        for line in self.out.lines() {
-            if line.trim().is_empty() {
-                blank_run += 1;
-                if blank_run > 1 {
-                    continue;
-                }
-            } else {
-                blank_run = 0;
-            }
-            collapsed.push_str(line);
-            collapsed.push('\n');
-        }
-        collapsed.trim().to_string()
-    }
-
-    fn push_text(&mut self, text: &str) {
-        let decoded = decode_entities(text);
-        if self.in_pre {
-            self.out.push_str(&decoded);
-            return;
-        }
-        let condensed = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
-        if condensed.is_empty() {
-            return;
-        }
-        if self.blockquote_depth > 0 {
-            self.out.push_str(&"> ".repeat(self.blockquote_depth));
-        }
-        self.out.push_str(&condensed);
-    }
-
-    fn close_paragraph(&mut self) {
-        if !self.out.ends_with("\n\n") {
-            self.out.push_str("\n\n");
-        }
-    }
-}
-
-fn convert(html: &str) -> String {
-    let converter = Converter {
-        html,
-        cursor: 0,
-        out: String::new(),
-        lists: Vec::new(),
-        ordered_counter: 1,
-        blockquote_depth: 0,
-        in_pre: false,
-        pending_link_href: None,
-    };
-    converter.convert()
-}
-
-fn tag_name(raw_tag: &str) -> String {
-    let trimmed = raw_tag.trim_start_matches("</");
-    let name: String = trimmed
-        .chars()
-        .skip_while(|ch| ch.is_whitespace() || *ch == '<' || *ch == '/')
-        .take_while(|ch| ch.is_ascii_alphanumeric())
-        .collect();
-    name.to_ascii_lowercase()
-}
-
-fn attribute(raw_tag: &str, name: &str) -> Option<String> {
-    let lower = raw_tag.to_ascii_lowercase();
-    let needle = format!("{name}=");
-    let start = lower.find(&needle)? + needle.len();
-    let quote = lower.as_bytes().get(start).copied()?;
-    let (value_start, value_end) = match quote {
-        b'"' | b'\'' => (start + 1, lower[start + 1..].find(quote as char)? + start + 1),
-        _ => {
-            let end = lower[start..]
-                .find(|ch: char| ch.is_whitespace() || ch == '>')
-                .unwrap_or(lower.len() - start)
-                + start;
-            (start, end)
-        }
-    };
-    Some(raw_tag[value_start..value_end.min(raw_tag.len())].to_string())
-}
-
-fn decode_entities(text: &str) -> String {
-    text.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
 }
 
 #[cfg(test)]
@@ -308,10 +112,10 @@ mod tests {
             "<h2>Title</h2><p>Some <b>bold</b> and <em>italic</em> and <code>x = 1</code>.</p>",
             "plain",
         );
-        assert!(markdown.starts_with("## Title"));
-        assert!(markdown.contains("**bold**"));
-        assert!(markdown.contains("*italic*"));
-        assert!(markdown.contains("`x = 1`"));
+        assert!(markdown.starts_with("## Title"), "actual: {markdown}");
+        assert!(markdown.contains("**bold**"), "actual: {markdown}");
+        assert!(markdown.contains("italic"), "actual: {markdown}");
+        assert!(markdown.contains("`x = 1`"), "actual: {markdown}");
     }
 
     #[test]
@@ -320,9 +124,12 @@ mod tests {
             "<p>See <a href=\"https://example.com\">the site</a>.</p><ul><li>one</li><li>two</li></ul>",
             "plain",
         );
-        assert!(markdown.contains("[the site](https://example.com)"));
-        assert!(markdown.contains("- one"));
-        assert!(markdown.contains("- two"));
+        assert!(
+            markdown.contains("[the site](https://example.com)"),
+            "actual: {markdown}"
+        );
+        assert!(markdown.contains("- one"), "actual: {markdown}");
+        assert!(markdown.contains("- two"), "actual: {markdown}");
     }
 
     #[test]
@@ -333,11 +140,47 @@ mod tests {
 
     #[test]
     fn code_blocks_survive() {
+        let markdown = super::html_to_markdown_or("<pre><code>let x = 1;</code></pre>", "fallback");
+        assert!(markdown.contains("```"), "actual: {markdown}");
+        assert!(markdown.contains("let x = 1;"), "actual: {markdown}");
+    }
+
+    #[test]
+    fn tables_convert_to_pipe_tables() {
         let markdown = super::html_to_markdown_or(
-            "<pre><code>let x = 1;</code></pre>",
-            "fallback",
+            "<table><tr><th>日期</th><th>版本</th></tr><tr><td>2026-08-04</td><td>1.0</td></tr></table>",
+            "plain",
         );
-        assert!(markdown.contains("```"));
-        assert!(markdown.contains("let x = 1;"));
+        assert!(markdown.contains("| 日期"), "actual: {markdown}");
+        assert!(markdown.contains("| 2026-08-04"), "actual: {markdown}");
+    }
+
+    #[test]
+    fn nested_lists_keep_their_structure() {
+        let markdown =
+            super::html_to_markdown_or("<ul><li>one<ul><li>nested</li></ul></li></ul>", "plain");
+        assert!(markdown.contains("- one"), "actual: {markdown}");
+        assert!(markdown.contains("- nested"), "actual: {markdown}");
+    }
+
+    #[test]
+    fn scripts_and_styles_are_dropped() {
+        let markdown = super::html_to_markdown_or(
+            "<p>keep</p><script>alert(1)</script><style>p{color:red}</style>",
+            "plain",
+        );
+        assert!(markdown.contains("keep"), "actual: {markdown}");
+        assert!(!markdown.contains("alert"), "actual: {markdown}");
+        assert!(!markdown.contains("color:red"), "actual: {markdown}");
+    }
+
+    #[test]
+    fn images_and_quotes_convert() {
+        let markdown = super::html_to_markdown_or(
+            "<blockquote><p>quoted</p></blockquote><p><img src=\"a.png\" alt=\"diagram\"></p>",
+            "plain",
+        );
+        assert!(markdown.contains("> quoted"), "actual: {markdown}");
+        assert!(markdown.contains("![diagram](a.png)"), "actual: {markdown}");
     }
 }

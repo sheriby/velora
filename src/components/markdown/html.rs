@@ -16,6 +16,9 @@ use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 pub(crate) enum HtmlSafetyClass {
     /// The fragment has at least one safe semantic node.
     Semantic,
+    /// The fragment draws nothing: closing tags without a matching opening tag,
+    /// such as a stray `</div>`. The source text is kept for editing.
+    Empty,
     /// The entire fragment must be shown and stored as plain raw text.
     RawTextBlock,
 }
@@ -172,6 +175,12 @@ impl HtmlDocument {
     pub(crate) fn is_semantic(&self) -> bool {
         self.safety == HtmlSafetyClass::Semantic
     }
+
+    /// True when the fragment has nothing to draw: stray closing tags parse to
+    /// an empty document.
+    pub(crate) fn renders_nothing(&self) -> bool {
+        self.safety == HtmlSafetyClass::Empty
+    }
 }
 
 impl HtmlCssColor {
@@ -281,15 +290,19 @@ pub(crate) fn parse_html_document(raw_source: &str) -> HtmlDocument {
     }
 
     let dom = parse_html_fragment(raw_source);
-    let mut nodes = Vec::new();
-    if let Some(body) = find_body(&dom.document) {
-        map_dom_children(&body, &mut nodes);
+    let nodes = map_html_fragment(&dom.document);
+
+    if nodes.is_empty() {
+        return HtmlDocument {
+            raw_source: raw_source.to_string(),
+            nodes,
+            safety: HtmlSafetyClass::Empty,
+        };
     }
 
-    if nodes.is_empty()
-        || nodes
-            .iter()
-            .all(|node| matches!(node.kind, HtmlNodeKind::RawTextBlock))
+    if nodes
+        .iter()
+        .all(|node| matches!(node.kind, HtmlNodeKind::RawTextBlock))
     {
         return HtmlDocument::raw(raw_source);
     }
@@ -311,70 +324,82 @@ fn parse_html_fragment(raw_source: &str) -> RcDom {
         .unwrap_or_else(|_| RcDom::default())
 }
 
-fn find_body(document: &Handle) -> Option<Handle> {
-    let mut stack = vec![document.clone()];
-    while let Some(node) = stack.pop() {
-        if let NodeData::Element { name, .. } = &node.data
-            && name.local.as_ref() == "body"
-        {
-            return Some(node);
-        }
-        for child in node.children.borrow().iter() {
-            stack.push(child.clone());
-        }
-    }
-    None
+/// Maps the fragment onto the semantic tree. `html5ever` always builds a full
+/// document (`html` > `head`/`body`), so those wrapper elements are unwrapped:
+/// a leading `<script>` or `<style>` lands in `head`, and the fragment's own
+/// markup is what must be classified.
+fn map_html_fragment(document: &Handle) -> Vec<HtmlNode> {
+    let mut nodes = Vec::new();
+    collect_fragment_nodes(document, &mut nodes);
+    nodes
 }
 
-/// Maps DOM children onto the semantic tree: an allowlisted element becomes a
-/// semantic node, every other node keeps its serialized markup as raw text.
+fn collect_fragment_nodes(handle: &Handle, nodes: &mut Vec<HtmlNode>) {
+    for child in handle.children.borrow().iter() {
+        if let NodeData::Element { name, .. } = &child.data {
+            let local = name.local.as_ref();
+            if matches!(local, "html" | "head" | "body") {
+                collect_fragment_nodes(child, nodes);
+                continue;
+            }
+        }
+        map_dom_node(child, nodes);
+    }
+}
+
 fn map_dom_children(parent: &Handle, nodes: &mut Vec<HtmlNode>) {
     for child in parent.children.borrow().iter() {
-        match &child.data {
-            NodeData::Text { contents } => {
-                let text = contents.borrow().to_string();
-                if !text.is_empty() {
-                    nodes.push(HtmlNode {
-                        kind: HtmlNodeKind::InlineSemantic,
-                        tag_name: "#text".into(),
-                        attrs: Vec::new(),
-                        children: Vec::new(),
-                        raw_source: text,
-                    });
-                }
+        map_dom_node(child, nodes);
+    }
+}
+
+/// Classifies one DOM node: an allowlisted element becomes a semantic node,
+/// every other node keeps its serialized markup as raw text.
+fn map_dom_node(node: &Handle, nodes: &mut Vec<HtmlNode>) {
+    match &node.data {
+        NodeData::Text { contents } => {
+            let text = contents.borrow().to_string();
+            if !text.is_empty() {
+                nodes.push(HtmlNode {
+                    kind: HtmlNodeKind::InlineSemantic,
+                    tag_name: "#text".into(),
+                    attrs: Vec::new(),
+                    children: Vec::new(),
+                    raw_source: text,
+                });
             }
-            NodeData::Element { name, attrs, .. } => {
-                let tag_name = name.local.to_string();
-                let attrs = dom_attrs(&attrs.borrow());
-                if is_safe_tag(&tag_name) && !has_dangerous_attrs(&attrs) {
-                    let mut children = Vec::new();
-                    map_dom_children(child, &mut children);
-                    nodes.push(HtmlNode {
-                        kind: if is_inline_tag(&tag_name) {
-                            HtmlNodeKind::InlineSemantic
-                        } else {
-                            HtmlNodeKind::BlockSemantic
-                        },
-                        tag_name,
-                        attrs,
-                        children,
-                        raw_source: serialize_handle(child),
-                    });
-                } else {
-                    nodes.push(raw_node(serialize_handle(child)));
-                }
-            }
-            NodeData::Comment { contents } => {
-                nodes.push(raw_node(format!("<!--{contents}-->")));
-            }
-            NodeData::Doctype { name, .. } => {
-                nodes.push(raw_node(format!("<!DOCTYPE {name}>")));
-            }
-            NodeData::ProcessingInstruction { target, contents } => {
-                nodes.push(raw_node(format!("<?{target} {contents}?>")));
-            }
-            NodeData::Document => map_dom_children(child, nodes),
         }
+        NodeData::Element { name, attrs, .. } => {
+            let tag_name = name.local.to_string();
+            let attrs = dom_attrs(&attrs.borrow());
+            if is_safe_tag(&tag_name) && !has_dangerous_attrs(&attrs) {
+                let mut children = Vec::new();
+                map_dom_children(node, &mut children);
+                nodes.push(HtmlNode {
+                    kind: if is_inline_tag(&tag_name) {
+                        HtmlNodeKind::InlineSemantic
+                    } else {
+                        HtmlNodeKind::BlockSemantic
+                    },
+                    tag_name,
+                    attrs,
+                    children,
+                    raw_source: serialize_handle(node),
+                });
+            } else {
+                nodes.push(raw_node(serialize_handle(node)));
+            }
+        }
+        NodeData::Comment { contents } => {
+            nodes.push(raw_node(format!("<!--{contents}-->")));
+        }
+        NodeData::Doctype { name, .. } => {
+            nodes.push(raw_node(format!("<!DOCTYPE {name}>")));
+        }
+        NodeData::ProcessingInstruction { target, contents } => {
+            nodes.push(raw_node(format!("<?{target} {contents}?>")));
+        }
+        NodeData::Document => map_dom_children(node, nodes),
     }
 }
 
@@ -414,6 +439,9 @@ pub(crate) fn sanitize_html_for_export(raw_source: &str) -> String {
     }
 
     let document = parse_html_document(raw_source);
+    if document.renders_nothing() {
+        return String::new();
+    }
     if !document.is_semantic() {
         return format!(
             "<pre class=\"vlt-raw-html\">{}</pre>",
@@ -665,39 +693,29 @@ pub(crate) fn parse_html_image_block(raw_source: &str) -> Option<HtmlImageBlock>
     }
 
     let dom = parse_html_fragment(trimmed);
-    let body = find_body(&dom.document)?;
-    let mut image: Option<Handle> = None;
-    for child in body.children.borrow().iter() {
-        match &child.data {
-            NodeData::Text { contents } => {
-                if !contents.borrow().trim().is_empty() {
-                    return None;
-                }
-            }
-            NodeData::Element { name, .. } if name.local.as_ref() == "img" && image.is_none() => {
-                image = Some(child.clone());
-            }
-            _ => return None,
+    let nodes = map_html_fragment(&dom.document);
+    let mut image: Option<&[HtmlAttr]> = None;
+    for node in &nodes {
+        if node.tag_name == "#text" && node.raw_source.trim().is_empty() {
+            continue;
         }
-    }
-    let image = image?;
-    let NodeData::Element { attrs, .. } = &image.data else {
-        return None;
-    };
-    let attrs = dom_attrs(&attrs.borrow());
-    if has_dangerous_attrs(&attrs) {
+        if image.is_none() && node.tag_name == "img" && node.kind != HtmlNodeKind::RawTextBlock {
+            image = Some(&node.attrs);
+            continue;
+        }
         return None;
     }
+    let attrs = image?;
 
-    let src = attr_value_in_attrs(&attrs, "src")?.trim().to_string();
+    let src = attr_value_in_attrs(attrs, "src")?.trim().to_string();
     if src.is_empty() {
         return None;
     }
 
-    let alt = attr_value_in_attrs(&attrs, "alt")
+    let alt = attr_value_in_attrs(attrs, "alt")
         .unwrap_or_default()
         .to_string();
-    let zoom = attr_value_in_attrs(&attrs, "style")
+    let zoom = attr_value_in_attrs(attrs, "style")
         .and_then(parse_html_zoom)
         .unwrap_or(1.0);
 
@@ -1218,10 +1236,12 @@ mod tests {
     }
 
     #[test]
-    fn stray_closing_tag_falls_back_to_raw_text() {
+    fn stray_closing_tag_renders_nothing() {
         let doc = parse_html_document("</div>");
-        assert_eq!(doc.safety, HtmlSafetyClass::RawTextBlock);
-        assert_eq!(doc.nodes[0].raw_source, "</div>");
+        assert!(doc.renders_nothing());
+        assert!(doc.nodes.is_empty());
+        assert_eq!(doc.raw_source, "</div>");
+        assert_eq!(sanitize_html_for_export("</div>"), "");
     }
 
     #[test]

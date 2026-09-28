@@ -13,6 +13,7 @@ use anyhow::{Context as _, anyhow};
 use gpui::*;
 
 use super::Editor;
+use super::tree::VisibleBlock;
 use crate::components::{
     BlockEvent, BlockKind, BlockRecord, CollapsedCaretAffinity, IndentBlock, InlineTextTree,
     OutdentBlock, PastedImageSource, TableCellPosition, is_table_row_candidate,
@@ -21,6 +22,26 @@ use crate::components::{
 use crate::config::{ImagePasteBehavior, read_app_preferences};
 
 impl Editor {
+    /// Vertical movement target for caret and block navigation: steps over
+    /// blocks that draw nothing in rendered mode (stray closing tags) so the
+    /// caret never lands in an invisible row.
+    fn vertical_neighbor_index(
+        &self,
+        visible: &[VisibleBlock],
+        from: usize,
+        delta: isize,
+        cx: &mut Context<Editor>,
+    ) -> Option<usize> {
+        let mut index = from.checked_add_signed(delta)?;
+        while let Some(entry) = visible.get(index) {
+            if !entry.entity.read(cx).renders_nothing() {
+                return Some(index);
+            }
+            index = index.checked_add_signed(delta)?;
+        }
+        None
+    }
+
     fn focused_block_for_tab_key(
         &self,
         window: &mut Window,
@@ -2293,11 +2314,13 @@ impl Editor {
             BlockEvent::RequestTableCellMoveHorizontal { .. }
             | BlockEvent::RequestTableCellMoveVertical { .. } => {}
             BlockEvent::RequestFocusPrev { preferred_x } => {
-                if current_visible_index == 0 {
+                let Some(target_index) =
+                    self.vertical_neighbor_index(&visible_before, current_visible_index, -1, cx)
+                else {
                     return;
-                }
+                };
 
-                let target = visible_before[current_visible_index - 1].entity.clone();
+                let target = visible_before[target_index].entity.clone();
                 // Entering a table from below lands in a body cell instead of
                 // the non-editable table container.
                 if target.read(cx).kind() == BlockKind::Table
@@ -2316,7 +2339,9 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestFocusNext { preferred_x } => {
-                if current_visible_index + 1 >= visible_before.len() {
+                let Some(target_index) =
+                    self.vertical_neighbor_index(&visible_before, current_visible_index, 1, cx)
+                else {
                     // A trailing multi-line block (code, math, ...) has nowhere
                     // below to move to, so give it a paragraph to land on and
                     // focus that, matching how a trailing table behaves.
@@ -2335,9 +2360,9 @@ impl Editor {
                         }
                     }
                     return;
-                }
+                };
 
-                let target = visible_before[current_visible_index + 1].entity.clone();
+                let target = visible_before[target_index].entity.clone();
                 // Entering a table from above lands in a header cell instead of
                 // the non-editable table container.
                 if target.read(cx).kind() == BlockKind::Table
@@ -2356,11 +2381,13 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestBlockUp => {
-                if current_visible_index == 0 {
+                let Some(target_index) =
+                    self.vertical_neighbor_index(&visible_before, current_visible_index, -1, cx)
+                else {
                     return;
-                }
+                };
 
-                let target = visible_before[current_visible_index - 1].entity.clone();
+                let target = visible_before[target_index].entity.clone();
                 if target.read(cx).kind() == BlockKind::Table
                     && self.focus_table_entry_cell(&target, false, cx)
                 {
@@ -2371,11 +2398,13 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestBlockDown => {
-                if current_visible_index + 1 >= visible_before.len() {
+                let Some(target_index) =
+                    self.vertical_neighbor_index(&visible_before, current_visible_index, 1, cx)
+                else {
                     return;
-                }
+                };
 
-                let target = visible_before[current_visible_index + 1].entity.clone();
+                let target = visible_before[target_index].entity.clone();
                 if target.read(cx).kind() == BlockKind::Table
                     && self.focus_table_entry_cell(&target, true, cx)
                 {
@@ -3636,6 +3665,32 @@ mod tests {
             let following = editor.document.visible_blocks()[1].entity.clone();
             assert_eq!(following.read(cx).display_text(), "after");
             assert_eq!(editor.pending_focus, Some(following.entity_id()));
+        });
+    }
+
+    #[gpui::test]
+    async fn arrow_down_skips_a_stray_closing_tag(cx: &mut TestAppContext) {
+        let markdown = ["alpha", "", "</div>", "", "beta"].join("\n");
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.flatten_visible_blocks();
+            assert_eq!(visible.len(), 3);
+            let stray = visible[1].entity.clone();
+            assert!(stray.read(cx).renders_nothing());
+
+            let alpha = visible[0].entity.clone();
+            editor.on_block_event(
+                alpha,
+                &BlockEvent::RequestFocusNext { preferred_x: None },
+                cx,
+            );
+
+            // The caret lands on the visible block below, not in the invisible
+            // stray-tag row.
+            let beta = visible[2].entity.clone();
+            assert_eq!(beta.read(cx).display_text(), "beta");
+            assert_eq!(editor.pending_focus, Some(beta.entity_id()));
         });
     }
 

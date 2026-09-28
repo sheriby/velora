@@ -1450,6 +1450,9 @@ impl Block {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
+        if document.renders_nothing() {
+            return div().into_any_element();
+        }
         if !document.is_semantic() {
             return div()
                 .w_full()
@@ -2044,6 +2047,12 @@ impl Focusable for Block {
 /// - The [`BlockTextElement`] handles text layout, selection, and cursor.
 impl Render for Block {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A stray closing tag parses to an empty HTML document: the text stays
+        // in the tree for source mode, rendered mode draws no row.
+        if self.renders_nothing() {
+            return div().w_full().into_any_element();
+        }
+
         let focused = self.focus_handle.is_focused(window);
         let code_language_focused = self.code_language_focus_handle.is_focused(window);
         let input_active = focused || code_language_focused;
