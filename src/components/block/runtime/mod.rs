@@ -621,11 +621,11 @@ impl Block {
         if keep_projection {
             self.rebuild_inline_projection(clean_selected.clone(), clean_marked.clone());
             if clean_selected.is_empty() {
-                let offset = self.clean_to_current_cursor_offset_with_affinity(
-                    clean_selected.start,
-                    collapsed_affinity,
-                );
-                self.assign_collapsed_selection_offset(offset, collapsed_affinity, None);
+                let affinity =
+                    self.caret_affinity_for_clean_offset(clean_selected.start, collapsed_affinity);
+                let offset = self
+                    .clean_to_current_cursor_offset_with_affinity(clean_selected.start, affinity);
+                self.assign_collapsed_selection_offset(offset, affinity, None);
             } else {
                 self.set_selection_from_clean_anchor_focus(
                     clean_anchor,
@@ -922,6 +922,8 @@ impl Block {
             self.selection_reversed = snapshot.selection_reversed;
             self.collapsed_caret_affinity = CollapsedCaretAffinity::Default;
         } else if clean_selected.is_empty() {
+            let collapsed_affinity =
+                self.caret_affinity_for_clean_offset(clean_selected.start, collapsed_affinity);
             let offset = self.clean_to_current_cursor_offset_with_affinity(
                 clean_selected.start,
                 collapsed_affinity,
@@ -1071,6 +1073,23 @@ impl Block {
         projection
             .display_offset_for_clean_cursor(clean, affinity)
             .unwrap_or_else(|| self.clean_to_current_cursor_offset(clean))
+    }
+
+    /// 光标落在块首/块尾时用外侧亲和性。默认映射会把光标放到标记「里面」：块首是
+    /// `**`、`<...>`、`[...]()` 这类标记时，打开文件后光标就不在行首了（用户报修），
+    /// 行尾同理。块内部的偏移不受影响（在粗体里继续打字仍然留在粗体里）。
+    fn caret_affinity_for_clean_offset(
+        &self,
+        clean: usize,
+        fallback: CollapsedCaretAffinity,
+    ) -> CollapsedCaretAffinity {
+        if clean == 0 {
+            CollapsedCaretAffinity::OuterStart
+        } else if clean >= self.record.title.visible_text().len() {
+            CollapsedCaretAffinity::OuterEnd
+        } else {
+            fallback
+        }
     }
 
     fn clean_to_current_range_start(&self, clean: usize) -> usize {

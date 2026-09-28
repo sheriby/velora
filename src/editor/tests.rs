@@ -6958,3 +6958,46 @@ async fn typing_backslashes_in_link_blocks_does_not_multiply(cx: &mut TestAppCon
         });
     }
 }
+
+#[gpui::test]
+async fn caret_lands_outside_leading_and_trailing_markup(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 用户报修：块首是 `**`、`<...>`、`[...]()` 这类标记时，打开文件后光标不在行首
+    // （跑到标记里面），行尾光标也会落进标记内部甚至越过可见文本。
+    for source in [
+        "alpha",
+        "**bold** tail",
+        "<https://example.com> tail",
+        "tail <https://example.com>",
+        "[a](https://example.com) tail",
+    ] {
+        let (editor, cx) = cx.add_window_view({
+            let source = source.to_string();
+            move |_window, cx| Editor::from_markdown(cx, source, None)
+        });
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.clone();
+            let block = block.read(cx);
+            assert_eq!(block.selected_range, 0..0, "{source:?} 初始光标应在块首");
+        });
+
+        cx.simulate_keystrokes("end");
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.clone();
+            let block = block.read(cx);
+            let display_len = block.display_text().len();
+            let clean_len = block.record.title.visible_text().len();
+            assert_eq!(
+                block.selected_range,
+                display_len..display_len,
+                "{source:?} 行尾光标应停在显示文本末尾"
+            );
+            assert_eq!(
+                block.current_to_clean_offset(block.selected_range.start),
+                clean_len,
+                "{source:?} 行尾光标在可见文本里的位置应是末尾"
+            );
+        });
+    }
+}
