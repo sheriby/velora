@@ -105,6 +105,9 @@ pub(crate) struct RenderedRowPlan {
     pub toc_version: u64,
     pub rendered_mode: bool,
     pub block_gap: f32,
+    /// 可见块数：渐进导入（G8）每步只 append + notify，不推进
+    /// document_revision——键里必须带块数，续建出的新块才会渲染。
+    pub visible_len: usize,
     pub rows: Vec<RenderedRowPlanRow>,
     /// P7：行元数据预计算（普通行距/起始下标/行首 id），未变更帧零重算。
     pub visible_starts: Vec<usize>,
@@ -509,6 +512,7 @@ impl Editor {
         toc_version: u64,
         rendered_mode: bool,
         block_gap: f32,
+        visible_len: usize,
         cx: &mut Context<Self>,
     ) -> RenderedRowPlan {
         let estimate = cx
@@ -622,6 +626,7 @@ impl Editor {
             toc_version,
             rendered_mode,
             block_gap,
+            visible_len,
             rows,
             visible_starts,
             gaps,
@@ -2229,6 +2234,7 @@ impl Render for Editor {
             self.toc_state_version,
             rendered_mode,
             d.block_gap,
+            self.document.visible_blocks().len(),
         );
         let cached_plan = self
             .rendered_row_plan
@@ -2239,6 +2245,7 @@ impl Render for Editor {
                     && plan.toc_version == plan_key.2
                     && plan.rendered_mode == plan_key.3
                     && plan.block_gap == plan_key.4
+                    && plan.visible_len == plan_key.5
             });
         let plan_rebuilt = cached_plan.is_none();
         let rendered_row_plan = match cached_plan {
@@ -2253,6 +2260,7 @@ impl Render for Editor {
                     plan_key.2,
                     rendered_mode,
                     plan_key.4,
+                    plan_key.5,
                     cx,
                 ));
                 self.rendered_row_plan = Some(plan.clone());

@@ -290,6 +290,43 @@ async fn small_code_files_stay_single_chunk(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn progressive_import_blocks_render_after_streaming(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 12000 块 > FIRST_CHUNK_ROOTS(2000)：首帧只建 2000，其余流式续建。
+    let mut markdown = String::new();
+    for index in 0..6_000 {
+        markdown.push_str(&format!("# Heading {index}\n\nParagraph {index} body text.\n\n"));
+    }
+    let (editor, cx) =
+        cx.add_window_view(move |_window, cx| Editor::from_markdown(cx, markdown, None));
+
+    // 流式续建排空后，行计划必须反映全部块（此前 plan 键不含块数，
+    // 续建只 append_roots + notify，渲染停留在首帧的 2000 行）。
+    cx.run_until_parked();
+    redraw(cx);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        let visible = editor.document.visible_blocks().len();
+        assert!(
+            (11_900..=12_100).contains(&visible),
+            "流式续建完成后可见块应全部就位，实际 {}",
+            visible
+        );
+        let plan_rows = editor
+            .rendered_row_plan
+            .as_ref()
+            .expect("行计划应在渲染后存在")
+            .rows
+            .len();
+        assert_eq!(
+            plan_rows, visible,
+            "行计划必须随流式续建刷新，否则新块不渲染（用户可见大片空白）"
+        );
+    });
+}
+
 /// P7 预算守卫：1 MiB 级代码文档同步构造必须在预算内（当前 dev 实测
 /// ~50ms，给 10x 余量），流式续建完成后序列化必须逐字节还原。
 #[gpui::test]
