@@ -3833,6 +3833,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if !self.workspace.is_open {
+            // 侧栏收起也要同步文档大纲：块级 `[TOC]` 的条目来自这里，曾因
+            // 「启动不展开侧边栏」回归成空目录（outline 按文档源去重，收起
+            // 时每帧只付一次字符串比较）。文件树同步仍留给打开的抽屉。
+            self.sync_workspace_outline(cx);
             return None;
         }
 
