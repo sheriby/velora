@@ -3039,6 +3039,40 @@ async fn moving_header_row_down_swaps_with_first_body(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn column_selection_does_not_insert_a_blank_row(cx: &mut TestAppContext) {
+    use crate::components::TableAxisKind;
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |".into(), None)
+    });
+    redraw(cx);
+    let (table, header_before) = editor.read_with(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        let header = table.read(cx).table_runtime.as_ref().unwrap().header[0].read(cx).last_bounds.unwrap();
+        (table, header)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.select_table_axis(table.entity_id(), TableAxisKind::Column, 0, cx);
+    });
+    redraw(cx);
+    let header_after = table.read_with(cx, |table, cx| {
+        table.table_runtime.as_ref().unwrap().header[0].read(cx).last_bounds.unwrap()
+    });
+    assert_eq!(header_before, header_after, "选择列不能插入空白行或推动表头");
+    let indicator = cx.debug_bounds("table-column-indicator-0").expect("表头中的列指示线");
+    assert!(indicator.top() < header_after.top());
+    assert_eq!(indicator.size.height, px(2.0));
+    let second = cx.debug_bounds("table-column-indicator-1").unwrap();
+    cx.simulate_click(second.center(), Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let selection = editor.table_axis_selection.unwrap();
+        assert_eq!(selection.kind, TableAxisKind::Column);
+        assert_eq!(selection.index, 1, "表头上沿仍应能直接选择整列");
+    });
+}
+
+#[gpui::test]
 async fn selecting_first_body_row_does_not_highlight_header(cx: &mut TestAppContext) {
     use crate::components::{TableAxisHighlight, TableAxisKind};
     let markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |"].join("\n");
