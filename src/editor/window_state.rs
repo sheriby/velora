@@ -3,7 +3,8 @@
 
 use super::*;
 
-/// P4b：stride 大多未知时的单帧最大挂载行数。
+/// P4b：stride 大多未知时的单帧最大预挂载行数。上限只削视口上下的余量，
+/// 视口自身必须始终有挂载行覆盖。
 const COLD_RUN_MAX_ROWS: usize = 12;
 
 impl Editor {
@@ -76,7 +77,11 @@ impl Editor {
     /// sum places each row against a band from the current scroll offset.
     /// Unmeasured rows use a lower-bound estimate; where that falls short of the
     /// scroll offset the trailing run is mounted instead, so the window never
-    /// lands on a spacer. Pure, so it is unit-tested headlessly.
+    /// lands on a spacer. When heights are still estimates the cold-start cap
+    /// trims only the margin around the viewport: the viewport keeps its mounted
+    /// rows, and when covering it needs more rows than the cap allows,
+    /// `needs_fill` asks the caller for another frame instead of leaving spacer
+    /// on screen. Pure, so it is unit-tested headlessly.
     pub(super) fn rendered_window(
         strides: &[f32],
         scroll_y: f32,
@@ -93,16 +98,21 @@ impl Editor {
                 top_h: 0.0,
                 bottom_h: 0.0,
                 focus_island: None,
+                needs_fill: false,
             };
         }
 
         let band_top = scroll_y - overdraw;
         let band_bottom = scroll_y + viewport_height + overdraw;
+        let viewport_bottom = scroll_y + viewport_height;
 
         let mut run_start = n;
         let mut run_end = 0usize;
         let mut top_of_start = 0.0f32;
         let mut bottom_of_end = 0.0f32;
+        // 视口自身落到的行区间。冷启动上限只许削掉这之外的预挂载行。
+        let mut viewport_first = n;
+        let mut viewport_last = 0usize;
         let mut cursor = 0.0f32;
         for (index, &stride) in strides.iter().enumerate() {
             let top = cursor;
@@ -115,24 +125,46 @@ impl Editor {
                 run_end = index + 1;
                 bottom_of_end = bottom;
             }
+            if viewport_first == n && bottom >= scroll_y {
+                viewport_first = index;
+            }
+            if top <= viewport_bottom {
+                viewport_last = index + 1;
+            }
             cursor = bottom;
         }
         let total = cursor;
 
         // P4b 冷启动保护：绝大多数 stride 还是估计值时，行高被严重低估
         // （一行真实 9000px 估计 16px），带状扫描会一口气挂载几十个巨行。
-        // 限制首帧挂载数，让 stride 逐帧学习后自然放宽。
+        // 上限只约束预挂载：run 起点最多高出视口首行 COLD_RUN_MAX_ROWS 行，
+        // 终点先按估计值铺到视口底部。估计值是行高的下界，铺满估计值即铺满
+        // 视口；行高被低估、预算内铺不满时置 needs_fill，由调用方续帧补齐，
+        // 绝不把视口留在 spacer 上。
         let known = strides.iter().filter(|&&stride| stride > estimate).count();
-        if known * 2 < n {
-            let cap_start = run_start;
-            if run_end > cap_start + COLD_RUN_MAX_ROWS {
-                run_end = cap_start + COLD_RUN_MAX_ROWS;
+        let mut needs_fill = false;
+        if known * 2 < n && viewport_first < n {
+            let lead_floor = viewport_first.saturating_sub(COLD_RUN_MAX_ROWS);
+            if run_start < lead_floor {
+                run_start = lead_floor;
+                top_of_start = strides[..lead_floor]
+                    .iter()
+                    .map(|stride| stride.max(0.0))
+                    .sum();
+            }
+            let cover_end = viewport_first
+                .saturating_add(COLD_RUN_MAX_ROWS * 2)
+                .min(viewport_last);
+            let capped_end = cover_end.max(viewport_first + 1).min(run_end);
+            if capped_end < run_end {
+                run_end = capped_end;
                 bottom_of_end = strides
                     .iter()
                     .take(run_end)
                     .map(|stride| stride.max(0.0))
                     .sum();
             }
+            needs_fill = run_end < viewport_last;
         }
 
         // Nothing hit the band: the scroll offset is past everything the strides
@@ -185,6 +217,7 @@ impl Editor {
                 lead_h: island.lead_h.max(0.0),
                 ..island
             }),
+            needs_fill,
         }
     }
 

@@ -28,7 +28,7 @@ use super::{
 };
 use crate::components::markdown::inline::{
     InlineFragment, InlineInsertionAttributes, InlineLinkHit, InlineRenderCache, InlineSpan,
-    InlineStyle, InlineTextTree, StyleFlag,
+    InlineStyle, InlineTextTree, StyleFlag, clamp_to_char_boundary,
 };
 use crate::components::{
     TableAxisHighlight, TableAxisMarker, TableCellPosition, TableColumnAlignment, TableRuntime,
@@ -2311,7 +2311,10 @@ impl Block {
         ) {
             Ok(idx) | Err(idx) => idx,
         };
-        ranges[line_idx].start + offset_in_line
+        // 字形几何反推的字节偏移可能落在多字节字符内部（中文文本里很常见）。
+        // 这个偏移会进选择范围，之后按它切片（状态栏选词统计、复制）就会
+        // panic；release 下 panic = abort，即用户报的 coredump。就地收敛。
+        clamp_to_char_boundary(text, ranges[line_idx].start + offset_in_line)
     }
 
     pub(crate) fn active_range_or_cursor_bounds(&self) -> Option<Bounds<Pixels>> {

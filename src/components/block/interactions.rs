@@ -11,6 +11,7 @@ use super::CollapsedCaretAffinity;
 use super::{
     Block, BlockEvent, BlockKind, InlineFormat, InlineTextTree, PastedImageSource, UndoCaptureKind,
 };
+use crate::components::markdown::inline::clamp_range_to_char_boundaries;
 use crate::components::markdown::paste::should_split_plain_multiline_paste;
 use crate::components::{
     BlockDown, BlockUp, BoldSelection, CodeSelection, Copy, Cut, Delete, DeleteBack,
@@ -906,18 +907,21 @@ impl Block {
 
     pub(crate) fn on_copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                self.display_text()[self.selected_range.clone()].to_string(),
-            ));
+            // 选择偏移理论上已收敛到字符边界，但文本变更后可能失效；切片前再夹一次。
+            let text = self.display_text();
+            let range = clamp_range_to_char_boundaries(text, self.selected_range.clone());
+            let selected = text[range].to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(selected));
         }
     }
 
     pub(crate) fn on_cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() {
             self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                self.display_text()[self.selected_range.clone()].to_string(),
-            ));
+            let text = self.display_text();
+            let range = clamp_range_to_char_boundaries(text, self.selected_range.clone());
+            let selected = text[range].to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(selected));
             self.replace_text_in_range(None, "", window, cx);
         }
     }
@@ -932,7 +936,9 @@ impl Block {
         if self.editor_selection_range.is_some() || self.selected_range.is_empty() {
             return;
         }
-        let selected = self.display_text()[self.selected_range.clone()].to_string();
+        let text = self.display_text();
+        let range = clamp_range_to_char_boundaries(text, self.selected_range.clone());
+        let selected = text[range].to_string();
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
         self.replace_text_in_visible_range(
             self.selected_range.clone(),

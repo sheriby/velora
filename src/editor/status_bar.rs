@@ -61,7 +61,8 @@ impl Editor {
             );
         } else if prefs.show_word_count {
             let total_count = self.cached_total_word_count();
-            let selection_count = self.selected_markdown_text(cx).as_deref().map(count_words);
+            // 只算选中文本的词数：这里每帧都会跑，不能走 O(整篇) 的 markdown 序列化。
+            let selection_count = self.selected_visible_text(cx).as_deref().map(count_words);
             right_items.push(render_word_count(
                 selection_count,
                 total_count,

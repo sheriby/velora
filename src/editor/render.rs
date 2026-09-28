@@ -20,6 +20,10 @@ pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";
 /// paints them before they scroll in instead of showing a blank edge.
 const RENDER_OVERDRAW_PX: f32 = 800.0;
 
+/// 冷启动续挂的帧数上限：行高被低估时一帧挂不满视口，最多再排这么多帧，
+/// 避免估不准时每帧重排。8 帧 ≈ 130ms。
+const COLD_FILL_MAX_FRAMES: u8 = 8;
+
 pub(crate) fn open_about_github_url(cx: &mut App) {
     cx.open_url(ABOUT_GITHUB_URL);
 }
@@ -761,12 +765,12 @@ impl Editor {
         let has_bounds = self.ensure_focused_caret_visible(window, cx);
         if self.pending_scroll_recheck_after_layout {
             self.pending_scroll_recheck_after_layout = false;
-            self.schedule_scroll_recheck(cx);
+            self.schedule_followup_frame(cx);
             return;
         }
 
         if !has_bounds {
-            self.schedule_scroll_recheck(cx);
+            self.schedule_followup_frame(cx);
             return;
         }
 
@@ -775,11 +779,13 @@ impl Editor {
         self.scroll_recheck_task = None;
     }
 
-    /// Requests a repaint one frame out so a still-pending scroll-into-view can
-    /// retry once the target block has been laid out. `cx.notify()` is swallowed
-    /// when called from within `render`, so without this the retry would wait
-    /// for the next external notify (e.g. the cursor blink, ~0.5s later).
-    fn schedule_scroll_recheck(&mut self, cx: &mut Context<Self>) {
+    /// Requests a repaint one frame out for work that cannot finish inside this
+    /// frame: a scroll-into-view whose target block has no measured bounds yet,
+    /// or a cold-start run that still has not covered the viewport. `cx.notify()`
+    /// is swallowed when called from within `render`, so without this the retry
+    /// would wait for the next external notify (e.g. the cursor blink, ~0.5s
+    /// later).
+    fn schedule_followup_frame(&mut self, cx: &mut Context<Self>) {
         self.scroll_recheck_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(16))
@@ -2407,6 +2413,15 @@ impl Render for Editor {
             focus_row,
             estimate,
         );
+
+        // 冷启动续挂：行高仍被低估时一帧铺不满视口，立刻排下一帧继续补，
+        // 而不是把整屏 spacer 留给读者、等到下一次输入才补上。
+        if render_window.needs_fill && self.cold_fill_frames < COLD_FILL_MAX_FRAMES {
+            self.cold_fill_frames += 1;
+            self.schedule_followup_frame(cx);
+        } else {
+            self.cold_fill_frames = 0;
+        }
 
         let island = render_window.focus_island;
         let island_before_run = island.is_some_and(|island| island.row < render_window.run_start);

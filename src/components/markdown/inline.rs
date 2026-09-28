@@ -3203,7 +3203,7 @@ fn set_style_flag(mut style: InlineStyle, flag: StyleFlag, enabled: bool) -> Inl
     style
 }
 
-fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
+pub(crate) fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
     let clamped = offset.min(text.len());
     if text.is_char_boundary(clamped) {
         return clamped;
@@ -3214,6 +3214,15 @@ fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
         boundary -= 1;
     }
     boundary
+}
+
+/// 把字节区间两端收敛到字符边界。鼠标位置、markdown 空间换算得到的偏移都可能
+/// 落在多字节字符内部，直接切片会 panic（release 下 panic = abort），
+/// 所以按偏移切片前统一走这里。
+pub(crate) fn clamp_range_to_char_boundaries(text: &str, range: Range<usize>) -> Range<usize> {
+    let start = clamp_to_char_boundary(text, range.start);
+    let end = clamp_to_char_boundary(text, range.end).max(start);
+    start..end
 }
 
 fn can_open_emphasis(tokens: &[CharToken], index: usize, len: usize) -> bool {

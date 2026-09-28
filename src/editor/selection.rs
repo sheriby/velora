@@ -13,6 +13,7 @@ use crate::components::{
     Block, BlockKind, Copy, Cut, Delete, DeleteBack, UndoCaptureKind,
     serialize_table_markdown_lines,
 };
+use crate::components::markdown::inline::clamp_range_to_char_boundaries;
 
 /// Cross-block selection with endpoints ordered by visible block position.
 #[derive(Clone, Copy)]
@@ -786,7 +787,9 @@ impl Editor {
     ) -> String {
         if let Some(mapping) = mappings.get(&entity.entity_id()) {
             if full_block {
-                return source[mapping.full_source_range.clone()].to_string();
+                let range =
+                    clamp_range_to_char_boundaries(source, mapping.full_source_range.clone());
+                return source[range].to_string();
             }
 
             let start = self
@@ -809,7 +812,8 @@ impl Editor {
                     cx,
                 )
                 .unwrap_or(mapping.full_source_range.end);
-            return source[start.min(end)..start.max(end)].to_string();
+            let range = clamp_range_to_char_boundaries(source, start.min(end)..start.max(end));
+            return source[range].to_string();
         }
 
         let block = entity.read(cx);
@@ -873,6 +877,56 @@ impl Editor {
         true
     }
 
+    /// 状态栏选词统计用的选中文本：只读可见文本，不序列化整篇文档、不重建
+    /// source mapping。旧的 `selected_markdown_text` 是 O(整篇)（600 块文档
+    /// 实测 38ms/次），而状态栏每帧都要算一次，长文档拖动选择直接卡死。
+    pub(crate) fn selected_visible_text(&self, cx: &App) -> Option<String> {
+        if let Some(selection) = self.normalized_cross_block_selection(cx) {
+            let visible = self.document.visible_blocks();
+            let mut text = String::new();
+            let mut wrote_chunk = false;
+            for index in selection.start_index..=selection.end_index {
+                let block = visible.get(index)?.entity.read(cx);
+                let len = block.visible_len();
+                let range = if selection.start_index == selection.end_index {
+                    selection.start.offset.min(len)..selection.end.offset.min(len)
+                } else if index == selection.start_index {
+                    selection.start.offset.min(len)..len
+                } else if index == selection.end_index {
+                    0..selection.end.offset.min(len)
+                } else {
+                    0..len
+                };
+                let display = block.display_text();
+                let range = clamp_range_to_char_boundaries(display, range);
+                if range.is_empty() {
+                    continue;
+                }
+                if wrote_chunk {
+                    text.push('\n');
+                }
+                text.push_str(&display[range]);
+                wrote_chunk = true;
+            }
+            return wrote_chunk.then_some(text);
+        }
+
+        // Fall back to a single block with a non-collapsed selection range.
+        for visible in self.document.visible_blocks() {
+            let block = visible.entity.read_untracked(cx);
+            if block.selected_range.is_empty() {
+                continue;
+            }
+            let display = block.display_text();
+            let range = clamp_range_to_char_boundaries(display, block.selected_range.clone());
+            if !range.is_empty() {
+                return Some(display[range].to_owned());
+            }
+        }
+
+        None
+    }
+
     /// Returns the markdown text of the current selection, whether cross-block
     /// or within a single block. Returns `None` when nothing is selected.
     pub(crate) fn selected_markdown_text(&self, cx: &App) -> Option<String> {
@@ -894,10 +948,10 @@ impl Editor {
             let markdown_range =
                 block.current_range_to_markdown_range(block.selected_range.clone());
             let full_markdown = block.record.title.serialize_markdown();
-            let start = markdown_range.start.min(full_markdown.len());
-            let end = markdown_range.end.min(full_markdown.len());
-            if start < end {
-                return Some(full_markdown[start..end].to_owned());
+            // markdown 空间换算得到的偏移可能落在多字节字符内部，直接切片会 panic。
+            let range = clamp_range_to_char_boundaries(&full_markdown, markdown_range.clone());
+            if !range.is_empty() {
+                return Some(full_markdown[range].to_owned());
             }
         }
 

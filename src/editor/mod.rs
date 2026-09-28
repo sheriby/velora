@@ -131,6 +131,8 @@ pub struct Editor {
     row_stride_width: Option<f32>,
     /// Where last frame's run sat among the scroll container's children.
     prev_mounted_run: Option<MountedRun>,
+    /// 冷启动续挂已排的帧数（上限 COLD_FILL_MAX_FRAMES，避免每帧重排）。
+    cold_fill_frames: u8,
     close_guard_installed: bool,
     show_unsaved_changes_dialog: bool,
     /// When true, the window will close after the next successful save.
@@ -256,6 +258,9 @@ struct RenderWindow {
     top_h: f32,
     bottom_h: f32,
     focus_island: Option<FocusIsland>,
+    /// 行高仍是估计值时，这个 run 受冷启动上限截断、还没铺到视口底部。
+    /// 渲染期据此再排一帧续挂（否则整屏 spacer 要等下一次输入才补上）。
+    needs_fill: bool,
 }
 
 /// Where a frame's mounted run sat among the scroll container's children, so the
@@ -506,6 +511,7 @@ impl Editor {
             toc_state_version: 0,
             row_stride_width: None,
             prev_mounted_run: None,
+            cold_fill_frames: 0,
             close_guard_installed: false,
             show_unsaved_changes_dialog: false,
             pending_close_after_save: false,
