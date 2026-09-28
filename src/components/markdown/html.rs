@@ -1,15 +1,15 @@
 //! Native-safe HTML classification for Markdown raw HTML blocks.
 //!
-//! The parser keeps the original source as the serialization truth and builds
-//! a conservative semantic tree only for tags that can be rendered safely in
-//! GPUI. Anything risky, unknown, malformed, or ambiguous becomes raw text.
-
-use std::ops::Range;
+//! Parsing follows the HTML living standard through `html5ever`, the parser
+//! Servo uses. The resulting DOM is classified into a conservative semantic
+//! tree of nodes that GPUI can render natively; anything risky or outside the
+//! allowlist keeps its serialized markup as raw text.
 
 use cssparser::color::{parse_hash_color, parse_named_color};
-
-#[cfg(feature = "html-native")]
-use tree_sitter::Parser;
+use html5ever::serialize::{SerializeOpts, TraversalScope, serialize};
+use html5ever::tendril::TendrilSink;
+use html5ever::{Attribute, parse_document};
+use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 
 /// Safety classification for an HTML fragment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,12 +84,21 @@ pub(crate) enum HtmlCssFontSizeKeyword {
     Larger,
 }
 
+/// Horizontal text alignment from `text-align` or the legacy `align` attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HtmlTextAlign {
+    Left,
+    Center,
+    Right,
+}
+
 /// Whitelisted visual CSS parsed from a safe HTML `style` attribute.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct HtmlInlineStyle {
     pub(crate) color: Option<HtmlCssColor>,
     pub(crate) background_color: Option<HtmlCssColor>,
     pub(crate) font_size: Option<HtmlCssFontSize>,
+    pub(crate) text_align: Option<HtmlTextAlign>,
 }
 
 impl Eq for HtmlInlineStyle {}
@@ -135,10 +144,8 @@ pub(crate) struct HtmlNode {
     pub(crate) attrs: Vec<HtmlAttr>,
     /// Classified child nodes. Empty for raw text nodes.
     pub(crate) children: Vec<HtmlNode>,
-    /// Exact source text covered by this node.
+    /// Serialized markup or decoded text covered by this node.
     pub(crate) raw_source: String,
-    /// Byte range in the original HTML fragment.
-    pub(crate) source_range: Range<usize>,
 }
 
 /// Classified HTML fragment plus its preserved source text.
@@ -156,7 +163,7 @@ impl HtmlDocument {
     pub(crate) fn raw(raw_source: impl Into<String>) -> Self {
         let raw_source = raw_source.into();
         Self {
-            nodes: vec![raw_node(&raw_source, 0..raw_source.len())],
+            nodes: vec![raw_node(raw_source.clone())],
             safety: HtmlSafetyClass::RawTextBlock,
             raw_source,
         }
@@ -233,7 +240,10 @@ impl HtmlCssFontSize {
 
 impl HtmlInlineStyle {
     pub(crate) fn is_empty(&self) -> bool {
-        self.color.is_none() && self.background_color.is_none() && self.font_size.is_none()
+        self.color.is_none()
+            && self.background_color.is_none()
+            && self.font_size.is_none()
+            && self.text_align.is_none()
     }
 
     pub(crate) fn to_css(self) -> Option<String> {
@@ -251,24 +261,16 @@ impl HtmlInlineStyle {
         if let Some(font_size) = self.font_size {
             declarations.push(format!("font-size: {}", font_size.to_css()));
         }
+        if let Some(align) = self.text_align {
+            let keyword = match align {
+                HtmlTextAlign::Left => "left",
+                HtmlTextAlign::Center => "center",
+                HtmlTextAlign::Right => "right",
+            };
+            declarations.push(format!("text-align: {keyword}"));
+        }
         Some(format!("{};", declarations.join("; ")))
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum TagKind {
-    Open,
-    Close,
-    CommentLike,
-}
-
-#[derive(Clone, Debug)]
-struct TagToken {
-    kind: TagKind,
-    name: String,
-    attrs: Vec<HtmlAttr>,
-    self_closing: bool,
-    source_range: Range<usize>,
 }
 
 /// Parses and classifies a raw HTML fragment. The returned document always
@@ -278,18 +280,16 @@ pub(crate) fn parse_html_document(raw_source: &str) -> HtmlDocument {
         return HtmlDocument::raw(raw_source);
     }
 
-    if tree_sitter_reports_error(raw_source) {
-        return HtmlDocument::raw(raw_source);
+    let dom = parse_html_fragment(raw_source);
+    let mut nodes = Vec::new();
+    if let Some(body) = find_body(&dom.document) {
+        map_dom_children(&body, &mut nodes);
     }
 
-    let (nodes, index, ok) = parse_nodes(raw_source, 0, None);
-    if !ok || index < raw_source.len() || nodes.is_empty() {
-        return HtmlDocument::raw(raw_source);
-    }
-
-    if nodes
-        .iter()
-        .all(|node| matches!(node.kind, HtmlNodeKind::RawTextBlock))
+    if nodes.is_empty()
+        || nodes
+            .iter()
+            .all(|node| matches!(node.kind, HtmlNodeKind::RawTextBlock))
     {
         return HtmlDocument::raw(raw_source);
     }
@@ -299,6 +299,110 @@ pub(crate) fn parse_html_document(raw_source: &str) -> HtmlDocument {
         nodes,
         safety: HtmlSafetyClass::Semantic,
     }
+}
+
+/// Parses a fragment the way a browser does: `html5ever` never fails, it
+/// recovers from malformed markup instead of rejecting it.
+fn parse_html_fragment(raw_source: &str) -> RcDom {
+    let mut source = std::io::Cursor::new(raw_source.as_bytes());
+    parse_document(RcDom::default(), Default::default())
+        .from_utf8()
+        .read_from(&mut source)
+        .unwrap_or_else(|_| RcDom::default())
+}
+
+fn find_body(document: &Handle) -> Option<Handle> {
+    let mut stack = vec![document.clone()];
+    while let Some(node) = stack.pop() {
+        if let NodeData::Element { name, .. } = &node.data
+            && name.local.as_ref() == "body"
+        {
+            return Some(node);
+        }
+        for child in node.children.borrow().iter() {
+            stack.push(child.clone());
+        }
+    }
+    None
+}
+
+/// Maps DOM children onto the semantic tree: an allowlisted element becomes a
+/// semantic node, every other node keeps its serialized markup as raw text.
+fn map_dom_children(parent: &Handle, nodes: &mut Vec<HtmlNode>) {
+    for child in parent.children.borrow().iter() {
+        match &child.data {
+            NodeData::Text { contents } => {
+                let text = contents.borrow().to_string();
+                if !text.is_empty() {
+                    nodes.push(HtmlNode {
+                        kind: HtmlNodeKind::InlineSemantic,
+                        tag_name: "#text".into(),
+                        attrs: Vec::new(),
+                        children: Vec::new(),
+                        raw_source: text,
+                    });
+                }
+            }
+            NodeData::Element { name, attrs, .. } => {
+                let tag_name = name.local.to_string();
+                let attrs = dom_attrs(&attrs.borrow());
+                if is_safe_tag(&tag_name) && !has_dangerous_attrs(&attrs) {
+                    let mut children = Vec::new();
+                    map_dom_children(child, &mut children);
+                    nodes.push(HtmlNode {
+                        kind: if is_inline_tag(&tag_name) {
+                            HtmlNodeKind::InlineSemantic
+                        } else {
+                            HtmlNodeKind::BlockSemantic
+                        },
+                        tag_name,
+                        attrs,
+                        children,
+                        raw_source: serialize_handle(child),
+                    });
+                } else {
+                    nodes.push(raw_node(serialize_handle(child)));
+                }
+            }
+            NodeData::Comment { contents } => {
+                nodes.push(raw_node(format!("<!--{contents}-->")));
+            }
+            NodeData::Doctype { name, .. } => {
+                nodes.push(raw_node(format!("<!DOCTYPE {name}>")));
+            }
+            NodeData::ProcessingInstruction { target, contents } => {
+                nodes.push(raw_node(format!("<?{target} {contents}?>")));
+            }
+            NodeData::Document => map_dom_children(child, nodes),
+        }
+    }
+}
+
+fn dom_attrs(attrs: &[Attribute]) -> Vec<HtmlAttr> {
+    attrs
+        .iter()
+        .map(|attr| {
+            let name = attr.name.local.to_string();
+            let value = attr.value.to_string();
+            HtmlAttr {
+                raw_source: format!("{}=\"{}\"", name, escape_html_attr(&value)),
+                name,
+                value: Some(value),
+            }
+        })
+        .collect()
+}
+
+fn serialize_handle(node: &Handle) -> String {
+    let mut bytes = Vec::new();
+    let serializable = SerializableHandle::from(node.clone());
+    // `SerializeOpts::default()` is `ChildrenOnly`, which drops the node itself.
+    let opts = SerializeOpts {
+        traversal_scope: TraversalScope::IncludeNode,
+        ..Default::default()
+    };
+    let _ = serialize(&mut bytes, &serializable, opts);
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Rewrites an HTML fragment for document export: safe semantic nodes keep
@@ -330,11 +434,16 @@ pub(crate) fn style_for_node(node: &HtmlNode) -> HtmlInlineStyle {
         return HtmlInlineStyle::default();
     }
 
-    let Some(style) = attr_value(node, "style") else {
-        return HtmlInlineStyle::default();
-    };
-
-    parse_inline_style(style)
+    let mut parsed = attr_value(node, "style")
+        .map(parse_inline_style)
+        .unwrap_or_default();
+    if parsed.text_align.is_none() {
+        parsed.text_align = attr_value(node, "align").and_then(parse_text_align);
+    }
+    if parsed.text_align.is_none() && node.tag_name == "center" {
+        parsed.text_align = Some(HtmlTextAlign::Center);
+    }
+    parsed
 }
 
 fn sanitize_node_for_export(node: &HtmlNode) -> String {
@@ -346,7 +455,7 @@ fn sanitize_node_for_export(node: &HtmlNode) -> String {
     }
 
     if node.tag_name == "#text" {
-        return node.raw_source.clone();
+        return escape_html(&node.raw_source);
     }
 
     if is_void_tag(&node.tag_name) {
@@ -422,176 +531,6 @@ fn escape_html(value: &str) -> String {
         }
     }
     escaped
-}
-
-fn parse_nodes(
-    raw: &str,
-    mut index: usize,
-    closing_tag: Option<&str>,
-) -> (Vec<HtmlNode>, usize, bool) {
-    let mut nodes = Vec::new();
-    while index < raw.len() {
-        let Some(tag_start_relative) = raw[index..].find('<') else {
-            if closing_tag.is_some() {
-                push_text_node(raw, index..raw.len(), &mut nodes);
-            } else {
-                push_text_node(raw, index..raw.len(), &mut nodes);
-            }
-            return (nodes, raw.len(), closing_tag.is_none());
-        };
-
-        let tag_start = index + tag_start_relative;
-        if tag_start > index {
-            push_text_node(raw, index..tag_start, &mut nodes);
-        }
-
-        let Some(token) = parse_tag_token(raw, tag_start) else {
-            push_text_node(raw, tag_start..tag_start + 1, &mut nodes);
-            index = tag_start + 1;
-            continue;
-        };
-
-        match token.kind {
-            TagKind::Close => {
-                if closing_tag == Some(token.name.as_str()) {
-                    return (nodes, token.source_range.end, true);
-                }
-                nodes.push(raw_node(raw, token.source_range.clone()));
-                index = token.source_range.end;
-            }
-            TagKind::CommentLike => {
-                nodes.push(raw_node(raw, token.source_range.clone()));
-                index = token.source_range.end;
-            }
-            TagKind::Open => {
-                let class = classify_open_tag(&token);
-                if class == HtmlSafetyClass::RawTextBlock {
-                    let raw_end = raw_region_end(raw, &token).unwrap_or(token.source_range.end);
-                    nodes.push(raw_node(raw, token.source_range.start..raw_end));
-                    index = raw_end;
-                    continue;
-                }
-
-                if token.self_closing || is_void_tag(&token.name) {
-                    nodes.push(semantic_node(raw, token, Vec::new()));
-                    index = nodes
-                        .last()
-                        .map(|node| node.source_range.end)
-                        .unwrap_or(index);
-                    continue;
-                }
-
-                let (children, child_end, closed) =
-                    parse_nodes(raw, token.source_range.end, Some(&token.name));
-                if !closed {
-                    nodes.push(raw_node(raw, token.source_range.start..raw.len()));
-                    return (nodes, raw.len(), closing_tag.is_none());
-                }
-
-                let mut node = semantic_node(raw, token, children);
-                node.source_range.end = child_end;
-                node.raw_source = raw[node.source_range.clone()].to_string();
-                nodes.push(node);
-                index = child_end;
-            }
-        }
-    }
-
-    (nodes, index, closing_tag.is_none())
-}
-
-fn parse_tag_token(raw: &str, start: usize) -> Option<TagToken> {
-    let rest = raw.get(start..)?;
-    if !rest.starts_with('<') {
-        return None;
-    }
-
-    if rest.starts_with("<!--") {
-        let end = rest.find("-->").map(|offset| start + offset + 3)?;
-        return Some(TagToken {
-            kind: TagKind::CommentLike,
-            name: "#comment".into(),
-            attrs: Vec::new(),
-            self_closing: true,
-            source_range: start..end,
-        });
-    }
-
-    if rest.starts_with("<!") || rest.starts_with("<?") {
-        let end = rest.find('>').map(|offset| start + offset + 1)?;
-        return Some(TagToken {
-            kind: TagKind::CommentLike,
-            name: "#raw".into(),
-            attrs: Vec::new(),
-            self_closing: true,
-            source_range: start..end,
-        });
-    }
-
-    let bytes = raw.as_bytes();
-    let mut index = start + 1;
-    let closing = bytes.get(index) == Some(&b'/');
-    if closing {
-        index += 1;
-    }
-
-    let name_start = index;
-    while index < raw.len() {
-        let ch = raw[index..].chars().next()?;
-        if ch.is_ascii_alphanumeric() || ch == '-' {
-            index += ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-    if index == name_start {
-        return None;
-    }
-
-    let name = raw[name_start..index].to_ascii_lowercase();
-    let attrs_start = index;
-    let mut quote: Option<char> = None;
-    while index < raw.len() {
-        let ch = raw[index..].chars().next()?;
-        if let Some(active_quote) = quote {
-            if ch == active_quote {
-                quote = None;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-
-        if ch == '"' || ch == '\'' {
-            quote = Some(ch);
-            index += ch.len_utf8();
-            continue;
-        }
-
-        if ch == '>' {
-            let source_range = start..index + 1;
-            let attrs_source = &raw[attrs_start..index];
-            let self_closing = attrs_source.trim_end().ends_with('/');
-            return Some(TagToken {
-                kind: if closing {
-                    TagKind::Close
-                } else {
-                    TagKind::Open
-                },
-                name,
-                attrs: if closing {
-                    Vec::new()
-                } else {
-                    parse_html_attrs(attrs_source)
-                },
-                self_closing,
-                source_range,
-            });
-        }
-
-        index += ch.len_utf8();
-    }
-
-    None
 }
 
 /// Peek the next char at `index` without advancing. Returns `None` at EOF.
@@ -685,69 +624,14 @@ pub(crate) fn parse_html_attrs(source: &str) -> Vec<HtmlAttr> {
     attrs
 }
 
-fn classify_open_tag(token: &TagToken) -> HtmlSafetyClass {
-    if !is_safe_tag(&token.name) || has_dangerous_attrs(&token.attrs) {
-        HtmlSafetyClass::RawTextBlock
-    } else {
-        HtmlSafetyClass::Semantic
-    }
-}
-
-fn semantic_node(raw: &str, token: TagToken, children: Vec<HtmlNode>) -> HtmlNode {
-    HtmlNode {
-        kind: if is_inline_tag(&token.name) {
-            HtmlNodeKind::InlineSemantic
-        } else {
-            HtmlNodeKind::BlockSemantic
-        },
-        tag_name: token.name,
-        attrs: token.attrs,
-        children,
-        raw_source: raw[token.source_range.clone()].to_string(),
-        source_range: token.source_range,
-    }
-}
-
-fn push_text_node(raw: &str, range: Range<usize>, nodes: &mut Vec<HtmlNode>) {
-    if range.is_empty() {
-        return;
-    }
-    nodes.push(HtmlNode {
-        kind: HtmlNodeKind::InlineSemantic,
-        tag_name: "#text".into(),
-        attrs: Vec::new(),
-        children: Vec::new(),
-        raw_source: raw[range.clone()].to_string(),
-        source_range: range,
-    });
-}
-
-fn raw_node(raw: &str, range: Range<usize>) -> HtmlNode {
+fn raw_node(raw_source: String) -> HtmlNode {
     HtmlNode {
         kind: HtmlNodeKind::RawTextBlock,
         tag_name: "#raw".into(),
         attrs: Vec::new(),
         children: Vec::new(),
-        raw_source: raw[range.clone()].to_string(),
-        source_range: range,
+        raw_source,
     }
-}
-
-fn raw_region_end(raw: &str, token: &TagToken) -> Option<usize> {
-    if token.self_closing || is_void_tag(&token.name) {
-        return Some(token.source_range.end);
-    }
-
-    let close = format!("</{}>", token.name);
-    let close_upper = close.to_ascii_uppercase();
-    let rest = &raw[token.source_range.end..];
-    let lower = rest.to_ascii_lowercase();
-    let upper = rest.to_ascii_uppercase();
-    lower
-        .find(&close)
-        .or_else(|| upper.find(&close_upper))
-        .map(|offset| token.source_range.end + offset + close.len())
-        .or(Some(raw.len()))
 }
 
 pub(crate) fn has_dangerous_attrs(attrs: &[HtmlAttr]) -> bool {
@@ -780,26 +664,40 @@ pub(crate) fn parse_html_image_block(raw_source: &str) -> Option<HtmlImageBlock>
         return None;
     }
 
-    let token = parse_tag_token(trimmed, 0)?;
-    if token.kind != TagKind::Open
-        || token.name != "img"
-        || token.source_range != (0..trimmed.len())
-    {
-        return None;
+    let dom = parse_html_fragment(trimmed);
+    let body = find_body(&dom.document)?;
+    let mut image: Option<Handle> = None;
+    for child in body.children.borrow().iter() {
+        match &child.data {
+            NodeData::Text { contents } => {
+                if !contents.borrow().trim().is_empty() {
+                    return None;
+                }
+            }
+            NodeData::Element { name, .. } if name.local.as_ref() == "img" && image.is_none() => {
+                image = Some(child.clone());
+            }
+            _ => return None,
+        }
     }
-    if has_dangerous_attrs(&token.attrs) {
+    let image = image?;
+    let NodeData::Element { attrs, .. } = &image.data else {
+        return None;
+    };
+    let attrs = dom_attrs(&attrs.borrow());
+    if has_dangerous_attrs(&attrs) {
         return None;
     }
 
-    let src = attr_value_in_attrs(&token.attrs, "src")?.trim().to_string();
+    let src = attr_value_in_attrs(&attrs, "src")?.trim().to_string();
     if src.is_empty() {
         return None;
     }
 
-    let alt = attr_value_in_attrs(&token.attrs, "alt")
+    let alt = attr_value_in_attrs(&attrs, "alt")
         .unwrap_or_default()
         .to_string();
-    let zoom = attr_value_in_attrs(&token.attrs, "style")
+    let zoom = attr_value_in_attrs(&attrs, "style")
         .and_then(parse_html_zoom)
         .unwrap_or(1.0);
 
@@ -855,6 +753,11 @@ pub(crate) fn parse_inline_style(style: &str) -> HtmlInlineStyle {
             "font-size" => {
                 if let Some(size) = parse_css_font_size(value) {
                     parsed.font_size = Some(size);
+                }
+            }
+            "text-align" => {
+                if let Some(align) = parse_text_align(value) {
+                    parsed.text_align = Some(align);
                 }
             }
             _ => {}
@@ -1117,7 +1020,8 @@ pub(crate) fn is_inline_tag(name: &str) -> bool {
 fn is_block_tag(name: &str) -> bool {
     matches!(
         name,
-        "div"
+        "center"
+            | "div"
             | "p"
             | "blockquote"
             | "hr"
@@ -1142,23 +1046,96 @@ fn is_void_tag(name: &str) -> bool {
     matches!(name, "br" | "hr" | "img")
 }
 
-#[cfg(feature = "html-native")]
-fn tree_sitter_reports_error(raw_source: &str) -> bool {
-    let mut parser = Parser::new();
-    if parser
-        .set_language(&tree_sitter_html::LANGUAGE.into())
-        .is_err()
-    {
-        return true;
-    }
-    parser
-        .parse(raw_source, None)
-        .is_none_or(|tree| tree.root_node().has_error())
+/// CommonMark HTML block kind 6 names: a line that starts with one of these
+/// tags opens an HTML block, and the block ends at the next blank line.
+pub(crate) fn is_block_level_html_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "base"
+            | "basefont"
+            | "blockquote"
+            | "body"
+            | "caption"
+            | "center"
+            | "col"
+            | "colgroup"
+            | "dd"
+            | "details"
+            | "dialog"
+            | "dir"
+            | "div"
+            | "dl"
+            | "dt"
+            | "fieldset"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "form"
+            | "frame"
+            | "frameset"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "head"
+            | "header"
+            | "hr"
+            | "html"
+            | "iframe"
+            | "legend"
+            | "li"
+            | "link"
+            | "main"
+            | "menu"
+            | "menuitem"
+            | "nav"
+            | "noframes"
+            | "ol"
+            | "optgroup"
+            | "option"
+            | "p"
+            | "param"
+            | "search"
+            | "section"
+            | "summary"
+            | "table"
+            | "tbody"
+            | "td"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "title"
+            | "tr"
+            | "track"
+            | "ul"
+    )
 }
 
-#[cfg(not(feature = "html-native"))]
-fn tree_sitter_reports_error(_: &str) -> bool {
-    true
+/// CommonMark HTML block kind 1 names: the block runs to the matching end tag
+/// and blank lines do not end it.
+pub(crate) fn is_raw_text_html_tag(name: &str) -> bool {
+    matches!(name, "script" | "style" | "pre" | "textarea")
+}
+
+/// HTML containers whose content is expected to span blank lines. Velora
+/// renders them as one native block, so their region runs to the closing tag
+/// instead of ending at the first blank line.
+pub(crate) fn is_html_container_tag(name: &str) -> bool {
+    matches!(name, "details" | "figure" | "table")
+}
+
+fn parse_text_align(value: &str) -> Option<HtmlTextAlign> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "left" => Some(HtmlTextAlign::Left),
+        "center" => Some(HtmlTextAlign::Center),
+        "right" => Some(HtmlTextAlign::Right),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1232,9 +1209,49 @@ mod tests {
     }
 
     #[test]
-    fn malformed_html_falls_back_to_raw_text() {
+    fn malformed_html_is_recovered_like_a_browser() {
         let doc = parse_html_document("<details><summary>x</details>");
+        assert!(doc.is_semantic());
+        assert_eq!(doc.nodes[0].tag_name, "details");
+        assert_eq!(doc.nodes[0].children[0].tag_name, "summary");
+        assert_eq!(doc.nodes[0].children[0].raw_source, "<summary>x</summary>");
+    }
+
+    #[test]
+    fn stray_closing_tag_falls_back_to_raw_text() {
+        let doc = parse_html_document("</div>");
         assert_eq!(doc.safety, HtmlSafetyClass::RawTextBlock);
+        assert_eq!(doc.nodes[0].raw_source, "</div>");
+    }
+
+    #[test]
+    fn parses_legacy_align_attribute_and_center_tag() {
+        let doc = parse_html_document("<div align=\"center\">x</div>");
+        assert!(doc.is_semantic());
+        assert_eq!(
+            style_for_node(&doc.nodes[0]).text_align,
+            Some(HtmlTextAlign::Center)
+        );
+
+        let doc = parse_html_document("<center>x</center>");
+        assert!(doc.is_semantic());
+        assert_eq!(doc.nodes[0].tag_name, "center");
+        assert_eq!(
+            style_for_node(&doc.nodes[0]).text_align,
+            Some(HtmlTextAlign::Center)
+        );
+    }
+
+    #[test]
+    fn parses_text_align_from_style_and_exports_it() {
+        let doc = parse_html_document("<p style=\"text-align: right\">x</p>");
+        assert_eq!(
+            style_for_node(&doc.nodes[0]).text_align,
+            Some(HtmlTextAlign::Right)
+        );
+
+        let html = sanitize_html_for_export("<div align=\"center\">x</div>");
+        assert!(html.contains("text-align: center"), "actual: {html}");
     }
 
     #[test]
@@ -1330,9 +1347,12 @@ mod tests {
             "<span style=\"color:blue; background-image:url(javascript:bad); background-color:rgb(255 255 0); font-size:120%\">x</span>",
         );
 
-        assert!(html.contains(
-            "style=\"color: rgba(0,0,255,1.000); background-color: rgba(255,255,0,1.000); font-size: 120%;\""
-        ));
+        assert!(
+            html.contains(
+                "style=\"color: rgba(0,0,255,1.000); background-color: rgba(255,255,0,1.000); font-size: 120%;\""
+            ),
+            "actual: {html}"
+        );
         assert!(!html.contains("background-image"));
     }
 

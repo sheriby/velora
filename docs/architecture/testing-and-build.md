@@ -59,7 +59,7 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
   - `releasewin`：release + debug-assertions（交叉编译无法跑 fxc.exe，打开 debug 断言让 DirectX 走运行时着色器路径）
   - `dev`：opt-level=0、256 codegen-units；**`[profile.dev.package]` 对 ~40 个热 crate（gpui/taffy/cosmic-text/rustybuzz/lyon/tree-sitter/ratex/pulldown-cmark…）单独 opt-level=3**——本地代码保持 O0 可调试，框架热路径保持性能。新增重依赖若在每帧路径上，记得加进这张表。
 - **vendoring**：`[patch.crates-io] gpui = { path = "vendor/gpui" }`（gpui 0.2.2 + `runtime_shaders`；dev 依赖带 `test-support`）。
-- **features**：`code-highlight-core/official/config`（tree-sitter 16 语言语法树高亮）、`html-native`。
+- **features**：`code-highlight-core/official/config`（tree-sitter 16 语言语法树高亮）。
 
 ## 6. vendor/gpui 本地补丁清单（重要！升级 gpui 必须重放）
 

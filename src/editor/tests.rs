@@ -3517,18 +3517,22 @@ async fn html_fallback_before_image_does_not_swallow_standalone_image(cx: &mut T
 }
 
 #[gpui::test]
-async fn unclosed_html_fallback_stops_before_standalone_image_without_blank(
-    cx: &mut TestAppContext,
-) {
+async fn unclosed_html_block_stops_before_standalone_image_without_blank(cx: &mut TestAppContext) {
     let image_url = "https://example.com/image.png";
     let markdown = format!("<span>unclosed html\n![image]({image_url})");
     let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
 
     editor.read_with(cx, |editor, cx| {
         assert_eq!(editor.document.root_count(), 2);
-        assert_eq!(
-            editor.document.root_blocks()[0].read(cx).kind(),
-            BlockKind::RawMarkdown
+        // html5ever recovers the unclosed tag like a browser does; the block is
+        // still an HTML block, not raw Markdown.
+        let html = editor.document.root_blocks()[0].read(cx);
+        assert_eq!(html.kind(), BlockKind::HtmlBlock);
+        assert!(
+            html.record
+                .html
+                .as_ref()
+                .is_some_and(|html| html.is_semantic())
         );
         let image = editor.document.root_blocks()[1].read(cx);
         let runtime = image.image_runtime().expect("image runtime");

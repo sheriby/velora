@@ -12,7 +12,10 @@ use crate::components::{
     BlockKind, BlockRecord, CalloutVariant, CodeFenceOpening, InlineTextTree,
     parse_footnote_definition_head,
 };
-use crate::components::{HtmlSafetyClass, parse_html_document};
+use crate::components::{
+    HtmlSafetyClass, is_block_level_html_tag, is_html_container_tag, is_raw_text_html_tag,
+    parse_html_document,
+};
 use crate::components::{
     collect_pipeless_table_region, collect_root_table_candidate_region,
     collect_table_candidate_region, is_root_table_candidate_line, is_table_candidate_line,
@@ -77,14 +80,6 @@ struct ListMarker {
 fn strip_fence_indent(line: &str) -> Option<&str> {
     let indent = line.bytes().take_while(|b| *b == b' ').count();
     (indent <= 3).then_some(&line[indent..])
-}
-
-fn collect_until_blank_line(lines: &[String], start: usize) -> usize {
-    let mut index = start + 1;
-    while index < lines.len() && !lines[index].trim().is_empty() {
-        index += 1;
-    }
-    index
 }
 
 fn collect_html_fallback_region(lines: &[String], start: usize) -> usize {
@@ -492,44 +487,44 @@ fn collect_block_html_region(lines: &[String], start: usize) -> usize {
         Some(HtmlBlockStart::Comment) => collect_closed_html_comment_region(lines, start)
             .unwrap_or_else(|| collect_html_fallback_region(lines, start)),
         Some(HtmlBlockStart::Tag {
-            name,
             self_closing,
             closes_same_line,
-        }) => {
-            if self_closing || closes_same_line {
-                return start + 1;
-            }
-
-            let mut depth = 1usize;
-            let mut index = start + 1;
-            while index < lines.len() {
-                if let Some(HtmlBlockStart::Tag {
-                    name: nested_name,
-                    self_closing,
-                    closes_same_line,
-                }) = parse_html_block_start(&lines[index])
-                    && nested_name == name
-                    && !self_closing
-                    && !closes_same_line
-                {
-                    depth += 1;
-                }
-
-                if let Some(close_name) = parse_html_close_tag_name(&lines[index])
-                    && close_name == name
-                {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return index + 1;
-                    }
-                }
-
-                index += 1;
-            }
-            collect_html_fallback_region(lines, start)
+            ..
+        }) if self_closing || closes_same_line => start + 1,
+        Some(HtmlBlockStart::Tag { name, .. })
+            if is_raw_text_html_tag(&name) || is_html_container_tag(&name) =>
+        {
+            collect_raw_text_html_region(lines, start, &name)
         }
-        None => collect_until_blank_line(lines, start),
+        // CommonMark HTML block kinds 6 and 7 end at the next blank line.
+        Some(HtmlBlockStart::Tag { .. }) | None => collect_markdown_html_region(lines, start),
     }
+}
+
+/// CommonMark HTML block kind 1: the region runs to the matching end tag, and
+/// blank lines inside it do not end the block.
+fn collect_raw_text_html_region(lines: &[String], start: usize, name: &str) -> usize {
+    let mut index = start + 1;
+    while index < lines.len() {
+        if parse_html_close_tag_name(&lines[index]).is_some_and(|close| close == name) {
+            return index + 1;
+        }
+        index += 1;
+    }
+    collect_html_fallback_region(lines, start)
+}
+
+/// HTML blocks that end at the next blank line. A standalone image line also
+/// ends the region so it stays a native image block.
+fn collect_markdown_html_region(lines: &[String], start: usize) -> usize {
+    let mut index = start + 1;
+    while index < lines.len() {
+        if lines[index].trim().is_empty() || parse_standalone_image(&lines[index]).is_some() {
+            break;
+        }
+        index += 1;
+    }
+    index
 }
 
 fn collect_reference_definition_region(lines: &[String], start: usize) -> usize {
@@ -604,9 +599,8 @@ fn parse_html_block_start(line: &str) -> Option<HtmlBlockStart> {
     }
 
     let tagged = rest.strip_prefix('<')?;
-    if tagged.starts_with('/') {
-        return None;
-    }
+    let closing = tagged.starts_with('/');
+    let tagged = tagged.strip_prefix('/').unwrap_or(tagged);
 
     let name_len = tagged
         .chars()
@@ -621,6 +615,16 @@ fn parse_html_block_start(line: &str) -> Option<HtmlBlockStart> {
     let next = suffix.chars().next()?;
     if !matches!(next, '>' | ' ' | '\t' | '/') {
         return None;
+    }
+
+    if closing {
+        // Only the CommonMark block-level names open a block; other closing
+        // tags stay inline text. A closing tag never wraps following lines.
+        return is_block_level_html_tag(name).then(|| HtmlBlockStart::Tag {
+            name: name.to_ascii_lowercase(),
+            self_closing: true,
+            closes_same_line: true,
+        });
     }
 
     Some(HtmlBlockStart::Tag {
@@ -3548,6 +3552,24 @@ mod tests {
                     .is_some_and(|html| html.is_semantic())
             );
             assert_eq!(editor.document.markdown_text(cx), markdown);
+        });
+    }
+
+    #[gpui::test]
+    async fn centered_div_keeps_the_following_markdown_table(cx: &mut TestAppContext) {
+        let markdown = "<div align=\"center\">\n\n| 日期 | 版本 |\n| :---: | :---: |\n| 2026-08-04 | 1.0 |\n\n</div>".to_string();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+        editor.update(cx, |editor, cx| {
+            let roots = editor.document.root_blocks();
+            assert_eq!(roots.len(), 3);
+            assert_eq!(roots[0].read(cx).kind(), BlockKind::HtmlBlock);
+            assert_eq!(roots[1].read(cx).kind(), BlockKind::Table);
+            assert_eq!(roots[2].read(cx).kind(), BlockKind::RawMarkdown);
+
+            let text = editor.document.markdown_text(cx);
+            assert!(text.contains("| 日期 | 版本 |"), "actual: {text}");
+            assert!(text.contains("</div>"), "actual: {text}");
         });
     }
 

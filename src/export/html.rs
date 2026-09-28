@@ -1242,9 +1242,12 @@ mod tests {
         let markdown = "<!--\n<strong>not html</strong>\n-->";
         let html = render_html(markdown, &Theme::default_theme(), "Doc");
 
-        assert!(html.contains("class=\"vlt-comment\""));
-        assert!(html.contains("&lt;!--"));
-        assert!(html.contains("&lt;strong&gt;not html&lt;/strong&gt;"));
+        assert!(html.contains("class=\"vlt-comment\""), "actual: {html}");
+        assert!(html.contains("&lt;!--"), "actual: {html}");
+        assert!(
+            html.contains("&lt;strong&gt;not html&lt;/strong&gt;"),
+            "actual: {html}"
+        );
         assert!(!html.contains("<!--\n<strong>not html</strong>\n-->"));
     }
 
@@ -1275,10 +1278,16 @@ mod tests {
             "Doc",
         );
 
-        assert!(html.contains("<div>safe"));
-        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
-        assert!(html.contains("tail</div>"));
-        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("<div>safe"), "actual: {html}");
+        assert!(
+            html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
+            "actual: {html}"
+        );
+        assert!(html.contains("tail</div>"), "actual: {html}");
+        assert!(
+            !html.contains("<script>alert(1)</script>"),
+            "actual: {html}"
+        );
     }
 
     #[test]
@@ -1289,10 +1298,13 @@ mod tests {
             "Doc",
         );
 
-        assert!(html.contains(
-            "style=\"color: rgba(0,0,255,1.000); background-color: rgba(255,255,0,1.000); font-size: 120%;\""
-        ));
-        assert!(!html.contains("background-image"));
+        assert!(
+            html.contains(
+                "style=\"color: rgba(0,0,255,1.000); background-color: rgba(255,255,0,1.000); font-size: 120%;\""
+            ),
+            "actual: {html}"
+        );
+        assert!(!html.contains("background-image"), "actual: {html}");
     }
 
     #[test]

@@ -2071,7 +2071,6 @@ fn inline_html_style(tag: &InlineHtmlTag) -> Option<HtmlInlineStyle> {
         attrs: tag.attrs.clone(),
         children: Vec::new(),
         raw_source: String::new(),
-        source_range: 0..0,
     };
     let style = style_for_node(&node);
     (!style.is_empty()).then_some(style)

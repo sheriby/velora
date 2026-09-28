@@ -11,12 +11,12 @@ const BLOCK_EDITOR_CONTEXT: &str = "BlockEditor";
 use super::element::{BlockTextElement, CodeLanguageInputElement};
 use super::{Block, BlockEvent, BlockKind, ImageResolvedSource, ImageRuntime};
 use crate::components::{
-    Editor, HtmlCssColor, HtmlDocument, HtmlNode, HtmlNodeKind, InlineScript, TableAxisHighlight,
-    TableAxisKind, TableAxisMarker, TableCellInlineImageSegment, TableColumnLayout, attr_value,
-    display_math_font_size, inline_math_font_size, parse_display_math_source,
-    parse_html_image_block, parse_mermaid_fence_source, parse_table_cell_inline_images,
-    render_display_math_svg, render_inline_math_svg, render_mermaid_svg_for_display,
-    resolve_image_source, style_for_node,
+    Editor, HtmlCssColor, HtmlDocument, HtmlNode, HtmlNodeKind, HtmlTextAlign, InlineScript,
+    TableAxisHighlight, TableAxisKind, TableAxisMarker, TableCellInlineImageSegment,
+    TableColumnLayout, attr_value, display_math_font_size, inline_math_font_size,
+    parse_display_math_source, parse_html_image_block, parse_mermaid_fence_source,
+    parse_table_cell_inline_images, render_display_math_svg, render_inline_math_svg,
+    render_mermaid_svg_for_display, resolve_image_source, style_for_node,
 };
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeDimensions, ThemeManager};
@@ -457,6 +457,7 @@ struct HtmlComputedStyle {
     color: Hsla,
     font_size: f32,
     root_font_size: f32,
+    text_align: Option<TextAlign>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -471,6 +472,7 @@ impl HtmlComputedStyle {
             color: theme.colors.text_default,
             font_size: theme.typography.text_size,
             root_font_size: theme.typography.text_size,
+            text_align: None,
         }
     }
 }
@@ -525,6 +527,13 @@ fn html_node_visual_style(
     }
     if let Some(color) = inline_style.background_color {
         background = Some(html_css_color_to_hsla(color, computed.color));
+    }
+    if let Some(align) = inline_style.text_align {
+        computed.text_align = Some(match align {
+            HtmlTextAlign::Left => TextAlign::Left,
+            HtmlTextAlign::Center => TextAlign::Center,
+            HtmlTextAlign::Right => TextAlign::Right,
+        });
     }
 
     HtmlNodeVisualStyle {
@@ -1493,10 +1502,14 @@ impl Block {
         }
 
         if node.tag_name == "#text" {
-            return div()
+            let mut element = div()
                 .min_w(px(0.0))
                 .text_size(px(inherited_style.font_size))
-                .text_color(inherited_style.color)
+                .text_color(inherited_style.color);
+            if let Some(align) = inherited_style.text_align {
+                element = element.w_full().text_align(align);
+            }
+            return element
                 .child(SharedString::from(node.raw_source.clone()))
                 .into_any_element();
         }
@@ -1680,14 +1693,18 @@ impl Block {
                 element.into_any_element()
             }
             _ => {
-                let mut element =
-                    div()
-                        .w_full()
-                        .text_size(px(node_style.computed.font_size))
-                        .text_color(node_style.computed.color)
-                        .children(node.children.iter().map(|child| {
-                            self.render_html_node(child, theme, node_style.computed, cx)
-                        }));
+                let mut element = div()
+                    .w_full()
+                    .text_size(px(node_style.computed.font_size))
+                    .text_color(node_style.computed.color);
+                if let Some(align) = node_style.computed.text_align {
+                    element = element.text_align(align);
+                }
+                element = element.children(
+                    node.children
+                        .iter()
+                        .map(|child| self.render_html_node(child, theme, node_style.computed, cx)),
+                );
                 if let Some(bg) = node_style.background {
                     element = element.bg(bg);
                 }

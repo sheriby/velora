@@ -25,9 +25,8 @@ collapsible_if = "allow"
 collapsible_else_if = "allow"
 
 [features]
-default = ["code-highlight-core", "code-highlight-official", "code-highlight-config", "html-native"]
+default = ["code-highlight-core", "code-highlight-official", "code-highlight-config"]
 code-highlight-core = ["dep:tree-sitter", "dep:tree-sitter-highlight"]
-html-native = ["dep:tree-sitter", "dep:tree-sitter-html"]
 code-highlight-official = [
     "code-highlight-core",
     "dep:tree-sitter-rust",
@@ -71,6 +70,8 @@ chromiumoxide = { version = "0.9.1", default-features = false, features = ["byte
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 url = "2"
 pulldown-cmark = "0.13"
+html5ever = "0.39"
+markup5ever_rcdom = "0.39"
 cssparser = "0.37"
 directories = "6"
 ratex-layout = "0.1.9"
