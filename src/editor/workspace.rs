@@ -273,7 +273,8 @@ pub(super) struct WorkspaceState {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            is_open: true,
+            // 应用启动不展开侧边栏（用户需求）：需要时点状态栏按钮/快捷键打开。
+            is_open: false,
             active_tab: WorkspaceTab::Files,
             root: None,
             file_tree: None,
@@ -6852,6 +6853,8 @@ mod tests {
             cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
         cx.update(|window, cx| {
             editor.update(cx, |editor, cx| {
+                // 侧栏默认关闭（用户需求）：搜索输入框在抽屉里，先展开再聚焦。
+                editor.workspace.is_open = true;
                 editor.workspace.active_tab = super::WorkspaceTab::Search;
                 let focus = editor
                     .workspace
