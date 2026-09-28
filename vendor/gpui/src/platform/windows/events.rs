@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use ::util::ResultExt;
 use anyhow::Context as _;
@@ -29,6 +30,28 @@ pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
+
+/// 临时诊断（沿用 `VELORA_STARTUP_TIMING` 的做法）：设 `VELORA_IME_DEBUG=1` 时，把
+/// IME 消息与键盘派发决策追加写入 `%TEMP%\velora-ime.log`。用于排查第三方输入法
+/// （搜狗/微信等）在 Windows 上的组合输入行为，验证完可以删。
+fn ime_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("VELORA_IME_DEBUG").is_some_and(|value| value != "0"))
+}
+
+fn ime_debug_log(line: &str) {
+    if !ime_debug_enabled() {
+        return;
+    }
+    use std::io::Write as _;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::env::temp_dir().join("velora-ime.log"))
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
 
 impl WindowsWindowInner {
     pub(crate) fn handle_msg(
@@ -370,6 +393,20 @@ impl WindowsWindowInner {
     // It's a known bug that you can't trigger `ctrl-shift-0`. See:
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
     fn handle_keydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        // 输入法声明要吃这个按键时，Windows 发的 keydown 是 `VK_PROCESSKEY`：按键属于
+        // 输入法，应用只应把它交给 `TranslateMessage` 通知输入法，不能拿它去匹配快捷键。
+        // 否则组合态里按退格/回车会落到文档上（删掉上一个已上屏的字、拆出新段），而输入法
+        // 自己的候选框还停在那里。上游同一问题：zed#36736，修法见 zed#41259；0.2.2 里还
+        // 留着「用 ImmGetVirtualKey 还原真实按键再派发」的老实现。
+        if VIRTUAL_KEY(wparam.loword()) == VK_PROCESSKEY {
+            ime_debug_log(&format!(
+                "keydown VK_PROCESSKEY lparam={:#x} -> TranslateMessage（不派发应用）",
+                lparam.0
+            ));
+            translate_message(handle, wparam, lparam);
+            return Some(0);
+        }
+
         let mut lock = self.state.borrow_mut();
         let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyDown(KeyDownEvent {
@@ -379,6 +416,10 @@ impl WindowsWindowInner {
         }) else {
             return Some(1);
         };
+        let key_label = match &input {
+            PlatformInput::KeyDown(event) => Some(event.keystroke.key.clone()),
+            _ => None,
+        };
         drop(lock);
 
         let is_composing = self
@@ -386,6 +427,11 @@ impl WindowsWindowInner {
             .flatten()
             .is_some();
         if is_composing {
+            ime_debug_log(&format!(
+                "keydown {} vkey={} 组合态中 -> 交给输入法",
+                key_label.as_deref().unwrap_or("?"),
+                wparam.loword()
+            ));
             translate_message(handle, wparam, lparam);
             return Some(0);
         }
@@ -397,6 +443,13 @@ impl WindowsWindowInner {
         let handled = !func(input).propagate;
 
         self.state.borrow_mut().callbacks.input = Some(func);
+
+        ime_debug_log(&format!(
+            "keydown {} vkey={} handled_by_app={}",
+            key_label.as_deref().unwrap_or("?"),
+            wparam.loword(),
+            handled
+        ));
 
         if handled {
             Some(0)
@@ -427,6 +480,7 @@ impl WindowsWindowInner {
 
     fn handle_char_msg(&self, wparam: WPARAM) -> Option<isize> {
         let input = self.parse_char_message(wparam)?;
+        ime_debug_log(&format!("WM_CHAR {input:?} -> replace_text_in_range"));
         self.with_input_handler(|input_handler| {
             input_handler.replace_text_in_range(None, &input);
         });
@@ -663,6 +717,7 @@ impl WindowsWindowInner {
 
     fn handle_ime_composition_inner(&self, ctx: HIMC, lparam: LPARAM) -> Option<isize> {
         let lparam = lparam.0 as u32;
+        ime_debug_log(&format!("WM_IME_COMPOSITION lparam={lparam:#x}"));
         if lparam == 0 {
             // Japanese IME may send this message with lparam = 0, which indicates that
             // there is no composition string.
@@ -673,20 +728,38 @@ impl WindowsWindowInner {
         } else {
             if lparam & GCS_COMPSTR.0 > 0 {
                 let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
+                ime_debug_log(&format!("  GCS_COMPSTR {comp_string:?}"));
                 let caret_pos =
                     (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
                         let pos = retrieve_composition_cursor_position(ctx);
                         pos..pos
                     });
-                self.with_input_handler(|input_handler| {
-                    input_handler.replace_and_mark_text_in_range(None, &comp_string, caret_pos);
-                })?;
+                let delivered = self
+                    .with_input_handler(|input_handler| {
+                        input_handler.replace_and_mark_text_in_range(
+                            None,
+                            &comp_string,
+                            caret_pos,
+                        );
+                    })
+                    .is_some();
+                if !delivered {
+                    ime_debug_log("  无输入处理器，组合串被丢弃");
+                    return None;
+                }
             }
             if lparam & GCS_RESULTSTR.0 > 0 {
                 let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
-                self.with_input_handler(|input_handler| {
-                    input_handler.replace_text_in_range(None, &comp_result);
-                })?;
+                ime_debug_log(&format!("  GCS_RESULTSTR {comp_result:?}"));
+                let delivered = self
+                    .with_input_handler(|input_handler| {
+                        input_handler.replace_text_in_range(None, &comp_result);
+                    })
+                    .is_some();
+                if !delivered {
+                    ime_debug_log("  无输入处理器，候选结果被丢弃");
+                    return None;
+                }
                 return Some(0);
             }
 
