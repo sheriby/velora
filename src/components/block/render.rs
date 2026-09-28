@@ -22,9 +22,11 @@ use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeDimensions, ThemeManager};
 
 // Unicode bullet glyphs for nested list depths.
+// 一级实心圆、二级空心圆、三级及以上实心方块（对齐浏览器 `ul` 的
+// disc / circle / square）。三级曾用 U+25A1（白色空心方块），与浏览器不一致。
 const BULLET_FILLED: &str = "\u{2022}";
 const BULLET_HOLLOW: &str = "\u{25E6}";
-const BULLET_SQUARE: &str = "\u{25A1}";
+const BULLET_SQUARE: &str = "\u{25AA}";
 const TASK_CHECKMARK: &str = "\u{2713}";
 
 // 标题折叠 chevron（roadmap C7）：位于标题行左侧留白内的按钮。
@@ -3628,9 +3630,20 @@ fn inline_word_chunks(text: &str, code: bool, has_background: bool) -> Vec<&str>
 #[cfg(test)]
 mod tests {
     use super::{
-        inline_display_font_size, promotes_inline_images, tag_query, wikilink_target,
+        bulleted_list_marker, inline_display_font_size, promotes_inline_images, tag_query,
+        wikilink_target,
     };
     use crate::components::{InlineScript, InlineSpan, InlineStyle};
+
+    #[test]
+    fn bulleted_list_marker_matches_browser_disc_circle_square() {
+        // 一级实心圆、二级空心圆、三级及更深入全是实心方块（用户报修：三级显示了
+        // 白色空心方块 U+25A1）。
+        assert_eq!(bulleted_list_marker(0), "\u{2022}");
+        assert_eq!(bulleted_list_marker(1), "\u{25E6}");
+        assert_eq!(bulleted_list_marker(2), "\u{25AA}");
+        assert_eq!(bulleted_list_marker(9), "\u{25AA}");
+    }
 
     #[test]
     fn inline_code_content_never_becomes_an_image_widget() {
