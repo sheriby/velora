@@ -1103,7 +1103,7 @@ impl InlineTextTree {
         }
         temp.append_tree(after);
         temp.normalize_fragments();
-        temp.normalize_inline_syntax_with_link_references(reference_definitions)
+        temp.normalize_visible_text_with_link_references(reference_definitions)
     }
 
     /// Like `replace_visible_range` but skips marker normalization so
@@ -1149,12 +1149,31 @@ impl InlineTextTree {
         self.normalize_inline_syntax_with_link_references(&LinkReferenceDefinitions::default())
     }
 
+    /// 归一化 markdown 源文本：反斜杠是转义前缀（读文件、解析链接标签）。
     pub fn normalize_inline_syntax_with_link_references(
         &self,
         reference_definitions: &LinkReferenceDefinitions,
     ) -> InlineEditResult {
+        self.normalize_inline_text_with_link_references(reference_definitions, false)
+    }
+
+    /// 归一化**可见文本**（编辑后重解析）：反斜杠是字面字符，不是转义前缀。
+    /// 用户按一次 `\` 就应该看到一个反斜杠，连按两次不该塔缩成一个（用户报修：
+    /// 渲染模式里打不出两个连续的反斜杠）。
+    pub fn normalize_visible_text_with_link_references(
+        &self,
+        reference_definitions: &LinkReferenceDefinitions,
+    ) -> InlineEditResult {
+        self.normalize_inline_text_with_link_references(reference_definitions, true)
+    }
+
+    fn normalize_inline_text_with_link_references(
+        &self,
+        reference_definitions: &LinkReferenceDefinitions,
+        literal_backslashes: bool,
+    ) -> InlineEditResult {
         let visible_text = self.visible_text();
-        let tokens = flatten_tokens(&self.fragments);
+        let tokens = flatten_tokens(&self.fragments, literal_backslashes);
         let mut builder = NormalizeBuilder::new(visible_text.len());
         let _ = parse_until(
             &tokens,
@@ -1368,6 +1387,9 @@ struct CharToken {
     style: InlineStyle,
     html_style: Option<HtmlInlineStyle>,
     source_range: Range<usize>,
+    /// 字面反斜杠：编辑可见文本时，用户按下的 `\` 是普通字符，不是转义前缀。
+    /// 读 markdown 源文件时为 false，转义语义照旧。
+    literal_backslash: bool,
 }
 
 /// Result of parsing a delimited inline region.
@@ -1503,7 +1525,7 @@ impl NormalizeBuilder {
     }
 }
 
-fn flatten_tokens(fragments: &[InlineFragment]) -> Vec<CharToken> {
+fn flatten_tokens(fragments: &[InlineFragment], literal_backslashes: bool) -> Vec<CharToken> {
     let mut tokens = Vec::new();
     let mut visible_offset = 0;
 
@@ -1515,6 +1537,7 @@ fn flatten_tokens(fragments: &[InlineFragment]) -> Vec<CharToken> {
                 style: fragment.style,
                 html_style: fragment.html_style,
                 source_range: visible_offset..visible_offset + len,
+                literal_backslash: literal_backslashes && ch == '\\',
             });
             visible_offset += len;
         }
@@ -1787,6 +1810,10 @@ fn token_is_backslash_escaped(tokens: &[CharToken], index: usize) -> bool {
     let mut cursor = index;
     let mut slash_count = 0usize;
     while cursor > 0 && tokens[cursor - 1].ch == '\\' {
+        // 可见文本模式下的反斜杠是字面字符，不算转义前缀。
+        if tokens[cursor - 1].literal_backslash {
+            break;
+        }
         slash_count += 1;
         cursor -= 1;
     }
@@ -1830,7 +1857,8 @@ fn parse_footnote_reference(
     let mut cursor = index + 2;
     let end_index = loop {
         let token = tokens.get(cursor)?;
-        if token.ch == '\\' {
+        // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
+        if token.ch == '\\' && !token.literal_backslash {
             cursor += 2;
             continue;
         }
@@ -2137,7 +2165,8 @@ fn locate_inline_link(
     let mut cursor = index + 1;
     let label_end = loop {
         let token = tokens.get(cursor)?;
-        if token.ch == '\\' {
+        // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
+        if token.ch == '\\' && !token.literal_backslash {
             cursor += 2;
             continue;
         }
@@ -2158,7 +2187,8 @@ fn locate_inline_link(
             cursor = url_start;
             let url_end = loop {
                 let token = tokens.get(cursor)?;
-                if token.ch == '\\' {
+                // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
+                if token.ch == '\\' && !token.literal_backslash {
                     cursor += 2;
                     continue;
                 }
@@ -2191,7 +2221,8 @@ fn locate_inline_link(
             cursor = reference_start;
             let reference_end = loop {
                 let token = tokens.get(cursor)?;
-                if token.ch == '\\' {
+                // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
+                if token.ch == '\\' && !token.literal_backslash {
                     cursor += 2;
                     continue;
                 }
@@ -2244,7 +2275,8 @@ fn locate_autolink(tokens: &[CharToken], index: usize) -> Option<usize> {
     let mut cursor = index + 1;
     let end_index = loop {
         let token = tokens.get(cursor)?;
-        if token.ch == '\\' {
+        // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
+        if token.ch == '\\' && !token.literal_backslash {
             cursor += 2;
             continue;
         }
@@ -2662,6 +2694,10 @@ fn matches_sequence(tokens: &[CharToken], index: usize, sequence: &str) -> bool 
 fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> Option<usize> {
     let next_index = index + 1;
     if next_index >= tokens.len() {
+        return None;
+    }
+    // 编辑可见文本时反斜杠是字面字符：两个反斜杠不是"转义的反斜杠"，`\*` 也不吃掉星号。
+    if tokens[index].literal_backslash {
         return None;
     }
 
@@ -4424,6 +4460,37 @@ mod tests {
         assert_eq!(
             InlineTextTree::from_markdown("`_a_b_`").serialize_markdown(),
             "`_a_b_`"
+        );
+    }
+    #[test]
+    fn visible_text_normalization_keeps_backslashes_literal() {
+        let references = LinkReferenceDefinitions::default();
+        let backslashes = |count: usize| "\\".repeat(count);
+        let visible = |text: &str| {
+            InlineTextTree::plain(text)
+                .normalize_visible_text_with_link_references(&references)
+                .tree
+        };
+
+        // 可见文本模式：用户按下的反斜杠就是字符本身
+        assert_eq!(
+            visible(&format!("a{}b", backslashes(2))).visible_text(),
+            format!("a{}b", backslashes(2))
+        );
+        assert_eq!(
+            visible(&format!("{}*b", backslashes(1))).visible_text(),
+            format!("{}*b", backslashes(1))
+        );
+        // 源文本模式（读文件）：转义语义不变
+        assert_eq!(
+            InlineTextTree::from_markdown(&format!("a{}b", backslashes(2))).visible_text(),
+            format!("a{}b", backslashes(1))
+        );
+        assert_eq!(InlineTextTree::from_markdown("\\*b").visible_text(), "*b");
+        // 写回源文件时每个可见反斜杠转义一次
+        assert_eq!(
+            visible(&format!("a{}b", backslashes(2))).serialize_markdown(),
+            format!("a{}b", backslashes(4))
         );
     }
 }

@@ -6842,3 +6842,59 @@ async fn tmp_debug_merge_state(cx: &mut TestAppContext) {
         .expect("read");
 }
 
+#[gpui::test]
+async fn typing_consecutive_backslashes_keeps_every_one(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "alpha".to_string(), None));
+
+    let backslashes = |count: usize| "\\".repeat(count);
+
+    // 用户报修：渲染模式里连按反斜杠只能得到一个（`\\` 被当成“转义的反斜杠”塔缩）。
+    for count in 1..=3 {
+        cx.simulate_input("\\");
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.clone();
+            assert_eq!(
+                block.read(cx).display_text(),
+                format!("{}alpha", backslashes(count))
+            );
+        });
+    }
+    editor.read_with(cx, |editor, cx| {
+        // 文件里每个可见反斜杠转义一次：3 个可见 -> 6 个字符
+        assert_eq!(editor.document.markdown_text(cx), format!("{}alpha", backslashes(6)));
+    });
+
+    // 反斜杠不再吃掉后面的标记字符
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "seed".to_string(), None));
+    cx.simulate_input("\\");
+    cx.simulate_input("*");
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        assert_eq!(
+            block.read(cx).display_text(),
+            format!("{}*seed", backslashes(1))
+        );
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            format!("{}*seed", backslashes(3))
+        );
+    });
+
+    // 一次插入一段文本（粘贴）：UNC 路径的反斜杠必须保真
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "seed".to_string(), None));
+    cx.simulate_input(&format!("{}server{}share", backslashes(2), backslashes(1)));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        assert_eq!(
+            block.read(cx).display_text(),
+            format!("{}server{}shareseed", backslashes(2), backslashes(1))
+        );
+    });
+}
