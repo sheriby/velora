@@ -2833,6 +2833,40 @@ async fn parsed_table_runtime_installs_column_alignment_on_cells(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn short_delimiter_dashes_still_render_as_tables(cx: &mut TestAppContext) {
+    // 回归：`|:--|:--:|` 表头和 `htmd` 产出的 `| ---- | -- |` 分隔行曾被判为
+    // “不是表格”，整段降级成纯文本。
+    let markdown = [
+        "| 分组 | 总数 | 保留 | 存疑 | 剔除 |",
+        "|:--|:--:|:--:|:--:|:--:|",
+        "| 1a 产物分 >0.8 | 1 | 1 | 0 | 0 |",
+        "| **合计** | **3** | **2** | **0** | **1** |",
+        "",
+        "| 源文件 | 行数 | 动作 |",
+        "| ---- | --- | -- |",
+        "| `a.md` | 160 | 增强 |",
+    ]
+    .join("\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.document.root_count(), 2);
+        let roots = editor.document.root_blocks();
+        for root in roots {
+            assert_eq!(root.read(cx).kind(), BlockKind::Table);
+        }
+        let record = roots[0]
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .expect("table record");
+        assert_eq!(record.alignments.len(), 5);
+        assert_eq!(record.rows.len(), 2);
+    });
+}
+
+#[gpui::test]
 async fn append_column_updates_table_and_focuses_new_header_cell(cx: &mut TestAppContext) {
     let markdown = ["| A | B |", "| --- | ---: |", "| 1 | 2 |"].join("\n");
     let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));

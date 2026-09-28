@@ -562,14 +562,20 @@ fn split_table_cells(line: &str) -> Option<Vec<String>> {
 
 fn parse_alignment_cell(cell: &str) -> Option<TableColumnAlignment> {
     let trimmed = cell.trim();
-    if trimmed.len() < 3 {
-        return None;
-    }
-
     let left = trimmed.starts_with(':');
     let right = trimmed.ends_with(':');
-    let core = trimmed.trim_start_matches(':').trim_end_matches(':');
-    if core.len() < 3 || !core.chars().all(|ch| ch == '-') {
+    let mut core = trimmed;
+    if left {
+        core = &core[1..];
+    }
+    if right && !core.is_empty() {
+        core = &core[..core.len() - 1];
+    }
+    // GFM asks for one hyphen per delimiter cell, with at most one optional
+    // colon on either end. Demanding three hyphens made valid tables render as
+    // plain text: `htmd` writes `| ---- | --- | -- |` when it converts an HTML
+    // table, and `|:--|:--:|` headers are common in hand-written Markdown.
+    if core.is_empty() || !core.chars().all(|ch| ch == '-') {
         return None;
     }
 
@@ -806,6 +812,53 @@ mod tests {
     fn rejects_alignment_row_with_wrong_column_count() {
         let lines = vec!["| A | B | C |".to_string(), "| --- | --- |".to_string()];
         assert!(parse_root_table_region(&lines).is_none());
+    }
+
+    #[test]
+    fn accepts_short_alignment_dashes() {
+        // GFM needs one hyphen per delimiter cell, so `| -- |` and `|:--|` are
+        // tables. Both shapes came back from real documents that failed to render.
+        let pipeless = vec![
+            "源文件 | 行数 | 目标文件 | 动作 | 内容映射 |".to_string(),
+            "----------------------------------------------------------------------- | --- | --------------- | -- | ---------------------------------------------------------------------------------------- |".to_string(),
+            "`ascendc-dev-guide/references/ascendc-hardware-guide.md` | 160 | `references/npu-hardware-params.md` | 增强 | 分离模式与 SPMD".to_string(),
+        ];
+        let table = parse_root_table_region(&pipeless).expect("two-hyphen cell must parse");
+        assert_eq!(table.alignments.len(), 5);
+        assert_eq!(table.rows.len(), 1);
+
+        let aligned = vec![
+            "| 分组 | 总数 | 保留 | 存疑 | 剔除 |".to_string(),
+            "|:--|:--:|:--:|:--:|:--:|".to_string(),
+            "| 1a 产物分 >0.8 | 1 | 1 | 0 | 0 |".to_string(),
+            "| **合计** | **3** | **2** | **0** | **1** |".to_string(),
+        ];
+        let table = parse_root_table_region(&aligned).expect("`:--` cell must parse");
+        assert_eq!(
+            table.alignments,
+            vec![
+                TableColumnAlignment::Left,
+                TableColumnAlignment::Center,
+                TableColumnAlignment::Center,
+                TableColumnAlignment::Center,
+                TableColumnAlignment::Center,
+            ]
+        );
+        assert_eq!(table.rows.len(), 2);
+    }
+
+    #[test]
+    fn rejects_alignment_cells_without_hyphens() {
+        for cell in ["", ":", "::", "-:-", "--- ---", "abc"] {
+            let lines = vec![
+                "| A | B |".to_string(),
+                format!("| {cell} | --- |"),
+            ];
+            assert!(
+                parse_root_table_region(&lines).is_none(),
+                "{cell:?} must not pass as a delimiter cell"
+            );
+        }
     }
 
     #[test]

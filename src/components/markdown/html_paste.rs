@@ -183,4 +183,22 @@ mod tests {
         assert!(markdown.contains("> quoted"), "actual: {markdown}");
         assert!(markdown.contains("![diagram](a.png)"), "actual: {markdown}");
     }
+
+    #[test]
+    fn converted_html_tables_parse_as_native_tables() {
+        // 回归：`htmd` 转换 HTML 表格时写出的分隔行是 `| ---- | --- | -- |`，
+        // 而原生表格解析器当时要求每个分隔单元格至少 3 个短横。结果是粘贴进来的
+        // HTML 表格不被识别，只能当纯文本显示。
+        let markdown = super::html_to_markdown_or(
+            "<table><thead><tr><th>源文件</th><th>行数</th><th>动作</th></tr></thead><tbody><tr><td>a.md</td><td>160</td><td>增强</td></tr><tr><td>b.md</td><td>92</td><td>剔除</td></tr></tbody></table>",
+            "plain",
+        );
+        let lines = markdown.lines().map(str::to_string).collect::<Vec<_>>();
+        let table = super::super::table::parse_root_table_region(&lines)
+            .expect("转换出的 HTML 表格必须能被原生表格解析器识别");
+        assert_eq!(table.header.len(), 3);
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.header[0].serialize_markdown(), "源文件");
+        assert_eq!(table.rows[1][2].serialize_markdown(), "剔除");
+    }
 }
