@@ -78,6 +78,37 @@ fn prose_spacing(
     spacing
 }
 
+/// 在整块文本已排版的各行上复现渲染期的水平间距：行内代码两侧的 `code_gap`、
+/// 相邻非空白字形间的 `letter_spacing`、中西文边界的 autospacing。折行前调用，
+/// 行宽随间距增长。
+///
+/// 表格列宽测量与正文渲染必须走同一条管线：测量不加间距，水位法钉在
+/// 「测量内容宽 + 余量」上的列，渲染时因间距变宽必然 mid-word 折行
+/// （用户报修）。
+pub(crate) fn add_render_spacing(
+    lines: &mut [WrappedLine],
+    code_ranges: &[Range<usize>],
+    letter_spacing: Pixels,
+    code_gap: Pixels,
+    font_size: Pixels,
+) {
+    let mut line_start = 0;
+    for line in lines.iter_mut() {
+        let line_end = line_start + line.len();
+        let ranges: Vec<_> = code_ranges
+            .iter()
+            .filter(|range| range.start < line_end && line_start < range.end)
+            .map(|range| {
+                range.start.saturating_sub(line_start)..range.end.min(line_end) - line_start
+            })
+            .collect();
+        let spacing =
+            prose_spacing(&line.text, &ranges, letter_spacing, code_gap, font_size * 0.25);
+        line.add_horizontal_spacing(&spacing);
+        line_start += line.len() + 1;
+    }
+}
+
 fn inline_code_background_bounds(
     segment: Bounds<Pixels>,
     baseline: Pixels,
@@ -133,7 +164,7 @@ fn source_line_number_tops(lines: &[WrappedLine], line_height: Pixels) -> Vec<Pi
     tops
 }
 
-fn build_text_runs(
+pub(crate) fn build_text_runs(
     input: &Block,
     display_text: &SharedString,
     base_run: &TextRun,
@@ -1133,17 +1164,16 @@ impl Element for BlockTextElement {
                     None,
                 ) {
                     Ok(mut lines) => {
-                        let mut line_start = 0;
+                        if space_prose {
+                            add_render_spacing(
+                                &mut lines,
+                                &code_ranges,
+                                letter_spacing,
+                                code_gap,
+                                font_size,
+                            );
+                        }
                         for line in lines.iter_mut() {
-                            if space_prose {
-                                let line_end = line_start + line.len();
-                                let ranges: Vec<_> = code_ranges.iter()
-                                    .filter(|range| range.start < line_end && line_start < range.end)
-                                    .map(|range| range.start.saturating_sub(line_start)..range.end.min(line_end) - line_start)
-                                    .collect();
-                                let spacing = prose_spacing(&line.text, &ranges, letter_spacing, code_gap, font_size * 0.25);
-                                line.add_horizontal_spacing(&spacing);
-                            }
                             if wrap_prose || space_prose {
                                 if line
                                     .wrap_width
@@ -1155,7 +1185,6 @@ impl Element for BlockTextElement {
                                     line.wrap_at_boundaries(&prose_line_breaks(&line.text), &emergency_breaks);
                                 }
                             }
-                            line_start += line.len() + 1;
                         }
                         let mut total_size: Size<Pixels> = Size::default();
                         for line in lines.iter() {

@@ -5,9 +5,10 @@
 //! are still outside the runtime-safe subset continue to use raw-Markdown
 //! fallback paths.
 
-use gpui::{Entity, FontStyle, FontWeight, Pixels, SharedString, TextRun, Window, px};
+use gpui::{App, Entity, FontStyle, FontWeight, Pixels, SharedString, TextRun, Window, px};
 
 use crate::components::{Block, InlineTextTree};
+use crate::config::preferences::FontPreferences;
 use crate::theme::Theme;
 
 /// Horizontal alignment declared by the table's delimiter row.
@@ -218,9 +219,10 @@ impl TableData {
     }
 }
 
-/// 内容窄的列钉宽时多给的余量（像素）。像素取整和边框描边之后，内容刚好等于列
-/// 宽的文字仍可能折行，留一点点余量；不会超过该列当前的均分份额。
-const EXTRA_COLUMN_SLACK: f32 = 4.0;
+/// 内容窄的列钉宽时多给的容差（像素）。测量与渲染的字体度量不可能逐像素一致
+/// （同族字体的版本差异、hinting、像素取整、比例换算的舍入），按用户建议留
+/// 10px 容差兜住这类抖动；不会超过该列当前的均分份额。
+const EXTRA_COLUMN_SLACK: f32 = 10.0;
 
 /// Responsive width fractions shared by every row of a native table.
 #[derive(Debug, Clone, PartialEq)]
@@ -254,8 +256,10 @@ impl TableColumnLayout {
         table_width: f32,
         window: &mut Window,
         theme: &Theme,
+        cx: &App,
     ) -> Self {
-        let preferred_widths = measure_preferred_column_widths(table, window, theme)
+        let fonts = crate::config::EditorSettings::fonts(cx);
+        let preferred_widths = measure_preferred_column_widths(table, window, theme, &fonts)
             .into_iter()
             .map(f32::from)
             .collect::<Vec<_>>();
@@ -382,19 +386,20 @@ fn measure_preferred_column_widths(
     table: &TableData,
     window: &mut Window,
     theme: &Theme,
+    fonts: &FontPreferences,
 ) -> Vec<Pixels> {
     let column_count = table.header.len().max(1);
     let mut preferred_widths = vec![Pixels::ZERO; column_count];
 
     for (column, cell) in table.header.iter().enumerate() {
-        preferred_widths[column] =
-            preferred_widths[column].max(measure_cell_preferred_width(cell, true, window, theme));
+        preferred_widths[column] = preferred_widths[column]
+            .max(measure_cell_preferred_width(cell, true, window, theme, fonts));
     }
 
     for row in &table.rows {
         for (column, cell) in row.iter().enumerate().take(column_count) {
             preferred_widths[column] = preferred_widths[column]
-                .max(measure_cell_preferred_width(cell, false, window, theme));
+                .max(measure_cell_preferred_width(cell, false, window, theme, fonts));
         }
     }
 
@@ -406,6 +411,7 @@ fn measure_cell_preferred_width(
     is_header: bool,
     window: &mut Window,
     theme: &Theme,
+    fonts: &FontPreferences,
 ) -> Pixels {
     let cache = cell.render_cache();
     let text = cache.visible_text();
@@ -428,14 +434,33 @@ fn measure_cell_preferred_width(
         strikethrough: None,
         font_size: None,
     };
-    let runs = measurement_runs(&cache, &base_run, px(theme.typography.code_size));
+    let runs = measurement_runs(&cache, &base_run, fonts);
     let font_size = px(theme.typography.text_size);
 
     let text_width = window
         .text_system()
         .shape_text(display_text, font_size, &runs, None, None)
         .ok()
-        .map(|lines| {
+        .map(|mut lines| {
+            // 列宽必须按渲染管线算：正文渲染在折行前会给行加水平间距（行内代码
+            // 两侧 code_gap、相邻字形的字距、中西文边界 autospacing）。测量不补
+            // 上这部分，钉在「内容宽+余量」上的列渲染时必然 mid-word 折行
+            // （用户报修）。
+            let code_ranges: Vec<_> = cache
+                .spans()
+                .iter()
+                .filter(|span| span.style.code)
+                .map(|span| span.range.clone())
+                .collect();
+            let letter_spacing = font_size * theme.typography.text_letter_spacing;
+            let code_gap = px(theme.dimensions.code_bg_pad_x) + font_size * 0.125;
+            crate::components::block::element::add_render_spacing(
+                &mut lines,
+                &code_ranges,
+                letter_spacing,
+                code_gap,
+                font_size,
+            );
             lines
                 .iter()
                 .map(|line| line.width())
@@ -450,7 +475,7 @@ fn measure_cell_preferred_width(
 fn measurement_runs(
     cache: &crate::components::InlineRenderCache,
     base_run: &TextRun,
-    code_font_size: Pixels,
+    fonts: &FontPreferences,
 ) -> Vec<TextRun> {
     let mut boundaries = vec![0, cache.visible_text().len()];
     for span in cache.spans() {
@@ -470,6 +495,16 @@ fn measurement_runs(
 
         let inline_style = cache.style_at(start);
         let mut font = base_run.font.clone();
+        if inline_style.code {
+            // 哪段用什么字体渲染，就用什么字体量：行内代码段与渲染端
+            // （build_text_runs）同样换 code 字体族、提到 Medium、用「代码块
+            // 字体大小」。按正文字体量等宽 token 会系统性偏窄，钉住列渲染时
+            // mid-word 折行（用户报修）。正文段仍按正文字体量。
+            font.family = SharedString::from(fonts.code_family.clone());
+            if font.weight < FontWeight::MEDIUM {
+                font.weight = FontWeight::MEDIUM;
+            }
+        }
         if inline_style.bold && font.weight < FontWeight::BOLD {
             font.weight = FontWeight::BOLD;
         }
@@ -484,9 +519,7 @@ fn measurement_runs(
             background_color: None,
             underline: None,
             strikethrough: None,
-            // 行内代码按「代码块字体大小」排版，量宽也要跟着走，
-            // 否则含行内代码的列会按正文字号估宽。
-            font_size: inline_style.code.then_some(code_font_size),
+            font_size: inline_style.code.then_some(px(fonts.code_size as f32)),
         });
     }
 
@@ -761,11 +794,136 @@ pub fn serialize_table_markdown_lines(table: &TableData) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        TableColumnAlignment, TableColumnLayout, TableData, collect_pipeless_table_region,
-        collect_root_table_candidate_region, is_root_table_candidate_line, parse_root_table_region,
-        serialize_table_markdown_lines,
+        TableColumnAlignment, TableColumnLayout, TableData, cell_chrome_width,
+        collect_pipeless_table_region, collect_root_table_candidate_region,
+        is_root_table_candidate_line, measure_preferred_column_widths, parse_root_table_region,
+        parse_table_region, serialize_table_markdown_lines,
     };
     use crate::components::InlineTextTree;
+    use gpui::{AppContext, Hsla, SharedString, TestAppContext, TextRun, font, px, rgba};
+
+    /// 用户报修场景的端到端不变量：水位法钉住的列，必须放得下按「渲染格式」
+    /// （行内代码换 code 字体族/字号、渲染期水平间距）排出来的最长行。
+    /// 测量端任何与渲染端的管线错位（曾经先后漏掉：写作列宽上限、渲染间距、
+    /// code 字体族）都会在这里以 mid-word 折行暴露。
+    #[gpui::test]
+    async fn pinned_columns_fit_render_formatted_lines(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            crate::theme::ThemeManager::init(cx);
+            let theme = cx.global::<crate::theme::ThemeManager>().current_arc();
+            let fonts = crate::config::EditorSettings::fonts(cx);
+
+            let documents = [
+                // 首张表：窄代码列 + 长散文列。
+                "| File / folder | Purpose |\n| --- | --- |\n| `config.toml` | Preferences — most entries are editable in the preferences window |\n| `session.json` | Per-workspace open tabs, active tab and sidebar width |\n| `languages/` | External language packs |\n| `themes/` | External theme packs |",
+                // 第二张表：窄代码列 + 超长代码清单列 + 散文列。
+                "| Section | Keys | Controls |\n| --- | --- | --- |\n| `[window]` | `default_window_width`, `default_window_height`, `open_position`, `remember_bounds`, `zoom_percent` | Default size, centered vs. remembered opening position, window memory, UI zoom |\n| `[editor]` | `tree_sort`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width` | File-tree sort, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width |\n| `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |",
+            ];
+            let table_width = 760.0;
+
+            for source in documents {
+                let lines: Vec<String> = source.lines().map(str::to_string).collect();
+                let table = parse_table_region(&lines).expect("用户报修表格应能解析");
+                let layout = TableColumnLayout::measure(&table, table_width, window, &theme, cx);
+                let preferred = measure_preferred_column_widths(&table, window, &theme, &fonts);
+                let chrome = cell_chrome_width(&theme);
+
+                for (column, &preferred) in preferred.iter().enumerate() {
+                    let assigned = px(layout.fraction(column) * table_width);
+                    if assigned + px(0.01) < preferred {
+                        // 被挤压的列按设计必然换行，不检查。
+                        continue;
+                    }
+
+                    let cells = std::iter::once(&table.header[column])
+                        .chain(table.rows.iter().map(|row| &row[column]));
+                    for cell in cells {
+                        let markdown = super::serialize_table_cell_markdown(
+                            &InlineTextTree::clone(cell),
+                        );
+                        let block = cx.new(|cx| {
+                            crate::components::Block::with_record(
+                                cx,
+                                crate::components::BlockRecord::new(
+                                    crate::components::BlockKind::Paragraph,
+                                    InlineTextTree::from_markdown(&markdown),
+                                ),
+                            )
+                        });
+                        let (display, runs, code_ranges) = block.read_with(cx, |block, _cx| {
+                            let display = SharedString::from(block.display_text().to_string());
+                            let base = TextRun {
+                                len: display.len(),
+                                font: font(".SystemUIFont"),
+                                color: Hsla::from(rgba(0x000000ff)),
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                                font_size: None,
+                            };
+                            let runs = crate::components::block::element::build_text_runs(
+                                block,
+                                &display,
+                                &base,
+                                px(1.0),
+                                base.color,
+                                base.color,
+                                true,
+                                &fonts.code_family,
+                                px(fonts.code_size as f32),
+                            );
+                            let code_ranges: Vec<_> = block
+                                .inline_spans()
+                                .iter()
+                                .filter(|span| span.style.code)
+                                .map(|span| span.range.clone())
+                                .collect();
+                            (display, runs, code_ranges)
+                        });
+
+                        let mut shaped = window
+                            .text_system()
+                            .shape_text(
+                                display.clone(),
+                                px(theme.typography.text_size),
+                                &runs,
+                                None,
+                                None,
+                            )
+                            .expect("cell should shape");
+                        let letter_spacing =
+                            px(theme.typography.text_size) * theme.typography.text_letter_spacing;
+                        let code_gap = px(theme.dimensions.code_bg_pad_x)
+                            + px(theme.typography.text_size) * 0.125;
+                        crate::components::block::element::add_render_spacing(
+                            &mut shaped,
+                            &code_ranges,
+                            letter_spacing,
+                            code_gap,
+                            px(theme.typography.text_size),
+                        );
+                        let longest = shaped
+                            .iter()
+                            .map(|line| line.width())
+                            .max()
+                            .unwrap_or(px(0.0));
+
+                        let content = assigned - chrome;
+                        assert!(
+                            longest <= content,
+                            "列 {column} 被钉在 {:.1}px（内容区 {:.1}px），\
+                             但按渲染格式量出的最长行 {:.1}px 放不下，会 mid-word 折行：\
+                             {markdown:?}",
+                            f32::from(assigned),
+                            f32::from(content),
+                            f32::from(longest)
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     fn assert_close(left: f32, right: f32) {
         assert!(
@@ -1065,11 +1223,11 @@ mod tests {
             .iter()
             .map(|fraction| fraction * 1000.0)
             .collect::<Vec<_>>();
-        assert_close(widths[0], 264.0);
-        assert_close(widths[1], 64.0);
-        assert_close(widths[2], 154.0);
-        assert_close(widths[3], 64.0);
-        assert_close(widths[4], 454.0);
+        assert_close(widths[0], 270.0);
+        assert_close(widths[1], 70.0);
+        assert_close(widths[2], 160.0);
+        assert_close(widths[3], 70.0);
+        assert_close(widths[4], 430.0);
         assert_close(widths.iter().sum::<f32>(), 1000.0);
     }
 

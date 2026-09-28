@@ -298,8 +298,19 @@ fn visible_quote_guides(block: &Block) -> usize {
     block.visible_quote_depth
 }
 
-fn effective_table_width(block: &Block, viewport_width: f32, d: &ThemeDimensions) -> f32 {
-    let centered_width = Editor::centered_column_width(viewport_width, d);
+/// 与编辑器正文列同一条公式的内容列宽度。编辑器渲染正文列时是
+/// `centered_column_width` 再 `.min(写作列宽上限)`（editor/render.rs），表格量宽、
+/// 图片与 mermaid 估宽必须用同一个宽度：宽窗口下 centered 宽度远超写作列上限，
+/// 拿超宽容器算出的列宽比例套到真实窄容器上，钉住列会被压到内容宽以下折行
+/// （用户报修：水位法列宽完全不对）。
+fn content_column_width(viewport_width: f32, d: &ThemeDimensions, cx: &App) -> f32 {
+    let writing_cap =
+        crate::config::EditorSettings::writing_width(cx).max_width(d.writing_max_width);
+    Editor::centered_column_width(viewport_width, d).min(writing_cap)
+}
+
+fn effective_table_width(block: &Block, viewport_width: f32, d: &ThemeDimensions, cx: &App) -> f32 {
+    let centered_width = content_column_width(viewport_width, d, cx);
     let visible_quote_guides = visible_quote_guides(block);
     let quote_inset = d.quote_padding_left * visible_quote_guides as f32;
     let callout_inset = if block.callout_depth > 0 {
@@ -312,8 +323,13 @@ fn effective_table_width(block: &Block, viewport_width: f32, d: &ThemeDimensions
         .max((d.table_cell_padding_x * 2.0 + 80.0).max(120.0))
 }
 
-fn container_image_width_budget(block: &Block, viewport_width: f32, d: &ThemeDimensions) -> f32 {
-    let centered_width = Editor::centered_column_width(viewport_width, d);
+fn container_image_width_budget(
+    block: &Block,
+    viewport_width: f32,
+    d: &ThemeDimensions,
+    cx: &App,
+) -> f32 {
+    let centered_width = content_column_width(viewport_width, d, cx);
     let visible_quote_guides = visible_quote_guides(block);
     let quote_inset = d.quote_padding_left * visible_quote_guides as f32;
     let callout_inset = if block.callout_depth > 0 {
@@ -325,9 +341,16 @@ fn container_image_width_budget(block: &Block, viewport_width: f32, d: &ThemeDim
     centered_width - quote_inset - callout_inset
 }
 
-fn effective_image_width(block: &Block, viewport_width: f32, d: &ThemeDimensions) -> f32 {
+fn effective_image_width(
+    block: &Block,
+    viewport_width: f32,
+    d: &ThemeDimensions,
+    cx: &App,
+) -> f32 {
     let list_inset = d.nested_block_indent * block.render_depth as f32;
-    (container_image_width_budget(block, viewport_width, d) - d.block_padding_x * 2.0 - list_inset)
+    (container_image_width_budget(block, viewport_width, d, cx)
+        - d.block_padding_x * 2.0
+        - list_inset)
         .max(160.0)
 }
 
@@ -712,7 +735,7 @@ impl Block {
         }
     }
 
-    fn render_mermaid_content(&self, theme: &Theme, window: &Window) -> AnyElement {
+    fn render_mermaid_content(&self, theme: &Theme, window: &Window, cx: &App) -> AnyElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
@@ -733,7 +756,7 @@ impl Block {
         };
 
         let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-        let available_width = effective_image_width(self, viewport_width, d);
+        let available_width = effective_image_width(self, viewport_width, d, cx);
 
         match render_mermaid_svg_for_display(&source, available_width, viewport_width) {
             Ok(rendered) => {
@@ -2328,7 +2351,7 @@ impl Render for Block {
             // is downscaled instead of filling the entire text column. The
             // session drag factor scales it further (roadmap C10).
             let max_width = px(
-                (effective_image_width(self, viewport_width, d).min(d.image_root_max_width))
+                (effective_image_width(self, viewport_width, d, cx).min(d.image_root_max_width))
                     * self.image_width_factor,
             );
             if let Some(runtime) = self.image_runtime() {
@@ -3044,14 +3067,14 @@ impl Render for Block {
                 } else {
                     px(0.0)
                 };
-                let table_width = (effective_table_width(self, viewport_width, d)
+                let table_width = (effective_table_width(self, viewport_width, d, cx)
                     - f32::from(right_gutter))
                     .max(1.0);
                 let column_layout = self
                     .record
                     .table
                     .as_ref()
-                    .map(|table| TableColumnLayout::measure(table, table_width, window, &theme))
+                    .map(|table| TableColumnLayout::measure(table, table_width, window, &theme, cx))
                     .unwrap_or_else(|| TableColumnLayout::equal(runtime.header.len()));
                 let preview_marker = self.table_axis_preview;
                 let selected_marker = self.table_axis_selection;
@@ -3464,7 +3487,7 @@ impl Render for Block {
                 let child = if focused {
                     BlockTextElement::new(cx.entity(), is_placeholder).into_any_element()
                 } else {
-                    self.render_mermaid_content(&theme, window)
+                    self.render_mermaid_content(&theme, window, cx)
                 };
                 focused_base.w_full().child(child).into_any_element()
             }
@@ -3620,10 +3643,44 @@ fn inline_word_chunks(text: &str, code: bool, has_background: bool) -> Vec<&str>
 #[cfg(test)]
 mod tests {
     use super::{
-        bulleted_list_marker, inline_display_font_size, promotes_inline_images, tag_query,
-        wikilink_target,
+        bulleted_list_marker, effective_table_width, inline_display_font_size,
+        promotes_inline_images, tag_query, wikilink_target,
     };
     use crate::components::{InlineScript, InlineSpan, InlineStyle};
+    use gpui::{AppContext, VisualTestContext};
+
+    #[gpui::test]
+    async fn table_measure_width_stays_within_the_writing_column_cap(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.update(|_window, cx| {
+            crate::theme::ThemeManager::init(cx);
+            let theme = cx.global::<super::ThemeManager>().current_arc();
+            let d = &theme.dimensions;
+            let viewport_width = 1600.0;
+            let cap =
+                crate::config::EditorSettings::writing_width(cx).max_width(d.writing_max_width);
+            assert!(
+                crate::editor::Editor::centered_column_width(viewport_width, d) > cap,
+                "前提失效：1600px 视口应宽到触发写作列上限（{cap}px）"
+            );
+
+            let block = cx.new(|cx| {
+                Block::with_record(
+                    cx,
+                    BlockRecord::new(BlockKind::Paragraph, InlineTextTree::from_markdown("x")),
+                )
+            });
+            let table_width =
+                block.read_with(cx, |block, cx| {
+                    effective_table_width(block, viewport_width, d, cx)
+                });
+            assert!(
+                table_width <= cap,
+                "表格测量宽 {table_width}px 超过写作列上限 {cap}px：宽窗口下水位法按超宽容器\
+                 算比例，套回真实窄容器后钉住列会被压到内容宽以下折行（用户报修）"
+            );
+        });
+    }
 
     #[test]
     fn bulleted_list_marker_matches_browser_disc_circle_square() {

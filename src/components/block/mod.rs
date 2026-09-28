@@ -5,7 +5,7 @@
 //! handlers. A block owns local editing state while the editor owns tree
 //! structure and cross-block mutations.
 
-mod element;
+pub(crate) mod element;
 mod input;
 mod interactions;
 mod render;
