@@ -65,7 +65,16 @@ impl LineWrapper {
                             }
                         } else {
                             // CJK may not be space separated, e.g.: `Hello world你好世界`
-                            if c != ' ' && first_non_whitespace_ix.is_some() {
+                            //
+                            // 中文没有词间空格，每个字都是候选断点，所以标点会被推到下一行
+                            // 行首（"标点符号出现在一行开头"）。这里加上行首/行末禁则：
+                            // 断点在禁则字符之前不成立、在禁则字符之后也不成立，于是断点
+                            // 退回到前一个字符之前（把前一字符连同标点一起推到下一行）。
+                            if c != ' '
+                                && first_non_whitespace_ix.is_some()
+                                && !Self::cannot_start_line(c)
+                                && !Self::cannot_end_line(prev_c)
+                            {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
                             }
@@ -187,6 +196,39 @@ impl LineWrapper {
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
+    }
+
+    /// 行首禁则：这些字符不能出现在一行开头。
+    ///
+    /// 列表参考 GB/T 15834《标点符号用法》与 JLREQ 的「行頭禁則」。
+    pub(crate) fn cannot_start_line(c: char) -> bool {
+        matches!(
+            c,
+            // 句读与句末标点
+            '。' | '，' | '、' | '；' | '：' | '？' | '！' | '…' | '‥' | '·' | '・'
+            // 成对符号的收尾部分
+            | '）' | '］' | '｝' | '〉' | '》' | '」' | '』' | '】' | '〕' | '〗' | '〙' | '〛'
+            // 引号收尾
+            | '”' | '’' | '〞' | '｣'
+            // 小写假名、长音符、叠字符号
+            | 'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' | 'っ' | 'ゃ' | 'ゅ' | 'ょ' | 'ゎ' | '゛' | '゜'
+            | 'ゝ' | 'ゞ' | 'ヽ' | 'ヾ' | 'ー' | '々'
+            // 西文里同样不该出现在行首的收尾符号
+            | ')' | ']' | '}' | '%' | '°' | '′' | '″' | '›' | '»'
+        )
+    }
+
+    /// 行末禁则：这些字符不能出现在一行末尾。
+    pub(crate) fn cannot_end_line(c: char) -> bool {
+        matches!(
+            c,
+            // 成对符号的起始部分
+            '（' | '［' | '｛' | '〈' | '《' | '「' | '『' | '【' | '〔' | '〖' | '〘' | '〚'
+            // 引号起始
+            | '“' | '‘' | '〝' | '｢'
+            // 西文
+            | '(' | '[' | '{' | '‹' | '«'
+        )
     }
 
     #[inline(always)]

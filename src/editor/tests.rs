@@ -7001,3 +7001,40 @@ async fn caret_lands_outside_leading_and_trailing_markup(cx: &mut TestAppContext
         });
     }
 }
+
+#[gpui::test]
+async fn cjk_wrapping_does_not_start_lines_with_punctuation(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 中文没有词间空格，断行器逐字断行；没有行首禁则时标点会被推到下一行行首
+    // （用户报修：标点经常出现在一行开头）。断点落在哪个字由容器宽度决定，所以
+    // 这里把所有宽度都扫一遍——旧实现在其中不少宽度上会让标点开头。
+    let text = "这是一段用来验证中文行首禁则的文字，里面有逗号、顿号；还有冒号：和分号。句号也不该落到行首，问号呢？感叹号也是！如果标点出现在行首，就说明禁则没有生效。".to_string();
+    let font = gpui::Font {
+        family: ".SystemUIFont".into(),
+        features: gpui::FontFeatures::default(),
+        fallbacks: None,
+        weight: gpui::FontWeight::NORMAL,
+        style: gpui::FontStyle::Normal,
+    };
+    let mut wrapped_lines = 0usize;
+    for width in (60..260).step_by(2) {
+        let boundaries = cx.update(|cx| {
+            let text_system = cx.text_system().clone();
+            let mut wrapper = text_system.line_wrapper(font.clone(), px(12.0));
+            wrapper
+                .wrap_line(&[gpui::LineFragment::text(&text)], px(width as f32))
+                .map(|boundary| boundary.ix)
+                .collect::<Vec<_>>()
+        });
+        wrapped_lines += boundaries.len();
+        for ix in boundaries {
+            let rest = text.get(ix..).unwrap_or_default();
+            let first = rest.chars().next().unwrap_or(' ');
+            assert!(
+                !"，、；：。？！）】”’".contains(first),
+                "{width}px 宽时空行断点让标点出现在行首 {first:?}：{rest}"
+            );
+        }
+    }
+    assert!(wrapped_lines > 100, "折行样本太少（{wrapped_lines}），测试没跑够");
+}
