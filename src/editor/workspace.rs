@@ -86,6 +86,20 @@ struct WorkspaceDocumentTab {
     file_version: u64,
     markdown: String,
     dirty: bool,
+    /// 预览标签（用户需求）：单击树节点打开，切换到其它文件时未修改的
+    /// 预览标签被替换、不再占据标签栏；双击打开或产生修改后转为固定展示。
+    preview: bool,
+}
+
+/// 打开文件时的标签模式（用户需求：单击预览、双击固定）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WorkspaceOpenMode {
+    /// 仅激活已有标签（点标签栏）：不改动其固定/预览状态。
+    Activate,
+    /// 单击打开：新建预览标签；已修改的预览不会被后续切换替换。
+    Preview,
+    /// 双击/常规路径打开：新建固定标签；已有的预览标签升级为固定。
+    Pinned,
 }
 
 #[derive(Clone, Copy)]
@@ -1728,6 +1742,7 @@ impl Editor {
                         file_version,
                         markdown,
                         dirty: false,
+                        preview: false,
                     });
                 }
                 if self.workspace.selected == previous.map(WorkspaceSelection::File) {
@@ -1785,6 +1800,7 @@ impl Editor {
                 file_version,
                 markdown,
                 dirty: self.document_dirty,
+                preview: false,
             });
         }
         self.workspace.active_document = Some(path);
@@ -1812,6 +1828,7 @@ impl Editor {
                     .unwrap_or_else(|| super::persistence::file_content_version(&markdown)),
                 markdown,
                 dirty: self.document_dirty,
+                preview: false,
             });
         }
         self.workspace.active_document = Some(path);
@@ -2932,9 +2949,45 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Pinned, window, cx);
+    }
+
+    /// 按「单击预览 / 双击固定」的模式打开工作区文件（用户需求）。
+    pub(crate) fn open_workspace_file_in_mode(
+        &mut self,
+        path: PathBuf,
+        mode: WorkspaceOpenMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.file_path.as_ref() == Some(&path) {
+            // 已是当前文档：双击树节点要把已打开的预览标签升级为固定。
+            if mode == WorkspaceOpenMode::Pinned
+                && let Some(tab) = self
+                    .workspace
+                    .open_documents
+                    .iter_mut()
+                    .find(|tab| tab.path == path && tab.preview)
+            {
+                tab.preview = false;
+                cx.notify();
+            }
             return;
         }
+        // 单击/双击打开要替换旧的未修改预览标签：预览只在停留期间占据标签栏，
+        // 一旦切走就消失（用户需求），已修改的预览保留。这里只记录待删清单，
+        // 真正删除放在函数末尾——打开流程中的 snapshot_current_document 会把
+        // 旧活动文档推回标签集，提前删会被它再加回来。
+        let stale_previews: Vec<PathBuf> = if mode == WorkspaceOpenMode::Activate {
+            Vec::new()
+        } else {
+            self.workspace
+                .open_documents
+                .iter()
+                .filter(|tab| tab.preview && !tab.dirty && tab.path != path)
+                .map(|tab| tab.path.clone())
+                .collect()
+        };
         // Sniff the content, not the extension: dotfiles like .gitignore have
         // no extension but are text, while a .md full of NUL bytes is not
         // renderable. Non-text files still become the active tab; the content
@@ -3008,6 +3061,7 @@ impl Editor {
         if !dirty {
             self.clear_external_change_conflict_for(&path);
         }
+        let preview = mode != WorkspaceOpenMode::Pinned;
         if !self
             .workspace
             .open_documents
@@ -3020,6 +3074,7 @@ impl Editor {
                 file_version,
                 markdown: markdown.clone(),
                 dirty,
+                preview,
             });
         }
         if let Some(tab) = self
@@ -3031,6 +3086,9 @@ impl Editor {
             tab.markdown = markdown.clone();
             tab.dirty = dirty;
             tab.file_version = file_version;
+            if mode == WorkspaceOpenMode::Pinned {
+                tab.preview = false;
+            }
         }
         self.recovery_id = recovery_id;
         self.file_version = Some(file_version);
@@ -3056,6 +3114,13 @@ impl Editor {
             self.schedule_autosave(cx);
         }
         window.set_window_edited(dirty);
+        // 此刻打开流程（含旧活动文档的快照回写）已结束，替换掉的未修改预览
+        // 标签可以安全移除了。
+        if !stale_previews.is_empty() {
+            self.workspace
+                .open_documents
+                .retain(|tab| !stale_previews.contains(&tab.path));
+        }
         self.persist_session(cx);
         cx.notify();
     }
@@ -3093,6 +3158,7 @@ impl Editor {
             file_version: 0,
             markdown: String::new(),
             dirty: false,
+            preview: false,
         });
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
@@ -3566,7 +3632,14 @@ impl Editor {
                             })
                             .child(if tab_shows_code_icon { "⌘" } else { "M" }),
                     )
-                    .child(div().flex_1().min_w(px(0.0)).truncate().child(title))
+                    .child({
+                        // 预览标签用斜体区分（用户需求：单击预览/双击固定）。
+                        let mut title_el = div().flex_1().min_w(px(0.0)).truncate();
+                        if tab.preview {
+                            title_el = title_el.italic();
+                        }
+                        title_el.child(title)
+                    })
                     .children((dirty && !active).then(|| {
                         div()
                             .w(px(7.0))
@@ -3578,7 +3651,14 @@ impl Editor {
                     .child(close_button)
                     .on_click(move |_event, window, cx| {
                         let _ = tab_editor.update(cx, |editor, cx| {
-                            editor.open_workspace_file(click_path.clone(), window, cx);
+                            // 点标签栏只是激活：不把预览标签升级为固定（用户需求
+                            // 的预览语义：只有双击树节点或产生修改才固定）。
+                            editor.open_workspace_file_in_mode(
+                                click_path.clone(),
+                                WorkspaceOpenMode::Activate,
+                                window,
+                                cx,
+                            );
                         });
                     })
                     .on_drag(
@@ -3832,6 +3912,15 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// 单击 = 预览打开，双击 = 固定打开（用户需求）；键盘触发的点击按固定处理。
+    fn tree_click_open_mode(event: &ClickEvent) -> WorkspaceOpenMode {
+        match event {
+            ClickEvent::Mouse(mouse) if mouse.up.click_count >= 2 => WorkspaceOpenMode::Pinned,
+            ClickEvent::Mouse(_) => WorkspaceOpenMode::Preview,
+            ClickEvent::Keyboard(_) => WorkspaceOpenMode::Pinned,
+        }
     }
 
     /// 文件树过滤：非空查询时显示匹配文件的扁平列表（roadmap D8）。
@@ -4721,7 +4810,13 @@ impl Editor {
                         )
                         .on_click(move |event, window, cx| {
                             let _ = row_editor.update(cx, |editor, cx| {
-                                editor.open_workspace_file(row_path.clone(), window, cx);
+                                let mode = Self::tree_click_open_mode(&event);
+                                editor.open_workspace_file_in_mode(
+                                    row_path.clone(),
+                                    mode,
+                                    window,
+                                    cx,
+                                );
                             });
                             let _ = event;
                         })
@@ -5214,13 +5309,16 @@ impl Editor {
                         editor.toggle_workspace_node(&node_id, cx);
                     }
                     WorkspaceTreeKind::MarkdownFile(path) => {
-                        editor.open_workspace_file(path, window, cx);
+                        let mode = Self::tree_click_open_mode(&event);
+                        editor.open_workspace_file_in_mode(path, mode, window, cx);
                     }
                     WorkspaceTreeKind::CodeFile(path) => {
-                        editor.open_workspace_file(path, window, cx);
+                        let mode = Self::tree_click_open_mode(&event);
+                        editor.open_workspace_file_in_mode(path, mode, window, cx);
                     }
                     WorkspaceTreeKind::OtherFile(path) => {
-                        editor.open_workspace_file(path, window, cx);
+                        let mode = Self::tree_click_open_mode(&event);
+                        editor.open_workspace_file_in_mode(path, mode, window, cx);
                     }
                     WorkspaceTreeKind::Heading { line, .. } => {
                         if event.click_count() >= 2 {
@@ -7704,6 +7802,109 @@ mod tests {
             );
             assert!(editor.workspace.active_document.is_none());
             assert!(editor.show_welcome, "没有可留的标签时应回到欢迎页");
+        });
+    }
+
+    #[gpui::test]
+    async fn single_click_previews_and_double_click_pins_tabs(cx: &mut TestAppContext) {
+        // 用户需求：单击打开为预览标签——切换到其它文件时未修改的预览标签被
+        // 替换、不再占据标签栏；双击打开固定常驻；已修改的预览不会被替换。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!("velora-preview-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let paths: Vec<std::path::PathBuf> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|name| {
+                let path = root.join(format!("{name}.md"));
+                fs::write(&path, format!("# {name}\n")).unwrap();
+                path
+            })
+            .collect();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+        let preview = super::WorkspaceOpenMode::Preview;
+        let pinned = super::WorkspaceOpenMode::Pinned;
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root.clone(), cx);
+            });
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(paths[0].clone(), preview, window, cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            let tabs = &editor.workspace.open_documents;
+            assert_eq!(tabs.len(), 1);
+            assert!(tabs[0].preview, "单击打开的应是预览标签");
+        });
+
+        // 单击另一个文件：旧的未修改预览标签被替换。
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(paths[1].clone(), preview, window, cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            let tabs = &editor.workspace.open_documents;
+            assert_eq!(tabs.len(), 1, "切走后未修改的预览标签应被替换");
+            assert_eq!(tabs[0].path, paths[1]);
+        });
+
+        // 双击打开：固定，之后切走不再被替换。
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(paths[0].clone(), pinned, window, cx);
+            });
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(paths[2].clone(), preview, window, cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            let tabs = &editor.workspace.open_documents;
+            assert_eq!(tabs.len(), 2, "固定标签保留，预览标签只有当前一个");
+            assert!(
+                tabs.iter().any(|tab| tab.path == paths[0] && !tab.preview),
+                "双击打开的标签应为固定"
+            );
+        });
+
+        // 已修改的预览标签切走后保留。
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(paths[3].clone(), preview, window, cx);
+                if let Some(tab) = editor
+                    .workspace
+                    .open_documents
+                    .iter_mut()
+                    .find(|tab| tab.path == paths[3])
+                {
+                    tab.dirty = true;
+                }
+            });
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(paths[4].clone(), preview, window, cx);
+            });
+        });
+        editor.read_with(cx, |editor, _| {
+            let tabs = &editor.workspace.open_documents;
+            assert!(
+                tabs.iter().any(|tab| tab.path == paths[3]),
+                "已修改的预览标签切走后应保留"
+            );
+            assert_eq!(tabs.len(), 3);
         });
     }
 
