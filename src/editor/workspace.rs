@@ -235,7 +235,7 @@ enum WorkspaceSelection {
 pub(super) struct WorkspaceState {
     pub(super) is_open: bool,
     pub(super) active_tab: WorkspaceTab,
-    root: Option<PathBuf>,
+    pub(super) root: Option<PathBuf>,
     file_tree: Option<WorkspaceTreeNode>,
     file_error: Option<String>,
     /// 外部修改冲突（自动保存检测到磁盘内容变了）：独立于 `file_error`，

@@ -7864,3 +7864,72 @@ async fn tags_panel_lists_workspace_tags_and_click_starts_search(cx: &mut TestAp
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[gpui::test]
+async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut TestAppContext) {
+    // [[ 补全端到端：输入 [[ 弹浮层 → 查询过滤 → Enter 插入 stem+]]。
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-wlc-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    std::fs::write(root.join("alpha.md"), "").expect("write alpha");
+    std::fs::write(root.join("beta.md"), "# beta\n").expect("write beta");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    let alpha = root.join("alpha.md");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha, window, cx);
+        });
+    });
+
+    // 聚焦首块后输入 "a[[be"：浮层出现且过滤到 beta。
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        editor.focus_block(block.entity_id());
+    });
+    redraw(cx);
+    cx.simulate_input("a[[be");
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("wikilink-completion").is_some(),
+        "输入 [[查询 后应出现补全浮层"
+    );
+    assert!(
+        cx.debug_bounds("wikilink-entry-0").is_some(),
+        "应过滤出 beta"
+    );
+    assert!(
+        cx.debug_bounds("wikilink-entry-1").is_none(),
+        "alpha 不匹配 be 查询"
+    );
+
+    // Enter 插入 "beta]]" 且不换行。
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.read(cx);
+        assert_eq!(block.display_text(), "a[[beta]]", "Enter 应插入 stem 与收尾");
+        assert!(block.cursor_offset() >= 9, "光标应停在 ]] 之后");
+    });
+    assert!(
+        cx.debug_bounds("wikilink-completion").is_none(),
+        "插入后浮层应关闭"
+    );
+
+    // Esc 关闭：重新输入 [[ 后按 Esc。
+    cx.simulate_input(" [[");
+    redraw(cx);
+    assert!(cx.debug_bounds("wikilink-completion").is_some());
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("wikilink-completion").is_none(),
+        "Esc 应关闭浮层"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

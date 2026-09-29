@@ -1700,6 +1700,9 @@ impl Editor {
 
         match event {
             BlockEvent::Changed => {
+                // [[ 补全跟随编辑刷新（依据本次编辑后的文本与光标）。
+                self.update_wikilink_completion_for_block(&block, cx);
+
                 let should_restart_numbered_list = block.update(cx, |block, _cx| {
                     block.take_numbered_list_restart_requested()
                 });

@@ -160,6 +160,8 @@ pub struct Editor {
     workspace_link_index: workspace_index::WorkspaceLinkIndex,
     /// 反链/标签面板的快照（防抖缓存，见 workspace_index::LinkPanelState）。
     link_panels: workspace_index::LinkPanelState,
+    /// [[ 补全会话（编辑锚定块，键经 intercept_keystrokes 拦截）。
+    wikilink_completion: Option<workspace_index::WikilinkCompletion>,
     /// 切换工作区后，下一帧（拿得到 `&mut Window` 时）要打开的标签页。
     pending_workspace_tab_activation: Option<PathBuf>,
     /// Optional informational dialog shown from the Help menu.
@@ -555,6 +557,7 @@ impl Editor {
             modal_key_interceptor: None,
             workspace_link_index: workspace_index::WorkspaceLinkIndex::default(),
             link_panels: workspace_index::LinkPanelState::default(),
+            wikilink_completion: None,
             pending_workspace_tab_activation: None,
             info_dialog: None,
             unsupported_preview_path: None,

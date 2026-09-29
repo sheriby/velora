@@ -2393,7 +2393,10 @@ impl Render for Editor {
                         return;
                     }
                     let _ = editor.update(cx, |editor, cx| {
-                        editor.modal_handle_keystroke(keystroke, window, cx);
+                        let consumed = editor.modal_handle_keystroke(keystroke, window, cx);
+                        if !consumed {
+                            editor.wikilink_completion_key_down(keystroke, cx);
+                        }
                     });
                 },
             ));
@@ -3408,6 +3411,13 @@ impl Render for Editor {
         };
         let base = if let Some(table_dialog) = self.render_table_insert_dialog_overlay(&theme, cx) {
             base.child(table_dialog)
+        } else {
+            base
+        };
+        let base = if self.wikilink_completion_is_open()
+            && let Some(completion) = self.render_wikilink_completion_overlay(&theme, window, cx)
+        {
+            base.child(completion)
         } else {
             base
         };

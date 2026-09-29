@@ -67,6 +67,19 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // [[ 补全浮层内的按下不动它：行确认靠 bubble 阶段的同一次按下；
+        // 落在浮层外的点击立即关闭。
+        if self.wikilink_completion_is_open() {
+            let inside_panel = self
+                .wikilink_completion
+                .as_ref()
+                .and_then(|state| state.panel_bounds)
+                .is_some_and(|bounds| bounds.contains(&event.position));
+            if !inside_panel {
+                self.close_wikilink_completion(cx);
+            }
+        }
+
         if event.button != MouseButton::Left {
             cx.propagate();
             return;
