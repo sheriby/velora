@@ -110,6 +110,10 @@ pub struct I18nStrings {
     pub menu_save_as: String,
     /// 文件历史菜单项与浮层标题。
     pub menu_file_history: String,
+    /// 图片右键菜单：在文件管理器中显示。
+    pub image_reveal_in_file_manager: String,
+    /// 图片右键菜单：复制图片地址。
+    pub image_copy_address: String,
     /// 历史浮层空态（该文件还没有保存版本）。
     pub file_history_empty: String,
     /// File menu item for quitting the app.
@@ -573,6 +577,8 @@ struct I18nStringsDe {
     menu_save: Option<String>,
     menu_save_as: Option<String>,
     menu_file_history: Option<String>,
+    image_reveal_in_file_manager: Option<String>,
+    image_copy_address: Option<String>,
     file_history_empty: Option<String>,
     menu_quit: Option<String>,
     menu_export_html: Option<String>,
@@ -869,6 +875,8 @@ const I18N_STRING_KEYS: &[&str] = &[
     "menu_save",
     "menu_save_as",
     "menu_file_history",
+    "image_reveal_in_file_manager",
+    "image_copy_address",
     "file_history_empty",
     "menu_quit",
     "menu_export_html",
@@ -1227,6 +1235,12 @@ impl I18nStringsDe {
             menu_save: self.menu_save.unwrap_or(defaults.menu_save),
             menu_save_as: self.menu_save_as.unwrap_or(defaults.menu_save_as),
             menu_file_history: self.menu_file_history.unwrap_or(defaults.menu_file_history),
+            image_reveal_in_file_manager: self
+                .image_reveal_in_file_manager
+                .unwrap_or(defaults.image_reveal_in_file_manager),
+            image_copy_address: self
+                .image_copy_address
+                .unwrap_or(defaults.image_copy_address),
             file_history_empty: self.file_history_empty.unwrap_or(defaults.file_history_empty),
             menu_quit: self.menu_quit.unwrap_or(defaults.menu_quit),
             menu_export_html: self.menu_export_html.unwrap_or(defaults.menu_export_html),
@@ -1967,6 +1981,8 @@ impl I18nStrings {
             menu_save: "保存".into(),
             menu_save_as: "另存为".into(),
             menu_file_history: "文件历史…".into(),
+            image_reveal_in_file_manager: "在文件管理器中显示".into(),
+            image_copy_address: "复制图片地址".into(),
             file_history_empty: "该文件还没有保存过的历史版本".into(),
             menu_quit: "退出".into(),
             menu_export_html: "HTML".into(),
@@ -2286,6 +2302,8 @@ impl I18nStrings {
             menu_save: "Save".into(),
             menu_save_as: "Save As".into(),
             menu_file_history: "File History…".into(),
+            image_reveal_in_file_manager: "Reveal in File Manager".into(),
+            image_copy_address: "Copy Image Address".into(),
             file_history_empty: "No saved versions for this file yet".into(),
             menu_quit: "Quit".into(),
             menu_export_html: "HTML".into(),

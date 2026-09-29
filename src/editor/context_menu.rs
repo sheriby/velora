@@ -1,5 +1,6 @@
 //! Rendered-mode context menus and native table insertion dialog.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::*;
@@ -32,6 +33,14 @@ pub(super) enum ContextMenuState {
     TableAxis {
         position: Point<Pixels>,
         selection: TableAxisSelection,
+    },
+    /// Image block menu: reveal in file manager / copy address.
+    Image {
+        position: Point<Pixels>,
+        /// 本地图片绝对路径（远程图 None，「在文件管理器中显示」禁用）。
+        local_path: Option<PathBuf>,
+        /// 原始地址（相对路径或 URL），「复制图片地址」用。
+        address: String,
     },
 }
 
@@ -74,6 +83,66 @@ impl Editor {
             submenu_open: false,
         });
         cx.notify();
+    }
+
+    /// 打开图片块右键菜单。
+    pub(super) fn open_image_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        local_path: Option<PathBuf>,
+        address: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(ContextMenuState::Image {
+            position,
+            local_path,
+            address,
+        });
+        cx.notify();
+    }
+
+    /// 「在文件管理器中显示」：macOS open -R / Windows explorer /select /
+    /// Linux xdg-open 目录。失败走应用内模态。
+    pub(super) fn on_image_reveal_in_file_manager(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ContextMenuState::Image {
+            local_path: Some(path),
+            ..
+        }) = self.context_menu.take()
+        else {
+            return;
+        };
+        let (program, args) = reveal_command_spec(&path);
+        match std::process::Command::new(program).args(&args).spawn() {
+            Ok(_) => {}
+            Err(error) => {
+                let strings = cx.global::<I18nManager>().strings().clone();
+                let detail: SharedString = error.to_string().into();
+                self.show_message_modal(
+                    strings.image_reveal_in_file_manager.clone(),
+                    detail,
+                    cx,
+                );
+            }
+        }
+        let _ = window;
+    }
+
+    /// 「复制图片地址」：本地图为文档相对路径原文，远程图为 URL。
+    pub(super) fn on_image_copy_address(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ContextMenuState::Image { address, .. }) = self.context_menu.take() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(address));
     }
 
     pub(super) fn open_table_axis_context_menu(
@@ -228,6 +297,23 @@ impl Editor {
             return;
         }
         cx.stop_propagation();
+
+        // 图片块：右键出图片菜单（在文件管理器中显示 / 复制图片地址）。
+        if let Some(block) = self.focusable_entity_by_id(entity_id)
+            && block.read(cx).showing_rendered_image()
+            && let Some(runtime) = block.read(cx).image_runtime()
+        {
+            let local_path = match &runtime.resolved_source {
+                crate::components::markdown::image::ImageResolvedSource::Local(path) => Some(
+                    std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
+                ),
+                crate::components::markdown::image::ImageResolvedSource::Remote(_) => None,
+            };
+            let address = runtime.src.clone();
+            self.open_image_context_menu(event.position, local_path, address, cx);
+            return;
+        }
+
         // Right-clicking inside a table cell, or any block where inserting a
         // table makes no sense (code, math, etc.), offers no insert menu.
         if self.table_cell_binding(entity_id).is_some() {
@@ -1027,6 +1113,69 @@ impl Editor {
                         .into_any_element(),
                 )
             }
+            ContextMenuState::Image {
+                position,
+                local_path,
+                address,
+            } => {
+                let strings = cx.global::<I18nManager>().strings().clone();
+                let items = vec![
+                    Self::render_axis_menu_item(
+                        theme,
+                        "image-reveal-in-file-manager",
+                        strings.image_reveal_in_file_manager.clone(),
+                        local_path.is_some(),
+                        false,
+                        Self::on_image_reveal_in_file_manager,
+                        cx,
+                    ),
+                    Self::render_axis_menu_item(
+                        theme,
+                        "image-copy-address",
+                        strings.image_copy_address.clone(),
+                        true,
+                        false,
+                        Self::on_image_copy_address,
+                        cx,
+                    ),
+                ];
+                Some(
+                    div()
+                        .id("image-context-menu-overlay")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .occlude()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(Self::on_dismiss_context_menu_overlay),
+                        )
+                        .child(
+                            div()
+                                .id("image-context-menu-panel")
+                                .absolute()
+                                .left(position.x)
+                                .top(position.y)
+                                .w(px(d.context_menu_axis_panel_width))
+                                .p(px(d.menu_panel_padding))
+                                .flex()
+                                .flex_col()
+                                .gap(px(d.menu_panel_gap))
+                                .bg(c.dialog_surface)
+                                .border(px(d.dialog_border_width))
+                                .border_color(c.dialog_border)
+                                .rounded(px(d.menu_panel_radius))
+                                .shadow_lg()
+                                .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                                    cx.stop_propagation()
+                                })
+                                .children(items),
+                        )
+                        .into_any_element(),
+                )
+            }
         }
     }
 
@@ -1253,6 +1402,29 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use super::reveal_command_spec;
+
+    #[test]
+    fn reveal_command_targets_the_file_on_macos_and_windows_dir_on_linux() {
+        let path = std::path::Path::new("/tmp/docs/pic.png");
+        let (program, args) = reveal_command_spec(path);
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(program, "open");
+            assert_eq!(args, vec!["-R".to_string(), "/tmp/docs/pic.png".to_string()]);
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            assert_eq!(program, "xdg-open");
+            assert_eq!(args, vec!["/tmp/docs".to_string()]);
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(program, "explorer");
+            assert_eq!(args, vec!["/select,/tmp/docs/pic.png".to_string()]);
+        }
+    }
+
     use super::{ContextMenuState, Editor, TableInsertTarget};
     use gpui::{AppContext, Point, TestAppContext, px};
 
@@ -1294,5 +1466,28 @@ mod tests {
             assert!(*submenu_open);
             assert!(editor.context_menu_submenu_close_task.is_none());
         });
+    }
+}
+
+/// 「在文件管理器中显示」的平台命令：程序名 + 参数（纯数据便于测试）。
+pub(super) fn reveal_command_spec(path: &std::path::Path) -> (&'static str, Vec<String>) {
+    #[cfg(target_os = "macos")]
+    {
+        ("open", vec!["-R".to_string(), path.display().to_string()])
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let dir = path
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .unwrap_or_else(|| path.to_path_buf());
+        ("xdg-open", vec![dir.display().to_string()])
+    }
+    #[cfg(windows)]
+    {
+        (
+            "explorer",
+            vec![format!("/select,{}", path.display())],
+        )
     }
 }
