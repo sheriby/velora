@@ -512,6 +512,16 @@ struct MenuPanelOrigin {
     panel_top: f32,
 }
 
+/// 汉堡列表面板的顶端 y：直接贴在标题栏下沿（按钮底边更靠下时以按钮为准）。
+///
+/// 不能拿 `menu_panel_top`（默认 30px）当这个距离：那是给「菜单栏那一行」用的
+/// 偏移（行本身高 32px），从标题栏下沿再加 30px 就是白白空一大截——用户报的
+/// 「竖列跟图标中间那么大间距」就是它。
+fn hamburger_menu_panel_top(titlebar_height: f32, dimensions: &ThemeDimensions) -> f32 {
+    let button_bottom = (titlebar_height + dimensions.menu_bar_button_height) / 2.0;
+    button_bottom.max(titlebar_height)
+}
+
 /// 汉堡列表里第 `index` 行的顶端 y。行高与间距跟条目面板里的行保持一致
 /// （`menu_item_height` + `menu_panel_gap`），这样展开的条目面板能跟被划过的行对齐。
 fn hamburger_menu_row_top(
@@ -519,8 +529,7 @@ fn hamburger_menu_row_top(
     titlebar_height: f32,
     dimensions: &ThemeDimensions,
 ) -> f32 {
-    titlebar_height
-        + dimensions.menu_panel_top
+    hamburger_menu_panel_top(titlebar_height, dimensions)
         + dimensions.menu_panel_padding
         + index as f32 * (dimensions.menu_item_height + dimensions.menu_panel_gap)
 }
@@ -983,7 +992,7 @@ impl Editor {
                 .id("app-hamburger-menu-panel")
                 .absolute()
                 .occlude()
-                .top(px(titlebar_height + d.menu_panel_top))
+                .top(px(hamburger_menu_panel_top(titlebar_height, d)))
                 .left(px(d.menu_bar_padding_x))
                 .w(px(list_width))
                 .p(px(d.menu_panel_padding))
@@ -3300,8 +3309,8 @@ impl Render for Editor {
 mod tests {
     use super::{
         NoRecentFiles, RenderedRowSpacingInfo, callout_row_top_gap, editor_text_font,
-        focus_mode_row_opacity, hamburger_menu_item_panel_origin, hamburger_menu_row_top,
-        import_menu_split_index, in_window_menu_bar_height_for_target_os,
+        focus_mode_row_opacity, hamburger_menu_item_panel_origin, hamburger_menu_panel_top,
+        hamburger_menu_row_top, import_menu_split_index, in_window_menu_bar_height_for_target_os,
         menu_bar_button_width, menu_items_visual_height_with_gaps, menu_panel_left,
         menu_panel_width_for_labels, owned_menu_item_labels, rendered_row_top_gap,
         scrollable_import_menu_scroll_height, submenu_bridge_geometry,
@@ -3598,8 +3607,7 @@ mod tests {
         let labels = vec!["File".to_string(), "Export".to_string()];
         let titlebar_height = 34.0;
 
-        let origin = hamburger_menu_item_panel_origin(1, titlebar_height, &labels, &dimensions);
-        let list_width = menu_panel_width_for_labels(&labels, &dimensions);
+        let origin = hamburger_menu_item_panel_origin(1, titlebar_height, &labels, &dimensions);        let list_width = menu_panel_width_for_labels(&labels, &dimensions);
         assert_eq!(
             origin.panel_left,
             dimensions.menu_bar_padding_x + list_width + dimensions.menu_panel_gap
@@ -3616,6 +3624,24 @@ mod tests {
         let row_delta = hamburger_menu_row_top(1, titlebar_height, &dimensions)
             - hamburger_menu_row_top(0, titlebar_height, &dimensions);
         assert_eq!(row_delta, dimensions.menu_item_height + dimensions.menu_panel_gap);
+    }
+
+    #[test]
+    fn hamburger_list_hangs_right_below_the_button() {
+        let dimensions = Theme::default_theme().dimensions;
+        // 默认主题：标题栏 36px、按钮 24px 居中 → 按钮底边在 30px 处，
+        // 列表挂在标题栏下沿（36px），跟图标之间的缝只有 6px。
+        let titlebar_height = 36.0;
+        let panel_top = hamburger_menu_panel_top(titlebar_height, &dimensions);
+        assert_eq!(panel_top, titlebar_height);
+
+        let button_bottom = (titlebar_height + dimensions.menu_bar_button_height) / 2.0;
+        let gap = panel_top - button_bottom;
+        assert!(gap > 0.0, "面板不该盖住图标，实测间距 {gap}");
+        assert!(gap <= 8.0, "图标到列表的间距不该超过 8px，实测 {gap}");
+        // 旧写法（标题栏下沿 + menu_panel_top）会空出 30px：确认已经不再用它。
+        assert!(panel_top + dimensions.menu_panel_top != panel_top);
+        assert!(dimensions.menu_panel_top > gap * 3.0);
     }
 
     #[test]
