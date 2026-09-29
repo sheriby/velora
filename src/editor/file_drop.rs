@@ -183,10 +183,13 @@ impl Editor {
         if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
             eprintln!("failed to remove replaced document recovery snapshot: {error}");
         }
-        if super::workspace::is_code_file(path) {
-            self.replace_document_from_code_source(markdown, path.to_path_buf(), cx);
-        } else {
+        // 与工作区树打开共用同一判定：只有 .md/.markdown 按 Markdown 解析，
+        // 其余（.jsonl/.log/无扩展名等）一律代码文档。此前拖拽用 is_code_file
+        // 白名单，.jsonl 被误当 Markdown 解析，两条入口行为不一致。
+        if super::workspace::is_markdown_document(path) {
             self.replace_document_from_markdown(markdown, Some(path.to_path_buf()), cx);
+        } else {
+            self.replace_document_from_code_source(markdown, path.to_path_buf(), cx);
         }
         crate::app_menu::record_recent_file_from_editor(path, cx);
         Ok(())

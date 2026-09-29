@@ -7637,3 +7637,44 @@ async fn collapsed_long_line_is_truncated_to_display_cap(cx: &mut TestAppContext
             assert_eq!(origin_index, 0, "点击长行行首应映射到原始文本偏移 0");
         });
 }
+
+#[gpui::test]
+async fn drop_open_mode_matches_workspace_open_mode(cx: &mut TestAppContext) {
+    // 拖拽与工作区树打开必须共用同一判定：只有 .md/.markdown 按 Markdown
+    // 解析；.jsonl 等一律代码文档（此前拖拽走 is_code_file 白名单，.jsonl
+    // 被误当 Markdown）。
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        crate::editor::Editor::from_markdown(cx, String::new(), None)
+    });
+
+    let jsonl = std::env::temp_dir().join(format!("velora-drop-{}.jsonl", std::process::id()));
+    std::fs::write(&jsonl, "{\"a\":1}\n{\"a\":2}\n").expect("write jsonl");
+    let markdown_ext =
+        std::env::temp_dir().join(format!("velora-drop-{}.markdown", std::process::id()));
+    std::fs::write(&markdown_ext, "# 标题\n\n正文\n").expect("write markdown");
+
+    editor.update(cx, |editor, cx| {
+        editor
+            .replace_document_from_path(&jsonl, cx)
+            .expect("jsonl should open");
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.code_tab_active(),
+            ".jsonl 拖拽打开必须是代码文档模式"
+        );
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor
+            .replace_document_from_path(&markdown_ext, cx)
+            .expect("markdown should open");
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            !editor.code_tab_active(),
+            ".markdown 拖拽打开必须是 Markdown 渲染模式"
+        );
+    });
+}

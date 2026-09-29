@@ -3160,11 +3160,7 @@ impl Editor {
         self.reveal_path_in_tree(&path);
         // Markdown rendering is for .md/.markdown only; every other text file
         // (code, dotfiles, plain text) opens as monospace source text.
-        let markdown_file = is_markdown_file(&path)
-            || path.extension().is_some_and(|extension| {
-                extension.to_string_lossy().eq_ignore_ascii_case("markdown")
-            });
-        if markdown_file {
+        if is_markdown_document(&path) {
             self.replace_document_from_markdown(markdown, Some(path), cx);
         } else {
             self.replace_document_from_code_source(markdown, path, cx);
@@ -5458,6 +5454,15 @@ fn fallback_delete(target: &Path, is_directory: bool) -> std::io::Result<()> {
 pub(super) fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("md"))
+}
+
+/// 是否按 Markdown 文档打开：仅 `.md` / `.markdown`。所有打开入口（工作区树、
+/// 拖拽、命令行）必须共用这一条判定，否则同一文件两条入口行为不一致。
+pub(crate) fn is_markdown_document(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        let extension = extension.to_string_lossy();
+        extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+    })
 }
 
 fn create_workspace_file(path: &Path) -> std::io::Result<()> {
