@@ -4,22 +4,29 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and release
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: ${{ github.ref_name }}
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   # The local Cargo config uses sccache; CI can build without that wrapper.
   RUSTC_WRAPPER: ''
 
 jobs:
   build:
     name: Build ${{ matrix.platform }}
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -91,11 +98,14 @@ jobs:
 
   release:
     name: Publish release
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - name: Download packages
         uses: actions/download-artifact@v8
         with:
@@ -109,8 +119,35 @@ jobs:
           GH_REPO: ${{ github.repository }}
           IS_BETA: ${{ contains(github.ref_name, 'beta') }}
         run: |
-          flags=(--verify-tag --generate-notes --title "$RELEASE_TAG")
+          notes_file="docs/releases/$RELEASE_TAG.md"
+          flags=(--verify-tag --title "$RELEASE_TAG")
+          if [[ -f "$notes_file" ]] && grep -q '[^[:space:]]' "$notes_file"; then
+            flags+=(--notes-file "$notes_file")
+          else
+            flags+=(--generate-notes)
+          fi
           if [[ "$IS_BETA" == 'true' ]]; then
             flags+=(--prerelease --latest=false)
           fi
           gh release create "$RELEASE_TAG" dist/* "${flags[@]}"
+
+  update_notes:
+    name: Update release notes
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes_file="docs/releases/$RELEASE_TAG.md"
+          if [[ ! -f "$notes_file" ]] || ! grep -q '[^[:space:]]' "$notes_file"; then
+            echo "::error::Add $notes_file with release notes before running this workflow"
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
