@@ -32,7 +32,7 @@ use crate::editor::{Editor, InfoDialogKind};
 use crate::export::ExportFormat;
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::ThemeManager;
-use crate::window_chrome::velora_window_options;
+use crate::window_chrome::velora_window_options_on_display;
 
 /// Global app-menu state for platform menu lifecycle hooks.
 #[derive(Default)]
@@ -61,53 +61,76 @@ fn window_title(file_path: Option<&Path>) -> SharedString {
     }
 }
 
+/// 记住的窗口位置/大小和它所在的显示器。显示器一并以 `display_id` 交给平台：
+/// gpui 的 Windows 后端只在 frame 中心点落在目标显示器上时才采用它，否则整块
+/// 换成显示器默认 bounds（位置和大小一起丢）。
+struct RestoredWindow {
+    bounds: Bounds<Pixels>,
+    display_id: Option<DisplayId>,
+}
+
 /// Opens an editor window for the given Markdown content and optional path.
 /// Restores the last window frame when remembering is enabled, clamped so
 /// the window stays reachable on the current displays; otherwise centers the
 /// default size.
-fn restored_window_bounds(cx: &mut App) -> Bounds<Pixels> {
+fn restored_window_bounds(cx: &mut App) -> RestoredWindow {
     let (default_w, default_h) = crate::config::EditorSettings::default_window_size(cx);
     let default_size = size(px(default_w as f32), px(default_h as f32));
+    let centered = RestoredWindow {
+        bounds: Bounds::centered(None, default_size, cx),
+        display_id: None,
+    };
     // 「打开位置 = 居中打开」时忽略记住的 frame，按默认窗口尺寸居中，
     // 让设置里的尺寸选项真正生效（用户报修：缺窗口位置/大小设置）。
     if crate::config::EditorSettings::window_open_position(cx)
         == crate::config::WindowOpenPosition::Center
     {
-        return Bounds::centered(None, default_size, cx);
+        return centered;
     }
-    let frame = crate::config::saved_window_frame()
-        .ok()
-        .flatten()
-        .map(|frame| {
-            let mut bounds = Bounds::new(
-                point(px(frame.x as f32), px(frame.y as f32)),
-                size(
-                    px(frame.width as f32).max(px(480.0)),
-                    px(frame.height as f32).max(px(320.0)),
-                ),
-            );
-            if let Some(display) = cx.primary_display() {
-                let screen = display.bounds();
-                let left = f32::from(screen.left());
-                let top = f32::from(screen.top());
-                let right = f32::from(screen.right());
-                let bottom = f32::from(screen.bottom());
-                let width = f32::from(bounds.size.width);
-                let height = f32::from(bounds.size.height);
-                // Keep at least 120x80pt of the window reachable on screen.
-                let x = f32::from(bounds.origin.x).clamp(
-                    left - (width - 120.0).max(0.0),
-                    (right - 120.0).max(left),
-                );
-                let y = f32::from(bounds.origin.y).clamp(
-                    top - (height - 80.0).max(0.0),
-                    (bottom - 80.0).max(top),
-                );
-                bounds.origin = point(px(x), px(y));
-            }
-            bounds
-        });
-    frame.unwrap_or_else(|| Bounds::centered(None, default_size, cx))
+    let Some(frame) = crate::config::saved_window_frame().ok().flatten() else {
+        return centered;
+    };
+    let mut bounds = Bounds::new(
+        point(px(frame.x as f32), px(frame.y as f32)),
+        size(
+            px(frame.width as f32).max(px(480.0)),
+            px(frame.height as f32).max(px(320.0)),
+        ),
+    );
+    let center = bounds.center();
+    // 记忆的 frame 还在某块屏上：原样恢复，并把该屏交给平台。
+    if let Some(display) = cx
+        .displays()
+        .into_iter()
+        .find(|display| display.bounds().contains(&center))
+    {
+        return RestoredWindow {
+            bounds,
+            display_id: Some(display.id()),
+        };
+    }
+    // 记忆的 frame 不在任何显示器上（副屏拔掉、分辨率变小）：挪回主屏，能整块
+    // 放下就整块放下，放不下时至少保证中心点留在屏内（平台按中心点判断可用性）。
+    // 尺寸照旧，否则平台会把大小一起换成默认值——「永远打开成默认大小」。
+    let Some(display) = cx.primary_display() else {
+        return RestoredWindow {
+            bounds,
+            display_id: None,
+        };
+    };
+    let screen = display.bounds();
+    // 能整块放下时就是「整块进屏」，放不下时退化成「中心点留在屏内」。
+    let right_edge = f32::from(screen.right()) - f32::from(bounds.size.width);
+    let bottom_edge = f32::from(screen.bottom()) - f32::from(bounds.size.height);
+    let left = f32::from(screen.left());
+    let top = f32::from(screen.top());
+    let x = f32::from(bounds.origin.x).clamp(right_edge.min(left), right_edge.max(left));
+    let y = f32::from(bounds.origin.y).clamp(bottom_edge.min(top), bottom_edge.max(top));
+    bounds.origin = point(px(x), px(y));
+    RestoredWindow {
+        bounds,
+        display_id: Some(display.id()),
+    }
 }
 
 pub(crate) fn open_editor_window(
@@ -115,18 +138,20 @@ pub(crate) fn open_editor_window(
     markdown: String,
     file_path: Option<PathBuf>,
 ) -> WindowHandle<Editor> {
-    let bounds = restored_window_bounds(cx);
+    let RestoredWindow { bounds, display_id } = restored_window_bounds(cx);
     let title = window_title(file_path.as_deref());
     let handle = cx
-        .open_window(velora_window_options(title, bounds), move |_window, cx| {
-            cx.new(move |cx| Editor::from_file_source(cx, markdown, file_path))
-        })
+        .open_window(
+            velora_window_options_on_display(title, bounds, display_id),
+            move |_window, cx| cx.new(move |cx| Editor::from_file_source(cx, markdown, file_path)),
+        )
         .unwrap();
 
     handle
         .update(cx, |editor, window, cx| {
             window.activate_window();
             editor.force_install_close_guard(cx, window);
+            editor.install_window_frame_recorder(window, cx);
         })
         .expect("newly opened editor window should be updateable");
 
@@ -140,10 +165,10 @@ pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnaps
         .recovered_document_title
         .clone();
     let title = format!("Velora - {recovered_title}");
-    let bounds = restored_window_bounds(cx);
+    let RestoredWindow { bounds, display_id } = restored_window_bounds(cx);
     let handle = cx
         .open_window(
-            velora_window_options(title.into(), bounds),
+            velora_window_options_on_display(title.into(), bounds, display_id),
             move |_window, cx| cx.new(move |cx| Editor::from_recovery(cx, snapshot)),
         )
         .unwrap();
@@ -151,6 +176,7 @@ pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnaps
         .update(cx, |editor, window, cx| {
             window.activate_window();
             editor.force_install_close_guard(cx, window);
+            editor.install_window_frame_recorder(window, cx);
         })
         .expect("newly opened recovered document should be updateable");
 }

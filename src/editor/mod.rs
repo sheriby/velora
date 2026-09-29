@@ -89,6 +89,12 @@ pub struct Editor {
     long_source_block_hint: Option<(u64, bool)>,
     /// 文件树「复制」暂存的源文件路径（roadmap D6）。
     pub(crate) tree_clipboard: Option<std::path::PathBuf>,
+    /// 拖动/缩放中的窗口 frame（roadmap A2 加固）：与磁盘上一致时不再调度写盘。
+    observed_window_frame: Option<crate::config::WindowFrame>,
+    /// 窗口 bounds 变化监听：它活着，`observe_window_bounds` 的回调才会被调用。
+    window_bounds_subscription: Option<Subscription>,
+    /// 防抖中的 frame 写盘任务；重新赋值即取消上一个计时。
+    window_frame_write_task: Option<Task<()>>,
     autosave_task: Option<Task<()>>,
     /// Background task importing the rest of a document that was opened with a
     /// partial block tree (roadmap G8).
@@ -488,6 +494,9 @@ impl Editor {
             document_revision: 0,
             long_source_block_hint: None,
             tree_clipboard: None,
+            observed_window_frame: None,
+            window_bounds_subscription: None,
+            window_frame_write_task: None,
             autosave_task: None,
             pending_materialization_task: None,
             recovery_id: uuid::Uuid::new_v4(),

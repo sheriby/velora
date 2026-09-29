@@ -4,9 +4,9 @@ use std::sync::OnceLock;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Bounds, ClickEvent, Context, Decorations, Hsla, MouseButton, Pixels, SharedString,
-    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowOptions, div, point, px, rgba, svg,
+    AnyElement, Bounds, ClickEvent, Context, Decorations, DisplayId, Hsla, MouseButton, Pixels,
+    SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowDecorations, WindowOptions, div, point, px, rgba, svg,
 };
 
 use crate::app_identity::VELORA_APP_ID;
@@ -176,10 +176,15 @@ pub(crate) fn velora_window_options_for_target_os(
     target_os: &str,
     title: SharedString,
     bounds: Bounds<Pixels>,
+    display_id: Option<DisplayId>,
 ) -> WindowOptions {
     WindowOptions {
         app_id: Some(VELORA_APP_ID.to_string()),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        // 记住的 frame 可能属于副屏：Windows 后端只在 frame 中心点落在
+        // 目标显示器上时才采用它，否则整块换成显示器默认 bounds（位置和大小一起
+        // 丢）。把 frame 所在的显示器一并传下去，副屏上的窗口才能原样恢复。
+        display_id,
         titlebar: Some(titlebar_options_for_target_os(target_os, title)),
         window_background: WindowBackgroundAppearance::Opaque,
         window_decorations: window_decorations_for_target_os(target_os),
@@ -188,7 +193,16 @@ pub(crate) fn velora_window_options_for_target_os(
 }
 
 pub(crate) fn velora_window_options(title: SharedString, bounds: Bounds<Pixels>) -> WindowOptions {
-    velora_window_options_for_target_os(std::env::consts::OS, title, bounds)
+    velora_window_options_for_target_os(std::env::consts::OS, title, bounds, None)
+}
+
+/// Same as [`velora_window_options`], for a window restored onto a specific display.
+pub(crate) fn velora_window_options_on_display(
+    title: SharedString,
+    bounds: Bounds<Pixels>,
+    display_id: Option<DisplayId>,
+) -> WindowOptions {
+    velora_window_options_for_target_os(std::env::consts::OS, title, bounds, display_id)
 }
 
 pub(crate) fn custom_titlebar_layout_for_target_os(

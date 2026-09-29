@@ -1985,6 +1985,41 @@ async fn platform_close_remembers_the_window_frame(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn resizing_the_window_records_the_frame_without_quitting(cx: &mut TestAppContext) {
+    let (root, _root_guard) = isolated_window_frame_config("window-frame-resize");
+    // 窗口位置/大小不能只在关窗/退出时落盘：强杀进程、平台关闭回调缺位、或调完
+    // 窗口程序就崩，最后一次调整就丢了。窗口一动（bounds 变化）就该记住。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    crate::config::store_window_frame(crate::config::WindowFrame {
+        x: 10,
+        y: 20,
+        width: 900,
+        height: 600,
+    })
+    .expect("seed frame");
+
+    // 走真实开窗路径（open_editor_window 里装监听），不关窗、不退出。
+    let editor = cx.update(|cx| crate::app_menu::open_editor_window(cx, String::new(), None));
+    cx.run_until_parked();
+    cx.simulate_window_resize(editor.into(), gpui::size(px(1320.0), px(880.0)));
+    // 防抖窗口过后才落盘。
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(700));
+    cx.run_until_parked();
+
+    let stored = crate::config::saved_window_frame()
+        .expect("read window frame")
+        .expect("窗口刚被缩放，frame 就应该已经落盘");
+    assert_eq!(
+        (stored.width, stored.height),
+        (1320, 880),
+        "缩放窗口后应立刻记住新尺寸，不依赖退出路径"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[gpui::test]
 async fn window_open_position_setting_controls_how_windows_open(cx: &mut TestAppContext) {
     let (root, _root_guard) = isolated_window_frame_config("window-open-position");
     // 用户报修：窗口位置与大小既记不住、也没有对应设置项。这里锁定设置语义：
@@ -2027,6 +2062,35 @@ async fn window_open_position_setting_controls_how_windows_open(cx: &mut TestApp
         windowed_rect(&centered, cx),
         (420, 180, 1080, 720),
         "打开位置=居中打开 时应按默认窗口尺寸居中，忽略记住的 frame"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn window_frame_from_a_missing_display_keeps_its_size(cx: &mut TestAppContext) {
+    let (root, _root_guard) = isolated_window_frame_config("window-frame-missing-display");
+    // 副屏拔掉/分辨率变小后，记住的 frame 中心点落在任何显示器之外。gpui 的
+    // Windows 后端遇到这种 frame 会把整块 bounds（连大小）换成显示器默认值——
+    // 表现就是「无论上次多大，打开永远默认大小」。应用层必须把它挪回一块屏上，
+    // 且尺寸照旧。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    crate::config::store_window_frame(crate::config::WindowFrame {
+        x: 2600,
+        y: 300,
+        width: 1400,
+        height: 900,
+    })
+    .expect("seed frame");
+
+    let handle = cx.update(|cx| crate::app_menu::open_editor_window(cx, String::new(), None));
+    cx.run_until_parked();
+
+    // 测试主屏 1920×1080：窗口能整块放下 → 搬进屏内 (520, 180)，尺寸不变。
+    assert_eq!(
+        windowed_rect(&handle, cx),
+        (520, 180, 1400, 900),
+        "frame 不在任何显示器上时应挪回主屏，并保留记住的尺寸"
     );
     let _ = fs::remove_dir_all(root);
 }
