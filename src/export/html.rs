@@ -193,6 +193,7 @@ fn rewrite_inline_math_line(line: &str, theme: &Theme) -> String {
                 &body,
                 theme.colors.text_default,
                 inline_math_font_size(theme.typography.text_size),
+                crate::components::latex::MathLayout::Inline,
             ) {
                 Ok(svg) => {
                     output.push_str(&format!("<span class=\"vlt-inline-math\">{svg}</span>"))
@@ -433,6 +434,7 @@ fn rewrite_display_math_blocks(markdown: &str, theme: &Theme) -> String {
                 &source.body,
                 theme.colors.text_default,
                 theme.typography.text_size,
+                crate::components::latex::MathLayout::Display,
             ) {
                 Ok(svg) => rewritten.push(format!("<div class=\"vlt-math\">{svg}</div>")),
                 Err(_) => rewritten.push(format!(

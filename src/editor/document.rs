@@ -561,17 +561,41 @@ fn is_display_math_start(line: &str) -> bool {
         .is_some_and(|rest| rest.starts_with("$$"))
 }
 
+/// `$$` 起始行、允许任意缩进。
+///
+/// 人们常把公式写在列表项或缩进块里（Windows 上 Typora 粘过来的文档尤其多），
+/// 这类行的缩进可能是 4 个空格或制表符；`is_display_math_start` 只认 ≤3 空格，
+/// 于是整块公式会掉进「4 空格缩进代码块」分支、原样显示成代码。
+fn is_display_math_start_at_any_indent(line: &str) -> bool {
+    line.trim_start().starts_with("$$")
+}
+
+/// 把公式块区域整体去掉公共缩进后拼成 Markdown 文本。
+///
+/// `parse_display_math_source` 只接受 ≤3 空格缩进的 `$$`，这里先按区域里**最少**的
+/// 非空行缩进去缩进，缩进 4 格以上的公式块也能识别。
+fn dedent_math_region(region: &[String]) -> String {
+    let indent = region
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| leading_indent_columns_and_bytes(line).0)
+        .min()
+        .unwrap_or(0);
+    dedent_lines(region, indent).join("\n")
+}
+
 fn collect_display_math_region(lines: &[String], start: usize) -> usize {
-    let opener = strip_fence_indent(&lines[start])
-        .map(str::trim_end)
-        .unwrap_or_default();
-    if opener != "$$" && opener[2..].contains("$$") {
+    // 两端都 trim：调用方可能带着任意缩进过来（`  $$` / `    $$`），
+    // 只去掉尾部空白会把缩进当成「同一行里有第二个 `$$`」。
+    let opener = lines[start].trim();
+    if opener != "$$" && opener.get(2..).is_some_and(|rest| rest.contains("$$")) {
         return start + 1;
     }
 
     let mut index = start + 1;
     while index < lines.len() {
-        if lines[index].trim() == "$$" {
+        // 结束行不要求独占一行：`\end{aligned}$$` 也算收尾。
+        if lines[index].trim_end().ends_with("$$") {
             return index + 1;
         }
 
@@ -1216,6 +1240,18 @@ impl Editor {
                 continue;
             }
 
+            // `$$` 公式块允许任意缩进，必须排在「4 空格缩进代码块」之前：
+            // 缩进 4 格的公式块之前会被当成代码块显示源码。
+            if is_display_math_start_at_any_indent(line) {
+                let end = collect_display_math_region(lines, index);
+                roots.push(math_or_raw_block(
+                    cx,
+                    dedent_math_region(&lines[index..end]),
+                ));
+                index = end;
+                continue;
+            }
+
             if strip_indented_code_prefix(line).is_some() {
                 let Some((block, next_index)) = collect_indented_code_block(cx, lines, index)
                 else {
@@ -1282,13 +1318,6 @@ impl Editor {
                 && let Some(table) = parse_root_table_region(&lines[index..end])
             {
                 roots.push(Self::new_block(cx, BlockRecord::table(table)));
-                index = end;
-                continue;
-            }
-
-            if is_display_math_start(line) {
-                let end = collect_display_math_region(lines, index);
-                roots.push(math_or_raw_block(cx, lines[index..end].join("\n")));
                 index = end;
                 continue;
             }
@@ -1779,11 +1808,43 @@ impl Editor {
             };
 
             let item_end = collect_list_item_region(lines, index, marker.indent_columns);
-            let block = native_block(cx, marker.kind.clone(), marker.text);
+
+            // 公式直接跟在项标记后面（`- $$ ... $$`）：项自己的正文就是公式开头，
+            // 而 `collect_list_item_region` 已把后续缩进行归入本项。把这两部分合成
+            // 一块公式，否则 `$$` 会留在项文本里原样显示成源码。
+            let item_math = if is_display_math_start_at_any_indent(&marker.text) {
+                let mut region = vec![marker.text.clone()];
+                region.extend(dedent_lines(
+                    &lines[index + 1..item_end],
+                    marker.content_indent_columns,
+                ));
+                let consumed = collect_display_math_region(&region, 0);
+                let markdown = dedent_math_region(&region[..consumed]);
+                parse_display_math_source(&markdown).is_some().then_some((markdown, consumed))
+            } else {
+                None
+            };
+
+            let block = native_block(
+                cx,
+                marker.kind.clone(),
+                if item_math.is_some() {
+                    String::new()
+                } else {
+                    marker.text
+                },
+            );
             let mut body_index = index + 1;
             let mut pending_blank_lines = 0usize;
             let mut fallback_raw = false;
             let mut saw_child = false;
+
+            if let Some((markdown, consumed)) = item_math {
+                attach_child_blocks(&block, vec![math_or_raw_block(cx, markdown)], cx);
+                // 区域第一行是项自己的标记行，后续行从 `index + consumed` 接着看。
+                body_index = index + consumed;
+                saw_child = true;
+            }
 
             while body_index < item_end {
                 let line = &lines[body_index];
@@ -1940,7 +2001,7 @@ impl Editor {
                             &block,
                             vec![math_or_raw_block(
                                 cx,
-                                anchor_dedented[..consumed].join("\n"),
+                                dedent_math_region(&anchor_dedented[..consumed]),
                             )],
                             cx,
                         );
@@ -3457,6 +3518,90 @@ mod tests {
             assert_eq!(
                 editor.document.markdown_text(cx),
                 "| A | B |\n\n| nope | --- |\n\n| 1 | 2 |"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn imports_display_math_block_with_inline_fence_delimiters(cx: &mut TestAppContext) {
+        // Typora 常见写法：`$$` 后面直接跟 `\begin{aligned}`，末行 `\end{aligned}$$`。
+        let markdown = concat!(
+            "$$\\begin{aligned}\n",
+            "&=dy\\cdot y-c_A\\,dy\\cdot y_A\\\\[2pt]\n",
+            "&=\\boxed{\\ dy\\cdot\\big(y-c_A y_A\\big)\\ \\neq 0\\ }\n",
+            "\\end{aligned}$$\n",
+            "\n",
+            "下面是正文段落。\n",
+        )
+        .to_string();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 2);
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::MathBlock);
+            let math = visible[0].entity.read(cx).display_text();
+            assert!(math.starts_with("$$\\begin{aligned}"), "公式块首行保留原文：{math:?}");
+            assert!(math.ends_with("\\end{aligned}$$"), "末行的 $$ 不能丢：{math:?}");
+            assert!(math.contains("\\boxed"), "公式正文应完整：{math:?}");
+            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
+            // 公式块后面的段落不能被吞进公式区域。
+            assert_eq!(visible[1].entity.read(cx).display_text(), "下面是正文段落。");
+            assert_eq!(
+                editor.document.markdown_text(cx).matches("\\boxed").count(),
+                1,
+                "公式只能出现一次"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn imports_four_space_indented_display_math(cx: &mut TestAppContext) {
+        // 缩进 4 格曾会被当成缩进代码块，公式原样显示成源码。
+        let markdown = concat!(
+            "    $$\n",
+            "    \\int_0^1 x\\,dx\n",
+            "    $$\n",
+        );
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 1);
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::MathBlock);
+            assert!(editor.document.markdown_text(cx).contains("\\int_0^1 x\\,dx"));
+        });
+    }
+
+    #[gpui::test]
+    async fn imports_display_math_on_list_item_line(cx: &mut TestAppContext) {
+        // 公式直接写在项标记后面：`- $$ … $$`。
+        let markdown = concat!(
+            "- $$\\begin{aligned}\n",
+            "  x &= y\n",
+            "  \\end{aligned}$$\n",
+        )
+        .to_string();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            let item = visible[0].entity.read(cx);
+            assert_eq!(item.kind(), BlockKind::BulletedListItem);
+            assert_eq!(item.children.len(), 1, "公式应该作为列表项的子块");
+            let math = item.children[0].read(cx);
+            assert_eq!(math.kind(), BlockKind::MathBlock);
+            assert_eq!(
+                math.display_text().lines().next(),
+                Some("$$\\begin{aligned}"),
+                "列表项里的公式应独立成块（去掉项缩进）"
+            );
+            // 项自己的文本不能再留着 `$$`（否则会渲染成源码）。
+            assert_eq!(item.display_text(), "");
+            assert_eq!(
+                editor.document.markdown_text(cx).matches("\\begin{aligned}").count(),
+                1,
+                "公式只能出现一次"
             );
         });
     }

@@ -49,14 +49,53 @@ pub(crate) fn parse_display_math_source(raw: &str) -> Option<DisplayMathSource> 
         return Some(DisplayMathSource { raw, body });
     }
 
+    // 多行块：开头的 `$$` 后面可以直接跟内容，结尾的 `$$` 前面也可以有内容。
+    //
+    // 笔记里很常见的是从 Typora 粘过来的这种写法（`$$` 不独占一行）：
+    //
+    //     $$\begin{aligned}
+    //     a &= b \\
+    //     \end{aligned}$$
+    //
+    // 旧实现要求首行是 `$$` 且末行也是 `$$`，这种写法会被当成普通文本（原样显示源码）。
     let opener = strip_display_indent(lines[0])?.trim_end();
-    let closer = lines.last()?.trim();
-    if opener != "$$" || closer != "$$" {
+    let opener_body = opener.strip_prefix("$$")?;
+    // 首行的 `$$` 之后又出现 `$$`，说明公式在同一行就闭合了，不是多行块。
+    if opener_body.contains("$$") {
         return None;
     }
 
-    let body = lines[1..lines.len() - 1].join("\n");
+    let closer = lines.last()?.trim_end();
+    let closer_body = closer.strip_suffix("$$")?;
+
+    let mut body_lines = Vec::with_capacity(lines.len());
+    body_lines.push(opener_body);
+    body_lines.extend_from_slice(&lines[1..lines.len() - 1]);
+    body_lines.push(closer_body);
+    let body = body_lines.join("\n").trim().to_string();
     Some(DisplayMathSource { raw, body })
+}
+
+/// TeX 排版样式：行间公式用 Display，行内公式必须用 Text。
+///
+/// 旧实现两条路径都用 ratex 的默认（`MathStyle::Display`）：行内 `$\sum_0^1$` 会按行间
+/// 尺寸排版（大字形、上下限放上下），再塞进行内公式那条 `max_h = 1.65em` 的框里，
+/// 于是整体被压小、上下标位置也不对（用户报修：`\sum`、`\int` 非常小）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum MathLayout {
+    /// 行间公式（`$$ ... $$`）。
+    Display,
+    /// 行内公式（`$ ... $`）。
+    Inline,
+}
+
+impl MathLayout {
+    fn ratex_style(self) -> ratex_types::MathStyle {
+        match self {
+            Self::Display => ratex_types::MathStyle::Display,
+            Self::Inline => ratex_types::MathStyle::Text,
+        }
+    }
 }
 
 /// Display font size used for rendered display-math blocks.
@@ -75,7 +114,7 @@ pub(crate) fn render_display_math_svg(
     text_color: Hsla,
     font_size: f32,
 ) -> anyhow::Result<LatexSvgRender> {
-    render_latex_svg_to_cache(&source.body, text_color, font_size)
+    render_latex_svg_to_cache(&source.body, text_color, font_size, MathLayout::Display)
 }
 
 /// Render an inline LaTeX body into a cached SVG file.
@@ -84,16 +123,17 @@ pub(crate) fn render_inline_math_svg(
     text_color: Hsla,
     font_size: f32,
 ) -> anyhow::Result<LatexSvgRender> {
-    render_latex_svg_to_cache(latex, text_color, font_size)
+    render_latex_svg_to_cache(latex, text_color, font_size, MathLayout::Inline)
 }
 
 fn render_latex_svg_to_cache(
     latex: &str,
     text_color: Hsla,
     font_size: f32,
+    math_layout: MathLayout,
 ) -> anyhow::Result<LatexSvgRender> {
-    let svg = render_latex_to_svg(latex, text_color, font_size)?;
-    let key = latex_cache_key(latex, text_color, font_size);
+    let svg = render_latex_to_svg(latex, text_color, font_size, math_layout)?;
+    let key = latex_cache_key(latex, text_color, font_size, math_layout);
     let path = latex_cache_dir()?.join(format!("{key}.svg"));
     if !path.exists() {
         fs::write(&path, &svg)
@@ -107,9 +147,14 @@ pub(crate) fn render_latex_to_svg(
     latex: &str,
     text_color: Hsla,
     font_size: f32,
+    math_layout: MathLayout,
 ) -> anyhow::Result<String> {
     let parsed = ratex_parser::parse(latex).map_err(|err| anyhow!("{err}"))?;
-    let layout = ratex_layout::layout(&parsed, &ratex_layout::LayoutOptions::default());
+    let layout_options = ratex_layout::LayoutOptions {
+        style: math_layout.ratex_style(),
+        ..ratex_layout::LayoutOptions::default()
+    };
+    let layout = ratex_layout::layout(&parsed, &layout_options);
     let display_list = ratex_layout::to_display_list(&layout);
     let mut svg = ratex_svg::render_to_svg(
         &display_list,
@@ -134,13 +179,21 @@ fn normalize_svg_size_units_to_px(svg: &str) -> String {
 }
 
 /// Stable cache key for formula content and visual parameters.
-pub(crate) fn latex_cache_key(latex: &str, text_color: Hsla, font_size: f32) -> String {
+pub(crate) fn latex_cache_key(
+    latex: &str,
+    text_color: Hsla,
+    font_size: f32,
+    math_layout: MathLayout,
+) -> String {
     let mut hasher = DefaultHasher::new();
     latex.hash(&mut hasher);
     svg_color(text_color).hash(&mut hasher);
     font_size.to_bits().hash(&mut hasher);
-    // 缓存格式版本：SVG 尺寸单位由 `pt` 改为 `px` 后，旧文件必须整体失效重生成。
-    "ratex-svg-px-v2".hash(&mut hasher);
+    // 同一段 LaTeX 在行内/行间下排版不同，必须分开缓存。
+    math_layout.hash(&mut hasher);
+    // 缓存格式版本：SVG 尺寸单位由 `pt` 改为 `px`（v2）、行内公式改用 Text 样式
+    // （v3）之后，旧文件必须整体失效重生成。
+    "ratex-svg-px-v3".hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
 
@@ -196,13 +249,13 @@ mod tests {
     fn svg_root_uses_pixel_size_units() {
         // ratex 输出 `pt`，usvg/浏览器按 96/72 换算，公式会整体比请求字号大 1/3；
         // 根标签尺寸必须是 `px`，字号设置才等于看到的字号。
-        let svg = render_latex_to_svg("x^2", Hsla::default(), 16.0).expect("svg");
+        let svg = render_latex_to_svg("x^2", Hsla::default(), 16.0, MathLayout::Display).expect("svg");
         let head = &svg[..svg.find('>').expect("svg root tag")];
         assert!(head.contains("px\""), "根标签尺寸应为 px: {head}");
         assert!(!head.contains("pt\""), "根标签不应残留 pt 单位: {head}");
         // 1 单位 = 该字号下的 1px：字号翻倍，尺寸也翻倍。
         let height_at = |size: f32| {
-            let svg = render_latex_to_svg("\\frac{1}{3}", Hsla::default(), size).expect("svg");
+            let svg = render_latex_to_svg("\\frac{1}{3}", Hsla::default(), size, MathLayout::Display).expect("svg");
             let head = &svg[..svg.find('>').expect("svg root tag")];
             let after = head.split_once("height=\"").expect("height attr").1;
             let value: String = after
@@ -220,6 +273,62 @@ mod tests {
             (height_at(32.0) - single_em_height * 2.0).abs() < 0.5,
             "尺寸应随字号线性变化"
         );
+    }
+
+    #[test]
+    fn inline_layout_shrinks_big_operators_to_text_style() {
+        // 行内公式必须走 Text 样式：`\sum_0^1` 的行内高度应明显低于行间（Display）——
+        // 否则行内那条 1.65em 的框会把公式整体压小、上下标位置也会怪。
+        let display =
+            render_latex_to_svg("\\sum_0^1", Hsla::default(), 16.0, MathLayout::Display).unwrap();
+        let inline =
+            render_latex_to_svg("\\sum_0^1", Hsla::default(), 16.0, MathLayout::Inline).unwrap();
+        let display_height = svg_pixel_height(&display);
+        let inline_height = svg_pixel_height(&inline);
+        assert!(
+            inline_height < display_height * 0.75,
+            "行内高度 {inline_height} 应明显矮于行间 {display_height}"
+        );
+
+        // 同一段公式在两种排版下不能共用缓存。
+        assert_ne!(
+            latex_cache_key("\\sum_0^1", Hsla::default(), 16.0, MathLayout::Display),
+            latex_cache_key("\\sum_0^1", Hsla::default(), 16.0, MathLayout::Inline)
+        );
+    }
+
+    fn svg_pixel_height(svg: &str) -> f64 {
+        let start = svg.find("height=\"").expect("SVG 应有 height 属性") + 8;
+        let rest = &svg[start..];
+        let end = rest.find('"').expect("height 属性应闭合");
+        rest[..end]
+            .trim_end_matches("px")
+            .parse()
+            .unwrap_or_else(|err| panic!("height 应是数字：{:?} ({err})", &rest[..end]))
+    }
+
+    #[test]
+    fn parses_aligned_block_with_inline_fence_delimiters() {
+        // Typora 写法：`$$` 后面直接跟 `\begin{aligned}`，末行 `\end{aligned}$$`。
+        // 旧实现要求 `$$` 独占一行，这种块会原样显示成源码。
+        let raw = "$$\\begin{aligned}\na &= b\\\\[2pt]\n&\\neq 0\n\\end{aligned}$$";
+        let source = parse_display_math_source(raw).expect("应识别为公式块");
+        assert_eq!(source.raw, raw);
+        assert_eq!(
+            source.body,
+            "\\begin{aligned}\na &= b\\\\[2pt]\n&\\neq 0\n\\end{aligned}"
+        );
+        assert!(
+            render_latex_to_svg(&source.body, Hsla::default(), 16.0, MathLayout::Display).is_ok(),
+            "去掉两侧 $$ 后应能交给 ratex 渲染"
+        );
+
+        // `$$` 独占一行的老写法仍然支持。
+        let classic = parse_display_math_source("$$\nx^2\n$$").expect("老写法");
+        assert_eq!(classic.body, "x^2");
+
+        // 没闭合的仍然是普通文本。
+        assert!(parse_display_math_source("$$\\begin{aligned}\nx &= y").is_none());
     }
 
     #[test]
@@ -242,8 +351,8 @@ mod tests {
 
     #[test]
     fn cache_key_changes_with_theme_inputs() {
-        let first = latex_cache_key("\\frac{1}{2}", Hsla::from(rgba(0xffffffff)), 18.0);
-        let second = latex_cache_key("\\frac{1}{2}", Hsla::from(rgba(0x000000ff)), 18.0);
+        let first = latex_cache_key("\\frac{1}{2}", Hsla::from(rgba(0xffffffff)), 18.0, MathLayout::Display);
+        let second = latex_cache_key("\\frac{1}{2}", Hsla::from(rgba(0x000000ff)), 18.0, MathLayout::Display);
         assert_ne!(first, second);
     }
 
@@ -262,13 +371,13 @@ mod tests {
     #[test]
     fn renders_basic_formula_svg() {
         let svg =
-            render_latex_to_svg("\\frac{1}{2}", Hsla::from(rgba(0xffffffff)), 18.0).expect("svg");
+            render_latex_to_svg("\\frac{1}{2}", Hsla::from(rgba(0xffffffff)), 18.0, MathLayout::Display).expect("svg");
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));
     }
 
     #[test]
     fn invalid_latex_returns_error() {
-        assert!(render_latex_to_svg("\\frac{a}", Hsla::from(rgba(0xffffffff)), 18.0).is_err());
+        assert!(render_latex_to_svg("\\frac{a}", Hsla::from(rgba(0xffffffff)), 18.0, MathLayout::Display).is_err());
     }
 }
