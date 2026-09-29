@@ -51,6 +51,11 @@ pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Co
             let Ok(()) = cx.update(|cx| {
                 let _ = this.update(cx, |editor, cx| {
                     editor.reload_externally_changed_document(&path, cx);
+                    // 反链/标签索引的增量维护：自己的保存也会产生 Modify
+                    // 事件，所以保存后索引自动跟上（单文件、防抖、后台读）。
+                    editor
+                        .workspace_link_index
+                        .schedule_rescan(path.clone(), cx);
                 });
             }) else {
                 return;

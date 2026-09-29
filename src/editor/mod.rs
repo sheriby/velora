@@ -48,6 +48,7 @@ mod command_palette;
 mod quick_open;
 mod watcher;
 mod workspace;
+pub(crate) mod workspace_index;
 
 use self::status_bar::StatusBarState;
 use self::workspace::WorkspaceState;
@@ -155,6 +156,10 @@ pub struct Editor {
     /// 元素监听，只有这个钩子能在回车进入焦点块的 Newline 绑定之前
     /// 截住它。构造为 None，render 首帧注册后保持订阅存活。
     modal_key_interceptor: Option<gpui::Subscription>,
+    /// 反链/标签面板与 [[ 补全共享的工作区链接索引（后台增量维护）。
+    workspace_link_index: workspace_index::WorkspaceLinkIndex,
+    /// 反链/标签面板的快照（防抖缓存，见 workspace_index::LinkPanelState）。
+    link_panels: workspace_index::LinkPanelState,
     /// 切换工作区后，下一帧（拿得到 `&mut Window` 时）要打开的标签页。
     pending_workspace_tab_activation: Option<PathBuf>,
     /// Optional informational dialog shown from the Help menu.
@@ -548,6 +553,8 @@ impl Editor {
             drop_replace_restore_focus: None,
             modal: None,
             modal_key_interceptor: None,
+            workspace_link_index: workspace_index::WorkspaceLinkIndex::default(),
+            link_panels: workspace_index::LinkPanelState::default(),
             pending_workspace_tab_activation: None,
             info_dialog: None,
             unsupported_preview_path: None,
