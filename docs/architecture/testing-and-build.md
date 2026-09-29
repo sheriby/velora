@@ -71,7 +71,6 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 4. **测试用真实平台 shaping**：`shape_line_with_platform_text_system`（macOS+test-support）。
 5. **Windows 着色器内嵌**：HLSL `include_str!` 进二进制，修交叉编译产物启动失败。
 6. **Windows 主线程任务泵限时**：`WindowsPlatformInner::run_foreground_task` 一次唤醒最多跑 10ms 主线程任务，跑满就把 `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` 重投一次（对齐上游 zed#43678）。原版用 `main_receiver.drain()` 把队列一次跑完，任务积压时 Windows 消息循环拿不到处理机会——原生文件对话框的模态循环靠它转，表现就是对话框卡住不响应。`WindowsPlatformInner` 因此多持一个 `platform_window_handle`（构造签名多一个 `HWND`）。
-7. **Windows vsync 节奏**：`VSyncProvider::wait_for_vsync`（`platform/windows/vsync.rs`）在 `DwmFlush` 早退时把 sleep 补足到刷新间隔——原版只在早退到 <1ms 时才补。窗口被盖住/禁用（模态对话框会对 owner 做 `EnableWindow(FALSE)`）或没有已提交帧时，`DwmFlush` 2~8ms 就返回，vsync 线程于是按「主线程能画多快」的节奏空转：每轮 `RedrawWindow(RDW_INVALIDATE)` 标脏所有窗口 → `WM_PAINT` → 主线程同步画一帧（实测每秒数百帧），窗口更新区因此永远非空。后果：壳层的模态循环拿不到消息循环时间，原生文件对话框窗口建好后一直 `visible=false`，卡几十秒直到前台窗口被外部改变（2026-09-29 实测 62s）。
 
 ## 7. 脚本与资源
 
