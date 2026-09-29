@@ -2381,19 +2381,11 @@ impl Render for Editor {
                         return;
                     }
                     let keystroke = &event.keystroke;
-                    let modifiers = keystroke.modifiers;
-                    let plain = !modifiers.control
-                        && !modifiers.alt
-                        && !modifiers.platform
-                        && !modifiers.function
-                        && !modifiers.shift;
-                    let is_enter = plain && keystroke.key == "enter";
-                    let is_escape = keystroke.key == "escape";
-                    if !is_enter && !is_escape {
-                        return;
-                    }
+                    // 三个浮层（模态/文件历史/[[ 补全）各自过滤按键；都未打开
+                    // 时这里只有三次布尔检查，打字热路径无感。
                     let _ = editor.update(cx, |editor, cx| {
                         let consumed = editor.modal_handle_keystroke(keystroke, window, cx);
+                        let consumed = consumed || editor.file_history_key_down(keystroke, cx);
                         if !consumed {
                             editor.wikilink_completion_key_down(keystroke, cx);
                         }
@@ -3175,6 +3167,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_save_document))
+            .on_action(cx.listener(Self::on_file_history_action))
             .on_action(cx.listener(Self::on_save_document_as))
             .on_action(cx.listener(Self::on_export_html))
             .on_action(cx.listener(Self::on_export_pdf))
@@ -3418,6 +3411,13 @@ impl Render for Editor {
             && let Some(completion) = self.render_wikilink_completion_overlay(&theme, window, cx)
         {
             base.child(completion)
+        } else {
+            base
+        };
+        let base = if self.file_history_is_open()
+            && let Some(overlay) = self.render_file_history_overlay(&theme, &strings, cx)
+        {
+            base.child(overlay)
         } else {
             base
         };

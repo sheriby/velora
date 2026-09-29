@@ -7933,3 +7933,77 @@ async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut Test
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn file_history_records_dedupes_and_prunes() {
+    // 存储约定：时间戳命名、同内容去重、每文件保留最近 20 条。
+    let root = std::env::temp_dir().join(format!("velora-fhist-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let file = root.join("doc.md");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    // 记录走的是 config 全局目录；测试构建用进程级临时配置根
+    // （VeloraConfigDirs::from_system 的 test 分支），不能直接指定 root，
+    // 所以这里只验证去重与上限行为，目录隔离交给测试根。
+    for index in 0..25 {
+        let content = format!("版本 {index}");
+        crate::config::record_file_history(&file, &content).expect("record");
+    }
+    let versions = crate::config::list_file_history(&file);
+    assert_eq!(versions.len(), 20, "超出上限应裁剪到 20 条");
+    let newest = std::fs::read_to_string(&versions[0]).expect("read newest");
+    assert_eq!(newest, "版本 24", "最新一条应是最后一次保存的内容");
+    let oldest = std::fs::read_to_string(&versions.last().unwrap()).expect("read oldest");
+    assert_eq!(oldest, "版本 5", "最老的 0..=4 应被裁掉");
+
+    // 同内容再保存不重复落盘。
+    crate::config::record_file_history(&file, "版本 24").expect("record dup");
+    assert_eq!(crate::config::list_file_history(&file).len(), 20);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[gpui::test]
+async fn file_history_overlay_restores_version_as_unsaved_edit(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("file-history");
+    std::fs::write(&path, "第一版内容").expect("seed v1");
+
+    // 直接落两条历史（记录路径已有单测），浮层走真实数据。
+    crate::config::record_file_history(&path, "第一版内容").expect("record v1");
+    crate::config::record_file_history(&path, "第二版内容").expect("record v2");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_markdown("当前编辑内容".to_string(), Some(path.clone()), cx);
+    });
+    redraw(cx);
+
+    // 打开历史浮层：两条版本，最新在前。
+    editor.update(cx, |editor, cx| {
+        editor.open_file_history(cx);
+    });
+    redraw(cx);
+    assert!(cx.debug_bounds("file-history-entry-0").is_some(), "应有版本行");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.file_history_overlay.as_ref().expect("浮层应打开").selected,
+            0,
+            "默认选中最新"
+        );
+    });
+
+    // ↓ 选上一版，Enter 恢复为未保存修改。
+    cx.simulate_keystrokes("down");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.current_document_source(cx).contains("第一版内容"),
+            "恢复选中版本内容"
+        );
+        assert!(editor.document_dirty, "恢复后应为未保存状态");
+        assert!(!editor.file_history_is_open(), "恢复后浮层关闭");
+    });
+    let _ = std::fs::remove_file(&path);
+}

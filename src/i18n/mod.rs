@@ -108,6 +108,10 @@ pub struct I18nStrings {
     pub menu_save: String,
     /// File menu item for saving the current document to a new path.
     pub menu_save_as: String,
+    /// 文件历史菜单项与浮层标题。
+    pub menu_file_history: String,
+    /// 历史浮层空态（该文件还没有保存版本）。
+    pub file_history_empty: String,
     /// File menu item for quitting the app.
     pub menu_quit: String,
     /// Export menu item for writing an HTML document.
@@ -568,6 +572,8 @@ struct I18nStringsDe {
     menu_no_recent_files: Option<String>,
     menu_save: Option<String>,
     menu_save_as: Option<String>,
+    menu_file_history: Option<String>,
+    file_history_empty: Option<String>,
     menu_quit: Option<String>,
     menu_export_html: Option<String>,
     menu_export_pdf: Option<String>,
@@ -862,6 +868,8 @@ const I18N_STRING_KEYS: &[&str] = &[
     "menu_no_recent_files",
     "menu_save",
     "menu_save_as",
+    "menu_file_history",
+    "file_history_empty",
     "menu_quit",
     "menu_export_html",
     "menu_export_pdf",
@@ -1218,6 +1226,8 @@ impl I18nStringsDe {
                 .unwrap_or(defaults.menu_no_recent_files),
             menu_save: self.menu_save.unwrap_or(defaults.menu_save),
             menu_save_as: self.menu_save_as.unwrap_or(defaults.menu_save_as),
+            menu_file_history: self.menu_file_history.unwrap_or(defaults.menu_file_history),
+            file_history_empty: self.file_history_empty.unwrap_or(defaults.file_history_empty),
             menu_quit: self.menu_quit.unwrap_or(defaults.menu_quit),
             menu_export_html: self.menu_export_html.unwrap_or(defaults.menu_export_html),
             menu_export_pdf: self.menu_export_pdf.unwrap_or(defaults.menu_export_pdf),
@@ -1956,6 +1966,8 @@ impl I18nStrings {
             menu_no_recent_files: "无最近的文件或文件夹".into(),
             menu_save: "保存".into(),
             menu_save_as: "另存为".into(),
+            menu_file_history: "文件历史…".into(),
+            file_history_empty: "该文件还没有保存过的历史版本".into(),
             menu_quit: "退出".into(),
             menu_export_html: "HTML".into(),
             menu_export_pdf: "PDF".into(),
@@ -2273,6 +2285,8 @@ impl I18nStrings {
             menu_no_recent_files: "No Recent Files or Folders".into(),
             menu_save: "Save".into(),
             menu_save_as: "Save As".into(),
+            menu_file_history: "File History…".into(),
+            file_history_empty: "No saved versions for this file yet".into(),
             menu_quit: "Quit".into(),
             menu_export_html: "HTML".into(),
             menu_export_pdf: "PDF".into(),

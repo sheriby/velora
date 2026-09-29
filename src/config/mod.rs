@@ -150,6 +150,73 @@ impl VeloraConfigDirs {
     pub(crate) fn recovery_dir(&self) -> PathBuf {
         self.root.join("recovery")
     }
+
+    pub(crate) fn history_root(&self) -> PathBuf {
+        self.root.join("history")
+    }
+}
+
+/// 文件本地历史的存储约定：`<配置根>/history/<路径哈希>/<毫秒时间戳>.md`。
+/// 每文件保留最近 `MAX_VERSIONS_PER_FILE` 条，与最早条目内容相同的保存
+/// 不重复落盘。
+pub(crate) fn record_file_history(file: &Path, content: &str) -> std::io::Result<()> {
+    const MAX_VERSIONS_PER_FILE: usize = 20;
+    let Ok(dirs) = VeloraConfigDirs::from_system() else {
+        return Ok(());
+    };
+    let dir = file_history_dir(&dirs, file);
+    std::fs::create_dir_all(&dir)?;
+    if list_file_history(file)
+        .first()
+        .and_then(|newest| std::fs::read_to_string(newest).ok())
+        .is_some_and(|existing| existing == content)
+    {
+        return Ok(());
+    }
+    // 纳秒命名：同一毫秒内的连续保存不能互相覆盖。
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    std::fs::write(dir.join(format!("{stamp}.md")), content)?;
+    // 按时间戳升序保留最新的 N 条。
+    let mut versions = list_file_history_asc(file);
+    while versions.len() > MAX_VERSIONS_PER_FILE {
+        let oldest = versions.remove(0);
+        let _ = std::fs::remove_file(oldest);
+    }
+    Ok(())
+}
+
+fn file_history_dir(dirs: &VeloraConfigDirs, file: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    file.hash(&mut hasher);
+    dirs.history_root().join(format!("{:016x}", hasher.finish()))
+}
+
+/// 某文件的版本列表，最新在前。
+pub(crate) fn list_file_history(file: &Path) -> Vec<PathBuf> {
+    let mut versions = list_file_history_asc(file);
+    versions.reverse();
+    versions
+}
+
+fn list_file_history_asc(file: &Path) -> Vec<PathBuf> {
+    let Ok(dirs) = VeloraConfigDirs::from_system() else {
+        return Vec::new();
+    };
+    let dir = file_history_dir(&dirs, file);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut versions: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        .collect();
+    versions.sort();
+    versions
 }
 
 /// 「导入主题/语言配置」对话框的起始目录：velora 自己的配置子目录。目录不存在就

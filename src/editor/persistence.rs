@@ -478,7 +478,18 @@ impl Editor {
 
     pub(super) fn apply_successful_save(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.document_revision = self.document_revision.wrapping_add(1);
-        self.file_version = Some(file_content_version(&self.serialized_document_text(cx)));
+        let saved_markdown = self.serialized_document_text(cx);
+        self.file_version = Some(file_content_version(&saved_markdown));
+        // 本地历史：每次成功保存后台落一条版本快照（同内容去重、每文件
+        // 保留最近 20 条）。写盘不在保存关键路径上。
+        let history_path = path.clone();
+        let history_content = saved_markdown.clone();
+        cx.spawn(async move |_this, cx| {
+            let _ = cx.update(|_cx| {
+                let _ = crate::config::record_file_history(&history_path, &history_content);
+            });
+        })
+        .detach();
         self.file_path = Some(path);
         self.recovery_source_path = None;
         self.is_recovered_document = false;

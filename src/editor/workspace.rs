@@ -6921,6 +6921,11 @@ fn tree_node_tooltip(node: &WorkspaceTreeNode) -> String {
 
 /// Minimal local-date rendering from a unix timestamp (UTC date, good enough
 /// for tooltips without pulling a time-zone database).
+/// 文件历史等模块复用的 UTC 日期时间格式化（D7 内建历法算法）。
+pub(crate) fn chrono_like_date_string_public(seconds: u64) -> String {
+    chrono_like_date_string(seconds)
+}
+
 fn chrono_like_date_string(seconds: u64) -> String {
     let days = seconds / 86_400;
     // Civil-from-days algorithm (Howard Hinnant) for a UTC date.

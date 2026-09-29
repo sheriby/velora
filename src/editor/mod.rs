@@ -49,6 +49,7 @@ mod command_palette;
 mod quick_open;
 mod watcher;
 mod workspace;
+mod file_history;
 pub(crate) mod workspace_index;
 
 use self::status_bar::StatusBarState;
@@ -163,6 +164,8 @@ pub struct Editor {
     link_panels: workspace_index::LinkPanelState,
     /// [[ 补全会话（编辑锚定块，键经 intercept_keystrokes 拦截）。
     wikilink_completion: Option<workspace_index::WikilinkCompletion>,
+    /// 文件历史浮层（保存版本浏览/恢复）。
+    file_history_overlay: Option<file_history::FileHistoryOverlay>,
     /// 切换工作区后，下一帧（拿得到 `&mut Window` 时）要打开的标签页。
     pending_workspace_tab_activation: Option<PathBuf>,
     /// Optional informational dialog shown from the Help menu.
@@ -559,6 +562,7 @@ impl Editor {
             workspace_link_index: workspace_index::WorkspaceLinkIndex::default(),
             link_panels: workspace_index::LinkPanelState::default(),
             wikilink_completion: None,
+            file_history_overlay: None,
             pending_workspace_tab_activation: None,
             info_dialog: None,
             unsupported_preview_path: None,

@@ -3048,6 +3048,7 @@ impl PreferencesWindow {
             ShortcutCommand::SaveDocumentAs => {
                 strings.preferences_shortcut_save_document_as.clone()
             }
+            ShortcutCommand::FileHistory => strings.menu_file_history.clone(),
             ShortcutCommand::PrintDocument => strings.menu_print.clone(),
             ShortcutCommand::NewWindow => strings.preferences_shortcut_new_window.clone(),
             ShortcutCommand::OpenFile => strings.preferences_shortcut_open_file.clone(),

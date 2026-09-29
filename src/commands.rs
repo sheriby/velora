@@ -13,7 +13,7 @@ use gpui::Action;
 use crate::components::{
     CloseWindow, CopyAsHtml, ExportHtml, ExportPdf, ExportPng, FindInDocument, FindNextMatch,
     FindPreviousMatch, NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PrintDocument,
-    QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout, ToggleFocusMode, ToggleFullscreen,
+    FileHistory, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout, ToggleFocusMode, ToggleFullscreen,
     ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::i18n::I18nStrings;
@@ -81,6 +81,7 @@ static COMMANDS: &[CommandSpec] = &[
     command!("open_folder", File, menu_open_folder, OpenFolder),
     command!(sep "save", File, menu_save, SaveDocument),
     command!("save_as", File, menu_save_as, SaveDocumentAs),
+    command!("file_history", File, menu_file_history, FileHistory),
     // 导出
     command!("export_html", Export, menu_export_html, ExportHtml),
     command!("export_pdf", Export, menu_export_pdf, ExportPdf),
