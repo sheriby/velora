@@ -71,7 +71,9 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 4. **测试用真实平台 shaping**：`shape_line_with_platform_text_system`（macOS+test-support）。
 5. **Windows 着色器内嵌**：HLSL `include_str!` 进二进制，修交叉编译产物启动失败。
 6. **Windows 主线程任务泵限时**：`WindowsPlatformInner::run_foreground_task` 一次唤醒最多跑 10ms 主线程任务，跑满就把 `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` 重投一次（对齐上游 zed#43678）。原版用 `main_receiver.drain()` 把队列一次跑完，任务积压时 Windows 消息循环拿不到处理机会——原生文件对话框的模态循环靠它转，表现就是对话框卡住不响应。`WindowsPlatformInner` 因此多持一个 `platform_window_handle`（构造签名多一个 `HWND`）。
-7. **Windows 原生文件对话框走专用 STA 线程**：`prompt_for_paths`/`prompt_for_new_path`（`platform/windows/platform.rs`）在名为 `velora-file-dialog` 的线程上创建并 `Show` 对话框（该线程自己 `OleInitialize`/`OleUninitialize`），结果经 oneshot 发回，不再占用 gpui 的 UI 线程；两个对话框都设了固定 `SetClientGuid`，不继承别人留下的视图状态。原因：同一进程里第 2 次开对话框时，壳层把窗口建好、甚至让它先成为前台窗口，却十几秒不 `ShowWindow`（本机实测第 1 次 0.6s、第 2 次 10.5s，更早一次 62s），而 `Show` 的模态循环占着 UI 线程，用户看到的就是整个应用卡住。同类案例 AvaloniaUI/Avalonia#21266（「刚关掉的模态会在 owner 线程留下待处理的激活/焦点消息，紧接着再调原生选择器就会挂」）的修法就是把选择器挪到专用 STA 线程。`HWND` 不是 `Send`，用 `SendHwnd` 包一层传过去。
+7. **Windows 原生文件对话框走专用 STA 线程**：`prompt_for_paths`/`prompt_for_new_path`（`platform/windows/platform.rs`）在名为 `velora-file-dialog` 的线程上创建并 `Show` 对话框（该线程自己 `OleInitialize`/`OleUninitialize`），结果经 oneshot 发回，不再占用 gpui 的 UI 线程。原因：同一进程里第 2 次开对话框时，壳层把窗口建好、甚至让它先成为前台窗口，却十几秒不 `ShowWindow`（本机实测第 1 次 0.6s、第 2 次 10.5s，更早一次 62s，切到别的应用后它才冒出来）。机制：gpui 的 UI 线程启动时就 `OleInitialize`（`platform.rs:96`），对话框原先就住在同一个 STA 公寓里，而刚关掉的模态会在这个线程队列里留下激活/焦点消息（`WM_ACTIVATE`/`WM_SETFOCUS`）——同类先例 AvaloniaUI/Avalonia#21266，其 #21433 描述的症状与本机几乎相同（「连着开两次、点取消就卡住，不是必现」），修法也是把选择器挪到专用 STA 线程。`HWND` 不是 `Send`，用 `SendHwnd` 包一层，到了对话框线程再用 `IsWindow` 复验。
+   两个对话框都设了固定 `SetClientGuid`：按 MSDN，状态默认按可执行文件名持久化，换 key 就把旧状态（可能记着一个已不可达的网络位置）一次性退役。**注意这是一次性的**，状态会重新攒起来。
+   这条修复管不到的情形：壳层在显示窗口前访问不可达位置（断开的映射网络盘、Quick access 里失联项、慢的第三方命名空间扩展）。那类只能在打开前用 `SetFolder` 显式指定目录压掉（保存对话框已有，打开对话框没有——`PathPromptOptions` 目前也传不了目录）。
 
 ## 7. 脚本与资源
 

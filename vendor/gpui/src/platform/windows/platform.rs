@@ -446,17 +446,11 @@ impl Platform for WindowsPlatform {
         &self,
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
-        let (tx, rx) = oneshot::channel();
-        // 本地补丁：原生对话框放自己的 STA 线程（理由见 `spawn_file_dialog_thread`），
+        // 本地补丁：原生对话框放自己的 STA 线程（理由见 `run_file_dialog_in_thread`），
         // 不再占用 gpui 的 UI 线程。
-        spawn_file_dialog_thread(
-            SendHwnd(self.find_current_active_window()),
-            move |window| {
-                let _ = tx.send(file_open_dialog(options, window.0));
-            },
-        );
-
-        rx
+        run_file_dialog_in_thread(self.find_current_active_window(), move |window| {
+            file_open_dialog(options, window)
+        })
     }
 
     fn prompt_for_new_path(
@@ -466,16 +460,10 @@ impl Platform for WindowsPlatform {
     ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let suggested_name = suggested_name.map(|s| s.to_owned());
-        let (tx, rx) = oneshot::channel();
         // 本地补丁：同上，原生对话框走自己的 STA 线程。
-        spawn_file_dialog_thread(
-            SendHwnd(self.find_current_active_window()),
-            move |window| {
-                let _ = tx.send(file_save_dialog(directory, suggested_name, window.0));
-            },
-        );
-
-        rx
+        run_file_dialog_in_thread(self.find_current_active_window(), move |window| {
+            file_save_dialog(directory, suggested_name, window)
+        })
     }
 
     fn can_select_mixed_files_and_dirs(&self) -> bool {
@@ -930,24 +918,28 @@ fn open_target_in_explorer(target: &Path) -> Result<()> {
     })
 }
 
-/// 本地补丁：velora 的原生文件对话框用固定的 client GUID，不继承别人的状态。
+/// 本地补丁：velora 的原生文件对话框用固定的 client GUID 标识自己的持久化状态。
 ///
-/// 不带 GUID 时壳层会沿用「上次是谁、在哪儿开过」的状态（可能是 Explorer 留下的
-/// 详情视图 / 预览窗格 / 已经离线的网络位置），它在 `ShowWindow` 之前要按这份状态
-/// 重建视图，慢的时候正是十几秒不显示（见 `spawn_file_dialog_thread` 的注释）。
-/// 带上自己的 GUID 后，velora 的对话框只记自己的目录与视图，状态干净、可预期。
+/// 按 MSDN，对话框状态（上次打开的目录、视图方式、窗口大小与位置）默认按**可执行
+/// 文件名**持久化，`SetClientGuid` 只是把它改成按 GUID 记。所以这条改动的实际作用是：
+/// 换一把新 key，把 velora 之前攒下的那份状态（可能记着一个已经不可达的网络位置）
+/// 一次性退役，之后的记忆归 velora 自己。
+///
+/// 注意这是**一次性**的：状态会重新攒起来；将来再记到一个失联的位置上，同样的慢还
+/// 会出现——那一类要用 `SetFolder` 显式指定目录才能治本（见 `run_file_dialog_in_thread`
+/// 的注释）。
 const VELORA_FILE_DIALOG_CLIENT_GUID: GUID =
     GUID::from_u128(0x7d1c2f5e_9a44_4b3c_8f61_5e0a9b6c4d27);
 
 /// 本地补丁：`HWND` 不是 `Send`（windows-rs 把句柄包成裸指针），而对话框线程要拿着
-/// owner 窗口句柄。句柄本身只是个数字；应用窗口活得比对话框久（模态期间 owner 只是
-/// 被壳层 `EnableWindow(FALSE)`，不会销毁）。作为 `spawn_file_dialog_thread` 的载荷
-/// 传过去，`Send` 边界由编译器把关。
+/// owner 窗口句柄。句柄本身只是个数字；应用窗口通常活得比对话框久（模态期间 owner
+/// 只是被壳层 `EnableWindow(FALSE)`，不会销毁）。作为线程载荷传过去，`Send` 边界由
+/// 编译器把关；到了对话框线程还会用 `IsWindow` 复验一次。
 #[derive(Clone, Copy)]
 struct SendHwnd(Option<HWND>);
 
-// SAFETY: 同 `SendHwnd` 的注释——句柄只是标识符，跨线程只用于传给
-// `IFileDialog::Show`/`SetOwnerWindow`，不对窗口做任何操作。
+// SAFETY: 同 `SendHwnd` 的注释——句柄只是标识符，跨线程只用于校验与传给
+// `IFileDialog::Show`，不对窗口做任何操作。
 unsafe impl Send for SendHwnd {}
 
 /// 本地补丁：原生文件对话框放到专门的 STA 线程上跑，不再跑在 gpui 的 UI 线程上。
@@ -957,30 +949,64 @@ unsafe impl Send for SendHwnd {}
 /// 第 2 次 10.5s（更早一次实测 62s，切到别的应用后它才冒出来）。期间 `Show()` 的
 /// 模态循环占着 UI 线程，用户看到的就是整个应用没反应。
 ///
-/// 同类案例 AvaloniaUI/Avalonia#21266 的结论：刚关掉的模态会在 owner 线程上留下
-/// 待处理的激活/焦点消息，紧接着再调原生选择器就可能挂住，修法是把选择器挪到专用
-/// STA 线程、与 UI 线程的队列状态解耦（`IFileDialog` 自己会跑模态消息循环，所以只
-/// 要给它一个线程就行）。这里照做：`Show` 在对话框线程上阻塞，UI 线程继续跑自己的
-/// 消息循环与渲染，壳层再慢也不会把应用卡住。
+/// gpui 的 UI 线程在启动时就 `OleInitialize` 过，也就是 STA——对话框原先就住在这个
+/// 公寓里。同类先例 AvaloniaUI/Avalonia#21266（#21433 描述的症状与这里几乎一样：
+/// 「连着开两次、点取消就卡住，且不是必现」）：对话框与 UI 线程共用公寓/消息队列时，
+/// 刚关掉的模态残留下来的激活与焦点消息（`WM_ACTIVATE`/`WM_SETFOCUS`）正好落在对话框
+/// 模态循环要处理的位置上，可能把它挂住；他们的修法就是把选择器挪到专用 STA 线程、
+/// 与 UI 线程的队列状态解耦。这里照做（`IFileDialog` 自己会跑模态消息循环，只要给它
+/// 一个线程就行）：`Show` 只阻塞这个线程，UI 线程继续跑自己的消息循环与渲染。
 ///
-/// 该线程上的 COM 必须按 STA 初始化（`OleInitialize` 就是 COINIT_APARTMENTTHREADED），
+/// 注意这条修复管不到的情形：壳层在显示窗口**之前**去访问一个已经不可达的位置
+/// （断开的映射网络盘、Quick access/最近位置里失联的项、慢的第三方命名空间扩展），
+/// 那是壳层自己的等待，对话框该慢还是慢——此时应用线程是活的，但窗口被模态禁用，
+/// 用户仍然会觉得「卡住」。那类根因要在打开前显式指定目录（`IFileDialog::SetFolder`；
+/// 现在只有保存对话框给了目录，打开对话框没给）。
+///
+/// 线程上的 COM 必须按 STA 初始化（`OleInitialize` 就是 COINIT_APARTMENTTHREADED），
 /// 且要在对话框对象全部释放之后才 `OleUninitialize`——所以任务里必须先把结果转成
 /// 普通数据（`Vec<PathBuf>` 之类）再发回，不能把 COM 接口带出线程。
-fn spawn_file_dialog_thread<Payload: Send + 'static>(
-    payload: Payload,
-    task: impl FnOnce(Payload) + Send + 'static,
-) {
+fn run_file_dialog_in_thread<T: Send + 'static>(
+    owner: Option<HWND>,
+    run: impl FnOnce(Option<HWND>) -> Result<T> + Send + 'static,
+) -> Receiver<Result<T>> {
+    let (tx, rx) = oneshot::channel();
+    let owner = SendHwnd(owner);
     let spawned = std::thread::Builder::new()
         .name("velora-file-dialog".to_owned())
         .spawn(move || {
-            let _ole_initialized = unsafe { OleInitialize(None) };
-            task(payload);
-            unsafe { OleUninitialize() };
+            let result = run_file_dialog_body(owner, run);
+            // 结果必须是普通数据（`Vec<PathBuf>` 之类），COM 接口不能带出线程。
+            let _ = tx.send(result);
         });
     if let Err(err) = spawned {
-        // 线程建不出来就只能让调用方等不到结果，不能假装成功。
+        // 线程建不起来（基本只在资源耗尽时）：日志留证；调用方会收到通道关闭，
+        // 按「取消」处理。不假装成功。
         log::error!("failed to spawn file dialog thread: {err}");
     }
+
+    rx
+}
+
+/// 对话框线程上的活儿：初始化 STA、校验 owner 句柄、跑任务、收尾。
+fn run_file_dialog_body<T: Send + 'static>(
+    owner: SendHwnd,
+    run: impl FnOnce(Option<HWND>) -> Result<T>,
+) -> Result<T> {
+    let ole_initialized = unsafe { OleInitialize(None) }.is_ok();
+    if !ole_initialized {
+        log::error!("OleInitialize failed on the file dialog thread");
+    }
+    // 从发起请求到真正 Show 之间隔了几毫秒；窗口要是已经没了（退出应用、被程序关掉），
+    // 把旧句柄留下别递给壳层——句柄值可能已被系统回收。
+    let owner = owner
+        .0
+        .filter(|hwnd| unsafe { IsWindow(Some(*hwnd)).as_bool() });
+    let result = run(owner);
+    if ole_initialized {
+        unsafe { OleUninitialize() };
+    }
+    result
 }
 
 fn file_open_dialog(
@@ -1007,9 +1033,13 @@ fn file_open_dialog(
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
         }
 
-        if folder_dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(err) = folder_dialog.Show(window) {
+            // 用户取消走的是 HRESULT_FROM_WIN32(ERROR_CANCELLED)，属正常路径；
+            // 其它错误往上报，否则用户点了没反应、也没人知道为什么。
+            if err.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(err).context("file dialog failed to show");
         }
     }
 
@@ -1068,9 +1098,12 @@ fn file_save_dialog(
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(err) = dialog.Show(window) {
+            // 同上：取消属正常路径，其它错误要暴露出来。
+            if err.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(err).context("file dialog failed to show");
         }
     }
     let shell_item = unsafe { dialog.GetResult()? };
