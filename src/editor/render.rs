@@ -2369,6 +2369,44 @@ impl Editor {
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.modal_key_interceptor.is_none() {
+            // C13：模态的 Enter/Esc 在 keymap 绑定解析之前拦截（绑定先于
+            // 元素监听，回车会被焦点块的 Newline 绑定消费）。拦截器全局
+            // 注册、按窗口过滤；stop_propagation 阻断 action 派发。
+            let editor = cx.entity().downgrade();
+            let window_handle = window.window_handle();
+            self.modal_key_interceptor = Some(cx.intercept_keystrokes(
+                move |event: &gpui::KeystrokeEvent, window, cx| {
+                    if window.window_handle() != window_handle {
+                        return;
+                    }
+                    let keystroke = &event.keystroke;
+                    let modifiers = keystroke.modifiers;
+                    let plain = !modifiers.control
+                        && !modifiers.alt
+                        && !modifiers.platform
+                        && !modifiers.function
+                        && !modifiers.shift;
+                    let is_enter = plain && keystroke.key == "enter";
+                    let is_escape = keystroke.key == "escape";
+                    if !is_enter && !is_escape {
+                        return;
+                    }
+                    let _ = editor.update(cx, |editor, cx| {
+                        if !editor.modal_is_open() {
+                            return;
+                        }
+                        if is_enter {
+                            let default_index = editor.modal_default_index();
+                            editor.dismiss_modal(default_index, window, cx);
+                        } else {
+                            editor.cancel_modal(window, cx);
+                        }
+                        cx.stop_propagation();
+                    });
+                },
+            ));
+        }
 
         self.window_handle = Some(window.window_handle());
         if self.system_appearance_subscription.is_none() {

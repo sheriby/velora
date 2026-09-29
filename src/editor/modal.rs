@@ -100,6 +100,52 @@ impl Editor {
         self.dismiss_modal(cancel_index, window, cx);
     }
 
+    /// 当前模态的默认按钮下标（模态未打开时为 0）。
+    pub(crate) fn modal_default_index(&self) -> usize {
+        self.modal
+            .as_ref()
+            .map(|modal| modal.spec.default_index)
+            .unwrap_or(0)
+    }
+
+    /// 模态打开时的按键处理（C13）。返回 true 表示按键已被模态消费。
+    ///
+    /// 模态自身不抢焦点（抢焦点会跟编辑器的焦点岛打架，C12 时实测按键
+    /// 收不到）。也不能走元素级 key_down 监听：gpui 的 keymap 绑定先于
+    /// 监听派发，回车会被焦点块的 Newline 绑定消费掉。所以调用点是
+    /// `App::intercept_keystrokes`（绑定解析之前，stop_propagation 可
+    /// 阻断 action 派发）——见 render.rs 的注册处。
+    pub(crate) fn modal_handle_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.modal_is_open() {
+            return false;
+        }
+        let modifiers = keystroke.modifiers;
+        let plain = !modifiers.control
+            && !modifiers.alt
+            && !modifiers.platform
+            && !modifiers.function
+            && !modifiers.shift;
+        match keystroke.key.as_str() {
+            "enter" if plain => {
+                let default_index = self.modal_default_index();
+                cx.stop_propagation();
+                self.dismiss_modal(default_index, window, cx);
+                true
+            }
+            "escape" => {
+                cx.stop_propagation();
+                self.cancel_modal(window, cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn render_modal_overlay(
         &mut self,
         theme: &Theme,

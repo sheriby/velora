@@ -7678,3 +7678,77 @@ async fn drop_open_mode_matches_workspace_open_mode(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn modal_enter_triggers_default_and_escape_cancels(cx: &mut TestAppContext) {
+    // C13：模态支持键盘。Enter = 默认按钮，Esc = 取消位。
+    // 实现挂在编辑器按键捕获钩子上（模态不抢焦点），所以先聚焦一个块
+    // 让按键有派发路径。
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "alpha".to_string(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        editor.focus_block(block.entity_id());
+    });
+    redraw(cx);
+
+    let choice: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
+
+    // Enter = 默认按钮（删除）。
+    let sink = choice.clone();
+    editor.update(cx, |editor, cx| {
+        editor.show_modal(
+            crate::editor::modal::ModalSpec {
+                title: "确认删除".into(),
+                detail: None,
+                buttons: vec!["删除".into(), "取消".into()],
+                default_index: 0,
+                cancel_index: 1,
+            },
+            move |index, _editor, _window, _cx| {
+                *sink.borrow_mut() = Some(index);
+            },
+            cx,
+        );
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.modal_is_open(), "前置：模态应已打开");
+    });
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert_eq!(*choice.borrow(), Some(0), "Enter 应触发默认按钮");
+    editor.read_with(cx, |editor, _| {
+        assert!(!editor.modal_is_open(), "Enter 后模态应关闭");
+    });
+
+    // Esc = 取消位（取消）。
+    let sink = choice.clone();
+    editor.update(cx, |editor, cx| {
+        editor.show_modal(
+            crate::editor::modal::ModalSpec {
+                title: "确认删除".into(),
+                detail: None,
+                buttons: vec!["删除".into(), "取消".into()],
+                default_index: 0,
+                cancel_index: 1,
+            },
+            move |index, _editor, _window, _cx| {
+                *sink.borrow_mut() = Some(index);
+            },
+            cx,
+        );
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+    assert_eq!(*choice.borrow(), Some(1), "Esc 应触发取消位");
+    editor.read_with(cx, |editor, _| {
+        assert!(!editor.modal_is_open(), "Esc 后模态应关闭");
+    });
+}

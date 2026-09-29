@@ -151,6 +151,10 @@ pub struct Editor {
     drop_replace_restore_focus: Option<EntityId>,
     /// 应用内模态（取代系统原生 window.prompt，用户要求全软件不用原生弹窗）。
     modal: Option<modal::EditorModal>,
+    /// C13：模态键盘拦截器（App::intercept_keystrokes）。绑定解析先于
+    /// 元素监听，只有这个钩子能在回车进入焦点块的 Newline 绑定之前
+    /// 截住它。构造为 None，render 首帧注册后保持订阅存活。
+    modal_key_interceptor: Option<gpui::Subscription>,
     /// 切换工作区后，下一帧（拿得到 `&mut Window` 时）要打开的标签页。
     pending_workspace_tab_activation: Option<PathBuf>,
     /// Optional informational dialog shown from the Help menu.
@@ -543,6 +547,7 @@ impl Editor {
             pending_drop_replace_after_save: false,
             drop_replace_restore_focus: None,
             modal: None,
+            modal_key_interceptor: None,
             pending_workspace_tab_activation: None,
             info_dialog: None,
             unsupported_preview_path: None,

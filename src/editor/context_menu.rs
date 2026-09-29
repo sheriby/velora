@@ -254,9 +254,16 @@ impl Editor {
     pub(super) fn on_dismiss_transient_ui(
         &mut self,
         _: &DismissTransientUi,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 模态是最高优先级的瞬态 UI：Esc 先归它（与按键捕获钩子双保险，
+        // cancel_modal 幂等）。
+        if self.modal_is_open() {
+            cx.stop_propagation();
+            self.cancel_modal(window, cx);
+            return;
+        }
         self.dismiss_contextual_overlays(cx);
         // escape 由全局快捷键路由到这里，浮层面板自己的 key_down 收不到。
         self.close_quick_open(cx);
