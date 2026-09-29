@@ -447,12 +447,14 @@ impl Platform for WindowsPlatform {
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_open_dialog(options, window));
-            })
-            .detach();
+        // 本地补丁：原生对话框放自己的 STA 线程（理由见 `spawn_file_dialog_thread`），
+        // 不再占用 gpui 的 UI 线程。
+        spawn_file_dialog_thread(
+            SendHwnd(self.find_current_active_window()),
+            move |window| {
+                let _ = tx.send(file_open_dialog(options, window.0));
+            },
+        );
 
         rx
     }
@@ -465,12 +467,13 @@ impl Platform for WindowsPlatform {
         let directory = directory.to_owned();
         let suggested_name = suggested_name.map(|s| s.to_owned());
         let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory, suggested_name, window));
-            })
-            .detach();
+        // 本地补丁：同上，原生对话框走自己的 STA 线程。
+        spawn_file_dialog_thread(
+            SendHwnd(self.find_current_active_window()),
+            move |window| {
+                let _ = tx.send(file_save_dialog(directory, suggested_name, window.0));
+            },
+        );
 
         rx
     }
@@ -927,6 +930,59 @@ fn open_target_in_explorer(target: &Path) -> Result<()> {
     })
 }
 
+/// 本地补丁：velora 的原生文件对话框用固定的 client GUID，不继承别人的状态。
+///
+/// 不带 GUID 时壳层会沿用「上次是谁、在哪儿开过」的状态（可能是 Explorer 留下的
+/// 详情视图 / 预览窗格 / 已经离线的网络位置），它在 `ShowWindow` 之前要按这份状态
+/// 重建视图，慢的时候正是十几秒不显示（见 `spawn_file_dialog_thread` 的注释）。
+/// 带上自己的 GUID 后，velora 的对话框只记自己的目录与视图，状态干净、可预期。
+const VELORA_FILE_DIALOG_CLIENT_GUID: GUID =
+    GUID::from_u128(0x7d1c2f5e_9a44_4b3c_8f61_5e0a9b6c4d27);
+
+/// 本地补丁：`HWND` 不是 `Send`（windows-rs 把句柄包成裸指针），而对话框线程要拿着
+/// owner 窗口句柄。句柄本身只是个数字；应用窗口活得比对话框久（模态期间 owner 只是
+/// 被壳层 `EnableWindow(FALSE)`，不会销毁）。作为 `spawn_file_dialog_thread` 的载荷
+/// 传过去，`Send` 边界由编译器把关。
+#[derive(Clone, Copy)]
+struct SendHwnd(Option<HWND>);
+
+// SAFETY: 同 `SendHwnd` 的注释——句柄只是标识符，跨线程只用于传给
+// `IFileDialog::Show`/`SetOwnerWindow`，不对窗口做任何操作。
+unsafe impl Send for SendHwnd {}
+
+/// 本地补丁：原生文件对话框放到专门的 STA 线程上跑，不再跑在 gpui 的 UI 线程上。
+///
+/// 实测（2026-09-29）：同一进程里第 2 次 `IFileOpenDialog::Show`，壳层把对话框窗口
+/// 建好了、甚至让它先成了前台窗口，却十几秒不 `ShowWindow`：本机第一次 0.6s 就显示，
+/// 第 2 次 10.5s（更早一次实测 62s，切到别的应用后它才冒出来）。期间 `Show()` 的
+/// 模态循环占着 UI 线程，用户看到的就是整个应用没反应。
+///
+/// 同类案例 AvaloniaUI/Avalonia#21266 的结论：刚关掉的模态会在 owner 线程上留下
+/// 待处理的激活/焦点消息，紧接着再调原生选择器就可能挂住，修法是把选择器挪到专用
+/// STA 线程、与 UI 线程的队列状态解耦（`IFileDialog` 自己会跑模态消息循环，所以只
+/// 要给它一个线程就行）。这里照做：`Show` 在对话框线程上阻塞，UI 线程继续跑自己的
+/// 消息循环与渲染，壳层再慢也不会把应用卡住。
+///
+/// 该线程上的 COM 必须按 STA 初始化（`OleInitialize` 就是 COINIT_APARTMENTTHREADED），
+/// 且要在对话框对象全部释放之后才 `OleUninitialize`——所以任务里必须先把结果转成
+/// 普通数据（`Vec<PathBuf>` 之类）再发回，不能把 COM 接口带出线程。
+fn spawn_file_dialog_thread<Payload: Send + 'static>(
+    payload: Payload,
+    task: impl FnOnce(Payload) + Send + 'static,
+) {
+    let spawned = std::thread::Builder::new()
+        .name("velora-file-dialog".to_owned())
+        .spawn(move || {
+            let _ole_initialized = unsafe { OleInitialize(None) };
+            task(payload);
+            unsafe { OleUninitialize() };
+        });
+    if let Err(err) = spawned {
+        // 线程建不出来就只能让调用方等不到结果，不能假装成功。
+        log::error!("failed to spawn file dialog thread: {err}");
+    }
+}
+
 fn file_open_dialog(
     options: PathPromptOptions,
     window: Option<HWND>,
@@ -943,6 +999,7 @@ fn file_open_dialog(
     }
 
     unsafe {
+        folder_dialog.SetClientGuid(&VELORA_FILE_DIALOG_CLIENT_GUID)?;
         folder_dialog.SetOptions(dialog_options)?;
 
         if let Some(prompt) = options.prompt {
@@ -978,6 +1035,7 @@ fn file_save_dialog(
     window: Option<HWND>,
 ) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
+    unsafe { dialog.SetClientGuid(&VELORA_FILE_DIALOG_CLIENT_GUID)? };
     if !directory.to_string_lossy().is_empty()
         && let Some(full_path) = directory
             .canonicalize()
