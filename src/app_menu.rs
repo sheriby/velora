@@ -15,7 +15,7 @@ use crate::commands::{CommandMenu, CommandSpec};
 use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
-    NewWindow, OpenCommandPalette, OpenFile, OpenPreferences, OpenRecentFile, PrintDocument,
+    NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
     QuitApplication, SaveDocument,
     SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
@@ -710,6 +710,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
 fn is_window_context_menu_action(action: &dyn Action) -> bool {
     action.as_any().is::<NewWindow>()
         || action.as_any().is::<OpenFile>()
+        || action.as_any().is::<OpenFolder>()
         || action.as_any().is::<OpenPreferences>()
         || action.as_any().is::<OpenRecentFile>()
         || action.as_any().is::<NoRecentFiles>()
@@ -813,6 +814,8 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         open_editor_window(cx, String::new(), None);
     } else if action.as_any().is::<OpenFile>() {
         prompt_and_open_files(cx);
+    } else if action.as_any().is::<OpenFolder>() {
+        prompt_and_open_folder(cx);
     } else if action.as_any().is::<CopyAsHtml>() {
         let _ = with_active_editor(cx, |editor, _window, cx| editor.copy_as_html(cx));
     } else if action.as_any().is::<OpenCommandPalette>() {
@@ -951,6 +954,8 @@ pub(crate) fn dispatch_menu_action_for_editor(
         open_editor_window(cx, String::new(), None);
     } else if action.as_any().is::<OpenFile>() {
         prompt_and_open_files_with_error_window(cx, current_window);
+    } else if action.as_any().is::<OpenFolder>() {
+        prompt_and_open_folder_with_error_window(cx, current_window);
     } else if action.as_any().is::<ToggleViewMode>() {
         let _ = target.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
     } else if action.as_any().is::<ToggleFocusMode>() {
@@ -1282,12 +1287,45 @@ fn prompt_and_open_files(cx: &mut App) {
     prompt_and_open_files_with_error_window(cx, error_window);
 }
 
+fn prompt_and_open_folder(cx: &mut App) {
+    let error_window = cx.active_window();
+    prompt_and_open_folder_with_error_window(cx, error_window);
+}
+
+/// 对话框要挑什么。Windows 的 `FOS_PICKFOLDERS` 只能「文件或文件夹」二选一
+/// （见 gpui 的 `can_select_mixed_files_and_dirs`），所以两个入口分开。
+#[derive(Clone, Copy)]
+enum PathPromptKind {
+    Files,
+    Folders,
+}
+
 fn prompt_and_open_files_with_error_window(cx: &mut App, error_window: Option<AnyWindowHandle>) {
-    let prompt_title = cx
-        .global::<I18nManager>()
-        .strings()
-        .open_markdown_files_prompt
-        .clone();
+    prompt_and_open_paths(cx, error_window, PathPromptKind::Files);
+}
+
+fn prompt_and_open_folder_with_error_window(cx: &mut App, error_window: Option<AnyWindowHandle>) {
+    prompt_and_open_paths(cx, error_window, PathPromptKind::Folders);
+}
+
+fn prompt_and_open_paths(
+    cx: &mut App,
+    error_window: Option<AnyWindowHandle>,
+    kind: PathPromptKind,
+) {
+    // 这个字符串是对话框确定铵钮上的字，保持短；增删字前先想一下它在原生窗口里的宽度。
+    let prompt_title = match kind {
+        PathPromptKind::Files => cx
+            .global::<I18nManager>()
+            .strings()
+            .open_markdown_files_prompt
+            .clone(),
+        PathPromptKind::Folders => cx
+            .global::<I18nManager>()
+            .strings()
+            .open_folder_prompt
+            .clone(),
+    };
     // 起始目录＝当前工作区根（或当前文件所在目录）。见 `PathPromptOptions::directory`：
     // 不指定时 Windows 壳层会回到它记住的上次位置，可能是一个已不可达的网络位置。
     let start_dir = editor_window_for_folder_open(cx).and_then(|window| {
@@ -1296,9 +1334,15 @@ fn prompt_and_open_files_with_error_window(cx: &mut App, error_window: Option<An
             .ok()
             .flatten()
     });
+    // 能同时选文件和文件夹的平台（macOS）保留混合选择；Windows 上文件入口
+    // 必须是纯文件，否则 `FOS_PICKFOLDERS` 会让对话框只能选文件夹（用户报修）。
+    let (files, directories) = match kind {
+        PathPromptKind::Files => (true, cx.can_select_mixed_files_and_dirs()),
+        PathPromptKind::Folders => (false, true),
+    };
     let prompt = cx.prompt_for_paths(PathPromptOptions {
-        files: true,
-        directories: true,
+        files,
+        directories,
         multiple: true,
         prompt: Some(prompt_title.into()),
         directory: start_dir,
@@ -1497,6 +1541,9 @@ pub(crate) fn init(cx: &mut App) {
     });
     cx.on_action(|_: &OpenFile, cx| {
         dispatch_menu_action(&OpenFile, cx);
+    });
+    cx.on_action(|_: &OpenFolder, cx| {
+        dispatch_menu_action(&OpenFolder, cx);
     });
     cx.on_action(|_: &ToggleViewMode, cx| {
         dispatch_menu_action(&ToggleViewMode, cx);
@@ -1756,6 +1803,20 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn open_file_dialog_prompt_is_generic() {
+        // 用户报修：打开文件的对话框确定铵钮上写着「打开 Markdown 文件」。这个字符串
+        // 原样进原生对话框的确定铵钮，必须短而通用；文件夹入口要有自己的文案。
+        use crate::i18n::I18nStrings;
+        for strings in [I18nStrings::zh_cn(), I18nStrings::en_us()] {
+            assert!(!strings.open_markdown_files_prompt.contains("Markdown"));
+            assert!(!strings.menu_open_folder.is_empty());
+            assert!(!strings.open_folder_prompt.is_empty());
+        }
+        assert_eq!(I18nStrings::zh_cn().open_markdown_files_prompt, "打开文件");
+        assert_eq!(I18nStrings::zh_cn().open_folder_prompt, "打开文件夹");
+    }
+
     fn build_menus_uses_chinese_language_when_selected() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::new_with_language_id("zh-CN");

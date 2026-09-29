@@ -55,6 +55,7 @@ actions!(
         SaveDocument,
         NewWindow,
         OpenFile,
+        OpenFolder,
         OpenPreferences,
         NoRecentFiles,
         SaveDocumentAs,
