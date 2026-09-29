@@ -7569,7 +7569,14 @@ mod tests {
 
         // 改写文件后缓存必须失效。
         fs::write(&note, "beta instead").expect("rewrite");
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        // 缓存的失效依据是 mtime，而文件系统的 mtime 粒度可能是一秒甚至更粗：
+        // 两次写在几十毫秒内发生时时间戳可能一模一样，缓存就会以为文件没变。
+        // 这里显式把 mtime 往后推，让「文件已改」这件事与文件系统粒度无关。
+        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&note) {
+            let _ = file.set_modified(
+                std::time::SystemTime::now() + std::time::Duration::from_secs(2),
+            );
+        }
         let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("rescan tree");
         let fresh = SearchMatcher::new("beta", SearchOptions::default());
         assert_eq!(
