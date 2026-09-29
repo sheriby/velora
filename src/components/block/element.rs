@@ -374,6 +374,32 @@ pub(super) fn hard_line_ranges(text: &str) -> Vec<Range<usize>> {
     ranges
 }
 
+/// 把整块文本的 `TextRun` 切出 `[range]` 字节段（按行 shape 用）：run 的 len
+/// 以字节计且必须覆盖传入文本全长，否则 shape_text 会丢弃没有 run 覆盖的尾部。
+pub(super) fn slice_runs_for_range(runs: &[TextRun], range: Range<usize>) -> Vec<TextRun> {
+    let mut sliced = Vec::new();
+    let mut cursor = 0usize;
+    for run in runs {
+        let run_start = cursor;
+        let run_end = run_start + run.len;
+        cursor = run_end;
+        if run_end <= range.start {
+            continue;
+        }
+        if run_start >= range.end {
+            break;
+        }
+        let lo = run_start.max(range.start);
+        let hi = run_end.min(range.end);
+        if hi > lo {
+            let mut clipped = run.clone();
+            clipped.len = hi - lo;
+            sliced.push(clipped);
+        }
+    }
+    sliced
+}
+
 /// Map a flat visible-text offset to `(line_index, offset_within_line)`.
 pub(super) fn line_index_for_offset(ranges: &[Range<usize>], offset: usize) -> (usize, usize) {
     let clamped = offset.min(ranges.last().map(|r| r.end).unwrap_or(0));
@@ -971,6 +997,11 @@ pub struct PrepaintState {
     lines: std::sync::Arc<Vec<WrappedLine>>,
     source_line_numbers: Vec<ShapedLine>,
     source_line_number_gutter_width: Pixels,
+    /// 超长行的行号槽折叠指示符（▸ 折叠 / ▾ 展开），有超长行才有。
+    long_line_chevron_collapsed: Option<ShapedLine>,
+    long_line_chevron_expanded: Option<ShapedLine>,
+    /// (源行下标, 是否展开)：paint 时按行顶画指示符。
+    long_line_markers: Vec<(usize, bool)>,
     cursor: Option<PaintQuad>,
     selection: Vec<PaintQuad>,
     code_backgrounds: Vec<PaintQuad>,
@@ -1105,18 +1136,31 @@ impl Element for BlockTextElement {
             font_size: f32::from(font_size).to_bits(),
             font_fingerprint,
             theme_fingerprint,
+            long_line_wrap_generation: input.long_line_wrap_generation(),
         };
         let cached_memo = input.shape_memo_entry();
         let input_entity = self.input.clone();
+        // 长行折叠计划（带行号的源码块才有）：决定布局宽度语义与按行 shape。
+        let long_line_plan = if !is_placeholder && input.long_line_folding_enabled() {
+            Some(input_entity.update(cx, |block, _block_cx| block.long_line_plan()))
+        } else {
+            None
+        };
 
         let shared_lines: Rc<RefCell<Option<std::sync::Arc<Vec<WrappedLine>>>>> =
             Rc::new(RefCell::new(None));
         let shared_lines_clone = shared_lines.clone();
 
         let mut layout_style = Style::default();
-        layout_style.size.width = relative(1.).into();
-        layout_style.min_size.width = px(0.0).into();
-        layout_style.max_size.width = relative(1.).into();
+        if long_line_plan.is_some() {
+            // 长行不换行：内容可以比容器宽（横向滚动容器需要真实内容宽度），
+            // 但至少占满容器，保持和 width:100% 相同的常规块外观。
+            layout_style.min_size.width = relative(1.).into();
+        } else {
+            layout_style.size.width = relative(1.).into();
+            layout_style.min_size.width = px(0.0).into();
+            layout_style.max_size.width = relative(1.).into();
+        }
 
         let layout_id = window.request_measured_layout(
             layout_style,
@@ -1156,57 +1200,140 @@ impl Element for BlockTextElement {
                     *shared_lines_clone.borrow_mut() = Some(lines);
                     return total_size;
                 }
-                match window.text_system().shape_text(
-                    display_text.clone(),
-                    font_size,
-                    &runs,
-                    text_wrap_width,
-                    None,
-                ) {
-                    Ok(mut lines) => {
-                        if space_prose {
-                            add_render_spacing(
-                                &mut lines,
-                                &code_ranges,
-                                letter_spacing,
-                                code_gap,
-                                font_size,
-                            );
-                        }
-                        for line in lines.iter_mut() {
-                            if wrap_prose || space_prose {
-                                if line
-                                    .wrap_width
-                                    .is_some_and(|width| line.unwrapped_layout.width > width)
+                // 有超长行时按行 shape：折叠的超长行不换行（横向滚动阅读，
+                // 单行占一个 WrappedLine 条目，块高度不再爆炸），其余行照常
+                // 按容器宽换行。没有超长行时保持整块一次 shape 的原路径。
+                let mut lines: Vec<WrappedLine> =
+                    if let Some(plan) = long_line_plan
+                        .as_ref()
+                        .filter(|plan| !plan.long_lines.is_empty())
+                    {
+                        let expanded = input_entity.update(closure_cx, |block, _block_cx| {
+                            block.expanded_long_lines.clone()
+                        });
+                        let mut all_lines = Vec::with_capacity(plan.ranges.len());
+                        for (line_idx, range) in plan.ranges.iter().enumerate() {
+                            let line_src = &display_text[range.clone()];
+                            let collapsed_long =
+                                plan.is_long(line_idx) && !expanded.contains(&line_idx);
+                            let (shaped_text, line_runs, line_wrap_width) = if collapsed_long {
+                                let char_count = line_src.chars().count();
+                                let cut_end = if char_count
+                                    > crate::components::LONG_LINE_DISPLAY_CHARS
                                 {
-                                    use unicode_segmentation::UnicodeSegmentation;
-                                    let emergency_breaks: Vec<_> = line.text.grapheme_indices(true)
-                                        .map(|(index, _)| index).collect();
-                                    line.wrap_at_boundaries(&prose_line_breaks(&line.text), &emergency_breaks);
+                                    line_src
+                                        .char_indices()
+                                        .nth(crate::components::LONG_LINE_DISPLAY_CHARS)
+                                        .map(|(offset, _)| offset)
+                                        .unwrap_or(line_src.len())
+                                } else {
+                                    line_src.len()
+                                };
+                                let mut line_runs = slice_runs_for_range(
+                                    &runs,
+                                    range.start..range.start + cut_end,
+                                );
+                                let shaped_text = if cut_end < line_src.len() {
+                                    let marker = format!(
+                                        " ⋯⋯（本行共 {char_count} 字符，已截断；点行号展开）"
+                                    );
+                                    // 截断提示沿用行尾样式，保证 marker 字节有 run 覆盖，
+                                    // 否则 shape_text 会把没有 run 的尾部直接丢掉。
+                                    if let Some(last) = line_runs.last() {
+                                        let mut marker_run = last.clone();
+                                        marker_run.len = marker.len();
+                                        line_runs.push(marker_run);
+                                    }
+                                    format!("{}{marker}", &line_src[..cut_end])
+                                } else {
+                                    line_src.to_string()
+                                };
+                                (shaped_text, line_runs, None)
+                            } else {
+                                (
+                                    line_src.to_string(),
+                                    slice_runs_for_range(&runs, range.clone()),
+                                    text_wrap_width,
+                                )
+                            };
+                            // 空源行 shape 不出条目会破坏「layout 行 ↔ 源行」
+                            // 一一对应，用单个空格兜底（宽度贡献可忽略，索引
+                            // 映射走原始行范围表，不受影响）。
+                            let shaped_text = if shaped_text.is_empty() {
+                                " ".to_string()
+                            } else {
+                                shaped_text
+                            };
+                            match window.text_system().shape_text(
+                                shaped_text.into(),
+                                font_size,
+                                &line_runs,
+                                line_wrap_width,
+                                None,
+                            ) {
+                                Ok(line) => {
+                                    debug_assert!(
+                                        line.len() <= 1,
+                                        "按行 shape 每个源行应恰好产出一条 WrappedLine"
+                                    );
+                                    all_lines.extend(line);
                                 }
+                                Err(_) => return Size::default(),
                             }
                         }
-                        let mut total_size: Size<Pixels> = Size::default();
-                        for line in lines.iter() {
-                            let ls = line.size(line_height);
-                            total_size.height += ls.height;
-                            total_size.width = total_size.width.max(ls.width);
+                        all_lines
+                    } else {
+                        match window.text_system().shape_text(
+                            display_text.clone(),
+                            font_size,
+                            &runs,
+                            text_wrap_width,
+                            None,
+                        ) {
+                            Ok(lines) => lines.into_vec(),
+                            Err(_) => return Size::default(),
                         }
-                        total_size.width += source_line_number_gutter_width;
-                        let lines = std::sync::Arc::new(lines.into_vec());
-                        // 立即写入备忘：同一次布局内 taffy 可能多次 measure，
-                        // 迟写会让每次 measure 都重新 shape。
-                        input_entity.update(closure_cx, |block, _block_cx| {
-                            block.set_shape_memo(ShapeMemoEntry {
-                                key,
-                                lines: lines.clone(),
-                            });
-                        });
-                        *shared_lines_clone.borrow_mut() = Some(lines);
-                        total_size
-                    }
-                    Err(_) => Size::default(),
+                    };
+                if space_prose {
+                    add_render_spacing(
+                        &mut lines,
+                        &code_ranges,
+                        letter_spacing,
+                        code_gap,
+                        font_size,
+                    );
                 }
+                for line in lines.iter_mut() {
+                    if wrap_prose || space_prose {
+                        if line
+                            .wrap_width
+                            .is_some_and(|width| line.unwrapped_layout.width > width)
+                        {
+                            use unicode_segmentation::UnicodeSegmentation;
+                            let emergency_breaks: Vec<_> = line.text.grapheme_indices(true)
+                                .map(|(index, _)| index).collect();
+                            line.wrap_at_boundaries(&prose_line_breaks(&line.text), &emergency_breaks);
+                        }
+                    }
+                }
+                let mut total_size: Size<Pixels> = Size::default();
+                for line in lines.iter() {
+                    let ls = line.size(line_height);
+                    total_size.height += ls.height;
+                    total_size.width = total_size.width.max(ls.width);
+                }
+                total_size.width += source_line_number_gutter_width;
+                let lines = std::sync::Arc::new(lines);
+                // 立即写入备忘：同一次布局内 taffy 可能多次 measure，
+                // 迟写会让每次 measure 都重新 shape。
+                input_entity.update(closure_cx, |block, _block_cx| {
+                    block.set_shape_memo(ShapeMemoEntry {
+                        key,
+                        lines: lines.clone(),
+                    });
+                });
+                *shared_lines_clone.borrow_mut() = Some(lines);
+                total_size
             },
         );
 
@@ -1274,6 +1401,51 @@ impl Element for BlockTextElement {
         } else {
             Vec::new()
         };
+
+        // 超长行指示符（▸ 折叠 / ▾ 展开）：画在行号槽最左侧，点击行号切换。
+        // 只有真的存在超长行时才 shape，常规块零开销。
+        let has_long_lines = input
+            .long_line_plan
+            .as_ref()
+            .is_some_and(|(_, plan)| !plan.long_lines.is_empty());
+        let (long_line_chevron_collapsed, long_line_chevron_expanded, long_line_markers) =
+            if has_long_lines {
+                let chevron = |label: &'static str| {
+                    window.text_system().shape_line(
+                        SharedString::from(label),
+                        font_size,
+                        &[TextRun {
+                            len: label.len(),
+                            font: style.font(),
+                            color: theme.colors.text_placeholder,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                            font_size: None,
+                        }],
+                        None,
+                    )
+                };
+                let markers = input
+                    .long_line_plan
+                    .as_ref()
+                    .map(|(_, plan)| {
+                        plan.long_lines
+                            .iter()
+                            .map(|&line_idx| {
+                                (line_idx, input.expanded_long_lines.contains(&line_idx))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (
+                    Some(chevron("▸")),
+                    Some(chevron("▾")),
+                    markers,
+                )
+            } else {
+                (None, None, Vec::new())
+            };
 
         let cursor_opacity = input.cursor_opacity();
         let cursor_color = {
@@ -1412,6 +1584,9 @@ impl Element for BlockTextElement {
             lines,
             source_line_numbers,
             source_line_number_gutter_width,
+            long_line_chevron_collapsed,
+            long_line_chevron_expanded,
+            long_line_markers,
             cursor: cursor_quad,
             selection: selection_quads,
             code_backgrounds: code_quads,
@@ -1499,6 +1674,31 @@ impl Element for BlockTextElement {
                 .ok();
         }
 
+        // 超长行的折叠指示符：贴行号槽最左缘，指向可点。
+        if !prepaint.long_line_markers.is_empty() {
+            let gutter_left = text_bounds.left() - prepaint.source_line_number_gutter_width;
+            for (line_idx, expanded) in &prepaint.long_line_markers {
+                let Some(y_top) = line_number_tops.get(*line_idx) else {
+                    continue;
+                };
+                let chevron = if *expanded {
+                    prepaint.long_line_chevron_expanded.as_ref()
+                } else {
+                    prepaint.long_line_chevron_collapsed.as_ref()
+                };
+                if let Some(chevron) = chevron {
+                    chevron
+                        .paint(
+                            point(gutter_left + px(2.0), bounds.origin.y + *y_top),
+                            line_height,
+                            window,
+                            cx,
+                        )
+                        .ok();
+                }
+            }
+        }
+
         let mut y_offset = Pixels::default();
         for line in lines.iter() {
             let origin_x = aligned_line_left(line, text_bounds, text_align);
@@ -1524,6 +1724,7 @@ impl Element for BlockTextElement {
             input.last_layout = Some((*lines).clone());
             input.last_bounds = Some(text_bounds);
             input.last_line_height = line_height;
+            input.last_gutter_width = prepaint.source_line_number_gutter_width;
         });
     }
 }

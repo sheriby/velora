@@ -1419,12 +1419,46 @@ impl Block {
         }
     }
 
+    /// 行号槽命中检测 + 折叠切换：点击落在行号槽（text_bounds 左侧）且命中的
+    /// 是超长行时切换展开态。返回是否发生了切换。
+    pub(crate) fn toggle_long_line_at_gutter(&mut self, position: Point<Pixels>) -> bool {
+        let (Some(bounds), Some(lines)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        else {
+            return false;
+        };
+        if self.last_gutter_width <= px(0.0) {
+            return false;
+        }
+        // 行号槽区间 = [text_bounds.left - gutter, text_bounds.left]。
+        if position.x < bounds.left() - self.last_gutter_width || position.x > bounds.left() {
+            return false;
+        }
+        let relative_y = position.y - bounds.top();
+        if relative_y < px(0.0) {
+            return false;
+        }
+        let Some((line_idx, _)) =
+            super::element::wrapped_line_for_y(lines, self.last_line_height, relative_y)
+        else {
+            return false;
+        };
+        self.toggle_long_line_expanded(line_idx)
+    }
+
     pub(crate) fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 行号槽点击：切换超长行的折叠/展开。要在落光标之前截住，
+        // 否则点行号会把光标塞进行首。
+        if self.long_line_folding_enabled() && self.toggle_long_line_at_gutter(event.position) {
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+
         if self.showing_rendered_image() {
             self.is_selecting = false;
             self.request_image_edit_expansion();

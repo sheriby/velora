@@ -190,6 +190,16 @@ pub struct Block {
     /// P3：跨帧 shape 备忘。键命中时布局闭包跳过 build_text_runs 与
     /// shape_text（taffy 一次布局会对同一元素多次 measure）。
     pub(crate) shape_memo: Option<ShapeMemoEntry>,
+    /// 长行折叠计划：源行字节范围 + 哪些行超长。`(文本代数, 计划)` 按代数
+    /// 缓存，文本变化时由下次布局重算（element 布局时读取）。
+    pub(crate) long_line_plan: Option<(u64, std::sync::Arc<LongLinePlan>)>,
+    /// 超长行的展开状态（块内源行下标）。展开 = 该行按容器宽换行；
+    /// 折叠 = 单行不换行，横向滚动阅读。
+    pub(crate) expanded_long_lines: std::collections::BTreeSet<usize>,
+    /// 展开/收起长行时递增：进 shape 备忘键（两种状态的换行结果不同）。
+    long_line_wrap_generation: u64,
+    /// 最近一次 paint 的行号槽宽度（带行号的块才有）；行号点击判定用。
+    pub(crate) last_gutter_width: Pixels,
     /// 表格列宽备忘（性能）：`TableColumnLayout::measure` 会对每格做 no-wrap
     /// shape_text，此前每帧全量重测；命中键时整帧零 shape。表内容或键变化
     /// 时失效。
@@ -315,6 +325,10 @@ impl Block {
             cached_display_text: SharedString::default(),
             display_generation: 0,
             shape_memo: None,
+            long_line_plan: None,
+            expanded_long_lines: std::collections::BTreeSet::new(),
+            long_line_wrap_generation: 0,
+            last_gutter_width: Pixels::ZERO,
             column_layout_memo: None,
             collapsed_caret_affinity: CollapsedCaretAffinity::Default,
             edit_mode,
@@ -483,6 +497,64 @@ impl Block {
 
     pub(crate) fn display_generation(&self) -> u64 {
         self.display_generation
+    }
+
+    /// 本块是否启用长行折叠：只有带行号槽的源码/源文件块（JSONL 等按行分块
+    /// 打开的代码文档、降级源码模式的整文档块）才有行号可点、才有折叠意义。
+    pub(crate) fn long_line_folding_enabled(&self) -> bool {
+        self.show_source_line_numbers
+            && (self.kind().is_code_block() || self.kind() == BlockKind::Paragraph)
+    }
+
+    /// 长行折叠计划（按文本代数缓存）：源行字节范围 + 超长行下标。
+    pub(crate) fn long_line_plan(&mut self) -> std::sync::Arc<LongLinePlan> {
+        let generation = self.display_generation;
+        if let Some((cached_generation, plan)) = &self.long_line_plan
+            && *cached_generation == generation
+        {
+            return plan.clone();
+        }
+        let text = self.shared_display_text();
+        let ranges = super::element::hard_line_ranges(&text);
+        let long_lines = ranges
+            .iter()
+            .enumerate()
+            .filter(|(_, range)| {
+                text[range.start..range.end].chars().count() > crate::components::LONG_LINE_SOURCE_LIMIT
+            })
+            .map(|(line_idx, _)| line_idx)
+            .collect();
+        let plan = std::sync::Arc::new(LongLinePlan { ranges, long_lines });
+        self.long_line_plan = Some((generation, plan.clone()));
+        plan
+    }
+
+    /// 该行是否超长（折叠单行渲染）。未启用或计划未建时恒 false。
+    pub(crate) fn is_long_line(&self, line_idx: usize) -> bool {
+        self.long_line_plan
+            .as_ref()
+            .is_some_and(|(_, plan)| plan.is_long(line_idx))
+    }
+
+    /// 行号槽点击：切换该超长行的折叠/展开。返回是否发生了切换。
+    pub(crate) fn toggle_long_line_expanded(&mut self, line_idx: usize) -> bool {
+        if !self.is_long_line(line_idx) {
+            return false;
+        }
+        if self.expanded_long_lines.contains(&line_idx) {
+            self.expanded_long_lines.remove(&line_idx);
+        } else {
+            self.expanded_long_lines.insert(line_idx);
+        }
+        self.long_line_wrap_generation = self.long_line_wrap_generation.wrapping_add(1);
+        // 换行结果变了：作废 shape 备忘（键里也带 long_line_wrap_generation，
+        // 这里清掉保证同帧内 taffy 重复 measure 不命中旧条目）。
+        self.shape_memo = None;
+        true
+    }
+
+    pub(crate) fn long_line_wrap_generation(&self) -> u64 {
+        self.long_line_wrap_generation
     }
 
     /// 表格列宽备忘读取/写入（性能：命中时整帧零 shape_text）。
@@ -2477,6 +2549,22 @@ pub(crate) struct ShapeMemoKey {
     pub font_size: u32,
     pub font_fingerprint: u64,
     pub theme_fingerprint: u64,
+    /// 长行折叠的展开代数：展开/收起改变超长行的换行结果。
+    pub long_line_wrap_generation: u64,
+}
+
+/// 长行折叠计划：源行字节范围（与 `hard_line_ranges` 对齐，layout 行按下标
+/// 一一对应）+ 超长行下标（升序）。shape 按行切分时用。
+#[derive(Debug)]
+pub(crate) struct LongLinePlan {
+    pub ranges: Vec<std::ops::Range<usize>>,
+    pub long_lines: Vec<usize>,
+}
+
+impl LongLinePlan {
+    pub fn is_long(&self, line_idx: usize) -> bool {
+        self.long_lines.binary_search(&line_idx).is_ok()
+    }
 }
 
 /// 表格列宽备忘的键：主题代数 + 字号 + 容器宽 + 表内容本身。

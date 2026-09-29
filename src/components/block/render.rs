@@ -2346,7 +2346,17 @@ impl Render for Block {
             };
 
             return source_base
-                .child(BlockTextElement::new(cx.entity(), is_placeholder))
+                .child(
+                    div()
+                        .id(ElementId::Name(
+                            format!("source-x-scroll-{}", self.record.id).into(),
+                        ))
+                        .min_w(px(0.0))
+                        .w_full()
+                        // 源码文档里的超长行折叠成单行，靠横向滚动阅读。
+                        .overflow_x_scroll()
+                        .child(BlockTextElement::new(cx.entity(), is_placeholder)),
+                )
                 .into_any_element();
         }
 
@@ -2956,8 +2966,14 @@ impl Render for Block {
                     .line_height(relative(1.5))
                     .child(
                         div()
+                            .id(ElementId::Name(
+                                format!("code-x-scroll-{}", self.record.id).into(),
+                            ))
                             .min_w(px(0.0))
                             .w_full()
+                            // 超长行折叠成单行后靠横向滚动阅读（overflow 需要
+                            // id 维护滚动状态）。
+                            .overflow_x_scroll()
                             .child(BlockTextElement::new(cx.entity(), is_placeholder)),
                     );
 

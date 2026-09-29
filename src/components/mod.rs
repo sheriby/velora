@@ -3,6 +3,16 @@
 /// 单块源码超过该字节长度时，渲染态降级为纯源码文本（roadmap B12）。
 pub(crate) const LONG_BLOCK_SOURCE_LIMIT: usize = 20_000;
 
+/// 带行号的代码/源文件行超过这个字符数就不再换行渲染：折叠成单行 +
+/// 横向滚动，点行号展开按宽换行。shape/paint 的代价都随行长线性放大，
+/// JSONL 之类每行兆级的文件不做折叠会整窗卡死。
+pub(crate) const LONG_LINE_SOURCE_LIMIT: usize = 512;
+
+/// 折叠态单行最多 shape 的字符数。gpui 的行 paint 逐字形迭代、没有按可见区
+/// 早退，兆级行即使不换行每帧也要扫全部字形；超出部分截断并在行尾提示，
+/// 点行号展开查看全文。
+pub(crate) const LONG_LINE_DISPLAY_CHARS: usize = 20_000;
+
 mod actions;
 mod block;
 pub(crate) mod latex;
