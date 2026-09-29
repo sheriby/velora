@@ -192,8 +192,9 @@ pub(crate) fn latex_cache_key(
     // 同一段 LaTeX 在行内/行间下排版不同，必须分开缓存。
     math_layout.hash(&mut hasher);
     // 缓存格式版本：SVG 尺寸单位由 `pt` 改为 `px`（v2）、行内公式改用 Text 样式
-    // （v3）之后，旧文件必须整体失效重生成。
-    "ratex-svg-px-v3".hash(&mut hasher);
+    // （v3）、KaTeX 字体改为真正嵌入二进制（v4，见 Cargo.toml 的 debug-embed）
+    // 之后，旧文件必须整体失效重生成——否则会把「退化 <text>」的旧图一直显示下去。
+    "ratex-svg-embed-v4".hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
 
@@ -273,6 +274,22 @@ mod tests {
             (height_at(32.0) - single_em_height * 2.0).abs() < 0.5,
             "尺寸应随字号线性变化"
         );
+    }
+
+    #[test]
+    fn embeds_glyph_outlines_instead_of_falling_back_to_text() {
+        // 回归护栏：算子（Σ/∫）的大字形来自 KaTeX_Size* 字体文件里的轮廓。
+        // 一旦字体取不到，ratex 会静默把整条公式退化成 <text font-family="KaTeX_Size2">，
+        // 系统字体按 1em 画出小号字形，而版式仍是行间尺寸——用户看到的就是「又小又歪」。
+        let svg = render_latex_to_svg(
+            "F = \\int_0^1 m a",
+            Hsla::default(),
+            16.0,
+            MathLayout::Display,
+        )
+        .expect("渲染成功");
+        assert!(svg.contains("<path"), "公式必须嵌成矢量轮廓，不能退化成 <text>");
+        assert!(!svg.contains("<text"), "不应残留 <text> 元素：{svg:.160}");
     }
 
     #[test]
@@ -381,3 +398,6 @@ mod tests {
         assert!(render_latex_to_svg("\\frac{a}", Hsla::from(rgba(0xffffffff)), 18.0, MathLayout::Display).is_err());
     }
 }
+
+
+

@@ -79,6 +79,11 @@ directories = "6"
 ratex-layout = "0.1.9"
 ratex-parser = "0.1.9"
 ratex-types = "0.1.9"
+# ratex-katex-fonts 用 rust-embed 装 KaTeX 字体：debug 构建默认在运行时
+# 按编译机绝对路径读盘，换台机器就找不到 → 公式整体静默退化成 <text>
+# （Σ/∫ 变成系统字体小字形）。这条直接依赖只为把 debug-embed 特性统一给
+# rust-embed，让 dev 包也把字体真正嵌进二进制。
+rust-embed = { version = "8.11", features = ["debug-embed"] }
 ratex-svg = { version = "0.1.9", features = ["embed-fonts", "standalone"] }
 mermaid-rs-renderer = { version = "0.3.0", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "default-tls"] }
