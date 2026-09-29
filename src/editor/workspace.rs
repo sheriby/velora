@@ -4658,10 +4658,10 @@ impl Editor {
                       label: &'static str,
                       selected: bool,
                       tab: WorkspaceTab,
-                      toggle_if_active: bool,
                       editor: WeakEntity<Self>| {
             div()
                 .id(id)
+                .debug_selector(move || id.to_string())
                 .w(px(34.0))
                 .h(px(34.0))
                 .flex()
@@ -4693,10 +4693,9 @@ impl Editor {
                 })
                 .on_click(move |_, _, cx| {
                     let _ = editor.update(cx, |editor, cx| {
-                        if toggle_if_active
-                            && editor.workspace.is_open
-                            && editor.workspace.active_tab == tab
-                        {
+                        // 三个按钮一致：已经开在这一页时再点一次就收起侧边栏
+                        // （之前只有文件和搜索会收，大纲那个参数写的是 false）。
+                        if editor.workspace.is_open && editor.workspace.active_tab == tab {
                             editor.workspace.is_open = false;
                             cx.notify();
                             return;
@@ -4726,7 +4725,6 @@ impl Editor {
                 "文件",
                 self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Files,
                 WorkspaceTab::Files,
-                true,
                 editor.clone(),
             ))
             .child(button(
@@ -4735,7 +4733,6 @@ impl Editor {
                 "搜索",
                 self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Search,
                 WorkspaceTab::Search,
-                true,
                 editor.clone(),
             ))
             .child(button(
@@ -4744,7 +4741,6 @@ impl Editor {
                 "大纲",
                 self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Outline,
                 WorkspaceTab::Outline,
-                false,
                 editor,
             ))
             .into_any_element()
@@ -7548,6 +7544,58 @@ mod tests {
         assert!(search_workspace_files(&tree, &SearchMatcher::new("absent", SearchOptions::default()), 200, &background).await.is_empty());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn activity_rail_buttons_all_toggle_the_sidebar(cx: &mut TestAppContext) {
+        // 用户要求：文件 / 搜索 / 大纲 三个活动栏按钮都支持「再点一次收起」。
+        // 之前只有文件和搜索会收（大纲那个参数写的是 false）。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        for (id, tab) in [
+            ("activity-files", super::WorkspaceTab::Files),
+            ("activity-search", super::WorkspaceTab::Search),
+            ("activity-outline", super::WorkspaceTab::Outline),
+        ] {
+            let bounds = cx
+                .debug_bounds(id)
+                .unwrap_or_else(|| panic!("活动栏按钮 {id} 应渲染"));
+
+            // 第一次点：展开并切到这一页。
+            cx.simulate_click(bounds.center(), Modifiers::none());
+            cx.update(|window, cx| window.draw(cx).clear());
+            editor.read_with(cx, |editor, _| {
+                assert!(editor.workspace.is_open, "点 {id} 应展开侧边栏");
+                assert_eq!(editor.workspace.active_tab, tab, "点 {id} 应切到对应页");
+            });
+
+            // 第二次点：收起。
+            cx.simulate_click(bounds.center(), Modifiers::none());
+            cx.update(|window, cx| window.draw(cx).clear());
+            editor.read_with(cx, |editor, _| {
+                assert!(!editor.workspace.is_open, "再点 {id} 应收起侧边栏");
+            });
+
+            // 第三次点：重新展开（同一个按钮能反复切）。
+            cx.simulate_click(bounds.center(), Modifiers::none());
+            cx.update(|window, cx| window.draw(cx).clear());
+            editor.read_with(cx, |editor, _| {
+                assert!(editor.workspace.is_open, "第三次点 {id} 应重新展开");
+            });
+
+            // 换下一个按钮前先关掉，避免上一个按钮的展开状态影响判断。
+            editor.update(cx, |editor, _cx| {
+                editor.workspace.is_open = false;
+            });
+            cx.update(|window, cx| window.draw(cx).clear());
+        }
     }
 
     #[gpui::test]
