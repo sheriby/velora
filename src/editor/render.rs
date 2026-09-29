@@ -512,14 +512,14 @@ struct MenuPanelOrigin {
     panel_top: f32,
 }
 
-/// 汉堡列表面板的顶端 y：直接贴在标题栏下沿（按钮底边更靠下时以按钮为准）。
+/// 汉堡列表面板的顶端 y：紧紧跟在按钮下沿后面（默认主题：按钮底 30 + 2 = 32px）。
 ///
-/// 不能拿 `menu_panel_top`（默认 30px）当这个距离：那是给「菜单栏那一行」用的
-/// 偏移（行本身高 32px），从标题栏下沿再加 30px 就是白白空一大截——用户报的
-/// 「竖列跟图标中间那么大间距」就是它。
+/// 不能用 `menu_panel_top`（默认 30px）——那是给「菜单栏那一行」算偏移用的，
+/// 从标题栏下沿再加 30px 就是白白空一大截（用户报的那个间距）。
+/// 也不能用「标题栏下沿」：标题栏比按钮高时，空出来的部分全变成图标与列表之间的缝。
+/// 这里只跟按钮高度和一个 gap 有关，主题把标题栏调多高都不会拉开。
 fn hamburger_menu_panel_top(titlebar_height: f32, dimensions: &ThemeDimensions) -> f32 {
-    let button_bottom = (titlebar_height + dimensions.menu_bar_button_height) / 2.0;
-    button_bottom.max(titlebar_height)
+    (titlebar_height + dimensions.menu_bar_button_height) / 2.0 + dimensions.menu_bar_gap
 }
 
 /// 汉堡列表里第 `index` 行的顶端 y。行高与间距跟条目面板里的行保持一致
@@ -3629,19 +3629,25 @@ mod tests {
     #[test]
     fn hamburger_list_hangs_right_below_the_button() {
         let dimensions = Theme::default_theme().dimensions;
-        // 默认主题：标题栏 36px、按钮 24px 居中 → 按钮底边在 30px 处，
-        // 列表挂在标题栏下沿（36px），跟图标之间的缝只有 6px。
         let titlebar_height = 36.0;
         let panel_top = hamburger_menu_panel_top(titlebar_height, &dimensions);
-        assert_eq!(panel_top, titlebar_height);
-
         let button_bottom = (titlebar_height + dimensions.menu_bar_button_height) / 2.0;
-        let gap = panel_top - button_bottom;
-        assert!(gap > 0.0, "面板不该盖住图标，实测间距 {gap}");
-        assert!(gap <= 8.0, "图标到列表的间距不该超过 8px，实测 {gap}");
+
+        // 缝就是 menu_bar_gap（默认 2px），不是几十像素。
+        assert_eq!(panel_top, button_bottom + dimensions.menu_bar_gap);
+        assert_eq!(panel_top, 32.0);
+
+        // 与标题栏高度无关：标题栏再高，缝也不会跟着长。
+        let tall_panel_top = hamburger_menu_panel_top(titlebar_height + 24.0, &dimensions);
+        assert_eq!(
+            tall_panel_top - panel_top,
+            12.0,
+            "标题栏每高 24px，面板只下移 12px（缝不变）"
+        );
+
         // 旧写法（标题栏下沿 + menu_panel_top）会空出 30px：确认已经不再用它。
-        assert!(panel_top + dimensions.menu_panel_top != panel_top);
-        assert!(dimensions.menu_panel_top > gap * 3.0);
+        assert!(dimensions.menu_panel_top > 10.0);
+        assert!(panel_top < titlebar_height + dimensions.menu_panel_top);
     }
 
     #[test]
