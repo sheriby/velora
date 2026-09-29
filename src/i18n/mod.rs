@@ -258,6 +258,12 @@ pub struct I18nStrings {
     pub workspace_tab_files: String,
     /// Workspace drawer Outline tab.
     pub workspace_tab_outline: String,
+    /// Backlinks panel empty state: no document open.
+    pub workspace_backlinks_no_document: String,
+    /// Backlinks panel empty state: nothing links here.
+    pub workspace_backlinks_empty: String,
+    /// Tags panel empty state.
+    pub workspace_tags_empty: String,
     /// Workspace drawer recent roots tab.
     pub workspace_tab_recent: String,
     /// Placeholder for filtering workspace files by name.
@@ -670,6 +676,9 @@ struct I18nStringsDe {
     workspace_panel_title: Option<String>,
     workspace_tab_files: Option<String>,
     workspace_tab_outline: Option<String>,
+    workspace_backlinks_no_document: Option<String>,
+    workspace_backlinks_empty: Option<String>,
+    workspace_tags_empty: Option<String>,
     workspace_tab_recent: Option<String>,
     workspace_search_placeholder: Option<String>,
     workspace_document_find_placeholder: Option<String>,
@@ -961,6 +970,9 @@ const I18N_STRING_KEYS: &[&str] = &[
     "workspace_panel_title",
     "workspace_tab_files",
     "workspace_tab_outline",
+    "workspace_backlinks_no_document",
+    "workspace_backlinks_empty",
+    "workspace_tags_empty",
     "workspace_tab_recent",
     "workspace_search_placeholder",
     "workspace_document_find_placeholder",
@@ -1509,6 +1521,15 @@ impl I18nStringsDe {
             workspace_tab_files: self
                 .workspace_tab_files
                 .unwrap_or(defaults.workspace_tab_files),
+            workspace_backlinks_no_document: self
+                .workspace_backlinks_no_document
+                .unwrap_or(defaults.workspace_backlinks_no_document),
+            workspace_backlinks_empty: self
+                .workspace_backlinks_empty
+                .unwrap_or(defaults.workspace_backlinks_empty),
+            workspace_tags_empty: self
+                .workspace_tags_empty
+                .unwrap_or(defaults.workspace_tags_empty),
             workspace_tab_outline: self
                 .workspace_tab_outline
                 .unwrap_or(defaults.workspace_tab_outline),
@@ -2045,6 +2066,9 @@ impl I18nStrings {
             preferences_shortcut_toggle_fullscreen: "切换全屏".into(),
             workspace_panel_title: "资源管理器".into(),
             workspace_tab_files: "文件".into(),
+            workspace_backlinks_no_document: "打开一篇笔记后查看反向链接".into(),
+            workspace_backlinks_empty: "还没有笔记链接到当前文档".into(),
+            workspace_tags_empty: "工作区还没有 #标签".into(),
             workspace_tab_outline: "大纲".into(),
             workspace_tab_recent: "最近".into(),
             workspace_search_placeholder: "搜索文件名与内容".into(),
@@ -2367,6 +2391,9 @@ impl I18nStrings {
             preferences_shortcut_toggle_fullscreen: "Toggle Full Screen".into(),
             workspace_panel_title: "Explorer".into(),
             workspace_tab_files: "Files".into(),
+            workspace_backlinks_no_document: "Open a note to see its backlinks".into(),
+            workspace_backlinks_empty: "No notes link to this document yet".into(),
+            workspace_tags_empty: "No #tags in this workspace yet".into(),
             workspace_tab_outline: "Outline".into(),
             workspace_tab_recent: "Recent".into(),
             workspace_search_placeholder: "Search files and contents".into(),

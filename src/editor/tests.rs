@@ -7752,3 +7752,115 @@ async fn modal_enter_triggers_default_and_escape_cancels(cx: &mut TestAppContext
         assert!(!editor.modal_is_open(), "Esc 后模态应关闭");
     });
 }
+
+#[gpui::test]
+async fn knowledge_panels_list_backlinks_and_tags_end_to_end(cx: &mut TestAppContext) {
+    // 反链 + 标签面板端到端：树落地后索引重建，面板列条目，点击生效。
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-km-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    std::fs::write(root.join("a.md"), "见 [[target]] #rust\n").expect("write a");
+    std::fs::write(root.join("b.md"), "#rust 和 #gpui，与目标无关\n").expect("write b");
+    std::fs::write(root.join("target.md"), "# target\n").expect("write target");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace_link_index.tracked_file_count(),
+            3,
+            "树落地后索引应包含全部 Markdown 文件"
+        );
+    });
+
+    let target_path = root.join("target.md");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(target_path, window, cx);
+        });
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.set_workspace_tab(super::workspace::WorkspaceTab::Backlinks, cx);
+    });
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("backlink-entry-0").is_some(),
+        "反链面板应列出 a.md"
+    );
+    assert!(
+        cx.debug_bounds("backlink-entry-1").is_none(),
+        "无关文件不应出现"
+    );
+    let row = cx.debug_bounds("backlink-entry-0").expect("row");
+    cx.simulate_click(row.center(), gpui::Modifiers::none());
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor
+                .file_path
+                .as_ref()
+                .map(|path| path.file_name().unwrap().to_string_lossy().to_string()),
+            Some("a.md".to_string()),
+            "点击反链条目应打开对应笔记"
+        );
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_tab(super::workspace::WorkspaceTab::Tags, cx);
+    });
+    redraw(cx);
+    let first = cx.debug_bounds("tag-entry-0").expect("tag row 0");
+    let second = cx.debug_bounds("tag-entry-1").expect("tag row 1");
+    assert!(first.origin.y <= second.origin.y, "#rust 应排在 #gpui 前");
+    cx.simulate_click(first.center(), gpui::Modifiers::none());
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.active_tab,
+            super::workspace::WorkspaceTab::Search
+        );
+        assert_eq!(editor.workspace.search_query, "#rust");
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn tags_panel_lists_workspace_tags_and_click_starts_search(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-tags-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    std::fs::write(root.join("a.md"), "#rust 笔记\n").expect("write a");
+    std::fs::write(root.join("b.md"), "也是 #rust 和 #gpui\n").expect("write b");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.set_workspace_tab(super::workspace::WorkspaceTab::Tags, cx);
+    });
+    redraw(cx);
+
+    // #rust 两个文件引用排第一，#gpui 一个排第二。
+    let first = cx.debug_bounds("tag-entry-0").expect("tag row 0");
+    let second = cx.debug_bounds("tag-entry-1").expect("tag row 1");
+    assert!(first.origin.y <= second.origin.y, "#rust 应排在 #gpui 前");
+
+    // 点击标签 → 进入搜索 tab，query 已填 #rust。
+    cx.simulate_click(first.center(), gpui::Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.workspace.active_tab, super::workspace::WorkspaceTab::Search);
+        assert_eq!(editor.workspace.search_query, "#rust");
+    });
+    let _ = std::fs::remove_dir_all(root);
+}

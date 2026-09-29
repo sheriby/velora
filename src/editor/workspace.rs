@@ -22,6 +22,8 @@ const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 const ACTIVITY_FILES_ICON: &str = "icon/workspace/activity-files.svg";
 const ACTIVITY_SEARCH_ICON: &str = "icon/workspace/activity-search.svg";
 const ACTIVITY_OUTLINE_ICON: &str = "icon/workspace/activity-outline.svg";
+const ACTIVITY_BACKLINKS_ICON: &str = "icon/workspace/activity-backlinks.svg";
+const ACTIVITY_TAGS_ICON: &str = "icon/workspace/activity-tags.svg";
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
@@ -37,6 +39,8 @@ pub(super) enum WorkspaceTab {
     Files,
     Search,
     Outline,
+    Backlinks,
+    Tags,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,7 +234,7 @@ enum WorkspaceSelection {
 
 pub(super) struct WorkspaceState {
     pub(super) is_open: bool,
-    active_tab: WorkspaceTab,
+    pub(super) active_tab: WorkspaceTab,
     root: Option<PathBuf>,
     file_tree: Option<WorkspaceTreeNode>,
     file_error: Option<String>,
@@ -245,7 +249,7 @@ pub(super) struct WorkspaceState {
     selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
-    search_query: String,
+    pub(super) search_query: String,
     search_scope: WorkspaceSearchScope,
     search_active_index: Option<usize>,
     search_selected_range: Range<usize>,
@@ -2088,6 +2092,14 @@ impl Editor {
                                 {
                                     editor.schedule_workspace_search(cx);
                                 }
+                                // 反链/标签索引：换根后第一次树落地时全量重建，
+                                // 之后由 watcher 单文件增量维持。
+                                if let Some(root) = editor.workspace.root.clone() {
+                                    let files = editor.workspace_text_files();
+                                    editor
+                                        .workspace_link_index
+                                        .ensure_built_for_root(&root, files, cx);
+                                }
                             }
                             Err(err) => {
                                 editor.workspace.file_error = Some(err.to_string());
@@ -2117,7 +2129,7 @@ impl Editor {
         self.workspace.outline_source = Some(source.clone());
     }
 
-    fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
+    pub(super) fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
         let changed = self.workspace.active_tab != tab;
         self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
@@ -3921,6 +3933,10 @@ impl Editor {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor),
+            WorkspaceTab::Backlinks => {
+                self.render_workspace_backlinks_panel(theme, strings, window, cx)
+            }
+            WorkspaceTab::Tags => self.render_workspace_tags_panel(theme, strings, cx),
         };
 
         Some(
@@ -4793,6 +4809,22 @@ impl Editor {
                 "大纲",
                 self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Outline,
                 WorkspaceTab::Outline,
+                editor.clone(),
+            ))
+            .child(button(
+                "activity-backlinks",
+                ACTIVITY_BACKLINKS_ICON,
+                "反链",
+                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Backlinks,
+                WorkspaceTab::Backlinks,
+                editor.clone(),
+            ))
+            .child(button(
+                "activity-tags",
+                ACTIVITY_TAGS_ICON,
+                "标签",
+                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Tags,
+                WorkspaceTab::Tags,
                 editor,
             ))
             .into_any_element()
@@ -5168,7 +5200,7 @@ impl Editor {
             .into_any_element()
     }
 
-    fn render_workspace_empty_state(
+    pub(crate) fn render_workspace_empty_state(
         &self,
         title: &str,
         message: &str,

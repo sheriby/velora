@@ -15,10 +15,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{AppContext, Task};
+use gpui::{AnyElement, AppContext, Task, Window};
 
 use super::workspace::is_markdown_document;
 use super::Editor;
+use crate::theme::Theme;
 
 /// 单个 Markdown 文件提取出的外链与标签。
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -379,7 +380,8 @@ impl Editor {
     /// 面板渲染前调用：revision 变了且距上次计算超过间隔才重算。
     pub(crate) fn refresh_link_panels(&mut self, cx: &mut gpui::Context<Self>) {
         let revision = self.document_revision;
-        if self.link_panels.revision == revision {
+        // 首帧（从未算过）必须算一次，不能拿默认 revision=0 挡住。
+        if self.link_panels.computed_at.is_some() && self.link_panels.revision == revision {
             return;
         }
         if self
@@ -540,5 +542,146 @@ mod tests {
             vec![("#rust".to_string(), 2), ("#gpui".to_string(), 1)],
             "同文件内重复标签只计一次，按引用文件数降序"
         );
+    }
+}
+
+// ===== 侧栏面板渲染 =====
+
+impl Editor {
+    /// 反链面板：列出工作区内 `[[链接]]` 指向当前文档的笔记，点击打开。
+    pub(crate) fn render_workspace_backlinks_panel(
+        &mut self,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        window: &Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        use gpui::*;
+        self.refresh_link_panels(cx);
+        let c = &theme.colors;
+        let t = &theme.typography;
+
+        if self.file_path.is_none() {
+            return self.render_workspace_empty_state(
+                "",
+                &strings.workspace_backlinks_no_document,
+                theme,
+            );
+        }
+        if self.link_panels.backlinks.is_empty() {
+            return self.render_workspace_empty_state("", &strings.workspace_backlinks_empty, theme);
+        }
+
+        let mut rows = Vec::new();
+        for (index, path) in self.link_panels.backlinks.clone().into_iter().enumerate() {
+            let name = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let dir = path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .map(|parent| parent.to_string_lossy().to_string());
+            let click_editor = cx.entity().downgrade();
+            rows.push(
+                div()
+                    .id(gpui::ElementId::Name(
+                        format!("backlink-entry-{index}").into(),
+                    ))
+                    .debug_selector(move || format!("backlink-entry-{index}"))
+                    .h(px(24.0))
+                    .w_full()
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(6.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                        let _ = click_editor.update(cx, |editor, cx| {
+                            editor.open_workspace_file(path.clone(), window, cx);
+                        });
+                    })
+                    .child(
+                        svg()
+                            .path("icon/workspace/markdown.svg")
+                            .size(px(14.0))
+                            .text_color(c.dialog_primary_button_bg),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(t.text_size * 0.92))
+                            .text_color(c.text_default)
+                            .child(name),
+                    )
+                    .children(dir.map(|dir| {
+                        div()
+                            .text_size(px(t.text_size * 0.78))
+                            .text_color(c.dialog_muted)
+                            .child(dir)
+                    })),
+            );
+        }
+
+        div().w_full().flex().flex_col().py(px(4.0)).children(rows).into_any_element()
+    }
+
+    /// 标签面板：工作区 #标签 聚合计数，点击进入工作区标签搜索（C4）。
+    pub(crate) fn render_workspace_tags_panel(
+        &mut self,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        use gpui::*;
+        self.refresh_link_panels(cx);
+        let c = &theme.colors;
+        let t = &theme.typography;
+
+        if self.link_panels.tags.is_empty() {
+            return self.render_workspace_empty_state("", &strings.workspace_tags_empty, theme);
+        }
+
+        let mut rows = Vec::new();
+        for (index, (tag, count)) in self.link_panels.tags.clone().into_iter().enumerate() {
+            let click_tag = tag.clone();
+            let click_editor = cx.entity().downgrade();
+            rows.push(
+                div()
+                    .id(gpui::ElementId::Name(format!("tag-entry-{index}").into()))
+                    .debug_selector(move || format!("tag-entry-{index}"))
+                    .h(px(24.0))
+                    .w_full()
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .px(px(6.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                        let _ = click_editor.update(cx, |editor, cx| {
+                            editor.open_tag_search(click_tag.clone(), cx);
+                        });
+                    })
+                    .child(
+                        div()
+                            .text_size(px(t.text_size * 0.92))
+                            .text_color(c.text_link)
+                            .child(tag),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(t.text_size * 0.78))
+                            .text_color(c.dialog_muted)
+                            .child(format!("{count}")),
+                    ),
+            );
+        }
+
+        div().w_full().flex().flex_col().py(px(4.0)).children(rows).into_any_element()
     }
 }

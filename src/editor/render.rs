@@ -2393,16 +2393,7 @@ impl Render for Editor {
                         return;
                     }
                     let _ = editor.update(cx, |editor, cx| {
-                        if !editor.modal_is_open() {
-                            return;
-                        }
-                        if is_enter {
-                            let default_index = editor.modal_default_index();
-                            editor.dismiss_modal(default_index, window, cx);
-                        } else {
-                            editor.cancel_modal(window, cx);
-                        }
-                        cx.stop_propagation();
+                        editor.modal_handle_keystroke(keystroke, window, cx);
                     });
                 },
             ));
