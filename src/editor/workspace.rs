@@ -1687,6 +1687,8 @@ impl Editor {
     }
 
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // 手动切换后不再保留「贴边滑出」的浮层状态，避免收起时它立刻又冒出来。
+        self.sidebar_peek = false;
         if self.workspace.is_open {
             self.workspace.is_open = false;
         } else {
@@ -1695,6 +1697,23 @@ impl Editor {
             self.workspace.is_open = true;
             self.sync_workspace_models(cx);
             window.activate_window();
+        }
+        cx.notify();
+    }
+
+    /// 收起状态下指针贴到窗口左边缘时的浮层开关。
+    ///
+    /// 收起后整条侧边栏（窄条 + 面板）都不占布局，正文用满整宽；指针贴到左边缘约
+    /// 6px 时把整条侧边栏作为浮层滑出盖在正文上，指针移开就收回。展开状态下这个
+    /// 开关不生效（那时侧边栏本来就常驻）。
+    pub(super) fn set_sidebar_peek(&mut self, peek: bool, cx: &mut Context<Self>) {
+        if self.workspace.is_open || self.sidebar_peek == peek {
+            return;
+        }
+        self.sidebar_peek = peek;
+        if peek {
+            // 浮层里展示的还是那几棵树，进入时同步一次，和展开抽屉走同一条路径。
+            self.sync_workspace_models(cx);
         }
         cx.notify();
     }
@@ -3851,7 +3870,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.workspace.is_open {
+        if !self.workspace.is_open && !self.sidebar_peek {
             // 侧栏收起也要同步文档大纲：块级 `[TOC]` 的条目来自这里，曾因
             // 「启动不展开侧边栏」回归成空目录（outline 按文档源去重，收起
             // 时每帧只付一次字符串比较）。文件树同步仍留给打开的抽屉。
@@ -4695,6 +4714,9 @@ impl Editor {
                     let _ = editor.update(cx, |editor, cx| {
                         // 三个按钮一致：已经开在这一页时再点一次就收起侧边栏
                         // （之前只有文件和搜索会收，大纲那个参数写的是 false）。
+                        // 手动切换后不要留下「贴边滑出」的状态：收起时它会让浮层
+                        // 立刻又冒出来，展开时也不需要它。
+                        editor.sidebar_peek = false;
                         if editor.workspace.is_open && editor.workspace.active_tab == tab {
                             editor.workspace.is_open = false;
                             cx.notify();
@@ -7548,8 +7570,8 @@ mod tests {
 
     #[gpui::test]
     async fn activity_rail_buttons_all_toggle_the_sidebar(cx: &mut TestAppContext) {
-        // 用户要求：文件 / 搜索 / 大纲 三个活动栏按钮都支持「再点一次收起」。
-        // 之前只有文件和搜索会收（大纲那个参数写的是 false）。
+        // 用户要求：文件 / 搜索 / 大纲 三个活动栏按钮都支持「再点一次收起」；
+        // 侧边栏收起后整条（含窄条）隐藏，指针贴到窗口左边缘才作为浮层滑出。
         cx.update(|cx| {
             crate::i18n::I18nManager::init(cx);
             crate::theme::ThemeManager::init(cx);
@@ -7559,14 +7581,27 @@ mod tests {
             cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
         cx.update(|window, cx| window.draw(cx).clear());
 
+        // 默认是收起状态：窄条不渲染，正文占满整宽。
+        assert!(
+            cx.debug_bounds("activity-files").is_none(),
+            "收起状态下窄条不应占位"
+        );
+
         for (id, tab) in [
             ("activity-files", super::WorkspaceTab::Files),
             ("activity-search", super::WorkspaceTab::Search),
             ("activity-outline", super::WorkspaceTab::Outline),
         ] {
+            // 贴左边缘把整条侧边栏（含窄条）作为浮层唤出。
+            cx.simulate_mouse_move(
+                gpui::point(px(2.0), px(200.0)),
+                gpui::MouseButton::Left,
+                Modifiers::none(),
+            );
+            cx.update(|window, cx| window.draw(cx).clear());
             let bounds = cx
                 .debug_bounds(id)
-                .unwrap_or_else(|| panic!("活动栏按钮 {id} 应渲染"));
+                .unwrap_or_else(|| panic!("贴左边缘后活动栏按钮 {id} 应滑出"));
 
             // 第一次点：展开并切到这一页。
             cx.simulate_click(bounds.center(), Modifiers::none());
@@ -7575,27 +7610,104 @@ mod tests {
                 assert!(editor.workspace.is_open, "点 {id} 应展开侧边栏");
                 assert_eq!(editor.workspace.active_tab, tab, "点 {id} 应切到对应页");
             });
+            assert!(
+                cx.debug_bounds(id).is_some(),
+                "展开后窄条常驻，不该再依赖贴边"
+            );
 
-            // 第二次点：收起。
+            // 第二次点：收起，整条侧边栏一起隐藏。
+            let bounds = cx.debug_bounds(id).expect("展开后按钮应仍可见");
             cx.simulate_click(bounds.center(), Modifiers::none());
             cx.update(|window, cx| window.draw(cx).clear());
             editor.read_with(cx, |editor, _| {
                 assert!(!editor.workspace.is_open, "再点 {id} 应收起侧边栏");
             });
+            assert!(
+                cx.debug_bounds(id).is_none(),
+                "收起后窄条应一起隐藏，等指针贴左边缘才滑出"
+            );
 
             // 第三次点：重新展开（同一个按钮能反复切）。
+            cx.simulate_mouse_move(
+                gpui::point(px(2.0), px(200.0)),
+                gpui::MouseButton::Left,
+                Modifiers::none(),
+            );
+            cx.update(|window, cx| window.draw(cx).clear());
+            let bounds = cx
+                .debug_bounds(id)
+                .unwrap_or_else(|| panic!("第二次贴边后活动栏按钮 {id} 应再次滑出"));
             cx.simulate_click(bounds.center(), Modifiers::none());
             cx.update(|window, cx| window.draw(cx).clear());
             editor.read_with(cx, |editor, _| {
                 assert!(editor.workspace.is_open, "第三次点 {id} 应重新展开");
             });
 
-            // 换下一个按钮前先关掉，避免上一个按钮的展开状态影响判断。
+            // 换下一个按钮前回到收起状态，避免上一个按钮的展开状态影响判断。
             editor.update(cx, |editor, _cx| {
                 editor.workspace.is_open = false;
+                editor.sidebar_peek = false;
             });
             cx.update(|window, cx| window.draw(cx).clear());
         }
+    }
+
+    #[gpui::test]
+    async fn collapsed_sidebar_slides_out_only_while_pointer_is_at_left_edge(
+        cx: &mut TestAppContext,
+    ) {
+        // 收起 = 自动隐藏：整条侧边栏不占布局；指针贴左边缘滑出浮层，移开收回。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        editor.update(cx, |editor, _| {
+            editor.workspace.is_open = false;
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_none(),
+            "收起状态不该有浮层"
+        );
+        assert!(
+            cx.debug_bounds("activity-files").is_none(),
+            "收起状态整条侧边栏（含窄条）不占位"
+        );
+
+        // 指针贴到左边缘：整条侧边栏（窄条 + 面板）作为浮层滑出。
+        cx.simulate_mouse_move(
+            gpui::point(px(2.0), px(200.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_some(),
+            "贴左边缘应滑出浮层"
+        );
+        assert!(
+            cx.debug_bounds("activity-files").is_some(),
+            "浮层里应包含窄条按钮"
+        );
+
+        // 指针移到正文：浮层收回。
+        cx.simulate_mouse_move(
+            gpui::point(px(700.0), px(200.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        // 悬停命中按上一帧的 hitbox 计算，退出事件要下一帧才派发。
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_none(),
+            "指针移开应收起浮层"
+        );
     }
 
     #[gpui::test]

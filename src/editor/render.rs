@@ -22,6 +22,10 @@ pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";
 /// Rows within this many pixels of the viewport stay mounted, so a fast flick
 /// paints them before they scroll in instead of showing a blank edge.
 const RENDER_OVERDRAW_PX: f32 = 800.0;
+/// 侧边栏收起后，贴住窗口左边缘多宽就算「想唤出侧边栏」。
+const SIDEBAR_AUTO_HIDE_EDGE_PX: f32 = 6.0;
+/// 活动栏（窄条）宽度，和 `render_activity_rail` 里的容器一致。
+const SIDEBAR_RAIL_WIDTH_PX: f32 = 50.0;
 
 /// 冷启动续挂的帧数上限：行高被低估时一帧挂不满视口，最多再排这么多帧，
 /// 避免估不准时每帧重排。8 帧 ≈ 130ms。
@@ -3208,22 +3212,67 @@ impl Render for Editor {
         };
         let workspace_width =
             self.current_workspace_panel_width(f32::from(window.viewport_size().width), cx);
-        let main_content = div()
+        let workspace_panel =
+            self.render_workspace_panel(&theme, &strings, workspace_width, window, cx);
+        let mut main_content = div()
             .w_full()
             .flex_1()
             .min_h(px(0.0))
             .pt(px(titlebar_height + menu_bar_height))
             .flex()
-            .min_w(px(0.0));
-        let main_content = main_content.child(self.render_activity_rail(&theme, cx));
-        let main_content = if let Some(workspace_panel) =
-            self.render_workspace_panel(&theme, &strings, workspace_width, window, cx)
-        {
-            main_content.child(workspace_panel)
+            .min_w(px(0.0))
+            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                // 指针跑到浮层右边的正文里就收回（浮层宽度 = 窄条 + 面板）。
+                if event.position.x > px(SIDEBAR_RAIL_WIDTH_PX + workspace_width) {
+                    this.set_sidebar_peek(false, cx);
+                }
+            }));
+        if self.workspace.is_open {
+            // 展开：窄条与面板占位，正文被挤到右边。
+            main_content = main_content.child(self.render_activity_rail(&theme, cx));
+            if let Some(workspace_panel) = workspace_panel {
+                main_content = main_content.child(workspace_panel);
+            }
+            main_content = main_content.child(content_area);
         } else {
-            main_content
-        };
-        let base = base.child(main_content.child(content_area));
+            // 收起：整条侧边栏不占布局，正文占满整宽。指针贴到左边缘时整条侧边栏作为
+            // 浮层滑出、盖在正文上（不挤压排版），移开收回。
+            main_content = main_content.child(content_area);
+            main_content = main_content.child(
+                div()
+                    .id("sidebar-auto-hide-edge")
+                    .debug_selector(|| "sidebar-auto-hide-edge".to_string())
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(SIDEBAR_AUTO_HIDE_EDGE_PX))
+                    .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                        if *hovered {
+                            this.set_sidebar_peek(true, cx);
+                        }
+                    })),
+            );
+            if let Some(workspace_panel) = workspace_panel {
+                let revealed = div()
+                    .id("sidebar-auto-hide-overlay")
+                    .debug_selector(|| "sidebar-auto-hide-overlay".to_string())
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    // 显式宽度：绝对定位下不给宽度会按父级拉伸，鼠标移到正文时仍算
+                    // 「在浮层内」，退出事件永远不触发。宽度 = 窄条 + 面板。
+                    .w(px(SIDEBAR_RAIL_WIDTH_PX + workspace_width))
+                    .flex()
+                    .border_r(px(1.0))
+                    .border_color(theme.colors.dialog_border)
+                    .child(self.render_activity_rail(&theme, cx))
+                    .child(workspace_panel);
+                main_content = main_content.child(revealed);
+            }
+        }
+        let base = base.child(main_content);
         let base = if let Some(status_bar) = self.render_status_bar(&theme, &strings, window, cx) {
             base.child(status_bar)
         } else {
