@@ -3,6 +3,8 @@
 use gpui::*;
 use unicode_segmentation::UnicodeSegmentation;
 
+const VIEW_SOURCE_ICON: &str = "icon/workspace/view-source.svg";
+
 use super::Editor;
 use crate::config::preferences::{StatusBarButton, StatusBarPreferences};
 use crate::i18n::I18nStrings;
@@ -247,24 +249,24 @@ impl Editor {
     fn render_view_mode_toggle(
         &mut self,
         theme: &Theme,
-        strings: &I18nStrings,
+        _strings: &I18nStrings,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
-        let d = &theme.dimensions;
-        let label = match self.view_mode {
-            super::ViewMode::Rendered => strings.view_mode_switch_to_source.clone(),
-            super::ViewMode::Source => strings.view_mode_switch_to_rendered.clone(),
-        };
         let editor = cx.entity().downgrade();
+        // 源码切换用 `</>` 图标而非文字（用户需求），颜色随悬停提亮。
         div()
             .id("status-bar-view-mode-toggle")
             .debug_selector(|| "status-bar-view-mode-toggle".to_string())
-            .text_size(px(d.status_bar_text_size))
             .text_color(c.status_bar_text_dim)
             .cursor_pointer()
             .hover(|this| this.text_color(c.status_bar_text))
-            .child(label)
+            .child(
+                svg()
+                    .path(VIEW_SOURCE_ICON)
+                    .size(px(14.0))
+                    .flex_shrink_0(),
+            )
             .on_click(move |_event, _window, cx| {
                 let _ = editor.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
             })
