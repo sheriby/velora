@@ -2554,14 +2554,6 @@ impl Render for Editor {
         if width_changed {
             self.row_stride_cache.clear();
             self.row_stride_width = Some(centered_width);
-            // 长行折叠块用定值 min_size 撑出横向滚动后，available 变成自身
-            // 宽度，容器宽只能在探针帧读到：宽度变化时给全部根块置脏，
-            // 下一帧重新学习换行参照宽。
-            for block in self.document.root_blocks() {
-                block.update(cx, |block, _block_cx| {
-                    block.wrap_container_width_dirty = true;
-                });
-            }
         }
 
         // The scroll container records every mounted child's layout bounds, so

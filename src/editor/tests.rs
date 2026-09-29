@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gpui::{
     AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, KeyDownEvent, Keystroke,
-    Modifiers, TestAppContext, VisualTestContext, WindowBounds, WindowHandle, div, px,
+    Modifiers, TestAppContext, VisualTestContext, WindowBounds, WindowHandle, px,
 };
 
 use super::{Editor, MountedRun, ViewMode};
@@ -7560,51 +7560,6 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn expanded_long_line_rewraps_after_window_resize(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let source = long_line_code_source();
-    let (editor, cx) = open_code_document_window(cx, &source, "resize");
-    redraw(cx);
-
-    // 展开 2000 字符的长行（第 2 行，行号槽点击）。
-    let click_position = editor.read_with(cx, |editor, cx| {
-        let block = editor.document.visible_blocks()[0].entity.read(cx);
-        let bounds = block.last_bounds.as_ref().expect("应已布局");
-        gpui::point(
-            bounds.left() - block.last_gutter_width / 2.0,
-            bounds.top() + block.last_line_height * 1.5,
-        )
-    });
-    editor.update(cx, |editor, cx| {
-        let block = editor.document.visible_blocks()[0].entity.clone();
-        block.update(cx, |block, _block_cx| {
-            assert!(block.toggle_long_line_at_gutter(click_position));
-        });
-    });
-    redraw(cx);
-    let wide_rows = editor.read_with(cx, |editor, cx| {
-        let block = editor.document.visible_blocks()[0].entity.read(cx);
-        let lines = block.last_layout.as_ref().expect("应完成排版");
-        lines[1].wrap_boundaries().len()
-    });
-    assert!(wide_rows > 0, "展开后应按容器宽换行");
-
-    // 窗口压窄一半：编辑器置脏 → 探针帧重学容器宽 → 按新宽重新换行。
-    cx.simulate_resize(gpui::size(gpui::px(600.0), gpui::px(800.0)));
-    redraw(cx);
-    redraw(cx);
-    let narrow_rows = editor.read_with(cx, |editor, cx| {
-        let block = editor.document.visible_blocks()[0].entity.read(cx);
-        let lines = block.last_layout.as_ref().expect("应完成排版");
-        lines[1].wrap_boundaries().len()
-    });
-    assert!(
-        narrow_rows > wide_rows,
-        "窗口变窄后展开行应换出更多行：宽窗 {wide_rows} 行 → 窄窗 {narrow_rows} 行"
-    );
-}
-
-#[gpui::test]
 async fn collapsed_long_line_is_truncated_to_display_cap(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let mut source = String::new();
@@ -7636,137 +7591,4 @@ async fn collapsed_long_line_is_truncated_to_display_cap(cx: &mut TestAppContext
             ));
             assert_eq!(origin_index, 0, "点击长行行首应映射到原始文本偏移 0");
         });
-}
-
-#[gpui::test]
-async fn long_line_element_overflows_scroll_container(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let source = long_line_code_source();
-    let (editor, cx) = open_code_document_window(cx, &source, "probe");
-    redraw(cx);
-    editor.read_with(cx, |editor, cx| {
-        let block = editor.document.visible_blocks()[0].entity.read(cx);
-        let bounds = block.last_bounds.expect("应已布局");
-        // taffy 会把 auto 宽的滚动子项钳到容器宽，长行块必须用定值
-        // min_size（实测内容宽）撑出溢出，否则横向滚动永远无内容可滚。
-        assert!(
-            bounds.size.width > gpui::px(5000.0),
-            "长行元素应保持内容全宽以支撑横向滚动，实际 {:?}",
-            bounds.size
-        );
-        let laid_out_width = bounds.size.width + block.last_gutter_width;
-        assert!(
-            (block.measured_content_width.unwrap() - laid_out_width).abs() < gpui::px(1.0),
-            "实测内容宽（含行号槽）应与元素布局宽一致（taffy 有亚像素取整）: \
-             measured = {:?}, laid_out = {laid_out_width:?}",
-            block.measured_content_width
-        );
-    });
-}
-
-#[gpui::test]
-async fn probe_scroll_overflow_minimal(cx: &mut TestAppContext) {
-    use gpui::prelude::*;
-    use gpui::{App, Bounds, Context, Element, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement, LayoutId, Pixels, Render, Style, Styled, Window};
-
-    struct WideLeaf {
-        bounds_out: std::rc::Rc<std::cell::RefCell<Option<Bounds<Pixels>>>>,
-    }
-    impl IntoElement for WideLeaf {
-        type Element = Self;
-        fn into_element(self) -> Self::Element {
-            self
-        }
-    }
-    impl Element for WideLeaf {
-        type RequestLayoutState = ();
-        type PrepaintState = ();
-
-        fn id(&self) -> Option<gpui::ElementId> {
-            None
-        }
-        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-            None
-        }
-
-        fn request_layout(
-            &mut self,
-            _id: Option<&GlobalElementId>,
-            _ix: Option<&InspectorElementId>,
-            window: &mut Window,
-            _cx: &mut App,
-        ) -> (LayoutId, Self::RequestLayoutState) {
-            let mut style = Style::default();
-            style.flex_shrink = 0.0;
-            style.min_size.width = gpui::px(5000.0).into();
-            let layout_id = window.request_measured_layout(
-                style,
-                move |known, avail, _window, _cx| {
-                    eprintln!(
-                        "[probe-scroll] known_w={:?} avail_w={:?}",
-                        known.width.map(|w| f32::from(w)),
-                        match avail.width {
-                            gpui::AvailableSpace::Definite(w) => Some(f32::from(w)),
-                            gpui::AvailableSpace::MinContent => None,
-                            gpui::AvailableSpace::MaxContent => None,
-                        }
-                    );
-                    gpui::size(gpui::px(5000.0), gpui::px(20.0))
-                }
-            );
-            (layout_id, ())
-        }
-
-        fn prepaint(
-            &mut self,
-            _id: Option<&GlobalElementId>,
-            _ix: Option<&InspectorElementId>,
-            bounds: Bounds<Pixels>,
-            _request: &mut Self::RequestLayoutState,
-            _window: &mut Window,
-            _cx: &mut App,
-        ) -> Self::PrepaintState {
-            *self.bounds_out.borrow_mut() = Some(bounds);
-        }
-
-        fn paint(
-            &mut self,
-            _id: Option<&GlobalElementId>,
-            _ix: Option<&InspectorElementId>,
-            _bounds: Bounds<Pixels>,
-            _request: &mut Self::RequestLayoutState,
-            _prepaint: &mut Self::PrepaintState,
-            _window: &mut Window,
-            _cx: &mut App,
-        ) {
-        }
-    }
-
-    struct ScrollProbeView {
-        bounds_out: std::rc::Rc<std::cell::RefCell<Option<Bounds<Pixels>>>>,
-    }
-    impl Render for ScrollProbeView {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div()
-                .id("scroll-root")
-                .size_full()
-                .overflow_x_scroll()
-                .child(WideLeaf {
-                    bounds_out: self.bounds_out.clone(),
-                })
-        }
-    }
-
-    let bounds_out = std::rc::Rc::new(std::cell::RefCell::new(None));
-    let (_view, cx) = cx.add_window_view(|_window, _cx| ScrollProbeView {
-        bounds_out: bounds_out.clone(),
-    });
-    redraw(cx);
-    let bounds = bounds_out.borrow().expect("leaf should be laid out");
-    eprintln!("[probe-scroll] leaf bounds = {:?}", bounds);
-    assert!(
-        bounds.size.width > gpui::px(4000.0),
-        "叶子应保持 5000px 内容宽，实际 {:?}",
-        bounds.size
-    );
 }

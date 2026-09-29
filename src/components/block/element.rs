@@ -1146,38 +1146,16 @@ impl Element for BlockTextElement {
         } else {
             None
         };
-        let long_line_mode = long_line_plan.is_some();
-        let (long_line_probe, measured_content_width, wrap_container_width) =
-            if long_line_mode {
-                input_entity.update(cx, |block, _block_cx| {
-                    (
-                        block.take_wrap_container_width_probe(),
-                        block.measured_content_width,
-                        block.wrap_container_width,
-                    )
-                })
-            } else {
-                (false, None, None)
-            };
 
         let shared_lines: Rc<RefCell<Option<std::sync::Arc<Vec<WrappedLine>>>>> =
             Rc::new(RefCell::new(None));
         let shared_lines_clone = shared_lines.clone();
 
         let mut layout_style = Style::default();
-        if long_line_mode {
-            // 长行不换行：内容比容器宽，靠横向滚动阅读。taffy 会把 auto 宽的
-            // 滚动子项钳到容器宽（flex_shrink=0 也拦不住，最小复现实测），
-            // 所以用「实测内容宽」当定值 min_size 撑出溢出。探针帧（编辑器
-            // 在窗口宽度变化后置脏）退回百分比——那一刻 available 就是容器
-            // 宽，measure 借此重新学习换行参照宽。
-            layout_style.flex_shrink = 0.0;
-            if long_line_probe || measured_content_width.is_none() {
-                layout_style.min_size.width = relative(1.).into();
-            } else {
-                layout_style.min_size.width =
-                    px(f32::from(measured_content_width.unwrap())).into();
-            }
+        if long_line_plan.is_some() {
+            // 长行不换行：内容可以比容器宽（横向滚动容器需要真实内容宽度），
+            // 但至少占满容器，保持和 width:100% 相同的常规块外观。
+            layout_style.min_size.width = relative(1.).into();
         } else {
             layout_style.size.width = relative(1.).into();
             layout_style.min_size.width = px(0.0).into();
@@ -1192,25 +1170,8 @@ impl Element for BlockTextElement {
                     AvailableSpace::MinContent => Some(px(1.0)),
                     AvailableSpace::MaxContent => Some(window.viewport_size().width.max(px(1.0))),
                 });
-                let mut text_wrap_width =
+                let text_wrap_width =
                     wrap_width.map(|width| (width - source_line_number_gutter_width).max(px(1.0)));
-                // 长行折叠模式：定值 min_size 会让 available 变成自身宽度
-                // （换行宽自引用）。换行参照宽只能来自探针帧的 available
-                // （那一刻 min_size 是百分比，available 就是容器宽）或上次
-                // 探针学到的值。
-                let mut learned_container_width: Option<Pixels> = None;
-                let mut wrap_container_width = wrap_container_width;
-                if long_line_mode
-                    && (long_line_probe || wrap_container_width.is_none())
-                    && let AvailableSpace::Definite(available_width) = available_space.width
-                {
-                    learned_container_width = Some(available_width);
-                    wrap_container_width = Some(available_width);
-                }
-                if long_line_mode && let Some(container_width) = wrap_container_width {
-                    text_wrap_width =
-                        Some((container_width - source_line_number_gutter_width).max(px(1.0)));
-                }
 
                 let mut key = memo_key_base;
                 key.wrap_width = text_wrap_width.map(|width| f32::from(width).to_bits());
@@ -1236,19 +1197,6 @@ impl Element for BlockTextElement {
                         total_size.width = total_size.width.max(ls.width);
                     }
                     total_size.width += source_line_number_gutter_width;
-                    if long_line_mode {
-                        if let Some(width) = learned_container_width {
-                            input_entity
-                                .update(closure_cx, |block, _block_cx| {
-                                    block.wrap_container_width = Some(width);
-                                });
-                        }
-                        input_entity.update(closure_cx, |block, block_cx| {
-                            if block.set_measured_content_width(total_size.width) {
-                                block_cx.notify();
-                            }
-                        });
-                    }
                     *shared_lines_clone.borrow_mut() = Some(lines);
                     return total_size;
                 }
@@ -1376,18 +1324,6 @@ impl Element for BlockTextElement {
                 }
                 total_size.width += source_line_number_gutter_width;
                 let lines = std::sync::Arc::new(lines);
-                if long_line_mode {
-                    if let Some(width) = learned_container_width {
-                        input_entity.update(closure_cx, |block, _block_cx| {
-                            block.wrap_container_width = Some(width);
-                        });
-                    }
-                    input_entity.update(closure_cx, |block, block_cx| {
-                        if block.set_measured_content_width(total_size.width) {
-                            block_cx.notify();
-                        }
-                    });
-                }
                 // 立即写入备忘：同一次布局内 taffy 可能多次 measure，
                 // 迟写会让每次 measure 都重新 shape。
                 input_entity.update(closure_cx, |block, _block_cx| {
