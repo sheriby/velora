@@ -1484,6 +1484,17 @@ impl Block {
             return;
         }
 
+        if event.click_count >= 2 && !event.modifiers.shift {
+            // 双击选词（用户要求）：选中所点的字词段。聚焦与不聚焦两个
+            // 分支都要处理——第一次单击只聚焦，第二次（已聚焦）才成词选。
+            self.is_selecting = true;
+            self.select_word_at(offset, cx);
+            if !was_focused {
+                cx.emit(BlockEvent::RequestFocus);
+            }
+            return;
+        }
+
         if was_focused {
             self.is_selecting = true;
             if event.modifiers.shift {
@@ -1496,6 +1507,33 @@ impl Block {
             self.move_to(offset, cx);
             cx.emit(BlockEvent::RequestFocus);
         }
+    }
+
+    /// 双击选词：选中 `offset` 所在的字词段（Unicode UAX#29 词边界：
+    /// 空白与标点各自成段，CJK 按字素分组）。
+    pub(crate) fn select_word_at(&mut self, offset: usize, cx: &mut Context<Self>) {
+        use unicode_segmentation::UnicodeSegmentation;
+        let text = self.display_text();
+        if text.is_empty() {
+            return;
+        }
+        let offset = offset.min(text.len());
+        let mut chosen: Option<(usize, usize)> = None;
+        for (start, segment) in text.split_word_bound_indices() {
+            let end = start + segment.len();
+            let contains = start <= offset && offset < end;
+            let at_tail = offset == text.len() && end == text.len();
+            if contains || at_tail {
+                chosen = Some((start, end));
+                break;
+            }
+        }
+        let Some((start, end)) = chosen else {
+            return;
+        };
+        self.selected_range = start..end;
+        self.selection_reversed = false;
+        cx.notify();
     }
 
     /// Resolve the inline link under a pointer position against the most recent

@@ -3233,3 +3233,35 @@ async fn table_header_cells_center_by_default_and_respect_explicit_alignment(
         assert_eq!(block.text_align(), gpui::TextAlign::Right);
     });
 }
+
+#[gpui::test]
+async fn double_click_selects_word_at_offset(cx: &mut TestAppContext) {
+    // 双击选词：拉丁词、CJK 分组、标点分段、行尾兜底。
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::plain("hello 世界, world"),
+            ),
+        )
+    });
+
+    // "hello 世界, world" 字节布局（UAX#29：CJK 单字成段）：
+    // hello=0..5, 世=6..9, 界=9..12, 逗号=12..13, world=14..19。
+    let mut select_at = |offset: usize| {
+        block.update(cx, |block, block_cx| {
+            block.select_word_at(offset, block_cx);
+            block.selected_range.clone()
+        })
+    };
+
+    assert_eq!(select_at(1), 0..5, "点 hello 中间应选中整个 hello");
+    assert_eq!(select_at(6), 6..9, "点 CJK 字符应选中该字");
+    assert_eq!(select_at(10), 9..12, "第二个 CJK 字同理");
+    assert_eq!(select_at(12), 12..13, "点标点应选中标点段");
+    assert_eq!(select_at(17), 14..19, "点 world 中间应选中 world");
+    assert_eq!(select_at(19), 14..19, "点文本末尾应选中最后一个词");
+    assert_eq!(select_at(1_000), 14..19, "超界偏移应收敛到最后一个词");
+}
