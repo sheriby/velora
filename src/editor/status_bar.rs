@@ -74,7 +74,7 @@ impl Editor {
         }
 
         // 右下角的模式切换按钮（用户需求：阅读时长信息换成源码切换）。
-        right_items.push(self.render_view_mode_toggle(theme, strings, cx));
+        right_items.push(self.render_view_mode_toggle(theme, cx));
 
         if self.long_source_block_hint(cx) {
             right_items.push(
@@ -243,29 +243,28 @@ fn render_word_count(
         .into_any_element()
 }
 
-/// 右下角的视图模式切换按钮：渲染态显示「切换到源码」，源码态显示
-/// 「切换到渲染」，点击即切换（用户需求）。
+/// 右下角的视图模式切换按钮：`</>` 图标，点击在渲染态/源码态之间切换（用户需求）。
 impl Editor {
-    fn render_view_mode_toggle(
-        &mut self,
-        theme: &Theme,
-        _strings: &I18nStrings,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_view_mode_toggle(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let c = &theme.colors;
         let editor = cx.entity().downgrade();
-        // 源码切换用 `</>` 图标而非文字（用户需求），颜色随悬停提亮。
+        // 图标颜色必须设在 svg 自身上：gpui 的 svg 元素只读自己的 style.text.color，
+        // 父容器的 text_color 不继承，漏设就一个像素都不画
+        // （docs/architecture/overview.md §GPUI 限制）。悬停提亮走 group_hover。
         div()
             .id("status-bar-view-mode-toggle")
             .debug_selector(|| "status-bar-view-mode-toggle".to_string())
-            .text_color(c.status_bar_text_dim)
+            .group("status-bar-view-mode-toggle")
             .cursor_pointer()
-            .hover(|this| this.text_color(c.status_bar_text))
             .child(
                 svg()
                     .path(VIEW_SOURCE_ICON)
                     .size(px(14.0))
-                    .flex_shrink_0(),
+                    .flex_shrink_0()
+                    .text_color(c.status_bar_text_dim)
+                    .group_hover("status-bar-view-mode-toggle", |this| {
+                        this.text_color(c.status_bar_text)
+                    }),
             )
             .on_click(move |_event, _window, cx| {
                 let _ = editor.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));

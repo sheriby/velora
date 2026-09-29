@@ -2059,6 +2059,32 @@ fn every_editor_window_removal_remembers_the_frame() {
     }
 }
 
+#[test]
+fn every_svg_icon_sets_its_own_text_color() {
+    // 状态栏的源码切换按钮换成 svg 图标后整块看不见：因为
+    // gpui 的 svg 元素只读自身 style.text.color，父容器 text_color 不继承
+    // （docs/architecture/overview.md §GPUI 限制）：漏设 ⇒ 一个像素都不画。
+    for (name, source) in [
+        ("status_bar.rs", include_str!("status_bar.rs")),
+        ("workspace.rs", include_str!("workspace.rs")),
+        ("window_chrome.rs", include_str!("../window_chrome.rs")),
+        (
+            "components/block/render.rs",
+            include_str!("../components/block/render.rs"),
+        ),
+    ] {
+        for (index, chain) in source.split("svg()").skip(1).enumerate() {
+            let chain = &chain[..chain.find(';').unwrap_or(chain.len())];
+            assert!(
+                chain.contains(".text_color("),
+                "{name} 第 {} 处 svg() 没有自己的 .text_color：\
+                 gpui 不从父容器继承文字色，图标会整块不渲染",
+                index + 1
+            );
+        }
+    }
+}
+
 #[gpui::test]
 async fn export_html_writes_rendered_document_without_changing_editor_state(
     cx: &mut TestAppContext,
