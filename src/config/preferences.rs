@@ -18,9 +18,9 @@ use crate::i18n::{I18nManager, language_id_for_locale_preferences};
 use crate::theme::{Theme, ThemeCatalogEntry, ThemeManager};
 use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar, velora_window_options};
 
-const DEFAULT_THEME_ID: &str = "system";
+const DEFAULT_THEME_ID: &str = "forest";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
-const PREFERENCES_VERSION: i64 = 2;
+const PREFERENCES_VERSION: i64 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FontPreferences {
@@ -1034,6 +1034,12 @@ fn load_preferences_from_toml_value(
         .unwrap_or_default();
     if version >= PREFERENCES_VERSION {
         return (preferences, false);
+    }
+
+    if version < 3 && preferences.default_theme_id == "system" {
+        // 「system」（跟随系统明暗）是 v2 之前的默认值，多数人没主动选过。默认主题改成
+        // Forest 后把它一起带过去，否则老配置看不到任何变化；想跟随系统的可以再选回来。
+        preferences.default_theme_id = DEFAULT_THEME_ID.into();
     }
 
     if version < 1 {
@@ -3914,7 +3920,7 @@ mod tests {
         let preferences =
             read_app_preferences_with_dirs(&dirs).expect("missing preferences should load");
         assert_eq!(preferences, AppPreferences::default());
-        assert_eq!(preferences.default_theme_id, "system");
+        assert_eq!(preferences.default_theme_id, "forest");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3940,20 +3946,20 @@ mod tests {
 
         let preferences =
             read_app_preferences_with_dirs(&dirs).expect("legacy preferences should migrate");
-        assert_eq!(preferences.default_theme_id, "system");
+        assert_eq!(preferences.default_theme_id, "forest");
         assert_eq!(
             preferences.image_paste_behavior,
             ImagePasteBehavior::CopyToAssetsFolder
         );
         let migrated_text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config should be migrated");
-        assert!(migrated_text.contains("preferences_version = 2"));
-        assert!(migrated_text.contains("default_theme_id = \"system\""));
+        assert!(migrated_text.contains("preferences_version = 3"));
+        assert!(migrated_text.contains("default_theme_id = \"forest\""));
         assert!(migrated_text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
 
         let current_preferences = migrated_text
             .replace(
-                "default_theme_id = \"system\"",
+                "default_theme_id = \"forest\"",
                 "default_theme_id = \"velora-dark\"",
             )
             .replace(
@@ -3966,6 +3972,59 @@ mod tests {
             .expect("versioned preferences should load without migration");
         assert_eq!(preferences.default_theme_id, "velora-dark");
         assert_eq!(preferences.image_paste_behavior, ImagePasteBehavior::None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn version_two_default_system_theme_migrates_to_forest() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-preferences-theme-default-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("temp root should exist");
+        let dirs = VeloraConfigDirs::from_root(&root);
+        std::fs::write(
+            dirs.app_config_file(),
+            r#"
+                preferences_version = 2
+
+                [theme]
+                default_theme_id = "system"
+
+                [editor]
+                markdown_font_family = "PingFang SC"
+            "#,
+        )
+        .expect("v2 preferences should be written");
+
+        let preferences = read_app_preferences_with_dirs(&dirs).expect("v2 preferences should load");
+        // 「system」是旧默认值，跟着新默认主题走；顺手确认其它设置没被这次迁移碰掉。
+        assert_eq!(preferences.default_theme_id, "forest");
+        assert_eq!(preferences.fonts.markdown_family, "PingFang SC");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicitly_chosen_theme_is_not_overwritten_by_default_theme() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-preferences-theme-explicit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("temp root should exist");
+        let dirs = VeloraConfigDirs::from_root(&root);
+        std::fs::write(
+            dirs.app_config_file(),
+            r#"
+                preferences_version = 2
+
+                [theme]
+                default_theme_id = "velora-light"
+            "#,
+        )
+        .expect("v2 preferences should be written");
+
+        let preferences = read_app_preferences_with_dirs(&dirs).expect("v2 preferences should load");
+        assert_eq!(preferences.default_theme_id, "velora-light");
         let _ = std::fs::remove_dir_all(root);
     }
 
