@@ -17,6 +17,7 @@ use crate::components::{
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
     QuitApplication, SaveDocument,
+    FileHistory,
     SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,
     ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UninstallCliTool, ZoomIn, ZoomOut,
@@ -687,6 +688,7 @@ fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindo
 fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
     action.as_any().is::<SaveDocument>()
         || action.as_any().is::<SaveDocumentAs>()
+        || action.as_any().is::<FileHistory>()
         || action.as_any().is::<ExportHtml>()
         || action.as_any().is::<ExportPdf>()
         || action.as_any().is::<ExportPng>()
@@ -1583,6 +1585,9 @@ pub(crate) fn init(cx: &mut App) {
     });
     cx.on_action(|_: &SaveDocumentAs, cx| {
         dispatch_menu_action(&SaveDocumentAs, cx);
+    });
+    cx.on_action(|_: &FileHistory, cx| {
+        dispatch_menu_action(&FileHistory, cx);
     });
     cx.on_action(|_: &ExportHtml, cx| {
         dispatch_menu_action(&ExportHtml, cx);
