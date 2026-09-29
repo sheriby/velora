@@ -70,6 +70,7 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 3. **debug_bounds 逐帧清理**：`Frame::clear` 清 debug_bounds（test 门控），防断言读到陈旧边界。
 4. **测试用真实平台 shaping**：`shape_line_with_platform_text_system`（macOS+test-support）。
 5. **Windows 着色器内嵌**：HLSL `include_str!` 进二进制，修交叉编译产物启动失败。
+6. **Windows 主线程任务泵限时**：`WindowsPlatformInner::run_foreground_task` 一次唤醒最多跑 10ms 主线程任务，跑满就把 `WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD` 重投一次（对齐上游 zed#43678）。原版用 `main_receiver.drain()` 把队列一次跑完，任务积压时 Windows 消息循环拿不到处理机会——原生文件对话框的模态循环靠它转，表现就是对话框卡住不响应。`WindowsPlatformInner` 因此多持一个 `platform_window_handle`（构造签名多一个 `HWND`）。
 
 ## 7. 脚本与资源
 

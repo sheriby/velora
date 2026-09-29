@@ -8,7 +8,7 @@
 - `main()`：解析 `-v/-h/-d(--detach)` + 文件/目录参数；macOS detach 会重新拉起自身。`Application::new().with_assets(VeloraAssets)`——SVG 图标按精确路径 `include_bytes!` 内嵌。
 - `app.run` 体内顺序：Dock 图标 → `config::load_or_create_app_preferences` → `I18nManager::init_with_language_id` → `ThemeManager::init_with_theme_id` → `EditorSettings::init` → `net::install_http_client` → `components::init_with_keybindings`。**菜单延迟 16ms 安装**（首帧后计时器，G5）。
 - 首窗口：无参数 → `restore_last_session`（session.json；活动标签同步开，其余每 16ms 一个）；否则 `open_startup_window`（尊重「打开上次文件」偏好，否则欢迎页）。随后 `restore_recovery_windows`（磁盘内容一致的快照跳过，否则合并/打开恢复窗口）。
-- 文件参数 → `open_editor_window`（app_menu.rs）：恢复并钳制窗口 frame → `Editor::from_file_source`；目录参数 → `open_workspace_window` + `set_workspace_root`。
+- 文件参数 → `open_editor_window`（app_menu.rs）：`restored_window_bounds` 恢复记住的 frame（并把所在显示器交给平台；不在任何屏上就搬回主屏、尺寸保留）→ `Editor::from_file_source`；目录参数 → `open_workspace_window` + `set_workspace_root`。开窗后装两个监听：`force_install_close_guard`（关窗前落盘 frame）与 `install_window_frame_recorder`（拖动/缩放即记 frame，500ms 防抖后台落盘）。
 - `VELORA_STARTUP_TIMING=1`：分阶段耗时到 stderr。
 
 ## 2. Workspace 是嵌入状态，不是独立实体

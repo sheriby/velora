@@ -70,32 +70,41 @@ struct RestoredWindow {
 }
 
 /// Opens an editor window for the given Markdown content and optional path.
-/// Restores the last window frame when remembering is enabled, clamped so
-/// the window stays reachable on the current displays; otherwise centers the
-/// default size.
+/// Restores the last window frame when remembering is enabled; centers the
+/// window (keeping the remembered size) when the open position is set to
+/// center; only falls back to the configured default size when no frame was
+/// remembered.
 fn restored_window_bounds(cx: &mut App) -> RestoredWindow {
     let (default_w, default_h) = crate::config::EditorSettings::default_window_size(cx);
     let default_size = size(px(default_w as f32), px(default_h as f32));
+    let frame = crate::config::saved_window_frame().ok().flatten();
+    let frame_size = frame.map(|frame| {
+        size(
+            px(frame.width as f32).max(px(480.0)),
+            px(frame.height as f32).max(px(320.0)),
+        )
+    });
+    // 「打开位置 = 居中打开」只改位置：大小仍用记住的 frame，「默认窗口尺寸」
+    // 只在没有记住 frame 时生效。之前这个模式把大小一起换成默认值，用户设了它
+    // 就永远开成默认大小——大小记忆看起来像坏了。
+    if crate::config::EditorSettings::window_open_position(cx)
+        == crate::config::WindowOpenPosition::Center
+    {
+        return RestoredWindow {
+            bounds: Bounds::centered(None, frame_size.unwrap_or(default_size), cx),
+            display_id: None,
+        };
+    }
     let centered = RestoredWindow {
         bounds: Bounds::centered(None, default_size, cx),
         display_id: None,
     };
-    // 「打开位置 = 居中打开」时忽略记住的 frame，按默认窗口尺寸居中，
-    // 让设置里的尺寸选项真正生效（用户报修：缺窗口位置/大小设置）。
-    if crate::config::EditorSettings::window_open_position(cx)
-        == crate::config::WindowOpenPosition::Center
-    {
-        return centered;
-    }
-    let Some(frame) = crate::config::saved_window_frame().ok().flatten() else {
+    let Some(frame) = frame else {
         return centered;
     };
     let mut bounds = Bounds::new(
         point(px(frame.x as f32), px(frame.y as f32)),
-        size(
-            px(frame.width as f32).max(px(480.0)),
-            px(frame.height as f32).max(px(320.0)),
-        ),
+        frame_size.expect("frame size was computed above"),
     );
     let center = bounds.center();
     // 记忆的 frame 还在某块屏上：原样恢复，并把该屏交给平台。

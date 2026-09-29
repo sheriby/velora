@@ -2022,9 +2022,8 @@ async fn resizing_the_window_records_the_frame_without_quitting(cx: &mut TestApp
 #[gpui::test]
 async fn window_open_position_setting_controls_how_windows_open(cx: &mut TestAppContext) {
     let (root, _root_guard) = isolated_window_frame_config("window-open-position");
-    // 用户报修：窗口位置与大小既记不住、也没有对应设置项。这里锁定设置语义：
-    // 「记住上次位置」恢复 frame；「居中打开」忽略 frame，按默认窗口尺寸在主屏居中
-    // （默认窗口尺寸由此真正生效）。
+    // 锁定设置语义：「记住上次位置」恢复 frame 的位置+大小；「居中打开」只把
+    // 位置居中，大小仍用记住的 frame；「默认窗口尺寸」只在没有记住 frame 时生效。
     init_editor_test_app(cx);
     crate::config::store_window_frame(crate::config::WindowFrame {
         x: 40,
@@ -2057,13 +2056,24 @@ async fn window_open_position_setting_controls_how_windows_open(cx: &mut TestApp
     });
     let centered = cx.update(|cx| crate::app_menu::open_editor_window(cx, String::new(), None));
     cx.run_until_parked();
-    // 测试平台主屏 1920×1080，默认窗口尺寸 1080×720 → 居中原点 (420, 180)。
+    // 测试平台主屏 1920×1080，记住的 frame 1000×700 → 居中原点 (460, 190)。
     assert_eq!(
         windowed_rect(&centered, cx),
-        (420, 180, 1080, 720),
-        "打开位置=居中打开 时应按默认窗口尺寸居中，忽略记住的 frame"
+        (460, 190, 1000, 700),
+        "打开位置=居中打开 时只居中位置，大小用记住的 frame"
     );
     let _ = fs::remove_dir_all(root);
+
+    // 没有记住 frame 时，「居中打开」才用「默认窗口尺寸」（1080×720 → (420, 180)）。
+    let (empty_root, _empty_root_guard) = isolated_window_frame_config("window-open-position-empty");
+    let fallback = cx.update(|cx| crate::app_menu::open_editor_window(cx, String::new(), None));
+    cx.run_until_parked();
+    assert_eq!(
+        windowed_rect(&fallback, cx),
+        (420, 180, 1080, 720),
+        "没有记住的 frame 时按默认窗口尺寸居中"
+    );
+    let _ = fs::remove_dir_all(empty_root);
 }
 
 #[gpui::test]

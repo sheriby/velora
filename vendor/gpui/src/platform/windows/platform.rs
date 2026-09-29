@@ -48,6 +48,9 @@ struct WindowsPlatformInner {
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
+    /// 本地补丁：任务唤醒消息的目标窗口（就是平台消息窗口本身），
+    /// `run_foreground_task` 把没跑完的任务重新投递时需要它。
+    platform_window_handle: HWND,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -675,7 +678,7 @@ impl Platform for WindowsPlatform {
 }
 
 impl WindowsPlatformInner {
-    fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
+    fn new(context: &mut PlatformWindowCreateContext, platform_window_handle: HWND) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsPlatformState::new(
             context.directx_devices.take().unwrap(),
         ));
@@ -684,6 +687,7 @@ impl WindowsPlatformInner {
             raw_window_handles: context.raw_window_handles.clone(),
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.take().unwrap(),
+            platform_window_handle,
         }))
     }
 
@@ -746,8 +750,32 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
+        // 本地补丁（对齐上游 zed#43678）：一次唤醒最多跑 10ms 主线程任务，然后把
+        // 唤醒消息重新投递，让 Windows 消息循环回到 GetMessage 有机会处理输入与
+        // 重绘。原版（drain 把队列一次跑完）在任务积压时会把消息循环饿死——
+        // 原生文件对话框的模态循环正是靠这条消息循环转起来的，表现就是对话框
+        // 卡住不响应（第一次开框队列是空的，所以第一次还好；之后队列带积压）。
+        const MAIN_TASK_BUDGET: std::time::Duration = std::time::Duration::from_millis(10);
+        let start = std::time::Instant::now();
+        loop {
+            if start.elapsed() >= MAIN_TASK_BUDGET {
+                unsafe {
+                    PostMessageW(
+                        Some(self.platform_window_handle),
+                        WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                        WPARAM(self.validation_number),
+                        LPARAM(0),
+                    )
+                    .log_err();
+                }
+                break;
+            }
+            match self.main_receiver.try_recv() {
+                Ok(runnable) => {
+                    runnable.run();
+                }
+                Err(_) => break,
+            }
         }
         Some(0)
     }
@@ -1115,7 +1143,7 @@ unsafe extern "system" fn window_procedure(
         let params = unsafe { &*params };
         let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
         let creation_context = unsafe { &mut *creation_context };
-        return match WindowsPlatformInner::new(creation_context) {
+        return match WindowsPlatformInner::new(creation_context, hwnd) {
             Ok(inner) => {
                 let weak = Box::new(Rc::downgrade(&inner));
                 unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
