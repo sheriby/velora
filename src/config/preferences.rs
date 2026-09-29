@@ -3572,9 +3572,12 @@ impl Render for PreferencesWindow {
                     .gap(px(d.dialog_gap))
                     .child(
                         div()
+                            .id("preferences-page-scroll")
+                            .debug_selector(|| "preferences-page-scroll".to_string())
                             .w_full()
                             .flex_1()
                             .min_h(px(0.0))
+                            .overflow_y_scroll()
                             .flex()
                             .flex_col()
                             .items_center()
@@ -4211,6 +4214,48 @@ mod tests {
             Some(&vec!["ctrl-alt-s".to_string()])
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn preferences_pages_render_inside_a_scroll_container(cx: &mut TestAppContext) {
+        // 用户报修（Windows）：偏好设置「文件」页内容超出窗口高度时无法滚动。
+        // 页面内容必须挂在 overflow_y_scroll 容器里。
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        cx.run_until_parked();
+
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+
+        handle
+            .update(cx, |preferences, _window, cx| {
+                preferences.nav = PreferencesNav::File;
+                cx.notify();
+            })
+            .expect("preferences window should update");
+        preferences_cx.run_until_parked();
+        assert!(
+            preferences_cx.debug_bounds("preferences-page-scroll").is_some(),
+            "偏好设置「文件」页应挂在可滚动容器里"
+        );
+
+        handle
+            .update(cx, |preferences, _window, cx| {
+                preferences.nav = PreferencesNav::Shortcuts;
+                cx.notify();
+            })
+            .expect("preferences window should update");
+        preferences_cx.run_until_parked();
+        assert!(
+            preferences_cx.debug_bounds("preferences-page-scroll").is_some(),
+            "快捷键页也应挂在滚动容器里"
+        );
     }
 
     #[gpui::test]
