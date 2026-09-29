@@ -20,10 +20,17 @@ impl Block {
             .table_cell_alignment()
             .unwrap_or(TableColumnAlignment::Default)
         {
+            // 表头默认居中（用户要求）；显式写了 `:---` / `---:` 的列仍以
+            // 语法为准。
+            TableColumnAlignment::Default if self.is_header_cell() => TextAlign::Center,
             TableColumnAlignment::Default | TableColumnAlignment::Left => TextAlign::Left,
             TableColumnAlignment::Center => TextAlign::Center,
             TableColumnAlignment::Right => TextAlign::Right,
         }
+    }
+
+    fn is_header_cell(&self) -> bool {
+        self.table_cell_position().is_some_and(|position| position.is_header())
     }
 
     pub(crate) fn set_table_cell_mode(

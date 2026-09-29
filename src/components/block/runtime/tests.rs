@@ -3181,3 +3181,55 @@ async fn typing_destination_into_empty_link_parens_keeps_caret_inside(cx: &mut T
         assert_eq!(block.selected_range, close..close);
     });
 }
+
+#[gpui::test]
+async fn table_header_cells_center_by_default_and_respect_explicit_alignment(
+    cx: &mut TestAppContext,
+) {
+    // 表头默认居中；显式对齐语法（:--- / :---: / ---:）优先。
+    use crate::components::TableColumnAlignment as Align;
+
+    let cx = cx.add_empty_window();
+    let make_cell = |cx: &mut gpui::VisualTestContext, row: usize, alignment| {
+        cx.new(|cx| {
+            let mut block = Block::with_record(
+                cx,
+                BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("单元格")),
+            );
+            block.set_table_cell_mode(
+                TableCellPosition { row, column: 0 },
+                alignment,
+            );
+            block
+        })
+    };
+    let header_default = make_cell(cx, 0, Align::Default);
+    let body_default = make_cell(cx, 1, Align::Default);
+    let header_explicit_left = make_cell(cx, 0, Align::Left);
+    let header_explicit_center = make_cell(cx, 0, Align::Center);
+    let header_explicit_right = make_cell(cx, 0, Align::Right);
+
+    header_default.read_with(cx, |block, _| {
+        assert_eq!(
+            block.text_align(),
+            gpui::TextAlign::Center,
+            "无对齐语法的表头应默认居中"
+        );
+    });
+    body_default.read_with(cx, |block, _| {
+        assert_eq!(block.text_align(), gpui::TextAlign::Left, "数据行默认左对齐");
+    });
+    header_explicit_left.read_with(cx, |block, _| {
+        assert_eq!(
+            block.text_align(),
+            gpui::TextAlign::Left,
+            "显式 :--- 的表头应保持左对齐"
+        );
+    });
+    header_explicit_center.read_with(cx, |block, _| {
+        assert_eq!(block.text_align(), gpui::TextAlign::Center);
+    });
+    header_explicit_right.read_with(cx, |block, _| {
+        assert_eq!(block.text_align(), gpui::TextAlign::Right);
+    });
+}
