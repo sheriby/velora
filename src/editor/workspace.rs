@@ -1688,7 +1688,10 @@ impl Editor {
 
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 手动切换后不再保留「贴边滑出」的浮层状态，避免收起时它立刻又冒出来。
+        // 收回动画同理：浮层要么被展开的抽屉取代、要么随收起直接消失，都不该
+        // 再挂着一个正在滑出的浮层。
         self.sidebar_peek = false;
+        self.sidebar_overlay_closing = false;
         if self.workspace.is_open {
             self.workspace.is_open = false;
         } else {
@@ -1703,18 +1706,46 @@ impl Editor {
 
     /// 收起状态下指针贴到窗口左边缘时的浮层开关。
     ///
-    /// 收起后整条侧边栏（窄条 + 面板）都不占布局，正文用满整宽；指针贴到左边缘约
-    /// 6px 时把整条侧边栏作为浮层滑出盖在正文上，指针移开就收回。展开状态下这个
-    /// 开关不生效（那时侧边栏本来就常驻）。
+    /// 收起后整条侧边栏（窄条 + 面板）都不占布局，正文用满整宽；指针在左边缘
+    /// 停留满 dwell（见 `SIDEBAR_PEEK_DWELL`）后整条侧边栏作为浮层带滑入动画
+    /// 盖在正文上，指针移开再带滑出动画收回。展开状态下这个开关不生效（那时
+    /// 侧边栏本来就常驻）。停留判定在贴边感应区的 hover 处理里。
+    ///
+    /// 收回动画期间浮层仍挂载，动画播完由定时器卸载；动画中途再次贴边会作废
+    /// 那枚定时器、重新播放滑入。
     pub(super) fn set_sidebar_peek(&mut self, peek: bool, cx: &mut Context<Self>) {
-        if self.workspace.is_open || self.sidebar_peek == peek {
+        if self.workspace.is_open {
             return;
         }
-        self.sidebar_peek = peek;
         if peek {
-            // 浮层里展示的还是那几棵树，进入时同步一次，和展开抽屉走同一条路径。
-            self.sync_workspace_models(cx);
+            // 已经完全滑出时无需重播；正在收回则取消收回、立即重新滑入。
+            if !self.sidebar_peek {
+                self.sidebar_peek = true;
+                // 浮层里展示的还是那几棵树，进入时同步一次，和展开抽屉走同一条路径。
+                self.sync_workspace_models(cx);
+                cx.notify();
+            }
+            self.sidebar_overlay_closing = false;
+            return;
         }
+        if !self.sidebar_peek {
+            return;
+        }
+        self.sidebar_peek = false;
+        self.sidebar_collapse_generation = self.sidebar_collapse_generation.wrapping_add(1);
+        let generation = self.sidebar_collapse_generation;
+        self.sidebar_overlay_closing = true;
+        let duration = super::render::SIDEBAR_SLIDE_DURATION;
+        cx.spawn(async move |editor, cx| {
+            cx.background_executor().timer(duration).await;
+            _ = editor.update(cx, |editor, cx| {
+                if editor.sidebar_collapse_generation == generation && !editor.sidebar_peek {
+                    editor.sidebar_overlay_closing = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -3870,10 +3901,12 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.workspace.is_open && !self.sidebar_peek {
+        if !self.workspace.is_open && !self.sidebar_peek && !self.sidebar_overlay_closing {
             // 侧栏收起也要同步文档大纲：块级 `[TOC]` 的条目来自这里，曾因
             // 「启动不展开侧边栏」回归成空目录（outline 按文档源去重，收起
             // 时每帧只付一次字符串比较）。文件树同步仍留给打开的抽屉。
+            // 收回动画期间面板要继续渲染（浮层还在滑出），所以只在完全
+            // 静止的收起状态才早退。
             self.sync_workspace_outline(cx);
             return None;
         }
@@ -4715,8 +4748,9 @@ impl Editor {
                         // 三个按钮一致：已经开在这一页时再点一次就收起侧边栏
                         // （之前只有文件和搜索会收，大纲那个参数写的是 false）。
                         // 手动切换后不要留下「贴边滑出」的状态：收起时它会让浮层
-                        // 立刻又冒出来，展开时也不需要它。
+                        // 立刻又冒出来，展开时也不需要它；收回动画同理一并清掉。
                         editor.sidebar_peek = false;
+                        editor.sidebar_overlay_closing = false;
                         if editor.workspace.is_open && editor.workspace.active_tab == tab {
                             editor.workspace.is_open = false;
                             cx.notify();
@@ -7592,12 +7626,19 @@ mod tests {
             ("activity-search", super::WorkspaceTab::Search),
             ("activity-outline", super::WorkspaceTab::Outline),
         ] {
-            // 贴左边缘把整条侧边栏（含窄条）作为浮层唤出。
+            // 贴左边缘并停留满 dwell 唤出浮层；滑入动画按真实时间计时
+            // （AnimationElement 用 Instant，测试时钟推不动），再等动画播完、
+            // 浮层停在 x=0 后按钮位置才可点。
             cx.simulate_mouse_move(
                 gpui::point(px(2.0), px(200.0)),
                 gpui::MouseButton::Left,
                 Modifiers::none(),
             );
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.executor().advance_clock(std::time::Duration::from_millis(400));
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear());
+            std::thread::sleep(std::time::Duration::from_millis(450));
             cx.update(|window, cx| window.draw(cx).clear());
             let bounds = cx
                 .debug_bounds(id)
@@ -7627,12 +7668,18 @@ mod tests {
                 "收起后窄条应一起隐藏，等指针贴左边缘才滑出"
             );
 
-            // 第三次点：重新展开（同一个按钮能反复切）。
+            // 第三次点：重新展开（同一个按钮能反复切）。同样停留唤出、等滑入
+            // 动画播完后再点。
             cx.simulate_mouse_move(
                 gpui::point(px(2.0), px(200.0)),
                 gpui::MouseButton::Left,
                 Modifiers::none(),
             );
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.executor().advance_clock(std::time::Duration::from_millis(400));
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear());
+            std::thread::sleep(std::time::Duration::from_millis(450));
             cx.update(|window, cx| window.draw(cx).clear());
             let bounds = cx
                 .debug_bounds(id)
@@ -7647,6 +7694,7 @@ mod tests {
             editor.update(cx, |editor, _cx| {
                 editor.workspace.is_open = false;
                 editor.sidebar_peek = false;
+                editor.sidebar_overlay_closing = false;
             });
             cx.update(|window, cx| window.draw(cx).clear());
         }
@@ -7679,23 +7727,35 @@ mod tests {
             "收起状态整条侧边栏（含窄条）不占位"
         );
 
-        // 指针贴到左边缘：整条侧边栏（窄条 + 面板）作为浮层滑出。
+        // 指针贴到左边缘并停留满 dwell：整条侧边栏（窄条 + 面板）作为浮层出现。
         cx.simulate_mouse_move(
             gpui::point(px(2.0), px(200.0)),
             gpui::MouseButton::Left,
             Modifiers::none(),
         );
         cx.update(|window, cx| window.draw(cx).clear());
+        cx.executor().advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        let titlebar_bottom = cx
+            .debug_bounds("editor-titlebar")
+            .map(|bounds| bounds.origin.y + bounds.size.height)
+            .unwrap_or(px(0.0));
+        let overlay = cx
+            .debug_bounds("sidebar-auto-hide-overlay")
+            .expect("贴左边缘应滑出浮层");
         assert!(
-            cx.debug_bounds("sidebar-auto-hide-overlay").is_some(),
-            "贴左边缘应滑出浮层"
+            overlay.origin.y >= titlebar_bottom,
+            "浮层顶边必须从标题栏下方开始（y = {:?}，标题栏底 = {titlebar_bottom:?}），\
+             否则会盖住红绿灯和标签栏",
+            overlay.origin.y
         );
         assert!(
             cx.debug_bounds("activity-files").is_some(),
             "浮层里应包含窄条按钮"
         );
 
-        // 指针移到正文：浮层收回。
+        // 指针移到正文：浮层带动画收回。动画期间仍挂载，播完（定时器收尾）才卸载。
         cx.simulate_mouse_move(
             gpui::point(px(700.0), px(200.0)),
             gpui::MouseButton::Left,
@@ -7704,9 +7764,160 @@ mod tests {
         // 悬停命中按上一帧的 hitbox 计算，退出事件要下一帧才派发。
         cx.update(|window, cx| window.draw(cx).clear());
         cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert!(!editor.sidebar_peek, "指针移开后贴边状态应结束");
+            assert!(
+                editor.sidebar_overlay_closing,
+                "移开后应先播放收回动画而不是瞬间消失"
+            );
+        });
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_some(),
+            "收回动画期间浮层仍在滑出，不该瞬间消失"
+        );
+        // 动画时长（350ms）走完后，定时器把浮层真正卸载。
+        cx.executor().advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
         assert!(
             cx.debug_bounds("sidebar-auto-hide-overlay").is_none(),
-            "指针移开应收起浮层"
+            "收回动画播完应收起浮层"
+        );
+    }
+
+    #[gpui::test]
+    async fn sidebar_collapse_timer_does_not_cut_a_second_slide_out(
+        cx: &mut TestAppContext,
+    ) {
+        // 快速「贴边 → 移开 → 再贴边 → 再移开」：第一轮收回的定时器到点时，
+        // 第二轮收回动画还在播。旧定时器必须因 generation 变化作废，否则会把
+        // 第二轮浮层半路砍掉、看起来瞬间消失。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.update(cx, |editor, _| {
+            editor.workspace.is_open = false;
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        // 第一轮：贴边停留唤出，随即移开进入收回动画（定时器在测试时钟
+        // T+400+350=750ms 到点）。
+        cx.simulate_mouse_move(
+            gpui::point(px(2.0), px(200.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.executor().advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_move(
+            gpui::point(px(700.0), px(200.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.executor().advance_clock(std::time::Duration::from_millis(100));
+
+        // 第二轮收回。停留判定下真实「再贴边」走不完 dwell 就会被第一轮定时器
+        // 赶上，所以像抽屉切换路径那样直写状态置回贴边，再移开触发第二轮
+        // （新定时器 T+500+350=850ms 到点）。
+        editor.update(cx, |editor, _cx| {
+            editor.sidebar_peek = true;
+            editor.sidebar_overlay_closing = false;
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_move(
+            gpui::point(px(700.0), px(200.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        // 推到 T+800ms：旧定时器（750ms）到点，但 generation 已变，不得动状态；
+        // 新定时器（850ms）还没到。
+        cx.executor().advance_clock(std::time::Duration::from_millis(300));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor.sidebar_overlay_closing,
+                "旧定时器到点不能终止第二轮收回动画"
+            );
+        });
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_some(),
+            "第二轮收回动画应完整播完，不被旧定时器半路砍掉"
+        );
+
+        // 推到 T+900ms：新一轮定时器到点，浮层才真正卸载。
+        cx.executor().advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_none(),
+            "新一轮收回动画播完应收起浮层"
+        );
+    }
+
+    #[gpui::test]
+    async fn sidebar_edge_hover_must_dwell_before_peeking(cx: &mut TestAppContext) {
+        // 防误触：贴边必须停留满 dwell 才唤出；扫过左缘不停留不弹，
+        // 移开后旧的停留定时器到点也不许再弹。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.update(cx, |editor, _| {
+            editor.workspace.is_open = false;
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        // 贴边但停留不足 dwell（300ms 只推 200ms）：不唤出。
+        cx.simulate_mouse_move(
+            gpui::point(px(2.0), px(200.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.executor().advance_clock(std::time::Duration::from_millis(200));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert!(!editor.sidebar_peek, "停留不满 dwell 不应唤出浮层");
+        });
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_none(),
+            "停留不满 dwell 不应出现浮层"
+        );
+
+        // 移开：挂着的停留定时器被作废，到点也不许再弹。
+        cx.simulate_mouse_move(
+            gpui::point(px(700.0), px(200.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.executor().advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert!(!editor.sidebar_peek, "移开后旧停留定时器不应唤出浮层");
+        });
+        assert!(
+            cx.debug_bounds("sidebar-auto-hide-overlay").is_none(),
+            "移开后旧停留定时器不应弹出浮层"
         );
     }
 

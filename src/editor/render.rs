@@ -23,9 +23,14 @@ pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";
 /// paints them before they scroll in instead of showing a blank edge.
 const RENDER_OVERDRAW_PX: f32 = 800.0;
 /// 侧边栏收起后，贴住窗口左边缘多宽就算「想唤出侧边栏」。
-const SIDEBAR_AUTO_HIDE_EDGE_PX: f32 = 6.0;
+const SIDEBAR_AUTO_HIDE_EDGE_PX: f32 = 15.0;
 /// 活动栏（窄条）宽度，和 `render_activity_rail` 里的容器一致。
 const SIDEBAR_RAIL_WIDTH_PX: f32 = 50.0;
+/// 唤出滑入 + 收回滑出共用的动画时长；workspace.rs 的收回定时器用同一值
+/// 收尾卸载。
+pub(super) const SIDEBAR_SLIDE_DURATION: Duration = Duration::from_millis(350);
+/// 贴边后必须停留满这段时长才唤出浮层：扫过左缘不停留不弹，防误触。
+pub(super) const SIDEBAR_PEEK_DWELL: Duration = Duration::from_millis(300);
 
 /// 冷启动续挂的帧数上限：行高被低估时一帧挂不满视口，最多再排这么多帧，
 /// 避免估不准时每帧重排。8 帧 ≈ 130ms。
@@ -3236,7 +3241,10 @@ impl Render for Editor {
             main_content = main_content.child(content_area);
         } else {
             // 收起：整条侧边栏不占布局，正文占满整宽。指针贴到左边缘时整条侧边栏作为
-            // 浮层滑出、盖在正文上（不挤压排版），移开收回。
+            // 浮层滑出、盖在正文上（不挤压排版），移开带动画收回。顶边和展开时对齐
+            // （标题栏 + 菜单栏之下），否则浮层会从窗口最顶上冒出来，盖住红绿灯和
+            // 标签栏。
+            let sidebar_top = px(titlebar_height + menu_bar_height);
             main_content = main_content.child(content_area);
             main_content = main_content.child(
                 div()
@@ -3244,32 +3252,71 @@ impl Render for Editor {
                     .debug_selector(|| "sidebar-auto-hide-edge".to_string())
                     .absolute()
                     .left_0()
-                    .top_0()
+                    .top(sidebar_top)
                     .bottom_0()
                     .w(px(SIDEBAR_AUTO_HIDE_EDGE_PX))
                     .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                        // 进出贴边区都先递增 generation 作废挂着的停留定时器：
+                        // 进入时换发新定时器，停留满才唤出；离开/再进入则让旧
+                        // 定时器到点也不生效（防误触，见 SIDEBAR_PEEK_DWELL）。
+                        this.sidebar_edge_dwell_generation =
+                            this.sidebar_edge_dwell_generation.wrapping_add(1);
                         if *hovered {
-                            this.set_sidebar_peek(true, cx);
+                            let generation = this.sidebar_edge_dwell_generation;
+                            let dwell = super::render::SIDEBAR_PEEK_DWELL;
+                            cx.spawn(async move |editor, cx| {
+                                cx.background_executor().timer(dwell).await;
+                                _ = editor.update(cx, |editor, cx| {
+                                    if editor.sidebar_edge_dwell_generation == generation {
+                                        editor.set_sidebar_peek(true, cx);
+                                    }
+                                });
+                            })
+                            .detach();
                         }
                     })),
             );
             if let Some(workspace_panel) = workspace_panel {
-                let revealed = div()
+                let overlay_width = px(SIDEBAR_RAIL_WIDTH_PX + workspace_width);
+                let overlay = div()
                     .id("sidebar-auto-hide-overlay")
                     .debug_selector(|| "sidebar-auto-hide-overlay".to_string())
                     .absolute()
                     .left_0()
-                    .top_0()
+                    .top(sidebar_top)
                     .bottom_0()
                     // 显式宽度：绝对定位下不给宽度会按父级拉伸，鼠标移到正文时仍算
                     // 「在浮层内」，退出事件永远不触发。宽度 = 窄条 + 面板。
-                    .w(px(SIDEBAR_RAIL_WIDTH_PX + workspace_width))
+                    .w(overlay_width)
                     .flex()
                     .border_r(px(1.0))
                     .border_color(theme.colors.dialog_border)
                     .child(self.render_activity_rail(&theme, cx))
                     .child(workspace_panel);
-                main_content = main_content.child(revealed);
+                // 唤出滑入 / 收回滑出都用负 left 把浮层整体推到左边界外：
+                // `with_animation` 在元素每次挂载时从头播放（滑入/滑出是两个
+                // 不同 id 的包装，切换状态即重播），动画结束后每帧按 delta=1
+                // 收敛在终态。收回动画期间（sidebar_overlay_closing）浮层仍
+                // 挂载，播完由 workspace.rs 的定时器卸载。
+                let layer = if self.sidebar_peek {
+                    overlay
+                        .with_animation(
+                            "sidebar-overlay-slide-in",
+                            Animation::new(SIDEBAR_SLIDE_DURATION).with_easing(ease_out_quint()),
+                            move |slide, delta| slide.left(overlay_width * (delta - 1.0)),
+                        )
+                        .into_any_element()
+                } else {
+                    debug_assert!(self.sidebar_overlay_closing, "面板此时只应随动画挂载");
+                    overlay
+                        .with_animation(
+                            "sidebar-overlay-slide-out",
+                            Animation::new(SIDEBAR_SLIDE_DURATION).with_easing(quadratic),
+                            move |slide, delta| slide.left(-overlay_width * delta),
+                        )
+                        .into_any_element()
+                };
+                main_content = main_content.child(layer);
             }
         }
         let base = base.child(main_content);
