@@ -1153,8 +1153,8 @@ impl Element for BlockTextElement {
 
         let mut layout_style = Style::default();
         if long_line_plan.is_some() {
-            // 长行不换行：内容可以比容器宽（横向滚动容器需要真实内容宽度），
-            // 但至少占满容器，保持和 width:100% 相同的常规块外观。
+            // 长行不换行：块宽保持容器宽，超出部分由外层 overflow_hidden
+            // 裁切显示（定版：不允许横向滚动）。
             layout_style.min_size.width = relative(1.).into();
         } else {
             layout_style.size.width = relative(1.).into();
@@ -1200,9 +1200,10 @@ impl Element for BlockTextElement {
                     *shared_lines_clone.borrow_mut() = Some(lines);
                     return total_size;
                 }
-                // 有超长行时按行 shape：折叠的超长行不换行（横向滚动阅读，
-                // 单行占一个 WrappedLine 条目，块高度不再爆炸），其余行照常
-                // 按容器宽换行。没有超长行时保持整块一次 shape 的原路径。
+                // 有超长行时按行 shape：折叠的超长行不换行（单行占一个
+                // WrappedLine 条目，块高度不再爆炸，超出部分裁切显示），
+                // 其余行照常按容器宽换行。没有超长行时保持整块一次 shape
+                // 的原路径。
                 let mut lines: Vec<WrappedLine> =
                     if let Some(plan) = long_line_plan
                         .as_ref()

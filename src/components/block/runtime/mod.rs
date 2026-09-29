@@ -194,7 +194,7 @@ pub struct Block {
     /// 缓存，文本变化时由下次布局重算（element 布局时读取）。
     pub(crate) long_line_plan: Option<(u64, std::sync::Arc<LongLinePlan>)>,
     /// 超长行的展开状态（块内源行下标）。展开 = 该行按容器宽换行；
-    /// 折叠 = 单行不换行，横向滚动阅读。
+    /// 折叠 = 单行不换行，超出部分裁切显示（不允许横向滚动）。
     pub(crate) expanded_long_lines: std::collections::BTreeSet<usize>,
     /// 展开/收起长行时递增：进 shape 备忘键（两种状态的换行结果不同）。
     long_line_wrap_generation: u64,

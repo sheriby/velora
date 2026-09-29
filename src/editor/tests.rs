@@ -7560,6 +7560,51 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn collapsed_long_line_has_no_horizontal_scrolling(cx: &mut TestAppContext) {
+    // 用户定版行为：折叠单行不许横向滚动，超出部分直接裁切，只能点行号展开。
+    init_editor_test_app(cx);
+    let source = long_line_code_source();
+    let (editor, cx) = open_code_document_window(cx, &source, "noscroll");
+    redraw(cx);
+
+    // 整个文档树里不应存在任何代码块的横向滚动容器。
+    let block_ids = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.entity_id())
+            .collect::<Vec<_>>()
+    });
+    let mut scroll_containers = 0;
+    for id in block_ids {
+        // debug_bounds 只收 'static 选择器，测试里泄漏这几个短字符串无妨。
+        let code_sel: &'static str = Box::leak(format!("code-x-scroll-{id}").into_boxed_str());
+        let source_sel: &'static str = Box::leak(format!("source-x-scroll-{id}").into_boxed_str());
+        if cx.debug_bounds(code_sel).is_some() || cx.debug_bounds(source_sel).is_some() {
+            scroll_containers += 1;
+        }
+    }
+    assert_eq!(scroll_containers, 0, "折叠单行不允许横向滚动：不应有横滚容器");
+
+    // 文本元素宽度被钳在容器宽内（不溢出），行依然单行不换行。
+    editor.read_with(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.read(cx);
+        let lines = block.last_layout.as_ref().expect("应完成排版");
+        assert!(
+            lines[1].wrap_boundaries().is_empty(),
+            "折叠行必须保持单行"
+        );
+        let bounds = block.last_bounds.as_ref().expect("应已布局");
+        assert!(
+            bounds.size.width < gpui::px(2500.0),
+            "文本区应被钳在容器宽内（裁切显示），实际 {:?}",
+            bounds.size
+        );
+    });
+}
+
+#[gpui::test]
 async fn collapsed_long_line_is_truncated_to_display_cap(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let mut source = String::new();
