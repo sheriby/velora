@@ -1009,6 +1009,25 @@ fn run_file_dialog_body<T: Send + 'static>(
     result
 }
 
+/// 把一个目录变成壳层认得的 `IShellItem`。
+///
+/// `canonicalize()` 的结果带 `\\?\` 前缀（ `SanitizedPath` 去的就是它），而壳层认不出
+/// 那种路径。目录不存在或解析失败就返回 `None`——对话框照常打开、只是从平台默认位置
+/// 开始，不该因为一个起始目录把整个对话框弄没。
+fn shell_folder_item(directory: &Path) -> Option<IShellItem> {
+    if directory.as_os_str().is_empty() {
+        return None;
+    }
+    let full_path = directory
+        .canonicalize()
+        .context("failed to canonicalize directory")
+        .log_err()?;
+    let full_path = SanitizedPath::new(&full_path);
+    unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path.to_string()), None) }
+        .context("failed to create a shell item for the dialog folder")
+        .log_err()
+}
+
 fn file_open_dialog(
     options: PathPromptOptions,
     window: Option<HWND>,
@@ -1027,6 +1046,16 @@ fn file_open_dialog(
     unsafe {
         folder_dialog.SetClientGuid(&VELORA_FILE_DIALOG_CLIENT_GUID)?;
         folder_dialog.SetOptions(dialog_options)?;
+
+        // 本地补丁：显式指定起始目录（见 `PathPromptOptions::directory`）。Windows 上
+        // `SetFolder` 总是覆盖壳层记住的上次位置，所以它不会再去探一个可能已不可达的
+        // 旧位置（那正是十几秒不出窗口的一类原因）。
+        if let Some(folder) = options.directory.as_deref().and_then(shell_folder_item) {
+            folder_dialog
+                .SetFolder(&folder)
+                .context("failed to set dialog folder")
+                .log_err();
+        }
 
         if let Some(prompt) = options.prompt {
             let prompt: &str = &prompt;
@@ -1066,19 +1095,10 @@ fn file_save_dialog(
 ) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     unsafe { dialog.SetClientGuid(&VELORA_FILE_DIALOG_CLIENT_GUID)? };
-    if !directory.to_string_lossy().is_empty()
-        && let Some(full_path) = directory
-            .canonicalize()
-            .context("failed to canonicalize directory")
-            .log_err()
-    {
-        let full_path = SanitizedPath::new(&full_path);
-        let full_path_string = full_path.to_string();
-        let path_item: IShellItem =
-            unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
+    if let Some(folder) = shell_folder_item(&directory) {
         unsafe {
             dialog
-                .SetFolder(&path_item)
+                .SetFolder(&folder)
                 .context("failed to set dialog folder")
                 .log_err()
         };

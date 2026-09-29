@@ -1394,6 +1394,12 @@ pub struct PathPromptOptions {
     pub multiple: bool,
     /// The prompt to show to a user when selecting a path
     pub prompt: Option<SharedString>,
+
+    /// 起始目录（本地补丁）。`None` 交给各平台自己的默认行为——Windows 上是壳层记住
+    /// 的上次位置，可能指向一个已不可达的网络位置，显示前要先去探它，卡住时十几秒
+    /// 不出对话框。给了就用它，且总是覆盖记住的位置：Windows `IFileDialog::SetFolder`、
+    /// macOS `NSOpenPanel.directoryURL`、Linux portal `current_folder`。
+    pub directory: Option<PathBuf>,
 }
 
 /// What kind of prompt styling to show

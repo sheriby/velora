@@ -152,10 +152,20 @@ impl VeloraConfigDirs {
     }
 }
 
+/// 「导入主题/语言配置」对话框的起始目录：velora 自己的配置子目录。目录不存在就
+/// 先建出来，否则壳层会退回它自己的默认位置（那就白搭了）。
+/// 见 `PathPromptOptions::directory`。
+pub(crate) fn config_dialog_start_dir(
+    pick: impl FnOnce(&VeloraConfigDirs) -> PathBuf,
+) -> Option<PathBuf> {
+    let dir = pick(&VeloraConfigDirs::from_system().ok()?);
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir)
+}
+
 pub(crate) fn read_recent_files() -> anyhow::Result<Vec<PathBuf>> {
     read_recent_files_with_dirs(&VeloraConfigDirs::from_system()?)
 }
-
 pub(crate) fn record_recent_file(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     record_recent_file_with_dirs(path, &VeloraConfigDirs::from_system()?)
 }

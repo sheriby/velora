@@ -309,15 +309,22 @@ impl<P: LinuxClient + 'static> Platform for P {
                     "Open File"
                 };
 
-                let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
+                let mut request_builder = ashpd::desktop::file_chooser::OpenFileRequest::default()
                     .identifier(identifier.await)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
                     .multiple(options.multiple)
-                    .directory(options.directories)
-                    .send()
-                    .await
+                    .directory(options.directories);
+                // 本地补丁：起始目录（见 `PathPromptOptions::directory`）。
+                let request_builder = match options.directory.clone() {
+                    Some(directory) => request_builder
+                        .current_folder(directory)
+                        .expect("pathbuf should not be nul terminated"),
+                    None => request_builder,
+                };
+
+                let request = match request_builder.send().await
                 {
                     Ok(request) => request,
                     Err(err) => {

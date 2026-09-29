@@ -24,6 +24,7 @@ use crate::components::{
 };
 use crate::config::{
     RecoverySnapshot, apply_configured_language, apply_configured_theme,
+    config_dialog_start_dir,
     import_language_config_and_select, import_theme_config_and_select, open_preferences_window,
     read_recent_folders, read_session, record_recent_file,
     remove_recent_file,
@@ -1287,11 +1288,20 @@ fn prompt_and_open_files_with_error_window(cx: &mut App, error_window: Option<An
         .strings()
         .open_markdown_files_prompt
         .clone();
+    // 起始目录＝当前工作区根（或当前文件所在目录）。见 `PathPromptOptions::directory`：
+    // 不指定时 Windows 壳层会回到它记住的上次位置，可能是一个已不可达的网络位置。
+    let start_dir = editor_window_for_folder_open(cx).and_then(|window| {
+        window
+            .update(cx, |editor, _window, _cx| editor.open_dialog_start_dir())
+            .ok()
+            .flatten()
+    });
     let prompt = cx.prompt_for_paths(PathPromptOptions {
         files: true,
         directories: true,
         multiple: true,
         prompt: Some(prompt_title.into()),
+        directory: start_dir,
     });
 
     cx.spawn(async move |cx| match prompt.await {
@@ -1360,11 +1370,13 @@ fn prompt_and_import_language_config_with_error_window(
         .strings()
         .add_language_config_prompt
         .clone();
+    let start_dir = config_dialog_start_dir(|dirs| dirs.languages_dir());
     let prompt = cx.prompt_for_paths(PathPromptOptions {
         files: true,
         directories: false,
         multiple: false,
         prompt: Some(prompt_title.into()),
+        directory: start_dir,
     });
 
     cx.spawn(async move |cx| match prompt.await {
@@ -1420,11 +1432,13 @@ fn prompt_and_import_theme_config_with_error_window(
         .strings()
         .add_theme_config_prompt
         .clone();
+    let start_dir = config_dialog_start_dir(|dirs| dirs.themes_dir());
     let prompt = cx.prompt_for_paths(PathPromptOptions {
         files: true,
         directories: false,
         multiple: false,
         prompt: Some(prompt_title.into()),
+        directory: start_dir,
     });
 
     cx.spawn(async move |cx| match prompt.await {

@@ -707,6 +707,15 @@ impl Editor {
         self.workspace.root.as_deref()
     }
 
+    /// 原生「打开文件」对话框的起始目录：优先工作区根，其次当前文件所在目录。
+    /// 见 `PathPromptOptions::directory`——给了目录，Windows 上壳层就不会回到它记住的
+    /// 上次位置（可能已不可达，显示前会卡在那里）。
+    pub(crate) fn open_dialog_start_dir(&self) -> Option<PathBuf> {
+        self.workspace_root_path()
+            .map(Path::to_path_buf)
+            .or_else(|| self.workspace_root_for_current_file())
+    }
+
     /// All markdown/code files of the workspace tree, for the quick switcher.
     pub(super) fn workspace_text_files(&self) -> Vec<PathBuf> {
         self.workspace
