@@ -200,6 +200,14 @@ pub struct Block {
     long_line_wrap_generation: u64,
     /// 最近一次 paint 的行号槽宽度（带行号的块才有）；行号点击判定用。
     pub(crate) last_gutter_width: Pixels,
+    /// 元素实测的内容宽度（含行号槽）：长行折叠模式用它给元素定 min_size。
+    /// taffy 会把 auto 宽的滚动子项钳到容器宽，只有定值 min 才能溢出滚动。
+    pub(crate) measured_content_width: Option<Pixels>,
+    /// 换行参照容器宽。定值 min_size 会让 available 变成自身宽度，容器宽
+    /// 只能在探针帧（min_size 退回百分比）读到并缓存在这里。
+    pub(crate) wrap_container_width: Option<Pixels>,
+    /// 编辑器在窗口宽度变化时置脏：元素下一帧进入探针重新学习容器宽。
+    pub(crate) wrap_container_width_dirty: bool,
     /// 表格列宽备忘（性能）：`TableColumnLayout::measure` 会对每格做 no-wrap
     /// shape_text，此前每帧全量重测；命中键时整帧零 shape。表内容或键变化
     /// 时失效。
@@ -329,6 +337,9 @@ impl Block {
             expanded_long_lines: std::collections::BTreeSet::new(),
             long_line_wrap_generation: 0,
             last_gutter_width: Pixels::ZERO,
+            measured_content_width: None,
+            wrap_container_width: None,
+            wrap_container_width_dirty: false,
             column_layout_memo: None,
             collapsed_caret_affinity: CollapsedCaretAffinity::Default,
             edit_mode,
@@ -555,6 +566,27 @@ impl Block {
 
     pub(crate) fn long_line_wrap_generation(&self) -> u64 {
         self.long_line_wrap_generation
+    }
+
+    /// 长行折叠布局的探针帧判定：编辑器在窗口宽度变化时置脏，置脏后的
+    /// 下一帧把 min_size 退回百分比——那一刻 available 就是容器宽，元素
+    /// 据此重新学习换行参照宽。返回是否进入探针帧。
+    pub(crate) fn take_wrap_container_width_probe(&mut self) -> bool {
+        if self.wrap_container_width_dirty {
+            self.wrap_container_width_dirty = false;
+            self.wrap_container_width = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 记录元素实测内容宽度。返回是否发生变化（调用方据此请求重绘，
+    /// 让下一帧用定值 min_size 溢出滚动容器）。
+    pub(crate) fn set_measured_content_width(&mut self, width: Pixels) -> bool {
+        let changed = self.measured_content_width != Some(width);
+        self.measured_content_width = Some(width);
+        changed
     }
 
     /// 表格列宽备忘读取/写入（性能：命中时整帧零 shape_text）。
