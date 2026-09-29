@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+  # The local Cargo config uses sccache; CI can build without that wrapper.
+  RUSTC_WRAPPER: ''
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - platform: macos-x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: windows-x64
+            runner: macos-15
+            target: x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set application version from tag
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', tag):
+              raise SystemExit(f'Invalid version tag: {tag}')
+          version = tag[1:]
+          # Only the CI checkout is changed; dependencies stay locked.
+          manifest = Path('Cargo.toml')
+          manifest.write_text(re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', manifest.read_text(), count=1))
+          lockfile = Path('Cargo.lock')
+          lockfile.write_text(re.sub(r'(\[\[package\]\]\nname = "velora"\nversion = ")[^"]+', lambda match: match[1] + version, lockfile.read_text(), count=1))
+          PY
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Windows packaging tools
+        if: matrix.platform == 'windows-x64'
+        run: brew install mingw-w64 nsis ripgrep
+
+      - name: Package macOS
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          bash scripts/package-macos.sh
+          version="${RELEASE_TAG#v}"
+          mv "dist/velora-$version.pkg" "dist/velora-$version-$PACKAGE_PLATFORM.pkg"
+
+      - name: Package Windows
+        if: matrix.platform == 'windows-x64'
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+        run: bash scripts/package-windows.sh
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.pkg
+            dist/*-setup.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          IS_BETA: ${{ contains(github.ref_name, 'beta') }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "$RELEASE_TAG")
+          if [[ "$IS_BETA" == 'true' ]]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" dist/* "${flags[@]}"

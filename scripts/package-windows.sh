@@ -16,7 +16,7 @@ fi
 
 cd "$REPO_ROOT"
 mkdir -p dist
-cargo build --profile releasewin --target "$TARGET"
+cargo build --profile releasewin --target "$TARGET" --locked
 file "target/$TARGET/releasewin/velora.exe" | rg -q "PE32\+ executable.*x86-64.*Windows"
 # 防回归：exe 必须含 Common-Controls v6 manifest（TaskDialogIndirect 入口点
 # 依赖它激活 comctl32 v6；缺失会使程序启动即报“无法定位程序输入点”）。
@@ -24,6 +24,7 @@ strings -a "target/$TARGET/releasewin/velora.exe" | rg -q "Microsoft.Windows.Com
     echo "错误：exe 未嵌入 Common-Controls manifest，拒绝打包" >&2
     exit 1
 }
-makensis -DVELORA_VERSION="$VERSION" -DREPO_ROOT="$REPO_ROOT" scripts/package-windows.nsi
+makensis -DVELORA_VERSION="$VERSION" -DVELORA_PRODUCT_VERSION="${VERSION%%[-+]*}.0" \
+    -DREPO_ROOT="$REPO_ROOT" scripts/package-windows.nsi
 test -s "dist/velora-$VERSION-windows-x64-setup.exe"
 echo "已生成：$REPO_ROOT/dist/velora-$VERSION-windows-x64-setup.exe"

@@ -1,6 +1,9 @@
 !ifndef VELORA_VERSION
   !define VELORA_VERSION "0.1.0"
 !endif
+!ifndef VELORA_PRODUCT_VERSION
+  !define VELORA_PRODUCT_VERSION "${VELORA_VERSION}.0"
+!endif
 !ifndef REPO_ROOT
   !define REPO_ROOT ".."
 !endif
@@ -13,7 +16,7 @@ InstallDirRegKey HKCU "Software\velora" "InstallDir"
 RequestExecutionLevel user
 Icon "${REPO_ROOT}\assets\icon\velora.ico"
 UninstallIcon "${REPO_ROOT}\assets\icon\velora.ico"
-VIProductVersion "${VELORA_VERSION}.0"
+VIProductVersion "${VELORA_PRODUCT_VERSION}"
 VIAddVersionKey "FileVersion" "${VELORA_VERSION}"
 VIAddVersionKey "ProductName" "Velora"
 VIAddVersionKey "ProductVersion" "${VELORA_VERSION}"

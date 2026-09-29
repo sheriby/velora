@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO_ROOT/Cargo.toml")"
+PACKAGE_VERSION="${VERSION%%[-+]*}"
 PACKAGE_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/velora-package.XXXXXX")"
 OUTPUT_DIR="$REPO_ROOT/dist"
 APP_BUNDLE="$PACKAGE_WORK_DIR/payload/velora.app"
@@ -16,13 +17,13 @@ trap cleanup EXIT
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources" \
     "$ICONSET_DIR" "$OUTPUT_DIR"
 
-cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --release
+cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --release --locked
 cp "$REPO_ROOT/target/release/velora" "$APP_BUNDLE/Contents/MacOS/velora"
 cp "$REPO_ROOT/resources/macos/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $PACKAGE_VERSION" \
     "$APP_BUNDLE/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $PACKAGE_VERSION" \
     "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile velora" \
     "$APP_BUNDLE/Contents/Info.plist"
@@ -59,11 +60,11 @@ ditto "$APP_BUNDLE" "$APP_OUTPUT"
 pkgbuild \
     --root "$PACKAGE_WORK_DIR/payload" \
     --identifier app.velora.editor \
-    --version "$VERSION" \
+    --version "$PACKAGE_VERSION" \
     --install-location /Applications \
     "$PACKAGE_WORK_DIR/velora-component.pkg"
 
-sed "s/__VELORA_VERSION__/$VERSION/g" \
+sed "s/__VELORA_VERSION__/$PACKAGE_VERSION/g" \
     "$REPO_ROOT/resources/macos/pkg/Distribution.xml" \
     > "$PACKAGE_WORK_DIR/Distribution.xml"
 productbuild \
