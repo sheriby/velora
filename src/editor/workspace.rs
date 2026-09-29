@@ -804,8 +804,11 @@ impl Editor {
         }
     }
 
-    /// Persists the open-tab set for session restore (roadmap A4). Cheap:
-    /// a tiny JSON write, only invoked on structural changes.
+    /// Persists the open-tab set for session restore (roadmap A4). The JSON
+    /// write runs on the background executor: on Windows a synchronous small
+    /// write in a click handler stalls the interaction (Defender 实时扫描放大
+    /// 延迟，用户报修：打开第二个文件起界面卡顿)。写入用全局锁串行，避免并发
+    /// 交错。
     pub(crate) fn persist_session(&mut self, cx: &mut Context<Self>) {
         self.snapshot_current_document(cx);
         let session = crate::config::SessionState {
@@ -827,9 +830,16 @@ impl Editor {
                 .map(|path| path.to_string_lossy().into_owned()),
             sidebar_width: self.workspace.panel_width.map(|width| width.round() as u16),
         };
-        if let Err(error) = crate::config::save_session(&session) {
-            eprintln!("failed to save session: {error}");
-        }
+        let background = cx.background_executor().clone();
+        background
+            .spawn(async move {
+                static SESSION_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+                let _guard = SESSION_WRITE_LOCK.lock().ok();
+                if let Err(error) = crate::config::save_session(&session) {
+                    eprintln!("failed to save session: {error}");
+                }
+            })
+            .detach();
     }
 
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {

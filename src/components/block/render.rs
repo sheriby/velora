@@ -14,7 +14,8 @@ use super::{Block, BlockEvent, BlockKind, ImageResolvedSource, ImageRuntime};
 use crate::components::{
     Editor, HtmlCssColor, HtmlDocument, HtmlNode, HtmlNodeKind, HtmlTextAlign, InlineScript,
     TableAxisHighlight, TableAxisKind, TableCellInlineImageSegment,
-    TableColumnLayout, attr_value, display_math_font_size, inline_math_font_size,
+    ColumnLayoutMemo, TableColumnLayout, attr_value, display_math_font_size,
+    inline_math_font_size,
     parse_display_math_source, parse_html_image_block, parse_mermaid_fence_source,
     parse_table_cell_inline_images, render_display_math_svg, render_inline_math_svg,
     render_mermaid_svg_for_display, resolve_image_source, style_for_node,
@@ -307,6 +308,57 @@ fn content_column_width(viewport_width: f32, d: &ThemeDimensions, cx: &App) -> f
     let writing_cap =
         crate::config::EditorSettings::writing_width(cx).max_width(d.writing_max_width);
     Editor::centered_column_width(viewport_width, d).min(writing_cap)
+}
+
+impl Block {
+    /// 表格列宽备忘（性能）：`measure` 会对每格做 no-wrap `shape_text`，此前
+    /// 每帧全量重测——文档打开后每次悬停/点击触发的重绘都拖着 O(单元格) 的
+    /// 文字排版，Windows DirectWrite 上尤其明显（用户报修：打开文件后第二次
+    /// 点击起整个界面卡死）。键（主题代数/字号/容器宽/表内容）均未变时整帧
+    /// 零 shape。
+    fn cached_table_column_layout(
+        &mut self,
+        table_width: f32,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TableColumnLayout> {
+        let table = self.record.table.clone()?;
+        let theme_fingerprint = {
+            // 参与 measure 的主题标量混一个指纹：字号/字距/内边距变了要重测。
+            let t = &theme.typography;
+            let d = &theme.dimensions;
+            t.text_size.to_bits() as u64
+                ^ (t.code_size.to_bits() as u64).rotate_left(1)
+                ^ (t.text_letter_spacing.to_bits() as u64).rotate_left(2)
+                ^ (d.table_cell_padding_x.to_bits() as u64).rotate_left(3)
+                ^ (d.code_bg_pad_x.to_bits() as u64).rotate_left(4)
+        };
+        let width_bits = table_width.to_bits();
+        let code_size_bits = theme.typography.code_size.to_bits();
+        let text_size_bits = theme.typography.text_size.to_bits();
+
+        if let Some(memo) = self.column_layout_memo()
+            && memo.theme_fingerprint == theme_fingerprint
+            && memo.code_size_bits == code_size_bits
+            && memo.text_size_bits == text_size_bits
+            && memo.width_bits == width_bits
+            && memo.table == table
+        {
+            return Some(memo.layout.clone());
+        }
+
+        let layout = TableColumnLayout::measure(&table, table_width, window, theme, cx);
+        self.set_column_layout_memo(ColumnLayoutMemo {
+            theme_fingerprint,
+            code_size_bits,
+            text_size_bits,
+            width_bits,
+            table,
+            layout: layout.clone(),
+        });
+        Some(layout)
+    }
 }
 
 fn effective_table_width(block: &Block, viewport_width: f32, d: &ThemeDimensions, cx: &App) -> f32 {
@@ -3071,10 +3123,7 @@ impl Render for Block {
                     - f32::from(right_gutter))
                     .max(1.0);
                 let column_layout = self
-                    .record
-                    .table
-                    .as_ref()
-                    .map(|table| TableColumnLayout::measure(table, table_width, window, &theme, cx))
+                    .cached_table_column_layout(table_width, &theme, window, cx)
                     .unwrap_or_else(|| TableColumnLayout::equal(runtime.header.len()));
                 let preview_marker = self.table_axis_preview;
                 let selected_marker = self.table_axis_selection;
@@ -3646,7 +3695,7 @@ mod tests {
         bulleted_list_marker, effective_table_width, inline_display_font_size,
         promotes_inline_images, tag_query, wikilink_target,
     };
-    use crate::components::{InlineScript, InlineSpan, InlineStyle};
+    use crate::components::{BlockRecord, InlineScript, InlineSpan, InlineStyle};
     use gpui::{AppContext, VisualTestContext};
 
     #[gpui::test]
@@ -3679,6 +3728,53 @@ mod tests {
                 "表格测量宽 {table_width}px 超过写作列上限 {cap}px：宽窗口下水位法按超宽容器\
                  算比例，套回真实窄容器后钉住列会被压到内容宽以下折行（用户报修）"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn table_column_layout_memo_skips_remeasure(cx: &mut TestAppContext) {
+        use crate::components::markdown::table::parse_table_region;
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            crate::theme::ThemeManager::init(cx);
+            let theme = cx.global::<super::ThemeManager>().current_arc();
+            let table_for = |cells: [&str; 2]| {
+                let source = format!("| {} | x |\n| --- | --- |\n| {} | y |", cells[0], cells[1]);
+                let lines: Vec<String> = source.lines().map(str::to_string).collect();
+                parse_table_region(&lines).expect("table parses")
+            };
+
+            let block = cx.new(|cx| {
+                Block::with_record(cx, BlockRecord::table(table_for(["a", "1"])))
+            });
+
+            let first = block.update(cx, |block, cx| {
+                block.cached_table_column_layout(760.0, &theme, window, cx)
+            });
+            assert!(first.is_some());
+
+            // 篡改备忘值：同键再次调用必须原样返回备忘值，证明没有重测。
+            block.update(cx, |block, _cx| {
+                if let Some(memo) = block.column_layout_memo.as_mut() {
+                    memo.layout =
+                        crate::components::TableColumnLayout::equal(2);
+                }
+            });
+            let second = block.update(cx, |block, cx| {
+                block.cached_table_column_layout(760.0, &theme, window, cx)
+            });
+            assert_eq!(second.unwrap().fraction(0), 0.5, "同键调用应命中备忘而非重测");
+
+            // 表内容变化：备忘必须被替换成基于新内容的条目。
+            block.update(cx, |block, cx| {
+                let changed = table_for(["much_wider_column", "2"]);
+                block.record.table = Some(changed.clone());
+                block.cached_table_column_layout(760.0, &theme, window, cx);
+                let memo = block
+                    .column_layout_memo()
+                    .expect("测量后应写入备忘");
+                assert_eq!(memo.table, changed, "表内容变化后备忘必须失效重测");
+            });
         });
     }
 
@@ -3760,7 +3856,7 @@ mod tests {
     use super::{
         HtmlComputedStyle, html_node_visual_style, inline_word_chunks,
     };
-    use crate::components::{Block, BlockKind, BlockRecord, InlineTextTree, parse_html_document};
+    use crate::components::{Block, BlockKind, InlineTextTree, parse_html_document};
     use crate::i18n::I18nManager;
     use crate::theme::{Theme, ThemeManager};
     use gpui::{Hsla, Rgba, TestAppContext, px};

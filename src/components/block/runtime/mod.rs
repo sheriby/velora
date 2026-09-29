@@ -190,6 +190,10 @@ pub struct Block {
     /// P3：跨帧 shape 备忘。键命中时布局闭包跳过 build_text_runs 与
     /// shape_text（taffy 一次布局会对同一元素多次 measure）。
     pub(crate) shape_memo: Option<ShapeMemoEntry>,
+    /// 表格列宽备忘（性能）：`TableColumnLayout::measure` 会对每格做 no-wrap
+    /// shape_text，此前每帧全量重测；命中键时整帧零 shape。表内容或键变化
+    /// 时失效。
+    pub(crate) column_layout_memo: Option<ColumnLayoutMemo>,
     collapsed_caret_affinity: CollapsedCaretAffinity,
     /// When true, block-level shortcuts and inline formatting are
     /// suppressed; the block stores raw text for source-mode editing.
@@ -311,6 +315,7 @@ impl Block {
             cached_display_text: SharedString::default(),
             display_generation: 0,
             shape_memo: None,
+            column_layout_memo: None,
             collapsed_caret_affinity: CollapsedCaretAffinity::Default,
             edit_mode,
             show_source_line_numbers: false,
@@ -478,6 +483,15 @@ impl Block {
 
     pub(crate) fn display_generation(&self) -> u64 {
         self.display_generation
+    }
+
+    /// 表格列宽备忘读取/写入（性能：命中时整帧零 shape_text）。
+    pub(crate) fn column_layout_memo(&self) -> Option<&ColumnLayoutMemo> {
+        self.column_layout_memo.as_ref()
+    }
+
+    pub(crate) fn set_column_layout_memo(&mut self, memo: ColumnLayoutMemo) {
+        self.column_layout_memo = Some(memo);
     }
 
     pub(crate) fn inline_tree_from_markdown_with_context(&self, markdown: &str) -> InlineTextTree {
@@ -2463,6 +2477,16 @@ pub(crate) struct ShapeMemoKey {
     pub font_size: u32,
     pub font_fingerprint: u64,
     pub theme_fingerprint: u64,
+}
+
+/// 表格列宽备忘的键：主题代数 + 字号 + 容器宽 + 表内容本身。
+pub(crate) struct ColumnLayoutMemo {
+    pub theme_fingerprint: u64,
+    pub code_size_bits: u32,
+    pub text_size_bits: u32,
+    pub width_bits: u32,
+    pub table: crate::components::markdown::table::TableData,
+    pub layout: crate::components::markdown::table::TableColumnLayout,
 }
 
 /// P3：shape 备忘的值：整块已换行行布局（Arc 共享，跨帧零拷贝复用）。
