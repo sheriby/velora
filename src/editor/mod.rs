@@ -28,6 +28,7 @@ mod close;
 mod context_menu;
 mod modal;
 mod document;
+pub(crate) mod encoding;
 mod events;
 mod export;
 mod file_drop;

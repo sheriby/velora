@@ -85,7 +85,7 @@ fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference
     if startup_open == config::StartupOpenPreference::LastOpenedFile
         && let Some(path) = config::first_existing_recent_markdown_file()
     {
-        match std::fs::read_to_string(&path) {
+        match crate::editor::encoding::read_document_string(&path) {
             Ok(markdown) => {
                 open_editor_window(cx, markdown, Some(path));
                 return;
@@ -122,7 +122,7 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
         if snapshot
             .source_path
             .as_ref()
-            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|path| crate::editor::encoding::read_document_string(path).ok())
             .is_some_and(|markdown| markdown == snapshot.markdown)
         {
             if let Err(error) = config::remove_recovery_snapshot(snapshot.id) {
@@ -471,7 +471,7 @@ fn main() {
                 continue;
             }
 
-            let markdown = match std::fs::read_to_string(&absolute_path) {
+            let markdown = match crate::editor::encoding::read_document_string(&absolute_path) {
                 Ok(content) => {
                     if let Err(err) = config::record_recent_file(&absolute_path) {
                         eprintln!("failed to update recent file history: {err}");

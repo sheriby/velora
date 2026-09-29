@@ -174,7 +174,7 @@ impl Editor {
         path: &Path,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let markdown = std::fs::read_to_string(path)
+        let markdown = super::encoding::read_document_string(path)
             .with_context(|| format!("failed to read '{}'", path.display()))?;
         self.document_revision = self.document_revision.wrapping_add(1);
         self.autosave_task = None;

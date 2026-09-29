@@ -266,7 +266,7 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
 }
 
 pub(crate) fn open_file_in_new_window(cx: &mut App, path: &Path) -> anyhow::Result<()> {
-    let markdown = std::fs::read_to_string(path)
+    let markdown = crate::editor::encoding::read_document_string(path)
         .with_context(|| format!("failed to read '{}'", path.display()))?;
     open_editor_window(cx, markdown, Some(path.to_path_buf()));
     record_recent_file_and_refresh(path, cx);

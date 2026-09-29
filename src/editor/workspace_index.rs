@@ -358,7 +358,7 @@ fn entry_has_link_to(entry: &FileLinkEntry, needles: &HashSet<String>) -> bool {
 }
 
 fn read_file_entry(path: &Path) -> Option<FileLinkEntry> {
-    let source = std::fs::read_to_string(path).ok()?;
+    let source = super::encoding::read_document_string(path).ok()?;
     Some(extract_links_and_tags(&source))
 }
 

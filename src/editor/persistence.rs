@@ -75,7 +75,7 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
 }
 
 fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<()> {
-    let markdown = std::fs::read_to_string(path)
+    let markdown = super::encoding::read_document_string(path)
         .with_context(|| format!("无法读取文件以检查外部修改：{}", path.display()))?;
     if file_content_version(&markdown) != expected_version {
         anyhow::bail!("检测到外部修改：{}", path.display());

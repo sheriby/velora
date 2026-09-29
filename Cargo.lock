@@ -7275,6 +7275,7 @@ dependencies = [
  "cssparser",
  "directories",
  "embed-resource",
+ "encoding_rs",
  "futures",
  "gpui",
  "htmd",

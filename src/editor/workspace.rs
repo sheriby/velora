@@ -663,7 +663,7 @@ impl Editor {
         {
             return;
         }
-        let Ok(disk) = std::fs::read_to_string(path) else {
+        let Ok(disk) = super::encoding::read_document_string(path) else {
             return;
         };
         if disk == cached_markdown {
@@ -1147,7 +1147,7 @@ impl Editor {
             let source_for_read = source.clone();
             let disk_markdown = if markdown_move {
                 match background
-                    .spawn(async move { fs::read_to_string(source_for_read) })
+                    .spawn(async move { super::encoding::read_document_string(source_for_read.as_path()) })
                     .await
                 {
                     Ok(markdown) => Some(markdown),
@@ -2670,7 +2670,7 @@ impl Editor {
                 Some(index) if self.workspace.open_documents[index].dirty => {
                     self.workspace.open_documents[index].markdown.clone()
                 }
-                _ => match fs::read_to_string(&path) {
+                _ => match super::encoding::read_document_string(&path) {
                     Ok(source) => source,
                     Err(_) => continue,
                 },
@@ -3103,7 +3103,7 @@ impl Editor {
             if tab.dirty {
                 (tab.markdown, true, tab.recovery_id, tab.file_version)
             } else {
-                match fs::read_to_string(&path) {
+                match super::encoding::read_document_string(&path) {
                     Ok(markdown) => {
                         let file_version = super::persistence::file_content_version(&markdown);
                         (markdown, false, tab.recovery_id, file_version)
@@ -3116,7 +3116,7 @@ impl Editor {
                 }
             }
         } else {
-            match fs::read_to_string(&path) {
+            match super::encoding::read_document_string(&path) {
                 Ok(markdown) => (
                     markdown.clone(),
                     false,
