@@ -374,6 +374,94 @@ pub(super) fn hard_line_ranges(text: &str) -> Vec<Range<usize>> {
     ranges
 }
 
+/// 光标处的括号匹配：光标前一个字符优先（贴着括号），其次光标处字符；
+/// 返回 (开括号偏移, 闭括号偏移)。扫描限深且带步数上限（`MAX_BRACKET_SCAN`），
+/// 防止超长行上每次按键全行扫描。
+pub(super) fn matching_bracket_pair(text: &str, cursor: usize) -> Option<(usize, usize)> {
+    const MAX_BRACKET_SCAN: usize = 8192;
+    const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+
+    let cursor = cursor.min(text.len());
+    let before = text[..cursor].chars().next_back();
+    let at = text[cursor..].chars().next();
+
+    #[derive(PartialEq)]
+    enum Dir {
+        Forward,
+        Backward,
+    }
+
+    // 方向判定：贴着开括号（光标在其右，或光标处就是开括号）向后匹配；
+    // 贴着闭括号（光标在其后，或光标处就是闭括号）向前匹配。
+    let (start, ch, dir) = match before {
+        Some(c) if PAIRS.iter().any(|(open, _)| *open == c) => {
+            (cursor - c.len_utf8(), c, Dir::Forward)
+        }
+        Some(c) if PAIRS.iter().any(|(_, close)| *close == c) => {
+            (cursor - c.len_utf8(), c, Dir::Backward)
+        }
+        _ => match at {
+            Some(c) if PAIRS.iter().any(|(open, _)| *open == c) => {
+                (cursor, c, Dir::Forward)
+            }
+            Some(c) if PAIRS.iter().any(|(_, close)| *close == c) => {
+                (cursor, c, Dir::Backward)
+            }
+            _ => return None,
+        },
+    };
+
+    let (open, close) = if dir == Dir::Forward {
+        *PAIRS.iter().find(|(open, _)| *open == ch)?
+    } else {
+        let (open, close) = *PAIRS.iter().find(|(_, close)| *close == ch)?;
+        (open, close)
+    };
+
+    match dir {
+        Dir::Forward => {
+            let mut depth = 0usize;
+            let mut scanned = 0usize;
+            for (offset, c) in text[start..].char_indices() {
+                if scanned > MAX_BRACKET_SCAN {
+                    return None;
+                }
+                scanned += c.len_utf8();
+                if c == open {
+                    depth += 1;
+                } else if c == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((start, start + offset));
+                    }
+                }
+            }
+            None
+        }
+        Dir::Backward => {
+            // start 是闭括号；向前找配对开括号。
+            let head = &text[..=start];
+            let mut depth = 0usize;
+            let mut scanned = 0usize;
+            for (offset, c) in head.char_indices().rev() {
+                if scanned > MAX_BRACKET_SCAN {
+                    return None;
+                }
+                scanned += c.len_utf8();
+                if c == close {
+                    depth += 1;
+                } else if c == open {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((offset, start));
+                    }
+                }
+            }
+            None
+        }
+    }
+}
+
 /// 把整块文本的 `TextRun` 切出 `[range]` 字节段（按行 shape 用）：run 的 len
 /// 以字节计且必须覆盖传入文本全长，否则 shape_text 会丢弃没有 run 覆盖的尾部。
 pub(super) fn slice_runs_for_range(runs: &[TextRun], range: Range<usize>) -> Vec<TextRun> {
@@ -1003,6 +1091,10 @@ pub struct PrepaintState {
     /// (源行下标, 是否展开)：paint 时按行顶画指示符。
     long_line_markers: Vec<(usize, bool)>,
     cursor: Option<PaintQuad>,
+    /// 当前行高亮（光标所在视觉行全宽，最底层）。
+    current_line: Vec<PaintQuad>,
+    /// 括号匹配高亮（成对两个字符的小底色）。
+    bracket_highlights: Vec<PaintQuad>,
     selection: Vec<PaintQuad>,
     code_backgrounds: Vec<PaintQuad>,
     search_highlights: Vec<PaintQuad>,
@@ -1458,7 +1550,7 @@ impl Element for BlockTextElement {
         let selection_color = theme.colors.selection;
         let text_align = input.text_align();
 
-        let (selection_quads, cursor_quad) =
+        let (current_line_quads, selection_quads, bracket_quads, cursor_quad) =
             if (focused || editor_selection_range.is_some()) && !lines.is_empty() {
                 if self.is_placeholder {
                     // Placeholder: cursor after the placeholder text
@@ -1468,7 +1560,9 @@ impl Element for BlockTextElement {
                         .position_for_index(0, line_height)
                         .unwrap_or_default();
                     (
-                        vec![],
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
                         Some(fill(
                             Bounds::new(
                                 point(origin_x + cursor_pos.x, text_bounds.top() + cursor_pos.y),
@@ -1478,20 +1572,54 @@ impl Element for BlockTextElement {
                         )),
                     )
                 } else if selected_range.is_empty() {
-                    // No selection: just draw the cursor
+                    // No selection: current-line wash + bracket pair + cursor.
                     let text = input.display_text();
+                    let cursor_bounds = cursor_bounds_for_offset(
+                        &lines,
+                        text_bounds,
+                        line_height,
+                        text,
+                        cursor,
+                        text_align,
+                        px(cursor_width),
+                    );
+                    // 当前行高亮：光标所在视觉行全宽一条（无选区时才有意义）。
+                    let current_line = cursor_bounds
+                        .map(|bounds| {
+                            fill(
+                                Bounds::new(
+                                    point(text_bounds.left(), bounds.origin.y),
+                                    size(text_bounds.size.width, bounds.size.height),
+                                ),
+                                theme.colors.current_line_bg,
+                            )
+                        })
+                        .into_iter()
+                        .collect();
+                    let bracket_highlights = matching_bracket_pair(&text, cursor)
+                        .map(|(open_offset, close_offset)| {
+                            [open_offset, close_offset]
+                                .into_iter()
+                                .filter_map(|offset| {
+                                    cursor_bounds_for_offset(
+                                        &lines,
+                                        text_bounds,
+                                        line_height,
+                                        text,
+                                        offset,
+                                        text_align,
+                                        px(cursor_width.max(1.0)),
+                                    )
+                                })
+                                .map(|bounds| fill(bounds, theme.colors.matching_bracket_bg))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
                     (
-                        vec![],
-                        cursor_bounds_for_offset(
-                            &lines,
-                            text_bounds,
-                            line_height,
-                            text,
-                            cursor,
-                            text_align,
-                            px(cursor_width),
-                        )
-                        .map(|bounds| fill(bounds, cursor_color)),
+                        current_line,
+                        Vec::new(),
+                        bracket_highlights,
+                        cursor_bounds.map(|bounds| fill(bounds, cursor_color)),
                     )
                 } else {
                     let text = input.display_text();
@@ -1506,10 +1634,10 @@ impl Element for BlockTextElement {
                     .into_iter()
                     .map(|bounds| fill(bounds, selection_color))
                     .collect();
-                    (quads, None)
+                    (Vec::new(), quads, Vec::new(), None)
                 }
             } else {
-                (vec![], None)
+                (Vec::new(), Vec::new(), Vec::new(), None)
             };
 
         // Compute code-span background quads with rounded corners and padding.
@@ -1589,6 +1717,8 @@ impl Element for BlockTextElement {
             long_line_chevron_expanded,
             long_line_markers,
             cursor: cursor_quad,
+            current_line: current_line_quads,
+            bracket_highlights: bracket_quads,
             selection: selection_quads,
             code_backgrounds: code_quads,
             search_highlights,
@@ -1649,8 +1779,17 @@ impl Element for BlockTextElement {
             window.paint_quad(highlight);
         }
 
+        // 当前行高亮垫底，选区叠上，括号匹配再上（都在文本之下）。
+        for line_wash in prepaint.current_line.drain(..) {
+            window.paint_quad(line_wash);
+        }
+
         for selection in prepaint.selection.drain(..) {
             window.paint_quad(selection);
+        }
+
+        for bracket in prepaint.bracket_highlights.drain(..) {
+            window.paint_quad(bracket);
         }
 
         let line_height = prepaint.line_height;
@@ -2331,5 +2470,35 @@ mod tests {
         let first_height = lines[0].size(px(20.0)).height;
         assert!(first_height > px(20.0));
         assert_eq!(super::wrapped_line_top(&lines, px(20.0), 1), first_height);
+    }
+}
+
+#[cfg(test)]
+mod bracket_tests {
+    #[test]
+    fn matching_bracket_pair_forward_backward_and_depth() {
+        use super::matching_bracket_pair;
+        let text = "fn f(a: (b, c)) { vec![x] }";
+        // 光标在 '(' 之后（贴括号）→ 向后匹配到对应 ')'。
+        let cursor = text.find('(').unwrap() + 1;
+        let (open, close) = matching_bracket_pair(text, cursor).expect("pair");
+        assert_eq!(&text[open..=open], "(");
+        assert_eq!(&text[close..=close], ")");
+        // 嵌套：内层 '(' 与内层 ')' 配对，不跳到外层。
+        let inner_open = text.find("(b").unwrap();
+        let (open, close) =
+            matching_bracket_pair(text, inner_open + 1).expect("inner pair");
+        assert_eq!(open, inner_open);
+        assert_eq!(&text[close..=close], ")");
+        // 光标停在最后一个闭括号右侧 → 向前匹配到外层开括号。
+        let close_offset = text.rfind(')').unwrap();
+        let (open, close) =
+            matching_bracket_pair(text, close_offset + 1).expect("backward pair");
+        assert_eq!(&text[open..=open], "(");
+        assert_eq!(close, close_offset);
+        // 无配对：孤立开括号 → None。
+        assert_eq!(matching_bracket_pair("((", 1), None);
+        // 非括号字符 → None。
+        assert_eq!(matching_bracket_pair("abc", 1), None);
     }
 }

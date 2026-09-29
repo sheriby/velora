@@ -171,6 +171,10 @@ pub struct ThemeColors {
     pub table_border: Hsla,
     /// Background of native table header cells.
     pub table_header_bg: Hsla,
+    /// Subtle full-width highlight of the line the caret is on.
+    pub current_line_bg: Hsla,
+    /// Background wash for the bracket pair highlight around the caret.
+    pub matching_bracket_bg: Hsla,
     /// Background of native table body cells.
     pub table_cell_bg: Hsla,
     /// Outline colour of the active native table cell.
@@ -608,6 +612,8 @@ struct ThemeColorsDe {
     code_syntax_punctuation: Option<Hsla>,
     table_border: Option<Hsla>,
     table_header_bg: Option<Hsla>,
+    current_line_bg: Option<Hsla>,
+    matching_bracket_bg: Option<Hsla>,
     table_cell_bg: Option<Hsla>,
     table_cell_active_outline: Option<Hsla>,
     table_axis_preview_bg: Option<Hsla>,
@@ -791,6 +797,12 @@ impl<'de> Deserialize<'de> for ThemeColors {
             table_header_bg: raw
                 .table_header_bg
                 .unwrap_or_else(|| Hsla::from(rgba(0x333333ff))),
+            current_line_bg: raw
+                .current_line_bg
+                .unwrap_or_else(|| Hsla::from(rgba(0xffffff0d))),
+            matching_bracket_bg: raw
+                .matching_bracket_bg
+                .unwrap_or_else(|| Hsla::from(rgba(0xffffff1a))),
             table_cell_bg: raw
                 .table_cell_bg
                 .unwrap_or_else(|| Hsla::from(rgba(0x292929ff))),
@@ -1178,6 +1190,8 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.code_language_input_placeholder = color(palette.muted);
     c.table_border = color(palette.line);
     c.table_header_bg = color(palette.panel);
+    c.current_line_bg = color((palette.text & 0xffffff00) | 0x0a);
+    c.matching_bracket_bg = color((palette.text & 0xffffff00) | 0x1a);
     c.table_cell_bg = color(palette.window);
     c.table_cell_active_outline = color(palette.accent);
     c.table_axis_preview_bg = color((palette.accent & 0xffffff00) | 0x0f);
@@ -1273,6 +1287,8 @@ impl Theme {
                 code_syntax_punctuation: Hsla::from(rgba(0xd4d4d4ff)),
                 table_border: Hsla::from(rgba(0x484644ff)),
                 table_header_bg: Hsla::from(rgba(0x333333ff)),
+                current_line_bg: Hsla::from(rgba(0xfffffff0)),
+                matching_bracket_bg: Hsla::from(rgba(0xffffff1a)),
                 table_cell_bg: Hsla::from(rgba(0x292929ff)),
                 table_cell_active_outline: Hsla::from(rgba(0x4cc2ffff)),
                 table_axis_preview_bg: Hsla::from(rgba(0xf5f5f51a)),
@@ -1522,6 +1538,8 @@ impl Theme {
                 code_syntax_punctuation: Hsla::from(rgba(0x393a34ff)),
                 table_border: Hsla::from(rgba(0xd1d1d1ff)),
                 table_header_bg: Hsla::from(rgba(0xf3f2f1ff)),
+                current_line_bg: Hsla::from(rgba(0x0000000a)),
+                matching_bracket_bg: Hsla::from(rgba(0x00000014)),
                 table_cell_bg: Hsla::from(rgba(0xffffffff)),
                 table_cell_active_outline: Hsla::from(rgba(0x6558d3ff)),
                 table_axis_preview_bg: Hsla::from(rgba(0x0078d414)),
