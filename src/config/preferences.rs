@@ -1574,6 +1574,8 @@ pub(crate) struct PreferencesWindow {
     shortcut_error: Option<String>,
     /// 保存失败时在本页顶部内联显示，不弹系统原生对话框（用户要求）。
     save_error: Option<String>,
+    /// 右侧内容区的滚动位置（单测用它验「真的能滚」）。
+    page_scroll: ScrollHandle,
     tree_sort: TreeSortPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
@@ -1695,6 +1697,7 @@ impl PreferencesWindow {
             recording_shortcut: None,
             shortcut_error: None,
             save_error: None,
+            page_scroll: ScrollHandle::new(),
             status_bar_enabled: preferences.status_bar.enabled,
             status_bar_show_word_count: preferences.status_bar.show_word_count,
             status_bar_show_cursor_position: preferences.status_bar.show_cursor_position,
@@ -2062,6 +2065,7 @@ impl PreferencesWindow {
         cx.notify();
     }
 
+    /// 侧边栏的一项：左对齐、选中时用强调色 + 左侧强调条。
     fn nav_button(
         &self,
         id: &'static str,
@@ -2074,37 +2078,148 @@ impl PreferencesWindow {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
+        let accent = c.dialog_primary_button_bg;
         div()
+            .id(id)
+            .debug_selector(move || id.to_string())
+            .w_full()
             .h(px(34.0))
-            .w(px(156.0))
-            .px(px(12.0))
+            .px(px(10.0))
             .flex()
             .items_center()
-            .justify_end()
+            .gap(px(9.0))
             .rounded(px(d.menu_item_radius))
             .cursor_pointer()
             .text_size(px(t.dialog_body_size))
             .font_weight(t.dialog_button_weight.to_font_weight())
             .text_color(if selected {
-                c.dialog_primary_button_text
+                c.dialog_title
             } else {
-                c.dialog_body
+                c.dialog_muted
             })
             .bg(if selected {
-                c.dialog_primary_button_bg
+                c.selection
             } else {
-                c.dialog_secondary_button_bg
+                c.dialog_surface
             })
             .hover(move |this| {
                 this.bg(if selected {
-                    c.dialog_primary_button_hover
+                    c.selection
                 } else {
                     c.dialog_secondary_button_hover
                 })
             })
-            .id(id)
+            // 左侧强调条：未选中时用背景色占位，保证两种状态文字不左右跳。
+            .child(
+                div()
+                    .w(px(3.0))
+                    .h(px(16.0))
+                    .flex_shrink_0()
+                    .rounded(px(2.0))
+                    .bg(if selected { accent } else { c.dialog_surface }),
+            )
             .child(label)
             .on_click(cx.listener(on_click))
+    }
+
+    /// 页面标题（放在滚动区外，不跟着内容滚）。
+    fn page_header(&self, title: String, theme: &Theme) -> AnyElement {
+        let c = &theme.colors;
+        let t = &theme.typography;
+        div()
+            .w_full()
+            .flex_shrink_0()
+            .text_size(px(t.dialog_title_size))
+            .font_weight(t.dialog_title_weight.to_font_weight())
+            .text_color(c.dialog_title)
+            .child(SharedString::from(title))
+            .into_any_element()
+    }
+
+    /// 一组设置：行装在圆角面板里，行与行之间一条细线。
+    fn settings_card(&self, theme: &Theme, rows: Vec<AnyElement>) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let mut column = div().w_full().flex().flex_col();
+        for (index, row) in rows.into_iter().enumerate() {
+            if index > 0 {
+                column = column.child(
+                    div()
+                        .w_full()
+                        .h(px(d.dialog_border_width.max(1.0)))
+                        .bg(c.dialog_border),
+                );
+            }
+            column = column.child(row);
+        }
+        div()
+            .w_full()
+            .flex_shrink_0()
+            .rounded(px(d.dialog_radius))
+            .border(px(d.dialog_border_width))
+            .border_color(c.dialog_border)
+            .bg(c.dialog_surface)
+            .overflow_hidden()
+            .child(column)
+            .into_any_element()
+    }
+
+    /// 一行设置：左边标签，右边控件；整行悬停时高亮。
+    fn settings_row(
+        &self,
+        theme: &Theme,
+        label: impl Into<SharedString>,
+        control: impl IntoElement,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let t = &theme.typography;
+        div()
+            .w_full()
+            .min_h(px(52.0))
+            .px(px(14.0))
+            .py(px(8.0))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(16.0))
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_size(px(t.dialog_body_size))
+                    .text_color(c.dialog_body)
+                    .child(label.into()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .child(control),
+            )
+            .into_any_element()
+    }
+
+    /// 页面顶部的错误条（保存失败、快捷键冲突）。
+    fn error_banner(&self, theme: &Theme, message: String) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let t = &theme.typography;
+        div()
+            .w_full()
+            .flex_shrink_0()
+            .px(px(12.0))
+            .py(px(8.0))
+            .rounded(px((d.dialog_radius - 4.0).max(4.0)))
+            .border(px(d.dialog_border_width))
+            .border_color(c.dialog_danger_button_bg)
+            .bg(c.dialog_surface)
+            .text_size(px(t.dialog_body_size))
+            .text_color(c.dialog_danger_button_bg)
+            .child(SharedString::from(message))
+            .into_any_element()
     }
 
     fn dropdown_button(
@@ -2118,12 +2233,14 @@ impl PreferencesWindow {
         let d = &theme.dimensions;
         let t = &theme.typography;
         div()
-            .w(px(280.0))
-            .min_h(px(36.0))
-            .px(px(12.0))
+            .id(id)
+            .w(px(200.0))
+            .h(px(32.0))
+            .px(px(10.0))
             .flex()
             .items_center()
             .justify_between()
+            .gap(px(8.0))
             .rounded(px(d.menu_item_radius))
             .border(px(d.dialog_border_width))
             .border_color(c.dialog_border)
@@ -2132,9 +2249,19 @@ impl PreferencesWindow {
             .cursor_pointer()
             .text_size(px(t.dialog_body_size))
             .text_color(c.dialog_body)
-            .id(id)
-            .child(label)
-            .child("v")
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .truncate()
+                    .child(SharedString::from(label)),
+            )
+            .child(
+                svg()
+                    .path("icon/workspace/chevron-down.svg")
+                    .size(px(10.0))
+                    .text_color(c.dialog_muted),
+            )
             .on_click(cx.listener(on_click))
     }
 
@@ -2150,23 +2277,37 @@ impl PreferencesWindow {
         let d = &theme.dimensions;
         let t = &theme.typography;
         div()
-            .w(px(280.0))
+            .id(id)
+            .w(px(200.0))
             .min_h(px(30.0))
-            .px(px(12.0))
+            .px(px(10.0))
             .flex()
             .items_center()
+            .justify_between()
+            .gap(px(8.0))
             .rounded(px(d.menu_item_radius))
             .cursor_pointer()
             .bg(if selected {
                 c.selection
             } else {
-                c.dialog_surface
+                c.dialog_secondary_button_bg
             })
             .hover(|this| this.bg(c.dialog_secondary_button_hover))
             .text_size(px(t.dialog_body_size))
-            .text_color(c.dialog_body)
-            .id(id)
-            .child(label)
+            .text_color(if selected {
+                c.dialog_title
+            } else {
+                c.dialog_body
+            })
+            .child(SharedString::from(label))
+            .when(selected, |this| {
+                this.child(
+                    svg()
+                        .path("icon/workspace/check.svg")
+                        .size(px(10.0))
+                        .text_color(c.dialog_primary_button_bg),
+                )
+            })
             .on_click(cx.listener(on_click))
     }
 
@@ -2185,7 +2326,7 @@ impl PreferencesWindow {
         let (surface, text, accent) = preview;
         div()
             .id(("preferences-theme-option", index))
-            .w(px(280.0))
+            .w(px(200.0))
             .min_h(px(38.0))
             .px(px(10.0))
             .flex()
@@ -2196,7 +2337,7 @@ impl PreferencesWindow {
             .bg(if selected {
                 c.selection
             } else {
-                c.dialog_surface
+                c.dialog_secondary_button_bg
             })
             .hover(|this| this.bg(c.dialog_secondary_button_hover))
             .text_size(px(t.dialog_body_size))
@@ -2206,6 +2347,7 @@ impl PreferencesWindow {
                     .w(px(36.0))
                     .h(px(24.0))
                     .px(px(5.0))
+                    .flex_shrink_0()
                     .flex()
                     .flex_col()
                     .justify_center()
@@ -2217,27 +2359,16 @@ impl PreferencesWindow {
                     .child(div().w(px(20.0)).h(px(3.0)).rounded(px(2.0)).bg(text))
                     .child(div().w(px(12.0)).h(px(3.0)).rounded(px(2.0)).bg(accent)),
             )
-            .child(label)
+            .child(div().flex_1().min_w(px(0.0)).truncate().child(SharedString::from(label)))
+            .when(selected, |this| {
+                this.child(
+                    svg()
+                        .path("icon/workspace/check.svg")
+                        .size(px(10.0))
+                        .text_color(c.dialog_primary_button_bg),
+                )
+            })
             .on_click(cx.listener(on_click))
-    }
-
-    fn labeled_row(&self, label: &str, control: impl IntoElement, theme: &Theme) -> Div {
-        let c = &theme.colors;
-        let t = &theme.typography;
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .w(px(280.0))
-                    .text_size(px(t.dialog_body_size))
-                    .font_weight(t.dialog_button_weight.to_font_weight())
-                    .text_color(c.dialog_title)
-                    .child(SharedString::from(label.to_string())),
-            )
-            .child(control)
     }
 
     fn render_startup_page(
@@ -2245,7 +2376,7 @@ impl PreferencesWindow {
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
         let selected = match self.startup_open {
             StartupOpenPreference::NewFile => strings.preferences_startup_new_file.clone(),
             StartupOpenPreference::LastOpenedFile => {
@@ -2464,36 +2595,37 @@ impl PreferencesWindow {
                     cx.notify();
                 }));
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(20.0))
-            .child(self.labeled_row(&strings.preferences_startup_option, dropdown, theme))
-            .child(self.labeled_row(
-                &strings.preferences_file_tree_sort,
-                tree_sort_dropdown,
-                theme,
-            ))
-            .child(self.labeled_row(
-                &strings.preferences_file_autosave_debounce,
-                debounce_dropdown,
-                theme,
-            ))
-            .child(self.labeled_row(
-                &strings.preferences_smart_punctuation,
-                smart_punctuation_toggle,
-                theme,
-            ))
-            .child(self.labeled_row(
-                &strings.preferences_file_external_change,
-                external_change_dropdown,
-                theme,
-            ))
-            .child(self.labeled_row(
-                &strings.preferences_file_delete_policy,
-                delete_policy_dropdown,
-                theme,
-            ))
+        self.settings_card(
+            theme,
+            vec![
+                self.settings_row(theme, strings.preferences_startup_option.clone(), dropdown),
+                self.settings_row(
+                    theme,
+                    strings.preferences_file_tree_sort.clone(),
+                    tree_sort_dropdown,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_file_autosave_debounce.clone(),
+                    debounce_dropdown,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_smart_punctuation.clone(),
+                    smart_punctuation_toggle,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_file_external_change.clone(),
+                    external_change_dropdown,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_file_delete_policy.clone(),
+                    delete_policy_dropdown,
+                ),
+            ],
+        )
     }
 
     fn render_theme_page(
@@ -2501,7 +2633,7 @@ impl PreferencesWindow {
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let mut dropdown = div()
             .flex()
             .flex_col()
@@ -2670,29 +2802,37 @@ impl PreferencesWindow {
                 ));
             }
         }
-        div()
-            .id("preferences-theme-page")
-            .w_full()
-            .max_h(px(390.0))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(16.0))
-            .child(self.labeled_row(&strings.preferences_local_theme, dropdown, theme))
-            .child(self.labeled_row(
+        // 两张卡片：主题一张，字体与排版一张。页面滚动交给外层容器，
+        // 这里不再自己开一个 max_h + overflow 的滚动区（嵌套滚动会互抢滚轮）。
+        let theme_rows = vec![self.settings_row(
+            theme,
+            strings.preferences_local_theme.clone(),
+            dropdown,
+        )];
+        let typography_rows = vec![
+            self.settings_row(
+                theme,
                 if chinese {
-                    "写作列宽"
+                    "写作列宽".to_string()
                 } else {
-                    "Writing Width"
+                    "Writing Width".to_string()
                 },
                 writing_width,
-                theme,
-            ))
-            .child(self.labeled_row("Markdown 字体", markdown_font, theme))
-            .child(self.font_size_row("Markdown 字号", self.fonts.markdown_size, true, theme, cx))
-            .child(self.labeled_row("代码等宽字体", code_font, theme))
-            .child(self.font_size_row("代码字号", self.fonts.code_size, false, theme, cx))
+            ),
+            self.settings_row(theme, "Markdown 字体".to_string(), markdown_font),
+            self.font_size_row("Markdown 字号", self.fonts.markdown_size, true, theme, cx),
+            self.settings_row(theme, "代码等宽字体".to_string(), code_font),
+            self.font_size_row("代码字号", self.fonts.code_size, false, theme, cx),
+        ];
+        div()
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .child(self.settings_card(theme, theme_rows))
+            .child(self.settings_card(theme, typography_rows))
+            .into_any_element()
     }
 
     fn font_size_row(
@@ -2702,7 +2842,7 @@ impl PreferencesWindow {
         markdown: bool,
         theme: &Theme,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
         let c = &theme.colors;
         let button = |id: &'static str, sign: &'static str, delta: i16, cx: &mut Context<Self>| {
             div()
@@ -2729,10 +2869,10 @@ impl PreferencesWindow {
                     cx.notify();
                 }))
         };
-        self.labeled_row(
-            label,
+        self.settings_row(
+            theme,
+            label.to_string(),
             div()
-                .w(px(280.0))
                 .flex()
                 .items_center()
                 .gap(px(8.0))
@@ -2757,7 +2897,6 @@ impl PreferencesWindow {
                     1,
                     cx,
                 )),
-            theme,
         )
     }
 
@@ -2784,7 +2923,7 @@ impl PreferencesWindow {
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
         let options = [
             ImagePasteBehavior::None,
             ImagePasteBehavior::CopyToDocumentFolder,
@@ -2820,7 +2959,14 @@ impl PreferencesWindow {
                 ));
             }
         }
-        self.labeled_row(&strings.preferences_image_insert_behavior, dropdown, theme)
+        self.settings_card(
+            theme,
+            vec![self.settings_row(
+                theme,
+                strings.preferences_image_insert_behavior.clone(),
+                dropdown,
+            )],
+        )
     }
 
     fn shortcut_category_label(
@@ -3085,7 +3231,6 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let c = &theme.colors;
-        let d = &theme.dimensions;
         let t = &theme.typography;
         let is_recording = self.recording_shortcut == Some(definition.command);
         let keys = resolved_shortcut_keys(&self.keybindings, definition.command);
@@ -3106,25 +3251,25 @@ impl PreferencesWindow {
 
         div()
             .w_full()
-            .min_h(px(42.0))
-            .px(px(10.0))
+            .min_h(px(48.0))
+            .px(px(14.0))
             .py(px(6.0))
             .flex()
             .items_center()
-            .justify_between()
             .gap(px(12.0))
-            .rounded(px(d.menu_item_radius))
-            .bg(c.dialog_surface)
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
             .child(
                 div()
-                    .min_w(px(144.0))
+                    .w(px(150.0))
+                    .flex_shrink_0()
                     .text_size(px(t.dialog_body_size))
                     .text_color(c.dialog_body)
                     .child(label),
             )
-            .child(div().flex_1().child(chips))
+            .child(div().flex_1().min_w(px(0.0)).child(chips))
             .child(
                 div()
+                    .flex_shrink_0()
                     .flex()
                     .gap(px(6.0))
                     .child(Self::shortcut_action_button(
@@ -3153,20 +3298,9 @@ impl PreferencesWindow {
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
         let c = &theme.colors;
-        let d = &theme.dimensions;
         let t = &theme.typography;
-        let mut content = div()
-            .id("preferences-shortcuts-scroll")
-            .w_full()
-            .flex_1()
-            .min_h(px(0.0))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(18.0))
-            .pr(px(4.0));
 
         let categories = [
             ShortcutCategory::File,
@@ -3177,67 +3311,40 @@ impl PreferencesWindow {
             ShortcutCategory::Other,
         ];
 
+        // 每个分类一张卡片，分类名用弱化的小字放在卡片上方；整页滚动交给外层容器。
+        let mut page = div().w_full().flex_shrink_0().flex().flex_col().gap(px(14.0));
         for category in categories {
-            let mut group = div().w_full().flex().flex_col().gap(px(8.0)).child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(
-                        div()
-                            .text_size(px(t.dialog_body_size))
-                            .font_weight(t.dialog_button_weight.to_font_weight())
-                            .text_color(c.dialog_title)
-                            .child(Self::shortcut_category_label(category, strings)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .h(px(d.dialog_border_width.max(1.0)))
-                            .bg(c.dialog_border),
-                    ),
-            );
-            for definition in shortcut_definitions()
+            let rows = shortcut_definitions()
                 .iter()
                 .copied()
                 .filter(|definition| definition.category == category)
-            {
-                group = group.child(self.render_shortcut_row(definition, theme, strings, cx));
+                .map(|definition| {
+                    self.render_shortcut_row(definition, theme, strings, cx)
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                continue;
             }
-            content = content.child(group);
-        }
-
-        let mut page = div()
-            .w_full()
-            .h_full()
-            .flex_1()
-            .min_h(px(0.0))
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(8.0));
-        if let Some(error) = &self.save_error {
             page = page.child(
                 div()
                     .w_full()
                     .flex_shrink_0()
-                    .text_size(px(t.dialog_body_size))
-                    .text_color(c.dialog_danger_button_bg)
-                    .child(error.clone()),
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.0))
+                    .child(
+                        div()
+                            .px(px(2.0))
+                            .text_size(px((t.dialog_body_size - 1.0).max(10.0)))
+                            .font_weight(t.dialog_button_weight.to_font_weight())
+                            .text_color(c.dialog_muted)
+                            .child(Self::shortcut_category_label(category, strings)),
+                    )
+                    .child(self.settings_card(theme, rows)),
             );
         }
-        if let Some(error) = &self.shortcut_error {
-            page = page.child(
-                div()
-                    .w_full()
-                    .flex_shrink_0()
-                    .text_size(px(t.dialog_body_size))
-                    .text_color(c.dialog_danger_button_bg)
-                    .child(error.clone()),
-            );
-        }
-        page.child(content)
+        page.into_any_element()
     }
 
     fn render_window_page(
@@ -3245,7 +3352,7 @@ impl PreferencesWindow {
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let zoom_selected = format!("{}%", self.zoom_percent);
         let mut zoom_dropdown = div()
             .flex()
@@ -3365,26 +3472,27 @@ impl PreferencesWindow {
                 cx.notify();
             }));
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(20.0))
-            .child(self.labeled_row(&strings.preferences_window_zoom, zoom_dropdown, theme))
-            .child(self.labeled_row(
-                &strings.preferences_window_default_size,
-                size_dropdown,
-                theme,
-            ))
-            .child(self.labeled_row(
-                &strings.preferences_window_open_position,
-                open_position_dropdown,
-                theme,
-            ))
-            .child(self.labeled_row(
-                &strings.preferences_window_remember_bounds,
-                remember_toggle,
-                theme,
-            ))
+        self.settings_card(
+            theme,
+            vec![
+                self.settings_row(theme, strings.preferences_window_zoom.clone(), zoom_dropdown),
+                self.settings_row(
+                    theme,
+                    strings.preferences_window_default_size.clone(),
+                    size_dropdown,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_window_open_position.clone(),
+                    open_position_dropdown,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_window_remember_bounds.clone(),
+                    remember_toggle,
+                ),
+            ],
+        )
     }
 
     fn render_status_bar_page(
@@ -3392,74 +3500,60 @@ impl PreferencesWindow {
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let c = &theme.colors;
-        let t = &theme.typography;
-
-        let switch_row = |label: &str,
-                          checked: bool,
-                          on_click: fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>),
-                          cx: &mut Context<Self>| {
-            div()
-                .w(px(280.0))
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(px(t.dialog_body_size))
-                        .text_color(c.dialog_body)
-                        .child(SharedString::from(label.to_string())),
-                )
-                .child(
-                    Switch::new(ElementId::Name(
-                        format!("preferences-toggle-{}", label).into(),
-                    ))
-                    .checked(checked)
-                    .on_click(cx.listener(on_click)),
-                )
+    ) -> AnyElement {
+        // 状态栏开关：五个都在同一张卡片里（侧栏按钮、模式切换之前只存着没入口）。
+        let switch = |id: &'static str,
+                      checked: bool,
+                      on_click: fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>),
+                      cx: &mut Context<Self>| {
+            Switch::new(id).checked(checked).on_click(cx.listener(on_click))
         };
 
-        let items = div()
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
-            .child(switch_row(
-                &strings.preferences_status_bar_enabled,
-                self.status_bar_enabled,
-                |this, _, _, cx| {
-                    this.status_bar_enabled = !this.status_bar_enabled;
-                    cx.notify();
-                },
-                cx,
-            ))
-            .child(switch_row(
-                &strings.preferences_status_bar_show_word_count,
-                self.status_bar_show_word_count,
-                |this, _, _, cx| {
-                    this.status_bar_show_word_count = !this.status_bar_show_word_count;
-                    cx.notify();
-                },
-                cx,
-            ))
-            .child(switch_row(
-                &strings.preferences_status_bar_show_cursor_position,
-                self.status_bar_show_cursor_position,
-                |this, _, _, cx| {
-                    this.status_bar_show_cursor_position = !this.status_bar_show_cursor_position;
-                    cx.notify();
-                },
-                cx,
-            ));
-
-        div()
-            .w_full()
-            .flex_1()
-            .min_h(px(0.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(items)
+        self.settings_card(
+            theme,
+            vec![
+                self.settings_row(
+                    theme,
+                    strings.preferences_status_bar_enabled.clone(),
+                    switch("preferences-status-bar-enabled", self.status_bar_enabled, |this, _, _, cx| {
+                        this.status_bar_enabled = !this.status_bar_enabled;
+                        cx.notify();
+                    }, cx),
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_status_bar_show_word_count.clone(),
+                    switch("preferences-status-bar-word-count", self.status_bar_show_word_count, |this, _, _, cx| {
+                        this.status_bar_show_word_count = !this.status_bar_show_word_count;
+                        cx.notify();
+                    }, cx),
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_status_bar_show_cursor_position.clone(),
+                    switch("preferences-status-bar-cursor-position", self.status_bar_show_cursor_position, |this, _, _, cx| {
+                        this.status_bar_show_cursor_position = !this.status_bar_show_cursor_position;
+                        cx.notify();
+                    }, cx),
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_status_bar_show_sidebar_toggle.clone(),
+                    switch("preferences-status-bar-sidebar-toggle", self.status_bar_show_sidebar_toggle, |this, _, _, cx| {
+                        this.status_bar_show_sidebar_toggle = !this.status_bar_show_sidebar_toggle;
+                        cx.notify();
+                    }, cx),
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_status_bar_show_mode_switch.clone(),
+                    switch("preferences-status-bar-mode-switch", self.status_bar_show_mode_switch, |this, _, _, cx| {
+                        this.status_bar_show_mode_switch = !this.status_bar_show_mode_switch;
+                        cx.notify();
+                    }, cx),
+                ),
+            ],
+        )
     }
 }
 
@@ -3488,244 +3582,197 @@ impl Render for PreferencesWindow {
         window.set_window_title(window_title.as_ref());
         let titlebar_height = custom_titlebar_height(window, d);
 
-        let content = div()
-            .size_full()
-            .pt(px(titlebar_height))
-            .flex()
-            .key_context("Preferences")
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::capture_shortcut_key))
-            .bg(c.editor_background)
-            .text_color(c.dialog_body)
-            .child(
-                div()
-                    .w(relative(0.3))
-                    .h_full()
-                    .pr(px(20.0))
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .border_r(px(d.dialog_border_width))
-                    .border_color(c.dialog_border)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.0))
-                            .child(self.nav_button(
-                                "preferences-nav-file",
-                                strings.preferences_nav_file.clone(),
-                                self.nav == PreferencesNav::File,
-                                &theme,
-                                Self::set_nav_file,
-                                cx,
-                            ))
-                            .child(self.nav_button(
-                                "preferences-nav-theme",
-                                strings.preferences_nav_theme.clone(),
-                                self.nav == PreferencesNav::Theme,
-                                &theme,
-                                Self::set_nav_theme,
-                                cx,
-                            ))
-                            .child(self.nav_button(
-                                "preferences-nav-image",
-                                strings.preferences_nav_image.clone(),
-                                self.nav == PreferencesNav::Image,
-                                &theme,
-                                Self::set_nav_image,
-                                cx,
-                            ))
-                            .child(self.nav_button(
-                                "preferences-nav-shortcuts",
-                                strings.preferences_nav_shortcuts.clone(),
-                                self.nav == PreferencesNav::Shortcuts,
-                                &theme,
-                                Self::set_nav_shortcuts,
-                                cx,
-                            ))
-                            .child(self.nav_button(
-                                "preferences-nav-status-bar",
-                                strings.preferences_nav_status_bar.clone(),
-                                self.nav == PreferencesNav::StatusBar,
-                                &theme,
-                                Self::set_nav_status_bar,
-                                cx,
-                            ))
-                            .child(self.nav_button(
-                                "preferences-nav-window",
-                                strings.preferences_nav_window.clone(),
-                                self.nav == PreferencesNav::Window,
-                                &theme,
-                                Self::set_nav_window,
-                                cx,
-                            )),
-                    ),
-            )
-            .child(
-                div()
-                    .w(relative(0.7))
-                    .h_full()
-                    .p(px(d.dialog_padding))
-                    .flex()
-                    .flex_col()
-                    .gap(px(d.dialog_gap))
-                    .child(
-                        div()
-                            .id("preferences-page-scroll")
-                            .debug_selector(|| "preferences-page-scroll".to_string())
-                            .w_full()
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .overflow_y_scroll()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(d.dialog_gap * 1.5))
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_size(px(t.dialog_title_size))
-                                    .font_weight(t.dialog_title_weight.to_font_weight())
-                                    .text_color(c.dialog_title)
-                                    .child(match self.nav {
-                                        PreferencesNav::File => {
-                                            strings.preferences_nav_file.clone()
-                                        }
-                                        PreferencesNav::Theme => {
-                                            strings.preferences_nav_theme.clone()
-                                        }
-                                        PreferencesNav::Image => {
-                                            strings.preferences_nav_image.clone()
-                                        }
-                                        PreferencesNav::Shortcuts => {
-                                            strings.preferences_nav_shortcuts.clone()
-                                        }
-                                        PreferencesNav::StatusBar => {
-                                            strings.preferences_nav_status_bar.clone()
-                                        }
-                                        PreferencesNav::Window => {
-                                            strings.preferences_nav_window.clone()
-                                        }
-                                    }),
-                            )
-                            .child(match self.nav {
-                                PreferencesNav::File => div()
-                                    .w_full()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(self.render_startup_page(&theme, &strings, cx))
-                                    .into_any_element(),
-                                PreferencesNav::Theme => div()
-                                    .w_full()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(self.render_theme_page(&theme, &strings, cx))
-                                    .into_any_element(),
-                                PreferencesNav::Image => div()
-                                    .w_full()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(self.render_image_page(&theme, &strings, cx))
-                                    .into_any_element(),
-                                PreferencesNav::Shortcuts => div()
-                                    .w_full()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .child(self.render_shortcuts_page(&theme, &strings, cx))
-                                    .into_any_element(),
-                                PreferencesNav::StatusBar => div()
-                                    .w_full()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(self.render_status_bar_page(&theme, &strings, cx))
-                                    .into_any_element(),
-                                PreferencesNav::Window => div()
-                                    .w_full()
-                                    .flex_1()
-                                    .min_h(px(0.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(self.render_window_page(&theme, &strings, cx))
-                                    .into_any_element(),
-                            }),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .flex_shrink_0()
-                            .flex()
-                            .justify_end()
-                            .gap(px(d.dialog_button_gap))
-                            .child(
-                                div()
-                                    .id("preferences-cancel")
-                                    .h(px(d.dialog_button_height))
-                                    .px(px(d.dialog_button_padding_x))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                                    .border(px(d.dialog_border_width))
-                                    .border_color(c.dialog_border)
-                                    .bg(c.dialog_secondary_button_bg)
-                                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                                    .cursor_pointer()
-                                    .text_size(px(t.dialog_button_size))
-                                    .font_weight(t.dialog_button_weight.to_font_weight())
-                                    .text_color(c.dialog_secondary_button_text)
-                                    .child(strings.preferences_cancel.clone())
-                                    .on_click(cx.listener(Self::cancel)),
-                            )
-                            .child(
-                                div()
-                                    .id("preferences-save")
-                                    .h(px(d.dialog_button_height))
-                                    .px(px(d.dialog_button_padding_x))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                                    .border(px(if can_save { 0.0 } else { d.dialog_border_width }))
-                                    .border_color(c.dialog_border)
-                                    .bg(if can_save {
-                                        c.dialog_primary_button_bg
-                                    } else {
-                                        c.dialog_secondary_button_bg
-                                    })
-                                    .hover(move |this| {
-                                        if can_save {
-                                            this.bg(c.dialog_primary_button_hover)
-                                        } else {
-                                            this.bg(c.dialog_secondary_button_bg)
-                                        }
-                                    })
-                                    .when(can_save, |this| this.cursor_pointer())
-                                    .text_size(px(t.dialog_button_size))
-                                    .font_weight(t.dialog_button_weight.to_font_weight())
-                                    .text_color(if can_save {
-                                        c.dialog_primary_button_text
-                                    } else {
-                                        c.dialog_secondary_button_text
-                                    })
-                                    .child(strings.preferences_save.clone())
-                                    .on_click(cx.listener(Self::save)),
-                            ),
-                    ),
-            );
+        let content = {
+            let page_title = match self.nav {
+                PreferencesNav::File => strings.preferences_nav_file.clone(),
+                PreferencesNav::Theme => strings.preferences_nav_theme.clone(),
+                PreferencesNav::Image => strings.preferences_nav_image.clone(),
+                PreferencesNav::Shortcuts => strings.preferences_nav_shortcuts.clone(),
+                PreferencesNav::StatusBar => strings.preferences_nav_status_bar.clone(),
+                PreferencesNav::Window => strings.preferences_nav_window.clone(),
+            };
+
+            // 侧边栏：左对齐 + 选中强调条（旧版把标签右对齐地堆在 30% 宽的栏里，
+            // 看起来像没有设计）。
+            let nav_items: [(&'static str, String, bool, fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>)); 6] = [
+                (
+                    "preferences-nav-file",
+                    strings.preferences_nav_file.clone(),
+                    self.nav == PreferencesNav::File,
+                    Self::set_nav_file,
+                ),
+                (
+                    "preferences-nav-theme",
+                    strings.preferences_nav_theme.clone(),
+                    self.nav == PreferencesNav::Theme,
+                    Self::set_nav_theme,
+                ),
+                (
+                    "preferences-nav-image",
+                    strings.preferences_nav_image.clone(),
+                    self.nav == PreferencesNav::Image,
+                    Self::set_nav_image,
+                ),
+                (
+                    "preferences-nav-shortcuts",
+                    strings.preferences_nav_shortcuts.clone(),
+                    self.nav == PreferencesNav::Shortcuts,
+                    Self::set_nav_shortcuts,
+                ),
+                (
+                    "preferences-nav-status-bar",
+                    strings.preferences_nav_status_bar.clone(),
+                    self.nav == PreferencesNav::StatusBar,
+                    Self::set_nav_status_bar,
+                ),
+                (
+                    "preferences-nav-window",
+                    strings.preferences_nav_window.clone(),
+                    self.nav == PreferencesNav::Window,
+                    Self::set_nav_window,
+                ),
+            ];
+            let mut sidebar = div()
+                .w(px(196.0))
+                .h_full()
+                .flex_shrink_0()
+                .px(px(12.0))
+                .py(px(16.0))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .border_r(px(d.dialog_border_width))
+                .border_color(c.dialog_border);
+            for (id, label, selected, handler) in nav_items {
+                sidebar = sidebar.child(self.nav_button(id, label, selected, &theme, handler, cx));
+            }
+
+            // 页面内容：错误条 + 卡片；内容列 flex_shrink_0、高度按内容算，
+            // 这样外层 overflow_y_scroll 才有东西可滚（旧版套了一层 flex_1，
+            // 高度被压成视口高度，于是「文件」和「窗口」两页永远滚不动）。
+            let mut page_column = div().w_full().flex_shrink_0().flex().flex_col().gap(px(14.0));
+            if let Some(error) = self.save_error.clone() {
+                page_column = page_column.child(self.error_banner(&theme, error));
+            }
+            if let Some(error) = self.shortcut_error.clone() {
+                page_column = page_column.child(self.error_banner(&theme, error));
+            }
+            page_column = page_column.child(match self.nav {
+                PreferencesNav::File => self.render_startup_page(&theme, &strings, cx),
+                PreferencesNav::Theme => self.render_theme_page(&theme, &strings, cx),
+                PreferencesNav::Image => self.render_image_page(&theme, &strings, cx),
+                PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, cx),
+                PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, cx),
+                PreferencesNav::Window => self.render_window_page(&theme, &strings, cx),
+            });
+
+            let footer = div()
+                .w_full()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap(px(d.dialog_button_gap))
+                .child(
+                    div()
+                        .id("preferences-cancel")
+                        .h(px(d.dialog_button_height))
+                        .px(px(d.dialog_button_padding_x))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+                        .border(px(d.dialog_border_width))
+                        .border_color(c.dialog_border)
+                        .bg(c.dialog_secondary_button_bg)
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .cursor_pointer()
+                        .text_size(px(t.dialog_button_size))
+                        .font_weight(t.dialog_button_weight.to_font_weight())
+                        .text_color(c.dialog_secondary_button_text)
+                        .child(strings.preferences_cancel.clone())
+                        .on_click(cx.listener(Self::cancel)),
+                )
+                .child(
+                    div()
+                        .id("preferences-save")
+                        .h(px(d.dialog_button_height))
+                        .px(px(d.dialog_button_padding_x))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px((d.dialog_radius - 4.0).max(0.0)))
+                        .border(px(if can_save { 0.0 } else { d.dialog_border_width }))
+                        .border_color(c.dialog_border)
+                        .bg(if can_save {
+                            c.dialog_primary_button_bg
+                        } else {
+                            c.dialog_secondary_button_bg
+                        })
+                        .hover(move |this| {
+                            if can_save {
+                                this.bg(c.dialog_primary_button_hover)
+                            } else {
+                                this.bg(c.dialog_secondary_button_bg)
+                            }
+                        })
+                        .when(can_save, |this| this.cursor_pointer())
+                        .text_size(px(t.dialog_button_size))
+                        .font_weight(t.dialog_button_weight.to_font_weight())
+                        .text_color(if can_save {
+                            c.dialog_primary_button_text
+                        } else {
+                            c.dialog_secondary_button_text
+                        })
+                        .child(strings.preferences_save.clone())
+                        .on_click(cx.listener(Self::save)),
+                );
+
+            div()
+                .size_full()
+                .pt(px(titlebar_height))
+                .flex()
+                .key_context("Preferences")
+                .track_focus(&self.focus_handle)
+                .on_key_down(cx.listener(Self::capture_shortcut_key))
+                .bg(c.editor_background)
+                .text_color(c.dialog_body)
+                .child(sidebar)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .h_full()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(660.0))
+                                .h_full()
+                                .px(px(24.0))
+                                .py(px(18.0))
+                                .flex()
+                                .flex_col()
+                                .gap(px(14.0))
+                                .child(self.page_header(page_title, &theme))
+                                .child(
+                                    div()
+                                        .id("preferences-page-scroll")
+                                        .debug_selector(|| "preferences-page-scroll".to_string())
+                                        .track_scroll(&self.page_scroll)
+                                        .w_full()
+                                        .flex_1()
+                                        .min_h(px(0.0))
+                                        .overflow_y_scroll()
+                                        .flex()
+                                        .flex_col()
+                                        .child(page_column),
+                                )
+                                .child(footer),
+                        ),
+                )
+        };
 
         let root = div()
             .size_full()
@@ -3756,7 +3803,25 @@ fn open_preferences_window_with_state(
     theme_options: Vec<ThemeCatalogEntry>,
     title: String,
 ) -> WindowHandle<PreferencesWindow> {
-    let bounds = Bounds::centered(None, size(px(720.0), px(480.0)), cx);
+    open_preferences_window_with_size(
+        cx,
+        preferences,
+        theme_options,
+        title,
+        size(px(880.0), px(620.0)),
+    )
+}
+
+/// 同 [`open_preferences_window_with_state`]，但窗口尺寸由调用方定（单测用它开一个
+/// 矮窗口，验证内容超出视口时真的能滚——测试平台不支持 resize）。
+fn open_preferences_window_with_size(
+    cx: &mut App,
+    preferences: AppPreferences,
+    theme_options: Vec<ThemeCatalogEntry>,
+    title: String,
+    window_size: Size<Pixels>,
+) -> WindowHandle<PreferencesWindow> {
+    let bounds = Bounds::centered(None, window_size, cx);
     let window_title = SharedString::from(format!("Velora - {title}"));
     let handle = cx
         .open_window(
@@ -3801,7 +3866,8 @@ mod tests {
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
         StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
         WritingWidthPreference,
-        load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_state,
+        load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_size,
+        open_preferences_window_with_state,
         read_app_preferences_with_dirs, save_app_preferences_with_dirs,
         save_preferences_from_window_with_dirs,
     };
@@ -3809,6 +3875,7 @@ mod tests {
     use crate::i18n::I18nManager;
     use crate::theme::{ThemeCatalogEntry, ThemeManager};
     use gpui::TestAppContext;
+    use gpui::px;
     use std::collections::BTreeMap;
 
     fn init_preferences_test_app(cx: &mut TestAppContext) {
@@ -4257,6 +4324,58 @@ mod tests {
             preferences_cx.debug_bounds("preferences-page-scroll").is_some(),
             "快捷键页也应挂在滚动容器里"
         );
+    }
+
+    #[gpui::test]
+    async fn preferences_pages_really_scroll_when_content_overflows(cx: &mut TestAppContext) {
+        // 用户报修（两次）：偏好设置「文件」「窗口」两页内容超出窗口高度时滚不动。
+        // 旧的测试只验了「挂了一个 overflow 容器」——容器在但高度被上一层的 flex_1
+        // 压成视口高度，于是根本滚不动。这里用滚动句柄验 max_offset。
+        init_preferences_test_app(cx);
+        // 窗口开矮一点：内容必然超出视口（测试平台不支持 resize，只能一开始就开小）。
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_size(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+                gpui::size(px(880.0), px(320.0)),
+            )
+        });
+        cx.run_until_parked();
+
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        preferences_cx.run_until_parked();
+
+        for nav in [PreferencesNav::File, PreferencesNav::Window] {
+            handle
+                .update(&mut preferences_cx, |preferences, _window, cx| {
+                    preferences.nav = nav;
+                    cx.notify();
+                })
+                .expect("preferences window should update");
+            preferences_cx.run_until_parked();
+
+            let max_offset = handle
+                .update(&mut preferences_cx, |preferences, _window, _cx| {
+                    preferences.page_scroll.max_offset()
+                })
+                .expect("preferences window should update");
+            assert!(
+                max_offset.height > px(0.0),
+                "「{nav:?}」页内容超出窗口时必须能滚，实测 max_offset {max_offset:?}"
+            );
+
+            // 侧边栏在最左边（旧版把标签堆在 30% 宽的栏里且右对齐）。
+            let nav_bounds = preferences_cx
+                .debug_bounds("preferences-nav-file")
+                .expect("侧边栏第一项应渲染");
+            assert!(
+                nav_bounds.origin.x < px(200.0),
+                "侧边栏应贴在窗口左侧，实测 x = {:?}",
+                nav_bounds.origin.x
+            );
+        }
     }
 
     #[gpui::test]
