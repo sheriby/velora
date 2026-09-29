@@ -43,14 +43,20 @@ impl VSyncProvider {
         let elapsed = vsync_start.elapsed();
         // DwmFlush and DCompositionWaitForCompositorClock returns very early
         // instead of waiting until vblank when the monitor goes to sleep or is
-        // unplugged (nothing to present due to desktop occlusion). We use 1ms as
-        // a threshold for the duration of the wait functions and fallback to
-        // Sleep() if it returns before that. This could happen during normal
-        // operation for the first call after the vsync thread becomes non-idle,
-        // but it shouldn't happen often.
-        if !wait_succeeded || elapsed < VSYNC_INTERVAL_THRESHOLD {
+        // unplugged (nothing to present due to desktop occlusion).
+        //
+        // 本地补丁：早退不止发生在显示器休眠时。当我们的窗口被盖住/禁用
+        // （原生模态文件对话框就会 `EnableWindow(owner, FALSE)`）或者没有
+        // 已提交的帧时，DwmFlush 同样会 2~8ms 就返回。原版只在 <1ms 时补
+        // sleep，于是 vsync 线程按「主线程能画多快」的节奏空转：每轮
+        // `RedrawWindow(RDW_INVALIDATE)` 把所有窗口标脏 → WM_PAINT → 主线程
+        // 同步画一帧，形成每秒几百帧的重绘风暴。主线程被它占满后，原生文件
+        // 对话框的模态循环拿不到消息循环时间：对话框窗口建好了却一直
+        // `visible=false`，直到前台窗口被外部改变才显现（实测卡 60s+）。
+        // 补足到刷新间隔，把重绘上限钉在刷新率上。
+        if !wait_succeeded || elapsed < self.interval {
             log::trace!("VSyncProvider::wait_for_vsync() took less time than expected");
-            std::thread::sleep(self.interval);
+            std::thread::sleep(self.interval.saturating_sub(elapsed));
         }
     }
 }
