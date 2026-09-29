@@ -15,6 +15,7 @@ use crate::theme::{Theme, ThemeDimensions};
 const TITLEBAR_MIN_HEIGHT: f32 = 36.0;
 const TITLEBAR_BUTTON_WIDTH: f32 = 46.0;
 const TITLEBAR_ICON_SIZE: f32 = 12.0;
+const TITLEBAR_MENU_ICON_SIZE: f32 = 14.0;
 const MAC_TRAFFIC_LIGHT_RESERVED_WIDTH: f32 = 84.0;
 /// Reserved drag area between the last tab and the right window edge.
 const TITLEBAR_DRAG_FILLER_WIDTH: f32 = 40.0;
@@ -22,6 +23,11 @@ const TITLEBAR_CLOSE_ICON: &str = "icon/titlebar/chrome-close.svg";
 const TITLEBAR_MAXIMIZE_ICON: &str = "icon/titlebar/chrome-maximize.svg";
 const TITLEBAR_MINIMIZE_ICON: &str = "icon/titlebar/chrome-minimize.svg";
 const TITLEBAR_RESTORE_ICON: &str = "icon/titlebar/chrome-restore.svg";
+/// Windows 标题栏最左侧的「菜单」按钮（三个横线）。
+pub(crate) const TITLEBAR_MENU_ICON: &str = "icon/titlebar/menu-hamburger.svg";
+
+/// 汉堡按钮的图标尺寸——比窗口按钮的图标略大一点，三条横线才看得出间距。
+pub(crate) const TITLEBAR_MENU_ICON_SIZE_PX: f32 = TITLEBAR_MENU_ICON_SIZE;
 
 /// Selects whether velora or the platform should render window controls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -289,6 +295,7 @@ pub(crate) fn titlebar_maximize_icon(is_maximized: bool, is_fullscreen: bool) ->
 pub(crate) fn render_custom_titlebar<T: 'static>(
     id: &'static str,
     title: SharedString,
+    leading: Option<AnyElement>,
     tabs: Option<AnyElement>,
     theme: &Theme,
     window: &Window,
@@ -552,6 +559,12 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                 None => make_drag_title().into_any_element(),
             };
 
+            // Windows 的菜单入口（汉堡按钮）放标题栏最左边、标签栏之前；
+            // 没有标签栏（欢迎页）时它也在最左边。
+            let root = match leading {
+                Some(leading) => root.child(leading),
+                None => root,
+            };
             root.child(left_row).child(middle).child(right_row)
         }
     };

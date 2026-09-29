@@ -264,6 +264,9 @@ impl AssetSource for VeloraAssets {
             "icon/titlebar/chrome-restore.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/titlebar/chrome-restore.svg"
             )))),
+            "icon/titlebar/menu-hamburger.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/titlebar/menu-hamburger.svg"
+            )))),
             _ => Ok(None),
         }
     }

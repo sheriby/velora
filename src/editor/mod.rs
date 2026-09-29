@@ -198,6 +198,8 @@ pub struct Editor {
     rendered_select_all_cycle: Option<RenderedSelectAllCycle>,
     /// Open top-level menu in the in-window fallback menu bar.
     menu_bar_open: Option<usize>,
+    /// Windows：标题栏左侧汉堡按钮展开的一级菜单列表是否打开。
+    hamburger_menu_open: bool,
     /// Open child submenu inside the in-window fallback menu panel.
     menu_submenu_open: Option<usize>,
     menu_bar_hovered: bool,
@@ -556,6 +558,7 @@ impl Editor {
             cross_block_drag: None,
             rendered_select_all_cycle: None,
             menu_bar_open: None,
+            hamburger_menu_open: false,
             menu_submenu_open: None,
             menu_bar_hovered: false,
             menu_panel_hovered: false,

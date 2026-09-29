@@ -3737,6 +3737,7 @@ impl Render for PreferencesWindow {
             "preferences-titlebar",
             window_title,
             None,
+            None,
             &theme,
             window,
             cx,

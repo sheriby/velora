@@ -2791,6 +2791,42 @@ async fn window_close_action_closes_current_editor_before_global_menu_route(
 }
 
 #[gpui::test]
+async fn hamburger_menu_toggles_and_closes_with_the_item_panel(cx: &mut TestAppContext) {
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "alpha".to_string(), None));
+
+    editor.update(cx, |editor, cx| {
+        // 点一下：列表打开，条目面板先不显示。
+        editor.toggle_hamburger_menu(cx);
+        assert!(editor.hamburger_menu_open);
+        assert_eq!(editor.menu_bar_open, None);
+
+        // 划过（或点）某一项：列表留着，它的条目面板打开。
+        editor.open_hamburger_menu_item(1, cx);
+        assert!(editor.hamburger_menu_open);
+        assert_eq!(editor.menu_bar_open, Some(1));
+
+        // 再点一下按钮：列表与条目面板一起关。
+        editor.toggle_hamburger_menu(cx);
+        assert!(!editor.hamburger_menu_open);
+        assert_eq!(editor.menu_bar_open, None);
+    });
+}
+
+#[gpui::test]
+async fn dismissing_from_body_closes_the_hamburger_list(cx: &mut TestAppContext) {
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "alpha".to_string(), None));
+
+    editor.update(cx, |editor, cx| {
+        editor.toggle_hamburger_menu(cx);
+        assert!(editor.hamburger_menu_open);
+
+        // 点正文（或 Esc）时，列表也要一起关——只开列表、没开条目面板也算打开。
+        editor.dismiss_menu_bar_from_body(cx);
+        assert!(!editor.hamburger_menu_open);
+    });
+}
+
+#[gpui::test]
 async fn dismissing_menu_bar_from_body_clears_open_state(cx: &mut TestAppContext) {
     let editor = cx.new(|cx| Editor::from_markdown(cx, "alpha".to_string(), None));
 

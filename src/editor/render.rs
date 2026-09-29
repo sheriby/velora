@@ -12,7 +12,10 @@ use crate::components::CalloutVariant;
 use crate::components::{AddLanguageConfig, AddThemeConfig, Block, BlockKind, NoRecentFiles};
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeDimensions, ThemeManager};
-use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar};
+use crate::window_chrome::{
+    TITLEBAR_MENU_ICON, TITLEBAR_MENU_ICON_SIZE_PX, custom_titlebar_height,
+    custom_titlebar_icon_color, render_custom_titlebar,
+};
 
 pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";
 
@@ -314,12 +317,31 @@ fn supports_in_window_menu() -> bool {
     supports_in_window_menu_for_target_os(std::env::consts::OS)
 }
 
+/// 是否单独渲染那一行菜单栏（文件/导出/语言/主题）。Windows 上不渲染：改用标题栏
+/// 左侧的汉堡按钮 + 竖列菜单，省出一整行高度。
+fn supports_menu_bar_row_for_target_os(target_os: &str) -> bool {
+    supports_in_window_menu_for_target_os(target_os) && target_os != "windows"
+}
+
+fn supports_menu_bar_row() -> bool {
+    supports_menu_bar_row_for_target_os(std::env::consts::OS)
+}
+
+/// 一级菜单是否由标题栏的汉堡按钮承载（目前只有 Windows）。
+fn supports_hamburger_menu_for_target_os(target_os: &str) -> bool {
+    supports_in_window_menu_for_target_os(target_os) && target_os == "windows"
+}
+
+fn supports_hamburger_menu() -> bool {
+    supports_hamburger_menu_for_target_os(std::env::consts::OS)
+}
+
 fn in_window_menu_bar_height_for_target_os(
     target_os: &str,
     has_menus: bool,
     dimensions: &ThemeDimensions,
 ) -> f32 {
-    if has_menus && supports_in_window_menu_for_target_os(target_os) {
+    if has_menus && supports_menu_bar_row_for_target_os(target_os) {
         dimensions.menu_bar_height
     } else {
         0.0
@@ -461,16 +483,14 @@ struct MenuSubmenuBridgeGeometry {
     height: f32,
 }
 
-fn submenu_bridge_geometry<S: AsRef<str>, T: AsRef<str>>(
-    open_index: usize,
-    menu_labels: &[S],
+fn submenu_bridge_geometry<T: AsRef<str>>(
+    main_panel_left: f32,
     items: &[OwnedMenuItem],
     item_index: usize,
     submenu_labels: &[T],
     dimensions: &ThemeDimensions,
 ) -> Option<MenuSubmenuBridgeGeometry> {
     let item = items.get(item_index)?;
-    let main_panel_left = menu_panel_left(open_index, menu_labels, dimensions);
     let main_panel_width = menu_panel_width_for_labels(&owned_menu_item_labels(items), dimensions);
     let submenu_width = menu_panel_width_for_labels(submenu_labels, dimensions);
     let vertical_tolerance = dimensions.menu_panel_padding + dimensions.menu_panel_gap;
@@ -482,6 +502,45 @@ fn submenu_bridge_geometry<S: AsRef<str>, T: AsRef<str>>(
         width: dimensions.menu_panel_gap + submenu_width,
         height: menu_item_visual_height(item, dimensions) + vertical_tolerance * 2.0,
     })
+}
+
+/// 菜单面板的锚点（窗口坐标）：一级面板画在哪。横向菜单栏模式下它由按钮位置算出，
+/// 汉堡模式下由列表宽度与被划过的行算出。
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MenuPanelOrigin {
+    panel_left: f32,
+    panel_top: f32,
+}
+
+/// 汉堡列表里第 `index` 行的顶端 y。行高与间距跟条目面板里的行保持一致
+/// （`menu_item_height` + `menu_panel_gap`），这样展开的条目面板能跟被划过的行对齐。
+fn hamburger_menu_row_top(
+    index: usize,
+    titlebar_height: f32,
+    dimensions: &ThemeDimensions,
+) -> f32 {
+    titlebar_height
+        + dimensions.menu_panel_top
+        + dimensions.menu_panel_padding
+        + index as f32 * (dimensions.menu_item_height + dimensions.menu_panel_gap)
+}
+
+/// 汉堡模式下，第 `index` 个菜单的条目面板该画在哪：贴在列表右侧、与它那一行对齐。
+fn hamburger_menu_item_panel_origin<S: AsRef<str>>(
+    index: usize,
+    titlebar_height: f32,
+    menu_labels: &[S],
+    dimensions: &ThemeDimensions,
+) -> MenuPanelOrigin {
+    let list_width = menu_panel_width_for_labels(menu_labels, dimensions);
+    MenuPanelOrigin {
+        panel_left: dimensions.menu_bar_padding_x + list_width + dimensions.menu_panel_gap,
+        // 面板自身的 padding 与 menu_panel_top 要和行的位置对消，让第一行正好落在
+        // 被划过的列表行上（面板绘制 y = panel_top + menu_panel_top，内容再 + padding）。
+        panel_top: hamburger_menu_row_top(index, titlebar_height, dimensions)
+            - dimensions.menu_panel_padding
+            - dimensions.menu_panel_top,
+    }
 }
 
 fn footnote_group_shell(
@@ -858,6 +917,122 @@ impl Editor {
         }
     }
 
+    /// Windows：标题栏最左侧的汉堡按钮。点一下开/关一级菜单列表。
+    fn render_hamburger_menu_button(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let is_open = self.hamburger_menu_open;
+        let editor = cx.entity().downgrade();
+        div()
+            .id("app-hamburger-menu-button")
+            .ml(px(d.menu_bar_padding_x))
+            .w(px(d.menu_bar_button_height))
+            .h(px(d.menu_bar_button_height))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(d.menu_bar_button_radius))
+            .bg(if is_open {
+                c.dialog_secondary_button_hover
+            } else {
+                c.dialog_surface
+            })
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .active(|this| this.opacity(0.92))
+            .cursor_pointer()
+            .child(
+                svg()
+                    .path(TITLEBAR_MENU_ICON)
+                    .size(px(TITLEBAR_MENU_ICON_SIZE_PX))
+                    .text_color(custom_titlebar_icon_color(theme)),
+            )
+            // 复用菜单栏的 hover 记账：鼠标停在按钮上就不该触发 120ms 自动关闭。
+            .on_hover(cx.listener(Self::on_menu_bar_hover))
+            .on_click(move |_, _window, cx| {
+                let _ = editor.update(cx, |editor, cx| editor.toggle_hamburger_menu(cx));
+            })
+            .into_any_element()
+    }
+
+    /// Windows：汉堡按钮展开的一级菜单列表（文件/导出/语言/主题，一个竖列）。
+    /// 划过哪一项，它的条目就在右边展开——条目面板仍由 `render_in_window_menu_panel`
+    /// 渲染，只是锚点不同。
+    fn render_hamburger_menu_panel(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+        menus: &[gpui::OwnedMenu],
+        titlebar_height: f32,
+    ) -> Option<AnyElement> {
+        if !self.hamburger_menu_open || menus.is_empty() {
+            return None;
+        }
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let t = &theme.typography;
+        let editor = cx.entity().downgrade();
+        let labels: Vec<SharedString> = menus.iter().map(|menu| menu.name.clone()).collect();
+        let list_width = menu_panel_width_for_labels(&labels, d);
+        Some(
+            div()
+                .id("app-hamburger-menu-panel")
+                .absolute()
+                .occlude()
+                .top(px(titlebar_height + d.menu_panel_top))
+                .left(px(d.menu_bar_padding_x))
+                .w(px(list_width))
+                .p(px(d.menu_panel_padding))
+                .flex()
+                .flex_col()
+                .gap(px(d.menu_panel_gap))
+                .bg(c.dialog_surface)
+                .border(px(d.dialog_border_width))
+                .border_color(c.dialog_border)
+                .rounded(px(d.menu_panel_radius))
+                .shadow_lg()
+                .on_hover(cx.listener(Self::on_menu_bar_hover))
+                .children(labels.iter().enumerate().map(|(index, label)| {
+                    let label = label.clone();
+                    let is_open = self.menu_bar_open == Some(index);
+                    let entry_editor = editor.clone();
+                    div()
+                        .id(("app-hamburger-menu-item", index))
+                        .w_full()
+                        .h(px(d.menu_item_height))
+                        .px(px(d.menu_item_padding_x))
+                        .flex()
+                        .items_center()
+                        .rounded(px(d.menu_item_radius))
+                        .bg(if is_open {
+                            c.dialog_secondary_button_hover
+                        } else {
+                            c.dialog_surface
+                        })
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .active(|this| this.opacity(0.92))
+                        .cursor_pointer()
+                        .text_size(px(d.menu_text_size))
+                        .font_weight(t.dialog_body_weight.to_font_weight())
+                        .text_color(c.dialog_secondary_button_text)
+                        .whitespace_nowrap()
+                        .child(label)
+                        .on_hover(move |hovered, _window, cx| {
+                            if *hovered {
+                                let _ = entry_editor.update(cx, |editor, cx| {
+                                    editor.open_hamburger_menu_item(index, cx)
+                                });
+                            }
+                        })
+                }))
+                .into_any_element(),
+        )
+    }
+
     /// Renders the in-window fallback menu bar backed by the app menus
     /// registered through `App::set_menus`. `menus` and `menu_labels` are
     /// fetched and computed once at the caller and shared with
@@ -1067,8 +1242,7 @@ impl Editor {
         theme: &Theme,
         cx: &mut Context<Self>,
         menus: Option<&[gpui::OwnedMenu]>,
-        menu_labels: &[SharedString],
-        top_offset: f32,
+        origin: MenuPanelOrigin,
         viewport_height: f32,
     ) -> Option<AnyElement> {
         let open_index = self.menu_bar_open?;
@@ -1086,8 +1260,7 @@ impl Editor {
                 OwnedMenuItem::Submenu(submenu) => {
                     let submenu_labels = owned_menu_item_labels(&submenu.items);
                     let geometry = submenu_bridge_geometry(
-                        open_index,
-                        menu_labels,
+                        origin.panel_left,
                         &menu_items,
                         submenu_index,
                         &submenu_labels,
@@ -1098,7 +1271,7 @@ impl Editor {
                             .id(("app-submenu-bridge", open_index * 1000 + submenu_index))
                             .absolute()
                             .occlude()
-                            .top(px(top_offset + geometry.top))
+                            .top(px(origin.panel_top + geometry.top))
                             .left(px(geometry.left))
                             .w(px(geometry.width))
                             .h(px(geometry.height))
@@ -1115,7 +1288,7 @@ impl Editor {
                 match menu_items.get(submenu_index)? {
                     OwnedMenuItem::Submenu(submenu) => {
                         let submenu_labels = owned_menu_item_labels(&submenu.items);
-                        let left = menu_panel_left(open_index, menu_labels, d)
+                        let left = origin.panel_left
                             + menu_panel_width
                             + d.menu_panel_gap;
                         let top = submenu_panel_top(&menu_items, submenu_index, d);
@@ -1208,7 +1381,7 @@ impl Editor {
                                 .id(("app-submenu-panel", open_index * 1000 + submenu_index))
                                 .absolute()
                                 .occlude()
-                                .top(px(top_offset + top))
+                                .top(px(origin.panel_top + top))
                                 .left(px(left))
                                 .w(px(submenu_width))
                                 .p(px(d.menu_panel_padding))
@@ -1233,8 +1406,8 @@ impl Editor {
             .id(("app-menu-panel", open_index))
             .absolute()
             .occlude()
-            .top(px(top_offset + d.menu_panel_top))
-            .left(px(menu_panel_left(open_index, menu_labels, d)))
+            .top(px(origin.panel_top + d.menu_panel_top))
+            .left(px(origin.panel_left))
             .w(px(menu_panel_width))
             .p(px(d.menu_panel_padding))
             .flex()
@@ -1253,7 +1426,7 @@ impl Editor {
                 scroll_items,
                 footer_items,
                 viewport_height,
-                top_offset,
+                origin.panel_top,
                 d,
             );
             let scroll_area = (!scroll_items.is_empty()).then(|| {
@@ -2992,9 +3165,13 @@ impl Render for Editor {
             .as_ref()
             .map(|m| m.iter().map(|menu| menu.name.clone()).collect())
             .unwrap_or_default();
+        // Windows：一级菜单入口是标题栏左侧的汉堡按钮，不再单占一行。
+        let hamburger_menu = (supports_hamburger_menu() && menus.is_some())
+            .then(|| self.render_hamburger_menu_button(&theme, cx));
         let base = if let Some(titlebar) = render_custom_titlebar(
             "editor-titlebar",
             format!("Velora - {}", self.workspace_breadcrumb()).into(),
+            hamburger_menu,
             titlebar_tabs,
             &theme,
             window,
@@ -3005,14 +3182,18 @@ impl Render for Editor {
         } else {
             base
         };
-        let base = if let Some(menu_bar) = self.render_in_window_menu_bar(
-            &theme,
-            cx,
-            menus.as_deref(),
-            &menu_labels,
-            titlebar_height,
-        ) {
-            base.child(menu_bar)
+        let base = if supports_menu_bar_row() {
+            if let Some(menu_bar) = self.render_in_window_menu_bar(
+                &theme,
+                cx,
+                menus.as_deref(),
+                &menu_labels,
+                titlebar_height,
+            ) {
+                base.child(menu_bar)
+            } else {
+                base
+            }
         } else {
             base
         };
@@ -3039,15 +3220,39 @@ impl Render for Editor {
         } else {
             base
         };
-        let base = if let Some(menu_panel) = self.render_in_window_menu_panel(
-            &theme,
-            cx,
-            menus.as_deref(),
-            &menu_labels,
-            titlebar_height,
-            f32::from(window.viewport_size().height.max(px(1.0))),
-        ) {
-            base.child(menu_panel)
+        let base = if let Some(hamburger_list) = menus.as_deref().and_then(|menus| {
+            self.render_hamburger_menu_panel(&theme, cx, menus, titlebar_height)
+        }) {
+            base.child(hamburger_list)
+        } else {
+            base
+        };
+        let base = if let Some(open_index) = self.menu_bar_open {
+            let dimensions = &theme.dimensions;
+            let origin = if self.hamburger_menu_open && supports_hamburger_menu() {
+                hamburger_menu_item_panel_origin(
+                    open_index,
+                    titlebar_height,
+                    &menu_labels,
+                    dimensions,
+                )
+            } else {
+                MenuPanelOrigin {
+                    panel_left: menu_panel_left(open_index, &menu_labels, dimensions),
+                    panel_top: titlebar_height,
+                }
+            };
+            if let Some(menu_panel) = self.render_in_window_menu_panel(
+                &theme,
+                cx,
+                menus.as_deref(),
+                origin,
+                f32::from(window.viewport_size().height.max(px(1.0))),
+            ) {
+                base.child(menu_panel)
+            } else {
+                base
+            }
         } else {
             base
         };
@@ -3095,11 +3300,13 @@ impl Render for Editor {
 mod tests {
     use super::{
         NoRecentFiles, RenderedRowSpacingInfo, callout_row_top_gap, editor_text_font,
-        focus_mode_row_opacity, import_menu_split_index, in_window_menu_bar_height_for_target_os,
+        focus_mode_row_opacity, hamburger_menu_item_panel_origin, hamburger_menu_row_top,
+        import_menu_split_index, in_window_menu_bar_height_for_target_os,
         menu_bar_button_width, menu_items_visual_height_with_gaps, menu_panel_left,
         menu_panel_width_for_labels, owned_menu_item_labels, rendered_row_top_gap,
         scrollable_import_menu_scroll_height, submenu_bridge_geometry,
-        supports_in_window_menu_for_target_os, tibetan_font_fallbacks_for_target_os,
+        supports_hamburger_menu_for_target_os, supports_in_window_menu_for_target_os,
+        supports_menu_bar_row_for_target_os, tibetan_font_fallbacks_for_target_os,
         typewriter_target_scroll_offset,
     };
     use crate::components::{AddLanguageConfig, AddThemeConfig};
@@ -3373,6 +3580,45 @@ mod tests {
     }
 
     #[test]
+    fn windows_moves_the_menu_row_into_the_titlebar() {
+        // 菜单栏那一行只在 Linux/FreeBSD 这类没有系统菜单栏的桌面保留；
+        // Windows 改成标题栏里的汉堡按钮。
+        assert!(supports_menu_bar_row_for_target_os("linux"));
+        assert!(!supports_menu_bar_row_for_target_os("windows"));
+        assert!(!supports_menu_bar_row_for_target_os("macos"));
+
+        assert!(supports_hamburger_menu_for_target_os("windows"));
+        assert!(!supports_hamburger_menu_for_target_os("linux"));
+        assert!(!supports_hamburger_menu_for_target_os("macos"));
+    }
+
+    #[test]
+    fn hamburger_item_panel_aligns_with_the_hovered_row() {
+        let dimensions = Theme::default_theme().dimensions;
+        let labels = vec!["File".to_string(), "Export".to_string()];
+        let titlebar_height = 34.0;
+
+        let origin = hamburger_menu_item_panel_origin(1, titlebar_height, &labels, &dimensions);
+        let list_width = menu_panel_width_for_labels(&labels, &dimensions);
+        assert_eq!(
+            origin.panel_left,
+            dimensions.menu_bar_padding_x + list_width + dimensions.menu_panel_gap
+        );
+
+        // 条目面板第一行的 y 必须跟列表里被划过的第 1 行重合。
+        let first_item_row_top =
+            origin.panel_top + dimensions.menu_panel_top + dimensions.menu_panel_padding;
+        assert_eq!(
+            first_item_row_top,
+            hamburger_menu_row_top(1, titlebar_height, &dimensions)
+        );
+        // 行越往下越高，且第二行比第一行低一行的高度。
+        let row_delta = hamburger_menu_row_top(1, titlebar_height, &dimensions)
+            - hamburger_menu_row_top(0, titlebar_height, &dimensions);
+        assert_eq!(row_delta, dimensions.menu_item_height + dimensions.menu_panel_gap);
+    }
+
+    #[test]
     fn in_window_menu_height_depends_on_platform_and_menu_presence() {
         let theme = Theme::default_theme();
         let dimensions = &theme.dimensions;
@@ -3381,9 +3627,10 @@ mod tests {
             in_window_menu_bar_height_for_target_os("linux", true, dimensions),
             dimensions.menu_bar_height
         );
+        // Windows 不再单占一行菜单栏（改成标题栏里的汉堡按钮）。
         assert_eq!(
             in_window_menu_bar_height_for_target_os("windows", true, dimensions),
-            dimensions.menu_bar_height
+            0.0
         );
         assert_eq!(
             in_window_menu_bar_height_for_target_os("linux", false, dimensions),
@@ -3517,7 +3764,13 @@ mod tests {
             _ => Vec::new(),
         };
 
-        let bridge = submenu_bridge_geometry(0, &labels, &items, 1, &submenu_labels, dimensions)
+        let bridge = submenu_bridge_geometry(
+            menu_panel_left(0, &labels, dimensions),
+            &items,
+            1,
+            &submenu_labels,
+            dimensions,
+        )
             .expect("submenu bridge geometry should be available");
         let submenu_width = menu_panel_width_for_labels(&submenu_labels, dimensions);
 
@@ -3554,7 +3807,13 @@ mod tests {
             _ => Vec::new(),
         };
 
-        let bridge = submenu_bridge_geometry(0, &labels, &items, 0, &submenu_labels, dimensions)
+        let bridge = submenu_bridge_geometry(
+            menu_panel_left(0, &labels, dimensions),
+            &items,
+            0,
+            &submenu_labels,
+            dimensions,
+        )
             .expect("submenu bridge geometry should be available");
 
         assert!(bridge.left > dimensions.menu_bar_padding_x + dimensions.menu_panel_width);

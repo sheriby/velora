@@ -536,6 +536,25 @@ impl Editor {
         }
     }
 
+    /// 点标题栏左侧的汉堡按钮：开/关一级菜单列表（Windows）。开、关都把子面板状态
+    /// 清干净，免得下次打开时旧的面板先闪一下。
+    pub(crate) fn toggle_hamburger_menu(&mut self, cx: &mut Context<Self>) {
+        self.menu_close_task = None;
+        let opening = !self.hamburger_menu_open;
+        self.hamburger_menu_open = opening;
+        self.menu_bar_open = None;
+        self.menu_submenu_open = None;
+        self.menu_submenu_panel_hovered = false;
+        self.menu_submenu_bridge_hovered = false;
+        cx.notify();
+    }
+
+    /// 鼠标划过汉堡列表里的某一项：列表保持打开，同时把它的条目面板打开。
+    pub(crate) fn open_hamburger_menu_item(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.hamburger_menu_open = true;
+        self.open_menu_bar(index, cx);
+    }
+
     pub(crate) fn open_menu_submenu(&mut self, index: usize, cx: &mut Context<Self>) {
         self.menu_close_task = None;
         if self.menu_submenu_open != Some(index) {
@@ -637,7 +656,7 @@ impl Editor {
     }
 
     pub(crate) fn dismiss_menu_bar_from_body(&mut self, cx: &mut Context<Self>) {
-        if self.menu_bar_open.is_some() {
+        if self.menu_bar_open.is_some() || self.hamburger_menu_open {
             self.close_menu_bar(cx);
         }
     }
@@ -711,6 +730,7 @@ impl Editor {
 
     pub(crate) fn close_menu_bar(&mut self, cx: &mut Context<Self>) {
         let had_open_menu = self.menu_bar_open.take().is_some();
+        let had_open_hamburger_list = std::mem::take(&mut self.hamburger_menu_open);
         let had_open_submenu = self.menu_submenu_open.take().is_some();
         let had_hover_state = self.menu_bar_hovered
             || self.menu_panel_hovered
@@ -721,7 +741,12 @@ impl Editor {
         self.menu_panel_hovered = false;
         self.menu_submenu_panel_hovered = false;
         self.menu_submenu_bridge_hovered = false;
-        if had_open_menu || had_open_submenu || had_hover_state || had_pending_close {
+        if had_open_menu
+            || had_open_hamburger_list
+            || had_open_submenu
+            || had_hover_state
+            || had_pending_close
+        {
             cx.notify();
         }
     }
