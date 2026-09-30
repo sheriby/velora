@@ -246,6 +246,8 @@ pub(super) struct WorkspaceState {
     /// 扁平标题清单（roadmap C2）：供正文里的 `[TOC]` 块渲染目录。
     toc_entries: Vec<TocEntry>,
     expanded: HashSet<String>,
+    /// 外部文件事件的树刷新防抖代数（见 `schedule_workspace_tree_refresh`）。
+    tree_refresh_generation: u32,
     selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
@@ -302,6 +304,7 @@ impl Default for WorkspaceState {
             outline_source: None,
             toc_entries: Vec::new(),
             expanded: HashSet::new(),
+            tree_refresh_generation: 0,
             selected: None,
             open_documents: Vec::new(),
             active_document: None,
@@ -895,12 +898,54 @@ impl Editor {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         self.sync_workspace_file_tree(cx);
         self.sync_workspace_outline(cx);
-        let active_root = self.workspace.root.clone();
-        if let Some(active_root) = active_root.as_deref() {
-            super::watcher::start_watching(self, active_root, cx);
-        }
+        self.ensure_workspace_watcher(cx);
         self.persist_session(cx);
         cx.notify();
+    }
+
+    /// 工作区根就绪后启动文件监听；同一根不重复启动（
+    /// 隐含根：只打开单个文件时也要监听，否则外部修改不会重载，用户报修）。
+    pub(super) fn ensure_workspace_watcher(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.workspace.root.clone() else {
+            return;
+        };
+        if self.watched_workspace_root.as_ref() == Some(&root) && self.external_watcher.is_some() {
+            return;
+        }
+        super::watcher::start_watching(self, &root, cx);
+        self.watched_workspace_root = Some(root);
+    }
+
+    /// watcher 事件统一入口：外部文件的增/删/改都走这里。
+    pub(super) fn on_watched_path_changed(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.reload_externally_changed_document(path, cx);
+        self.workspace_link_index
+            .schedule_rescan(path.to_path_buf(), cx);
+        self.schedule_workspace_tree_refresh(cx);
+    }
+
+    /// 合并连续的 watcher 事件，防抖后强制重扫文件树：外部新建/删除/改名
+    /// 也要反映到树、⌘P 与工作区搜索的文件列表里（用户报修：外部改动后
+    /// 树一直是旧的，点进去报「无法预览」）。
+    fn schedule_workspace_tree_refresh(&mut self, cx: &mut Context<Self>) {
+        self.workspace.tree_refresh_generation = self
+            .workspace
+            .tree_refresh_generation
+            .wrapping_add(1);
+        let generation = self.workspace.tree_refresh_generation;
+        cx.spawn(async move |editor, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
+            editor
+                .update(cx, |editor, cx| {
+                    if editor.workspace.tree_refresh_generation == generation {
+                        editor.refresh_workspace_tree(cx);
+                    }
+                })
+                .ok();
+        })
+        .detach();
     }
 
     /// 收起落在新工作区之外的标签；脏标签先写回自己的文件，内容不丢。
@@ -1837,6 +1882,8 @@ impl Editor {
         if self.workspace.root.is_none() {
             self.workspace.root = self.workspace_root_for_current_file();
         }
+        // 隐含根（只打开单个文件）也要起监听，否则外部修改永远不会重载。
+        self.ensure_workspace_watcher(cx);
         if previous_root != self.workspace.root {
             self.workspace.file_tree = None;
             self.workspace.tree_scan_root = None;
@@ -8495,6 +8542,166 @@ async fn autosave_conflict_reports_the_file_that_actually_changed(cx: &mut TestA
                 &source[range],
                 "beta",
                 "脏文件里的跳转必须落在命中文本上"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn external_file_events_refresh_the_workspace_tree(cx: &mut TestAppContext) {
+        // 审查发现：watcher 只转发 Modify/Create 且从不刷新文件树，外部新建/
+        // 删除/改名的文件在树、⌘P、工作区搜索的文件列表里永远是旧的。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-watcher-tree-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let existing = root.join("a.md");
+        fs::write(&existing, "# a\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+        });
+        cx.run_until_parked();
+
+        // 外部新建：树/文件列表要出现它。
+        let added = root.join("b.md");
+        fs::write(&added, "# b\n").unwrap();
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| editor.on_watched_path_changed(&added, cx));
+        });
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor.workspace_text_files().iter().any(|path| path == &added),
+                "外部新建的文件应出现在工作区文件列表"
+            );
+        });
+
+        // 外部删除：树/文件列表不能再列出它。
+        fs::remove_file(&existing).unwrap();
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| editor.on_watched_path_changed(&existing, cx));
+        });
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                !editor.workspace_text_files().iter().any(|path| path == &existing),
+                "外部删除的文件不应再出现在工作区文件列表"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn opening_a_single_file_starts_the_workspace_watcher(cx: &mut TestAppContext) {
+        // 审查发现：只有打开文件夹才会启动 watcher；只打开一个文件时外部修改
+        // 永远不会重载（D3 静默失效）。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-single-file-watch-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.md");
+        fs::write(&path, "# note\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        editor.update(cx, |editor, cx| {
+            editor.replace_document_from_markdown("# note\n".into(), Some(path.clone()), cx);
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.workspace.root.is_some(), "打开单文件应隐含工作区根");
+            assert!(
+                editor.external_watcher.is_some(),
+                "隐含根也必须启动文件监听"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn backlinks_panel_picks_up_an_external_link_to_the_active_document(
+        cx: &mut TestAppContext,
+    ) {
+        // 审查发现：反链/标签面板只按 document_revision 失效，别的文件在外部
+        // 新增 [[链接]] 时面板一直显示旧结果。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-backlinks-external-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let active = root.join("a.md");
+        let other = root.join("b.md");
+        fs::write(&active, "# A\n").unwrap();
+        fs::write(&other, "# B\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root.clone(), cx);
+                editor.workspace.is_open = true;
+                editor.open_workspace_file(active.clone(), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| editor.refresh_link_panels(cx));
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.link_panels.backlinks.is_empty(), "前置：还没有反链");
+        });
+
+        fs::write(&other, "# B\n\n[[a]]\n").unwrap();
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| editor.on_watched_path_changed(&other, cx));
+        });
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| editor.refresh_link_panels(cx));
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor
+                    .link_panels
+                    .backlinks
+                    .iter()
+                    .any(|path| path == &other),
+                "外部新增的 [[a]] 必须出现在反链面板"
             );
         });
     }

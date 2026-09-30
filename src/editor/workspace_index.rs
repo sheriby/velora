@@ -38,6 +38,9 @@ pub(crate) struct WorkspaceLinkIndex {
     indexed_root: Option<PathBuf>,
     entries: HashMap<PathBuf, Arc<FileLinkEntry>>,
     scan_generation: u64,
+    /// 索引内容版本：条目增/删/全量重建时递增，反链与标签面板据此失效
+    /// （别的文件在外部改了链接时，document_revision 不会变）。
+    entries_revision: u64,
     /// 全量扫描任务：新任务覆盖旧字段即取消旧扫描（树扫描同模式）。
     full_scan_task: Option<Task<()>>,
     /// 单文件重扫的挂起集合：同一路径飞行中不重复调度。
@@ -159,6 +162,7 @@ impl WorkspaceLinkIndex {
     /// 按代数丢弃过期结果。
     pub(crate) fn rebuild_all(&mut self, files: Vec<PathBuf>, cx: &mut gpui::Context<Editor>) {
         self.scan_generation = self.scan_generation.wrapping_add(1);
+        self.entries_revision = self.entries_revision.wrapping_add(1);
         let generation = self.scan_generation;
         self.entries.clear();
         let read_files = std::sync::Arc::new(files);
@@ -214,6 +218,7 @@ impl WorkspaceLinkIndex {
                         index.entries.remove(&path);
                     }
                 }
+                index.entries_revision = index.entries_revision.wrapping_add(1);
                 cx.notify();
             });
         })
@@ -335,6 +340,10 @@ impl WorkspaceLinkIndex {
         self.rebuild_all(files, cx);
     }
 
+    /// 索引内容版本：面板据此判断是否需要重算。
+    pub(crate) fn entries_revision(&self) -> u64 {
+        self.entries_revision
+    }
 }
 
 /// 目标文件可被 `[[...]]` 指到的名字集合：stem 与完整文件名（小写），
@@ -368,6 +377,8 @@ fn read_file_entry(path: &Path) -> Option<FileLinkEntry> {
 #[derive(Default)]
 pub(crate) struct LinkPanelState {
     revision: u64,
+    /// 计算时的索引版本：索引在外部变化后必须重算。
+    index_revision: u64,
     computed_at: Option<std::time::Instant>,
     pub(crate) backlinks: Vec<PathBuf>,
     pub(crate) tags: Vec<(String, usize)>,
@@ -377,17 +388,24 @@ pub(crate) struct LinkPanelState {
 const PANEL_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
 
 impl Editor {
-    /// 面板渲染前调用：revision 变了且距上次计算超过间隔才重算。
+    /// 面板渲染前调用：文档修订或索引版本变了才重算；只有文档在改时保留
+    /// 半秒去抖（打字路径不做全量序列化），索引变化（watcher 从外部增删
+    /// 链接）立即生效。
     pub(crate) fn refresh_link_panels(&mut self, cx: &mut gpui::Context<Self>) {
         let revision = self.document_revision;
+        let index_revision = self.workspace_link_index.entries_revision();
         // 首帧（从未算过）必须算一次，不能拿默认 revision=0 挡住。
-        if self.link_panels.computed_at.is_some() && self.link_panels.revision == revision {
+        if self.link_panels.computed_at.is_some()
+            && self.link_panels.revision == revision
+            && self.link_panels.index_revision == index_revision
+        {
             return;
         }
-        if self
-            .link_panels
-            .computed_at
-            .is_some_and(|at| at.elapsed() < PANEL_RECOMPUTE_INTERVAL)
+        if self.link_panels.index_revision == index_revision
+            && self
+                .link_panels
+                .computed_at
+                .is_some_and(|at| at.elapsed() < PANEL_RECOMPUTE_INTERVAL)
         {
             return;
         }
@@ -408,6 +426,7 @@ impl Editor {
         let tags = self.workspace_link_index.tag_counts(&live, active_document);
         self.link_panels = LinkPanelState {
             revision,
+            index_revision,
             computed_at: Some(std::time::Instant::now()),
             backlinks,
             tags,

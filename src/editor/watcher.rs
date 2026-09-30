@@ -19,10 +19,13 @@ pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Co
     let watcher = notify::recommended_watcher(
         move |res: Result<notify::Event, notify::Error>| {
             let Ok(event) = res else { return };
-            if !matches!(
+            let relevant = matches!(
                 event.kind,
-                notify::EventKind::Modify(_) | notify::EventKind::Create(_)
-            ) {
+                notify::EventKind::Modify(_)
+                    | notify::EventKind::Create(_)
+                    | notify::EventKind::Remove(_)
+            );
+            if !relevant {
                 return;
             }
             for path in event.paths {
@@ -50,12 +53,7 @@ pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Co
         while let Some(path) = events.next().await {
             let Ok(()) = cx.update(|cx| {
                 let _ = this.update(cx, |editor, cx| {
-                    editor.reload_externally_changed_document(&path, cx);
-                    // 反链/标签索引的增量维护：自己的保存也会产生 Modify
-                    // 事件，所以保存后索引自动跟上（单文件、防抖、后台读）。
-                    editor
-                        .workspace_link_index
-                        .schedule_rescan(path.clone(), cx);
+                    editor.on_watched_path_changed(&path, cx);
                 });
             }) else {
                 return;

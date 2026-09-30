@@ -190,6 +190,8 @@ pub struct Editor {
     command_palette: Option<command_palette::CommandPaletteState>,
     /// Workspace change watcher (roadmap D3); `None` until a root is set.
     external_watcher: Option<notify::RecommendedWatcher>,
+    /// 已启动文件监听的工作区根：同一根不重复启动（含隐含根）。
+    watched_workspace_root: Option<PathBuf>,
     /// Cached block→source-range map + newline offsets for outline-follow
     /// scroll (roadmap C5), keyed by document revision.
     pub(super) outline_follow_cache:
@@ -573,6 +575,7 @@ impl Editor {
             quick_open: None,
             command_palette: None,
             external_watcher: None,
+            watched_workspace_root: None,
             outline_follow_cache: None,
             last_outline_follow_offset: f32::NAN,
             cursor_history_back: Vec::new(),

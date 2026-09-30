@@ -99,8 +99,8 @@
 | F4 保存与冲突 | ✅ 完成 | 本次提交 | 新增用例：`manual_save_then_typing_does_not_report_an_external_change`、`autosave_conflict_reports_the_file_that_actually_changed`。改动：`apply_successful_save` 调 `mark_workspace_document_saved` 同步标签版本/内容/脏标记；自动保存后台任务携带真正失败的文件路径并优先用它上报冲突 |
 | F5 文件历史撤销 | ✅ 完成 | 本次提交 | 新增用例：`file_history_restore_can_be_undone`。改动：`restore_file_history_version` 恢复前把当前文档压进撤销栈（只留这一条），兑现「可撤销」承诺 |
 | F6 脏文件搜索跳转 | ✅ 完成 | 本次提交 | 新增用例：`clicking_a_search_hit_in_a_dirty_file_lands_on_the_match`。改动：`open_search_hit` 先验证磁盘偏移落在内存文本上是否仍是匹配，不是就用查询就近重定位（前/后/从头兜底），并补记 `document_active_range` |
-| F7 watcher | ⬜ 未开始 | — | — |
-| F8 性能批次 | ⬜ 未开始 | — | 可拆分多个提交 |
+| F7 watcher | ✅ 完成 | 本次提交 | 新增用例：`external_file_events_refresh_the_workspace_tree`、`opening_a_single_file_starts_the_workspace_watcher`（做过变异验证）、`backlinks_panel_picks_up_an_external_link_to_the_active_document`。改动：watcher 收 Remove + 统一走 `on_watched_path_changed`；新增 250ms 防抖的树刷新；`ensure_workspace_watcher`（隐含根也监听，同根不重启）；索引加 `entries_revision`，面板据此失效（文档编辑仍保留 500ms 去抖） |
+| F8 性能批次 | ⏳ 进行中 | — | 可拆分多个提交 |
 | F9 P2 收尾 | ⬜ 未开始 | — | 可拆分多个提交 |
 
 已观察到的环境噪声（不要当回归）：
