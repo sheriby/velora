@@ -939,6 +939,8 @@ mod dispatch;
 pub(crate) use dispatch::dispatch_menu_action_for_editor;
 
 pub(super) use build_menus::*;
+// test-only re-export (build_menus tests alias it)
+#[cfg(test)]
 pub(crate) use build_menus::build_menus as build_menus_impl;
 pub(crate) use build_menus::init;
 

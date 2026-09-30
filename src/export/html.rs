@@ -677,7 +677,9 @@ fn collect_display_math_region(lines: &[&str], start: usize) -> usize {
 }
 
 
-pub(crate) use css::{chromium_pdf_theme_css, contains_tibetan_text, css_color, prepare_print_html};
+pub(crate) use css::{chromium_pdf_theme_css, contains_tibetan_text, prepare_print_html};
+#[cfg(test)]
+pub(crate) use css::css_color;
 mod css;
 
 #[cfg(test)]
