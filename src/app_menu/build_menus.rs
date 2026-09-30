@@ -1,4 +1,5 @@
 use super::*;
+use super::command_menus::{command_menu_items, command_spec, file_menu_items};
 
 pub(crate) fn build_menus(
     theme_manager: &ThemeManager,
