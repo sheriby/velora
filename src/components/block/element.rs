@@ -1176,6 +1176,7 @@ impl Element for BlockTextElement {
                     &theme.colors,
                 )
             } else {
+                let fonts = crate::config::EditorSettings::scaled_fonts(cx);
                 build_text_runs(
                     input,
                     &display_text,
@@ -1184,8 +1185,8 @@ impl Element for BlockTextElement {
                     theme.colors.text_link,
                     theme.colors.text_link,
                     show_inline_code_backgrounds,
-                    &crate::config::EditorSettings::fonts(cx).code_family,
-                    px(crate::config::EditorSettings::fonts(cx).code_size as f32),
+                    &fonts.code_family,
+                    px(fonts.code_size as f32),
                 )
             }
         } else {
@@ -1208,7 +1209,7 @@ impl Element for BlockTextElement {
         // 换行宽、基准字号、字体（偏好 + 主题排版）、主题（run 颜色烘焙）。
         use std::hash::{Hash, Hasher};
         let mut fingerprint_hasher = std::hash::DefaultHasher::new();
-        let font_prefs = crate::config::EditorSettings::fonts(cx);
+        let font_prefs = crate::config::EditorSettings::scaled_fonts(cx);
         font_prefs.markdown_family.hash(&mut fingerprint_hasher);
         font_prefs.markdown_size.hash(&mut fingerprint_hasher);
         font_prefs.code_family.hash(&mut fingerprint_hasher);
@@ -1454,7 +1455,7 @@ impl Element for BlockTextElement {
             .unwrap_or_else(|| input.selected_range.clone());
         let cursor = input.cursor_offset();
         let code_size = if input.inline_spans().iter().any(|span| span.style.code) {
-            px(crate::config::EditorSettings::fonts(cx).code_size as f32)
+            px(crate::config::EditorSettings::scaled_font_sizes(cx).1)
         } else { px(0.0) };
         let line_height = window.line_height().max(code_size * 1.35);
         let focused = input.focus_handle.is_focused(window);

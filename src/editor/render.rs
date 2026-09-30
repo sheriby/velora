@@ -2433,22 +2433,8 @@ impl Render for Editor {
         let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
         let fonts = crate::config::EditorSettings::fonts(cx);
         let writing_width = crate::config::EditorSettings::writing_width(cx);
-        theme.typography.text_size = fonts.markdown_size as f32;
-        theme.typography.code_size = fonts.code_size as f32;
-        // Session-wide zoom (⌘+/⌘-/⌘0): scales the whole typographic scale,
-        // not just body text, so hierarchy stays consistent.
-        let zoom = crate::config::EditorSettings::zoom_percent(cx) as f32 / 100.0;
-        if (zoom - 1.0).abs() > f32::EPSILON {
-            let t = &mut theme.typography;
-            t.text_size *= zoom;
-            t.code_size *= zoom;
-            t.h1_size *= zoom;
-            t.h2_size *= zoom;
-            t.h3_size *= zoom;
-            t.h4_size *= zoom;
-            t.h5_size *= zoom;
-            t.h6_size *= zoom;
-        }
+        // 字号设置 + 界面缩放（⌘+/⌘-/⌘0）由这一个派生负责，文档块共用。
+        crate::config::EditorSettings::apply_scaled_typography(cx, &mut theme);
         let strings = cx.global::<I18nManager>().strings_arc();
         self.sync_window_title(window, &strings);
 

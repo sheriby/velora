@@ -595,6 +595,48 @@ impl EditorSettings {
             .unwrap_or_default()
     }
 
+    /// 生效的正文字号与代码字号：用户字号设置 × 界面缩放。
+    ///
+    /// 需要按用户设置绘制文本的地方都从这里取字号。文档块与编辑器外壳
+    /// 曾经各自拼一半（块只套字号、漏掉缩放），界面缩放看起来完全没反应。
+    pub(crate) fn scaled_font_sizes(cx: &App) -> (f32, f32) {
+        let fonts = Self::fonts(cx);
+        let zoom = Self::zoom_percent(cx) as f32 / 100.0;
+        (
+            (fonts.markdown_size as f32 * zoom).max(1.0),
+            (fonts.code_size as f32 * zoom).max(1.0),
+        )
+    }
+
+    /// 字体偏好的渲染副本：字号已乘界面缩放，字体族不变。
+    ///
+    /// 表格按字号估算列宽与换行，必须用与绘制一致的字号，否则缩放后列宽对不上。
+    pub(crate) fn scaled_fonts(cx: &App) -> FontPreferences {
+        let mut fonts = Self::fonts(cx);
+        let (text_size, code_size) = Self::scaled_font_sizes(cx);
+        fonts.markdown_size = text_size.round().clamp(1.0, u16::MAX as f32) as u16;
+        fonts.code_size = code_size.round().clamp(1.0, u16::MAX as f32) as u16;
+        fonts
+    }
+
+    /// 把「字号设置 + 界面缩放」套到一份渲染用主题排版：正文、代码与各级标题
+    /// 同比例缩放，标题层级不变。文档块与编辑器外壳共用这一个派生。
+    pub(crate) fn apply_scaled_typography(cx: &App, theme: &mut crate::theme::Theme) {
+        let fonts = Self::fonts(cx);
+        let zoom = Self::zoom_percent(cx) as f32 / 100.0;
+        let t = &mut theme.typography;
+        t.text_size = (fonts.markdown_size as f32 * zoom).max(1.0);
+        t.code_size = (fonts.code_size as f32 * zoom).max(1.0);
+        if (zoom - 1.0).abs() > f32::EPSILON {
+            t.h1_size *= zoom;
+            t.h2_size *= zoom;
+            t.h3_size *= zoom;
+            t.h4_size *= zoom;
+            t.h5_size *= zoom;
+            t.h6_size *= zoom;
+        }
+    }
+
     pub(crate) fn writing_width(cx: &App) -> WritingWidthPreference {
         cx.try_global::<Self>()
             .map(|settings| settings.writing_width)
@@ -2283,8 +2325,12 @@ impl PreferencesWindow {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
+        let debug_id = id.into();
         div()
-            .id(id)
+            .id(debug_id.clone())
+            // 测试里按 id 查边界（release 构建为空操作）：下拉能不能点中
+            // 只有真的点一下才验得出来。
+            .debug_selector(move || debug_id.to_string())
             .w(px(200.0))
             .min_h(px(30.0))
             .px(px(10.0))
@@ -3886,6 +3932,43 @@ mod tests {
     use gpui::px;
     use std::collections::BTreeMap;
 
+    #[gpui::test]
+    async fn scaled_typography_applies_font_size_and_ui_zoom(cx: &mut TestAppContext) {
+        // 用户报修：界面缩放设置了没反应。缩放与字号必须是同一个派生，
+        // 正文/代码/标题一起缩放；文档块以前只套字号，漏了缩放因子。
+        init_preferences_test_app(cx);
+        cx.update_global::<EditorSettings, _>(|settings, _cx| {
+            settings.fonts.markdown_size = 20;
+            settings.fonts.code_size = 12;
+            settings.zoom_percent = 150;
+        });
+        let theme = cx.read_global::<ThemeManager, _>(|manager, _cx| {
+            manager.current_arc().as_ref().clone()
+        });
+
+        let mut scaled = theme.clone();
+        cx.update(|cx| EditorSettings::apply_scaled_typography(cx, &mut scaled));
+        assert_eq!(scaled.typography.text_size, 30.0, "正文 20px × 150%");
+        assert_eq!(scaled.typography.code_size, 18.0, "代码 12px × 150%");
+        assert_eq!(scaled.typography.h1_size, theme.typography.h1_size * 1.5);
+        assert_eq!(scaled.typography.h6_size, theme.typography.h6_size * 1.5);
+
+        let (text_size, code_size) = cx.update(|cx| EditorSettings::scaled_font_sizes(cx));
+        assert_eq!((text_size, code_size), (30.0, 18.0));
+
+        // 100% 时只套字号，标题保持主题原值。
+        let mut plain = theme.clone();
+        cx.update_global::<EditorSettings, _>(|settings, _cx| {
+            settings.zoom_percent = 100;
+            settings.fonts.markdown_size = 16;
+            settings.fonts.code_size = 14;
+        });
+        cx.update(|cx| EditorSettings::apply_scaled_typography(cx, &mut plain));
+        assert_eq!(plain.typography.text_size, 16.0);
+        assert_eq!(plain.typography.code_size, 14.0);
+        assert_eq!(plain.typography.h1_size, theme.typography.h1_size);
+    }
+
     fn init_preferences_test_app(cx: &mut TestAppContext) {
         cx.update(|cx| {
             I18nManager::init_with_language_id(cx, "en-US");
@@ -4477,6 +4560,46 @@ mod tests {
                 preferences.default_window_height = 800;
                 preferences.window_open_position = WindowOpenPosition::Center;
                 assert!(preferences.has_unsaved_changes());
+            })
+            .expect("preferences window should update");
+    }
+
+    #[gpui::test]
+    async fn clicking_a_zoom_dropdown_item_updates_the_selection(cx: &mut TestAppContext) {
+        // 用户报修：界面缩放设置了没反应。这条守住入口本身——点「125%」必须
+        // 真的写进窗口状态并进入待保存（渲染侧的修正在下面那条测试里）。
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        preferences_cx.run_until_parked();
+
+        handle
+            .update(&mut preferences_cx, |preferences, _window, cx| {
+                preferences.nav = PreferencesNav::Window;
+                preferences.zoom_dropdown_open = true;
+                cx.notify();
+            })
+            .expect("preferences window should update");
+        preferences_cx.run_until_parked();
+
+        let item = preferences_cx
+            .debug_bounds("preferences-zoom-125")
+            .expect("「125%」下拉项应渲染");
+        preferences_cx.simulate_click(item.center(), gpui::Modifiers::none());
+        preferences_cx.run_until_parked();
+
+        handle
+            .update(&mut preferences_cx, |preferences, _window, _cx| {
+                assert_eq!(preferences.zoom_percent, 125, "点选后应写入 125%");
+                assert!(!preferences.zoom_dropdown_open, "点选后下拉应收起");
+                assert!(preferences.has_unsaved_changes(), "应进入待保存状态");
             })
             .expect("preferences window should update");
     }

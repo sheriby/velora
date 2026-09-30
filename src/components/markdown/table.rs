@@ -258,7 +258,8 @@ impl TableColumnLayout {
         theme: &Theme,
         cx: &App,
     ) -> Self {
-        let fonts = crate::config::EditorSettings::fonts(cx);
+        // 列宽/换行按字号估算，必须用与绘制一致的字号（含界面缩放）。
+        let fonts = crate::config::EditorSettings::scaled_fonts(cx);
         let preferred_widths = measure_preferred_column_widths(table, window, theme, &fonts)
             .into_iter()
             .map(f32::from)

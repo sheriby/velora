@@ -7334,6 +7334,40 @@ async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut Test
 }
 
 #[gpui::test]
+async fn ui_zoom_scales_document_text(cx: &mut TestAppContext) {
+    // 用户报修：偏好设置「界面缩放」/ ⌘+/⌘- 改了没有任何反应。
+    // 根因：正文块渲染自己拼主题排版，只套了字号设置，漏掉缩放因子；
+    // 缩放只作用在编辑器外壳那份主题上。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let (_editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "一段用来观察缩放的正文，长到足以在窗口里换行显示。\n".to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+    let before = cx
+        .debug_bounds("block-shell")
+        .expect("正文块应渲染")
+        .size
+        .height;
+    cx.update(|_, cx| crate::config::EditorSettings::set_zoom_percent(cx, 200));
+    redraw(cx);
+    let after = cx
+        .debug_bounds("block-shell")
+        .expect("正文块应渲染")
+        .size
+        .height;
+    cx.update(|_, cx| crate::config::EditorSettings::set_zoom_percent(cx, 100));
+    assert!(
+        after > before,
+        "界面缩放 200% 后正文块应变高：{before:?} -> {after:?}"
+    );
+}
+
+#[gpui::test]
 async fn blank_line_block_renders_as_a_small_gap(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     // 松列表（- a / 空行 / - b）：空行块原本占一整行高 + 上下 padding，加起来

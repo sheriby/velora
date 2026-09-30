@@ -1184,7 +1184,7 @@ impl Block {
         let display_font_size = inline_display_font_size(
             span,
             font_size,
-            crate::config::EditorSettings::fonts(cx).code_size as f32,
+            crate::config::EditorSettings::scaled_font_sizes(cx).1,
         );
 
         let mut element = div()
@@ -2190,9 +2190,10 @@ impl Render for Block {
             focused && self.display_text().is_empty() && self.marked_range.is_none();
 
         let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
+        // 文档块必须和编辑器外壳共用字号派生：块以前只套字号、漏掉界面缩放，
+        // 导致缩放设置对正文完全没反应（用户报修）。
+        crate::config::EditorSettings::apply_scaled_typography(cx, &mut theme);
         let fonts = crate::config::EditorSettings::fonts(cx);
-        theme.typography.text_size = fonts.markdown_size as f32;
-        theme.typography.code_size = fonts.code_size as f32;
         let strings = cx.global::<I18nManager>().strings_arc();
         let c = &theme.colors;
         let d = &theme.dimensions;
