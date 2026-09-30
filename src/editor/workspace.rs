@@ -2036,10 +2036,7 @@ impl Editor {
             && self.workspace.root == next_root
             && self.workspace.tree_scan_root == next_root
         {
-            self.workspace.selected = self
-                .file_path
-                .as_ref()
-                .map(|path| WorkspaceSelection::File(path.clone()));
+            self.follow_active_document_in_workspace_tree();
             return;
         }
 
@@ -2082,10 +2079,7 @@ impl Editor {
                             Ok(tree) => {
                                 editor.workspace.expanded.insert(tree.id.clone());
                                 editor.workspace.file_tree = Some(tree);
-                                editor.workspace.selected = editor
-                                    .file_path
-                                    .as_ref()
-                                    .map(|path| WorkspaceSelection::File(path.clone()));
+                                editor.follow_active_document_in_workspace_tree();
                                 // 扫描期间发起的工作区搜索此时才有文件列表可用。
                                 if editor.workspace.active_tab == WorkspaceTab::Search
                                     && !editor.workspace.search_query.is_empty()
@@ -2110,6 +2104,23 @@ impl Editor {
                     .ok();
             },
         ));
+    }
+
+    /// 侧栏树选中项跟随活动文件——但只在用户没在树上做出别的选择时。
+    /// 右键目录/工作区根之后，菜单动作（新建、粘贴、重命名、删除…）都按
+    /// 点击时的选择取目标，所以每帧的「跟随活动文件」不能把目录选中顶掉
+    /// （用户报修：右键 drafts 新建文件落到了活动文件旁边）。
+    fn follow_active_document_in_workspace_tree(&mut self) {
+        if !matches!(
+            self.workspace.selected,
+            None | Some(WorkspaceSelection::File(_))
+        ) {
+            return;
+        }
+        self.workspace.selected = self
+            .file_path
+            .as_ref()
+            .map(|path| WorkspaceSelection::File(path.clone()));
     }
 
     fn sync_workspace_outline(&mut self, _cx: &mut Context<Self>) {
@@ -8077,6 +8088,74 @@ mod tests {
             "滚轮应把文件树滚下去，实测 {tree_offset:?}"
         );
         assert_eq!(body_after, body_offset, "浮层里滚动不该带动正文");
+    }
+
+    #[gpui::test]
+    async fn workspace_context_menu_keeps_the_right_clicked_directory(cx: &mut TestAppContext) {
+        // 用户报修：右键目录后，侧栏每帧把选中项改回活动文件，菜单动作
+        // （新建/粘贴/重命名/删除…）会作用到活动文件上。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-context-menu-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let drafts = root.join("drafts");
+        fs::create_dir_all(&drafts).unwrap();
+        let note = root.join("a.md");
+        fs::write(&note, "# a\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root.clone(), cx);
+                editor.workspace.is_open = true;
+                editor.open_workspace_file(note.clone(), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.workspace.selected,
+                Some(WorkspaceSelection::File(note.clone())),
+                "打开文件后树应跟随活动文件"
+            );
+        });
+
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_context_menu(
+                    point(px(40.0), px(120.0)),
+                    Some(WorkspaceSelection::Directory(drafts.clone())),
+                    cx,
+                );
+            });
+        });
+        // 菜单渲染帧：以前会把选中项改回活动文件。
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.workspace.selected,
+                Some(WorkspaceSelection::Directory(drafts.clone())),
+                "右键目录后，选中目标不能被活动文件顶掉"
+            );
+            assert_eq!(
+                editor.selected_workspace_directory(),
+                Some(drafts.clone()),
+                "新建/粘贴的目标目录应是右键的那个目录"
+            );
+        });
     }
 
     #[gpui::test]
