@@ -7611,10 +7611,16 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     );
 
     let before = perf_passes(&editor, cx);
+    let revision_before = editor.read_with(cx, |editor, _| editor.document_revision);
     let start = Instant::now();
     cx.simulate_input("x");
     redraw(cx);
     let typed = start.elapsed();
+    let revision_after = editor.read_with(cx, |editor, _| editor.document_revision);
+    eprintln!(
+        "[measure] 一次按键：修订 +{}（行计划重建的键含修订/折叠/TOC 版本）",
+        revision_after - revision_before,
+    );
     let delta = perf_delta(before, perf_passes(&editor, cx));
     let totals = editor.read_with(cx, |editor, _| {
         (
