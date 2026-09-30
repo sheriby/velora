@@ -129,7 +129,12 @@ jobs:
           if [[ "$IS_BETA" == 'true' ]]; then
             flags+=(--prerelease --latest=false)
           fi
-          gh release create "$RELEASE_TAG" dist/* "${flags[@]}"
+          version="${RELEASE_TAG#v}"
+          gh release create "$RELEASE_TAG" \
+            "dist/velora-$version-macos-arm64.pkg" \
+            "dist/velora-$version-macos-x64.pkg" \
+            "dist/velora-$version-windows-x64-setup.exe" \
+            "${flags[@]}"
 
   update_notes:
     name: Update release notes
