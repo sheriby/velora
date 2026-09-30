@@ -1029,9 +1029,10 @@ pub(crate) fn dispatch_menu_action_for_editor(
 
 mod build_menus;
 pub(super) use build_menus::*;
+#[cfg(test)]
 pub(crate) use build_menus::build_menus as build_menus_impl;
 pub(crate) use build_menus::init;
-#[cfg(test)]
+
 mod command_menus;
 
 #[cfg(test)]
