@@ -7963,6 +7963,41 @@ fn file_history_records_dedupes_and_prunes() {
 }
 
 #[gpui::test]
+async fn inserting_a_table_through_the_dialog_can_be_undone(cx: &mut TestAppContext) {
+    // 审查发现：表格插入对话框不进撤销栈（其它表格操作都进），Ctrl+Z 要么什么
+    // 都不做，要么把之前的一次编辑一并撤掉。
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n\nbody\n".into(), None));
+    redraw(cx);
+    let before = editor.read_with(cx, |editor, cx| editor.current_document_source(cx));
+    editor.update(cx, |editor, cx| {
+        editor.table_insert_dialog = Some(super::context_menu::TableInsertDialogState {
+            target: super::context_menu::TableInsertTarget::Append,
+            body_rows: 1,
+            columns: 2,
+        });
+        assert!(editor.insert_table_from_dialog(cx), "对话框应插入表格");
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.current_document_source(cx).contains('|'),
+            "前置：表格已插入"
+        );
+    });
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.current_document_source(cx),
+            before,
+            "⌘Z 应撤销表格插入"
+        );
+    });
+}
+
+#[gpui::test]
 async fn escape_dismisses_the_info_dialog(cx: &mut TestAppContext) {
     // 审查发现：信息弹窗（关于/检查更新）没有键盘路径也没有遮罩点击，Esc 关不掉。
     init_editor_test_app(cx);

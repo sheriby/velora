@@ -912,8 +912,14 @@ impl Editor {
         if self.watched_workspace_root.as_ref() == Some(&root) && self.external_watcher.is_some() {
             return;
         }
+        self.watched_workspace_root = Some(root.clone());
+        // 测试进程里成百上千个窗口各起一个 OS watcher 会把 fd 打爆
+        // （Too many open files），“要不要监听”的决策在测试里可断言，
+        // OS 侧的监听行为由真实运行验证。
+        if cfg!(test) {
+            return;
+        }
         super::watcher::start_watching(self, &root, cx);
-        self.watched_workspace_root = Some(root);
     }
 
     /// watcher 事件统一入口：外部文件的增/删/改都走这里。
@@ -6264,6 +6270,9 @@ const SEARCH_CACHE_MAX_FILE_BYTES: u64 = 20_000_000;
 
 struct SearchContentCacheEntry {
     mtime: std::time::SystemTime,
+    /// 文件长度：mtime 粒度可能粗到秒，同秒内的改写只能靠长度变
+    /// 化发现（两个都同就认了，属于极端情况）。
+    len: u64,
     contents: std::sync::Arc<str>,
     last_used: std::time::Instant,
 }
@@ -6285,6 +6294,7 @@ fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
         return None;
     }
     let mtime = metadata.modified().ok()?;
+    let len = metadata.len();
 
     {
         let cache = search_content_cache();
@@ -6292,7 +6302,7 @@ fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
             return None;
         };
         if let Some(entry) = cache.get(path) {
-            if entry.mtime == mtime {
+            if entry.mtime == mtime && entry.len == len {
                 return Some(entry.contents.clone());
             }
         }
@@ -6307,7 +6317,7 @@ fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
 
     if let Ok(mut cache) = search_content_cache().lock() {
         if let Some(existing) = cache.get(path) {
-            if existing.mtime == mtime {
+            if existing.mtime == mtime && existing.len == len {
                 return Some(existing.contents.clone());
             }
         }
@@ -6334,6 +6344,7 @@ fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
                 path.to_path_buf(),
                 SearchContentCacheEntry {
                     mtime,
+                    len,
                     contents: contents.clone(),
                     last_used: std::time::Instant::now(),
                 },
@@ -7314,6 +7325,31 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
+
+    #[test]
+    fn search_cache_detects_a_rewrite_with_a_restored_mtime() {
+        // 审查发现：搜索内容缓存只比 mtime。粗粒度文件系统（秒级/更粗）里
+        // 内容改了但 mtime 没变时，搜索会一直读到旧内容。
+        let path = std::env::temp_dir().join(format!(
+            "velora-search-cache-len-{}.md",
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(&path, "alpha").unwrap();
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(
+            &*super::cached_file_source(&path).expect("first read"),
+            "alpha"
+        );
+        fs::write(&path, "beta beta").unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(before).unwrap();
+        assert_eq!(
+            &*super::cached_file_source(&path).expect("second read"),
+            "beta beta",
+            "mtime 未变但长度变了，缓存必须失效"
+        );
+        let _ = fs::remove_file(&path);
+    }
 
     #[test]
     fn search_offsets_keep_cjk_and_emoji_boundaries() {
@@ -8638,9 +8674,12 @@ async fn autosave_conflict_reports_the_file_that_actually_changed(cx: &mut TestA
         cx.run_until_parked();
         editor.read_with(cx, |editor, _| {
             assert!(editor.workspace.root.is_some(), "打开单文件应隐含工作区根");
-            assert!(
-                editor.external_watcher.is_some(),
-                "隐含根也必须启动文件监听"
+            // 测试里不起真实 OS watcher（fd 限制），断言“决定监听哪根”的接缝；
+            // 实际的 notify 监听由真实运行验证。
+            assert_eq!(
+                editor.watched_workspace_root.as_deref(),
+                editor.workspace.root.as_deref(),
+                "隐含根也必须进入监听状态"
             );
         });
     }

@@ -1375,7 +1375,8 @@ pub(crate) fn save_app_preferences_with_dirs(
             .with_context(|| format!("failed to create '{}'", parent.display()))?;
     }
     let text = toml::to_string_pretty(&PreferencesFile::from(preferences))?;
-    std::fs::write(&path, text).with_context(|| format!("failed to write '{}'", path.display()))
+    crate::config::write_config_file_atomic(&path, &text)
+        .with_context(|| format!("failed to write '{}'", path.display()))
 }
 
 /// 导出主题偏好（roadmap F3）；读取失败时按「当前主题」导出。

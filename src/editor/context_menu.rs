@@ -468,9 +468,20 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.insert_table_from_dialog(cx);
+    }
+
+    /// 从已打开的插入对话框插入表格。与 UI 事件解耦（便于测试），并把这次
+    /// 结构插入纳入撤销栈：其它表格操作都走 prepare/finalize，此前这条漏了
+    /// （用户报修：插入表格后 Ctrl+Z 没反应，或者把上一次编辑一并揪掉）。
+    pub(super) fn insert_table_from_dialog(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(dialog) = self.table_insert_dialog.take() else {
-            return;
+            return false;
         };
+        self.prepare_undo_capture(
+            crate::components::UndoCaptureKind::NonCoalescible,
+            cx,
+        );
 
         let table = TableData::new_empty(dialog.body_rows, dialog.columns);
         let new_block = Self::new_table_block(cx, table);
@@ -518,8 +529,10 @@ impl Editor {
             self.focus_block(first_cell.entity_id());
         }
         self.mark_dirty(cx);
+        self.finalize_pending_undo_capture(cx);
         self.request_active_block_scroll_into_view(cx);
         cx.notify();
+        true
     }
 
     fn active_axis_menu_selection(&self) -> Option<TableAxisSelection> {

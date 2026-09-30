@@ -26,6 +26,27 @@ pub(crate) use recovery::{
 };
 pub(crate) use session::{SessionState, read_session, save_session};
 
+/// 配置文件原子写：同目录临时文件 + rename。
+///
+/// `session.json` / `config.toml` 被半写（进程中断、并发写）后会解析失败，
+/// 而读取端把解析失败当成「没有配置」静默回退默认值——等于丢掉用户设置。
+/// 临时文件与目标同目录，rename 在同一文件系统内是原子的。
+pub(crate) fn write_config_file_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = path.with_file_name(format!(".{file_name}.velora-{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&temp, contents)?;
+    match std::fs::rename(&temp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp);
+            Err(error)
+        }
+    }
+}
+
 pub(crate) const RECENT_FILES_LIMIT: usize = 20;
 
 /// Local date as YYYY-MM-DD, computed from the system clock via the civil

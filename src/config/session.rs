@@ -52,7 +52,7 @@ fn save_session_with_dirs(
             .with_context(|| format!("failed to create '{}'", parent.display()))?;
     }
     let text = serde_json::to_string_pretty(session)?;
-    std::fs::write(&path, text + "\n")
+    crate::config::write_config_file_atomic(&path, &(text + "\n"))
         .with_context(|| format!("failed to write '{}'", path.display()))
 }
 
@@ -64,6 +64,35 @@ fn session_file(dirs: &VeloraConfigDirs) -> std::path::PathBuf {
 mod tests {
     use super::{SessionState, read_session_with_dirs, save_session_with_dirs};
     use crate::config::VeloraConfigDirs;
+
+    #[test]
+    fn session_write_leaves_no_partial_or_temp_files() {
+        // 审查发现：session.json / config.toml 是直接覆写，半写文件会被读取端
+        // 当成「没有配置」静默回退默认值（等于丢用户设置）；原子写不应留临时文件。
+        let root =
+            std::env::temp_dir().join(format!("velora-session-atomic-{}", uuid::Uuid::new_v4()));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        let session = SessionState {
+            root: Some("/tmp/workspace".into()),
+            tabs: vec!["/tmp/workspace/a.md".into()],
+            active: Some("/tmp/workspace/a.md".into()),
+            sidebar_width: Some(280),
+        };
+        save_session_with_dirs(&session, &dirs).expect("save session");
+        let leftovers: Vec<String> = std::fs::read_dir(&dirs.root)
+            .expect("read config dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "原子写不应留下临时文件：{leftovers:?}");
+        assert_eq!(
+            read_session_with_dirs(&dirs).expect("read session").sidebar_width,
+            Some(280),
+            "原子写不能丢内容"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn session_roundtrips_through_disk() {
