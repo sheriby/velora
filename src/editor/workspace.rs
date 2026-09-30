@@ -7964,6 +7964,110 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn scrolling_inside_the_peek_overlay_does_not_scroll_the_document(
+        cx: &mut TestAppContext,
+    ) {
+        // 用户报修：侧栏收起时贴边唤出浮层，在浮层里滚文件树，正文跟着一起滚。
+        // 展开时侧栏占布局，正文滚区不在指针底下；收起后浮层盖在正文上，若不
+        // 遮挡鼠标命中，一次滚轮会同时命中「浮层里的文件树」和「后面的编辑器
+        // 滚动区」两个可滚区，两边都滚。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root =
+            std::env::temp_dir().join(format!("velora-peek-scroll-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..80 {
+            fs::write(
+                root.join(format!("note-{index:02}.md")),
+                format!("# note {index}\n"),
+            )
+            .unwrap();
+        }
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let markdown = (0..400)
+            .map(|index| format!("## Section {index}\n\nParagraph body for section {index}.\n"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = false;
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+
+        // 先证明正文可滚、且滚轮命中正文时确实会滚。
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(700.0), px(400.0)),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-600.0))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::default(),
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        let body_offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+        assert!(
+            body_offset < px(0.0),
+            "正文应先滚起来，实测 {body_offset:?}"
+        );
+
+        // 收起 + 贴边唤出（直接置位，等价停留满 dwell 后的状态）。滑入动画
+        // 按真实时间推进，推时钟 + 睡一觉等它停到终位（和上面贴边测试同节奏）。
+        editor.update(cx, |editor, _cx| {
+            editor.sidebar_peek = true;
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(450));
+        cx.update(|window, cx| window.draw(cx).clear());
+        let overlay = cx
+            .debug_bounds("sidebar-auto-hide-overlay")
+            .expect("贴边状态下浮层应已挂载");
+        assert!(
+            overlay.origin.x <= px(1.0),
+            "滑入动画结束后浮层应贴住左边缘，实测 origin.x = {:?}",
+            overlay.origin.x
+        );
+        let tree_max = editor.read_with(cx, |editor, _| {
+            editor.workspace.tree_scroll_handle.max_offset().height
+        });
+        assert!(
+            tree_max > px(0.0),
+            "文件树应可滚（前置布局条件），实测 {tree_max:?}"
+        );
+
+        // 在浮层里的文件树上滚：只有文件树滚，正文偏移不许动。
+        let panel_point = point(overlay.origin.x + px(100.0), px(400.0));
+        cx.simulate_event(ScrollWheelEvent {
+            position: panel_point,
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-600.0))),
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::default(),
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        let tree_offset = editor.read_with(cx, |editor, _| {
+            editor.workspace.tree_scroll_handle.offset().y
+        });
+        let body_after = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+        assert!(
+            tree_offset < px(0.0),
+            "滚轮应把文件树滚下去，实测 {tree_offset:?}"
+        );
+        assert_eq!(body_after, body_offset, "浮层里滚动不该带动正文");
+    }
+
+    #[gpui::test]
     async fn workspace_search_cache_picks_up_modified_content(cx: &mut TestAppContext) {
         // 内容缓存：mtime 未变走内存；文件被改写后必须反映新内容（用户报修
         // 的性能优化不能牺牲正确性）。

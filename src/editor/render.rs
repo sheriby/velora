@@ -23,7 +23,7 @@ pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";
 /// paints them before they scroll in instead of showing a blank edge.
 const RENDER_OVERDRAW_PX: f32 = 800.0;
 /// 侧边栏收起后，贴住窗口左边缘多宽就算「想唤出侧边栏」。
-const SIDEBAR_AUTO_HIDE_EDGE_PX: f32 = 15.0;
+const SIDEBAR_AUTO_HIDE_EDGE_PX: f32 = 30.0;
 /// 活动栏（窄条）宽度，和 `render_activity_rail` 里的容器一致。
 const SIDEBAR_RAIL_WIDTH_PX: f32 = 50.0;
 /// 唤出滑入 + 收回滑出共用的动画时长；workspace.rs 的收回定时器用同一值
@@ -3313,6 +3313,10 @@ impl Render for Editor {
                     // 显式宽度：绝对定位下不给宽度会按父级拉伸，鼠标移到正文时仍算
                     // 「在浮层内」，退出事件永远不触发。宽度 = 窄条 + 面板。
                     .w(overlay_width)
+                    // 遮挡命中：浮层盖着正文，不挡住的话滚轮会同时命中浮层里的文件
+                    // 树和后面的编辑器滚动区（用户报修：收起侧栏贴边唤出后，在浮层
+                    // 里滚树把正文也带着滚了），点击也会穿透到正文。
+                    .occlude()
                     .flex()
                     .border_r(px(1.0))
                     .border_color(theme.colors.dialog_border)
