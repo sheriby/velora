@@ -110,7 +110,18 @@ impl Editor {
             return;
         };
         let file_path = self.file_path.clone();
+        // 兑现「可撤销」：恢复前把当前文档压进撤销栈，⌘Z 能回到恢复前的
+        // 内容（用户报修：恢复会清空整个 undo 栈，误按 Enter 就丢掉当前
+        // 未保存的修改且无法撤回）。
+        let pre_restore = self.capture_history_entry(
+            crate::components::UndoCaptureKind::NonCoalescible,
+            cx,
+        );
+        self.pending_undo_capture = None;
         self.replace_document_from_markdown(content, file_path, cx);
+        self.undo_history.clear();
+        self.redo_history.clear();
+        self.undo_history.push(pre_restore);
         self.mark_dirty(cx);
         cx.notify();
     }

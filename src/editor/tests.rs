@@ -7963,6 +7963,56 @@ fn file_history_records_dedupes_and_prunes() {
 }
 
 #[gpui::test]
+async fn file_history_restore_can_be_undone(cx: &mut TestAppContext) {
+    // 用户报修（审查发现）：恢复历史版本会清空 undo 栈，模块注释承诺的
+    // 「可撤销」是假的——误按 Enter 就丢掉当前未保存内容且无法撤回。
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("file-history-undo");
+    std::fs::write(&path, "当前内容").expect("seed current");
+    crate::config::record_file_history(&path, "旧版本内容").expect("record older");
+    let history_files = crate::config::list_file_history(&path);
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = std::fs::remove_file(cleanup_path);
+        for file in history_files {
+            let _ = std::fs::remove_file(file);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_markdown("当前内容".to_string(), Some(path.clone()), cx);
+    });
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        editor.open_file_history(cx);
+        editor.restore_file_history_version(0, cx);
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.current_document_source(cx),
+            "旧版本内容",
+            "恢复后正文应是历史内容"
+        );
+        assert!(editor.document_dirty, "恢复是未保存修改");
+    });
+
+    // ⌘Z 应回到恢复前的内容。
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.current_document_source(cx),
+            "当前内容",
+            "恢复历史版本必须可撤销，⌘Z 回到恢复前内容"
+        );
+    });
+}
+
+#[gpui::test]
 async fn file_history_overlay_restores_version_as_unsaved_edit(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let path = temp_markdown_path("file-history");
