@@ -5280,10 +5280,36 @@ impl Editor {
                 .map(str::len)
                 .sum::<usize>()
                 .min(source.len());
-            let start = (line_start + match_range.start).min(source.len());
-            let end = (line_start + match_range.end).min(source.len());
-            if source.is_char_boundary(start) && source.is_char_boundary(end) {
-                self.jump_to_document_search_range(start..end, cx);
+            let approx_start = (line_start + match_range.start).min(source.len());
+            let approx_end = (line_start + match_range.end).min(source.len());
+            let matcher =
+                SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
+            // 命中偏移来自磁盘快照。文件有未保存修改时内存文本已经变了，旧
+            // 偏移直接套会落到错处（甚至切在多字节字符中间而静默不跳）。
+            // 先看近似区间是否恰好就是查询的匹配；不是就在内存文本里用查询
+            // 就近重新定位（用户报修：脏文件点搜索结果乱跳/不跳）。
+            let approx_is_the_match = source
+                .get(approx_start..approx_end)
+                .is_some_and(|slice| {
+                    !slice.is_empty()
+                        && matcher
+                            .find_in_line(slice)
+                            .iter()
+                            .any(|range| range.start == 0 && range.end == slice.len())
+                });
+            let range = if approx_is_the_match {
+                Some(approx_start..approx_end)
+            } else {
+                find_document_match_from(&source, &matcher, approx_start, false)
+                    .or_else(|| find_document_match_from(&source, &matcher, approx_start, true))
+                    .or_else(|| find_document_match_from(&source, &matcher, 0, false))
+            };
+            if let Some(range) = range
+                && source.is_char_boundary(range.start)
+                && source.is_char_boundary(range.end)
+            {
+                self.workspace.document_active_range = Some(range.clone());
+                self.jump_to_document_search_range(range, cx);
             }
         }
     }
@@ -8393,6 +8419,82 @@ async fn autosave_conflict_reports_the_file_that_actually_changed(cx: &mut TestA
                 editor.selected_workspace_directory(),
                 Some(drafts.clone()),
                 "新建/粘贴的目标目录应是右键的那个目录"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn clicking_a_search_hit_in_a_dirty_file_lands_on_the_match(cx: &mut TestAppContext) {
+        // 审查发现：工作区搜索读磁盘快照，跳转偏移却套在未保存的内存文本上，
+        // 脏文件点搜索结果会跳错位置或静默落到空区间。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let root = std::env::temp_dir().join(format!(
+            "velora-dirty-search-hit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.md");
+        fs::write(&path, "first para\n\nbeta target\n").unwrap();
+        cx.on_quit({
+            let root = root.clone();
+            move || {
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_workspace_root(root.clone(), cx);
+                editor.workspace.is_open = true;
+                editor.open_workspace_file(path.clone(), window, cx);
+            });
+        });
+        cx.run_until_parked();
+        // 未保存的编辑：在开头插入两行，磁盘上的 line = 3 在内存里已推到 line = 5。
+        editor.update(cx, |editor, cx| {
+            let block = editor.document.root_blocks()[0].clone();
+            block.update(cx, |block, cx| {
+                block.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+                block.replace_text_in_visible_range(0..0, "inserted line\n\n", None, false, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            editor.workspace.search_query = "beta".into();
+            editor.workspace.search_scope = super::WorkspaceSearchScope::Workspace;
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        let index = editor.read_with(cx, |editor, _| {
+            editor
+                .workspace
+                .search_results
+                .iter()
+                .position(|hit| hit.path == path && hit.line == Some(3))
+                .expect("磁盘快照应把命中记在第 3 行")
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| editor.open_search_hit(index, window, cx));
+        });
+        editor.read_with(cx, |editor, cx| {
+            let range = editor
+                .workspace
+                .document_active_range
+                .clone()
+                .expect("点击结果应跳到命中");
+            let source = editor.current_document_source(cx);
+            assert_eq!(
+                &source[range],
+                "beta",
+                "脏文件里的跳转必须落在命中文本上"
             );
         });
     }

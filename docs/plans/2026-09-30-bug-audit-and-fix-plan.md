@@ -98,7 +98,7 @@
 | F3 树右键目标 | ✅ 完成 | 未提交 | 新增用例：`workspace_context_menu_keeps_the_right_clicked_directory`。改动：新 helper `follow_active_document_in_workspace_tree`（只在 None/File 选中时跟随活动文件），替换两处无条件重置（每帧同步 + 扫描落地） |
 | F4 保存与冲突 | ✅ 完成 | 本次提交 | 新增用例：`manual_save_then_typing_does_not_report_an_external_change`、`autosave_conflict_reports_the_file_that_actually_changed`。改动：`apply_successful_save` 调 `mark_workspace_document_saved` 同步标签版本/内容/脏标记；自动保存后台任务携带真正失败的文件路径并优先用它上报冲突 |
 | F5 文件历史撤销 | ✅ 完成 | 本次提交 | 新增用例：`file_history_restore_can_be_undone`。改动：`restore_file_history_version` 恢复前把当前文档压进撤销栈（只留这一条），兑现「可撤销」承诺 |
-| F6 脏文件搜索跳转 | ⬜ 未开始 | — | — |
+| F6 脏文件搜索跳转 | ✅ 完成 | 本次提交 | 新增用例：`clicking_a_search_hit_in_a_dirty_file_lands_on_the_match`。改动：`open_search_hit` 先验证磁盘偏移落在内存文本上是否仍是匹配，不是就用查询就近重定位（前/后/从头兜底），并补记 `document_active_range` |
 | F7 watcher | ⬜ 未开始 | — | — |
 | F8 性能批次 | ⬜ 未开始 | — | 可拆分多个提交 |
 | F9 P2 收尾 | ⬜ 未开始 | — | 可拆分多个提交 |
