@@ -793,6 +793,8 @@ impl Editor {
             );
             if (target - f32::from(offset.y)).abs() > 0.5 {
                 offset.y = px(target);
+                self.caret_scroll_applications
+                    .set(self.caret_scroll_applications.get() + 1);
                 self.scroll_handle.set_offset(offset);
             }
             return true;
@@ -808,6 +810,10 @@ impl Editor {
             offset.y += px(viewport_center - target_center);
             let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
             offset.y = offset.y.min(px(0.0)).max(-max_offset_y);
+            if self.scroll_handle.offset().y != offset.y {
+                self.caret_scroll_applications
+                    .set(self.caret_scroll_applications.get() + 1);
+            }
             self.scroll_handle.set_offset(offset);
             return true;
         }
@@ -829,11 +835,18 @@ impl Editor {
         if changed {
             let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
             offset.y = offset.y.min(px(0.0)).max(-max_offset_y);
+            if self.scroll_handle.offset().y != offset.y {
+                self.caret_scroll_applications
+                    .set(self.caret_scroll_applications.get() + 1);
+            }
             self.scroll_handle.set_offset(offset);
         }
 
         true
     }
+
+    /// 整篇替换后光标滚动的校验帧数（16ms 一帧，约 100ms）。
+    const SCROLL_SETTLE_FRAMES: u8 = 6;
 
     fn apply_pending_scroll_into_view(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.scrollbar_drag.is_some() {
@@ -844,16 +857,27 @@ impl Editor {
             return;
         }
 
-        // scroll_to_item indexed children by position, which the spacers break;
-        // the focused block is always mounted, so pixel math on its bounds works.
-        let has_bounds = self.ensure_focused_caret_visible(window, cx);
+        // 撤销/换模式/打开文件会替换整篇块：这一帧块边界和行高还来自旧布局或
+        // 估计值，拿它算「光标离边界多远」会多滚一截，下一帧再被真实布局纠正
+        // ——用户看到窗口来回滚。所以布局重算的那一帧先不滚，等下一帧拿到新
+        // 布局再滚一次，之后再校验几帧直到测量落定。
         if self.pending_scroll_recheck_after_layout {
             self.pending_scroll_recheck_after_layout = false;
+            self.scroll_settle_frames = Self::SCROLL_SETTLE_FRAMES;
             self.schedule_followup_frame(cx);
             return;
         }
 
+        // scroll_to_item indexed children by position, which the spacers break;
+        // the focused block is always mounted, so pixel math on its bounds works.
+        let has_bounds = self.ensure_focused_caret_visible(window, cx);
         if !has_bounds {
+            self.schedule_followup_frame(cx);
+            return;
+        }
+
+        if self.scroll_settle_frames > 0 {
+            self.scroll_settle_frames -= 1;
             self.schedule_followup_frame(cx);
             return;
         }

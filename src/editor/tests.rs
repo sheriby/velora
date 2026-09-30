@@ -7356,6 +7356,116 @@ async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut Test
 }
 
 #[gpui::test]
+async fn undo_scroll_after_document_replace_stays_single_shot(cx: &mut TestAppContext) {
+    // 用户报修：编辑中按 Ctrl+Z，窗口来回滚动。撤销会替换整篇块，这一帧的
+    // 块边界/行高都是旧布局或估计值，最容易出现「先按旧几何滚一次、下一帧
+    // 再按新几何纠正」。这里守住：撤销后滚动应用 ≤1 次、逐帧偏移不反向，
+    // 且撤销后的活动块最终落在视口内。
+    init_editor_test_app(cx);
+    let markdown = (0..300)
+        .map(|index| {
+            let code = (0..20)
+                .map(|line| format!("line {line} of block {index}\n"))
+                .collect::<String>();
+            format!("## 第 {index} 节\n\n第 {index} 段。\n\n```rust\n{code}```\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    for _ in 0..4 {
+        redraw(cx);
+    }
+
+    let offset = |editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext| {
+        f32::from(editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y))
+    };
+    let target = editor.read_with(cx, |editor, _| {
+        let blocks = editor.document.visible_blocks();
+        blocks[blocks.len() * 3 / 4].entity.entity_id()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(target));
+    redraw(cx);
+
+    let mut previous = offset(&editor, cx);
+    for round in 0..3 {
+        cx.simulate_input("x");
+        redraw(cx);
+        let before = editor.read_with(cx, |editor, _| editor.caret_scroll_applications.get());
+        editor.update(cx, |editor, cx| editor.undo_document(cx));
+        let mut frames = Vec::new();
+        for _ in 0..6 {
+            redraw(cx);
+            frames.push(offset(&editor, cx));
+            cx.executor().advance_clock(Duration::from_millis(32));
+            cx.run_until_parked();
+        }
+        let applications =
+            editor.read_with(cx, |editor, _| editor.caret_scroll_applications.get()) - before;
+        eprintln!("[measure] 第 {} 次撤销：应用 {applications} 次，逐帧 {frames:?}", round + 1);
+
+        // 允许一次「行高收敛」后的同向校正，但不许来回反复。
+        assert!(
+            applications <= 2,
+            "第 {} 次撤销后滚动应用了 {applications} 次（应一次到位 + 至多一次同向校正）",
+            round + 1
+        );
+        let span = frames
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), value| {
+                (lo.min(*value), hi.max(*value))
+            });
+        assert!(
+            span.1 - span.0 <= 2.0 * 1052.0,
+            "第 {} 次撤销后视野漂移 {:.0}px（超过两个视口）：{frames:?}",
+            round + 1,
+            span.1 - span.0
+        );
+        // 逐帧偏移不许反向（允许一次到位后保持不动）。
+        let mut direction = 0.0f32;
+        for pair in frames.windows(2) {
+            let delta = pair[1] - pair[0];
+            if delta.abs() <= 0.5 {
+                continue;
+            }
+            if direction == 0.0 {
+                direction = delta.signum();
+            } else {
+                assert_eq!(
+                    delta.signum(),
+                    direction,
+                    "第 {} 次撤销后滚动反向：{frames:?}",
+                    round + 1
+                );
+            }
+        }
+        previous = frames.last().copied().unwrap_or(previous);
+    }
+
+    // 撤销后的活动块必须落在视口内（撤销后整篇块都换了新实体，要按当前
+    // 活动块查，而不是撤销前那个 id）。
+    let diag = editor.read_with(cx, |editor, cx| {
+        let viewport = editor.scroll_handle.bounds();
+        let active = editor.active_entity_id;
+        let lookup = active.and_then(|id| editor.focusable_entity_by_id(id));
+        let bounds = lookup
+            .as_ref()
+            .and_then(|block| block.read_with(cx, |block, _| block.active_range_or_cursor_bounds()));
+        let index = active.and_then(|id| editor.document.visible_index_for_entity_id(id));
+        (viewport, active.is_some(), lookup.is_some(), bounds, index)
+    });
+    eprintln!(
+        "[probe] viewport {:?} / active? {} / lookup? {} / bounds {:?} / index {:?}",
+        diag.0, diag.1, diag.2, diag.3, diag.4
+    );
+    let visible = diag
+        .3
+        .as_ref()
+        .map(|bounds| bounds.bottom() > diag.0.top() && bounds.top() < diag.0.bottom())
+        .unwrap_or(false);
+    assert!(visible, "撤销后活动块应在视口内，当前偏移 {previous:.1}");
+}
+
+#[gpui::test]
 async fn typing_does_not_rescan_status_bar_statistics_every_key(cx: &mut TestAppContext) {
     // P2：状态栏整篇字数与「超长块」提示都是整篇扫描，旧实现按 document_revision
     // 缓存 → 每个按键扫一遍（1 MiB 整篇分词 29ms，10 MiB 约 300ms）。改成静默

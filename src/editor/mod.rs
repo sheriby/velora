@@ -150,12 +150,18 @@ pub struct Editor {
     word_count_scans: std::cell::Cell<u64>,
     /// 性能计数器：行结构计划重建次数（每键重建整篇计划是 P2 热点）。
     row_plan_rebuilds: std::cell::Cell<u64>,
+    /// 计数器：光标滚动实际改动的次数。撤销等操作会替换整篇块，
+    /// 用旧布局的边界先滚一次、下一帧再纠正，就会让用户看到来回滚。
+    caret_scroll_applications: std::cell::Cell<u64>,
     /// 性能诊断：四类全文遍数的累计耗时（纳秒），只给基准用例与诊断读。
     source_serialization_nanos: std::cell::Cell<u64>,
     source_mapping_nanos: std::cell::Cell<u64>,
     row_plan_nanos: std::cell::Cell<u64>,
     /// Where last frame's run sat among the scroll container's children.
     prev_mounted_run: Option<MountedRun>,
+    /// 撤销/换模式等整篇替换后，光标滚动的「再看几帧」计数：行高在头几帧
+    /// 还是估计值，滚动目标会随后续测量漂移，一次到位并不成立。
+    scroll_settle_frames: u8,
     /// 冷启动续挂已排的帧数（上限 COLD_FILL_MAX_FRAMES，避免每帧重排）。
     cold_fill_frames: u8,
     close_guard_installed: bool,
@@ -579,7 +585,9 @@ impl Editor {
             source_mapping_builds: std::cell::Cell::default(),
             word_count_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),
+            caret_scroll_applications: std::cell::Cell::default(),
             prev_mounted_run: None,
+            scroll_settle_frames: 0,
             cold_fill_frames: 0,
             close_guard_installed: false,
             show_unsaved_changes_dialog: false,
