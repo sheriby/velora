@@ -2384,6 +2384,14 @@ impl Editor {
             },
             cx,
         );
+        // 搜索跳转不能把焦点从查询框抢进正文：那样继续敲字会直接改写文档
+        // （用户报修）。本帧块仍拿到焦点，apply_pending_scroll_into_view 靠
+        // 它算滚动目标；同帧稍后 apply_pending_workspace_search_focus 把焦点
+        // 交还查询框。滚动目标另走 active_entity_id（见 ensure_focused_
+        // caret_visible），不依赖焦点。
+        if self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Search {
+            self.workspace.search_focus_pending = true;
+        }
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_center_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
@@ -2517,9 +2525,13 @@ impl Editor {
         if self.workspace.search_scope != WorkspaceSearchScope::Document {
             return;
         }
-        let Some(source) = self.workspace.document_search_source.clone() else {
-            return;
-        };
+        // 查询刚打完时后台搜索还没落地（120ms 去抖），快照为 None；改在
+        // 当前文档源上找，不再静默什么都不做（用户报修）。
+        let source = self
+            .workspace
+            .document_search_source
+            .clone()
+            .unwrap_or_else(|| self.current_document_source(cx));
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let from = self
             .workspace
@@ -8222,6 +8234,96 @@ mod tests {
         cx.run_until_parked();
         editor.read_with(cx, |editor, _cx| {
             assert_eq!(editor.workspace.search_results.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn document_find_enter_right_after_typing_still_jumps(cx: &mut TestAppContext) {
+        // 用户报修：打完查询立刻回车（120ms 去抖窗口内）会静默什么都不做。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, "# Alpha\n\nBeta alpha\n".into(), None)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "alpha".into();
+            editor.schedule_workspace_search(cx);
+            // 用户打完字立刻回车：后台搜索还没落地。
+            editor.find_next_document_match(false, cx);
+        });
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.workspace.document_active_range,
+                Some(2..7),
+                "回车应立刻跳到第一条命中，而不是静默什么都不做"
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.workspace.document_active_range,
+                Some(2..7),
+                "结果落地后不能把刚跳到的命中清掉"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn document_find_jump_keeps_the_query_field_focused(cx: &mut TestAppContext) {
+        // 用户报修：跳转后焦点被抢进正文，继续敲字直接改写文档（数据损坏）。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let original = "# Alpha\n\nBeta alpha\n";
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, original.into(), None)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "alpha".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| {
+            editor.read_with(cx, |editor, _| {
+                let focus = editor.workspace.search_focus.as_ref().expect("find focus");
+                assert!(focus.is_focused(window), "打开查找面板后焦点应在查询框");
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            editor.find_next_document_match(false, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| {
+            editor.read_with(cx, |editor, _| {
+                let focus = editor.workspace.search_focus.as_ref().expect("find focus");
+                assert!(focus.is_focused(window), "跳转后焦点应留在查询框");
+            });
+        });
+        // 继续敲字：必须进查询，不是进正文。
+        let before = editor.read_with(cx, |editor, cx| editor.current_document_source(cx));
+        cx.simulate_input("X");
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.workspace.search_query.contains('X'),
+                "键入应进查询框，实际查询 = {:?}",
+                editor.workspace.search_query
+            );
+            assert_eq!(
+                editor.current_document_source(cx),
+                before,
+                "跳转后键入不许改写正文"
+            );
         });
     }
 

@@ -759,7 +759,14 @@ impl Editor {
     }
 
     fn ensure_focused_caret_visible(&mut self, window: &Window, cx: &App) -> bool {
-        let Some(focused_block) = self.focused_edit_target(window, cx) else {
+        // 搜索跳转会把焦点交还查询框：滚动目标改用 active_entity_id，
+        // 不让「滚到命中」依赖正文块持有焦点，也避免挂着的滚动请求在
+        // 没有焦点块时反复排后续帧。
+        let focused_block = self.focused_edit_target(window, cx).or_else(|| {
+            self.active_entity_id
+                .and_then(|entity_id| self.focusable_entity_by_id(entity_id))
+        });
+        let Some(focused_block) = focused_block else {
             return false;
         };
         let Some(active_bounds) =
