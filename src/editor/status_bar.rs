@@ -24,6 +24,7 @@ impl Editor {
         {
             return count;
         }
+        self.word_count_scans.set(self.word_count_scans.get() + 1);
         let count = count_words(&self.last_stable_source_text);
         self.word_count_cache.set(Some((revision, count)));
         count

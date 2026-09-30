@@ -491,6 +491,12 @@ pub struct BlockRecord {
     pub parent: Option<Uuid>,
     pub content: Vec<Uuid>,
     pub raw_fallback: Option<String>,
+    /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
+    /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
+    title_revision: u64,
+    /// markdown 输出备忘：(标题树版本, markdown)。`RefCell` 以便 `&self` 读取路径
+    /// 命中。（序列化是纯函数，版本不对就重算，不存在脏读风险。）
+    markdown_memo: std::cell::RefCell<Option<(u64, String)>>,
 }
 
 impl BlockRecord {
@@ -504,6 +510,8 @@ impl BlockRecord {
             parent: None,
             content: Vec::new(),
             raw_fallback: None,
+            title_revision: 0,
+            markdown_memo: std::cell::RefCell::new(None),
         };
         record.sync_raw_fallback();
         record
@@ -562,13 +570,24 @@ impl BlockRecord {
 
     pub fn set_title(&mut self, title: InlineTextTree) {
         self.title = title;
+        self.title_revision = self.title_revision.wrapping_add(1);
         self.sync_raw_fallback();
     }
 
     /// Export the block title as Markdown: fragment style flags are
     /// serialized back to delimiter markers via [`InlineTextTree::serialize_markdown`].
+    ///
+    /// 按 [`Self::title_revision`] 备忘：整篇序列化时每个未改动的块直接拿上次
+    /// 结果，1 MiB 文档的序列化从 416ms 降到只算被改的那几块。
     pub fn title_markdown(&self) -> String {
-        self.title.serialize_markdown()
+        if let Some((revision, markdown)) = self.markdown_memo.borrow().as_ref()
+            && *revision == self.title_revision
+        {
+            return markdown.clone();
+        }
+        let markdown = self.title.serialize_markdown();
+        *self.markdown_memo.borrow_mut() = Some((self.title_revision, markdown.clone()));
+        markdown
     }
 
     /// Returns true for block kinds that keep their original source text

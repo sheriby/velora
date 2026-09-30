@@ -6,10 +6,18 @@ use super::*;
 
 impl Editor {
     pub(super) fn current_document_source(&self, cx: &App) -> String {
-        match self.view_mode {
+        self.source_serializations
+            .set(self.source_serializations.get() + 1);
+        let started = std::time::Instant::now();
+        let source = match self.view_mode {
             ViewMode::Rendered => self.document.markdown_text(cx),
             ViewMode::Source => self.document.raw_source_text(cx),
-        }
+        };
+        self.source_serialization_nanos.set(
+            self.source_serialization_nanos.get()
+                + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
+        source
     }
 
     pub(super) fn is_empty_paragraph_separator(block: &Block) -> bool {
@@ -693,6 +701,22 @@ impl Editor {
     }
 
     fn build_source_target_mappings_until(
+        &self,
+        cx: &App,
+        target: Option<EntityId>,
+    ) -> (Vec<SourceTargetMapping>, HashMap<EntityId, Range<usize>>) {
+        self.source_mapping_builds
+            .set(self.source_mapping_builds.get() + 1);
+        let started = std::time::Instant::now();
+        let result = self.build_source_target_mappings_inner(cx, target);
+        self.source_mapping_nanos.set(
+            self.source_mapping_nanos.get()
+                + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
+        result
+    }
+
+    fn build_source_target_mappings_inner(
         &self,
         cx: &App,
         target: Option<EntityId>,

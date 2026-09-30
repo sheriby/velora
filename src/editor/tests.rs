@@ -43,6 +43,28 @@ fn temp_export_path(test_name: &str, extension: &str) -> PathBuf {
     path
 }
 
+/// P2 性能守门的四个全文遍数：序列化 / mapping 重建 / 字数扫描 / 行计划重建。
+fn perf_passes(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut gpui::VisualTestContext,
+) -> (u64, u64, u64, u64) {
+    editor.read_with(cx, |editor, _| {
+        (
+            editor.source_serializations.get(),
+            editor.source_mapping_builds.get(),
+            editor.word_count_scans.get(),
+            editor.row_plan_rebuilds.get(),
+        )
+    })
+}
+
+fn perf_delta(
+    from: (u64, u64, u64, u64),
+    to: (u64, u64, u64, u64),
+) -> (u64, u64, u64, u64) {
+    (to.0 - from.0, to.1 - from.1, to.2 - from.2, to.3 - from.3)
+}
+
 fn redraw(cx: &mut gpui::VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear());
     cx.run_until_parked();
@@ -7331,6 +7353,178 @@ async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut Test
             assert!(wraps > 2, "应实际覆盖多行中英文混排");
         });
     }
+}
+
+#[gpui::test]
+async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
+    // P2 大文档输入预算：1 MiB 文档里一次按键的成本必须是「常数次全文遍数 +
+    // 有界时间」，而不是随文档线性增长的多遍扫描。夹具由
+    // scripts/generate-fixtures.mjs 生成且被 gitignore，缺失就跳过。
+    // （10 MiB 夹具单键实测 13s，迭代太慢，先用 1 MiB 收敛行为。）
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/one-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        return;
+    }
+    init_editor_test_app(cx);
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    assert!(markdown.len() >= 1024 * 1024, "夹具应约 1 MiB");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while editor.read_with(cx, |editor, _| editor.document.pending_tail().is_some()) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+
+    // 单次全文操作的分解成本（人类可读的诊断输出，断言看计数器）。
+    let t = Instant::now();
+    let raw_len = editor.read_with(cx, |editor, cx| editor.document.raw_source_text(cx).len());
+    let raw_source = t.elapsed();
+    let t = Instant::now();
+    let title_len = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.read(cx).record.title_markdown().len())
+            .sum::<usize>()
+    });
+    let title_markdown = t.elapsed();
+    let t = Instant::now();
+    let visible_len = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.read(cx).display_text().len())
+            .sum::<usize>()
+    });
+    let visible_text = t.elapsed();
+    eprintln!(
+        "[probe] raw_source {raw_len}B {raw_source:?}；title_markdown {title_len}B {title_markdown:?}；display_text {visible_len}B {visible_text:?}"
+    );
+    // 真实 Markdown 语料上的等价校验：每 25 块抽一块，比对无映射快路径与
+    // 映射版本（夹具含表格、围栏代码、脚注、HTML、公式）。
+    let mismatched = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .step_by(25)
+            .find(|visible| {
+                let block = visible.entity.read(cx);
+                block.record.title.serialize_markdown()
+                    != block.record.title.markdown_offset_map().markdown()
+            })
+            .map(|visible| visible.entity.read(cx).display_text().to_string())
+    });
+    assert!(
+        mismatched.is_none(),
+        "真实语料里无映射序列化与映射版本不一致：{mismatched:?}"
+    );
+
+    let t = Instant::now();
+    let src_len = editor.read_with(cx, |editor, cx| editor.current_document_source(cx).len());
+    let serialize = t.elapsed();
+    let t = Instant::now();
+    editor.update(cx, |editor, _| editor.word_count_cache.set(None));
+    let words = editor.read_with(cx, |editor, _| editor.cached_total_word_count());
+    let word_count = t.elapsed();
+    let t = Instant::now();
+    let mappings = editor.read_with(cx, |editor, cx| editor.build_source_target_mappings(cx).len());
+    let mapping = t.elapsed();
+    eprintln!(
+        "[measure] 1 MiB 单次全文：序列化 {src_len}B {serialize:?}；字数 {words} 词 {word_count:?}；mapping {mappings} 条 {mapping:?}"
+    );
+    // 预算（并发跑测下取宽裕上限）：块 markdown 有备忘，整篇序列化不该再付
+    // 每块重算的钱（修复前 title_markdown 全量 779ms）。
+    assert!(
+        title_markdown < Duration::from_millis(100),
+        "块 markdown 备忘失效了吗：全量 title_markdown {title_markdown:?}"
+    );
+    assert!(
+        serialize < Duration::from_millis(400),
+        "整篇序列化 {serialize:?}，偏出预算（修复前 840ms）"
+    );
+
+    let before = perf_passes(&editor, cx);
+    let start = Instant::now();
+    cx.simulate_input("x");
+    redraw(cx);
+    let typed = start.elapsed();
+    let delta = perf_delta(before, perf_passes(&editor, cx));
+    let totals = editor.read_with(cx, |editor, _| {
+        (
+            editor.source_serializations.get(),
+            editor.source_serialization_nanos.get(),
+            editor.source_mapping_builds.get(),
+            editor.source_mapping_nanos.get(),
+            editor.row_plan_rebuilds.get(),
+            editor.row_plan_nanos.get(),
+        )
+    });
+    eprintln!("[measure] 1 MiB 一次按键 {typed:?}，遍数 (序列化, mapping, 字数, 行计划) = {delta:?}");
+    eprintln!(
+        "[measure] 本次用例累计：序列化 {} 次 {:.0}ms；mapping {} 次 {:.0}ms；行计划 {} 次 {:.0}ms",
+        totals.0,
+        totals.1 as f64 / 1e6,
+        totals.2,
+        totals.3 as f64 / 1e6,
+        totals.4,
+        totals.5 as f64 / 1e6,
+    );
+    // 每次按键的全文遍数必须是常数级（与文档大小无关）。
+    assert!(delta.0 <= 1, "一次按键出现 {} 次全文序列化", delta.0);
+    assert!(delta.1 <= 2, "一次按键出现 {} 次 mapping 重建", delta.1);
+    assert!(delta.2 <= 1, "一次按键出现 {} 次整篇字数扫描", delta.2);
+    assert!(delta.3 <= 2, "一次按键出现 {} 次行计划重建", delta.3);
+
+    let after = perf_passes(&editor, cx);
+    let start = Instant::now();
+    for _ in 0..5 {
+        redraw(cx);
+    }
+    let idle = start.elapsed();
+    let idle_delta = perf_delta(after, perf_passes(&editor, cx));
+    eprintln!("[measure] 1 MiB 五个静止帧 {idle:?}，遍数 {idle_delta:?}");
+    // 静止帧不许做任何全文级工作。
+    assert_eq!(idle_delta, (0, 0, 0, 0), "静止帧出现全文级工作");
+}
+
+#[gpui::test]
+async fn per_keystroke_document_passes_stay_bounded(cx: &mut TestAppContext) {
+    // P2 性能守门：大文档里每次按键都不许做整篇级的工作。这里数的是
+    // 「全文序列化 / source mapping 重建 / 整篇字数扫描 / 行计划重建」
+    // 四种全文遍数，用计数器而不是计时，避免并行跑测试时抖动。
+    init_editor_test_app(cx);
+    let markdown = (0..400)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+
+    let before = perf_passes(&editor, cx);
+    cx.simulate_input("x");
+    redraw(cx);
+    let after_type = perf_passes(&editor, cx);
+
+    let before_idle = after_type;
+    for _ in 0..5 {
+        redraw(cx);
+    }
+    let after_idle = perf_passes(&editor, cx);
+
+    eprintln!(
+        "[measure] 一次按键 (序列化, mapping, 字数, 行计划) = {:?}",
+        perf_delta(before, after_type)
+    );
+    eprintln!(
+        "[measure] 五个静止帧 = {:?}",
+        perf_delta(before_idle, after_idle)
+    );
 }
 
 #[gpui::test]

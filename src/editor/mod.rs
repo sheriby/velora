@@ -135,9 +135,21 @@ pub struct Editor {
     open_generation: u64,
     /// TOC 条目版本：大纲重建后递增（[TOC] 块的条目同步随行计划进行）。
     toc_state_version: u64,
-    /// Content column the cached footprints were measured at. Rows rewrap when it
-    /// changes, so entries from another width are discarded rather than reused.
+    /// 内容栏宽度变更时丢弃另一宽度下测得的行高。
     row_stride_width: Option<f32>,
+    /// 性能计数器：整篇序列化次数（`current_document_source`）。大文档里
+    /// 每键一次是 P2 热点，测试用它守住「每键最多一次」。
+    source_serializations: std::cell::Cell<u64>,
+    /// 性能计数器：source mapping 重建次数（每帧重建也是 P2 热点）。
+    source_mapping_builds: std::cell::Cell<u64>,
+    /// 性能计数器：状态栏整篇字数扫描次数（unicode 分词在大文档里很贵）。
+    word_count_scans: std::cell::Cell<u64>,
+    /// 性能计数器：行结构计划重建次数（每键重建整篇计划是 P2 热点）。
+    row_plan_rebuilds: std::cell::Cell<u64>,
+    /// 性能诊断：四类全文遍数的累计耗时（纳秒），只给基准用例与诊断读。
+    source_serialization_nanos: std::cell::Cell<u64>,
+    source_mapping_nanos: std::cell::Cell<u64>,
+    row_plan_nanos: std::cell::Cell<u64>,
     /// Where last frame's run sat among the scroll container's children.
     prev_mounted_run: Option<MountedRun>,
     /// 冷启动续挂已排的帧数（上限 COLD_FILL_MAX_FRAMES，避免每帧重排）。
@@ -554,6 +566,13 @@ impl Editor {
             open_generation: 0,
             toc_state_version: 0,
             row_stride_width: None,
+            source_serializations: std::cell::Cell::default(),
+            source_serialization_nanos: std::cell::Cell::default(),
+            source_mapping_nanos: std::cell::Cell::default(),
+            row_plan_nanos: std::cell::Cell::default(),
+            source_mapping_builds: std::cell::Cell::default(),
+            word_count_scans: std::cell::Cell::default(),
+            row_plan_rebuilds: std::cell::Cell::default(),
             prev_mounted_run: None,
             cold_fill_frames: 0,
             close_guard_installed: false,

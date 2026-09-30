@@ -2465,6 +2465,8 @@ impl Render for Editor {
         let rendered_row_plan = match cached_plan {
             Some(plan) => plan,
             None => {
+                self.row_plan_rebuilds.set(self.row_plan_rebuilds.get() + 1);
+                let plan_started = std::time::Instant::now();
                 let visible_blocks =
                     self.apply_heading_fold_filter(self.document.visible_blocks().to_vec(), cx);
                 let plan = std::sync::Arc::new(self.build_rendered_row_plan(
@@ -2478,6 +2480,10 @@ impl Render for Editor {
                     cx,
                 ));
                 self.rendered_row_plan = Some(plan.clone());
+                self.row_plan_nanos.set(
+                    self.row_plan_nanos.get()
+                        + plan_started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+                );
                 plan
             }
         };

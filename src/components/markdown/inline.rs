@@ -594,7 +594,64 @@ impl InlineTextTree {
         {
             return fragment.text.clone();
         }
-        self.markdown_offset_map().markdown
+        self.serialize_markdown_plain()
+    }
+
+    /// 只产出 markdown 字符串的序列化（不建偏移映射）。
+    ///
+    /// [`Self::markdown_offset_map`] 要为每个可见字节和每个 markdown 字节各写
+    /// 一张映射表；保存/撤销/导出只要字符串，却为此付出整篇字节数的向量分配
+    /// （1 MiB 文档实测 779ms，占单次按键耗时的大半）。这里与映射版本共用同一
+    /// 套分隔符与转义规则，靠 `serialize_markdown_matches_offset_map` 用例守住
+    /// 两条路径输出一致。
+    pub(crate) fn serialize_markdown_plain(&self) -> String {
+        if self.fragments.is_empty() {
+            return String::new();
+        }
+
+        let mut output = String::new();
+        let mut index = 0usize;
+        while index < self.fragments.len() {
+            if let Some(footnote) = self.fragments[index].footnote.clone() {
+                output.push_str(&footnote.raw_markdown());
+                index += 1;
+                continue;
+            }
+
+            if let Some(math) = self.fragments[index].math.clone() {
+                output.push_str(&math.source);
+                index += 1;
+                continue;
+            }
+
+            let link = self.fragments[index].link.clone();
+            let mut end = index + 1;
+            while end < self.fragments.len()
+                && self.fragments[end].link == link
+                && self.fragments[end].footnote.is_none()
+                && self.fragments[end].math.is_none()
+            {
+                end += 1;
+            }
+
+            let run_markdown = serialize_fragment_run_markdown(&self.fragments[index..end]);
+            if let Some(link) = link {
+                output.push_str(link.open_marker());
+                output.push_str(&run_markdown);
+                if let Some(middle_marker) = link.middle_marker() {
+                    output.push_str(middle_marker);
+                }
+                if let Some(editable_text) = link.editable_text().as_deref() {
+                    output.push_str(editable_text);
+                }
+                output.push_str(link.close_marker());
+            } else {
+                output.push_str(&run_markdown);
+            }
+
+            index = end;
+        }
+        output
     }
 
     pub(crate) fn markdown_offset_map(&self) -> InlineMarkdownOffsetMap {
@@ -749,6 +806,56 @@ impl InlineTextTree {
             markdown_to_visible,
         }
     }
+}
+
+/// 与 [`serialize_fragment_run_markdown_with_offset_map`] 同一套分隔符选择与
+/// 转义规则，只产出 markdown 字符串（不建映射表）。两条路径的一致性由
+/// `serialize_markdown_matches_offset_map` 用例守住。
+fn serialize_fragment_run_markdown(fragments: &[InlineFragment]) -> String {
+    if fragments.is_empty() {
+        return String::new();
+    }
+
+    let stacks = choose_fragment_stacks(fragments);
+    let mut output = String::new();
+    let mut current_stack: Vec<Delimiter> = Vec::new();
+    let mut current_html_style: Option<HtmlInlineStyle> = None;
+
+    for (fragment, next_stack) in fragments.iter().zip(stacks.iter()) {
+        if current_html_style != fragment.html_style {
+            output.push_str(&stack_transition_string(&current_stack, &[]));
+            current_stack.clear();
+
+            if current_html_style.is_some() {
+                output.push_str("</span>");
+            }
+            if let Some(style) = fragment.html_style
+                && let Some(marker) = html_style_open_marker(style)
+            {
+                output.push_str(&marker);
+            }
+            current_html_style = fragment.html_style;
+        }
+
+        output.push_str(&stack_transition_string(&current_stack, next_stack));
+
+        if let Some(math) = fragment.math.as_ref() {
+            output.push_str(&math.source);
+        } else if fragment.style.code {
+            output.push_str(&escape_code_span_text(&fragment.text));
+        } else {
+            output.push_str(&escape_literal_text(&fragment.text));
+        }
+
+        current_stack = next_stack.clone();
+    }
+
+    output.push_str(&stack_transition_string(&current_stack, &[]));
+    if current_html_style.is_some() {
+        output.push_str("</span>");
+    }
+
+    output
 }
 
 fn serialize_fragment_run_markdown_with_offset_map(
@@ -2728,6 +2835,65 @@ fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> Option<usiz
     }
 }
 
+/// 转义规则与 [`escape_literal_text_with_offset_map`] 完全一致，只是不建映射表。
+fn escape_literal_text(text: &str) -> String {
+    const ESCAPED_HTML_MARKERS: [&str; 6] =
+        ["</strong>", "<strong>", "</em>", "<em>", "</u>", "<u>"];
+    let mut escaped = String::with_capacity(text.len());
+    let mut index = 0usize;
+    'scan: while index < text.len() {
+        for marker in ESCAPED_HTML_MARKERS {
+            if text[index..].starts_with(marker) {
+                escaped.push('\\');
+                escaped.push_str(marker);
+                index += marker.len();
+                continue 'scan;
+            }
+        }
+
+        if text[index..].starts_with('_') {
+            // 词中下划线串既不能开启也不能关闭强调（CommonMark 侧翼规则）。
+            let run_len = text[index..].bytes().take_while(|byte| *byte == b'_').count();
+            let prev = text[..index].chars().next_back();
+            let next = text[index + run_len..].chars().next();
+            if prev.is_some_and(is_emphasis_word_char) && next.is_some_and(is_emphasis_word_char)
+            {
+                escaped.push_str(&text[index..index + run_len]);
+                index += run_len;
+                continue;
+            }
+        }
+
+        let ch = text[index..].chars().next().unwrap();
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '*' => escaped.push_str("\\*"),
+            '_' | '~' | '^' | '`' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+        index += ch.len_utf8();
+    }
+    escaped
+}
+
+/// 代码片段（行内 code）的空白填充规则，与映射版本一致。
+fn escape_code_span_text(text: &str) -> String {
+    let needs_padding = !text.is_empty()
+        && !text.chars().all(|ch| ch == ' ')
+        && (text.starts_with([' ', '`']) || text.ends_with([' ', '`']));
+    if !needs_padding {
+        return text.to_string();
+    }
+    let mut markdown = String::with_capacity(text.len() + 2);
+    markdown.push(' ');
+    markdown.push_str(text);
+    markdown.push(' ');
+    markdown
+}
+
 fn escape_literal_text_with_offset_map(text: &str) -> InlineMarkdownOffsetMap {
     let mut escaped = String::new();
     let mut visible_to_markdown = vec![0; text.len() + 1];
@@ -3422,6 +3588,40 @@ mod tests {
         InlineScript, InlineStyle, InlineTextTree, LinkReferenceDefinitions, StyleFlag,
     };
     use crate::components::HtmlCssColor;
+
+    #[test]
+    fn serialize_markdown_matches_offset_map() {
+        // 无映射快路径必须与映射版本逐字节一致：保存/撤销/导出走前者，
+        // 偏移映射走后者，两者一旦漂移，用户内容就会被改写。
+        let corpus = [
+            "plain text",
+            "**bold** and *italic*",
+            "_underline_ and __also__",
+            "topic_embedding_attention stays",
+            "code `x ` and ``y``",
+            "<strong>x</strong> <em>y</em> <u>z</u>",
+            "[label](https://example.com)",
+            "![alt](pic.png)",
+            "math $x^2$ inline",
+            "super^script^ and ~~strike~~",
+            "back\\slash and \\*star",
+            "footnote[^1] and more",
+            "中文与 English mixed **粗** 文本",
+            "`![alt](p.png){width=50%}`",
+            "a<u>b</u>c<strong>d</strong>e",
+            "**bold `code` inside** and _nested <em>html</em>_",
+            "`  padded code  `",
+            "link with [**bold** label](https://a.b/c?d=e#f)",
+        ];
+        for text in corpus {
+            let tree = InlineTextTree::from_markdown(text);
+            assert_eq!(
+                tree.serialize_markdown(),
+                tree.markdown_offset_map().markdown,
+                "无映射序列化与映射版本不一致：{text:?}"
+            );
+        }
+    }
 
     #[test]
     fn inline_code_does_not_force_the_mixed_visual_path() {
