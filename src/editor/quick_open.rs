@@ -210,12 +210,14 @@ impl Editor {
     }
 
     pub(crate) fn toggle_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.quick_open.take().is_some() {
-            cx.notify();
+        if self.quick_open.is_some() {
+            self.close_quick_open(cx);
             return;
         }
         self.dismiss_contextual_overlays(cx);
         let mut state = QuickOpenState::default();
+        // 记住打开前的正文焦点，关闭时还回去。
+        self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
         window.focus(&focus);
         state.focus = Some(focus);
@@ -225,6 +227,7 @@ impl Editor {
 
     pub(super) fn close_quick_open(&mut self, cx: &mut Context<Self>) {
         if self.quick_open.take().is_some() {
+            self.restore_focus_after_overlay(cx);
             cx.notify();
         }
     }

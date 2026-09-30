@@ -120,6 +120,14 @@ impl Editor {
         }
     }
 
+    /// 浮层关闭后把焦点还给之前聚焦的正文块（⌘P/⇧⌘P 关闭后敲字不再丢）。
+    pub(super) fn restore_focus_after_overlay(&mut self, cx: &mut Context<Self>) {
+        if let Some(entity_id) = self.overlay_focus_restore_target.take() {
+            self.pending_focus = Some(entity_id);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn hide_unsaved_changes_dialog(&mut self, cx: &mut Context<Self>) {
         if self.show_unsaved_changes_dialog {
             self.show_unsaved_changes_dialog = false;

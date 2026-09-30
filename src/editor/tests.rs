@@ -7963,6 +7963,94 @@ fn file_history_records_dedupes_and_prunes() {
 }
 
 #[gpui::test]
+async fn escape_dismisses_the_info_dialog(cx: &mut TestAppContext) {
+    // 审查发现：信息弹窗（关于/检查更新）没有键盘路径也没有遮罩点击，Esc 关不掉。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n".into(), None));
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.update(cx, |editor, cx| {
+        editor.show_info_dialog(super::InfoDialogKind::About, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.info_dialog.is_some(), "前置：弹窗已打开");
+    });
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.info_dialog.is_none(), "Esc 应关掉信息弹窗");
+    });
+}
+
+#[gpui::test]
+async fn escape_closes_the_in_window_menu_bar(cx: &mut TestAppContext) {
+    // 审查发现：标题栏菜单面板没有键盘路径，Esc 关不掉（只能等 hover 超时或点正文）。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n".into(), None));
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.update(cx, |editor, _cx| {
+        editor.menu_bar_open = Some(0);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.menu_bar_open.is_some(), "前置：菜单已打开");
+    });
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.menu_bar_open.is_none(), "Esc 应关掉标题栏菜单");
+    });
+}
+
+#[gpui::test]
+async fn closing_quick_open_restores_focus_to_the_document(cx: &mut TestAppContext) {
+    // 审查发现：关掉 ⌘P 只丢状态不还焦点，之后敲字全丢（要再手点正文）。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n\nbody\n".into(), None));
+    cx.update(|window, cx| window.draw(cx).clear());
+    let block_id = editor.read_with(cx, |editor, _| {
+        editor.document.root_blocks()[1].entity_id()
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            let block = editor
+                .document
+                .block_entity_by_id(block_id)
+                .expect("目标块");
+            window.focus(&block.read(cx).focus_handle);
+            editor.toggle_quick_open(window, cx);
+        });
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.quick_open.is_some(), "前置：⌘P 已打开");
+    });
+    // Esc 关闭（走全局 DismissTransientUi 路径）。
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| {
+        editor.read_with(cx, |editor, cx| {
+            assert!(editor.quick_open.is_none(), "前置：⌘P 已关闭");
+            let block = editor
+                .document
+                .block_entity_by_id(block_id)
+                .expect("目标块");
+            assert!(
+                block.read(cx).focus_handle.is_focused(window),
+                "关闭 ⌘P 后焦点应回到正文块"
+            );
+        });
+    });
+}
+
+#[gpui::test]
 async fn file_history_restore_can_be_undone(cx: &mut TestAppContext) {
     // 用户报修（审查发现）：恢复历史版本会清空 undo 栈，模块注释承诺的
     // 「可撤销」是假的——误按 Enter 就丢掉当前未保存内容且无法撤回。

@@ -351,6 +351,18 @@ impl Editor {
             self.cancel_modal(window, cx);
             return;
         }
+        // 信息弹窗与标题栏菜单也是瞬态 UI，且没有其他键盘退出口（用户报修：
+        // Esc 关不掉「关于/检查更新」弹窗，也关不掉标题栏菜单）。
+        if self.info_dialog.is_some() {
+            cx.stop_propagation();
+            self.hide_info_dialog(cx);
+            return;
+        }
+        if self.menu_bar_open.is_some() {
+            cx.stop_propagation();
+            self.close_menu_bar(cx);
+            return;
+        }
         self.dismiss_contextual_overlays(cx);
         // escape 由全局快捷键路由到这里，浮层面板自己的 key_down 收不到。
         self.close_quick_open(cx);

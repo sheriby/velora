@@ -251,6 +251,11 @@ pub struct Editor {
     redo_history: Vec<HistoryEntry>,
     pending_undo_capture: Option<PendingUndoCapture>,
     last_selection_snapshot: UndoSelectionSnapshot,
+    /// 帧级选区快照对应的 (活动块, 选区)：没变就不重算（见
+    /// `refresh_selection_snapshot_if_changed`）。
+    last_selection_snapshot_source: Option<(EntityId, std::ops::Range<usize>)>,
+    /// ⌘P/⇧⌘P 打开前的正文焦点块：关闭浮层时还回去（不然敲字全丢）。
+    overlay_focus_restore_target: Option<EntityId>,
     last_stable_source_text: String,
     history_restore_in_progress: bool,
     image_reference_definitions: Arc<ImageReferenceDefinitions>,
@@ -612,6 +617,8 @@ impl Editor {
             redo_history: Vec::new(),
             pending_undo_capture: None,
             last_selection_snapshot: Self::empty_selection_snapshot(),
+            last_selection_snapshot_source: None,
+            overlay_focus_restore_target: None,
             last_stable_source_text: normalized,
             history_restore_in_progress: false,
             image_reference_definitions: Arc::default(),
@@ -856,7 +863,3 @@ impl Editor {
         editor
     }
 }
-    /// 帧级选区快照对应的 (活动块, 选区)：没变就不重算（见
-    /// `refresh_selection_snapshot_if_changed`）。
-    last_selection_snapshot_source: Option<(EntityId, std::ops::Range<usize>)>,
-            last_selection_snapshot_source: None,

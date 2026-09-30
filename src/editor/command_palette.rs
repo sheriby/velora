@@ -45,12 +45,13 @@ impl Editor {
 
     /// 打开/关闭命令面板（roadmap H5：菜单与快捷键共用同一入口）。
     pub(crate) fn toggle_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.command_palette.take().is_some() {
-            cx.notify();
+        if self.command_palette.is_some() {
+            self.close_command_palette(cx);
             return;
         }
         self.dismiss_contextual_overlays(cx);
         let mut state = CommandPaletteState::default();
+        self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
         window.focus(&focus);
         state.focus = Some(focus);
@@ -60,6 +61,7 @@ impl Editor {
 
     pub(super) fn close_command_palette(&mut self, cx: &mut Context<Self>) {
         if self.command_palette.take().is_some() {
+            self.restore_focus_after_overlay(cx);
             cx.notify();
         }
     }
