@@ -786,6 +786,7 @@ impl Block {
     }
 }
 
+mod code_language;
 mod keys;
 
 #[cfg(test)]
