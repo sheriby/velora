@@ -96,7 +96,7 @@
 | F1 查找跳转 | ✅ 完成 | 未提交 | 新增用例：`document_find_enter_right_after_typing_still_jumps`（去抖窗口内回车立刻跳）、`document_find_jump_keeps_the_query_field_focused`（跳转后焦点留在查询框、键入不改文档）。改动：`find_next_document_match` 无快照时回退 `current_document_source`；`jump_to_document_search_range` 面板打开时重设 `search_focus_pending`；`ensure_focused_caret_visible` 无焦点块时用 `active_entity_id` 作滚动目标 |
 | F2 高亮完整 | ✅ 完成 | 本次提交 | 新增用例：`document_find_highlights_survive_a_view_mode_switch`、`document_find_jump_unfolds_the_section_containing_the_match`、`closing_the_sidebar_clears_document_find_highlights`。改动：`toggle_view_mode` 末尾重算高亮（`window_state.rs`）；`unfold_sections_covering_source_range` + 跳转前展开折叠章节；`toggle_workspace_drawer` 收起时同步清理高亮 |
 | F3 树右键目标 | ✅ 完成 | 未提交 | 新增用例：`workspace_context_menu_keeps_the_right_clicked_directory`。改动：新 helper `follow_active_document_in_workspace_tree`（只在 None/File 选中时跟随活动文件），替换两处无条件重置（每帧同步 + 扫描落地） |
-| F4 保存与冲突 | ⬜ 未开始 | — | — |
+| F4 保存与冲突 | ✅ 完成 | 本次提交 | 新增用例：`manual_save_then_typing_does_not_report_an_external_change`、`autosave_conflict_reports_the_file_that_actually_changed`。改动：`apply_successful_save` 调 `mark_workspace_document_saved` 同步标签版本/内容/脏标记；自动保存后台任务携带真正失败的文件路径并优先用它上报冲突 |
 | F5 文件历史撤销 | ⬜ 未开始 | — | — |
 | F6 脏文件搜索跳转 | ⬜ 未开始 | — | — |
 | F7 watcher | ⬜ 未开始 | — | — |

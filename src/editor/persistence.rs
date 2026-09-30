@@ -181,22 +181,31 @@ impl Editor {
                     .background_executor()
                     .spawn(async move {
                         for document in documents_for_write {
-                            crate::config::save_recovery_snapshot(&document.recovery)?;
+                            // 失败时把真正出问题的文件路径一起带回去：冲突要记在
+                            // 那个文件上，而不是第一个有路径的标签（用户报修）。
+                            let failing_path = document.path.clone();
+                            crate::config::save_recovery_snapshot(&document.recovery)
+                                .map_err(|error| (failing_path.clone(), error))?;
                             if let (Some(path), Some(expected_version)) =
                                 (document.path.as_deref(), document.file_version)
                             {
-                                verify_file_version(path, expected_version)?;
+                                verify_file_version(path, expected_version)
+                                    .map_err(|error| (failing_path.clone(), error))?;
                             }
                             if let Some(temp_path) = document.temp_path {
-                                std::fs::write(temp_path, &document.recovery.markdown)?;
+                                std::fs::write(temp_path, &document.recovery.markdown)
+                                    .map_err(|error| {
+                                        (failing_path.clone(), anyhow::Error::from(error))
+                                    })?;
                                 if let (Some(path), Some(expected_version)) =
                                     (document.path.as_deref(), document.file_version)
                                 {
-                                    verify_file_version(path, expected_version)?;
+                                    verify_file_version(path, expected_version)
+                                        .map_err(|error| (failing_path.clone(), error))?;
                                 }
                             }
                         }
-                        Ok::<_, anyhow::Error>(())
+                        Ok::<_, (Option<PathBuf>, anyhow::Error)>(())
                     })
                     .await;
                 let conflict_detail = editor
@@ -204,7 +213,7 @@ impl Editor {
                         editor.autosave_task = None;
                         match write_result {
                             Ok(()) => {}
-                            Err(error) => {
+                            Err((failing_path, error)) => {
                                 for document in &documents {
                                     if let Some(temp_path) = document.temp_path.as_ref() {
                                         let _ = std::fs::remove_file(temp_path);
@@ -219,9 +228,11 @@ impl Editor {
                                 if detail.starts_with("检测到外部修改")
                                     || detail.starts_with("无法读取文件以检查外部修改")
                                 {
-                                    let conflict_path = documents
-                                        .iter()
-                                        .find_map(|document| document.path.clone());
+                                    // 优先用真正失败的文件路径；只有旧路径拿不到时才
+                                    // 退回第一个有路径的标签。
+                                    let conflict_path = failing_path.or_else(|| {
+                                        documents.iter().find_map(|document| document.path.clone())
+                                    });
                                     if let Some(conflict_path) = conflict_path {
                                         editor.report_external_change_conflict(
                                             conflict_path,
@@ -480,6 +491,11 @@ impl Editor {
         self.document_revision = self.document_revision.wrapping_add(1);
         let saved_markdown = self.serialized_document_text(cx);
         self.file_version = Some(file_content_version(&saved_markdown));
+        // 标签里的版本号也要跟上（自动保存按它校验磁盘，见
+        // mark_workspace_document_saved）。
+        if let Some(file_version) = self.file_version {
+            self.mark_workspace_document_saved(&path, file_version, &saved_markdown);
+        }
         // 本地历史：每次成功保存后台落一条版本快照（同内容去重、每文件
         // 保留最近 20 条）。写盘不在保存关键路径上。
         let history_path = path.clone();
