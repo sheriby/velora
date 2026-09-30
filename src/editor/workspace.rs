@@ -206,6 +206,7 @@ enum OverlayInputKind {
     Query,
     Replace,
     QuickOpen,
+    CommandPalette,
 }
 
 impl From<SearchInputKind> for OverlayInputKind {
@@ -6728,6 +6729,14 @@ fn search_utf8_to_utf16(text: &str, offset: usize) -> usize {
 impl Editor {
     fn active_overlay_input(&self, window: &Window) -> OverlayInputKind {
         if self
+            .command_palette
+            .as_ref()
+            .and_then(|state| state.focus.as_ref())
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            return OverlayInputKind::CommandPalette;
+        }
+        if self
             .quick_open
             .as_ref()
             .and_then(|state| state.focus.as_ref())
@@ -6756,6 +6765,11 @@ impl Editor {
                 .as_ref()
                 .map(|state| state.query.as_str())
                 .unwrap_or_default(),
+            OverlayInputKind::CommandPalette => self
+                .command_palette
+                .as_ref()
+                .map(|state| state.query.as_str())
+                .unwrap_or_default(),
         }
     }
 
@@ -6768,6 +6782,11 @@ impl Editor {
                 .as_ref()
                 .map(|state| state.selected_range.clone())
                 .unwrap_or_default(),
+            OverlayInputKind::CommandPalette => self
+                .command_palette
+                .as_ref()
+                .map(|state| state.selected_range.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -6777,6 +6796,10 @@ impl Editor {
             OverlayInputKind::Replace => self.workspace.replace_marked_range.clone(),
             OverlayInputKind::QuickOpen => self
                 .quick_open
+                .as_ref()
+                .and_then(|state| state.marked_range.clone()),
+            OverlayInputKind::CommandPalette => self
+                .command_palette
                 .as_ref()
                 .and_then(|state| state.marked_range.clone()),
         }
@@ -6809,6 +6832,15 @@ impl Editor {
                     .map(|state| state.query.clone())
                     .unwrap_or_default(),
                 self.quick_open
+                    .as_ref()
+                    .is_some_and(|state| state.marked_range.is_some()),
+            ),
+            OverlayInputKind::CommandPalette => (
+                self.command_palette
+                    .as_ref()
+                    .map(|state| state.query.clone())
+                    .unwrap_or_default(),
+                self.command_palette
                     .as_ref()
                     .is_some_and(|state| state.marked_range.is_some()),
             ),
@@ -6855,6 +6887,14 @@ impl Editor {
                 }
                 if !marked && (self.input_text(kind) != old.as_str() || was_marked) {
                     self.refresh_quick_open_results(cx);
+                }
+            }
+            OverlayInputKind::CommandPalette => {
+                if let Some(state) = self.command_palette.as_mut() {
+                    state.query = updated;
+                    state.selected_range = selection;
+                    state.marked_range = marked_range;
+                    state.selected = 0;
                 }
             }
         }
@@ -6941,12 +6981,18 @@ impl EntityInputHandler for Editor {
                     state.marked_range = None;
                 }
             }
+            OverlayInputKind::CommandPalette => {
+                if let Some(state) = self.command_palette.as_mut() {
+                    state.marked_range = None;
+                }
+            }
         }
         if was_marked {
             match kind {
                 OverlayInputKind::Query => self.schedule_workspace_search(cx),
                 OverlayInputKind::Replace => {}
                 OverlayInputKind::QuickOpen => self.refresh_quick_open_results(cx),
+                OverlayInputKind::CommandPalette => {}
             }
             cx.notify();
         }

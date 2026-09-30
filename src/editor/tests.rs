@@ -7963,6 +7963,91 @@ fn file_history_records_dedupes_and_prunes() {
 }
 
 #[gpui::test]
+async fn command_palette_accepts_non_ascii_typing(cx: &mut TestAppContext) {
+    // 审查发现：命令面板只接 on_key_down 且限定 is_ascii_graphic，中文用户
+    // 在 ⇧⌘P 里打字没反应，退格删标量不删字素。
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n".into(), None));
+    cx.update(|window, cx| {
+        window.activate_window();
+        editor.update(cx, |editor, cx| editor.toggle_command_palette(window, cx));
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.command_palette.is_some(), "前置：面板已打开");
+    });
+    cx.simulate_input("中文");
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.command_palette.as_ref().expect("面板").query,
+            "中文",
+            "命令面板必须能吃输入法/非 ASCII 文本"
+        );
+    });
+}
+
+#[gpui::test]
+async fn editing_a_code_file_updates_the_link_index(cx: &mut TestAppContext) {
+    // 审查发现：全量索引含代码文件（collect_workspace_files），增量重扫却只收
+    // Markdown，代码文件里的 [[链接]] 外部改动后永远停在旧状态。
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-code-index-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let active = root.join("a.md");
+    let code = root.join("notes.rs");
+    fs::write(&active, "# A\n").unwrap();
+    fs::write(&code, "// [[a]]\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+            editor.open_workspace_file(active.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| editor.refresh_link_panels(cx));
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.link_panels.backlinks.iter().any(|path| path == &code),
+            "前置：代码文件里的 [[a]] 已被全量索引"
+        );
+    });
+
+    fs::write(&code, "// 链接已删\n").unwrap();
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| editor.on_watched_path_changed(&code, cx));
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| editor.refresh_link_panels(cx));
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            !editor.link_panels.backlinks.iter().any(|path| path == &code),
+            "代码文件的外部改动也要更新索引，不能一直显示旧反链"
+        );
+    });
+}
+
+#[gpui::test]
 async fn inserting_a_table_through_the_dialog_can_be_undone(cx: &mut TestAppContext) {
     // 审查发现：表格插入对话框不进撤销栈（其它表格操作都进），Ctrl+Z 要么什么
     // 都不做，要么把之前的一次编辑一并撤掉。

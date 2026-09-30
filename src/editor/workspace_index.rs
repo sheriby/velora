@@ -192,7 +192,7 @@ impl WorkspaceLinkIndex {
     /// 读取发生在延迟之后所以拿到的总是最新内容；同一路径飞行中不重复
     /// 调度。非 Markdown 文件直接忽略。
     pub(crate) fn schedule_rescan(&mut self, path: PathBuf, cx: &mut gpui::Context<Editor>) {
-        if !is_markdown_document(&path) {
+        if !is_markdown_document(&path) && !super::workspace::is_code_file(&path) {
             return;
         }
         if !self.pending_rescan.insert(path.clone()) {

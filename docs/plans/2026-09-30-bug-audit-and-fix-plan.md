@@ -101,7 +101,7 @@
 | F6 脏文件搜索跳转 | ✅ 完成 | 本次提交 | 新增用例：`clicking_a_search_hit_in_a_dirty_file_lands_on_the_match`。改动：`open_search_hit` 先验证磁盘偏移落在内存文本上是否仍是匹配，不是就用查询就近重定位（前/后/从头兜底），并补记 `document_active_range` |
 | F7 watcher | ✅ 完成 | 本次提交 | 新增用例：`external_file_events_refresh_the_workspace_tree`、`opening_a_single_file_starts_the_workspace_watcher`（做过变异验证）、`backlinks_panel_picks_up_an_external_link_to_the_active_document`。改动：watcher 收 Remove + 统一走 `on_watched_path_changed`；新增 250ms 防抖的树刷新；`ensure_workspace_watcher`（隐含根也监听，同根不重启）；索引加 `entries_revision`，面板据此失效（文档编辑仍保留 500ms 去抖） |
 | F8 性能批次 | ✅ 完成（范围收口） | 本次提交 | 已做：帧级选区快照改带变更检测、稳定快照不再每键捕获选区、滚轮淡出任务合并。**明确延后**（需独立批次 + 10 MiB 基准守门）：#13 每键整篇序列化（要把稳定快照延迟/增量，牵动大纲/状态栏/跳转读取方）、#15 每键重建行计划（结构版本与文本版本分离会影响滚动测量正确性）、#16 状态栏缓存（输入文本本身每键变，换键不能省扫描，需增量计数）、#17 滚动窗口 O(行数)（需前缀和缓存/二分）、#18a/b Theme 深拷贝与跨块拖拽 O(块)（收益小、改动面大） |
-| F9 P2 收尾 | ⏳ 进行中（分 3 批） | F9a 本次提交 | F9a：Esc 关信息弹窗/标题栏菜单、⌘P/⇧⌘P 关闭后焦点回正文（3 用例）。F9b ✅ 本次提交：表格插入进 undo（变异验证）、搜索缓存加长度校验（变异验证）、session/config 改原子写（无区分性测试：仅进程半写时可观测；留临时文件断言守实现）。F9c 计划：命令面板 IME、索引增量谓词与全量一致 |
+| F9 P2 收尾 | ✅ 完成（分 3 批） | F9a/F9b/F9c 见备注 | F9a：Esc 关信息弹窗/标题栏菜单、⌘P/⇧⌘P 关闭后焦点回正文（3 用例）。F9b ✅ 本次提交：表格插入进 undo（变异验证）、搜索缓存加长度校验（变异验证）、session/config 改原子写（无区分性测试：仅进程半写时可观测；留临时文件断言守实现）。F9c ✅ 本次提交：命令面板接入单行输入处理器（IME/非 ASCII/字素退格）、索引增量重扫与全量谓词一致（含代码文件）。用例 2 条（均先见红）。 |
 
 已观察到的环境噪声（不要当回归）：
 - `workspace_search_accepts_unicode_platform_input`、`quick_open_accepts_ime_text_for_non_ascii_file_names`：容器无剪贴板/IME，干净树同样失败。
@@ -109,6 +109,18 @@
 - `large_code_document_opens_within_budget`：写入时间预算的计时测试，全量并行跑时偶发失败，单跑稳定通过（导入路径与 F1/F3 改动无关）。
 
 图例：⬜ 未开始 / ⏳ 进行中 / ✅ 完成（附提交号）
+
+## 4.1 F8 明确延后清单（需独立批次 + 10 MiB 基准守门）
+
+以下条目在本次批次里**未做**，原因不是遗漏而是风险/收益判断，后续必须单独立项：
+
+| 条目 | 为什么不在本批做 |
+| --- | --- |
+| #13 每键整篇序列化（`finalize_pending_undo_capture` 的 `current_document_source`） | 要改成延迟/增量快照，会牵动大纲同步、状态栏缓存、`jump_to_source_line`、查找等一批读取方；没有基准与回放验证就改，容易把「稳定源文本」的语义改坏 |
+| #15 每键重建整篇行计划 | 计划键含 `document_revision` 是滚动测量正确性的前提；结构版本与文本版本分离需要先有滚动回放用例与 10 MiB 基准，否则停顿和跳滚的回归无法判定 |
+| #16 状态栏字数/长块缓存 | 输入文本本身每键都在变，换缓存键省不掉扫描；需要增量计数或空闲期计算的设计 |
+| #17 滚动窗口 O(行数) 前缀和/焦点扫描 | 属于渲染主循环重构，需要基准与滚动行为用例护住 |
+| #18a/b Theme 深拷贝、跨块拖拽 O(块) | 收益小、改动面涉及渲染签名与选择交互；建议随下一次渲染重构一起做 |
 
 ## 5. 恢复指南
 

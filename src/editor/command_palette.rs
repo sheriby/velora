@@ -14,6 +14,8 @@ pub(in crate::editor) struct CommandPaletteState {
     pub(super) query: String,
     pub(super) focus: Option<FocusHandle>,
     pub(super) selected: usize,
+    pub(super) selected_range: std::ops::Range<usize>,
+    pub(super) marked_range: Option<std::ops::Range<usize>>,
 }
 
 /// One executable command: display label (already localized) + the action it
@@ -115,23 +117,9 @@ impl Editor {
                 }
                 return;
             }
-            "backspace" => {
-                if let Some(state) = self.command_palette.as_mut() {
-                    state.query.pop();
-                    state.selected = 0;
-                }
-                cx.notify();
-                return;
-            }
-            "shift" | "control" | "alt" | "meta" | "capslock" | "tab" | "enter" => return,
+            // 文本输入（含 IME、退格、粘贴）统一走编辑器的单行输入处理器，
+            // 见 `render_command_palette_overlay` 里的 canvas 注册。
             _ => {}
-        }
-        if key.len() == 1 && key.chars().all(|ch| ch.is_ascii_graphic()) {
-            if let Some(state) = self.command_palette.as_mut() {
-                state.query.push_str(&key);
-                state.selected = 0;
-            }
-            cx.notify();
         }
     }
 }
@@ -269,6 +257,26 @@ pub(super) fn render_command_palette_overlay(
                         } else {
                             state.query.clone()
                         })
+                        // 输入走编辑器的单行输入处理器：与搜索框/⌘P 共用 IME 路由，
+                        // 中文与非 ASCII 文本能输入（用户报修：面板里打字没反应）。
+                        .child(
+                            canvas(|_, _, _| (), {
+                                let focus = focus.clone();
+                                let input_editor = cx.entity();
+                                move |bounds, _, window, cx| {
+                                    window.handle_input(
+                                        &focus,
+                                        ElementInputHandler::new(bounds, input_editor.clone()),
+                                        cx,
+                                    );
+                                }
+                            })
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .bottom_0()
+                            .left_0(),
+                        )
                         .on_key_down({
                             let editor_handle = editor_handle.clone();
                             move |event: &KeyDownEvent, _window, cx| {
