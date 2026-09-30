@@ -53,7 +53,7 @@ struct SyncSeeds {
 
 /// A block together with its position in the current visible DFS order.
 #[derive(Clone)]
-pub(super) struct VisibleBlock {
+pub(crate) struct VisibleBlock {
     pub entity: Entity<Block>,
 }
 
