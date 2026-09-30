@@ -16,13 +16,69 @@ pub(super) struct StatusBarState {
 }
 
 impl Editor {
-    /// 状态栏整篇字数（P4a：按 document_revision 缓存，避免每帧全文扫描）。
-    pub(super) fn cached_total_word_count(&self) -> usize {
+    /// 状态栏整篇统计的静默窗口：打字期间不重扫。
+    const STATUS_SCAN_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+    /// 整篇统计（字数、超长块提示）现在能不能重算。
+    ///
+    /// 打字期间每个按键都会递增 `document_revision`，旧实现据此重算两遍整篇
+    /// 统计（1 MiB 文档里整篇分词 29ms、扫行十几 ms）。这里改成：修订变了先
+    /// 沿用上次结果，等文档安静 250ms 再补算一次——用户看到的数字晚一拍，
+    /// 但不再为每个字符付整篇扫描。
+    fn status_scan_ready(&mut self, revision: u64, cx: &mut Context<Self>) -> bool {
+        if self.status_scan_settled_revision == Some(revision) {
+            return true;
+        }
+        self.schedule_status_scan(cx);
+        false
+    }
+
+    fn schedule_status_scan(&mut self, cx: &mut Context<Self>) {
+        if self.status_scan_task.is_some() {
+            return;
+        }
+        let weak_editor = cx.entity().downgrade();
+        self.status_scan_task = Some(cx.spawn(
+            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                loop {
+                    let Ok(revision) = weak_editor.update(cx, |this, _cx| this.document_revision)
+                    else {
+                        return;
+                    };
+                    cx.background_executor()
+                        .timer(Self::STATUS_SCAN_SETTLE)
+                        .await;
+                    let keep_waiting = weak_editor
+                        .update(cx, |this, cx| {
+                            if this.document_revision != revision {
+                                // 还 在打字：再等一个静默窗口。
+                                return true;
+                            }
+                            this.status_scan_task = None;
+                            this.status_scan_settled_revision = Some(revision);
+                            cx.notify();
+                            false
+                        })
+                        .unwrap_or(false);
+                    if !keep_waiting {
+                        return;
+                    }
+                }
+            },
+        ));
+    }
+
+    /// 状态栏整篇字数（P4a 缓存 + P2 静默窗口）：渲染每帧读，但只在文档
+    /// 安静下来后重扫一次。
+    pub(super) fn cached_total_word_count(&mut self, cx: &mut Context<Self>) -> usize {
         let revision = self.document_revision;
-        if let Some((cached_revision, count)) = self.word_count_cache.get()
-            && cached_revision == revision
-        {
-            return count;
+        if let Some((cached_revision, count)) = self.word_count_cache.get() {
+            if cached_revision == revision {
+                return count;
+            }
+            if !self.status_scan_ready(revision, cx) {
+                return count;
+            }
         }
         self.word_count_scans.set(self.word_count_scans.get() + 1);
         let count = count_words(&self.last_stable_source_text);
@@ -63,7 +119,7 @@ impl Editor {
                     .into_any_element(),
             );
         } else if prefs.show_word_count {
-            let total_count = self.cached_total_word_count();
+            let total_count = self.cached_total_word_count(cx);
             // 只算选中文本的词数：这里每帧都会跑，不能走 O(整篇) 的 markdown 序列化。
             let selection_count = self.selected_visible_text(cx).as_deref().map(count_words);
             right_items.push(render_word_count(
@@ -125,11 +181,14 @@ impl Editor {
         Some(bar)
     }
 
-    /// 文档是否含超长单块（roadmap B12）；按文档修订缓存，避免逐帧扫描。
-    fn long_source_block_hint(&mut self, _cx: &mut Context<Self>) -> bool {
+    /// 文档是否含超长单块（roadmap B12）；同字数一样走静默窗口，
+    /// 不再每个按键都扫一遍整篇行。
+    fn long_source_block_hint(&mut self, cx: &mut Context<Self>) -> bool {
         let revision = self.document_revision;
-        match self.long_source_block_hint {
+        let cached = self.long_source_block_hint;
+        match cached {
             Some((cached, value)) if cached == revision => value,
+            Some((_, value)) if !self.status_scan_ready(revision, cx) => value,
             _ => {
                 let value = document_has_long_source_block(&self.last_stable_source_text);
                 self.long_source_block_hint = Some((revision, value));

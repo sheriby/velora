@@ -7356,6 +7356,57 @@ async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut Test
 }
 
 #[gpui::test]
+async fn typing_does_not_rescan_status_bar_statistics_every_key(cx: &mut TestAppContext) {
+    // P2：状态栏整篇字数与「超长块」提示都是整篇扫描，旧实现按 document_revision
+    // 缓存 → 每个按键扫一遍（1 MiB 整篇分词 29ms，10 MiB 约 300ms）。改成静默
+    // 窗口：打字期间沿用旧值，停手后补算一次。
+    init_editor_test_app(cx);
+    let markdown = (0..200)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文，用于字数统计。\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    // 首帧照常算一次。
+    editor.update(cx, |editor, cx| {
+        editor.cached_total_word_count(cx);
+    });
+    let before = editor.read_with(cx, |editor, _| editor.word_count_scans.get());
+
+    for _ in 0..5 {
+        cx.simulate_input("x");
+        redraw(cx);
+    }
+    let during = editor.read_with(cx, |editor, _| editor.word_count_scans.get()) - before;
+    assert!(
+        during == 0,
+        "连打 5 个字期间重扫了 {during} 次整篇字数，静默窗口没生效"
+    );
+
+    // 停手后必须补算，且数字与当前文本一致。静默计时器每轮确认「这一轮
+    // 250ms 内文档没再变」，所以打字节拍会让它多等一轮，推进两轮即可。
+    for _ in 0..3 {
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+    }
+    redraw(cx);
+    let total = editor.update(cx, |editor, cx| editor.cached_total_word_count(cx));
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            total,
+            crate::editor::status_bar::count_words(&editor.last_stable_source_text),
+            "静默窗口后补算的字数必须与当前文本一致"
+        );
+    });
+    let after = editor.read_with(cx, |editor, _| editor.word_count_scans.get());
+    assert!(
+        after - before <= 2,
+        "补算次数过多：{} 次（预期 ≤ 2）",
+        after - before
+    );
+}
+
+#[gpui::test]
 async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     // P2 大文档输入预算：1 MiB 文档里一次按键的成本必须是「常数次全文遍数 +
     // 有界时间」，而不是随文档线性增长的多遍扫描。夹具由
@@ -7430,7 +7481,7 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     let serialize = t.elapsed();
     let t = Instant::now();
     editor.update(cx, |editor, _| editor.word_count_cache.set(None));
-    let words = editor.read_with(cx, |editor, _| editor.cached_total_word_count());
+    let words = editor.update(cx, |editor, cx| editor.cached_total_word_count(cx));
     let word_count = t.elapsed();
     let t = Instant::now();
     let mappings = editor.read_with(cx, |editor, cx| editor.build_source_target_mappings(cx).len());

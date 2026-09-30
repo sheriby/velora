@@ -90,6 +90,10 @@ pub struct Editor {
     document_revision: u64,
     /// 长块护栏提示缓存：(文档修订, 是否含超长块)（roadmap B12）。
     long_source_block_hint: Option<(u64, bool)>,
+    /// 状态栏整篇统计（字数、超长块）的静默窗口状态：打字期间沿用旧值，
+    /// 停手 250ms 后补算一次（P2：每键整篇分词/扫行曾占单键成本一截）。
+    status_scan_settled_revision: Option<u64>,
+    status_scan_task: Option<Task<()>>,
     /// 文件树「复制」暂存的源文件路径（roadmap D6）。
     pub(crate) tree_clipboard: Option<std::path::PathBuf>,
     /// 拖动/缩放中的窗口 frame（roadmap A2 加固）：与磁盘上一致时不再调度写盘。
@@ -540,6 +544,8 @@ impl Editor {
             document_dirty: false,
             document_revision: 0,
             long_source_block_hint: None,
+            status_scan_settled_revision: None,
+            status_scan_task: None,
             tree_clipboard: None,
             observed_window_frame: None,
             window_bounds_subscription: None,
