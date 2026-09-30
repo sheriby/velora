@@ -2416,7 +2416,7 @@ impl Render for Editor {
         self.apply_pending_focus(window, cx);
         self.apply_pending_scroll_into_view(window, cx);
         self.apply_pending_workspace_search_focus(window, cx);
-        self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
+        self.refresh_selection_snapshot_if_changed(cx);
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
         self.sync_pending_workspace_tab_activation(window, cx);

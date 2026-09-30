@@ -856,3 +856,7 @@ impl Editor {
         editor
     }
 }
+    /// 帧级选区快照对应的 (活动块, 选区)：没变就不重算（见
+    /// `refresh_selection_snapshot_if_changed`）。
+    last_selection_snapshot_source: Option<(EntityId, std::ops::Range<usize>)>,
+            last_selection_snapshot_source: None,

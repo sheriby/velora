@@ -61,10 +61,12 @@ impl Editor {
         }
     }
 
-    pub(super) fn capture_stable_history_entry(&self, kind: UndoCaptureKind) -> HistoryEntry {
+    pub(super) fn capture_stable_history_entry(&self, kind: UndoCaptureKind, cx: &App) -> HistoryEntry {
         HistoryEntry {
             source_text: self.last_stable_source_text.clone(),
-            selection: self.last_selection_snapshot.clone(),
+            // 选区现场算：调用点是结构编辑开始前，算出来就是编辑前的选区，
+            // 比每键维护一份快照便宜（大文档里 capture 要从头建 mapping）。
+            selection: self.capture_source_selection_snapshot(cx),
             timestamp: Instant::now(),
             kind,
         }
@@ -79,12 +81,16 @@ impl Editor {
         });
     }
 
-    pub(super) fn prepare_undo_capture_from_stable_snapshot(&mut self, kind: UndoCaptureKind) {
+    pub(super) fn prepare_undo_capture_from_stable_snapshot(
+        &mut self,
+        kind: UndoCaptureKind,
+        cx: &App,
+    ) {
         if self.history_restore_in_progress || self.pending_undo_capture.is_some() {
             return;
         }
         self.pending_undo_capture = Some(PendingUndoCapture {
-            snapshot: self.capture_stable_history_entry(kind),
+            snapshot: self.capture_stable_history_entry(kind, cx),
         });
     }
 
@@ -93,9 +99,25 @@ impl Editor {
         self.set_stable_document_snapshot(source, cx);
     }
 
-    fn set_stable_document_snapshot(&mut self, source: String, cx: &App) {
-        self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
+    fn set_stable_document_snapshot(&mut self, source: String, _cx: &App) {
         self.last_stable_source_text = source;
+    }
+
+    /// 帧级选区快照刷新：只在选区（或活动块）真的变了时重算。
+    ///
+    /// `capture_source_selection_snapshot` 在渲染模式下要从文档第一块走到
+    /// 光标块重建 source mapping，大文档里每帧都算一次就是白付 O(文档) 成本；
+    /// 文档内容变化会经编辑路径刷新稳定快照，这里只管选区移动。
+    pub(super) fn refresh_selection_snapshot_if_changed(&mut self, cx: &App) {
+        let Some(target) = self.current_edit_target_from_state(cx) else {
+            return;
+        };
+        let current = (target.entity_id(), target.read(cx).selected_range.clone());
+        if self.last_selection_snapshot_source.as_ref() == Some(&current) {
+            return;
+        }
+        self.last_selection_snapshot_source = Some(current);
+        self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
     }
 
     pub(super) fn finalize_pending_undo_capture(&mut self, cx: &mut Context<Self>) {

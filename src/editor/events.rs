@@ -988,18 +988,34 @@ impl Editor {
         let duration = Duration::from_millis(900);
         self.scrollbar_visible_until = Instant::now() + duration;
 
-        let weak_editor = cx.entity().downgrade();
-        self.scrollbar_fade_task = Some(cx.spawn(
-            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-                cx.background_executor()
-                    .timer(duration + Duration::from_millis(50))
-                    .await;
-                let _ = weak_editor.update(cx, |this, cx| {
-                    this.scrollbar_fade_task = None;
-                    cx.notify();
-                });
-            },
-        ));
+        // 已有淡出任务时就只延长显示时间：滚轮每 tick 都起一个定时任务，
+        // 长滚动会堆出一串已无意义的后台任务。
+        if self.scrollbar_fade_task.is_none() {
+            let weak_editor = cx.entity().downgrade();
+            self.scrollbar_fade_task = Some(cx.spawn(
+                async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                    loop {
+                        cx.background_executor()
+                            .timer(duration + Duration::from_millis(50))
+                            .await;
+                        let keep_waiting = weak_editor
+                            .update(cx, |this, cx| {
+                                if Instant::now() < this.scrollbar_visible_until {
+                                    // 等待期间又滚动过：按新的截止时间再等一轮。
+                                    return true;
+                                }
+                                this.scrollbar_fade_task = None;
+                                cx.notify();
+                                false
+                            })
+                            .unwrap_or(false);
+                        if !keep_waiting {
+                            return;
+                        }
+                    }
+                },
+            ));
+        }
 
         cx.notify();
     }
@@ -1646,7 +1662,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let BlockEvent::PrepareUndo { kind } = event {
-            self.prepare_undo_capture_from_stable_snapshot(*kind);
+            self.prepare_undo_capture_from_stable_snapshot(*kind, cx);
             return;
         }
 
