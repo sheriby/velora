@@ -1698,6 +1698,9 @@ impl Editor {
         self.sidebar_overlay_closing = false;
         if self.workspace.is_open {
             self.workspace.is_open = false;
+            // 面板关了就不该再显示正文搜索高亮（用户报修：残留高亮没有面板
+            // 可以解释，也没有别的路径清它）。inactive 分支会清掉全部范围。
+            self.sync_document_search_highlights(cx);
         } else {
             self.close_menu_bar(cx);
             self.dismiss_contextual_overlays(cx);
@@ -2123,6 +2126,60 @@ impl Editor {
             .map(|path| WorkspaceSelection::File(path.clone()));
     }
 
+    /// 命中所在的块被折叠标题盖住时，把所有盖住它的折叠标题展开。
+    /// 折叠逻辑见 `apply_heading_fold_filter`：标题折叠后隐藏后续块，直到
+    /// 同级或更高级标题；这里按同一顺序维护一个折叠栈，栈里的标题就是
+    /// 盖住目标块的那些。返回是否真的展开了。
+    fn unfold_sections_covering_source_range(
+        &mut self,
+        range: &Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mappings = self.build_source_target_mappings(cx);
+        let Some(entity_id) = mappings
+            .iter()
+            .find(|mapping| {
+                Self::source_range_contains(&mapping.full_source_range, range.start)
+            })
+            .map(|mapping| mapping.entity.entity_id())
+        else {
+            return false;
+        };
+        let Some(target_index) = self.document.visible_index_for_entity_id(entity_id) else {
+            return false;
+        };
+        let visible = self.document.visible_blocks().to_vec();
+        let mut covering: Vec<(u8, EntityId)> = Vec::new();
+        for visible_block in visible.iter().take(target_index) {
+            let block = visible_block.entity.read(cx);
+            if let BlockKind::Heading { level } = block.kind() {
+                while covering
+                    .last()
+                    .is_some_and(|(hide_below, _)| level <= *hide_below)
+                {
+                    covering.pop();
+                }
+                if block.folded {
+                    covering.push((level, visible_block.entity.entity_id()));
+                }
+            }
+        }
+        let mut unfolded = false;
+        for (_, heading_id) in covering {
+            let Some(heading) = self.document.block_entity_by_id(heading_id) else {
+                continue;
+            };
+            heading.update(cx, |block, cx| {
+                if block.folded {
+                    block.folded = false;
+                    unfolded = true;
+                    cx.notify();
+                }
+            });
+        }
+        unfolded
+    }
+
     fn sync_workspace_outline(&mut self, _cx: &mut Context<Self>) {
         let source = &self.last_stable_source_text;
         if self.workspace.outline_source.as_deref() == Some(source.as_str()) {
@@ -2388,6 +2445,11 @@ impl Editor {
 
     fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         self.push_cursor_location(cx);
+        // 命中在折叠标题的章节里时先展开：块被折叠过滤不挂载，既画不出高亮
+        // 也滚不过去（用户报修）。
+        if self.unfold_sections_covering_source_range(&range, cx) {
+            self.fold_state_version = self.fold_state_version.wrapping_add(1);
+        }
         self.apply_selection_snapshot_in_current_mode(
             &UndoSelectionSnapshot {
                 range,
@@ -7152,7 +7214,7 @@ mod tests {
     };
     use crate::components::{Block, UndoCaptureKind};
     use gpui::{
-        AppContext, ClipboardItem, EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
+        App, AppContext, ClipboardItem, EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
         TestAppContext, TouchPhase, point, px,
     };
     use std::fs;
@@ -8403,6 +8465,125 @@ mod tests {
                 before,
                 "跳转后键入不许改写正文"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn document_find_highlights_survive_a_view_mode_switch(cx: &mut TestAppContext) {
+        // 用户报修：切渲染/源码模式后文档内搜索高亮全丢，直到改查询才回来。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, "# Alpha\n\nBeta alpha\n".into(), None)
+        });
+        let highlighted_roots = |editor: &Editor, cx: &App| -> usize {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .filter(|block| !block.read(cx).search_highlight_ranges.is_empty())
+                .count()
+        };
+        editor.update(cx, |editor, cx| {
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "alpha".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(highlighted_roots(editor, cx), 2, "渲染模式两个块各有一条命中");
+        });
+        editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(highlighted_roots(editor, cx), 1, "源码模式是单块文档，命中仍要高亮");
+        });
+        editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(highlighted_roots(editor, cx), 2, "切回渲染模式命中仍要高亮");
+        });
+    }
+
+    #[gpui::test]
+    async fn document_find_jump_unfolds_the_section_containing_the_match(
+        cx: &mut TestAppContext,
+    ) {
+        // 用户报修：折叠标题里的命中搜不到也看不到（块被过滤，不挂载也不滚动）。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, "# A\n\nhidden needle\n\n# B\n\nneedle again\n".into(), None)
+        });
+        editor.update(cx, |editor, cx| {
+            let heading = editor.document.root_blocks()[0].clone();
+            heading.update(cx, |block, _cx| block.folded = true);
+            editor.fold_state_version = editor.fold_state_version.wrapping_add(1);
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "needle".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            editor.find_next_document_match(false, cx);
+        });
+        editor.read_with(cx, |editor, cx| {
+            assert!(
+                !editor.document.root_blocks()[0].read(cx).folded,
+                "命中在折叠章节内时应先展开标题"
+            );
+            assert_eq!(
+                editor.workspace.document_active_range,
+                Some(12..18),
+                "应跳到折叠章节内的第一条命中"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn closing_the_sidebar_clears_document_find_highlights(cx: &mut TestAppContext) {
+        // 用户报修：关侧栏后正文里的搜索高亮还留着，没有面板解释也清不掉。
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+        });
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, "# Alpha\n\nBeta alpha\n".into(), None)
+        });
+        editor.update(cx, |editor, cx| {
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "alpha".into();
+            editor.schedule_workspace_search(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        let highlighted_roots = |editor: &Editor, cx: &App| -> usize {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .filter(|block| !block.read(cx).search_highlight_ranges.is_empty())
+                .count()
+        };
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(highlighted_roots(editor, cx), 2, "前置：两条命中都高亮");
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| editor.toggle_workspace_drawer(window, cx));
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            assert!(!editor.workspace.is_open, "前置：侧栏已收起");
+            assert_eq!(highlighted_roots(editor, cx), 0, "收起侧栏后不应残留搜索高亮");
         });
     }
 

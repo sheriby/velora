@@ -457,6 +457,14 @@ impl Editor {
         self.dismiss_contextual_overlays(cx);
         self.sync_table_axis_visuals(cx);
         self.refresh_stable_document_snapshot(cx);
+        // 模式切换会换掉整套块实体，文档内搜索高亮必须重算，否则正文里的
+        // 命中全丢（用户报修）。非查找场景下该函数自行早退/清理。
+        if self.workspace.is_open
+            && self.workspace.active_tab == super::workspace::WorkspaceTab::Search
+            && !self.workspace.search_query.trim().is_empty()
+        {
+            self.sync_document_search_highlights(cx);
+        }
         cx.notify();
     }
 
