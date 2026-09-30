@@ -8566,6 +8566,8 @@ async fn autosave_conflict_reports_the_file_that_actually_changed(cx: &mut TestA
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&root).unwrap();
+        // 与树/搜索产出的 canonical 路径对齐（macOS /var → /private/var）。
+        let root = std::fs::canonicalize(&root).unwrap_or(root);
         let path = root.join("note.md");
         fs::write(&path, "first para\n\nbeta target\n").unwrap();
         cx.on_quit({
@@ -8642,6 +8644,10 @@ async fn autosave_conflict_reports_the_file_that_actually_changed(cx: &mut TestA
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&root).unwrap();
+        // macOS 上 /var 是 /private/var 的符号链接：set_workspace_root 会把根
+        // canonicalize，树里的路径全是 /private/var/...；测试断言用的路径必须
+        // 与之同源，否则 path == 断言永远失败。
+        let root = std::fs::canonicalize(&root).unwrap_or(root);
         let existing = root.join("a.md");
         fs::write(&existing, "# a\n").unwrap();
         cx.on_quit({
@@ -8746,6 +8752,8 @@ async fn autosave_conflict_reports_the_file_that_actually_changed(cx: &mut TestA
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&root).unwrap();
+        // 与索引/树产出的 canonical 路径对齐（macOS /var → /private/var）。
+        let root = std::fs::canonicalize(&root).unwrap_or(root);
         let active = root.join("a.md");
         let other = root.join("b.md");
         fs::write(&active, "# A\n").unwrap();

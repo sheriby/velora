@@ -849,7 +849,7 @@ seg_k (k ≥ 2) = [system]
     redraw(cx);
 
     // 找到装着 seg_1 的代码块。
-    let (code_block, bounds) = editor.read_with(cx, |editor, cx| {
+    let (_code_block, bounds) = editor.read_with(cx, |editor, cx| {
         let visible = editor.document.visible_blocks().to_vec();
         for entry in visible {
             let block = entry.entity.clone();
@@ -5988,9 +5988,12 @@ async fn large_document_opens_within_budget(cx: &mut TestAppContext) {
         blocks > first_blocks * 10,
         "续建后块数未增长: {first_blocks} -> {blocks}"
     );
-    // 打开只付首块的钱：打开耗时必须显著小于整篇建块成本（相对判据在并发跑测下也稳）。
+    // 打开只付首块的钱：打开耗时必须显著小于整篇建块成本。相对判据在并发
+    // 跑测下稳定，但打开的固定开销（读盘/编码嗅探/首帧布局）会随机器状态
+    // 漂移（2026-09-30 观测 4.5s/20.4s ≈ 1/4.5），取 1/3 仍能抓住「打开付
+    // 整篇的钱」的失效模式（比值≈1）。
     assert!(
-        open_elapsed * 5 < total_elapsed,
+        open_elapsed * 3 < total_elapsed,
         "打开 {open_elapsed:?} 与整篇建块 {total_elapsed:?} 不成比例：打开可能又付了整篇的钱"
     );
     assert!(text_len >= 9 * 1024 * 1024, "续建后文本仍不完整: {text_len}");
@@ -7600,9 +7603,10 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
         "[measure] 1 MiB 单次全文：序列化 {src_len}B {serialize:?}；字数 {words} 词 {word_count:?}；mapping {mappings} 条 {mapping:?}"
     );
     // 预算（并发跑测下取宽裕上限）：块 markdown 有备忘，整篇序列化不该再付
-    // 每块重算的钱（修复前 title_markdown 全量 779ms）。
+    // 每块重算的钱（修复前 title_markdown 全量 779ms）。阈值必须远高于机器
+    // 的日间波动（2026-09-30 观测 100–115ms），同时仍以 3 倍余量覆盖失效模式。
     assert!(
-        title_markdown < Duration::from_millis(100),
+        title_markdown < Duration::from_millis(250),
         "块 markdown 备忘失效了吗：全量 title_markdown {title_markdown:?}"
     );
     assert!(
@@ -8086,7 +8090,7 @@ async fn modal_enter_triggers_default_and_escape_cancels(cx: &mut TestAppContext
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         Editor::from_markdown(cx, "alpha".to_string(), None)
     });
-    editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, _cx| {
         let block = editor.document.visible_blocks()[0].entity.clone();
         editor.focus_block(block.entity_id());
     });
@@ -8283,7 +8287,7 @@ async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut Test
     });
 
     // 聚焦首块后输入 "a[[be"：浮层出现且过滤到 beta。
-    editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, _cx| {
         let block = editor.document.visible_blocks()[0].entity.clone();
         editor.focus_block(block.entity_id());
     });
@@ -8398,6 +8402,8 @@ async fn editing_a_code_file_updates_the_link_index(cx: &mut TestAppContext) {
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
+    // 与索引产出的 canonical 路径对齐（macOS /var → /private/var）。
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
     let active = root.join("a.md");
     let code = root.join("notes.rs");
     fs::write(&active, "# A\n").unwrap();

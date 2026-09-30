@@ -3701,7 +3701,7 @@ mod tests {
         promotes_inline_images, tag_query, wikilink_target,
     };
     use crate::components::{BlockRecord, InlineScript, InlineSpan, InlineStyle};
-    use gpui::{AppContext, VisualTestContext};
+    use gpui::AppContext;
 
     #[gpui::test]
     async fn table_measure_width_stays_within_the_writing_column_cap(cx: &mut TestAppContext) {

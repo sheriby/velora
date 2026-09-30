@@ -1808,7 +1808,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn open_file_dialog_prompt_is_generic() {
         // 用户报修：打开文件的对话框确定铵钮上写着「打开 Markdown 文件」。这个字符串
         // 原样进原生对话框的确定铵钮，必须短而通用；文件夹入口要有自己的文案。
@@ -1822,6 +1821,7 @@ mod tests {
         assert_eq!(I18nStrings::zh_cn().open_folder_prompt, "打开文件夹");
     }
 
+    #[test]
     fn build_menus_uses_chinese_language_when_selected() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::new_with_language_id("zh-CN");
