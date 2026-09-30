@@ -1,17 +1,14 @@
 # Velora
 
-**A native Markdown editor built for long-form writing.**
-WYSIWYG by default, source mode when you want it — written in Rust with GPUI.
-
 **English** · [简体中文](README_CN.md)
 
 ---
 
-Velora opens your writing folder as a workspace, renders Markdown as you type, and stays fast on manuscripts that measure in megabytes. Code files live in the same window with syntax highlighting, and every prompt is an in-app modal — no native dialogs interrupting the flow.
+Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebView, with the interface rendered directly on the GPU — faster startup, lower overhead, steadier response. WYSIWYG by default, switchable to Markdown source at any time. Beyond raw performance, the interface stays modern, clean and readable — light and fluid.
 
 ## Screenshots
 
-![The Velora workspace: file tree, tab, and live WYSIWYG Markdown editing](docs/验收记录/2026-09-25-velora-macos-原生界面.png)
+![The Velora workspace: file tree, multiple tabs, and live WYSIWYG Markdown editing](docs/验收记录/2026-09-30-velora-macos-原生界面.png)
 
 ![The six built-in themes: Velora Light, Paper, Forest, Velora Dark, Midnight and Ink](docs/design/主题预览.png)
 
@@ -49,9 +46,9 @@ Velora opens your writing folder as a workspace, renders Markdown as you type, a
 ### Reliability & performance
 
 - **Your text survives** — autosave with a configurable debounce, atomic writes (temp file + rename), and automatic recovery of unsaved content after a crash.
-- **Big documents stay fast** — a 10 MiB, \~160,000-block manuscript opens in about 1.2 s (debug build): the first screen builds synchronously while the rest streams in through background chunks.
-- **Fast startup** — initialization is spread across frames; roughly 0.7 s to the first window in a debug build.
-- **Guarded by tests** — 900+ automated tests, golden snapshots of rendered block structure, and a per-block import budget that fails CI on regression.
+- **Big documents stay fast** — huge manuscripts build their first screen synchronously while the rest streams in through background chunks; typing and scrolling never stall.
+- **Fast startup** — initialization is spread across frames, so the window appears without delay.
+- **Guarded by tests** — 1000+ automated tests, golden snapshots of rendered block structure, and a per-block import budget that fails CI on regression.
 
 ### Export
 
