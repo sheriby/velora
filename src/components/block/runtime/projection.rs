@@ -12,7 +12,7 @@ use super::CollapsedCaretAffinity;
 
 /// One displayed segment in an expanded inline projection.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ExpandedInlineSegment {
+pub(crate) struct ExpandedInlineSegment {
     pub(super) display_range: Range<usize>,
     pub(super) clean_range: Range<usize>,
     pub(super) fragment_index: usize,
@@ -131,7 +131,7 @@ pub(super) enum ExpandedInlineSegmentKind {
 
 /// One projected link run spanning one or more inline fragments.
 #[derive(Clone, Debug)]
-pub(super) struct ExpandedLinkRun {
+pub(crate) struct ExpandedLinkRun {
     pub(super) link: InlineLink,
     pub(super) start_fragment_index: usize,
     pub(super) end_fragment_index: usize,

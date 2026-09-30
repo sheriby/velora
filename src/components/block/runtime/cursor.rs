@@ -165,7 +165,7 @@ impl Block {
     /// 光标贴在自动链接的可见文本边缘时，把插入点映射到 `<`/`>` 之外。
     /// 自动链接的「标签」就是 URL 本身，插到里面会把链接写坏，转义字符也会直接落进
     /// 显示文本（用户报修：行首自动链接前按反斜杠，可见数量翻倍）。
-    fn autolink_boundary_markdown_range(&self, clean_range: &Range<usize>) -> Option<Range<usize>> {
+    pub(crate) fn autolink_boundary_markdown_range(&self, clean_range: &Range<usize>) -> Option<Range<usize>> {
         if clean_range.start != clean_range.end {
             return None;
         }
