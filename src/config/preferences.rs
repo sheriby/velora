@@ -854,8 +854,7 @@ impl EditorSettings {
 
 
 pub(crate) use persistence::*;
-pub(super) use render::*;
-pub(crate) use render::open_preferences_window;
+pub(crate) use render::{open_preferences_window, open_preferences_window_with_size, open_preferences_window_with_state};
 pub(crate) use window::{PreferencesNav, PreferencesWindow};
 
 mod pages_general;
