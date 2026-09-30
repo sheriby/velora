@@ -288,7 +288,7 @@ pub struct Editor {
 
 /// Runtime binding between a table block and one cell editor.
 #[derive(Clone)]
-struct TableCellBinding {
+pub(crate) struct TableCellBinding {
     table_block: Entity<Block>,
     cell: Entity<Block>,
     position: TableCellPosition,
