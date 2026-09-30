@@ -1,6 +1,6 @@
 # 2026-09-30 Bug 审查结果与修复计划（含 TDD 协议与进度表）
 
-状态：执行中（按单元逐条修，每单元一个提交，标题 `fix(scope): 描述`）
+状态：**F1–F9 全部收口**（F8 有明确延后清单，见 4.1）。每单元一个提交，标题 `fix(scope): 描述`。
 用途：**唯一事实来源**。上下文压缩/换会话后，先读本文件，再看文末「进度表」和 `git log`，从第一个非 ✅ 单元继续。
 
 ## 0. 背景与方法
@@ -106,7 +106,7 @@
 已观察到的环境噪声（不要当回归）：
 - `workspace_search_accepts_unicode_platform_input`、`quick_open_accepts_ime_text_for_non_ascii_file_names`：容器无剪贴板/IME，干净树同样失败。
 - `many_tabs_never_slide_under_the_window_controls`：macOS 红绿灯预留区断言，Linux 上必失败。
-- `large_code_document_opens_within_budget`：写入时间预算的计时测试，全量并行跑时偶发失败，单跑稳定通过（导入路径与 F1/F3 改动无关）。
+- `large_code_document_opens_within_budget`、`selection_word_count_stays_cheap_on_a_long_document`：写入时间预算的计时测试，全量并行跑时偶发失败，单跑稳定通过（后者实测 449–707µs / 预算 5ms，10 倍余量；机器负载高时会被挤爆）。
 
 图例：⬜ 未开始 / ⏳ 进行中 / ✅ 完成（附提交号）
 
