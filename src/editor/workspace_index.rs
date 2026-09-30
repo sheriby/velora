@@ -81,7 +81,7 @@ pub(crate) fn extract_links_and_tags(source: &str) -> FileLinkEntry {
         }
 
         // 行内代码段跳过：逐段扫描时把 `...` 之间的内容剪掉。
-        let mut rest = line;
+        let rest = line;
         let mut code_delimiter: Option<usize> = None;
         let mut scan_from = 0usize;
         loop {
@@ -310,21 +310,6 @@ impl WorkspaceLinkIndex {
         }
     }
 
-    /// 含某标签的存活文件（标签面板点击 → 打开搜索前的列表容量提示用；
-    /// 搜索本身走 C4 的 `open_tag_search`）。
-    pub(crate) fn files_with_tag(&self, tag: &str, live_files: &[PathBuf]) -> Vec<PathBuf> {
-        let live: HashSet<&PathBuf> = live_files.iter().collect();
-        self.entries
-            .iter()
-            .filter(|(path, entry)| live.contains(path) && entry.tags.iter().any(|t| t == tag))
-            .map(|(path, _)| path.clone())
-            .collect()
-    }
-
-    pub(crate) fn tracked_file_count(&self) -> usize {
-        self.entries.len()
-    }
-
     /// 树扫描落地后调用：根变了（或尚未建过）就全量重建；同根则跳过，
     /// 之后由 watcher 增量维持。
     pub(crate) fn ensure_built_for_root(
@@ -382,7 +367,6 @@ pub(crate) struct LinkPanelState {
     computed_at: Option<std::time::Instant>,
     pub(crate) backlinks: Vec<PathBuf>,
     pub(crate) tags: Vec<(String, usize)>,
-    pub(crate) indexed_files: usize,
 }
 
 const PANEL_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
@@ -430,7 +414,6 @@ impl Editor {
             computed_at: Some(std::time::Instant::now()),
             backlinks,
             tags,
-            indexed_files: self.workspace_link_index.tracked_file_count(),
         };
         cx.notify();
     }
@@ -439,6 +422,13 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 仅供测试断言使用（生产路径不读取文件数），故收进测试构建。
+    impl WorkspaceLinkIndex {
+        pub(crate) fn tracked_file_count(&self) -> usize {
+            self.entries.len()
+        }
+    }
 
     #[test]
     fn extracts_wikilinks_tags_and_skips_code() {

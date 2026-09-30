@@ -1141,7 +1141,7 @@ impl Editor {
             ContextMenuState::Image {
                 position,
                 local_path,
-                address,
+                address: _,
             } => {
                 let strings = cx.global::<I18nManager>().strings().clone();
                 let items = vec![
