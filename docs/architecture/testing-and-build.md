@@ -6,11 +6,12 @@
 
 ## 1. 测试组织
 
-- **没有顶层 Rust `tests/` target**；`tests/` 目录只放夹具。全部 Rust 测试是 bin crate 内的 `#[cfg(test)]` 模块（700+ 项）。
-- **引导**：`init_editor_test_app`（src/editor/tests.rs）在 `TestAppContext` 里初始化 `I18nManager`/`ThemeManager`/`components::init`。窗口用 vendored 辅助 `cx.add_window_view(...)`（vendor/gpui/src/app/test_context.rs）。
-- **重绘惯用法**：`redraw()`（tests.rs）= `window.draw(cx).clear()` + `run_until_parked`。断言元素真实布局用 `debug_bounds("名字")` + `simulate_click`（vendored gpui 的 test-only 通道）。
+- **没有顶层 Rust `tests/` target**；`tests/` 目录只放夹具。全部 Rust 测试是 bin crate 内的 `#[cfg(test)]` 模块（1069 项）。
+- **2026-09-30 起测试与源码分离**：内联测试模块已全部迁出为同级文件——`editor/tests.rs`+`editor/tests/`（20 个主题文件 + common.rs 脚手架）、`workspace/tests/`、`document/tests/`、`events/tests/`、`block/runtime/tests/`、以及各文件的 `<name>/tests.rs`。引导与共享助手集中在 `editor/tests/common.rs`。
+- **引导**：`init_editor_test_app`（src/editor/tests/common.rs）在 `TestAppContext` 里初始化 `I18nManager`/`ThemeManager`/`components::init`。窗口用 vendored 辅助 `cx.add_window_view(...)`（vendor/gpui/src/app/test_context.rs）。
+- **重绘惯用法**：`redraw()`（editor/tests/common.rs）= `window.draw(cx).clear()` + `run_until_parked`。断言元素真实布局用 `debug_bounds("名字")` + `simulate_click`（vendored gpui 的 test-only 通道）。
 - **配置隔离**：`override_test_config_root`/`TestConfigRootGuard`（src/config/mod.rs，线程局部 RAII）。
-- 主要测试文件：src/editor/tests.rs（156 个 gpui 测试：滚动条几何/渲染窗口裁剪、保存/IME/冲突、表格运行时、图片运行时、undo/模式切换、大文档 G8、崩溃恢复、wikilink、命令注册表守卫等）、workspace.rs 内嵌测试（文件树/搜索/大纲，用 debug_bounds）、document.rs/events.rs 内嵌测试。
+- 主要测试位置：src/editor/tests/（gpui 端到端：滚动条几何/渲染窗口裁剪、保存/IME/冲突、表格运行时、图片运行时、undo/模式切换、大文档 G8、崩溃恢复、wikilink、命令注册表守卫等）、workspace/tests/（文件树/搜索/侧栏/标签）、document/tests/（导入与往返）、events/tests/（块事件）、block/runtime/tests/（块运行时）。
 - **源码审计测试**：`app_source_never_uses_native_prompts`（禁系统原生弹窗）、命令注册表守卫（每条注册命令必须有处理者）。
 - 夹具：tests/fixtures/markdown-baseline.md（`include_str!` 进单元测试）；tests/fixtures/perf/*.md 是 **gitignored**，用 `node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成。
 
@@ -27,13 +28,13 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 
 ## 3. 性能探针与预算断言
 
-- **`manual_markdown_load_probe`**（src/editor/tests.rs，`#[ignore]`）：
+- **`manual_markdown_load_probe`**（src/editor/tests/loading_chunks.rs，`#[ignore]`）：
   ```bash
   VELORA_PERF_FILE=<utf8文件> cargo test manual_markdown_load_probe -- --ignored --nocapture
   ```
   输出 `construct_ms / first_draw_ms / steady_p95_ms / edit_update_ms / serialize_ms`（12 次重绘取 p95）。走 `Editor::from_markdown`——**测代码文件路径需要另设入口**。
 - **`VELORA_STARTUP_TIMING=1`**（src/main.rs `startup_timing_enabled`/`log_startup_phase`）：分阶段启动耗时打 stderr。
-- **大文档预算断言**：`large_document_opens_within_budget`（tests.rs）——首开块数、`open_elapsed*5 < total_elapsed`（渐进导入比例性）、分块导入与单遍逐字节一致、**每块成本 ≤ 400µs**、180s 续建死线；预算 `[1,2,3,5,8]` 等价性用例。
+- **大文档预算断言**：`large_document_opens_within_budget`（src/editor/tests/import_perf.rs）——首开块数、`open_elapsed*5 < total_elapsed`（渐进导入比例性）、分块导入与单遍逐字节一致、**每块成本 ≤ 400µs**、180s 续建死线；预算 `[1,2,3,5,8]` 等价性用例。
 
 ## 4. Criterion benches（benches/，`cargo bench --bench <name>`）
 

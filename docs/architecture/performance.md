@@ -129,7 +129,7 @@ markdown 路径（`manual_markdown_load_probe`）：
   ~100-200ms 的主线程占用（G8 markdown 同样存在）。
 
 ### 2026-09-28 P1 代码路径探针与基线
-新增 `manual_code_load_probe`（src/editor/tests.rs，`#[ignore]`，同一 `VELORA_PERF_FILE` 入口）：走 `Editor::from_file_source` 真实代码文件路径，断言进入 Source 模式，输出与 markdown 探针同格式。基线（dev，单 CodeBlock 现状）：
+新增 `manual_code_load_probe`（src/editor/tests/loading_chunks.rs，`#[ignore]`，同一 `VELORA_PERF_FILE` 入口）：走 `Editor::from_file_source` 真实代码文件路径，断言进入 Source 模式，输出与 markdown 探针同格式。基线（dev，单 CodeBlock 现状）：
 
 | 夹具 | construct_ms | first_draw | steady_p95 |
 |---|---:|---:|---:|

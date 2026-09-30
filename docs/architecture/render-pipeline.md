@@ -3,10 +3,10 @@
 > 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支。
 > **行号会漂移，函数名不会**。相关文档：[overview.md](./overview.md)、[editor-core.md](./editor-core.md)、[workspace-ui.md](./workspace-ui.md)、[testing-and-build.md](./testing-and-build.md)
 
-## 1. 每帧入口与滚动容器（src/editor/render.rs `impl Render for Editor`）
+## 1. 每帧入口与滚动容器（src/editor/render/paint.rs `impl Render for Editor`；行计划/菜单几何类型在 render.rs，标题栏与滚动同步在 render/sync.rs）
 
 - 每帧：关闭守卫/外观观察者 → 挂起焦点/滚动入视 → `sync_scroll_viewport` + 大纲跟随滚动 → clone 主题并按会话缩放套用全部字号。
-- **滚动是手动列表 + 原生滚动 div，不是 uniform_list**：`div().id("editor-scroll-inner").overflow_y_scroll().track_scroll(&self.scroll_handle)`；`scroll_handle.offset().y`（负值）为滚动位置，翻页/跳转经 `set_offset`（src/editor/events.rs）。自定义滚动条覆盖层 + canvas 鼠标事件（几何在 `scrollbar_geometry`，src/editor/window_state.rs）。
+- **滚动是手动列表 + 原生滚动 div，不是 uniform_list**：`div().id("editor-scroll-inner").overflow_y_scroll().track_scroll(&self.scroll_handle)`；`scroll_handle.offset().y`（负值）为滚动位置，翻页/跳转经 `set_offset`（src/editor/events/scroll_mouse.rs）。自定义滚动条覆盖层 + canvas 鼠标事件（几何在 `scrollbar_geometry`，src/editor/window_state.rs）。
 - 可见块 = `document.visible_blocks()`（缓存的 DFS `VisibleTreeSnapshot`，结构变更时 `rebuild_metadata_and_snapshot` 重建）+ `apply_heading_fold_filter`（折叠标题过滤，同时填充 foldable/[TOC]）。
 - 行分组：callout 组（`callout_anchor`）/脚注组（`footnote_anchor`）合并为 `RowElement::{Group,Ordinary}`；行间距元数据按行 `read_with` 现读，不整帧缓存 Vec。
 
@@ -21,7 +21,7 @@
 
 - `impl Render for Block`：同步图片焦点态与行内投影（`sync_inline_projection_for_focus`）→ 光标闪烁启停 → 按 kind 分派：表格单元格 / source-raw（纯 `BlockTextElement` + 可选行号槽）/ 独立图片 / 标题(带折叠 chevron) / 列表(标记符+复选框) / CodeBlock(面板+复制按钮+`CodeLanguageInputElement`) / Table / HtmlBlock / Math+Mermaid(未聚焦渲染 SVG，聚焦退回文本) / TOC / 默认文本 → `wrap_with_quote_guides`。
 - 公共壳 `render_shell`：`Stateful<Div>` + `key_context("BlockEditor")` + track_focus + 全部动作 + 鼠标处理。
-- **`BlockTextElement`**（src/components/block/element.rs，自定义 `Element`）：
+- **`BlockTextElement`**（src/components/block/element/text_element.rs，自定义 `Element`；类型定义在 element.rs）：
   - `request_layout`：读块 → `shared_display_text()`（Arc SharedString）→ `build_text_runs` / `build_code_text_runs` → `window.text_system().shape_text(...)`（`request_measured_layout` 内）→ `Vec<WrappedLine>` 存 `Rc<RefCell>`。
   - `prepaint`：光标 quad、选区 quad、行内代码圆角背景、搜索高亮、行号 ShapedLine、hitbox。
   - `paint`：画 quad/行号/文本行；聚焦时 `window.handle_input` 注册 IME；⌘ 悬停链接变手型；**把 `last_layout`/`last_bounds`/`last_line_height` 写回 Block**——这是命中测试的布局缓存。
@@ -53,6 +53,6 @@
 
 1. `shape_text` 每帧重 shape 所有挂载块（element.rs request_layout）。
 2. 表格列宽每帧重测所有单元格（markdown/table.rs `measure_preferred_column_widths`）。
-3. `visible_blocks().to_vec()` 全量克隆 + 折叠过滤每帧扫描（src/editor/render.rs render 开头）。
+3. `visible_blocks().to_vec()` 全量克隆 + 折叠过滤每帧扫描（src/editor/render/paint.rs render 开头）。
 4. 主题 clone + 全字号缩放套用每帧执行。
 5. 行间距 `RenderedRowSpacingInfo::from_block` 每行 `read_with`（相对小）。

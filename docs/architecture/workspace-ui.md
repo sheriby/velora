@@ -13,7 +13,7 @@
 
 ## 2. Workspace 是嵌入状态，不是独立实体
 
-**没有单独的 Workspace GPUI 实体**。`Editor` 内嵌 `workspace: WorkspaceState`（src/editor/workspace.rs）：
+**没有单独的 Workspace GPUI 实体**。`Editor` 内嵌 `workspace: WorkspaceState`（src/editor/workspace.rs 为根，功能代码在 workspace/ 子模块：tabs.rs find_replace.rs search_backend.rs sidebar.rs 等）：
 
 - `active_tab: {Files, Search, Outline}`、`root`、`file_tree: Option<WorkspaceTreeNode>`（递归 children）、`outline_tree`/`toc_entries`、`expanded: HashSet<String>`、`open_documents: Vec<WorkspaceDocumentTab>`、搜索/替换全套状态、`panel_width` 等。
 - **标签是快照不是 Editor 实体**：`WorkspaceDocumentTab { path, recovery_id, file_version, markdown, dirty }`。单个 Editor 在切换激活标签时换入换出 `DocumentTree` 内容（`snapshot_current_document` 序列化回标签）。
@@ -31,7 +31,7 @@
 - 动作声明：`actions!(velora, [...])`（src/components/actions.rs）；带载荷动作（选主题/语言/标签页/最近文件）走 `#[action(namespace = velora)]`。
 - `SHORTCUT_DEFINITIONS`：每条命令 id/分类/默认键/`context: "BlockEditor"`；`resolved_keybindings` 合并 config.toml `[keybindings]` 覆盖，再追加固定绑定（⌘P/⇧⌘P/⌘1-9/缩放/光标历史）。
 - **命令注册表**（src/commands.rs）：`CommandSpec { id, CommandMenu, label: fn(&I18nStrings), action }`，静态 `COMMANDS` 表是**菜单与命令面板的唯一事实源**（有守卫测试）。
-- 菜单（app_menu.rs）：`build_menus`（macOS 六菜单；非 macOS App 并入 File）→ `install_menus`；~30 个 `cx.on_action` 处理者 → `dispatch_menu_action`（if/else 链，有源码扫描守卫）。退出走 `cx.defer`（让应用内未保存对话框工作）。
+- 菜单（app_menu/）：`build_menus`（app_menu/build_menus.rs，macOS 六菜单；非 macOS App 并入 File）→ `install_menus`（app_menu.rs）；~30 个 `cx.on_action` 处理者 → `dispatch_menu_action`（if/else 链，有源码扫描守卫）。退出走 `cx.defer`（让应用内未保存对话框工作）。
 
 ## 5. 配置层（src/config/）
 

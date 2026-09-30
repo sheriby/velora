@@ -25,16 +25,16 @@ Workspace (src/editor/workspace.rs)
 ## 2. 导入：markdown → 块
 
 - 入口 `Editor::from_markdown` → `from_markdown_with_chunk_budget`：CRLF→LF 规范化 → `markdown_requires_source_mode_fallback` 检查（不支持的构造整体降级为单 RawMarkdown 块 + Source 模式）→ `split_markdown_lines` 切行一次 → `build_root_block_chunk` 逐块构建。
-- **解析器是手写逐行扫描器，不是 pulldown-cmark**（pulldown-cmark 只用于 HTML 导出）。分发顺序见 `build_blocks_from_lines_internal`（src/editor/document.rs）：frontmatter → 空行段 → 围栏代码 → fenced div → HTML 注释/块 → 脚注定义 → 引用定义 → setext 标题 → 独立图片 → 缩进代码 → 列表 → 引用块/callout → ATX 标题 → 分隔线 → 表格（含 pipeless）→ 展示数学 → 兜底段落。
+- **解析器是手写逐行扫描器，不是 pulldown-cmark**（pulldown-cmark 只用于 HTML 导出）。分发顺序见 `build_blocks_from_lines_internal`（src/editor/document/import.rs；识别函数在 src/editor/document/parse.rs）：frontmatter → 空行段 → 围栏代码 → fenced div → HTML 注释/块 → 脚注定义 → 引用定义 → setext 标题 → 独立图片 → 缩进代码 → 列表 → 引用块/callout → ATX 标题 → 分隔线 → 表格（含 pipeless）→ 展示数学 → 兜底段落。
 - 每块行内解析：`native_block` → `InlineTextTree::from_markdown`。
 - 无法表达的构造 → `raw_block`（`BlockKind::RawMarkdown`）逐字保留。
 - **分块/渐进导入**（大文档关键）：`PendingTail` + `start_pending_materialization_task`/`materialize_next_pending_chunk`（src/editor/mod.rs）。预算 `FIRST_CHUNK_ROOTS=2000`、`STEADY_CHUNK_ROOTS=250`：首屏同步建 2000 块，其余后台每轮 250 块续建。需要全文的操作调 `flush_pending_materialization`。
-- **纯文本/代码文件路径（性能敏感）**：`from_file_source`（src/editor/mod.rs）按 `workspace::is_code_file`（src/editor/workspace.rs，扩展名表含 `log/lock/toml/txt/csv/json/...`）分流 → `replace_document_from_code_source` → `replace_document_content`（src/editor/file_drop.rs）：**整个文件变成单个 `BlockKind::CodeBlock` 块**（`BlockRecord::with_plain_text`），Source 模式等宽编辑；CRLF 用 `code_uses_crlf` 标记保存时还原。markdown 兜底降级也是单 RawMarkdown 块。**这是大纯文本文件性能瓶颈的结构性根源（10MB log = 1 块 10MB 文本）**。
+- **纯文本/代码文件路径（性能敏感）**：`from_file_source`（src/editor/mod.rs）按 `workspace::is_code_file`（src/editor/workspace/search_backend.rs，扩展名表含 `log/lock/toml/txt/csv/json/...`）分流 → `replace_document_from_code_source` → `replace_document_content`（src/editor/file_drop.rs）：**整个文件变成单个 `BlockKind::CodeBlock` 块**（`BlockRecord::with_plain_text`），Source 模式等宽编辑；CRLF 用 `code_uses_crlf` 标记保存时还原。markdown 兜底降级也是单 RawMarkdown 块。**这是大纯文本文件性能瓶颈的结构性根源（10MB log = 1 块 10MB 文本）**。
 
 ## 3. 编辑：按键 → 变更 → 序列化
 
 1. 按键由焦点 **Block** 的 GPUI input handler 处理：`Block::replace_text_in_range`（src/components/block/input.rs）→ 计算 undo 类型 → `prepare_undo_capture` → `replace_text_in_visible_range`（src/components/block/runtime/mod.rs）修改 `record.title` 并 emit `BlockEvent::Changed`。
-2. Editor 经 `on_block_event`（src/editor/events.rs，订阅点在 runtime_context.rs `new_block`）收所有块事件。结构性事件（换行/合并/缩进/粘贴等）经 `DocumentTree::insert_blocks_at` + `with_structure_mutation`（重建快照一次）改树。
+2. Editor 经 `on_block_event`（src/editor/events/block_event.rs，订阅点在 runtime_context.rs `new_block`）收所有块事件。结构性事件（换行/合并/缩进/粘贴等）经 `DocumentTree::insert_blocks_at` + `with_structure_mutation`（重建快照一次）改树。
 3. `Changed` 之后：`mark_dirty`（src/editor/window_state.rs）推进 `document_revision` + `document_dirty` + `schedule_autosave`；`finalize_pending_undo_capture`（src/editor/history.rs）落 undo 条目；引用敏感块才刷新 image/link/footnote 运行时（`changed_block_needs_runtime_context_refresh`，src/editor/runtime_context.rs）。
 4. **序列化是惰性的**：`DocumentTree::markdown_text` / `raw_source_text`（tree.rs，逐块 `BlockRecord::markdown_line`）只在保存、autosave 快照、undo 快照、引用注册表重建、跨块编辑时执行。按键路径从不重序列化全文。
 
