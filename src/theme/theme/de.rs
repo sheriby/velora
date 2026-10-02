@@ -28,6 +28,7 @@ struct ThemeColorsDe {
     callout_important_border: Option<Hsla>,
     callout_warning_bg: Option<Hsla>,
     search_highlight_bg: Option<Hsla>,
+    search_active_highlight_bg: Option<Hsla>,
     callout_warning_border: Option<Hsla>,
     callout_caution_bg: Option<Hsla>,
     callout_caution_border: Option<Hsla>,
@@ -153,6 +154,9 @@ impl<'de> Deserialize<'de> for ThemeColors {
             search_highlight_bg: raw
                 .search_highlight_bg
                 .unwrap_or_else(|| Hsla::from(rgba(0xffe06638))),
+            search_active_highlight_bg: raw
+                .search_active_highlight_bg
+                .unwrap_or_else(|| Hsla::from(rgba(0xffe06680))),
             callout_warning_border: raw
                 .callout_warning_border
                 .unwrap_or_else(|| Hsla::from(rgba(0xfb7185ff))),

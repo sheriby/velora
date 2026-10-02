@@ -833,12 +833,12 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
     } else if action.as_any().is::<FindInDocument>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.open_document_find(cx));
     } else if action.as_any().is::<FindNextMatch>() {
-        let _ = with_active_editor(cx, |editor, _, cx| {
-            editor.find_next_document_match(false, cx)
+        let _ = with_active_editor(cx, |editor, window, cx| {
+            editor.advance_search_match(false, window, cx)
         });
     } else if action.as_any().is::<FindPreviousMatch>() {
-        let _ = with_active_editor(cx, |editor, _, cx| {
-            editor.find_next_document_match(true, cx)
+        let _ = with_active_editor(cx, |editor, window, cx| {
+            editor.advance_search_match(true, window, cx)
         });
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);

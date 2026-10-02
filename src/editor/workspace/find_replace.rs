@@ -140,6 +140,9 @@ impl Editor {
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_center_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
+        // 活动命中变了（跳转/循环）：重算文档内高亮，让用户看得出当前
+        // 停在哪一个命中上（用户报修：来回跳毫无视觉反馈）。
+        self.sync_document_search_highlights(cx);
         cx.notify();
     }
 
@@ -225,19 +228,19 @@ impl Editor {
     pub(crate) fn on_find_next_match(
         &mut self,
         _: &crate::components::FindNextMatch,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.find_next_document_match(false, cx);
+        self.advance_search_match(false, window, cx);
     }
 
     pub(crate) fn on_find_previous_match(
         &mut self,
         _: &crate::components::FindPreviousMatch,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.find_next_document_match(true, cx);
+        self.advance_search_match(true, window, cx);
     }
 
     pub(crate) fn refresh_document_find_after_edit(&mut self, cx: &mut Context<Self>) {
@@ -266,10 +269,50 @@ impl Editor {
         }
     }
 
-    pub(crate) fn find_next_document_match(&mut self, reverse: bool, cx: &mut Context<Self>) {
-        if self.workspace.search_scope != WorkspaceSearchScope::Document {
+    /// Enter/「下一个/上一个」按钮的统一入口：工作区范围在结果列表里
+    /// 循环（此前是空操作，来回跳毫无反应——用户报修），文档范围在当前
+    /// 文档内循环。
+    pub(crate) fn advance_search_match(
+        &mut self,
+        reverse: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.search_scope == WorkspaceSearchScope::Workspace {
+            self.cycle_workspace_search_hit(reverse, window, cx);
+        } else {
+            self.find_next_document_match(reverse, cx);
+        }
+    }
+
+    /// 工作区范围：按 search_active_index 在结果列表里循环点击。
+    fn cycle_workspace_search_hit(
+        &mut self,
+        reverse: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.workspace.search_results.len();
+        if count == 0 {
             return;
         }
+        let next = match self.workspace.search_active_index {
+            Some(index) => {
+                let step = if reverse { -1isize } else { 1isize };
+                (index as isize + step).rem_euclid(count as isize) as usize
+            }
+            None => {
+                if reverse {
+                    count - 1
+                } else {
+                    0
+                }
+            }
+        };
+        self.open_search_hit(next, window, cx);
+    }
+
+    pub(crate) fn find_next_document_match(&mut self, reverse: bool, cx: &mut Context<Self>) {
         // 查询刚打完时后台搜索还没落地（120ms 去抖），快照为 None；改在
         // 当前文档源上找，不再静默什么都不做（用户报修）。
         let source = self

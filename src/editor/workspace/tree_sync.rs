@@ -10,7 +10,10 @@ impl Editor {
     pub(crate) fn sync_document_search_highlights(&mut self, cx: &mut Context<Self>) {
         let previous = std::mem::take(&mut self.search_highlighted_blocks);
         for entity in &previous {
-            let _ = entity.update(cx, |block, _| block.search_highlight_ranges.clear());
+            let _ = entity.update(cx, |block, _| {
+                block.search_highlight_ranges.clear();
+                block.search_active_range = None;
+            });
         }
 
         let query = self.workspace.search_query.trim().to_string();
@@ -25,6 +28,9 @@ impl Editor {
         let matcher = SearchMatcher::new(&query, self.search_options());
         let source = self.current_document_source(cx);
         let mappings = self.build_source_target_mappings(cx);
+        // 活动命中（循环跳转/点击结果选中的那个）单独标记，让用户在多个
+        // 命中之间能看出当前在哪一个。
+        let active_range = self.workspace.document_active_range.clone();
         let mut highlighted = Vec::new();
         for mapping in &mappings {
             let Some(block_source) = source.get(mapping.full_source_range.clone()) else {
@@ -56,8 +62,29 @@ impl Editor {
             if ranges.is_empty() {
                 continue;
             }
+            let active_local = active_range.as_ref().and_then(|active| {
+                let contained = mapping.full_source_range.start <= active.start
+                    && active.end <= mapping.full_source_range.end;
+                if !contained {
+                    return None;
+                }
+                let local = |offset: usize| {
+                    let index = offset - mapping.full_source_range.start;
+                    mapping.source_to_content[index.min(mapping.source_to_content.len() - 1)]
+                };
+                let content = local(active.start)..local(active.end);
+                let converted =
+                    mapping
+                        .entity
+                        .read(cx)
+                        .markdown_range_to_current_range(content);
+                (!converted.is_empty()).then_some(converted)
+            });
             let entity = mapping.entity.clone();
-            entity.update(cx, |block, _| block.search_highlight_ranges = ranges);
+            entity.update(cx, |block, _| {
+                block.search_highlight_ranges = ranges;
+                block.search_active_range = active_local.clone();
+            });
             highlighted.push(entity);
         }
         self.search_highlighted_blocks = highlighted;

@@ -107,6 +107,8 @@ pub struct ThemeColors {
     pub callout_warning_bg: Hsla,
     /// Translucent fill for in-document search matches (roadmap B2).
     pub search_highlight_bg: Hsla,
+    /// Deeper fill for the ACTIVE search match (the one jumps select).
+    pub search_active_highlight_bg: Hsla,
     /// Warning callout accent border/text colour.
     pub callout_warning_border: Hsla,
     /// Caution callout background.

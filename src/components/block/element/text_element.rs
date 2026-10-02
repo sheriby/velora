@@ -634,12 +634,17 @@ impl Element for BlockTextElement {
         }
 
         // In-document search matches (roadmap B2): translucent quads under
-        // the text, computed like selection segments.
+        // the text, computed like selection segments. 活动命中用更深的
+        // search_active_highlight_bg，循环跳转时能看出当前在哪一个。
         let mut search_highlights = Vec::new();
-        if !input.search_highlight_ranges.is_empty() {
+        {
             let highlight_color = theme.colors.search_highlight_bg;
+            let active_color = theme.colors.search_active_highlight_bg;
+            let active_range = input.search_active_range.clone();
             let text = input.display_text();
             for range in &input.search_highlight_ranges {
+                let is_active = active_range.as_ref().is_some_and(|active| active == range);
+                let color = if is_active { active_color } else { highlight_color };
                 for segment in range_segment_bounds(
                     &lines,
                     text_bounds,
@@ -648,7 +653,7 @@ impl Element for BlockTextElement {
                     range.clone(),
                     text_align,
                 ) {
-                    let mut quad = fill(segment, highlight_color);
+                    let mut quad = fill(segment, color);
                     quad.corner_radii = Corners::all(px(2.0));
                     search_highlights.push(quad);
                 }

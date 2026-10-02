@@ -34,9 +34,13 @@ pub(crate) fn dispatch_menu_action_for_editor(
     } else if action.as_any().is::<FindInDocument>() {
         let _ = target.update(cx, |editor, cx| editor.open_document_find(cx));
     } else if action.as_any().is::<FindNextMatch>() {
-        let _ = target.update(cx, |editor, cx| editor.find_next_document_match(false, cx));
+        let _ = target.update(cx, |editor, cx| {
+            editor.advance_search_match(false, window, cx)
+        });
     } else if action.as_any().is::<FindPreviousMatch>() {
-        let _ = target.update(cx, |editor, cx| editor.find_next_document_match(true, cx));
+        let _ = target.update(cx, |editor, cx| {
+            editor.advance_search_match(true, window, cx)
+        });
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {

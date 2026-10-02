@@ -615,7 +615,7 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
             index
         ));
     }
-    big.push_str("\n## 沟通风格\n\n- 专业、技术、简洁\n");
+    big.push_str("\n## 沟通风格\n\n- 专业、技术、简洁\n\n再提一次沟通风格的要求，制造第二个命中。\n");
     let root = std::env::temp_dir().join(format!("velora-search-jump-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("mkdir");
     std::fs::write(root.join("big.md"), &big).expect("write big");
@@ -705,8 +705,30 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
             !block.search_highlight_ranges.is_empty(),
             "工作区范围的命中跳转过去后，文档内匹配必须有高亮（用户报修）"
         );
+        assert_eq!(
+            block.search_active_range,
+            Some(0.."沟通风格".len()),
+            "活动命中应有更深的独立标记"
+        );
         assert!(editor.cross_block_selection.is_none());
     });
     assert!(reached, "滚动应使目标标题进入视口附近");
+
+    // 循环跳转（Enter / 上一个下一个小按钮）：工作区范围此前是空操作（用户报修）
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            let before = editor.workspace.search_active_index;
+            editor.advance_search_match(false, window, cx);
+            assert_ne!(
+                editor.workspace.search_active_index, before,
+                "工作区范围下 Enter 必须推进到下一个命中"
+            );
+            let next_index = editor.workspace.search_active_index.unwrap_or(0);
+            assert_eq!(next_index, before.unwrap_or(0) + 1);
+            // 反向绕回
+            editor.advance_search_match(true, window, cx);
+            assert_eq!(editor.workspace.search_active_index, before);
+        });
+    });
     let _ = std::fs::remove_dir_all(root);
 }

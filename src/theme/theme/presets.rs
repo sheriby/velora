@@ -36,6 +36,8 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     // 当前行高亮跟主题走：取各色板的选区淡色（forest 即淡绿系）垫在光标行下，
     // alpha 压到 40%——高亮一旦接近不透明就会盖住正文（用户报修）。
     c.current_line_bg = color((palette.selection & 0xffffff00) | 0x66);
+    // 活动搜索命中：同一选区淡色但更实，与普通命中的浅底拉开层次。
+    c.search_active_highlight_bg = color((palette.selection & 0xffffff00) | 0xb4);
     c.text_h1 = color(palette.text);
     c.text_h2 = color(palette.text);
     c.text_h3 = color(palette.text);
@@ -132,6 +134,7 @@ impl Theme {
                 callout_important_border: Hsla::from(rgba(0xa78bfaff)),
                 callout_warning_bg: Hsla::from(rgba(0xfce1001f)),
                 search_highlight_bg: Hsla::from(rgba(0xffe06638)),
+                search_active_highlight_bg: Hsla::from(rgba(0xffe06680)),
                 callout_warning_border: Hsla::from(rgba(0xfce100ff)),
                 callout_caution_bg: Hsla::from(rgba(0xd134381f)),
                 callout_caution_border: Hsla::from(rgba(0xd13438ff)),
@@ -383,6 +386,7 @@ impl Theme {
                 callout_important_border: Hsla::from(rgba(0x8764b8ff)),
                 callout_warning_bg: Hsla::from(rgba(0xca501014)),
                 search_highlight_bg: Hsla::from(rgba(0xffd60a4d)),
+                search_active_highlight_bg: Hsla::from(rgba(0xffd60a8c)),
                 callout_warning_border: Hsla::from(rgba(0xca5010ff)),
                 callout_caution_bg: Hsla::from(rgba(0xd1343814)),
                 callout_caution_border: Hsla::from(rgba(0xd13438ff)),

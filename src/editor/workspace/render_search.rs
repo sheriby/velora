@@ -560,7 +560,7 @@ impl Editor {
                         let reverse = event.keystroke.modifiers.shift;
                         let _ = editor.update(cx, |editor, cx| match kind {
                             SearchInputKind::Query => {
-                                editor.find_next_document_match(reverse, cx);
+                                editor.advance_search_match(reverse, window, cx);
                             }
                             SearchInputKind::Replace => {
                                 editor.replace_active_document_match(window, cx);
@@ -765,7 +765,6 @@ impl Editor {
         if let Some(range) = hit.source_range.clone() {
             self.workspace.document_active_range = Some(range.clone());
             self.jump_to_document_search_range(range, cx);
-            self.sync_document_search_highlights(cx);
             return;
         }
         let path = hit.path.clone();
@@ -812,9 +811,6 @@ impl Editor {
             {
                 self.workspace.document_active_range = Some(range.clone());
                 self.jump_to_document_search_range(range, cx);
-                // 切换文档后块是新建的，必须重算当前文档的匹配高亮
-                // （用户报修：工作区搜索跳转过去没有任何高亮）。
-                self.sync_document_search_highlights(cx);
             }
         }
     }
