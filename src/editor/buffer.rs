@@ -21,6 +21,7 @@ use std::sync::Arc;
 const MAX_CHUNK_BYTES: usize = 4096;
 
 /// 一段连续文本。永不跨字符边界切分（UTF-8 字节序列完整性是硬要求）。
+#[derive(Clone)]
 struct Chunk {
     text: String,
     /// 本块内 `'\n'` 的个数，行号换算靠它，不必重扫文本。
@@ -68,6 +69,7 @@ pub(crate) struct AppliedEdit {
 }
 
 /// 文档文本。所有编辑最终都落成一次 [`TextBuffer::edit`]。
+#[derive(Clone)]
 pub(crate) struct TextBuffer {
     chunks: Vec<Chunk>,
     /// 锚点槽位 → 当前绝对字节偏移；`None` 是空槽（可回收）。
@@ -103,12 +105,6 @@ impl TextBuffer {
         self.pristine.is_some()
     }
 
-    /// 作废「原样写回」依据。内容经任何一条未追踪的路径改动时调用
-    /// （过渡期：块树编辑还没接进 [`edit`](Self::edit)，脏标记就是它的路径）。
-    pub(crate) fn discard_pristine(&mut self) {
-        self.pristine = None;
-    }
-
     /// 保存要写的字节：未编辑过就是打开时的原始字节，否则按形状重新编码。
     pub(crate) fn file_bytes(&self) -> Vec<u8> {
         match (self.pristine.as_ref(), self.shape) {
@@ -116,6 +112,32 @@ impl TextBuffer {
             (None, Some(shape)) => shape.encode(&self.text()),
             (None, None) => self.text().into_bytes(),
         }
+    }
+
+    /// 与另一个缓冲区内容相同吗？逐块比字节，不复制任何一方。
+    pub(crate) fn same_content(&self, other: &Self) -> bool {
+        self.byte_len() == other.byte_len()
+            && self
+                .chunks
+                .iter()
+                .zip(other.chunks.iter())
+                .all(|(mine, theirs)| mine.text == theirs.text)
+    }
+
+    /// 内容与给定文本逐字节相同吗？不复制自己，用来跳过「其实没变的整篇重投影」。
+    pub(crate) fn matches_text(&self, text: &str) -> bool {
+        if self.byte_len() != text.len() {
+            return false;
+        }
+        let mut offset = 0usize;
+        for chunk in &self.chunks {
+            let len = chunk.byte_len();
+            if text[offset..offset + len] != chunk.text[..] {
+                return false;
+            }
+            offset += len;
+        }
+        true
     }
 
     /// 缓冲区当前全文。
@@ -303,7 +325,7 @@ impl TextBuffer {
         }
     }
 
-    fn is_char_boundary(&self, offset: usize) -> bool {
+    pub(crate) fn is_char_boundary(&self, offset: usize) -> bool {
         let (index, local) = self.locate(offset);
         match self.chunks.get(index) {
             Some(chunk) => chunk.text.is_char_boundary(local),

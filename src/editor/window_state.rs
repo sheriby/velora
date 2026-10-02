@@ -471,25 +471,23 @@ impl Editor {
     /// Marks the document dirty and schedules window-title and edited-state
     /// refresh for the next render frame.
     ///
-    /// 这条是给**没声明区间**的改动用的（结构变更、表格、跨块选区……）：块树变了，
+    /// 这条是给**没声明区间**的改动用的（表格、跨块选区、源码模式……）：块树变了，
     /// 缓冲区只能整篇重投影才能跟上，未编辑块的原始字节就此丢失。想保住原文的改动
     /// 路径请走 [`Self::mark_dirty_written_back`]。
     pub(super) fn mark_dirty(&mut self, cx: &mut Context<Self>) {
-        if self.writes_through_the_buffer() {
-            self.resync_buffer_from_document(cx);
-        } else {
-            // 源码/代码文档的改动还没接进缓冲区，那份「打开时的原始字节」就不作数了。
-            self.buffer.discard_pristine();
-        }
         self.finish_dirty(cx);
     }
 
     /// 改动已经按区间写回缓冲区：不重投影，所以别的块一个字节都不会被改写。
     pub(crate) fn mark_dirty_written_back(&mut self, cx: &mut Context<Self>) {
+        self.skip_next_resync = true;
         self.finish_dirty(cx);
     }
 
     fn finish_dirty(&mut self, cx: &mut Context<Self>) {
+        // 每次改动都要把块树的序列化刷进「稳定快照」：搜索高亮、大纲、跨块选区
+        // 恢复都按它的坐标算位置，少刷一次就会拿旧文本去映射新块树。
+        self.resync_buffer_and_stable_snapshot(cx);
         self.document_revision = self.document_revision.wrapping_add(1);
         if !self.document_dirty {
             self.document_dirty = true;

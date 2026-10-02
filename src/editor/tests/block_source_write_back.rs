@@ -202,7 +202,7 @@ async fn splitting_a_block_keeps_the_other_blocks_bytes_untouched(
 
     let document = encoding::load_document(&path).expect("read fixture");
     let open_path = path.clone();
-    let (editor, cx) =
+    let (_editor, cx) =
         cx.add_window_view(move |_window, cx| Editor::from_loaded_document(cx, document, Some(open_path)));
     redraw(cx);
 

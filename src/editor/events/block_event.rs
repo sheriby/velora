@@ -115,7 +115,7 @@ impl Editor {
                     self.mark_dirty(cx);
                 }
                 self.request_active_block_scroll_into_view(cx);
-                self.finalize_pending_undo_capture(cx);
+                self.finalize_pending_undo_capture_at_end_of_batch(cx);
             }
             BlockEvent::RequestToggleFold => {
                 let folding_on = !block.read(cx).folded;

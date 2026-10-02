@@ -66,6 +66,8 @@ pub struct Editor {
     document: DocumentTree,
     /// 文档文本的**唯一事实源**：块树是它上面的一份投影，保存写的是它。
     buffer: buffer::TextBuffer,
+    /// 撤销/重做刚把缓冲区摆到目标状态，下一次 `mark_dirty` 就别再重投影盖掉它。
+    skip_next_resync: bool,
     table_cells: HashMap<EntityId, TableCellBinding>,
     /// Which view the editor is currently presenting.
     pub(crate) view_mode: ViewMode,
@@ -367,10 +369,22 @@ struct UndoSelectionSnapshot {
 /// One undo history entry containing source text and selection state.
 #[derive(Clone, Debug)]
 struct HistoryEntry {
-    source_text: String,
+    /// 这一步在缓冲区上留下的写入记录，按文档顺序。
+    ///
+    /// 撤销 = 从后往前把每条的 `new_range` 换回 `removed`；重做 = 把逆操作的结果
+    /// 再反过来放回去。存的是增量，不是全文快照——这是 10 MiB 文档单键 13 秒、
+    /// 撤销栈最坏 2 GB 那笔账的还法。
+    edits: Vec<buffer::AppliedEdit>,
     selection: UndoSelectionSnapshot,
     timestamp: Instant,
     kind: UndoCaptureKind,
+}
+
+impl HistoryEntry {
+    /// 撤销栈闸门盯的这个数：正常打字与拆合块之后，它不该随文档大小增长。
+    pub(crate) fn byte_len(&self) -> usize {
+        self.edits.iter().map(|edit| edit.removed.len()).sum()
+    }
 }
 
 /// Deferred undo capture used to coalesce adjacent typing edits.
@@ -531,6 +545,7 @@ impl Editor {
         let mut editor = Self {
             document,
             buffer,
+            skip_next_resync: false,
             table_cells: HashMap::new(),
             view_mode: if source_mode_fallback_required {
                 ViewMode::Source
@@ -941,7 +956,7 @@ impl Editor {
     ///
     /// 返回 `false` 表示这个块没有可用区间（新建的块、子块、整篇重投影后没被
     /// 记到的空块）：那种情况下按区间写会把字节落错位置，调用方必须退回
-    /// [`Self::resync_buffer_from_document`]。
+    /// [`Self::resync_buffer_and_stable_snapshot`]。
     pub(crate) fn write_back_block_source(
         &mut self,
         block: &Entity<Block>,
@@ -957,6 +972,7 @@ impl Editor {
         }
 
         let applied = self.buffer.edit(old_span.clone(), &new_source);
+        self.record_buffer_edit(applied.clone());
         block.update(cx, |block, _cx| {
             block.record.source_span = Some(applied.new_range);
         });
@@ -1015,7 +1031,8 @@ impl Editor {
             return false;
         };
         let replaced_len = region_end - region_start;
-        self.buffer.edit(region_start..region_end, &text);
+        let applied = self.buffer.edit(region_start..region_end, &text);
+        self.record_buffer_edit(applied);
         // 先平移再分配：新块区间的右端可能已经越过 region_end（拆块会变长）。
         let delta = text.len() as i64 - replaced_len as i64;
         if delta != 0 {
@@ -1096,17 +1113,53 @@ impl Editor {
             && self.view_mode == ViewMode::Rendered
     }
 
-    /// 整篇重投影：块树的序列化结果换进缓冲区，并据此重建所有根块的区间。
+    /// 块树变了：把它的序列化换进缓冲区（除非这次改动自己声明过区间），并刷新
+    /// 搜索/大纲赖以定位的稳定快照。两者必须是同一份文本，否则坐标会漂。
     ///
     /// 这是写回的保底档位，代价是**未编辑的块也被重新序列化一次**（表格列宽填充、
     /// `__` 强调这些写法就此改写），原始字节也随之丢弃。每多一条走到这里的路径，
     /// 就少一块「保住原文」的地盘——收敛方向是让改动自己声明区间，不是让这里变快。
-    pub(crate) fn resync_buffer_from_document(&mut self, cx: &mut Context<Self>) {
-        if !self.writes_through_the_buffer() {
+    pub(crate) fn resync_buffer_and_stable_snapshot(&mut self, cx: &mut Context<Self>) {
+        let skip_resync = std::mem::take(&mut self.skip_next_resync);
+        if self.writes_through_the_buffer() {
+            let (text, block_spans) = self.document.markdown_text_with_block_spans(cx);
+            self.last_stable_source_text = text.clone();
+            if !skip_resync {
+                self.apply_resynced_text(&text);
+                // 区间只有在它派生自的那份文本里才成立：跳过重投影时也别动区间，
+                // 写回路径已经把区间按缓冲区字节摆好了。
+                self.reattach_root_spans(&block_spans, &text, cx);
+            }
             return;
         }
-        let (text, block_spans) = self.document.markdown_text_with_block_spans(cx);
-        self.buffer = buffer::TextBuffer::from_text(&text);
+        // 源码/代码文档：缓冲区装的是不套围栏的源码文本。
+        let text = self.document.raw_source_text(cx);
+        self.last_stable_source_text = text.clone();
+        if !skip_resync {
+            self.apply_resynced_text(&text);
+        }
+    }
+
+    /// 把重投影出来的文本作为**一次**写入落进缓冲区。
+    ///
+    /// 走 `edit` 而不是整个换掉缓冲区，是为了让撤销组拿到它的逆操作；文本没变时
+    /// 什么都不做，「打开后没改过」那份原始字节也就保住了。
+    fn apply_resynced_text(&mut self, text: &str) {
+        if self.buffer.matches_text(text) {
+            return;
+        }
+        let range = 0..self.buffer.byte_len();
+        let applied = self.buffer.edit(range, text);
+        self.record_buffer_edit(applied);
+    }
+
+    /// 按重投影出来的文本重建所有根块的源码区间。
+    fn reattach_root_spans(
+        &mut self,
+        block_spans: &[(EntityId, std::ops::Range<usize>)],
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
         let roots = self.document.root_blocks().to_vec();
         for block in roots {
             let span = block_spans

@@ -52,24 +52,75 @@ impl Editor {
         }
     }
 
-    pub(super) fn capture_history_entry(&self, kind: UndoCaptureKind, cx: &App) -> HistoryEntry {
+    /// 撤销栈占用的字节数（条目负载，不含结构体本身）。
+    ///
+    /// 这是「撤销存增量而不是存全文」那条性质的闸门：正常打字与拆块之后，
+    /// 它不该随文档大小增长。
+    pub(crate) fn undo_history_byte_len(&self) -> usize {
+        self.undo_history
+            .iter()
+            .map(|entry| entry.byte_len())
+            .sum::<usize>()
+            + self
+                .redo_history
+                .iter()
+                .map(|entry| entry.byte_len())
+                .sum::<usize>()
+    }
+
+    /// 开一个撤销组：只记下「改动前的选区」，不复制任何文本。
+    ///
+    /// 组里的字节增量由 [`Editor::record_buffer_edit`] 在每次 `TextBuffer::edit`
+    /// 落地后追加，所以准备阶段的工作量与文档大小无关。
+    pub(super) fn begin_history_group(&mut self, kind: UndoCaptureKind, cx: &App) -> HistoryEntry {
         HistoryEntry {
-            source_text: self.current_document_source(cx),
+            edits: Vec::new(),
+            // 选区现场算：调用点是编辑开始前，算出来就是编辑前的选区。
             selection: self.capture_source_selection_snapshot(cx),
             timestamp: Instant::now(),
             kind,
         }
     }
 
-    pub(super) fn capture_stable_history_entry(&self, kind: UndoCaptureKind, cx: &App) -> HistoryEntry {
-        HistoryEntry {
-            source_text: self.last_stable_source_text.clone(),
-            // 选区现场算：调用点是结构编辑开始前，算出来就是编辑前的选区，
-            // 比每键维护一份快照便宜（大文档里 capture 要从头建 mapping）。
-            selection: self.capture_source_selection_snapshot(cx),
-            timestamp: Instant::now(),
-            kind,
+    /// 把当前撤销组留到本次派发批处理结束再结算。
+    ///
+    /// 一次用户动作会连着发出好几个事件（回车先截断本块，再请求拆块），逐条结算
+    /// 就会把一次动作切成两个撤销步——第一次撤销停在「文本截断了但第二块还没落地」
+    /// 的中间态。推迟到批处理末尾，同一动作的增量自然落进同一个组。
+    pub(super) fn finalize_pending_undo_capture_at_end_of_batch(&mut self, cx: &mut Context<Self>) {
+        let this = cx.entity().clone();
+        cx.defer(move |cx| {
+            let _ = this.update(cx, |editor, cx| editor.finalize_pending_undo_capture(cx));
+        });
+    }
+
+    /// 把一次已经落地的缓冲区写入记进当前撤销组。
+    ///
+    /// 撤销时按反序重放，所以这里只管追加，不需要合并区间。
+    pub(crate) fn record_buffer_edit(&mut self, applied: buffer::AppliedEdit) {
+        if self.history_restore_in_progress {
+            return;
         }
+        if let Some(pending) = self.pending_undo_capture.as_mut() {
+            pending.snapshot.edits.push(applied);
+        }
+    }
+
+    /// 这组逆操作重放回当前状态吗（也就是「改了等于没改」）。
+    /// 撤销组里可能有多条，后面的条目会把前面的区间挪位，所以「改了等于没改」
+    /// 要在一份副本上真重放一遍，不能拿当前缓冲区去套每条区间。
+    fn history_group_is_noop(buffer: &buffer::TextBuffer, edits: &[buffer::AppliedEdit]) -> bool {
+        let mut probe = buffer.clone();
+        for edit in edits.iter().rev() {
+            if edit.new_range.end > probe.byte_len()
+                || !probe.is_char_boundary(edit.new_range.start)
+                || !probe.is_char_boundary(edit.new_range.end)
+            {
+                return false;
+            }
+            probe.edit(edit.new_range.clone(), &edit.removed);
+        }
+        probe.same_content(buffer)
     }
 
     pub(super) fn prepare_undo_capture(&mut self, kind: UndoCaptureKind, cx: &mut Context<Self>) {
@@ -77,10 +128,12 @@ impl Editor {
             return;
         }
         self.pending_undo_capture = Some(PendingUndoCapture {
-            snapshot: self.capture_history_entry(kind, cx),
+            snapshot: self.begin_history_group(kind, cx),
         });
     }
 
+    /// 与 `prepare_undo_capture` 同一条路：撤销组不再需要任何文本快照，
+    /// 「稳定快照」那种每键全文对比的说法就此作废。
     pub(super) fn prepare_undo_capture_from_stable_snapshot(
         &mut self,
         kind: UndoCaptureKind,
@@ -90,7 +143,7 @@ impl Editor {
             return;
         }
         self.pending_undo_capture = Some(PendingUndoCapture {
-            snapshot: self.capture_stable_history_entry(kind, cx),
+            snapshot: self.begin_history_group(kind, cx),
         });
     }
 
@@ -131,24 +184,38 @@ impl Editor {
             return;
         };
 
-        let current_source = self.current_document_source(cx);
-        if pending.snapshot.kind == UndoCaptureKind::ImeCompositionCommit
-            && let Some(last) = self
-                .undo_history
-                .last_mut()
-                .filter(|entry| entry.kind == UndoCaptureKind::ImeComposition)
-        {
-            self.redo_history.clear();
-            if last.source_text == current_source {
-                self.undo_history.pop();
-            } else {
-                last.kind = UndoCaptureKind::NonCoalescible;
-            }
-            self.set_stable_document_snapshot(current_source, cx);
+        // 这次改动没落下任何字节增量：撤销栈不该多出空条目。
+        if pending.snapshot.edits.is_empty() {
             return;
         }
-        if current_source == pending.snapshot.source_text {
-            self.set_stable_document_snapshot(current_source, cx);
+
+        if pending.snapshot.kind == UndoCaptureKind::ImeCompositionCommit
+            && self
+                .undo_history
+                .last()
+                .is_some_and(|entry| entry.kind == UndoCaptureKind::ImeComposition)
+        {
+            // 组合输入收尾时文本又回到了组合开始前：那条记录没有存在意义。
+            //
+            // 增量式撤销组里，「组合」和「收尾」是两条各自记录了一次缓冲区写入的
+            // 条目，撤销整次组合输入必须一次退干净，所以先把收尾的增量并进来，
+            // 再拿合并后的整组判断「改了等于没改」。
+            self.redo_history.clear();
+            self.undo_history
+                .last_mut()
+                .expect("checked above")
+                .edits
+                .extend(pending.snapshot.edits);
+            let noop = Self::history_group_is_noop(
+                &self.buffer,
+                &self.undo_history.last().expect("checked above").edits,
+            );
+            if noop {
+                self.undo_history.pop();
+            } else {
+                self.undo_history.last_mut().expect("checked above").kind =
+                    UndoCaptureKind::NonCoalescible;
+            }
             return;
         }
 
@@ -164,14 +231,20 @@ impl Editor {
                         .saturating_duration_since(entry.timestamp)
                         <= Self::HISTORY_COALESCE_WINDOW
             });
-        if !should_merge {
+        if should_merge {
+            // 合并 = 把两组增量接起来：撤销时整组反序重放，等价于逐步回退。
+            self.undo_history
+                .last_mut()
+                .expect("checked above")
+                .edits
+                .extend(pending.snapshot.edits);
+        } else {
             self.undo_history.push(pending.snapshot);
             if self.undo_history.len() > Self::HISTORY_LIMIT {
                 let overflow = self.undo_history.len() - Self::HISTORY_LIMIT;
                 self.undo_history.drain(0..overflow);
             }
         }
-        self.set_stable_document_snapshot(current_source, cx);
     }
 
     pub(super) fn apply_selection_snapshot_in_current_mode(
@@ -308,13 +381,33 @@ impl Editor {
         }
     }
 
-    pub(super) fn restore_history_entry(&mut self, entry: &HistoryEntry, cx: &mut Context<Self>) {
+    /// 反序重放一组逆操作，返回「重做这一步」需要的那组增量。
+    fn replay_history_group(&mut self, entry: &HistoryEntry) -> Vec<buffer::AppliedEdit> {
+        // 这一步之内缓冲区已经是目标状态，别让重投影拿块树盖掉它。
+        self.skip_next_resync = true;
+        let mut forward = Vec::with_capacity(entry.edits.len());
+        // 反序重放：后发生的改动先退回。返回的那组也按同样的反序记录，
+        // 下一次 `replay_history_group` 再反一次就正好是正向时序。
+        for edit in entry.edits.iter().rev() {
+            forward.push(self.buffer.edit(edit.new_range.clone(), &edit.removed));
+        }
+        forward
+    }
+
+    /// 用缓冲区里的文本重建整棵块树（撤销/重做专用，O(文档)，只在按键时付）。
+    fn rebuild_document_from_buffer(&mut self, cx: &mut Context<Self>) {
+        let source = self.buffer.text();
         match self.view_mode {
             ViewMode::Rendered => {
-                let mut roots = Self::build_root_blocks_from_markdown(cx, &entry.source_text);
+                // 与打开文档同一条路：从缓冲区的文本解析根块，并把源码区间挂上——
+                // 区间说的是缓冲区里的字节，不能用重新序列化的结果去换算。
+                let lines = Arc::new(Self::split_markdown_lines(&source));
+                let (mut roots, root_spans, _consumed) =
+                    Self::build_root_block_chunk(cx, &lines, ChunkCursor::WHOLE_DOCUMENT);
                 if roots.is_empty() {
                     roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
                 }
+                Self::attach_root_spans(&self.buffer, &roots, &root_spans, 0, cx);
                 self.document.replace_roots(roots, cx);
                 self.rebuild_table_runtimes(cx);
                 self.rebuild_image_runtimes(cx);
@@ -331,17 +424,19 @@ impl Editor {
                 } else {
                     BlockKind::Paragraph
                 };
-                let roots = Self::build_source_document_roots(kind, &entry.source_text, cx);
+                let roots = Self::build_source_document_roots(kind, &source, cx);
                 self.document.replace_roots(roots, cx);
                 self.table_cells.clear();
             }
         }
+    }
 
+    /// 撤销/重做一步的收尾：把选区放回那一步之前的现场。
+    fn apply_restored_selection(&mut self, entry: &HistoryEntry, cx: &mut Context<Self>) {
         self.apply_selection_snapshot_in_current_mode(&entry.selection, cx);
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
         self.last_scroll_viewport_size = None;
-        self.refresh_stable_document_snapshot(cx);
     }
 
     pub(super) fn normalize_rendered_quote_structure(&mut self, cx: &mut Context<Self>) {
@@ -369,14 +464,26 @@ impl Editor {
             return;
         };
 
-        // Snapshot the current document so redo can step forward to it.
-        let current = self.capture_history_entry(UndoCaptureKind::NonCoalescible, cx);
+        // 记下此刻的选区，重做时能回到同一现场。
+        let selection_before = self.capture_source_selection_snapshot(cx);
+        let current = HistoryEntry {
+            edits: Vec::new(),
+            selection: selection_before,
+            timestamp: Instant::now(),
+            kind: UndoCaptureKind::NonCoalescible,
+        };
         self.pending_undo_capture = None;
         self.history_restore_in_progress = true;
         self.clear_cross_block_selection(cx);
-        self.restore_history_entry(&entry, cx);
+        let forward = self.replay_history_group(&entry);
+        self.rebuild_document_from_buffer(cx);
         self.history_restore_in_progress = false;
-        self.redo_history.push(current);
+        self.apply_restored_selection(&entry, cx);
+        // 重放留下的区间就是这一步的正向操作，交给重做用。
+        self.redo_history.push(HistoryEntry {
+            edits: forward,
+            ..current
+        });
         self.mark_dirty(cx);
         self.sync_table_axis_visuals(cx);
         self.dismiss_contextual_overlays(cx);
@@ -388,14 +495,24 @@ impl Editor {
             return;
         };
 
-        // Snapshot the current document so undo can step back to it again.
-        let current = self.capture_history_entry(UndoCaptureKind::NonCoalescible, cx);
+        let selection_before = self.capture_source_selection_snapshot(cx);
+        let current = HistoryEntry {
+            edits: Vec::new(),
+            selection: selection_before,
+            timestamp: Instant::now(),
+            kind: UndoCaptureKind::NonCoalescible,
+        };
         self.pending_undo_capture = None;
         self.history_restore_in_progress = true;
         self.clear_cross_block_selection(cx);
-        self.restore_history_entry(&entry, cx);
+        let forward = self.replay_history_group(&entry);
+        self.rebuild_document_from_buffer(cx);
         self.history_restore_in_progress = false;
-        self.undo_history.push(current);
+        self.apply_restored_selection(&entry, cx);
+        self.undo_history.push(HistoryEntry {
+            edits: forward,
+            ..current
+        });
         self.mark_dirty(cx);
         self.sync_table_axis_visuals(cx);
         self.dismiss_contextual_overlays(cx);

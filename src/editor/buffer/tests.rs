@@ -304,16 +304,16 @@ fn line_offsets_stay_correct_across_many_chunks() {
 }
 
 #[test]
-fn discarding_the_pristine_copy_forces_reencoding_by_shape() {
+fn an_edit_forces_reencoding_by_shape_and_ends_the_pristine_copy() {
     let raw = "正文一\r\n正文二\r\n".as_bytes().to_vec();
     let mut buffer = TextBuffer::from_text("正文一\n正文二\n");
     buffer.set_file_origin(raw.clone(), FileShape::detect(&raw));
     assert_eq!(buffer.file_bytes(), raw);
 
-    // 内容被别的路径改动（尚未追踪到 edit）时，作废原字节依据，改按形状编码写回。
-    buffer.discard_pristine();
+    // 唯一写入口落下改动：原字节依据就此作废，写回改按文件形状编码。
+    buffer.edit(0..9, "改过的正文一");
     assert!(!buffer.is_pristine());
-    assert_eq!(buffer.file_bytes(), raw);
+    assert_eq!(buffer.file_bytes(), "改过的正文一\r\n正文二\r\n".as_bytes());
 
     // 无形状信息时退回 UTF-8 文本本身。
     let plain = TextBuffer::from_text("正文\n");

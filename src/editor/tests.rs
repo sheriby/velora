@@ -25,5 +25,6 @@ mod selection_mouse;
 mod table_runtime;
 mod tree_quick_open;
 mod typing_wrapping;
+mod undo_history_deltas;
 mod window_menu;
 mod workspace_shell;
