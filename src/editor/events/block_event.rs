@@ -56,6 +56,14 @@ impl Editor {
             self.clear_cross_block_selection(cx);
         }
 
+        // 结构事件要按区间写回：先记下根块布局，变更后再算「哪几根被换成了哪几根」。
+        let roots_before = matches!(
+            event,
+            BlockEvent::RequestNewline { .. }
+                | BlockEvent::RequestMergeIntoPrev { .. }
+                | BlockEvent::RequestMergeFromNext
+        )
+        .then(|| self.document.root_layout(cx));
         let visible_before = self.document.flatten_visible_blocks();
         let current_visible_index = visible_before
             .iter()
@@ -168,7 +176,11 @@ impl Editor {
                 if current_kind.is_quote_container() {
                     self.normalize_rendered_quote_structure(cx);
                 }
-                self.mark_dirty(cx);
+                if self.write_back_newline_region(&block, roots_before.as_deref(), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
@@ -304,7 +316,12 @@ impl Editor {
                 } else {
                     self.rebuild_image_runtimes(cx);
                 }
-                self.mark_dirty(cx);
+                // 锚点是**前一块**：它吸收了本块，被换掉的区间是「前一块 + 本块」。
+                if self.write_back_newline_region(&prev, roots_before.as_deref(), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
@@ -345,7 +362,11 @@ impl Editor {
 
                 self.focus_block(block.entity_id());
                 self.rebuild_image_runtimes(cx);
-                self.mark_dirty(cx);
+                if self.write_back_newline_region(&block, roots_before.as_deref(), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }

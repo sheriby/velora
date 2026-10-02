@@ -185,3 +185,83 @@ async fn saving_after_an_edit_keeps_the_untouched_blocks_byte_identical(
     );
     assert!(!editor.read_with(cx, |editor, _cx| editor.document_dirty));
 }
+
+/// 拆块也必须保住别的块：回车不该把整篇重新序列化一遍。
+#[gpui::test]
+async fn splitting_a_block_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-split");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) =
+        cx.add_window_view(move |_window, cx| Editor::from_loaded_document(cx, document, Some(open_path)));
+    redraw(cx);
+
+    cx.simulate_input("写");
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        concat!(
+            "写\n\n段落文字\n\n",
+            "| 名称 | 数量 |\n",
+            "| ---- | ---- |\n",
+            "| 甲   | 1    |\n",
+            "\n",
+            "强调 __下划线__ 结尾\n",
+        )
+        .replace('\n', "\r\n"),
+        "一次回车把未编辑的块也重新序列化了：{saved:?}"
+    );
+}
+
+/// 拆完再合回来：分隔空行的加减必须正好互相抵消，文档回到「原文 + 那一处改动」。
+#[gpui::test]
+async fn splitting_then_merging_back_restores_the_original_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-split-merge");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.simulate_input("写");
+    cx.dispatch_action(Newline);
+    cx.dispatch_action(DeleteBack);
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        LOSSY_SHAPE_FIXTURE
+            .replace("段落文字", "写段落文字")
+            .replace('\n', "\r\n"),
+        "拆块再合块之后，落盘的不再是「原文 + 一处改动」：{saved:?}"
+    );
+    let (spans, buffer_text) = root_block_spans(&editor, cx);
+    assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "拆完再合回来");
+}

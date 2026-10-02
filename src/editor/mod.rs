@@ -967,6 +967,77 @@ impl Editor {
         true
     }
 
+    /// 结构变更（拆块、合块）之后，把被换掉的那一段连续根块写回缓冲区。
+    ///
+    /// `before` 是变更前的根块布局。用「首尾对齐」算出 old_run / new_run：变更
+    /// 前后从尾部数第一个不相等的根块位置就是这段的右界，锚点所在根块是左界。
+    /// 返回 `false` 表示这段算不出来（纯插入、根块没挂区间、整段都是空段落），
+    /// 调用方继续用整篇重投影兜底。
+    pub(crate) fn write_back_root_region(
+        &mut self,
+        anchor: &Entity<Block>,
+        before: &[(EntityId, Option<std::ops::Range<usize>>)],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(anchor_index) = before.iter().position(|(id, _)| *id == anchor.entity_id()) else {
+            return false;
+        };
+        let after = self.document.root_layout(cx);
+        let suffix = before
+            .iter()
+            .rev()
+            .zip(after.iter().rev())
+            .take_while(|((before_id, _), (after_id, _))| before_id == after_id)
+            .count();
+        let Some(old_end) = before.len().checked_sub(suffix) else {
+            return false;
+        };
+        let Some(new_end) = after.len().checked_sub(suffix) else {
+            return false;
+        };
+        // 纯插入：要补的分隔换行数取决于右边那块的种类，这一版不算，交给兜底。
+        if anchor_index >= old_end {
+            return false;
+        }
+        let Some(region_start) = before[anchor_index].1.clone().map(|span| span.start) else {
+            return false;
+        };
+        let Some(region_end) = before[old_end - 1].1.clone().map(|span| span.end) else {
+            return false;
+        };
+        if region_end <= region_start {
+            return false;
+        }
+
+        let Some((text, local_spans)) =
+            self.document.markdown_region_for_roots(anchor_index..new_end, cx)
+        else {
+            return false;
+        };
+        let replaced_len = region_end - region_start;
+        self.buffer.edit(region_start..region_end, &text);
+        // 先平移再分配：新块区间的右端可能已经越过 region_end（拆块会变长）。
+        let delta = text.len() as i64 - replaced_len as i64;
+        if delta != 0 {
+            self.shift_root_spans_after(region_start, delta, cx);
+        }
+        for (id, local) in local_spans {
+            let span = region_start + local.start..region_start + local.end;
+            let roots = self.document.root_blocks();
+            let Some(block) = roots
+                .iter()
+                .find(|block| block.entity_id() == id)
+                .cloned()
+            else {
+                continue;
+            };
+            block.update(cx, |block, _cx| {
+                block.record.source_span = Some(span);
+            });
+        }
+        true
+    }
+
     /// 编辑点之后的根块区间整体平移；之前的块字节没被碰到，区间自然不动。
     fn shift_root_spans_after(&mut self, from: usize, delta: i64, cx: &mut App) {
         let total = self.buffer.byte_len() as i64;
@@ -986,6 +1057,32 @@ impl Editor {
                 block.record.source_span = Some(start..end.max(start));
             });
         }
+    }
+
+    /// 拆块事件的写回入口：先看根块序列变了没有。
+    ///
+    /// - 变了（段落一分为二、两块合一）→ 只重写被换掉的那一段区间。
+    /// - 没变（子块拆合，新块挂在某个根块底下）→ 整根块重投影，它的区间本来就
+    ///   盖住整棵子树，别的根块照样不动。
+    pub(crate) fn write_back_newline_region(
+        &mut self,
+        block: &Entity<Block>,
+        before: Option<&[(EntityId, Option<std::ops::Range<usize>>)]>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(before) = before else { return false };
+        if self.write_back_root_region(block, before, cx) {
+            return true;
+        }
+        let Some(root) = self.document.root_ancestor_of(block.entity_id()) else {
+            return false;
+        };
+        // 根块序列一模一样才敢走整块重投影：不一样说明结构变更没算出区间，得兜底。
+        let unchanged_sequence = before
+            .iter()
+            .map(|(id, _)| *id)
+            .eq(self.document.root_layout(cx).into_iter().map(|(id, _)| id));
+        unchanged_sequence && self.write_back_block_source(&root, cx)
     }
 
     /// 这个文档的字节是否由缓冲区说了算。

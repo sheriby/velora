@@ -356,6 +356,93 @@ impl DocumentTree {
         lines.join("\n")
     }
 
+    /// 根块布局快照：`(块身份, 它的源码区间)`，顺序即文档顺序。
+    ///
+    /// 结构事件用它对比变更前后，算出「哪几根块被换成了哪几根」，只重写那一段
+    /// 字节。这里只碰整数与句柄，比整篇序列化便宜得多。
+    pub(crate) fn root_layout(&self, cx: &App) -> Vec<(gpui::EntityId, Option<std::ops::Range<usize>>)> {
+        self.roots
+            .iter()
+            .map(|block| (block.entity_id(), block.read(cx).record.source_span.clone()))
+            .collect()
+    }
+
+    /// 某块所在根块的句柄（块树里父链的顶端；它自己就是根块时返回自己）。
+    pub(crate) fn root_ancestor_of(&self, entity_id: EntityId) -> Option<Entity<Block>> {
+        let location = self.find_block_location(entity_id)?;
+        let Some(parent) = location.parent else {
+            return self
+                .roots
+                .iter()
+                .find(|block| block.entity_id() == entity_id)
+                .cloned();
+        };
+        let mut current = parent;
+        while let Some(parent) = self
+            .find_block_location(current.entity_id())
+            .and_then(|location| location.parent)
+        {
+            current = parent;
+        }
+        Some(current)
+    }
+
+    /// 序列化 `range` 这段连续根块，返回片段文本与每根块在片段里的字节区间。
+    ///
+    /// 片段右边的字节由调用方原样保留，所以 `collect_root_markdown_lines` 替
+    /// 「下一块」补的那一个分隔空行要在这里削掉，否则拼接处多出一个空行。
+    /// 整段都是空段落时返回 `None`：那种形状下首尾分支的空行规则与全文不同，
+    /// 交给整篇重投影兜底。
+    pub(crate) fn markdown_region_for_roots(
+        &self,
+        range: std::ops::Range<usize>,
+        cx: &App,
+    ) -> Option<(String, Vec<(gpui::EntityId, std::ops::Range<usize>)>)> {
+        let blocks = self.roots.get(range)?;
+        let mut lines = Vec::new();
+        let mut line_spans = Vec::new();
+        Self::collect_root_markdown_lines(
+            blocks,
+            cx,
+            &mut lines,
+            None,
+            Some(&mut line_spans),
+        );
+        if line_spans.is_empty() {
+            return None;
+        }
+        // 只削一个：剩下的空行是这段里空段落自己的字节。
+        if lines.last().is_some_and(|line| line.is_empty()) {
+            lines.pop();
+        }
+
+        let text = lines.join("\n");
+        let mut line_byte_starts = Vec::with_capacity(lines.len() + 1);
+        let mut running = 0usize;
+        for line in &lines {
+            line_byte_starts.push(running);
+            running += line.len() + 1;
+        }
+        line_byte_starts.push(running);
+        let total = text.len();
+        let byte_spans = line_spans
+            .into_iter()
+            .map(|(id, line_span)| {
+                let start = line_byte_starts[line_span.start.min(line_byte_starts.len() - 1)];
+                let raw_end = line_byte_starts[line_span.end.min(lines.len())].min(total);
+                // 与 `attach_root_spans` 同一条约定：块不含自己行尾的换行，
+                // 但片段最后一个块的右端就是片段末尾，那里没有换行可减。
+                let end = if raw_end > start && raw_end < total {
+                    raw_end - 1
+                } else {
+                    raw_end
+                };
+                (id, start..end.max(start))
+            })
+            .collect();
+        Some((text, byte_spans))
+    }
+
     pub(super) fn raw_source_text(&self, cx: &App) -> String {
         // P5：单遍追加。旧实现先把每块文本克隆成 String 再 join——超大
         // 文档一次序列化要付两倍字节量的搬运。
