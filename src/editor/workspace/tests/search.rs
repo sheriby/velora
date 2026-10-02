@@ -1050,3 +1050,87 @@ async fn workspace_search_reports_all_hits_and_jumps_by_proximity(cx: &mut TestA
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[gpui::test]
+async fn cycling_hits_within_one_viewport_still_centers(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    // 用户报修：多个命中相距不远时点「下一个」视口不动/不居中。文档要有
+    // 足够滚动空间（两屏以上），两个命中相距约半屏，逐个点击时每次都应把
+    // 当前命中精确居中。
+    let mut md = String::from("# 标题\n\n第一段 alpha 在这里\n");
+    for index in 0..30 {
+        md.push_str(&format!("\n填充段落 {}，撑开滚动空间。\n", index));
+    }
+    md.push_str("\n第二段 alpha 在那里\n");
+    for index in 30..60 {
+        md.push_str(&format!("\n尾部段落 {}，继续撑开。\n", index));
+    }
+    let (editor, cx) =
+        cx.add_window_view(move |_, cx| Editor::from_markdown(cx, md.to_string(), None));
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Document;
+        editor.workspace.search_query = "alpha".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(std::time::Duration::from_millis(400));
+    cx.run_until_parked();
+    let hit_count = editor.read_with(cx, |editor, _cx| {
+        editor.workspace.search_results.len()
+    });
+    assert_eq!(hit_count, 2, "应有恰好两个 alpha 命中");
+
+    // 点击第一个命中，等稳定后记录其居中状态
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.open_search_hit(0, window, cx));
+    });
+    for _ in 0..12 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let drift_of = |cx: &mut TestAppContext| -> Option<f32> {
+        editor.read_with(cx, |editor, cx| {
+            editor
+                .active_entity_id
+                .and_then(|id| {
+                    editor
+                        .document
+                        .visible_blocks()
+                        .into_iter()
+                        .find(|visible| visible.entity.entity_id() == id)
+                        .map(|visible| visible.entity.clone())
+                })
+                .and_then(|target| target.read(cx).active_range_or_cursor_bounds())
+                .map(|bounds| {
+                    let target_center =
+                        f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5;
+                    let viewport_center = f32::from(editor.scroll_handle.bounds().top())
+                        + f32::from(editor.scroll_handle.bounds().size.height) * 0.5;
+                    (target_center - viewport_center).abs()
+                })
+        })
+    };
+    // 第一个命中在文档头部，居中被顶部钳制（设计行为），不断言其 drift。
+
+    // 点「下一个」：第二个命中必须重新居中（视口要动）
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.advance_search_match(false, window, cx));
+    });
+    for _ in 0..12 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let second_drift = drift_of(cx);
+    println!("CYCDBG second_drift={second_drift:?}");
+    let second_drift = second_drift.expect("第二个命中应有边界可测");
+    assert!(
+        second_drift <= 2.0,
+        "点「下一个」必须把新命中精确居中，实际偏差 {second_drift}px"
+    );
+}

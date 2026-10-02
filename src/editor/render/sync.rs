@@ -53,17 +53,18 @@ impl Editor {
         // 开头而不是命中（用户报修：表格里的命中点了没反应）。
         let anchor_id = self.active_entity_id;
         // 锚点实体 → 滚动实体：cell 不是可滚动实体（不在可见块列表、无独立
-        // 布局边界），升级为宿主表格块，把整个表格滚进视口，选区留在单元格。
-        // 悬空 id（表格重建替换过 cell）回退 focusable 注册表，再不行按文档
-        // 树为准。
-        let scroll_block = anchor_id.and_then(|id| {
+        // 布局边界），生命周期/可见列表索引都用宿主表格块。悬空 id（表格重
+        // 建替换过 cell）回退 focusable 注册表，再不行按文档树为准。
+        let anchor_block = anchor_id.and_then(|id| {
             self.document
                 .block_entity_by_id(id)
                 .or_else(|| self.focusable_entity_by_id(id))
         });
-        let scroll_block = scroll_block.map(|block| {
-            let is_cell = block.read_with(cx, |b, _cx| b.table_cell_position().is_some());
-            if is_cell
+        let is_cell_anchor = anchor_block
+            .as_ref()
+            .is_some_and(|block| block.read_with(cx, |b, _cx| b.table_cell_position().is_some()));
+        let scroll_block = anchor_block.clone().map(|block| {
+            if is_cell_anchor
                 && let Some(binding) = self.table_cell_binding(block.entity_id())
             {
                 binding.table_block.clone()
@@ -79,8 +80,21 @@ impl Editor {
         let Some(focused_block) = focused_block else {
             return false;
         };
-        let Some(active_bounds) =
-            focused_block.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+        // 居中坐标：cell 锚点优先用命中单元格自己的 bounds——长表格整体
+        // 中心离命中行可能差几屏，滚「表格中心」等于没跳到那一行（用户报
+        // 修）。表格未绘制时 cell 无 bounds，退回宿主表格的（先滚到表格，
+        // 表格进入绘制窗口后下一帧按 cell 精确居中）。
+        let active_bounds_from_anchor = if is_cell_anchor
+            && let Some(cell) = anchor_block.as_ref()
+        {
+            cell.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+        } else {
+            None
+        };
+        let Some(active_bounds) = active_bounds_from_anchor
+            .or_else(|| {
+                focused_block.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+            })
         else {
             // 目标块尚未绘制：渲染窗口只画视口附近的块，窗外的块既没有
             // last_bounds 也没有文本布局，精确居中无从算起——但不滚就永远
@@ -215,10 +229,13 @@ impl Editor {
 
     /// 初始加载/普通可见性滚动的校验帧数（16ms 一帧，约 100ms）。
     const SCROLL_SETTLE_FRAMES: u8 = 6;
-    /// 跳转型滚动（center 标志）的校验帧数。目标块在未绘制区域时先估算/
-    /// 爬行靠近、边界落地后精确居中——深处来回跳需要覆盖整段爬行，短窗口
-    /// 会在半路停掉（用户报修：向上跳停在中间）。
-    const JUMP_SCROLL_SETTLE_FRAMES: u8 = 24;
+    /// 跳转型滚动（center 标志）的帧数硬上限（~1.5s）。center 是绝对定位，
+    /// 本应一帧到位；大文档跳转时渲染窗口扩展、行高测量逐帧漂移，居中要
+    /// 追着漂移校正。清除条件改为「偏差达标即停」（见 apply），帧数只作
+    /// 防呆上限——此前 24 帧耗尽即弃，命中停在视口边缘（用户报修）。
+    const JUMP_SCROLL_SETTLE_FRAMES: u8 = 90;
+    /// 跳转居中收敛阈值：目标中心与视口中线偏差 ≤ 此值即视为到位。
+    const JUMP_CENTER_TOLERANCE_PX: f32 = 2.0;
 
     pub(crate) fn apply_pending_scroll_into_view(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.scrollbar_drag.is_some() {
@@ -252,6 +269,29 @@ impl Editor {
             return;
         }
 
+        if self.pending_scroll_center_into_view {
+            // 居中「到位即停」：偏差达标才清标志；未达标（布局还在漂移/
+            // 爬行途中）继续排帧，不受 settle 倒计时约束——倒计时到点就把
+            // 标志清了，命中永远停在视口边缘（用户报修）。
+            if self.jump_center_converged(cx) {
+                self.pending_scroll_active_block_into_view = false;
+                self.pending_scroll_center_into_view = false;
+                self.scroll_settle_frames = 0;
+                self.scroll_recheck_task = None;
+                return;
+            }
+            if self.scroll_settle_frames > 0 {
+                self.scroll_settle_frames -= 1;
+                self.schedule_followup_frame(cx);
+                return;
+            }
+            // 硬上限到点仍未收敛（异常布局）：放弃并清标志，避免无限帧。
+            self.pending_scroll_active_block_into_view = false;
+            self.pending_scroll_center_into_view = false;
+            self.scroll_recheck_task = None;
+            return;
+        }
+
         if self.scroll_settle_frames > 0 {
             self.scroll_settle_frames -= 1;
             self.schedule_followup_frame(cx);
@@ -261,6 +301,41 @@ impl Editor {
         self.pending_scroll_active_block_into_view = false;
         self.pending_scroll_center_into_view = false;
         self.scroll_recheck_task = None;
+    }
+
+    /// 跳转居中是否已收敛：滚动锚点（cell 时取命中单元格自身）的中心与
+    /// 视口中线偏差 ≤ 容差。
+    fn jump_center_converged(&self, cx: &App) -> bool {
+        let anchor_id = self.active_entity_id;
+        let Some(anchor_block) = anchor_id.and_then(|id| {
+            self.document
+                .block_entity_by_id(id)
+                .or_else(|| self.focusable_entity_by_id(id))
+        }) else {
+            return false;
+        };
+        let is_cell = anchor_block.read_with(cx, |block, _cx| {
+            block.table_cell_position().is_some()
+        });
+        let bounds = if is_cell {
+            anchor_block
+                .read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+                .or_else(|| {
+                    let binding = self.table_cell_binding(anchor_block.entity_id())?;
+                    let host = binding.table_block;
+                    host.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+                })
+        } else {
+            anchor_block.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+        };
+        let Some(bounds) = bounds else {
+            return false;
+        };
+        let viewport = self.scroll_handle.bounds();
+        let viewport_center =
+            f32::from(viewport.top()) + f32::from(viewport.size.height) * 0.5;
+        let target_center = f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5;
+        (target_center - viewport_center).abs() <= Self::JUMP_CENTER_TOLERANCE_PX
     }
 
     /// Requests a repaint one frame out for work that cannot finish inside this
