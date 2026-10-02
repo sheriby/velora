@@ -7,6 +7,7 @@ impl Editor {
         if matches!(
             block.kind(),
             BlockKind::RawMarkdown
+                | BlockKind::FrontMatter
                 | BlockKind::HtmlBlock
                 | BlockKind::FootnoteDefinition
                 | BlockKind::Table

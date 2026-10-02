@@ -63,7 +63,10 @@ pub(crate) enum EditMode {
 
 impl EditMode {
     fn for_kind(kind: &BlockKind) -> Self {
-        if kind.is_code_block() {
+        // FrontMatter 与代码块同构：始终以 YAML 源码 widget 呈现、块内 raw 编辑。
+        // 不能归入 SourceRaw——那会让 `is_source_raw_mode()` 在未聚焦时把它
+        // 引到纯文本渲染分支，绕过代码块外观。
+        if kind.is_code_block() || matches!(kind, BlockKind::FrontMatter) {
             Self::CodeBlockRaw
         } else if matches!(
             kind,

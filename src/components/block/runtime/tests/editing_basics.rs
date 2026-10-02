@@ -279,3 +279,21 @@ async fn mermaid_block_uses_raw_text_editing(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn frontmatter_block_avoids_source_raw_paint_branch(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let markdown = "---\nname: triton-ascend-coder\n---";
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::front_matter(markdown)));
+
+    block.update(cx, |block, _cx| {
+        assert_eq!(block.kind(), BlockKind::FrontMatter);
+        assert!(block.uses_raw_text_editing());
+        // 回归防护：FrontMatter 一旦落到 SourceRaw，paint 的 source-raw 前置
+        // 分支会在未聚焦时按纯文本渲染，YAML 代码块外观永远出不来（用户报修）。
+        // 它必须与代码块同构走 CodeBlockRaw，始终渲染 widget。
+        assert!(!block.is_source_raw_mode());
+        assert_eq!(block.display_text(), markdown);
+        assert_eq!(block.record.markdown_line(0, None), markdown);
+    });
+}
+

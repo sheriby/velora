@@ -44,7 +44,7 @@
         editor.update(cx, |editor, cx| {
             let visible = editor.document.visible_blocks();
             assert!(visible.len() >= 2);
-            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::RawMarkdown);
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::FrontMatter);
             assert_eq!(
                 visible[0].entity.read(cx).display_text(),
                 "---\ntitle: Notes\ntags: [writing]\n---"
@@ -64,9 +64,11 @@
         editor.update(cx, |editor, cx| {
             let visible = editor.document.visible_blocks();
             assert!(
-                !visible
-                    .iter()
-                    .any(|block| block.entity.read(cx).kind() == BlockKind::RawMarkdown)
+                !visible.iter().any(|block| matches!(
+                    block.entity.read(cx).kind(),
+                    BlockKind::RawMarkdown | BlockKind::FrontMatter
+                )),
+                "a bare opening --- must not become frontmatter"
             );
         });
     }

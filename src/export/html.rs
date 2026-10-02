@@ -80,7 +80,62 @@ fn markdown_options() -> Options {
     options
 }
 
+/// 文档开头的 YAML front matter（`---` 围栏对）不进 pulldown：转成 GitHub 风格的
+/// key/value 表后从正文剥掉，否则 `---` 会被拆成分隔线/ Setext 下划线、YAML 正文
+/// 被拆成段落和列表。关闭围栏只认 `---`，与编辑器导入的判定保持一致。
+fn split_front_matter(markdown: &str) -> Option<(String, &str)> {
+    let mut lines = markdown.split_inclusive('\n');
+    let opening = lines.next()?;
+    if opening.trim_end_matches(['\r', '\n']) != "---" {
+        return None;
+    }
+    let mut consumed = opening.len();
+    let mut body = String::new();
+    for line in lines {
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            consumed += line.len();
+            return Some((front_matter_table_html(&body), &markdown[consumed..]));
+        }
+        consumed += line.len();
+        body.push_str(line);
+    }
+    None
+}
+
+/// 把 front matter 主体渲染成两列表格；行解析与编辑器属性卡共用
+/// [`frontmatter::parse_front_matter_rows`]，保证两边展示同一份数据。
+fn front_matter_table_html(body: &str) -> String {
+    let rows = crate::components::markdown::frontmatter::parse_front_matter_rows(body);
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut html = String::from("<div class=\"vlt-front-matter\"><table><tbody>\n");
+    for (key, values) in &rows {
+        html.push_str("<tr><th>");
+        html.push_str(&css::escape_html(key));
+        html.push_str("</th><td>");
+        if values.len() > 1 {
+            html.push_str("<ul>");
+            for value in values {
+                html.push_str("<li>");
+                html.push_str(&css::escape_html(value));
+                html.push_str("</li>");
+            }
+            html.push_str("</ul>");
+        } else if let Some(value) = values.first() {
+            html.push_str(&css::escape_html(value));
+        }
+        html.push_str("</td></tr>\n");
+    }
+    html.push_str("</tbody></table></div>\n");
+    html
+}
+
 fn render_browser_html_body(markdown: &str, theme: &Theme, base_dir: Option<&Path>) -> String {
+    let (front_matter_html, markdown) = match split_front_matter(markdown) {
+        Some((table, rest)) => (table, rest),
+        None => (String::new(), markdown),
+    };
     let rewritten = rewrite_visible_comment_blocks(markdown);
     let rewritten = rewrite_unsafe_html_blocks(&rewritten, base_dir);
     let rewritten = rewrite_display_math_blocks(&rewritten, theme);
@@ -88,7 +143,7 @@ fn render_browser_html_body(markdown: &str, theme: &Theme, base_dir: Option<&Pat
     let rewritten = rewrite_mermaid_blocks(&rewritten);
     let parser = Parser::new_ext(&rewritten, markdown_options())
         .map(|event| rewrite_local_image_event(event, base_dir));
-    let mut body = String::new();
+    let mut body = front_matter_html;
     html::push_html(&mut body, parser);
     body
 }

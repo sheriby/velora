@@ -943,6 +943,73 @@ impl Render for Block {
                         .into_any_element()
                 }
             }
+            // FrontMatter 属性面板：底色跟主题走（forest 下即 code_bg 浅绿），
+            // 不套代码块的任何装饰；key 列对齐并用主题 accent 高亮，值一律普通
+            // 文本（列表值逗号连接），`---` 围栏隐藏。编辑态同底色内改 YAML
+            // 原文（等宽）。行解析与 HTML 导出共用 [`frontmatter::parse_front_matter_rows`]。
+            BlockKind::FrontMatter => {
+                let raw = self
+                    .record
+                    .raw_fallback
+                    .clone()
+                    .unwrap_or_else(|| self.record.title.visible_text().to_string());
+                let rows = crate::components::markdown::frontmatter::parse_front_matter_rows(
+                    &crate::components::markdown::frontmatter::front_matter_body(&raw),
+                );
+                let card = focused_base
+                    .w_full()
+                    .bg(c.code_bg)
+                    .rounded(px(10.0))
+                    .px(px(14.0))
+                    .py(px(10.0));
+                if focused || rows.is_empty() {
+                    card
+                        .font(font(fonts.code_family.clone()))
+                        .text_size(px(t.code_size))
+                        .text_color(c.code_text)
+                        .line_height(relative(1.5))
+                        .child(
+                            div().min_w(px(0.0)).w_full().overflow_hidden()
+                                .child(BlockTextElement::new(cx.entity(), is_placeholder)),
+                        )
+                        .into_any_element()
+                } else {
+                    let text_size = px(t.text_size);
+                    let mut rows_div = div().w_full().flex().flex_col().gap(px(8.0));
+                    for (key, values) in &rows {
+                        // 值一律普通正文：列表值逗号连接、自然折行，不做任何胶囊装饰。
+                        let value_div = if values.is_empty() {
+                            div().flex_grow().min_w(px(0.0))
+                        } else {
+                            div()
+                                .flex_grow()
+                                .min_w(px(0.0))
+                                .text_size(text_size)
+                                .text_color(c.text_default)
+                                .child(SharedString::from(values.join(", ")))
+                        };
+                        rows_div = rows_div.child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(12.0))
+                                .child(
+                                    div()
+                                        .w(px(110.0))
+                                        .flex_shrink_0()
+                                        .text_size(text_size)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(c.text_link)
+                                        .child(SharedString::from(key.clone())),
+                                )
+                                .child(value_div),
+                        );
+                    }
+                    card.child(rows_div).into_any_element()
+                }
+            }
             BlockKind::Table => {
                 let Some(runtime) = self.table_runtime.clone() else {
                     return focused_base

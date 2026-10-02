@@ -416,6 +416,7 @@ impl Editor {
                     | BlockKind::MathBlock
                     | BlockKind::MermaidBlock
                     | BlockKind::RawMarkdown
+                    | BlockKind::FrontMatter
                     | BlockKind::Separator
             ))
             .then(|| block_ref.record.title.markdown_offset_map());
@@ -440,6 +441,7 @@ impl Editor {
                 self.push_code_block_mapping(block, quote_depth, absolute_start, mappings, cx)
             }
             BlockKind::RawMarkdown
+            | BlockKind::FrontMatter
             | BlockKind::Comment
             | BlockKind::HtmlBlock
             | BlockKind::MathBlock

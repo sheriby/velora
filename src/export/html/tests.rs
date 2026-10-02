@@ -412,6 +412,31 @@ mod tests {
     }
 
     #[test]
+    fn exports_frontmatter_as_key_value_table() {
+        let source = concat!(
+            "---\n",
+            "name: triton-ascend-coder\n",
+            "temperature: 0.1\n",
+            "skills:\n",
+            "  - op-task-extractor\n",
+            "  - kernel-designer\n",
+            "---\n",
+            "\n",
+            "# Body\n"
+        );
+        let html = render_html(source, &Theme::default_theme(), "Doc");
+
+        assert!(html.contains("vlt-front-matter"));
+        assert!(html.contains("<th>name</th><td>triton-ascend-coder</td>"));
+        assert!(html.contains("<th>temperature</th><td>0.1</td>"));
+        assert!(html.contains("<li>op-task-extractor</li>"));
+        assert!(html.contains("<li>kernel-designer</li>"));
+        // 围栏不能漏进 pulldown，否则会被拆成分隔线；正文照常渲染。
+        assert!(!html.contains("<hr"));
+        assert!(html.contains("<h1>Body</h1>"));
+    }
+
+    #[test]
     fn invalid_display_math_exports_escaped_raw_markdown() {
         let html = render_html("$$\n\\frac{a}\n$$", &Theme::default_theme(), "Doc");
 

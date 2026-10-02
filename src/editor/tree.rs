@@ -857,6 +857,7 @@ impl DocumentTree {
                 }
             }
             BlockKind::RawMarkdown
+            | BlockKind::FrontMatter
             | BlockKind::Comment
             | BlockKind::HtmlBlock
             | BlockKind::MathBlock

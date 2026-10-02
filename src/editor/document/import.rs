@@ -90,8 +90,8 @@ impl Editor {
                 break;
             }
             // YAML frontmatter: a `---` fence pair at the very top of the
-            // document is preserved byte-exact as an opaque block instead of
-            // being parsed as setext headings / thematic breaks (roadmap C1).
+            // document is preserved byte-exact as a FrontMatter block instead
+            // of being parsed as setext headings / thematic breaks (roadmap C1).
             if cursor.is_document_start
                 && index == 0
                 && roots.is_empty()
@@ -101,10 +101,7 @@ impl Editor {
                 })
             {
                 let front_matter = lines[..=close].join("\n");
-                roots.push(Self::new_block(
-                    cx,
-                    BlockRecord::raw_markdown(front_matter),
-                ));
+                roots.push(Self::new_block(cx, BlockRecord::front_matter(front_matter)));
                 index = close + 1;
                 continue;
             }

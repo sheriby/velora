@@ -179,6 +179,17 @@ hr {{ border: 0; border-top: 1px solid; border-color: var(--vlt-border); }}
   color: var(--vlt-muted);
   font-size: 0.92em;
 }}
+.vlt-front-matter table {{ width: auto; min-width: 30%; }}
+.vlt-front-matter th {{
+  background-color: var(--vlt-code-bg);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-weight: 500;
+  white-space: nowrap;
+}}
+.vlt-front-matter td ul {{
+  margin: 0;
+  padding-left: 1.2em;
+}}
 "#,
         color_scheme,
         css_color(c.editor_background),
