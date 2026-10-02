@@ -114,6 +114,12 @@ impl Render for Editor {
             }
         };
         let rows = &rendered_row_plan.rows;
+        // The focused row is always kept mounted so its caret is not blurred; a
+        // table cell maps to its containing table block's row. 跳转滚动进行中
+        // （pending_scroll_active_block_into_view）时焦点通常已交还查询框，
+        // 此刻必须把活动块（滚动目标）也钉在窗口里：否则目标滑出绘制窗口、
+        // 边界被丢弃，精确居中失去坐标，估算爬行与之互相拉锯（用户报修：
+        // 向上跳回开头的命中永远停在半路）。
         let focused_visible_index = self
             .focused_edit_target_entity_id(window, cx)
             .and_then(|id| {
@@ -123,6 +129,13 @@ impl Render for Editor {
                             .visible_index_for_entity_id(binding.table_block.entity_id())
                     })
                 })
+            })
+            .or_else(|| {
+                if !self.pending_scroll_active_block_into_view {
+                    return None;
+                }
+                self.active_entity_id
+                    .and_then(|id| self.document.visible_index_for_entity_id(id))
             });
         let focus_mode_active = self.focus_mode
             && self.view_mode == crate::editor::ViewMode::Rendered

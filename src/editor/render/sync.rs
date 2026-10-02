@@ -61,9 +61,21 @@ impl Editor {
             // 目标块尚未绘制：渲染窗口只画视口附近的块，窗外的块既没有
             // last_bounds 也没有文本布局，精确居中无从算起——但不滚就永远
             // 不会画，死锁（用户报修：跨标签搜索跳转后视口停在文档顶部，
-            // 要手动翻完整篇才看得到命中）。按块序号比例估算目标纵向位置
-            // 先滚过去，让目标进入绘制窗口；真实边界落地后由后续 settle
-            // 帧精确居中。
+            // 要手动翻完整篇才看得到命中）。
+            // 估算/爬行只在程序性跳转（center 标志）时进行：初始加载的
+            // pending 不带 center，视口在哪都该原地不动，否则用户手动滚走
+            // 后活动块出窗、无边界，会被估算一路拉回（回归：reading_to_
+            // the_bottom 测试实测视口被拽回顶部）。
+            if !self.pending_scroll_center_into_view {
+                return false;
+            }
+            //
+            // 危险在于估算和绘制互相干扰：比例跳一步把目标拉进窗口，目标
+            // 一有边界就触发精确居中，而居中把视口滚向目标后目标可能又滑出
+            // 窗口、边界被丢弃，估算再跳…… 来回震荡耗尽 settle 帧数（用户
+            // 报修：向上跳回开头永远停在半路）。所以估算只在离目标还远时
+            // 大步跳；一旦接近（约一屏内）改用固定半屏步长单调爬行，保证
+            // 每一帧都净逼近，绝不过冲。
             let viewport_height = f32::from(self.scroll_handle.bounds().size.height);
             let content_height =
                 f32::from(self.scroll_handle.max_offset().height) + viewport_height;
@@ -75,12 +87,28 @@ impl Editor {
                 let total = self.document.visible_blocks().len().max(1);
                 let estimate_y = content_height * (index as f32 + 0.5) / total as f32;
                 let mut offset = self.scroll_handle.offset();
-                let desired = -(estimate_y - viewport_height * 0.5);
+                let target_y = -(estimate_y - viewport_height * 0.5);
                 let max_offset_y = f32::from(self.scroll_handle.max_offset().height).max(0.0);
-                let clamped = desired.min(0.0).max(-max_offset_y);
-                if (f32::from(offset.y) - clamped).abs() > 1.0 {
-                    offset.y = px(clamped);
-                    self.scroll_handle.set_offset(offset);
+                let target_y = target_y.min(0.0).max(-max_offset_y);
+                let current = f32::from(offset.y);
+                if (current - target_y).abs() <= viewport_height * 1.5 {
+                    // 接近：每帧半屏单调爬向目标，永不出冲。
+                    let step = viewport_height * 0.5;
+                    let next = if target_y < current {
+                        (current - step).max(target_y)
+                    } else {
+                        (current + step).min(target_y)
+                    };
+                    if (next - current).abs() > 1.0 {
+                        offset.y = px(next);
+                        self.scroll_handle.set_offset(offset);
+                    }
+                } else {
+                    let clamped = target_y;
+                    if (current - clamped).abs() > 1.0 {
+                        offset.y = px(clamped);
+                        self.scroll_handle.set_offset(offset);
+                    }
                 }
             }
             return false;
@@ -157,8 +185,12 @@ impl Editor {
         true
     }
 
-    /// 整篇替换后光标滚动的校验帧数（16ms 一帧，约 100ms）。
+    /// 初始加载/普通可见性滚动的校验帧数（16ms 一帧，约 100ms）。
     const SCROLL_SETTLE_FRAMES: u8 = 6;
+    /// 跳转型滚动（center 标志）的校验帧数。目标块在未绘制区域时先估算/
+    /// 爬行靠近、边界落地后精确居中——深处来回跳需要覆盖整段爬行，短窗口
+    /// 会在半路停掉（用户报修：向上跳停在中间）。
+    const JUMP_SCROLL_SETTLE_FRAMES: u8 = 24;
 
     pub(crate) fn apply_pending_scroll_into_view(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.scrollbar_drag.is_some() {
@@ -175,7 +207,11 @@ impl Editor {
         // 布局再滚一次，之后再校验几帧直到测量落定。
         if self.pending_scroll_recheck_after_layout {
             self.pending_scroll_recheck_after_layout = false;
-            self.scroll_settle_frames = Self::SCROLL_SETTLE_FRAMES;
+            self.scroll_settle_frames = if self.pending_scroll_center_into_view {
+                Self::JUMP_SCROLL_SETTLE_FRAMES
+            } else {
+                Self::SCROLL_SETTLE_FRAMES
+            };
             self.schedule_followup_frame(cx);
             return;
         }

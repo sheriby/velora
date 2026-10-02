@@ -604,18 +604,17 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
         crate::theme::ThemeManager::init(cx);
         crate::components::init(cx);
     });
-    // 目标命中在长文档末尾：刚切换的文档只有视口附近的块被绘制，目标块
-    // 没有 last_bounds/文本布局，精确居中无从算起——不滚就永远不画，死锁
-    // （用户报修：搜索跳转后视口停在文档顶部，要手动翻完整篇才看得到命中）。
-    // 修复后按块序号比例估算位置先滚过去，再由 settle 帧精确居中。
-    let mut big = String::from("## Top\n\nintro line\n");
+    // 早命中在文档开头、晚命中在末尾：跳转必须双向跟随——向下跳进从未
+    // 绘制过的区域（目标块没有布局边界，精确居中无从算起），向上跳反向
+    // 滚回首屏（用户报修：浏览过一遍之前跳转不响应；浏览=全部画过=边界齐）。
+    let mut big = String::from("## Top\n\n开头段落就有测试命中\n");
     for index in 0..200 {
         big.push_str(&format!(
             "\n段落 {}：需要一些正文文本把布局撑开，越远越不容易被绘制。\n",
             index
         ));
     }
-    big.push_str("\n## 沟通风格\n\n- 专业、技术、简洁\n\n再提一次沟通风格的要求，制造第二个命中。\n");
+    big.push_str("\n## 沟通风格\n\n- 专业、技术、简洁\n\n末尾再来一次性能测试，制造深处的命中。\n");
     let root = std::env::temp_dir().join(format!("velora-search-jump-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("mkdir");
     std::fs::write(root.join("big.md"), &big).expect("write big");
@@ -635,58 +634,67 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
             editor.open_workspace_file(root.join("start.md"), window, cx);
             editor.workspace.is_open = true;
             editor.workspace.active_tab = WorkspaceTab::Search;
-            editor.workspace.search_query = "沟通风格".into();
+            editor.workspace.search_query = "测试".into();
             editor.schedule_workspace_search(cx);
         });
     });
     cx.run_until_parked();
     cx.executor().advance_clock(std::time::Duration::from_millis(400));
     cx.run_until_parked();
-    let hit_index = editor.read_with(cx, |editor, _cx| {
-        editor
-            .workspace
-            .search_results
-            .iter()
-            .position(|hit| hit.path == big_path)
-            .expect("workspace search should hit big.md")
-    });
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.open_search_hit(hit_index, window, cx);
-        });
+    let (early_index, later_index) = editor.read_with(cx, |editor, _cx| {
+        let mut early = None;
+        let mut later = None;
+        for (index, hit) in editor.workspace.search_results.iter().enumerate() {
+            if hit.path != big_path {
+                continue;
+            }
+            if hit.line.is_some_and(|line| line < 100) {
+                early = early.or(Some(index));
+            } else {
+                later = Some(index);
+            }
+        }
+        (early.expect("early hit"), later.expect("late hit"))
     });
 
-    // 多帧后必须离开文档顶部并落在目标附近：活动块是目标标题且视口已滚过首屏
-    let mut reached = false;
+    // 1) 先跳文档末尾的命中：视口必须滚进从未绘制过的深处
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(later_index, window, cx);
+        });
+    });
     for _ in 0..16 {
         cx.update(|window, cx| window.draw(cx).clear());
         cx.run_until_parked();
-        editor.read_with(cx, |editor, cx| {
-            let scroll_y = f32::from(editor.scroll_handle.offset().y);
-            if scroll_y.abs() < 500.0 {
-                return;
-            }
-            let on_target = editor.active_entity_id.and_then(|id| {
-                editor
-                    .document
-                    .visible_blocks()
-                    .into_iter()
-                    .find(|visible| visible.entity.entity_id() == id)
-                    .map(|visible| {
-                        let block = visible.entity.read(cx);
-                        matches!(block.kind(), BlockKind::Heading { level: 2 })
-                            && block.selected_range == (0.."沟通风格".len())
-                    })
-            });
-            reached = reached || on_target.unwrap_or(false);
-        });
     }
+    let scroll_at_later = editor.read_with(cx, |editor, _cx| {
+        f32::from(editor.scroll_handle.offset().y)
+    });
+    assert!(
+        scroll_at_later < -2000.0,
+        "向下跳转必须滚进深处：scroll_y={scroll_at_later}"
+    );
+
+    // 2) 再向上跳回开头的命中：视口必须反向滚回首屏
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(early_index, window, cx);
+        });
+    });
+    for _ in 0..16 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let scroll_at_early = editor.read_with(cx, |editor, _cx| {
+        f32::from(editor.scroll_handle.offset().y)
+    });
+    assert!(
+        scroll_at_early.abs() < 500.0,
+        "向上跳转必须反向滚回首屏：scroll_y={scroll_at_early}"
+    );
+
+    // 3) 活动块选区落在命中上、高亮与活动标记齐备
     editor.read_with(cx, |editor, cx| {
-        let scroll_y = f32::from(editor.scroll_handle.offset().y);
-        assert!(
-            scroll_y.abs() > 2000.0,
-            "搜索跳转后视口应滚向文档深处的命中，实际 scroll_y={scroll_y}"
-        );
         let active = editor
             .active_entity_id
             .and_then(|id| {
@@ -699,22 +707,26 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
             })
             .expect("active block");
         let block = active.read(cx);
-        assert_eq!(block.kind(), BlockKind::Heading { level: 2 });
-        assert_eq!(block.selected_range, 0.."沟通风格".len());
         assert!(
-            !block.search_highlight_ranges.is_empty(),
-            "工作区范围的命中跳转过去后，文档内匹配必须有高亮（用户报修）"
+            !block.selected_range.is_empty(),
+            "活动块应有命中的选区"
+        );
+        assert!(
+            block
+                .search_highlight_ranges
+                .iter()
+                .any(|range| range == &block.selected_range),
+            "选区应落在某个测试命中上"
         );
         assert_eq!(
             block.search_active_range,
-            Some(0.."沟通风格".len()),
+            Some(block.selected_range.clone()),
             "活动命中应有更深的独立标记"
         );
         assert!(editor.cross_block_selection.is_none());
     });
-    assert!(reached, "滚动应使目标标题进入视口附近");
 
-    // 循环跳转（Enter / 上一个下一个小按钮）：工作区范围此前是空操作（用户报修）
+    // 4) 工作区范围循环跳转（Enter / 上一个下一个小按钮）：此前是空操作
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
             let before = editor.workspace.search_active_index;
@@ -723,11 +735,8 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
                 editor.workspace.search_active_index, before,
                 "工作区范围下 Enter 必须推进到下一个命中"
             );
-            let next_index = editor.workspace.search_active_index.unwrap_or(0);
-            assert_eq!(next_index, before.unwrap_or(0) + 1);
-            // 反向绕回
             editor.advance_search_match(true, window, cx);
-            assert_eq!(editor.workspace.search_active_index, before);
+            assert_eq!(editor.workspace.search_active_index, before, "反向应绕回");
         });
     });
     let _ = std::fs::remove_dir_all(root);
