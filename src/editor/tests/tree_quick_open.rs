@@ -227,3 +227,148 @@ async fn quick_open_composition_commit_backspace_and_escape_edit_the_query(
     let _ = std::fs::remove_dir_all(root);
 }
 
+
+#[gpui::test]
+async fn outline_jump_lands_inside_the_target_heading(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 复刻用户文档形态：front matter + 表格 + 分隔线之后的长文档深处标题。
+    let source = concat!(
+        "---\n",
+        "name: ascend-kernel-developer\n",
+        "---\n",
+        "\n",
+        "## System Prompt\n",
+        "\n",
+        "intro line\n",
+        "\n",
+        "| 项目 | 说明 |\n",
+        "| --- | --- |\n",
+        "| Phase 4 最大迭代 | 3 次，禁止超出 |\n",
+        "| 语言 | 中文 |\n",
+        "\n",
+        "---\n",
+        "\n",
+        "## 沟通风格\n",
+        "\n",
+        "- 专业、技术、简洁\n",
+    );
+    let (editor, cx) = cx.add_window_view({
+        let source = source.to_string();
+        move |_window, cx| Editor::from_markdown(cx, source, None)
+    });
+
+    editor.update(cx, |editor, cx| {
+        let line = editor
+            .last_stable_source_text
+            .lines()
+            .position(|text| text == "## 沟通风格")
+            .expect("target heading line");
+        editor.open_outline_node(format!("outline-{line}"), line, cx);
+
+        // 用户报修：跳转后选区落在「上一块末尾两个字 + 标题开头两个字」，
+        // 即映射把标题行起点解析进了前一个块——绝不允许产生跨块选区。
+        assert!(
+            editor.cross_block_selection.is_none(),
+            "大纲跳转到单行标题不应产生跨块选区"
+        );
+        let active_id = editor.active_entity_id.expect("outline jump focuses a block");
+        let target = editor
+            .document
+            .visible_blocks()
+            .into_iter()
+            .find(|visible| visible.entity.entity_id() == active_id)
+            .expect("active block is visible")
+            .entity
+            .clone();
+        let block = target.read(cx);
+        assert_eq!(
+            block.kind(),
+            BlockKind::Heading { level: 2 },
+            "焦点块应是目标标题"
+        );
+        assert!(
+            block.selected_range.start <= block.visible_len()
+                && block.selected_range.end <= block.visible_len(),
+            "选区应完全落在标题块内，实际 {:?}（可见长度 {}）",
+            block.selected_range,
+            block.visible_len()
+        );
+    });
+}
+
+#[gpui::test]
+async fn source_mappings_align_with_the_real_document_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 复刻 ascend-kernel-developer.md 的真实构造：代码围栏/列表项后直接跟
+    // `---`（无空行）、嵌套 front matter、双空行、表格。映射的
+    // full_source_range 必须逐字节对齐原文，否则大纲跳转/搜索定位随文档
+    // 深度累积漂移（用户报修：光标落在「沟通风格」的沟和通之间）。
+    let source = concat!(
+        "---\n",
+        "name: ascend-kernel-developer\n",
+        "argument-hint: >\n",
+        "  输入格式: 生成算子\n",
+        "---\n",
+        "\n",
+        "# System Prompt\n",
+        "\n",
+        "body text\n",
+        "\n",
+        "## 工作流\n",
+        "\n",
+        "```\n",
+        "Phase 0: 参数确认\n",
+        "Phase 1: 环境准备\n",
+        "```\n",
+        "---\n",
+        "\n",
+        "## 关键限制\n",
+        "\n",
+        "- 必须融合成单个算子\n",
+        "- 禁止 torch 算子\n",
+        "---\n",
+        "\n",
+        "## Phase 0: 参数确认\n",
+        "\n",
+        "| 参数 | 说明 |\n",
+        "|------|------|\n",
+        "| `npu` | 设备 ID |\n",
+        "\n",
+        "\n",
+        "## 沟通风格\n",
+        "\n",
+        "- 专业、技术、简洁\n",
+    );
+    let (editor, cx) = cx.add_window_view({
+        let source = source.to_string();
+        move |_window, cx| Editor::from_markdown(cx, source, None)
+    });
+
+    editor.update(cx, |editor, cx| {
+        let source = editor.last_stable_source_text.clone();
+        for mapping in editor.build_source_target_mappings(cx) {
+            let block = mapping.entity.read(cx);
+            let range = &mapping.full_source_range;
+            assert!(
+                range.end <= source.len() && source.is_char_boundary(range.start),
+                "块 {:?} 的映射范围 {:?} 越界/不合法",
+                block.kind(),
+                range
+            );
+            if let BlockKind::Heading { level } = block.kind() {
+                let slice = &source[range.clone()];
+                let expected_prefix =
+                    format!("{}{} ", "  ".repeat(0), "#".repeat(level.clone() as usize));
+                assert!(
+                    slice.starts_with(&expected_prefix),
+                    "标题映射未对齐原文：映射切到 {slice:?}，应为 {expected_prefix:?} 开头"
+                );
+                let title = block.record.title.visible_text().to_string();
+                assert!(
+                    slice.ends_with(&title),
+                    "标题映射未对齐原文：映射切到 {slice:?}，应以标题 {title:?} 结尾"
+                );
+            }
+        }
+    });
+}

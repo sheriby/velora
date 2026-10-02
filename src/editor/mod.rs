@@ -652,12 +652,24 @@ impl Editor {
             last_selection_snapshot: Self::empty_selection_snapshot(),
             last_selection_snapshot_source: None,
             overlay_focus_restore_target: None,
-            last_stable_source_text: normalized,
+            last_stable_source_text: normalized.clone(),
             history_restore_in_progress: false,
             image_reference_definitions: Arc::default(),
             link_reference_definitions: Arc::default(),
             footnote_registry: Arc::default(),
             runtime_context_sensitive_blocks: HashSet::new(),
+        };
+        // last_stable_source_text 必须取导入模型的序列化文本，而不是原始输入：
+        // 序列化会对非规范输入做规范化（如代码围栏后直接跟 `---` 会补空行），
+        // 大纲/锚点跳转/源码映射全部以这份文本为基准；拿原文当基准时偏移随
+        // 文档深度累积漂移（用户报修：大纲跳转光标落进标题两个字之间）。
+        // 代码文档例外：内容没有 Markdown 规范化问题，且撤销恢复按原始
+        // 字节走，套上围栏会破坏文档。文件本身的规范化与现状一致——首次
+        // 保存时才落盘。
+        editor.last_stable_source_text = if editor.code_document {
+            normalized
+        } else {
+            editor.document.markdown_text(cx)
         };
         editor.rebuild_table_runtimes(cx); // Also refreshes image and reference contexts.
         editor.pending_focus = editor.first_focusable_entity_id(cx);

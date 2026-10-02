@@ -726,18 +726,10 @@ impl Editor {
         let mut mappings = Vec::new();
         let mut block_ranges = HashMap::new();
         let mut absolute = 0usize;
-        let mut pending_empty_roots = 0usize;
-        let mut wrote_non_empty_root = false;
-        let mut previous_was_list_item = false;
+        let source = self.current_document_source(cx);
 
         for block in self.document.root_blocks() {
-            let (is_empty_root, current_is_list_item) = {
-                let block_ref = block.read(cx);
-                (
-                    Self::is_empty_root_paragraph(block_ref),
-                    block_ref.kind().is_list_item(),
-                )
-            };
+            let is_empty_root = Self::is_empty_root_paragraph(block.read(cx));
             if is_empty_root {
                 // Empty roots carry no text mapping, but they still need a source
                 // span so a cross-block selection whose boundary lands on one can
@@ -745,23 +737,15 @@ impl Editor {
                 // zero-width anchor at the current cursor is the right position:
                 // 0 for a leading empty root, source end for a trailing one.
                 block_ranges.insert(block.entity_id(), absolute..absolute);
-                pending_empty_roots += 1;
                 continue;
             }
 
-            if wrote_non_empty_root {
-                let separator_count = if previous_was_list_item && current_is_list_item {
-                    if pending_empty_roots == 0 {
-                        0
-                    } else {
-                        pending_empty_roots + 1
-                    }
-                } else {
-                    pending_empty_roots + 1
-                };
-                absolute += separator_count;
-            } else if pending_empty_roots > 0 {
-                absolute += pending_empty_roots;
+            // 锚定原文：跳过块间实际存在的空行。相邻根块之间可以没有空行
+            // （原文里代码围栏/列表项后直接跟 `---`），旧实现按「每块之间必有
+            // 1 个空行」记账，每处多算 1 字节且随文档深度累积，大纲跳转与
+            // 搜索定位越靠后越歪（用户报修：光标落在标题两个字之间）。
+            while source[absolute.min(source.len())..].starts_with('\n') {
+                absolute += 1;
             }
 
             let prior_mapping_count = mappings.len();
@@ -774,10 +758,6 @@ impl Editor {
                 &mut block_ranges,
                 cx,
             );
-
-            wrote_non_empty_root = true;
-            pending_empty_roots = 0;
-            previous_was_list_item = current_is_list_item;
             absolute += 1;
             if target.is_some_and(|id| {
                 mappings[prior_mapping_count..]
