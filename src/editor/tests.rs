@@ -16,6 +16,7 @@ mod loading_chunks;
 mod long_lines;
 mod perf_budgets;
 mod render_snapshot_fold;
+mod round_trip_fidelity;
 mod save_autosave_ime;
 mod scroll_window;
 mod selection_mouse;
