@@ -1287,3 +1287,88 @@ async fn real_workspace_click_hit_183_end_to_end(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// 工作区扫描出来的「当前文件」命中，跳转必须落在缓冲区里的那段字节上。
+///
+/// 未编辑过的文档里磁盘行号与缓冲区行号是同一份，命中区间按缓冲区字节算
+/// 才对得上——这条守住这一点。它不替代 `match_ordinal` 那层对应：文档脏了
+/// （有未保存的编辑）时磁盘行号就会与缓冲区错位，见
+/// `clicking_a_search_hit_in_a_dirty_file_lands_on_the_match`。
+#[gpui::test]
+async fn same_file_workspace_hit_jumps_by_the_file_line(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-same-file-hit-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("note.md");
+    // Setext 标题占两行、表格列宽填过空格：序列化会同时改行号与字节数。
+    let source = concat!(
+        "标题\n",
+        "=====\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 目标 |\n",
+        "\n",
+        "结尾段落\n",
+    );
+    fs::write(&path, source).expect("write fixture");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let document = crate::editor::encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) =
+        cx.add_window_view(move |_, cx| Editor::from_loaded_document(cx, document, Some(open_path)));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "目标".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+
+    // 树扫描的命中路径是 canonicalize 过的（macOS 下 /var ↔ /private/var）。
+    let scanned_path = path.canonicalize().expect("canonicalize fixture path");
+    let hit_index = editor.read_with(cx, |editor, _cx| {
+        editor
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.path == scanned_path && hit.source_range.is_none())
+            .expect("工作区扫描应给出当前文件的命中")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(hit_index, window, cx)
+        });
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, _cx| {
+        let range = editor
+            .workspace
+            .document_active_range
+            .clone()
+            .expect("跳转后应有活动命中区间");
+        assert_eq!(
+            editor.buffer.slice(range),
+            "目标",
+            "按文件行号跳转没落在命中文字上"
+        );
+    });
+}

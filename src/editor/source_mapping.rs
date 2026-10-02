@@ -326,8 +326,7 @@ impl Editor {
             return 0;
         };
         let Some(span) = block_ref.record.source_span.clone() else {
-            drop(block_ref);
-            // 引用块里的表格没有自己的源码区间（区间只挂在根块上），只能继续按
+                // 引用块里的表格没有自己的源码区间（区间只挂在根块上），只能继续按
             // 序列化行来猜位置——漂移被限制在这个根块的区间之内。
             return self.push_inferred_table_mappings(
                 block,
@@ -338,7 +337,6 @@ impl Editor {
                 cx,
             );
         };
-        drop(block_ref);
 
         // 单元格的位置从缓冲区里这张表的原文量出来（在原文行里找单元格文本），
         // 不再按「列宽 = 内容长 + 3」猜：列宽是用户在文件里写的样子，猜的口径
@@ -424,7 +422,6 @@ impl Editor {
         ) else {
             return 0;
         };
-        drop(block_ref);
         let lines = crate::components::serialize_table_markdown_lines(&table);
         let indentation = "  ".repeat(list_depth);
         let quote_prefix = "> ".repeat(quote_depth);
