@@ -108,6 +108,7 @@ impl Editor {
             let index = self
                 .document
                 .visible_index_for_entity_id(focused_block.entity_id());
+
             if viewport_height > 0.0
                 && let Some(index) = index
             {

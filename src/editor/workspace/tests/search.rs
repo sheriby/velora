@@ -303,13 +303,16 @@ async fn clicking_a_search_hit_in_a_dirty_file_lands_on_the_match(cx: &mut TestA
     });
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
+    // 行号升级（用户报修「行号不对」）：打开文件的命中一律记编辑器内存
+    // 文本的行号——磁盘第 3 行在内存已推到第 5 行，侧栏显示的必须和编辑器
+    // 所见一致，点击跳转也锚定同一份文本。
     let index = editor.read_with(cx, |editor, _| {
         editor
             .workspace
             .search_results
             .iter()
-            .position(|hit| hit.path == path && hit.line == Some(3))
-            .expect("磁盘快照应把命中记在第 3 行")
+            .position(|hit| hit.path == path && hit.line == Some(5))
+            .expect("脏文件的命中应记内存行号（第 5 行），与编辑器所见一致")
     });
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| editor.open_search_hit(index, window, cx));
@@ -904,4 +907,146 @@ async fn document_search_hit_inside_table_jumps(cx: &mut TestAppContext) {
             "命中的单元格应有选区与高亮"
         );
     });
+}
+
+#[gpui::test]
+async fn workspace_search_reports_all_hits_and_jumps_by_proximity(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    // 复刻 BASELINE_0408.md：一张几十行的表格，"测试"在大量表格行里。
+    // 此前每文件硬编码 3 条命中（用户报修「结果不全」），行号取磁盘原文
+    // 而跳转锚定序列化文本（规范化后行数变化→行号错位、点了乱跳）。
+    // 表格放文档末尾（贴近 BASELINE_0408 实况）：跳转必须滚进未绘制区域。
+    let mut md = String::from("# 基线\n\n引导段落。\n");
+    for index in 0..30 {
+        md.push_str(&format!("\n前置段落 {}，把表格推到文档末尾。\n", index));
+    }
+    md.push_str("\n| Level | 备注 |\n|---|---|\n");
+    for index in 1..=30 {
+        md.push_str(&format!("| {index} | 性能测试跳过 |\n"));
+    }
+    let root = std::env::temp_dir().join(format!("velora-all-hits-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("mkdir");
+    std::fs::write(root.join("baseline.md"), &md).expect("write");
+    std::fs::write(root.join("start.md"), "# start\n\nseed\n").expect("write start");
+    let baseline = std::fs::canonicalize(root.join("baseline.md")).expect("canonicalize");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(root.join("start.md"), window, cx);
+            editor.workspace.is_open = true;
+            editor.workspace.active_tab = WorkspaceTab::Search;
+            editor.workspace.search_query = "测试".into();
+            editor.schedule_workspace_search(cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(std::time::Duration::from_millis(400));
+    cx.run_until_parked();
+
+    let (baseline_hits, first_baseline_index) = editor.read_with(cx, |editor, _cx| {
+        let hits: Vec<&super::super::WorkspaceSearchHit> = editor
+            .workspace
+            .search_results
+            .iter()
+            .filter(|hit| hit.path == baseline)
+            .collect();
+        let first = editor
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.path == baseline);
+        (hits.len(), first)
+    });
+    assert!(
+        baseline_hits >= 30,
+        "表格里 30 行「测试」必须全量报告，实际 {baseline_hits} 条（每文件 3 条上限回归）"
+    );
+
+    // 点击最后一条命中：跳转必须落在含「测试」的行上（就近重定位），
+    // 且视口滚到目标。
+    let last_index = editor.read_with(cx, |editor, _cx| {
+        editor
+            .workspace
+            .search_results
+            .iter()
+            .rposition(|hit| hit.path == baseline)
+            .expect("baseline hits")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(last_index, window, cx);
+        });
+    });
+    for _ in 0..16 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, cx| {
+        let scroll_y = f32::from(editor.scroll_handle.offset().y);
+        println!(
+            "ALLDBG scroll={scroll_y} active_id={:?} anchor_kind={:?} sel={:?} pending_center={} visible_n={}",
+            editor.active_entity_id,
+            editor
+                .active_entity_id
+                .and_then(|id| {
+                    editor
+                        .document
+                        .block_entity_by_id(id)
+                        .map(|block| block.read(cx).kind().clone())
+                }),
+            editor
+                .active_entity_id
+                .and_then(|id| {
+                    editor
+                        .document
+                        .block_entity_by_id(id)
+                        .map(|block| block.read(cx).selected_range.clone())
+                }),
+            editor.pending_scroll_center_into_view,
+            editor.document.visible_blocks().len(),
+        );
+        assert!(
+            scroll_y.abs() > 500.0,
+            "点击表格区命中必须滚动：scroll_y={scroll_y}"
+        );
+        let active = editor
+            .active_entity_id
+            .and_then(|id| {
+                editor
+                    .document
+                    .visible_blocks()
+                    .into_iter()
+                    .find(|visible| visible.entity.entity_id() == id)
+                    .map(|visible| visible.entity.clone())
+            });
+        // 选区/高亮在命中的单元格上（锚点是宿主表格，自身无选区）
+        if let Some(table) = active {
+            let has_cell_highlight = table.read(cx).table_runtime.as_ref().is_some_and(
+                |runtime| {
+                    runtime.rows.iter().flatten().any(|cell| {
+                        cell.read_with(cx, |block, _| {
+                            !block.selected_range.is_empty()
+                                || !block.search_highlight_ranges.is_empty()
+                        })
+                    })
+                },
+            );
+            assert!(
+                has_cell_highlight,
+                "命中的单元格应有选区或高亮"
+            );
+        }
+        let _ = first_baseline_index;
+    });
+    let _ = std::fs::remove_dir_all(root);
 }

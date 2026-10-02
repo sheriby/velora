@@ -775,36 +775,14 @@ impl Editor {
             && let (Some(line), Some(match_range)) = (line, match_range)
         {
             let source = self.current_document_source(cx);
-            let line_start = source
-                .split_inclusive('\n')
-                .take(line.saturating_sub(1))
-                .map(str::len)
-                .sum::<usize>()
-                .min(source.len());
-            let approx_start = (line_start + match_range.start).min(source.len());
-            let approx_end = (line_start + match_range.end).min(source.len());
             let matcher =
                 SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
-            // 命中偏移来自磁盘快照。文件有未保存修改时内存文本已经变了，旧
-            // 偏移直接套会落到错处（甚至切在多字节字符中间而静默不跳）。
-            // 先看近似区间是否恰好就是查询的匹配；不是就在内存文本里用查询
-            // 就近重新定位（用户报修：脏文件点搜索结果乱跳/不跳）。
-            let approx_is_the_match = source
-                .get(approx_start..approx_end)
-                .is_some_and(|slice| {
-                    !slice.is_empty()
-                        && matcher
-                            .find_in_line(slice)
-                            .iter()
-                            .any(|range| range.start == 0 && range.end == slice.len())
-                });
-            let range = if approx_is_the_match {
-                Some(approx_start..approx_end)
-            } else {
-                find_document_match_from(&source, &matcher, approx_start, false)
-                    .or_else(|| find_document_match_from(&source, &matcher, approx_start, true))
-                    .or_else(|| find_document_match_from(&source, &matcher, 0, false))
-            };
+            // 磁盘行号 ≠ 序列化行号（序列化会规范化表格/空行，行数会变），
+            // 直接换算必然错位（用户报修：行号不对、点了乱跳）。行号只当
+            // 「就近」信号用：在磁盘行附近的窗口内收集查询词的全部真实命中，
+            // 选字节距离最近的一个——词匹配保证语义精确，行号只管方向。
+            let range = nearest_document_match(&source, &matcher, line, match_range.start)
+                .or_else(|| find_document_match_from(&source, &matcher, 0, false));
             if let Some(range) = range
                 && source.is_char_boundary(range.start)
                 && source.is_char_boundary(range.end)
@@ -814,4 +792,40 @@ impl Editor {
             }
         }
     }
+}
+
+/// 在「磁盘行号 ±窗口行数」范围内收集查询词的全部命中，返回离
+/// `approx_column`（命中在该行的列）字节距离最近的一个。
+fn nearest_document_match(
+    source: &str,
+    matcher: &SearchMatcher,
+    disk_line: usize,
+    approx_column: usize,
+) -> Option<Range<usize>> {
+    const LINE_WINDOW: usize = 40;
+    let lines: Vec<&str> = source.split_inclusive('\n').collect();
+    let approx_line = (disk_line.saturating_sub(1)).min(lines.len());
+    let window_start = approx_line.saturating_sub(LINE_WINDOW);
+    let window_end = (approx_line + LINE_WINDOW + 1).min(lines.len());
+    let approx_start = lines[..approx_line].iter().map(|line| line.len()).sum::<usize>()
+        + approx_column.min(
+            lines
+                .get(approx_line)
+                .map(|line| line.len())
+                .unwrap_or(0),
+        );
+    let mut best: Option<(usize, Range<usize>)> = None;
+    let mut absolute = lines[..window_start].iter().map(|line| line.len()).sum::<usize>();
+    for line in &lines[window_start..window_end] {
+        let line_text = line.strip_suffix('\n').unwrap_or(line);
+        for found in matcher.find_in_line(line_text) {
+            let start = absolute + found.start;
+            let distance = start.abs_diff(approx_start);
+            if best.as_ref().is_none_or(|(best_distance, _)| distance < *best_distance) {
+                best = Some((distance, start..absolute + found.end));
+            }
+        }
+        absolute += line.len();
+    }
+    best.map(|(_, range)| range)
 }

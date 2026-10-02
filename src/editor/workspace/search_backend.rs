@@ -377,7 +377,6 @@ pub(crate) fn search_single_file(
     let Some(source) = cached_file_source(&file.path) else {
         return;
     };
-    let mut file_hits = 0;
     for (index, raw_line) in source.split_inclusive('\n').enumerate() {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
         let matches = matcher.find_in_line(line);
@@ -390,8 +389,9 @@ pub(crate) fn search_single_file(
                 source_range: None,
                 preview: line.trim().chars().take(140).collect(),
             });
-            file_hits += 1;
-            if file_hits == 3 || hits.len() >= limit {
+            // 每文件全量收集（此前硬编码 3 条，用户报修「结果不全」）；
+            // 只受全局 limit 约束。
+            if hits.len() >= limit {
                 break;
             }
         }
