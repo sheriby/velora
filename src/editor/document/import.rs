@@ -52,7 +52,11 @@ impl Editor {
         cx: &mut Context<Self>,
         lines: &[String],
         cursor: ChunkCursor,
-    ) -> (Vec<Entity<crate::editor::Block>>, usize) {
+    ) -> (
+        Vec<Entity<crate::editor::Block>>,
+        Vec<std::ops::Range<usize>>,
+        usize,
+    ) {
         Self::build_blocks_from_lines_internal(cx, lines, true, cursor)
     }
 
@@ -73,8 +77,14 @@ impl Editor {
         lines: &[String],
         allow_root_footnote_definitions: bool,
         cursor: ChunkCursor,
-    ) -> (Vec<Entity<crate::editor::Block>>, usize) {
+    ) -> (
+        Vec<Entity<crate::editor::Block>>,
+        Vec<std::ops::Range<usize>>,
+        usize,
+    ) {
         let mut roots = Vec::new();
+        // 与 `roots` 同步：每根块消费的行区间（相对传入的 `lines` 切片）。
+        let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
         let mut index = 0;
 
         while index < lines.len() {
@@ -102,6 +112,7 @@ impl Editor {
             {
                 let front_matter = lines[..=close].join("\n");
                 roots.push(Self::new_block(cx, BlockRecord::front_matter(front_matter)));
+                spans.push(index..close + 1);
                 index = close + 1;
                 continue;
             }
@@ -130,8 +141,11 @@ impl Editor {
                         blank_run_len.saturating_sub(1)
                     };
 
-                for _ in 0..preserved_empty_blocks {
+                for offset in 0..preserved_empty_blocks {
                     roots.push(native_block(cx, BlockKind::Paragraph, String::new()));
+                    // 空段落占住空行段里的一条空行；多出来的空行是块间分隔符，
+                    // 不属于任何块，于是编辑某个块时永远不会碰到它。
+                    spans.push((blank_start + offset)..(blank_start + offset + 1));
                 }
                 continue;
             }
@@ -140,11 +154,13 @@ impl Editor {
                 let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index) else {
                     let paragraph = Self::collect_paragraph_block(cx, lines, index);
                     roots.push(paragraph.0);
+                    spans.push(index..paragraph.1);
                     index = paragraph.1;
                     continue;
                 };
 
                 roots.push(block);
+                spans.push(index..next_index);
                 index = next_index;
                 continue;
             }
@@ -152,12 +168,14 @@ impl Editor {
             if is_fenced_div_opening(line) {
                 let end = collect_fenced_div_end(lines, index).unwrap_or(lines.len());
                 roots.push(raw_block(cx, lines[index..end].join("\n")));
+                spans.push(index..end);
                 index = end;
                 continue;
             }
 
             if let Some((block, end)) = collect_comment_block(cx, lines, index) {
                 roots.push(block);
+                spans.push(index..end);
                 index = end;
                 continue;
             }
@@ -165,6 +183,7 @@ impl Editor {
             if is_block_html_start(line) {
                 let end = collect_block_html_region(lines, index);
                 roots.push(html_or_raw_block(cx, lines[index..end].join("\n")));
+                spans.push(index..end);
                 index = end;
                 continue;
             }
@@ -182,6 +201,7 @@ impl Editor {
                 } else {
                     roots.push(raw_block(cx, lines[index..end].join("\n")));
                 }
+                spans.push(index..end);
                 index = end;
                 continue;
             }
@@ -189,6 +209,7 @@ impl Editor {
             if is_reference_definition_start(line) {
                 let end = collect_reference_definition_region(lines, index);
                 roots.push(raw_block(cx, lines[index..end].join("\n")));
+                spans.push(index..end);
                 index = end;
                 continue;
             }
@@ -202,12 +223,14 @@ impl Editor {
                     BlockKind::Heading { level },
                     line.trim_end().to_string(),
                 ));
+                spans.push(index..index + 2);
                 index += 2;
                 continue;
             }
 
             if parse_standalone_image(line).is_some() {
                 roots.push(standalone_image_block(cx, line.to_string()));
+                spans.push(index..index + 1);
                 index += 1;
                 continue;
             }
@@ -220,6 +243,7 @@ impl Editor {
                     cx,
                     dedent_math_region(&lines[index..end]),
                 ));
+                spans.push(index..end);
                 index = end;
                 continue;
             }
@@ -231,6 +255,7 @@ impl Editor {
                 };
 
                 roots.push(block);
+                spans.push(index..next_index);
                 index = next_index;
                 continue;
             }
@@ -241,8 +266,12 @@ impl Editor {
                 // collector takes the remaining root budget and can stop between
                 // top-level items.
                 let remaining = cursor.root_budget.saturating_sub(roots.len()).max(1);
-                let (blocks, next_index) = Self::collect_list_blocks(cx, lines, index, remaining);
-                roots.extend(blocks);
+                let (blocks, block_spans, next_index) =
+                    Self::collect_list_blocks(cx, lines, index, remaining);
+                for (block, block_span) in blocks.into_iter().zip(block_spans) {
+                    roots.push(block);
+                    spans.push(block_span);
+                }
                 index = next_index;
                 continue;
             }
@@ -250,12 +279,14 @@ impl Editor {
             if is_quote_start(line) {
                 let (block, next_index) = Self::collect_quote_block(cx, lines, index);
                 roots.push(block);
+                spans.push(index..next_index);
                 index = next_index;
                 continue;
             }
 
             if let Some((level, content)) = BlockKind::parse_atx_heading_line(line) {
                 roots.push(native_block(cx, BlockKind::Heading { level }, content));
+                spans.push(index..index + 1);
                 index += 1;
                 continue;
             }
@@ -265,6 +296,7 @@ impl Editor {
                     cx,
                     BlockRecord::new(BlockKind::Separator, InlineTextTree::plain(String::new())),
                 ));
+                spans.push(index..index + 1);
                 index += 1;
                 continue;
             }
@@ -274,13 +306,12 @@ impl Editor {
                 let region = &lines[index..end];
                 if let Some(table) = parse_root_table_region(region) {
                     roots.push(Self::new_block(cx, BlockRecord::table(table)));
+                    spans.push(index..end);
                 } else {
-                    roots.extend(
-                        region
-                            .iter()
-                            .cloned()
-                            .map(|line| plain_text_paragraph_block(cx, line)),
-                    );
+                    for (offset, line) in region.iter().enumerate() {
+                        roots.push(plain_text_paragraph_block(cx, line.clone()));
+                        spans.push((index + offset)..(index + offset + 1));
+                    }
                 }
                 index = end;
                 continue;
@@ -290,15 +321,22 @@ impl Editor {
                 && let Some(table) = parse_root_table_region(&lines[index..end])
             {
                 roots.push(Self::new_block(cx, BlockRecord::table(table)));
+                spans.push(index..end);
                 index = end;
                 continue;
             }
 
             let paragraph = Self::collect_paragraph_block(cx, lines, index);
             roots.push(paragraph.0);
+            spans.push(index..paragraph.1);
             index = paragraph.1;
         }
 
-        (roots, index)
+        debug_assert_eq!(
+            roots.len(),
+            spans.len(),
+            "块与源码区间必须一一对应，导入器漏记了区间"
+        );
+        (roots, spans, index)
     }
 }

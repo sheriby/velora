@@ -190,7 +190,8 @@ impl Editor {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
-                let (list_blocks, consumed) = Self::collect_list_blocks(cx, lines, index, usize::MAX);
+                let (list_blocks, _nested_spans, consumed) =
+                    Self::collect_list_blocks(cx, lines, index, usize::MAX);
                 if list_blocks
                     .iter()
                     .any(|block| block.read(cx).kind() == BlockKind::RawMarkdown)
@@ -385,7 +386,8 @@ impl Editor {
             }
 
             if parse_list_marker(line).is_some() {
-                let (list_blocks, consumed) = Self::collect_list_blocks(cx, lines, index, usize::MAX);
+                let (list_blocks, _nested_spans, consumed) =
+                    Self::collect_list_blocks(cx, lines, index, usize::MAX);
                 if list_blocks
                     .iter()
                     .any(|block| block.read(cx).kind() == BlockKind::RawMarkdown)
@@ -464,8 +466,15 @@ impl Editor {
         lines: &[String],
         start: usize,
         item_budget: usize,
-    ) -> (Vec<Entity<crate::editor::Block>>, usize) {
+    ) -> (
+        Vec<Entity<crate::editor::Block>>,
+        Vec<std::ops::Range<usize>>,
+        usize,
+    ) {
         let mut roots = Vec::new();
+        // 与 `roots` 同步：每个顶层项消费的行区间。递归进去的子项区间用不上
+        // （子项在父项区间里），所以只在顶层这一层记账。
+        let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
         let mut index = start;
 
         while index < lines.len() {
@@ -532,7 +541,7 @@ impl Editor {
                         dedent_lines(&lines[body_index..item_end], line_indent_columns);
 
                     if parse_list_marker(&anchor_dedented[0]).is_some() {
-                        let (children, consumed) =
+                        let (children, _child_spans, consumed) =
                             Self::collect_list_blocks(cx, &anchor_dedented, 0, usize::MAX);
                         attach_child_blocks(&block, children, cx);
                         body_index += consumed;
@@ -737,9 +746,15 @@ impl Editor {
             } else {
                 roots.push(block);
             }
+            spans.push(index..item_end);
             index = item_end;
         }
 
-        (roots, index)
+        debug_assert_eq!(
+            roots.len(),
+            spans.len(),
+            "列表项与源码区间必须一一对应"
+        );
+        (roots, spans, index)
     }
 }

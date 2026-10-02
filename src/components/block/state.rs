@@ -498,6 +498,10 @@ pub struct BlockRecord {
     pub parent: Option<Uuid>,
     pub content: Vec<Uuid>,
     pub raw_fallback: Option<String>,
+    /// 该块在文档缓冲区里占的源码区间（字节）。由导入器在解析时记录，
+    /// 不是序列化之后反推出来的——这是「块是文本的投影」这条不变式的载体。
+    /// 子块与新建块暂时没有区间（`None`），等接入写回路径后由重投影补上。
+    pub source_span: Option<std::ops::Range<usize>>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -517,6 +521,7 @@ impl BlockRecord {
             parent: None,
             content: Vec::new(),
             raw_fallback: None,
+            source_span: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };

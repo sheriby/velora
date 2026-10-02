@@ -485,6 +485,9 @@ impl Editor {
         first_chunk_roots: usize,
     ) -> Self {
         let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+        // 缓冲区先于块树建好：导入器要把每根块的源码区间换算成字节区间，
+        // 靠的就是它的行索引。
+        let buffer = buffer::TextBuffer::from_text(&normalized);
         let source_mode_fallback_required =
             Self::markdown_requires_source_mode_fallback(&normalized);
         let mut pending_tail = None;
@@ -494,7 +497,7 @@ impl Editor {
             vec![block]
         } else {
             let lines = Arc::new(Self::split_markdown_lines(&normalized));
-            let (roots, next_line) = Self::build_root_block_chunk(
+            let (roots, root_spans, next_line) = Self::build_root_block_chunk(
                 cx,
                 &lines,
                 ChunkCursor {
@@ -513,6 +516,7 @@ impl Editor {
                     lines,
                 });
             }
+            Self::attach_root_spans(&buffer, &roots, &root_spans, 0, cx);
             roots
         };
         if roots.is_empty() {
@@ -526,7 +530,7 @@ impl Editor {
 
         let mut editor = Self {
             document,
-            buffer: buffer::TextBuffer::from_text(&normalized),
+            buffer,
             table_cells: HashMap::new(),
             view_mode: if source_mode_fallback_required {
                 ViewMode::Source
@@ -727,7 +731,7 @@ impl Editor {
             return false;
         };
 
-        let (roots, consumed) = Self::build_root_block_chunk(
+        let (roots, root_spans, consumed) = Self::build_root_block_chunk(
             cx,
             &tail.lines[tail.next_line..],
             ChunkCursor {
@@ -747,6 +751,8 @@ impl Editor {
             .cloned()
             .collect::<Vec<_>>();
         let next_line = tail.next_line + consumed;
+        // 续建块的行区间要加上这一片在全文里的行基址，否则第二块之后全部错位。
+        Self::attach_root_spans(&self.buffer, &roots, &root_spans, tail.next_line, cx);
         self.document.append_roots(roots, cx);
         for block in tables {
             let Some(table) = block.read(cx).record.table.clone() else {
@@ -896,6 +902,33 @@ impl Editor {
         }
         let shape = buffer::FileShape::detect(&raw);
         self.buffer.set_file_origin(raw, shape);
+    }
+
+    /// 把导入器记录的「根块消费的行区间」换算成缓冲区字节区间，挂到块上。
+    ///
+    /// 区间右端是**下一块的起始行**，换算成字节时要减掉那个换行符：块的内容
+    /// 不含它自己的行尾换行，块与块之间的空行更不归入任何块——这样编辑一个块
+    /// 时，写回的字节不会越界碰到邻居或分隔空行。
+    pub(crate) fn attach_root_spans(
+        buffer: &buffer::TextBuffer,
+        roots: &[Entity<Block>],
+        line_spans: &[std::ops::Range<usize>],
+        line_base: usize,
+        cx: &mut App,
+    ) {
+        let total = buffer.byte_len();
+        for (block, span) in roots.iter().zip(line_spans) {
+            let start = buffer.line_start(line_base + span.start).min(total);
+            let end = if span.end > span.start {
+                buffer.line_start(line_base + span.end).min(total).saturating_sub(1)
+            } else {
+                start
+            };
+            let span = start..end.max(start);
+            block.update(cx, |block, _cx| {
+                block.record.source_span = Some(span);
+            });
+        }
     }
 
     /// 文档内容被整体替换（切标签、拖拽打开、会话恢复）时重建缓冲区。

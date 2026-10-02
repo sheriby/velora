@@ -272,7 +272,9 @@ impl DocumentTree {
     /// while nothing has moved underneath it.
     pub(super) fn flush_pending_tail(&mut self, cx: &mut Context<Editor>) {
         while let Some(tail) = self.pending.clone() {
-            let (roots, consumed) = Editor::build_root_block_chunk(
+            // 结构变更被迫续建的块暂不挂源码区间：写回阶段按区间重投影时会补齐，
+            // 而这些块正是要被改动的，挂上也会被立刻作废。
+            let (roots, _root_spans, consumed) = Editor::build_root_block_chunk(
                 cx,
                 &tail.lines[tail.next_line..],
                 ChunkCursor {

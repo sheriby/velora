@@ -2,6 +2,7 @@
 //! [`common`]（`init_editor_test_app`、`redraw`、临时路径与性能计数等），
 //! 各子模块通过 `use super::common::*` 引入。纯移动拆分，用例本身未改。
 
+mod block_source_spans;
 mod common;
 
 mod editing_misc;
