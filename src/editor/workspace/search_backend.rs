@@ -365,6 +365,7 @@ pub(crate) fn search_single_file(
             line: None,
             match_range: None,
             source_range: None,
+            match_ordinal: None,
             preview: String::new(),
         });
         if hits.len() >= limit {
@@ -377,6 +378,7 @@ pub(crate) fn search_single_file(
     let Some(source) = cached_file_source(&file.path) else {
         return;
     };
+    let mut content_ordinal = 0usize;
     for (index, raw_line) in source.split_inclusive('\n').enumerate() {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
         let matches = matcher.find_in_line(line);
@@ -387,8 +389,10 @@ pub(crate) fn search_single_file(
                 line: Some(index + 1),
                 match_range: Some(first.clone()),
                 source_range: None,
+                match_ordinal: Some(content_ordinal),
                 preview: line.trim().chars().take(140).collect(),
             });
+            content_ordinal += 1;
             // 每文件全量收集（此前硬编码 3 条，用户报修「结果不全」）；
             // 只受全局 limit 约束。
             if hits.len() >= limit {
@@ -460,8 +464,10 @@ pub(crate) fn search_document_source(
     }
     let mut hits = Vec::new();
     let mut absolute = 0usize;
+    let mut content_ordinal = 0usize;
     for (line_index, raw_line) in source.split_inclusive('\n').enumerate() {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let mut first_of_line = true;
         for range in matcher.find_in_line(line) {
             hits.push(WorkspaceSearchHit {
                 path: path.to_path_buf(),
@@ -469,6 +475,16 @@ pub(crate) fn search_document_source(
                 line: Some(line_index + 1),
                 match_range: Some(range.start..range.end),
                 source_range: Some(absolute + range.start..absolute + range.end),
+                // ordinal 按「含词行」计（每行首个命中递增），与磁盘扫描
+                // 的口径一致，跳转按行对应。
+                match_ordinal: Some(if first_of_line {
+                    let ordinal = content_ordinal;
+                    content_ordinal += 1;
+                    first_of_line = false;
+                    ordinal
+                } else {
+                    content_ordinal
+                }),
                 preview: line.trim().chars().take(140).collect(),
             });
             if hits.len() == limit {

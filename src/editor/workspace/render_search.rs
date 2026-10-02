@@ -775,22 +775,48 @@ impl Editor {
         }
         let path = hit.path.clone();
         let line = hit.line;
-        let match_range = hit.match_range.clone();
+        let match_ordinal = hit.match_ordinal;
         self.open_workspace_file(path.clone(), window, cx);
-        if self.file_path.as_ref() == Some(&path)
-            && let (Some(line), Some(match_range)) = (line, match_range)
+        // 路径表示可能不一致（树扫描 canonicalize，打开路径未必；macOS
+        // /var ↔ /private/var）：字面比较失败会让整个跳转块静默跳过——
+        // 用户报修「点了完全没反应」。双方 canonicalize 后再比。
+        let same_file = match (self.file_path.as_ref(), path.canonicalize()) {
+            (Some(open), Ok(canonical)) => {
+                open == &path
+                    || open.canonicalize().map(|open| open == canonical).unwrap_or(false)
+            }
+            (Some(open), Err(_)) => open == &path,
+            _ => false,
+        };
+        if same_file
+            && let Some(ordinal) = match_ordinal
         {
             let source = self.current_document_source(cx);
             let matcher =
                 SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
-            // 磁盘行号 ≠ 序列化行号（序列化会规范化表格/空行，行数会变），
-            // 直接换算必然错位（用户报修：行号不对、点了乱跳）。行号只当
-            // 「就近」信号用：在磁盘行附近的窗口内收集查询词的全部真实命中，
-            // 选字节距离最近的一个——词匹配保证语义精确，行号只管方向。
-            let range = nearest_document_match(&source, &matcher, line, match_range.start)
-                .or_else(|| find_document_match_from(&source, &matcher, 0, false));
+            // 磁盘行号在编辑器文本里会漂移（规范化挪动行的位置，且偏移随
+            // 位置缓变），行号换算和字节就近都不可靠。但「文件内第 k 个含
+            // 查询词的行」的对应关系不灭：规范化只会挪行、不会增删内容行。
+            // 用 ordinal 在编辑器文本里数第 k 个含词行，再在该行内取第一个
+            // 命中作为选区（用户报修：两个不同命中被解析到同一处，点击无
+            // 反应）。
+            let mut seen = 0usize;
+            let mut absolute = 0usize;
+            let mut range = None;
+            for raw_line in source.split_inclusive('\n') {
+                let line_text = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+                if let Some(first) = matcher.find_in_line(line_text).first() {
+                    if seen == ordinal {
+                        range = Some(absolute + first.start..absolute + first.end);
+                        break;
+                    }
+                    seen += 1;
+                }
+                absolute += raw_line.len();
+            }
+            let range = range.or_else(|| find_document_match_from(&source, &matcher, 0, false));
             search_jump_debug(&format!(
-                "relocate line={line} -> range={range:?}"
+                "relocate disk_line={line:?} ordinal={ordinal} -> range={range:?}"
             ));
             if let Some(range) = range
                 && source.is_char_boundary(range.start)
@@ -798,24 +824,6 @@ impl Editor {
             {
                 self.workspace.document_active_range = Some(range.clone());
                 self.jump_to_document_search_range(range, cx);
-            } else {
-                // 保底：重定位失败也不再静默——滚到近似行首并选中该行，
-                // 用户至少能看到视口移动和目标行。
-                let line_start = source
-                    .split_inclusive('\n')
-                    .take(line.saturating_sub(1))
-                    .map(str::len)
-                    .sum::<usize>()
-                    .min(source.len());
-                let line_end = source[line_start..]
-                    .find('\n')
-                    .map(|offset| line_start + offset)
-                    .unwrap_or(source.len());
-                if source.is_char_boundary(line_start) {
-                    search_jump_debug(&format!("fallback to line start {line_start}..{line_end}"));
-                    self.workspace.document_active_range = Some(line_start..line_end);
-                    self.jump_to_document_search_range(line_start..line_end, cx);
-                }
             }
         }
     }
@@ -828,38 +836,3 @@ fn search_jump_debug(message: &str) {
     }
 }
 
-/// 在「磁盘行号 ±窗口行数」范围内收集查询词的全部命中，返回离
-/// `approx_column`（命中在该行的列）字节距离最近的一个。
-fn nearest_document_match(
-    source: &str,
-    matcher: &SearchMatcher,
-    disk_line: usize,
-    approx_column: usize,
-) -> Option<Range<usize>> {
-    const LINE_WINDOW: usize = 40;
-    let lines: Vec<&str> = source.split_inclusive('\n').collect();
-    let approx_line = (disk_line.saturating_sub(1)).min(lines.len());
-    let window_start = approx_line.saturating_sub(LINE_WINDOW);
-    let window_end = (approx_line + LINE_WINDOW + 1).min(lines.len());
-    let approx_start = lines[..approx_line].iter().map(|line| line.len()).sum::<usize>()
-        + approx_column.min(
-            lines
-                .get(approx_line)
-                .map(|line| line.len())
-                .unwrap_or(0),
-        );
-    let mut best: Option<(usize, Range<usize>)> = None;
-    let mut absolute = lines[..window_start].iter().map(|line| line.len()).sum::<usize>();
-    for line in &lines[window_start..window_end] {
-        let line_text = line.strip_suffix('\n').unwrap_or(line);
-        for found in matcher.find_in_line(line_text) {
-            let start = absolute + found.start;
-            let distance = start.abs_diff(approx_start);
-            if best.as_ref().is_none_or(|(best_distance, _)| distance < *best_distance) {
-                best = Some((distance, start..absolute + found.end));
-            }
-        }
-        absolute += line.len();
-    }
-    best.map(|(_, range)| range)
-}

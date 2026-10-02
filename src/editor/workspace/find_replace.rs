@@ -44,47 +44,8 @@ impl Editor {
             let (results, document_source) = match scope {
                 WorkspaceSearchScope::Workspace => {
                     let Some(tree) = tree else { return };
-                    let mut results = search_workspace_files(&tree, &matcher, 200, &background)
+                    let results = search_workspace_files(&tree, &matcher, 200, &background)
                         .await;
-                    // 当前打开文件的命中改用编辑器内存文本重扫：工作区扫描走
-                    // 磁盘原文，行号是磁盘的；跳转/高亮锚定序列化文本，序列化
-                    // 规范化（表格/空行）会让行号错位——用户报修「行号不对、
-                    // 点了乱跳」。内存行号与跳转基准同源，天然一致。未保存的
-                    // 修改也能搜到（此前必须先落盘）。
-                    let Ok((mem_source, open_path, open_label)) = editor.update(cx, |editor, cx| {
-                        let source = editor.current_document_source(cx);
-                        let path = editor.file_path.clone();
-                        let label = path
-                            .as_ref()
-                            .and_then(|path| path.file_name())
-                            .map(|name| name.to_string_lossy().into_owned());
-                        (source, path, label)
-                    }) else {
-                        return;
-                    };
-                    if let Some(path) = open_path {
-                        let label = open_label.unwrap_or_else(|| {
-                            path.file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default()
-                        });
-                        let disk_path = path.clone();
-                        // 剔除磁盘版行命中（文件名命中保留），记录插入位置
-                        let first_line_hit = results
-                            .iter()
-                            .position(|hit| hit.path == disk_path && hit.line.is_some());
-                        results
-                            .retain(|hit| !(hit.path == disk_path && hit.line.is_some()));
-                        let mem_hits = search_document_source(
-                            &mem_source, &matcher, &path, &label, 200,
-                        );
-                        let at = first_line_hit.unwrap_or(results.len());
-                        let mut merged = Vec::with_capacity(results.len() + mem_hits.len());
-                        merged.extend_from_slice(&results[..at]);
-                        merged.extend(mem_hits);
-                        merged.extend_from_slice(&results[at..]);
-                        results = merged;
-                    }
                     (results, None)
                 }
                 WorkspaceSearchScope::Document => {

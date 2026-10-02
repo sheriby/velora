@@ -128,6 +128,10 @@ pub(crate) struct WorkspaceSearchHit {
     match_range: Option<Range<usize>>,
     /// Absolute byte range in the current document (document-scope hits only).
     source_range: Option<Range<usize>>,
+    /// 该文件内第几个含查询词的行（0-based）。磁盘行号会因编辑器对非规范
+    /// 输入的规范化而在文档内漂移，但「第 k 个含词行」的对应关系不灭——
+    /// 跳转靠它而不是靠行号换算。
+    match_ordinal: Option<usize>,
     preview: String,
 }
 

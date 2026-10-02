@@ -303,16 +303,16 @@ async fn clicking_a_search_hit_in_a_dirty_file_lands_on_the_match(cx: &mut TestA
     });
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
-    // 行号升级（用户报修「行号不对」）：打开文件的命中一律记编辑器内存
-    // 文本的行号——磁盘第 3 行在内存已推到第 5 行，侧栏显示的必须和编辑器
-    // 所见一致，点击跳转也锚定同一份文本。
+    // 行号语义（用户定盘）：搜索一律看磁盘文件，行号是磁盘行号——磁盘
+    // 第 3 行。点击跳转靠「文件内第 k 个含词行」对应（见 open_search_hit），
+    // 未保存的两行插入不会让命中找错。
     let index = editor.read_with(cx, |editor, _| {
         editor
             .workspace
             .search_results
             .iter()
-            .position(|hit| hit.path == path && hit.line == Some(5))
-            .expect("脏文件的命中应记内存行号（第 5 行），与编辑器所见一致")
+            .position(|hit| hit.path == path && hit.line == Some(3))
+            .expect("磁盘快照应把命中记在第 3 行")
     });
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| editor.open_search_hit(index, window, cx));
@@ -1193,6 +1193,72 @@ async fn real_workspace_click_hit_183_end_to_end(cx: &mut TestAppContext) {
         println!("REALDBG no line-183 hit; abort");
         return;
     };
+    // nearest_document_match 决策明细：为什么 174 和 183 重定位到同一处？
+    editor.read_with(cx, |editor, cx| {
+        let source = editor.current_document_source(cx);
+        let matcher = super::super::SearchMatcher::new(
+            editor.workspace.search_query.trim(),
+            editor.search_options(),
+        );
+        let lines: Vec<&str> = source.split_inclusive('\n').collect();
+        println!("NEARDBG live_lines={} stable==live={}", lines.len(), editor.last_stable_source_text == source);
+        // 磁盘 174/183 行的关键内容在序列化文本中的真实位置
+        for (needle, label) in [
+            ("执行性能测试", "disk-183-content"),
+            ("迭代次数上限为 3 次", "disk-174-content"),
+        ] {
+            for (li, line) in lines.iter().enumerate() {
+                if line.contains(needle) {
+                    println!(
+                        "NEARDBG   FIND {label} at serialized line={} text={:?}",
+                        li + 1,
+                        line.chars().take(50).collect::<String>()
+                    );
+                }
+            }
+        }
+        for disk_line in [174usize, 183] {
+            let approx_line = (disk_line - 1).min(lines.len());
+            let window_start = approx_line.saturating_sub(40);
+            let window_end = (approx_line + 41).min(lines.len());
+            println!("NEARDBG disk_line={disk_line} window={window_start}..{window_end}");
+            for li in window_start..window_end {
+                let text = lines[li].strip_suffix('\n').unwrap_or(lines[li]);
+                if text.contains("测试") {
+                    let hits = matcher.find_in_line(text);
+                    println!(
+                        "NEARDBG   HAS line={} find={:?} query={:?} opts=({},{},{},{}) text={:?}",
+                        li + 1,
+                        hits,
+                        editor.workspace.search_query,
+                        editor.workspace.search_match_case,
+                        editor.workspace.search_whole_word,
+                        editor.workspace.search_use_regex,
+                        editor.workspace.search_fuzzy,
+                        text,
+                    );
+                }
+                if li + 1 == 174 || li + 1 == 183 {
+                    println!("NEARDBG   AT line={} text={:?}", li + 1, text.chars().take(50).collect::<String>());
+                }
+                for found in matcher.find_in_line(text) {
+                    let distance = {
+                        let approx_start: usize = lines[..approx_line].iter().map(|l| l.len()).sum();
+                        let col = approx_line;
+                        let _ = col;
+                        (li.abs_diff(approx_line), found.start)
+                    };
+                    println!(
+                        "NEARDBG   hit line={} col={:?} row_dist={:?} text={:?}",
+                        li + 1,
+                        found,
+                        distance,
+                        text.chars().take(50).collect::<String>()
+                    );
+                }
+            }
+        }
+    });
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
             editor.open_search_hit(index, window, cx);
