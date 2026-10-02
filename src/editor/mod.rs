@@ -936,6 +936,89 @@ impl Editor {
         }
     }
 
+    /// 把这个块当前的源码写回它自己占的缓冲区区间——只经唯一写入口
+    /// [`buffer::TextBuffer::edit`]。
+    ///
+    /// 返回 `false` 表示这个块没有可用区间（新建的块、子块、整篇重投影后没被
+    /// 记到的空块）：那种情况下按区间写会把字节落错位置，调用方必须退回
+    /// [`Self::resync_buffer_from_document`]。
+    pub(crate) fn write_back_block_source(
+        &mut self,
+        block: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(old_span) = block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let new_source = self.document.block_markdown_source(block, cx);
+        if self.buffer.slice(old_span.clone()) == new_source {
+            // 投影刷新但内容没变：不动缓冲区，区间照旧有效。
+            return true;
+        }
+
+        let applied = self.buffer.edit(old_span.clone(), &new_source);
+        block.update(cx, |block, _cx| {
+            block.record.source_span = Some(applied.new_range);
+        });
+        let delta = new_source.len() as i64 - (old_span.end - old_span.start) as i64;
+        if delta != 0 {
+            self.shift_root_spans_after(old_span.end, delta, cx);
+        }
+        true
+    }
+
+    /// 编辑点之后的根块区间整体平移；之前的块字节没被碰到，区间自然不动。
+    fn shift_root_spans_after(&mut self, from: usize, delta: i64, cx: &mut App) {
+        let total = self.buffer.byte_len() as i64;
+        let moved = self
+            .document
+            .root_blocks()
+            .iter()
+            .filter_map(|block| {
+                let span = block.read(cx).record.source_span.clone()?;
+                (span.start >= from).then_some((block.clone(), span))
+            })
+            .collect::<Vec<_>>();
+        for (block, span) in moved {
+            let start = (span.start as i64 + delta).clamp(0, total) as usize;
+            let end = (span.end as i64 + delta).clamp(0, total) as usize;
+            block.update(cx, |block, _cx| {
+                block.record.source_span = Some(start..end.max(start));
+            });
+        }
+    }
+
+    /// 整篇重投影：块树的序列化结果换进缓冲区，并据此重建所有根块的区间。
+    ///
+    /// 这是写回的保底档位，代价是**未编辑的块也被重新序列化一次**（表格列宽填充、
+    /// `__` 强调这些写法就此改写），原始字节也随之丢弃。每多一条走到这里的路径，
+    /// 就少一块「保住原文」的地盘——收敛方向是让改动自己声明区间，不是让这里变快。
+    pub(crate) fn resync_buffer_from_document(&mut self, cx: &mut Context<Self>) {
+        let (text, block_spans) = self.document.markdown_text_with_block_spans(cx);
+        self.buffer = buffer::TextBuffer::from_text(&text);
+        let roots = self.document.root_blocks().to_vec();
+        for block in roots {
+            let span = block_spans
+                .iter()
+                .find(|(id, _)| *id == block.entity_id())
+                .map(|(_, span)| {
+                    // 序列化那边记的区间右端含本块行尾的换行，写回约定不含。
+                    let start = span.start.min(text.len());
+                    let end = span.end.min(text.len());
+                    let end = if end > start && text.as_bytes()[end - 1] == b'\n' {
+                        end - 1
+                    } else {
+                        end
+                    };
+                    Some(start..end.max(start))
+                })
+                .unwrap_or_default();
+            block.update(cx, |block, _cx| {
+                block.record.source_span = span;
+            });
+        }
+    }
+
     /// 文档内容被整体替换（切标签、拖拽打开、会话恢复）时重建缓冲区。
     ///
     /// 缓冲区是唯一事实源，绝不能留着上一个文档的内容——那会让保存写出别的

@@ -11,7 +11,7 @@ use crate::editor::encoding;
 /// 每个根块的（源码区间, 区间里的原文），外加缓冲区全文。
 ///
 /// 用 `unwrap` 而不是 `filter_map`：漏挂区间的块必须让测试炸掉，不能被静默跳过。
-fn root_block_spans(
+pub(super) fn root_block_spans(
     editor: &gpui::Entity<Editor>,
     cx: &mut gpui::VisualTestContext,
 ) -> (Vec<(std::ops::Range<usize>, String)>, String) {
@@ -35,11 +35,11 @@ fn root_block_spans(
     })
 }
 
-fn span_ranges(spans: &[(std::ops::Range<usize>, String)]) -> Vec<std::ops::Range<usize>> {
+pub(super) fn span_ranges(spans: &[(std::ops::Range<usize>, String)]) -> Vec<std::ops::Range<usize>> {
     spans.iter().map(|(span, _)| span.clone()).collect()
 }
 
-fn rendered_blocks(spans: &[(std::ops::Range<usize>, String)]) -> String {
+pub(super) fn rendered_blocks(spans: &[(std::ops::Range<usize>, String)]) -> String {
     spans
         .iter()
         .map(|(_, text)| format!("{text:?}"))
@@ -51,7 +51,7 @@ fn rendered_blocks(spans: &[(std::ops::Range<usize>, String)]) -> String {
 ///
 /// 这条不变式说的是「内容字节 = 各块区间的并」：既不越界吃到邻居，也不漏掉任何
 /// 有内容的字节。写回阶段要靠它保证改一个块不会碰到别的块。
-fn assert_spans_tile_the_content(
+pub(super) fn assert_spans_tile_the_content(
     spans: &[std::ops::Range<usize>],
     buffer_text: &str,
     label: &str,

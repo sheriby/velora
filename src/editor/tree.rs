@@ -346,6 +346,16 @@ impl DocumentTree {
         (lines.join("\n"), byte_spans)
     }
 
+    /// 单个根块当前的源码（多行以 `\n` 连接，不含行尾换行）。
+    ///
+    /// 区间写回只替换这一段字节，所以别的块不会被重新序列化。列表项与引用块
+    /// 递归带上整棵子树，宽度和导入时记下的那段行区间一致。
+    pub(crate) fn block_markdown_source(&self, block: &Entity<Block>, cx: &App) -> String {
+        let mut lines = Vec::new();
+        Self::collect_single_block_markdown_lines(block.read(cx), 0, cx, &mut lines);
+        lines.join("\n")
+    }
+
     pub(super) fn raw_source_text(&self, cx: &App) -> String {
         // P5：单遍追加。旧实现先把每块文本克隆成 String 再 join——超大
         // 文档一次序列化要付两倍字节量的搬运。

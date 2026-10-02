@@ -91,7 +91,21 @@ impl Editor {
                 if let Some(focus_id) = callout_focus_target {
                     self.focus_block(focus_id);
                 }
-                self.mark_dirty(cx);
+                // 文本改动按区间写回缓冲区，未编辑的块因此保住原有字节。前提是这次
+                // 事件没动结构：根块序列一变，区间就整体错位，只能退回整篇重投影。
+                let structure_unchanged = {
+                    let after = self.document.visible_blocks();
+                    after.len() == visible_before.len()
+                        && after
+                            .iter()
+                            .zip(&visible_before)
+                            .all(|(a, b)| a.entity.entity_id() == b.entity.entity_id())
+                };
+                if structure_unchanged && self.write_back_block_source(&block, cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture(cx);
             }

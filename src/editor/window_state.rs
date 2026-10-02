@@ -470,13 +470,24 @@ impl Editor {
 
     /// Marks the document dirty and schedules window-title and edited-state
     /// refresh for the next render frame.
+    ///
+    /// 这条是给**没声明区间**的改动用的（结构变更、表格、跨块选区……）：块树变了，
+    /// 缓冲区只能整篇重投影才能跟上，未编辑块的原始字节就此丢失。想保住原文的改动
+    /// 路径请走 [`Self::mark_dirty_written_back`]。
     pub(super) fn mark_dirty(&mut self, cx: &mut Context<Self>) {
+        self.resync_buffer_from_document(cx);
+        self.finish_dirty(cx);
+    }
+
+    /// 改动已经按区间写回缓冲区：不重投影，所以别的块一个字节都不会被改写。
+    pub(crate) fn mark_dirty_written_back(&mut self, cx: &mut Context<Self>) {
+        self.finish_dirty(cx);
+    }
+
+    fn finish_dirty(&mut self, cx: &mut Context<Self>) {
         self.document_revision = self.document_revision.wrapping_add(1);
         if !self.document_dirty {
             self.document_dirty = true;
-            // 过渡期：块树编辑还没接进 `TextBuffer::edit`，脏标记是「内容已经不
-            // 是打开时那份字节」的唯一信号。写回落地后这行随之删除。
-            self.buffer.discard_pristine();
             self.pending_window_edited = true;
             self.pending_window_unedited = false;
             self.pending_window_title_refresh = true;
