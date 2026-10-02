@@ -33,6 +33,9 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.text_default = color(palette.text);
     c.text_placeholder = color(palette.muted);
     c.text_link = color(palette.accent);
+    // 当前行高亮跟主题走：取各色板的选区淡色（forest 即淡绿系）垫在光标行下，
+    // alpha 压到 40%——高亮一旦接近不透明就会盖住正文（用户报修）。
+    c.current_line_bg = color((palette.selection & 0xffffff00) | 0x66);
     c.text_h1 = color(palette.text);
     c.text_h2 = color(palette.text);
     c.text_h3 = color(palette.text);
@@ -65,7 +68,6 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.code_language_input_placeholder = color(palette.muted);
     c.table_border = color(palette.line);
     c.table_header_bg = color(palette.panel);
-    c.current_line_bg = color((palette.text & 0xffffff00) | 0x0a);
     c.matching_bracket_bg = color((palette.text & 0xffffff00) | 0x1a);
     c.table_cell_bg = color(palette.window);
     c.table_cell_active_outline = color(palette.accent);
@@ -162,7 +164,7 @@ impl Theme {
                 code_syntax_punctuation: Hsla::from(rgba(0xd4d4d4ff)),
                 table_border: Hsla::from(rgba(0x484644ff)),
                 table_header_bg: Hsla::from(rgba(0x333333ff)),
-                current_line_bg: Hsla::from(rgba(0xfffffff0)),
+                current_line_bg: Hsla::from(rgba(0xffffff0d)),
                 matching_bracket_bg: Hsla::from(rgba(0xffffff1a)),
                 table_cell_bg: Hsla::from(rgba(0x292929ff)),
                 table_cell_active_outline: Hsla::from(rgba(0x4cc2ffff)),

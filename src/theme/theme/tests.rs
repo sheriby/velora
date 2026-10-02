@@ -1,7 +1,34 @@
 mod tests {
     use crate::theme::{Theme, ThemeManager};
     use crate::config::VeloraConfigDirs;
-    use gpui::{WindowAppearance, rgba};
+    use gpui::{Rgba, WindowAppearance, rgba};
+
+    #[test]
+    fn current_line_highlight_stays_transparent_and_theme_tinted() {
+        // 用户报修：深色默认主题的当前行高亮曾是 94% 不透明白，直接盖住正文。
+        // 高亮必须低透明度，且内置色板主题取自 selection 淡色（跟主题走）。
+        let themes = [
+            ("default", Theme::default_theme()),
+            ("light", Theme::light_theme()),
+            ("paper", Theme::paper_theme()),
+            ("forest", Theme::forest_theme()),
+            ("midnight", Theme::midnight_theme()),
+            ("ink", Theme::ink_theme()),
+        ];
+        for (name, theme) in themes {
+            let alpha = theme.colors.current_line_bg.a;
+            assert!(
+                alpha <= 0.45,
+                "主题 {name} 的当前行高亮 alpha={alpha:.2} 过高：接近不透明会盖住正文"
+            );
+        }
+
+        let line = Rgba::from(Theme::forest_theme().colors.current_line_bg);
+        assert!(
+            line.g > line.r && line.g > line.b,
+            "forest 当前行高亮应为 selection 淡绿系，实际 {line:?}"
+        );
+    }
 
     #[test]
     fn theme_token_documentation_covers_every_token() {
