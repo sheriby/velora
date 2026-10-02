@@ -8,10 +8,38 @@
 use std::io;
 use std::path::Path;
 
-/// 读取并解码文档文件。IO 错误原样上抛（与 read_to_string 同语义）。
+/// 打开一个文件所需的全部信息：**原始字节**与解码后的文本。
+///
+/// 原始字节是「未编辑就字节不变」的依据（保存时原样写回），解码文本是缓冲区的
+/// 内容。两者必须在同一次读盘里拿到——分两次读会在两次读之间被外部改动时，
+/// 把一个「其实没跟着文本变」的字节版本写回去。
+pub(crate) struct LoadedDocument {
+    /// 磁盘原始字节；空表示来源不是文件（新建、粘贴片段、恢复快照），
+    /// 因而没有「原样写回」的依据。
+    pub(crate) raw: Vec<u8>,
+    pub(crate) text: String,
+}
+
+impl LoadedDocument {
+    /// 只有文本、没有原始字节可用时的来源。
+    pub(crate) fn from_text(text: String) -> Self {
+        Self {
+            raw: Vec::new(),
+            text,
+        }
+    }
+}
+
+/// 读并解码一个文档文件。IO 错误原样上抛（与 read_to_string 同语义）。
+pub(crate) fn load_document(path: &Path) -> io::Result<LoadedDocument> {
+    let raw = std::fs::read(path)?;
+    let text = decode_document_bytes(raw.clone());
+    Ok(LoadedDocument { raw, text })
+}
+
+/// 读并解码一个文档文件，只要文本。
 pub(crate) fn read_document_string(path: &Path) -> io::Result<String> {
-    let bytes = std::fs::read(path)?;
-    Ok(decode_document_bytes(bytes))
+    Ok(load_document(path)?.text)
 }
 
 /// 解码文档字节：UTF-8 → UTF-16 BOM 保持原路径 → GB18030 → lossy 兜底。

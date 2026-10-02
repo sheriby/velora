@@ -24,6 +24,7 @@ use crate::components::{
     TableAxisHighlight, TableAxisKind, TableAxisMarker, TableCellPosition, TableColumnAlignment,
     TableData, TableRuntime, UndoCaptureKind, serialize_table_cell_markdown,
 };
+mod buffer;
 mod close;
 mod context_menu;
 mod modal;
@@ -63,6 +64,8 @@ use self::workspace::WorkspaceState;
 /// scrolling, dirty tracking, and serialization stay synchronized.
 pub struct Editor {
     document: DocumentTree,
+    /// 文档文本的**唯一事实源**：块树是它上面的一份投影，保存写的是它。
+    buffer: buffer::TextBuffer,
     table_cells: HashMap<EntityId, TableCellBinding>,
     /// Which view the editor is currently presenting.
     pub(crate) view_mode: ViewMode,
@@ -523,6 +526,7 @@ impl Editor {
 
         let mut editor = Self {
             document,
+            buffer: buffer::TextBuffer::from_text(&normalized),
             table_cells: HashMap::new(),
             view_mode: if source_mode_fallback_required {
                 ViewMode::Source
@@ -869,6 +873,29 @@ impl Editor {
         } else {
             Self::from_markdown(cx, source, file_path)
         }
+    }
+
+    /// 从一次真实读盘建编辑器：文本进缓冲区，**原始字节**留作「未编辑就原样
+    /// 写回」的依据。字节与文本必须来自同一次读盘，所以在这里一起接住。
+    pub(crate) fn from_loaded_document(
+        cx: &mut Context<Self>,
+        document: encoding::LoadedDocument,
+        file_path: Option<PathBuf>,
+    ) -> Self {
+        let encoding::LoadedDocument { raw, text } = document;
+        let mut editor = Self::from_file_source(cx, text, file_path);
+        editor.attach_file_origin(raw);
+        editor
+    }
+
+    /// 记下这个文档来自磁盘的原始字节与文件形状。空字节表示来源不是文件
+    /// （新建、恢复快照），于是没有「原样写回」的依据，保存走重新编码。
+    pub(crate) fn attach_file_origin(&mut self, raw: Vec<u8>) {
+        if raw.is_empty() {
+            return;
+        }
+        let shape = buffer::FileShape::detect(&raw);
+        self.buffer.set_file_origin(raw, shape);
     }
 
     pub(crate) fn from_recovery(

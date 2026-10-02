@@ -34,7 +34,8 @@ mod theme;
 mod window_chrome;
 
 use app_menu::{
-    init as init_app_menu, open_editor_window, open_workspace_window, restore_last_session,
+    init as init_app_menu, open_editor_window, open_editor_window_from_document,
+    open_workspace_window, restore_last_session,
 };
 use components::init_with_keybindings as init_editor;
 #[cfg(target_os = "macos")]
@@ -85,9 +86,9 @@ fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference
     if startup_open == config::StartupOpenPreference::LastOpenedFile
         && let Some(path) = config::first_existing_recent_markdown_file()
     {
-        match crate::editor::encoding::read_document_string(&path) {
-            Ok(markdown) => {
-                open_editor_window(cx, markdown, Some(path));
+        match crate::editor::encoding::load_document(&path) {
+            Ok(document) => {
+                open_editor_window_from_document(cx, document, Some(path));
                 return;
             }
             Err(err) => {
@@ -471,22 +472,22 @@ fn main() {
                 continue;
             }
 
-            let markdown = match crate::editor::encoding::read_document_string(&absolute_path) {
-                Ok(content) => {
+            let document = match crate::editor::encoding::load_document(&absolute_path) {
+                Ok(document) => {
                     if let Err(err) = config::record_recent_file(&absolute_path) {
                         eprintln!("failed to update recent file history: {err}");
                     }
-                    content
+                    document
                 }
                 Err(err) => {
                     eprintln!(
                         "failed to read '{}': {err}. opened as empty document.",
                         absolute_path.display()
                     );
-                    String::new()
+                    crate::editor::encoding::LoadedDocument::from_text(String::new())
                 }
             };
-            open_editor_window(cx, markdown, Some(absolute_path));
+            open_editor_window_from_document(cx, document, Some(absolute_path));
         }
         restore_recovery_windows(cx, &recovery_windows_restored);
         app_menu::install_menus(cx);

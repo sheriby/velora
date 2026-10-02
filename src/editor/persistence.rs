@@ -58,11 +58,14 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
 
 /// Atomic save (roadmap G1): write to a sibling temp file, fsync, then rename
 /// over the destination so a crash never leaves a half-written document.
-fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+///
+/// 收 `&[u8]` 而不是 `&str`：保存的内容可能就是打开时读到的原始字节（未编辑的
+/// 文档），那不必是合法 UTF-8。
+fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let temp_path = autosave_temp_path(path);
     let mut file = std::fs::File::create(&temp_path)?;
-    file.write_all(contents.as_bytes())?;
+    file.write_all(contents)?;
     file.sync_all()?;
     drop(file);
     match std::fs::rename(&temp_path, path) {
@@ -459,6 +462,29 @@ impl Editor {
         }
     }
 
+    /// 保存实际落盘的**文本**：未编辑过就是缓冲区里的原文（与磁盘上的字节一一
+    /// 对应），否则仍是块树序列化——直到编辑写回接进缓冲区为止。
+    ///
+    /// 版本号、工作区标签文本、本地历史都取这份文本，不能取重新序列化的结果，
+    /// 否则下一次校验磁盘时会发现自己刚写的文件「被外部改了」。
+    pub(super) fn document_text_for_save(&self, cx: &App) -> String {
+        if self.buffer.is_pristine() {
+            self.buffer.text()
+        } else {
+            self.serialized_document_text(cx)
+        }
+    }
+
+    /// 保存落盘的**字节**：未编辑过就原样写回打开时读到的字节，一个字节都不必
+    /// 重新生成——这是「打开不编辑、保存不改写用户文件」的实现方式。
+    pub(super) fn document_bytes_for_save(&self, cx: &App) -> Vec<u8> {
+        if self.buffer.is_pristine() {
+            self.buffer.file_bytes()
+        } else {
+            self.serialized_document_text(cx).into_bytes()
+        }
+    }
+
     pub(super) fn save_dialog_defaults(&self) -> (PathBuf, Option<String>) {
         if let Some(path) = self.recovery_source_path.as_ref() {
             let directory = path
@@ -489,7 +515,7 @@ impl Editor {
 
     pub(super) fn apply_successful_save(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.document_revision = self.document_revision.wrapping_add(1);
-        let saved_markdown = self.serialized_document_text(cx);
+        let saved_markdown = self.document_text_for_save(cx);
         self.file_version = Some(file_content_version(&saved_markdown));
         // 标签里的版本号也要跟上（自动保存按它校验磁盘，见
         // mark_workspace_document_saved）。
@@ -550,8 +576,8 @@ impl Editor {
             let _ = window;
             return false;
         }
-        let markdown = self.serialized_document_text(cx);
-        match write_atomic(path, &markdown) {
+        let bytes = self.document_bytes_for_save(cx);
+        match write_atomic(path, &bytes) {
             Ok(_) => {
                 self.apply_successful_save(path.to_path_buf(), cx);
                 window.set_window_edited(false);
@@ -573,7 +599,8 @@ impl Editor {
             cx.notify();
             return;
         }
-        let markdown = self.serialized_document_text(cx);
+        // 先取字节再弹面板：未编辑的文档保存的就是打开时那份原始字节。
+        let markdown = self.document_bytes_for_save(cx);
         let (default_dir, suggested_name) = self.save_dialog_defaults();
         let prompt = cx.prompt_for_new_path(&default_dir, suggested_name.as_deref());
         let weak_editor = cx.entity().downgrade();
@@ -697,7 +724,7 @@ mod tests {
         let path = root.join("doc.md");
         std::fs::write(&path, "old").expect("seed");
 
-        write_atomic(&path, "new content").expect("atomic write");
+        write_atomic(&path, b"new content").expect("atomic write");
 
         assert_eq!(std::fs::read_to_string(&path).expect("read"), "new content");
         let leftovers: Vec<_> = std::fs::read_dir(&root)
@@ -719,7 +746,7 @@ mod tests {
 
         // Target inside a missing subdirectory fails at temp-file creation.
         let missing = root.join("missing").join("doc.md");
-        assert!(write_atomic(&missing, "nope").is_err());
+        assert!(write_atomic(&missing, b"nope").is_err());
         assert_eq!(std::fs::read_to_string(&path).expect("read"), "original");
         let _ = std::fs::remove_dir_all(root);
     }

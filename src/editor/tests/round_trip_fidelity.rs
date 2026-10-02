@@ -31,10 +31,10 @@ fn open_then_save_without_edit(
         let _ = fs::remove_file(&cleanup);
     });
 
-    let text = encoding::read_document_string(&path).expect("decode fixture");
+    let document = encoding::load_document(&path).expect("read fixture");
     let (editor, cx) = cx.add_window_view({
         let path = path.clone();
-        move |_window, cx| Editor::from_file_source(cx, text, Some(path))
+        move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
     });
 
     let dirty_on_open = editor.read_with(cx, |editor, _cx| editor.document_dirty);

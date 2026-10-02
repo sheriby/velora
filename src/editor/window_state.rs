@@ -474,6 +474,9 @@ impl Editor {
         self.document_revision = self.document_revision.wrapping_add(1);
         if !self.document_dirty {
             self.document_dirty = true;
+            // 过渡期：块树编辑还没接进 `TextBuffer::edit`，脏标记是「内容已经不
+            // 是打开时那份字节」的唯一信号。写回落地后这行随之删除。
+            self.buffer.discard_pristine();
             self.pending_window_edited = true;
             self.pending_window_unedited = false;
             self.pending_window_title_refresh = true;

@@ -149,12 +149,26 @@ pub(crate) fn open_editor_window(
     markdown: String,
     file_path: Option<PathBuf>,
 ) -> WindowHandle<Editor> {
+    open_editor_window_from_document(
+        cx,
+        crate::editor::encoding::LoadedDocument::from_text(markdown),
+        file_path,
+    )
+}
+
+/// 从一次真实读盘开窗：原始字节跟着进编辑器，「打开后没编辑就保存」才可能
+/// 一个字节都不改。只有文本可用时（新建窗口、测试）走 `open_editor_window`。
+pub(crate) fn open_editor_window_from_document(
+    cx: &mut App,
+    document: crate::editor::encoding::LoadedDocument,
+    file_path: Option<PathBuf>,
+) -> WindowHandle<Editor> {
     let RestoredWindow { bounds, display_id } = restored_window_bounds(cx);
     let title = window_title(file_path.as_deref());
     let handle = cx
         .open_window(
             velora_window_options_on_display(title, bounds, display_id),
-            move |_window, cx| cx.new(move |cx| Editor::from_file_source(cx, markdown, file_path)),
+            move |_window, cx| cx.new(move |cx| Editor::from_loaded_document(cx, document, file_path)),
         )
         .unwrap();
 
@@ -267,9 +281,9 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
 }
 
 pub(crate) fn open_file_in_new_window(cx: &mut App, path: &Path) -> anyhow::Result<()> {
-    let markdown = crate::editor::encoding::read_document_string(path)
+    let document = crate::editor::encoding::load_document(path)
         .with_context(|| format!("failed to read '{}'", path.display()))?;
-    open_editor_window(cx, markdown, Some(path.to_path_buf()));
+    open_editor_window_from_document(cx, document, Some(path.to_path_buf()));
     record_recent_file_and_refresh(path, cx);
     Ok(())
 }
