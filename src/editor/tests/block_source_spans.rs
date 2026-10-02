@@ -148,6 +148,33 @@ async fn every_root_block_points_at_its_own_source(cx: &mut TestAppContext) {
     assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "分块导入的文档");
 }
 
+/// 末行没有换行符的文档：最后一块的区间必须包含它自己的最后一个字节。
+///
+/// 「区间右端减掉那个换行符」这条规则在文末是错的——那里根本没有换行符可减。
+#[gpui::test]
+async fn a_document_without_a_trailing_newline_keeps_its_last_byte_inside_the_block(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    for source in ["甲\n乙", "甲\n\n乙", "标题\n\n段落文字"] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        redraw(cx);
+
+        let (spans, buffer_text) = root_block_spans(&editor, cx);
+        let last = spans
+            .last()
+            .unwrap_or_else(|| panic!("{source:?} 没有建出根块"));
+        assert!(
+            buffer_text.ends_with(&last.1) && !last.1.is_empty(),
+            "最后一块没吃到文档末尾的字节：块 {:?}，缓冲区 {buffer_text:?}",
+            last.1
+        );
+        assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "无末行换行的文档");
+    }
+}
+
 #[gpui::test]
 async fn blank_lines_between_blocks_belong_to_no_block(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

@@ -909,6 +909,9 @@ impl Editor {
     /// 区间右端是**下一块的起始行**，换算成字节时要减掉那个换行符：块的内容
     /// 不含它自己的行尾换行，块与块之间的空行更不归入任何块——这样编辑一个块
     /// 时，写回的字节不会越界碰到邻居或分隔空行。
+    ///
+    /// 唯一的例外是文档末尾没有换行符：那里没有换行可减，最后一块的区间右端
+    /// 就是文档末尾，减一个字节会把块内容和多字节字符一起切坏。
     pub(crate) fn attach_root_spans(
         buffer: &buffer::TextBuffer,
         roots: &[Entity<Block>],
@@ -917,12 +920,14 @@ impl Editor {
         cx: &mut App,
     ) {
         let total = buffer.byte_len();
+        let ends_with_newline = buffer.line_start(buffer.line_count().saturating_sub(1)) >= total;
         for (block, span) in roots.iter().zip(line_spans) {
             let start = buffer.line_start(line_base + span.start).min(total);
-            let end = if span.end > span.start {
-                buffer.line_start(line_base + span.end).min(total).saturating_sub(1)
+            let raw_end = buffer.line_start(line_base + span.end).min(total);
+            let end = if raw_end < total || ends_with_newline {
+                raw_end.saturating_sub(1)
             } else {
-                start
+                raw_end
             };
             let span = start..end.max(start);
             block.update(cx, |block, _cx| {
