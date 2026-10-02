@@ -5,7 +5,8 @@ impl Editor {
     /// files open as a tab in this window.
     /// Recomputes in-document search highlight ranges (roadmap B2): clears
     /// the previous blocks, then maps every match through the source→content
-    /// mappings onto the owning block.
+    /// mappings onto the owning block. 工作区范围（所有文件）的命中跳转过去
+    /// 之后同样要看到高亮——用户报修过跳转后无高亮。
     pub(crate) fn sync_document_search_highlights(&mut self, cx: &mut Context<Self>) {
         let previous = std::mem::take(&mut self.search_highlighted_blocks);
         for entity in &previous {
@@ -15,7 +16,6 @@ impl Editor {
         let query = self.workspace.search_query.trim().to_string();
         let active = self.workspace.is_open
             && self.workspace.active_tab == WorkspaceTab::Search
-            && self.workspace.search_scope == WorkspaceSearchScope::Document
             && !query.is_empty();
         if !active {
             cx.notify();

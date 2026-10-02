@@ -58,8 +58,34 @@ impl Editor {
         let Some(active_bounds) =
             focused_block.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
         else {
+            // 目标块尚未绘制：渲染窗口只画视口附近的块，窗外的块既没有
+            // last_bounds 也没有文本布局，精确居中无从算起——但不滚就永远
+            // 不会画，死锁（用户报修：跨标签搜索跳转后视口停在文档顶部，
+            // 要手动翻完整篇才看得到命中）。按块序号比例估算目标纵向位置
+            // 先滚过去，让目标进入绘制窗口；真实边界落地后由后续 settle
+            // 帧精确居中。
+            let viewport_height = f32::from(self.scroll_handle.bounds().size.height);
+            let content_height =
+                f32::from(self.scroll_handle.max_offset().height) + viewport_height;
+            if viewport_height > 0.0
+                && let Some(index) = self
+                    .active_entity_id
+                    .and_then(|id| self.document.visible_index_for_entity_id(id))
+            {
+                let total = self.document.visible_blocks().len().max(1);
+                let estimate_y = content_height * (index as f32 + 0.5) / total as f32;
+                let mut offset = self.scroll_handle.offset();
+                let desired = -(estimate_y - viewport_height * 0.5);
+                let max_offset_y = f32::from(self.scroll_handle.max_offset().height).max(0.0);
+                let clamped = desired.min(0.0).max(-max_offset_y);
+                if (f32::from(offset.y) - clamped).abs() > 1.0 {
+                    offset.y = px(clamped);
+                    self.scroll_handle.set_offset(offset);
+                }
+            }
             return false;
         };
+
 
         let viewport = self.scroll_handle.bounds();
         if self.typewriter_mode

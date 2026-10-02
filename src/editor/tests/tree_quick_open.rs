@@ -372,3 +372,6 @@ async fn source_mappings_align_with_the_real_document_text(cx: &mut TestAppConte
         }
     });
 }
+
+use super::common::*;
+
