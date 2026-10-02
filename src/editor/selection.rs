@@ -610,29 +610,12 @@ impl Editor {
     }
 
     fn rebuild_after_cross_block_source_edit(&mut self, source: String, cx: &mut Context<Self>) {
-        match self.view_mode {
-            ViewMode::Rendered => {
-                let mut roots = Self::build_root_blocks_from_markdown(cx, &source);
-                if roots.is_empty() {
-                    roots.push(Self::new_block(
-                        cx,
-                        crate::components::BlockRecord::paragraph(String::new()),
-                    ));
-                }
-                self.document.replace_roots(roots, cx);
-                self.rebuild_table_runtimes(cx);
-                self.rebuild_image_runtimes(cx);
-            }
-            ViewMode::Source => {
-                let block = Self::new_block(
-                    cx,
-                    crate::components::BlockRecord::paragraph(source.clone()),
-                );
-                block.update(cx, |block, _cx| block.set_source_document_mode());
-                self.document.replace_roots(vec![block], cx);
-                self.table_cells.clear();
-            }
-        }
+        // 跨块改动落在整篇文本上：先把它写进缓冲区（一次全文写入，撤销拿得到它的
+        // 逆操作），再从缓冲区重建投影——只有从缓冲区重建，根块才挂得上区间，
+        // 之后的位置换算才有锚点。
+        let applied = self.buffer.edit(0..self.buffer.byte_len(), &source);
+        self.record_buffer_edit(applied);
+        self.rebuild_document_from_buffer(cx);
     }
 
     fn apply_marked_source_range(&mut self, source_range: Range<usize>, cx: &mut Context<Self>) {

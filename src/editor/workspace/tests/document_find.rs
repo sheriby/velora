@@ -435,3 +435,70 @@ async fn cmd_f_opens_current_document_find_in_sidebar(cx: &mut TestAppContext) {
     });
 }
 
+
+/// 读取侧的坐标必须是文件坐标：Search 面板显示的行号与跳转用的字节区间，
+/// 说的都应该是磁盘上那份文本，而不是块树重新序列化出来的那份。
+///
+/// 夹具同时踩两种「序列化会改写形状」的写法：Setext 标题被压成 ATX（少一行），
+/// 表格列宽被重新填充（字节数变了）。只要读的是重新序列化的结果，行号与
+/// 字节区间就都会漂。
+#[gpui::test]
+async fn document_find_reports_the_file_position_of_a_lossy_shape_hit(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-find-file-position-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("note.md");
+    let source = concat!(
+        "标题\n",
+        "=====\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 目标 |\n",
+    );
+    fs::write(&path, source).expect("write fixture");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let document = crate::editor::encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    editor.update(cx, |editor, cx| {
+        editor.open_document_find(cx);
+        editor.workspace.search_query = "目标".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace.search_results.len(), 1);
+        let hit = &editor.workspace.search_results[0];
+        assert_eq!(
+            hit.line,
+            Some(6),
+            "命中在文件里的第 6 行；Setext 标题被重新序列化压成一行就会报成第 5 行"
+        );
+        let range = hit.source_range.clone().unwrap();
+        assert_eq!(
+            editor.buffer.slice(range),
+            "目标",
+            "字节区间是从重新序列化的文本里算出来的，落到缓冲区就错位"
+        );
+    });
+}

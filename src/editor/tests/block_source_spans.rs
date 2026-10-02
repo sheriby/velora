@@ -259,3 +259,58 @@ async fn a_crlf_document_from_disk_anchors_every_root_block(cx: &mut TestAppCont
         rendered_blocks(&spans)
     );
 }
+
+/// 每一步之后每个根块都必须带着指向缓冲区的区间。
+///
+/// 区间是读取侧唯一的锚点：漏了区间的块在位置换算里不存在，表现就是
+/// 「点了搜索结果没反应」「光标落回 0」「大纲跳转停在篇首」。凡是重建整棵
+/// 树的路径（打字、拆块、撤销、切视图）都必须把区间重新挂上。
+#[gpui::test]
+async fn every_document_rebuild_leaves_every_root_block_anchored(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let source = concat!(
+        "# 标题\n",
+        "\n",
+        "段落一\n",
+        "\n",
+        "> 引用\n",
+        "\n",
+        "| a | b |\n",
+        "| --- | --- |\n",
+        "| 1 | 2 |\n",
+    );
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+    redraw(cx);
+
+    let mut checked = 0usize;
+    let mut assert_anchored = |label: &str, cx: &mut gpui::VisualTestContext| {
+        let (spans, buffer_text) = root_block_spans(&editor, cx);
+        assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, label);
+        assert!(spans.len() > 1, "{label}：夹具没分出多个块");
+        checked += 1;
+    };
+    assert_anchored("打开", cx);
+
+    cx.simulate_input("写");
+    redraw(cx);
+    assert_anchored("打字", cx);
+
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    assert_anchored("拆块", cx);
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_anchored("撤销", cx);
+
+    editor.update(cx, |editor, cx| {
+        editor.toggle_view_mode(cx);
+        editor.toggle_view_mode(cx);
+    });
+    redraw(cx);
+    assert_anchored("切到源码视图再切回来", cx);
+
+    assert_eq!(checked, 5, "每一步都该检查一次");
+}

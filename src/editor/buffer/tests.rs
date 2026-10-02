@@ -319,3 +319,21 @@ fn an_edit_forces_reencoding_by_shape_and_ends_the_pristine_copy() {
     let plain = TextBuffer::from_text("正文\n");
     assert_eq!(plain.file_bytes(), "正文\n".as_bytes());
 }
+
+/// 行号→字节区间是读取侧（搜索跳转、大纲点击）唯一的换算入口，必须在
+/// 缓冲区自己的坐标里成立，且不含行尾换行符。
+#[test]
+fn line_range_gives_the_bytes_of_that_line_without_the_newline() {
+    let mut buffer = TextBuffer::from_text("first\n\n第三行 with 中文\ntail\n");
+    assert_eq!(buffer.line_range(0), 0..5);
+    assert_eq!(buffer.line_range(1), 6..6);
+    assert_eq!(buffer.line_range(2), 7..7 + "第三行 with 中文".len());
+    assert_eq!(buffer.line_range(3), 29..33);
+
+    // 末行没有换行符时区间就到文末。
+    buffer = TextBuffer::from_text("甲\n乙");
+    assert_eq!(buffer.line_range(0), 0..3);
+    assert_eq!(buffer.line_range(1), 4..7);
+    // 越界钳到文末，不 panic。
+    assert_eq!(buffer.line_range(9), 7..7);
+}

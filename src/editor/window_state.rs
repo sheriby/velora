@@ -419,32 +419,22 @@ impl Editor {
         self.rendered_select_all_cycle = None;
         match self.view_mode {
             ViewMode::Rendered => {
-                let markdown = self.document.markdown_text(cx);
-                let block = Self::new_block(cx, BlockRecord::paragraph(markdown));
-                block.update(cx, |block, _cx| block.set_source_document_mode());
-                self.document.replace_roots(vec![block], cx);
                 self.view_mode = ViewMode::Source;
                 self.table_cells.clear();
             }
             ViewMode::Source => {
-                let source = self.document.raw_source_text(cx);
                 self.source_mode_fallback_required =
-                    Self::markdown_requires_source_mode_fallback(&source);
+                    Self::markdown_requires_source_mode_fallback(&self.buffer.text());
                 if self.source_mode_fallback_required {
                     cx.notify();
                     return;
                 }
-                let mut roots = Self::build_root_blocks_from_markdown(cx, &source);
-                if roots.is_empty() {
-                    roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
-                }
-                self.document.replace_roots(roots, cx);
                 self.view_mode = ViewMode::Rendered;
                 self.source_mode_fallback_required = false;
-                self.rebuild_table_runtimes(cx);
-                self.rebuild_image_runtimes(cx);
             }
         }
+        // 两种视图都是缓冲区的一份投影：换视图 = 换投影，文本与区间都从缓冲区来。
+        self.rebuild_document_from_buffer(cx);
 
         self.apply_selection_snapshot_in_current_mode(&selection_snapshot, cx);
         self.pending_scroll_active_block_into_view = true;

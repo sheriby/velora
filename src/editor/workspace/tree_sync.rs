@@ -112,19 +112,10 @@ impl Editor {
     /// 供标题行内的折叠 chevron 决定是否显示。
     /// 跳到源码行并选中该行（roadmap C2 的 `[TOC]` 条目点击）。
     pub(crate) fn jump_to_source_line(&mut self, line: usize, cx: &mut Context<Self>) {
-        let source = self.last_stable_source_text.clone();
-        let line_start = source
-            .split_inclusive('\n')
-            .take(line)
-            .map(str::len)
-            .sum::<usize>()
-            .min(source.len());
-        let line_end = source[line_start..]
-            .find('\n')
-            .map(|offset| line_start + offset)
-            .unwrap_or(source.len());
-        if source.is_char_boundary(line_start) && source.is_char_boundary(line_end) {
-            self.jump_to_document_search_range(line_start..line_end, cx);
+        // 行号换算只有一条路：缓冲区里的第 line 行（0 基）。它说的就是文件。
+        let range = self.buffer.line_range(line);
+        if !range.is_empty() {
+            self.jump_to_document_search_range(range, cx);
         }
     }
 

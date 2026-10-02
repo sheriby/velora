@@ -197,7 +197,11 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
         totals.5 as f64 / 1e6,
     );
     // 每次按键的全文遍数必须是常数级（与文档大小无关）。
-    assert!(delta.0 <= 1, "一次按键出现 {} 次全文序列化", delta.0);
+    //
+    // 序列化这一项现在是 0：打字走的是区间写回，`mark_dirty_written_back` 声明过
+    // 区间，就不该再整篇序列化一遍。读侧（搜索、大纲、状态栏）也全部改读缓冲区。
+    // 这条从「≤1」收到「=0」，是 buffer 为事实源换来的实际收益。
+    assert_eq!(delta.0, 0, "一次按键出现 {} 次全文序列化", delta.0);
     assert!(delta.1 <= 2, "一次按键出现 {} 次 mapping 重建", delta.1);
     assert!(delta.2 <= 1, "一次按键出现 {} 次整篇字数扫描", delta.2);
     assert!(delta.3 <= 2, "一次按键出现 {} 次行计划重建", delta.3);
@@ -238,10 +242,11 @@ async fn per_keystroke_document_passes_stay_bounded(cx: &mut TestAppContext) {
     }
     let after_idle = perf_passes(&editor, cx);
 
+    let typing = perf_delta(before, after_type);
     eprintln!(
-        "[measure] 一次按键 (序列化, mapping, 字数, 行计划) = {:?}",
-        perf_delta(before, after_type)
+        "[measure] 一次按键 (序列化, mapping, 字数, 行计划) = {typing:?}"
     );
+    assert_eq!(typing.0, 0, "一次按键做了 {typing:?} 次全文序列化");
     eprintln!(
         "[measure] 五个静止帧 = {:?}",
         perf_delta(before_idle, after_idle)

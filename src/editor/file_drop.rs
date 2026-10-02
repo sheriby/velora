@@ -276,7 +276,7 @@ impl Editor {
             };
             built
         } else {
-            Self::build_root_blocks_from_markdown(cx, &normalized)
+            self.rebuild_root_blocks_from_buffer(cx)
         };
         if roots.is_empty() {
             roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
@@ -349,15 +349,8 @@ impl Editor {
         self.redo_history.clear();
         self.pending_undo_capture = None;
         self.last_selection_snapshot = Self::empty_selection_snapshot();
-        // last_stable_source_text 必须是模型序列化文本而非原始输入：
-        // 大纲/锚点/源码映射都锚定这份文本，序列化对非规范输入的规范化
-        // （如相邻根块补空行）会让原文基准逐字节漂移（用户报修）。
-        // 代码文档例外：无规范化问题，撤销按原始字节恢复。
-        self.last_stable_source_text = if self.code_document {
-            normalized
-        } else {
-            self.document.markdown_text(cx)
-        };
+        // 拖拽打开的文档同样以缓冲区为基准（见 `from_markdown` 里的同一注释）。
+        self.refresh_stable_document_snapshot(cx);
         self.history_restore_in_progress = false;
         self.sync_workspace_after_document_path_change(cx);
         cx.notify();

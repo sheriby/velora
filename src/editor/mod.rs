@@ -675,25 +675,18 @@ impl Editor {
             last_selection_snapshot: Self::empty_selection_snapshot(),
             last_selection_snapshot_source: None,
             overlay_focus_restore_target: None,
-            last_stable_source_text: normalized.clone(),
+            last_stable_source_text: String::new(),
             history_restore_in_progress: false,
             image_reference_definitions: Arc::default(),
             link_reference_definitions: Arc::default(),
             footnote_registry: Arc::default(),
             runtime_context_sensitive_blocks: HashSet::new(),
         };
-        // last_stable_source_text 必须取导入模型的序列化文本，而不是原始输入：
-        // 序列化会对非规范输入做规范化（如代码围栏后直接跟 `---` 会补空行），
-        // 大纲/锚点跳转/源码映射全部以这份文本为基准；拿原文当基准时偏移随
-        // 文档深度累积漂移（用户报修：大纲跳转光标落进标题两个字之间）。
-        // 代码文档例外：内容没有 Markdown 规范化问题，且撤销恢复按原始
-        // 字节走，套上围栏会破坏文档。文件本身的规范化与现状一致——首次
-        // 保存时才落盘。
-        editor.last_stable_source_text = if editor.code_document {
-            normalized
-        } else {
-            editor.document.markdown_text(cx)
-        };
+        // 稳定快照就是缓冲区里的那份文本：大纲、锚点跳转、搜索高亮、状态栏
+        // 全部锚定它，而块的位置由 `source_span` 说了算，两边同一个坐标系。
+        // 此前它取的是导入模型的序列化文本，非规范输入（围栏后紧跟 `---`、
+        // 表格列宽填充）会让基准逐字节漂移。
+        editor.refresh_stable_document_snapshot(cx);
         editor.rebuild_table_runtimes(cx); // Also refreshes image and reference contexts.
         editor.pending_focus = editor.first_focusable_entity_id(cx);
         editor.active_entity_id = editor.pending_focus;
@@ -1122,22 +1115,30 @@ impl Editor {
     pub(crate) fn resync_buffer_and_stable_snapshot(&mut self, cx: &mut Context<Self>) {
         let skip_resync = std::mem::take(&mut self.skip_next_resync);
         if self.writes_through_the_buffer() {
-            let (text, block_spans) = self.document.markdown_text_with_block_spans(cx);
-            self.last_stable_source_text = text.clone();
             if !skip_resync {
+                let started = std::time::Instant::now();
+                let (text, block_spans) = self.document.markdown_text_with_block_spans(cx);
+                // 性能闸门盯的就是这一遍：改动自己声明了区间（`skip_resync`）时
+                // 一次按键应该是 0 遍整篇序列化。
+                self.source_serializations
+                    .set(self.source_serializations.get() + 1);
+                self.source_serialization_nanos.set(
+                    self.source_serialization_nanos.get()
+                        + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+                );
                 self.apply_resynced_text(&text);
                 // 区间只有在它派生自的那份文本里才成立：跳过重投影时也别动区间，
                 // 写回路径已经把区间按缓冲区字节摆好了。
                 self.reattach_root_spans(&block_spans, &text, cx);
             }
-            return;
-        }
-        // 源码/代码文档：缓冲区装的是不套围栏的源码文本。
-        let text = self.document.raw_source_text(cx);
-        self.last_stable_source_text = text.clone();
-        if !skip_resync {
+        } else if !skip_resync {
+            // 源码/代码文档：缓冲区装的是不套围栏的源码文本。
+            let text = self.document.raw_source_text(cx);
             self.apply_resynced_text(&text);
         }
+        // 稳定快照与读取侧同源：搜索高亮、大纲、跨块选区恢复都按它的坐标算位置，
+        // 所以它就是缓冲区的内容。
+        self.last_stable_source_text = self.buffer.text();
     }
 
     /// 把重投影出来的文本作为**一次**写入落进缓冲区。

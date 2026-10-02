@@ -349,6 +349,9 @@ pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
     let mut roots = Vec::new();
     let mut stack: Vec<(u8, Vec<usize>)> = Vec::new();
     let mut fence: Option<(char, usize)> = None;
+    // 大纲读的是文件里的那份文本，所以 Setext 标题必须在这里也认得——
+    // 以前它读重新序列化的文本，Setext 已经被转成 `#` 才进来。
+    let mut previous: Option<(usize, &str)> = None;
 
     for (line_index, line) in markdown.lines().enumerate() {
         let trimmed = line.trim_start();
@@ -356,51 +359,85 @@ pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
             if is_closing_fence(trimmed, marker, len) {
                 fence = None;
             }
+            previous = None;
             continue;
         }
 
         if let Some(next_fence) = opening_fence(trimmed) {
             fence = Some(next_fence);
+            previous = None;
             continue;
         }
 
-        let Some((level, title)) = BlockKind::parse_atx_heading_line(line) else {
-            continue;
-        };
-
-        while stack
-            .last()
-            .is_some_and(|(parent_level, _)| *parent_level >= level)
-        {
-            stack.pop();
-        }
-
-        let node = WorkspaceTreeNode {
-            id: format!("outline:{line_index}"),
-            label: title,
-            kind: WorkspaceTreeKind::Heading {
-                line: line_index,
-                level,
+        let heading = match BlockKind::parse_atx_heading_line(line) {
+            Some((level, title)) => Some((line_index, level, title)),
+            None => match setext_level(trimmed).zip(previous) {
+                Some((level, (caption_index, caption)))
+                    if is_setext_caption(caption.trim()) =>
+                {
+                    Some((caption_index, level, caption.trim().to_string()))
+                }
+                _ => None,
             },
-            children: Vec::new(),
         };
 
-        let siblings = if let Some((_, parent_path)) = stack.last() {
-            children_at_path_mut(&mut roots, parent_path)
-        } else {
-            &mut roots
-        };
-        siblings.push(node);
+        if let Some((heading_line, level, title)) = heading {
+            while stack
+                .last()
+                .is_some_and(|(parent_level, _)| *parent_level >= level)
+            {
+                stack.pop();
+            }
 
-        let mut node_path = stack
-            .last()
-            .map(|(_, path)| path.clone())
-            .unwrap_or_default();
-        node_path.push(siblings.len() - 1);
-        stack.push((level, node_path));
+            let node = WorkspaceTreeNode {
+                id: format!("outline:{heading_line}"),
+                label: title,
+                kind: WorkspaceTreeKind::Heading {
+                    line: heading_line,
+                    level,
+                },
+                children: Vec::new(),
+            };
+
+            let siblings = if let Some((_, parent_path)) = stack.last() {
+                children_at_path_mut(&mut roots, parent_path)
+            } else {
+                &mut roots
+            };
+            siblings.push(node);
+
+            let mut node_path = stack
+                .last()
+                .map(|(_, path)| path.clone())
+                .unwrap_or_default();
+            node_path.push(siblings.len() - 1);
+            stack.push((level, node_path));
+            previous = None;
+            continue;
+        }
+
+        previous = Some((line_index, line));
     }
 
     roots
+}
+
+/// 这一行是不是 Setext 划线（`===` 一级、`---` 二级）。
+fn setext_level(trimmed: &str) -> Option<u8> {
+    let marker = trimmed.chars().next()?;
+    if !matches!(marker, '=' | '-') || !trimmed.chars().all(|ch| ch == marker) {
+        return None;
+    }
+    Some(if marker == '=' { 1 } else { 2 })
+}
+
+/// 划线上方那行能不能当标题正文：列表项、引用、分隔线、围栏这些都不算。
+fn is_setext_caption(caption: &str) -> bool {
+    !caption.is_empty()
+        && !caption.starts_with('#')
+        && !caption.starts_with('>')
+        && !matches!(caption.chars().next(), Some('-') | Some('*') | Some('+') | Some('`') | Some('~'))
+        && BlockKind::parse_atx_heading_line(caption).is_none()
 }
 
 pub(crate) fn children_at_path_mut<'a>(

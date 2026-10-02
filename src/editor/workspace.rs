@@ -249,7 +249,7 @@ pub(super) struct WorkspaceState {
     outline_tree: Vec<WorkspaceTreeNode>,
     outline_source: Option<String>,
     /// 扁平标题清单（roadmap C2）：供正文里的 `[TOC]` 块渲染目录。
-    toc_entries: Vec<TocEntry>,
+    pub(crate) toc_entries: Vec<TocEntry>,
     expanded: HashSet<String>,
     /// 外部文件事件的树刷新防抖代数（见 `schedule_workspace_tree_refresh`）。
     tree_refresh_generation: u32,

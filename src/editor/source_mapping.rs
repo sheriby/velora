@@ -5,19 +5,14 @@ use std::ops::Range;
 use super::*;
 
 impl Editor {
-    pub(super) fn current_document_source(&self, cx: &App) -> String {
-        self.source_serializations
-            .set(self.source_serializations.get() + 1);
-        let started = std::time::Instant::now();
-        let source = match self.view_mode {
-            ViewMode::Rendered => self.document.markdown_text(cx),
-            ViewMode::Source => self.document.raw_source_text(cx),
-        };
-        self.source_serialization_nanos.set(
-            self.source_serialization_nanos.get()
-                + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
-        );
-        source
+    /// 读取侧（搜索、大纲、状态栏、跳转）看到的文档文本。
+    ///
+    /// 就是缓冲区里的那份——也就是文件里的那份。以前这里重新序列化块树，
+    /// 于是搜索命中的行号与字节区间说的是「模型眼里的文档」，用户看到的
+    /// 却是磁盘上的文件：Setext 标题少一行、表格列宽被重新填充，两边就对不上。
+    /// 偏移也不再靠反推，块的位置由 `source_span` 说了算。
+    pub(super) fn current_document_source(&self, _cx: &App) -> String {
+        self.buffer.text()
     }
 
     pub(super) fn is_empty_paragraph_separator(block: &Block) -> bool {
@@ -323,13 +318,113 @@ impl Editor {
         mappings: &mut Vec<SourceTargetMapping>,
         cx: &App,
     ) -> usize {
-        let Some(table) = block.read(cx).record.table.clone() else {
+        let block_ref = block.read(cx);
+        let (Some(table), Some(runtime)) = (
+            block_ref.record.table.clone(),
+            block_ref.table_runtime.clone(),
+        ) else {
             return 0;
         };
-        let Some(runtime) = block.read(cx).table_runtime.clone() else {
-            return 0;
+        let Some(span) = block_ref.record.source_span.clone() else {
+            drop(block_ref);
+            // 引用块里的表格没有自己的源码区间（区间只挂在根块上），只能继续按
+            // 序列化行来猜位置——漂移被限制在这个根块的区间之内。
+            return self.push_inferred_table_mappings(
+                block,
+                list_depth,
+                quote_depth,
+                absolute_start,
+                mappings,
+                cx,
+            );
         };
+        drop(block_ref);
 
+        // 单元格的位置从缓冲区里这张表的原文量出来（在原文行里找单元格文本），
+        // 不再按「列宽 = 内容长 + 3」猜：列宽是用户在文件里写的样子，猜的口径
+        // 在填充过的表格上越漂越远。找不到（写法被规范化改过字节）就没有该格的
+        // 映射，命中退回宿主表格块——阶段 3 让解析期记下每个格的字节区间后，
+        // 这里整个由记录代替。
+        let raw = self.buffer.slice(span.clone());
+        let mut raw_lines = raw.split('\n');
+        let mut line_start = span.start;
+
+        if let Some(header_line) = raw_lines.next() {
+            self.push_table_row_mappings(
+                header_line,
+                line_start,
+                &runtime.header,
+                &table.header,
+                mappings,
+            );
+            line_start += header_line.len() + 1;
+        }
+        if let Some(separator_line) = raw_lines.next() {
+            line_start += separator_line.len() + 1;
+        }
+        for (row_cells, row_trees) in runtime.rows.iter().zip(table.rows.iter()) {
+            let Some(row_line) = raw_lines.next() else { break };
+            self.push_table_row_mappings(
+                row_line,
+                line_start,
+                row_cells,
+                row_trees,
+                mappings,
+            );
+            line_start += row_line.len() + 1;
+        }
+
+        span.len()
+    }
+
+    /// 把一行表格里的每个单元格映射到它在缓冲区原文里的字节区间。
+    fn push_table_row_mappings(
+        &self,
+        row_line: &str,
+        line_start: usize,
+        cells: &[Entity<Block>],
+        trees: &[crate::components::InlineTextTree],
+        mappings: &mut Vec<SourceTargetMapping>,
+    ) {
+        let mut cursor = 0usize;
+        for (cell, tree) in cells.iter().zip(trees.iter()) {
+            let cell_markdown = serialize_table_cell_markdown(tree);
+            if cell_markdown.is_empty() {
+                continue;
+            }
+            let Some(found) = row_line[cursor..].find(&cell_markdown) else {
+                continue;
+            };
+            let start = line_start + cursor + found;
+            let len = cell_markdown.len();
+            cursor += found + len;
+            mappings.push(SourceTargetMapping {
+                entity: cell.clone(),
+                full_source_range: start..start + len,
+                content_to_source: (0..=len).collect(),
+                source_to_content: (0..=len).collect(),
+            });
+        }
+    }
+
+    /// 引用块内表格的映射：按序列化行 + 「列宽 = 内容长 + 3」推算单元格位置。
+    fn push_inferred_table_mappings(
+        &self,
+        block: &Entity<Block>,
+        list_depth: usize,
+        quote_depth: usize,
+        absolute_start: usize,
+        mappings: &mut Vec<SourceTargetMapping>,
+        cx: &App,
+    ) -> usize {
+        let block_ref = block.read(cx);
+        let (Some(table), Some(runtime)) = (
+            block_ref.record.table.clone(),
+            block_ref.table_runtime.clone(),
+        ) else {
+            return 0;
+        };
+        drop(block_ref);
         let lines = crate::components::serialize_table_markdown_lines(&table);
         let indentation = "  ".repeat(list_depth);
         let quote_prefix = "> ".repeat(quote_depth);
@@ -728,26 +823,28 @@ impl Editor {
 
         match self.view_mode {
             ViewMode::Rendered => {
-                // 锚点来自序列化遍历本身（markdown_text_with_block_spans）：
-                // 映射与文本同源，构造上零漂移。此前映射按「块间必有空行」
-                // 自行记账，非规范输入（相邻根块、编辑后状态）会累积漂移，
-                // 甚至切进多字节字符中间直接 coredump（用户报修）。
-                let (source, spans) = self.document.markdown_text_with_block_spans(cx);
-                let span_by_id: HashMap<EntityId, std::ops::Range<usize>> =
-                    spans.into_iter().collect();
-                let mut cursor = 0usize;
+                // 锚点就是每个根块在缓冲区里的区间：位置与文本同源，不再按
+                // 「块间必有空行」自行记账——那条路在非规范输入（相邻根块、
+                // 编辑后状态）会累积漂移，甚至切进多字节字符中间直接 coredump
+                // （用户报修）。块内部的偏移仍由下面的重建算出，写法不规范的
+                // 块（表格列宽填充）会在块内漂几个字节，但绝不会再漂到别的块里。
+                let mut next_anchor = 0usize;
                 for block in self.document.root_blocks() {
                     let id = block.entity_id();
-                    let is_empty_root = Self::is_empty_root_paragraph(block.read(cx));
-                    if is_empty_root {
-                        // 空根块无文本映射，但要有零宽 span 让跨块选区边界
-                        // 能解析（否则删除选区会中止）。
-                        block_ranges.insert(id, cursor..cursor);
-                        continue;
-                    }
-                    let Some(span) = span_by_id.get(&id).cloned() else {
+                    let Some(span) = block.read(cx).record.source_span.clone() else {
+                        // 这个根块还没有区间（刚插进树、尚未写回缓冲区）：给一个
+                        // 就近的零宽锚点，跨块选区的端点才解析得出来。真正的区间
+                        // 要等写回那一步才有。
+                        block_ranges.insert(id, next_anchor..next_anchor);
                         continue;
                     };
+                    next_anchor = (span.end + 1).min(self.buffer.byte_len());
+                    if Self::is_empty_root_paragraph(block.read(cx)) {
+                        // 空根块无文本映射，但要有零宽 span 让跨块选区边界
+                        // 能解析（否则删除选区会中止）。
+                        block_ranges.insert(id, span.start..span.start);
+                        continue;
+                    }
                     let prior_mapping_count = mappings.len();
                     self.collect_single_block_source_mappings(
                         block,
@@ -758,18 +855,20 @@ impl Editor {
                         &mut block_ranges,
                         cx,
                     );
-                    // 保险：块内映射的边界钳到字符边界。锚点已精确，但个别
-                    // 块的映射记账长度与序列化跨度的任何微小出入都不允许
-                    // 变成 panic。
+                    // 保险：块内映射钳在本块的区间里并落在字符边界上。锚点已
+                    // 精确，但个别块的映射记账长度与缓冲区跨度的任何微小出入
+                    // 都不允许变成 panic，也不允许越界吃到邻居的字节。
                     for mapping in &mut mappings[prior_mapping_count..] {
-                        let start = mapping.full_source_range.start;
-                        let mut end = mapping.full_source_range.end.min(source.len());
-                        while end > start && !source.is_char_boundary(end) {
+                        let start = mapping.full_source_range.start.min(span.end);
+                        let mut end = mapping.full_source_range.end.min(span.end);
+                        while end > start && !self.buffer.is_char_boundary(end) {
                             end -= 1;
                         }
                         mapping.full_source_range = start..end;
                     }
-                    cursor = span.end + 1;
+                    // 根块的范围就是它在缓冲区里的区间：跨块选区按它取整块，
+                    // 不能按重建出来的长度算（写法不规范时两者长度不同）。
+                    block_ranges.insert(id, span.clone());
                     if target.is_some_and(|id| {
                         mappings[prior_mapping_count..]
                             .iter()

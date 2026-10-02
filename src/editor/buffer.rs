@@ -230,6 +230,27 @@ impl TextBuffer {
         self.byte_len()
     }
 
+    /// 第 `line` 行（0 基）的字节区间，**不含**行尾换行符。越界钳到文末。
+    ///
+    /// 读取侧（搜索跳转、大纲点击、行列号）都从这里把行号换成字节，
+    /// 于是它们说的坐标天然是文件坐标。
+    pub(crate) fn line_range(&self, line: usize) -> std::ops::Range<usize> {
+        let start = self.line_start(line);
+        let mut end = self.line_start(line + 1).min(self.byte_len());
+        if end > start && self.byte_at(end - 1) == Some(b'\n') {
+            end -= 1;
+        }
+        start..end.max(start)
+    }
+
+    /// 该偏移处的字节；越界返回 `None`（多字节字符内部的字节照样能取到）。
+    pub(crate) fn byte_at(&self, offset: usize) -> Option<u8> {
+        let (index, local) = self.locate(offset);
+        self.chunks
+            .get(index)
+            .and_then(|chunk| chunk.text.as_bytes().get(local).copied())
+    }
+
     /// 字节偏移所在行（0 基）。`offset` 等于全文长度时算作末行。
     ///
     /// `offset` 必须是字符边界（搜索命中与光标位置天然是）。

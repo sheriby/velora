@@ -222,26 +222,15 @@ impl Editor {
     /// to the heading with its title text selected, so typing replaces it
     /// directly in the document (roadmap C6).
     pub(crate) fn rename_outline_heading(&mut self, line: usize, cx: &mut Context<Self>) {
-        let source = self.last_stable_source_text.clone();
-        let line_start = source
-            .split_inclusive('\n')
-            .take(line)
-            .map(str::len)
-            .sum::<usize>()
-            .min(source.len());
-        let line_end = source[line_start..]
-            .find('\n')
-            .map(|offset| line_start + offset)
-            .unwrap_or(source.len());
-        let line_text = &source[line_start..line_end];
+        let range = self.buffer.line_range(line);
+        let line_text = self.buffer.slice(range.clone());
         let marker_len = line_text.chars().take_while(|ch| *ch == '#').count();
         let after_marker = &line_text[marker_len..];
         let spaces = after_marker.len() - after_marker.trim_start().len();
-        let title_start = (line_start + marker_len + spaces).min(line_end);
-        if !source.is_char_boundary(title_start) {
-            return;
+        let title_start = range.start + marker_len + spaces;
+        if title_start < range.end && self.buffer.is_char_boundary(title_start) {
+            self.jump_to_document_search_range(title_start..range.end, cx);
         }
-        self.jump_to_document_search_range(title_start..line_end, cx);
     }
 
     /// Clicking an outline heading jumps to that heading and expands it so its
@@ -249,19 +238,6 @@ impl Editor {
     pub(crate) fn open_outline_node(&mut self, id: String, line: usize, cx: &mut Context<Self>) {
         self.workspace.selected = Some(WorkspaceSelection::Outline(id.clone()));
         self.workspace.expanded.insert(id);
-        // The outline is built from `last_stable_source_text`, so compute the
-        // heading's byte range against that same snapshot.
-        let source = self.last_stable_source_text.clone();
-        let line_start = source
-            .split_inclusive('\n')
-            .take(line)
-            .map(str::len)
-            .sum::<usize>()
-            .min(source.len());
-        let line_end = source[line_start..]
-            .find('\n')
-            .map(|offset| line_start + offset)
-            .unwrap_or(source.len());
         // 折叠的标题被点击时先展开，使章节内容可见（roadmap C7）。
         if let Some(heading) = self.heading_block_at_source_line(line, cx) {
             heading.update(cx, |block, _cx| {
@@ -271,8 +247,9 @@ impl Editor {
                 }
             });
         }
-        if source.is_char_boundary(line_start) && source.is_char_boundary(line_end) {
-            self.jump_to_document_search_range(line_start..line_end, cx);
+        let range = self.buffer.line_range(line);
+        if !range.is_empty() {
+            self.jump_to_document_search_range(range, cx);
         } else {
             cx.notify();
         }
@@ -285,13 +262,7 @@ impl Editor {
         cx: &App,
     ) -> Option<Entity<crate::editor::Block>> {
         let (_, ranges) = self.build_source_target_mappings_with_block_ranges(cx);
-        let source = self.current_document_source(cx);
-        let line_start = source
-            .split_inclusive('\n')
-            .take(line)
-            .map(str::len)
-            .sum::<usize>()
-            .min(source.len());
+        let line_start = self.buffer.line_range(line).start;
         ranges
             .iter()
             .find(|(_, range)| range.contains(&line_start) || range.start == line_start)

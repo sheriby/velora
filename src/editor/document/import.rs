@@ -25,15 +25,27 @@ impl Editor {
         false
     }
 
-    pub(crate) fn build_root_blocks_from_markdown(
+    /// 从缓冲区现在的内容解析整棵块树，并把每个根块的源码区间挂回去。
+    ///
+    /// 这是「重建整棵树」的唯一入口：树是缓冲区的一份投影，输入必须是缓冲区的
+    /// 文本，输出必须带区间。漏掉区间的块在位置换算里没有锚点——搜索跳转、
+    /// 大纲点击、跨块选区端点都会落回 0。
+    pub(crate) fn rebuild_root_blocks_from_buffer(
+        &mut self,
         cx: &mut Context<Self>,
-        markdown: &str,
     ) -> Vec<Entity<crate::editor::Block>> {
-        let lines = markdown
-            .split('\n')
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        Self::build_blocks_from_lines_internal(cx, &lines, true, ChunkCursor::WHOLE_DOCUMENT).0
+        let source = self.buffer.text();
+        let lines = std::sync::Arc::new(Self::split_markdown_lines(&source));
+        let (mut roots, root_spans, _consumed) =
+            Self::build_root_block_chunk(cx, &lines, ChunkCursor::WHOLE_DOCUMENT);
+        if roots.is_empty() {
+            roots.push(Self::new_block(
+                cx,
+                BlockRecord::paragraph(String::new()),
+            ));
+        }
+        Self::attach_root_spans(&self.buffer, &roots, &root_spans, 0, cx);
+        roots
     }
 
     /// Splits normalized Markdown into lines once, so a document can be built in

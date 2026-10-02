@@ -394,20 +394,15 @@ impl Editor {
         forward
     }
 
-    /// 用缓冲区里的文本重建整棵块树（撤销/重做专用，O(文档)，只在按键时付）。
-    fn rebuild_document_from_buffer(&mut self, cx: &mut Context<Self>) {
+    /// 用缓冲区里的文本重建整棵块树，并把每个根块的区间挂回去。
+    ///
+    /// 视图切换、撤销/重做都走这一条：块树是缓冲区的投影，投影就只能从缓冲区来，
+    /// 不能拿重新序列化的文本去建（那样根块没有区间，位置换算就没了锚点）。
+    pub(crate) fn rebuild_document_from_buffer(&mut self, cx: &mut Context<Self>) {
         let source = self.buffer.text();
         match self.view_mode {
             ViewMode::Rendered => {
-                // 与打开文档同一条路：从缓冲区的文本解析根块，并把源码区间挂上——
-                // 区间说的是缓冲区里的字节，不能用重新序列化的结果去换算。
-                let lines = Arc::new(Self::split_markdown_lines(&source));
-                let (mut roots, root_spans, _consumed) =
-                    Self::build_root_block_chunk(cx, &lines, ChunkCursor::WHOLE_DOCUMENT);
-                if roots.is_empty() {
-                    roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
-                }
-                Self::attach_root_spans(&self.buffer, &roots, &root_spans, 0, cx);
+                let roots = self.rebuild_root_blocks_from_buffer(cx);
                 self.document.replace_roots(roots, cx);
                 self.rebuild_table_runtimes(cx);
                 self.rebuild_image_runtimes(cx);
@@ -444,12 +439,13 @@ impl Editor {
             return;
         }
 
+        // 先落缓冲区再算选区：这一步之前插入的新引用块还没有源码区间，
+        // 而位置换算只认区间——拿旧状态算出来的快照会把焦点放回上一个块。
+        // 引用块的重排会换掉整棵树的实体：先把当前块树落进缓冲区并挂好区间，
+        // 否则刚插入的块算不出位置，快照会退回上一个块。
+        self.resync_buffer_and_stable_snapshot(cx);
         let selection_snapshot = self.capture_source_selection_snapshot(cx);
-        let source = self.document.markdown_text(cx);
-        let mut roots = Self::build_root_blocks_from_markdown(cx, &source);
-        if roots.is_empty() {
-            roots.push(Self::new_block(cx, BlockRecord::paragraph(String::new())));
-        }
+        let roots = self.rebuild_root_blocks_from_buffer(cx);
         self.document.replace_roots(roots, cx);
         self.rebuild_table_runtimes(cx);
         self.rebuild_image_runtimes(cx);
