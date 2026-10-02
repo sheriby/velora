@@ -152,3 +152,78 @@ async fn opening_then_saving_without_edit_preserves_every_byte(cx: &mut TestAppC
         failures.join("\n")
     );
 }
+
+/// 工作区标签打开（`open_workspace_file`）与文件窗口打开走的是不同漏斗，
+/// 它也必须带上原始字节。
+#[gpui::test]
+async fn opening_from_a_workspace_tab_preserves_every_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let root = temp_markdown_path("workspace-round-trip");
+    fs::create_dir_all(&root).expect("create workspace root");
+    let path = root.join("笔记.md");
+    let original = "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\r\n\r\n末尾没有换行"
+        .as_bytes()
+        .to_vec();
+    fs::write(&path, &original).expect("write fixture");
+    let cleanup = root.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(cleanup);
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx);
+        });
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(!editor.document_dirty, "标签打开后不应是脏的");
+    });
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    assert_eq!(fs::read(&path).expect("read saved"), original);
+}
+
+/// 拖拽/按路径替换文档：缓冲区必须整个换掉，不能留着上一个文档的内容，
+/// 否则保存会写出别的文件的字节。
+#[gpui::test]
+async fn replacing_the_document_by_path_swaps_the_buffer_and_keeps_its_bytes(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("replace-by-path");
+    let original = "# 换进来的文档\n\n末行换行也保留\n".as_bytes().to_vec();
+    fs::write(&path, &original).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "旧文档的内容，绝不能再出现在保存结果里".to_string(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor
+            .replace_document_from_path(&path, cx)
+            .expect("open by path");
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.buffer.text().contains("旧文档"),
+            "缓冲区还留着上一个文档的内容"
+        );
+        assert!(!editor.document_dirty, "按路径替换后不应是脏的");
+    });
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    assert_eq!(fs::read(&path).expect("read saved"), original);
+}

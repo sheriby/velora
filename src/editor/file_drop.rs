@@ -174,8 +174,9 @@ impl Editor {
         path: &Path,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let markdown = super::encoding::read_document_string(path)
+        let document = super::encoding::load_document(path)
             .with_context(|| format!("failed to read '{}'", path.display()))?;
+        let super::encoding::LoadedDocument { raw, text: markdown } = document;
         self.document_revision = self.document_revision.wrapping_add(1);
         self.autosave_task = None;
         self.recovery_source_path = None;
@@ -191,6 +192,7 @@ impl Editor {
         } else {
             self.replace_document_from_code_source(markdown, path.to_path_buf(), cx);
         }
+        self.attach_file_origin(raw);
         crate::app_menu::record_recent_file_from_editor(path, cx);
         Ok(())
     }
@@ -235,6 +237,9 @@ impl Editor {
         } else {
             markdown
         };
+        // 内容整体换掉了，事实源必须跟着换：缓冲区留着上一个文档的内容，
+        // 保存就会写出别的文件的字节。
+        self.reset_buffer_for_text(&normalized);
         let is_code = code_language.is_some();
         self.code_document = is_code;
         self.code_uses_crlf = is_code && had_crlf;

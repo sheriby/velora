@@ -305,14 +305,17 @@ impl Editor {
             .iter()
             .find(|tab| tab.path == path)
             .cloned();
-        let (markdown, dirty, recovery_id, file_version) = if let Some(tab) = cached {
+        // `raw` 是本次读盘拿到的原始字节；脏标签的内容来自内存而不是磁盘，
+        // 那种情况没有「原样写回」的依据，留空。
+        let (markdown, raw, dirty, recovery_id, file_version) = if let Some(tab) = cached {
             if tab.dirty {
-                (tab.markdown, true, tab.recovery_id, tab.file_version)
+                (tab.markdown, Vec::new(), true, tab.recovery_id, tab.file_version)
             } else {
-                match crate::editor::encoding::read_document_string(&path) {
-                    Ok(markdown) => {
-                        let file_version = crate::editor::persistence::file_content_version(&markdown);
-                        (markdown, false, tab.recovery_id, file_version)
+                match crate::editor::encoding::load_document(&path) {
+                    Ok(document) => {
+                        let crate::editor::encoding::LoadedDocument { raw, text } = document;
+                        let file_version = crate::editor::persistence::file_content_version(&text);
+                        (text, raw, false, tab.recovery_id, file_version)
                     }
                     Err(err) => {
                         self.workspace.file_error = Some(err.to_string());
@@ -322,13 +325,13 @@ impl Editor {
                 }
             }
         } else {
-            match crate::editor::encoding::read_document_string(&path) {
-                Ok(markdown) => (
-                    markdown.clone(),
-                    false,
-                    uuid::Uuid::new_v4(),
-                    crate::editor::persistence::file_content_version(&markdown),
-                ),
+            match crate::editor::encoding::load_document(&path) {
+                Ok(document) => {
+                    let crate::editor::encoding::LoadedDocument { raw, text } = document;
+                    let file_version =
+                        crate::editor::persistence::file_content_version(&text);
+                    (text, raw, false, uuid::Uuid::new_v4(), file_version)
+                }
                 Err(err) => {
                     self.workspace.file_error = Some(err.to_string());
                     cx.notify();
@@ -379,10 +382,11 @@ impl Editor {
         // Markdown rendering is for .md/.markdown only; every other text file
         // (code, dotfiles, plain text) opens as monospace source text.
         if is_markdown_document(&path) {
-            self.replace_document_from_markdown(markdown, Some(path), cx);
+            self.replace_document_from_markdown(markdown, Some(path.clone()), cx);
         } else {
-            self.replace_document_from_code_source(markdown, path, cx);
+            self.replace_document_from_code_source(markdown, path.clone(), cx);
         }
+        self.attach_file_origin(raw);
         self.document_dirty = dirty;
         self.file_version = Some(file_version);
         if dirty || self.has_dirty_workspace_documents() {

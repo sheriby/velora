@@ -898,6 +898,14 @@ impl Editor {
         self.buffer.set_file_origin(raw, shape);
     }
 
+    /// 文档内容被整体替换（切标签、拖拽打开、会话恢复）时重建缓冲区。
+    ///
+    /// 缓冲区是唯一事实源，绝不能留着上一个文档的内容——那会让保存写出别的
+    /// 文件的字节。传入的必须是已规范成 LF 的文本。
+    pub(crate) fn reset_buffer_for_text(&mut self, normalized_text: &str) {
+        self.buffer = buffer::TextBuffer::from_text(normalized_text);
+    }
+
     pub(crate) fn from_recovery(
         cx: &mut Context<Self>,
         snapshot: crate::config::RecoverySnapshot,
