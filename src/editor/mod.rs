@@ -988,12 +988,26 @@ impl Editor {
         }
     }
 
+    /// 这个文档的字节是否由缓冲区说了算。
+    ///
+    /// 源码视图与代码/纯文本文件的块树是「整篇源码的一份投影」：根块没有源码区间
+    /// （写回无处落笔），而 `markdown_text` 还会给整篇文本套上围栏。这类文档继续
+    /// 走序列化，直到阶段 2 让源码模式直接读写缓冲区为止。
+    pub(crate) fn writes_through_the_buffer(&self) -> bool {
+        !self.code_document
+            && !self.source_mode_fallback_required
+            && self.view_mode == ViewMode::Rendered
+    }
+
     /// 整篇重投影：块树的序列化结果换进缓冲区，并据此重建所有根块的区间。
     ///
     /// 这是写回的保底档位，代价是**未编辑的块也被重新序列化一次**（表格列宽填充、
     /// `__` 强调这些写法就此改写），原始字节也随之丢弃。每多一条走到这里的路径，
     /// 就少一块「保住原文」的地盘——收敛方向是让改动自己声明区间，不是让这里变快。
     pub(crate) fn resync_buffer_from_document(&mut self, cx: &mut Context<Self>) {
+        if !self.writes_through_the_buffer() {
+            return;
+        }
         let (text, block_spans) = self.document.markdown_text_with_block_spans(cx);
         self.buffer = buffer::TextBuffer::from_text(&text);
         let roots = self.document.root_blocks().to_vec();

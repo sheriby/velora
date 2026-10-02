@@ -231,6 +231,7 @@ async fn streamed_document_saves_complete_text_to_disk(cx: &mut TestAppContext) 
         let _ = fs::remove_file(&cleanup_path);
     });
 
+    let expected_source = markdown.clone();
     let (editor, cx) = cx.add_window_view({
         let path = path.clone();
         move |_window, cx| {
@@ -249,18 +250,21 @@ async fn streamed_document_saves_complete_text_to_disk(cx: &mut TestAppContext) 
 
     cx.simulate_input(" x");
     redraw(cx);
-    let expected = editor.read_with(cx, |editor, cx| {
+    editor.read_with(cx, |editor, _cx| {
         assert!(editor.document_dirty);
-        editor.document.markdown_text(cx)
     });
-    assert!(expected.contains("末尾段落"), "续建后的文档缺少尾段");
 
     cx.dispatch_action(SaveDocument);
     redraw(cx);
+    // 新语义：保存写缓冲区，落盘的就是「原文件 + 那一处改动」。
+    // 旧断言拿整篇重新序列化的结果来比，等于默认了未编辑的块可以被改写。
+    let saved = fs::read_to_string(&path).expect("read saved markdown");
     assert_eq!(
-        fs::read_to_string(&path).expect("read saved markdown"),
-        expected
+        saved,
+        format!(" x{expected_source}"),
+        "续建的文档保存后不是「原文 + 一处改动」"
     );
+    assert!(saved.contains("末尾段落"), "续建后的文档缺少尾段");
     editor.read_with(cx, |editor, _cx| {
         assert!(!editor.document_dirty);
     });

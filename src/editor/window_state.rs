@@ -475,7 +475,12 @@ impl Editor {
     /// 缓冲区只能整篇重投影才能跟上，未编辑块的原始字节就此丢失。想保住原文的改动
     /// 路径请走 [`Self::mark_dirty_written_back`]。
     pub(super) fn mark_dirty(&mut self, cx: &mut Context<Self>) {
-        self.resync_buffer_from_document(cx);
+        if self.writes_through_the_buffer() {
+            self.resync_buffer_from_document(cx);
+        } else {
+            // 源码/代码文档的改动还没接进缓冲区，那份「打开时的原始字节」就不作数了。
+            self.buffer.discard_pristine();
+        }
         self.finish_dirty(cx);
     }
 

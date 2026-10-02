@@ -462,23 +462,24 @@ impl Editor {
         }
     }
 
-    /// 保存实际落盘的**文本**：未编辑过就是缓冲区里的原文（与磁盘上的字节一一
-    /// 对应），否则仍是块树序列化——直到编辑写回接进缓冲区为止。
+    /// 保存实际落盘的**文本**（LF，与落盘字节一一对应）：渲染模式取缓冲区，
+    /// 源码/代码文档还取块树序列化。
     ///
     /// 版本号、工作区标签文本、本地历史都取这份文本，不能取重新序列化的结果，
     /// 否则下一次校验磁盘时会发现自己刚写的文件「被外部改了」。
     pub(super) fn document_text_for_save(&self, cx: &App) -> String {
-        if self.buffer.is_pristine() {
+        if self.writes_through_the_buffer() || self.buffer.is_pristine() {
             self.buffer.text()
         } else {
             self.serialized_document_text(cx)
         }
     }
 
-    /// 保存落盘的**字节**：未编辑过就原样写回打开时读到的字节，一个字节都不必
-    /// 重新生成——这是「打开不编辑、保存不改写用户文件」的实现方式。
+    /// 保存落盘的**字节**：写的就是缓冲区。未编辑过时 `file_bytes` 直接返回打开
+    /// 读到的那串字节；编辑过的部分由区间写回落进缓冲区，未编辑的块保持原文，
+    /// 行尾与编码按文件原来的形状重新编码。
     pub(super) fn document_bytes_for_save(&self, cx: &App) -> Vec<u8> {
-        if self.buffer.is_pristine() {
+        if self.writes_through_the_buffer() || self.buffer.is_pristine() {
             self.buffer.file_bytes()
         } else {
             self.serialized_document_text(cx).into_bytes()

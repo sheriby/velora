@@ -9,6 +9,7 @@ use super::block_source_spans::{
     assert_spans_tile_the_content, rendered_blocks, root_block_spans, span_ranges,
 };
 use super::common::*;
+use crate::editor::encoding;
 
 /// 一个「重新序列化必然改写」的文档：填充过的表格 + 下划线强调 + 括号序号列表。
 pub(super) const LOSSY_SHAPE_FIXTURE: &str = concat!(
@@ -147,4 +148,40 @@ fn present_root_spans(
             .collect::<Vec<_>>();
         (spans, editor.buffer.text())
     })
+}
+
+/// 保存换源到缓冲区：改一处，别的块在**磁盘上**也还是一个字节都没变。
+#[gpui::test]
+async fn saving_after_an_edit_keeps_the_untouched_blocks_byte_identical(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-save");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.simulate_input("写");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    // 只有被编辑的那一块变了：表格填充、`__` 写法、CRLF 与末行换行都还是磁盘上的样子。
+    // 走整篇重新序列化的话，这四样会同时被改写（`| --- |`、`**下划线**`、LF、丢末行换行）。
+    assert_eq!(
+        saved,
+        LOSSY_SHAPE_FIXTURE.replace("段落文字", "写段落文字").replace('\n', "\r\n")
+    );
+    assert!(!editor.read_with(cx, |editor, _cx| editor.document_dirty));
 }
