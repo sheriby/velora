@@ -725,49 +725,94 @@ impl Editor {
     ) -> (Vec<SourceTargetMapping>, HashMap<EntityId, Range<usize>>) {
         let mut mappings = Vec::new();
         let mut block_ranges = HashMap::new();
-        let mut absolute = 0usize;
-        let source = self.current_document_source(cx);
 
-        for block in self.document.root_blocks() {
-            let is_empty_root = Self::is_empty_root_paragraph(block.read(cx));
-            if is_empty_root {
-                // Empty roots carry no text mapping, but they still need a source
-                // span so a cross-block selection whose boundary lands on one can
-                // be resolved (otherwise deletion of the selection aborts). A
-                // zero-width anchor at the current cursor is the right position:
-                // 0 for a leading empty root, source end for a trailing one.
-                block_ranges.insert(block.entity_id(), absolute..absolute);
-                continue;
+        match self.view_mode {
+            ViewMode::Rendered => {
+                // 锚点来自序列化遍历本身（markdown_text_with_block_spans）：
+                // 映射与文本同源，构造上零漂移。此前映射按「块间必有空行」
+                // 自行记账，非规范输入（相邻根块、编辑后状态）会累积漂移，
+                // 甚至切进多字节字符中间直接 coredump（用户报修）。
+                let (source, spans) = self.document.markdown_text_with_block_spans(cx);
+                let span_by_id: HashMap<EntityId, std::ops::Range<usize>> =
+                    spans.into_iter().collect();
+                let mut cursor = 0usize;
+                for block in self.document.root_blocks() {
+                    let id = block.entity_id();
+                    let is_empty_root = Self::is_empty_root_paragraph(block.read(cx));
+                    if is_empty_root {
+                        // 空根块无文本映射，但要有零宽 span 让跨块选区边界
+                        // 能解析（否则删除选区会中止）。
+                        block_ranges.insert(id, cursor..cursor);
+                        continue;
+                    }
+                    let Some(span) = span_by_id.get(&id).cloned() else {
+                        continue;
+                    };
+                    let prior_mapping_count = mappings.len();
+                    self.collect_single_block_source_mappings(
+                        block,
+                        0,
+                        0,
+                        span.start,
+                        &mut mappings,
+                        &mut block_ranges,
+                        cx,
+                    );
+                    // 保险：块内映射的边界钳到字符边界。锚点已精确，但个别
+                    // 块的映射记账长度与序列化跨度的任何微小出入都不允许
+                    // 变成 panic。
+                    for mapping in &mut mappings[prior_mapping_count..] {
+                        let start = mapping.full_source_range.start;
+                        let mut end = mapping.full_source_range.end.min(source.len());
+                        while end > start && !source.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        mapping.full_source_range = start..end;
+                    }
+                    cursor = span.end + 1;
+                    if target.is_some_and(|id| {
+                        mappings[prior_mapping_count..]
+                            .iter()
+                            .any(|mapping| mapping.entity.entity_id() == id)
+                    }) {
+                        break;
+                    }
+                }
             }
-
-            // 锚定原文：跳过块间实际存在的空行。相邻根块之间可以没有空行
-            // （原文里代码围栏/列表项后直接跟 `---`），旧实现按「每块之间必有
-            // 1 个空行」记账，每处多算 1 字节且随文档深度累积，大纲跳转与
-            // 搜索定位越靠后越歪（用户报修：光标落在标题两个字之间）。
-            while source[absolute.min(source.len())..].starts_with('\n') {
-                absolute += 1;
-            }
-
-            let prior_mapping_count = mappings.len();
-            absolute += self.collect_single_block_source_mappings(
-                block,
-                0,
-                0,
-                absolute,
-                &mut mappings,
-                &mut block_ranges,
-                cx,
-            );
-            absolute += 1;
-            if target.is_some_and(|id| {
-                mappings[prior_mapping_count..]
-                    .iter()
-                    .any(|mapping| mapping.entity.entity_id() == id)
-            }) {
-                break;
+            ViewMode::Source => {
+                // 源码模式：块即原始行，保持记账走查；边界钳制防越界。
+                let source = self.current_document_source(cx);
+                let mut absolute = 0usize;
+                for block in self.document.root_blocks() {
+                    let is_empty_root = Self::is_empty_root_paragraph(block.read(cx));
+                    if is_empty_root {
+                        block_ranges.insert(block.entity_id(), absolute..absolute);
+                        continue;
+                    }
+                    let prior_mapping_count = mappings.len();
+                    absolute += self.collect_single_block_source_mappings(
+                        block,
+                        0,
+                        0,
+                        absolute,
+                        &mut mappings,
+                        &mut block_ranges,
+                        cx,
+                    );
+                    for mapping in &mut mappings[prior_mapping_count..] {
+                        let start = mapping.full_source_range.start;
+                        let mut end = mapping.full_source_range.end.min(source.len());
+                        while end > start && !source.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        mapping.full_source_range = start..end;
+                    }
+                    absolute += 1;
+                }
             }
         }
 
         (mappings, block_ranges)
     }
+
 }

@@ -301,8 +301,47 @@ impl DocumentTree {
 
     pub(super) fn markdown_text(&self, cx: &App) -> String {
         let mut lines = Vec::new();
-        Self::collect_root_markdown_lines(&self.roots, cx, &mut lines, self.pending.as_ref());
+        Self::collect_root_markdown_lines(&self.roots, cx, &mut lines, self.pending.as_ref(), None);
         lines.join("\n")
+    }
+
+    /// 序列化全文的同时记录每个非空根块的行区间。源码映射（大纲/搜索/跨块
+    /// 选区的块↔文本对应）必须与序列化文本逐字节一致：此前映射自行按
+    /// 「块间必有空行」记账，非规范输入（相邻根块、编辑后的状态）会累积
+    /// 漂移甚至切进多字节字符中间（用户报修 coredump）。让映射的锚点来自
+    /// 序列化遍历本身，构造上零漂移。
+    pub(super) fn markdown_text_with_block_spans(
+        &self,
+        cx: &App,
+    ) -> (String, Vec<(gpui::EntityId, std::ops::Range<usize>)>) {
+        let mut lines = Vec::new();
+        let mut spans = Vec::new();
+        Self::collect_root_markdown_lines(
+            &self.roots,
+            cx,
+            &mut lines,
+            self.pending.as_ref(),
+            Some(&mut spans),
+        );
+        // 行号 → 字节区间：行 i 的起始字节 = 之前所有行长度 + 1（换行）之和。
+        let mut line_byte_starts = Vec::with_capacity(lines.len() + 1);
+        let mut running = 0usize;
+        for line in &lines {
+            line_byte_starts.push(running);
+            running += line.len() + 1;
+        }
+        line_byte_starts.push(running);
+        let total_len = running.saturating_sub(1);
+        let byte_spans = spans
+            .into_iter()
+            .map(|(id, line_span)| {
+                let start = line_byte_starts[line_span.start];
+                let mut end = line_byte_starts[line_span.end.min(lines.len())];
+                end = end.min(total_len);
+                (id, start..end)
+            })
+            .collect();
+        (lines.join("\n"), byte_spans)
     }
 
     pub(super) fn raw_source_text(&self, cx: &App) -> String {
@@ -690,6 +729,7 @@ impl DocumentTree {
         cx: &App,
         lines: &mut Vec<String>,
         tail: Option<&PendingTail>,
+        mut spans: Option<&mut Vec<(gpui::EntityId, std::ops::Range<usize>)>>,
     ) {
         let mut pending_empty_roots = 0usize;
         let mut wrote_non_empty_root = false;
@@ -714,7 +754,11 @@ impl DocumentTree {
                 lines.extend(std::iter::repeat_n(String::new(), pending_empty_roots));
             }
 
+            let span_start = lines.len();
             Self::collect_single_block_markdown_lines(block_ref, 0, cx, lines);
+            if let Some(spans) = spans.as_deref_mut() {
+                spans.push((block.entity_id(), span_start..lines.len()));
+            }
             wrote_non_empty_root = true;
             pending_empty_roots = 0;
             previous_was_list_item = current_is_list_item;
