@@ -802,3 +802,106 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[gpui::test]
+async fn document_search_hit_inside_table_jumps(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    // 复刻 BASELINE_0408.md：多列表格、中文表头、粗体单元格、行内代码
+    let mut md = String::from("# 基线\n\n引导段落，让文档有一点高度。\n\n");
+    for index in 0..40 {
+        md.push_str(&format!("\n填充段落 {}，撑开布局。\n", index));
+    }
+    md.push_str("\n| Shape | 排列 | 数据类型 | SwiGLU | VECTOR | 精度验证 | 备注 |\n");
+    md.push_str("|---|---|---|---|---|---|---|\n");
+    md.push_str("| 1 | 1 | GELU | ✅ | ✅ | 性能测试通过 | `baseline` |\n");
+    md.push_str("| 1 | 6 | Histc | ✅ | ✅ | **执行性能测试** | x |\n");
+    md.push_str("| 1 | 7 | Sum | ❌ | ✅ | 测试失败 | y |\n");
+    for index in 0..40 {
+        md.push_str(&format!("\n尾部段落 {}，继续撑开。\n", index));
+    }
+    let (editor, cx) =
+        cx.add_window_view(move |_, cx| Editor::from_markdown(cx, md, None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.workspace.is_open = true;
+            editor.workspace.active_tab = WorkspaceTab::Search;
+            editor.workspace.search_scope = super::super::WorkspaceSearchScope::Document;
+            editor.workspace.search_query = "测试".into();
+            editor.schedule_workspace_search(cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(std::time::Duration::from_millis(400));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        println!(
+            "TBLDBG results={} pending={} gen={} query={:?} scope_doc={}",
+            editor.workspace.search_results.len(),
+            editor.workspace.search_pending,
+            editor.workspace.search_generation,
+            editor.workspace.search_query,
+            matches!(
+                editor.workspace.search_scope,
+                super::super::WorkspaceSearchScope::Document
+            ),
+        );
+        for hit in &editor.workspace.search_results {
+            println!(
+                "TBLDBG hit line={:?} range={:?} preview={:?}",
+                hit.line, hit.source_range, hit.preview
+            );
+        }
+    });
+    // 点击表格区域的命中（最后一个），断言选区落在表格内且滚动发生
+    let hit_index = editor.read_with(cx, |editor, _cx| {
+        editor.workspace.search_results.len().saturating_sub(1)
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(hit_index, window, cx);
+        });
+    });
+    for _ in 0..16 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, cx| {
+        // 回归（用户报修：表格里的搜索命中点了没反应）：
+        // 1) 滚动必须把表格滚进视口；2) 滚动锚点是宿主表格块而非
+        // 单元格（cell 实体随表格重建而亡，锚它=悬空 id=永无坐标）。
+        let scroll_y = f32::from(editor.scroll_handle.offset().y);
+        assert!(
+            scroll_y.abs() > 800.0,
+            "表格内命中点击后必须滚动到表格：scroll_y={scroll_y}"
+        );
+        let anchor_kind = editor.active_entity_id.and_then(|id| {
+            editor
+                .document
+                .block_entity_by_id(id)
+                .map(|block| block.read(cx).kind().clone())
+        });
+        assert_eq!(
+            anchor_kind,
+            Some(BlockKind::Table),
+            "滚动锚点应是宿主表格块（cell 会随重建变悬空 id），实际 {anchor_kind:?}"
+        );
+        // 命中选区应落在某个表格单元格里
+        let cell_selected = editor
+            .build_source_target_mappings(cx)
+            .iter()
+            .any(|mapping| {
+                let block = mapping.entity.read(cx);
+                block.table_cell_position().is_some()
+                    && !block.selected_range.is_empty()
+                    && !block.search_highlight_ranges.is_empty()
+            });
+        assert!(
+            cell_selected,
+            "命中的单元格应有选区与高亮"
+        );
+    });
+}

@@ -81,6 +81,28 @@ impl Editor {
         self.table_cells.clear();
         self.table_axis_preview = None;
         let visible = self.document.visible_blocks().to_vec();
+        // 表格重建会替换全部单元格实体：滚动/焦点锚点若指向旧 cell，重建后
+        // 就成了文档树里查不到的悬空 id，跳转滚动永无坐标（用户报修：表格里
+        // 的搜索命中点了没反应）。在旧 runtime 销毁前确认悬空锚点确是某表的
+        // 单元格并记下宿主，重建后把锚点迁到宿主表格块。
+        let mut stale_cell_host: Option<Entity<Block>> = None;
+        if let Some(anchor) = self.active_entity_id.or(self.pending_focus)
+            && self.document.block_entity_by_id(anchor).is_none()
+            && let Some(host) = visible.iter().find_map(|visible| {
+                let is_host = visible.entity.read(cx).table_runtime.as_ref().is_some_and(
+                    |runtime| {
+                        runtime
+                            .rows
+                            .iter()
+                            .flatten()
+                            .any(|cell| cell.entity_id() == anchor)
+                    },
+                );
+                is_host.then_some(visible.entity.clone())
+            })
+        {
+            stale_cell_host = Some(host);
+        }
         for block in &visible {
             let has_table_state = block.entity.read_with(cx, |block, _cx| {
                 block.kind() == BlockKind::Table || block.table_runtime.is_some()
@@ -98,6 +120,18 @@ impl Editor {
             };
             if visible.entity.read(cx).kind() == BlockKind::Table {
                 self.install_table_runtime_for_block(&visible.entity, &table, cx);
+            }
+        }
+        if let Some(host) = stale_cell_host {
+            if self.active_entity_id.is_some_and(|id| {
+                self.document.block_entity_by_id(id).is_none()
+            }) {
+                self.active_entity_id = Some(host.entity_id());
+            }
+            if self.pending_focus.is_some_and(|id| {
+                self.document.block_entity_by_id(id).is_none()
+            }) {
+                self.pending_focus = Some(host.entity_id());
             }
         }
         self.rebuild_image_runtimes(cx);

@@ -129,6 +129,22 @@ impl Editor {
             },
             cx,
         );
+        // 跳转目标的滚动锚点不能是表格单元格：cell 不注册进文档块树，且随
+        // 表格重建而亡——锚它则滚动系统永远查不到坐标（用户报修：表格里的
+        // 搜索命中点了没反应）。apply 落在 cell 上时这里校正为宿主表格块；
+        // 视图切换等恢复路径不受影响（它们需要 cell 锚点继续编辑）。
+        if let Some(anchor) = self.active_entity_id
+            && self.document.block_entity_by_id(anchor).is_none()
+            && let Some(binding) = self.table_cell_binding(anchor)
+        {
+            let host = binding.table_block.entity_id();
+            if self.active_entity_id == Some(anchor) {
+                self.active_entity_id = Some(host);
+            }
+            if self.pending_focus == Some(anchor) {
+                self.pending_focus = Some(host);
+            }
+        }
         // 搜索跳转不能把焦点从查询框抢进正文：那样继续敲字会直接改写文档
         // （用户报修）。本帧块仍拿到焦点，apply_pending_scroll_into_view 靠
         // 它算滚动目标；同帧稍后 apply_pending_workspace_search_focus 把焦点

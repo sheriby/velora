@@ -48,10 +48,34 @@ impl Editor {
         // 搜索跳转会把焦点交还查询框：滚动目标改用 active_entity_id，
         // 不让「滚到命中」依赖正文块持有焦点，也避免挂着的滚动请求在
         // 没有焦点块时反复排后续帧。
-        let focused_block = self.focused_edit_target(window, cx).or_else(|| {
-            self.active_entity_id
-                .and_then(|entity_id| self.focusable_entity_by_id(entity_id))
+        // 跳转滚动进行中只认 active 锚点：命中落在表格单元格里时焦点会
+        // 回落到文档首块（cell 不能持有窗口焦点），信焦点块就会滚向文档
+        // 开头而不是命中（用户报修：表格里的命中点了没反应）。
+        let anchor_id = self.active_entity_id;
+        // 锚点实体 → 滚动实体：cell 不是可滚动实体（不在可见块列表、无独立
+        // 布局边界），升级为宿主表格块，把整个表格滚进视口，选区留在单元格。
+        // 悬空 id（表格重建替换过 cell）回退 focusable 注册表，再不行按文档
+        // 树为准。
+        let scroll_block = anchor_id.and_then(|id| {
+            self.document
+                .block_entity_by_id(id)
+                .or_else(|| self.focusable_entity_by_id(id))
         });
+        let scroll_block = scroll_block.map(|block| {
+            let is_cell = block.read_with(cx, |b, _cx| b.table_cell_position().is_some());
+            if is_cell
+                && let Some(binding) = self.table_cell_binding(block.entity_id())
+            {
+                binding.table_block.clone()
+            } else {
+                block
+            }
+        });
+        let focused_block = if self.pending_scroll_center_into_view {
+            scroll_block
+        } else {
+            self.focused_edit_target(window, cx).or(scroll_block)
+        };
         let Some(focused_block) = focused_block else {
             return false;
         };
@@ -79,10 +103,13 @@ impl Editor {
             let viewport_height = f32::from(self.scroll_handle.bounds().size.height);
             let content_height =
                 f32::from(self.scroll_handle.max_offset().height) + viewport_height;
+            // focused_block 已是滚动实体（cell 已升级为宿主表格块），
+            // 直接按它在可见列表中的位置估算。
+            let index = self
+                .document
+                .visible_index_for_entity_id(focused_block.entity_id());
             if viewport_height > 0.0
-                && let Some(index) = self
-                    .active_entity_id
-                    .and_then(|id| self.document.visible_index_for_entity_id(id))
+                && let Some(index) = index
             {
                 let total = self.document.visible_blocks().len().max(1);
                 let estimate_y = content_height * (index as f32 + 0.5) / total as f32;
