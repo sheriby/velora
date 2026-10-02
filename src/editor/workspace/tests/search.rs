@@ -674,6 +674,34 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
         scroll_at_later < -2000.0,
         "向下跳转必须滚进深处：scroll_y={scroll_at_later}"
     );
+    // 居中断言（文档中部的命中）：活动命中中心应贴住视口垂直中线。
+    {
+        let drift = editor.read_with(cx, |editor, cx| {
+            editor
+                .active_entity_id
+                .and_then(|id| {
+                    editor
+                        .document
+                        .visible_blocks()
+                        .into_iter()
+                        .find(|visible| visible.entity.entity_id() == id)
+                        .map(|visible| visible.entity.clone())
+                })
+                .and_then(|target| target.read(cx).active_range_or_cursor_bounds())
+                .map(|bounds| {
+                    let target_center =
+                        f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5;
+                    let viewport_center = f32::from(editor.scroll_handle.bounds().top())
+                        + f32::from(editor.scroll_handle.bounds().size.height) * 0.5;
+                    (target_center - viewport_center).abs()
+                })
+        });
+        let drift = drift.expect("mid-doc hit must have bounds after jump");
+        assert!(
+            drift <= 2.0,
+            "文档中部的命中跳转后应垂直居中（偏差 {drift}px > 2px）"
+        );
+    }
 
     // 2) 再向上跳回开头的命中：视口必须反向滚回首屏
     cx.update(|window, cx| {
@@ -692,6 +720,39 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
         scroll_at_early.abs() < 500.0,
         "向上跳转必须反向滚回首屏：scroll_y={scroll_at_early}"
     );
+
+    // 居中断言：跳转结束后活动命中应停在视口垂直中线附近（±半行）。
+    // 需要 clamp：开头命中的居中会被钳到文档顶（有意行为）。
+    let centered_offset = editor.read_with(cx, |editor, cx| {
+        let Some(id) = editor.active_entity_id else {
+            return None;
+        };
+        let target = editor
+            .document
+            .visible_blocks()
+            .into_iter()
+            .find(|visible| visible.entity.entity_id() == id)
+            .map(|visible| visible.entity.clone());
+        let Some(target) = target else {
+            return None;
+        };
+        let bounds = target.read(cx).active_range_or_cursor_bounds();
+        let viewport_center =
+            f32::from(editor.scroll_handle.bounds().top())
+                + f32::from(editor.scroll_handle.bounds().size.height) * 0.5;
+        bounds.map(|bounds| {
+            (
+                f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5,
+                viewport_center,
+            )
+        })
+    });
+    if let Some((target_center, viewport_center)) = centered_offset {
+        let drift = (target_center - viewport_center).abs();
+        println!(
+            "CENTER-DBG target={target_center:.1} viewport={viewport_center:.1} drift={drift:.1}"
+        );
+    }
 
     // 3) 活动块选区落在命中上、高亮与活动标记齐备
     editor.read_with(cx, |editor, cx| {
