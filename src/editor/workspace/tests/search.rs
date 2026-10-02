@@ -1134,3 +1134,90 @@ async fn cycling_hits_within_one_viewport_still_centers(cx: &mut TestAppContext)
         "点「下一个」必须把新命中精确居中，实际偏差 {second_drift}px"
     );
 }
+
+#[gpui::test]
+async fn real_workspace_click_hit_183_end_to_end(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::path::PathBuf::from("/Users/sher/Github/AscendOpGenAgent");
+    if !root.is_dir() {
+        return; // 环境无该工作区时跳过
+    }
+    let target = std::fs::canonicalize(root.join("agents/ascend-kernel-developer.md")).unwrap();
+    let kernel_source = std::fs::read_to_string(&target).unwrap();
+
+    // 初始打开的是另一个文件（复刻用户多标签场景）
+    let (editor, cx) = cx.add_window_view({
+        let kernel_source = kernel_source.clone();
+        move |_, cx| Editor::from_markdown(cx, kernel_source, None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.workspace.is_open = true;
+            editor.workspace.active_tab = WorkspaceTab::Search;
+            editor.workspace.search_query = "测试".into();
+            editor.schedule_workspace_search(cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(std::time::Duration::from_millis(400));
+    cx.run_until_parked();
+
+    let hit_info = editor.read_with(cx, |editor, _cx| {
+        let total = editor.workspace.search_results.len();
+        let idx = editor.workspace.search_results.iter().position(|hit| {
+            hit.path == target && hit.line == Some(183)
+        });
+        let for_target: Vec<_> = editor
+            .workspace
+            .search_results
+            .iter()
+            .filter(|hit| hit.path == target)
+            .map(|hit| (hit.line, hit.source_range.is_some()))
+            .collect();
+        (total, idx, for_target)
+    });
+    println!(
+        "REALDBG total={} idx_183={:?} target_hits={:?}",
+        hit_info.0, hit_info.1, hit_info.2
+    );
+    let Some(index) = hit_info.1 else {
+        println!("REALDBG no line-183 hit; abort");
+        return;
+    };
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(index, window, cx);
+        });
+    });
+    for _ in 0..20 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, cx| {
+        let scroll_y = f32::from(editor.scroll_handle.offset().y);
+        let source = editor.current_document_source(cx);
+        let active_range = editor.workspace.document_active_range.clone();
+        let slice = active_range
+            .as_ref()
+            .and_then(|range| source.get(range.clone()))
+            .map(|slice| slice.to_string());
+        println!(
+            "REALDBG scroll={scroll_y} active_range={active_range:?} slice={slice:?} pending_center={}",
+            editor.pending_scroll_center_into_view
+        );
+        assert!(scroll_y.abs() > 100.0, "点击命中必须滚动 scroll={scroll_y}");
+        assert!(
+            slice.as_deref() == Some("测试"),
+            "选区应落在「测试」上，实际 {slice:?}"
+        );
+    });
+}

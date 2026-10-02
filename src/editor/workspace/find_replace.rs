@@ -155,6 +155,9 @@ impl Editor {
     }
 
     pub(crate) fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        if std::env::var("VELORA_SEARCH_JUMP_DEBUG").as_deref() == Ok("1") {
+            eprintln!("[SEARCHJUMP] jump range={range:?}");
+        }
         self.push_cursor_location(cx);
         // 命中在折叠标题的章节里时先展开：块被折叠过滤不挂载，既画不出高亮
         // 也滚不过去（用户报修）。
@@ -198,6 +201,12 @@ impl Editor {
         // 活动命中变了（跳转/循环）：重算文档内高亮，让用户看得出当前
         // 停在哪一个命中上（用户报修：来回跳毫无视觉反馈）。
         self.sync_document_search_highlights(cx);
+        if std::env::var("VELORA_SEARCH_JUMP_DEBUG").as_deref() == Ok("1") {
+            eprintln!(
+                "[SEARCHJUMP] jump flags set, active={:?}",
+                self.active_entity_id
+            );
+        }
         cx.notify();
     }
 

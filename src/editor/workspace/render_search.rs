@@ -761,6 +761,12 @@ impl Editor {
         let Some(hit) = self.workspace.search_results.get(index) else {
             return;
         };
+        search_jump_debug(&format!(
+            "click index={index} path={:?} line={:?} source_range={:?}",
+            hit.path.file_name(),
+            hit.line,
+            hit.source_range,
+        ));
         self.workspace.search_active_index = Some(index);
         if let Some(range) = hit.source_range.clone() {
             self.workspace.document_active_range = Some(range.clone());
@@ -783,14 +789,42 @@ impl Editor {
             // 选字节距离最近的一个——词匹配保证语义精确，行号只管方向。
             let range = nearest_document_match(&source, &matcher, line, match_range.start)
                 .or_else(|| find_document_match_from(&source, &matcher, 0, false));
+            search_jump_debug(&format!(
+                "relocate line={line} -> range={range:?}"
+            ));
             if let Some(range) = range
                 && source.is_char_boundary(range.start)
                 && source.is_char_boundary(range.end)
             {
                 self.workspace.document_active_range = Some(range.clone());
                 self.jump_to_document_search_range(range, cx);
+            } else {
+                // 保底：重定位失败也不再静默——滚到近似行首并选中该行，
+                // 用户至少能看到视口移动和目标行。
+                let line_start = source
+                    .split_inclusive('\n')
+                    .take(line.saturating_sub(1))
+                    .map(str::len)
+                    .sum::<usize>()
+                    .min(source.len());
+                let line_end = source[line_start..]
+                    .find('\n')
+                    .map(|offset| line_start + offset)
+                    .unwrap_or(source.len());
+                if source.is_char_boundary(line_start) {
+                    search_jump_debug(&format!("fallback to line start {line_start}..{line_end}"));
+                    self.workspace.document_active_range = Some(line_start..line_end);
+                    self.jump_to_document_search_range(line_start..line_end, cx);
+                }
             }
         }
+    }
+}
+
+/// 搜索跳转链路调试开关：VELORA_SEARCH_JUMP_DEBUG=1 时输出关键节点。
+fn search_jump_debug(message: &str) {
+    if std::env::var("VELORA_SEARCH_JUMP_DEBUG").as_deref() == Ok("1") {
+        eprintln!("[SEARCHJUMP] {message}");
     }
 }
 
