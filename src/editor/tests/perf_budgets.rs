@@ -413,6 +413,32 @@ async fn tree_filter_appends_once_per_keystroke(cx: &mut TestAppContext) {
     });
 }
 
+/// 源码模式下状态栏的「行 : 列」每帧都要算，它不许把整篇序列化一遍。
+///
+/// 这一项是纯读取：文档多大都不该跟着它变贵。旧实现拿 `raw_source_text`（整篇拼出来
+/// 的字符串）数换行，10 MiB 文档每帧一次大搬运。
+#[gpui::test]
+async fn the_status_bar_cursor_readout_does_not_serialize_the_document(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一行\n\n第三行 with 中文\n".to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| editor.document.whole_document_renders.get());
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| editor.document.whole_document_renders.get());
+    assert_eq!(
+        before, after,
+        "状态栏读行列号时又把整篇序列化了一遍（{before} → {after}）"
+    );
+}
+
 #[gpui::test]
 async fn status_bar_view_mode_toggle_switches_mode(cx: &mut TestAppContext) {
     // 用户需求：右下角的「分钟阅读」换成源码切换按钮，点击切换视图模式。

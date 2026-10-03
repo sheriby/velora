@@ -99,3 +99,33 @@ async fn the_status_bar_counts_the_file_text(cx: &mut TestAppContext) {
         "夹具得是「重新序列化会改写形状」的写法，否则这条断言测不出东西"
     );
 }
+
+/// 状态栏报的「行 : 列」是缓冲区里的位置：行按文件里的行，列按字素数。
+///
+/// 守的是「读取侧与文件同源」这个前提，顺带钉住中文的列不是按字节算的。
+#[gpui::test]
+async fn the_status_bar_reports_the_cursor_position_of_the_buffer(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一行\n\n第三行 with 中文\n".to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    let position = editor.update(cx, |editor, cx| {
+        let root = editor.document.root_blocks()[0].clone();
+        let offset = editor
+            .buffer
+            .text()
+            .find(" with")
+            .expect("夹具里应有这一段");
+        root.update(cx, |block, _cx| block.selected_range = offset..offset);
+        editor.compute_source_cursor_position(cx)
+    });
+    assert_eq!(
+        position,
+        (3, 4),
+        "行列号不是按缓冲区里的位置算的：{position:?}"
+    );
+}

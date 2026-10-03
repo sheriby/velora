@@ -245,16 +245,16 @@ impl Editor {
     }
 
     /// Returns (line, col), both 1-based, from the source-mode selection snapshot.
-    fn compute_source_cursor_position(&self, cx: &App) -> (usize, usize) {
+    ///
+    /// 行列号在缓冲区自己的坐标里算：状态栏每帧都要读它，拿整篇序列化出来的文本去数
+    /// 换行就是每帧一次 O(文档) 的搬运，文档多大都跟着它贵。
+    pub(super) fn compute_source_cursor_position(&self, cx: &App) -> (usize, usize) {
         let snapshot = self.capture_source_selection_snapshot(cx);
-        let cursor_offset = snapshot.range.end;
-        let text = self.document.raw_source_text(cx);
-        let clamped = cursor_offset.min(text.len());
-
-        let line = text[..clamped].matches('\n').count() + 1;
-        let last_newline = text[..clamped].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let col = text[last_newline..clamped].graphemes(true).count() + 1;
-        (line, col)
+        let offset = snapshot.range.end.min(self.buffer.byte_len());
+        let line = self.buffer.line_of(offset);
+        let line_start = self.buffer.line_range(line).start;
+        let column = self.buffer.slice(line_start..offset).graphemes(true).count();
+        (line + 1, column + 1)
     }
 }
 
