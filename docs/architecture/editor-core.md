@@ -94,6 +94,7 @@ Workspace (src/editor/workspace.rs)
 6. **引用敏感的块才刷新运行时**（`changed_block_needs_runtime_context_refresh`，src/editor/runtime_context.rs）：image/link/footnote 注册表从 `buffer.text()` 解析，且刷新必须排在写回**之后**，否则读到的是改动前的文本（`editing_image_reference_definition_refreshes_existing_image` 钉住这一顺序）。
 7. **闸门**：`a_real_editing_session_never_falls_back_to_whole_document_serialization`（src/editor/tests/perf_budgets.rs）把打字、回车拆块、勾任务框、缩进/提级/降级、标注里拆块、表格加行/删行/调对齐/加删列/移动行列、删整张表、多行粘贴一条条走一遍，断言 `source_serializations + whole_document_renders` 增量为 0。白名单常量 `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED` 现在是空表——每加一条命令都只能让它更短。
 8. **字节保真**由另一组按字节断言的测试守（src/editor/tests/round_trip_fidelity.rs、block_source_write_back.rs、block_source_spans.rs）：`__下划线__` 写法、字面转义 `\*`、Setext、表格列宽、CRLF、末行换行、无末行换行，打开—编辑—保存之后没改过的字节必须逐字节还是磁盘上那样。
+9. **`record.title == parse(buffer[span])` 的渲染侧对照**：`typing_one_char_only_changes_the_text_at_the_caret` 对全部保真形状断言「打一个字只动光标那一个字」——本块可见文本正好多出那一个字符，其余块的可见文本一字不改。字节表盯磁盘，这条盯投影：写法被重新解释时（`\*` 读成强调、脚注退回源码形状），字节可能没变而渲染已经变了。已知让路的一个形状是脚注引用（#23，由 `typing_next_to_a_footnote_reference_renders_the_raw_markdown` 钉住现状）。
 
 
 ## 4. Undo/历史（src/editor/history.rs）

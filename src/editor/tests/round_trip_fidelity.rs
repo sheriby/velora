@@ -1199,3 +1199,153 @@ async fn mixed_line_endings_survive_a_save_and_normalize_to_lf_only_after_an_edi
         "编辑后的混排文件应整体按 LF 写回，且除插入处外文本不变"
     );
 }
+
+/// 投影不变式的粗筛：**打一个字只该动光标那一个字**。
+///
+/// `record.title == parse(buffer[span])` 这条不变式破了的时候，症状都是这个样子——
+/// 插入点以外的可见文本变了（写法被读成语法：`\*` 成强调、`_x_` 成下划线），或者别的
+/// 块的可见文本被顺手重新解释。字节层面的表盯着磁盘，这条盯着渲染：两边都过才算「打字
+/// 没有重新解释用户没碰的那段」。
+#[gpui::test]
+async fn typing_one_char_only_changes_the_text_at_the_caret(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let mut failures: Vec<String> = Vec::new();
+    for (name, source) in FIDELITY_CASES {
+        let path = temp_markdown_path(name);
+        fs::write(&path, source).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+
+        let visible_before = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| block_text_snapshot(visible.entity.read(cx)))
+                .collect::<Vec<_>>()
+        });
+        let Some(first) = editor.read_with(cx, |editor, _cx| {
+            editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+        }) else {
+            continue;
+        };
+        cx.update(|_window, cx| {
+            first.update(cx, |block, _cx| block.selected_range = 0..0);
+        });
+        cx.simulate_input("X");
+        redraw(cx);
+
+        let visible_after = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| block_text_snapshot(visible.entity.read(cx)))
+                .collect::<Vec<_>>()
+        });
+        if visible_after.len() != visible_before.len() {
+            failures.push(format!(
+                "  [{name}] 打一个字把块列表换了：{} 块 → {} 块",
+                visible_before.len(),
+                visible_after.len()
+            ));
+            continue;
+        }
+        // 脚注引用是这条守卫目前唯一让路的形状，见
+        // `typing_next_to_a_footnote_reference_renders_the_raw_markdown`（钉住现状，不是认可）：
+        // 重解析把 `[^1]` 当源码形状存进片段，序号要等注册表换人时才贴回去，而打字不换注册表。
+        if *name == "脚注定义" {
+            continue;
+        }
+        for (index, (before, after)) in visible_before.iter().zip(&visible_after).enumerate() {
+            let expected = if index == 0 {
+                format!("X{before}")
+            } else {
+                before.clone()
+            };
+            if *after != expected {
+                failures.push(format!(
+                    "  [{name}] 第 {} 块的可见文本被重新解释了：{before:?} → {after:?}（应为 {expected:?}）",
+                    index + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "打字不该重新解释光标以外的写法，{} 个形状失败：\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+
+/// 一块「用户看得见的文字」的快照。表格的文字不在标题树里，一格一格拼起来才是它的可见文本。
+fn block_text_snapshot(block: &crate::editor::Block) -> String {
+    let Some(table) = block.record.table.as_ref() else {
+        return block.record.title.visible_text();
+    };
+    let cells = |rows: &[Vec<crate::components::InlineTextTree>]| -> String {
+        rows.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.visible_text())
+                    .collect::<Vec<_>>()
+                    .join("\u{1}")
+            })
+            .collect::<Vec<_>>()
+            .join("\u{2}")
+    };
+    format!("{}\u{2}{}", cells(&[table.header.clone()]), cells(&table.rows))
+}
+
+/// 已知缺陷（钉住现状，不是认可）：脚注引用旁边打字会把 `¹` 变回原文 `[^1]`。
+///
+/// 两条解析路径对脚注片段的「可见文本」口径不同：导入时按注册表贴序号（`¹`），
+/// 编辑后的重解析按源码形状存（`[^1]`）并把序号留空，而序号回填只在注册表换人时做
+/// （`sync_footnote_registry` 早早 return）。字节没被动过（缓冲区仍是 `[^1]`），坏的是
+/// 渲染与可见长度——光标与字数都会差出一截。`typing_one_char_only_changes_the_text_at_the_caret`
+/// 因此对这一个形状让路。
+#[gpui::test]
+async fn typing_next_to_a_footnote_reference_renders_the_raw_markdown(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const SOURCE: &str = "有脚注[^1]。\n\n[^1]: 脚注内容\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, SOURCE.to_string(), None));
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+    }).expect("应有第一个块");
+    let before = first.read_with(cx, |block, _cx| block.record.title.visible_text());
+    assert_eq!(before, "有脚注\u{b9}。", "脚注引用现在的可见形状变了：这条测试的对照要跟着改");
+
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    cx.simulate_input("X");
+    redraw(cx);
+
+    let after = first.read_with(cx, |block, _cx| block.record.title.visible_text());
+    assert_eq!(
+        after, "X有脚注[^1]。",
+        "脚注引用的形状处理变了：并进 `typing_one_char_only_changes_the_text_at_the_caret`"
+    );
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.buffer.text()),
+        "X有脚注[^1]。\n\n[^1]: 脚注内容\n",
+        "字节层面被改写了：那已经不是这条测试的范围"
+    );
+}
