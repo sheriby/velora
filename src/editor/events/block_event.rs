@@ -65,6 +65,8 @@ impl Editor {
                 | BlockEvent::ToggleTaskChecked
                 | BlockEvent::RequestIndent
                 | BlockEvent::RequestOutdent
+                | BlockEvent::RequestQuoteBreak
+                | BlockEvent::RequestCalloutBreak
         )
         .then(|| self.document.root_layout(cx));
         let visible_before = self.document.flatten_visible_blocks();
@@ -233,6 +235,11 @@ impl Editor {
                 };
 
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+                // 拆引用改的是这一根引用（它在容器里时是那一整根容器），锚点取根块。
+                let region_anchor = self
+                    .document
+                    .root_ancestor_of(block.entity_id())
+                    .unwrap_or_else(|| block.clone());
 
                 let new_quote = Self::new_block(
                     cx,
@@ -249,8 +256,17 @@ impl Editor {
                 self.document
                     .insert_blocks_at(parent, insert_index, blocks, cx);
                 self.focus_block(new_quote.entity_id());
+                // 先把这一段按区间落进缓冲区，再声明「缓冲区已经是目标状态」：
+                // normalize 里那次重同步 otherwise 会拿整篇重新序列化盖掉未编辑的块。
+                let wrote_back =
+                    self.write_back_structural_change(&region_anchor, roots_before.as_deref(), cx);
+                self.skip_next_resync = wrote_back;
                 self.normalize_rendered_quote_structure(cx);
-                self.mark_dirty(cx);
+                if wrote_back {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
@@ -262,6 +278,10 @@ impl Editor {
                 };
 
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+                let region_anchor = self
+                    .document
+                    .root_ancestor_of(block.entity_id())
+                    .unwrap_or_else(|| block.clone());
                 let plain = Self::new_block(cx, BlockRecord::paragraph(String::new()));
                 let blocks = if parent.is_none() {
                     vec![plain.clone()]
@@ -275,7 +295,11 @@ impl Editor {
                     .insert_blocks_at(parent, insert_index, blocks, cx);
                 self.focus_block(plain.entity_id());
                 self.rebuild_image_runtimes(cx);
-                self.mark_dirty(cx);
+                if self.write_back_structural_change(&region_anchor, roots_before.as_deref(), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }

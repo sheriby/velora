@@ -521,6 +521,134 @@ async fn forming_a_table_from_typed_rows_keeps_the_other_blocks_bytes_untouched(
     );
 }
 
+/// 引用里按回车拆出下一个引用块：被换掉的只有那一段引用，表外的块一个字节都不动。
+#[gpui::test]
+async fn breaking_a_quote_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "段落文字\n",
+        "\n",
+        "> 引用一行\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-quote-break");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let quote = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind() == BlockKind::Quote)
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有一个引用块");
+            editor.on_block_event(quote, &BlockEvent::RequestQuoteBreak, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert!(
+        saved.starts_with("段落文字\r\n\r\n> 引用一行\r\n"),
+        "引用前面或引用自己的字节被改写了：{saved:?}"
+    );
+    assert!(
+        saved.ends_with("强调 __下划线__ 结尾\r\n"),
+        "引用后面的块、行结束符或末行换行被改写了：{saved:?}"
+    );
+    assert!(
+        saved.contains("| ---- | ---- |\r\n| 甲   | 1    |"),
+        "拆引用把不相干表格的列宽填充重排了：{saved:?}"
+    );
+}
+
+/// 标注里按回车跳出标注也一样只能改那一段。
+#[gpui::test]
+async fn breaking_out_of_a_callout_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "段落文字\n",
+        "\n",
+        "> [!NOTE] 标注一行\n",
+        ">\n",
+        "> 正文一行\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-callout-break");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let body = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "正文一行")
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有标注正文那一行");
+            editor.on_block_event(body, &BlockEvent::RequestCalloutBreak, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert!(
+        saved.contains("> [!NOTE] 标注一行"),
+        "标注自己丢了：{saved:?}"
+    );
+    assert!(
+        saved.contains("| ---- | ---- |\r\n| 甲   | 1    |"),
+        "跳出标注把不相干表格的列宽填充重排了：{saved:?}"
+    );
+    assert!(
+        saved.ends_with("强调 __下划线__ 结尾\r\n"),
+        "跳出标注改写了后面的块、行结束符或末行换行：{saved:?}"
+    );
+}
+
 /// 提级一条嵌套列表项也只该动列表这一段：后面的段落、表格与行结束符不该被重排。
 #[gpui::test]
 async fn outdenting_a_list_item_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
