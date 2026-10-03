@@ -312,8 +312,6 @@ impl Editor {
     pub(super) fn push_table_mappings(
         &self,
         block: &Entity<Block>,
-        list_depth: usize,
-        quote_depth: usize,
         absolute_start: usize,
         mappings: &mut Vec<SourceTargetMapping>,
         cx: &App,
@@ -326,16 +324,9 @@ impl Editor {
             return 0;
         };
         let Some(span) = block_ref.record.source_span.clone() else {
-                // 引用块里的表格没有自己的源码区间（区间只挂在根块上），只能继续按
-            // 序列化行来猜位置——漂移被限制在这个根块的区间之内。
-            return self.push_inferred_table_mappings(
-                block,
-                list_depth,
-                quote_depth,
-                absolute_start,
-                mappings,
-                cx,
-            );
+            // 挂在容器里的表格没有自己的源码区间（区间只挂在根块上），那就到**所在根块**
+            // 的原文里量同一套格子。
+            return self.push_table_mappings_in_root(block, absolute_start, mappings, cx);
         };
 
         // 单元格的位置从缓冲区里这张表的原文量出来（在原文行里找单元格文本），
@@ -405,85 +396,92 @@ impl Editor {
         }
     }
 
-    /// 引用块内表格的映射：按序列化行 + 「列宽 = 内容长 + 3」推算单元格位置。
-    fn push_inferred_table_mappings(
+    /// 容器里的表格（挂在引用/列表根块下，没有自己的源码区间）的映射：在它**所在根块**的
+    /// 原文里先按表头那一行定位这张表，再把每行的格子按原文量出来。
+    ///
+    /// 不按「列宽 = 内容长 + 3」推算——那条口径在用户填过宽度的列上会漂（实测漂 3 字节，
+    /// 命中选中的是 `" | 苹"` 而不是 `苹果`）。同一个根块里有几张表头相同的表时，取离本块
+    /// 在走树时算出的起点最近的那一张。定位不到表头、行数与模型对不上，就什么都不推，命中
+    /// 退回宿主表格块。
+    fn push_table_mappings_in_root(
         &self,
         block: &Entity<Block>,
-        list_depth: usize,
-        quote_depth: usize,
         absolute_start: usize,
         mappings: &mut Vec<SourceTargetMapping>,
         cx: &App,
     ) -> usize {
-        let block_ref = block.read(cx);
         let (Some(table), Some(runtime)) = (
-            block_ref.record.table.clone(),
-            block_ref.table_runtime.clone(),
+            block.read(cx).record.table.clone(),
+            block.read(cx).table_runtime.clone(),
         ) else {
             return 0;
         };
-        let lines = crate::components::serialize_table_markdown_lines(&table);
-        let indentation = "  ".repeat(list_depth);
-        let quote_prefix = "> ".repeat(quote_depth);
-        let line_prefix_len = indentation.len() + quote_prefix.len();
-        let mut line_start = absolute_start;
-
-        if let Some(header_line) = lines.first() {
-            let mut line_cursor = line_prefix_len + 2usize;
-            for (column, cell) in runtime.header.iter().enumerate() {
-                let Some(tree) = table.header.get(column) else {
-                    continue;
-                };
-                let cell_markdown = serialize_table_cell_markdown(tree);
-                let start = line_start + line_cursor;
-                let len = cell_markdown.len();
-                mappings.push(SourceTargetMapping {
-                    entity: cell.clone(),
-                    full_source_range: start..start + len,
-                    content_to_source: (0..=len).collect(),
-                    source_to_content: (0..=len).collect(),
-                });
-                line_cursor += len + 3;
-            }
-            line_start += line_prefix_len + header_line.len() + 1;
-        }
-
-        if lines.len() > 1 {
-            line_start += line_prefix_len + lines[1].len() + 1;
-        }
-
-        for (body_row_index, row) in runtime.rows.iter().enumerate() {
-            let Some(row_line) = lines.get(body_row_index + 2) else {
-                break;
-            };
-            let mut line_cursor = line_prefix_len + 2usize;
-            for (column, cell) in row.iter().enumerate() {
-                let Some(tree) = table
-                    .rows
-                    .get(body_row_index)
-                    .and_then(|table_row| table_row.get(column))
-                else {
-                    continue;
-                };
-                let cell_markdown = serialize_table_cell_markdown(tree);
-                let start = line_start + line_cursor;
-                let len = cell_markdown.len();
-                mappings.push(SourceTargetMapping {
-                    entity: cell.clone(),
-                    full_source_range: start..start + len,
-                    content_to_source: (0..=len).collect(),
-                    source_to_content: (0..=len).collect(),
-                });
-                line_cursor += len + 3;
-            }
-            line_start += line_prefix_len + row_line.len() + 1;
-        }
-
-        lines
+        let Some(root) = self.document.root_ancestor_of(block.entity_id()) else {
+            return 0;
+        };
+        let Some(root_span) = root.read(cx).record.source_span.clone() else {
+            return 0;
+        };
+        let header = table
+            .header
             .iter()
-            .map(|line| line_prefix_len + line.len())
-            .sum::<usize>()
-            + lines.len().saturating_sub(1)
+            .map(serialize_table_cell_markdown)
+            .collect::<Vec<_>>();
+        let mut outer_header = vec![String::new()];
+        outer_header.extend(header.iter().cloned());
+        outer_header.push(String::new());
+
+        let raw = self.buffer.slice(root_span.clone());
+        let mut lines: Vec<(usize, String)> = Vec::new();
+        let mut line_start = root_span.start;
+        for line in raw.split('\n') {
+            lines.push((line_start, line.to_string()));
+            line_start += line.len() + 1;
+        }
+        let mut candidates = lines.iter().enumerate().filter_map(|(index, (start, line))| {
+            let cells = table_row_cells(line);
+            (cells == header || cells == outer_header).then_some((index, *start))
+        });
+        let (header_index, header_start) = match candidates.next() {
+            Some(first) => candidates
+                .fold(first, |best, candidate| {
+                    if (candidate.1 as i64 - absolute_start as i64).abs()
+                        < (best.1 as i64 - absolute_start as i64).abs()
+                    {
+                        candidate
+                    } else {
+                        best
+                    }
+                },
+                ),
+            None => return 0,
+        };
+        // 表头之后是分隔行，再往后才是数据行；行数与模型对不上就什么都不推。
+        let body_start = header_index + 2;
+        if lines.len() < body_start + table.rows.len() {
+            return 0;
+        }
+        self.push_table_row_mappings(
+            &lines[header_index].1,
+            header_start,
+            &runtime.header,
+            &table.header,
+            mappings,
+        );
+        for (row_index, row) in table.rows.iter().enumerate() {
+            let Some(cells) = runtime.rows.get(row_index) else {
+                continue;
+            };
+            let (start, line) = &lines[body_start + row_index];
+            self.push_table_row_mappings(line, *start, cells, row, mappings);
+        }
+        let last_index = if table.rows.is_empty() {
+            header_index + 1
+        } else {
+            body_start + table.rows.len() - 1
+        }
+        .min(lines.len() - 1);
+        (lines[last_index].0 + lines[last_index].1.len()) - header_start
     }
 
     pub(super) fn collect_single_block_source_mappings(
@@ -523,8 +521,6 @@ impl Editor {
         let own_len = match kind {
             BlockKind::Table => self.push_table_mappings(
                 block,
-                list_depth,
-                quote_depth,
                 absolute_start,
                 mappings,
                 cx,
@@ -937,4 +933,13 @@ impl Editor {
         (mappings, block_ranges)
     }
 
+}
+
+/// 一行里按管道符切出的格文本：先去掉引用前缀 `>` 与缩进，再逐格 trim。
+fn table_row_cells(line: &str) -> Vec<String> {
+    let mut core = line.trim_start();
+    while let Some(rest) = core.strip_prefix('>') {
+        core = rest.trim_start();
+    }
+    core.split('|').map(|part| part.trim().to_string()).collect()
 }

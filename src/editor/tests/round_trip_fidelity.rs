@@ -846,3 +846,46 @@ async fn replacing_a_selection_across_a_quote_line_break_keeps_the_sibling_prefi
         "跨引用行的选区替换把没改过的那行改写了：{saved:?}"
     );
 }
+
+/// 挂在引用块里的表格没有自己的源码区间，它的格子也要映射到缓冲区里的真实字节。
+///
+/// 以前按「列宽 = 内容长 + 3」推算，用户填过宽度的列上会漂（实测命中选中的是
+/// `" | 苹"` 而不是 `苹果`）。现在改成在**所在根块**的原文行里逐格量。
+#[gpui::test]
+async fn a_table_inside_a_quote_maps_its_cells_to_the_real_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> 前话\n>\n> | 名称   | 数量 |\n> |:-------|-----:|\n> | 苹果   |    3 |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let mapped = editor.read_with(cx, |editor, cx| {
+        let source = editor.buffer.text();
+        ["名称", "数量", "苹果", "3"]
+            .into_iter()
+            .map(|text| {
+                let binding = editor
+                    .table_cells
+                    .values()
+                    .find(|binding| binding.cell.read(cx).display_text() == text)
+                    .cloned();
+                let Some(binding) = binding else {
+                    return format!("{text}: 没有这一格的绑定");
+                };
+                match editor.source_mapping_for_entity(binding.cell.entity_id(), cx) {
+                    Some(mapping) => {
+                        let range = mapping.full_source_range;
+                        format!("{text}: {:?}", &source[..range.end][range.start..])
+                    }
+                    None => format!("{text}: 没有映射"),
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        mapped,
+        vec!["名称: \"名称\"", "数量: \"数量\"", "苹果: \"苹果\"", "3: \"3\""],
+        "容器里的表格的格子映射没有落在它自己的原文字节上：{mapped:?}"
+    );
+}
