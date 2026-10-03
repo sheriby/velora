@@ -462,28 +462,21 @@ impl Editor {
         }
     }
 
-    /// 保存实际落盘的**文本**（LF，与落盘字节一一对应）：渲染模式取缓冲区，
-    /// 源码/代码文档还取块树序列化。
+    /// 保存实际落盘的**文本**（LF）：就是缓冲区。
     ///
     /// 版本号、工作区标签文本、本地历史都取这份文本，不能取重新序列化的结果，
-    /// 否则下一次校验磁盘时会发现自己刚写的文件「被外部改了」。
-    pub(super) fn document_text_for_save(&self, cx: &App) -> String {
-        if self.writes_through_the_buffer() || self.buffer.is_pristine() {
-            self.buffer.text()
-        } else {
-            self.serialized_document_text(cx)
-        }
+    /// 否则下一次校验磁盘时会发现自己刚写的文件「被外部改了」。源码/代码文档也走
+    /// 这一条——每次改动都由 `resync_buffer_from_projection` 落进缓冲区，再序列化
+    /// 一遍等于给保存路径留着「重拼整篇」这份可写字节。
+    pub(super) fn document_text_for_save(&self) -> String {
+        self.buffer.text()
     }
 
     /// 保存落盘的**字节**：写的就是缓冲区。未编辑过时 `file_bytes` 直接返回打开
     /// 读到的那串字节；编辑过的部分由区间写回落进缓冲区，未编辑的块保持原文，
     /// 行尾与编码按文件原来的形状重新编码。
-    pub(super) fn document_bytes_for_save(&self, cx: &App) -> Vec<u8> {
-        if self.writes_through_the_buffer() || self.buffer.is_pristine() {
-            self.buffer.file_bytes()
-        } else {
-            self.serialized_document_text(cx).into_bytes()
-        }
+    pub(super) fn document_bytes_for_save(&self) -> Vec<u8> {
+        self.buffer.file_bytes()
     }
 
     pub(super) fn save_dialog_defaults(&self) -> (PathBuf, Option<String>) {
@@ -516,7 +509,7 @@ impl Editor {
 
     pub(super) fn apply_successful_save(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.document_revision = self.document_revision.wrapping_add(1);
-        let saved_markdown = self.document_text_for_save(cx);
+        let saved_markdown = self.document_text_for_save();
         self.file_version = Some(file_content_version(&saved_markdown));
         // 标签里的版本号也要跟上（自动保存按它校验磁盘，见
         // mark_workspace_document_saved）。
@@ -577,7 +570,7 @@ impl Editor {
             let _ = window;
             return false;
         }
-        let bytes = self.document_bytes_for_save(cx);
+        let bytes = self.document_bytes_for_save();
         match write_atomic(path, &bytes) {
             Ok(_) => {
                 self.apply_successful_save(path.to_path_buf(), cx);
@@ -601,7 +594,7 @@ impl Editor {
             return;
         }
         // 先取字节再弹面板：未编辑的文档保存的就是打开时那份原始字节。
-        let markdown = self.document_bytes_for_save(cx);
+        let markdown = self.document_bytes_for_save();
         let (default_dir, suggested_name) = self.save_dialog_defaults();
         let prompt = cx.prompt_for_new_path(&default_dir, suggested_name.as_deref());
         let weak_editor = cx.entity().downgrade();

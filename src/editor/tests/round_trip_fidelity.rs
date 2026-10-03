@@ -692,3 +692,58 @@ async fn editing_a_code_document_without_a_final_newline_keeps_it_absent(
         String::from_utf8_lossy(&saved)
     );
 }
+
+/// CRLF 的代码文档：改一行、保存，字节按文件原来的形状回来，且不留下「未保存」。
+///
+/// 保存取文本时要同时盯两件事：落盘字节（行尾形状由 `FileShape` 重新编码）与
+/// 保存后写在版本号里的那份文本——两者对不上，下一次校验磁盘就会把自己刚写的
+/// 文件当成外部改动。
+#[gpui::test]
+async fn editing_a_crlf_code_document_saves_crlf_bytes_and_clears_dirty(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let path = std::env::temp_dir().join(format!("velora-code-crlf-{}.py", std::process::id()));
+    fs::write(&path, b"print(1)\r\nprint(2)\r\n").expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        let line = editor
+            .document
+            .visible_blocks()
+            .first()
+            .expect("代码文档应有可见块")
+            .entity
+            .clone();
+        line.update(cx, |line, cx| {
+            line.prepare_undo_capture(crate::components::UndoCaptureKind::CoalescibleText, cx);
+            line.replace_text_in_visible_range(0..0, "# ", None, false, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read(&path).expect("read saved");
+    assert_eq!(
+        saved.as_slice(),
+        b"# print(1)\r\nprint(2)\r\n",
+        "CRLF 代码文档保存的行尾形状或字节不对：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.document_dirty,
+            "保存之后还标着未保存：版本号与落盘文本对不上"
+        );
+    });
+}
