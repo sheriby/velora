@@ -68,6 +68,26 @@ impl Editor {
         true
     }
 
+    /// 这张表在缓冲区里占的源码行：行号 + 行内容，从本块区间第一行往后走，
+    /// 走到不再以 `|` 开头为止。分隔行也算一行，所以第 `n` 个数据行是第 `n + 2` 行。
+    ///
+    /// 只在表自己的区间里走，行数对不上（单元格里有换行、表挂在容器里没有区间）时
+    /// 调用方拿到的结果就不该用来落笔。
+    fn table_source_lines(&self, span: &Range<usize>) -> Vec<(usize, String)> {
+        let mut lines = Vec::new();
+        let mut line = self.buffer.line_of(span.start);
+        let final_line = self.buffer.line_of(span.end);
+        while line <= final_line {
+            let text = self.buffer.slice(self.buffer.line_range(line));
+            if !text.trim_start().starts_with('|') {
+                break;
+            }
+            lines.push((line, text));
+            line += 1;
+        }
+        lines
+    }
+
     /// 表格加一行 = 在最后一行之后插一行，别的字节一个都不动。
     ///
     /// 把整张表按模型重拼一遍会顺手洗掉用户写的列宽填充：`| 名称   | 数量 |` 变成
@@ -94,19 +114,7 @@ impl Editor {
         else {
             return false;
         };
-        // 表的最后一行：从本块区间第一行往后走，走到不再以 `|` 开头为止。
-        let mut last_row: Option<(usize, String)> = None;
-        let mut line = self.buffer.line_of(span.start);
-        let final_line = self.buffer.line_of(span.end);
-        while line <= final_line {
-            let text = self.buffer.slice(self.buffer.line_range(line));
-            if !text.trim_start().starts_with('|') {
-                break;
-            }
-            last_row = Some((line, text));
-            line += 1;
-        }
-        let Some((last_row_line, last_row_text)) = last_row else {
+        let Some((last_row_line, last_row_text)) = self.table_source_lines(&span).pop() else {
             return false;
         };
         // 竖线数对不上列数，说明格子里有转义竖线，骨架算不准。
@@ -139,13 +147,70 @@ impl Editor {
         true
     }
 
+    /// 表格删一行 = 把那一行连着它前面的换行剪掉，别的字节一个都不动。
+    ///
+    /// 数据行在源码里就是文本的一行：删行不需要重拼这张表，重拼会把表头对齐、分隔行
+    /// 的 `:` 和其余各行的填充一起洗掉。剪掉的是 `前一行行尾` 到 `本行行尾`，所以删
+    /// 的永远是行本身而不是它后面的换行——删最后一行时文档末行的换行才不会跟着没了。
+    ///
+    /// 返回 `false` 表示删不出来：模型和源码行数已经对不上（单元格里有换行）、这一行
+    /// 不是数据行、竖线数跟列数不符。那种情况交回整块写。
+    fn write_back_table_row_deletion(
+        &mut self,
+        table_block: &Entity<Block>,
+        row_index: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (Some(span), Some((columns, rows_left))) = (
+            table_block.read(cx).record.source_span.clone(),
+            table_block
+                .read(cx)
+                .record
+                .table
+                .as_ref()
+                .map(|table| (table.column_count(), table.rows.len())),
+        ) else {
+            return false;
+        };
+        // 模型里那一行已经删掉了，源码里该还剩「表头 + 分隔行 + 剩下的数据行」。
+        let lines = self.table_source_lines(&span);
+        if lines.len() != rows_left + 3 {
+            return false;
+        }
+        let target_line = match lines.get(row_index + 2) {
+            Some((line, text))
+                if text.chars().filter(|character| *character == '|').count() == columns + 1 =>
+            {
+                *line
+            }
+            _ => return false,
+        };
+        if target_line == 0 {
+            return false;
+        }
+
+        let from = self.buffer.line_range(target_line - 1).end;
+        let to = self.buffer.line_range(target_line).end;
+        let applied = self.buffer.edit(from..to, "");
+        self.record_buffer_edit(applied);
+        let delta = from as i64 - to as i64;
+        table_block.update(cx, |block, _cx| {
+            if let Some(span) = &block.record.source_span {
+                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
+            }
+        });
+        self.shift_root_spans_after(to, delta, cx);
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
     /// 别处的 `__强调__` 写法、Setext、CRLF 与末行换行一起洗掉。表这一级的改动
-    /// 优先走 [`Self::write_back_table_row_insertion`] 那种按行落笔的路，只有算不出
-    /// 行形状时（转义竖线、表挂在容器里没有自己的区间）才重拼这张表——那仍然只在
-    /// 它自己的区间内。
+    /// 优先走按行落笔的路（[`Self::write_back_table_row_insertion`]、
+    /// [`Self::write_back_table_row_deletion`]），只有算不出行形状时（转义竖线、
+    /// 单元格里有换行、表挂在容器里没有自己的区间）才重拼这张表——那仍然只在它
+    /// 自己的区间内。
     pub(super) fn write_back_table_structure_edit(
         &mut self,
         table_block: &Entity<Block>,
@@ -669,7 +734,11 @@ impl Editor {
             },
             cx,
         );
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_row_deletion(table_block, row_index, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);

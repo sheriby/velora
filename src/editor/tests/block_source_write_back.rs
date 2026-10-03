@@ -1622,3 +1622,101 @@ async fn adding_a_table_row_keeps_the_untouched_rows_padded_as_written(
     assert_eq!(lines[1], "|:-------|-----:|", "分隔行的对齐被改了：{saved:?}");
     assert_eq!(lines[2], "| 苹果   |    3 |", "原有数据行的填充被改了：{saved:?}");
 }
+
+/// 表格删一行，只许多删那一行——别的行的列宽填充一个字节都不动。
+///
+/// 删行同样不允许「按新的表重拼整张表」：文件里表格的一行就是文本的一行，删一行
+/// 就是删掉那一行连同它前面的换行。表头对齐、分隔行的 `:`、留下的那行的填充都是
+/// 用户写的字节。
+#[gpui::test]
+async fn deleting_a_table_row_keeps_the_other_rows_padded_as_written(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str =
+        "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n| 梨子   |    9 |\n";
+    let path = temp_markdown_path("write-back-table-row-delete");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.delete_table_row(&table, 0, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   | 数量 |\n|:-------|-----:|\n| 梨子   |    9 |\n",
+        "删一行洗掉了别的行的填充：{saved:?}"
+    );
+}
+
+/// 删掉表格最后一行时，文档末行的换行不能跟着一起没了。
+///
+/// 按行落笔删行要连带删掉一个换行符：如果删的是「本行 + 行尾换行」，而本行恰好是
+/// 文档最后一行，末行换行就被吃掉了——保存出来的字节和磁盘上的形状不再一致。
+#[gpui::test]
+async fn deleting_the_last_table_row_keeps_the_final_newline(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n| 梨子   |    9 |\n";
+    let path = temp_markdown_path("write-back-table-last-row-delete");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.delete_table_row(&table, 1, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   | 数量 |\r\n|:-------|-----:|\r\n| 苹果   |    3 |\r\n",
+        "删最后一行改掉了行结束符或末行换行：{saved:?}"
+    );
+}

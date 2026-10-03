@@ -544,6 +544,18 @@ async fn a_real_editing_session_never_falls_back_to_whole_document_serialization
     });
     count_step(&mut offenders, "表格加一行", &mut before, &editor, cx);
 
+    editor.update(cx, |editor, cx| {
+        let table = editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).kind() == crate::components::BlockKind::Table)
+            .cloned()
+            .expect("表格还在");
+        editor.delete_table_row(&table, 1, cx);
+    });
+    count_step(&mut offenders, "表格删一行", &mut before, &editor, cx);
+
     let table = editor.read_with(cx, |editor, cx| {
         editor
             .document
