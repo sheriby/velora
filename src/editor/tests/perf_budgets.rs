@@ -665,3 +665,60 @@ fn dispatch(
     });
     redraw(cx);
 }
+
+/// 阶段 2「增量重投影」：在引用块里按回车，只该重投影这一根引用。
+///
+/// 引用行的换行可能改结构（行首变成 `- 项` 就不再是引用行了），所以这条路要走
+/// `normalize_rendered_quote_structure`。但那一步现在做的是「整棵树落进缓冲区 +
+/// 整篇重解析」：60 根块的文档里改一根引用，实体全部换掉、未编辑块的字节也被
+/// 重新序列化一遍。这里两个数一起守：整篇序列化 0 次，重投影出来的根块数有界。
+#[gpui::test]
+async fn entering_a_quote_reprojects_only_that_quote(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut markdown = String::new();
+    for index in 0..30 {
+        markdown.push_str(&format!("第 {index} 段正文。\n\n"));
+    }
+    markdown.push_str("> 引用一\n> 引用二\n\n");
+    for index in 0..30 {
+        markdown.push_str(&format!("尾段 {index}。\n\n"));
+    }
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+
+    let quote = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).kind().is_quote_container())
+            .cloned()
+            .expect("夹具里应有一根引用")
+    });
+    let (rebuilt_before, serializations_before, root_count) = editor.read_with(cx, |editor, _| {
+        (
+            editor.roots_reprojected.get(),
+            editor.source_serializations.get(),
+            editor.document.root_blocks().len(),
+        )
+    });
+    assert!(root_count > 40, "夹具得够大才测得出「跟着文档长」：{root_count} 根");
+
+    quote.update(cx, |block, _cx| block.selected_range = 3..3);
+    cx.update(|window, cx| {
+        quote.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+
+    let rebuilt = editor.read_with(cx, |editor, _| editor.roots_reprojected.get()) - rebuilt_before;
+    let serializations =
+        editor.read_with(cx, |editor, _| editor.source_serializations.get())
+            - serializations_before;
+    eprintln!("[measure] 一次引用内回车：整篇序列化 {serializations} 次，重投影 {rebuilt} 根 / 全文 {root_count} 根");
+    assert_eq!(serializations, 0, "在引用里按回车还在全篇重新序列化");
+    assert!(
+        rebuilt <= 2,
+        "在引用里按回车重投影了 {rebuilt} 根块（全文 {root_count} 根），只该动这一根引用"
+    );
+}

@@ -44,8 +44,73 @@ impl Editor {
                 BlockRecord::paragraph(String::new()),
             ));
         }
+        self.roots_reprojected
+            .set(self.roots_reprojected.get() + roots.len() as u64);
         Self::attach_root_spans(&self.buffer, &roots, &root_spans, 0, cx);
         roots
+    }
+
+    /// 只重解析缓冲区里第 `root_index` 根块占的那几行字节，把它换成新解析出来的
+    /// 那几根，区间之外的块一个实体都不换。
+    ///
+    /// 引用行的换行会改结构（行首变成 `- 项` 就不再是引用行了），所以改完字节必须
+    /// 重新解析才能刷新投影。整篇重解析付的是「文档有多少根块」的代价：每根块的
+    /// 折叠状态、光标现场、渲染缓存全丢，未编辑的块还要连自己的字节重新序列化一遍。
+    /// 这里只吃这一段——解析窗口从这块的第一行起，往后多看一两行当探针：只要解析
+    /// 结果没越过本块的最后一行，改动就还留在段内。窗口不够（后面的段落被吸进来了）
+    /// 返回 `None`，由调用方退回整篇重投影。
+    pub(crate) fn reproject_root_region(
+        &mut self,
+        root_index: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        // 懒导入没建完时接缝归尾部那段，窗口解析与整篇解析对不上，走整篇那条路。
+        if self.document.pending_tail().is_some() {
+            return None;
+        }
+        let roots = self.document.root_blocks().to_vec();
+        let root = roots.get(root_index)?.clone();
+        let span = root.read(cx).record.source_span.clone()?;
+        if span.end > self.buffer.byte_len() {
+            return None;
+        }
+        let line_base = self.buffer.line_of(span.start);
+        let last_line = self.buffer.line_of(span.end);
+        let region_lines = last_line + 1 - line_base;
+        let previous_root_is_list_item = root_index
+            .checked_sub(1)
+            .and_then(|index| roots.get(index))
+            .is_some_and(|previous| previous.read(cx).kind().is_list_item());
+        let total_lines = self.buffer.line_count();
+
+        for lookahead in 0..=2usize {
+            let cut = (last_line + 1 + lookahead).min(total_lines);
+            let ends_at_document_tail = cut == total_lines;
+            let lines: Vec<String> = (line_base..cut)
+                .map(|line| self.buffer.slice(self.buffer.line_range(line)))
+                .collect();
+            let cursor = ChunkCursor {
+                root_budget: usize::MAX,
+                is_document_start: line_base == 0,
+                previous_root_is_list_item,
+            };
+            let (new_roots, spans, _consumed) =
+                Self::build_blocks_from_lines_internal(cx, &lines, true, cursor);
+            let Some(parsed_lines) = spans.last().map(|span| span.end) else {
+                return None;
+            };
+            // 探针行被吃掉说明改动把结构带过了接缝，本段之外的块也要跟着变。
+            if parsed_lines > region_lines && !ends_at_document_tail {
+                continue;
+            }
+            self.roots_reprojected
+                .set(self.roots_reprojected.get() + new_roots.len() as u64);
+            Self::attach_root_spans(&self.buffer, &new_roots, &spans, line_base, cx);
+            self.document
+                .replace_root_range(root_index..root_index + 1, new_roots, cx);
+            return Some(parsed_lines);
+        }
+        None
     }
 
     /// Splits normalized Markdown into lines once, so a document can be built in

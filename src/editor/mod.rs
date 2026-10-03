@@ -158,6 +158,9 @@ pub struct Editor {
     word_count_scans: std::cell::Cell<u64>,
     /// 性能计数器：行结构计划重建次数（每键重建整篇计划是 P2 热点）。
     row_plan_rebuilds: std::cell::Cell<u64>,
+    /// 性能计数器：重投影出来的**根块数**。整篇重解析一次就是「文档有多少根块」，
+    /// 区域重解析只重建改动那一段的几根——增量重投影要守的就是这个数不跟着文档长。
+    roots_reprojected: std::cell::Cell<u64>,
     /// 计数器：光标滚动实际改动的次数。撤销等操作会替换整篇块，
     /// 用旧布局的边界先滚一次、下一帧再纠正，就会让用户看到来回滚。
     caret_scroll_applications: std::cell::Cell<u64>,
@@ -611,6 +614,7 @@ impl Editor {
             source_mapping_full_builds: std::cell::Cell::default(),
             word_count_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),
+            roots_reprojected: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),
             prev_mounted_run: None,
             scroll_settle_frames: 0,

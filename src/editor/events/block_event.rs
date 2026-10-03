@@ -100,7 +100,7 @@ impl Editor {
                 let needs_reference_refresh = !should_normalize_quote
                     && self.changed_block_needs_runtime_context_refresh(&block, cx);
                 if should_normalize_quote {
-                    self.normalize_rendered_quote_structure(cx);
+                    self.normalize_rendered_quote_structure(&block, cx);
                 }
                 if let Some(focus_id) = callout_focus_target {
                     self.focus_block(focus_id);
@@ -206,7 +206,7 @@ impl Editor {
                     let wrote_back =
                         self.write_back_structural_change(&block, roots_before.as_deref(), cx);
                     self.skip_next_resync = wrote_back;
-                    self.normalize_rendered_quote_structure(cx);
+                    self.normalize_rendered_quote_structure(&block, cx);
                     if wrote_back {
                         self.mark_dirty_written_back(cx);
                     } else {
@@ -297,7 +297,7 @@ impl Editor {
                 let wrote_back =
                     self.write_back_structural_change(&region_anchor, roots_before.as_deref(), cx);
                 self.skip_next_resync = wrote_back;
-                self.normalize_rendered_quote_structure(cx);
+                self.normalize_rendered_quote_structure(&block, cx);
                 if wrote_back {
                     self.mark_dirty_written_back(cx);
                 } else {
@@ -375,7 +375,7 @@ impl Editor {
 
                 self.focus_block(prev.entity_id());
                 if quote_related {
-                    self.normalize_rendered_quote_structure(cx);
+                    self.normalize_rendered_quote_structure(&block, cx);
                 } else {
                     self.rebuild_image_runtimes(cx);
                 }
@@ -481,7 +481,7 @@ impl Editor {
                     Self::set_block_title_and_kind(&block, current_kind, first_title, cursor, cx);
                     self.focus_block(block.entity_id());
                     if quote_related {
-                        self.normalize_rendered_quote_structure(cx);
+                        self.normalize_rendered_quote_structure(&block, cx);
                     } else {
                         self.rebuild_image_runtimes(cx);
                     }
@@ -580,7 +580,7 @@ impl Editor {
                 }
 
                 if quote_related {
-                    self.normalize_rendered_quote_structure(cx);
+                    self.normalize_rendered_quote_structure(&block, cx);
                 }
 
                 // Quote normalization rebuilds roots from Markdown, so resolve the
@@ -990,7 +990,7 @@ impl Editor {
                     self.write_back_structural_change(&region_anchor, roots_before.as_deref(), cx);
                 self.skip_next_resync = wrote_back && quote_related;
                 if quote_related {
-                    self.normalize_rendered_quote_structure(cx);
+                    self.normalize_rendered_quote_structure(&block, cx);
                 }
                 if wrote_back {
                     self.mark_dirty_written_back(cx);

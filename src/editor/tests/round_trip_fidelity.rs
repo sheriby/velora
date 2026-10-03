@@ -266,11 +266,11 @@ fn escape_bytes(bytes: &[u8]) -> String {
 /// 这里断言两件事：本块区间以外的字节原样，以及整篇序列化次数没有增加。
 /// 还会退回整篇重投影的形状——白名单，只许减不许增。
 ///
-/// 「引用前缀风格」：在引用容器里按回车走的是 `normalize_rendered_quote_structure`，
-/// 它先把整棵树落进缓冲区再重解析（引用行的换行可能改变结构，比如行首变成 `- 项`）。
-/// 那一趟换实体、整篇序列化，是阶段 2「增量重投影」要换掉的对象；这条形状自己的
-/// **字节**依然逐条断言，所以这里只豁免「整篇序列化次数」那一项。
-const WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED: &[&str] = &["引用前缀风格"];
+/// 现在是空的：最后一条「引用前缀风格」（在引用容器里按回车）改走了区间落笔 +
+/// 区域重解析（`Editor::reproject_root_region`）。以前那一趟先把整棵树序列化进
+/// 缓冲区再整篇重解析，未编辑块的写法被一起洗掉；现在它只动本块那一段，也只换
+/// 本段重解析出来的那几根块。
+const WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED: &[&str] = &[];
 
 #[gpui::test]
 async fn splitting_the_first_block_only_touches_that_blocks_bytes(cx: &mut TestAppContext) {
@@ -575,14 +575,14 @@ async fn saving_an_edited_non_utf8_file_keeps_its_encoding(cx: &mut TestAppConte
 
 
 
-/// 兜底档位（整篇重投影）也不许吃掉末行换行。
+/// 编辑引用块不吃掉末行换行，也不许把 CRLF 降成 LF。
 ///
 /// 序列化把每根块当「一行」，行尾那个换行不在它的产物里：缓冲区原本以换行结尾却
-/// 不补回来，兜底一次就把文件的末行换行删掉，CRLF 文件连带少一个 `\r`。现在还会
-/// 走到兜底的是引用容器的重排（`normalize_rendered_quote_structure`），所以这条
-/// 用一个引用夹具盯着——它不该随时间失效：以后哪条路径再退回整篇重投影，这里就红。
+/// 不补回来，重投影一次就把文件的末行换行删掉，CRLF 文件连带少一个 `\r`。这条用
+/// 一个 CRLF 引用夹具盯着落笔与保存这两步——以前走的是整篇重投影，现在走的是按
+/// 区间落笔，两个形状都不该漂。
 #[gpui::test]
-async fn a_whole_document_resync_keeps_the_final_newline(cx: &mut TestAppContext) {
+async fn editing_a_quote_keeps_the_final_newline_and_line_endings(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
     const FIXTURE: &str = "> 引用一\n>引用二\n>   引用三\n";
@@ -618,15 +618,20 @@ async fn a_whole_document_resync_keeps_the_final_newline(cx: &mut TestAppContext
     redraw(cx);
 
     let saved = fs::read(&path).expect("read saved file");
+    let text = String::from_utf8_lossy(&saved).to_string();
+    // 块首回车在引用里插出一个空引用行。这一步现在按区间落笔，不再被整篇重投影
+    // 连同用户的编辑一起洗掉（以前回车等于没按）。
     assert!(
-        saved.ends_with(b"\r\n"),
-        "兜底重投影吃掉了末行换行（或把 CRLF 降成了 LF）：{:?}",
-        String::from_utf8_lossy(&saved)
+        saved.starts_with(b"> \r\n"),
+        "块首回车没在引用里插出空行：{text:?}"
     );
     assert!(
-        saved.starts_with("> 引用一\r\n".as_bytes()),
-        "兜底重投影改写了第一行：{:?}",
-        String::from_utf8_lossy(&saved)
+        saved.ends_with(b"\r\n"),
+        "落笔吃掉了末行换行（或把 CRLF 降成了 LF）：{text:?}"
+    );
+    assert!(
+        text.contains(">   引用三\r\n"),
+        "没改过的那一行被改写了：{text:?}"
     );
     // 形状本身也不能变：每个 LF 都得有 CR 在前面，不许混进裸 LF。
     let total_lf = saved.iter().filter(|byte| **byte == b'\n').count();
@@ -636,3 +641,4 @@ async fn a_whole_document_resync_keeps_the_final_newline(cx: &mut TestAppContext
         "行尾形状被混用了：CRLF {crlf_pairs} 处，LF 共 {total_lf} 处"
     );
 }
+

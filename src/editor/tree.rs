@@ -220,6 +220,24 @@ impl DocumentTree {
         self.rebuild_metadata_and_snapshot(cx);
     }
 
+    /// 只把 `range` 里那几根根块换成新解析出来的一段，区间之外的实体一个都不动。
+    ///
+    /// 整篇换实体（`replace_roots`）会让每个块丢掉折叠状态、光标现场和渲染缓存，
+    /// 而区域重投影改的只有改动那一段。
+    pub(super) fn replace_root_range(
+        &mut self,
+        range: std::ops::Range<usize>,
+        roots: Vec<Entity<Block>>,
+        cx: &mut Context<Editor>,
+    ) {
+        if range.start > self.roots.len() || range.end < range.start || range.end > self.roots.len()
+        {
+            return;
+        }
+        self.roots.splice(range, roots);
+        self.rebuild_metadata_and_snapshot(cx);
+    }
+
     /// Appends freshly built roots and extends the cached snapshot instead of
     /// re-running the full DFS, so streaming a huge document stays linear.
     pub(super) fn append_roots(&mut self, roots: Vec<Entity<Block>>, cx: &mut Context<Editor>) {

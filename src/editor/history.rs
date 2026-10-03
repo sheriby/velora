@@ -409,25 +409,56 @@ impl Editor {
         self.last_scroll_viewport_size = None;
     }
 
-    pub(super) fn normalize_rendered_quote_structure(&mut self, cx: &mut Context<Self>) {
+    /// 引用容器里的改动要重新解析才看得出结构（引用行的换行可能把行首变成 `- 项`，
+    /// 容器因此不再是容器）。
+    ///
+    /// 这一步按**区间**做：先把本块自己的字节写进缓冲区，再只重解析它占的那几行。
+    /// 两条路里任何一条不通才退回整篇重投影——那条路会把每个未编辑块的原始字节连
+    /// 折叠状态、光标现场一起洗掉。调用方已经按区间落笔时（拆引用、引用里拆块），
+    /// 它留下的 `skip_next_resync` 说话，这里不再另写一遍。
+    pub(super) fn normalize_rendered_quote_structure(
+        &mut self,
+        anchor: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) {
         if self.view_mode != ViewMode::Rendered {
             return;
         }
 
-        // 先落缓冲区再算选区：这一步之前插入的新引用块还没有源码区间，
-        // 而位置换算只认区间——拿旧状态算出来的快照会把焦点放回上一个块。
-        // 引用块的重排会换掉整棵树的实体：先把当前块树落进缓冲区并挂好区间，
-        // 否则刚插入的块算不出位置，快照会退回上一个块。
+        let root = self
+            .document
+            .root_ancestor_of(anchor.entity_id())
+            .or_else(|| Some(anchor.clone()));
+        // 先落缓冲区再算选区：这一步之前插入的新引用块还没有源码区间，而位置换算
+        // 只认区间——拿旧状态算出来的快照会把焦点放回上一个块。
+        let wrote_region = root
+            .as_ref()
+            .is_some_and(|root| self.write_back_block_source(root, cx));
+        self.skip_next_resync |= wrote_region;
         self.resync_buffer_from_projection(cx);
         let selection_snapshot = self.capture_source_selection_snapshot(cx);
-        let roots = self.rebuild_root_blocks_from_buffer(cx);
-        self.document.replace_roots(roots, cx);
+        let reprojected = root
+            .as_ref()
+            .and_then(|root| {
+                self.document
+                    .root_blocks()
+                    .iter()
+                    .position(|block| block.entity_id() == root.entity_id())
+            })
+            .and_then(|index| self.reproject_root_region(index, cx));
+        if reprojected.is_none() {
+            let roots = self.rebuild_root_blocks_from_buffer(cx);
+            self.document.replace_roots(roots, cx);
+        }
         self.rebuild_table_runtimes(cx);
         self.rebuild_image_runtimes(cx);
         self.apply_selection_snapshot_in_current_mode(&selection_snapshot, cx);
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
         self.last_scroll_viewport_size = None;
+        // 走到这里缓冲区已经是目标状态（两条路都以它为准重解析过），调用方随后的
+        // 落笔不该再来一遍整篇重投影。
+        self.skip_next_resync = true;
     }
 
     pub(super) fn undo_document(&mut self, cx: &mut Context<Self>) {
