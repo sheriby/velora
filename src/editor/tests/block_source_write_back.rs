@@ -1924,3 +1924,104 @@ async fn deleting_a_table_column_keeps_the_other_columns_padded_as_written(
         "删一列改掉了别的格的字节或表外的块：{saved:?}"
     );
 }
+
+/// 表格移动一行 = 把这两行的文本互换，分隔行和别的字节都留在原地。
+///
+/// 移动在源码里就是两行互换，长度一进一出，这张表占的总字节数不变。重拼整张表却会
+/// 把每行的填充按新的行序重排——`| 梨子   |    9 |` 挪上来之后不该变成 `| 梨子 | 9 |`。
+#[gpui::test]
+async fn moving_a_table_row_swaps_only_those_two_lines(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n| 梨子   |    9 |\n";
+    let path = temp_markdown_path("write-back-table-row-move");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            // 视觉行 1（苹果）往下换一行。
+            editor.move_table_row(&table, 1, 1, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "表格移动一行之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   | 数量 |\r\n|:-------|-----:|\r\n| 梨子   |    9 |\r\n| 苹果   |    3 |\r\n",
+        "移动一行改掉了这两行以外的字节：{saved:?}"
+    );
+}
+
+/// 换的两行长度不一样时，偏移必须算对：先写后面那行，再写前面那行。
+///
+/// 表下面还有别的块，它们的区间在写回之后得仍然指着原文——这里既按字节比对文件，
+/// 又检查根块区间仍然严丝合缝地铺满正文。
+#[gpui::test]
+async fn moving_a_table_row_of_different_length_leaves_the_blocks_below(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n| 一 | 9 |\n\n强调 __下划线__ 结尾\n";
+    let path = temp_markdown_path("write-back-table-row-move-uneven");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.move_table_row(&table, 1, 1, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "换两行长度不同的行之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   | 数量 |\n|:-------|-----:|\n| 一 | 9 |\n| 苹果   |    3 |\n\n强调 __下划线__ 结尾\n",
+        "换两行长度不同的行写掉了别的字节：{saved:?}"
+    );
+}

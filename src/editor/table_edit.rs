@@ -394,6 +394,60 @@ impl Editor {
         true
     }
 
+    /// 表格里两行互换 = 把这两行的文本对调，别的字节留在原地。
+    ///
+    /// 长度一进一出，这张表占的总字节数不变，所以本块区间和后面每个根块的区间都不用
+    /// 挪。落笔要先写后面那行：先写前面那行会把后面那行的偏移带歪。分隔行不在这次
+    /// 交换里（模型把表头当第 0 行，源码里表头与数据行之间还隔着分隔行）。
+    ///
+    /// 返回 `false` 表示换不了：行数与模型对不上、行号越界、表没有自己的区间。
+    /// 那种情况交回整块写。
+    fn write_back_table_row_swap(
+        &mut self,
+        table_block: &Entity<Block>,
+        visual_a: usize,
+        visual_b: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let Some(rows) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| table.rows.len())
+        else {
+            return false;
+        };
+        let lines = self.table_source_lines(&span);
+        if lines.len() != rows + 2 {
+            return false;
+        }
+        // 视觉行 0 是表头，占源码第 0 行；视觉行 `v`（数据行）占源码第 `v + 1` 行，
+        // 中间那条分隔行不跟着走。
+        let source_index = |visual: usize| if visual == 0 { 0 } else { visual + 1 };
+        let (a, b) = (source_index(visual_a), source_index(visual_b));
+        if a == b || a >= lines.len() || b >= lines.len() {
+            return false;
+        }
+        let (first, second) = (a.min(b), a.max(b));
+        let (first_line, first_text) = (&lines[first].0, lines[first].1.clone());
+        let (second_line, second_text) = (&lines[second].0, lines[second].1.clone());
+        if first_text == second_text {
+            return true;
+        }
+
+        let second_range = self.buffer.line_range(*second_line);
+        let applied = self.buffer.edit(second_range, &first_text);
+        self.record_buffer_edit(applied);
+        let first_range = self.buffer.line_range(*first_line);
+        let applied = self.buffer.edit(first_range, &second_text);
+        self.record_buffer_edit(applied);
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
@@ -817,7 +871,11 @@ impl Editor {
             },
             cx,
         );
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_row_swap(table_block, visual_row, next_row, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
