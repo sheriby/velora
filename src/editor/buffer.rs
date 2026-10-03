@@ -125,14 +125,18 @@ impl TextBuffer {
     }
 
     /// 内容与给定文本逐字节相同吗？不复制自己，用来跳过「其实没变的整篇重投影」。
+    ///
+    /// 按字节比，不按字符切片：块边界只对缓冲区自己的字符对齐，比较另一份内容时同样的
+    /// 偏移可能落在某个多字节字符中间，`text[a..b]` 会直接 panic。
     pub(crate) fn matches_text(&self, text: &str) -> bool {
         if self.byte_len() != text.len() {
             return false;
         }
+        let bytes = text.as_bytes();
         let mut offset = 0usize;
         for chunk in &self.chunks {
             let len = chunk.byte_len();
-            if text[offset..offset + len] != chunk.text[..] {
+            if &bytes[offset..offset + len] != chunk.text.as_bytes() {
                 return false;
             }
             offset += len;

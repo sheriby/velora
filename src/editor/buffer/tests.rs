@@ -337,3 +337,25 @@ fn line_range_gives_the_bytes_of_that_line_without_the_newline() {
     // 越界钳到文末，不 panic。
     assert_eq!(buffer.line_range(9), 7..7);
 }
+
+/// 比较一份等长但内容不同的文本时只能返回 `false`，不许 panic。
+///
+/// 分块的边界是按缓冲区自己的字符切的；换一份内容时同样的偏移可能正好落在某个多
+/// 字节字符中间（撤销表格「移动一行」就是这种：两行互换，整篇长度不变、内容变了）。
+/// 逐字节比较走 `bytes`，跟字符边界无关。
+#[test]
+fn matching_a_same_length_but_different_text_returns_false_instead_of_panicking() {
+    let text = "x".repeat(3000) + &"甲".repeat(1500);
+    let buffer = TextBuffer::from_text(&text);
+    assert!(
+        buffer.chunks.len() > 1,
+        "夹具应被切成多块，实际 {} 块",
+        buffer.chunks.len()
+    );
+    assert!(buffer.matches_text(&text));
+
+    // 等长、内容不同，而且块边界落在对方文本的字符中间。
+    let other = "x".repeat(2999) + &"甲".repeat(1500) + "y";
+    assert_eq!(other.len(), text.len());
+    assert!(!buffer.matches_text(&other));
+}
