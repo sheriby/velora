@@ -141,9 +141,16 @@ pub(crate) struct CharToken {
     pub(crate) style: InlineStyle,
     pub(crate) html_style: Option<HtmlInlineStyle>,
     pub(crate) source_range: Range<usize>,
-    /// 字面反斜杠：编辑可见文本时，用户按下的 `\` 是普通字符，不是转义前缀。
-    /// 读 markdown 源文件时为 false，转义语义照旧。
-    pub(crate) literal_backslash: bool,
+    /// 这个字符是字面文本，不能当语法读。编辑可见文本时有两种：反斜杠永远是字面字符
+    /// （用户按一次 `\` 就该看到一个，连按两次不该塔缩成一个——用户报修：渲染模式里
+    /// 打不出两个连续的反斜杠）；`escaped` 那种是源码用反斜杠换来的字面记号。
+    /// 源码里没配对的定界符（`2 * 3` 的星号）不在其列：它仍然是语法候选，用户后来补
+    /// 一颗星就该成强调。读 markdown 源文件时恒为 false，转义语义照旧。
+    pub(crate) literal_char: bool,
+    /// 这个字符是**源码里转义出来的**（`\*` 的那个 `*`）。可见文本里它和一个没配对的
+    /// 定界符长得一样，可它已经不是语法候选了：再当定界符读一遍就是改写用户的写法。
+    /// `InlineTextTree::escaped_offsets` 记的就是这些位置，重解析时原样带到新树里。
+    pub(crate) escaped: bool,
 }
 
 /// Result of parsing a delimited inline region.
@@ -159,6 +166,8 @@ pub(crate) struct NormalizeBuilder {
     pub(crate) fragments: Vec<InlineFragment>,
     pub(crate) visible_to_normalized: Vec<usize>,
     pub(crate) normalized_len: usize,
+    /// 输出树里那些「由源码转义而来」的字符的可见字节偏移。
+    pub(crate) escaped_offsets: Vec<u32>,
 }
 
 impl NormalizeBuilder {
@@ -167,6 +176,7 @@ impl NormalizeBuilder {
             fragments: Vec::new(),
             visible_to_normalized: vec![0; input_len + 1],
             normalized_len: 0,
+            escaped_offsets: Vec::new(),
         }
     }
 
@@ -178,15 +188,20 @@ impl NormalizeBuilder {
 
     /// 推测性解析的快照。正文扫完仍未闭合时用 `rollback` 回到快照，否则这次尝试
     /// 已经写进 builder 的正文会留在输出里，调用方又把整段重新输出一遍（内容翻倍）。
-    pub(crate) fn mark(&self) -> (usize, usize) {
-        (self.fragments.len(), self.normalized_len)
+    pub(crate) fn mark(&self) -> (usize, usize, usize) {
+        (
+            self.fragments.len(),
+            self.normalized_len,
+            self.escaped_offsets.len(),
+        )
     }
 
     /// 回到 `mark` 时的状态。`visible_to_normalized` 不用备份：调用方会从起始位置
     /// 重新输出同一批 token，同一批边界会被重新写一遍。
-    pub(crate) fn rollback(&mut self, mark: (usize, usize)) {
+    pub(crate) fn rollback(&mut self, mark: (usize, usize, usize)) {
         self.fragments.truncate(mark.0);
         self.normalized_len = mark.1;
+        self.escaped_offsets.truncate(mark.2);
     }
 
     pub(crate) fn emit_token(
@@ -220,6 +235,9 @@ impl NormalizeBuilder {
 
         let text = token.ch.to_string();
         let start = self.normalized_len;
+        if token.escaped {
+            self.escaped_offsets.push(start as u32);
+        }
         for boundary in token.source_range.start..=token.source_range.end {
             self.visible_to_normalized[boundary] = start + (boundary - token.source_range.start);
         }
@@ -281,19 +299,38 @@ impl NormalizeBuilder {
     }
 }
 
-pub(crate) fn flatten_tokens(fragments: &[InlineFragment], literal_backslashes: bool) -> Vec<CharToken> {
+/// 把片段摊平成 token 流。`visible_text_mode` 为真时输入是**可见文本**（编辑路径）：
+/// `escaped_offsets`（旧树的可见字节偏移）标出的那些字符是源码用反斜杠换来的字面记号，
+/// 反斜杠自己也是字面字符。
+pub(crate) fn flatten_tokens(
+    fragments: &[InlineFragment],
+    visible_text_mode: bool,
+    escaped_offsets: &[u32],
+) -> Vec<CharToken> {
     let mut tokens = Vec::new();
-    let mut visible_offset = 0;
+    let mut visible_offset = 0usize;
 
     for fragment in fragments {
+        // 脚注与行内公式存的是各自的 markdown 原文，序列化按原样写出，不是可见文本。
+        let holds_raw_markdown = fragment.footnote.is_some() || fragment.math.is_some();
         for ch in fragment.text.chars() {
             let len = ch.len_utf8();
+            // 这些偏移是递增记下的（解析与搬运都从左往右），二分以免一块里转义多了
+            // 就退化成每个字符扫一遍表。
+            let escaped = visible_text_mode
+                && !holds_raw_markdown
+                && escaped_offsets
+                    .binary_search(&(visible_offset as u32))
+                    .is_ok();
             tokens.push(CharToken {
                 ch,
                 style: fragment.style,
                 html_style: fragment.html_style,
                 source_range: visible_offset..visible_offset + len,
-                literal_backslash: literal_backslashes && ch == '\\',
+                literal_char: visible_text_mode
+                    && !holds_raw_markdown
+                    && (ch == '\\' || escaped),
+                escaped,
             });
             visible_offset += len;
         }
@@ -318,6 +355,13 @@ pub(crate) fn parse_until(
 ) -> ParseResult {
     let body_start = index;
     while index < tokens.len() {
+        // 字面字符只做文本：既不开定界符，也不闭合正在扫的那一对。
+        if tokens[index].literal_char {
+            builder.emit_token(&tokens[index], extra_style, extra_html_style);
+            index += 1;
+            continue;
+        }
+
         // Check for closing delimiter.
         if let Some(ref end_delim) = end_delimiter {
             let mut closed = match end_delim {
@@ -364,13 +408,18 @@ pub(crate) fn parse_until(
 
         if !inside_code
             && tokens[index].ch == '\\'
+            && !tokens[index].literal_char
             && let Some(escaped_len) = escaped_sequence_token_len(tokens, index)
         {
             builder.drop_token(&tokens[index]);
             let escaped_start = index + 1;
             let escaped_end = escaped_start + escaped_len;
             for token in &tokens[escaped_start..escaped_end] {
-                builder.emit_token(token, extra_style, extra_html_style);
+                // 转义来的字符从此是字面文本：把这一位带到输出树上，下一次重解析
+                // 就不该再把它读成定界符（可见文本模式下靠它分辨 `\*` 与没配对的 `*`）。
+                let mut escaped_token = token.clone();
+                escaped_token.escaped = true;
+                builder.emit_token(&escaped_token, extra_style, extra_html_style);
             }
             index = escaped_end;
             continue;
@@ -567,7 +616,7 @@ pub(crate) fn token_is_backslash_escaped(tokens: &[CharToken], index: usize) -> 
     let mut slash_count = 0usize;
     while cursor > 0 && tokens[cursor - 1].ch == '\\' {
         // 可见文本模式下的反斜杠是字面字符，不算转义前缀。
-        if tokens[cursor - 1].literal_backslash {
+        if tokens[cursor - 1].literal_char {
             break;
         }
         slash_count += 1;
@@ -614,7 +663,7 @@ pub(crate) fn parse_footnote_reference(
     let end_index = loop {
         let token = tokens.get(cursor)?;
         // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
-        if token.ch == '\\' && !token.literal_backslash {
+        if token.ch == '\\' && !token.literal_char {
             cursor += 2;
             continue;
         }

@@ -438,6 +438,31 @@
     }
 
     #[test]
+    fn typing_at_the_caret_keeps_the_escapes_the_source_already_had() {
+        // `\*` 在源码里是字面星号；重解析时再把它当定界符，可见文本就短一截、
+        // 序列化也回不去原来的字节了。
+        let markdown = "字面星号 \\*不强调\\* 和字面下划线 \\_x\\_";
+        let tree = InlineTextTree::from_markdown(markdown);
+        let result = tree.replace_visible_range_with_link_references(
+            0..0,
+            "X",
+            InlineInsertionAttributes::default(),
+            &LinkReferenceDefinitions::default(),
+        );
+
+        assert_eq!(
+            result.tree.visible_text(),
+            "X字面星号 *不强调* 和字面下划线 _x_",
+            "字面星号被读成了强调定界符"
+        );
+        assert_eq!(
+            result.tree.serialize_markdown(),
+            format!("X{markdown}"),
+            "插入处以外的写法被改写了"
+        );
+    }
+
+    #[test]
     fn unresolved_shortcut_reference_links_remain_literal_text() {
         let markdown = "[shortcut reference]";
         let tree = InlineTextTree::from_markdown_with_link_references(

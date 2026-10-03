@@ -50,7 +50,11 @@ Workspace (src/editor/workspace.rs)
   **定界符字符不落盘**，序列化时按规则重建（`serialize_markdown`），但**写法落盘**：强调用 `*`
   还是 `_` 记在 `InlineStyle::emphasis_marker`（`stacks.rs` 序列化照写，`__粗__` 不会被写成
   `**粗**`），列表项的子弹字符与序号分隔符记在 `BlockRecord::list_marker`（`+ 项目`、`1)`
-  不会被写成 `- 项目`、`1.`，显示也照写）。正因为重建出的字节只保证「语义相同、写法可能不同」，
+  不会被写成 `- 项目`、`1.`，显示也照写）。**转义也是写法**：`\*不强调\*` 在可见文本里就
+  是两个 `*`，与 `2 * 3` 那种没配对的定界符长得一模一样，所以解析时把「这个字符是反斜杠
+  换来的」记成 `InlineTextTree::escaped_offsets`（可见字节偏移，随 `split_at`/`append_tree`
+  与每次重解析一起搬运）。少了这一位，一次打字就会把写法读成语法：可见文本变短、渲染变粗，
+  写回也只好整块重新序列化。正因为重建出的字节只保证「语义相同、写法可能不同」，
   写回必须只动真正改过的那段字节（§3），不能「从块树重新生成这一块」。渲染侧有
   `InlineRenderCache`（可见文本 + spans + 双向偏移映射 `InlineMarkdownOffsetMap`）。
 
@@ -89,7 +93,7 @@ Workspace (src/editor/workspace.rs)
 5. **重投影从「整棵树重新解析」换成「只重解析变了的那一段」**：`reproject_root_region`（src/editor/document/import.rs）把一根根块换成它那段行重新解析出的若干根块（窗口 = 本段行 + 前瞻 ≤2 行，且要求解析结果落在本段内才接受，否则放弃走全量 `rebuild_root_blocks_from_buffer`）；计数器 `Editor::roots_reprojected` 记增量重投影了几根。
 6. **引用敏感的块才刷新运行时**（`changed_block_needs_runtime_context_refresh`，src/editor/runtime_context.rs）：image/link/footnote 注册表从 `buffer.text()` 解析，且刷新必须排在写回**之后**，否则读到的是改动前的文本（`editing_image_reference_definition_refreshes_existing_image` 钉住这一顺序）。
 7. **闸门**：`a_real_editing_session_never_falls_back_to_whole_document_serialization`（src/editor/tests/perf_budgets.rs）把打字、回车拆块、勾任务框、缩进/提级/降级、标注里拆块、表格加行/删行/调对齐/加删列/移动行列、删整张表、多行粘贴一条条走一遍，断言 `source_serializations + whole_document_renders` 增量为 0。白名单常量 `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED` 现在是空表——每加一条命令都只能让它更短。
-8. **字节保真**由另一组按字节断言的测试守（src/editor/tests/round_trip_fidelity.rs、block_source_write_back.rs、block_source_spans.rs）：`__下划线__` 写法、Setext、表格列宽、CRLF、末行换行、无末行换行，打开—编辑—保存之后没改过的字节必须逐字节还是磁盘上那样。
+8. **字节保真**由另一组按字节断言的测试守（src/editor/tests/round_trip_fidelity.rs、block_source_write_back.rs、block_source_spans.rs）：`__下划线__` 写法、字面转义 `\*`、Setext、表格列宽、CRLF、末行换行、无末行换行，打开—编辑—保存之后没改过的字节必须逐字节还是磁盘上那样。
 
 
 ## 4. Undo/历史（src/editor/history.rs）

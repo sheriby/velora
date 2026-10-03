@@ -191,7 +191,7 @@ pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> 
         return None;
     }
     // 编辑可见文本时反斜杠是字面字符：两个反斜杠不是"转义的反斜杠"，`\*` 也不吃掉星号。
-    if tokens[index].literal_backslash {
+    if tokens[index].literal_char {
         return None;
     }
 
@@ -220,6 +220,12 @@ pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> 
     } else {
         None
     }
+}
+
+/// 序列化器在普通文字段里会转义的那些字符。「序列化会转义」与「重新解析时必须当字面
+/// 读」是同一条知识的两面（`flatten_tokens` 用它），所以只能有一处定义。
+pub(crate) fn is_escaped_by_serializer(ch: char) -> bool {
+    matches!(ch, '\\' | '*' | '_' | '~' | '^' | '`')
 }
 
 /// 转义规则与 [`escape_literal_text_with_offset_map`] 完全一致，只是不建映射表。
@@ -252,14 +258,11 @@ pub(crate) fn escape_literal_text(text: &str) -> String {
         }
 
         let ch = text[index..].chars().next().unwrap();
-        match ch {
-            '\\' => escaped.push_str("\\\\"),
-            '*' => escaped.push_str("\\*"),
-            '_' | '~' | '^' | '`' => {
-                escaped.push('\\');
-                escaped.push(ch);
-            }
-            _ => escaped.push(ch),
+        if is_escaped_by_serializer(ch) {
+            escaped.push('\\');
+            escaped.push(ch);
+        } else {
+            escaped.push(ch);
         }
         index += ch.len_utf8();
     }

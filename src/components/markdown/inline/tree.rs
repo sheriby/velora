@@ -4,6 +4,13 @@ use super::*;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InlineTextTree {
     pub(crate) fragments: Vec<InlineFragment>,
+    /// 源码里由反斜杠转义而来的那些字符，在这棵树**可见文本**里的字节偏移。
+    ///
+    /// 可见文本分不出 `2 * 3` 里那颗没配对的星号和 `\*不强调\*` 里的星号——前者是语法
+    /// 候选，用户补一颗就该成强调；后者已经不是语法，重读一遍会把用户的写法改掉，还会
+    /// 把可见长度弄短，逼得编辑器放弃按区间写回。这份区别只有源码知道，所以解析时把它
+    /// 记下来，往后的每次编辑与重解析都原样带过去。
+    pub(crate) escaped_offsets: Vec<u32>,
 }
 
 impl InlineTextTree {
@@ -60,7 +67,10 @@ impl InlineTextTree {
     }
 
     pub fn from_fragments(fragments: Vec<InlineFragment>) -> Self {
-        let mut tree = Self { fragments };
+        let mut tree = Self {
+            fragments,
+            escaped_offsets: Vec::new(),
+        };
         tree.normalize_fragments();
         tree
     }
@@ -622,10 +632,30 @@ impl InlineTextTree {
             consumed = fragment_end;
         }
 
-        (Self::from_fragments(left), Self::from_fragments(right))
+        let mut left = Self::from_fragments(left);
+        let mut right = Self::from_fragments(right);
+        // 转义位置跟着切口分两半，右半整体左移一个切口。
+        left.escaped_offsets = self
+            .escaped_offsets
+            .iter()
+            .filter(|offset| (**offset as usize) < clamped)
+            .copied()
+            .collect();
+        right.escaped_offsets = self
+            .escaped_offsets
+            .iter()
+            .filter_map(|offset| {
+                let offset = *offset as usize;
+                (offset >= clamped).then_some((offset - clamped) as u32)
+            })
+            .collect();
+        (left, right)
     }
 
     pub fn append_tree(&mut self, other: Self) {
+        let base = self.visible_len() as u32;
+        self.escaped_offsets
+            .extend(other.escaped_offsets.iter().map(|offset| offset + base));
         self.fragments.extend(other.fragments);
         self.normalize_fragments();
     }
@@ -636,6 +666,9 @@ impl InlineTextTree {
         replacement: Vec<InlineFragment>,
     ) {
         self.fragments.splice(range, replacement);
+        // 片段整体换了一批，可见偏移全变了，而替换内容（链接的一段）不是从转义解析
+        // 来的——这份记录留着只会指错位置，宁可丢掉转义保护。
+        self.escaped_offsets.clear();
         self.normalize_fragments();
     }
 
@@ -832,7 +865,7 @@ impl InlineTextTree {
         self.normalize_inline_text_with_link_references(reference_definitions, false)
     }
 
-    /// 归一化**可见文本**（编辑后重解析）：反斜杠是字面字符，不是转义前缀。
+    /// 归一化**可见文本**（编辑后重解析）：转义来的记号与反斜杠是字面字符，不是定界符。
     /// 用户按一次 `\` 就应该看到一个反斜杠，连按两次不该塔缩成一个（用户报修：
     /// 渲染模式里打不出两个连续的反斜杠）。
     pub fn normalize_visible_text_with_link_references(
@@ -845,10 +878,10 @@ impl InlineTextTree {
     fn normalize_inline_text_with_link_references(
         &self,
         reference_definitions: &LinkReferenceDefinitions,
-        literal_backslashes: bool,
+        visible_text_mode: bool,
     ) -> InlineEditResult {
         let visible_text = self.visible_text();
-        let tokens = flatten_tokens(&self.fragments, literal_backslashes);
+        let tokens = flatten_tokens(&self.fragments, visible_text_mode, &self.escaped_offsets);
         let mut builder = NormalizeBuilder::new(visible_text.len());
         let _ = parse_until(
             &tokens,
@@ -860,8 +893,11 @@ impl InlineTextTree {
             false,
             reference_definitions,
         );
+        let mut tree = InlineTextTree::from_fragments(builder.fragments);
+        // 转义带来的字面字符在输出树里换了位置，跟着这次解析的偏移表一起搬过去。
+        tree.escaped_offsets = builder.escaped_offsets;
         InlineEditResult {
-            tree: InlineTextTree::from_fragments(builder.fragments),
+            tree,
             visible_to_normalized: builder.visible_to_normalized,
         }
     }

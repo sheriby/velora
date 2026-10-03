@@ -166,12 +166,6 @@ async fn saving_after_an_edit_at_the_start_preserves_every_other_byte(cx: &mut T
 
     let mut failures: Vec<String> = Vec::new();
     for (name, source) in FIDELITY_CASES {
-        // 「转义字符原样」由 `typing_next_to_literal_escapes_still_rewrites_the_block`
-        // 单独盯着：那一条洗掉字节的原因不在写回层，是块自己的标题从可见文本重建时
-        // 把字面 `*` 当成了强调定界符。
-        if *name == "转义字符原样" {
-            continue;
-        }
         let path = temp_markdown_path(name);
         fs::write(&path, source).expect("write fixture");
         let cleanup = path.clone();
@@ -431,14 +425,13 @@ async fn replacing_the_document_by_path_swaps_the_buffer_and_keeps_its_bytes(
     assert_eq!(fs::read(&path).expect("read saved"), original);
 }
 
-/// 已知缺陷（钉住现状，不是认可）：段首打字会把整段的字面转义洗掉。
+/// 段首打字不许重新解释这一段里已有的字面转义。
 ///
-/// 根因不在写回层：块在光标处插入文字时是从**可见文本**重建标题的，于是原本
-/// 显示成字面星号的 `\*不强调\*` 被当成强调定界符（渲染也跟着变粗），可见长度
-/// 缩短，编辑器只能退回整块重新序列化。缓冲区这边按区间写回已经能保住这些字节
-/// ——修好上面那一步之后，这条应该并进 `saving_after_an_edit_at_the_start_...`。
+/// `\*不强调\*` 显示成字面星号，靠的是源码里那两个反斜杠；树里只剩一个 `*`，和没配对
+/// 的定界符长得一模一样。转义位置因此是必须存下来的数据（`InlineTextTree::escaped_offsets`）：
+/// 少了它，一次打字就把写法读成语法，可见文本变短、渲染变粗、字节也被顺手改写。
 #[gpui::test]
-async fn typing_next_to_literal_escapes_still_rewrites_the_block(cx: &mut TestAppContext) {
+async fn typing_next_to_literal_escapes_keeps_them_literal(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
     const SOURCE: &str = "字面星号 \\*不强调\\* 和字面下划线 \\_x\\_\n";
@@ -454,10 +447,69 @@ async fn typing_next_to_literal_escapes_still_rewrites_the_block(cx: &mut TestAp
     cx.simulate_input("X");
     redraw(cx);
 
-    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    let (buffer_text, visible_text) = editor.read_with(cx, |editor, cx| {
+        let block = editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+            .expect("应有第一个块");
+        (
+            editor.buffer.text(),
+            block.read(cx).record.title.visible_text(),
+        )
+    });
     assert_eq!(
-        buffer_text, "X字面星号 *不强调* 和字面下划线 _x_\n",
-        "字面转义的处理变了：这条测试该并进逐字节保真那张表"
+        buffer_text, "X字面星号 \\*不强调\\* 和字面下划线 \\_x\\_\n",
+        "插入处以外的字面转义被重新解释了"
+    );
+    assert_eq!(
+        visible_text, "X字面星号 *不强调* 和字面下划线 _x_",
+        "字面星号被读成了强调定界符，可见文本短了一截"
+    );
+}
+
+/// 转义写法存下来之后，同一段里现敲的 markdown 语法照常生效：两者不打架。
+#[gpui::test]
+async fn typing_markdown_in_an_escaped_paragraph_makes_bold_and_keeps_the_escapes(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const SOURCE: &str = "字面星号 \\*不强调\\*\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, SOURCE.to_string(), None));
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+    }).expect("应有第一个块");
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    for ch in "**粗**".chars() {
+        cx.simulate_input(&ch.to_string());
+    }
+    redraw(cx);
+
+    let (buffer_text, visible_text) = editor.read_with(cx, |editor, cx| {
+        let block = editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+            .expect("应有第一个块");
+        (
+            editor.buffer.text(),
+            block.read(cx).record.title.visible_text(),
+        )
+    });
+    assert_eq!(
+        buffer_text, "**粗**字面星号 \\*不强调\\*\n",
+        "现写的定界符没落到源码里，或者旧的转义被改写了"
+    );
+    assert_eq!(
+        visible_text, "粗字面星号 *不强调*",
+        "逐字符敲的 ** 没成粗体，或字面星号被读成了定界符"
     );
 }
 

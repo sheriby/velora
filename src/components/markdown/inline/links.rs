@@ -25,7 +25,7 @@ pub(crate) fn locate_inline_link(
     let label_end = loop {
         let token = tokens.get(cursor)?;
         // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
-        if token.ch == '\\' && !token.literal_backslash {
+        if token.ch == '\\' && !token.literal_char {
             cursor += 2;
             continue;
         }
@@ -47,7 +47,7 @@ pub(crate) fn locate_inline_link(
             let url_end = loop {
                 let token = tokens.get(cursor)?;
                 // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
-                if token.ch == '\\' && !token.literal_backslash {
+                if token.ch == '\\' && !token.literal_char {
                     cursor += 2;
                     continue;
                 }
@@ -81,7 +81,7 @@ pub(crate) fn locate_inline_link(
             let reference_end = loop {
                 let token = tokens.get(cursor)?;
                 // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
-                if token.ch == '\\' && !token.literal_backslash {
+                if token.ch == '\\' && !token.literal_char {
                     cursor += 2;
                     continue;
                 }
@@ -135,7 +135,7 @@ pub(crate) fn locate_autolink(tokens: &[CharToken], index: usize) -> Option<usiz
     let end_index = loop {
         let token = tokens.get(cursor)?;
         // 可见文本模式下的反斜杠是字面字符，不能跳过后一个字符。
-        if token.ch == '\\' && !token.literal_backslash {
+        if token.ch == '\\' && !token.literal_char {
             cursor += 2;
             continue;
         }
