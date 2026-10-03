@@ -1283,3 +1283,71 @@ async fn deleting_a_whole_table_keeps_the_other_blocks_bytes_untouched(cx: &mut 
     let (spans, buffer_text) = present_root_spans(&editor, cx);
     assert_spans_tile_the_content(&spans, &buffer_text, "整张表删掉之后");
 }
+
+/// 嵌套列表项降成子段落只该动列表那两行：表外与列表外的字节照旧。
+#[gpui::test]
+async fn downgrading_a_nested_list_item_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "段落文字\n",
+        "\n",
+        "- 甲\n",
+        "  - 乙\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-nested-downgrade");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let nested = editor
+                .document
+                .visible_blocks()
+                .get(2)
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有嵌套的列表项");
+            editor.on_block_event(
+                nested,
+                &BlockEvent::RequestDowngradeNestedListItemToChildParagraph,
+                cx,
+            );
+        });
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(
+        buffer_text.starts_with("段落文字\n\n- 甲\n"),
+        "降级把列表之前或首项的字节改了：{buffer_text:?}"
+    );
+    assert!(
+        buffer_text.contains("| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |"),
+        "降级把表格的列宽填充重算了：{buffer_text:?}"
+    );
+    assert!(
+        buffer_text.ends_with("强调 __下划线__ 结尾\n"),
+        "降级把后面的块规范化了，或丢了末行换行：{buffer_text:?}"
+    );
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "嵌套列表项降级之后");
+}

@@ -674,6 +674,7 @@ impl Editor {
                 }
 
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+                let roots_before = self.document.root_layout(cx);
 
                 let downgraded = self.document.with_structure_mutation(cx, |document, cx| {
                     let (moved, removed_location) =
@@ -701,7 +702,12 @@ impl Editor {
 
                 self.focus_block(downgraded.entity_id());
                 self.rebuild_image_runtimes(cx);
-                self.mark_dirty(cx);
+                // 降级的内容都在这一根列表里：整根块按新区间写回就够了。
+                if self.write_back_structural_change(&downgraded, Some(&roots_before), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
