@@ -39,7 +39,7 @@ async fn typing_does_not_rescan_status_bar_statistics_every_key(cx: &mut TestApp
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             total,
-            crate::editor::status_bar::count_words(&editor.last_stable_source_text),
+            crate::editor::status_bar::count_words(&editor.buffer.text()),
             "静默窗口后补算的字数必须与当前文本一致"
         );
     });
@@ -457,7 +457,7 @@ async fn status_bar_view_mode_toggle_switches_mode(cx: &mut TestAppContext) {
 
 /// 阶段 2 闸门：一次真实的编辑序列里，「整篇重新序列化」这一档兜底应该出现 0 次。
 ///
-/// 计数器只在 `resync_buffer_and_stable_snapshot` 真的重投影时加一：走到那里说明
+/// 计数器只在 `resync_buffer_from_projection` 真的重投影时加一：走到那里说明
 /// 这条命令没声明自己的区间，未编辑块的原始字节就此丢掉（表格列宽填充、`__` 强调
 /// 写法、CRLF、末行换行都是这样被洗掉的）。每转一条路径，这里就少一个名额。
 #[gpui::test]

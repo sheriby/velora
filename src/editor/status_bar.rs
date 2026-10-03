@@ -81,7 +81,7 @@ impl Editor {
             }
         }
         self.word_count_scans.set(self.word_count_scans.get() + 1);
-        let count = count_words(&self.last_stable_source_text);
+        let count = count_words(&self.buffer.text());
         self.word_count_cache.set(Some((revision, count)));
         count
     }
@@ -190,7 +190,7 @@ impl Editor {
             Some((cached, value)) if cached == revision => value,
             Some((_, value)) if !self.status_scan_ready(revision, cx) => value,
             _ => {
-                let value = document_has_long_source_block(&self.last_stable_source_text);
+                let value = document_has_long_source_block(&self.buffer.text());
                 self.long_source_block_hint = Some((revision, value));
                 value
             }

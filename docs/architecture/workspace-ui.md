@@ -55,8 +55,8 @@
 
 ## 8. 侧栏三面板的防重算设计
 
-- **状态栏**（status_bar.rs）：字数/阅读时长读 `last_stable_source_text`（稳定快照，非实时序列化）；长块提示按 `(document_revision, bool)` 缓存；行列号仅 Source 模式算。
-- **大纲**：`sync_workspace_outline` 仅当 `outline_source != last_stable_source_text` 才重建（`build_outline_tree` 用 pulldown-cmark，围栏代码安全）；滚动跟随高亮按字节偏移分区 + `outline_follow_cache`（按 revision 键）。
+- **状态栏**（status_bar.rs）：字数/阅读时长读缓冲区（= 文件内容）；长块提示按 `(document_revision, bool)` 缓存；行列号仅 Source 模式算。
+- **大纲**：`sync_workspace_outline` 仅当缓冲区内容与 `outline_source` 不同才重建（比较零拷贝，`build_outline_tree` 用 pulldown-cmark，围栏代码安全）；滚动跟随高亮按字节偏移分区 + `outline_follow_cache`（按 revision 键）。
 - **搜索**：`schedule_workspace_search` 代数计数 + 120ms 去抖；工作区域走缓存的树、文档域走源码，均在 background executor + catch_unwind；结果上限 200；**重搜期间保留旧结果**（防闪空白）；文档内命中经 `sync_document_search_highlights` 画进块。
 - ⌘P 快速切换（quick_open.rs）：过滤 `workspace_text_files()`，上限 12，IME 输入路由经 Editor 的 input handler。
 - ⇧⌘P 命令面板（command_palette.rs）：条目来自 `commands::commands()`；派发走真实 `window.dispatch_action`（与菜单/快捷键同路径）。

@@ -349,8 +349,6 @@ impl Editor {
         self.redo_history.clear();
         self.pending_undo_capture = None;
         self.last_selection_snapshot = Self::empty_selection_snapshot();
-        // 拖拽打开的文档同样以缓冲区为基准（见 `from_markdown` 里的同一注释）。
-        self.refresh_stable_document_snapshot(cx);
         self.history_restore_in_progress = false;
         self.sync_workspace_after_document_path_change(cx);
         cx.notify();

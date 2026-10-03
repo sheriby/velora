@@ -72,13 +72,13 @@ async fn outline_lines_are_the_lines_in_the_file(cx: &mut TestAppContext) {
     });
 }
 
-/// 状态栏读的那份「稳定快照」就是缓冲区内容，而重新序列化的文本是另一份。
+/// 状态栏读的就是缓冲区内容，而重新序列化的文本是另一份。
 ///
 /// 字数对规范化不敏感（标记、空行、列宽都不是词），所以这条守的不是数字本身，
-/// 而是「快照与文件同源」这个前提：快照一旦回到序列化文本，行列号、字数、
+/// 而是「状态栏与文件同源」这个前提：读取侧一旦回到序列化文本，行列号、字数、
 /// 搜索高亮会一起漂。
 #[gpui::test]
-async fn the_status_bar_snapshot_is_the_file_text(cx: &mut TestAppContext) {
+async fn the_status_bar_counts_the_file_text(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
     let (editor, cx) = cx.add_window_view(|_window, cx| {
@@ -86,15 +86,13 @@ async fn the_status_bar_snapshot_is_the_file_text(cx: &mut TestAppContext) {
     });
     redraw(cx);
 
-    let (snapshot, buffer_text, serialized, shown) = editor.update(cx, |editor, cx| {
+    let (buffer_text, serialized, shown) = editor.update(cx, |editor, cx| {
         (
-            editor.last_stable_source_text.clone(),
             editor.buffer.text(),
             editor.document.markdown_text(cx),
             editor.cached_total_word_count(cx),
         )
     });
-    assert_eq!(snapshot, buffer_text, "稳定快照不是缓冲区（文件）内容");
     assert_eq!(shown, count_words(&buffer_text), "字数不是按文件内容算的");
     assert_ne!(
         buffer_text, serialized,

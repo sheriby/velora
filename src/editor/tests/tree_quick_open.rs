@@ -258,8 +258,8 @@ async fn outline_jump_lands_inside_the_target_heading(cx: &mut TestAppContext) {
     });
 
     editor.update(cx, |editor, cx| {
-        let line = editor
-            .last_stable_source_text
+        let buffer_text = editor.buffer.text();
+        let line = buffer_text
             .lines()
             .position(|text| text == "## 沟通风格")
             .expect("target heading line");
@@ -345,7 +345,7 @@ async fn source_mappings_align_with_the_real_document_text(cx: &mut TestAppConte
     });
 
     editor.update(cx, |editor, cx| {
-        let source = editor.last_stable_source_text.clone();
+        let source = editor.buffer.text();
         for mapping in editor.build_source_target_mappings(cx) {
             let block = mapping.entity.read(cx);
             let range = &mapping.full_source_range;

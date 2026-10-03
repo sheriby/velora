@@ -132,35 +132,11 @@ impl Editor {
         });
     }
 
-    /// 与 `prepare_undo_capture` 同一条路：撤销组不再需要任何文本快照，
-    /// 「稳定快照」那种每键全文对比的说法就此作废。
-    pub(super) fn prepare_undo_capture_from_stable_snapshot(
-        &mut self,
-        kind: UndoCaptureKind,
-        cx: &App,
-    ) {
-        if self.history_restore_in_progress || self.pending_undo_capture.is_some() {
-            return;
-        }
-        self.pending_undo_capture = Some(PendingUndoCapture {
-            snapshot: self.begin_history_group(kind, cx),
-        });
-    }
-
-    pub(super) fn refresh_stable_document_snapshot(&mut self, cx: &App) {
-        let source = self.current_document_source(cx);
-        self.set_stable_document_snapshot(source, cx);
-    }
-
-    fn set_stable_document_snapshot(&mut self, source: String, _cx: &App) {
-        self.last_stable_source_text = source;
-    }
-
     /// 帧级选区快照刷新：只在选区（或活动块）真的变了时重算。
     ///
     /// `capture_source_selection_snapshot` 在渲染模式下要从文档第一块走到
     /// 光标块重建 source mapping，大文档里每帧都算一次就是白付 O(文档) 成本；
-    /// 文档内容变化会经编辑路径刷新稳定快照，这里只管选区移动。
+    /// 这里只管选区移动，文档内容变化由编辑路径自己处理。
     pub(super) fn refresh_selection_snapshot_if_changed(&mut self, cx: &App) {
         let Some(target) = self.current_edit_target_from_state(cx) else {
             return;
@@ -180,7 +156,6 @@ impl Editor {
         }
 
         let Some(pending) = self.pending_undo_capture.take() else {
-            self.refresh_stable_document_snapshot(cx);
             return;
         };
 
@@ -443,7 +418,7 @@ impl Editor {
         // 而位置换算只认区间——拿旧状态算出来的快照会把焦点放回上一个块。
         // 引用块的重排会换掉整棵树的实体：先把当前块树落进缓冲区并挂好区间，
         // 否则刚插入的块算不出位置，快照会退回上一个块。
-        self.resync_buffer_and_stable_snapshot(cx);
+        self.resync_buffer_from_projection(cx);
         let selection_snapshot = self.capture_source_selection_snapshot(cx);
         let roots = self.rebuild_root_blocks_from_buffer(cx);
         self.document.replace_roots(roots, cx);

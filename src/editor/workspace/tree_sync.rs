@@ -449,12 +449,19 @@ impl Editor {
     }
 
     pub(crate) fn sync_workspace_outline(&mut self, _cx: &mut Context<Self>) {
-        let source = &self.last_stable_source_text;
-        if self.workspace.outline_source.as_deref() == Some(source.as_str()) {
+        // 这条短路每帧都会走（侧栏一开着就渲染），所以比较必须零拷贝：
+        // `buffer.text()` 每次都要复制整篇，10 MiB 文档上就是一帧一次大搬运。
+        let unchanged = self
+            .workspace
+            .outline_source
+            .as_deref()
+            .is_some_and(|source| self.buffer.matches_text(source));
+        if unchanged {
             return;
         }
 
-        let outline = build_outline_tree(source);
+        let source = self.buffer.text();
+        let outline = build_outline_tree(&source);
         prune_outline_state(&mut self.workspace, &outline);
         // Expand headings down to H3 by default so the outline is usable
         // without clicking through every level; users can still collapse.
@@ -462,6 +469,6 @@ impl Editor {
         self.workspace.toc_entries = flatten_outline_entries(&outline);
         self.toc_state_version = self.toc_state_version.wrapping_add(1);
         self.workspace.outline_tree = outline;
-        self.workspace.outline_source = Some(source.clone());
+        self.workspace.outline_source = Some(source);
     }
 }

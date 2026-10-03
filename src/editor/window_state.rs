@@ -446,7 +446,6 @@ impl Editor {
         self.table_axis_selection = None;
         self.dismiss_contextual_overlays(cx);
         self.sync_table_axis_visuals(cx);
-        self.refresh_stable_document_snapshot(cx);
         // 模式切换会换掉整套块实体，文档内搜索高亮必须重算，否则正文里的
         // 命中全丢（用户报修）。非查找场景下该函数自行早退/清理。
         if self.workspace.is_open
@@ -475,9 +474,10 @@ impl Editor {
     }
 
     fn finish_dirty(&mut self, cx: &mut Context<Self>) {
-        // 每次改动都要把块树的序列化刷进「稳定快照」：搜索高亮、大纲、跨块选区
-        // 恢复都按它的坐标算位置，少刷一次就会拿旧文本去映射新块树。
-        self.resync_buffer_and_stable_snapshot(cx);
+        // 改动没自己声明区间时，这里是唯一的落笔处：把块树的序列化刷进缓冲区，
+        // 搜索高亮、大纲、跨块选区恢复都按缓冲区坐标算位置，少刷一次就会拿旧文本
+        // 去映射新块树。
+        self.resync_buffer_from_projection(cx);
         self.document_revision = self.document_revision.wrapping_add(1);
         if !self.document_dirty {
             self.document_dirty = true;
@@ -737,7 +737,7 @@ impl Editor {
     }
 
     fn jump_to_heading_anchor(&mut self, anchor: &str, cx: &mut Context<Self>) {
-        let source = self.last_stable_source_text.clone();
+        let source = self.buffer.text();
         if let Some(line) = heading_line_for_anchor(&source, anchor) {
             self.jump_to_source_line(line, cx);
         }

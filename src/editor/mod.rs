@@ -286,7 +286,6 @@ pub struct Editor {
     last_selection_snapshot_source: Option<(EntityId, std::ops::Range<usize>)>,
     /// ⌘P/⇧⌘P 打开前的正文焦点块：关闭浮层时还回去（不然敲字全丢）。
     overlay_focus_restore_target: Option<EntityId>,
-    last_stable_source_text: String,
     history_restore_in_progress: bool,
     image_reference_definitions: Arc<ImageReferenceDefinitions>,
     link_reference_definitions: Arc<LinkReferenceDefinitions>,
@@ -679,18 +678,12 @@ impl Editor {
             last_selection_snapshot: Self::empty_selection_snapshot(),
             last_selection_snapshot_source: None,
             overlay_focus_restore_target: None,
-            last_stable_source_text: String::new(),
             history_restore_in_progress: false,
             image_reference_definitions: Arc::default(),
             link_reference_definitions: Arc::default(),
             footnote_registry: Arc::default(),
             runtime_context_sensitive_blocks: HashSet::new(),
         };
-        // 稳定快照就是缓冲区里的那份文本：大纲、锚点跳转、搜索高亮、状态栏
-        // 全部锚定它，而块的位置由 `source_span` 说了算，两边同一个坐标系。
-        // 此前它取的是导入模型的序列化文本，非规范输入（围栏后紧跟 `---`、
-        // 表格列宽填充）会让基准逐字节漂移。
-        editor.refresh_stable_document_snapshot(cx);
         editor.rebuild_table_runtimes(cx); // Also refreshes image and reference contexts.
         editor.pending_focus = editor.first_focusable_entity_id(cx);
         editor.active_entity_id = editor.pending_focus;
@@ -1046,7 +1039,7 @@ impl Editor {
 
     /// 返回 `false` 表示这个块没有可用区间（新建的块、子块、整篇重投影后没被
     /// 记到的空块）：那种情况下按区间写会把字节落错位置，调用方必须退回
-    /// [`Self::resync_buffer_and_stable_snapshot`]。
+    /// [`Self::resync_buffer_from_projection`]。
     pub(crate) fn write_back_block_source(
         &mut self,
         block: &Entity<Block>,
@@ -1340,13 +1333,13 @@ impl Editor {
             && self.view_mode == ViewMode::Rendered
     }
 
-    /// 块树变了：把它的序列化换进缓冲区（除非这次改动自己声明过区间），并刷新
-    /// 搜索/大纲赖以定位的稳定快照。两者必须是同一份文本，否则坐标会漂。
+    /// 块树变了：把它的序列化换进缓冲区（除非这次改动自己声明过区间）。读取侧
+    /// 全部以缓冲区为准，所以区间也要按这份新文本重挂，否则坐标会漂。
     ///
     /// 这是写回的保底档位，代价是**未编辑的块也被重新序列化一次**（表格列宽填充、
     /// `__` 强调这些写法就此改写），原始字节也随之丢弃。每多一条走到这里的路径，
     /// 就少一块「保住原文」的地盘——收敛方向是让改动自己声明区间，不是让这里变快。
-    pub(crate) fn resync_buffer_and_stable_snapshot(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn resync_buffer_from_projection(&mut self, cx: &mut Context<Self>) {
         let skip_resync = std::mem::take(&mut self.skip_next_resync);
         if self.writes_through_the_buffer() {
             if !skip_resync {
@@ -1370,9 +1363,6 @@ impl Editor {
             let text = self.document.raw_source_text(cx);
             self.apply_resynced_text(&text);
         }
-        // 稳定快照与读取侧同源：搜索高亮、大纲、跨块选区恢复都按它的坐标算位置，
-        // 所以它就是缓冲区的内容。
-        self.last_stable_source_text = self.buffer.text();
     }
 
     /// 把重投影出来的文本作为**一次**写入落进缓冲区。

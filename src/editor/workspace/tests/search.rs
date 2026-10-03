@@ -1201,7 +1201,7 @@ async fn real_workspace_click_hit_183_end_to_end(cx: &mut TestAppContext) {
             editor.search_options(),
         );
         let lines: Vec<&str> = source.split_inclusive('\n').collect();
-        println!("NEARDBG live_lines={} stable==live={}", lines.len(), editor.last_stable_source_text == source);
+        println!("NEARDBG live_lines={}", lines.len());
         // 磁盘 174/183 行的关键内容在序列化文本中的真实位置
         for (needle, label) in [
             ("执行性能测试", "disk-183-content"),
