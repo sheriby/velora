@@ -1153,3 +1153,80 @@ async fn pressing_enter_in_a_table_cell_only_inserts_a_blank_line(cx: &mut TestA
     let (spans, buffer_text) = present_root_spans(&editor, cx);
     assert_spans_tile_the_content(&spans, &buffer_text, "表后插入空段落之后");
 }
+
+/// 空的标注降级成引用只该改这一段：`> [!注意]` 换成 `>`，别的块一个字节都不动。
+#[gpui::test]
+async fn downgrading_an_empty_callout_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "段落文字\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "> [!note]\n",
+        ">\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-callout-downgrade");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let body = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| {
+                    let block = visible.entity.read(cx);
+                    if block.kind() != BlockKind::Paragraph || !block.display_text().is_empty() {
+                        return false;
+                    }
+                    let block_id = visible.entity.entity_id();
+                    editor
+                        .document
+                        .find_block_location(block_id)
+                        .and_then(|location| location.parent)
+                        .is_some_and(|parent| parent.read(cx).kind().callout_variant().is_some())
+                })
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有标注的空正文");
+            editor.on_block_event(body, &BlockEvent::RequestDelete, cx);
+        });
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(
+        buffer_text.starts_with("段落文字\n\n| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |\n"),
+        "标注降级把表格的列宽填充重算了：{buffer_text:?}"
+    );
+    assert!(
+        buffer_text.ends_with("强调 __下划线__ 结尾\n"),
+        "标注降级把后面的块规范化了，或丢了末行换行：{buffer_text:?}"
+    );
+    assert!(
+        buffer_text.contains("> \\[!NOTE]"),
+        "降级后的引用没进缓冲区：{buffer_text:?}"
+    );
+    // 这一根块从两行变一行，后面的块整体左移：区间必须还各自对得上自己的源码。
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "标注降级成引用之后");
+}

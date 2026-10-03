@@ -223,6 +223,7 @@ impl Editor {
         }
 
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        let roots_before = self.document.root_layout(cx);
         self.document.with_structure_mutation(cx, |document, cx| {
             let _ = document.remove_block_by_id_raw(block.entity_id(), cx);
             parent.update(cx, |parent, cx| {
@@ -240,7 +241,12 @@ impl Editor {
         });
         self.focus_block(parent.entity_id());
         self.rebuild_image_runtimes(cx);
-        self.mark_dirty(cx);
+        // 标注降级只改这一段：整根块按新区间写回，表外的块一个字节都不动。
+        if self.write_back_structural_change(&parent, Some(&roots_before), cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
         self.finalize_pending_undo_capture(cx);
         cx.notify();
         true
