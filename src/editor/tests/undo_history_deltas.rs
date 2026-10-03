@@ -544,6 +544,59 @@ async fn undoing_an_added_table_column_puts_the_bytes_back_byte_for_byte(
     assert_eq!(saved, FIXTURE, "撤销一次加列之后，磁盘上的字节不再是原文");
 }
 
+/// 撤销一次「表格删一列」：每行剪了一小段，撤销要把这些段按剪的反序逐段放回去。
+#[gpui::test]
+async fn undoing_a_dropped_table_column_puts_the_bytes_back_byte_for_byte(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str =
+        "| 名称   | 数量 | 单价 |\r\n|:-------|-----:|-----:|\r\n| 苹果   |    3 |    2 |\r\n";
+    let path = temp_markdown_path("undo-table-column-delete");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.delete_table_column(&table, 1, cx);
+        });
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.buffer.text().contains("数量"),
+            "删列没生效：{:?}",
+            editor.buffer.text()
+        );
+    });
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(saved, FIXTURE, "撤销一次删列之后，磁盘上的字节不再是原文");
+}
+
 /// 闸门（方案 §6.2.4）：撤销栈打满 200 步，内存必须停在 8 MB 以内。
 ///
 /// 旧实现每步存一份全文快照，栈深 200 × 文档大小——10 MiB 文档最坏 2 GB。存增量

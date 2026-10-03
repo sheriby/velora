@@ -1872,3 +1872,55 @@ async fn adding_a_table_column_keeps_the_other_columns_padded_as_written(
         "加一列改掉了别的格的字节或表外的块：{saved:?}"
     );
 }
+
+/// 表格删一列，只许剪掉每行里那一格连同它右边那根竖线，别的格一个字节都不动。
+///
+/// 删列同样不许重拼整张表：留下的那两列的填充（`| 名称   |`、`|    2 |`）和分隔行
+/// 的对齐写法都是用户写的字节。这里连表外那个 `__下划线__` 的写法一起按字节断言。
+#[gpui::test]
+async fn deleting_a_table_column_keeps_the_other_columns_padded_as_written(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 | 单价 |\n|:-------|-----:|-----:|\n| 苹果   |    3 |    2 |\n\n强调 __下划线__ 结尾\n";
+    let path = temp_markdown_path("write-back-table-column-delete");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.delete_table_column(&table, 1, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "表格删一列之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   | 单价 |\r\n|:-------|-----:|\r\n| 苹果   |    2 |\r\n\r\n强调 __下划线__ 结尾\r\n",
+        "删一列改掉了别的格的字节或表外的块：{saved:?}"
+    );
+}

@@ -336,6 +336,64 @@ impl Editor {
         true
     }
 
+    /// 表格删一列 = 每行剪掉那一格连同它右边那根竖线，留下的格一个字节都不动。
+    ///
+    /// 整张表按模型重拼会把留下的那些列的填充与对齐写法一起重排。剪点全在表自己的
+    /// 区间里，而且从最后一行往前剪——后面的行先动，前面那些行的偏移才不会被带歪。
+    ///
+    /// 返回 `false` 表示剪不出来：列号越界、某行的竖线数跟列数对不上（格子里有转义
+    /// 竖线或不是管道写法）、行数与模型对不上、表没有自己的区间。那种情况交回整块写。
+    fn write_back_table_column_deletion(
+        &mut self,
+        table_block: &Entity<Block>,
+        column: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let Some((rows, columns)) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| (table.rows.len(), table.column_count()))
+        else {
+            return false;
+        };
+        let lines = self.table_source_lines(&span);
+        if lines.len() != rows + 2 || column > columns {
+            return false;
+        }
+        // 模型里那一列已经删了，所以源码里每行该比模型多一列、多一根竖线。
+        let mut cuts: Vec<Range<usize>> = Vec::with_capacity(lines.len());
+        for (line, text) in &lines {
+            let pipes = unescaped_pipe_offsets(text);
+            let wrapped = pipes.first() == Some(&0) && pipes.last() == Some(&(text.len() - 1));
+            if !wrapped || pipes.len() != columns + 2 {
+                return false;
+            }
+            let line_start = self.buffer.line_range(*line).start;
+            cuts.push((line_start + pipes[column] + 1)..(line_start + pipes[column + 1] + 1));
+        }
+
+        let boundary = self.buffer.line_range(lines[lines.len() - 1].0).end;
+        let mut moved = 0usize;
+        for range in cuts.into_iter().rev() {
+            moved += range.end - range.start;
+            let applied = self.buffer.edit(range, "");
+            self.record_buffer_edit(applied);
+        }
+        let delta = -(moved as i64);
+        table_block.update(cx, |block, _cx| {
+            if let Some(span) = &block.record.source_span {
+                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
+            }
+        });
+        self.shift_root_spans_after(boundary, delta, cx);
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
@@ -961,7 +1019,11 @@ impl Editor {
             },
             cx,
         );
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_column_deletion(table_block, column, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
