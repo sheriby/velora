@@ -2025,3 +2025,53 @@ async fn moving_a_table_row_of_different_length_leaves_the_blocks_below(cx: &mut
         "换两行长度不同的行写掉了别的字节：{saved:?}"
     );
 }
+
+/// 表格移动一列 = 每行里那两格的对调，第三列的字节一个都不动。
+///
+/// 每格连自己的填充一起搬走（`| 名称   |` 就是 `| 名称   |`），分隔行的对齐写法跟着
+/// 换列。整张表按模型重拼会把没动的第三列也重排一遍。
+#[gpui::test]
+async fn moving_a_table_column_swaps_only_those_two_columns(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 | 单价 |\n|:-------|-----:|-----:|\n| 苹果   |    3 |    2 |\n";
+    let path = temp_markdown_path("write-back-table-column-move");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.move_table_column(&table, 0, 1, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "表格移动一列之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 数量 | 名称   | 单价 |\r\n|-----:|:-------|-----:|\r\n|    3 | 苹果   |    2 |\r\n",
+        "移动一列改掉了这两格以外的字节：{saved:?}"
+    );
+}

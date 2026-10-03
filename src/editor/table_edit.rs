@@ -448,6 +448,78 @@ impl Editor {
         true
     }
 
+    /// 表格里两列互换 = 每行只把那两格的对调，别的格留在原地。
+    ///
+    /// 每格连自己的填充一起搬走，分隔行的对齐写法跟着换列。一格长一格短也不要紧：
+    /// 同一行里对调的是一进一出，行长不变，所以后面的行、这张表的区间和表外的块都
+    /// 不会被挪。每行先写靠后那一格，再写靠前那格，偏移才不会错位。
+    ///
+    /// 返回 `false` 表示换不了：列号越界、行数与模型对不上、某行的竖线数跟列数不符。
+    /// 那种情况交回整块写。
+    fn write_back_table_column_swap(
+        &mut self,
+        table_block: &Entity<Block>,
+        column_a: usize,
+        column_b: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let Some((rows, columns)) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| (table.rows.len(), table.column_count()))
+        else {
+            return false;
+        };
+        let lines = self.table_source_lines(&span);
+        if lines.len() != rows + 2 || column_a == column_b {
+            return false;
+        }
+        let (first, second) = (column_a.min(column_b), column_a.max(column_b));
+        if second >= columns {
+            return false;
+        }
+
+        // 先把每行那两格的文本量出来，再逐行对调：每行的净长度不变，所以后面的行、
+        // 这张表的区间都不会被挪。
+        let mut swaps: Vec<(usize, Range<usize>, Range<usize>, String, String)> = Vec::new();
+        for (line, text) in &lines {
+            let pipes = unescaped_pipe_offsets(text);
+            let wrapped = pipes.first() == Some(&0) && pipes.last() == Some(&(text.len() - 1));
+            if !wrapped || pipes.len() != columns + 1 {
+                return false;
+            }
+            let first_cell = (pipes[first] + 1)..pipes[first + 1];
+            let second_cell = (pipes[second] + 1)..pipes[second + 1];
+            let first_text = text[first_cell.clone()].to_string();
+            let second_text = text[second_cell.clone()].to_string();
+            swaps.push((*line, first_cell, second_cell, first_text, second_text));
+        }
+
+        for (line, first_cell, second_cell, first_text, second_text) in swaps.into_iter().rev() {
+            if first_text == second_text {
+                continue;
+            }
+            let line_start = self.buffer.line_range(line).start;
+            // 先写靠后那一格：它不动前面那格的偏移。
+            let applied = self.buffer.edit(
+                (line_start + second_cell.start)..(line_start + second_cell.end),
+                &first_text,
+            );
+            self.record_buffer_edit(applied);
+            let applied = self.buffer.edit(
+                (line_start + first_cell.start)..(line_start + first_cell.end),
+                &second_text,
+            );
+            self.record_buffer_edit(applied);
+        }
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
@@ -930,7 +1002,11 @@ impl Editor {
             },
             cx,
         );
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_column_swap(table_block, column, next_column, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
