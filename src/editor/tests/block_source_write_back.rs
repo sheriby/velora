@@ -649,6 +649,72 @@ async fn breaking_out_of_a_callout_keeps_the_other_blocks_bytes_untouched(
     );
 }
 
+/// 在空段落上按退格是删掉那一段：只能动那一行，别处的字节一个不改。
+#[gpui::test]
+async fn deleting_an_empty_paragraph_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-delete-empty");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let expected = FIXTURE.replace("|\n\n\n强调", "|\n\n强调");
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let empty = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| {
+                    let block = visible.entity.read(cx);
+                    block.kind() == BlockKind::Paragraph && block.display_text().is_empty()
+                })
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有一个空段落");
+            editor.on_block_event(empty, &BlockEvent::RequestDelete, cx);
+        });
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text, expected,
+        "删一个空段落改写了别的字节，或者在文档里留下了多余空行：{buffer_text:?}"
+    );
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.save_document(window, cx));
+    });
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        expected.replace('\n', "\r\n"),
+        "保存落盘的不是缓冲区里那份字节：{saved:?}"
+    );
+}
+
 /// 提级一条嵌套列表项也只该动列表这一段：后面的段落、表格与行结束符不该被重排。
 #[gpui::test]
 async fn outdenting_a_list_item_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {

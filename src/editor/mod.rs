@@ -1014,15 +1014,49 @@ impl Editor {
         let Some(region_end) = before[old_end - 1].1.clone().map(|span| span.end) else {
             return false;
         };
-        if region_end <= region_start {
-            return false;
-        }
 
         let Some((text, local_spans)) =
             self.document.markdown_region_for_roots(anchor_index..new_end, cx)
         else {
             return false;
         };
+        // 整段被删空时要连分隔一起收掉：接缝处不该留下两个连续空行，文档开头也不该
+        // 以空行开始，否则删一个空段落会在文件里留下多余空行。
+        let (region_start, region_end) = if text.is_empty() {
+            let total = self.buffer.byte_len();
+            let mut start = region_start;
+            // 先吃掉这一行自己的换行（区间右端点本来就停在换行之前）。
+            let mut end = if self.buffer.byte_at(region_end) == Some(b'\n') {
+                region_end + 1
+            } else {
+                region_end
+            };
+            let blank_before = start >= 2
+                && self.buffer.byte_at(start - 1) == Some(b'\n')
+                && self.buffer.byte_at(start - 2) == Some(b'\n');
+            if blank_before {
+                if self.buffer.byte_at(end) == Some(b'\n') {
+                    // 前面本来就空着一行：把后面的分隔也吃掉一行。
+                    end += 1;
+                } else if end == region_end && end < total {
+                    // 后面没有分隔可吃（删的是文档最后一段）：退回去吃前面那行空行。
+                    start -= 1;
+                }
+            } else if start == 0 && self.buffer.byte_at(end) == Some(b'\n') {
+                // 删的是文档开头，紧跟其后的空行一起收掉。
+                end += 1;
+            }
+            (start, end)
+        } else {
+            (region_start, region_end)
+        };
+        if region_end <= region_start {
+            // 有文字要写却算不出非空区间（例如这一块的区间已经被折叠成零宽）：
+            // 交给调用方兜底。整段删空又没有分隔可收（空文档里那个空段落）才是
+            // 「没字节要写」，区间照旧有效。
+            return text.is_empty();
+        }
+
         let replaced_len = region_end - region_start;
         let applied = self.buffer.edit(region_start..region_end, &text);
         self.record_buffer_edit(applied);

@@ -67,6 +67,7 @@ impl Editor {
                 | BlockEvent::RequestOutdent
                 | BlockEvent::RequestQuoteBreak
                 | BlockEvent::RequestCalloutBreak
+                | BlockEvent::RequestDelete
         )
         .then(|| self.document.root_layout(cx));
         let visible_before = self.document.flatten_visible_blocks();
@@ -902,6 +903,11 @@ impl Editor {
                     return;
                 }
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+                // 删掉这一块只该动它那一段（在容器里时是那一整根容器）。
+                let region_anchor = self
+                    .document
+                    .root_ancestor_of(block.entity_id())
+                    .unwrap_or_else(|| block.clone());
 
                 let visible_before_ids = visible_before
                     .iter()
@@ -937,10 +943,19 @@ impl Editor {
                     self.focus_block(first_root.entity_id());
                 }
 
+                // 先把这一段按区间落进缓冲区，再声明「缓冲区已经是目标状态」：
+                // normalize 里那次重同步 otherwise 会拿整篇重新序列化盖掉未编辑的块。
+                let wrote_back =
+                    self.write_back_structural_change(&region_anchor, roots_before.as_deref(), cx);
+                self.skip_next_resync = wrote_back && quote_related;
                 if quote_related {
                     self.normalize_rendered_quote_structure(cx);
                 }
-                self.mark_dirty(cx);
+                if wrote_back {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }

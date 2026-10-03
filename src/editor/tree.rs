@@ -398,7 +398,14 @@ impl DocumentTree {
         range: std::ops::Range<usize>,
         cx: &App,
     ) -> Option<(String, Vec<(gpui::EntityId, std::ops::Range<usize>)>)> {
+        let range_is_empty = range.start >= range.end;
         let blocks = self.roots.get(range)?;
+        if blocks.is_empty() && range_is_empty {
+            // 这一段被删空了（例如删掉最后一个空段落）：新文本就是空串，
+            // 该收掉多少分隔由调用方按接缝两边的字节决定。非空的块序列序列化不出
+            // 内容时仍然算不出来（返回 None），交给整篇重投影兜底。
+            return Some((String::new(), Vec::new()));
+        }
         let mut lines = Vec::new();
         let mut line_spans = Vec::new();
         Self::collect_root_markdown_lines(
