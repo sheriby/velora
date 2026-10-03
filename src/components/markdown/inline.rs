@@ -27,6 +27,11 @@ pub struct InlineStyle {
     pub strikethrough: bool,
     pub code: bool,
     pub script: InlineScript,
+    /// 强调（粗体/斜体）在原文里用的定界符：`*` 或 `_`。
+    ///
+    /// 写法是原文的一部分：不记它的话，序列化只能一律写 `*`，于是任何一次整块落笔
+    /// 都把用户的 `__粗__` 改成 `**粗**`。`None` 表示按规范写 `*`。
+    pub emphasis_marker: Option<char>,
 }
 
 /// Vertical script style for simple Markdown extension syntax.
@@ -40,12 +45,17 @@ pub enum InlineScript {
 
 impl InlineStyle {
     pub fn with_bold(self) -> Self {
-        Self { bold: true, ..self }
+        Self {
+            bold: true,
+            emphasis_marker: Some(self.emphasis_marker.unwrap_or('*')),
+            ..self
+        }
     }
 
     pub fn with_italic(self) -> Self {
         Self {
             italic: true,
+            emphasis_marker: Some(self.emphasis_marker.unwrap_or('*')),
             ..self
         }
     }
@@ -88,8 +98,16 @@ impl InlineStyle {
 
     fn apply(self, delimiter: Delimiter) -> Self {
         match delimiter {
-            Delimiter::BoldMarkdown { .. } | Delimiter::BoldHtml => self.with_bold(),
-            Delimiter::ItalicMarkdown { .. } | Delimiter::ItalicHtml => self.with_italic(),
+            Delimiter::BoldMarkdown { marker } => InlineStyle {
+                emphasis_marker: Some(marker),
+                ..self.with_bold()
+            },
+            Delimiter::ItalicMarkdown { marker } => InlineStyle {
+                emphasis_marker: Some(marker),
+                ..self.with_italic()
+            },
+            Delimiter::BoldHtml => self.with_bold(),
+            Delimiter::ItalicHtml => self.with_italic(),
             Delimiter::Underline => self.with_underline(),
             Delimiter::StrikethroughMarkdown => self.with_strikethrough(),
             Delimiter::CodeMarkdown { .. } => self.with_code(),

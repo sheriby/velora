@@ -456,7 +456,7 @@ async fn typing_next_to_literal_escapes_still_rewrites_the_block(cx: &mut TestAp
 
     let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
     assert_eq!(
-        buffer_text, "X字面星号 *不强调* 和字面下划线 *x*\n",
+        buffer_text, "X字面星号 *不强调* 和字面下划线 _x_\n",
         "字面转义的处理变了：这条测试该并进逐字节保真那张表"
     );
 }
@@ -939,5 +939,36 @@ async fn splitting_a_plus_bulleted_item_keeps_the_plus_marker(cx: &mut TestAppCo
     assert_eq!(
         buffer_text, "+ alph\n+ a one\n+ beta two\n",
         "拆项把用户写的加号记号换成了减号"
+    );
+}
+
+/// 在带下划线强调的段落里打字（这一步会走整块落笔），同块没改过的下划线写法要原样留着。
+///
+/// 整块落笔拿的是块的序列化结果。序列化过去一律把强调写成星号，于是打一个字就把用户
+/// 的 `__下划线__` 改成 `**下划线**`——现在写法记在样式里，落笔出去还是下划线。
+#[gpui::test]
+async fn typing_inside_an_underscore_emphasis_paragraph_keeps_the_underscores(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "强调 __下划线__ 尾巴\n".to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        let end = block.read(cx).record.title.visible_len();
+        block.update(cx, |block, _cx| block.selected_range = end..end);
+        editor.pending_focus = Some(block.entity_id());
+    });
+    redraw(cx);
+
+    cx.simulate_input("*");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(
+        buffer_text.contains("__下划线__"),
+        "整块落笔把下划线强调洗成了星号：{buffer_text:?}"
     );
 }

@@ -47,7 +47,10 @@ Workspace (src/editor/workspace.rs)
   块文本 `record.title` 的语义从「内容」变成「`parse(buffer[span])` 的缓存」。Raw 保留类块
   （RawMarkdown/Comment/HtmlBlock/MathBlock/Mermaid）把原始源码存在 `raw_fallback`。
 - **行内内容**：`InlineTextTree = Vec<InlineFragment>`（src/components/markdown/inline.rs）。
-  **定界符不存储**，序列化时按规则重建（`serialize_markdown`）——正因为模型里存不下写法，
+  **定界符字符不落盘**，序列化时按规则重建（`serialize_markdown`），但**写法落盘**：强调用 `*`
+  还是 `_` 记在 `InlineStyle::emphasis_marker`（`stacks.rs` 序列化照写，`__粗__` 不会被写成
+  `**粗**`），列表项的子弹字符与序号分隔符记在 `BlockRecord::list_marker`（`+ 项目`、`1)`
+  不会被写成 `- 项目`、`1.`，显示也照写）。正因为重建出的字节只保证「语义相同、写法可能不同」，
   写回必须只动真正改过的那段字节（§3），不能「从块树重新生成这一块」。渲染侧有
   `InlineRenderCache`（可见文本 + spans + 双向偏移映射 `InlineMarkdownOffsetMap`）。
 

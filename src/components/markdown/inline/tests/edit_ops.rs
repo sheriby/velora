@@ -41,6 +41,7 @@
                 strikethrough: false,
                 code: false,
                 script: InlineScript::Normal,
+                emphasis_marker: Some('*'),
             }
         );
     }
@@ -809,15 +810,15 @@
         // 放宽词中规则不能误伤真正的下划线强调。
         assert_eq!(
             InlineTextTree::from_markdown("_italic_").serialize_markdown(),
-            "*italic*"
+            "_italic_"
         );
         assert_eq!(
             InlineTextTree::from_markdown("__bold__").serialize_markdown(),
-            "**bold**"
+            "__bold__"
         );
         assert_eq!(
             InlineTextTree::from_markdown("(_强调_)").serialize_markdown(),
-            "(*强调*)"
+            "(_强调_)"
         );
         assert_eq!(
             InlineTextTree::from_markdown("`_a_b_`").serialize_markdown(),

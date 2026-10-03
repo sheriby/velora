@@ -214,6 +214,8 @@ impl NormalizeBuilder {
         if extra_style.has_script() {
             style.script = extra_style.script;
         }
+        // 强调定界符的写法也要跟着样式往外传，不然 `_x_` 出来只剩「是斜体」这半个事实。
+        style.emphasis_marker = extra_style.emphasis_marker.or(style.emphasis_marker);
         let html_style = merge_html_styles(html_style, token.html_style);
 
         let text = token.ch.to_string();

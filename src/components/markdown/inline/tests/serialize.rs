@@ -94,11 +94,12 @@
     }
 
     #[test]
-    fn parses_underscore_emphasis_and_canonicalizes_to_asterisks() {
+    fn parses_underscore_emphasis_and_keeps_the_underscore_delimiters() {
         let tree = InlineTextTree::from_markdown("_a_ __b__");
 
         assert_eq!(tree.visible_text(), "a b");
-        assert_eq!(tree.serialize_markdown(), "*a* **b**");
+        // 写法是原文的一部分：下划线强调序列化回去还是下划线，不再规范成星号。
+        assert_eq!(tree.serialize_markdown(), "_a_ __b__");
     }
 
     #[test]
@@ -254,4 +255,23 @@
 
         assert_eq!(tree.visible_text(), markdown);
         assert_eq!(tree.serialize_markdown(), markdown);
+    }
+
+    #[test]
+    fn emphasis_keeps_the_delimiter_it_was_written_with() {
+        // 定界符的写法是原文的一部分。解析认得 `_`，序列化却一律写回 `*`，于是任何一次
+        // 整块落笔都会把用户的下划线强调改成星号（`__粗__` 变 `**粗**`）。
+        for text in [
+            "_italic_ and __bold__",
+            "强调 __下划线__ 尾巴",
+            "*star* and _under_",
+            "***both*** and ___both___",
+            "混合 _一_ 与 **二** 与 __三__",
+        ] {
+            assert_eq!(
+                InlineTextTree::from_markdown(text).serialize_markdown(),
+                text,
+                "下划线写法的强调被改成了星号"
+            );
+        }
     }

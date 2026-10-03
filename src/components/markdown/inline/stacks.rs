@@ -92,9 +92,13 @@ pub(crate) fn stack_variants(
 ) -> Vec<Vec<Delimiter>> {
     let style = fragment.style;
     let code_run_len = style.code.then(|| code_delimiter_run_len(&fragment.text));
+    // 强调按原文那位的写法写回去（`__粗__` 不该变成 `**粗**`）；没记过的按规范写 `*`。
+    let emphasis_marker = style.emphasis_marker.unwrap_or('*');
     let mut markdown_stack = Vec::new();
     if style.bold {
-        markdown_stack.push(Delimiter::BoldMarkdown { marker: '*' });
+        markdown_stack.push(Delimiter::BoldMarkdown {
+            marker: emphasis_marker,
+        });
     }
     if style.underline {
         markdown_stack.push(Delimiter::Underline);
@@ -119,7 +123,9 @@ pub(crate) fn stack_variants(
         InlineScript::Subscript => markdown_stack.push(Delimiter::SubscriptMarkdown),
     }
     if style.italic {
-        markdown_stack.push(Delimiter::ItalicMarkdown { marker: '*' });
+        markdown_stack.push(Delimiter::ItalicMarkdown {
+            marker: emphasis_marker,
+        });
     }
     // Code is always the innermost delimiter so it nests inside emphasis.
     if let Some(run_len) = code_run_len {
@@ -187,6 +193,7 @@ pub(crate) fn can_use_markdown_script_delimiters(
 pub(crate) fn styles_match_ignoring_script(left: InlineStyle, right: InlineStyle) -> bool {
     left.bold == right.bold
         && left.italic == right.italic
+        && left.emphasis_marker == right.emphasis_marker
         && left.underline == right.underline
         && left.strikethrough == right.strikethrough
         && left.code == right.code
@@ -274,14 +281,23 @@ pub(crate) fn stack_preference_key(stack: &[Delimiter]) -> Vec<u8> {
         .collect()
 }
 
+/// 连续 4 个以上的强调定界符在 CommonMark 里是歧义写法。星号与下划线同理，
+/// 序列化现在会照原文写 `_`，两种都得盯。
 pub(crate) fn longest_star_run(text: &str) -> usize {
     let mut max_run = 0;
+    let mut run_char = None;
     let mut current_run = 0;
     for ch in text.chars() {
-        if ch == '*' {
-            current_run += 1;
+        if matches!(ch, '*' | '_') {
+            if run_char == Some(ch) {
+                current_run += 1;
+            } else {
+                run_char = Some(ch);
+                current_run = 1;
+            }
             max_run = max_run.max(current_run);
         } else {
+            run_char = None;
             current_run = 0;
         }
     }
@@ -302,8 +318,25 @@ pub(crate) fn style_flag_enabled(style: InlineStyle, flag: StyleFlag) -> bool {
 
 pub(crate) fn set_style_flag(mut style: InlineStyle, flag: StyleFlag, enabled: bool) -> InlineStyle {
     match flag {
-        StyleFlag::Bold => style.bold = enabled,
-        StyleFlag::Italic => style.italic = enabled,
+        // 开强调时把写法定下来（用户新加的强调按规范写 `*`），两个强调都没了就把写法
+        // 一起放下——这样「手动加粗」与「从 `**…**` 解析出来」的样式是同一个值，
+        // 序列化的往返比较不会因为半个字段的差异而分叉。
+        StyleFlag::Bold => {
+            style.bold = enabled;
+            if enabled {
+                style.emphasis_marker = Some(style.emphasis_marker.unwrap_or('*'));
+            } else if !style.italic {
+                style.emphasis_marker = None;
+            }
+        }
+        StyleFlag::Italic => {
+            style.italic = enabled;
+            if enabled {
+                style.emphasis_marker = Some(style.emphasis_marker.unwrap_or('*'));
+            } else if !style.bold {
+                style.emphasis_marker = None;
+            }
+        }
         StyleFlag::Underline => style.underline = enabled,
         StyleFlag::Strikethrough => style.strikethrough = enabled,
         StyleFlag::Code => style.code = enabled,
