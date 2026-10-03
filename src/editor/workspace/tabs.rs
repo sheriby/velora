@@ -54,18 +54,21 @@ impl Editor {
         let Ok(disk) = crate::editor::encoding::read_document_string(path) else {
             return;
         };
-        if disk == cached_markdown {
+        // 标签缓存与缓冲区一样存 LF 文本，磁盘上的 CRLF 不是「外部改动」：按规范化
+        // 后的版本号比，否则每次监听事件都会把干净文件当成被改了，重新导入一遍。
+        let disk_version = crate::editor::persistence::file_content_version(&disk);
+        if disk_version == crate::editor::persistence::file_content_version(&cached_markdown) {
             return;
         }
-        let file_version = crate::editor::persistence::file_content_version(&disk);
+        let disk_text = disk.replace("\r\n", "\n").replace('\r', "\n");
         if let Some(tab) = self
             .workspace
             .open_documents
             .iter_mut()
             .find(|tab| tab.path == path)
         {
-            tab.markdown = disk.clone();
-            tab.file_version = file_version;
+            tab.markdown = disk_text;
+            tab.file_version = disk_version;
         }
         if is_active {
             let path = path.to_path_buf();
@@ -82,10 +85,10 @@ impl Editor {
     pub(crate) fn cached_tab_content_for_path(
         &self,
         path: &Path,
-        cx: &App,
+        _cx: &App,
     ) -> Option<(String, bool)> {
         if self.file_path.as_deref() == Some(path) {
-            return Some((self.serialized_document_text(cx), self.document_dirty));
+            return Some((self.document_text_for_save(), self.document_dirty));
         }
         self.workspace
             .open_documents

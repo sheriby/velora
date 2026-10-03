@@ -5,7 +5,7 @@ impl Editor {
         if let Some(path) = self.file_path.clone() {
             let previous = self.workspace.active_document.clone();
             if previous.as_ref() != Some(&path) {
-                let markdown = self.serialized_document_text(cx);
+                let markdown = self.document_text_for_save();
                 let file_version = self
                     .file_version
                     .unwrap_or_else(|| crate::editor::persistence::file_content_version(&markdown));
@@ -91,7 +91,7 @@ impl Editor {
         self.ensure_current_document_tab(cx);
     }
 
-    pub(crate) fn ensure_current_document_tab(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn ensure_current_document_tab(&mut self, _cx: &mut Context<Self>) {
         let Some(path) = self.file_path.clone() else {
             return;
         };
@@ -104,7 +104,7 @@ impl Editor {
             .iter()
             .any(|tab| tab.path == path)
         {
-            let markdown = self.serialized_document_text(cx);
+            let markdown = self.document_text_for_save();
             let file_version = self
                 .file_version
                 .unwrap_or_else(|| crate::editor::persistence::file_content_version(&markdown));
@@ -120,11 +120,11 @@ impl Editor {
         self.workspace.active_document = Some(path);
     }
 
-    pub(crate) fn snapshot_current_document(&mut self, cx: &App) {
+    pub(crate) fn snapshot_current_document(&mut self, _cx: &App) {
         let Some(path) = self.file_path.clone() else {
             return;
         };
-        let markdown = self.serialized_document_text(cx);
+        let markdown = self.document_text_for_save();
         if let Some(tab) = self
             .workspace
             .open_documents
@@ -148,7 +148,10 @@ impl Editor {
         self.workspace.active_document = Some(path);
     }
 
-    pub(crate) fn dirty_workspace_documents(&mut self, cx: &App) -> Vec<WorkspaceAutosaveDocument> {
+    pub(crate) fn dirty_workspace_documents(
+        &mut self,
+        cx: &App,
+    ) -> Vec<WorkspaceAutosaveDocument> {
         self.snapshot_current_document(cx);
         self.workspace
             .open_documents
@@ -263,9 +266,13 @@ impl Editor {
         self.workspace.root.clone()
     }
 
-    pub(crate) fn markdown_state_for_path(&self, path: &Path, cx: &App) -> Option<(String, bool, u64)> {
+    pub(crate) fn markdown_state_for_path(
+        &self,
+        path: &Path,
+        _cx: &App,
+    ) -> Option<(String, bool, u64)> {
         if self.file_path.as_deref() == Some(path) {
-            let markdown = self.serialized_document_text(cx);
+            let markdown = self.document_text_for_save();
             return Some((
                 markdown.clone(),
                 self.document_dirty,

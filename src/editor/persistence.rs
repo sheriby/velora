@@ -160,7 +160,7 @@ impl Editor {
                                 recovery: crate::config::RecoverySnapshot {
                                     id: editor.recovery_id,
                                     source_path: editor.recovery_source_path.clone(),
-                                    markdown: editor.serialized_document_text(cx),
+                                    markdown: editor.document_text_for_save(),
                                 },
                                 path: None,
                                 temp_path: None,

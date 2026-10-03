@@ -525,6 +525,134 @@ async fn recovered_document_is_opened_as_a_dirty_copy(cx: &mut TestAppContext) {
     });
 }
 
+/// 标签缓存存的是文档文本，不是「从块树重拼一遍」的结果。
+///
+/// 会话标签（`WorkspaceDocumentTab.markdown`）是自动保存/恢复快照的**内容来源**：切标签、
+/// 退出前存脏标签、写快照都取它。它取块树序列化的话，写进快照的正文就已经被洗过一遍
+/// （下划线强调变成星号、表格列宽被重新对齐），恢复出来的是另一份文档。缓冲区才是事实源，
+/// 所以标签必须存缓冲区文本。
+#[gpui::test]
+async fn the_workspace_tab_cache_holds_the_buffer_text_not_a_reserialization(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "# 标题\n\n_下划线_ 强调\n\n| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n";
+    let path = temp_markdown_path("tab-cache-holds-buffer-text");
+    fs::write(&path, FIXTURE).expect("seed fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), Some(path))
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(!editor.document_dirty, "干净文档才该等于磁盘原文");
+        assert!(editor.buffer.text().contains("_下划线_"));
+    });
+
+    editor.update(cx, |editor, cx| editor.snapshot_current_document(cx));
+
+    let (_, _, tab_markdown) = editor
+        .read_with(cx, |editor, _cx| {
+            editor.workspace_tab_state_for_test(&path).expect("tab")
+        });
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        tab_markdown, buffer_text,
+        "标签缓存被重新序列化过：{:?}\n缓冲区：{:?}",
+        tab_markdown, buffer_text
+    );
+}
+
+/// 没有文件路径的文档，自动保存写的恢复快照也必须是一字不差的缓冲区文本。
+///
+/// 快照是「用户还没保存过的正文」唯一的落盘形态：它若取块树序列化，恢复出来的文档
+/// 已经不是用户打开的那份（下划线变星号、表格列宽被重新对齐），而且这份损失连撤销
+/// 都找不回来。这里只编辑标题一行，其余块的原文必须原样进快照。
+#[gpui::test]
+async fn an_untitled_autosave_snapshot_holds_the_buffer_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "# 标题\n\n_下划线_ 强调\n\n| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    redraw(cx);
+
+    cx.simulate_input("起草 ");
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| assert!(editor.document_dirty));
+
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    let snapshot = crate::config::read_recovery_snapshots()
+        .expect("read recovery snapshots")
+        .into_iter()
+        .find(|snapshot| snapshot.id == recovery_id)
+        .expect("autosave must write a recovery snapshot for the untitled document");
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(snapshot.markdown, buffer_text);
+    assert!(
+        snapshot.markdown.contains("_下划线_") && snapshot.markdown.contains("| 苹果   |    3 |"),
+        "快照里的正文被洗过：{:?}",
+        snapshot.markdown
+    );
+}
+
+/// 磁盘上只是行尾不同（CRLF ↔ LF），不算外部修改，干净文档不许被重新导入。
+///
+/// 标签缓存与缓冲区同为 LF 文本，而读盘拿到的字符串保留原行尾：逐字比较会让每次监听
+/// 事件都判定「文件被改了」，把用户刚保存的文件再导入一遍——块实体全换、折叠与滚动
+/// 状态随之丢失。
+#[gpui::test]
+async fn a_clean_document_is_not_reimported_when_only_the_line_ending_differs(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "# 标题\n\n_下划线_ 强调\n";
+    let path = temp_markdown_path("watcher-crlf-no-reload");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("seed CRLF fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), Some(path))
+    });
+    redraw(cx);
+
+    let first_block = editor.read_with(cx, |editor, _cx| {
+        editor.document.first_root().cloned().expect("first root")
+    });
+    editor.update(cx, |editor, cx| {
+        editor.reload_externally_changed_document(&path, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.document_dirty,
+            "行尾差异被当成了未保存的改动"
+        );
+        assert_eq!(
+            editor.document.first_root().cloned().expect("first root"),
+            first_block,
+            "内容没变却重新导入了整篇文档"
+        );
+    });
+}
+
 #[gpui::test]
 async fn workspace_tabs_restore_unsaved_markdown_state(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

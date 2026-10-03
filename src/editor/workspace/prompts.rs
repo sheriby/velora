@@ -211,7 +211,7 @@ impl Editor {
                 }
                 let active_markdown = if markdown_move && editor.file_path.as_ref() == Some(&source)
                 {
-                    Some((editor.serialized_document_text(cx), editor.document_dirty))
+                    Some((editor.document_text_for_save(), editor.document_dirty))
                 } else {
                     None
                 };
