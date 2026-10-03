@@ -642,3 +642,53 @@ async fn editing_a_quote_keeps_the_final_newline_and_line_endings(cx: &mut TestA
     );
 }
 
+
+/// 代码文档改一行，保存出去只能多这几个字节。
+///
+/// 源码/代码文档的保存目前还取块树序列化（`serialized_document_text`），而那份投影
+/// 是「整篇源码按行块重新拼一遍」——末行换行的有无、行尾形状都靠拼接规则碰对。这条
+/// 守的是结果而不是实现：以后哪一步把保存换成缓冲区或改坏拼接，只要多写或少写一个
+/// 用户没打过的字节，这里就红。
+#[gpui::test]
+async fn editing_a_code_document_without_a_final_newline_keeps_it_absent(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let path = std::env::temp_dir().join(format!("velora-code-no-eol-{}.py", std::process::id()));
+    fs::write(&path, "print(1)\nprint(2)").expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        let line = editor
+            .document
+            .visible_blocks()
+            .first()
+            .expect("代码文档应有可见块")
+            .entity
+            .clone();
+        line.update(cx, |line, cx| {
+            line.prepare_undo_capture(crate::components::UndoCaptureKind::CoalescibleText, cx);
+            line.replace_text_in_visible_range(0..0, "# ", None, false, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read(&path).expect("read saved");
+    assert_eq!(
+        String::from_utf8_lossy(&saved).as_ref(),
+        "# print(1)\nprint(2)",
+        "代码文档保存动到了用户没改的字节：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+}
