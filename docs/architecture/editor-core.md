@@ -1,6 +1,8 @@
 # Editor Core（文档模型与编辑管线）
 
-> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支。
+> 面向后续 agent 的代码导览。初稿 2026-09-28（`perf` 分支）；**2026-10-03 按「buffer 为唯一
+> 事实源」重构改写 §1/§2/§3/§4/§5/§7**，分支 `s2-buffer-source-of-truth`，设计记录见
+> [../plans/2026-10-02-buffer-as-source-of-truth-refactor.md](../plans/2026-10-02-buffer-as-source-of-truth-refactor.md)。
 > **行号会漂移，函数名不会**——引用以 `文件:函数名` 为主，行号仅作当时定位参考。
 > 相关文档：[overview.md](./overview.md)、[render-pipeline.md](./render-pipeline.md)、[workspace-ui.md](./workspace-ui.md)、[testing-and-build.md](./testing-and-build.md)
 
@@ -9,63 +11,148 @@
 ```
 Workspace (src/editor/workspace.rs)
   └─ Editor 实体（每个标签一个, src/editor/mod.rs struct Editor）
-       └─ document: DocumentTree (src/editor/tree.rs)
-            └─ roots: Vec<Entity<Block>>      ← 顶层块
-                 └─ children: Vec<Entity<Block>>  ← 列表/引用的嵌套内容
+       ├─ buffer: TextBuffer (src/editor/buffer.rs)   ← 文档唯一事实源：文件里的那份文本
+       └─ document: DocumentTree (src/editor/tree.rs) ← 投影（渲染用的块树），不是事实源
+            └─ roots: Vec<Entity<Block>>              ← 顶层块，每块记自己占的字节区间
+                 └─ children: Vec<Entity<Block>>      ← 列表/引用的嵌套内容
 ```
 
-- **`Editor`**（src/editor/mod.rs `struct Editor`）：窗口级控制器。持有 `view_mode`（`Rendered`/`Source`）、`document_dirty`/`document_revision`（脏标记与修订号，很多缓存的 key）、`file_path`、`file_version`（磁盘内容哈希，外部修改检测用）、undo/redo 栈、`last_stable_source_text`（稳定全文快照，undo/引用刷新复用，避免重复序列化）、`image_reference_definitions`/`link_reference_definitions`/`footnote_registry`（`Arc` 共享）、`table_cells: HashMap<EntityId, TableCellBinding>`、`outline_follow_cache`（按 revision 缓存）、`row_stride_cache: HashMap<EntityId, f32>`（渲染窗口用）。
-- **`DocumentTree`**（src/editor/tree.rs）：`roots: Vec<Entity<Block>>` + `PendingTail`（分块导入时未消费的原始行，见 §3）+ `VisibleTreeSnapshot`（DFS 可见序、entity→索引/位置 映射，`rebuild_metadata_and_snapshot` 在结构变更后重建一次）。
-- **`Block`**（src/components/block/runtime/mod.rs `struct Block`）：GPUI 实体。`record: BlockRecord`（持久数据）+ `children` + 运行时状态：`selected_range`（块内字节偏移选区）、`marked_range`（IME）、`edit_mode`（富文本渲染 vs 纯源码）、`projection`（行内定界符展开态）、`last_layout`/`last_bounds`（shaping 结果）、`table_runtime`、`folded`、`cached_display_text`（可见文本 `SharedString` 缓存）。
-- **`BlockRecord`**（src/components/block/state.rs）：`{ id, kind: BlockKind, title: InlineTextTree, table, html, parent, content, raw_fallback }`。**块文本就是 `record.title`**。Raw 保留类块（RawMarkdown/Comment/HtmlBlock/MathBlock/Mermaid）把原始源码存在 `raw_fallback`（`kind_uses_raw_fallback`）。
-- **行内内容**：`InlineTextTree = Vec<InlineFragment>`（src/components/markdown/inline.rs）。fragment 携带文本 + `InlineStyle` 标志 + 可选 link/footnote/math。**定界符不存储**，序列化时按规则重建（`serialize_markdown`）。渲染侧有 `InlineRenderCache`（可见文本 + spans + 双向偏移映射 `InlineMarkdownOffsetMap`）。
+- **`Editor`**（src/editor/mod.rs `struct Editor`）：窗口级控制器。持有 `buffer`、`view_mode`
+  （`Rendered`/`Source`）、`document_dirty`/`document_revision`（脏标记与修订号，缓存的 key）、
+  `file_path`/`file_version`（外部修改检测）、undo/redo 栈（`Vec<HistoryEntry>`，存增量，见 §4）、
+  `skip_next_resync`（一次性标记：「这一步已经按区间落笔了，别让整篇重投影把字节盖掉」）、
+  `table_cells`、`image/link/footnote` 注册表、`outline_follow_cache`、`row_stride_cache`。
+  **初稿里写的 `last_stable_source_text` 已删除**——那是文件全文的第二份副本，纯浪费。
+- **`TextBuffer`**（src/editor/buffer.rs）：分块文本 + Fenwick 前缀和 + 可平移的 `Anchor` 槽，
+  外加 `FileShape { encoding, line_ending }`（src/editor/buffer/file_shape.rs）。要点：
+  - 内容是 **LF 规范化**的文本；磁盘上的 CRLF/编码形状记在 `FileShape` 里，保存时还原。
+  - `file_bytes()`：没编辑过就返回打开时读到的那份**原始字节**，编辑过就按 `FileShape` 重新
+    编码。这就是「打开即保存，字节不变」那条验收的实现。
+  - `text()` 每次复制整篇——只在真需要全文的地方调；只要判断「有没有变」时用
+    `matches_text(&str)`（零拷贝逐块比较）。
+  - `edit(range, &str) -> AppliedEdit` 是唯一写入口；`AppliedEdit { removed, new_range }`
+    顺手就是这次改动的逆操作，撤销栈直接存它。
+  - 读侧坐标：`byte_len`/`byte_at`/`slice`/`line_of`/`line_range`/`line_count`。
+- **`DocumentTree`**（src/editor/tree.rs）：`roots` + `PendingTail`（分块导入未消费的行）+
+  `VisibleTreeSnapshot`（DFS 可见序与 entity→索引映射，`rebuild_metadata_and_snapshot` 在结构
+  变更后重建一次）。计数 `whole_document_renders`：`markdown_text`/`raw_source_text` 每被叫一次
+  加一，是性能闸门的分子（见 §3 末）。
+- **`Block`**（src/components/block/runtime/mod.rs `struct Block`）：GPUI 实体。`record` +
+  `children` + 运行时状态：`selected_range`（**块内**字节偏移选区）、`marked_range`（IME）、
+  `edit_mode`、`projection`（行内定界符展开态）、`last_layout`/`last_bounds`、`table_runtime`、
+  `folded`、`search_highlight_ranges`、`cached_display_text`。
+- **`BlockRecord`**（src/components/block/state.rs）：`{ id, kind, title, table, html, parent,
+  content, raw_fallback, source_span }`。`source_span: Option<Range<usize>>` 是**缓冲区字节坐标**，
+  只有根块记，且不含本块自己的行尾换行——块与文档的唯一对应关系就是这一段字节。
+  块文本 `record.title` 的语义从「内容」变成「`parse(buffer[span])` 的缓存」。Raw 保留类块
+  （RawMarkdown/Comment/HtmlBlock/MathBlock/Mermaid）把原始源码存在 `raw_fallback`。
+- **行内内容**：`InlineTextTree = Vec<InlineFragment>`（src/components/markdown/inline.rs）。
+  **定界符不存储**，序列化时按规则重建（`serialize_markdown`）——正因为模型里存不下写法，
+  写回必须只动真正改过的那段字节（§3），不能「从块树重新生成这一块」。渲染侧有
+  `InlineRenderCache`（可见文本 + spans + 双向偏移映射 `InlineMarkdownOffsetMap`）。
 
-**没有全局行索引/rope**。跨块定位靠 `SourceTargetMapping`（见 §5）。
+**跨块定位两条路**：块→文档直接用 `record.source_span`（缓冲区坐标，无需构建映射）；文档→块
+仍走 `SourceTargetMapping`（§5，按块的字节映射表，正在被 span 直取一点点替代）。
 
-## 2. 导入：markdown → 块
 
-- 入口 `Editor::from_markdown` → `from_markdown_with_chunk_budget`：CRLF→LF 规范化 → `markdown_requires_source_mode_fallback` 检查（不支持的构造整体降级为单 RawMarkdown 块 + Source 模式）→ `split_markdown_lines` 切行一次 → `build_root_block_chunk` 逐块构建。
+## 2. 导入：文件 → buffer → 块
+
+- 入口 `Editor::from_loaded_document`（src/editor/mod.rs）拿到 `encoding::load_document` 的结果：
+  解码后的文本 + `FileShape`。**行尾不再在导入时被抹平**：文本进 `TextBuffer` 时是 LF 规范化的，
+  CRLF/编码形状由 `FileShape` 记着，保存时还原（`file_bytes()`）。
+- `from_markdown` / `from_markdown_with_chunk_budget`：`markdown_requires_source_mode_fallback`
+  检查（不支持的构造整体降级为单 RawMarkdown 块 + Source 模式）→ `split_markdown_lines` 切行 →
+  `build_root_block_chunk` 逐块构建 → `attach_root_spans`（src/editor/mod.rs）把每根块占的行区间
+  换算成缓冲区字节区间，写进 `record.source_span`。
 - **解析器是手写逐行扫描器，不是 pulldown-cmark**（pulldown-cmark 只用于 HTML 导出）。分发顺序见 `build_blocks_from_lines_internal`（src/editor/document/import.rs；识别函数在 src/editor/document/parse.rs）：frontmatter → 空行段 → 围栏代码 → fenced div → HTML 注释/块 → 脚注定义 → 引用定义 → setext 标题 → 独立图片 → 缩进代码 → 列表 → 引用块/callout → ATX 标题 → 分隔线 → 表格（含 pipeless）→ 展示数学 → 兜底段落。
-- 每块行内解析：`native_block` → `InlineTextTree::from_markdown`。
-- 无法表达的构造 → `raw_block`（`BlockKind::RawMarkdown`）逐字保留。
-- **分块/渐进导入**（大文档关键）：`PendingTail` + `start_pending_materialization_task`/`materialize_next_pending_chunk`（src/editor/mod.rs）。预算 `FIRST_CHUNK_ROOTS=2000`、`STEADY_CHUNK_ROOTS=250`：首屏同步建 2000 块，其余后台每轮 250 块续建。需要全文的操作调 `flush_pending_materialization`。
-- **纯文本/代码文件路径（性能敏感）**：`from_file_source`（src/editor/mod.rs）按 `workspace::is_code_file`（src/editor/workspace/search_backend.rs，扩展名表含 `log/lock/toml/txt/csv/json/...`）分流 → `replace_document_from_code_source` → `replace_document_content`（src/editor/file_drop.rs）：**整个文件变成单个 `BlockKind::CodeBlock` 块**（`BlockRecord::with_plain_text`），Source 模式等宽编辑；CRLF 用 `code_uses_crlf` 标记保存时还原。markdown 兜底降级也是单 RawMarkdown 块。**这是大纯文本文件性能瓶颈的结构性根源（10MB log = 1 块 10MB 文本）**。
+- 每块行内解析：`native_block` → `InlineTextTree::from_markdown`。无法表达的构造 → `raw_block`（`BlockKind::RawMarkdown`）逐字保留。
+- **分块/渐进导入**（大文档关键）：`PendingTail` + `start_pending_materialization_task`/`materialize_next_pending_chunk`（src/editor/mod.rs），游标是 `ChunkCursor`（src/editor/document.rs：`root_budget`/`is_document_start`/`previous_root_is_list_item`）。预算 `FIRST_CHUNK_ROOTS=2000`、`STEADY_CHUNK_ROOTS=250`：首屏同步建 2000 块，其余后台每轮 250 块续建。需要全文的操作调 `flush_pending_materialization`；区域重投影（§3）在 `pending_tail().is_some()` 时直接放弃走全量。
+- **纯文本/代码文件路径（性能敏感）**：`from_file_source`（src/editor/mod.rs）按 `workspace::is_code_file`（src/editor/workspace/search_backend.rs，扩展名表含 `log/lock/toml/txt/csv/json/...`）分流 → `replace_document_from_code_source` → `replace_document_content`（src/editor/file_drop.rs）：**整个文件变成单个 `BlockKind::CodeBlock` 块**，Source 模式等宽编辑。文件全文只有一份的事实源是 `buffer`，读取侧与保存都走它（初稿里的
+`last_stable_source_text`、`document_search_source` 那几份副本已删）。**剩下的两份开销**：解析出来的
+`record.title` 仍是一块拥有的副本，加上单块 10 MB 文本的 shaping/行计划——按行窗口渲染没做之前改不掉。
 
-## 3. 编辑：按键 → 变更 → 序列化
+## 3. 编辑：按键 → 区间落笔 → 局部重投影
 
-1. 按键由焦点 **Block** 的 GPUI input handler 处理：`Block::replace_text_in_range`（src/components/block/input.rs）→ 计算 undo 类型 → `prepare_undo_capture` → `replace_text_in_visible_range`（src/components/block/runtime/mod.rs）修改 `record.title` 并 emit `BlockEvent::Changed`。
-2. Editor 经 `on_block_event`（src/editor/events/block_event.rs，订阅点在 runtime_context.rs `new_block`）收所有块事件。结构性事件（换行/合并/缩进/粘贴等）经 `DocumentTree::insert_blocks_at` + `with_structure_mutation`（重建快照一次）改树。
-3. `Changed` 之后：`mark_dirty`（src/editor/window_state.rs）推进 `document_revision` + `document_dirty` + `schedule_autosave`；`finalize_pending_undo_capture`（src/editor/history.rs）落 undo 条目；引用敏感块才刷新 image/link/footnote 运行时（`changed_block_needs_runtime_context_refresh`，src/editor/runtime_context.rs）。
-4. **序列化是惰性的**：`DocumentTree::markdown_text` / `raw_source_text`（tree.rs，逐块 `BlockRecord::markdown_line`）只在保存、autosave 快照、undo 快照、引用注册表重建、跨块编辑时执行。按键路径从不重序列化全文。
+1. 按键由焦点 **Block** 的 GPUI input handler 处理：`Block::replace_text_in_range`（src/components/block/input.rs）→ 计算 undo 类型 → `prepare_undo_capture` → `replace_text_in_visible_range`（src/components/block/runtime/mod.rs）改 `record.title` 并 emit `BlockEvent::Changed`。
+2. Editor 经 `on_block_event`（src/editor/events/block_event.rs，订阅点在 runtime_context.rs `new_block`）收所有块事件。结构性事件（换行/合并/缩进/粘贴等）经 `DocumentTree::insert_blocks_at`/`replace_root_range` + `with_structure_mutation` 改树。
+3. **写回从「块改了就重序列化这一块」换成「只贴真正不同的那一段字节」**，按精度分档，逐档失败才降级：
+   - `write_back_visible_insertion`（src/editor/mod.rs）：打字/插入这种「在已知字节点插一段」，直接在缓冲区那个点插。
+   - `write_back_block_source`：整根块的内容变了，但只重写它自己 `source_span` 那一段。
+   - `write_back_root_region` + `write_back_blank_run`：根块序列变了（一分为二、两块合一），只重写被换掉的那一段区间。
+   - 表格：按行/按格落笔，见下。
+   - 兜底 `mark_dirty` → `resync_buffer_from_projection`：从块树把全文重新序列化（`DocumentTree::markdown_text`），`source_serializations`/`whole_document_renders` 各加一。**这条是最后手段**：未编辑块的原始字节会在这里被洗掉，所以正常编辑路径必须走不到它。
+   - 任一档成功落笔后调 `mark_dirty_written_back`（src/editor/window_state.rs）置 `skip_next_resync`，让本轮的 `Changed` 不再触发兜底重投影。
+4. **表格的结构命令也都是缓冲区编辑**（src/editor/table_edit.rs）：单元格打字 `write_back_table_cell_source`（只动那一格的内容字节，同列宽填充不动）、加行 `write_back_table_row_insertion`（照最后一行的骨架插一行）、删行 `write_back_table_row_deletion`（剪掉那一行连着它前面的换行）、加/删列 `write_back_table_column_insertion`/`_deletion`（每行插/剪一格，从后往前）、调对齐 `write_back_table_column_alignment`（只重写分隔行那一格）、移动行/列 `write_back_table_row_swap`/`_column_swap`（文本对调，净长度不变）、删表头 `write_back_table_header_promotion`（改第一行 + 剪掉升上来的那行）。量不出行形状时（格子里有转义竖线、表挂在容器里没有自己的区间、行数与模型对不上）才退回 `write_back_table_structure_edit`。
+5. **重投影从「整棵树重新解析」换成「只重解析变了的那一段」**：`reproject_root_region`（src/editor/document/import.rs）把一根根块换成它那段行重新解析出的若干根块（窗口 = 本段行 + 前瞻 ≤2 行，且要求解析结果落在本段内才接受，否则放弃走全量 `rebuild_root_blocks_from_buffer`）；计数器 `Editor::roots_reprojected` 记增量重投影了几根。
+6. **引用敏感的块才刷新运行时**（`changed_block_needs_runtime_context_refresh`，src/editor/runtime_context.rs）：image/link/footnote 注册表从 `buffer.text()` 解析，且刷新必须排在写回**之后**，否则读到的是改动前的文本（`editing_image_reference_definition_refreshes_existing_image` 钉住这一顺序）。
+7. **闸门**：`a_real_editing_session_never_falls_back_to_whole_document_serialization`（src/editor/tests/perf_budgets.rs）把打字、回车拆块、勾任务框、缩进/提级/降级、标注里拆块、表格加行/删行/调对齐/加删列/移动行列、删整张表、多行粘贴一条条走一遍，断言 `source_serializations + whole_document_renders` 增量为 0。白名单常量 `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED` 现在是空表——每加一条命令都只能让它更短。
+8. **字节保真**由另一组按字节断言的测试守（src/editor/tests/round_trip_fidelity.rs、block_source_write_back.rs、block_source_spans.rs）：`__下划线__` 写法、Setext、表格列宽、CRLF、末行换行、无末行换行，打开—编辑—保存之后没改过的字节必须逐字节还是磁盘上那样。
+
 
 ## 4. Undo/历史（src/editor/history.rs）
 
-- **全文源码快照制，不是 diff**：`HistoryEntry { source_text, selection, timestamp, kind }`。
-- `prepare_undo_capture` 在编辑**前**拍快照（优先复用 `last_stable_source_text` 的廉价路径）；`finalize_pending_undo_capture` 编辑后落栈；`CoalescableText` 在 1s 窗口（`HISTORY_COALESCE_WINDOW`）内合并；栈深 `HISTORY_LIMIT=200`。
-- undo/redo → `restore_history_entry`：Rendered 模式整树重建（`build_root_blocks_from_markdown`）；Source 模式替换单块。
-- **大文件隐患**：每个 undo 条目持有整篇文档源码字符串（10MB 文档 × 200 条 ≈ 2GB 上限），大文件下 finalize 一次就要 clone 全文——编辑耗时与内存的主来源之一。
+- **增量组，不是全文快照**：`HistoryEntry { edits: Vec<AppliedEdit>, selection, timestamp, kind }`
+  （src/editor/mod.rs）。一次编辑动作 = 一组 `AppliedEdit`（每条是 `{ removed, new_range }`），
+  撤销 = `replay_history_group` 从后往前把每条的 `new_range` 换回 `removed`；重做反向再来一遍。
+- `prepare_undo_capture` 在编辑**前**开组；编辑路径里每次 `TextBuffer::edit` 的返回值都经
+  `record_buffer_edit` 落进这组；`finalize_pending_undo_capture` 收组入栈。
+- 合并窗口 `HISTORY_COALESCE_WINDOW`（1s）只并 `CoalescibleText`；`ImeComposition`/
+  `ImeCompositionCommit` 各自独立成步；`NonCoalescible` 永远单独一步。栈深 `HISTORY_LIMIT=200`。
+  `history_group_is_noop` 在一份副本上真重放一遍来判断「改了等于没改」，那种组不入栈。
+- undo/redo 之后：缓冲区已经是目标状态，置 `skip_next_resync = true`；投影按 `rebuild_document_from_buffer`
+  （从缓冲区重新解析，**不是**从块树序列化）重建，`apply_selection_snapshot_in_current_mode` 把选区
+  放回缓冲区坐标里的那几个字节。
+- **内存预算有闸门**：`two_hundred_undo_steps_stay_within_the_memory_budget`（200 步 ≤ 8 MiB，且
+  ≤ 64 KiB 的绝对上限）与 `undo_memory_does_not_scale_with_document_size`（同样动作在大文档上记的
+  字节数不跟着文档长）——初稿写的「10MB × 200 ≈ 2GB」是这次还掉的账。
 
-## 5. 选区/光标与源码映射（src/editor/source_mapping.rs）
+## 5. 选区/光标与位置（src/editor/source_mapping.rs 与缓冲区坐标）
 
-- 每 Block 自持 `selected_range`（块内字节偏移）+ IME `marked_range`；焦点走每块 `focus_handle`；Editor 记 `active_entity_id`。
-- 跨块选区：`CrossBlockSelection { anchor, focus }`（`{entity_id, offset}`，src/editor/selection.rs）。
-- `SourceTargetMapping`：按块的字节映射表（块内容偏移 ↔ 序列化文档偏移），`build_source_target_mappings_until`（可提前停止）/ `source_mapping_for_entity`（单块短路）。用途：undo 选区恢复、跨块替换、大纲跟随滚动、光标历史、状态栏行列号。
-- 表格单元格是独立 Block，经 `TableCellBinding` 绑定并单独建映射（`push_table_mappings`）。
+- 每 Block 自持 `selected_range`（**块内**字节偏移）+ IME `marked_range`；焦点走每块
+  `focus_handle`；Editor 记 `active_entity_id`。跨块选区：`CrossBlockSelection { anchor, focus }`
+  （`{entity_id, offset}`，src/editor/selection.rs）。
+- **文档级位置一律用缓冲区字节坐标**：`record.source_span`、撤销/重做的 `UndoSelectionSnapshot.range`、
+  搜索命中 `source_range`、大纲与锚点跳转、状态栏的「行 : 列」（`compute_source_cursor_position`，
+  src/editor/status_bar.rs，直接在缓冲区里数行与字素）。这些都不要再引入「序列化文本里的偏移」。
+- `SourceTargetMapping`（块内容偏移 ↔ 文档偏移的逐块映射表）还在，用途：undo 选区恢复、跨块替换、
+  搜索高亮落到具体块、大纲跟随滚动、光标历史。它是从 `record.source_span` + 块内映射推出来的，
+  计数器 `source_mapping_builds`/`source_mapping_full_builds` 盯着它别在按键路径上整篇重建
+  （`typing_does_not_rescan_status_bar_statistics_every_key`、`per_keystroke_document_passes_stay_bounded`）。
+- 表格单元格是独立 Block，经 `TableCellBinding` 绑定；它在原文里的字节区间由
+  `table_cell_source_range`（src/editor/table_edit.rs）按「第几行第几列」从管道符之间量出来
+  ——不能拿格子文本去原文里找，用户刚打的字还没进文件。
+- **还没做完的**：磁盘搜索命中里那些没有 `source_range` 的仍要靠 `match_ordinal`（在缓冲区里重数
+  第 k 个含词行）定位；表格单元格里的搜索命中拿到了高亮区间，但表格的画法（paint_parts.rs）还没
+  把它画出来。
+
 
 ## 6. 持久化（src/editor/persistence.rs）
 
+- **保存的字节来自缓冲区**：`document_text_for_save()` = `buffer.text()`，`document_bytes_for_save()`
+  = `buffer.file_bytes()`（没编辑过就是打开时那份原始字节，编辑过按 `FileShape` 重编码）。
+  `serialized_document_text`（从块树整篇序列化）只剩导出、会话快照、标签关闭提示在用；代码文档
+  另有一个 `code_uses_crlf` 标记（src/editor/file_drop.rs），只服务它的 Source 分支。
 - **原子写**：`write_atomic` = 同目录临时文件 + `sync_all` + `rename`。
 - **外部修改检测**：`file_content_version`（规范化文本 DefaultHasher）；手动保存与 autosave 前 `verify_file_version` 重读比对，不一致则报「外部修改」。
 - **Autosave**：`schedule_autosave` 防抖后台任务（默认 800ms，`[editor] autosave_debounce_ms`）；IME 组合中跳过；后台写恢复快照 + 临时文件，回主线程校对 revision 后落盘。
 - **Watcher**（src/editor/watcher.rs）：每工作区递归 notify 监听，干净标签自动重载，脏标签走冲突提示。
 - **关闭流**（src/editor/close.rs）：脏文档拦截为应用内对话框；保存后关闭经 `pending_close_after_save`。
 
-## 7. 已知性能事实（perf 分支基线，dev 构建）
+## 7. 已知性能事实（dev 构建，闸门测试实测）
 
-| 场景 | 数据 |
+性能夹具不进仓库：`node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成
+`tests/fixtures/perf/{one,ten}-mib.md`；缺文件时相关测试打印 `skipping:` 直接通过。
+
+| 场景 | 数据（2026-10-03，`--nocapture` 实测） |
 |---|---|
-| 1MiB log（探针走 markdown 路径，全文 1 块） | 构建 1697ms / 首绘 655ms / **稳态绘制 647ms/帧** |
-| 每帧全量克隆 | `render()` 中 `visible_blocks().to_vec()` + 折叠过滤扫描全部块 |
-| 单块纯文本 | 非 markdown 文件整文件 1 个 CodeBlock，渲染/undo/序列化都压在一块 |
+| 1 MiB 一次按键 | 52.5ms；整篇遍数 = 序列化 0 / mapping 3 / 字数 0 / 行计划 2 |
+| 1 MiB 五个静止帧 | 7.1ms，遍数全 0（不打字不重算任何东西） |
+| 10 MiB 一次按键 | 635ms，序列化 0 次、整篇 mapping 0 次（预算 1500ms） |
+| 单次全文操作 | 序列化 1 MiB 31.8µs；数 32 万词 6.9ms；建 15968 条 mapping 236.8ms |
+| 撤销栈 200 步 | ≤ 64 KiB（存的是增量；旧制最坏 200 × 文档大小） |
 
-诊断探针：`VELORA_PERF_FILE=<file> cargo test manual_markdown_load_probe -- --ignored --nocapture`（src/editor/tests.rs）。性能优化进行中的设计记录见 [performance.md](./performance.md)。
+**剩下的线性成本**：10 MiB 那 635ms 不在文档模型上，而在行计划重建与可见列表重排（单块 10 MB 文本
+的 shaping）——按行窗口渲染没做，属于独立工作。诊断探针：`VELORA_PERF_FILE=<file> cargo test manual_markdown_load_probe -- --ignored --nocapture`。
+计数入口：`Editor::{source_serializations, source_mapping_builds, source_mapping_full_builds, word_count_scans, row_plan_rebuilds, roots_reprojected}`、
+`DocumentTree::whole_document_renders`。性能优化进行中的设计记录见 [performance.md](./performance.md)。
+
