@@ -376,3 +376,198 @@ async fn status_bar_view_mode_toggle_switches_mode(cx: &mut TestAppContext) {
 }
 
 
+
+/// 阶段 2 闸门：一次真实的编辑序列里，「整篇重新序列化」这一档兜底应该出现 0 次。
+///
+/// 计数器只在 `resync_buffer_and_stable_snapshot` 真的重投影时加一：走到那里说明
+/// 这条命令没声明自己的区间，未编辑块的原始字节就此丢掉（表格列宽填充、`__` 强调
+/// 写法、CRLF、末行换行都是这样被洗掉的）。每转一条路径，这里就少一个名额。
+#[gpui::test]
+async fn a_real_editing_session_never_falls_back_to_whole_document_serialization(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            concat!(
+                "- [ ] 任务甲\n",
+                "  - 嵌套乙\n",
+                "\n",
+                "段落文字\n",
+                "\n",
+                "> [!note]\n",
+                "> 标注正文\n",
+                "\n",
+                "| 名称 | 数量 |\n",
+                "| ---- | ---- |\n",
+                "| 甲   | 1    |\n",
+                "\n",
+                "强调 __下划线__ 结尾\n",
+            )
+            .to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+
+    let mut offenders: Vec<&'static str> = Vec::new();
+    let mut before = source_serializations(&editor, cx);
+
+    cx.simulate_input("写");
+    redraw(cx);
+    count_step(&mut offenders, "打字", &mut before, &editor, cx);
+
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    count_step(&mut offenders, "回车拆块", &mut before, &editor, cx);
+
+    let task = visible_block_with_text("任务甲", &editor, cx);
+    dispatch(&editor, task, crate::components::BlockEvent::ToggleTaskChecked, cx);
+    count_step(&mut offenders, "勾任务复选框", &mut before, &editor, cx);
+
+    let nested = visible_block_with_text("嵌套乙", &editor, cx);
+    dispatch(&editor, nested.clone(), crate::components::BlockEvent::RequestIndent, cx);
+    count_step(&mut offenders, "缩进", &mut before, &editor, cx);
+    dispatch(&editor, nested.clone(), crate::components::BlockEvent::RequestOutdent, cx);
+    count_step(&mut offenders, "提级", &mut before, &editor, cx);
+    dispatch(
+        &editor,
+        nested,
+        crate::components::BlockEvent::RequestDowngradeNestedListItemToChildParagraph,
+        cx,
+    );
+    count_step(&mut offenders, "嵌套项降级", &mut before, &editor, cx);
+
+    let callout_body = visible_block_with_text("标注正文", &editor, cx);
+    dispatch(&editor, callout_body, crate::components::BlockEvent::RequestQuoteBreak, cx);
+    count_step(&mut offenders, "标注里拆块", &mut before, &editor, cx);
+
+    editor.update(cx, |editor, cx| {
+        let table = editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).kind() == crate::components::BlockKind::Table)
+            .cloned()
+            .expect("夹具里应有一张表");
+        editor.append_table_row(&table, cx);
+    });
+    count_step(&mut offenders, "表格加一行", &mut before, &editor, cx);
+
+    let table = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).kind() == crate::components::BlockKind::Table)
+            .cloned()
+            .expect("表格还在")
+    });
+    editor.update(cx, |editor, cx| {
+        let cell = table
+            .read(cx)
+            .table_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.cell(crate::components::TableCellPosition { row: 1, column: 0 }))
+            .expect("数据行单元格");
+        editor.on_block_event(
+            cell.clone(),
+            &crate::components::BlockEvent::RequestNewline {
+                trailing: InlineTextTree::plain(String::new()),
+                source_already_mutated: false,
+            },
+            cx,
+        );
+    });
+    count_step(&mut offenders, "单元格里回车", &mut before, &editor, cx);
+
+    editor.update(cx, |editor, cx| {
+        let table = editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).kind() == crate::components::BlockKind::Table)
+            .cloned()
+            .expect("表格还在");
+        editor.remove_table_block(&table, cx);
+    });
+    count_step(&mut offenders, "删掉整张表", &mut before, &editor, cx);
+
+    let target = visible_block_with_text("段落文字", &editor, cx);
+    dispatch(
+        &editor,
+        target,
+        crate::components::BlockEvent::RequestPasteMultiline {
+            leading: InlineTextTree::plain(String::new()),
+            lines: vec!["粘贴一".to_string(), "粘贴二".to_string()],
+            trailing: InlineTextTree::plain(String::new()),
+            split_physical_lines: true,
+        },
+        cx,
+    );
+    count_step(&mut offenders, "多行粘贴", &mut before, &editor, cx);
+
+    let underscore = visible_block_with_text("强调 下划线 结尾", &editor, cx);
+    dispatch(
+        &editor,
+        underscore,
+        crate::components::BlockEvent::RequestNewline {
+            trailing: InlineTextTree::plain(String::new()),
+            source_already_mutated: false,
+        },
+        cx,
+    );
+    count_step(&mut offenders, "有定界符的块拆行", &mut before, &editor, cx);
+
+    assert!(
+        offenders.is_empty(),
+        "这些命令还在整篇重新序列化（未编辑块的字节会被洗掉）：{offenders:?}"
+    );
+}
+
+fn source_serializations(editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext) -> u64 {
+    editor.read_with(cx, |editor, _| editor.source_serializations.get())
+}
+
+fn count_step(
+    offenders: &mut Vec<&'static str>,
+    label: &'static str,
+    before: &mut u64,
+    editor: &gpui::Entity<Editor>,
+    cx: &mut gpui::VisualTestContext,
+) {
+    let now = source_serializations(editor, cx);
+    if now > *before {
+        offenders.push(label);
+    }
+    *before = now;
+}
+
+fn visible_block_with_text(
+    wanted: &'static str,
+    editor: &gpui::Entity<Editor>,
+    cx: &mut gpui::VisualTestContext,
+) -> gpui::Entity<crate::components::Block> {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).display_text() == wanted)
+            .map(|visible| visible.entity.clone())
+            .unwrap_or_else(|| panic!("夹具里找不到内容为 {wanted:?} 的块"))
+    })
+}
+
+fn dispatch(
+    editor: &gpui::Entity<Editor>,
+    block: gpui::Entity<crate::components::Block>,
+    event: crate::components::BlockEvent,
+    cx: &mut gpui::VisualTestContext,
+) {
+    editor.update(cx, |editor, cx| {
+        editor.on_block_event(block, &event, cx);
+    });
+    redraw(cx);
+}

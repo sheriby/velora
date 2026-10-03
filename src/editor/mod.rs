@@ -1020,29 +1020,14 @@ impl Editor {
         else {
             // 换进去的那一段全是空段落（删掉整张表、原位留一个空段落）：空段落
             // 序列化不出文本，但文件里要改的字节很清楚——把旧的这几行连它们自己的
-            // 换行一起收掉，接缝上剩下的那一行空行就是那个空段落。接缝必须正好是
-            // 「两边各空着一行」（或表就是文档最后一段），别的形状算不准，交兜底。
-            let one_blank_paragraph = new_end - anchor_index == 1;
-            let blank_before = region_start >= 2
-                && self.buffer.byte_at(region_start - 1) == Some(b'\n')
-                && self.buffer.byte_at(region_start - 2) == Some(b'\n');
-            let eats_own_line = self.buffer.byte_at(region_end) == Some(b'\n');
-            let seam_after = match (
-                self.buffer.byte_at(region_end + 1),
-                self.buffer.byte_at(region_end + 2),
-            ) {
-                (None, _) => true,
-                (Some(b'\n'), Some(byte)) => byte != b'\n',
-                _ => false,
-            };
-            if one_blank_paragraph && blank_before && eats_own_line && seam_after {
-                let removed = region_end + 1 - region_start;
-                let applied = self.buffer.edit(region_start..region_end + 1, "");
-                self.record_buffer_edit(applied);
-                self.shift_root_spans_after(region_end + 1, -(removed as i64), cx);
-                return true;
-            }
-            return false;
+            // 换行一起收掉，接缝上剩下的空行就是那些空段落。
+            return self.write_back_blank_run(
+                region_start,
+                region_end,
+                new_end - anchor_index,
+                old_end < before.len(),
+                cx,
+            );
         };
 
         // 纯插入空段落（单元格里按回车是在块后加一段）：旧的一块没少，只往里加
@@ -1132,6 +1117,51 @@ impl Editor {
             block.update(cx, |block, _cx| {
                 block.record.source_span = Some(span);
             });
+        }
+        true
+    }
+
+    /// 换成「只剩空段落」的那一段怎么写回：把旧的这几行连它们自己的换行收掉，
+    /// 接缝上剩下的空行就是那些空段落——比该有的多就一起吃掉，少就补换行。该有
+    /// 几行按序列化的接缝规则：后面还跟着别的根块时多留一个分隔空行。
+    fn write_back_blank_run(
+        &mut self,
+        region_start: usize,
+        region_end: usize,
+        blank_roots: usize,
+        has_next_root: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if blank_roots == 0 {
+            return false;
+        }
+        // 区间左边紧挨着的空行：往左数连续的换行，最靠近内容的那个是上一行的
+        // 结束符，不算空行。
+        let mut blanks_before = 0usize;
+        let mut cursor = region_start;
+        while cursor > 0 && self.buffer.byte_at(cursor - 1) == Some(b'\n') {
+            cursor -= 1;
+            blanks_before += 1;
+        }
+        let blanks_before = blanks_before.saturating_sub(1);
+        // 区间右边紧挨着的空行：先跳过这一行自己的结束符，再往右数连续的换行。
+        let mut line_end = region_end;
+        if self.buffer.byte_at(line_end) == Some(b'\n') {
+            line_end += 1;
+        }
+        let mut blanks_after = 0usize;
+        while self.buffer.byte_at(line_end + blanks_after) == Some(b'\n') {
+            blanks_after += 1;
+        }
+        let want = blank_roots + usize::from(has_next_root);
+        let have = blanks_before + blanks_after;
+        let eaten = line_end + have.saturating_sub(want);
+        let filler = "\n".repeat(want.saturating_sub(have));
+        let applied = self.buffer.edit(region_start..eaten, &filler);
+        self.record_buffer_edit(applied);
+        let delta = filler.len() as i64 - (eaten - region_start) as i64;
+        if delta != 0 {
+            self.shift_root_spans_after(eaten, delta, cx);
         }
         true
     }
