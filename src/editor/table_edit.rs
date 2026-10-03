@@ -1,8 +1,73 @@
 //! Native table runtime installation and table-editing operations.
 
+use std::ops::Range;
+
 use super::*;
 
 impl Editor {
+    /// 这一格在缓冲区原文里占的字节区间：按「第几行第几列」从管道符之间量出来。
+    ///
+    /// 不能拿格子的文本去原文里找——用户刚打的字还没进文件，按新文本搜必然搜不到。
+    /// 返回的是内容区间（两侧的空格填充不算），所以写回去只动这一格的内容，
+    /// 同一行别的列的列宽填充一个字节都不动。
+    pub(crate) fn table_cell_source_range(
+        &self,
+        binding: &TableCellBinding,
+        cx: &App,
+    ) -> Option<Range<usize>> {
+        let span = binding.table_block.read(cx).record.source_span.clone()?;
+        let raw = self.buffer.slice(span.clone());
+        // 视觉行 0 是表头（源码第 0 行），1 起是数据行：中间那条分隔行没有格子。
+        let line_index = if binding.position.row == 0 {
+            0
+        } else {
+            binding.position.row + 1
+        };
+        let mut line_start = span.start;
+        for (index, line) in raw.split('\n').enumerate() {
+            if index == line_index {
+                return cell_content_range_in_line(line, line_start, binding.position.column);
+            }
+            line_start += line.len() + 1;
+        }
+        None
+    }
+
+    /// 打字打进单元格：只把这一格的内容写回它自己的字节区间。
+    ///
+    /// 整张表重新序列化会把列宽填充重排（`| 甲   |` 变 `| 甲 |`），整篇重同步更会
+    /// 把表外的块一起洗。这一格之外的字节——包括同一行的其它列——原样保留。
+    pub(crate) fn write_back_table_cell_source(
+        &mut self,
+        binding: &TableCellBinding,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(old_span) = self.table_cell_source_range(binding, cx) else {
+            return false;
+        };
+        let new_source = serialize_table_cell_markdown(&binding.cell.read(cx).record.title);
+        if self.buffer.slice(old_span.clone()) == new_source {
+            return true;
+        }
+
+        let old_len = old_span.end - old_span.start;
+        let applied = self.buffer.edit(old_span, &new_source);
+        self.record_buffer_edit(applied.clone());
+        let delta = new_source.len() as i64 - old_len as i64;
+        if delta == 0 {
+            return true;
+        }
+        // 表根块的区间要跟着涨：这一格就在它里面。它后面的根块整体平移。
+        if let Some(table_span) = binding.table_block.read(cx).record.source_span.clone() {
+            binding.table_block.update(cx, |block, _cx| {
+                block.record.source_span =
+                    Some(table_span.start..(table_span.end as i64 + delta) as usize);
+            });
+        }
+        self.shift_root_spans_after(applied.new_range.end, delta, cx);
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
@@ -804,4 +869,53 @@ impl Editor {
             }
         }
     }
+}
+
+/// 一行表格里第 `column` 个格子的**内容**字节区间（两侧的填充空格不算在内）。
+///
+/// 反斜杠转义的 `|` 不算列分隔符；首尾没有外层管道符的写法也能量出来。空格全占
+/// 的空格，内容区间取零宽、插在第一个空格后面，写进去就是「往这格里加字」。
+fn cell_content_range_in_line(
+    line: &str,
+    line_start: usize,
+    column: usize,
+) -> Option<Range<usize>> {
+    let bytes = line.as_bytes();
+    let mut slots: Vec<Range<usize>> = Vec::new();
+    let mut start = 0usize;
+    let mut escaped = false;
+    for (offset, byte) in bytes.iter().enumerate() {
+        if *byte == b'\\' {
+            escaped = !escaped;
+        } else if *byte == b'|' && !escaped {
+            slots.push(start..offset);
+            start = offset + 1;
+            escaped = false;
+        } else {
+            escaped = false;
+        }
+    }
+    slots.push(start..line.len());
+    // 外层管道符两侧什么都没有：那一格不算数据。
+    if slots.first().is_some_and(|slot| slot.is_empty()) {
+        slots.remove(0);
+    }
+    if slots.last().is_some_and(|slot| slot.is_empty()) {
+        slots.pop();
+    }
+
+    let slot = slots.get(column)?.clone();
+    let mut left = slot.start;
+    while left < slot.end && matches!(bytes[left], b' ' | b'\t') {
+        left += 1;
+    }
+    let mut right = slot.end;
+    while right > left && matches!(bytes[right - 1], b' ' | b'\t') {
+        right -= 1;
+    }
+    if left == right {
+        let at = slot.start + usize::from(slot.end - slot.start > 1);
+        return Some(line_start + at..line_start + at);
+    }
+    Some(line_start + left..line_start + right)
 }

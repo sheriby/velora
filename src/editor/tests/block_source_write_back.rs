@@ -332,6 +332,75 @@ async fn cross_block_delete_keeps_the_other_blocks_bytes_untouched(cx: &mut Test
     );
 }
 
+/// 打字打进单元格也只该动那一格：单元格在缓冲区里有自己的字节区间，写回就该
+/// 落在那段区间上，连同一张表里别的列的填充都不该重排，更不许动表外的块。
+#[gpui::test]
+async fn typing_in_a_table_cell_keeps_the_padding_and_the_neighbours(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-table-cell");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            // 视觉行 0 是表头，1 是第一条数据行：光标落在「甲」这一格。
+            assert!(
+                editor.focus_table_cell_position(
+                    &table,
+                    crate::components::TableCellPosition { row: 1, column: 0 },
+                    cx
+                ),
+                "定位不到数据行的单元格"
+            );
+        });
+    });
+    redraw(cx);
+
+    cx.simulate_input("写");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    let row = saved
+        .split("\r\n")
+        .find(|line| line.contains("甲"))
+        .expect("数据行还在文件里");
+    assert!(row.contains("写"), "单元格里的字没进文件：{saved:?}");
+    assert!(
+        row.contains("| 1    |"),
+        "同一行其它列的列宽填充被重排了：{saved:?}"
+    );
+    assert!(
+        saved.starts_with("段落文字\r\n\r\n| 名称 | 数量 |\r\n| ---- | ---- |\r\n"),
+        "表外与表头的字节被改写了：{saved:?}"
+    );
+    assert!(
+        saved.ends_with("\r\n\r\n强调 __下划线__ 结尾\r\n"),
+        "表后面的块、行结束符或末行换行被改写了：{saved:?}"
+    );
+}
+
 /// 表格结构命令只该动这张表：加一行不许把文档里别的块改写。
 ///
 /// 表自己那几行重新排布是允许的（新列宽要容下新的一行），管的是**表外**：段落、

@@ -186,7 +186,14 @@ impl Editor {
                 if self.changed_block_needs_runtime_context_refresh(&binding.cell, cx) {
                     self.rebuild_image_runtimes(cx);
                 }
-                self.mark_dirty(cx);
+                // 打字打进格子就只改那一格的内容字节：同一行的列宽填充、表外的块
+                // 都不该跟着重排。量不出这一格的位置（引用块里的表格没有自己的
+                // 区间）才退回整张表的区间。
+                if self.write_back_table_cell_source(&binding, cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.write_back_table_structure_edit(&binding.table_block, cx);
+                }
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture(cx);
             }
