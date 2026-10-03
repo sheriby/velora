@@ -151,6 +151,9 @@ pub struct Editor {
     source_serializations: std::cell::Cell<u64>,
     /// 性能计数器：source mapping 重建次数（每帧重建也是 P2 热点）。
     source_mapping_builds: std::cell::Cell<u64>,
+    /// 性能计数器：其中「整篇重建」的次数。按单块取映射是 O(这一块)，整篇重建是
+    /// O(文档)——打字这类每键动作只许付前者的钱。
+    source_mapping_full_builds: std::cell::Cell<u64>,
     /// 性能计数器：状态栏整篇字数扫描次数（unicode 分词在大文档里很贵）。
     word_count_scans: std::cell::Cell<u64>,
     /// 性能计数器：行结构计划重建次数（每键重建整篇计划是 P2 热点）。
@@ -606,6 +609,7 @@ impl Editor {
             source_mapping_nanos: std::cell::Cell::default(),
             row_plan_nanos: std::cell::Cell::default(),
             source_mapping_builds: std::cell::Cell::default(),
+            source_mapping_full_builds: std::cell::Cell::default(),
             word_count_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),

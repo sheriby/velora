@@ -518,21 +518,16 @@ impl Editor {
     /// 渲染块里「第 n 个可见字符」和「源文本第 n 个字节」不是一回事（`~2~` 三个
     /// 字节显示成 2 个字符），标题的 `# ` 前缀也不在块的显示文本里，所以插入点
     /// 必须经映射换算，不能拿块内偏移直接当缓冲区偏移用。
+    ///
+    /// 只取这一块自己的映射：打字每键都要走这里，整篇重建映射是 O(文档)。
     pub(crate) fn caret_source_offset(
         &self,
         entity_id: EntityId,
         display_offset: usize,
         cx: &App,
     ) -> Option<usize> {
-        let mappings = self.source_mapping_by_entity_id(cx);
-        self.endpoint_source_offset(
-            CrossBlockSelectionEndpoint {
-                entity_id,
-                offset: display_offset,
-            },
-            &mappings,
-            cx,
-        )
+        let mapping = self.source_mapping_for_entity(entity_id, cx)?;
+        self.mapping_source_offset(&mapping, display_offset, cx)
     }
 
     fn endpoint_source_offset(
@@ -541,17 +536,29 @@ impl Editor {
         mappings: &HashMap<EntityId, SourceTargetMapping>,
         cx: &App,
     ) -> Option<usize> {
-        let mapping = mappings.get(&endpoint.entity_id)?;
+        self.mapping_source_offset(
+            mappings.get(&endpoint.entity_id)?,
+            endpoint.offset,
+            cx,
+        )
+    }
+
+    fn mapping_source_offset(
+        &self,
+        mapping: &SourceTargetMapping,
+        offset: usize,
+        cx: &App,
+    ) -> Option<usize> {
         let block = mapping.entity.read(cx);
         let visible_len = block.visible_len();
-        if endpoint.offset == 0 {
+        if offset == 0 {
             return Some(mapping.full_source_range.start);
         }
-        if endpoint.offset >= visible_len {
+        if offset >= visible_len {
             return Some(mapping.full_source_range.end);
         }
         let markdown_offset = block
-            .current_range_to_markdown_range(endpoint.offset..endpoint.offset)
+            .current_range_to_markdown_range(offset..offset)
             .start;
         let max_content = mapping.content_to_source.len().saturating_sub(1);
         Some(

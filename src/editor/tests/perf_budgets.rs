@@ -165,6 +165,9 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     );
 
     let before = perf_passes(&editor, cx);
+    let full_mappings_before = editor.read_with(cx, |editor, _| {
+        editor.source_mapping_full_builds.get()
+    });
     let revision_before = editor.read_with(cx, |editor, _| editor.document_revision);
     let start = Instant::now();
     cx.simulate_input("x");
@@ -202,7 +205,20 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     // 区间，就不该再整篇序列化一遍。读侧（搜索、大纲、状态栏）也全部改读缓冲区。
     // 这条从「≤1」收到「=0」，是 buffer 为事实源换来的实际收益。
     assert_eq!(delta.0, 0, "一次按键出现 {} 次全文序列化", delta.0);
-    assert!(delta.1 <= 2, "一次按键出现 {} 次 mapping 重建", delta.1);
+    // 三次按块重建：撤销分组的选区快照、区间写回要找插入点、编辑后的选区快照。
+    // 它们都只走「光标所在的那一根块」，成本随块大小而不是随文档大小长。
+    assert!(delta.1 <= 3, "一次按键出现 {} 次 mapping 重建", delta.1);
+    // 上面那 2 次额度只许是「按这一块重建」（`source_mapping_for_entity`，成本随
+    // 被编辑的块走）。整篇重建是 O(文档)：1 MiB 实测一次 227ms，10 MiB 就是秒级，
+    // 拿它换掉整篇序列化等于把 13 秒从一列挪到另一列。
+    let full_mappings_after = editor.read_with(cx, |editor, _| {
+        editor.source_mapping_full_builds.get()
+    });
+    assert_eq!(
+        full_mappings_after - full_mappings_before,
+        0,
+        "一次按键出现整篇 source mapping 重建"
+    );
     assert!(delta.2 <= 1, "一次按键出现 {} 次整篇字数扫描", delta.2);
     assert!(delta.3 <= 2, "一次按键出现 {} 次行计划重建", delta.3);
 
@@ -216,6 +232,68 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     eprintln!("[measure] 1 MiB 五个静止帧 {idle:?}，遍数 {idle_delta:?}");
     // 静止帧不许做任何全文级工作。
     assert_eq!(idle_delta, (0, 0, 0, 0), "静止帧出现全文级工作");
+}
+
+/// 阶段 1 闸门要求的 10 MiB 档：一次按键不许出现任何「整篇」遍历。
+///
+/// 夹具与 1 MiB 那份由 `scripts/generate-fixtures.mjs` 一起生成、同样被 gitignore，
+/// 没生成就跳过。这里刻意不做单次全文测量——10 MiB 一次整篇 mapping 实测 4.6s，
+/// 而那正是被禁止的行为本身。断言两件事：整篇序列化 0 次、整篇 mapping 重建 0 次，
+/// 再加一个墙钟上限兜住「新增了别的整篇工作」。
+///
+/// 上限现在是 1.5s：10 MiB 一次按键实测 0.6s，剩下的线性成本不在写回层，而在
+/// 15 万个块的行计划与可见列表重排（1 MiB 同一条路径是 51ms）。那一块要靠按可见
+/// 窗口物化，方案 §10 已把它列为独立工作项。
+#[gpui::test]
+async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext) {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/ten-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        return;
+    }
+    init_editor_test_app(cx);
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    assert!(markdown.len() >= 10 * 1024 * 1024, "夹具应约 10 MiB");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while editor.read_with(cx, |editor, _| editor.document.pending_tail().is_some()) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| {
+        (
+            editor.source_serializations.get(),
+            editor.source_mapping_full_builds.get(),
+        )
+    });
+    let start = Instant::now();
+    cx.simulate_input("x");
+    redraw(cx);
+    let typed = start.elapsed();
+    let after = editor.read_with(cx, |editor, _| {
+        (
+            editor.source_serializations.get(),
+            editor.source_mapping_full_builds.get(),
+        )
+    });
+    eprintln!(
+        "[measure] 10 MiB 一次按键 {typed:?}，整篇遍数 (序列化, mapping) = ({}, {})",
+        after.0 - before.0,
+        after.1 - before.1
+    );
+    assert_eq!(after.0 - before.0, 0, "10 MiB 一次按键出现整篇序列化");
+    assert_eq!(
+        after.1 - before.1,
+        0,
+        "10 MiB 一次按键出现整篇 source mapping 重建"
+    );
+    assert!(
+        typed < Duration::from_millis(1_500),
+        "10 MiB 一次按键 {typed:?}，偏出预算"
+    );
 }
 
 #[gpui::test]

@@ -801,6 +801,10 @@ impl Editor {
     ) -> (Vec<SourceTargetMapping>, HashMap<EntityId, Range<usize>>) {
         self.source_mapping_builds
             .set(self.source_mapping_builds.get() + 1);
+        if target.is_none() {
+            self.source_mapping_full_builds
+                .set(self.source_mapping_full_builds.get() + 1);
+        }
         let started = std::time::Instant::now();
         let result = self.build_source_target_mappings_inner(cx, target);
         self.source_mapping_nanos.set(
@@ -826,7 +830,29 @@ impl Editor {
                 // （用户报修）。块内部的偏移仍由下面的重建算出，写法不规范的
                 // 块（表格列宽填充）会在块内漂几个字节，但绝不会再漂到别的块里。
                 let mut next_anchor = 0usize;
-                for block in self.document.root_blocks() {
+                let roots = self.document.root_blocks();
+                // 只要某一根的映射时，前面那些根块不必走查：锚点就是它自己的区间，
+                // 走查它没有意义，而这一跳正是「打字 = O(这一块)」的关键。
+                let start_index = match target {
+                    Some(id) => self
+                        .document
+                        .root_ancestor_of(id)
+                        .and_then(|root| {
+                            roots.iter().position(|block| block.entity_id() == root.entity_id())
+                        })
+                        .unwrap_or(0),
+                    None => 0,
+                };
+                if start_index > 0 {
+                    next_anchor = roots[start_index - 1]
+                        .read(cx)
+                        .record
+                        .source_span
+                        .as_ref()
+                        .map(|span| (span.end + 1).min(self.buffer.byte_len()))
+                        .unwrap_or(0);
+                }
+                for block in roots.iter().skip(start_index) {
                     let id = block.entity_id();
                     let Some(span) = block.read(cx).record.source_span.clone() else {
                         // 这个根块还没有区间（刚插进树、尚未写回缓冲区）：给一个
