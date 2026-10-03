@@ -502,3 +502,59 @@ async fn document_find_reports_the_file_position_of_a_lossy_shape_hit(
         );
     });
 }
+
+/// 查找下一个必须按**当前**文本算，不是后台搜索那一刻的快照。
+///
+/// 命中落地之后用户还能继续打字：在命中之前插几个字节，整段就往后移。这时
+/// 「查找下一个」若拿旧快照算区间，跳过去的「命中」是改动之前的位置——光标落在
+/// 别的词或空白上，替换也会改错地方。
+#[gpui::test]
+async fn document_find_navigates_the_edited_text_not_the_search_snapshot(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "标题段落\n\n正文一段。\n".into(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.open_document_find(cx);
+        editor.workspace.search_query = "正文".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    editor.update(cx, |editor, _cx| {
+        assert_eq!(editor.workspace.search_results.len(), 1, "夹具应该命中一次");
+    });
+
+    // 命中之后在它前面插入字节：整段往后移。
+    editor.update(cx, |editor, cx| {
+        let heading = editor.document.root_blocks()[0].clone();
+        heading.update(cx, |heading, cx| {
+            heading.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+            heading.replace_text_in_visible_range(0..0, "插入的字", None, false, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    editor.update(cx, |editor, cx| {
+        editor.find_next_document_match(false, cx);
+        let range = editor
+            .workspace
+            .document_active_range
+            .clone()
+            .expect("查找下一个应该落在命中上");
+        let source = editor.current_document_source(cx);
+        assert!(range.end <= source.len(), "命中区间越界：{:?} / 文本 {} 字节", range, source.len());
+        assert_eq!(
+            &source[range.clone()],
+            "正文",
+            "跳到了改动之前的位置：缓冲区现在是 {:?}",
+            source.chars().take(40).collect::<String>()
+        );
+    });
+}

@@ -72,7 +72,6 @@ impl Editor {
         self.workspace.search_selected_range = 0..0;
         self.workspace.search_marked_range = None;
         self.workspace.search_results.clear();
-        self.workspace.document_search_source = None;
         self.workspace.document_active_range = None;
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);

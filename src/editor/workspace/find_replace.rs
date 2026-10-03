@@ -14,7 +14,6 @@ impl Editor {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         let generation = self.workspace.search_generation;
         self.workspace.search_active_index = None;
-        self.workspace.document_search_source = None;
         self.workspace.document_active_range = None;
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let scope = self.workspace.search_scope;
@@ -41,12 +40,10 @@ impl Editor {
             if !current {
                 return;
             }
-            let (results, document_source) = match scope {
+            let results = match scope {
                 WorkspaceSearchScope::Workspace => {
                     let Some(tree) = tree else { return };
-                    let results = search_workspace_files(&tree, &matcher, 200, &background)
-                        .await;
-                    (results, None)
+                    search_workspace_files(&tree, &matcher, 200, &background).await
                 }
                 WorkspaceSearchScope::Document => {
                     let Ok((source, path, label)) = editor.update(cx, |editor, cx| {
@@ -65,22 +62,19 @@ impl Editor {
                     }) else {
                         return;
                     };
-                    let (results, source) = background
+                    background
                         .spawn(async move {
-                            let results = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                                || search_document_source(&source, &matcher, &path, &label, 200),
-                            ))
-                            .unwrap_or_default();
-                            (results, source)
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                search_document_source(&source, &matcher, &path, &label, 200)
+                            }))
+                            .unwrap_or_default()
                         })
-                        .await;
-                    (results, Some(source))
+                        .await
                 }
             };
             let _ = editor.update(cx, |editor, cx| {
                 if editor.workspace.search_generation == generation {
                     editor.workspace.search_results = results;
-                    editor.workspace.document_search_source = document_source;
                     editor.workspace.search_pending = false;
                     editor.sync_document_search_highlights(cx);
                     cx.notify();
@@ -338,13 +332,9 @@ impl Editor {
     }
 
     pub(crate) fn find_next_document_match(&mut self, reverse: bool, cx: &mut Context<Self>) {
-        // 查询刚打完时后台搜索还没落地（120ms 去抖），快照为 None；改在
-        // 当前文档源上找，不再静默什么都不做（用户报修）。
-        let source = self
-            .workspace
-            .document_search_source
-            .clone()
-            .unwrap_or_else(|| self.current_document_source(cx));
+        // 命中区间按当前文本算：这个区间要拿去跳转、拿去替换，拿搜索结果落地那一刻
+        // 的快照算，用户中间打过的字会让它落到别的位置上。
+        let source = self.current_document_source(cx);
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let from = self
             .workspace
@@ -400,9 +390,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        let Some(source) = self.workspace.document_search_source.clone() else {
-            return 0;
-        };
+        let source = self.current_document_source(cx);
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let replacement = self.workspace.replace_query.clone();
         let mut ranges = Vec::new();
@@ -474,16 +462,7 @@ impl Editor {
             if Some(&path) == active_path.as_ref() {
                 // The active document goes through the live editor path so the
                 // change is undoable and stays in sync with the block model.
-                let source = self.current_document_source(cx);
-                let scoped = SearchMatcher::new(
-                    self.workspace.search_query.trim(),
-                    self.search_options(),
-                );
-                let count = count_matches_in_source(&source, &scoped);
-                if count > 0 {
-                    self.workspace.document_search_source = Some(source);
-                    total += self.replace_all_document_matches(window, cx);
-                }
+                total += self.replace_all_document_matches(window, cx);
                 continue;
             }
             let open_tab_index = self
