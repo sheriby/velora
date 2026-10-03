@@ -434,6 +434,7 @@ impl Editor {
         }
 
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        let roots_before = self.document.root_layout(cx);
         let can_insert_image_block = self.view_mode == crate::editor::ViewMode::Rendered
             && block.read(cx).kind() == BlockKind::Paragraph
             && self.table_cell_binding(block.entity_id()).is_none()
@@ -447,7 +448,13 @@ impl Editor {
             );
         }
 
-        self.mark_dirty(cx);
+        // 一段变三段（前面 + 图片行 + 后面）改的是根块序列，但变的只有落点那一段：
+        // 只重写那一段，别处的 `__强调__` 写法、表格列宽、CRLF 才不会跟着被洗。
+        if self.write_back_structural_change(&block, Some(&roots_before), cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
         self.finalize_pending_undo_capture(cx);
         cx.notify();
     }

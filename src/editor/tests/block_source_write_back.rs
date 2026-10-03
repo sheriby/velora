@@ -2128,3 +2128,89 @@ async fn deleting_the_table_header_row_keeps_the_other_lines_padded_as_written(
         "删表头改掉了这两行以外的字节：{saved:?}"
     );
 }
+
+/// 粘一张图片进来，只许多写它那几行——别的块、列宽填充、行尾形状都不许动。
+///
+/// 图片粘贴以前是「改块树 → mark_dirty → 整篇从块树重新序列化」，于是给一段粘张图片会
+/// 把别处的 `__强调__` 写法、表格列宽、CRLF 与末行换行一起洗掉。这里既按字节比对文件，
+/// 也盯着整篇序列化的计数。
+#[gpui::test]
+async fn pasting_an_image_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "velora-paste-image-{}-{nanos}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("doc.md");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let picture = dir.join("pic.png");
+    fs::write(&picture, b"\x89PNG\r\n\x1a\n not really a png").expect("write picture");
+    let cleanup = dir.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| editor.source_serializations.get());
+    let source = crate::components::PastedImageSource::LocalPath(picture.clone());
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let paragraph = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).display_text() == "段落文字")
+                .cloned()
+                .expect("夹具里应有一段「段落文字」");
+            editor.on_block_event(
+                paragraph,
+                &BlockEvent::RequestPasteImage {
+                    leading: InlineTextTree::plain("段落".to_string()),
+                    source: source.clone(),
+                    trailing: InlineTextTree::plain("文字".to_string()),
+                },
+                cx,
+            );
+        });
+    });
+    redraw(cx);
+
+    let after = editor.read_with(cx, |editor, _| editor.source_serializations.get());
+    assert_eq!(
+        before, after,
+        "粘图片又把整篇序列化了一遍（{before} → {after}）"
+    );
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert!(
+        saved.starts_with("段落\r\n\r\n!["),
+        "落点前面被改写了：{saved:?}"
+    );
+    assert!(
+        saved.ends_with("\r\n\r\n强调 __下划线__ 结尾\r\n"),
+        "落点后面的块、行结束符或末行换行被改写了：{saved:?}"
+    );
+    let table_lines = saved
+        .split("\r\n")
+        .filter(|line| line.starts_with('|'))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        table_lines,
+        vec!["| 名称 | 数量 |", "| ---- | ---- |", "| 甲   | 1    |"],
+        "粘图片把表格的列宽填充重排了：{table_lines:?}"
+    );
+}
