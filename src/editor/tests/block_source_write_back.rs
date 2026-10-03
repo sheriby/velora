@@ -2075,3 +2075,56 @@ async fn moving_a_table_column_swaps_only_those_two_columns(cx: &mut TestAppCont
         "移动一列改掉了这两格以外的字节：{saved:?}"
     );
 }
+
+/// 删掉表头 = 表头那行换成第一条数据行的文本，再把那条数据行删掉。
+///
+/// 分隔行和剩下的数据行都不该跟着重排：`|:-------|` 的写法、`| 梨子   |    9 |` 的
+/// 填充都是用户写的字节。
+#[gpui::test]
+async fn deleting_the_table_header_row_keeps_the_other_lines_padded_as_written(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str =
+        "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n| 梨子   |    9 |\n";
+    let path = temp_markdown_path("write-back-table-header-delete");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.delete_table_header_row(&table, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "删掉表头之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 苹果   |    3 |\r\n|:-------|-----:|\r\n| 梨子   |    9 |\r\n",
+        "删表头改掉了这两行以外的字节：{saved:?}"
+    );
+}

@@ -520,6 +520,67 @@ impl Editor {
         true
     }
 
+    /// 删掉表头 = 表头那行换成第一条数据行的文本，再把那条数据行连着它的换行剪掉。
+    ///
+    /// 模型里表头就是「第一条数据行升上来的」，源码里也只做这两件事：改第一行、删第三
+    /// 行。分隔行与其余数据行的字节留在原地。剪线在改表头之前做（剪的是后面的行，不会
+    /// 挪动第一行的偏移）。
+    ///
+    /// 返回 `false` 表示做不出来：行数与模型对不上、表头行或那条数据行的竖线跟列数不
+    /// 符、表没有自己的区间。那种情况交回整块写。
+    fn write_back_table_header_promotion(
+        &mut self,
+        table_block: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let Some((rows, columns)) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| (table.rows.len(), table.column_count()))
+        else {
+            return false;
+        };
+        let lines = self.table_source_lines(&span);
+        // 升上表头的那一行在源码里还没删，所以行数该比模型多一行。
+        if lines.len() != rows + 3 {
+            return false;
+        }
+        let header_line = lines[0].0;
+        let header_text = lines[0].1.clone();
+        let promoted_line = lines[2].0;
+        let promoted_text = lines[2].1.clone();
+        for text in [&header_text, &promoted_text] {
+            if text.chars().filter(|character| *character == '|').count() != columns + 1 {
+                return false;
+            }
+        }
+
+        let boundary = self.buffer.line_range(lines[lines.len() - 1].0).end;
+        // 先剪掉升上表头的那条数据行（连着它前面的换行，所以不动表头那行的偏移）。
+        let cut_from = self.buffer.line_range(promoted_line - 1).end;
+        let cut_to = self.buffer.line_range(promoted_line).end;
+        let applied = self.buffer.edit(cut_from..cut_to, "");
+        self.record_buffer_edit(applied);
+        let header_range = self.buffer.line_range(header_line);
+        let applied = self.buffer.edit(header_range.clone(), &promoted_text);
+        self.record_buffer_edit(applied);
+
+        let delta = cut_from as i64 - cut_to as i64 + promoted_text.len() as i64
+            - (header_range.end - header_range.start) as i64;
+        table_block.update(cx, |block, _cx| {
+            if let Some(span) = &block.record.source_span {
+                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
+            }
+        });
+        self.shift_root_spans_after(boundary, delta, cx);
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
@@ -1106,7 +1167,11 @@ impl Editor {
         self.rebuild_table_runtimes(cx);
         self.clear_table_axis_selection(cx);
         self.focus_table_cell_position(table_block, TableCellPosition { row: 0, column: 0 }, cx);
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_header_promotion(table_block, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
