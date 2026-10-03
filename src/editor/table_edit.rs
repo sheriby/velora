@@ -702,6 +702,7 @@ impl Editor {
         };
         // Insert the replacement paragraph after the table first, then remove the
         // table, so the document is never momentarily empty.
+        let roots_before = self.document.root_layout(cx);
         let paragraph = Self::new_block(cx, BlockRecord::paragraph(String::new()));
         self.document.insert_blocks_at(
             location.parent.clone(),
@@ -716,9 +717,13 @@ impl Editor {
         self.rebuild_table_runtimes(cx);
         self.clear_table_axis_selection(cx);
         self.focus_block(paragraph.entity_id());
-        // 这里删掉的是整个根块，缓冲区要改的是「一段连续根块」而不是单块的区间，
-        // 单块写回算不出来，先由整篇重投影兜住。
-        self.mark_dirty(cx);
+        // 整根块没了要改的是「一段连续根块」的区间：把表那几行连它们自己的换行
+        // 一起收掉，剩下的那一行空行就是原位那个空段落。算不出来才退回整篇重投影。
+        if self.write_back_root_region(table_block, &roots_before, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);

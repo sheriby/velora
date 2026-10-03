@@ -375,3 +375,59 @@ async fn undoing_a_table_cell_newline_removes_the_blank_line_it_added(cx: &mut T
         "撤销一次表内回车之后，磁盘上的字节不再是原文"
     );
 }
+
+/// 撤销「删掉整张表」要把那几行表原样放回去。
+///
+/// 删除走的是区间收行（旧的几行连它们自己的换行一起收掉），撤销就是把它换回去
+/// 的那次 `AppliedEdit`；顺手整篇重投影会把列宽填充和 `__下划线__` 写法洗掉。
+#[gpui::test]
+async fn undoing_a_dropped_table_puts_the_rows_back_byte_for_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("undo-drop-table");
+    fs::write(&path, LOSSY_DOC.replace('\n', "\r\n")).expect("write fixture");
+    let original_disk = fs::read_to_string(&path).expect("read fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.remove_table_block(&table, cx);
+        });
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.buffer.text().contains("名称"),
+            "删表没生效：{:?}",
+            editor.buffer.text()
+        );
+    });
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved, original_disk,
+        "撤销一次删表之后，磁盘上的字节不再是原文"
+    );
+}

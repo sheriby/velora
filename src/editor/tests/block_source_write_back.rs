@@ -1230,3 +1230,56 @@ async fn downgrading_an_empty_callout_keeps_the_other_blocks_bytes_untouched(
     let (spans, buffer_text) = present_root_spans(&editor, cx);
     assert_spans_tile_the_content(&spans, &buffer_text, "标注降级成引用之后");
 }
+
+/// 删掉整张表（删最后一行/列时表整个没了，原位留一个空段落）：文件里少的应该
+/// 只有那三行表，接缝剩下的那一行空行就是那个空段落。别处的字节照旧不动。
+#[gpui::test]
+async fn deleting_a_whole_table_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-drop-table");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.remove_table_block(&table, cx);
+        });
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "段落文字\n\n\n强调 __下划线__ 结尾\n",
+        "删掉整张表不该把别处重排一遍"
+    );
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "段落文字\r\n\r\n\r\n强调 __下划线__ 结尾\r\n",
+        "保存写出去的字节不再是「原文减去那张表」"
+    );
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "整张表删掉之后");
+}

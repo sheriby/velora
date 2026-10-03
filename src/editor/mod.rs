@@ -1018,6 +1018,30 @@ impl Editor {
         let Some((text, local_spans)) =
             self.document.markdown_region_for_roots(anchor_index..new_end, cx)
         else {
+            // 换进去的那一段全是空段落（删掉整张表、原位留一个空段落）：空段落
+            // 序列化不出文本，但文件里要改的字节很清楚——把旧的这几行连它们自己的
+            // 换行一起收掉，接缝上剩下的那一行空行就是那个空段落。接缝必须正好是
+            // 「两边各空着一行」（或表就是文档最后一段），别的形状算不准，交兜底。
+            let one_blank_paragraph = new_end - anchor_index == 1;
+            let blank_before = region_start >= 2
+                && self.buffer.byte_at(region_start - 1) == Some(b'\n')
+                && self.buffer.byte_at(region_start - 2) == Some(b'\n');
+            let eats_own_line = self.buffer.byte_at(region_end) == Some(b'\n');
+            let seam_after = match (
+                self.buffer.byte_at(region_end + 1),
+                self.buffer.byte_at(region_end + 2),
+            ) {
+                (None, _) => true,
+                (Some(b'\n'), Some(byte)) => byte != b'\n',
+                _ => false,
+            };
+            if one_blank_paragraph && blank_before && eats_own_line && seam_after {
+                let removed = region_end + 1 - region_start;
+                let applied = self.buffer.edit(region_start..region_end + 1, "");
+                self.record_buffer_edit(applied);
+                self.shift_root_spans_after(region_end + 1, -(removed as i64), cx);
+                return true;
+            }
             return false;
         };
 
