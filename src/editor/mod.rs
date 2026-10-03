@@ -76,7 +76,6 @@ pub struct Editor {
     /// Keeps ambiguous Markdown extensions in source mode until their syntax is removed.
     source_mode_fallback_required: bool,
     code_document: bool,
-    code_uses_crlf: bool,
     /// Deferred focus target applied during render when a [`Window`] is
     /// available.
     pending_focus: Option<EntityId>,
@@ -561,7 +560,6 @@ impl Editor {
             typewriter_mode: false,
             source_mode_fallback_required,
             code_document: false,
-            code_uses_crlf: false,
             pending_focus,
             active_entity_id: pending_focus,
             pending_scroll_active_block_into_view: true,

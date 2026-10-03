@@ -231,7 +231,6 @@ impl Editor {
     ) {
         // P6 顺手项：LF 文档（常见日志/代码）零拷贝直通，避免两次全文分配。
         let had_cr = markdown.contains('\r');
-        let had_crlf = markdown.contains("\r\n");
         let normalized = if had_cr {
             markdown.replace("\r\n", "\n").replace('\r', "\n")
         } else {
@@ -242,7 +241,6 @@ impl Editor {
         self.reset_buffer_for_text(&normalized);
         let is_code = code_language.is_some();
         self.code_document = is_code;
-        self.code_uses_crlf = is_code && had_crlf;
         let source_mode_fallback_required =
             !is_code && Self::markdown_requires_source_mode_fallback(&normalized);
         let mut pending_code_tail = None;

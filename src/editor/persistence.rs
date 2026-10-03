@@ -449,19 +449,6 @@ impl Editor {
         .detach();
     }
 
-    pub(super) fn serialized_document_text(&self, cx: &App) -> String {
-        if self.view_mode == super::ViewMode::Source {
-            let source = self.document.raw_source_text(cx);
-            if self.code_document && self.code_uses_crlf {
-                source.replace('\n', "\r\n")
-            } else {
-                source
-            }
-        } else {
-            self.document.markdown_text(cx)
-        }
-    }
-
     /// 保存实际落盘的**文本**（LF）：就是缓冲区。
     ///
     /// 版本号、工作区标签文本、本地历史都取这份文本，不能取重新序列化的结果，

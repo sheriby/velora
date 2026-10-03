@@ -32,6 +32,45 @@ async fn export_html_writes_rendered_document_without_changing_editor_state(
     assert!(html.contains("<p>body</p>"));
 }
 
+/// 导出是「读文档」，不该为了渲染 HTML 先把整篇投影重拼一遍。
+///
+/// 大文档上这一遍是一次全文分配加几百毫秒，而它产出的 markdown 与缓冲区只差在写法
+/// （下划线变星号、表格重新补白），HTML 里根本看不出来——纯付钱不拿货。
+#[gpui::test]
+async fn exporting_a_document_does_not_rereserialize_the_projection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let export_path = temp_export_path("export-reads-buffer", "html");
+    let cleanup_path = export_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# Title\n\n_下划线_ body".to_string(), None)
+    });
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| editor.document.whole_document_renders.get());
+    editor
+        .update(cx, |editor, cx| {
+            editor.export_document_to_path(ExportFormat::Html, &export_path, cx)
+        })
+        .expect("html export should write");
+    let after = editor.read_with(cx, |editor, _| editor.document.whole_document_renders.get());
+    assert_eq!(
+        before, after,
+        "导出又把整篇投影序列化了一遍（{before} → {after}）"
+    );
+
+    let html = fs::read_to_string(&export_path).expect("read exported html");
+    assert!(html.contains("<h1>Title</h1>"), "导出内容缺失：{html}");
+    assert!(
+        html.contains("<em>下划线</em>"),
+        "导出的正文不是文档本身：{html}"
+    );
+}
+
 #[gpui::test]
 async fn export_png_writes_long_image_without_changing_editor_state(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -97,6 +136,9 @@ async fn export_html_uses_source_mode_raw_text(cx: &mut TestAppContext) {
             ));
             block.sync_render_cache();
         });
+        // 源码模式的一次改动都要落到缓冲区（这一档没有区间可声明，由重投影落笔），
+        // 导出读的就是缓冲区。只改投影不写回，等于伪造一个产品里不存在的状态。
+        editor.mark_dirty(cx);
         editor
             .export_document_to_path(ExportFormat::Html, &export_path, cx)
             .expect("source html export should write");

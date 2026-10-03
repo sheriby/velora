@@ -190,17 +190,37 @@ async fn code_source_chunks_round_trip_and_continue_line_numbers(cx: &mut TestAp
 #[gpui::test]
 async fn code_source_with_crlf_round_trips_through_chunks(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    let crlf_source = "alpha\n\nbravo\n".to_string().replace('\n', "\r\n");
-    let expected_source = crlf_source.clone();
+    // 1200 行 > 一个源码块（512 行）：这份文档走的是分块续建这条路。
+    let mut crlf_source = String::new();
+    for index in 0..1200 {
+        crlf_source.push_str(&format!("alpha {index}\r\n"));
+    }
+    let expected_bytes = crlf_source.clone().into_bytes();
     let path = std::env::temp_dir().join(format!("velora-chunk-crlf-{}.txt", std::process::id()));
+    std::fs::write(&path, &crlf_source).expect("seed CRLF source");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = std::fs::remove_file(&cleanup);
+    });
+    let document = crate::editor::encoding::load_document(&path).expect("read fixture");
 
     let (editor, cx) = cx.add_window_view(move |_window, cx| {
-        Editor::from_file_source(cx, crlf_source.clone(), Some(path.clone()))
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
     });
+    cx.run_until_parked();
     editor.read_with(cx, |editor, cx| {
-        assert!(editor.code_uses_crlf, "应记录 CRLF 标记");
-        let serialized = editor.serialized_document_text(cx);
-        assert_eq!(serialized, expected_source, "保存序列化必须还原 CRLF");
+        assert_eq!(
+            editor.document.visible_blocks().len(),
+            3,
+            "1200 行源码应分成 512/512/177 三块再续建"
+        );
+        // 保存的字节来自缓冲区：没改过的 CRLF 代码文档，落盘就该是原样那串字节。
+        assert_eq!(editor.buffer.file_bytes(), expected_bytes);
+        // 投影本身也要完整：兜底重投影那一档拿它当内容源，缺行就是丢内容。
+        assert_eq!(
+            editor.document.raw_source_text(cx).replace('\n', "\r\n"),
+            crlf_source
+        );
     });
 }
 

@@ -86,7 +86,7 @@ impl Editor {
         path: &Path,
         cx: &App,
     ) -> anyhow::Result<()> {
-        let markdown = self.serialized_document_text(cx);
+        let markdown = self.current_document_source(cx);
         let theme = cx.global::<ThemeManager>().current().clone();
         let title = self.export_title();
         let source_base_dir = self.file_path.as_ref().and_then(|path| path.parent());
@@ -99,7 +99,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let markdown = self.serialized_document_text(cx);
+        let markdown = self.current_document_source(cx);
         let theme = cx.global::<ThemeManager>().current().clone();
         let title = self.export_title();
         let source_base_dir = self

@@ -33,7 +33,7 @@ async fn large_document_opens_within_budget(cx: &mut TestAppContext) {
             (
                 editor.document.visible_blocks().len(),
                 editor.document.pending_tail().is_some(),
-                editor.serialized_document_text(cx).len(),
+                editor.document.markdown_text(cx).len(),
             )
         })
     });
@@ -60,8 +60,8 @@ async fn large_document_opens_within_budget(cx: &mut TestAppContext) {
         editor.read_with(cx, |editor, cx| {
             (
                 editor.document.visible_blocks().len(),
-                editor.serialized_document_text(cx).len(),
-                editor.serialized_document_text(cx),
+                editor.document.markdown_text(cx).len(),
+                editor.document.markdown_text(cx),
             )
         })
     });
@@ -90,7 +90,7 @@ async fn large_document_opens_within_budget(cx: &mut TestAppContext) {
     let expected = cx.read(|cx| {
         single_pass.read_with(cx, |editor, cx| {
             assert!(editor.document.pending_tail().is_none());
-            editor.serialized_document_text(cx)
+            editor.document.markdown_text(cx)
         })
     });
     assert_eq!(text, expected, "分块导入与整篇导入结果不一致");
