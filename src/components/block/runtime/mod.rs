@@ -250,6 +250,9 @@ pub struct Block {
     /// 刚在光标处插入的那段文字（可见偏移 + 内容）。编辑器据此只把这几个字节
     /// 插进缓冲区，块自己没碰过的定界符就不会被重新序列化改写。一次事件读走。
     pending_visible_insertion: Option<(usize, String)>,
+    /// 这次「标题变短」是拆块切出来的，不是用户删的：光标之后的那截属于即将插进
+    /// 来的新块。编辑器据此跳过这次写回，让紧随其后的结构写回连着区间一起处理。
+    split_truncation_pending: bool,
 }
 
 /// 目录（TOC）条目（roadmap C2）：编辑器按当前标题结构写入 `[TOC]` 块。
@@ -373,6 +376,7 @@ impl Block {
             numbered_list_restart_requested: false,
             quote_reparse_requested: false,
             pending_visible_insertion: None,
+            split_truncation_pending: false,
         };
         block.sync_code_highlight();
         block.refresh_cached_display_text();
@@ -424,6 +428,21 @@ impl Block {
 
     pub(crate) fn take_pending_visible_insertion(&mut self) -> Option<(usize, String)> {
         self.pending_visible_insertion.take()
+    }
+
+    /// 这次切分是不是拆块切出来的（只读，不清标记）。
+    pub(crate) fn split_truncation_pending(&self) -> bool {
+        self.split_truncation_pending
+    }
+
+    /// 块准备在光标处把自己切成两半。
+    pub(crate) fn mark_split_truncation(&mut self) {
+        self.split_truncation_pending = true;
+    }
+
+    /// 取走拆块标记：紧跟的那次 RequestNewline 就是这次切分的另一半。
+    pub(crate) fn take_split_truncation(&mut self) -> bool {
+        std::mem::take(&mut self.split_truncation_pending)
     }
 
     pub(crate) fn set_runtime_context(

@@ -538,3 +538,50 @@ fn dispatch_block_event(
         editor.on_block_event(block, &event, cx);
     });
 }
+
+/// 拆块的撤销组只该记下接缝那几个字节。
+///
+/// 块在光标处切成两半，文件里真正变的只有接缝上的换行——可是这一步现在先有一次
+/// Changed 把「切掉的后半截」写成一次删除，撤销组于是记下整块的后半（方案 §6.2.4
+/// 算的就是这笔：一段 86 KiB 的段落，拆一次块记 ~2 KiB，200 步就是几百 KB 到
+/// 十几 MB）。这一条钉住负载与块大小无关，并且撤销后逐字节回到原文。
+#[gpui::test]
+async fn splitting_a_block_records_only_the_seam_in_the_undo_group(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let paragraph = "字".repeat(1_300);
+    let source = format!("{paragraph}\n\n结尾\n");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.clone(), None));
+    redraw(cx);
+
+    let target = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有第一段")
+    });
+    cx.update(|_window, cx| {
+        target.update(cx, |block, _cx| block.selected_range = 1_500..1_500);
+    });
+    cx.update(|window, cx| {
+        target.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+
+    let stored = editor.read_with(cx, |editor, _cx| editor.undo_history_byte_len());
+    assert!(
+        stored <= 8,
+        "拆块的撤销负载跟着块大小长：{stored} 字节"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(buffer_text, source, "撤销拆块没把字节换回去");
+    let (spans, buffer_text) = root_block_spans(&editor, cx);
+    assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "撤销拆块之后");
+}

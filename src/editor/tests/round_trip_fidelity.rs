@@ -255,6 +255,105 @@ fn escape_bytes(bytes: &[u8]) -> String {
         .replace('\t', "\\t")
 }
 
+/// 第三维：打开 → 在第一块开头按回车拆块。这一步只该改写**这一块自己的**字节。
+///
+/// 回车拆块现在是这样走的：块先把光标之后的文字从自己身上切掉（Changed），编辑器
+/// 按区间把这次切掉写成一次删除，于是这一块在缓冲区里塌成零宽；紧接着的
+/// RequestNewline 再想按区间写回就没有区间可用，只能退回整篇重新序列化——
+/// `__粗__` 变 `**粗**`、`>引用二` 变 `> 引用二`、表格列宽重填、末行换行被丢掉，
+/// 一次回车把全文的写法洗了一遍。
+///
+/// 这里断言两件事：本块区间以外的字节原样，以及整篇序列化次数没有增加。至于本块
+/// 自己那些没碰到的行（多行块内部的接缝），由 `block_source_write_back` 里的用例
+/// 单独盯着。
+#[gpui::test]
+async fn splitting_the_first_block_only_touches_that_blocks_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let mut failures: Vec<String> = Vec::new();
+    for (name, source) in FIDELITY_CASES {
+        // 「引用前缀风格」单独跳过：在引用容器里按回车走的是 `normalize_rendered_quote_structure`
+        // ——它会先把整棵树落进缓冲区再重解析（引用行的换行可能改变结构，比如行首变成
+        // `- 项`）。那一趟是阶段 2「增量重投影」要换掉的，不是拆块写回的问题。
+        if *name == "引用前缀风格" {
+            continue;
+        }
+        let path = temp_markdown_path(name);
+        fs::write(&path, source).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+
+        let first = editor.read_with(cx, |editor, _cx| {
+            editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+        });
+        let Some(first) = first else {
+            failures.push(format!("  [{name}] 打开后一个可见块都没有"));
+            continue;
+        };
+        // 缓冲区是 LF 空间，块区间也记在这套坐标里，所以这条对照走缓冲区而不是磁盘。
+        let (buffer_before, own_span, serializations_before) = editor.read_with(cx, |editor, cx| {
+            let span = first.read(cx).record.source_span.clone().or_else(|| {
+                editor
+                    .document
+                    .root_ancestor_of(first.entity_id())
+                    .and_then(|root| root.read(cx).record.source_span.clone())
+            });
+            (
+                editor.buffer.text(),
+                span,
+                editor.source_serializations.get(),
+            )
+        });
+
+        cx.update(|_window, cx| {
+            first.update(cx, |block, _cx| block.selected_range = 0..0);
+        });
+        cx.dispatch_action(Newline);
+        redraw(cx);
+
+        let buffer_after = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+        let serializations = editor.read_with(cx, |editor, _| editor.source_serializations.get());
+        let mut problems: Vec<String> = Vec::new();
+        if serializations > serializations_before {
+            problems.push("触发了整篇重新序列化".to_string());
+        }
+        if let Some(span) = &own_span {
+            if buffer_before[..span.start] != buffer_after[..span.start] {
+                problems.push("本块之前的字节被改写".to_string());
+            }
+            if !buffer_after.ends_with(&buffer_before[span.end..]) {
+                problems.push("本块之后的字节被改写".to_string());
+            }
+        }
+        if !problems.is_empty() {
+            failures.push(format!(
+                "  [{name}] 拆块洗掉了不相干的块（{}）\n    拆块前: {}\n    拆块后: {}",
+                problems.join("，"),
+                escape_bytes(buffer_before.as_bytes()),
+                escape_bytes(buffer_after.as_bytes()),
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "拆块改写了本块以外的字节，{} / {} 个用例失败：\n{}",
+        failures.len(),
+        FIDELITY_CASES.len(),
+        failures.join("\n")
+    );
+}
+
+
+
 /// 工作区标签打开（`open_workspace_file`）与文件窗口打开走的是不同漏斗，
 /// 它也必须带上原始字节。
 #[gpui::test]
@@ -471,3 +570,5 @@ async fn saving_an_edited_non_utf8_file_keeps_its_encoding(cx: &mut TestAppConte
     let expected = encoding_rs::GB18030.encode(&edited).0.to_vec();
     assert_eq!(saved, expected, "编辑之后保存出去的不是 GB18030 的字节");
 }
+
+

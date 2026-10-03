@@ -429,6 +429,8 @@ impl Block {
         let cursor = self.cursor_offset();
         let (leading, trailing) = self.split_title(cursor);
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        // 切下来的那半截属于紧跟着插入的新块：标出来，编辑器才不会把它写成一次删除。
+        self.mark_split_truncation();
         self.record.set_title(leading);
         self.mark_changed(cx);
         let cursor = self.visible_len();

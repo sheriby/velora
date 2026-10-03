@@ -115,7 +115,13 @@ impl Editor {
                             .zip(&visible_before)
                             .all(|(a, b)| a.entity.entity_id() == b.entity.entity_id())
                 };
-                if structure_unchanged
+                // 拆块的切分不落笔：光标之后那截是下一个块的源码，写出去就是「先删一遍
+                // 再写回一遍」——本块的区间塌成零宽，紧随的结构写回就没区间可用，只能
+                // 整篇重投影。留着区间，那一步才只改这一段。
+                let splitting = block.read(cx).split_truncation_pending();
+                if splitting {
+                    self.mark_dirty_written_back(cx);
+                } else if structure_unchanged
                     && (self.write_back_visible_insertion(&block, cx)
                         || self.write_back_block_source(&block, cx))
                 {
@@ -142,6 +148,9 @@ impl Editor {
                 trailing,
                 source_already_mutated,
             } => {
+                // 上面那次 Changed 没有落笔（切下的那截留给这一步写），标记必须在这里
+                // 收走：既不留在块上影响下一次编辑，也让下面几个提前返回有得兜底。
+                let split_truncated = block.update(cx, |block, _cx| block.take_split_truncation());
                 // Typing a setext underline (`=====`/`-----`) under a paragraph
                 // and pressing Enter turns that paragraph into a heading, the
                 // same way the importer treats the two adjacent lines.
@@ -154,6 +163,9 @@ impl Editor {
                     return;
                 }
                 let Some(location) = self.document.find_block_location(block.entity_id()) else {
+                    if split_truncated {
+                        self.mark_dirty(cx);
+                    }
                     return;
                 };
                 if !source_already_mutated {

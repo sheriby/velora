@@ -1204,6 +1204,7 @@ impl Editor {
         if delta != 0 {
             self.shift_root_spans_after(region_start, delta, cx);
         }
+        let assigned: Vec<EntityId> = local_spans.iter().map(|(id, _)| *id).collect();
         for (id, local) in local_spans {
             let span = region_start + local.start..region_start + local.end;
             let roots = self.document.root_blocks();
@@ -1216,6 +1217,17 @@ impl Editor {
             };
             block.update(cx, |block, _cx| {
                 block.record.source_span = Some(span);
+            });
+        }
+        // 拆块拆出的空块在段首：空段落序列化不出字节，分不到区间，留着旧的整块
+        // 区间就是过期区间——下一次按区间写会把字节落错位置。它在文件里就是接缝上
+        // 的那一行，记零宽在段首。
+        if !assigned.contains(&anchor.entity_id())
+            && text.starts_with('\n')
+            && anchor.read(cx).record.source_span.is_some()
+        {
+            anchor.update(cx, |block, _cx| {
+                block.record.source_span = Some(region_start..region_start);
             });
         }
         true

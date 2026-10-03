@@ -101,9 +101,14 @@ async fn spans_still_tile_the_document_after_an_edit(cx: &mut TestAppContext) {
     });
 }
 
-/// 结构变更（回车拆块）没声明区间：整篇重投影必须让缓冲区重新跟上块树。
+/// 结构变更（回车拆块）按区间写回：缓冲区只多出接缝那一行，别的块一个字节都不动，
+/// 而每根块仍然挂着自己的区间。
+///
+/// 这条以前钉的是「拆块没有区间，所以整篇重投影之后缓冲区等于序列化」。区间档位
+/// 接住拆块之后，那个等式不再成立——成立的是更强的性质：不重投影（`source_serializations`
+/// 为 0），表里的列宽填充和 `__下划线__` 写法原样保留，末行换行也没被吃掉。
 #[gpui::test]
-async fn a_structural_edit_resyncs_the_buffer_and_reanchors_every_block(
+async fn a_structural_edit_writes_through_its_interval_and_reanchors_every_block(
     cx: &mut TestAppContext,
 ) {
     init_editor_test_app(cx);
@@ -116,22 +121,32 @@ async fn a_structural_edit_resyncs_the_buffer_and_reanchors_every_block(
     cx.dispatch_action(Newline);
     redraw(cx);
 
-    // 重投影之后没被序列化记到的空块还没有区间（空行归分隔符），所以这里容忍 None；
-    // 但已经挂上的区间必须仍然互不重叠、且只含本块内容。
-    let (spans, buffer_text) = present_root_spans(&editor, cx);
-    assert!(
-        buffer_text.contains("\n段落文字"),
-        "回车拆块没进缓冲区：{buffer_text:?}"
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        format!("\n{LOSSY_SHAPE_FIXTURE}"),
+        "回车拆块应该只在块首插一行，别的字节一个字都不许多改或少改"
     );
-    assert_spans_tile_the_content(&spans, &buffer_text, "结构变更之后");
+
+    // 每根块都还挂着区间：漏挂的块在位置换算里不存在，表现就是光标落回 0、
+    // 点了搜索结果没反应。拆出来的空块记零宽在段首。
     editor.read_with(cx, |editor, cx| {
-        assert!(
-            editor.document.root_count() > 3,
-            "拆块后根块数应该增加"
+        let missing = editor
+            .document
+            .root_blocks()
+            .iter()
+            .filter(|block| block.read(cx).record.source_span.is_none())
+            .count();
+        assert_eq!(missing, 0, "拆块后有 {missing} 根块丢了区间");
+        assert!(editor.document.root_count() > 3, "拆块后根块数应该增加");
+        assert_eq!(
+            editor.source_serializations.get(),
+            0,
+            "拆块还在整篇重新序列化"
         );
-        // 兜底档位的定义：缓冲区与块树的序列化一致。
-        assert_eq!(editor.buffer.text(), editor.document.markdown_text(cx));
     });
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "结构变更之后");
 }
 
 /// 只取已经挂上区间的根块；漏挂的由重投影兜底，不该让测试瞎掉。
@@ -1387,4 +1402,166 @@ async fn merging_a_paragraph_into_a_quote_container_keeps_the_spans_valid(
     assert!(buffer_text.contains("world"), "合并没进缓冲区：{buffer_text:?}");
     let (spans, buffer_text) = present_root_spans(&editor, cx);
     assert_spans_tile_the_content(&spans, &buffer_text, "段落并进引用容器之后");
+}
+
+/// 拆块的接缝只该往文件里插换行：整块文本一个字都不重贴。
+///
+/// 块在光标处把自己切成两半时，先有一次 Changed 把「切掉的后半截」写成一次删除，
+/// 于是这一块在缓冲区里塌成零宽；随后的结构写回没有区间可用，只能整篇重投影——
+/// 表里、段里的每个 `__下划线__` 都被顺手规范掉。这一条钉住的是那一步：文件与拆块
+/// 前相比只多了接缝的几个换行，块里其余字节（含另一行的写法）与块外的块全部原样。
+/// 至于接缝该多吃一个换行还是少吃一个，是拆块语义的问题，另条测试盯着。
+#[gpui::test]
+async fn splitting_a_wrapped_paragraph_inserts_only_the_seam_newlines(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "段落\n",
+        "\n",
+        "第一行文字\n第二行文字\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-split-seam");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let wrapped = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).display_text() == "第一行文字\n第二行文字")
+            .map(|visible| visible.entity.clone())
+            .expect("夹具里应有一跨行的段落")
+    });
+    cx.update(|_window, cx| {
+        wrapped.update(cx, |block, _cx| block.selected_range = 15..15);
+    });
+    cx.update(|window, cx| {
+        wrapped.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_only_newlines_inserted(FIXTURE, &buffer_text, "跨行段落拆块");
+    // 块里那一行用户没碰过的写法（`__下划线__`）必须还是原来那几个字节。
+    assert!(
+        buffer_text.ends_with("强调 __下划线__ 结尾\n"),
+        "拆块把相邻块的写法规范掉了：{buffer_text:?}"
+    );
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "拆行段落之后");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.source_serializations.get(),
+            0,
+            "拆块触发了整篇重新序列化"
+        );
+    });
+}
+
+/// `after` 必须是 `before` 在某一处**只插入若干换行**得到的：不许有改写，也不许有删除。
+fn assert_only_newlines_inserted(before: &str, after: &str, label: &str) {
+    let common_prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(old, new)| old == new)
+        .count();
+    let prefix = (0..=common_prefix)
+        .rev()
+        .find(|count| before.is_char_boundary(*count) && after.is_char_boundary(*count))
+        .unwrap_or(0);
+    let rest_before = &before[prefix..];
+    let rest_after = &after[prefix..];
+    let common_suffix = rest_before
+        .bytes()
+        .rev()
+        .zip(rest_after.bytes().rev())
+        .take_while(|(old, new)| old == new)
+        .count();
+    let suffix = (0..=common_suffix)
+        .rev()
+        .find(|count| {
+            rest_before.is_char_boundary(rest_before.len() - count)
+                && rest_after.is_char_boundary(rest_after.len() - count)
+        })
+        .unwrap_or(0);
+    let deleted = &rest_before[..rest_before.len() - suffix];
+    let inserted = &rest_after[..rest_after.len() - suffix];
+    assert_eq!(
+        deleted, "",
+        "{label} 改写了原有字节（删掉了 {deleted:?}，插入了 {inserted:?}）\n    之前: {before:?}\n    之后: {after:?}"
+    );
+    assert!(
+        inserted.bytes().all(|byte| byte == b'\n'),
+        "{label} 插入的不只是接缝换行，而是 {inserted:?}"
+    );
+}
+
+/// 行中拆块：文件里多出来的应该只有「结束这一行 + 一个分隔空行」这两个换行。
+#[gpui::test]
+async fn splitting_a_paragraph_mid_line_inserts_the_block_break(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "段落\n",
+        "\n",
+        "第一段文字\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-split-midline");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let target = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).display_text() == "第一段文字")
+            .map(|visible| visible.entity.clone())
+            .expect("夹具里应有「第一段文字」")
+    });
+    cx.update(|_window, cx| {
+        target.update(cx, |block, _cx| block.selected_range = 6..6);
+    });
+    cx.update(|window, cx| {
+        target.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "段落\n\n第一\n\n段文字\n\n强调 __下划线__ 结尾\n",
+        "行中拆块重贴了整块文本：{buffer_text:?}"
+    );
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "行中拆块之后");
 }

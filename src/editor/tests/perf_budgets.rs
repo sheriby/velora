@@ -422,6 +422,17 @@ async fn a_real_editing_session_never_falls_back_to_whole_document_serialization
     redraw(cx);
     count_step(&mut offenders, "回车拆块", &mut before, &editor, cx);
 
+    // 块首回车：切出来的是个空块。这一步以前会把本块的区间压塌成零宽，结构写回
+    // 没有区间可用，只能整篇重投影。
+    let head = visible_block_with_text("段落文字", &editor, cx);
+    head.update(cx, |block, _cx| block.selected_range = 0..0);
+    cx.update(|window, cx| {
+        head.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+    count_step(&mut offenders, "块首回车拆块", &mut before, &editor, cx);
+
+
     let task = visible_block_with_text("任务甲", &editor, cx);
     dispatch(&editor, task, crate::components::BlockEvent::ToggleTaskChecked, cx);
     count_step(&mut offenders, "勾任务复选框", &mut before, &editor, cx);
