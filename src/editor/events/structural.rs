@@ -211,6 +211,7 @@ impl Editor {
         let header_index = location.index - 1;
         let removed_delimiter = block.entity_id();
         let removed_header = prev.entity_id();
+        let roots_before = self.document.root_layout(cx);
         let table_block = Self::new_table_block(cx, table);
         let new_paragraph = Self::new_block(cx, BlockRecord::paragraph(String::new()));
         self.document.with_structure_mutation(cx, |document, cx| {
@@ -225,7 +226,12 @@ impl Editor {
         );
         self.rebuild_table_runtimes(cx);
         self.focus_block(new_paragraph.entity_id());
-        self.mark_dirty(cx);
+        // 被换掉的是「表头那段 + 分隔行那段」：锚点用表头那根，区间外的块一个字节不动。
+        if self.write_back_structural_change(&prev, Some(&roots_before), cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
         self.finalize_pending_undo_capture(cx);
         cx.notify();
         true
@@ -255,6 +261,7 @@ impl Editor {
         });
 
         let removed_id = row_block.entity_id();
+        let roots_before = self.document.root_layout(cx);
         self.document.with_structure_mutation(cx, |document, cx| {
             let _ = document.remove_block_by_id_raw(removed_id, cx);
         });
@@ -269,7 +276,12 @@ impl Editor {
         }
         self.rebuild_table_runtimes(cx);
         self.focus_block(new_paragraph.entity_id());
-        self.mark_dirty(cx);
+        // 手打的行被表吸收：被换掉的区间是「这张表 + 那一行」，表外的块一个字节不动。
+        if self.write_back_structural_change(table_block, Some(&roots_before), cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
         self.finalize_pending_undo_capture(cx);
         cx.notify();
         true
