@@ -359,3 +359,115 @@ async fn typing_next_to_literal_escapes_still_rewrites_the_block(cx: &mut TestAp
         "字面转义的处理变了：这条测试该并进逐字节保真那张表"
     );
 }
+
+/// 编码维度的回环用例：磁盘字节不是 UTF-8 时也必须原样带回去。
+///
+/// `FileShape` 记的是「编码 + 行尾」，缓冲区里始终是解码后的规范文本，保存时
+/// 按同一个形状重编码——所以 GB18030 的字节、UTF-8 的 BOM 都不该在打开保存这一
+/// 趟里变成 UTF-8 正文。
+fn raw_fidelity_cases() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        // 「中文笔记」的 GB18030 字节（Windows 中文环境常见）。
+        (
+            "GB18030 正文",
+            encoding_rs::GB18030
+                .encode("中文笔记\r\n第二行\r\n")
+                .0
+                .to_vec(),
+        ),
+        // UTF-8 BOM：BOM 本身是合法 UTF-8 字符，跟着文本一起回来。
+        ("UTF-8 BOM", "\u{feff}# 标题\n\n正文\n".as_bytes().to_vec()),
+        (
+            "UTF-8 BOM 且 CRLF",
+            "\u{feff}# 标题\r\n\r\n正文\r\n".as_bytes().to_vec(),
+        ),
+        // 混合行尾（有 lone CR）：按 LF 形状处理，不许把 LF 升格成 CRLF。
+        (
+            "混合行尾",
+            "第一行\r\n第二行\n第三行\r\n".as_bytes().to_vec(),
+        ),
+    ]
+}
+
+#[gpui::test]
+async fn opening_then_saving_a_non_utf8_file_preserves_every_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let cases = raw_fidelity_cases();
+    let mut failures: Vec<String> = Vec::new();
+    for (name, bytes) in &cases {
+        let path = temp_markdown_path(name);
+        fs::write(&path, bytes).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+        let dirty_on_open = editor.read_with(cx, |editor, _cx| editor.document_dirty);
+
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+
+        let saved = fs::read(&path).expect("read saved file");
+        let report = describe_case(name, bytes, &saved, dirty_on_open);
+        if !report.is_empty() {
+            failures.push(report);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "非 UTF-8 文件打开→保存改写了字节，{} / {} 个用例失败：\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+}
+
+/// 编辑之后也要按原编码写回去：只改一个字符不许顺手把整篇转成 UTF-8。
+#[gpui::test]
+async fn saving_an_edited_non_utf8_file_keeps_its_encoding(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let text = "中文笔记\n\n第二行\n";
+    let original = encoding_rs::GB18030.encode(text).0.into_owned();
+    let path = temp_markdown_path("gb18030-edit");
+    fs::write(&path, &original).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+    });
+    redraw(cx);
+    let first = editor
+        .read_with(cx, |editor, _cx| {
+            editor
+                .document
+                .visible_blocks()
+                .first()
+                .map(|visible| visible.entity.clone())
+        })
+        .expect("应有第一个块");
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    cx.simulate_input("X");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read(&path).expect("read saved file");
+    let edited = format!("X{text}");
+    let expected = encoding_rs::GB18030.encode(&edited).0.to_vec();
+    assert_eq!(saved, expected, "编辑之后保存出去的不是 GB18030 的字节");
+}
