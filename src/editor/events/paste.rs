@@ -1,6 +1,77 @@
 use super::*;
 
 impl Editor {
+    /// 多行粘贴在缓冲区里就是一次插入：把剪贴板文本插到光标处，别的块一个字节
+    /// 都不动，块结构交给导入器从缓冲区重新认（与打开文件同一套规则）。
+    ///
+    /// 旧路径自己按行拼块、再 `mark_dirty` 让重同步把整篇从块树重新序列化，于是
+    /// 一次粘贴会把不相干的块洗成规范化写法（表格列宽填充重算、`__强调__` 变
+    /// `**…**`、Setext 转 ATX、CRLF 与末行换行丢失），撤销条目也变成全文副本。
+    ///
+    /// 返回 false 表示这次插入没法按区间算（块内偏移映射不到缓冲区、容器结构要
+    /// 自己那套规范化、整段都是空行），留给原来的整篇重投影路径。
+    pub(crate) fn paste_multiline_through_buffer(
+        &mut self,
+        block: &Entity<crate::editor::Block>,
+        leading: &crate::components::InlineTextTree,
+        lines: &[String],
+        trailing: &crate::components::InlineTextTree,
+        split_physical_lines: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(at) = self.caret_source_offset(block.entity_id(), leading.visible_len(), cx) else {
+            return false;
+        };
+        // 物理行粘贴是「一段一行」：空行丢掉，行与行之间补分隔空行。
+        // 结构粘贴保留剪贴板原样的换行，但结构块必须独占一行，所以只在光标那一侧
+        // 还留着文字时补空行把它和前后隔开。
+        let inserted = if split_physical_lines {
+            lines
+                .iter()
+                .filter(|line| !line.trim().is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        } else {
+            let mut text = String::new();
+            if leading.visible_len() > 0 {
+                text.push_str("\n\n");
+            }
+            text.push_str(&lines.join("\n"));
+            if trailing.visible_len() > 0 {
+                text.push_str("\n\n");
+            }
+            text
+        };
+        if inserted.is_empty() {
+            return false;
+        }
+
+        self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        let applied = self.buffer.edit(at..at, &inserted);
+        // 光标停在粘贴文本的末尾：插入点之后、原文剩下的那截之前。
+        let caret = applied.new_range.end;
+        self.record_buffer_edit(applied);
+        self.rebuild_document_from_buffer(cx);
+        if !split_physical_lines
+            && let Some(last_root) = self.document.root_blocks().last().cloned()
+        {
+            // 结构块落在文档末尾时下面没有行，光标得有段落落脚。
+            self.ensure_trailing_paragraph_after_structural(&last_root, cx);
+        }
+        self.apply_selection_snapshot_in_current_mode(
+            &crate::editor::UndoSelectionSnapshot {
+                range: caret..caret,
+                reversed: false,
+            },
+            cx,
+        );
+        self.mark_dirty_written_back(cx);
+        self.finalize_pending_undo_capture(cx);
+        cx.notify();
+        true
+    }
+
     pub(crate) fn build_plain_paste_blocks_from_lines(
         cx: &mut Context<Self>,
         lines: &[String],

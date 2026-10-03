@@ -331,3 +331,62 @@ async fn cross_block_delete_keeps_the_other_blocks_bytes_untouched(cx: &mut Test
         "跨块删除把未编辑的块也重新序列化了：{saved:?}"
     );
 }
+
+/// 多行粘贴也一样只能改粘贴落点那一段。这条管的是「结构一变就整篇重投影」：
+/// 粘贴把一段变三段，块序列变了，如果这时退回整篇重新序列化，不相干的表格列宽
+/// 填充和 `__下划线__` 写法会跟着被洗，磁盘上的 CRLF 与末行换行也一起没了。
+#[gpui::test]
+async fn multiline_paste_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-paste");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.clone();
+            editor.on_block_event(
+                block,
+                &BlockEvent::RequestPasteMultiline {
+                    leading: InlineTextTree::plain(String::new()),
+                    lines: vec!["粘贴一".to_string(), "粘贴二".to_string()],
+                    trailing: InlineTextTree::plain("段落文字".to_string()),
+                    split_physical_lines: true,
+                },
+                cx,
+            );
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert!(
+        saved.contains("粘贴一") && saved.contains("粘贴二") && saved.contains("段落文字"),
+        "粘贴的内容没落进文档：{saved:?}"
+    );
+    assert!(
+        saved.contains("| 甲   | 1    |"),
+        "粘贴把表格列宽填充重算了：{saved:?}"
+    );
+    assert!(
+        saved.contains("强调 __下划线__ 结尾"),
+        "粘贴把下划线强调规范成了别的写法：{saved:?}"
+    );
+    assert!(
+        saved.contains("\r\n") && saved.ends_with('\n') && !saved.contains("\n\n\n"),
+        "粘贴把行结束符或末行换行弄丢了：{saved:?}"
+    );
+}

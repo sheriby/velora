@@ -101,6 +101,72 @@ async fn undoing_a_split_puts_the_exact_bytes_back(cx: &mut TestAppContext) {
     );
 }
 
+/// 撤销一次粘贴 = 把插进去的那段字节拿掉。粘贴在缓冲区里只是一次插入，所以
+/// 撤销组里连被替换的字节都没有，未编辑的块更不会被动到。
+#[gpui::test]
+async fn undoing_a_multiline_paste_puts_the_exact_bytes_back(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    // 够大的文档：整篇快照与增量的差别在这里必须是数量级。
+    let source = format!(
+        "段落文字\n\n{}| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |\n\n强调 __下划线__ 结尾\n",
+        "这是一段不参与改动的中文行。\n".repeat(16_000)
+    );
+    assert!(source.len() > 512 * 1024, "夹具应该大于一半 MiB");
+    let path = temp_markdown_path("undo-paste");
+    fs::write(&path, source.replace('\n', "\r\n")).expect("write fixture");
+    let original_disk = fs::read_to_string(&path).expect("read fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let before_len = editor.read_with(cx, |editor, _cx| editor.buffer.byte_len());
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.clone();
+            editor.on_block_event(
+                block,
+                &BlockEvent::RequestPasteMultiline {
+                    leading: InlineTextTree::plain(String::new()),
+                    lines: vec!["粘贴一".to_string(), "粘贴二".to_string()],
+                    trailing: InlineTextTree::plain("段落文字".to_string()),
+                    split_physical_lines: true,
+                },
+                cx,
+            );
+        });
+    });
+    redraw(cx);
+    let inserted_len =
+        editor.read_with(cx, |editor, _cx| editor.buffer.byte_len()) - before_len;
+    assert!(inserted_len > 0, "粘贴没进缓冲区");
+
+    let stored = editor.read_with(cx, |editor, _cx| editor.undo_history_byte_len());
+    assert!(
+        stored < inserted_len,
+        "撤销粘贴记了 {stored} 字节，比粘进去的 {inserted_len} 字节还多：又在存整篇副本"
+    );
+
+    editor.update(cx, |editor, _cx| editor.undo_document(_cx));
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved, original_disk,
+        "撤销一次粘贴之后，磁盘上的字节不再是原文"
+    );
+}
+
 #[gpui::test]
 async fn undo_and_redo_round_trip_the_document_text(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

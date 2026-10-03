@@ -513,6 +513,28 @@ impl Editor {
             .collect()
     }
 
+    /// 光标落在缓冲区的哪个字节：块内显示偏移 → 文件字节偏移。
+    ///
+    /// 渲染块里「第 n 个可见字符」和「源文本第 n 个字节」不是一回事（`~2~` 三个
+    /// 字节显示成 2 个字符），标题的 `# ` 前缀也不在块的显示文本里，所以插入点
+    /// 必须经映射换算，不能拿块内偏移直接当缓冲区偏移用。
+    pub(crate) fn caret_source_offset(
+        &self,
+        entity_id: EntityId,
+        display_offset: usize,
+        cx: &App,
+    ) -> Option<usize> {
+        let mappings = self.source_mapping_by_entity_id(cx);
+        self.endpoint_source_offset(
+            CrossBlockSelectionEndpoint {
+                entity_id,
+                offset: display_offset,
+            },
+            &mappings,
+            cx,
+        )
+    }
+
     fn endpoint_source_offset(
         &self,
         endpoint: CrossBlockSelectionEndpoint,

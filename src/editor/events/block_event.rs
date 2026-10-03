@@ -380,6 +380,21 @@ impl Editor {
                     return;
                 }
                 let quote_related = self.block_is_quote_structure_related(&block, cx);
+                // 粘贴先按「在光标处插入一段文本」处理：能算出插入点就走缓冲区插入，
+                // 块结构由导入器从缓冲区重新认。引用/标注里的粘贴要跟着容器自己那套
+                // 规范化走，留在下面的整篇重投影路径上。
+                if !quote_related
+                    && self.paste_multiline_through_buffer(
+                        &block,
+                        leading,
+                        lines,
+                        trailing,
+                        *split_physical_lines,
+                        cx,
+                    )
+                {
+                    return;
+                }
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
 
                 let current_kind = block.read(cx).kind();
