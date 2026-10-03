@@ -94,6 +94,11 @@ pub(super) struct DocumentTree {
     pending: Option<PendingTail>,
     /// P6a：代码/纯文本文档的原始字节尾部（与 `pending` 互斥使用）。
     pending_source: Option<PendingSourceTail>,
+    /// 整篇渲染遍数。兜底重投影那一遍另有 `Editor::source_serializations` 计数，
+    /// 这里盯的是**别的路径**上悄悄发生的整篇序列化（引用定义、脚注、源码模式行列
+    /// 号）——正常编辑序列里必须是 0：每多一次，未编辑块的原始字节就多被洗一次，
+    /// 成本也跟着文档长度长。
+    pub(crate) whole_document_renders: std::cell::Cell<u64>,
 }
 
 impl DocumentTree {
@@ -103,6 +108,7 @@ impl DocumentTree {
             snapshot: VisibleTreeSnapshot::default(),
             pending: None,
             pending_source: None,
+            whole_document_renders: std::cell::Cell::new(0),
         }
     }
 
@@ -302,6 +308,8 @@ impl DocumentTree {
     }
 
     pub(super) fn markdown_text(&self, cx: &App) -> String {
+        self.whole_document_renders
+            .set(self.whole_document_renders.get() + 1);
         let mut lines = Vec::new();
         Self::collect_root_markdown_lines(&self.roots, cx, &mut lines, self.pending.as_ref(), None);
         lines.join("\n")
@@ -451,6 +459,8 @@ impl DocumentTree {
     }
 
     pub(super) fn raw_source_text(&self, cx: &App) -> String {
+        self.whole_document_renders
+            .set(self.whole_document_renders.get() + 1);
         // P5：单遍追加。旧实现先把每块文本克隆成 String 再 join——超大
         // 文档一次序列化要付两倍字节量的搬运。
         let mut capacity = 0usize;

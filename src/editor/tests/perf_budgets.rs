@@ -455,11 +455,11 @@ async fn status_bar_view_mode_toggle_switches_mode(cx: &mut TestAppContext) {
 
 
 
-/// 阶段 2 闸门：一次真实的编辑序列里，「整篇重新序列化」这一档兜底应该出现 0 次。
+/// 阶段 2 闸门：一次真实的编辑序列里，整篇渲染（任何来源）应该出现 0 次。
 ///
-/// 计数器只在 `resync_buffer_from_projection` 真的重投影时加一：走到那里说明
-/// 这条命令没声明自己的区间，未编辑块的原始字节就此丢掉（表格列宽填充、`__` 强调
-/// 写法、CRLF、末行换行都是这样被洗掉的）。每转一条路径，这里就少一个名额。
+/// 走到兜底档位说明这条命令没声明自己的区间，未编辑块的原始字节就此丢掉（表格列宽
+/// 填充、`__` 强调写法、CRLF、末行换行都是这样被洗掉的）；没走兜底但顺手把整篇渲染
+/// 一遍（刷引用定义、脚注）同样是 O(文档) 的按键成本。每转一条路径，这里就少一个名额。
 #[gpui::test]
 async fn a_real_editing_session_never_falls_back_to_whole_document_serialization(
     cx: &mut TestAppContext,
@@ -616,7 +616,12 @@ async fn a_real_editing_session_never_falls_back_to_whole_document_serialization
 }
 
 fn source_serializations(editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext) -> u64 {
-    editor.read_with(cx, |editor, _| editor.source_serializations.get())
+    // 兜底重投影那一遍 + 别的路径上悄悄发生的整篇渲染（引用定义、脚注、源码模式
+    // 行列号各是一遍全文）。闸门要的是「这一键有没有做整篇的活」，只数其中一路
+    // 等于给另一路开了后门。
+    editor.read_with(cx, |editor, _| {
+        editor.source_serializations.get() + editor.document.whole_document_renders.get()
+    })
 }
 
 fn count_step(

@@ -97,10 +97,10 @@ impl Editor {
                     }) || Self::rendered_quote_text_requires_reparse(&block, cx);
 
                 self.refresh_rendered_quote_metadata_if_needed(&block, cx);
+                let needs_reference_refresh = !should_normalize_quote
+                    && self.changed_block_needs_runtime_context_refresh(&block, cx);
                 if should_normalize_quote {
                     self.normalize_rendered_quote_structure(cx);
-                } else if self.changed_block_needs_runtime_context_refresh(&block, cx) {
-                    self.rebuild_image_runtimes(cx);
                 }
                 if let Some(focus_id) = callout_focus_target {
                     self.focus_block(focus_id);
@@ -128,6 +128,12 @@ impl Editor {
                     self.mark_dirty_written_back(cx);
                 } else {
                     self.mark_dirty(cx);
+                }
+                // 引用定义要从缓冲区重解析，就得等这一笔落完：早一步读到的是改之前
+                // 的定义行——改 `[asset]:` 的地址，图片还指着旧地址
+                // （`editing_image_reference_definition_refreshes_existing_image`）。
+                if needs_reference_refresh {
+                    self.rebuild_image_runtimes(cx);
                 }
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture_at_end_of_batch(cx);
@@ -192,15 +198,29 @@ impl Editor {
                     vec![new_block.clone()],
                     cx,
                 );
-                self.rebuild_image_runtimes(cx);
                 self.focus_block(new_block.entity_id());
-                if current_kind.is_quote_container() {
+                let quote_normalized = current_kind.is_quote_container();
+                if quote_normalized {
+                    // normalize 里那次重同步之前先按区间落笔，否则它会拿整篇序列化
+                    // 盖掉未编辑的块（同 RequestQuoteBreak 的处理）。
+                    let wrote_back =
+                        self.write_back_structural_change(&block, roots_before.as_deref(), cx);
+                    self.skip_next_resync = wrote_back;
                     self.normalize_rendered_quote_structure(cx);
-                }
-                if self.write_back_structural_change(&block, roots_before.as_deref(), cx) {
-                    self.mark_dirty_written_back(cx);
+                    if wrote_back {
+                        self.mark_dirty_written_back(cx);
+                    } else {
+                        self.mark_dirty(cx);
+                    }
                 } else {
-                    self.mark_dirty(cx);
+                    if self.write_back_structural_change(&block, roots_before.as_deref(), cx) {
+                        self.mark_dirty_written_back(cx);
+                    } else {
+                        self.mark_dirty(cx);
+                    }
+                    // 引用那一路 normalize 自己会刷；这里要在缓冲区落笔之后再刷，
+                    // 定义才不是改之前那一份。
+                    self.rebuild_image_runtimes(cx);
                 }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();

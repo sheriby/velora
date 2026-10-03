@@ -239,7 +239,11 @@ impl Editor {
 
     pub(super) fn rebuild_image_runtimes(&mut self, cx: &mut Context<Self>) {
         let base_dir = self.image_base_dir();
-        let markdown = self.document.markdown_text(cx);
+        // 引用定义按**文件**算：保存出去的是缓冲区，重新打开时解析器读到的就是这几
+        // 个字节，渲染时必须用同一份文本。块树的序列化不保证这一点——列表项里的定义
+        // `- [logo]: /a.png` 会被写成 `- [logo][logo]: /a.png`。顺带这也把一整篇
+        // 序列化从每次结构变更的关键路径上摘掉了。
+        let markdown = self.buffer.text();
         self.image_reference_definitions = Arc::new(parse_image_reference_definitions(&markdown));
         self.link_reference_definitions = Arc::new(parse_link_reference_definitions(&markdown));
         self.rebuild_footnote_registry(cx);
