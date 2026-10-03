@@ -415,4 +415,61 @@ mod tests {
         });
         cx.quit();
     }
+
+    /// 跨块删除只能改写选区自己那一段字节。
+    ///
+    /// 这条断言管的是「删两段正文，凭什么把不相干的表格列宽填充和下划线写法
+    /// 一起洗掉」：旧路径把新整篇文本 `edit(0..全文)` 写回缓冲区，再 `mark_dirty`
+    /// 让重同步从块树整篇重新序列化，于是未编辑的块也被规范化，撤销组里还存着
+    /// 一份全文副本。
+    #[test]
+    fn cross_block_delete_rewrites_only_the_selected_bytes() {
+        let mut cx = TestAppContext::single();
+        init_editor_test_app(&mut cx);
+        let source = concat!(
+            "第一段文字\n",
+            "\n",
+            "第二段文字\n",
+            "\n",
+            "| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |\n",
+            "\n",
+            "强调 __下划线__ 结尾\n",
+        );
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+
+        editor.update(&mut cx, |editor, cx| {
+            let second_len = editor.document.visible_blocks()[1]
+                .entity
+                .read(cx)
+                .visible_len();
+            set_selection(editor, 0, 0, 1, second_len, cx);
+            let selection = editor.normalized_cross_block_selection(cx).unwrap();
+            let range = editor
+                .cross_block_source_range_for_normalized(selection, cx)
+                .unwrap();
+            // 区间写回的定义就是这次拼接：选区之外一个字节都不许变。
+            let expected = format!("{}{}", &source[..range.start], &source[range.end..]);
+
+            assert!(editor.delete_cross_block_selection(cx));
+
+            let text = editor.buffer.text();
+            assert_eq!(text, expected, "跨块删除改写了选区之外的字节：{text:?}");
+            assert!(
+                text.contains("| 甲   | 1    |"),
+                "表格列宽填充被洗掉了：{text:?}"
+            );
+            assert!(
+                text.contains("强调 __下划线__ 结尾"),
+                "下划线强调被规范化成了别的写法：{text:?}"
+            );
+
+            let deleted = range.end - range.start;
+            let stored = editor.undo_history_byte_len();
+            assert!(
+                stored <= deleted + 32,
+                "撤销组存了整篇副本：删了 {deleted} 字节却记了 {stored} 字节"
+            );
+        });
+        cx.quit();
+    }
 }

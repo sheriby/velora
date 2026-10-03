@@ -265,3 +265,69 @@ async fn splitting_then_merging_back_restores_the_original_bytes(cx: &mut TestAp
     let (spans, buffer_text) = root_block_spans(&editor, cx);
     assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "拆完再合回来");
 }
+
+/// 跨块删除同样只能改选区自己那一段：删掉前两段正文，不该把不相干的表格列宽
+/// 填充、`__下划线__` 写法、CRLF 与末行换行一起洗掉。
+#[gpui::test]
+async fn cross_block_delete_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "第一段文字\n",
+        "\n",
+        "第二段文字\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-cross-block-delete");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    editor.update(cx, |editor, _cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: visible[0].entity.entity_id(),
+                offset: 0,
+            },
+            focus: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: visible[1].entity.entity_id(),
+                offset: usize::MAX,
+            },
+        });
+    });
+    cx.dispatch_action(Delete);
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        concat!(
+            "\r\n",
+            "\r\n",
+            "| 名称 | 数量 |\r\n",
+            "| ---- | ---- |\r\n",
+            "| 甲   | 1    |\r\n",
+            "\r\n",
+            "强调 __下划线__ 结尾\r\n",
+        ),
+        "跨块删除把未编辑的块也重新序列化了：{saved:?}"
+    );
+}

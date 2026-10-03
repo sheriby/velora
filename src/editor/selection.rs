@@ -606,15 +606,37 @@ impl Editor {
                 }
             }
         }
-        Some(lo..hi)
+        Some(self.clamp_source_range_to_boundaries(lo..hi))
     }
 
-    fn rebuild_after_cross_block_source_edit(&mut self, source: String, cx: &mut Context<Self>) {
-        // 跨块改动落在整篇文本上：先把它写进缓冲区（一次全文写入，撤销拿得到它的
-        // 逆操作），再从缓冲区重建投影——只有从缓冲区重建，根块才挂得上区间，
-        // 之后的位置换算才有锚点。
-        let applied = self.buffer.edit(0..self.buffer.byte_len(), &source);
+    /// 把缓冲区区间夹到字符边界上：写入端点不能落在半个多字节字符里。
+    /// 只问缓冲区的边界位，不为了夹端点把整篇文本取出来。
+    fn clamp_source_range_to_boundaries(&self, range: Range<usize>) -> Range<usize> {
+        let clamp = |offset: usize| {
+            let mut offset = offset.min(self.buffer.byte_len());
+            while offset > 0 && !self.buffer.is_char_boundary(offset) {
+                offset -= 1;
+            }
+            offset
+        };
+        let start = clamp(range.start);
+        start..clamp(range.end).max(start)
+    }
+
+    /// 跨块改动只写选区那一段字节，其余字节一个不碰。
+    ///
+    /// 必须走区间：整篇写入之后重同步会从块树重新序列化全文，不相干的块就跟着
+    /// 被洗（表格列宽填充重算、`__强调__` 变 `**…**`、Setext 转 ATX），撤销条目
+    /// 也退化成一份全文副本。
+    fn write_back_cross_block_source_edit(
+        &mut self,
+        source_range: Range<usize>,
+        new_text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let applied = self.buffer.edit(source_range, new_text);
         self.record_buffer_edit(applied);
+        // 再从缓冲区重建投影：只有重建，根块才挂得上区间，之后的位置换算才有锚点。
         self.rebuild_document_from_buffer(cx);
     }
 
@@ -657,10 +679,7 @@ impl Editor {
         };
 
         self.prepare_undo_capture(undo_kind, cx);
-        let mut source = self.current_document_source(cx);
-        let start = source_range.start.min(source.len());
-        let end = source_range.end.min(source.len());
-        source.replace_range(start..end, new_text);
+        let start = source_range.start;
         self.cross_block_selection = None;
         self.cross_block_drag = None;
 
@@ -675,7 +694,7 @@ impl Editor {
         let marked_source_range =
             (mark_inserted_text && !new_text.is_empty()).then_some(inserted_start..inserted_end);
 
-        self.rebuild_after_cross_block_source_edit(source, cx);
+        self.write_back_cross_block_source_edit(source_range, new_text, cx);
         self.apply_selection_snapshot_in_current_mode(
             &UndoSelectionSnapshot {
                 range: selected_source_range,
@@ -686,7 +705,7 @@ impl Editor {
         if let Some(marked_source_range) = marked_source_range {
             self.apply_marked_source_range(marked_source_range, cx);
         }
-        self.mark_dirty(cx);
+        self.mark_dirty_written_back(cx);
         self.finalize_pending_undo_capture(cx);
         self.sync_table_axis_visuals(cx);
         self.dismiss_contextual_overlays(cx);
@@ -848,14 +867,11 @@ impl Editor {
         }
 
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
-        let mut source = self.current_document_source(cx);
-        let start = source_range.start.min(source.len());
-        let end = source_range.end.min(source.len());
-        source.replace_range(start..end, "");
+        let start = source_range.start;
         self.cross_block_selection = None;
         self.cross_block_drag = None;
 
-        self.rebuild_after_cross_block_source_edit(source, cx);
+        self.write_back_cross_block_source_edit(source_range, "", cx);
 
         self.apply_selection_snapshot_in_current_mode(
             &UndoSelectionSnapshot {
@@ -864,7 +880,7 @@ impl Editor {
             },
             cx,
         );
-        self.mark_dirty(cx);
+        self.mark_dirty_written_back(cx);
         self.finalize_pending_undo_capture(cx);
         self.sync_table_axis_visuals(cx);
         self.dismiss_contextual_overlays(cx);
