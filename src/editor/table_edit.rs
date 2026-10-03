@@ -292,7 +292,6 @@ impl Editor {
         }
         // 模型里已经有这一列了，所以源码里每行该有「列数」根竖线（外层那两根算在内）。
         let columns = table.column_count();
-        let columns = table.column_count();
         let mut inserts: Vec<(usize, usize, String)> = Vec::with_capacity(lines.len());
         for (index, (line, text)) in lines.iter().enumerate() {
             let pipes = unescaped_pipe_offsets(text);

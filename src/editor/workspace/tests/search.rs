@@ -724,39 +724,6 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
         "向上跳转必须反向滚回首屏：scroll_y={scroll_at_early}"
     );
 
-    // 居中断言：跳转结束后活动命中应停在视口垂直中线附近（±半行）。
-    // 需要 clamp：开头命中的居中会被钳到文档顶（有意行为）。
-    let centered_offset = editor.read_with(cx, |editor, cx| {
-        let Some(id) = editor.active_entity_id else {
-            return None;
-        };
-        let target = editor
-            .document
-            .visible_blocks()
-            .into_iter()
-            .find(|visible| visible.entity.entity_id() == id)
-            .map(|visible| visible.entity.clone());
-        let Some(target) = target else {
-            return None;
-        };
-        let bounds = target.read(cx).active_range_or_cursor_bounds();
-        let viewport_center =
-            f32::from(editor.scroll_handle.bounds().top())
-                + f32::from(editor.scroll_handle.bounds().size.height) * 0.5;
-        bounds.map(|bounds| {
-            (
-                f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5,
-                viewport_center,
-            )
-        })
-    });
-    if let Some((target_center, viewport_center)) = centered_offset {
-        let drift = (target_center - viewport_center).abs();
-        println!(
-            "CENTER-DBG target={target_center:.1} viewport={viewport_center:.1} drift={drift:.1}"
-        );
-    }
-
     // 3) 活动块选区落在命中上、高亮与活动标记齐备
     editor.read_with(cx, |editor, cx| {
         let active = editor
@@ -828,7 +795,7 @@ async fn document_search_hit_inside_table_jumps(cx: &mut TestAppContext) {
     }
     let (editor, cx) =
         cx.add_window_view(move |_, cx| Editor::from_markdown(cx, md, None));
-    cx.update(|window, cx| {
+    cx.update(|_window, cx| {
         editor.update(cx, |editor, cx| {
             editor.workspace.is_open = true;
             editor.workspace.active_tab = WorkspaceTab::Search;
@@ -840,25 +807,6 @@ async fn document_search_hit_inside_table_jumps(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.executor().advance_clock(std::time::Duration::from_millis(400));
     cx.run_until_parked();
-    editor.read_with(cx, |editor, _cx| {
-        println!(
-            "TBLDBG results={} pending={} gen={} query={:?} scope_doc={}",
-            editor.workspace.search_results.len(),
-            editor.workspace.search_pending,
-            editor.workspace.search_generation,
-            editor.workspace.search_query,
-            matches!(
-                editor.workspace.search_scope,
-                super::super::WorkspaceSearchScope::Document
-            ),
-        );
-        for hit in &editor.workspace.search_results {
-            println!(
-                "TBLDBG hit line={:?} range={:?} preview={:?}",
-                hit.line, hit.source_range, hit.preview
-            );
-        }
-    });
     // 点击表格区域的命中（最后一个），断言选区落在表格内且滚动发生
     let hit_index = editor.read_with(cx, |editor, _cx| {
         editor.workspace.search_results.len().saturating_sub(1)
@@ -993,28 +941,6 @@ async fn workspace_search_reports_all_hits_and_jumps_by_proximity(cx: &mut TestA
     }
     editor.read_with(cx, |editor, cx| {
         let scroll_y = f32::from(editor.scroll_handle.offset().y);
-        println!(
-            "ALLDBG scroll={scroll_y} active_id={:?} anchor_kind={:?} sel={:?} pending_center={} visible_n={}",
-            editor.active_entity_id,
-            editor
-                .active_entity_id
-                .and_then(|id| {
-                    editor
-                        .document
-                        .block_entity_by_id(id)
-                        .map(|block| block.read(cx).kind().clone())
-                }),
-            editor
-                .active_entity_id
-                .and_then(|id| {
-                    editor
-                        .document
-                        .block_entity_by_id(id)
-                        .map(|block| block.read(cx).selected_range.clone())
-                }),
-            editor.pending_scroll_center_into_view,
-            editor.document.visible_blocks().len(),
-        );
         assert!(
             scroll_y.abs() > 500.0,
             "点击表格区命中必须滚动：scroll_y={scroll_y}"
@@ -1127,165 +1053,11 @@ async fn cycling_hits_within_one_viewport_still_centers(cx: &mut TestAppContext)
         cx.run_until_parked();
     }
     let second_drift = drift_of(cx);
-    println!("CYCDBG second_drift={second_drift:?}");
     let second_drift = second_drift.expect("第二个命中应有边界可测");
     assert!(
         second_drift <= 2.0,
         "点「下一个」必须把新命中精确居中，实际偏差 {second_drift}px"
     );
-}
-
-#[gpui::test]
-async fn real_workspace_click_hit_183_end_to_end(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        crate::i18n::I18nManager::init(cx);
-        crate::theme::ThemeManager::init(cx);
-        crate::components::init(cx);
-    });
-    let root = std::path::PathBuf::from("/Users/sher/Github/AscendOpGenAgent");
-    if !root.is_dir() {
-        return; // 环境无该工作区时跳过
-    }
-    let target = std::fs::canonicalize(root.join("agents/ascend-kernel-developer.md")).unwrap();
-    let kernel_source = std::fs::read_to_string(&target).unwrap();
-
-    // 初始打开的是另一个文件（复刻用户多标签场景）
-    let (editor, cx) = cx.add_window_view({
-        let kernel_source = kernel_source.clone();
-        move |_, cx| Editor::from_markdown(cx, kernel_source, None)
-    });
-    editor.update(cx, |editor, cx| {
-        editor.set_workspace_root(root.clone(), cx);
-    });
-    cx.run_until_parked();
-
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.workspace.is_open = true;
-            editor.workspace.active_tab = WorkspaceTab::Search;
-            editor.workspace.search_query = "测试".into();
-            editor.schedule_workspace_search(cx);
-        });
-    });
-    cx.run_until_parked();
-    cx.executor().advance_clock(std::time::Duration::from_millis(400));
-    cx.run_until_parked();
-
-    let hit_info = editor.read_with(cx, |editor, _cx| {
-        let total = editor.workspace.search_results.len();
-        let idx = editor.workspace.search_results.iter().position(|hit| {
-            hit.path == target && hit.line == Some(183)
-        });
-        let for_target: Vec<_> = editor
-            .workspace
-            .search_results
-            .iter()
-            .filter(|hit| hit.path == target)
-            .map(|hit| (hit.line, hit.source_range.is_some()))
-            .collect();
-        (total, idx, for_target)
-    });
-    println!(
-        "REALDBG total={} idx_183={:?} target_hits={:?}",
-        hit_info.0, hit_info.1, hit_info.2
-    );
-    let Some(index) = hit_info.1 else {
-        println!("REALDBG no line-183 hit; abort");
-        return;
-    };
-    // nearest_document_match 决策明细：为什么 174 和 183 重定位到同一处？
-    editor.read_with(cx, |editor, cx| {
-        let source = editor.current_document_source(cx);
-        let matcher = super::super::SearchMatcher::new(
-            editor.workspace.search_query.trim(),
-            editor.search_options(),
-        );
-        let lines: Vec<&str> = source.split_inclusive('\n').collect();
-        println!("NEARDBG live_lines={}", lines.len());
-        // 磁盘 174/183 行的关键内容在序列化文本中的真实位置
-        for (needle, label) in [
-            ("执行性能测试", "disk-183-content"),
-            ("迭代次数上限为 3 次", "disk-174-content"),
-        ] {
-            for (li, line) in lines.iter().enumerate() {
-                if line.contains(needle) {
-                    println!(
-                        "NEARDBG   FIND {label} at serialized line={} text={:?}",
-                        li + 1,
-                        line.chars().take(50).collect::<String>()
-                    );
-                }
-            }
-        }
-        for disk_line in [174usize, 183] {
-            let approx_line = (disk_line - 1).min(lines.len());
-            let window_start = approx_line.saturating_sub(40);
-            let window_end = (approx_line + 41).min(lines.len());
-            println!("NEARDBG disk_line={disk_line} window={window_start}..{window_end}");
-            for li in window_start..window_end {
-                let text = lines[li].strip_suffix('\n').unwrap_or(lines[li]);
-                if text.contains("测试") {
-                    let hits = matcher.find_in_line(text);
-                    println!(
-                        "NEARDBG   HAS line={} find={:?} query={:?} opts=({},{},{},{}) text={:?}",
-                        li + 1,
-                        hits,
-                        editor.workspace.search_query,
-                        editor.workspace.search_match_case,
-                        editor.workspace.search_whole_word,
-                        editor.workspace.search_use_regex,
-                        editor.workspace.search_fuzzy,
-                        text,
-                    );
-                }
-                if li + 1 == 174 || li + 1 == 183 {
-                    println!("NEARDBG   AT line={} text={:?}", li + 1, text.chars().take(50).collect::<String>());
-                }
-                for found in matcher.find_in_line(text) {
-                    let distance = {
-                        let approx_start: usize = lines[..approx_line].iter().map(|l| l.len()).sum();
-                        let col = approx_line;
-                        let _ = col;
-                        (li.abs_diff(approx_line), found.start)
-                    };
-                    println!(
-                        "NEARDBG   hit line={} col={:?} row_dist={:?} text={:?}",
-                        li + 1,
-                        found,
-                        distance,
-                        text.chars().take(50).collect::<String>()
-                    );
-                }
-            }
-        }
-    });
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.open_search_hit(index, window, cx);
-        });
-    });
-    for _ in 0..20 {
-        cx.update(|window, cx| window.draw(cx).clear());
-        cx.run_until_parked();
-    }
-    editor.read_with(cx, |editor, cx| {
-        let scroll_y = f32::from(editor.scroll_handle.offset().y);
-        let source = editor.current_document_source(cx);
-        let active_range = editor.workspace.document_active_range.clone();
-        let slice = active_range
-            .as_ref()
-            .and_then(|range| source.get(range.clone()))
-            .map(|slice| slice.to_string());
-        println!(
-            "REALDBG scroll={scroll_y} active_range={active_range:?} slice={slice:?} pending_center={}",
-            editor.pending_scroll_center_into_view
-        );
-        assert!(scroll_y.abs() > 100.0, "点击命中必须滚动 scroll={scroll_y}");
-        assert!(
-            slice.as_deref() == Some("测试"),
-            "选区应落在「测试」上，实际 {slice:?}"
-        );
-    });
 }
 
 /// 工作区扫描出来的「当前文件」命中，跳转必须落在缓冲区里的那段字节上。

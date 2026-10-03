@@ -149,7 +149,7 @@ impl Editor {
         self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
     }
 
-    pub(super) fn finalize_pending_undo_capture(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn finalize_pending_undo_capture(&mut self, _cx: &mut Context<Self>) {
         if self.history_restore_in_progress {
             self.pending_undo_capture = None;
             return;
