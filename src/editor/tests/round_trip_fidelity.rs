@@ -747,3 +747,102 @@ async fn editing_a_crlf_code_document_saves_crlf_bytes_and_clears_dirty(
         );
     });
 }
+
+/// 在多行引用里打字，同块没改过的那几行的前缀写法必须原样留着。
+///
+/// 引用容器是一个多行根块：`> 引用一`、`>引用二`、`>   引用三` 三种写法都合法，
+/// 前缀的空格数是用户写的字节。以前「结构一变就把整块按模型重拼」会把没改过的那几行
+/// 一并规范成 `> `，这里钉住按区间落笔的结果。
+#[gpui::test]
+async fn typing_inside_a_quote_line_keeps_the_sibling_line_prefixes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> 引用一\n>引用二\n>   引用三\n";
+    let path = temp_markdown_path("quote-sibling-prefixes");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有第一个可见块")
+    });
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 9..9);
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(first.entity_id()));
+    redraw(cx);
+    cx.simulate_input("甲");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "> 引用一甲\r\n>引用二\r\n>   引用三\r\n",
+        "打字把同块没改过的那几行改写了：{saved:?}"
+    );
+}
+
+/// 选区跨过引用里的换行再打字，也一样只能改落点那一段。
+#[gpui::test]
+async fn replacing_a_selection_across_a_quote_line_break_keeps_the_sibling_prefixes(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> 引用一\n>引用二\n>   引用三\n";
+    let path = temp_markdown_path("quote-cross-line-replace");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有第一个可见块")
+    });
+    cx.update(|_window, cx| {
+        // 「引用一」之后到「引用」之后：跨过那条换行。
+        first.update(cx, |block, _cx| block.selected_range = 9..16);
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(first.entity_id()));
+    redraw(cx);
+    cx.simulate_input("甲");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "> 引用一甲二\n>   引用三\n",
+        "跨引用行的选区替换把没改过的那行改写了：{saved:?}"
+    );
+}
