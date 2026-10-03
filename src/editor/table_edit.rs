@@ -203,6 +203,69 @@ impl Editor {
         true
     }
 
+    /// 调一列的对齐 = 只改写分隔行里那一格，同一行的别的格都不动。
+    ///
+    /// 对齐写法就写在分隔行那一格的 `:` 上，整张表按模型重拼却会顺手把用户手写的
+    /// 列宽填充重排掉。所以只重写那一格：按原来的 `-` 个数排，多出来的冒号从这一格
+    /// 自己的填充里腾，腾不下才让这一格变长。
+    ///
+    /// 返回 `false` 表示这一格改不出来：那一行不是干净的对齐写法（夹了别的字符）、
+    /// 行数与模型对不上、表没有自己的区间。那种情况交回整块写。
+    fn write_back_table_column_alignment(
+        &mut self,
+        table_block: &Entity<Block>,
+        column: usize,
+        alignment: TableColumnAlignment,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let Some((columns, rows)) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| (table.column_count(), table.rows.len()))
+        else {
+            return false;
+        };
+        let lines = self.table_source_lines(&span);
+        if lines.len() != rows + 2 || column >= columns {
+            return false;
+        }
+        let Some((delimiter_line, delimiter_text)) = lines.get(1).cloned() else {
+            return false;
+        };
+        let mut cells = delimiter_text.split('|').collect::<Vec<_>>();
+        if cells.len() != columns + 2 {
+            return false;
+        }
+        let Some(new_cell) = realigned_delimiter_cell(cells[column + 1], alignment) else {
+            return false;
+        };
+        if new_cell == cells[column + 1] {
+            return true;
+        }
+        cells[column + 1] = &new_cell;
+        let new_line = cells.join("|");
+
+        let old_line_range = self.buffer.line_range(delimiter_line);
+        let applied = self.buffer.edit(old_line_range.clone(), &new_line);
+        self.record_buffer_edit(applied);
+        let delta = new_line.len() as i64 - (old_line_range.end - old_line_range.start) as i64;
+        if delta != 0 {
+            table_block.update(cx, |block, _cx| {
+                if let Some(span) = &block.record.source_span {
+                    block.record.source_span =
+                        Some(span.start..(span.end as i64 + delta) as usize);
+                }
+            });
+            self.shift_root_spans_after(old_line_range.end, delta, cx);
+        }
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
@@ -561,7 +624,11 @@ impl Editor {
         };
         self.set_table_axis_selection(Some(selection), cx);
         self.focus_table_cell_position(table_block, TableCellPosition { row: 0, column }, cx);
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_column_alignment(table_block, column, alignment, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -1019,6 +1086,44 @@ impl Editor {
             }
         }
     }
+}
+
+/// 分隔行里一格的新写法：换成 `alignment`，但这一格的宽度尽量不动。
+///
+/// GFM 在这一格里只认 `-` 和两端的 `:`，所以照原来的 `-` 个数重排；要多加的冒号
+/// 从这一格自己的填充里腾（`-----:` 居中变 `:----:`），腾不出位置才让它变长
+/// （`---` 居中变 `:-:`）。不是干净的对齐写法（夹了别的字符、一个 `-` 都没有）
+/// 就返回 `None`，调用方交回整块写。
+fn realigned_delimiter_cell(cell: &str, alignment: TableColumnAlignment) -> Option<String> {
+    let core = cell.trim();
+    let old_dashes = core.matches('-').count();
+    if old_dashes == 0 || !core.chars().all(|character| character == '-' || character == ':') {
+        return None;
+    }
+    let (left, right) = match alignment {
+        TableColumnAlignment::Default => (false, false),
+        TableColumnAlignment::Left => (true, false),
+        TableColumnAlignment::Center => (true, true),
+        TableColumnAlignment::Right => (false, true),
+    };
+    let colons = usize::from(left) + usize::from(right);
+    let target_width = cell.chars().count();
+    let dashes = old_dashes.min(target_width.saturating_sub(colons).max(1));
+
+    let mut cell = String::with_capacity(target_width + 2);
+    if left {
+        cell.push(':');
+    }
+    for _ in 0..dashes {
+        cell.push('-');
+    }
+    if right {
+        cell.push(':');
+    }
+    for _ in cell.chars().count()..target_width {
+        cell.push(' ');
+    }
+    Some(cell)
 }
 
 /// 一行表格里第 `column` 个格子的**内容**字节区间（两侧的填充空格不算在内）。

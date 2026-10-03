@@ -1720,3 +1720,101 @@ async fn deleting_the_last_table_row_keeps_the_final_newline(cx: &mut TestAppCon
         "删最后一行改掉了行结束符或末行换行：{saved:?}"
     );
 }
+
+/// 调一列的对齐，只许改分隔行里那一格，同一行的别的格都不动。
+///
+/// 对齐写在源码里就是分隔行那一格的 `:`。整张表按模型重拼会把用户手写的列宽填充
+/// 一起重排，而用户只是把一列改成居中。这里要求别处一个字节都不动：表头、数据行、
+/// 另一格的对齐写法原样，整行宽度也保持住（居中多出来的冒号从这一格的填充里腾）。
+#[gpui::test]
+async fn centering_a_table_column_rewrites_only_that_delimiter_cell(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n";
+    let path = temp_markdown_path("write-back-table-alignment");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.set_table_column_alignment(&table, 1, TableColumnAlignment::Center, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   | 数量 |\n|:-------|:----:|\n| 苹果   |    3 |\n",
+        "调一列的对齐改掉了别的字节：{saved:?}"
+    );
+}
+
+/// 分隔行那一格腾不出填充时只能变长（`--` 居中 → `:-:`），这种长度变化必须把
+/// 表自己的区间和后面每个根块的区间一起挪，不然下一次编辑就贴错地方。
+///
+/// 同时这张表的形状（CRLF、末行换行）和表外那个 `__下划线__` 的写法都得原样留着。
+#[gpui::test]
+async fn widening_a_delimiter_cell_moves_the_spans_after_it(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称 | 数量 |\n|--|---:|\n| 甲 | 1 |\n\n强调 __下划线__ 结尾\n";
+    let path = temp_markdown_path("write-back-table-alignment-grow");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.set_table_column_alignment(&table, 0, TableColumnAlignment::Center, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "分隔行那一格变长之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称 | 数量 |\r\n|:-:|---:|\r\n| 甲 | 1 |\r\n\r\n强调 __下划线__ 结尾\r\n",
+        "分隔行变长把别的字节也带坏了：{saved:?}"
+    );
+}
