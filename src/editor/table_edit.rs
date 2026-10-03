@@ -266,6 +266,76 @@ impl Editor {
         true
     }
 
+    /// 表格加一列 = 每行末尾多插这一列，已有的格一个字节都不动。
+    ///
+    /// 整张表按模型重拼会把用户手写的列宽填充和对齐写法一起重排，而新列自己该长
+    /// 什么样模型里已经写了：数据行按模型里那一格，分隔行照抄它左边那格的写法（宽
+    /// 度和风格跟着邻居，不再重排别人）。每行只在它末尾那根竖线之前插入
+    /// `|` + 新格，所以插的顺序是从后往前——前面的字节不会因为后面的插入而挪位。
+    ///
+    /// 返回 `false` 表示插不出来：某行的竖线数跟列数对不上（格子里有转义竖线或不是
+    /// 管道写法）、行数与模型对不上、表没有自己的区间。那种情况交回整块写。
+    fn write_back_table_column_insertion(
+        &mut self,
+        table_block: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let Some(table) = table_block.read(cx).record.table.clone() else {
+            return false;
+        };
+        let lines = self.table_source_lines(&span);
+        if lines.len() != table.rows.len() + 2 {
+            return false;
+        }
+        // 模型里已经有这一列了，所以源码里每行该有「列数」根竖线（外层那两根算在内）。
+        let columns = table.column_count();
+        let columns = table.column_count();
+        let mut inserts: Vec<(usize, usize, String)> = Vec::with_capacity(lines.len());
+        for (index, (line, text)) in lines.iter().enumerate() {
+            let pipes = unescaped_pipe_offsets(text);
+            // 只认「外层两根竖线齐平」的管道写法：缩进的、结尾还有杂字的都算不出插点。
+            let wrapped = pipes.first() == Some(&0) && pipes.last() == Some(&(text.len() - 1));
+            if !wrapped || pipes.len() != columns {
+                return false;
+            }
+            let cell = if index == 1 {
+                // 分隔行：照抄左边那一格的写法。
+                let start = pipes[pipes.len() - 2] + 1;
+                text[start..pipes[pipes.len() - 1]].to_string()
+            } else {
+                let new_cell = if index == 0 {
+                    table.header.last()
+                } else {
+                    table.rows.get(index - 2).and_then(|row| row.last())
+                };
+                let Some(new_cell) = new_cell else { return false };
+                format!(" {} ", serialize_table_cell_markdown(new_cell))
+            };
+            inserts.push((*line, pipes[pipes.len() - 1], format!("|{cell}")));
+        }
+
+        // 表后面的根块整体右移：以原本最后一行的行尾为界，插点都在它前面。
+        let boundary = self.buffer.line_range(inserts[inserts.len() - 1].0).end;
+        let mut moved = 0usize;
+        for (line, pipe, text) in inserts.into_iter().rev() {
+            let offset = self.buffer.line_range(line).start + pipe;
+            let applied = self.buffer.edit(offset..offset, &text);
+            self.record_buffer_edit(applied);
+            moved += text.len();
+        }
+        table_block.update(cx, |block, _cx| {
+            if let Some(span) = &block.record.source_span {
+                block.record.source_span =
+                    Some(span.start..(span.end as i64 + moved as i64) as usize);
+            }
+        });
+        self.shift_root_spans_after(boundary, moved as i64, cx);
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
@@ -494,7 +564,11 @@ impl Editor {
         {
             self.focus_block(cell.entity_id());
         }
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_column_insertion(table_block, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -1086,6 +1160,23 @@ impl Editor {
             }
         }
     }
+}
+
+/// 一行表格里「真正的列分隔符」的字节位置。反斜杠转义的 `|` 不算列分隔符。
+fn unescaped_pipe_offsets(line: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut escaped = false;
+    for (offset, byte) in line.bytes().enumerate() {
+        if byte == b'\\' {
+            escaped = !escaped;
+        } else if byte == b'|' && !escaped {
+            offsets.push(offset);
+            escaped = false;
+        } else {
+            escaped = false;
+        }
+    }
+    offsets
 }
 
 /// 分隔行里一格的新写法：换成 `alignment`，但这一格的宽度尽量不动。

@@ -1818,3 +1818,57 @@ async fn widening_a_delimiter_cell_moves_the_spans_after_it(cx: &mut TestAppCont
         "分隔行变长把别的字节也带坏了：{saved:?}"
     );
 }
+
+/// 表格加一列，只许在每行末尾多插这一列，别的格一个字节都不动。
+///
+/// 「加列等于按新的列宽把整张表重排」是方案 §6.3.1 要点名换掉的行为：`| 名称   |`
+/// 的填充、`|:-------|` 的对齐写法、表外那些块的字节都会被洗掉。新的一列自己怎么写
+/// 可以按模型来（分隔行那一格照抄它左边那一格的写法），但它左边的字节得原样。
+#[gpui::test]
+async fn adding_a_table_column_keeps_the_other_columns_padded_as_written(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str =
+        "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n\n强调 __下划线__ 结尾\n";
+    let path = temp_markdown_path("write-back-table-column-add");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.append_table_column(&table, cx);
+        });
+    });
+    redraw(cx);
+
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "表格加一列之后");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        "| 名称   | 数量 |  |\r\n|:-------|-----:|-----:|\r\n| 苹果   |    3 |  |\r\n\r\n强调 __下划线__ 结尾\r\n",
+        "加一列改掉了别的格的字节或表外的块：{saved:?}"
+    );
+}
