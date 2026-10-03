@@ -247,6 +247,9 @@ pub struct Block {
     pub(crate) toc_entries: Vec<TocEntry>,
     numbered_list_restart_requested: bool,
     quote_reparse_requested: bool,
+    /// 刚在光标处插入的那段文字（可见偏移 + 内容）。编辑器据此只把这几个字节
+    /// 插进缓冲区，块自己没碰过的定界符就不会被重新序列化改写。一次事件读走。
+    pending_visible_insertion: Option<(usize, String)>,
 }
 
 /// 目录（TOC）条目（roadmap C2）：编辑器按当前标题结构写入 `[TOC]` 块。
@@ -369,6 +372,7 @@ impl Block {
             toc_entries: Vec::new(),
             numbered_list_restart_requested: false,
             quote_reparse_requested: false,
+            pending_visible_insertion: None,
         };
         block.sync_code_highlight();
         block.refresh_cached_display_text();
@@ -416,6 +420,10 @@ impl Block {
         let requested = self.numbered_list_restart_requested;
         self.numbered_list_restart_requested = false;
         requested
+    }
+
+    pub(crate) fn take_pending_visible_insertion(&mut self) -> Option<(usize, String)> {
+        self.pending_visible_insertion.take()
     }
 
     pub(crate) fn set_runtime_context(

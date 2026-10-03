@@ -947,6 +947,58 @@ impl Editor {
     /// 把这个块当前的源码写回它自己占的缓冲区区间——只经唯一写入口
     /// [`buffer::TextBuffer::edit`]。
     ///
+    /// 打字这种「在光标处插入几个字节」的改动：直接把那几个字节插到缓冲区里
+    /// 对应的源码位置。
+    ///
+    /// 整块重新序列化会顺手改写这一块自己的定界符——`1)` 变 `1.`、`__粗__` 变
+    /// `**粗**`、`>引用` 补成 `> 引用`、`~~~~` 换成 ```，可用户只碰了中间那几个字。
+    /// 插入点由可见偏移换算成源码字节位（`caret_source_offset`）：插入点之前的
+    /// 文本没动过，所以换算照样成立。算不出落点、或插入的文字序列化后会变样
+    /// （打进去的是个字面 `*`）都退回整块写回。
+    pub(crate) fn write_back_visible_insertion(
+        &mut self,
+        block: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((visible_offset, inserted)) =
+            block.update(cx, |block, _cx| block.take_pending_visible_insertion())
+        else {
+            return false;
+        };
+        if crate::components::InlineTextTree::plain(inserted.clone()).serialize_markdown()
+            != inserted
+        {
+            return false;
+        }
+        let Some(at) = self.caret_source_offset(block.entity_id(), visible_offset, cx) else {
+            return false;
+        };
+        let Some(root) = self.document.root_ancestor_of(block.entity_id()) else {
+            return false;
+        };
+        let Some(span) = root.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        // 换算出来的位置必须在缓冲区里、也得落在这一根块的区间内：映射表是按块树
+        // 的序列化算的，容器里的块（引用、列表）区间与缓冲区并不一一对应，越界就
+        // 说明这次改动不是「往源码里插几个字节」那么简单，退回整块写回。
+        if at > self.buffer.byte_len() || !self.buffer.is_char_boundary(at) {
+            return false;
+        }
+        if at < span.start || at > span.end {
+            return false;
+        }
+
+        let applied = self.buffer.edit(at..at, &inserted);
+        self.record_buffer_edit(applied);
+        let delta = inserted.len() as i64;
+        root.update(cx, |root, _cx| {
+            root.record.source_span = Some(span.start..span.end + delta as usize);
+        });
+        self.shift_root_spans_after(span.end, delta, cx);
+        true
+    }
+
     /// 返回 `false` 表示这个块没有可用区间（新建的块、子块、整篇重投影后没被
     /// 记到的空块）：那种情况下按区间写会把字节落错位置，调用方必须退回
     /// [`Self::resync_buffer_and_stable_snapshot`]。
@@ -958,6 +1010,12 @@ impl Editor {
         let Some(old_span) = block.read(cx).record.source_span.clone() else {
             return false;
         };
+        // 区间是这一根块上一次写回时挂上的字节位；中途有人（比如标注结构的归一化）
+        // 自己重投影了缓冲区，这个区间就是过期的。拿过期区间去写会越界，宁可退回
+        // 整篇重投影。
+        if old_span.end > self.buffer.byte_len() || !self.buffer.is_char_boundary(old_span.end) {
+            return false;
+        }
         let new_source = self.document.block_markdown_source(block, cx);
         if self.buffer.slice(old_span.clone()) == new_source {
             // 投影刷新但内容没变：不动缓冲区，区间照旧有效。
@@ -1014,6 +1072,11 @@ impl Editor {
         let Some(region_end) = before[old_end - 1].1.clone().map(|span| span.end) else {
             return false;
         };
+        // 与 `write_back_block_source` 同一条守卫：区间来自上一次写回，中途缓冲区
+        // 被别的路径重投影过就过期了，过期区间写下去要么写错位置要么越界。
+        if region_end > self.buffer.byte_len() || region_start > region_end {
+            return false;
+        }
 
         let Some((text, local_spans)) =
             self.document.markdown_region_for_roots(anchor_index..new_end, cx)

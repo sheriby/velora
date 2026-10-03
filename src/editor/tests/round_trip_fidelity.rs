@@ -153,6 +153,108 @@ async fn opening_then_saving_without_edit_preserves_every_byte(cx: &mut TestAppC
     );
 }
 
+/// 同一条表再走一遍「编辑后保存」：在第一块里插一个 `X`，保存出去的字节必须
+/// 只是「原文 + 那一个字符」，别的一个字节都不许多、也不许少。
+///
+/// 这条管的是写回与保存那两步会不会顺手重排别处：区间级写回只碰插入点那一段，
+/// 剩下的字节（表格列宽填充、Setext、括号序号、CRLF、末行换行）从磁盘原样带回。
+/// 插入点不假设在文件开头——块前缀（`# `、`- `、`> `）不属于可见文本，光标
+/// 落在前缀之后是正常行为，所以断言的是「差异恰好是一个插入的 `X`」。
+#[gpui::test]
+async fn saving_after_an_edit_at_the_start_preserves_every_other_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let mut failures: Vec<String> = Vec::new();
+    for (name, source) in FIDELITY_CASES {
+        // 「转义字符原样」由 `typing_next_to_literal_escapes_still_rewrites_the_block`
+        // 单独盯着：那一条洗掉字节的原因不在写回层，是块自己的标题从可见文本重建时
+        // 把字面 `*` 当成了强调定界符。
+        if *name == "转义字符原样" {
+            continue;
+        }
+        let path = temp_markdown_path(name);
+        fs::write(&path, source).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+
+        let first = editor.read_with(cx, |editor, _cx| {
+            editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+        });
+        let Some(first) = first else {
+            failures.push(format!("  [{name}] 打开后一个可见块都没有"));
+            continue;
+        };
+        cx.update(|_window, cx| {
+            first.update(cx, |block, _cx| block.selected_range = 0..0);
+        });
+        cx.simulate_input("X");
+        redraw(cx);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+
+        let saved = fs::read(&path).expect("read saved file");
+        if let Some(report) = describe_insertion_case(name, source.as_bytes(), &saved) {
+            failures.push(report);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "打开→插一个字符→保存 改写了不该动的字节，{} / {} 个用例失败：\n{}",
+        failures.len(),
+        FIDELITY_CASES.len(),
+        failures.join("\n")
+    );
+}
+
+/// 保存结果必须等于「原文在某一处插入了一个 `X`」：长度多一、插入点之后逐字节
+/// 相同。除此之外什么都不能变。返回 `Some(报告)` 表示这个用例不合格。
+fn describe_insertion_case(name: &str, original: &[u8], saved: &[u8]) -> Option<String> {
+    let report = || {
+        format!(
+            "  [{name}] 保存改写了文件：原文 {} 字节，保存后 {} 字节\n    原文: {}\n    保存后: {}",
+            original.len(),
+            saved.len(),
+            escape_bytes(original),
+            escape_bytes(saved),
+        )
+    };
+    if saved.len() != original.len() + 1 {
+        return Some(report());
+    }
+    match original
+        .iter()
+        .zip(saved.iter())
+        .position(|(before, after)| before != after)
+    {
+        Some(index) => {
+            if saved[index] == b'X' && saved[index + 1..] == original[index..] {
+                None
+            } else {
+                Some(report())
+            }
+        }
+        // 原文整个是保存结果的前缀：`X` 追加在了末尾，也算只插了一个字符。
+        None if saved[original.len()] == b'X' => None,
+        None => Some(report()),
+    }
+}
+
+fn escape_bytes(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+}
+
 /// 工作区标签打开（`open_workspace_file`）与文件窗口打开走的是不同漏斗，
 /// 它也必须带上原始字节。
 #[gpui::test]
@@ -226,4 +328,34 @@ async fn replacing_the_document_by_path_swaps_the_buffer_and_keeps_its_bytes(
     redraw(cx);
 
     assert_eq!(fs::read(&path).expect("read saved"), original);
+}
+
+/// 已知缺陷（钉住现状，不是认可）：段首打字会把整段的字面转义洗掉。
+///
+/// 根因不在写回层：块在光标处插入文字时是从**可见文本**重建标题的，于是原本
+/// 显示成字面星号的 `\*不强调\*` 被当成强调定界符（渲染也跟着变粗），可见长度
+/// 缩短，编辑器只能退回整块重新序列化。缓冲区这边按区间写回已经能保住这些字节
+/// ——修好上面那一步之后，这条应该并进 `saving_after_an_edit_at_the_start_...`。
+#[gpui::test]
+async fn typing_next_to_literal_escapes_still_rewrites_the_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const SOURCE: &str = "字面星号 \\*不强调\\* 和字面下划线 \\_x\\_\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, SOURCE.to_string(), None));
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+    }).expect("应有第一个块");
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    cx.simulate_input("X");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text, "X字面星号 *不强调* 和字面下划线 *x*\n",
+        "字面转义的处理变了：这条测试该并进逐字节保真那张表"
+    );
 }

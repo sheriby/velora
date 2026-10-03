@@ -1351,3 +1351,40 @@ async fn downgrading_a_nested_list_item_keeps_the_other_blocks_bytes_untouched(
     let (spans, buffer_text) = present_root_spans(&editor, cx);
     assert_spans_tile_the_content(&spans, &buffer_text, "嵌套列表项降级之后");
 }
+
+/// 段落并进引用容器：合并之后区间必须还跟得上缓冲区。
+///
+/// 容器里的块没有自己的源码区间，写回时拿的是整根块的区间——一旦那个区间过期，
+/// `buffer.edit` 就会拿一个比缓冲区还长的区间来写（实测越界 panic）。
+#[gpui::test]
+async fn merging_a_paragraph_into_a_quote_container_keeps_the_spans_valid(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> hello\n\nworld".to_string(), None)
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let target = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).record.title.visible_text() == "world")
+                .cloned()
+                .expect("夹具里应有 world 段");
+            let content = target.read(cx).record.title.clone();
+            editor.focus_block(target.entity_id());
+            target.update(cx, |block, cx| block.move_to(0, cx));
+            editor.on_block_event(target, &BlockEvent::RequestMergeIntoPrev { content }, cx);
+        });
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(buffer_text.contains("world"), "合并没进缓冲区：{buffer_text:?}");
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "段落并进引用容器之后");
+}

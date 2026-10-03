@@ -157,6 +157,18 @@ impl Block {
             None
         };
 
+        // 在光标处插几个字符这一种形状交给编辑器按源码位置点写回：整块重新序列化
+        // 会把围栏的写法（`~~~~`）打成 ```。归一化动过别处就不算纯插入。
+        self.pending_visible_insertion = if range.is_empty()
+            && !inserted.is_empty()
+            && trimmed_start == 0
+            && normalized.len() == raw_next.len()
+        {
+            Some((range.start, inserted.clone()))
+        } else {
+            None
+        };
+
         let old_language = match &self.record.kind {
             BlockKind::CodeBlock { language } => language.clone(),
             _ => None,

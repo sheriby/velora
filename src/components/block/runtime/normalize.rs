@@ -568,10 +568,12 @@ impl Block {
         let clean_range = self.current_to_clean_range(visible_range.clone());
         let mut base_title = self.record.title.clone();
         let overlaps_delimiters = self.projection.is_some() && !self.uses_raw_text_editing();
+        let mut styles_unwrapped = false;
         if overlaps_delimiters {
             let touched_styles = self.projected_styles_touching_display_range(&visible_range);
             if !touched_styles.is_empty() {
                 base_title.unwrap_styles_on_fragments(&touched_styles);
+                styles_unwrapped = true;
             }
         }
 
@@ -623,6 +625,20 @@ impl Block {
             .as_ref()
             .map(|range| range.end)
             .unwrap_or_else(|| result.map_offset(clean_range.start + new_text.len()));
+
+        // 「在光标处插入一段文字」这种形状才交给编辑器做点写回：删除会挪动后面的
+        // 文本、换行会改结构、拆掉样式或写进引用里都得由整块重新序列化来说明。
+        self.pending_visible_insertion = if visible_range.is_empty()
+            && !new_text.is_empty()
+            && !new_text.contains('\n')
+            && !caret_may_have_closed_span
+            && !styles_unwrapped
+            && !quote_structure_edit
+        {
+            Some((visible_range.start, new_text.to_string()))
+        } else {
+            None
+        };
 
         self.apply_title_edit(
             result.tree,

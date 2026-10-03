@@ -115,7 +115,10 @@ impl Editor {
                             .zip(&visible_before)
                             .all(|(a, b)| a.entity.entity_id() == b.entity.entity_id())
                 };
-                if structure_unchanged && self.write_back_block_source(&block, cx) {
+                if structure_unchanged
+                    && (self.write_back_visible_insertion(&block, cx)
+                        || self.write_back_block_source(&block, cx))
+                {
                     self.mark_dirty_written_back(cx);
                 } else {
                     self.mark_dirty(cx);
