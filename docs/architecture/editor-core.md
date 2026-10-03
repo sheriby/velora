@@ -130,8 +130,10 @@ Workspace (src/editor/workspace.rs)
 
 - **保存的字节来自缓冲区**：`document_text_for_save()` = `buffer.text()`，`document_bytes_for_save()`
   = `buffer.file_bytes()`（没编辑过就是打开时那份原始字节，编辑过按 `FileShape` 重编码）。
-  `serialized_document_text`（从块树整篇序列化）只剩导出、会话快照、标签关闭提示在用；代码文档
-  另有一个 `code_uses_crlf` 标记（src/editor/file_drop.rs），只服务它的 Source 分支。
+  会话标签缓存、自动保存的恢复快照、导出（HTML/PDF/PNG）、拖拽替换前的另存**全部取这一份**，
+  生产代码里已经没有「从块树整篇序列化再当作文档内容用」的入口了（`DocumentTree::markdown_text`
+  / `raw_source_text` 只剩兜底重投影那一档和测试在用）。行尾形状也不再靠 `code_uses_crlf` 这种
+  标记还原——它就记在缓冲区的 `FileShape` 里。
 - **原子写**：`write_atomic` = 同目录临时文件 + `sync_all` + `rename`。
 - **外部修改检测**：`file_content_version`（规范化文本 DefaultHasher）；手动保存与 autosave 前 `verify_file_version` 重读比对，不一致则报「外部修改」。
 - **Autosave**：`schedule_autosave` 防抖后台任务（默认 800ms，`[editor] autosave_debounce_ms`）；IME 组合中跳过；后台写恢复快照 + 临时文件，回主线程校对 revision 后落盘。

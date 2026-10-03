@@ -63,7 +63,7 @@ benches/ scripts/ tests/fixtures/
 1. **禁止 Editor update 重入**：实体 update 内不得再 `editor.update()`（历史 coredump）。
 2. **块文本只存 `InlineTextTree`**：定界符不落盘，序列化时按确定性规则重建；Raw 类块（frontmatter/HTML/数学/mermaid/不支持的构造）用 `raw_fallback` 逐字保留。
 3. **往返无损**：markdown 导入→序列化必须逐字节还原（有守卫测试；分块导入与单遍导入等价也有测试）。
-4. **代码文件 CRLF**：`code_uses_crlf` 标记，保存时还原 CRLF。
+4. **行尾与编码形状记在缓冲区**：`TextBuffer` 的 `FileShape` 存原文件的行尾/编码，落盘按它重编码；没编辑过的文档 `file_bytes()` 就是打开时那份原始字节。
 5. **`document_revision` 是缓存键**：大纲跟随、长块提示等按它失效；渲染期跨实体写字段安全（不自动 notify），需要重绘必须显式 `cx.notify()`。
 6. **GPUI 限制**：svg 不继承父 div text_color；`.id()` 后变 Stateful 类型（if/else 分支需 into_any_element 统一）；TextRun 逐段字号是本地补丁（Linux 未接）。
 7. **所有提示用应用内模态**，禁系统原生弹窗（源码审计测试守卫）。
