@@ -428,6 +428,13 @@ impl Block {
 
         let cursor = self.cursor_offset();
         let (leading, trailing) = self.split_title(cursor);
+        // 光标正好压在块内的那个换行上：那个换行就是这次拆块的接缝，两边都不该留着它
+        // ——留着会让新块多一个空首行，文件里多一个空行，重新解析还多出一个空块。
+        let trailing = if trailing.visible_text().starts_with('\n') {
+            trailing.split_at(1).1
+        } else {
+            trailing
+        };
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
         // 切下来的那半截属于紧跟着插入的新块：标出来，编辑器才不会把它写成一次删除。
         self.mark_split_truncation();

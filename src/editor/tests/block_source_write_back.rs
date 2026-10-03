@@ -1409,8 +1409,10 @@ async fn merging_a_paragraph_into_a_quote_container_keeps_the_spans_valid(
 /// 块在光标处把自己切成两半时，先有一次 Changed 把「切掉的后半截」写成一次删除，
 /// 于是这一块在缓冲区里塌成零宽；随后的结构写回没有区间可用，只能整篇重投影——
 /// 表里、段里的每个 `__下划线__` 都被顺手规范掉。这一条钉住的是那一步：文件与拆块
-/// 前相比只多了接缝的几个换行，块里其余字节（含另一行的写法）与块外的块全部原样。
-/// 至于接缝该多吃一个换行还是少吃一个，是拆块语义的问题，另条测试盯着。
+/// 前相比只多了接缝的一个分隔空行，块里其余字节（含另一行的写法）与块外的块全部原样。
+///
+/// 光标压在块内换行上时，那个换行归接缝：两边都不留着它，否则新块多一个空首行、
+/// 文件多一个空行，重新解析还多出一个空块。
 #[gpui::test]
 async fn splitting_a_wrapped_paragraph_inserts_only_the_seam_newlines(
     cx: &mut TestAppContext,
@@ -1457,6 +1459,11 @@ async fn splitting_a_wrapped_paragraph_inserts_only_the_seam_newlines(
     redraw(cx);
 
     let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "段落\n\n第一行文字\n\n第二行文字\n\n强调 __下划线__ 结尾\n",
+        "在块内换行处拆块：接缝吃掉那个换行，文件里只多一个分隔空行"
+    );
     assert_only_newlines_inserted(FIXTURE, &buffer_text, "跨行段落拆块");
     // 块里那一行用户没碰过的写法（`__下划线__`）必须还是原来那几个字节。
     assert!(
