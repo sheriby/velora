@@ -303,3 +303,75 @@ async fn undo_reattaches_root_spans_so_the_next_edit_lands_right(cx: &mut TestAp
         );
     });
 }
+
+/// 撤销「单元格里回车插出来的空段落」只该把那个空行收回去。
+///
+/// 插入本身是一条 `AppliedEdit`，撤销就是它的逆操作；顺手整篇重新序列化会把
+/// 表格的列宽填充和 `__下划线__` 写法一起洗掉，磁盘上就不再是原文。
+#[gpui::test]
+async fn undoing_a_table_cell_newline_removes_the_blank_line_it_added(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("undo-table-enter");
+    fs::write(&path, LOSSY_DOC.replace('\n', "\r\n")).expect("write fixture");
+    let original_disk = fs::read_to_string(&path).expect("read fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            let cell = table
+                .read(cx)
+                .table_runtime
+                .as_ref()
+                .and_then(|runtime| {
+                    runtime.cell(crate::components::TableCellPosition { row: 1, column: 0 })
+                })
+                .expect("夹具里的表应有数据行的单元格");
+            editor.on_block_event(
+                cell.clone(),
+                &BlockEvent::RequestNewline {
+                    trailing: InlineTextTree::plain(String::new()),
+                    source_already_mutated: false,
+                },
+                cx,
+            );
+        });
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.buffer.text().contains("| 甲   | 1    |\n\n\n强调"),
+            "回车没在表后插出空段落：{:?}",
+            editor.buffer.text()
+        );
+    });
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved, original_disk,
+        "撤销一次表内回车之后，磁盘上的字节不再是原文"
+    );
+}

@@ -1093,3 +1093,63 @@ async fn forming_a_setext_heading_keeps_the_other_blocks_bytes_untouched(cx: &mu
         "标题文字丢了：{buffer_text:?}"
     );
 }
+
+/// 单元格里按回车是在表后面插一个空段落：文件里多出来的应该只有那一行空行。
+///
+/// 整篇重投影会把这张表的列宽填充（`| ---- |`、`| 甲   | 1    |`）和表外的
+/// `__下划线__` 写法一起洗掉，所以这里断言的是**除那一行空行外逐字节不变**。
+#[gpui::test]
+async fn pressing_enter_in_a_table_cell_only_inserts_a_blank_line(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-table-enter");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            let cell = table
+                .read(cx)
+                .table_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.cell(crate::components::TableCellPosition { row: 1, column: 0 }))
+                .expect("夹具里的表应有数据行的单元格");
+            editor.on_block_event(
+                cell.clone(),
+                &BlockEvent::RequestNewline {
+                    trailing: InlineTextTree::plain(String::new()),
+                    source_already_mutated: false,
+                },
+                cx,
+            );
+        });
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "段落文字\n\n| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |\n\n\n强调 __下划线__ 结尾\n",
+        "单元格里回车不该重排整篇文档"
+    );
+    // 插进去的空行会让后面那一段整体右移一格：区间必须还各自对得上自己的源码。
+    let (spans, buffer_text) = present_root_spans(&editor, cx);
+    assert_spans_tile_the_content(&spans, &buffer_text, "表后插入空段落之后");
+}

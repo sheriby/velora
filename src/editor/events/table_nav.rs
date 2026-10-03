@@ -233,6 +233,7 @@ impl Editor {
                 self.clear_table_axis_selection(cx);
                 self.sync_table_record_from_runtime(&binding.table_block, cx);
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+                let roots_before = self.document.root_layout(cx);
                 let new_block = Self::new_block(cx, BlockRecord::paragraph(String::new()));
                 self.document.insert_blocks_at(
                     location.parent,
@@ -242,7 +243,12 @@ impl Editor {
                 );
                 self.rebuild_image_runtimes(cx);
                 self.focus_block(new_block.entity_id());
-                self.mark_dirty(cx);
+                // 表后插一个空段落：只在表的下一行前面补空行，表自己的字节不动。
+                if self.write_back_structural_change(&binding.table_block, Some(&roots_before), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();

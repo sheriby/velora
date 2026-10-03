@@ -1020,6 +1020,36 @@ impl Editor {
         else {
             return false;
         };
+
+        // 纯插入空段落（单元格里按回车是在块后加一段）：旧的一块没少，只往里加
+        // 空内容，文件里多出来的就只有空行。这时整段重写会把锚点自己的字节重排
+        // 一遍（表格的列宽填充就是在这里被洗掉的），所以只把「序列化多出来的那
+        // 几个换行」插在锚点行之后。接缝不合这个形状（锚点是文档最后一段、接缝
+        // 本来不空着一行、插进去的带内容）都退回整篇重投影兜底。
+        if old_end == anchor_index + 1
+            && new_end > old_end
+            && after[anchor_index].0 == anchor.entity_id()
+            && old_end < before.len()
+        {
+            let added = self
+                .document
+                .markdown_region_for_roots(anchor_index..old_end, cx)
+                .and_then(|(old_text, _)| text.strip_prefix(old_text.as_str()).map(str::to_string))
+                .unwrap_or_default();
+            let seam_is_one_blank = self.buffer.byte_at(region_end) == Some(b'\n')
+                && self.buffer.byte_at(region_end + 1) == Some(b'\n')
+                && self.buffer.byte_at(region_end + 2).is_some_and(|byte| byte != b'\n');
+            if !added.is_empty()
+                && added.bytes().all(|byte| byte == b'\n')
+                && seam_is_one_blank
+            {
+                let applied = self.buffer.edit(region_end + 1..region_end + 1, &added);
+                self.record_buffer_edit(applied);
+                self.shift_root_spans_after(region_end + 1, added.len() as i64, cx);
+                return true;
+            }
+        }
+
         // 整段被删空时要连分隔一起收掉：接缝处不该留下两个连续空行，文档开头也不该
         // 以空行开始，否则删一个空段落会在文件里留下多余空行。
         let (region_start, region_end) = if text.is_empty() {
