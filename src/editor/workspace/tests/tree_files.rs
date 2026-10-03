@@ -475,3 +475,57 @@ fn workspace_panel_width_stays_within_drag_bounds() {
     assert_eq!(clamp_workspace_panel_width(320.0, 1080.0), 320.0);
     assert_eq!(clamp_workspace_panel_width(500.0, 720.0), 400.0);
 }
+
+/// 代码文件也归缓冲区说了算：改一个字符，保存出去应该还是「原文 + 那一处改动」。
+///
+/// 这条管的是文件形状（CRLF、连续空行、行首制表符、末行没有换行）。代码文档
+/// 以前不走缓冲区，而是每次保存从块树把源码拼回去，形状靠专门的分支硬撑。
+#[gpui::test]
+async fn saving_an_edited_code_file_keeps_the_file_shape(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root =
+        std::env::temp_dir().join(format!("velora-code-shape-test-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create test workspace");
+    let path = root.join("shape.rs");
+    // CRLF + 连续空行 + 制表符缩进 + 末行没有换行：每一样都是重新拼接时容易丢的。
+    let original = "first\r\n\r\n\r\n\tindented\r\nlast";
+    fs::write(&path, original).expect("write code file");
+    let cleanup_root = root.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(cleanup_root);
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        });
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().unwrap().clone()
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <crate::components::Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "X", window, cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.save_document(window, cx))
+    });
+    cx.run_until_parked();
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(saved, format!("X{original}"), "改一个字符之后代码文件的形状被重排了");
+}
