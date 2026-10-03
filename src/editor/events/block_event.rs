@@ -62,6 +62,7 @@ impl Editor {
             BlockEvent::RequestNewline { .. }
                 | BlockEvent::RequestMergeIntoPrev { .. }
                 | BlockEvent::RequestMergeFromNext
+                | BlockEvent::ToggleTaskChecked
         )
         .then(|| self.document.root_layout(cx));
         let visible_before = self.document.flatten_visible_blocks();
@@ -176,7 +177,7 @@ impl Editor {
                 if current_kind.is_quote_container() {
                     self.normalize_rendered_quote_structure(cx);
                 }
-                if self.write_back_newline_region(&block, roots_before.as_deref(), cx) {
+                if self.write_back_structural_change(&block, roots_before.as_deref(), cx) {
                     self.mark_dirty_written_back(cx);
                 } else {
                     self.mark_dirty(cx);
@@ -317,7 +318,7 @@ impl Editor {
                     self.rebuild_image_runtimes(cx);
                 }
                 // 锚点是**前一块**：它吸收了本块，被换掉的区间是「前一块 + 本块」。
-                if self.write_back_newline_region(&prev, roots_before.as_deref(), cx) {
+                if self.write_back_structural_change(&prev, roots_before.as_deref(), cx) {
                     self.mark_dirty_written_back(cx);
                 } else {
                     self.mark_dirty(cx);
@@ -362,7 +363,7 @@ impl Editor {
 
                 self.focus_block(block.entity_id());
                 self.rebuild_image_runtimes(cx);
-                if self.write_back_newline_region(&block, roots_before.as_deref(), cx) {
+                if self.write_back_structural_change(&block, roots_before.as_deref(), cx) {
                     self.mark_dirty_written_back(cx);
                 } else {
                     self.mark_dirty(cx);
@@ -669,7 +670,12 @@ impl Editor {
                     block.cursor_blink_epoch = Instant::now();
                     cx.notify();
                 });
-                self.mark_dirty(cx);
+                // 勾一下复选框只改这一行：块序列没变，整根块重投影回它自己的区间。
+                if self.write_back_structural_change(&block, roots_before.as_deref(), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.request_active_block_scroll_into_view(cx);
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();

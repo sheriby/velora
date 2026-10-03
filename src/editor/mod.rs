@@ -1069,12 +1069,12 @@ impl Editor {
         }
     }
 
-    /// 拆块事件的写回入口：先看根块序列变了没有。
+    /// 结构命令的写回入口：先看根块序列变了没有。
     ///
     /// - 变了（段落一分为二、两块合一）→ 只重写被换掉的那一段区间。
-    /// - 没变（子块拆合，新块挂在某个根块底下）→ 整根块重投影，它的区间本来就
+    /// - 没变（子块拆合、换块种类、勾任务框）→ 整根块重投影，它的区间本来就
     ///   盖住整棵子树，别的根块照样不动。
-    pub(crate) fn write_back_newline_region(
+    pub(crate) fn write_back_structural_change(
         &mut self,
         block: &Entity<Block>,
         before: Option<&[(EntityId, Option<std::ops::Range<usize>>)]>,

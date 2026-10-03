@@ -332,6 +332,64 @@ async fn cross_block_delete_keeps_the_other_blocks_bytes_untouched(cx: &mut Test
     );
 }
 
+/// 勾一个任务复选框只该改那一行的 `[ ]`：整篇重新序列化会把别处的列宽填充、
+/// `__下划线__` 写法、CRLF 与末行换行一起洗掉。
+#[gpui::test]
+async fn toggling_a_task_checkbox_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "- [ ] 买牛奶\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-task-toggle");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let task = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| matches!(root.read(cx).kind(), BlockKind::TaskListItem { .. }))
+                .cloned()
+                .expect("夹具里应有一条任务");
+            editor.on_block_event(task, &BlockEvent::ToggleTaskChecked, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        FIXTURE
+            .replace("- [ ] 买牛奶", "- [x] 买牛奶")
+            .replace('\n', "\r\n"),
+        "勾一个复选框改写了勾选项之外的字节：{saved:?}"
+    );
+}
+
 /// 打字打进单元格也只该动那一格：单元格在缓冲区里有自己的字节区间，写回就该
 /// 落在那段区间上，连同一张表里别的列的填充都不该重排，更不许动表外的块。
 #[gpui::test]
