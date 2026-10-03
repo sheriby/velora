@@ -1572,3 +1572,53 @@ async fn splitting_a_paragraph_mid_line_inserts_the_block_break(cx: &mut TestApp
     let (spans, buffer_text) = present_root_spans(&editor, cx);
     assert_spans_tile_the_content(&spans, &buffer_text, "行中拆块之后");
 }
+
+/// 表格加一行，只许多那一行——原有各行的列宽填充是用户写的字节。
+///
+/// 「行列增删等于把整张表按新的列宽重排一遍」是方案 §6.3.1 要点名换掉的旧行为：
+/// 用户在表尾加一行，表头 `| 名称   | 数量 |` 的对齐、分隔行的 `|:-------|-----:|`
+/// 和已有数据行的填充都不该动。这条按字节断言，不看重新解析后的结构。
+#[gpui::test]
+async fn adding_a_table_row_keeps_the_untouched_rows_padded_as_written(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |    3 |\n";
+    let path = temp_markdown_path("write-back-table-row-padding");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.append_table_row(&table, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    let lines = saved.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 4, "加一行应该有 4 行：{saved:?}");
+    assert_eq!(lines[0], "| 名称   | 数量 |", "表头那一行被重排了：{saved:?}");
+    assert_eq!(lines[1], "|:-------|-----:|", "分隔行的对齐被改了：{saved:?}");
+    assert_eq!(lines[2], "| 苹果   |    3 |", "原有数据行的填充被改了：{saved:?}");
+}

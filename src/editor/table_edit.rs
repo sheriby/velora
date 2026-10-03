@@ -68,12 +68,84 @@ impl Editor {
         true
     }
 
+    /// 表格加一行 = 在最后一行之后插一行，别的字节一个都不动。
+    ///
+    /// 把整张表按模型重拼一遍会顺手洗掉用户写的列宽填充：`| 名称   | 数量 |` 变成
+    /// `| 名称 | 数量 |`、`|:-------|-----:|` 变成 `| :--- | ---: |`，而用户只是
+    /// 在表尾加了一行。文件里表格的一行就是文本的一行，所以按最后一行的骨架补一行
+    /// （把每格内容换成等长空白），列宽与对齐写法原样留着。
+    ///
+    /// 返回 `false` 表示这行插不出来：表没有自己的区间（挂在容器里）、行里数出的
+    /// 竖线跟列数对不上（单元格里有转义竖线），那种情况交回整块写。
+    fn write_back_table_row_insertion(
+        &mut self,
+        table_block: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        let Some(columns) = table_block
+            .read(cx)
+            .record
+            .table
+            .as_ref()
+            .map(|table| table.column_count())
+        else {
+            return false;
+        };
+        // 表的最后一行：从本块区间第一行往后走，走到不再以 `|` 开头为止。
+        let mut last_row: Option<(usize, String)> = None;
+        let mut line = self.buffer.line_of(span.start);
+        let final_line = self.buffer.line_of(span.end);
+        while line <= final_line {
+            let text = self.buffer.slice(self.buffer.line_range(line));
+            if !text.trim_start().starts_with('|') {
+                break;
+            }
+            last_row = Some((line, text));
+            line += 1;
+        }
+        let Some((last_row_line, last_row_text)) = last_row else {
+            return false;
+        };
+        // 竖线数对不上列数，说明格子里有转义竖线，骨架算不准。
+        if last_row_text.chars().filter(|character| *character == '|').count() != columns + 1 {
+            return false;
+        }
+        let new_row = last_row_text
+            .split('|')
+            .map(|segment| {
+                if segment.chars().all(|character| character.is_whitespace()) {
+                    segment.to_string()
+                } else {
+                    " ".repeat(segment.chars().count())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+
+        let inserted = format!("\n{new_row}");
+        let offset = self.buffer.line_range(last_row_line).end;
+        let applied = self.buffer.edit(offset..offset, &inserted);
+        self.record_buffer_edit(applied);
+        let delta = inserted.len() as i64;
+        table_block.update(cx, |block, _cx| {
+            if let Some(span) = &block.record.source_span {
+                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
+            }
+        });
+        self.shift_root_spans_after(offset, delta, cx);
+        true
+    }
+
     /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
     ///
     /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
-    /// 别处的 `__强调__` 写法、Setext、CRLF 与末行换行一起洗掉。这张表自己重新
-    /// 排布是允许的（列宽要跟着新的一行走），但改动得局限在它自己的区间里。
-    /// 表挂在容器里（根块没有自己的区间）时算不出这一段，退回整篇重投影。
+    /// 别处的 `__强调__` 写法、Setext、CRLF 与末行换行一起洗掉。表这一级的改动
+    /// 优先走 [`Self::write_back_table_row_insertion`] 那种按行落笔的路，只有算不出
+    /// 行形状时（转义竖线、表挂在容器里没有自己的区间）才重拼这张表——那仍然只在
+    /// 它自己的区间内。
     pub(super) fn write_back_table_structure_edit(
         &mut self,
         table_block: &Entity<Block>,
@@ -329,7 +401,11 @@ impl Editor {
         {
             self.focus_block(cell.entity_id());
         }
-        self.write_back_table_structure_edit(table_block, cx);
+        if self.write_back_table_row_insertion(table_block, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.write_back_table_structure_edit(table_block, cx);
+        }
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
