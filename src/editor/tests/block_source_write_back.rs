@@ -332,6 +332,111 @@ async fn cross_block_delete_keeps_the_other_blocks_bytes_untouched(cx: &mut Test
     );
 }
 
+/// 缩进一条列表项只该动这一条：它挂到上一条底下，被换掉的字节区间是这两条自己。
+#[gpui::test]
+async fn indenting_a_list_item_keeps_the_other_blocks_bytes_untouched(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "- 甲\n",
+        "- 乙\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 丙丁 | 12   |\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-indent");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let second = editor.document.visible_blocks()[1].entity.clone();
+            editor.on_block_event(second, &BlockEvent::RequestIndent, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        FIXTURE.replace("- 甲\n- 乙", "- 甲\n  - 乙").replace('\n', "\r\n"),
+        "缩进改写了这两条列表项之外的字节：{saved:?}"
+    );
+}
+
+/// 提级一条嵌套列表项也只该动列表这一段：后面的段落、表格与行结束符不该被重排。
+#[gpui::test]
+async fn outdenting_a_list_item_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "- 甲\n",
+        "  - 乙\n",
+        "\n",
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 丙丁 | 12   |\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-outdent");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let nested = editor.document.visible_blocks()[1].entity.clone();
+            editor.on_block_event(nested, &BlockEvent::RequestOutdent, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert!(
+        saved.ends_with("\r\n\r\n强调 __下划线__ 结尾\r\n"),
+        "提级改写了列表之外的字节：{saved:?}"
+    );
+    assert!(
+        saved.contains("| ---- | ---- |\r\n| 丙丁 | 12   |"),
+        "提级把不相干表格的列宽填充重排了：{saved:?}"
+    );
+    assert!(
+        saved.starts_with("- 甲\r\n") && !saved.contains("  - 乙") && saved.contains("- 乙"),
+        "提级没落到文件里：{saved:?}"
+    );
+}
+
 /// 勾一个任务复选框只该改那一行的 `[ ]`：整篇重新序列化会把别处的列宽填充、
 /// `__下划线__` 写法、CRLF 与末行换行一起洗掉。
 #[gpui::test]

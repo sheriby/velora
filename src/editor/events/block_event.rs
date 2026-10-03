@@ -63,6 +63,8 @@ impl Editor {
                 | BlockEvent::RequestMergeIntoPrev { .. }
                 | BlockEvent::RequestMergeFromNext
                 | BlockEvent::ToggleTaskChecked
+                | BlockEvent::RequestIndent
+                | BlockEvent::RequestOutdent
         )
         .then(|| self.document.root_layout(cx));
         let visible_before = self.document.flatten_visible_blocks();
@@ -555,6 +557,12 @@ impl Editor {
                     return;
                 }
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+                // 区间锚点取「上一条所在的那一根」：本块被它吸收之后，被换掉的字节
+                // 区间就是「那一根 + 本块」这一段，区间外的块一个字节都不动。
+                let region_anchor = self
+                    .document
+                    .root_ancestor_of(target_parent.entity_id())
+                    .unwrap_or_else(|| target_parent.clone());
 
                 let moved = self.document.with_structure_mutation(cx, |document, cx| {
                     let moved = document.remove_block_by_id_raw(block.entity_id(), cx)?.0;
@@ -573,7 +581,11 @@ impl Editor {
                 };
 
                 self.focus_block(moved.entity_id());
-                self.mark_dirty(cx);
+                if self.write_back_structural_change(&region_anchor, roots_before.as_deref(), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
@@ -582,6 +594,13 @@ impl Editor {
                     return;
                 };
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+                // 提级是把本块从父级挪到上一级：被换掉的区间是「父级所在的那一根」整段。
+                // 本块本来就是根块时（降级成段落）块序列不变，锚点就用它自己。
+                let region_anchor = location
+                    .parent
+                    .as_ref()
+                    .and_then(|parent| self.document.root_ancestor_of(parent.entity_id()))
+                    .unwrap_or_else(|| block.clone());
 
                 if let Some(parent) = location.parent.clone() {
                     let Some(parent_location) =
@@ -610,7 +629,11 @@ impl Editor {
                     self.focus_block(block.entity_id());
                 }
 
-                self.mark_dirty(cx);
+                if self.write_back_structural_change(&region_anchor, roots_before.as_deref(), cx) {
+                    self.mark_dirty_written_back(cx);
+                } else {
+                    self.mark_dirty(cx);
+                }
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }
