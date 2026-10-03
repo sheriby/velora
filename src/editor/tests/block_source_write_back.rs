@@ -332,6 +332,77 @@ async fn cross_block_delete_keeps_the_other_blocks_bytes_untouched(cx: &mut Test
     );
 }
 
+/// 表格结构命令只该动这张表：加一行不许把文档里别的块改写。
+///
+/// 表自己那几行重新排布是允许的（新列宽要容下新的一行），管的是**表外**：段落、
+/// `__下划线__` 写法、CRLF、末行换行都得逐字节还是磁盘上那样。
+#[gpui::test]
+async fn adding_a_table_row_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("write-back-table-row");
+    fs::write(&path, LOSSY_SHAPE_FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            editor.append_table_row(&table, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert!(
+        saved.starts_with("段落文字\r\n\r\n|"),
+        "表前面的块被改写了：{saved:?}"
+    );
+    assert!(
+        saved.ends_with("\r\n\r\n强调 __下划线__ 结尾\r\n"),
+        "表后面的块、行结束符或末行换行被改写了：{saved:?}"
+    );
+
+    let table_lines = saved
+        .split("\r\n")
+        .filter(|line| line.starts_with('|'))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        table_lines.len(),
+        4,
+        "加完一行应该是 4 行表格内容（表头 + 分隔 + 两行数据）：{saved:?}"
+    );
+    assert!(
+        table_lines
+            .iter()
+            .any(|line| line.contains("名称") && line.contains("数量")),
+        "表头内容丢了：{table_lines:?}"
+    );
+    assert!(
+        table_lines
+            .iter()
+            .any(|line| line.contains("甲") && line.contains("1")),
+        "原有数据行的内容丢了：{table_lines:?}"
+    );
+}
+
 /// 多行粘贴也一样只能改粘贴落点那一段。这条管的是「结构一变就整篇重投影」：
 /// 粘贴把一段变三段，块序列变了，如果这时退回整篇重新序列化，不相干的表格列宽
 /// 填充和 `__下划线__` 写法会跟着被洗，磁盘上的 CRLF 与末行换行也一起没了。

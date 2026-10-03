@@ -3,6 +3,24 @@
 use super::*;
 
 impl Editor {
+    /// 表格结构命令只重写这张表自己的源码区间，表外的块一个字节都不动。
+    ///
+    /// `mark_dirty` 的整篇重同步会从块树把全文重新序列化：给一张表加一行，会把
+    /// 别处的 `__强调__` 写法、Setext、CRLF 与末行换行一起洗掉。这张表自己重新
+    /// 排布是允许的（列宽要跟着新的一行走），但改动得局限在它自己的区间里。
+    /// 表挂在容器里（根块没有自己的区间）时算不出这一段，退回整篇重投影。
+    pub(super) fn write_back_table_structure_edit(
+        &mut self,
+        table_block: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.write_back_block_source(table_block, cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
+    }
+
     pub(crate) fn new_table_block(cx: &mut Context<Self>, table: TableData) -> Entity<Block> {
         Self::new_block(cx, BlockRecord::table(table))
     }
@@ -211,7 +229,7 @@ impl Editor {
         {
             self.focus_block(cell.entity_id());
         }
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -246,7 +264,7 @@ impl Editor {
         {
             self.focus_block(cell.entity_id());
         }
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -337,7 +355,7 @@ impl Editor {
         };
         self.set_table_axis_selection(Some(selection), cx);
         self.focus_table_cell_position(table_block, TableCellPosition { row: 0, column }, cx);
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -394,7 +412,7 @@ impl Editor {
             },
             cx,
         );
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -449,7 +467,7 @@ impl Editor {
             },
             cx,
         );
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -510,7 +528,7 @@ impl Editor {
             },
             cx,
         );
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -545,7 +563,7 @@ impl Editor {
         self.rebuild_table_runtimes(cx);
         self.clear_table_axis_selection(cx);
         self.focus_table_cell_position(table_block, TableCellPosition { row: 0, column: 0 }, cx);
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -592,7 +610,7 @@ impl Editor {
             },
             cx,
         );
-        self.mark_dirty(cx);
+        self.write_back_table_structure_edit(table_block, cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
             self.finalize_pending_undo_capture(cx);
@@ -633,6 +651,8 @@ impl Editor {
         self.rebuild_table_runtimes(cx);
         self.clear_table_axis_selection(cx);
         self.focus_block(paragraph.entity_id());
+        // 这里删掉的是整个根块，缓冲区要改的是「一段连续根块」而不是单块的区间，
+        // 单块写回算不出来，先由整篇重投影兜住。
         self.mark_dirty(cx);
         self.request_active_block_scroll_into_view(cx);
         if started_local_capture {
