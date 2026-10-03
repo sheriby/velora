@@ -119,6 +119,9 @@ impl Editor {
         // event (nothing had changed yet), so start a fresh one here that spans
         // the heading/separator conversion. prepare is a no-op if one is pending.
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        let roots_before = self.document.root_layout(cx);
+        // 被换掉的那一段：成标题时是「标题行 + 下划线行」，做分隔线时就是下划线那行。
+        let region_anchor = target.clone().unwrap_or_else(|| block.clone());
 
         if let Some(prev) = target {
             let heading_title = prev.read(cx).record.title.clone();
@@ -158,7 +161,11 @@ impl Editor {
         }
 
         self.rebuild_image_runtimes(cx);
-        self.mark_dirty(cx);
+        if self.write_back_structural_change(&region_anchor, Some(&roots_before), cx) {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
         self.finalize_pending_undo_capture(cx);
         cx.notify();
         true

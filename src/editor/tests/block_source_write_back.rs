@@ -1026,3 +1026,70 @@ async fn multiline_paste_keeps_the_other_blocks_bytes_untouched(cx: &mut TestApp
         "粘贴把行结束符或末行换行弄丢了：{saved:?}"
     );
 }
+
+/// 手打 Setext 下划线成标题：被换掉的只有那两行，别处的字节一个不动。
+#[gpui::test]
+async fn forming_a_setext_heading_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = concat!(
+        "| 名称 | 数量 |\n",
+        "| ---- | ---- |\n",
+        "| 甲   | 1    |\n",
+        "\n",
+        "标题文字\n",
+        "\n",
+        "====\n",
+        "\n",
+        "强调 __下划线__ 结尾\n",
+    );
+
+    let path = temp_markdown_path("write-back-setext");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let underline = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "====")
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有一条 Setext 下划线");
+            editor.on_block_event(
+                underline,
+                &BlockEvent::RequestNewline {
+                    trailing: InlineTextTree::plain(String::new()),
+                    source_already_mutated: false,
+                },
+                cx,
+            );
+        });
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(
+        buffer_text.starts_with("| 名称 | 数量 |\n| ---- | ---- |\n| 甲   | 1    |\n"),
+        "Setext 成标题把前面表格的列宽填充重算了：{buffer_text:?}"
+    );
+    assert!(
+        buffer_text.ends_with("强调 __下划线__ 结尾\n"),
+        "Setext 成标题把后面的块规范化了：{buffer_text:?}"
+    );
+    assert!(
+        buffer_text.contains("标题文字"),
+        "标题文字丢了：{buffer_text:?}"
+    );
+}
