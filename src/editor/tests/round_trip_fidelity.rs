@@ -972,3 +972,178 @@ async fn typing_inside_an_underscore_emphasis_paragraph_keeps_the_underscores(
         "整块落笔把下划线强调洗成了星号：{buffer_text:?}"
     );
 }
+
+/// 编码与 BOM 这一维的保真用例（阶段 3 的「编码/EOL 全矩阵」）。
+///
+/// 上面那张表都走 UTF-8；这一张走真实字节：中文 Windows 常见的 GB18030、
+/// UTF-8 BOM、以及两者与 CRLF 的组合。形状记在 `FileShape` 里，保存按同一形状
+/// 重新编码，所以这些用例验的还是同一件事：没改过的字节必须原样回去。
+fn encoding_matrix_cases() -> Vec<(&'static str, Vec<u8>)> {
+    let gb = |text: &str| encoding_rs::GB18030.encode(text).0.into_owned();
+    let utf8_bom = |text: &str| {
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    };
+    vec![
+        ("UTF-8 BOM", utf8_bom("# 标题\n\n正文\n")),
+        ("UTF-8 BOM 与 CRLF 表格填充", utf8_bom(
+            "# 标题\r\n\r\n| 名称   | 数量 |\r\n|:-------|-----:|\r\n| 苹果   |    3 |\r\n",
+        )),
+        ("GB18030 简体中文", gb("# 会议记录\n\n中文正文与 English\n")),
+        ("GB18030 与 CRLF", gb("# 会议记录\r\n\r\n中文正文\r\n第二行\r\n")),
+        ("GB18030 无末行换行", gb("# 会议记录\n\n中文正文没有末行换行")),
+        ("GB18030 与括号序号列表", gb("1) 第一项\n2) 第二项\n")),
+    ]
+}
+
+/// 打开 → 不编辑 → 保存：编码、BOM、行尾一个字节都不许多、也不许少。
+#[gpui::test]
+async fn opening_then_saving_preserves_encoding_and_bom_byte_for_byte(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let cases = encoding_matrix_cases();
+    let total = cases.len();
+    let mut failures: Vec<String> = Vec::new();
+    for (name, source) in cases {
+        let path = temp_markdown_path(name);
+        fs::write(&path, &source).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        let dirty_on_open = editor.read_with(cx, |editor, _cx| editor.document_dirty);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+
+        let saved = fs::read(&path).expect("read saved file");
+        let report = describe_case(name, &source, &saved, dirty_on_open);
+        if !report.is_empty() {
+            failures.push(report);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "打开→不编辑→保存 改写了编码或 BOM，{} / {} 个用例失败：\n{}",
+        failures.len(),
+        total,
+        failures.join("\n")
+    );
+}
+
+/// 编辑后保存：插进去的那个 ASCII 字符以外，编码字节（含 GB18030 的双字节/四字节
+/// 序列）必须逐字节留在原位。
+#[gpui::test]
+async fn editing_then_saving_keeps_the_encoding_and_every_other_byte(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let mut failures: Vec<String> = Vec::new();
+    for (name, source) in encoding_matrix_cases() {
+        let path = temp_markdown_path(name);
+        fs::write(&path, &source).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+        let Some(first) = editor.read_with(cx, |editor, _cx| {
+            editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+        }) else {
+            failures.push(format!("  [{name}] 打开后一个可见块都没有"));
+            continue;
+        };
+        cx.update(|_window, cx| {
+            first.update(cx, |block, _cx| block.selected_range = 0..0);
+        });
+        cx.simulate_input("X");
+        redraw(cx);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+
+        let saved = fs::read(&path).expect("read saved file");
+        if let Some(report) = describe_insertion_case(name, &source, &saved) {
+            failures.push(report);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "打开→插一个字符→保存 改动了编码里不该动的字节，{} 个用例失败：\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// 一个文件里同时混着 CRLF 和 LF 时的行为，钉在两段上：
+///
+/// - 没编辑过：保存走原字节回写（`TextBuffer::pristine`），混排一个字节都不动。
+/// - 编辑过：必须重新编码，而 `FileShape` 记的是**整个文件**的行尾形状，混排没有
+///   形状可记，于是按 LF 落地（见 `detect_line_ending`：宁可少还原一处，也不把
+///   LF 行升格成 CRLF）。这不是待修的保真缺陷；混排文件要统一行尾，走显式的格式化命令。
+#[gpui::test]
+async fn mixed_line_endings_survive_a_save_and_normalize_to_lf_only_after_an_edit(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let source = "第一行\r\n第二行\n第三行\r\n";
+    let path = temp_markdown_path("混排行尾");
+    fs::write(&path, source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+    });
+    redraw(cx);
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    assert_eq!(
+        fs::read(&path).expect("read saved file"),
+        source.as_bytes(),
+        "没编辑过的混排文件，保存不该动任何字节"
+    );
+
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+    });
+    let Some(first) = first else {
+        panic!("打开后一个可见块都没有");
+    };
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    cx.simulate_input("X");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read saved file"),
+        "X第一行\n第二行\n第三行\n",
+        "编辑后的混排文件应整体按 LF 写回，且除插入处外文本不变"
+    );
+}
