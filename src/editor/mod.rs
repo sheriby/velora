@@ -999,6 +999,47 @@ impl Editor {
         true
     }
 
+    /// 把 `new_text` 与该区间现有字节的**最小差异**写进缓冲区，返回长度差（新 − 旧）。
+    ///
+    /// 拆块只是在光标处多一个分隔空行，可「整段重贴」会把这一块里几百行没碰过的
+    /// 字节也重新写一遍：撤销组因此记下这一整块（86 KiB 的段落走 200 步就是 17 MB），
+    /// 而且序列化写法与原文不同的地方会被顺手规范化（`1)`→`1.`、`__粗__`→`**粗**`）。
+    /// 区间写回的承诺就是「改动以外不动」，那就连真正写下去的字节也照这个来。
+    fn write_minimal_diff(&mut self, range: std::ops::Range<usize>, new_text: &str) -> i64 {
+        let old = self.buffer.slice(range.clone());
+        let common_prefix = old
+            .bytes()
+            .zip(new_text.bytes())
+            .take_while(|(before, after)| before == after)
+            .count();
+        let prefix = (0..=common_prefix)
+            .rev()
+            .find(|count| old.is_char_boundary(*count) && new_text.is_char_boundary(*count))
+            .unwrap_or(0);
+        let rest_old = &old[prefix..];
+        let rest_new = &new_text[prefix..];
+        let common_suffix = rest_old
+            .bytes()
+            .rev()
+            .zip(rest_new.bytes().rev())
+            .take_while(|(before, after)| before == after)
+            .count();
+        let suffix = (0..=common_suffix)
+            .rev()
+            .find(|count| {
+                rest_old.is_char_boundary(rest_old.len() - count)
+                    && rest_new.is_char_boundary(rest_new.len() - count)
+            })
+            .unwrap_or(0);
+
+        let from = range.start + prefix;
+        let to = range.end - suffix;
+        let middle = &new_text[prefix..new_text.len() - suffix];
+        let applied = self.buffer.edit(from..to, middle);
+        self.record_buffer_edit(applied);
+        new_text.len() as i64 - old.len() as i64
+    }
+
     /// 返回 `false` 表示这个块没有可用区间（新建的块、子块、整篇重投影后没被
     /// 记到的空块）：那种情况下按区间写会把字节落错位置，调用方必须退回
     /// [`Self::resync_buffer_and_stable_snapshot`]。
@@ -1022,12 +1063,11 @@ impl Editor {
             return true;
         }
 
-        let applied = self.buffer.edit(old_span.clone(), &new_source);
-        self.record_buffer_edit(applied.clone());
+        let old_len = old_span.end - old_span.start;
+        let delta = self.write_minimal_diff(old_span.clone(), &new_source);
         block.update(cx, |block, _cx| {
-            block.record.source_span = Some(applied.new_range);
+            block.record.source_span = Some(old_span.start..old_span.start + (old_len as i64 + delta) as usize);
         });
-        let delta = new_source.len() as i64 - (old_span.end - old_span.start) as i64;
         if delta != 0 {
             self.shift_root_spans_after(old_span.end, delta, cx);
         }
@@ -1159,11 +1199,8 @@ impl Editor {
             return text.is_empty();
         }
 
-        let replaced_len = region_end - region_start;
-        let applied = self.buffer.edit(region_start..region_end, &text);
-        self.record_buffer_edit(applied);
+        let delta = self.write_minimal_diff(region_start..region_end, &text);
         // 先平移再分配：新块区间的右端可能已经越过 region_end（拆块会变长）。
-        let delta = text.len() as i64 - replaced_len as i64;
         if delta != 0 {
             self.shift_root_spans_after(region_start, delta, cx);
         }
@@ -1330,9 +1367,10 @@ impl Editor {
         if self.buffer.matches_text(text) {
             return;
         }
+        // 仍然只写最小差异：整篇重投影这一遍已经把全文序列化过了，代价付了就付，
+        // 但撤销组不该因此再存一份全文副本（文档 86 KiB × 200 步 = 17 MB）。
         let range = 0..self.buffer.byte_len();
-        let applied = self.buffer.edit(range, text);
-        self.record_buffer_edit(applied);
+        self.write_minimal_diff(range, text);
     }
 
     /// 按重投影出来的文本重建所有根块的源码区间。

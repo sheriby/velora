@@ -431,3 +431,110 @@ async fn undoing_a_dropped_table_puts_the_rows_back_byte_for_byte(cx: &mut TestA
         "撤销一次删表之后，磁盘上的字节不再是原文"
     );
 }
+
+/// 闸门（方案 §6.2.4）：撤销栈打满 200 步，内存必须停在 8 MB 以内。
+///
+/// 旧实现每步存一份全文快照，栈深 200 × 文档大小——10 MiB 文档最坏 2 GB。存增量
+/// 之后每组只有「被换掉的字节 + 它现在占的区间」。这里用勾任务框当步子：它是
+/// `NonCoalescible`（打字那组会在 1 秒合并窗口里并起来，真实时钟下测试没法拉开），
+/// 而且每步只改 `[ ]`↔`[x]` 那几个字节。
+#[gpui::test]
+async fn two_hundred_undo_steps_stay_within_the_memory_budget(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let source = format!(
+        "{}\n",
+        (0..200)
+            .map(|index| format!("- [ ] 任务 {index}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(source.len() > 2048, "夹具太小测不出整篇副本：{}", source.len());
+    let source_len = source.len();
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+
+    for _ in 0..200 {
+        let task = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| matches!(root.read(cx).kind(), BlockKind::TaskListItem { .. }))
+                .cloned()
+                .expect("夹具里应有任务项")
+        });
+        dispatch_block_event(&editor, task, crate::components::BlockEvent::ToggleTaskChecked, cx);
+        redraw(cx);
+    }
+
+    let stored = editor.read_with(cx, |editor, _cx| editor.undo_history_byte_len());
+    let groups = editor.read_with(cx, |editor, _cx| editor.undo_history.len());
+    eprintln!("[measure] {groups} 组撤销记了 {stored} 字节，文档 {source_len} 字节");
+    assert_eq!(groups, 200, "撤销栈没打满，测不到最坏情况：{groups}");
+    assert!(
+        stored <= 8 * 1024 * 1024,
+        "200 步撤销记了 {stored} 字节，超出 8 MB 预算：又在存整篇副本"
+    );
+    // 绝对上限：整篇副本的话这里是 200 × 文档大小，这条会先炸。
+    assert!(
+        stored <= 64 * 1024,
+        "200 步撤销记了 {stored} 字节，文档才 {source_len} 字节：增量存大了"
+    );
+}
+
+/// 撤销负载不该跟着文档大小长。
+///
+/// 同一串动作在小文档和大文档上记的字节必须差不多：增量的成本只与「改了哪些字节」
+/// 有关。整篇副本做不到——文档大一倍，撤销栈就大一倍。
+#[gpui::test]
+async fn undo_memory_does_not_scale_with_document_size(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let stored_for = |cx: &mut TestAppContext, tasks: usize| -> usize {
+        let source = format!(
+            "{}\n",
+            (0..tasks)
+                .map(|index| format!("- [ ] 任务 {index}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+        redraw(cx);
+        for _ in 0..12 {
+            let task = editor.read_with(cx, |editor, cx| {
+                editor
+                    .document
+                    .root_blocks()
+                    .iter()
+                    .find(|root| matches!(root.read(cx).kind(), BlockKind::TaskListItem { .. }))
+                    .cloned()
+                    .expect("夹具里应有任务项")
+            });
+            dispatch_block_event(&editor, task, crate::components::BlockEvent::ToggleTaskChecked, cx);
+            redraw(cx);
+        }
+        editor.read_with(cx, |editor, _cx| editor.undo_history_byte_len())
+    };
+
+    let small = stored_for(cx, 20);
+    let large = stored_for(cx, 4_000);
+    eprintln!("[measure] 撤销负载：小文档 {small} 字节，200 倍任务数的文档 {large} 字节");
+    assert_eq!(
+        small, large,
+        "文档大了 200 倍，撤销负载从 {small} 涨到 {large} 字节：又在按文档大小记账"
+    );
+}
+
+fn dispatch_block_event(
+    editor: &gpui::Entity<Editor>,
+    block: gpui::Entity<crate::components::Block>,
+    event: crate::components::BlockEvent,
+    cx: &mut gpui::VisualTestContext,
+) {
+    editor.update(cx, |editor, cx| {
+        editor.on_block_event(block, &event, cx);
+    });
+}
