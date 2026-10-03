@@ -61,7 +61,7 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
 ///
 /// 收 `&[u8]` 而不是 `&str`：保存的内容可能就是打开时读到的原始字节（未编辑的
 /// 文档），那不必是合法 UTF-8。
-fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let temp_path = autosave_temp_path(path);
     let mut file = std::fs::File::create(&temp_path)?;

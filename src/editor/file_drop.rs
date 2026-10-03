@@ -453,7 +453,10 @@ impl Editor {
             self.clear_pending_drop_replace_state(cx);
             return;
         };
-        let markdown = self.serialized_document_text(cx);
+        // 先取字节再弹面板，和「另存为」同一条规则：保存的字节来自缓冲区，未编辑过的
+        // 部分落盘就是打开时那份原文。取块树序列化会先把下划线强调变成星号、把表格
+        // 列宽重新对齐。
+        let markdown = self.document_bytes_for_save();
         let (default_dir, suggested_name) = self.save_dialog_defaults();
         let prompt = cx.prompt_for_new_path(&default_dir, suggested_name.as_deref());
         let weak_editor = cx.entity().downgrade();
@@ -489,7 +492,7 @@ impl Editor {
                 save_path.set_extension("md");
             }
 
-            if let Err(err) = std::fs::write(&save_path, &markdown) {
+            if let Err(err) = super::persistence::write_atomic(&save_path, &markdown) {
                 let _ = weak_editor_for_write_error.update(cx, |this, cx| {
                     this.abort_pending_drop_replace_after_save(cx);
                 });
