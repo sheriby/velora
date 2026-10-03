@@ -1376,6 +1376,20 @@ impl Editor {
     /// 走 `edit` 而不是整个换掉缓冲区，是为了让撤销组拿到它的逆操作；文本没变时
     /// 什么都不做，「打开后没改过」那份原始字节也就保住了。
     fn apply_resynced_text(&mut self, text: &str) {
+        // 序列化把每根块当「一行」，行尾那个换行不在它的产物里。缓冲区原本以换行
+        // 结尾时必须补回来，否则走一次兜底档位就吃掉文件的末行换行（CRLF 文件连带
+        // 少一个 `\r`）——那是用户没改过的字节。
+        let mut kept;
+        let text = if !text.ends_with('\n')
+            && self.buffer.byte_len() > 0
+            && self.buffer.byte_at(self.buffer.byte_len() - 1) == Some(b'\n')
+        {
+            kept = text.to_string();
+            kept.push('\n');
+            kept.as_str()
+        } else {
+            text
+        };
         if self.buffer.matches_text(text) {
             return;
         }

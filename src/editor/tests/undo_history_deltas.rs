@@ -555,7 +555,7 @@ async fn splitting_a_block_records_only_the_seam_in_the_undo_group(cx: &mut Test
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.clone(), None));
     redraw(cx);
 
-    let target = editor.read_with(cx, |editor, cx| {
+    let target = editor.read_with(cx, |editor, _cx| {
         editor
             .document
             .visible_blocks()

@@ -257,27 +257,27 @@ fn escape_bytes(bytes: &[u8]) -> String {
 
 /// 第三维：打开 → 在第一块开头按回车拆块。这一步只该改写**这一块自己的**字节。
 ///
-/// 回车拆块现在是这样走的：块先把光标之后的文字从自己身上切掉（Changed），编辑器
+/// 回车拆块以前是这样走的：块先把光标之后的文字从自己身上切掉（Changed），编辑器
 /// 按区间把这次切掉写成一次删除，于是这一块在缓冲区里塌成零宽；紧接着的
 /// RequestNewline 再想按区间写回就没有区间可用，只能退回整篇重新序列化——
 /// `__粗__` 变 `**粗**`、`>引用二` 变 `> 引用二`、表格列宽重填、末行换行被丢掉，
 /// 一次回车把全文的写法洗了一遍。
 ///
-/// 这里断言两件事：本块区间以外的字节原样，以及整篇序列化次数没有增加。至于本块
-/// 自己那些没碰到的行（多行块内部的接缝），由 `block_source_write_back` 里的用例
-/// 单独盯着。
+/// 这里断言两件事：本块区间以外的字节原样，以及整篇序列化次数没有增加。
+/// 还会退回整篇重投影的形状——白名单，只许减不许增。
+///
+/// 「引用前缀风格」：在引用容器里按回车走的是 `normalize_rendered_quote_structure`，
+/// 它先把整棵树落进缓冲区再重解析（引用行的换行可能改变结构，比如行首变成 `- 项`）。
+/// 那一趟换实体、整篇序列化，是阶段 2「增量重投影」要换掉的对象；这条形状自己的
+/// **字节**依然逐条断言，所以这里只豁免「整篇序列化次数」那一项。
+const WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED: &[&str] = &["引用前缀风格"];
+
 #[gpui::test]
 async fn splitting_the_first_block_only_touches_that_blocks_bytes(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
     let mut failures: Vec<String> = Vec::new();
     for (name, source) in FIDELITY_CASES {
-        // 「引用前缀风格」单独跳过：在引用容器里按回车走的是 `normalize_rendered_quote_structure`
-        // ——它会先把整棵树落进缓冲区再重解析（引用行的换行可能改变结构，比如行首变成
-        // `- 项`）。那一趟是阶段 2「增量重投影」要换掉的，不是拆块写回的问题。
-        if *name == "引用前缀风格" {
-            continue;
-        }
         let path = temp_markdown_path(name);
         fs::write(&path, source).expect("write fixture");
         let cleanup = path.clone();
@@ -322,7 +322,9 @@ async fn splitting_the_first_block_only_touches_that_blocks_bytes(cx: &mut TestA
         let buffer_after = editor.read_with(cx, |editor, _cx| editor.buffer.text());
         let serializations = editor.read_with(cx, |editor, _| editor.source_serializations.get());
         let mut problems: Vec<String> = Vec::new();
-        if serializations > serializations_before {
+        if serializations > serializations_before
+            && !WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED.contains(name)
+        {
             problems.push("触发了整篇重新序列化".to_string());
         }
         if let Some(span) = &own_span {
@@ -572,3 +574,65 @@ async fn saving_an_edited_non_utf8_file_keeps_its_encoding(cx: &mut TestAppConte
 }
 
 
+
+/// 兜底档位（整篇重投影）也不许吃掉末行换行。
+///
+/// 序列化把每根块当「一行」，行尾那个换行不在它的产物里：缓冲区原本以换行结尾却
+/// 不补回来，兜底一次就把文件的末行换行删掉，CRLF 文件连带少一个 `\r`。现在还会
+/// 走到兜底的是引用容器的重排（`normalize_rendered_quote_structure`），所以这条
+/// 用一个引用夹具盯着——它不该随时间失效：以后哪条路径再退回整篇重投影，这里就红。
+#[gpui::test]
+async fn a_whole_document_resync_keeps_the_final_newline(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> 引用一\n>引用二\n>   引用三\n";
+
+    let path = temp_markdown_path("resync-final-newline");
+    fs::write(&path, FIXTURE.replace('\n', "\r\n")).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有第一个可见块")
+    });
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read(&path).expect("read saved file");
+    assert!(
+        saved.ends_with(b"\r\n"),
+        "兜底重投影吃掉了末行换行（或把 CRLF 降成了 LF）：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+    assert!(
+        saved.starts_with("> 引用一\r\n".as_bytes()),
+        "兜底重投影改写了第一行：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+    // 形状本身也不能变：每个 LF 都得有 CR 在前面，不许混进裸 LF。
+    let total_lf = saved.iter().filter(|byte| **byte == b'\n').count();
+    let crlf_pairs = saved.windows(2).filter(|pair| *pair == b"\r\n").count();
+    assert_eq!(
+        crlf_pairs, total_lf,
+        "行尾形状被混用了：CRLF {crlf_pairs} 处，LF 共 {total_lf} 处"
+    );
+}
