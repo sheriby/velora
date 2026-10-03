@@ -515,6 +515,8 @@ impl Editor {
                     marker.text
                 },
             );
+            // 记号的写法是原文的一部分：块带着它，显示与序列化才不改用户写的 `+`、`1)`。
+            block.update(cx, |block, _cx| block.record.list_marker = marker.style);
             let mut body_index = index + 1;
             let mut pending_blank_lines = 0usize;
             let mut fallback_raw = false;

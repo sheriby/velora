@@ -620,6 +620,7 @@ impl Render for Block {
                         .child(SharedString::from(numbered_list_marker(
                             self.render_depth,
                             self.list_ordinal.unwrap_or(1),
+                            self.record.list_marker.delimiter_or_default(),
                         ))),
                     if showing_rendered_image {
                         // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：

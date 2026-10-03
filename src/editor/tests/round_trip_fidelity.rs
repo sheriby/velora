@@ -889,3 +889,55 @@ async fn a_table_inside_a_quote_maps_its_cells_to_the_real_bytes(cx: &mut TestAp
         "容器里的表格的格子映射没有落在它自己的原文字节上：{mapped:?}"
     );
 }
+
+/// 拆一个 `1)` 的列表项，两个半截都还得写 `1)`/`2)`，不许变成 `1.`。
+///
+/// 用户在原文里用的是圆括号，编辑器却把项当成「只有序号、没有写法」的东西：显示按
+/// 规范补点号，序列化也按规范补点号，于是回车一分为二的那一刻，用户自己写的记号
+/// 被换掉了（用户报修「为啥 1) 还会变成 1. 啊！！」）。
+#[gpui::test]
+async fn splitting_a_paren_numbered_item_keeps_the_paren_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "1) alpha one\n2) beta two\n".to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let item = editor.document.visible_blocks()[0].entity.clone();
+        item.update(cx, |block, _cx| block.selected_range = 4..4);
+        editor.pending_focus = Some(item.entity_id());
+    });
+    redraw(cx);
+    cx.dispatch_action(Newline);
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text, "1) alph\n2) a one\n2) beta two\n",
+        "拆项把用户写的圆括号记号换成了点号"
+    );
+}
+
+/// 拆一个 `+` 的无序项，两个半截都还得写 `+`，不许被规范成 `-`。
+#[gpui::test]
+async fn splitting_a_plus_bulleted_item_keeps_the_plus_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "+ alpha one\n+ beta two\n".to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let item = editor.document.visible_blocks()[0].entity.clone();
+        item.update(cx, |block, _cx| block.selected_range = 4..4);
+        editor.pending_focus = Some(item.entity_id());
+    });
+    redraw(cx);
+    cx.dispatch_action(Newline);
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text, "+ alph\n+ a one\n+ beta two\n",
+        "拆项把用户写的加号记号换成了减号"
+    );
+}

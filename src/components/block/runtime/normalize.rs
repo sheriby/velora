@@ -11,20 +11,30 @@ impl Block {
         &self,
         mut next_title: InlineTextTree,
         cursor: usize,
-    ) -> (BlockKind, InlineTextTree, usize, usize) {
+    ) -> (
+        BlockKind,
+        InlineTextTree,
+        usize,
+        usize,
+        crate::components::ListMarkerStyle,
+    ) {
         if self.is_table_cell() {
-            return (self.kind(), next_title, cursor, 0);
+            return (self.kind(), next_title, cursor, 0, self.record.list_marker);
         }
 
         if !self.uses_raw_text_editing() && self.kind() == BlockKind::Paragraph {
             let visible_text = next_title.visible_text();
             if let Some((kind, prefix_len)) = BlockKind::detect_markdown_shortcut(&visible_text) {
+                // 快捷语法把 `+ ` 变成无序项时，用户写的记号字符是丢掉的那半个信息。
+                let style = BlockKind::detect_list_marker_style(&visible_text)
+                    .unwrap_or(self.record.list_marker);
                 next_title.remove_visible_prefix(prefix_len);
                 return (
                     kind,
                     next_title,
                     cursor.saturating_sub(prefix_len),
                     prefix_len,
+                    style,
                 );
             }
         }
@@ -40,11 +50,18 @@ impl Block {
                     next_title,
                     cursor.saturating_sub(prefix_len),
                     prefix_len,
+                    self.record.list_marker,
                 );
             }
         }
 
-        (self.kind(), next_title, cursor, 0)
+        (
+            self.kind(),
+            next_title,
+            cursor,
+            0,
+            self.record.list_marker,
+        )
     }
 
     fn quote_line_starts_block_syntax(line: &str) -> bool {
@@ -431,7 +448,7 @@ impl Block {
         let keep_projection =
             self.projection.is_some() && self.edit_mode.supports_inline_projection();
 
-        let (next_kind, normalized_title, adjusted_cursor, shortcut_removed_len) =
+        let (next_kind, normalized_title, adjusted_cursor, shortcut_removed_len, next_list_marker) =
             self.normalize_after_title_edit(next_title, cursor_clean);
         let should_restart_numbered_list = old_kind == BlockKind::Paragraph
             && old_title_was_empty
@@ -447,6 +464,7 @@ impl Block {
             .unwrap_or_else(|| adjusted_cursor..adjusted_cursor);
 
         self.record.kind = next_kind;
+        self.record.list_marker = next_list_marker;
         self.record.set_title(normalized_title);
         self.numbered_list_restart_requested = should_restart_numbered_list;
         self.sync_edit_mode_from_kind();

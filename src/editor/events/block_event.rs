@@ -188,7 +188,14 @@ impl Editor {
                 } else {
                     current_kind.newline_sibling_kind()
                 };
-                let new_block = Self::new_block(cx, BlockRecord::new(sibling_kind, trailing.clone()));
+                let marker = block.read(cx).record.list_marker;
+                let mut record = BlockRecord::new(sibling_kind.clone(), trailing.clone());
+                // 拆出来的那半截还排在同一个列表里：记号的写法要跟着走，不然用户写的
+                // `1)`/`+` 在回车那一刻只有前半截保得住。
+                if sibling_kind.is_list_item() {
+                    record.list_marker = marker;
+                }
+                let new_block = Self::new_block(cx, record);
                 if self.view_mode == crate::editor::ViewMode::Source {
                     new_block.update(cx, |block, _cx| block.set_source_document_mode());
                 }

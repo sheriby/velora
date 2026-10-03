@@ -374,7 +374,7 @@
     }
 
     #[gpui::test]
-    async fn imports_parenthesized_ordered_lists_and_serializes_canonical_dot_markers(
+    async fn imports_parenthesized_ordered_lists_and_keeps_the_paren_markers(
         cx: &mut TestAppContext,
     ) {
         let editor = cx.new(|cx| Editor::from_markdown(cx, "1) one\n2) two".to_string(), None));
@@ -394,7 +394,8 @@
             assert_eq!(visible[1].entity.read(cx).display_text(), "two");
             assert_eq!(visible[0].entity.read(cx).list_ordinal, Some(1));
             assert_eq!(visible[1].entity.read(cx).list_ordinal, Some(2));
-            assert_eq!(editor.document.markdown_text(cx), "1. one\n2. two");
+            // 记号的写法是原文的一部分：`1)` 序列化回去还是 `1)`，不再规范成 `1.`。
+            assert_eq!(editor.document.markdown_text(cx), "1) one\n2) two");
         });
     }
 
@@ -417,7 +418,7 @@
             assert_eq!(visible[0].entity.read(cx).display_text(), "parent");
             assert_eq!(visible[1].entity.read(cx).display_text(), "child");
             assert_eq!(visible[1].entity.read(cx).render_depth, 1);
-            assert_eq!(editor.document.markdown_text(cx), "1. parent\n  1. child");
+            assert_eq!(editor.document.markdown_text(cx), "1) parent\n  1) child");
         });
     }
 

@@ -4,6 +4,8 @@ pub(crate) struct ListMarker {
     pub(crate) kind: BlockKind,
     pub(crate) indent_columns: usize,
     pub(crate) content_indent_columns: usize,
+    /// 记号的写法（`+`/`*`/`-`、`.`/`)`），块记录带着它才能显示与序列化都不改用户的原文。
+    pub(crate) style: ListMarkerStyle,
     pub(crate) text: String,
 }
 
@@ -290,15 +292,28 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
             content_indent_columns: display_columns(
                 &line[..indent_bytes + marker.len_utf8() + separator_len],
             ),
+            style: ListMarkerStyle {
+                bullet: Some(marker),
+                delimiter: None,
+            },
             text,
         });
     }
 
     let (digit_len, marker_len, text) = parse_ordered_list_marker(rest)?;
+    let delimiter = match rest.as_bytes().get(digit_len) {
+        Some(b'.') => '.',
+        Some(b')') => ')',
+        _ => return None,
+    };
     Some(ListMarker {
         kind: BlockKind::NumberedListItem,
         indent_columns,
         content_indent_columns: display_columns(&line[..indent_bytes + digit_len + marker_len]),
+        style: ListMarkerStyle {
+            bullet: None,
+            delimiter: Some(delimiter),
+        },
         text: text.to_string(),
     })
 }

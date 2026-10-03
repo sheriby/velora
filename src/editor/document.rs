@@ -9,7 +9,7 @@ pub(super) use gpui::*;
 
 pub(super) use super::Editor;
 pub(super) use crate::components::{
-    BlockKind, BlockRecord, CalloutVariant, CodeFenceOpening, InlineTextTree,
+    BlockKind, BlockRecord, CalloutVariant, CodeFenceOpening, InlineTextTree, ListMarkerStyle,
     parse_footnote_definition_head,
 };
 pub(super) use crate::components::{

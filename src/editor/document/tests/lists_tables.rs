@@ -4,7 +4,7 @@
     use crate::components::{BlockKind, Editor};
 
     #[gpui::test]
-    async fn imports_and_canonicalizes_task_lists(cx: &mut TestAppContext) {
+    async fn imports_task_lists_and_keeps_their_bullet_markers(cx: &mut TestAppContext) {
         let editor = cx.new(|cx| {
             Editor::from_markdown(
                 cx,
@@ -27,7 +27,7 @@
             );
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "- [ ] todo\n- [x] done\n- [x] shipped"
+                "- [ ] todo\n* [x] done\n+ [x] shipped"
             );
         });
     }

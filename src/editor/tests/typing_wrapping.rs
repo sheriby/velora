@@ -421,3 +421,33 @@ async fn undo_scroll_after_document_replace_stays_single_shot(cx: &mut TestAppCo
     assert!(visible, "撤销后活动块应在视口内，当前偏移 {previous:.1}");
 }
 
+
+/// 在空段落里打 `+ ` 变成无序项，记号要留下用户打的那个 `+`。
+///
+/// 快捷语法只回答「这是无序项」，写法是它丢掉的半个信息；丢了写法，这块以后任何
+/// 一次整块落笔都会把 `+` 写成 `-`（同理 `1)` 被写成 `1.`）。
+#[gpui::test]
+async fn typing_a_plus_bullet_shortcut_keeps_the_plus_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    redraw(cx);
+
+    cx.simulate_input("+ 项目");
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("list item");
+        assert_eq!(block.read(cx).kind(), BlockKind::BulletedListItem);
+        assert_eq!(
+            block.read(cx).record.list_marker.bullet,
+            Some('+'),
+            "快捷语法把用户写的加号记号丢了"
+        );
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "+ 项目",
+            "整块序列化把加号写成了减号"
+        );
+    });
+}

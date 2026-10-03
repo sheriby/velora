@@ -3,7 +3,7 @@ use super::*;
 mod tests {
     use super::{
         bulleted_list_marker, effective_table_width, inline_display_font_size,
-        promotes_inline_images, tag_query, wikilink_target,
+        numbered_list_marker, promotes_inline_images, tag_query, wikilink_target,
     };
     use crate::components::{BlockRecord, InlineScript, InlineSpan, InlineStyle};
     use gpui::AppContext;
@@ -96,6 +96,16 @@ mod tests {
         assert_eq!(bulleted_list_marker(1), "\u{25E6}");
         assert_eq!(bulleted_list_marker(2), "\u{25AA}");
         assert_eq!(bulleted_list_marker(9), "\u{25AA}");
+    }
+
+    #[test]
+    fn numbered_list_marker_writes_the_delimiter_the_item_was_parsed_with() {
+        // 显示也要照原文的写法：用户写的是 `1)`，屏上不该变成 `1.`（用户报修
+        // 「为啥 1) 还会变成 1. 啊！！」）。没记过的按规范写点号。
+        assert_eq!(numbered_list_marker(0, 1, '.'), "1.");
+        assert_eq!(numbered_list_marker(0, 12, ')'), "12)");
+        assert_eq!(numbered_list_marker(1, 2, ')'), "b)");
+        assert_eq!(numbered_list_marker(2, 4, ')'), "\u{2163})");
     }
 
     #[test]

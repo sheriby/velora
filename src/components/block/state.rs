@@ -155,6 +155,31 @@ pub struct CodeFenceOpening {
     pub language: Option<SharedString>,
 }
 
+/// 列表项在原文里写下的记号。
+///
+/// 解析时记下来，序列化与绘制都照它写。没有这两位，列表项就只是「有序/无序」，
+/// 用户写的 `1)` 会在显示与重新落笔时变成 `1.`，`+ 项目` 变成 `- 项目`。
+/// `None` 表示按规范写（无序 `-`、有序 `.`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ListMarkerStyle {
+    /// 无序项（含任务项）的子弹字符：`-`、`*` 或 `+`。
+    pub bullet: Option<char>,
+    /// 有序项序号后面的分隔符：`.` 或 `)`。
+    pub delimiter: Option<char>,
+}
+
+impl ListMarkerStyle {
+    /// 无序项实际使用的子弹字符（没记过就是规范的 `-`）。
+    pub fn bullet_or_default(&self) -> char {
+        self.bullet.unwrap_or('-')
+    }
+
+    /// 有序项实际使用的分隔符（没记过就是规范的 `.`）。
+    pub fn delimiter_or_default(&self) -> char {
+        self.delimiter.unwrap_or('.')
+    }
+}
+
 impl BlockKind {
     /// Returns true when blocks of this kind may own child blocks in the
     /// current runtime tree.
@@ -324,6 +349,30 @@ impl BlockKind {
         } else {
             None
         }
+    }
+
+    /// 从用户刚敲下的一行文本里读出列表记号的**写法**：`+ ` 的加号、`1)` 的括号。
+    /// `detect_markdown_shortcut` 只回答「这是哪种块」，写法是它丢掉的半个信息。
+    pub fn detect_list_marker_style(value: &str) -> Option<ListMarkerStyle> {
+        if let Some(bullet @ ('-' | '*' | '+')) = value.chars().next()
+            && value[bullet.len_utf8()..].starts_with([' ', '\t'])
+        {
+            return Some(ListMarkerStyle {
+                bullet: Some(bullet),
+                delimiter: None,
+            });
+        }
+        let digits = value.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+        if digits > 0
+            && let Some(delimiter @ ('.' | ')')) = value[digits..].chars().next()
+            && value[digits + delimiter.len_utf8()..].starts_with([' ', '\t'])
+        {
+            return Some(ListMarkerStyle {
+                bullet: None,
+                delimiter: Some(delimiter),
+            });
+        }
+        None
     }
 
     pub fn parse_atx_heading_line(line: &str) -> Option<(u8, String)> {
@@ -498,6 +547,8 @@ pub struct BlockRecord {
     pub parent: Option<Uuid>,
     pub content: Vec<Uuid>,
     pub raw_fallback: Option<String>,
+    /// 列表项自己写的记号（`+`/`*`/`-`、`.`/`)`）。见 [`ListMarkerStyle`]。
+    pub list_marker: ListMarkerStyle,
     /// 该块在文档缓冲区里占的源码区间（字节）。由导入器在解析时记录，
     /// 不是序列化之后反推出来的——这是「块是文本的投影」这条不变式的载体。
     /// 子块与新建块暂时没有区间（`None`），等接入写回路径后由重投影补上。
@@ -521,6 +572,7 @@ impl BlockRecord {
             parent: None,
             content: Vec::new(),
             raw_fallback: None,
+            list_marker: ListMarkerStyle::default(),
             source_span: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
@@ -640,19 +692,26 @@ impl BlockRecord {
             }
             BlockKind::BulletedListItem => prefixed_multiline(
                 &title_markdown,
-                &format!("{indentation}- "),
+                &format!("{indentation}{} ", self.list_marker.bullet_or_default()),
                 &format!("{indentation}  "),
             ),
             BlockKind::TaskListItem { checked } => prefixed_multiline(
                 &title_markdown,
-                &format!("{indentation}- [{}] ", if checked { "x" } else { " " }),
+                &format!(
+                    "{indentation}{} [{}] ",
+                    self.list_marker.bullet_or_default(),
+                    if checked { "x" } else { " " }
+                ),
                 &format!("{indentation}      "),
             ),
             BlockKind::NumberedListItem => {
                 let ordinal = list_ordinal.unwrap_or(1);
                 prefixed_multiline(
                     &title_markdown,
-                    &format!("{indentation}{ordinal}. "),
+                    &format!(
+                        "{indentation}{ordinal}{} ",
+                        self.list_marker.delimiter_or_default()
+                    ),
                     &format!("{indentation}   "),
                 )
             }

@@ -378,7 +378,7 @@ async fn undo_after_view_mode_switch_keeps_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn undo_first_edit_after_marker_normalization_restores_content(cx: &mut TestAppContext) {
+async fn undo_first_edit_in_a_paren_numbered_item_restores_content(cx: &mut TestAppContext) {
     let editor = cx.new(|cx| Editor::from_markdown(cx, "1) first".to_string(), None));
 
     editor.update(cx, |editor, cx| {
@@ -391,9 +391,9 @@ async fn undo_first_edit_after_marker_normalization_restores_content(cx: &mut Te
     });
 
     editor.update(cx, |editor, cx| {
-        assert_eq!(editor.document.markdown_text(cx), "1. first!");
+        assert_eq!(editor.document.markdown_text(cx), "1) first!");
         editor.undo_document(cx);
-        assert_eq!(editor.document.markdown_text(cx), "1. first");
+        assert_eq!(editor.document.markdown_text(cx), "1) first");
     });
 }
 

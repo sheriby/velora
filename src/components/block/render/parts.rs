@@ -98,11 +98,12 @@ pub(crate) fn effective_image_width(
 
 /// Returns a human-readable list ordinal: numbers at depth 0, lowercase
 /// letters at depth 1, and unicode roman numerals at depth 2+.
-pub(crate) fn numbered_list_marker(depth: usize, ordinal: usize) -> String {
+/// `delimiter` 是该列表项在原文里写的分隔符（`.` 或 `)`），显示时照写。
+pub(crate) fn numbered_list_marker(depth: usize, ordinal: usize, delimiter: char) -> String {
     match depth {
-        0 => format!("{ordinal}."),
-        1 => format!("{}.", alphabetic_list_marker(ordinal)),
-        _ => format!("{}.", roman_list_marker(ordinal)),
+        0 => format!("{ordinal}{delimiter}"),
+        1 => format!("{}{delimiter}", alphabetic_list_marker(ordinal)),
+        _ => format!("{}{delimiter}", roman_list_marker(ordinal)),
     }
 }
 
