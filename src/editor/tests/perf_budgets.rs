@@ -1268,3 +1268,101 @@ async fn probe_attribute_ten_mib_markdown_keystroke(cx: &mut TestAppContext) {
     }
     eprintln!("[attr] markdown 文档 {roots} 根块");
 }
+
+fn measured_prefixes(editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext) -> u64 {
+    editor.read_with(cx, |editor, _| editor.line_prefix_measured.get())
+}
+
+/// 一次真实的编辑序列里，「事后拿文件行与模型行比记号宽度」一次都不该出现。
+///
+/// 每一行让开几字节是解析期记下的数据（不变式 23），块内行数改了那份账跟着改；比出来
+/// 的那条路只是「账还没有」时的退路。这里按形状逐一走过打字、回车、再打字，哪一步还在
+/// 比就把形状名字报出来。还走退路的两族写在不变式 23 末尾：根块拆出来那块没有账（段落、
+/// 围栏在接缝那一步）、缩进代码块连分隔空行一起吃进内容（行数一核对就作废）。
+#[gpui::test]
+async fn a_real_editing_session_never_measures_marker_widths_after_the_fact(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            concat!(
+                "# 标题甲\n",
+                "\n",
+                "段落文字\n",
+                "\n",
+                "- [ ] 任务甲\n",
+                "  - 嵌套乙\n",
+                "\n",
+                "> 引用正文\n",
+                "\n",
+                "```rust\n",
+                "let a = 1;\n",
+                "```\n",
+                "\n",
+                "    let indented = 1;\n",
+                "\n",
+                "| 名称 | 数量 |\n",
+                "| ---- | ---- |\n",
+                "| 甲   | 1    |\n",
+            )
+            .to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+
+    let mut offenders: Vec<&'static str> = Vec::new();
+    let mut before = measured_prefixes(&editor, cx);
+    for (label, wanted) in [
+        ("标题里", "标题甲"),
+        ("任务项里", "任务甲"),
+        ("嵌套项里", "嵌套乙"),
+        ("引用里", "引用正文"),
+    ] {
+        let target = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == wanted)
+                .map(|visible| visible.entity.clone())
+                .unwrap_or_else(|| panic!("夹具里找不到 {wanted:?}: 可见块 = {:?}", editor.document.visible_blocks().iter().map(|v| v.entity.read(cx).display_text().to_string()).collect::<Vec<_>>()))
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(target.entity_id()));
+            target.update(cx, |block, block_cx| block.move_to(block.visible_len(), block_cx));
+        });
+        redraw(cx);
+
+        cx.simulate_input("写");
+        redraw(cx);
+        let now = measured_prefixes(&editor, cx);
+        if now > before {
+            offenders.push(label);
+        }
+        before = now;
+
+        cx.dispatch_action(Newline);
+        redraw(cx);
+        let now = measured_prefixes(&editor, cx);
+        if now > before {
+            offenders.push(label);
+        }
+        before = now;
+
+        cx.simulate_input("字");
+        redraw(cx);
+        let now = measured_prefixes(&editor, cx);
+        if now > before {
+            offenders.push(label);
+        }
+        before = now;
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "这些形状还在事后拿文件行与模型行比记号宽度：{offenders:?}"
+    );
+}
