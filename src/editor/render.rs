@@ -129,16 +129,17 @@ impl RenderedRowSpacingInfo {
 }
 
 /// P4b：行结构计划——折叠过滤与分组扫描的一次性产物，按
-/// (document_revision, fold_state_version, 渲染模式) 缓存。未变更帧直接
+/// (行元数据版本, fold_state_version, toc 版本, 渲染模式) 缓存。未变更帧直接
 /// 复用，不再对全文档做逐块实体读取；元素只在行真正挂载时构建。
+/// 行元数据版本见 [`DocumentTree::row_meta_version`](crate::editor::tree)。
 pub(crate) struct RenderedRowPlan {
-    pub revision: u64,
+    pub row_meta_version: u64,
     pub fold_version: u64,
     pub toc_version: u64,
     pub rendered_mode: bool,
     pub block_gap: f32,
     /// 可见块数：渐进导入（G8）每步只 append + notify，不推进
-    /// document_revision——键里必须带块数，续建出的新块才会渲染。
+    /// 行元数据版本（append 会推进）——键里必须带块数，续建出的新块才会渲染。
     pub visible_len: usize,
     pub rows: Vec<RenderedRowPlanRow>,
     /// P7：行元数据预计算（普通行距/起始下标/行首 id），未变更帧零重算。
@@ -612,7 +613,7 @@ impl Editor {
     fn build_rendered_row_plan(
         &self,
         kept: &[u32],
-        revision: u64,
+        row_meta_version: u64,
         fold_version: u64,
         toc_version: u64,
         rendered_mode: bool,
@@ -734,7 +735,7 @@ impl Editor {
         ));
 
         RenderedRowPlan {
-            revision,
+            row_meta_version,
             fold_version,
             toc_version,
             rendered_mode,

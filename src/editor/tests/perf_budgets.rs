@@ -1402,6 +1402,19 @@ async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestA
 
     cx.simulate_input("字");
     redraw(cx);
+    // 打字不重排行计划（行元数据没变，见 typing_a_plain_character_...），
+    // 换一个真会重排的动作继续测「重建里读了几个实体」：回车拆块。
+    let rebuilds_before_newline = editor.read_with(cx, |editor, _| editor.row_plan_rebuilds.get());
+    assert_eq!(
+        rebuilds_before_newline, 0,
+        "打字不该重排行计划（行元数据没变）"
+    );
+    editor.update(cx, |editor, _cx| {
+        editor.row_plan_block_reads.set(0);
+        editor.row_plan_rebuilds.set(0);
+    });
+    cx.dispatch_action(Newline);
+    redraw(cx);
 
     let (reads, rebuilds, snapshot_rebuilds) = editor.read_with(cx, |editor, _| {
         (
@@ -1415,7 +1428,7 @@ async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestA
     );
     assert!(
         rebuilds >= 1,
-        "这次按键没重建行计划，闸门测不到东西"
+        "拆块之后行计划没重建，闸门测不到东西"
     );
     assert!(
         reads <= sections as u64 * 2 + 16,
@@ -1426,9 +1439,10 @@ async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestA
 
 /// 归因探针（markdown 那份 + **大纲页签打开**）：`[TOC]` 之外，侧栏的大纲页签
 /// 是大纲的另一个读者——它一出现，(a) 每次同步都要把 5 万条标题重新拼成一棵树
-/// （`install_outline`），(b) 每帧还要把整棵树走成元素树。按视口开窗后 (b) 没了、
-/// 原地换标签后 (a) 的整树重拼也没了：实测一次按键 2.3–2.6s → 318ms，剩下的大纲
-/// 93ms 是「每键仍走一遍 10.6 万根块 + 5.3 万条标题克隆」，行计划 2×~90ms。
+/// （`install_outline`），(b) 每帧还要把整棵树走成元素树，(c) 每次按键还要逼行计划
+/// 重排。三处都已收口：按视口开窗、原地换标签、行计划键换成行元数据版本。
+/// 实测一次按键 2.3–2.6s → 正文里 **174–175ms**（行计划 0 次重排）、标题里
+/// 197–272ms，剩下的大纲同步 ~88ms 是「每键仍走一遍 10.6 万根块 + 5.3 万条标题克隆」。
 /// 跑法：`cargo test probe_attribute_ten_mib_markdown_with_outline -- --ignored --nocapture`。
 #[gpui::test]
 #[ignore]
@@ -1473,7 +1487,33 @@ async fn probe_attribute_ten_mib_markdown_with_outline_open(cx: &mut TestAppCont
         let cost = start.elapsed();
         let after = whole_document_passes(&editor, cx);
         eprintln!(
-            "[attr-outline] 第 {i} 次按键 {cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.1}ms；行计划 {} 次 {}ms",
+            "[attr-outline] 第 {i} 次按键（标题里）{cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.1}ms；行计划 {} 次 {}ms",
+            after.outline_rebuilds - before.outline_rebuilds,
+            after.outline_full_rescans - before.outline_full_rescans,
+            after.outline_lines_scanned - before.outline_lines_scanned,
+            (after.outline_nanos - before.outline_nanos) as f64 / 1e6,
+            after.row_plan_rebuilds - before.row_plan_rebuilds,
+            after.row_plan_nanos - before.row_plan_nanos,
+        );
+    }
+
+    // 第二段（正文）：行元数据（层级/分组锚点/目录标记）一个没动，行计划
+    // 应该整个复用（这是按键的常态）。
+    editor.update(cx, |editor, cx| {
+        let paragraph = editor.document.root_blocks()[1].clone();
+        editor.focus_block(paragraph.entity_id());
+        paragraph.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+    for i in 0..3 {
+        let before = whole_document_passes(&editor, cx);
+        let start = Instant::now();
+        cx.simulate_input("x");
+        redraw(cx);
+        let cost = start.elapsed();
+        let after = whole_document_passes(&editor, cx);
+        eprintln!(
+            "[attr-outline] 第 {i} 次按键（正文里）{cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.1}ms；行计划 {} 次 {}ms",
             after.outline_rebuilds - before.outline_rebuilds,
             after.outline_full_rescans - before.outline_full_rescans,
             after.outline_lines_scanned - before.outline_lines_scanned,
@@ -1575,5 +1615,77 @@ async fn typing_inside_a_heading_updates_the_outline_in_place(cx: &mut TestAppCo
             editor.workspace.toc_entries[0].title, "新甲",
             "`[TOC]` 读的条目没跟着换"
         );
+    });
+}
+
+/// 行计划的缓存键不该是「文档修订」：打字只改块内文字，行元数据（层级、分组
+/// 锚点、目录标记）一个没动时，16 万行的计划不该重排（10 MiB 实测一次重排
+/// ~42ms、每键两次）。修的是键——换成一个只在行元数据真变时才动的版本。
+#[gpui::test]
+async fn typing_a_plain_character_does_not_rebuild_the_row_plan(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..300)
+        .map(|index| format!("第 {index} 段正文。\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.root_blocks()[0].clone();
+        editor.focus_block(first.entity_id());
+        first.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| editor.row_plan_rebuilds.get());
+    cx.simulate_input("字");
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| editor.row_plan_rebuilds.get());
+    assert_eq!(
+        after, before,
+        "行元数据没变，打一个字却重排了整篇行计划"
+    );
+
+    // 结构变了（回车拆块）就必须重排，别让闸门被「永远不重排」蒙过去。
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    let after_newline = editor.read_with(cx, |editor, _| editor.row_plan_rebuilds.get());
+    assert!(
+        after_newline > after,
+        "拆块之后行计划没重排（可见列表变了）"
+    );
+}
+
+/// 没有 `[TOC]` 块时，在标题里打字也不该重排行计划：大纲原地换标签会
+/// 推进 `toc_state_version`（那是为了让行计划的折叠过滤把新条目推给 `[TOC]`
+/// 块），正文里没人看目录时这一推进只是白白下架整张计划。侧栏开着（大纲是
+/// 读者）但没有 `[TOC]` 块，就是这一档。
+#[gpui::test]
+async fn typing_in_a_heading_without_a_toc_block_reuses_the_row_plan(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "# 甲\n\n正文一\n\n# 乙\n\n正文二\n".to_string();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+        let first = editor.document.root_blocks()[0].clone();
+        editor.focus_block(first.entity_id());
+        first.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace.toc_entries.len(), 2, "前置：大纲是读者");
+    });
+
+    let before = editor.read_with(cx, |editor, _| editor.row_plan_rebuilds.get());
+    cx.simulate_input("新");
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| editor.row_plan_rebuilds.get());
+    assert_eq!(
+        after, before,
+        "没有 `[TOC]` 块，在标题里打一个字却重排了整篇行计划"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace.toc_entries[0].title, "新甲", "大纲条目没跟上");
     });
 }

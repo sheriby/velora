@@ -133,8 +133,9 @@ pub struct Editor {
     /// 状态栏代码文档行数缓存（P4a）：键 document_revision，避免每帧
     /// 重新序列化整篇文档只为数行数。
     code_line_count_cache: std::cell::Cell<Option<(u64, usize)>>,
-    /// 行结构计划缓存（P4b）：键 (document_revision, fold_state_version,
-    /// 渲染模式)，见 render::RenderedRowPlan。
+    /// 行结构计划缓存（P4b）：键 (块树的行元数据版本, fold_state_version,
+    /// toc 版本, 渲染模式)，见 render::RenderedRowPlan。行元数据版本只在
+    /// 层级/分组锚点/目录标记真变时才动——打字不再每键重排整张计划。
     rendered_row_plan: Option<std::sync::Arc<render::RenderedRowPlan>>,
     /// 折叠状态版本：任何 folded 变更都递增，使行计划重建。
     fold_state_version: u64,
@@ -142,6 +143,7 @@ pub struct Editor {
     /// 用于后台 file_version 哈希写回时的竞态校验。
     open_generation: u64,
     /// TOC 条目版本：大纲重建后递增（[TOC] 块的条目同步随行计划进行）。
+    /// 只在正文里真有 `[TOC]` 块（读者）时递增，见 tree_sync 的换标签路径。
     toc_state_version: u64,
     /// 内容栏宽度变更时丢弃另一宽度下测得的行高。
     row_stride_width: Option<f32>,

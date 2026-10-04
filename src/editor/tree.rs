@@ -80,6 +80,9 @@ pub(super) struct VisibleTreeSnapshot {
     visible: Vec<VisibleBlock>,
     /// 与 `visible` 一一对齐的行元数据（`RenderedRowPlan` 的分组与折叠过滤读它）。
     row_spacing: Vec<crate::editor::render::RenderedRowSpacingInfo>,
+    /// 显示文本是 `[TOC]` 的行有几条：正文里有没有目录读者，行计划的缓存键
+    /// 与大纲的「换标签要不要叫醒折叠过滤」都靠它判断。
+    toc_rows: usize,
     visible_index_by_entity: HashMap<EntityId, usize>,
     location_by_entity: HashMap<EntityId, BlockLocation>,
     last_visible_descendant_by_entity: HashMap<EntityId, EntityId>,
@@ -89,6 +92,7 @@ impl VisibleTreeSnapshot {
     fn clear(&mut self) {
         self.visible.clear();
         self.row_spacing.clear();
+        self.toc_rows = 0;
         self.visible_index_by_entity.clear();
         self.location_by_entity.clear();
         self.last_visible_descendant_by_entity.clear();
@@ -123,6 +127,11 @@ pub(super) struct DocumentTree {
     /// O(文档)：10 MiB 一次按键那 175 毫秒的第一嫌疑就是这里，先把它变成数得到的东西。
     pub(crate) snapshot_rebuilds: std::cell::Cell<u64>,
     pub(crate) snapshot_nanos: std::cell::Cell<u64>,
+    /// 行元数据（`VisibleTreeSnapshot::row_spacing` 那一份）的版本：可见列表
+    /// 同步整棵重排、增量追加、或某一块的行标记（`is_toc`/`had_toc`）翻面时 +1。
+    /// 行计划的缓存键用它而不是「文档修订」——打字只改块内文字时行元数据不动，
+    /// 16 万行的计划不该为此重排（10 MiB 实测一次重排 ~42ms、每键两次）。
+    row_meta_version: u64,
 }
 
 impl DocumentTree {
@@ -164,7 +173,17 @@ impl DocumentTree {
             whole_document_renders: std::cell::Cell::new(0),
             snapshot_rebuilds: std::cell::Cell::new(0),
             snapshot_nanos: std::cell::Cell::new(0),
+            row_meta_version: 0,
         }
+    }
+
+    pub(crate) fn row_meta_version(&self) -> u64 {
+        self.row_meta_version
+    }
+
+    /// 正文里有没有 `[TOC]` 块在等目录条目（折叠掉的也算：折起来只是不显示）。
+    pub(super) fn has_toc_reader(&self) -> bool {
+        self.snapshot.toc_rows > 0
     }
 
     pub(super) fn pending_tail(&self) -> Option<&PendingTail> {
@@ -224,8 +243,18 @@ impl DocumentTree {
         let is_toc = is_paragraph && block.display_text().trim().eq_ignore_ascii_case("[toc]");
         let had_toc = is_paragraph && !block.toc_entries.is_empty();
         let spacing = &mut self.snapshot.row_spacing[index];
-        spacing.is_toc = is_toc;
-        spacing.had_toc = had_toc;
+        if spacing.is_toc != is_toc || spacing.had_toc != had_toc {
+            if spacing.is_toc != is_toc {
+                if is_toc {
+                    self.snapshot.toc_rows += 1;
+                } else {
+                    self.snapshot.toc_rows = self.snapshot.toc_rows.saturating_sub(1);
+                }
+            }
+            spacing.is_toc = is_toc;
+            spacing.had_toc = had_toc;
+            self.row_meta_version = self.row_meta_version.wrapping_add(1);
+        }
     }
 
     pub(super) fn flatten_visible_blocks(&self) -> Vec<VisibleBlock> {
@@ -374,6 +403,7 @@ impl DocumentTree {
                 }
             }
         }
+        self.row_meta_version = self.row_meta_version.wrapping_add(1);
     }
 
     /// Materializes every remaining pending line.
@@ -728,6 +758,7 @@ impl DocumentTree {
         );
         self.snapshot_rebuilds
             .set(self.snapshot_rebuilds.get() + 1);
+        self.row_meta_version = self.row_meta_version.wrapping_add(1);
         self.snapshot_nanos.set(
             self.snapshot_nanos.get() + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
         );
@@ -930,6 +961,9 @@ impl DocumentTree {
                     had_toc,
                 ),
             );
+            if is_toc {
+                snapshot.toc_rows += 1;
+            }
             snapshot
                 .visible_index_by_entity
                 .insert(entity_id, visible_index);

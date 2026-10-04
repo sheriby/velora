@@ -65,11 +65,12 @@ impl Render for Editor {
         self.sync_window_title(window, &strings);
 
         let d = &theme.dimensions;
-        // P4b：键命中时整帧复用行结构计划；未命中（编辑/折叠/大纲/模式
-        // 切换后的第一帧）才做一次全文档扫描。
+        // P4b：键命中时整帧复用行结构计划；未命中（行元数据/折叠/大纲/模式
+        // 变化后的第一帧）才做一次全文档扫描。键用行元数据的版本而不是文档修订：
+        // 打字只改块内文字时行元数据不动，计划就该照用。
         let rendered_mode = self.view_mode == crate::editor::ViewMode::Rendered;
         let plan_key = (
-            self.document_revision,
+            self.document.row_meta_version(),
             self.fold_state_version,
             self.toc_state_version,
             rendered_mode,
@@ -80,7 +81,7 @@ impl Render for Editor {
             .rendered_row_plan
             .clone()
             .filter(|plan| {
-                plan.revision == plan_key.0
+                plan.row_meta_version == plan_key.0
                     && plan.fold_version == plan_key.1
                     && plan.toc_version == plan_key.2
                     && plan.rendered_mode == plan_key.3

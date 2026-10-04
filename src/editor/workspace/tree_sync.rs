@@ -702,7 +702,13 @@ impl Editor {
             entry.line = heading.line;
             entry.level = heading.level;
         }
-        self.toc_state_version = self.toc_state_version.wrapping_add(1);
+        // `toc_state_version` 是给行计划的折叠过滤下的命令：下一帧把新条目推给
+        // 正文里的 `[TOC]` 块。没有 `[TOC]` 块时推进它只是白白下架整张行计划
+        // （10 MiB 一次重排 ~42ms，而在标题里打字是每键都来的），所以只在真的有
+        // 读者时才推。`is_toc` 自己的翻面走 `refresh_row_spacing_for` 的版本。
+        if self.document.has_toc_reader() {
+            self.toc_state_version = self.toc_state_version.wrapping_add(1);
+        }
         true
     }
 
