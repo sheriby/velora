@@ -479,7 +479,7 @@ impl Editor {
         block_ranges: &mut HashMap<EntityId, Range<usize>>,
         cx: &App,
     ) -> usize {
-        let (kind, list_ordinal, title, children) = {
+        let (kind, list_ordinal, title, content_marker_len, children) = {
             let block_ref = block.read(cx);
             let kind = block_ref.kind();
             let title = (!matches!(
@@ -499,6 +499,7 @@ impl Editor {
                 kind,
                 block_ref.list_ordinal,
                 title,
+                block_ref.record.content_marker_len,
                 block_ref.children.clone(),
             )
         };
@@ -542,7 +543,17 @@ impl Editor {
             BlockKind::Heading { level } => self.push_inline_block_mapping(
                 block,
                 title.expect("heading title").markdown().to_string(),
-                format!("{}{} ", "  ".repeat(list_depth), "#".repeat(level as usize)),
+                // 记号在这一行里占几位：导入时量过就按量到的算。Setext 标题的内容行
+                // 根本没有 `# `，缩进过的 ATX 前面还压着空格——按模型拼一个 `# `，
+                // 块内每个偏移就整体漂几个字节。
+                match content_marker_len {
+                    Some(marker_len) if list_depth == 0 => " ".repeat(marker_len),
+                    _ => format!(
+                        "{}{} ",
+                        "  ".repeat(list_depth),
+                        "#".repeat(level as usize)
+                    ),
+                },
                 String::new(),
                 quote_depth,
                 absolute_start,

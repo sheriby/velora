@@ -872,10 +872,20 @@ pub(crate) fn native_block(
     kind: BlockKind,
     markdown: String,
 ) -> Entity<crate::editor::Block> {
-    Editor::new_block(
-        cx,
-        BlockRecord::new(kind, InlineTextTree::from_markdown(&markdown)),
-    )
+    native_block_with_marker(cx, kind, markdown, None)
+}
+
+/// 同上，另外把「内容在这一行里从第几个字节开始」交给块记着（读侧算块内偏移用，
+/// 见 [`BlockRecord::content_marker_len`]）。
+pub(crate) fn native_block_with_marker(
+    cx: &mut Context<Editor>,
+    kind: BlockKind,
+    markdown: String,
+    content_marker_len: Option<usize>,
+) -> Entity<crate::editor::Block> {
+    let mut record = BlockRecord::new(kind, InlineTextTree::from_markdown(&markdown));
+    record.content_marker_len = content_marker_len;
+    Editor::new_block(cx, record)
 }
 
 pub(crate) fn standalone_image_block(cx: &mut Context<Editor>, markdown: String) -> Entity<crate::editor::Block> {

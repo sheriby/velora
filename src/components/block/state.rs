@@ -376,6 +376,15 @@ impl BlockKind {
     }
 
     pub fn parse_atx_heading_line(line: &str) -> Option<(u8, String)> {
+        Self::parse_atx_heading_line_with_marker(line)
+            .map(|(level, content, _marker_len)| (level, content))
+    }
+
+    /// 同 `parse_atx_heading_line`，另外给出**内容在这一行里从第几个字节开始**。
+    ///
+    /// 记号（含它后面的那个空格与本行前导缩进）占几位是文件里的事实，按模型拼
+    /// `# ` 会算错：缩进过的 `  # 标题` 内容在第 3 个字节。读侧的块内偏移靠它。
+    pub fn parse_atx_heading_line_with_marker(line: &str) -> Option<(u8, String, usize)> {
         let trimmed_end = line.trim_end();
         let leading_spaces = trimmed_end.bytes().take_while(|b| *b == b' ').count();
         if leading_spaces > 3 {
@@ -389,6 +398,7 @@ impl BlockKind {
         }
 
         let content = rest[level..].strip_prefix(' ')?;
+        let marker_len = leading_spaces + level + 1;
         let mut content = content.trim_end().to_string();
         if let Some(closing_hash_start) = content.rfind(' ')
             && content[closing_hash_start + 1..]
@@ -399,7 +409,7 @@ impl BlockKind {
             content = content.trim_end().to_string();
         }
 
-        Some((level as u8, content))
+        Some((level as u8, content, marker_len))
     }
 
     pub fn parse_setext_underline(line: &str) -> Option<u8> {
@@ -553,6 +563,11 @@ pub struct BlockRecord {
     /// 不是序列化之后反推出来的——这是「块是文本的投影」这条不变式的载体。
     /// 子块与新建块暂时没有区间（`None`），等接入写回路径后由重投影补上。
     pub source_span: Option<std::ops::Range<usize>>,
+    /// 本块的内容在它**那一行**里从第几个字节开始（记号与记号后面的空格都算）。
+    /// 由导入器量出来：Setext 标题的内容行根本没有记号（0），缩进过的 ATX 记号前面
+    /// 还有空格。读侧算块内偏移靠它，不必再按模型拼一个 `# ` 猜宽度。
+    /// `None` = 没量过（编辑中新建的块），按规范记号算就是对的。
+    pub content_marker_len: Option<usize>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -574,6 +589,7 @@ impl BlockRecord {
             raw_fallback: None,
             list_marker: ListMarkerStyle::default(),
             source_span: None,
+            content_marker_len: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };

@@ -295,10 +295,12 @@ impl Editor {
                 .get(index + 1)
                 .and_then(|next| BlockKind::parse_setext_underline(next))
             {
-                roots.push(native_block(
+                // Setext 标题的内容行没有记号：内容就从这一行的第 0 个字节开始。
+                roots.push(native_block_with_marker(
                     cx,
                     BlockKind::Heading { level },
                     line.trim_end().to_string(),
+                    Some(0),
                 ));
                 spans.push(index..index + 2);
                 index += 2;
@@ -361,8 +363,15 @@ impl Editor {
                 continue;
             }
 
-            if let Some((level, content)) = BlockKind::parse_atx_heading_line(line) {
-                roots.push(native_block(cx, BlockKind::Heading { level }, content));
+            if let Some((level, content, marker_len)) =
+                BlockKind::parse_atx_heading_line_with_marker(line)
+            {
+                roots.push(native_block_with_marker(
+                    cx,
+                    BlockKind::Heading { level },
+                    content,
+                    Some(marker_len),
+                ));
                 spans.push(index..index + 1);
                 index += 1;
                 continue;
