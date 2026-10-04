@@ -10,12 +10,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if !self.workspace.is_open && !self.sidebar_peek && !self.sidebar_overlay_closing {
-            // 侧栏收起也要同步文档大纲：块级 `[TOC]` 的条目来自这里，曾因
-            // 「启动不展开侧边栏」回归成空目录（outline 按文档源去重，收起
-            // 时每帧只付一次字符串比较）。文件树同步仍留给打开的抽屉。
-            // 收回动画期间面板要继续渲染（浮层还在滑出），所以只在完全
-            // 静止的收起状态才早退。
-            self.sync_workspace_outline(cx);
+            // 侧栏收起时不再在这里重算文档大纲：它曾经的读者是正文里的块级 `[TOC]`，
+            // 而现在 `[TOC]` 在自己需要的那一帧直接要一份清单（见
+            // `apply_heading_fold_filter`），于是「没人看也算一遍」的每帧整篇开销没了。
+            // 文件树同步仍留给打开的抽屉。收回动画期间面板要继续渲染（浮层还在滑出），
+            // 所以只在完全静止的收起状态才早退。
             return None;
         }
 

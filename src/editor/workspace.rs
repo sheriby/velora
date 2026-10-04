@@ -247,7 +247,19 @@ pub(super) struct WorkspaceState {
     /// 只有该文件被重新加载才清除，扫描或普通错误清空不得影响它。
     external_change_conflict: Option<(PathBuf, String)>,
     outline_tree: Vec<WorkspaceTreeNode>,
-    outline_source: Option<String>,
+    /// 大纲的增量缓存：每根块「自己那几行里有哪些标题」的摘要，按块的 EntityId 存。
+    /// 键用 EntityId 而不是下标：重投影只换掉改动那几根的实体，新 id 自然没缓存
+    /// （于是重算），没动的块 id 不变（于是照用），删掉的块在下次重建时整张换掉。
+    outline_segments: HashMap<EntityId, OutlineSegment>,
+    /// 上次同步时的根块数。懒导入把尾部的块补进来时一个字节都没改，只靠
+    /// [`TextBuffer::take_dirty_region`](crate::editor::buffer::TextBuffer) 发现不了。
+    outline_root_count: usize,
+    /// 整份缓存作废（换文档、整篇重投影）：下一次同步无条件重扫。
+    outline_stale: bool,
+    /// 待重扫的字节范围。除了缓冲区自己记的「哪些字节被改过」，还要并上「区间接缝
+    /// 被重新分过」的范围：拆块/合块时块自己的字节可以一个字没动，但它现在指着的
+    /// 是一段不同的字节，只问缓冲区就漏掉了这一类（差分测试抓到过）。
+    outline_dirty: Option<Range<usize>>,
     /// 扁平标题清单（roadmap C2）：供正文里的 `[TOC]` 块渲染目录。
     pub(crate) toc_entries: Vec<TocEntry>,
     expanded: HashSet<String>,
@@ -305,7 +317,10 @@ impl Default for WorkspaceState {
             file_error: None,
             external_change_conflict: None,
             outline_tree: Vec::new(),
-            outline_source: None,
+            outline_segments: HashMap::new(),
+            outline_root_count: 0,
+            outline_stale: true,
+            outline_dirty: None,
             toc_entries: Vec::new(),
             expanded: HashSet::new(),
             tree_refresh_generation: 0,

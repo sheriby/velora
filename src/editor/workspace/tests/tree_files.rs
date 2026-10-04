@@ -1,7 +1,7 @@
 use super::super::{
     Editor, TreeSortPreference, WorkspaceSelection,
     WorkspaceState,
-    WorkspaceTreeKind, build_outline_tree, clamp_workspace_panel_width,
+    WorkspaceTreeKind, WorkspaceTreeNode, build_outline_tree, clamp_workspace_panel_width,
     create_workspace_file, create_workspace_folder, is_code_file, tree_node_path,
     path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
     scan_workspace_dir,
@@ -528,4 +528,182 @@ async fn saving_an_edited_code_file_keeps_the_file_shape(cx: &mut TestAppContext
 
     let saved = fs::read_to_string(&path).expect("read saved file");
     assert_eq!(saved, format!("X{original}"), "改一个字符之后代码文件的形状被重排了");
+}
+
+/// 把大纲树摊平成可比较的形状：(整篇行号, 层级, 标题文字, 缩进深度)。
+fn outline_shape(nodes: &[WorkspaceTreeNode]) -> Vec<(usize, u8, String, usize)> {
+    fn visit(
+        nodes: &[WorkspaceTreeNode],
+        depth: usize,
+        out: &mut Vec<(usize, u8, String, usize)>,
+    ) {
+        for node in nodes {
+            if let WorkspaceTreeKind::Heading { line, level } = node.kind {
+                out.push((line, level, node.label.clone(), depth));
+            }
+            visit(&node.children, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    visit(nodes, 0, &mut out);
+    out
+}
+
+/// 大纲现在是「每根块一份行摘要」拼出来的，这条路必须与「把整篇按行扫一遍」逐字节
+/// 等价：围栏里的 `#`、Setext 的上一行、缩进过的 `#`、四空格缩进的代码、front
+/// matter、没闭合的围栏跨过块边界……每一种形状都在打字、按回车、删字之后各比一次。
+#[gpui::test]
+async fn the_incremental_outline_matches_a_whole_document_scan(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    const SHAPES: &[(&str, &str)] = &[
+        ("层级混排", "# 一\n\n## 二\n\n### 三\n\n## 四\n\n# 五\n"),
+        (
+            "围栏里的井号",
+            "# 外面\n\n```text\n# 里面不是标题\n```\n\n# 外面乙\n",
+        ),
+        (
+            "没闭合的围栏",
+            "# 前面\n\n```\n# 掉进围栏里\n\n# 也还在围栏里\n",
+        ),
+        (
+            "Setext 标题",
+            "一级标题\n========\n\n正文\n\n二级标题\n--------\n\n# ATX\n",
+        ),
+        (
+            "缩进过的井号",
+            "  # 两格算标题\n\n    # 四格是代码\n\n# 顶格\n",
+        ),
+        (
+            "front matter",
+            "---\ntitle: 笔记\n# 这不是标题\n---\n\n# 这才是\n",
+        ),
+        (
+            "引用与列表里",
+            "# 顶\n\n> 引用一\n> # 引用里的井号\n\n- 项\n  # 列表续行\n",
+        ),
+        (
+            "表格里的井号",
+            "# 顶\n\n| 名称 | 说明 |\n| --- | --- |\n| a | # 不算 |\n\n# 尾\n",
+        ),
+        ("划线单独成段", "正文\n\n===\n\n# 标题\n"),
+    ];
+
+    for (name, document) in SHAPES {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, (*document).to_string(), None));
+        cx.run_until_parked();
+
+        let check = |tag: &str, editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext| {
+            editor.update(cx, |editor, cx| {
+                editor.sync_workspace_outline(cx);
+                let by_segments = outline_shape(&editor.workspace.outline_tree);
+                let whole_source = editor.buffer.text();
+                let whole = build_outline_tree(&whole_source);
+                assert_eq!(
+                    by_segments,
+                    outline_shape(&whole),
+                    "「{name}」{tag}之后，按块拼的大纲与整篇扫的不一样：{by_segments:?} vs {:?}\n文本 {whole_source:?}",
+                    outline_shape(&whole),
+                );
+            });
+        };
+        check("打开", &editor, cx);
+
+        // 一块一块地落笔：在每根块的块首打一个字、再按一次回车，每步都比对一次。
+        let root_count = editor.read_with(cx, |editor, _| editor.document.root_count());
+        let mut typed = true;
+        for index in 0..root_count {
+            for _ in 0..2 {
+                let Some(root) = editor.update(cx, |editor, _cx| {
+                    let root = editor.document.root_blocks().get(index)?.clone();
+                    editor.focus_block(root.entity_id());
+                    Some(root)
+                }) else {
+                    break;
+                };
+                let tag = if typed { "块首打字" } else { "块首回车" };
+                cx.update(|window, cx| {
+                    root.update(cx, |block, cx| {
+                        block.selected_range = 0..0;
+                        if typed {
+                            <crate::components::Block as EntityInputHandler>::replace_text_in_range(
+                                block, None, "甲", window, cx,
+                            );
+                        } else {
+                            block.on_newline(&crate::components::Newline, window, cx);
+                        }
+                    });
+                });
+                typed = !typed;
+                cx.run_until_parked();
+                check(&format!("第 {index} 根{tag}"), &editor, cx);
+            }
+        }
+    }
+}
+
+/// 大纲只为「在看它的人」算：侧栏收起、正文里又没有 `[TOC]` 块时，打一个字都不该
+/// 重算一遍（旧实现每帧拿整篇文本比一次，再把整篇按行重扫）；正文里有 `[TOC]` 块时，
+/// 收起侧栏也要算——那是它的读者。
+#[gpui::test]
+async fn the_outline_is_only_built_for_a_reader(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 一\n\n正文段落。\n".to_string(), None)
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    let before = editor.read_with(cx, |editor, _| editor.outline_rebuilds.get());
+    let root = editor.update(cx, |editor, _cx| {
+        let root = editor.document.root_blocks()[1].clone();
+        editor.focus_block(root.entity_id());
+        root
+    });
+    cx.update(|window, cx| {
+        root.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <crate::components::Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "甲", window, cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.outline_rebuilds.get(),
+            before,
+            "侧栏收起又没有 `[TOC]` 块，打一个字却重算了一遍大纲"
+        );
+    });
+
+    // 正文里出现 `[TOC]`：它自己是读者，收起侧栏也得把清单算出来。
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_markdown("[TOC]\n\n# 一\n\n正文段落。\n".to_string(), None, cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor
+                .workspace
+                .toc_entries
+                .iter()
+                .map(|entry| entry.title.clone())
+                .collect::<Vec<_>>(),
+            vec!["一".to_string()],
+            "有 `[TOC]` 块却没算大纲"
+        );
+    });
 }

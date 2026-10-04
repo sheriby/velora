@@ -69,7 +69,7 @@ impl Editor {
         // 下面再点文件就自动置顶（用户报修）。重扫照旧会刷新内容。
         let previous_root = self.workspace.root.clone();
         self.clear_workspace_file_error();
-        self.workspace.outline_source = None;
+        self.workspace.outline_stale = true;
         if self.workspace.root.is_none() {
             self.workspace.root = self.workspace_root_for_current_file();
         }

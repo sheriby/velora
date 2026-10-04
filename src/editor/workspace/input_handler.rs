@@ -345,15 +345,84 @@ pub(crate) fn flatten_outline_entries(nodes: &[WorkspaceTreeNode]) -> Vec<TocEnt
     entries
 }
 
-pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
-    let mut roots = Vec::new();
-    let mut stack: Vec<(u8, Vec<usize>)> = Vec::new();
+/// 一条标题在大纲里的位置：整篇行号、层级、标题文字。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OutlineHeading {
+    pub(crate) line: usize,
+    pub(crate) level: u8,
+    pub(crate) label: String,
+}
+
+/// 一根块在大纲里的那一份，按「这块自己的行」算好存着。
+///
+/// 分块扫再拼起来，与整篇扫一遍，必须给出同一个结果：`headings` 由
+/// [`outline_headings`] 这同一个函数产出，行号只是差了 `first_line`。
+/// 跨块的状态只有两处可能漏：未闭合的围栏（记在 `ends_inside_fence`，见调用方
+/// 的退回分支）与 Setext 的「上一行」——后者的正文与划线之间没有空行，解析器
+/// 不会在那里分块，所以划线所在块的上一行必是空行或前一块的最后一行，两种都当不出标题。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OutlineSegment {
+    /// 这段第一行在整篇里的行号。存绝对行号，但块整体上移/下移时可以用
+    /// [`Self::shifted_to`] 平移，不必回头重扫字节。
+    pub(crate) first_line: usize,
+    /// 扫这一段时它占的字节数。字节数变了就说明这段的字节被重新分配过（拆块、合块
+    /// 把接缝挪了位置），那份摘要不再是这段的了——必须重扫。
+    pub(crate) byte_len: usize,
+    /// 这段有几行（闸门用它数「一次按键真重扫了多少行」）。
+    pub(crate) lines: usize,
+    pub(crate) headings: Vec<OutlineHeading>,
+    /// 这段结束时还在围栏里：围栏没闭合，后面的行都不该算标题。
+    pub(crate) ends_inside_fence: bool,
+}
+
+impl OutlineSegment {
+    /// 平移行号（内容没变，只是这块被上面的编辑挪了位置）。
+    pub(crate) fn shifted_to(&self, first_line: usize) -> Self {
+        let delta = first_line as i64 - self.first_line as i64;
+        Self {
+            first_line,
+            byte_len: self.byte_len,
+            lines: self.lines,
+            headings: self
+                .headings
+                .iter()
+                .map(|heading| OutlineHeading {
+                    line: (heading.line as i64 + delta).max(0) as usize,
+                    level: heading.level,
+                    label: heading.label.clone(),
+                })
+                .collect(),
+            ends_inside_fence: self.ends_inside_fence,
+        }
+    }
+
+    /// 内容与另一段相同吗？行号平移不算内容变了。
+    pub(crate) fn same_content_as(&self, other: &Self) -> bool {
+        self.lines == other.lines
+            && self.ends_inside_fence == other.ends_inside_fence
+            && self.headings.len() == other.headings.len()
+            && self
+                .headings
+                .iter()
+                .zip(other.headings.iter())
+                .all(|(mine, theirs)| {
+                    mine.level == theirs.level
+                        && mine.label == theirs.label
+                        && mine.line == theirs.line
+                })
+    }
+}
+
+/// 扫一段行，按出现顺序取出其中的标题。`first_line` 是这段第一行在整篇里的行号。
+///
+/// 大纲读的是文件里的那份文本，所以 Setext 标题必须在这里也认得——以前它读重新
+/// 序列化的文本，Setext 已经被转成 `#` 才进来。
+fn outline_headings(first_line: usize, lines: &str) -> (Vec<OutlineHeading>, bool) {
+    let mut headings = Vec::new();
     let mut fence: Option<(char, usize)> = None;
-    // 大纲读的是文件里的那份文本，所以 Setext 标题必须在这里也认得——
-    // 以前它读重新序列化的文本，Setext 已经被转成 `#` 才进来。
     let mut previous: Option<(usize, &str)> = None;
 
-    for (line_index, line) in markdown.lines().enumerate() {
+    for (offset, line) in lines.lines().enumerate() {
         let trimmed = line.trim_start();
         if let Some((marker, len)) = fence {
             if is_closing_fence(trimmed, marker, len) {
@@ -370,7 +439,7 @@ pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
         }
 
         let heading = match BlockKind::parse_atx_heading_line(line) {
-            Some((level, title)) => Some((line_index, level, title)),
+            Some((level, title)) => Some((offset, level, title)),
             None => match setext_level(trimmed).zip(previous) {
                 Some((level, (caption_index, caption)))
                     if is_setext_caption(caption.trim()) =>
@@ -381,45 +450,79 @@ pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
             },
         };
 
-        if let Some((heading_line, level, title)) = heading {
-            while stack
-                .last()
-                .is_some_and(|(parent_level, _)| *parent_level >= level)
-            {
-                stack.pop();
-            }
-
-            let node = WorkspaceTreeNode {
-                id: format!("outline:{heading_line}"),
-                label: title,
-                kind: WorkspaceTreeKind::Heading {
-                    line: heading_line,
-                    level,
-                },
-                children: Vec::new(),
-            };
-
-            let siblings = if let Some((_, parent_path)) = stack.last() {
-                children_at_path_mut(&mut roots, parent_path)
-            } else {
-                &mut roots
-            };
-            siblings.push(node);
-
-            let mut node_path = stack
-                .last()
-                .map(|(_, path)| path.clone())
-                .unwrap_or_default();
-            node_path.push(siblings.len() - 1);
-            stack.push((level, node_path));
+        if let Some((heading_line, level, label)) = heading {
+            headings.push(OutlineHeading {
+                line: first_line + heading_line,
+                level,
+                label,
+            });
             previous = None;
             continue;
         }
 
-        previous = Some((line_index, line));
+        previous = Some((offset, line));
+    }
+
+    (headings, fence.is_some())
+}
+
+/// 一段（通常是一根块）行的大纲摘要。
+pub(crate) fn outline_segment(first_line: usize, source: &str) -> OutlineSegment {
+    let (headings, ends_inside_fence) = outline_headings(first_line, source);
+    OutlineSegment {
+        first_line,
+        byte_len: source.len(),
+        lines: source.lines().count(),
+        headings,
+        ends_inside_fence,
+    }
+}
+
+/// 把按文档顺序排好的标题拼成嵌套树。嵌套只由层级序列决定，所以逐段拼出来
+/// 与整篇扫出来的树一致。
+pub(crate) fn nest_outline_headings(headings: &[OutlineHeading]) -> Vec<WorkspaceTreeNode> {
+    let mut roots: Vec<WorkspaceTreeNode> = Vec::new();
+    let mut stack: Vec<(u8, Vec<usize>)> = Vec::new();
+    for heading in headings {
+        let level = heading.level;
+        while stack
+            .last()
+            .is_some_and(|(parent_level, _)| *parent_level >= level)
+        {
+            stack.pop();
+        }
+
+        let node = WorkspaceTreeNode {
+            id: format!("outline:{}", heading.line),
+            label: heading.label.clone(),
+            kind: WorkspaceTreeKind::Heading {
+                line: heading.line,
+                level,
+            },
+            children: Vec::new(),
+        };
+
+        let siblings = if let Some((_, parent_path)) = stack.last() {
+            children_at_path_mut(&mut roots, parent_path)
+        } else {
+            &mut roots
+        };
+        siblings.push(node);
+
+        let mut node_path = stack
+            .last()
+            .map(|(_, path)| path.clone())
+            .unwrap_or_default();
+        node_path.push(siblings.len() - 1);
+        stack.push((level, node_path));
     }
 
     roots
+}
+
+pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
+    let (headings, _) = outline_headings(0, markdown);
+    nest_outline_headings(&headings)
 }
 
 /// 这一行是不是 Setext 划线（`===` 一级、`---` 二级）。

@@ -188,7 +188,7 @@ impl Editor {
     }
 
     pub(crate) fn apply_heading_fold_filter(
-        &self,
+        &mut self,
         all: Vec<crate::editor::tree::VisibleBlock>,
         cx: &mut Context<Self>,
     ) -> Vec<crate::editor::tree::VisibleBlock> {
@@ -220,6 +220,10 @@ impl Editor {
                 )
             };
             if is_toc {
+                // `[TOC]` 就是大纲的一个读者：它出现的那一帧要把清单算出来（同步
+                // 自己会先比一次「有没有什么变了」，没变时这里几乎不花钱），
+                // 否则刚打完 `[TOC]` 的那一帧会拿到上一份、甚至空的条目。
+                self.sync_workspace_outline(cx);
                 let entries = self.workspace.toc_entries.clone();
                 visible
                     .entity
@@ -490,28 +494,166 @@ impl Editor {
         unfolded
     }
 
-    pub(crate) fn sync_workspace_outline(&mut self, _cx: &mut Context<Self>) {
-        // 这条短路每帧都会走（侧栏一开着就渲染），所以比较必须零拷贝：
-        // `buffer.text()` 每次都要复制整篇，10 MiB 文档上就是一帧一次大搬运。
-        let unchanged = self
-            .workspace
-            .outline_source
-            .as_deref()
-            .is_some_and(|source| self.buffer.matches_text(source));
-        if unchanged {
+    /// 记一笔「这段字节里的区间接缝被重新分过」。写回层按区间拆块/合块时调它：
+    /// 块自己的字节可以一个字没动，但它现在指着的是一段不同的字节，下一次大纲同步
+    /// 必须把落在里面的块重扫，不然就会留着上一世的标题（差分测试抓到过：拆块把
+    /// `# 甲一` 拆成 `# ` 与 `甲一`，按缓存拼出来的大纲还认得那个标题）。
+    pub(crate) fn note_outline_dirty_region(&mut self, range: Range<usize>) {
+        if range.start >= range.end {
             return;
         }
+        self.workspace.outline_dirty = Some(match self.workspace.outline_dirty.take() {
+            Some(seen) => seen.start.min(range.start)..seen.end.max(range.end),
+            None => range,
+        });
+    }
 
-        let source = self.buffer.text();
+    /// 这次编辑有没有碰到这根块的字节。没碰到的块，内容一个字节都没变，
+    /// 上次算好的大纲摘要照用（至多平移行号）。
+    fn region_touches(region: &Range<usize>, span: &Range<usize>) -> bool {
+        span.start < region.end && region.start < span.end
+    }
+
+    /// 文档大纲：侧栏「大纲」页签与正文 `[TOC]` 的那份标题树。
+    ///
+    /// 「有没有必要重算」这个判断必须便宜：以前是拿整篇文本比较（10 MiB 一次大
+    /// 搬运）再把整篇按行重扫一遍（实测一次按键 105ms / 58.5 万行）。现在改问缓冲区
+    /// 「哪些字节被改过」，只重扫改动落到的那几根块——一根块的行数是局部量，与文档
+    /// 多大无关。
+    pub(crate) fn sync_workspace_outline(&mut self, cx: &mut Context<Self>) {
+        // 懒导入还没接完：文档本身还不完整，这一段一帧都不必动（旧实现靠「整篇
+        // 文本没变」短路，于是一边续建一边留着半份大纲，`[TOC]` 直到第一次编辑
+        // 才补全）。续建结束时根块数与上次同步对不上，那时一次建全。
+        // 注意顺序：这里必须在取走脏区间之前返回，否则导入期间用户改的那一段字节
+        // 会被当成「已经处理过」。
+        if self.document.pending_tail().is_some() || self.document.pending_source().is_some() {
+            return;
+        }
+        let dirty = match (
+            self.buffer.take_dirty_region(),
+            self.workspace.outline_dirty.take(),
+        ) {
+            (Some(edits), Some(repartitioned)) => Some(
+                edits.start.min(repartitioned.start)..edits.end.max(repartitioned.end),
+            ),
+            (edits, repartitioned) => edits.or(repartitioned),
+        };
+        let roots = self.document.root_blocks().to_vec();
+        if dirty.is_none()
+            && !self.workspace.outline_stale
+            && roots.len() == self.workspace.outline_root_count
+        {
+            return;
+        }
+        self.workspace.outline_root_count = roots.len();
+        self.workspace.outline_stale = false;
+
         let started = std::time::Instant::now();
-        let outline = build_outline_tree(&source);
-        self.outline_rebuilds
-            .set(self.outline_rebuilds.get() + 1);
-        self.outline_lines_scanned
-            .set(self.outline_lines_scanned.get() + self.buffer.line_count() as u64);
-        self.outline_nanos.set(
-            self.outline_nanos.get() + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        // 每根块的第一行在整篇的第几行：一次批量问缓冲区。逐根块问是
+        // O(根块数 × 文本块数)——10 MiB 那份实测把一次按键拖到 6.3 秒。
+        let spans: Vec<Option<Range<usize>>> = roots
+            .iter()
+            .map(|root| root.read(cx).record.source_span.clone())
+            .collect();
+        let mut order = (0..roots.len())
+            .filter_map(|index| spans[index].as_ref().map(|span| (span.start, index)))
+            .collect::<Vec<_>>();
+        order.sort_unstable();
+        let answers = self.buffer.lines_and_line_starts(
+            &order.iter().map(|(start, _)| *start).collect::<Vec<_>>(),
         );
+        let total = self.buffer.byte_len();
+        let mut first_lines: Vec<Option<usize>> = vec![None; roots.len()];
+        for ((start, index), (line, line_start)) in order.iter().zip(answers) {
+            // 段内相对行号要能对上整篇行号，所以起点必须正落在行首；区间还得在缓冲区内。
+            if *start == line_start
+                && spans[*index]
+                    .as_ref()
+                    .is_some_and(|span| span.end <= total)
+            {
+                first_lines[*index] = Some(line);
+            }
+        }
+
+        let mut segments: HashMap<EntityId, OutlineSegment> =
+            HashMap::with_capacity(roots.len());
+        let mut rescanned_lines = 0usize;
+        let mut changed = false;
+        // 有一根块带不出可用的区间（懒导入还没接上的尾段），或者未闭合的围栏跨了
+        // 块边界——这两种都只能整篇重扫。
+        let mut rescan_everything = false;
+        for (index, root) in roots.iter().enumerate() {
+            let id = root.entity_id();
+            let cached = self.workspace.outline_segments.remove(&id);
+            let (Some(span), Some(first_line)) = (spans[index].clone(), first_lines[index]) else {
+                rescan_everything = true;
+                break;
+            };
+            let touched = dirty
+                .as_ref()
+                .is_some_and(|dirty| Self::region_touches(dirty, &span));
+            match cached {
+                // 这块的字节一个都没动、段的字节数也没变：摘要照用，至多把行号平移
+                // 到现在的位置。字节数变了说明接缝被重新分过（拆块、合块），那段
+                // 字节已经不是这块的了。
+                Some(cached) if !touched && cached.byte_len == span.end - span.start => {
+                    if cached.first_line == first_line {
+                        segments.insert(id, cached);
+                    } else {
+                        changed = true;
+                        segments.insert(id, cached.shifted_to(first_line));
+                    }
+                }
+                // 改动落在这一块里（或者它是刚换上去的新块）：只重扫它自己那几行。
+                cached => {
+                    let segment = outline_segment(first_line, &self.buffer.slice(span));
+                    rescanned_lines += segment.lines;
+                    changed |= cached.is_none_or(|cached| !cached.same_content_as(&segment));
+                    if segment.ends_inside_fence && index + 1 < roots.len() {
+                        // 未闭合的围栏跨过了块边界，段与段不再独立：只能整篇重扫。
+                        rescan_everything = true;
+                        break;
+                    }
+                    segments.insert(id, segment);
+                }
+            }
+        }
+        // 整篇重扫这条退回路径不缓存任何东西：下一帧重新按块算。
+        self.workspace.outline_segments = if rescan_everything {
+            HashMap::new()
+        } else {
+            segments
+        };
+
+        if rescan_everything {
+            // 增量这条路对这个文档不成立（有块带不出可用的区间，或未闭合的围栏跨了
+            // 块边界）：退回整篇扫一遍，缓存留空，下一帧重新按块算。
+            changed = true;
+            self.outline_full_rescans
+                .set(self.outline_full_rescans.get() + 1);
+            let source = self.buffer.text();
+            rescanned_lines = self.buffer.line_count();
+            self.install_outline(build_outline_tree(&source));
+        } else if changed {
+            let mut headings: Vec<OutlineHeading> = Vec::new();
+            for root in &roots {
+                if let Some(segment) = self.workspace.outline_segments.get(&root.entity_id()) {
+                    headings.extend(segment.headings.iter().cloned());
+                }
+            }
+            self.install_outline(nest_outline_headings(&headings));
+        }
+        self.outline_rebuilds
+            .set(self.outline_rebuilds.get() + u64::from(changed));
+        self.outline_lines_scanned
+            .set(self.outline_lines_scanned.get() + rescanned_lines as u64);
+        self.outline_nanos.set(
+            self.outline_nanos.get()
+                + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
+    }
+
+    fn install_outline(&mut self, outline: Vec<WorkspaceTreeNode>) {
         prune_outline_state(&mut self.workspace, &outline);
         // Expand headings down to H3 by default so the outline is usable
         // without clicking through every level; users can still collapse.
@@ -519,6 +661,5 @@ impl Editor {
         self.workspace.toc_entries = flatten_outline_entries(&outline);
         self.toc_state_version = self.toc_state_version.wrapping_add(1);
         self.workspace.outline_tree = outline;
-        self.workspace.outline_source = Some(source);
     }
 }

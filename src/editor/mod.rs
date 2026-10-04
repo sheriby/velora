@@ -165,6 +165,10 @@ pub struct Editor {
     /// 计数器里，所以「整篇落笔 0 次」全绿的同时，10 MiB 一次按键仍有 110ms
     /// 花在这里（实测占该键渲染量的 74%）。
     outline_rebuilds: std::cell::Cell<u64>,
+    /// 计数器：其中「整篇重扫」的次数。增量按块重扫是常态，这一档只该在块带不出
+    /// 可用区间（跨块的未闭合围栏、没有源码区间的块）时出现——它一涨就说明增量那条
+    /// 路对这个文档没生效。
+    outline_full_rescans: std::cell::Cell<u64>,
     /// 计数器：大纲重建累计扫过的**行数**（问缓冲区的行计数，不是数换行符）。
     outline_lines_scanned: std::cell::Cell<u64>,
     /// 性能计数器：大纲重建累计耗时。
@@ -621,6 +625,7 @@ impl Editor {
             row_plan_rebuilds: std::cell::Cell::default(),
             roots_reprojected: std::cell::Cell::default(),
             outline_rebuilds: std::cell::Cell::default(),
+            outline_full_rescans: std::cell::Cell::default(),
             outline_lines_scanned: std::cell::Cell::default(),
             outline_nanos: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),
@@ -1288,6 +1293,11 @@ impl Editor {
                 block.record.source_span = Some(region_start..region_start);
             });
         }
+        // 这一段里的区间接缝被重新分配过：落在里面的块要重算派生数据（大纲摘要）。
+        // 块的字节可以一个字没动，但它现在指着的是另一段字节——只问缓冲区「哪些字节
+        // 被编辑过」看不到这一类。
+        let covered = region_start..(region_start + text.len()).max(region_end);
+        self.note_outline_dirty_region(covered.start..covered.end.min(self.buffer.byte_len()));
         true
     }
 

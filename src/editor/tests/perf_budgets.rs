@@ -241,9 +241,13 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
 /// 而那正是被禁止的行为本身。断言两件事：整篇序列化 0 次、整篇 mapping 重建 0 次，
 /// 再加一个墙钟上限兜住「新增了别的整篇工作」。
 ///
-/// 上限现在是 1.5s：10 MiB 一次按键实测 0.6s，剩下的线性成本不在写回层，而在
-/// 15 万个块的行计划与可见列表重排（1 MiB 同一条路径是 51ms）。那一块要靠按可见
-/// 窗口物化，方案 §10 已把它列为独立工作项。
+/// 10 MiB markdown 一次按键的闸门：写回层不许出现整篇遍数，大纲也不许再把整篇重扫。
+///
+/// 成对实测（同一台机器、同一份夹具、dev 无优化）：改前一次按键 546ms，其中大纲
+/// 重扫 585499 行（=全文）；改后 241ms，大纲重扫 0 行——侧栏收起又没 `[TOC]` 块时
+/// 没人看这份树，打开大纲页签时也只重扫改动那一根块占的那几行。
+/// 剩下的 241ms 仍与文档大小同向：可见列表没按视口裁剪，10 万根块的行计划与布局
+/// 还在里面（方案 §10 的按窗口物化那一档）。
 #[gpui::test]
 async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -269,6 +273,7 @@ async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext
             editor.source_mapping_full_builds.get(),
             editor.outline_lines_scanned.get(),
             editor.buffer.line_count(),
+            editor.outline_full_rescans.get(),
         )
     });
     let start = Instant::now();
@@ -281,20 +286,34 @@ async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext
             editor.source_mapping_full_builds.get(),
             editor.outline_lines_scanned.get(),
             editor.buffer.line_count(),
+            editor.outline_full_rescans.get(),
         )
     });
     eprintln!(
-        "[measure] 10 MiB 一次按键 {typed:?}，整篇遍数 (序列化, mapping) = ({}, {})，大纲扫了 {} 行 / 全文 {} 行",
+        "[measure] 10 MiB 一次按键 {typed:?}，整篇遍数 (序列化, mapping) = ({}, {})，大纲扫了 {} 行 / 全文 {} 行，整篇重扫 {} 次",
         after.0 - before.0,
         after.1 - before.1,
         after.2 - before.2,
         after.3,
+        after.4 - before.4,
     );
     assert_eq!(after.0 - before.0, 0, "10 MiB 一次按键出现整篇序列化");
     assert_eq!(
         after.1 - before.1,
         0,
         "10 MiB 一次按键出现整篇 source mapping 重建"
+    );
+    assert_eq!(
+        after.4 - before.4,
+        0,
+        "10 MiB 一次按键让大纲退回整篇重扫：按块增量这条路没生效"
+    );
+    assert!(
+        after.2 - before.2 < after.3 as u64 / 8,
+        "10 MiB 一次按键为了大纲重扫了 {} 行（全文 {} 行）：大纲读的是缓冲区全文，\
+         改动只落在其中一根块上，就该只重扫那一段",
+        after.2 - before.2,
+        after.3,
     );
     assert!(
         typed < Duration::from_millis(1_500),
@@ -1008,6 +1027,7 @@ async fn one_mib_code_document_typing_stays_within_budget(cx: &mut TestAppContex
 #[derive(Clone, Copy, Default)]
 struct WholeDocumentPasses {
     outline_rebuilds: u64,
+    outline_full_rescans: u64,
     outline_lines_scanned: u64,
     outline_nanos: u64,
     snapshot_rebuilds: u64,
@@ -1025,6 +1045,7 @@ fn whole_document_passes(
 ) -> WholeDocumentPasses {
     editor.read_with(cx, |editor, _cx| WholeDocumentPasses {
         outline_rebuilds: editor.outline_rebuilds.get(),
+        outline_full_rescans: editor.outline_full_rescans.get(),
         outline_lines_scanned: editor.outline_lines_scanned.get(),
         outline_nanos: editor.outline_nanos.get(),
         snapshot_rebuilds: editor.document.snapshot_rebuilds.get(),
@@ -1078,8 +1099,9 @@ async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
         let cost = start.elapsed();
         let after = whole_document_passes(&editor, cx);
         eprintln!(
-            "[attr] 第 {i} 次按键 {cost:?}：大纲 {} 次 / {} 行 / {:.0}ms；投影重排 {} 次 {:.0}ms；行计划 {}；整篇 mapping {}；字数扫描 {}；整篇落笔 {}；整篇渲染 {}",
+            "[attr] 第 {i} 次按键 {cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.0}ms；投影重排 {} 次 {:.0}ms；行计划 {}；整篇 mapping {}；字数扫描 {}；整篇落笔 {}；整篇渲染 {}",
             after.outline_rebuilds - before.outline_rebuilds,
+            after.outline_full_rescans - before.outline_full_rescans,
             after.outline_lines_scanned - before.outline_lines_scanned,
             (after.outline_nanos - before.outline_nanos) as f64 / 1e6,
             after.snapshot_rebuilds - before.snapshot_rebuilds,
@@ -1092,4 +1114,48 @@ async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
         );
     }
     eprintln!("[attr] 文档 {lines} 行、{roots} 根块");
+}
+
+/// 归因探针（markdown 那份）：与 `ten_mib_typing_does_not_scan_the_whole_document`
+/// 同一份文档、同一个入口，只是多按几次键并打出所有整篇遍数，方便 `sample` 挂上去。
+#[gpui::test]
+#[ignore]
+async fn probe_attribute_ten_mib_markdown_keystroke(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/ten-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping");
+        return;
+    }
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while editor.read_with(cx, |editor, _| editor.document.pending_tail().is_some()) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+    let roots = editor.read_with(cx, |editor, _| editor.document.root_count());
+    for i in 0..6 {
+        let before = whole_document_passes(&editor, cx);
+        let start = Instant::now();
+        cx.simulate_input("x");
+        redraw(cx);
+        let cost = start.elapsed();
+        let after = whole_document_passes(&editor, cx);
+        eprintln!(
+            "[attr] markdown 第 {i} 次按键 {cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.1}ms；投影重排 {}；行计划 {}；整篇 mapping {}；整篇落笔 {}；整篇渲染 {}",
+            after.outline_rebuilds - before.outline_rebuilds,
+            after.outline_full_rescans - before.outline_full_rescans,
+            after.outline_lines_scanned - before.outline_lines_scanned,
+            (after.outline_nanos - before.outline_nanos) as f64 / 1e6,
+            after.snapshot_rebuilds - before.snapshot_rebuilds,
+            after.row_plan_rebuilds - before.row_plan_rebuilds,
+            after.source_mapping_full_builds - before.source_mapping_full_builds,
+            after.source_serializations - before.source_serializations,
+            after.whole_document_renders - before.whole_document_renders,
+        );
+    }
+    eprintln!("[attr] markdown 文档 {roots} 根块");
 }
