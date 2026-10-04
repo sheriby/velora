@@ -1288,6 +1288,10 @@ impl Editor {
             };
             block.update(cx, |block, _cx| {
                 block.record.source_span = Some(span);
+                // 这一段字节被重新写过（拆块、合块、Setext 提成 ATX……），块自己
+                // 那一行的形状可能跟着变了，解析期记下的记号宽度就此过期。清掉它，
+                // 位置换算交回按文件量那一条，直到下一次重新解析给它新的账。
+                block.record.source_line_prefixes.clear();
             });
         }
         // 拆块拆出的空块在段首：空段落序列化不出字节，分不到区间，留着旧的整块

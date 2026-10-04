@@ -30,10 +30,15 @@ impl Editor {
             index += 1;
         }
 
-        (
-            native_block(cx, BlockKind::Paragraph, paragraph_lines.join("\n")),
-            index,
-        )
+        let content = paragraph_lines.join("\n");
+        let line_count = paragraph_lines.len();
+        let block = native_block(cx, BlockKind::Paragraph, content);
+        // 根段落一行都没剥（内容就是文件那一行），所以每行的记号宽度是 0——
+        // 这是解析期就知道的事实，交给位置换算直接用，不再拿文件行与模型行比。
+        block.update(cx, |block, _cx| {
+            block.record.source_line_prefixes = vec![0u32; line_count];
+        });
+        (block, index)
     }
 
     pub(crate) fn collect_quote_block(

@@ -1081,18 +1081,32 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             )
         };
 
-        // 记号在本行里占几位是文件里的事实，按模型拼会整体漂（见 `measured_block_prefix`）。
+        // 记号在本行里占几位是文件里的事实。先问块自己在解析期记下的那份数据；
+        // 还没记到的形状（引用/列表里的子块、代码围栏、表格格子）才退回按文件量
+        // ——量的口径见 `measured_block_prefix`：按模型拼（列表每级两个空格、引用一律
+        // `> `）在缩进四格、制表符、`>引用` 这类写法里会整体漂。
+        // 子块的续行还要按上级列表的缩进量，那个数只能从本块的第一行量出来。
         let measured_first_line =
             self.measured_block_prefix(absolute_start, quote_depth, list_dedent, &kind);
         let kind_for_measure = kind.clone();
         let line_prefixes = |markdown: &str| {
-            self.measured_block_line_prefixes(
+            self.recorded_block_line_prefixes(
+                block,
                 markdown,
                 absolute_start,
                 quote_depth,
                 list_dedent,
-                &kind_for_measure,
+                cx,
             )
+            .or_else(|| {
+                self.measured_block_line_prefixes(
+                    markdown,
+                    absolute_start,
+                    quote_depth,
+                    list_dedent,
+                    &kind_for_measure,
+                )
+            })
         };
 
         let own_len = match kind {
@@ -1133,16 +1147,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             }
             BlockKind::Heading { level } => {
                 let markdown = title.expect("heading title").markdown().to_string();
-                let measured_lines = self
-                    .recorded_block_line_prefixes(
-                        block,
-                        &markdown,
-                        absolute_start,
-                        quote_depth,
-                        list_dedent,
-                        cx,
-                    )
-                    .or_else(|| line_prefixes(&markdown));
+                let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
                     block,
                     markdown,

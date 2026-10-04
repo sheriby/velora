@@ -544,3 +544,44 @@ async fn typing_in_an_atx_heading_uses_the_parse_time_prefix(cx: &mut TestAppCon
         );
     });
 }
+
+/// 段落同样按解析期记下的宽度落笔：根段落一行都没剥，每行宽度都是 0，这是数据不是猜。
+///
+/// 多行段落（续行、行尾硬换行 `\`）尤其要看这份账——按模型拼续行缩进以前会把硬换行的
+/// `\` 序列化成 `\\`，一位之差把后面所有行的落点带漂。
+#[gpui::test]
+async fn typing_in_a_paragraph_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "正文甲\n正文乙\n".to_string(), None)
+    });
+    editor.update(cx, |editor, _cx| {
+        let root = editor.document.root_blocks()[0].clone();
+        editor.focus_block(root.entity_id());
+    });
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| {
+        (
+            editor.line_prefix_from_record.get(),
+            editor.line_prefix_measured.get(),
+        )
+    });
+    // 焦点落在块上时光标在第一行行首：这一行的落点靠的是记下来的宽度，不是比出来的。
+    cx.simulate_input("写");
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| {
+        (
+            editor.line_prefix_from_record.get(),
+            editor.line_prefix_measured.get(),
+        )
+    });
+    assert!(
+        after.0 > before.0,
+        "打字没用上解析期记下的记号宽度（记下来的行数没涨）"
+    );
+    assert_eq!(after.1 - before.1, 0, "这两行段落还在事后拿文件行与模型行比");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "写正文甲\n正文乙\n");
+    });
+}

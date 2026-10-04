@@ -219,7 +219,12 @@ impl Editor {
                     };
 
                 for offset in 0..preserved_empty_blocks {
-                    roots.push(native_block(cx, BlockKind::Paragraph, String::new()));
+                    let empty = native_block(cx, BlockKind::Paragraph, String::new());
+                    // 空段落占的那一行同样没剥任何东西。
+                    empty.update(cx, |block, _cx| {
+                        block.record.source_line_prefixes = vec![0];
+                    });
+                    roots.push(empty);
                     // 空段落占住空行段里的一条空行；多出来的空行是块间分隔符，
                     // 不属于任何块，于是编辑某个块时永远不会碰到它。
                     spans.push((blank_start + offset)..(blank_start + offset + 1));
