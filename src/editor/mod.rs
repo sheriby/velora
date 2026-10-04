@@ -224,10 +224,6 @@ pub struct Editor {
     external_watcher: Option<notify::RecommendedWatcher>,
     /// 已启动文件监听的工作区根：同一根不重复启动（含隐含根）。
     watched_workspace_root: Option<PathBuf>,
-    /// Cached block→source-range map + newline offsets for outline-follow
-    /// scroll (roadmap C5), keyed by document revision.
-    pub(super) outline_follow_cache:
-        Option<(u64, std::collections::HashMap<EntityId, std::ops::Range<usize>>, Vec<usize>)>,
     /// Scroll offset at the last outline-follow update.
     pub(super) last_outline_follow_offset: f32,
     /// Cursor position history (roadmap E6): jump points to return to.
@@ -642,7 +638,6 @@ impl Editor {
             command_palette: None,
             external_watcher: None,
             watched_workspace_root: None,
-            outline_follow_cache: None,
             last_outline_follow_offset: f32::NAN,
             cursor_history_back: Vec::new(),
             cursor_history_forward: Vec::new(),

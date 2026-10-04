@@ -448,3 +448,61 @@ async fn clicking_an_outline_heading_unfolds_it_without_a_document_wide_mapping(
         "点一次大纲标题重拼了整篇 source mapping"
     );
 }
+
+/// 大纲跟随滚动：选中视口上方那一个标题，而且不为此整篇重拼映射。
+///
+/// 这条挂在每帧的绘制上（`render/paint.rs`）。块在缓冲区里的起点本来就记在块上，
+/// 行号也问缓冲区就行；旧实现却为「哪一块含这个字节」把整篇 source mapping 重拼一遍，
+/// 还把全文复制出来扫一遍换行符建 `Vec<usize>`（10 MiB 文档 ≈ 百万条 ≈ 8 MB），按
+/// revision 缓存——于是每次编辑之后的第一帧都要付这一趟。这条路径此前没有测试。
+#[gpui::test]
+async fn scrolling_with_the_outline_open_follows_the_heading_above_the_viewport(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "# 章一\n\n正文甲\n\n# 章二\n\n正文乙\n".to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+        editor.sync_workspace_outline(cx);
+        // 伪造一次布局：第一节的三块在视口上方，最上面的可见块是 `正文乙`（文件里第 6 行）。
+        let mut y = -300.0;
+        for visible in editor.document.visible_blocks() {
+            let bounds = gpui::Bounds {
+                origin: gpui::point(gpui::px(0.0), gpui::px(y)),
+                size: gpui::size(gpui::px(600.0), gpui::px(60.0)),
+            };
+            visible.entity.update(cx, |block, _cx| block.last_bounds = Some(bounds));
+            y += 100.0;
+        }
+    });
+
+    let builds_before = editor.read_with(cx, |editor, _| editor.source_mapping_full_builds.get());
+    editor.update(cx, |editor, cx| {
+        editor.sync_outline_follow_scroll(gpui::px(0.0), cx);
+    });
+    let builds_after = editor.read_with(cx, |editor, _| editor.source_mapping_full_builds.get());
+
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(crate::editor::workspace::WorkspaceSelection::Outline(
+                "outline:4".to_string()
+            )),
+            "滚动跟随应选中视口上方那一个标题（文件里第 5 行的 `# 章二`）"
+        );
+    });
+    assert_eq!(
+        builds_after - builds_before,
+        0,
+        "滚动跟随一次重拼了整篇 source mapping"
+    );
+}

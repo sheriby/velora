@@ -253,7 +253,7 @@ pub(super) struct WorkspaceState {
     expanded: HashSet<String>,
     /// 外部文件事件的树刷新防抖代数（见 `schedule_workspace_tree_refresh`）。
     tree_refresh_generation: u32,
-    selected: Option<WorkspaceSelection>,
+    pub(super) selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
     pub(super) search_query: String,

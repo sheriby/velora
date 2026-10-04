@@ -140,11 +140,15 @@ Workspace (src/editor/workspace.rs)
   `BlockTextElement`，它读 `search_highlight_ranges`；由 `document_search_hit_inside_table_jumps`
   钉住），还没画出来的是那几个不走 `BlockTextElement` 的格子：含行内数学/上下标/内嵌图片的格子、
   长块兜底那一档，以及 HTML `<table>`（src/components/block/render/inline_visuals.rs、paint_parts.rs）。
-- **还没做完的（整篇 source mapping 重建的余下两个入口）**：`sync_document_search_highlights`
-  （src/editor/workspace/tree_sync.rs:30，搜索高亮本来就要扫全文，成本同阶）与 `sync_outline_follow_scroll`
-  （同文件 :230，滚动跟随，还带一次全文换行符扫描——可改 `buffer.line_of`，块的位置本来就挂在块上）。
-  删掉这两个入口，`build_source_target_mappings` 与 `collect_single_block_source_mappings` 里那套
-  前缀重建才真能删。
+- **还没做完的（整篇 source mapping 重建的最后一个入口）**：`sync_document_search_highlights`
+  （src/editor/workspace/tree_sync.rs:30）。它本来就要扫全文找命中，成本同阶，但为了把命中偏移
+  换算进块，它先整篇重拼一遍 mapping、又把整篇文本复制出来（`current_document_source`）——10 MiB
+  文档就是每趟一次大搬运。改成「扫到命中的那几根块才重建它自己的映射」之后，
+  `build_source_target_mappings` 与 `collect_single_block_source_mappings` 里那套前缀重建才真能删。
+- **大纲跟随滚动已经不付全文的钱**（`sync_outline_follow_scroll`，src/editor/workspace/tree_sync.rs）：
+  块起点问它自己的 `source_span`（容器里的子块退回那一根块的映射），行号问 `buffer.line_of`，
+  于是 `outline_follow_cache`（按 revision 缓存的整篇 ranges + 百万条 `newlines`）整个删掉。
+  守卫：`scrolling_with_the_outline_open_follows_the_heading_above_the_viewport`——这条路径此前 0 测试。
 
 
 ## 6. 持久化（src/editor/persistence.rs）
