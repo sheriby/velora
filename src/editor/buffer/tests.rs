@@ -416,7 +416,7 @@ fn the_line_probe_counter_follows_how_deep_the_offsets_are() {
 fn asking_for_line_numbers_does_not_read_the_text() {
     let line = "line 01234 with some english text and a bit more\n";
     let text = format!("{}# heading at the end\n", line.repeat(4000));
-    let mut buffer = TextBuffer::from_text(&text);
+    let buffer = TextBuffer::from_text(&text);
     assert!(buffer.chunks.len() > 30, "夹具得跨很多块才测得出名堂");
     let total = buffer.byte_len();
     buffer.take_line_probe_bytes();
