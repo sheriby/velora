@@ -3382,3 +3382,52 @@ async fn resync_refreshes_the_ledger_before_the_next_keystroke(cx: &mut TestAppC
         "resync 后的第一次落笔用了过期账，字落错了位：{buffer_text:?}"
     );
 }
+
+/// 区域重解析（窗口带两行探针）在混合邻域里只许换掉本段那几根：探针区里
+/// 解析出来的后续根（列表）是隔壁的根，不属于本次安装——装进去就会把后续
+/// 根块的实体和区间算重。
+#[gpui::test]
+async fn reprojecting_a_quote_keeps_the_neighbor_roots_untouched(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> 引用\n- 甲\n- 乙\n".to_string(), None)
+    });
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .map(|root| root.entity_id())
+            .collect::<Vec<_>>()
+    });
+    assert!(before.len() >= 2, "夹具至少要有引用和列表两根");
+
+    let reprojected = editor.update(cx, |editor, cx| editor.reproject_root_region(0, cx));
+    assert_eq!(
+        reprojected,
+        Some(1),
+        "引用段一行、窗口解析应在第 1 行给出根边界"
+    );
+
+    let after = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .map(|root| root.entity_id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "重投影不许增删根块：后续根不是本次安装的对象"
+    );
+    assert_eq!(
+        after[1..],
+        before[1..],
+        "重投影动了引用之外的根块"
+    );
+}
