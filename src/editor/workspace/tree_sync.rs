@@ -1,4 +1,5 @@
 use super::*;
+use crate::editor::{SourceTargetMapping, ViewMode};
 
 impl Editor {
     /// Opens a welcome-page recent entry: folders replace the working set,
@@ -26,69 +27,136 @@ impl Editor {
         }
 
         let matcher = SearchMatcher::new(&query, self.search_options());
-        let source = self.current_document_source(cx);
-        let mappings = self.build_source_target_mappings(cx);
         // 活动命中（循环跳转/点击结果选中的那个）单独标记，让用户在多个
         // 命中之间能看出当前在哪一个。
         let active_range = self.workspace.document_active_range.clone();
         let mut highlighted = Vec::new();
-        for mapping in &mappings {
-            let Some(block_source) = source.get(mapping.full_source_range.clone()) else {
-                continue;
-            };
-            let matches = matcher.find_in_line(block_source);
-            if matches.is_empty() {
-                continue;
-            }
-            let mut ranges = Vec::with_capacity(matches.len());
-            for found in matches {
-                let local_start = found.start;
-                let local_end = found.end;
-                if local_end >= mapping.source_to_content.len() {
-                    continue;
-                }
-                let content_start = mapping.source_to_content[local_start];
-                let content_end = mapping.source_to_content[local_end];
-                if content_end > content_start {
-                    let range = mapping
-                        .entity
-                        .read(cx)
-                        .markdown_range_to_current_range(content_start..content_end);
-                    if !range.is_empty() {
-                        ranges.push(range);
+
+        match self.view_mode {
+            ViewMode::Rendered => {
+                // 命中先在缓冲区里按字节找（不把整篇复制出来），然后只为**有命中的
+                // 那一根块**重建它自己的映射。没命中的块连换算都不需要，整篇重拼
+                // source mapping 是白付的 O(文档)——查询没改、只是重算一遍高亮也要付。
+                for root in self.document.root_blocks().to_vec() {
+                    let Some(span) = root.read(cx).record.source_span.clone() else {
+                        continue;
+                    };
+                    let text = self.buffer.slice(span.clone());
+                    let hits: Vec<Range<usize>> = matcher
+                        .find_in_line(&text)
+                        .into_iter()
+                        .map(|found| span.start + found.start..span.start + found.end)
+                        .collect();
+                    if hits.is_empty() {
+                        continue;
+                    }
+                    let mut mappings = Vec::new();
+                    let mut block_ranges = std::collections::HashMap::new();
+                    self.source_mapping_builds
+                        .set(self.source_mapping_builds.get() + 1);
+                    self.push_root_source_mappings(&root, &mut mappings, &mut block_ranges, cx);
+                    for mapping in &mappings {
+                        let Some((ranges, active_local)) =
+                            Self::search_ranges_for_hits(mapping, &hits, &active_range, cx)
+                        else {
+                            continue;
+                        };
+                        let entity = mapping.entity.clone();
+                        entity.update(cx, |block, _| {
+                            block.search_highlight_ranges = ranges;
+                            block.search_active_range = active_local;
+                        });
+                        highlighted.push(entity);
                     }
                 }
             }
-            if ranges.is_empty() {
-                continue;
-            }
-            let active_local = active_range.as_ref().and_then(|active| {
-                let contained = mapping.full_source_range.start <= active.start
-                    && active.end <= mapping.full_source_range.end;
-                if !contained {
-                    return None;
+            ViewMode::Source => {
+                // 源码模式的块是按行切的投影，位置不挂在 `source_span` 上，仍按整篇
+                // 走查算出每块的源码区间。
+                let source = self.current_document_source(cx);
+                let mappings = self.build_source_target_mappings(cx);
+                for mapping in &mappings {
+                    let Some(text) = source.get(mapping.full_source_range.clone()) else {
+                        continue;
+                    };
+                    let hits: Vec<Range<usize>> = matcher
+                        .find_in_line(text)
+                        .into_iter()
+                        .map(|found| {
+                            mapping.full_source_range.start + found.start
+                                ..mapping.full_source_range.start + found.end
+                        })
+                        .collect();
+                    let Some((ranges, active_local)) =
+                        Self::search_ranges_for_hits(mapping, &hits, &active_range, cx)
+                    else {
+                        continue;
+                    };
+                    let entity = mapping.entity.clone();
+                    entity.update(cx, |block, _| {
+                        block.search_highlight_ranges = ranges;
+                        block.search_active_range = active_local;
+                    });
+                    highlighted.push(entity);
                 }
-                let local = |offset: usize| {
-                    let index = offset - mapping.full_source_range.start;
-                    mapping.source_to_content[index.min(mapping.source_to_content.len() - 1)]
-                };
-                let content = local(active.start)..local(active.end);
-                let converted =
-                    mapping
-                        .entity
-                        .read(cx)
-                        .markdown_range_to_current_range(content);
-                (!converted.is_empty()).then_some(converted)
-            });
-            let entity = mapping.entity.clone();
-            entity.update(cx, |block, _| {
-                block.search_highlight_ranges = ranges;
-                block.search_active_range = active_local.clone();
-            });
-            highlighted.push(entity);
+            }
         }
+
         self.search_highlighted_blocks = highlighted;
         cx.notify();
+    }
+
+    /// 把绝对的命中字节区间换算成这一块上的显示区间；没有落在这块里的命中就 `None`。
+    fn search_ranges_for_hits(
+        mapping: &SourceTargetMapping,
+        hits: &[Range<usize>],
+        active_range: &Option<Range<usize>>,
+        cx: &App,
+    ) -> Option<(Vec<Range<usize>>, Option<Range<usize>>)> {
+        let block_start = mapping.full_source_range.start;
+        let block_end = mapping.full_source_range.end;
+        let mut ranges = Vec::new();
+        for hit in hits {
+            if hit.start < block_start || hit.end > block_end {
+                continue;
+            }
+            let local_start = hit.start - block_start;
+            let local_end = hit.end - block_start;
+            if local_end >= mapping.source_to_content.len() {
+                continue;
+            }
+            let content_start = mapping.source_to_content[local_start];
+            let content_end = mapping.source_to_content[local_end];
+            if content_end <= content_start {
+                continue;
+            }
+            let range = mapping
+                .entity
+                .read(cx)
+                .markdown_range_to_current_range(content_start..content_end);
+            if !range.is_empty() {
+                ranges.push(range);
+            }
+        }
+        if ranges.is_empty() {
+            return None;
+        }
+        let active_local = active_range.as_ref().and_then(|active| {
+            if block_start > active.start || active.end > block_end {
+                return None;
+            }
+            let local = |offset: usize| {
+                let index = offset - block_start;
+                mapping.source_to_content[index.min(mapping.source_to_content.len() - 1)]
+            };
+            let content = local(active.start)..local(active.end);
+            let converted = mapping
+                .entity
+                .read(cx)
+                .markdown_range_to_current_range(content);
+            (!converted.is_empty()).then_some(converted)
+        });
+        Some((ranges, active_local))
     }
 
     /// Cycles the file tree sort order (roadmap D2) and rescans.

@@ -1,6 +1,5 @@
 //! Editor-level selection spanning multiple rendered blocks.
 
-use std::collections::HashMap;
 use std::ops::Range;
 
 use gpui::*;

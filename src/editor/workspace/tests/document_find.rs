@@ -558,3 +558,66 @@ async fn document_find_navigates_the_edited_text_not_the_search_snapshot(
         );
     });
 }
+
+/// 文档内搜索的高亮换算不该把整篇重拼一遍。
+///
+/// 命中的字节偏移要换算进块，靠的是**这一块自己**的映射：没命中的块连文本都不必取。
+/// 旧实现先整篇重拼 source mapping、又把整篇文本复制出来扫一遍，于是查询没改、只是
+/// 重算高亮也要付全文的钱（10 MiB 文档 = 每趟一次大搬运）。
+#[gpui::test]
+async fn document_find_highlights_map_only_the_blocks_with_hits(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(
+            cx,
+            concat!(
+                "# 章一\n",
+                "\n",
+                "正文里有 alpha\n",
+                "\n",
+                "章二\n",
+                "=====\n",
+                "\n",
+                "| 名称 | alpha |\n",
+                "| ---- | ---- |\n",
+                "| 甲   | 乙   |\n",
+            )
+            .to_string(),
+            None,
+        )
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.update(cx, |editor, cx| {
+        editor.open_document_find(cx);
+        editor.workspace.search_query = "alpha".into();
+    });
+
+    let builds_before = editor.read_with(cx, |editor, _| editor.source_mapping_full_builds.get());
+    editor.update(cx, |editor, cx| editor.sync_document_search_highlights(cx));
+    let builds_after = editor.read_with(cx, |editor, _| editor.source_mapping_full_builds.get());
+    assert_eq!(
+        builds_after - builds_before,
+        0,
+        "刷一次文档内搜索高亮重拼了整篇 source mapping"
+    );
+
+    let texts = editor.read_with(cx, |editor, cx| {
+        editor
+            .search_highlighted_blocks
+            .iter()
+            .map(|block| block.read_with(cx, |block, _cx| block.display_text().to_string()))
+            .collect::<Vec<_>>()
+    });
+    assert!(
+        texts.iter().any(|text| text == "正文里有 alpha"),
+        "正文里的命中该有高亮：{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|text| text == "alpha"),
+        "表格那一格里的命中也该有高亮：{texts:?}"
+    );
+}

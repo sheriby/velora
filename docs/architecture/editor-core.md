@@ -140,11 +140,15 @@ Workspace (src/editor/workspace.rs)
   `BlockTextElement`，它读 `search_highlight_ranges`；由 `document_search_hit_inside_table_jumps`
   钉住），还没画出来的是那几个不走 `BlockTextElement` 的格子：含行内数学/上下标/内嵌图片的格子、
   长块兜底那一档，以及 HTML `<table>`（src/components/block/render/inline_visuals.rs、paint_parts.rs）。
-- **还没做完的（整篇 source mapping 重建的最后一个入口）**：`sync_document_search_highlights`
-  （src/editor/workspace/tree_sync.rs:30）。它本来就要扫全文找命中，成本同阶，但为了把命中偏移
-  换算进块，它先整篇重拼一遍 mapping、又把整篇文本复制出来（`current_document_source`）——10 MiB
-  文档就是每趟一次大搬运。改成「扫到命中的那几根块才重建它自己的映射」之后，
-  `build_source_target_mappings` 与 `collect_single_block_source_mappings` 里那套前缀重建才真能删。
+- **渲染态已经没有整篇 source mapping 走查**（2026-10-04）：`sync_document_search_highlights` 改成
+  「先在缓冲区里按字节找命中，只为**有命中的那一根块**重建它自己的映射」（`search_ranges_for_hits`
+  做偏移换算），既不再复制整篇文本，也不整篇走查；守卫
+  `document_find_highlights_map_only_the_blocks_with_hits`（`source_mapping_full_builds` 增量为 0，
+  并钉住正文与表格格子两处命中）。`build_source_target_mappings` 只剩两处入口：源码模式的高亮
+  （那里的块是按行切的投影，位置不挂 `source_span`，模式属性使然）与窗口内一根有区间的块都没有时的
+  退回。剩下的猜测式记账是 `collect_single_block_source_mappings` 里**块内**那段前缀重建——它要等
+  每个子块与每个格子都在解析期记下自己的字节区间才能删（方案 §4 的 `SourceRegion`，表格 cells 已经在
+  按结构量了）。
 - **大纲跟随滚动已经不付全文的钱**（`sync_outline_follow_scroll`，src/editor/workspace/tree_sync.rs）：
   块起点问它自己的 `source_span`（容器里的子块退回那一根块的映射），行号问 `buffer.line_of`，
   于是 `outline_follow_cache`（按 revision 缓存的整篇 ranges + 百万条 `newlines`）整个删掉。
