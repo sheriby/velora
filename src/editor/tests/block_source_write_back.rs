@@ -2799,3 +2799,50 @@ async fn typing_at_the_end_of_an_indented_fence_line_keeps_the_fence_indent(
     );
 }
 
+
+/// 代码/纯文本文件的块是**缓冲区的一段切片**：文件里既没有 ``` 围栏行，也没有列表
+/// 记号，内容第 n 个字节就是「块区间起点 + n」。以前源码模式的映射走查拿 markdown 的
+/// 围栏口径去量它——`这一行字节数 − 序列化出来的围栏长度` 会切进多字节字符中间
+/// （`def 甲():` 里 `甲` 占三位，切在第 5 位直接 panic），中文/emoji 的 `.py`/`.txt`
+/// 一打字就崩。
+#[gpui::test]
+async fn typing_in_a_code_document_with_chinese_lands_on_the_caret_bytes(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "def 甲():\n    return 甲\n";
+    let path = std::env::temp_dir().join(format!("velora-code-cjk-{}.py", std::process::id()));
+    fs::write(&path, source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    redraw(cx);
+
+    // 光标移到第 4 个可见字符（`def ` 之后、`甲` 之前）再打字。
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .root_blocks()
+            .first()
+            .cloned()
+            .expect("代码文档该有根块")
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(first.entity_id()));
+        first.update(cx, |block, block_cx| block.move_to(4, block_cx));
+    });
+    redraw(cx);
+    cx.simulate_input("乙");
+    redraw(cx);
+
+    let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        file, "def 乙甲():\n    return 甲\n",
+        "代码文档里打字没落在光标那几位字节上"
+    );
+}

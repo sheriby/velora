@@ -507,7 +507,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut content_to_source = vec![0; content.len() + 1];
         let mut source_to_content = vec![0usize];
 
-        let mut push_prefix = |full: &mut String,
+        let push_prefix = |full: &mut String,
                                source_to_content: &mut Vec<usize>,
                                mark: usize,
                                index: usize| {
@@ -964,6 +964,30 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         }
     }
 
+    /// 源码视图的块 ↔ 缓冲区切片：内容第 n 个字节就是「块起点 + n」，两侧都是恒等表。
+    ///
+    /// 返回这一份切片的长度，走查用它推进到下一根块（源码文档的块间只隔一个换行）。
+    fn push_source_slice_mapping(
+        &self,
+        block: &Entity<Block>,
+        absolute_start: usize,
+        mappings: &mut Vec<SourceTargetMapping>,
+        block_ranges: &mut HashMap<EntityId, Range<usize>>,
+        cx: &App,
+    ) -> usize {
+        let len = block.read(cx).display_text().len();
+        let identity: Vec<usize> = (0..=len).collect();
+        let end = absolute_start + len;
+        mappings.push(SourceTargetMapping {
+            entity: block.clone(),
+            full_source_range: absolute_start..end,
+            content_to_source: identity.clone(),
+            source_to_content: identity,
+        });
+        block_ranges.insert(block.entity_id(), absolute_start..end);
+        len
+    }
+
     pub(super) fn collect_single_block_source_mappings(
         &self,
         block: &Entity<Block>,
@@ -975,6 +999,19 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         block_ranges: &mut HashMap<EntityId, Range<usize>>,
         cx: &App,
     ) -> usize {
+        // 源码/代码文档里的块是**缓冲区的一段切片**：可见文本就是文件里的那几位字节，
+        // 没有记号、没有围栏行可量。拿 markdown 的口径去量它（`行字节数 − 序列化出来的
+        // 围栏长度`）会切进多字节字符中间——`def 甲():` 里 `甲` 占三位，切在第 5 位直接
+        // panic。内容偏移与源码偏移只差一个块起点。
+        if block.read(cx).is_source_raw_mode() {
+            return self.push_source_slice_mapping(
+                block,
+                absolute_start,
+                mappings,
+                block_ranges,
+                cx,
+            );
+        }
         let (kind, list_ordinal, title, children) = {
             let block_ref = block.read(cx);
             let kind = block_ref.kind();
