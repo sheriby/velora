@@ -528,7 +528,14 @@ impl Editor {
         let block = mapping.entity.read(cx);
         let visible_len = block.visible_len();
         if offset >= visible_len {
-            return Some(mapping.full_source_range.end);
+            // 「内容末尾」在文件里停在哪，映射表自己最清楚：块区间可能还压着用户写的
+            // 闭合 `#`、行尾空格这些不属于内容的字节（`# 标题 #` 就是），拿区间末尾当
+            // 落点会把字插到那些字节之后。
+            return mapping
+                .content_to_source
+                .last()
+                .map(|offset| mapping.full_source_range.start + *offset)
+                .or(Some(mapping.full_source_range.end));
         }
         // 第 0 个可见字符也在内容里，就要按内容区间换算：`full_source_range.start` 含
         // `# `、`- `、`> ` 这些记号，段首打字直接落它就把字插到了记号前面。

@@ -5,6 +5,14 @@ use std::ops::Range;
 use super::table_edit::cell_content_range_in_line;
 use super::*;
 
+/// 逐行量出来的结果：每行在自己那一行里让开几个前缀字节，以及这一行在**文件里**占几个
+/// 字节。后者与模型的 markdown 那行可以不等长（模型为保住一个字面反斜杠会多写一位），
+/// 位置换算按文件的长度走，`content_to_source` 说的才是缓冲区的坐标。
+pub(super) struct MeasuredBlockLines {
+    pub prefixes: Vec<usize>,
+    pub file_lens: Vec<usize>,
+}
+
 /// 围栏各行在它自己那一行里让开几个字节，按文件量（`measured_code_block_line_prefixes`）。
 /// 模型不存围栏行，内容行前面被上级容器吃掉的那几列缩进也不在模型里，而映射的起点
 /// 是整行的行首——这几位只能从缓冲区量回来。
@@ -176,75 +184,78 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         (full, content_to_source, source_to_content)
     }
 
-    /// 每一行按自己量出来的前缀起头（多行内容的块用，`measured_block_line_prefixes`）。
+    /// 每一行按「量出来的前缀 + 这一行在**文件里**的长度」建位置表（多行内容的块用，
+    /// `measured_block_line_prefixes`）。
+    ///
+    /// 内容偏移是模型 markdown 的坐标，落点必须是缓冲区的坐标，所以行内逐位对齐、
+    /// 超出文件那一行长度的部分钳在行尾：模型为了保住一个字面反斜杠多写的那一位，
+    /// 在文件里根本没有字节可对。以前这里按模型的 markdown 拼整段文本再按位置算，
+    /// 于是行一旦带上这种长度差，后面每一行的落点都漂。
     fn build_line_prefixed_content_mapping(
         content: &str,
         line_prefixes: &[usize],
-    ) -> (String, Vec<usize>, Vec<usize>) {
-        let mut full = String::new();
-        let mut content_to_source = vec![0; content.len() + 1];
-        let mut source_to_content = vec![0usize];
-
-        let push_prefix = |full: &mut String,
-                           source_to_content: &mut Vec<usize>,
-                           mark: usize,
-                           index: usize| {
-            let width = line_prefixes.get(index).copied().unwrap_or(0);
-            let start = full.len();
-            if width > 0 {
-                full.push_str(&" ".repeat(width));
+        file_lens: &[usize],
+    ) -> (usize, Vec<usize>, Vec<usize>) {
+        let model_lines: Vec<&str> = content.split('\n').collect();
+        let mut content_to_source = vec![0usize; content.len() + 1];
+        let mut total_len = 0usize;
+        let mut markdown_offset = 0usize;
+        for (index, model_line) in model_lines.iter().enumerate() {
+            let prefix = line_prefixes.get(index).copied().unwrap_or(0);
+            let file_len = file_lens.get(index).copied().unwrap_or(model_line.len());
+            let content_start = total_len + prefix;
+            for position in 0..=model_line.len() {
+                content_to_source[markdown_offset + position] =
+                    content_start + position.min(file_len);
             }
-            source_to_content.resize(full.len() + 1, mark);
-            for position in start..=full.len() {
-                source_to_content[position] = mark;
-            }
-        };
-
-        push_prefix(&mut full, &mut source_to_content, 0, 0);
-        let mut content_offset = 0usize;
-        let mut line_index = 0usize;
-        while content_offset < content.len() {
-            content_to_source[content_offset] = full.len();
-            let ch = content[content_offset..]
-                .chars()
-                .next()
-                .expect("content offset should stay on char boundaries");
-            let start = full.len();
-            full.push(ch);
-            source_to_content.resize(full.len() + 1, content_offset);
-            for position in start..=full.len() {
-                source_to_content[position] = content_offset;
-            }
-            content_offset += ch.len_utf8();
-            if ch == '\n' {
-                line_index += 1;
-                push_prefix(&mut full, &mut source_to_content, content_offset, line_index);
+            markdown_offset += model_line.len();
+            total_len = content_start + file_len;
+            if index + 1 < model_lines.len() {
+                content_to_source[markdown_offset] = total_len;
+                markdown_offset += 1;
+                total_len += 1;
             }
         }
-        content_to_source[content.len()] = full.len();
-        source_to_content.resize(full.len() + 1, content.len());
-        source_to_content[full.len()] = content.len();
 
-        (full, content_to_source, source_to_content)
+        // 反表：内容偏移落在哪个字节上，那个字节就归它；行首记号与多字节字符内部的
+        // 字节归到最近的那个内容起点。
+        let mut source_to_content = vec![0usize; total_len + 1];
+        for (content_offset, position) in content_to_source.iter().enumerate() {
+            source_to_content[*position] = content_offset;
+        }
+        let mut previous = 0usize;
+        for slot in source_to_content.iter_mut() {
+            if *slot == 0 {
+                *slot = previous;
+            } else {
+                previous = *slot;
+            }
+        }
+
+        (total_len, content_to_source, source_to_content)
     }
 
     fn push_line_prefixed_inline_mapping(
         &self,
         block: &Entity<Block>,
         content_markdown: String,
-        line_prefixes: &[usize],
+        measured: &MeasuredBlockLines,
         absolute_start: usize,
         mappings: &mut Vec<SourceTargetMapping>,
     ) -> usize {
-        let (full_text, content_to_source, source_to_content) =
-            Self::build_line_prefixed_content_mapping(&content_markdown, line_prefixes);
+        let (full_len, content_to_source, source_to_content) =
+            Self::build_line_prefixed_content_mapping(
+                &content_markdown,
+                &measured.prefixes,
+                &measured.file_lens,
+            );
         mappings.push(SourceTargetMapping {
             entity: block.clone(),
-            full_source_range: absolute_start..absolute_start + full_text.len(),
+            full_source_range: absolute_start..absolute_start + full_len,
             content_to_source,
             source_to_content,
         });
-        full_text.len()
+        full_len
     }
 
     pub(super) fn push_inline_block_mapping(
@@ -882,12 +893,14 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         quote_depth: usize,
         list_dedent: usize,
         kind: &BlockKind,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<MeasuredBlockLines> {
         let first = self.measured_block_prefix(absolute_start, quote_depth, list_dedent, kind)?;
         let model_lines: Vec<&str> = content_markdown.split('\n').collect();
+        let open_line = self.buffer.slice(self.buffer.line_range(self.buffer.line_of(absolute_start)));
         let mut prefixes = vec![first.0];
+        let mut file_lens = vec![open_line.len() - first.0];
         if model_lines.len() == 1 {
-            return Some(prefixes);
+            return Some(MeasuredBlockLines { prefixes, file_lens });
         }
 
         let levels = quote_depth + usize::from(matches!(kind, BlockKind::Quote));
@@ -899,7 +912,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 return None;
             }
             let file_line = self.buffer.slice(range);
-            let mut rest = file_line;
+            let mut rest = file_line.clone();
             let mut consumed = 0usize;
             for _ in 0..levels {
                 let stripped = super::document::strip_one_quote_level(&rest)?;
@@ -911,10 +924,13 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             if model_indent > file_indent {
                 return None;
             }
-            prefixes.push(consumed + (file_indent - model_indent));
+            let prefix = consumed + (file_indent - model_indent);
+            prefixes.push(prefix);
+            file_lens.push(file_line.len() - prefix);
         }
-        Some(prefixes)
+        Some(MeasuredBlockLines { prefixes, file_lens })
     }
+
     /// 每一行的前缀都量得到的块按量出来的落笔（里头已含本行的容器记号，所以引用包裹
     /// 不再叠一层），任一行量不到就整块退回按模型拼的那对前缀。
     fn push_measured_inline_mapping(
@@ -923,16 +939,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         content_markdown: String,
         composed_first: String,
         composed_continuation: String,
-        measured_lines: Option<Vec<usize>>,
+        measured_lines: Option<MeasuredBlockLines>,
         quote_depth: usize,
         absolute_start: usize,
         mappings: &mut Vec<SourceTargetMapping>,
     ) -> usize {
         match measured_lines {
-            Some(prefixes) => self.push_line_prefixed_inline_mapping(
+            Some(measured) => self.push_line_prefixed_inline_mapping(
                 block,
                 content_markdown,
-                &prefixes,
+                &measured,
                 absolute_start,
                 mappings,
             ),

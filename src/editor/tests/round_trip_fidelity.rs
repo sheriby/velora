@@ -217,6 +217,91 @@ async fn saving_after_an_edit_at_the_start_preserves_every_other_byte(cx: &mut T
     );
 }
 
+/// 打开→在首块**第二行**行首插一个字符→保存：其他字节一个不动，字还得插在光标那一处。
+///
+/// 上面那张表量的是首行行首，这一张量的是续行。续行的记号宽度按文件逐行量
+/// （`measured_block_line_prefixes`）；回到按模型拼之后，`>引用二`（记号后没空格）少一位、
+/// `>   引用三` 多一位，四空格嵌套列表的续段还会走整块重贴、把用户那四格缩进洗成两格。
+/// 「差异恰好是一个插入字符」不够——插错位置也是差一个字符，所以再对一次插入点。
+/// 只有一个可见行的形状跳过，但可量的形状少到 6 个以下就是夹具变了。
+#[gpui::test]
+async fn saving_after_an_edit_on_the_second_line_preserves_every_other_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut measured = 0usize;
+    for (name, source) in FIDELITY_CASES {
+        let path = temp_markdown_path(name);
+        fs::write(&path, source).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+
+        let Some(first) = editor.read_with(cx, |editor, _cx| {
+            editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+        }) else {
+            failures.push(format!("  [{name}] 打开后一个可见块都没有"));
+            continue;
+        };
+        let Some(caret) = first.read_with(cx, |block, _cx| {
+            block
+                .record
+                .title
+                .visible_text()
+                .find('\n')
+                .map(|newline| newline + 1)
+        }) else {
+            continue;
+        };
+        let expected_at =
+            editor.read_with(cx, |editor, cx| editor.caret_source_offset(first.entity_id(), caret, cx));
+        measured += 1;
+        cx.update(|_window, cx| {
+            first.update(cx, |block, _cx| block.selected_range = caret..caret);
+        });
+        cx.simulate_input("X");
+        redraw(cx);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+
+        let saved = fs::read(&path).expect("read saved file");
+        if let Some(report) = describe_insertion_case(name, source.as_bytes(), &saved) {
+            failures.push(report);
+            continue;
+        }
+        let inserted_at = source
+            .as_bytes()
+            .iter()
+            .zip(saved.iter())
+            .take_while(|(before, after)| before == after)
+            .count();
+        if Some(inserted_at) != expected_at {
+            failures.push(format!(
+                "  [{name}] 字插在第 {inserted_at} 字节，光标说的是 {expected_at:?}：那一行的记号宽度与文件不符"
+            ));
+        }
+    }
+
+    assert!(
+        measured >= 6,
+        "首块有第二行的形状只剩 {measured} 个可量：夹具变了"
+    );
+    assert!(
+        failures.is_empty(),
+        "打开→在首块第二行插一个字符→保存 改写了不该动的字节，{} / {} 个用例失败：\n{}",
+        failures.len(),
+        measured,
+        failures.join("\n")
+    );
+}
+
 /// 保存结果必须等于「原文在某一处插入了一个 `X`」：长度多一、插入点之后逐字节
 /// 相同。除此之外什么都不能变。返回 `Some(报告)` 表示这个用例不合格。
 fn describe_insertion_case(name: &str, original: &[u8], saved: &[u8]) -> Option<String> {
