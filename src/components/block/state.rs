@@ -78,11 +78,28 @@ impl CalloutVariant {
         Some((variant, title))
     }
 
+    /// 头一行里 `[!...]` 那一段照用户写的样子取出来（`note` 与 `NOTE` 是两种写法）。
+    pub fn header_marker_text(line: &str) -> Option<&str> {
+        let rest = line.trim_start().strip_prefix("[!")?;
+        let marker_end = rest.find(']')?;
+        Some(&rest[..marker_end])
+    }
+
     pub fn header_markdown(self, title_markdown: &str) -> String {
+        self.header_markdown_with(None, title_markdown)
+    }
+
+    /// `marker_text` 是用户写下的那一串（`note`），没有就按规范形状拼（`NOTE`）。
+    pub fn header_markdown_with(
+        self,
+        marker_text: Option<&str>,
+        title_markdown: &str,
+    ) -> String {
+        let marker = marker_text.unwrap_or_else(|| self.marker());
         if title_markdown.trim().is_empty() {
-            format!("[!{}]", self.marker())
+            format!("[!{marker}]")
         } else {
-            format!("[!{}] {}", self.marker(), title_markdown)
+            format!("[!{marker}] {title_markdown}")
         }
     }
 
@@ -578,6 +595,9 @@ pub struct BlockRecord {
     /// 代码围栏的开行与闭合行各自让开几字节（文件里的缩进位数）。解析期认出围栏时
     /// 就知道这两个数；`None` 是「不是围栏代码块，或没记」。缩进代码块没有这两行。
     pub source_fence_lines: Option<(u32, u32)>,
+    /// 标注头 `[!...]` 里那一串照用户写的样子存（`note` 与 `NOTE` 是两种写法）。
+    /// `None` 是「没记」，序列化退回规范形状；「格式化文档」把它清成 `None`。
+    pub callout_marker: Option<SharedString>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -602,6 +622,7 @@ impl BlockRecord {
             source_line_prefixes: Vec::new(),
             source_separator_bytes: 0,
             source_fence_lines: None,
+            callout_marker: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };
@@ -681,6 +702,7 @@ impl BlockRecord {
     /// 版本号不动就会把旧写法继续交出去。
     pub fn canonicalize_writing_style(&mut self) {
         self.list_marker = ListMarkerStyle::default();
+        self.callout_marker = None;
         let mut title = self.title.clone();
         title.reset_emphasis_markers();
         self.set_title(title);

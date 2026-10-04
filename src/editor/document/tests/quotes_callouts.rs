@@ -305,9 +305,11 @@
                 BlockKind::Callout(CalloutVariant::Important)
             );
             assert_eq!(visible[0].entity.read(cx).display_text(), "Optional title");
+            // 认得 `important` 是小写写法，序列化也就照它落笔——把记号拼成大写是
+            // 「格式化文档」那一条命令才许做的规范化。
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "> [!IMPORTANT] Optional title"
+                "> [!important] Optional title"
             );
         });
     }

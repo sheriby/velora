@@ -107,6 +107,9 @@ impl Editor {
                 &origins[header_index + 1..],
                 variant,
                 title,
+                // 头那一行的记号照用户写的样子记下来（`note` / `NOTE` 是两种写法）。
+                CalloutVariant::header_marker_text(&lines[header_index])
+                    .map(|marker| SharedString::from(marker.to_string())),
             );
         }
 
@@ -364,6 +367,7 @@ impl Editor {
         origins: &[usize],
         variant: CalloutVariant,
         title: String,
+        marker: Option<SharedString>,
     ) -> Option<Entity<crate::editor::Block>> {
         let inherited = |at: usize| origins.get(at).copied().unwrap_or(0);
         let mut children = Vec::new();
@@ -516,6 +520,9 @@ impl Editor {
                 InlineTextTree::from_markdown(&title),
             ),
         );
+        block.update(cx, |block, _cx| {
+            block.record.callout_marker = marker;
+        });
         attach_child_blocks(&block, children, cx);
         Some(block)
     }

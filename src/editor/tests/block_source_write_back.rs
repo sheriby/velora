@@ -3130,3 +3130,39 @@ async fn newline_in_an_indented_code_block_keeps_the_indented_style(cx: &mut Tes
         "缩进代码块里回车被重写成带围栏的形状：{buffer_text:?}"
     );
 }
+
+/// 标注里按回车拆一行，头那一行 `[!note]` 的写法是用户自己写的：大小写不许被拼成规范
+/// 形状（`[!NOTE]`）。规范化只许住在「格式化文档」那一条命令里（不变式 21）。
+#[gpui::test]
+async fn breaking_a_line_inside_a_callout_keeps_the_header_as_written(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> [!note]\n> 标注正文\n".to_string(), None)
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let body = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "标注正文")
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有标注正文那一块");
+            editor.focus_block(body.entity_id());
+            body.update(cx, |block, block_cx| block.move_to(3, block_cx));
+        });
+    });
+    redraw(cx);
+
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    cx.simulate_input("写");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "> [!note]\n> 标\n> 写注正文\n",
+        "拆一行标注把用户写的小写记号拼成了规范大写：{buffer_text:?}"
+    );
+}

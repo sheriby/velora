@@ -1083,7 +1083,10 @@ impl DocumentTree {
                 let indentation = "  ".repeat(list_depth);
                 lines.push(format!(
                     "{indentation}> {}",
-                    variant.header_markdown(&block_ref.record.title_markdown())
+                    variant.header_markdown_with(
+                        block_ref.record.callout_marker.as_ref().map(SharedString::as_str),
+                        &block_ref.record.title_markdown()
+                    )
                 ));
                 if !block_ref.children.is_empty() {
                     let mut child_lines = Vec::new();

@@ -197,3 +197,30 @@ async fn formatting_again_after_an_undo_still_normalizes(cx: &mut TestAppContext
         );
     });
 }
+
+/// 标注头的小写写法平时照用户写的落笔，格式化时才拼成规范的大写。
+#[gpui::test]
+async fn formatting_a_lowercase_callout_marker_writes_the_canonical_one(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> [!important] 标注标题\n> 正文\n".to_string(), None)
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.buffer.text(),
+            "> [!important] 标注标题\n> 正文\n",
+            "打开就把记号拼成大写了"
+        );
+    });
+
+    editor.update(cx, |editor, cx| editor.format_document(cx));
+    redraw(cx);
+
+    let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(
+        file.contains("> [!IMPORTANT] 标注标题"),
+        "格式化没把标注头拼成规范写法：{file:?}"
+    );
+}
