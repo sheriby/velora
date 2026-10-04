@@ -585,3 +585,50 @@ async fn typing_in_a_paragraph_uses_the_parse_time_prefix(cx: &mut TestAppContex
         assert_eq!(editor.buffer.text(), "写正文甲\n正文乙\n");
     });
 }
+
+/// 列表项也一样：项标记（缩进、子弹写法、任务框）占几位是解析期记下的数据。
+///
+/// `+`、`1)`、制表符分隔、`- [x]` 这些写法的宽度都不一样，按模型拼「两个空格 + `- `」
+/// 一族里最容易漂的一族——以前每次换算都要拿文件行重量一遍。
+#[gpui::test]
+async fn typing_in_a_list_item_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (name, source, expected) in [
+        ("破折号", "- 项甲\n", "- 写项甲\n"),
+        ("加号子弹", "+ 项乙\n", "+ 写项乙\n"),
+        ("带括号序号", "1) 项丙\n", "1) 写项丙\n"),
+        ("制表符分隔", "-\t项丁\n", "-\t写项丁\n"),
+        ("任务框", "- [x] 项戊\n", "- [x] 写项戊\n"),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        editor.update(cx, |editor, _cx| {
+            let root = editor.document.root_blocks()[0].clone();
+            editor.focus_block(root.entity_id());
+        });
+        redraw(cx);
+
+        let before = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+            )
+        });
+        cx.simulate_input("写");
+        redraw(cx);
+        let after = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+                editor.buffer.text(),
+            )
+        });
+        assert!(after.0 > before.0, "{name}：打字没用上解析期记下的记号宽度");
+        assert_eq!(
+            after.1 - before.1,
+            0,
+            "{name}：这一行还在事后拿文件行与模型行比"
+        );
+        assert_eq!(after.2, expected, "{name}：字落错了字节");
+    }
+}

@@ -511,17 +511,24 @@ impl Editor {
                 None
             };
 
-            let block = native_block(
-                cx,
-                marker.kind.clone(),
-                if item_math.is_some() {
-                    String::new()
-                } else {
-                    marker.text
-                },
-            );
+            // 项标记（缩进 + 子弹/序号 + 它后面那个空格 + 任务框）在本行里占几位，
+            // 是剥它的那段代码当场知道的事实：记下来给位置换算用，别再事后比。
+            // 项正文接着被并进公式块的那种情形不算——那一行的内容不在块里。
+            let marker_is_math = item_math.is_some();
+            let marker_width = lines[index].len() - marker.text.len();
+            let item_text = if item_math.is_some() {
+                String::new()
+            } else {
+                marker.text
+            };
+            let block = native_block(cx, marker.kind.clone(), item_text);
             // 记号的写法是原文的一部分：块带着它，显示与序列化才不改用户写的 `+`、`1)`。
-            block.update(cx, |block, _cx| block.record.list_marker = marker.style);
+            block.update(cx, |block, _cx| {
+                block.record.list_marker = marker.style;
+                if !marker_is_math {
+                    block.record.source_line_prefixes = vec![marker_width as u32];
+                }
+            });
             let mut body_index = index + 1;
             let mut pending_blank_lines = 0usize;
             let mut fallback_raw = false;
