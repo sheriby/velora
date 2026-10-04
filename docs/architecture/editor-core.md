@@ -97,8 +97,13 @@ Workspace (src/editor/workspace.rs)
    **源码模式那一档也计数**（2026-10-04）：`resync_buffer_from_projection` 的源码/代码分支以前不加
    `source_serializations`，白名单空表看着全绿，实际未闭合 fenced div / 不支持 admonition 触发的
    整篇兜底里，1 MiB 文档一次按键实测 **2.28 秒**（成本随文档线性增长，大头是把整篇文本重解析成
-   行内树）。现在它进分子了，守卫 `source_mode_typing_is_counted_and_preserves_every_other_byte`
-   （同时钉住字节：除了光标那一个字符，其余原样）。「源码模式直接编辑缓冲区」是还没签字的一笔。
+   行内树）。数出来之后就归零了：源码/代码文档的块挂上自己的缓冲区区间，按键按那一
+   段字节落笔（不变式 20）：同一份 1 MiB 文档切到源码视图，一次按键 **1.99s（整篇落笔 1 次）→
+   141ms（0 次）**（`one_mib_source_mode_typing_stays_within_budget`）。守卫
+   `source_mode_typing_writes_through_the_buffer_and_preserves_every_other_byte`、
+   `typing_in_a_code_document_writes_through_the_buffer`（同时钉住字节：除了光标那一个字符，其余原样）。
+   `raw_source_text` 还在，但只剩源码视图里的**结构**命令（回车拆块、删块）会走——那几档的接缝规
+   则是渲染态的，对源码文档不适用。
 8. **字节保真**由另一组按字节断言的测试守（src/editor/tests/round_trip_fidelity.rs、block_source_write_back.rs、block_source_spans.rs）：`__下划线__` 写法、字面转义 `\*`、Setext、表格列宽、CRLF、末行换行、无末行换行，打开—编辑—保存之后没改过的字节必须逐字节还是磁盘上那样。
 9. **`record.title == parse(buffer[span])` 的渲染侧对照**：`typing_one_char_only_changes_the_text_at_the_caret` 对全部保真形状（含脚注定义）断言「打一个字只动光标那一个字」——本块可见文本正好多出那一个字符，其余块的可见文本一字不改。字节表盯磁盘，这条盯投影：写法被重新解释时（`\*` 读成强调、脚注退回源码形状），字节可能没变而渲染已经变了。
 10. **脚注序号是渲染形状，不是字节形状**：`[^1]` 进树是一个带 `InlineFootnoteReference` 的片段，可见文本按注册表贴成 `¹`。编辑后的重解析认得出 `[^1]` 这个形状、认不出序号（片段 `ordinal` 为空，文本退回源码形状），所以 `sync_footnote_registry` 不能只在注册表换人时回填——段首打一个字并不换注册表，不回填的话屏幕上就是 `[^1]`，可见长度多出三个字节，光标与字数都跟着错。回填排在写回**之后**，因此缓冲区里始终是 `[^1]`（`typing_next_to_a_footnote_reference_keeps_the_ordinal_label`、`typing_between_two_footnote_references_keeps_both_ordinals`、`deleting_a_char_next_to_a_footnote_reference_keeps_the_ordinal_label`）。
@@ -111,6 +116,7 @@ Workspace (src/editor/workspace.rs)
 17. **缩进代码块不补围栏行**：制表符开头的 ` ``` ` 按 CommonMark 就是缩进代码块（制表符算四列，超过围栏允许的三列），可 `push_code_block_mapping` 以前给**任何**代码块都先拼一遍围栏 + 信息串 + 换行，内容行的起点因此整体后移 4 字节——实测在内容第 3 个字符处打一个字，`\t```rust` 那一块写成 `\t```ruXst`（字跑到下一行去了），`\tfoo bar` 写成 `\tfoo bXar`。围栏量不到（开行去掉围栏与信息串之后不是纯空白）就换 `measured_indented_code_line_prefixes`：块占几行按本块的 `source_span` 数（数不齐就说明这一块其实有围栏，交回围栏那条路），每行前缀仍是「文件行的缩进 − 模型行的缩进」，前后不补任何东西。守卫：`typing_inside_an_indented_code_block_lands_on_those_bytes`（伪围栏、制表符、四空格三例钉文件字节）。
 18. **多行内容每一行的记号都按文件量**（`measured_block_line_prefixes` + `build_line_prefixed_content_mapping`）：`build_prefixed_content_mapping` 只有「首行前缀 + 续行前缀」两个字符串，于是多行块（多行引用、引用容器正文、列表项里的续段）从第二行起一律按 `> ` 每级、列表每级两个空格拼。文件里第二行写 `>引用二`（记号后没空格）就少一位、`>   引用三` 就多一位——实测在 `> 引用一\n>引用二\n>   引用三` 的第二行行首打一个字，字节写成 `> X引用二`（比内容起点晚一位，落进了记号与内容之间）；四空格嵌套列表的续段更狠，把每行的量法关掉之后在续段行首打一个字，写成 `  X  子丙`（字落在缩进里），更早一轮还整块重贴成 `- 父甲\n  - 子乙\n    子丙X`——子项那行用户自己写的四格缩进被模型洗成两格。首行沿用 15 那条（本块记号在那里量），续行按「这一行剥掉容器记号后的缩进 − 模型这一行的缩进」量：上级列表的 dedent 是逐级累出来的、走查只带得到累计值，而缩进差正好等于上级容器从这一行吃掉的字节数。行的**长度**也按文件算（`MeasuredBlockLines.file_lens`）：模型为保住一个字面反斜杠会多写一位（`第一行\` + 换行在模型里是 `第一行\\`），位置换算按模型的 markdown 长度走，后面每一行的落点就漂一位——实测在这块的续行行首打一个字，落点算不成字符边界，退回整块写回，把文件里那个 `\` 转义成 `\\`（21 字节变 23 字节）。行内逐位对齐、超出文件那行长度的部分钳在行尾，行与行之间按文件的长度推进。任一行对不上（引用记号剥不动、模型行的缩进比文件行还多、行不在缓冲区里）就整块退回按模型拼。守卫：`typing_on_the_second_line_of_a_quote_with_varied_markers_lands_on_those_bytes`（没空格/三个空格/四空格续段三例钉文件字节）。
 19. **「块内最后一个位置」的落点按映射表，不按块区间末尾**：`mapping_source_offset`（src/editor/selection.rs）在 `offset >= visible_len` 时以前直接交 `full_source_range.end`，而块区间是可以压着不属于内容的字节的（`# 标题寅 #` 的闭合 `#`、围栏的闭合行、行尾空格）。现在交 `content_to_source` 的最后一项——内容在文件里真正结束的那一位。跨块选区端点、源码/渲染视图切换后的光标、查找命中选中、大纲改名时的选中区间都读这一个换算（改这一步时它们各有测试红过，落点按内容末尾走才全部对上）。
+20. **源码/代码文档的块就是缓冲区的一段切片**：文件里既没有 ``` 围栏行、也没有列表记号，所以区间不问解析器——`attach_source_slice_spans`（src/editor/mod.rs）按「块自己的文本长度 + 一个块间换行」推进，`buffer.slice(span) == block.display_text()` 恒成立，块内位置换算也就是恒等表（`push_source_slice_mapping`）。两条推论：`block_markdown_source` 对 source-raw 的块交回那份原文（走序列化会给它补一对围栏，等于把 markdown 写进用户的纯文本文件），而**结构写回那几档对源码文档不适用**（`write_back_root_region` 在 Source 视图直接退回）——渲染态的接缝是「根块之间空一行」，源码视图的接缝是「隔一个换行」。这一档以前没有区间，位置靠「拷整篇文本 + 累加序列化长度」记账，还拿围栏口径去量代码文档的行：`这一行字节数 − 围栏长度` 会切进多字节字符中间（`def 甲():` 一打字就 panic）。守卫：`typing_in_a_code_document_with_chinese_lands_on_the_caret_bytes`、`source_mode_typing_writes_through_the_buffer_and_preserves_every_other_byte`、`typing_in_a_code_document_writes_through_the_buffer`、`newline_in_a_code_document_inserts_only_a_line_break`、`one_mib_source_mode_typing_stays_within_budget`。
 
 
 ## 4. Undo/历史（src/editor/history.rs）
@@ -154,9 +160,9 @@ Workspace (src/editor/workspace.rs)
   「先在缓冲区里按字节找命中，只为**有命中的那一根块**重建它自己的映射」（`search_ranges_for_hits`
   做偏移换算），既不再复制整篇文本，也不整篇走查；守卫
   `document_find_highlights_map_only_the_blocks_with_hits`（`source_mapping_full_builds` 增量为 0，
-  并钉住正文与表格格子两处命中）。`build_source_target_mappings` 只剩两处入口：源码模式的高亮
-  （那里的块是按行切的投影，位置不挂 `source_span`，模式属性使然）与窗口内一根有区间的块都没有时的
-  退回。**块内**那段前缀重建已经收窄：单行内容的块（标题、段落、列表项、任务项、单子块引用）
+  并钉住正文与表格格子两处命中）。`build_source_target_mappings` 现在两种视图共用同一条「按根块区间
+  起锚」的走查（源码/代码文档的块也挂上了区间，见不变式 20；以前它另走一遍「拷整篇文本 + 累加
+  序列化长度」的记账），只剩一处入口：窗口内一根有区间的块都没有时的退回。**块内**那段前缀重建已经收窄：单行内容的块（标题、段落、列表项、任务项、单子块引用）
   按文件量记号宽度（不变式 15），代码围栏的开行、内容行、闭合行也按文件量（不变式 16）。
   块内那段前缀重建已经全部改成按文件量：单行按 15、围栏与缩进代码块按 16/17、多行按每行（18）。
   它还是要为每一根块现算一遍映射，真正能删掉它的是「每个子块与每个格子在解析期就记下自己的字节区间」；再往下要等
@@ -190,13 +196,17 @@ Workspace (src/editor/workspace.rs)
 | 场景 | 数据（2026-10-03，`--nocapture` 实测） |
 |---|---|
 | 1 MiB 一次按键 | 52.5ms；整篇遍数 = 序列化 0 / mapping 3 / 字数 0 / 行计划 2 |
+| 1 MiB 源码模式一次按键 | 改前 **1.99s（整篇落笔 1 次）**，改后 141ms（整篇落笔 0 次、整篇 mapping 0 次）（2026-10-04） |
 | 1 MiB 五个静止帧 | 7.1ms，遍数全 0（不打字不重算任何东西） |
 | 10 MiB 一次按键 | 635ms，序列化 0 次、整篇 mapping 0 次（预算 1500ms） |
 | 单次全文操作 | 序列化 1 MiB 31.8µs；数 32 万词 6.9ms；建 15968 条 mapping 236.8ms |
 | 撤销栈 200 步 | ≤ 64 KiB（存的是增量；旧制最坏 200 × 文档大小） |
 
 **剩下的线性成本**：10 MiB 那 635ms 不在文档模型上，而在行计划重建与可见列表重排（单块 10 MB 文本
-的 shaping）——按行窗口渲染没做，属于独立工作。诊断探针：`VELORA_PERF_FILE=<file> cargo test manual_markdown_load_probe -- --ignored --nocapture`。
+的 shaping）——按行窗口渲染没做，属于独立工作。源码模式同一处根，而且更直白：这一档的**可见列表不
+裁剪**（1 MiB 的文档 115 根块全部算「可见」，10 MiB 是 1144 根），每键 2 次行计划重建就随文档长
+（实测 1 MiB 141ms、10 MiB 1.37s，整篇落笔都是 0 次）。静止帧 5 帧只要 4.9ms，说明贵的不是绘制本身，
+是每键重排这份整篇的可见列表。两条都要「块内/列表也按行窗口投影」才解得掉。诊断探针：`VELORA_PERF_FILE=<file> cargo test manual_markdown_load_probe -- --ignored --nocapture`。
 计数入口：`Editor::{source_serializations, source_mapping_builds, source_mapping_full_builds, word_count_scans, row_plan_rebuilds, roots_reprojected}`、
 `DocumentTree::whole_document_renders`。性能优化进行中的设计记录见 [performance.md](./performance.md)。
 
