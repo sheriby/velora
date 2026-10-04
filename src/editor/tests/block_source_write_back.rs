@@ -2541,6 +2541,86 @@ async fn typing_inside_an_indented_code_fence_lands_on_those_bytes(cx: &mut Test
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
 
+/// 多行块里每一行的记号各自按文件量，第二行往后才落得准。
+///
+/// 单行内容的块已经按文件量记号（`40740fb`），多行内容仍按模型拼：首行一个前缀、
+/// 续行一个前缀，引用一律 `> `、列表续段一律每级两个空格。文件里第二行写 `>引用二`
+/// （记号后没空格）就少一位，写 `>   引用三` 就多一位——字落进上一行的内容里。
+#[gpui::test]
+async fn typing_on_the_second_line_of_a_quote_with_varied_markers_lands_on_those_bytes(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const SHAPES: [(&str, &str, usize, &str); 3] = [
+        (
+            "记号后没空格的续行",
+            "> 引用一\n>引用二\n>   引用三\n",
+            10,
+            "> 引用一\n>X引用二\n>   引用三\n",
+        ),
+        (
+            "记号后三个空格的续行",
+            "> 引用一\n> 引用二\n>   引用三\n",
+            22,
+            "> 引用一\n> 引用二\n>   X引用三\n",
+        ),
+        (
+            "四空格嵌套列表里的续段",
+            "- 父甲\n    - 子乙\n    子丙\n",
+            7,
+            "- 父甲\n    - 子乙\n    X子丙\n",
+        ),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, source_text, caret, want_file) in SHAPES {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source_text.to_string(), None)
+        });
+        redraw(cx);
+
+        let block = editor.read_with(cx, |editor, cx| {
+            let mut blocks = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.clone())
+                .collect::<Vec<_>>();
+            for visible in editor.document.visible_blocks() {
+                blocks.extend(visible.entity.read_with(cx, |block, _| block.children.clone()));
+            }
+            blocks
+                .into_iter()
+                .find(|block| {
+                    block
+                        .read_with(cx, |block, _| block.record.title.visible_text())
+                        .contains("引用二")
+                        || block
+                            .read_with(cx, |block, _| block.record.title.visible_text())
+                            .contains("子乙")
+                })
+                .expect("夹具应有那块")
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(block.entity_id()));
+            block.update(cx, |inner, block_cx| inner.move_to(caret, block_cx));
+        });
+        redraw(cx);
+        cx.simulate_input("X");
+        redraw(cx);
+
+        let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+        if file != want_file {
+            failures.push(format!(
+                "  [{name}] 打进去的字节不在那一行里：{file:?}（应为 {want_file:?}）"
+            ));
+        }
+    }
+
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
 /// 缩进不是每级两个空格的列表，打字也要落在那一项的字节上。
 ///
 /// 走查算子块的绝对位置时，前缀是按模型拼的（列表每级两个空格、引用一律 `> `）。
@@ -2718,3 +2798,4 @@ async fn typing_at_the_end_of_an_indented_fence_line_keeps_the_fence_indent(
         "块末的光标打一个字，不该把围栏的缩进或信息串洗成别的写法"
     );
 }
+

@@ -176,6 +176,77 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         (full, content_to_source, source_to_content)
     }
 
+    /// 每一行按自己量出来的前缀起头（多行内容的块用，`measured_block_line_prefixes`）。
+    fn build_line_prefixed_content_mapping(
+        content: &str,
+        line_prefixes: &[usize],
+    ) -> (String, Vec<usize>, Vec<usize>) {
+        let mut full = String::new();
+        let mut content_to_source = vec![0; content.len() + 1];
+        let mut source_to_content = vec![0usize];
+
+        let push_prefix = |full: &mut String,
+                           source_to_content: &mut Vec<usize>,
+                           mark: usize,
+                           index: usize| {
+            let width = line_prefixes.get(index).copied().unwrap_or(0);
+            let start = full.len();
+            if width > 0 {
+                full.push_str(&" ".repeat(width));
+            }
+            source_to_content.resize(full.len() + 1, mark);
+            for position in start..=full.len() {
+                source_to_content[position] = mark;
+            }
+        };
+
+        push_prefix(&mut full, &mut source_to_content, 0, 0);
+        let mut content_offset = 0usize;
+        let mut line_index = 0usize;
+        while content_offset < content.len() {
+            content_to_source[content_offset] = full.len();
+            let ch = content[content_offset..]
+                .chars()
+                .next()
+                .expect("content offset should stay on char boundaries");
+            let start = full.len();
+            full.push(ch);
+            source_to_content.resize(full.len() + 1, content_offset);
+            for position in start..=full.len() {
+                source_to_content[position] = content_offset;
+            }
+            content_offset += ch.len_utf8();
+            if ch == '\n' {
+                line_index += 1;
+                push_prefix(&mut full, &mut source_to_content, content_offset, line_index);
+            }
+        }
+        content_to_source[content.len()] = full.len();
+        source_to_content.resize(full.len() + 1, content.len());
+        source_to_content[full.len()] = content.len();
+
+        (full, content_to_source, source_to_content)
+    }
+
+    fn push_line_prefixed_inline_mapping(
+        &self,
+        block: &Entity<Block>,
+        content_markdown: String,
+        line_prefixes: &[usize],
+        absolute_start: usize,
+        mappings: &mut Vec<SourceTargetMapping>,
+    ) -> usize {
+        let (full_text, content_to_source, source_to_content) =
+            Self::build_line_prefixed_content_mapping(&content_markdown, line_prefixes);
+        mappings.push(SourceTargetMapping {
+            entity: block.clone(),
+            full_source_range: absolute_start..absolute_start + full_text.len(),
+            content_to_source,
+            source_to_content,
+        });
+        full_text.len()
+    }
+
     pub(super) fn push_inline_block_mapping(
         &self,
         block: &Entity<Block>,
@@ -796,38 +867,74 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
 
     /// 单行内容的块才敢用量出来的前缀：多行内容里每一行的记号宽度这里量不到，
     /// 仍按模型拼（并把引用包裹交给 `quote_depth`）。量到了就说明头记号已经含
-    /// `>`，调用方要把 `quote_depth` 记作 0，别再叠一层包裹。
-    fn measured_inline_prefix(
+        /// 这一块的内容每一行在自己那一行里让开几个字节：首行走 `measured_block_prefix`
+    /// （本块的记号在那里量），续行按「这一行的容器记号 + 缩进差」量。
+    ///
+    /// 多行内容以前整块退回按模型拼（续行一律 `> `、列表续段一律每级两个空格），于是
+    /// 文件里写 `>引用二`（记号后没空格）就整体少一位、写 `>   引用三` 就多一位——字落进
+    /// 上一行的内容里；四空格嵌套列表的续段更狠，整块重贴时把用户那四格缩进洗成两格。
+    /// 续行没有自己的记号，只有上级容器吃掉的缩进，而那位数是逐级 dedent 累出来的、
+    /// 这里只带得到累计值，所以按「文件这行剥掉容器记号后的缩进 − 模型这行的缩进」量：
+    /// 差出来那截就是上级容器从这行吃掉的字节。对不上（负数、引用记号剥不动、行不在
+    /// 缓冲区里）整块退回按模型拼。
+    fn measured_block_line_prefixes(
         &self,
         content_markdown: &str,
-        measured: Option<(usize, usize)>,
-    ) -> Option<String> {
-        if content_markdown.contains('\n') {
-            return None;
+        absolute_start: usize,
+        quote_depth: usize,
+        list_dedent: usize,
+        kind: &BlockKind,
+    ) -> Option<Vec<usize>> {
+        let first = self.measured_block_prefix(absolute_start, quote_depth, list_dedent, kind)?;
+        let model_lines: Vec<&str> = content_markdown.split('\n').collect();
+        let mut prefixes = vec![first.0];
+        if model_lines.len() == 1 {
+            return Some(prefixes);
         }
-        measured.map(|(offset, _)| " ".repeat(offset))
-    }
 
-    /// 单行内容的块用量出来的前缀落笔（它已含本行所有容器记号，所以引用包裹不再叠一层），
-    /// 量不到时退回按模型拼的那对前缀。
+        let levels = quote_depth + usize::from(matches!(kind, BlockKind::Quote));
+        let mut line_index = self.buffer.line_of(absolute_start);
+        for (index, model_line) in model_lines.iter().enumerate().skip(1) {
+            line_index += 1;
+            let range = self.buffer.line_range(line_index);
+            if range.start >= self.buffer.byte_len() {
+                return None;
+            }
+            let file_line = self.buffer.slice(range);
+            let mut rest = file_line;
+            let mut consumed = 0usize;
+            for _ in 0..levels {
+                let stripped = super::document::strip_one_quote_level(&rest)?;
+                consumed += rest.len() - stripped.len();
+                rest = stripped;
+            }
+            let file_indent = leading_blank_bytes(&rest);
+            let model_indent = leading_blank_bytes(model_line);
+            if model_indent > file_indent {
+                return None;
+            }
+            prefixes.push(consumed + (file_indent - model_indent));
+        }
+        Some(prefixes)
+    }
+    /// 每一行的前缀都量得到的块按量出来的落笔（里头已含本行的容器记号，所以引用包裹
+    /// 不再叠一层），任一行量不到就整块退回按模型拼的那对前缀。
     fn push_measured_inline_mapping(
         &self,
         block: &Entity<Block>,
         content_markdown: String,
         composed_first: String,
         composed_continuation: String,
-        measured_first: Option<String>,
+        measured_lines: Option<Vec<usize>>,
         quote_depth: usize,
         absolute_start: usize,
         mappings: &mut Vec<SourceTargetMapping>,
     ) -> usize {
-        match measured_first {
-            Some(first) => self.push_inline_block_mapping(
+        match measured_lines {
+            Some(prefixes) => self.push_line_prefixed_inline_mapping(
                 block,
                 content_markdown,
-                first.clone(),
-                first,
-                0,
+                &prefixes,
                 absolute_start,
                 mappings,
             ),
@@ -879,7 +986,18 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         };
 
         // 记号在本行里占几位是文件里的事实，按模型拼会整体漂（见 `measured_block_prefix`）。
-        let measured = self.measured_block_prefix(absolute_start, quote_depth, list_dedent, &kind);
+        let measured_first_line =
+            self.measured_block_prefix(absolute_start, quote_depth, list_dedent, &kind);
+        let kind_for_measure = kind.clone();
+        let line_prefixes = |markdown: &str| {
+            self.measured_block_line_prefixes(
+                markdown,
+                absolute_start,
+                quote_depth,
+                list_dedent,
+                &kind_for_measure,
+            )
+        };
 
         let own_len = match kind {
             BlockKind::Table => self.push_table_mappings(
@@ -919,7 +1037,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             }
             BlockKind::Heading { level } => {
                 let markdown = title.expect("heading title").markdown().to_string();
-                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
                     block,
                     markdown,
@@ -929,7 +1047,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                         "#".repeat(level as usize)
                     ),
                     String::new(),
-                    measured_first,
+                    measured_lines,
                     quote_depth,
                     absolute_start,
                     mappings,
@@ -938,13 +1056,13 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             BlockKind::Paragraph => {
                 let markdown = title.expect("paragraph title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
-                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
                     block,
                     markdown,
                     indentation.clone(),
                     indentation,
-                    measured_first,
+                    measured_lines,
                     quote_depth,
                     absolute_start,
                     mappings,
@@ -953,13 +1071,13 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             BlockKind::BulletedListItem => {
                 let markdown = title.expect("bullet title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
-                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
                     block,
                     markdown,
                     format!("{indentation}- "),
                     format!("{indentation}  "),
-                    measured_first,
+                    measured_lines,
                     quote_depth,
                     absolute_start,
                     mappings,
@@ -968,13 +1086,13 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             BlockKind::TaskListItem { checked } => {
                 let markdown = title.expect("task title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
-                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
                     block,
                     markdown,
                     format!("{indentation}- [{}] ", if checked { "x" } else { " " }),
                     format!("{indentation}      "),
-                    measured_first,
+                    measured_lines,
                     quote_depth,
                     absolute_start,
                     mappings,
@@ -984,13 +1102,13 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 let markdown = title.expect("numbered title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let ordinal = list_ordinal.unwrap_or(1);
-                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                let measured_lines = line_prefixes(&markdown);
                 self.push_measured_inline_mapping(
                     block,
                     markdown,
                     format!("{indentation}{ordinal}. "),
                     format!("{indentation}   "),
-                    measured_first,
+                    measured_lines,
                     quote_depth,
                     absolute_start,
                     mappings,
@@ -1001,13 +1119,13 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 if title.is_empty() && !children.is_empty() {
                     0
                 } else {
-                    let measured_first = self.measured_inline_prefix(&title, measured);
+                    let measured_lines = line_prefixes(&title);
                     self.push_measured_inline_mapping(
                         block,
                         title,
                         String::new(),
                         String::new(),
-                        measured_first,
+                        measured_lines,
                         quote_depth + 1,
                         absolute_start,
                         mappings,
@@ -1126,7 +1244,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         }
 
         let child_list_depth = list_depth + usize::from(kind.is_list_item());
-        let child_list_dedent = measured
+        let child_list_dedent = measured_first_line
             .map(|(_, dedent)| dedent)
             .unwrap_or(list_dedent + 2 * usize::from(kind.is_list_item()));
         let child_quote_depth = quote_depth + usize::from(kind.is_quote_container());
