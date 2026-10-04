@@ -545,6 +545,62 @@ async fn typing_in_an_atx_heading_uses_the_parse_time_prefix(cx: &mut TestAppCon
     });
 }
 
+/// Setext 标题也在解析期记下「内容从第几个字节开始」，不再走比出来那条路。
+///
+/// 这一族的记号在**下一行**（`===` / `---`），内容行根本没有记号——宽度就是 0，这是事实
+/// 而不是猜。以前每次换算都要拿文件行与模型行比一次才能得出这个 0，而且比的时候把下划线
+/// 那一行也算进块里，块末的位置就报到了下划线后面（实测 `标题甲` 的内容末尾报第 12 位，
+/// 文件里在 9）。
+#[gpui::test]
+async fn typing_in_a_setext_heading_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (name, source, expected) in [
+        ("一级用等号", "标题甲\n===\n", "写标题甲\n===\n"),
+        ("二级用横线", "标题乙\n---\n", "写标题乙\n---\n"),
+        (
+            "后面还有别的块",
+            "标题丙\n===\n\n正文。\n",
+            "写标题丙\n===\n\n正文。\n",
+        ),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        editor.update(cx, |editor, _cx| {
+            let root = editor.document.root_blocks()[0].clone();
+            editor.focus_block(root.entity_id());
+        });
+        redraw(cx);
+
+        let before = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+            )
+        });
+        cx.simulate_input("写");
+        redraw(cx);
+        let (after, buffer) = editor.read_with(cx, |editor, _| {
+            (
+                (
+                    editor.line_prefix_from_record.get(),
+                    editor.line_prefix_measured.get(),
+                ),
+                editor.buffer.text(),
+            )
+        });
+        assert!(
+            after.0 > before.0,
+            "{name}：打字没用上解析期记下的记号宽度"
+        );
+        assert_eq!(
+            after.1 - before.1,
+            0,
+            "{name}：Setext 标题那一行还在事后拿文件行与模型行比"
+        );
+        assert_eq!(buffer, expected, "{name}：字落错了字节");
+    }
+}
+
 /// 段落同样按解析期记下的宽度落笔：根段落一行都没剥，每行宽度都是 0，这是数据不是猜。
 ///
 /// 多行段落（续行、行尾硬换行 `\`）尤其要看这份账——按模型拼续行缩进以前会把硬换行的

@@ -300,11 +300,18 @@ impl Editor {
                 .get(index + 1)
                 .and_then(|next| BlockKind::parse_setext_underline(next))
             {
-                roots.push(native_block(
+                let heading = native_block(
                     cx,
                     BlockKind::Heading { level },
                     line.trim_end().to_string(),
-                ));
+                );
+                // Setext 标题的内容行**没有记号**：整行（连前导空白）就是内容，所以宽度是 0
+                // ——这是这里一眼看到的事实，不是事后拿文件行与模型行比出来的。底下那一行是
+                // 下划线，不在模型里，位置表按文件的行长度走（`file_lens`），不需要为它记什么。
+                heading.update(cx, |heading, _cx| {
+                    heading.record.source_line_prefixes = vec![0];
+                });
+                roots.push(heading);
                 spans.push(index..index + 2);
                 index += 2;
                 continue;
