@@ -2888,3 +2888,50 @@ async fn newline_in_a_code_document_inserts_only_a_line_break(cx: &mut TestAppCo
         "代码文档的回车写出了 markdown 形状"
     );
 }
+
+/// 源码/代码文档里按回车：结构写回那档要按**这一档自己的接缝**拼新文本（根块之间隔一个
+/// 换行，不补围栏、不空一行），算得出那一段字节就不用整篇重投影。
+/// 实测 10 MiB 的代码文档一次回车 430 毫秒全花在那一遍整篇落笔上。
+#[gpui::test]
+async fn entering_a_line_in_a_code_document_lands_on_that_line(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "print(1)\nprint(2)\nprint(3)\n";
+    let path = std::env::temp_dir().join(format!("velora-code-enter-{}.py", std::process::id()));
+    fs::write(&path, source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    redraw(cx);
+
+    let root = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks()[0].clone()
+    });
+    let serializations_before =
+        editor.read_with(cx, |editor, _| editor.source_serializations.get());
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(root.entity_id()));
+        root.update(cx, |block, block_cx| block.move_to(8, block_cx));
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        root.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+
+    let (serializations, file) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.source_serializations.get() - serializations_before,
+            editor.buffer.text(),
+        )
+    });
+    assert_eq!(
+        file, "print(1)\n\nprint(2)\nprint(3)\n",
+        "代码文档的回车改动了光标以外不该动的字节"
+    );
+    assert_eq!(serializations, 0, "代码文档按回车还在整篇落笔");
+}
