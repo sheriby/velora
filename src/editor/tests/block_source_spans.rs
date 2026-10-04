@@ -376,3 +376,80 @@ async fn a_code_document_tiles_the_buffer_with_block_spans(cx: &mut TestAppConte
     redraw(cx);
     assert_tiles("撤销", cx);
 }
+
+/// 源码分块文档的行号就是**文件里的行号**：每块的首行等于它区间起点在缓冲区里的行号，
+/// 前面多一行，后面的块整体跟着挪。
+///
+/// 这个数以前靠逐块 `display_text().split('\n').count()` 累出来——按一个键就把整篇文本
+/// 再扫一遍（预算「每键全文遍历次数 = 0」上的一处漏项）。现在改问缓冲区（行索引是
+/// Fenwick 里两次查询），这条守卫钉住语义：行号与 `source_span` 说的是同一件事。
+#[gpui::test]
+async fn source_document_line_numbers_follow_the_buffer(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut source = String::new();
+    for index in 0..1200 {
+        source.push_str(&format!("print({index})\n"));
+    }
+    let path = std::env::temp_dir().join(format!("velora-code-lines-{}.py", std::process::id()));
+    fs::write(&path, source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while editor.read_with(cx, |editor, _| editor.document.pending_source().is_some()) {
+        assert!(Instant::now() < deadline, "分块续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+
+    let assert_line_numbers = |label: &str, cx: &mut gpui::VisualTestContext| {
+        let wrong = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .filter_map(|block| {
+                    let span = block.read(cx).record.source_span.clone()?;
+                    let shown = block.read(cx).source_line_start();
+                    let truth = editor.buffer.line_of(span.start) + 1;
+                    (shown != truth).then_some((shown, truth))
+                })
+                .take(3)
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            wrong.is_empty(),
+            "{label}：有块的行号不是缓冲区的行号（显示, 应该）{wrong:?}"
+        );
+    };
+    assert_line_numbers("打开", cx);
+
+    let second_before = editor.read_with(cx, |editor, cx| {
+        editor.document.root_blocks()[1].read(cx).source_line_start()
+    });
+    let root = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks()[0].clone()
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(root.entity_id()));
+        root.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+    cx.dispatch_action(Newline);
+    redraw(cx);
+
+    assert_line_numbers("在最前面插一行之后", cx);
+    let second_after = editor.read_with(cx, |editor, cx| {
+        editor.document.root_blocks()[1].read(cx).source_line_start()
+    });
+    assert_eq!(
+        second_after,
+        second_before + 1,
+        "前面多了一行，后面那块的行号没跟着挪"
+    );
+}

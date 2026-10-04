@@ -491,18 +491,30 @@ impl Editor {
         self.refresh_document_find_after_edit(cx);
     }
 
-    /// 源码分块文档的行号续号：文本/结构变化后重算每块的首行行号
-    /// （分块见 `build_source_document_roots`；渲染模式文档没有行号槽）。
+    /// 源码分块文档的行号续号：每块的首行行号**问缓冲区**（它区间起点在第几行，
+    /// Fenwick 查询），不再逐块把文本 `split('\n')` 数一遍——那等于每按一个键就把整篇
+    /// 文本重扫一次，而这份信息缓冲区本来就有。（分块见 `build_source_document_roots`；
+    /// 渲染模式文档没有行号槽。）
     fn refresh_source_line_starts(&mut self, cx: &mut Context<Self>) {
         if !(self.code_document || self.source_mode_fallback_required) {
             return;
         }
-        let mut next_line = 1usize;
-        for visible in self.document.flatten_visible_blocks() {
-            next_line = visible.entity.update(cx, |block, _cx| {
-                block.set_source_line_start(next_line);
-                next_line + block.display_text().split('\n').count()
-            });
+        let total = self.buffer.byte_len();
+        let mut cursor = 0usize;
+        for block in self.document.root_blocks().to_vec() {
+            let start = block
+                .read(cx)
+                .record
+                .source_span
+                .clone()
+                .map(|span| span.start)
+                .unwrap_or(cursor)
+                .min(total);
+            let line = self.buffer.line_of(start) + 1;
+            let length = block.read(cx).display_text().len();
+            block.update(cx, |block, _cx| block.set_source_line_start(line));
+            // 下一片从「这片文本 + 它们之间那个换行」之后开始。
+            cursor = (start + length + 1).min(total);
         }
     }
 
