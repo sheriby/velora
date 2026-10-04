@@ -90,6 +90,7 @@ Workspace (src/editor/workspace.rs)
    - 兜底 `mark_dirty` → `resync_buffer_from_projection`：从块树把全文重新序列化（`DocumentTree::markdown_text`），`source_serializations`/`whole_document_renders` 各加一。**这条是最后手段**：未编辑块的原始字节会在这里被洗掉，所以正常编辑路径必须走不到它。
    - 任一档成功落笔后调 `mark_dirty_written_back`（src/editor/window_state.rs）置 `skip_next_resync`，让本轮的 `Changed` 不再触发兜底重投影。
 4. **表格的结构命令也都是缓冲区编辑**（src/editor/table_edit.rs）：单元格打字 `write_back_table_cell_source`（只动那一格的内容字节，同列宽填充不动）、加行 `write_back_table_row_insertion`（照最后一行的骨架插一行）、删行 `write_back_table_row_deletion`（剪掉那一行连着它前面的换行）、加/删列 `write_back_table_column_insertion`/`_deletion`（每行插/剪一格，从后往前）、调对齐 `write_back_table_column_alignment`（只重写分隔行那一格）、移动行/列 `write_back_table_row_swap`/`_column_swap`（文本对调，净长度不变）、删表头 `write_back_table_header_promotion`（改第一行 + 剪掉升上来的那行）。量不出行形状时（格子里有转义竖线、表挂在容器里没有自己的区间、行数与模型对不上）才退回 `write_back_table_structure_edit`。
+   - **读侧的格子位置量的是同一把尺**（`push_table_row_mappings`，src/editor/source_mapping.rs）：按「第几行第几列」从原文的管道符之间夹出内容区间（`cell_content_range_in_line`），不拿这一格序列化出来的文字回原文里搜。搜的口径有两处会静默失配：空格子序列化出空串（于是这一格**没有映射**，光标停在里面时 `caret_source_offset` 算不出，粘贴/跳转/行列号只能退回默认位置），以及写法与序列化口径不一致时。容器里的行写着 `> | 甲 | 乙 |`，量之前要先让开容器记号（`table_row_container_prefix`），否则 `> ` 被当成第 0 列。守卫：`an_empty_table_cell_still_knows_which_bytes_it_is`、`a_quote_table_maps_columns_after_its_container_marker`。
 5. **重投影从「整棵树重新解析」换成「只重解析变了的那一段」**：`reproject_root_region`（src/editor/document/import.rs）把一根根块换成它那段行重新解析出的若干根块（窗口 = 本段行 + 前瞻 ≤2 行，且要求解析结果落在本段内才接受，否则放弃走全量 `rebuild_root_blocks_from_buffer`）；计数器 `Editor::roots_reprojected` 记增量重投影了几根。
 6. **引用敏感的块才刷新运行时**（`changed_block_needs_runtime_context_refresh`，src/editor/runtime_context.rs）：image/link/footnote 注册表从 `buffer.text()` 解析，且刷新必须排在写回**之后**，否则读到的是改动前的文本（`editing_image_reference_definition_refreshes_existing_image` 钉住这一顺序）。
 7. **闸门**：`a_real_editing_session_never_falls_back_to_whole_document_serialization`（src/editor/tests/perf_budgets.rs）把打字、回车拆块、勾任务框、缩进/提级/降级、标注里拆块、表格加行/删行/调对齐/加删列/移动行列、删整张表、多行粘贴一条条走一遍，断言 `source_serializations + whole_document_renders` 增量为 0。白名单常量 `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED` 现在是空表——每加一条命令都只能让它更短。
@@ -131,8 +132,10 @@ Workspace (src/editor/workspace.rs)
   `table_cell_source_range`（src/editor/table_edit.rs）按「第几行第几列」从管道符之间量出来
   ——不能拿格子文本去原文里找，用户刚打的字还没进文件。
 - **还没做完的**：磁盘搜索命中里那些没有 `source_range` 的仍要靠 `match_ordinal`（在缓冲区里重数
-  第 k 个含词行）定位；表格单元格里的搜索命中拿到了高亮区间，但表格的画法（paint_parts.rs）还没
-  把它画出来。
+  第 k 个含词行）定位。表格单元格里的搜索命中**已经画得出**（格子是独立 Block，走
+  `BlockTextElement`，它读 `search_highlight_ranges`；由 `document_search_hit_inside_table_jumps`
+  钉住），还没画出来的是那几个不走 `BlockTextElement` 的格子：含行内数学/上下标/内嵌图片的格子、
+  长块兜底那一档，以及 HTML `<table>`（src/components/block/render/inline_visuals.rs、paint_parts.rs）。
 
 
 ## 6. 持久化（src/editor/persistence.rs）

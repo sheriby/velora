@@ -1481,7 +1481,7 @@ fn realigned_delimiter_cell(cell: &str, alignment: TableColumnAlignment) -> Opti
 ///
 /// 反斜杠转义的 `|` 不算列分隔符；首尾没有外层管道符的写法也能量出来。空格全占
 /// 的空格，内容区间取零宽、插在第一个空格后面，写进去就是「往这格里加字」。
-fn cell_content_range_in_line(
+pub(crate) fn cell_content_range_in_line(
     line: &str,
     line_start: usize,
     column: usize,

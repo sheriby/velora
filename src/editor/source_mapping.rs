@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use super::table_edit::cell_content_range_in_line;
 use super::*;
 
 impl Editor {
@@ -317,7 +318,7 @@ impl Editor {
         cx: &App,
     ) -> usize {
         let block_ref = block.read(cx);
-        let (Some(table), Some(runtime)) = (
+        let (Some(_table), Some(runtime)) = (
             block_ref.record.table.clone(),
             block_ref.table_runtime.clone(),
         ) else {
@@ -329,37 +330,22 @@ impl Editor {
             return self.push_table_mappings_in_root(block, absolute_start, mappings, cx);
         };
 
-        // 单元格的位置从缓冲区里这张表的原文量出来（在原文行里找单元格文本），
-        // 不再按「列宽 = 内容长 + 3」猜：列宽是用户在文件里写的样子，猜的口径
-        // 在填充过的表格上越漂越远。找不到（写法被规范化改过字节）就没有该格的
-        // 映射，命中退回宿主表格块——阶段 3 让解析期记下每个格的字节区间后，
-        // 这里整个由记录代替。
+        // 单元格的位置按结构从缓冲区里这张表的原文量（第几行第几列，夹在管道符之间），
+        // 既不按「列宽 = 内容长 + 3」猜，也不拿这一格序列化出来的文字回原文里搜。
         let raw = self.buffer.slice(span.clone());
         let mut raw_lines = raw.split('\n');
         let mut line_start = span.start;
 
         if let Some(header_line) = raw_lines.next() {
-            self.push_table_row_mappings(
-                header_line,
-                line_start,
-                &runtime.header,
-                &table.header,
-                mappings,
-            );
+            self.push_table_row_mappings(header_line, line_start, &runtime.header, mappings);
             line_start += header_line.len() + 1;
         }
         if let Some(separator_line) = raw_lines.next() {
             line_start += separator_line.len() + 1;
         }
-        for (row_cells, row_trees) in runtime.rows.iter().zip(table.rows.iter()) {
+        for row_cells in runtime.rows.iter() {
             let Some(row_line) = raw_lines.next() else { break };
-            self.push_table_row_mappings(
-                row_line,
-                line_start,
-                row_cells,
-                row_trees,
-                mappings,
-            );
+            self.push_table_row_mappings(row_line, line_start, row_cells, mappings);
             line_start += row_line.len() + 1;
         }
 
@@ -367,29 +353,29 @@ impl Editor {
     }
 
     /// 把一行表格里的每个单元格映射到它在缓冲区原文里的字节区间。
+    ///
+    /// 按**结构**量：第几列就从原文的管道符之间夹第几段（与写回同一把尺）。以前是拿
+    /// 这一格序列化出来的文字回原文里搜——空格子序列化出空串，于是这一格压根没有映射
+    /// （光标停在空格里时 `caret_source_offset` 算不出，粘贴/跳转/行列号只能退回默认），
+    /// 写法与序列化口径不一致时同样是静默失配。
     fn push_table_row_mappings(
         &self,
         row_line: &str,
         line_start: usize,
         cells: &[Entity<Block>],
-        trees: &[crate::components::InlineTextTree],
         mappings: &mut Vec<SourceTargetMapping>,
     ) {
-        let mut cursor = 0usize;
-        for (cell, tree) in cells.iter().zip(trees.iter()) {
-            let cell_markdown = serialize_table_cell_markdown(tree);
-            if cell_markdown.is_empty() {
-                continue;
-            }
-            let Some(found) = row_line[cursor..].find(&cell_markdown) else {
+        // 挂在容器里的行写着 `> | 甲 | 乙 |`：容器记号不是第一列。
+        let prefix = table_row_container_prefix(row_line);
+        let core = &row_line[prefix..];
+        for (column, cell) in cells.iter().enumerate() {
+            let Some(range) = cell_content_range_in_line(core, line_start + prefix, column) else {
                 continue;
             };
-            let start = line_start + cursor + found;
-            let len = cell_markdown.len();
-            cursor += found + len;
+            let len = range.len();
             mappings.push(SourceTargetMapping {
                 entity: cell.clone(),
-                full_source_range: start..start + len,
+                full_source_range: range,
                 content_to_source: (0..=len).collect(),
                 source_to_content: (0..=len).collect(),
             });
@@ -465,7 +451,6 @@ impl Editor {
             &lines[header_index].1,
             header_start,
             &runtime.header,
-            &table.header,
             mappings,
         );
         for (row_index, row) in table.rows.iter().enumerate() {
@@ -473,7 +458,7 @@ impl Editor {
                 continue;
             };
             let (start, line) = &lines[body_start + row_index];
-            self.push_table_row_mappings(line, *start, cells, row, mappings);
+            self.push_table_row_mappings(line, *start, cells, mappings);
         }
         let last_index = if table.rows.is_empty() {
             header_index + 1
@@ -942,4 +927,24 @@ fn table_row_cells(line: &str) -> Vec<String> {
         core = rest.trim_start();
     }
     core.split('|').map(|part| part.trim().to_string()).collect()
+}
+
+/// 一行表格前挂着多少**容器记号**：缩进、引用块的 `>`（可以嵌套），到表格真正开始为止。
+///
+/// 量格子要从表格里量：`> | 甲 | 乙 |` 的 `> ` 不是第 0 列。
+fn table_row_container_prefix(line: &str) -> usize {
+    let mut consumed = 0usize;
+    let mut rest = line;
+    loop {
+        let trimmed = rest.trim_start();
+        consumed += rest.len() - trimmed.len();
+        rest = trimmed;
+        match rest.strip_prefix('>') {
+            Some(after_marker) => {
+                consumed += 1;
+                rest = after_marker;
+            }
+            None => return consumed,
+        }
+    }
 }

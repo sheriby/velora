@@ -942,6 +942,167 @@ async fn a_table_inside_a_quote_maps_its_cells_to_the_real_bytes(cx: &mut TestAp
     );
 }
 
+/// 空格子也要说得出自己在文件里的哪一段字节。
+///
+/// 读侧量格子位置的办法是「在原文那一行里搜这一格序列化出来的文字」：空格子序列化
+/// 出空串，于是这一格**没有映射**——光标停在空格里时算不出源码偏移，粘贴、跳转、
+/// 状态栏的行列号都只能退回默认位置。格子位置该按结构量（第几行第几列，从原文的
+/// 管道符之间夹出来），与写回用的是同一把尺。
+#[gpui::test]
+async fn an_empty_table_cell_still_knows_which_bytes_it_is(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 名称   | 数量 |\n|:-------|-----:|\n| 苹果   |      |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let (ranges, caret, column_bounds) = editor.read_with(cx, |editor, cx| {
+        let source = editor.buffer.text();
+        // 数据行 `| 苹果   |      |` 里第二格那一列的范围：前一个管道符之后到行尾。
+        let row_start = source.find("| 苹果").expect("夹具里应有这一行");
+        let row_line = source[row_start..].split('\n').next().expect("行应有内容");
+        let second_pipe = row_start
+            + row_line
+                .match_indices('|')
+                .nth(1)
+                .expect("这一行该有两个管道符")
+                .0;
+        let column_bounds = (second_pipe, row_start + row_line.len());
+
+        let ranges = editor
+            .table_cells
+            .values()
+            .map(|binding| {
+                let position = binding
+                    .cell
+                    .read_with(cx, |block, _cx| block.table_cell_position())
+                    .expect("格子绑定应有位置");
+                (
+                    (position.row, position.column),
+                    editor
+                        .source_mapping_for_entity(binding.cell.entity_id(), cx)
+                        .map(|mapping| mapping.full_source_range),
+                )
+            })
+            .collect::<Vec<_>>();
+        let empty_cell = editor
+            .table_cells
+            .values()
+            .find(|binding| {
+                binding
+                    .cell
+                    .read_with(cx, |block, _cx| block.table_cell_position())
+                    == Some(crate::components::TableCellPosition { row: 1, column: 1 })
+            })
+            .expect("夹具里该有那个空格子");
+        let caret = editor.caret_source_offset(empty_cell.cell.entity_id(), 0, cx);
+        (ranges, caret, column_bounds)
+    });
+
+    let missing = ranges
+        .iter()
+        .filter(|(_, range)| range.is_none())
+        .map(|(position, _)| format!("第 {} 行第 {} 列", position.0 + 1, position.1 + 1))
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "这些格子说不出自己在文件里的区间：{missing:?}（空格子序列化出空串，按文字搜就搜不到）"
+    );
+    let (second_pipe, row_end) = column_bounds;
+    let empty_range = ranges
+        .iter()
+        .find(|(position, _)| *position == (1, 1))
+        .and_then(|(_, range)| range.clone())
+        .expect("上一条断言已保证有映射");
+    assert!(
+        empty_range.is_empty() && empty_range.start > second_pipe && empty_range.start <= row_end,
+        "空格子的映射区间没落在它自己那一列里：{empty_range:?}（列在 {second_pipe}..{row_end}）"
+    );
+    assert_eq!(
+        caret,
+        Some(empty_range.start),
+        "光标在空格子里时算不出缓冲区偏移（粘贴、跳转、行列号都靠这个偏移）"
+    );
+}
+
+/// 容器里的表格（挂在引用块下）按结构量格子时，容器记号不算第 0 列。
+///
+/// 引用块里的行写着 `> | 甲 | 乙 |`：`table_cell_source_range` 那条尺是从第一个管道符
+/// 起算的，量之前得先把 `>` 与缩进让开，否则整表往右错一格，空格子的区间还会落在记号上。
+#[gpui::test]
+async fn a_quote_table_maps_columns_after_its_container_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> | 名称   | 数量 |\n> |:-------|-----:|\n> | 苹果   |      |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let (cells, row_start, second_pipe, source) = editor.read_with(cx, |editor, cx| {
+        let source = editor.buffer.text();
+        let row_start = source.find("> | 苹果").expect("夹具里应有这一行");
+        let row_line = source[row_start..].split('\n').next().expect("行应有内容");
+        let second_pipe = row_start
+            + row_line
+                .match_indices('|')
+                .nth(1)
+                .expect("这一行该有两个管道符")
+                .0;
+
+        let mut cells = editor
+            .table_cells
+            .values()
+            .map(|binding| {
+                let position = binding
+                    .cell
+                    .read_with(cx, |block, _cx| block.table_cell_position())
+                    .expect("格子绑定应有位置");
+                (
+                    (position.row, position.column),
+                    binding
+                        .cell
+                        .read_with(cx, |block, _cx| block.display_text().to_string()),
+                    editor
+                        .source_mapping_for_entity(binding.cell.entity_id(), cx)
+                        .map(|mapping| mapping.full_source_range),
+                )
+            })
+            .collect::<Vec<_>>();
+        cells.sort_by_key(|(position, _, _)| *position);
+        (cells, row_start, second_pipe, source)
+    });
+
+    // 空格子的原文区间是零宽，位置在它自己那一列里（第二个管道符之后）。
+    let expected: [((usize, usize), &str, &str); 4] = [
+        ((0, 0), "名称", "名称"),
+        ((0, 1), "数量", "数量"),
+        ((1, 0), "苹果", "苹果"),
+        ((1, 1), "", ""),
+    ];
+    assert_eq!(cells.len(), expected.len(), "夹具里的格子数变了：对照要跟着改");
+    for ((position, text, range), ((want_row, want_column), want_text, want_slice)) in
+        cells.iter().zip(expected.iter())
+    {
+        assert_eq!(*position, (*want_row, *want_column));
+        assert_eq!(text, want_text);
+        let label = format!("第 {} 行第 {} 列（{text:?}）", want_row + 1, want_column + 1);
+        let range = range.clone().unwrap_or_else(|| panic!("{label} 没有映射"));
+        assert_eq!(
+            &source[range.clone()],
+            *want_slice,
+            "{label} 量到的原文不是它自己那格的字节（容器记号 `> ` 被当成了第 0 列？{range:?}）"
+        );
+        if *position == (1, 1) {
+            assert!(
+                range.start > second_pipe && range.start <= row_start + 21,
+                "{label} 没落在它自己那一列里：{range:?}（该在 {second_pipe}..{} 之间）",
+                row_start + 21
+            );
+        }
+    }
+}
+
 /// 拆一个 `1)` 的列表项，两个半截都还得写 `1)`/`2)`，不许变成 `1.`。
 ///
 /// 用户在原文里用的是圆括号，编辑器却把项当成「只有序号、没有写法」的东西：显示按
