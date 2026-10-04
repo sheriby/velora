@@ -839,8 +839,10 @@ impl Editor {
                 }
             }
         }
-        Self::attach_source_slice_spans(&self.buffer, &roots, cx);
         self.document.append_roots(roots, cx);
+        // 区间按**整棵根序列**重挂：这一片是接在已物化的那些片之后的，只按新块自己
+        // 从 0 数会把第二片排到第一片身上（区间重叠，写回就把字节写到别的块里）。
+        self.reattach_source_document_spans(cx);
 
         if offset < tail.source.len() {
             let rest = tail.source.split_off(offset);

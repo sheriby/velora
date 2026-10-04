@@ -314,3 +314,65 @@ async fn every_document_rebuild_leaves_every_root_block_anchored(cx: &mut TestAp
 
     assert_eq!(checked, 5, "每一步都该检查一次");
 }
+
+/// 源码/代码文档的根块也要各自持有区间，且区间里的字节 == 块自己那份文本。
+///
+/// 这一档的块本来就是缓冲区的一段切片，所以「切得对不对」是可以逐块对照的：
+/// 区间不重叠、不越界，块文本与区间字节一模一样。少了这条，写回会拿过期区间
+/// 把字节写到别的块身上（回车拆块第一次付费的整篇落笔就是这么来的）。
+#[gpui::test]
+async fn a_code_document_tiles_the_buffer_with_block_spans(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut source = String::new();
+    for index in 0..1200 {
+        source.push_str(&format!("print({index})\n"));
+    }
+    let path = std::env::temp_dir().join(format!("velora-code-tiles-{}.py", std::process::id()));
+    fs::write(&path, &source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while editor.read_with(cx, |editor, _| editor.document.pending_source().is_some()) {
+        assert!(Instant::now() < deadline, "分块续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+
+    let assert_tiles = |label: &str, cx: &mut gpui::VisualTestContext| {
+        let (spans, buffer_text) = root_block_spans(&editor, cx);
+        assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, label);
+        let mismatched = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .zip(spans.iter())
+                .find(|(block, (span, _))| block.read(cx).display_text() != editor.buffer.slice(span.clone()))
+                .map(|(block, (span, _))| (block.entity_id(), span.clone()))
+        });
+        assert!(
+            mismatched.is_none(),
+            "{label}：有块的文本与它的区间字节不一致：{mismatched:?}"
+        );
+        assert!(spans.len() > 1, "{label}：夹具该分出多块");
+    };
+    assert_tiles("打开", cx);
+
+    cx.simulate_input("x");
+    redraw(cx);
+    assert_tiles("打字", cx);
+
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    assert_tiles("回车拆块", cx);
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_tiles("撤销", cx);
+}
