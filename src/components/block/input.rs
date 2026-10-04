@@ -215,6 +215,11 @@ impl EntityInputHandler for Block {
         if self.marked_range.is_some() {
             if new_text.is_empty() {
                 self.prepare_undo_capture(UndoCaptureKind::ImeCompositionCommit, cx);
+            } else {
+                // 组合进行中的后续更新（拼音逐键增长）也在写缓冲区：delta 撤销栈
+                // 要求每一次写入都被记账，漏记会让这次组合撤销退不干净（中间态
+                // 残留在文档里）。相邻的组合条目由 finalize 按时间序并成一步。
+                self.prepare_undo_capture(UndoCaptureKind::ImeComposition, cx);
             }
         } else if !new_text.is_empty() {
             self.prepare_undo_capture(UndoCaptureKind::ImeComposition, cx);

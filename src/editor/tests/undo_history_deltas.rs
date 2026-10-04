@@ -270,6 +270,72 @@ async fn an_ime_composition_undoes_and_redoes_as_one_step(cx: &mut TestAppContex
     );
 }
 
+/// 拼音逐键增长（n → ni → nih → 提交）是**多次**组合更新，每一次都在写缓冲区：
+/// 每一次都必须被撤销栈记账。组合进行中的更新不开组的话，增量被静默丢弃，
+/// 撤销一次退不干净——中间态残留在文档里（实测得到「笔记内容ih」）。
+#[gpui::test]
+async fn a_multi_update_ime_composition_undoes_cleanly(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "笔记内容\n".to_string(), None));
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _cx| {
+        editor.document.first_root().expect("paragraph").clone()
+    });
+    block.update(cx, |block, _cx| block.selected_range = 12..12);
+
+    // n → ni → nih：每次更新都替换上一段 marked 文本（utf16 区间），组合随之增长。
+    // 每次 redraw 之间 deferred 结算会把组关掉——正是真实输入事件之间的时序。
+    let steps = [
+        (None, "n", Some(1..1)),
+        (Some(4..5), "ni", Some(2..2)),
+        (Some(4..6), "nih", Some(3..3)),
+    ];
+    for (range, fragment, selection) in steps {
+        cx.update(|window, cx| {
+            block.update(cx, |block, block_cx| {
+                <Block as EntityInputHandler>::replace_and_mark_text_in_range(
+                    block, range, fragment, selection, window, block_cx,
+                );
+            });
+        });
+        redraw(cx);
+    }
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "你好", window, block_cx,
+            );
+        });
+    });
+    redraw(cx);
+
+    let composed = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(composed, "笔记内容你好\n", "组合提交后的文本不对：{composed:?}");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.undo_history.len(),
+            1,
+            "整次组合（含多次中间更新）在撤销栈里该只有一组"
+        );
+    });
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.buffer.text()),
+        "笔记内容\n",
+        "撤销一次没退干净：组合的中间态残留在文档里"
+    );
+
+    editor.update(cx, |editor, cx| editor.redo_document(cx));
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.buffer.text()),
+        composed,
+        "重做没回到提交后的文本"
+    );
+}
+
 /// 撤销会重建整棵树：块区间必须重新指向缓冲区，否则下一次写回落在错的字节上。
 ///
 /// 这是「块树只是投影」在撤销路径上的续集——撤销之后文档还是那份文档，

@@ -97,6 +97,13 @@ impl Editor {
     /// 把一次已经落地的缓冲区写入记进当前撤销组。
     ///
     /// 撤销时按反序重放，所以这里只管追加，不需要合并区间。
+    ///
+    /// **不变式**：用户可见的每一次编辑都必须被某个打开的组记账——输入路径由
+    /// `prepare_undo_capture` 开组，模型直改由 `BlockEvent::Changed` 臂补开组，
+    /// 结构事件各自显式 prepare。无组时到达这里的写入只有两类合法来源：
+    /// 撤销/重放（`history_restore_in_progress`）与 `mark_dirty` 程序化重同步
+    /// （「树说了算」的声明式写入，不构成可撤销的用户动作）。新增写入路径时
+    /// 必须先开组再落笔，否则撤销的增量坐标会静默错位。
     pub(crate) fn record_buffer_edit(&mut self, applied: buffer::AppliedEdit) {
         if self.history_restore_in_progress {
             return;
@@ -161,6 +168,24 @@ impl Editor {
 
         // 这次改动没落下任何字节增量：撤销栈不该多出空条目。
         if pending.snapshot.edits.is_empty() {
+            return;
+        }
+
+        // 组合进行中的每次更新各开一条 ImeComposition（见 input.rs）：撤销整次
+        // 组合必须一次退干净，相邻的组合条目按时间序并成一条——撤销时反序重放，
+        // 顺序天然正确。
+        if pending.snapshot.kind == UndoCaptureKind::ImeComposition
+            && self
+                .undo_history
+                .last()
+                .is_some_and(|entry| entry.kind == UndoCaptureKind::ImeComposition)
+        {
+            self.redo_history.clear();
+            self.undo_history
+                .last_mut()
+                .expect("checked above")
+                .edits
+                .extend(pending.snapshot.edits);
             return;
         }
 

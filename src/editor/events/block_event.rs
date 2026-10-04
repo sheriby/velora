@@ -78,6 +78,11 @@ impl Editor {
 
         match event {
             BlockEvent::Changed => {
+                // 模型直改（重命名、补全、程序化编辑）同样会走到 Changed：它们在改
+                // 用户文档，撤销必须覆盖。没有开着的组就补开一个——delta 撤销栈的
+                // 前提是每一次缓冲区写入都被记账，这条不变式在这里收口（组已开时
+                // prepare 是空操作，打字的 Coalescible 组不受影响）。
+                self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
                 // [[ 补全跟随编辑刷新（依据本次编辑后的文本与光标）。
                 self.update_wikilink_completion_for_block(&block, cx);
                 // 文本形状（`[TOC]`）变了就当场刷新快照里那一条元数据：整棵同步

@@ -161,6 +161,9 @@ impl Block {
         if self.code_language_marked_range.is_some() {
             if !mark_inserted_text {
                 self.prepare_undo_capture(UndoCaptureKind::ImeCompositionCommit, cx);
+            } else {
+                // 同 input.rs：组合进行中的后续更新也在写缓冲区，必须记账。
+                self.prepare_undo_capture(UndoCaptureKind::ImeComposition, cx);
             }
         } else if mark_inserted_text {
             self.prepare_undo_capture(UndoCaptureKind::ImeComposition, cx);
