@@ -2474,9 +2474,9 @@ async fn copy_then_paste_a_cross_block_selection_keeps_the_writing_style(cx: &mu
 /// 缩进 − 模型那行的缩进」量：模型存的那一段是上级容器 dedent 之后的，两级缩进都不在
 /// 模型里。
 ///
-/// 制表符缩进的围栏不在这张表里：`\t```rust` 按 CommonMark 就是缩进代码块（制表符算
-/// 四列，超过围栏允许的三列），不是围栏。它是另一族账——缩进代码块的映射现在还给内容
-/// 补上 phantom 的围栏行，光标因此落进围栏文字里（`\t```ruXst`）。
+/// 制表符缩进的「围栏」不在这张表里：`\t```rust` 按 CommonMark 就是缩进代码块（制表符
+/// 算四列，超过围栏允许的三列），由 `typing_inside_an_indented_code_block_lands_on_those_bytes`
+/// 盯。
 #[gpui::test]
 async fn typing_inside_an_indented_code_fence_lands_on_those_bytes(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -2619,6 +2619,64 @@ async fn typing_in_an_indented_list_item_lands_on_that_item(cx: &mut TestAppCont
         if file != want_file {
             failures.push(format!(
                 "  [{name}] 字节没落进子项那一行：{file:?}（应为 {want_file:?}），屏幕上子项是 {visible:?}"
+            ));
+        }
+    }
+
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// 缩进代码块里打字，落点要在内容行自己的字节上，别再按围栏那套拼。
+///
+/// 缩进代码块（四空格或制表符）在文件里就是那几行内容，没有围栏行；而映射给任何
+/// 代码块都先补一遍 ` ``` ` + 信息串 + 换行——`\t```rust` 那种「看着像围栏、按
+/// CommonMark 是缩进代码块」（制表符算四列，超过围栏允许的三列）也照补。实测（2026-10-04）
+/// 在内容第 3 个字符处打一个字：`\t```rust` 那一块写成 `\t```ruXst`（phantom 的
+/// 围栏行 + 换行 = 4 字节，正好把光标推到第二行去），`\tfoo bar` 写成 `\tfoo bXar`。
+/// 量法：块行数按本块的 `source_span` 数，内容行的前缀 = 「文件行的缩进 − 模型行的
+/// 缩进」（模型存的是 dedent 之后那一段），开行没有围栏那套东西就不补。
+#[gpui::test]
+async fn typing_inside_an_indented_code_block_lands_on_those_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const SHAPES: [(&str, &str, usize, &str); 3] = [
+        (
+            "制表符缩进的伪围栏",
+            "\t```rust\n\tlet c = 3;\n\t```\n",
+            2,
+            "\t``X`rust\n\tlet c = 3;\n\t```\n",
+        ),
+        ("制表符缩进的代码", "\tfoo bar\n", 2, "\tfoXo bar\n"),
+        (
+            "四空格缩进的代码",
+            "    let d = 4;\n    第二行\n",
+            2,
+            "    leXt d = 4;\n    第二行\n",
+        ),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, source_text, caret, want_file) in SHAPES {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source_text.to_string(), None)
+        });
+        redraw(cx);
+
+        let code = editor.read_with(cx, |editor, _cx| {
+            editor.document.visible_blocks()[0].entity.clone()
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(code.entity_id()));
+            code.update(cx, |block, block_cx| block.move_to(caret, block_cx));
+        });
+        redraw(cx);
+        cx.simulate_input("X");
+        redraw(cx);
+
+        let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+        if file != want_file {
+            failures.push(format!(
+                "  [{name}] 打进去的字节不在内容里：{file:?}（应为 {want_file:?}）"
             ));
         }
     }

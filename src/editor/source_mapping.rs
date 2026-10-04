@@ -21,6 +21,11 @@ fn fence_line_width(measured: Option<&MeasuredFencePrefixes>, uniform: usize, in
     }
 }
 
+/// 内容里第几个换行之后（= 第几条内容行，0 基）。
+fn full_line_index_of(content: &str, offset: usize) -> usize {
+    content[..offset].bytes().filter(|byte| *byte == b'\n').count()
+}
+
 fn leading_blank_bytes(line: &str) -> usize {
     line.bytes()
         .take_while(|byte| *byte == b' ' || *byte == b'\t')
@@ -365,6 +370,107 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         })
     }
 
+    /// 量出来：这一段缩进代码块的内容行各自在自己那一行里让开几个字节。
+    ///
+    /// 缩进代码块（四空格或制表符）在文件里就是那几行内容，没有围栏行；模型存的是
+    /// 每行 dedent 之后那一段，dedent 吃掉几位是文件里的事。行数拿本块的 `source_span`
+    /// 数——数不齐就说明这一块其实有围栏（围栏那两行不在内容里），交回围栏那条路。
+    fn measured_indented_code_line_prefixes(
+        &self,
+        span: &Range<usize>,
+        content: &str,
+        absolute_start: usize,
+        quote_depth: usize,
+    ) -> Option<Vec<usize>> {
+        if quote_depth > 0
+            || span.start != absolute_start
+            || !self.buffer.is_char_boundary(absolute_start)
+        {
+            return None;
+        }
+        let mut model_lines: Vec<&str> = content.split('\n').collect();
+        if model_lines.last().is_some_and(|line| line.is_empty()) {
+            model_lines.pop();
+        }
+        if model_lines.is_empty() {
+            return None;
+        }
+
+        let mut line_index = self.buffer.line_of(span.start);
+        let mut prefixes = Vec::with_capacity(model_lines.len());
+        for model_line in &model_lines {
+            let range = self.buffer.line_range(line_index);
+            // 内容行必须在块自己的区间里：多一行就说明模型的行数与文件的行数不齐。
+            if range.start >= span.end || range.start > self.buffer.byte_len() {
+                return None;
+            }
+            let file_line = self.buffer.slice(range);
+            let file_indent = leading_blank_bytes(&file_line);
+            let model_indent = leading_blank_bytes(model_line);
+            if model_indent > file_indent {
+                return None;
+            }
+            prefixes.push(file_indent - model_indent);
+            line_index += 1;
+        }
+        Some(prefixes)
+    }
+
+    /// 缩进代码块的映射：内容行按量出来的缩进起头，前后都不补围栏。
+    fn build_indented_code_content_mapping(
+        content: &str,
+        line_prefixes: &[usize],
+    ) -> (String, Vec<usize>, Vec<usize>) {
+        let mut full = String::new();
+        let mut content_to_source = vec![0; content.len() + 1];
+        let mut source_to_content = vec![0usize];
+
+        let mut push_prefix = |full: &mut String,
+                               source_to_content: &mut Vec<usize>,
+                               mark: usize,
+                               index: usize| {
+            let width = line_prefixes.get(index).copied().unwrap_or(0);
+            let start = full.len();
+            if width > 0 {
+                full.push_str(&" ".repeat(width));
+            }
+            source_to_content.resize(full.len() + 1, mark);
+            for position in start..=full.len() {
+                source_to_content[position] = mark;
+            }
+        };
+
+        push_prefix(&mut full, &mut source_to_content, 0, 0);
+        let mut content_offset = 0usize;
+        while content_offset < content.len() {
+            content_to_source[content_offset] = full.len();
+            let ch = content[content_offset..]
+                .chars()
+                .next()
+                .expect("content offset should stay on char boundaries");
+            let start = full.len();
+            full.push(ch);
+            source_to_content.resize(full.len() + 1, content_offset);
+            for position in start..=full.len() {
+                source_to_content[position] = content_offset;
+            }
+            content_offset += ch.len_utf8();
+            if ch == '\n' && content_offset < content.len() {
+                push_prefix(
+                    &mut full,
+                    &mut source_to_content,
+                    content_offset,
+                    full_line_index_of(content, content_offset),
+                );
+            }
+        }
+        content_to_source[content.len()] = full.len();
+        source_to_content.resize(full.len() + 1, content.len());
+        source_to_content[full.len()] = content.len();
+
+        (full, content_to_source, source_to_content)
+    }
+
     pub(super) fn push_code_block_mapping(
         &self,
         block: &Entity<Block>,
@@ -387,12 +493,38 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
 
         let measured =
             self.measured_code_block_line_prefixes(&content, language.as_ref(), absolute_start, quote_depth);
-        let (full_text, content_to_source, source_to_content) = Self::build_code_block_content_mapping(
-            &content,
-            &indentation,
-            language.as_ref(),
-            measured.as_ref(),
-        );
+        let (full_text, content_to_source, source_to_content) = match measured.as_ref() {
+            Some(prefixes) => Self::build_code_block_content_mapping(
+                &content,
+                &indentation,
+                language.as_ref(),
+                Some(prefixes),
+            ),
+            None => {
+                // 没有围栏的缩进代码块：文件里就是那几行内容，前后不该补 phantom 围栏行。
+                let span = block.read(cx).record.source_span.clone();
+                match span
+                    .as_ref()
+                    .and_then(|span| {
+                        self.measured_indented_code_line_prefixes(
+                            span,
+                            &content,
+                            absolute_start,
+                            quote_depth,
+                        )
+                    }) {
+                    Some(prefixes) => {
+                        Self::build_indented_code_content_mapping(&content, &prefixes)
+                    }
+                    None => Self::build_code_block_content_mapping(
+                        &content,
+                        &indentation,
+                        language.as_ref(),
+                        None,
+                    ),
+                }
+            }
+        };
         let (full_text, content_to_source, source_to_content) =
             Self::wrap_source_mapping_with_quotes(
                 full_text,
