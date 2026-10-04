@@ -1013,6 +1013,19 @@ impl DocumentTree {
                     lines.push(format!("{}{fence}", " ".repeat(close)));
                     return;
                 }
+                // 账上 `source_fence_lines` 是 `None` 说明文件里根本没有围栏行（缩进代码
+                // 块）：那就只补每行的缩进，别补那一对 phantom 围栏行——补了等于在按键
+                // 路径上把用户那一族换了形状。引用里的那一族同样不接（那份账把上级吃掉
+                // 的 `> ` 也记在里面，父块还要再补一遍记号）。
+                if block_ref.quote_depth == 0 && block_ref.record.source_fence_lines.is_none() {
+                    let widths = &block_ref.record.source_line_prefixes;
+                    if !widths.is_empty() && widths.len() == content.split('\n').count() {
+                        for (code_line, width) in content.split('\n').zip(widths) {
+                            lines.push(format!("{}{code_line}", " ".repeat(*width as usize)));
+                        }
+                        return;
+                    }
+                }
                 let indentation = "  ".repeat(list_depth);
                 lines.push(format!("{indentation}{fence}{lang_str}"));
                 for code_line in content.split('\n') {

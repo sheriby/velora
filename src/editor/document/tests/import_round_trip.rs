@@ -34,7 +34,7 @@
     }
 
     #[gpui::test]
-    async fn imports_indented_code_blocks_and_serializes_fenced(cx: &mut TestAppContext) {
+    async fn imports_indented_code_blocks_and_keeps_them_indented(cx: &mut TestAppContext) {
         let editor = cx.new(|cx| {
             Editor::from_markdown(
                 cx,
@@ -51,9 +51,10 @@
                 visible[0].entity.read(cx).display_text(),
                 "let x = 1;\nprintln!(\"hi\");"
             );
+            // 文件里没有围栏行，序列化也就不补一对：那是「格式化文档」才许的规范化。
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "```\nlet x = 1;\nprintln!(\"hi\");\n```"
+                "    let x = 1;\n    println!(\"hi\");"
             );
         });
     }
@@ -246,9 +247,10 @@
                 visible[1].entity.read(cx).display_text(),
                 "let x = 1;\nlet y = 2;"
             );
+            // 每一行的缩进按文件那一行记下的位数落笔（这里是六格），不发明围栏行。
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "- item with code block\n  ```\n  let x = 1;\n  let y = 2;\n  ```"
+                "- item with code block\n      let x = 1;\n      let y = 2;"
             );
 
             editor.toggle_view_mode(cx);

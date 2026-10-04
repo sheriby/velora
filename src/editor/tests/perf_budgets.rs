@@ -1320,6 +1320,7 @@ async fn a_real_editing_session_never_measures_marker_widths_after_the_fact(
         ("任务项里", "任务甲"),
         ("嵌套项里", "嵌套乙"),
         ("引用里", "引用正文"),
+        ("缩进代码块里", "let indented = 1;"),
     ] {
         let target = editor.read_with(cx, |editor, cx| {
             editor

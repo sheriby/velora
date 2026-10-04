@@ -3090,3 +3090,43 @@ async fn entering_a_line_in_a_code_document_lands_on_that_line(cx: &mut TestAppC
     );
     assert_eq!(serializations, 0, "代码文档按回车还在整篇落笔");
 }
+
+/// 缩进代码块里按回车，这一块还得是缩进代码块：文件里没有围栏行，落笔就不该补一对。
+///
+/// 实测（2026-10-04）：`    let indented = 1;` 里回车再打一个字，整块被重写成
+/// ` ```\nlet indented = 1;\n字\n``` `——形状换了、缩进没了，那是「格式化文档」才许做的
+/// 规范化（不变式 21）。这一族在文件里长什么样，账上写得清楚：`source_fence_lines`
+/// 是 `None` 就是没有围栏行。
+#[gpui::test]
+async fn newline_in_an_indented_code_block_keeps_the_indented_style(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "    let indented = 1;\n\n正文。\n".to_string(), None)
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let code = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind().is_code_block())
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有一个缩进代码块");
+            editor.focus_block(code.entity_id());
+            code.update(cx, |block, block_cx| block.move_to(block.visible_len(), block_cx));
+        });
+    });
+    redraw(cx);
+
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    cx.simulate_input("字");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "    let indented = 1;\n    字\n\n正文。\n",
+        "缩进代码块里回车被重写成带围栏的形状：{buffer_text:?}"
+    );
+}
