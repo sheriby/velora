@@ -575,16 +575,22 @@ impl Editor {
             }
         }
 
-        let mut segments: HashMap<EntityId, OutlineSegment> =
+        let mut segments: HashMap<(EntityId, OutlineFence), OutlineSegment> =
             HashMap::with_capacity(roots.len());
         let mut rescanned_lines = 0usize;
         let mut changed = false;
-        // 有一根块带不出可用的区间（懒导入还没接上的尾段），或者未闭合的围栏跨了
-        // 块边界——这两种都只能整篇重扫。
+        // 有一根块带不出可用的区间（懒导入还没接上的尾段）：只能整篇重扫。
         let mut rescan_everything = false;
+        // 围栏的状态要跨块传下去。源码视图按行切片，一根 ``` 能正好落在两片接缝上，
+        // 于是后一片是从围栏**里面**开始的；以前这里认不出来，只有「这片结尾还在
+        // 围栏里 → 整篇重扫」一条退回，所以一份 10 MiB 的代码文档里跨接缝的围栏把整条
+        // 增量路作废了（实测每帧一次大纲同步 142ms、重扫 585499 行 = 全文；见闸门
+        // `one_mib_code_document_with_a_fence_on_the_seam_scans_one_chunk` 的成对数字）。
+        let mut fence: OutlineFence = None;
+        // 按文档顺序记下每块用的是哪份摘要（键含围栏状态），拼树时照这个顺序取。
+        let mut walk: Vec<(EntityId, OutlineFence)> = Vec::with_capacity(roots.len());
         for (index, root) in roots.iter().enumerate() {
             let id = root.entity_id();
-            let cached = self.workspace.outline_segments.remove(&id);
             let (Some(span), Some(first_line)) = (spans[index].clone(), first_lines[index]) else {
                 rescan_everything = true;
                 break;
@@ -592,29 +598,35 @@ impl Editor {
             let touched = dirty
                 .as_ref()
                 .is_some_and(|dirty| Self::region_touches(dirty, &span));
+            // 缓存键是「这块 + 走进这块时的围栏状态」：同样的字节，围栏外扫出来一片
+            // 标题，围栏里一个都没有，两份摘要不能混用。
+            let key = (id, fence);
+            walk.push(key);
+            let cached = self.workspace.outline_segments.remove(&key);
             match cached {
                 // 这块的字节一个都没动、段的字节数也没变：摘要照用，至多把行号平移
                 // 到现在的位置。字节数变了说明接缝被重新分过（拆块、合块），那段
                 // 字节已经不是这块的了。
                 Some(cached) if !touched && cached.byte_len == span.end - span.start => {
                     if cached.first_line == first_line {
-                        segments.insert(id, cached);
+                        fence = cached.fence_out;
+                        segments.insert(key, cached);
                     } else {
+                        let cached = cached.shifted_to(first_line);
+                        fence = cached.fence_out;
                         changed = true;
-                        segments.insert(id, cached.shifted_to(first_line));
+                        segments.insert(key, cached);
                     }
                 }
-                // 改动落在这一块里（或者它是刚换上去的新块）：只重扫它自己那几行。
+                // 改动落在这一块里（或者它是刚换上去的新块、又或者上面的编辑把围栏
+                // 状态推到它身上来了）：只重扫它自己那几行。
                 cached => {
-                    let segment = outline_segment(first_line, &self.buffer.slice(span));
+                    let segment =
+                        outline_segment(first_line, &self.buffer.slice(span), fence);
                     rescanned_lines += segment.lines;
                     changed |= cached.is_none_or(|cached| !cached.same_content_as(&segment));
-                    if segment.ends_inside_fence && index + 1 < roots.len() {
-                        // 未闭合的围栏跨过了块边界，段与段不再独立：只能整篇重扫。
-                        rescan_everything = true;
-                        break;
-                    }
-                    segments.insert(id, segment);
+                    fence = segment.fence_out;
+                    segments.insert(key, segment);
                 }
             }
         }
@@ -626,8 +638,8 @@ impl Editor {
         };
 
         if rescan_everything {
-            // 增量这条路对这个文档不成立（有块带不出可用的区间，或未闭合的围栏跨了
-            // 块边界）：退回整篇扫一遍，缓存留空，下一帧重新按块算。
+            // 增量这条路对这个文档不成立（有块带不出可用的区间）：退回整篇扫一遍，
+            // 缓存留空，下一帧重新按块算。
             changed = true;
             self.outline_full_rescans
                 .set(self.outline_full_rescans.get() + 1);
@@ -636,8 +648,8 @@ impl Editor {
             self.install_outline(build_outline_tree(&source));
         } else if changed {
             let mut headings: Vec<OutlineHeading> = Vec::new();
-            for root in &roots {
-                if let Some(segment) = self.workspace.outline_segments.get(&root.entity_id()) {
+            for key in &walk {
+                if let Some(segment) = self.workspace.outline_segments.get(key) {
                     headings.extend(segment.headings.iter().cloned());
                 }
             }

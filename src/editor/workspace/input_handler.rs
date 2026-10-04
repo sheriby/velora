@@ -353,15 +353,24 @@ pub(crate) struct OutlineHeading {
     pub(crate) label: String,
 }
 
+/// 走到某一行时的围栏状态：`None` 是围栏外，`Some((记号字符, 记号长度))` 是还在
+/// 某个围栏里面。闭栏要认得开栏用的字符与长度，所以只带一个 bool 不够——
+/// 反引号围栏里的 `~~~` 不是闭栏。
+pub(crate) type OutlineFence = Option<(char, usize)>;
+
 /// 一根块在大纲里的那一份，按「这块自己的行」算好存着。
 ///
 /// 分块扫再拼起来，与整篇扫一遍，必须给出同一个结果：`headings` 由
 /// [`outline_headings`] 这同一个函数产出，行号只是差了 `first_line`。
-/// 跨块的状态只有两处可能漏：未闭合的围栏（记在 `ends_inside_fence`，见调用方
-/// 的退回分支）与 Setext 的「上一行」——后者的正文与划线之间没有空行，解析器
-/// 不会在那里分块，所以划线所在块的上一行必是空行或前一块的最后一行，两种都当不出标题。
+/// 跨块的状态只有两处可能漏：围栏（进出各记一份，`fence_in` 由调用方按前一块的
+/// `fence_out` 喂进来）与 Setext 的「上一行」——后者的正文与划线之间没有空行，
+/// 解析器不会在那里分块，所以划线所在块的上一行必是空行或前一块的最后一行，
+/// 两种都当不出标题。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OutlineSegment {
+    /// 进这段时的围栏状态。它是这段摘要的一部分：同一段字节，围栏外扫出来全是标题，
+    /// 围栏里扫出来一个都没有，缓存不能混用（缓存键就是 `(块, fence_in)`）。
+    pub(crate) fence_in: OutlineFence,
     /// 这段第一行在整篇里的行号。存绝对行号，但块整体上移/下移时可以用
     /// [`Self::shifted_to`] 平移，不必回头重扫字节。
     pub(crate) first_line: usize,
@@ -371,8 +380,8 @@ pub(crate) struct OutlineSegment {
     /// 这段有几行（闸门用它数「一次按键真重扫了多少行」）。
     pub(crate) lines: usize,
     pub(crate) headings: Vec<OutlineHeading>,
-    /// 这段结束时还在围栏里：围栏没闭合，后面的行都不该算标题。
-    pub(crate) ends_inside_fence: bool,
+    /// 退出这段时的围栏状态，交给下一段接着扫。
+    pub(crate) fence_out: OutlineFence,
 }
 
 impl OutlineSegment {
@@ -380,6 +389,7 @@ impl OutlineSegment {
     pub(crate) fn shifted_to(&self, first_line: usize) -> Self {
         let delta = first_line as i64 - self.first_line as i64;
         Self {
+            fence_in: self.fence_in,
             first_line,
             byte_len: self.byte_len,
             lines: self.lines,
@@ -392,14 +402,15 @@ impl OutlineSegment {
                     label: heading.label.clone(),
                 })
                 .collect(),
-            ends_inside_fence: self.ends_inside_fence,
+            fence_out: self.fence_out,
         }
     }
 
     /// 内容与另一段相同吗？行号平移不算内容变了。
     pub(crate) fn same_content_as(&self, other: &Self) -> bool {
-        self.lines == other.lines
-            && self.ends_inside_fence == other.ends_inside_fence
+        self.fence_in == other.fence_in
+            && self.fence_out == other.fence_out
+            && self.lines == other.lines
             && self.headings.len() == other.headings.len()
             && self
                 .headings
@@ -413,13 +424,19 @@ impl OutlineSegment {
     }
 }
 
-/// 扫一段行，按出现顺序取出其中的标题。`first_line` 是这段第一行在整篇里的行号。
+/// 扫一段行，按出现顺序取出其中的标题。`first_line` 是这段第一行在整篇里的行号，
+/// `fence_in` 是走到这一段时的围栏状态（源码视图按行切片时，``` 会跨过片与片的接缝，
+/// 后一片是从围栏**里面**开始的）。返回退出时的围栏状态，交给下一段接着用。
 ///
 /// 大纲读的是文件里的那份文本，所以 Setext 标题必须在这里也认得——以前它读重新
 /// 序列化的文本，Setext 已经被转成 `#` 才进来。
-fn outline_headings(first_line: usize, lines: &str) -> (Vec<OutlineHeading>, bool) {
+fn outline_headings(
+    first_line: usize,
+    lines: &str,
+    fence_in: OutlineFence,
+) -> (Vec<OutlineHeading>, OutlineFence) {
     let mut headings = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
+    let mut fence = fence_in;
     let mut previous: Option<(usize, &str)> = None;
 
     for (offset, line) in lines.lines().enumerate() {
@@ -463,18 +480,23 @@ fn outline_headings(first_line: usize, lines: &str) -> (Vec<OutlineHeading>, boo
         previous = Some((offset, line));
     }
 
-    (headings, fence.is_some())
+    (headings, fence)
 }
 
 /// 一段（通常是一根块）行的大纲摘要。
-pub(crate) fn outline_segment(first_line: usize, source: &str) -> OutlineSegment {
-    let (headings, ends_inside_fence) = outline_headings(first_line, source);
+pub(crate) fn outline_segment(
+    first_line: usize,
+    source: &str,
+    fence_in: OutlineFence,
+) -> OutlineSegment {
+    let (headings, fence_out) = outline_headings(first_line, source, fence_in);
     OutlineSegment {
+        fence_in,
         first_line,
         byte_len: source.len(),
         lines: source.lines().count(),
         headings,
-        ends_inside_fence,
+        fence_out,
     }
 }
 
@@ -521,7 +543,7 @@ pub(crate) fn nest_outline_headings(headings: &[OutlineHeading]) -> Vec<Workspac
 }
 
 pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
-    let (headings, _) = outline_headings(0, markdown);
+    let (headings, _) = outline_headings(0, markdown, None);
     nest_outline_headings(&headings)
 }
 

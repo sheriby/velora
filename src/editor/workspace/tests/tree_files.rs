@@ -597,9 +597,21 @@ async fn the_incremental_outline_matches_a_whole_document_scan(cx: &mut TestAppC
             cx.add_window_view(|_window, cx| Editor::from_markdown(cx, (*document).to_string(), None));
         cx.run_until_parked();
 
-        let check = |tag: &str, editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext| {
+        let check = |tag: &str,
+                     editor: &gpui::Entity<Editor>,
+                     cx: &mut gpui::VisualTestContext,
+                     rescans: &mut u64| {
             editor.update(cx, |editor, cx| {
                 editor.sync_workspace_outline(cx);
+                // 比对的必须是「按块拼」这条路算出来的大纲：一旦某一步退回整篇重扫，
+                // 它照样与整篇扫的一致，这个测试就成了自证。所以退回次数也钉在这里。
+                let full = editor.outline_full_rescans.get();
+                assert_eq!(
+                    full, *rescans,
+                    "「{name}」{tag}之后大纲退回了整篇重扫（累计 {} 次）：按块增量这条路没走通",
+                    full - *rescans,
+                );
+                *rescans = full;
                 let by_segments = outline_shape(&editor.workspace.outline_tree);
                 let whole_source = editor.buffer.text();
                 let whole = build_outline_tree(&whole_source);
@@ -611,7 +623,8 @@ async fn the_incremental_outline_matches_a_whole_document_scan(cx: &mut TestAppC
                 );
             });
         };
-        check("打开", &editor, cx);
+        let mut rescans = editor.read_with(cx, |editor, _| editor.outline_full_rescans.get());
+        check("打开", &editor, cx, &mut rescans);
 
         // 一块一块地落笔：在每根块的块首打一个字、再按一次回车，每步都比对一次。
         let root_count = editor.read_with(cx, |editor, _| editor.document.root_count());
@@ -640,7 +653,7 @@ async fn the_incremental_outline_matches_a_whole_document_scan(cx: &mut TestAppC
                 });
                 typed = !typed;
                 cx.run_until_parked();
-                check(&format!("第 {index} 根{tag}"), &editor, cx);
+                check(&format!("第 {index} 根{tag}"), &editor, cx, &mut rescans);
             }
         }
     }
@@ -704,6 +717,234 @@ async fn the_outline_is_only_built_for_a_reader(cx: &mut TestAppContext) {
                 .collect::<Vec<_>>(),
             vec!["一".to_string()],
             "有 `[TOC]` 块却没算大纲"
+        );
+    });
+}
+
+/// 源码/代码文档按行切片（`SOURCE_DOCUMENT_CHUNK_LINES` 行一片），``` 围栏会跨过片与片
+/// 的接缝——那一片的「进入时的围栏状态」不再是空的。摘要按这个状态分档之后，第二片照样
+/// 只扫自己那几行；在那之前，跨片围栏让大纲整条增量路失效，只能退回整篇重扫（10 MiB
+/// 代码文档实测一键 585499 行 / 140ms）。
+#[gpui::test]
+async fn a_fence_crossing_a_source_chunk_seam_still_scans_per_block(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let chunk = crate::editor::file_drop::SOURCE_DOCUMENT_CHUNK_LINES;
+    let mut lines = vec!["fn main() {}".to_string()];
+    while lines.len() < chunk - 1 {
+        lines.push(format!("正文第 {} 行，不是标题。", lines.len()));
+    }
+    // 这一片的最后一行开围栏，闭合行与后面的标题都落在下一片里。
+    lines.push("```rust".to_string());
+    lines.push("# 掉在围栏里，不算标题".to_string());
+    lines.push("```".to_string());
+    lines.push("# 围栏外才算标题".to_string());
+    let source = format!("{}\n", lines.join("\n"));
+    // 按行切片是**代码/纯文本文件**那条路（`build_source_document_roots`），
+    // 所以要真走文件加载，`from_markdown` 的源码退回是整篇一块。
+    let path = std::env::temp_dir().join(format!("velora-outline-seam-{}.py", std::process::id()));
+    fs::write(&path, &source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = crate::editor::encoding::load_document(&path).expect("load fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        let roots = editor.document.root_blocks();
+        assert!(
+            roots.len() >= 2,
+            "这份文档该被切成至少两片，接缝才能压在围栏上：{} 片",
+            roots.len()
+        );
+        assert!(
+            roots[0].read(cx).display_text().ends_with("```rust"),
+            "接缝没压在围栏上，这个测试就没测到东西"
+        );
+    });
+
+    // 侧栏收起又没 `[TOC]` 块时大纲根本不算（见 `the_outline_is_only_built_for_a_reader`），
+    // 这里按「有人看」的方式显式要一次。
+    let before = editor.read_with(cx, |editor, _| editor.outline_full_rescans.get());
+    editor.update(cx, |editor, cx| editor.sync_workspace_outline(cx));
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.outline_full_rescans.get(),
+            before,
+            "打开这份文档就把大纲整篇重扫了：跨片的围栏让按块增量失效"
+        );
+        assert_eq!(
+            editor
+                .workspace
+                .toc_entries
+                .iter()
+                .map(|entry| entry.title.clone())
+                .collect::<Vec<_>>(),
+            vec!["围栏外才算标题".to_string()],
+            "跨片的围栏没被认出来：围栏里的 # 也算了标题"
+        );
+    });
+
+    // 打一个字：只该重扫改动那一片，别退回整篇。
+    let root = editor.update(cx, |editor, _cx| {
+        let root = editor.document.root_blocks()[1].clone();
+        editor.focus_block(root.entity_id());
+        root
+    });
+    cx.update(|window, cx| {
+        root.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <crate::components::Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "甲", window, cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let before_typing = editor.read_with(cx, |editor, _| editor.outline_full_rescans.get());
+    editor.update(cx, |editor, cx| editor.sync_workspace_outline(cx));
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.outline_full_rescans.get(),
+            before_typing,
+            "打一个字让大纲退回整篇重扫"
+        );
+        assert_eq!(
+            editor
+                .workspace
+                .toc_entries
+                .iter()
+                .map(|entry| entry.title.clone())
+                .collect::<Vec<_>>(),
+            vec!["围栏外才算标题".to_string()],
+            "打完字这份大纲就不是原来的了"
+        );
+    });
+}
+
+/// 围栏的状态要能**跨过没动过的块**传下去：开栏长度多一个反引号，后面那些一个字
+/// 都没改的片就从「围栏外」变成「围栏里」，它们那份摘要不再算数——缓存键带着
+/// 「走进这块时的围栏状态」，所以这里是换键重扫，而不是整篇重扫，也不是留着旧摘要。
+#[gpui::test]
+async fn a_longer_fence_above_pulls_the_following_chunks_inside_it(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let chunk = crate::editor::file_drop::SOURCE_DOCUMENT_CHUNK_LINES;
+    // 五片：0 全正文，1 的第一行开围栏，2 的第一行是井号（在栏里，不算标题），
+    // 3 的第一行闭栏、第二行是井号（算），4 的第一行也是井号（算）。
+    let mut lines = vec!["value = 0".to_string(); chunk * 5];
+    lines[chunk] = "```rust".to_string();
+    lines[chunk * 2] = "# 掉在围栏里，不算标题".to_string();
+    lines[chunk * 3] = "```".to_string();
+    lines[chunk * 3 + 1] = "# 围栏外才算标题".to_string();
+    lines[chunk * 4] = "# 也算标题".to_string();
+    let source = format!("{}\n", lines.join("\n"));
+    let path = std::env::temp_dir().join(format!(
+        "velora-outline-fence-width-{}.py",
+        std::process::id()
+    ));
+    fs::write(&path, &source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = crate::editor::encoding::load_document(&path).expect("load fixture");
+    let (editor, cx) =
+        cx.add_window_view(move |_window, cx| Editor::from_loaded_document(cx, document, Some(path.clone())));
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        let roots = editor.document.root_blocks();
+        assert!(
+            roots.len() >= 5,
+            "这份文档该切成五片才测得到跨片传递：{} 片",
+            roots.len()
+        );
+        assert!(
+            roots[1].read(cx).display_text().starts_with("```rust"),
+            "开栏没落在第二片的第一行，这个测试就没测到东西"
+        );
+    });
+
+    let titles = |editor: &Editor| -> Vec<String> {
+        editor
+            .workspace
+            .toc_entries
+            .iter()
+            .map(|entry| entry.title.clone())
+            .collect()
+    };
+    let sync = |editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext, tag: &str| {
+        let before = editor.read_with(cx, |editor, _| editor.outline_full_rescans.get());
+        editor.update(cx, |editor, cx| editor.sync_workspace_outline(cx));
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(
+                editor.outline_full_rescans.get(),
+                before,
+                "{tag}：大纲退回了整篇重扫，跨片的围栏状态没接住"
+            );
+        });
+    };
+
+    sync(&editor, cx, "打开");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            titles(editor),
+            vec!["围栏外才算标题".to_string(), "也算标题".to_string()],
+        );
+    });
+
+    // 在开栏那片补一个反引号：四格的栏，三格的那一行关不掉它。
+    let root = editor.update(cx, |editor, _cx| {
+        let root = editor.document.root_blocks()[1].clone();
+        editor.focus_block(root.entity_id());
+        root
+    });
+    cx.update(|window, cx| {
+        root.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <crate::components::Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "`", window, cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    sync(&editor, cx, "开栏长一格");
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            titles(editor).is_empty(),
+            "四格的开栏后面三片还在栏里，大纲却认出了标题：{:?}",
+            titles(editor)
+        );
+    });
+
+    // 撤掉那一格：后面几片又回到栏外，摘要得重新算出来（换过键的旧那档不该留着）。
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    sync(&editor, cx, "撤销那一格");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            titles(editor),
+            vec!["围栏外才算标题".to_string(), "也算标题".to_string()],
+            "撤销之后大纲没有回到栏外那份：{:?}",
+            titles(editor)
         );
     });
 }

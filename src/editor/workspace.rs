@@ -247,10 +247,12 @@ pub(super) struct WorkspaceState {
     /// 只有该文件被重新加载才清除，扫描或普通错误清空不得影响它。
     external_change_conflict: Option<(PathBuf, String)>,
     outline_tree: Vec<WorkspaceTreeNode>,
-    /// 大纲的增量缓存：每根块「自己那几行里有哪些标题」的摘要，按块的 EntityId 存。
-    /// 键用 EntityId 而不是下标：重投影只换掉改动那几根的实体，新 id 自然没缓存
-    /// （于是重算），没动的块 id 不变（于是照用），删掉的块在下次重建时整张换掉。
-    outline_segments: HashMap<EntityId, OutlineSegment>,
+    /// 大纲的增量缓存：每根块「自己那几行里有哪些标题」的摘要，按「块的 EntityId +
+    /// 走进这块时的围栏状态」存。键用 EntityId 而不是下标：重投影只换掉改动那几根的实体，
+    /// 新 id 自然没缓存（于是重算），没动的块 id 不变（于是照用），删掉的块在下次重建时
+    /// 整张换掉。围栏状态也进键，因为同样的字节在围栏里/外扫出来的东西完全不同
+    /// （源码视图的一片可能正从一条 ``` 中间开始）。
+    outline_segments: HashMap<(EntityId, OutlineFence), OutlineSegment>,
     /// 上次同步时的根块数。懒导入把尾部的块补进来时一个字节都没改，只靠
     /// [`TextBuffer::take_dirty_region`](crate::editor::buffer::TextBuffer) 发现不了。
     outline_root_count: usize,

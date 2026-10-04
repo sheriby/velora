@@ -321,6 +321,110 @@ async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext
     );
 }
 
+/// 一片 ``` 正好压在源码文档的切片接缝上时，大纲的按块增量也不该作废。
+///
+/// 源码/代码文档按 512 行切片，所以一条围栏的开栏与闭栏可以落在不同的片里：整片
+/// 是从围栏**里面**开始的。以前摘要只记「这片结尾还在围栏里吗」，认不出下一片该
+/// 接着栏内的状态扫，于是每次同步都退回整篇重扫——闸门数出来的是全文行号。
+///
+/// 成对实测（同一台机器、同一份夹具改出来的同一份文档，dev 无优化；把下面读的夹具
+/// 换成 ten-mib.md 就是 10 MiB 那档）。一次大纲同步的开销：
+/// 改前 **142ms、重扫 585499 行（=全文）、每帧整篇重扫 1 次**；
+/// 改后 **44ms、重扫 512 行（=改动那一片）、整篇重扫 0 次**。
+/// 剩下的 44ms 不在重扫上，而在「把每根块的起点换算成整篇行号」那一次按字节数行的
+/// 走查——缓冲区还没有行索引，那是下一个与文档大小同向的项。
+#[gpui::test]
+async fn one_mib_code_document_with_a_fence_on_the_seam_scans_one_chunk(
+    cx: &mut TestAppContext,
+) {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/one-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        return;
+    }
+    init_editor_test_app(cx);
+    let chunk = crate::editor::file_drop::SOURCE_DOCUMENT_CHUNK_LINES;
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    let mut lines: Vec<&str> = markdown.lines().collect();
+    // 开栏压在片 0 的最后一行，闭栏落在片 2 的第一行：中间整片都在围栏里。
+    lines[chunk - 1] = "```";
+    lines[chunk + 1] = "# 掉在围栏里，不算标题";
+    lines[chunk * 2] = "```";
+    let source = format!("{}\n", lines.join("\n"));
+    let path = std::env::temp_dir().join(format!("velora-seam-gate-{}.py", std::process::id()));
+    fs::write(&path, &source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = crate::editor::encoding::load_document(&path).expect("load fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while editor.read_with(cx, |editor, _| {
+        editor.document.pending_source().is_some() || editor.document.pending_tail().is_some()
+    }) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+
+    let counted = |editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext| {
+        editor.read_with(cx, |editor, _| {
+            (
+                editor.outline_lines_scanned.get(),
+                editor.outline_full_rescans.get(),
+                editor.buffer.line_count(),
+                editor.outline_nanos.get(),
+            )
+        })
+    };
+    let sync = |editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext| {
+        editor.update(cx, |editor, cx| editor.sync_workspace_outline(cx));
+        cx.run_until_parked();
+    };
+
+    // 第一次建大纲就得走按块这条路（侧栏收起时没人看，所以显式要一次）。
+    let (_, rescans_before, _, _) = counted(&editor, cx);
+    sync(&editor, cx);
+    let (_, rescans_after, lines_total, _) = counted(&editor, cx);
+    assert_eq!(
+        rescans_after, rescans_before,
+        "打开这份文档就把大纲整篇重扫了：压在接缝上的围栏让按块增量失效"
+    );
+
+    let (scanned_before, rescans_before, _, nanos_before) = counted(&editor, cx);
+    let start = Instant::now();
+    cx.simulate_input("x");
+    redraw(cx);
+    let typed = start.elapsed();
+    sync(&editor, cx);
+    let (scanned_after, rescans_after, _, nanos_after) = counted(&editor, cx);
+    eprintln!(
+        "[measure] 1 MiB 跨接缝围栏，一次按键 {typed:?}，大纲重扫 {} 行 / 全文 {lines_total} 行（{:.1}ms），整篇重扫 {} 次",
+        scanned_after - scanned_before,
+        (nanos_after - nanos_before) as f64 / 1e6,
+        rescans_after - rescans_before,
+    );
+    assert_eq!(
+        rescans_after - rescans_before,
+        0,
+        "打一个字让大纲退回整篇重扫"
+    );
+    assert!(
+        scanned_after - scanned_before < lines_total as u64 / 8,
+        "一次按键为了大纲重扫了 {} 行（全文 {lines_total} 行）：改动只落在一根块上，\
+         就该只重扫那一片",
+        scanned_after - scanned_before,
+    );
+    assert!(
+        typed < Duration::from_millis(1_200),
+        "1 MiB 代码文档一次按键 {typed:?}，偏出预算"
+    );
+}
+
 #[gpui::test]
 async fn per_keystroke_document_passes_stay_bounded(cx: &mut TestAppContext) {
     // P2 性能守门：大文档里每次按键都不许做整篇级的工作。这里数的是
