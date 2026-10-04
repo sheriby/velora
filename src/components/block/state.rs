@@ -595,6 +595,10 @@ pub struct BlockRecord {
     /// 代码围栏的开行与闭合行各自让开几字节（文件里的缩进位数）。解析期认出围栏时
     /// 就知道这两个数；`None` 是「不是围栏代码块，或没记」。缩进代码块没有这两行。
     pub source_fence_lines: Option<(u32, u32)>,
+    /// 这一块在文件里是**缩进代码块**（四格或制表符，没有围栏行）。认族靠的是解析器
+    /// 走的那条分支，不是「账上有没有记号宽度」——账会因为重新落笔而缺，缺了就把这一族
+    /// 拼成带围栏的形状，等于在按键路径上换了用户的写法。
+    pub code_is_indented: bool,
     /// 标注头 `[!...]` 里那一串照用户写的样子存（`note` 与 `NOTE` 是两种写法）。
     /// `None` 是「没记」，序列化退回规范形状；「格式化文档」把它清成 `None`。
     pub callout_marker: Option<SharedString>,
@@ -622,6 +626,7 @@ impl BlockRecord {
             source_line_prefixes: Vec::new(),
             source_separator_bytes: 0,
             source_fence_lines: None,
+            code_is_indented: false,
             callout_marker: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),

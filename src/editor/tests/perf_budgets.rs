@@ -1277,8 +1277,9 @@ fn measured_prefixes(editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestCon
 ///
 /// 每一行让开几字节是解析期记下的数据（不变式 23），块内行数改了那份账跟着改；比出来
 /// 的那条路只是「账还没有」时的退路。这里按形状逐一走过打字、回车、再打字，哪一步还在
-/// 比就把形状名字报出来。还走退路的两族写在不变式 23 末尾：根块拆出来那块没有账（段落、
-/// 围栏在接缝那一步）、缩进代码块连分隔空行一起吃进内容（行数一核对就作废）。
+/// 比就把形状名字报出来。围栏那一族不在表上：拆它自己那一步里有一回换算落在「模型已经
+/// 多一行、文件那一行还没写下去」的窗口里，那一次只能比；落点由
+/// `newline_in_a_fenced_code_block_inserts_only_a_line_break` 钉住。
 #[gpui::test]
 async fn a_real_editing_session_never_measures_marker_widths_after_the_fact(
     cx: &mut TestAppContext,
@@ -1317,6 +1318,7 @@ async fn a_real_editing_session_never_measures_marker_widths_after_the_fact(
     let mut before = measured_prefixes(&editor, cx);
     for (label, wanted) in [
         ("标题里", "标题甲"),
+        ("段落里", "段落文字"),
         ("任务项里", "任务甲"),
         ("嵌套项里", "嵌套乙"),
         ("引用里", "引用正文"),

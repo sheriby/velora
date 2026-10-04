@@ -1138,6 +1138,43 @@ impl Editor {
         true
     }
 
+    /// 这一块刚按模型的写法落笔（`write_back_root_region` 拼的就是这份文本），它每一行
+    /// 让开几字节也就是拼出来的那一段：根块的前缀是记号（`# `、`- [ ] `、`1)`），代码块
+    /// 还多一对顶格的围栏行。认不出形状的那一族返回 `None`，账留着空、交回按文件量。
+    fn written_line_ledger(block_ref: &Block) -> Option<(Vec<u32>, Option<(u32, u32)>)> {
+        let kind = block_ref.record.kind.clone();
+        if kind.is_code_block() {
+            let content = block_ref.record.title.visible_text();
+            let lines = if content.is_empty() {
+                0
+            } else {
+                content.split('\n').count()
+            };
+            if block_ref.record.code_is_indented {
+                // 缩进那一族没有围栏行，落笔补的就是账上那几位（账缺了按四格，与
+                // `collect_single_block_markdown_lines` 那条分支同一个口径）。
+                let prefixes = block_ref.record.source_line_prefixes.clone();
+                let widths: Vec<u32> = if prefixes.len() == lines {
+                    prefixes
+                } else {
+                    vec![4; lines]
+                };
+                return Some((widths, None));
+            }
+            // 围栏那一族：根块落笔就是顶格那对围栏行加零缩进的内容行。
+            return Some((vec![0u32; lines], Some((0u32, 0u32))));
+        }
+        let simple = kind == BlockKind::Paragraph
+            || matches!(kind, BlockKind::Heading { .. })
+            || kind.is_list_item();
+        let markdown = block_ref.record.title_markdown();
+        if !simple || markdown.contains('\n') {
+            return None;
+        }
+        let line = block_ref.record.markdown_line(0, block_ref.list_ordinal);
+        Some((vec![line.len().saturating_sub(markdown.len()) as u32], None))
+    }
+
     /// 把 `block` 的源码区间换成新的，并让它连子块在解析期记下的记号宽度一起作废。
     ///
     /// 这一段字节被重新写过（拆块、合块、Setext 提成 ATX……），块自己那一行的形状
@@ -1150,10 +1187,17 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let children = block.read(cx).children.clone();
+        let ledger = Self::written_line_ledger(block.read(cx));
         block.update(cx, |block, _cx| {
             block.record.source_span = Some(span);
-            block.record.source_line_prefixes.clear();
             block.record.source_separator_bytes = 0;
+            match ledger {
+                Some((prefixes, fence)) => {
+                    block.record.source_line_prefixes = prefixes;
+                    block.record.source_fence_lines = fence;
+                }
+                None => block.record.source_line_prefixes.clear(),
+            }
         });
         for child in children {
             Self::invalidate_record_prefixes(&child, cx);

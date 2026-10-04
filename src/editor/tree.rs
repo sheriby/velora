@@ -1017,14 +1017,28 @@ impl DocumentTree {
                 // 块）：那就只补每行的缩进，别补那一对 phantom 围栏行——补了等于在按键
                 // 路径上把用户那一族换了形状。引用里的那一族同样不接（那份账把上级吃掉
                 // 的 `> ` 也记在里面，父块还要再补一遍记号）。
-                if block_ref.quote_depth == 0 && block_ref.record.source_fence_lines.is_none() {
-                    let widths = &block_ref.record.source_line_prefixes;
-                    if !widths.is_empty() && widths.len() == content.split('\n').count() {
-                        for (code_line, width) in content.split('\n').zip(widths) {
-                            lines.push(format!("{}{code_line}", " ".repeat(*width as usize)));
-                        }
-                        return;
+                // 账上 `code_is_indented` 说的是文件里根本没有围栏行（缩进代码块）：那就
+                // 只补每一行让开的位数，别发明那一对 phantom 围栏行。引用里的那一族不接
+                // （父块还要补记号，这份账把上级吃掉的字节也记在里面了）。
+                if block_ref.quote_depth == 0 && block_ref.record.code_is_indented {
+                    let model_lines: Vec<&str> = content.split('\n').collect();
+                    let widths: Vec<usize> = if block_ref.record.source_line_prefixes.len()
+                        == model_lines.len()
+                    {
+                        block_ref
+                            .record
+                            .source_line_prefixes
+                            .iter()
+                            .map(|width| *width as usize)
+                            .collect()
+                    } else {
+                        // 账缺了也按缩进那一族落笔：四格是这一族在文件里的最低门槛。
+                        vec![4; model_lines.len()]
+                    };
+                    for (code_line, width) in model_lines.into_iter().zip(widths) {
+                        lines.push(format!("{}{code_line}", " ".repeat(width)));
                     }
+                    return;
                 }
                 let indentation = "  ".repeat(list_depth);
                 lines.push(format!("{indentation}{fence}{lang_str}"));

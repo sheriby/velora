@@ -915,6 +915,7 @@ pub(crate) fn collect_indented_code_block(
     let block = build_code_block(cx, None, code_lines.join("\n"));
     block.update(cx, |block, _cx| {
         block.record.source_line_prefixes = prefixes;
+        block.record.code_is_indented = true;
     });
     Some((block, code_index))
 }

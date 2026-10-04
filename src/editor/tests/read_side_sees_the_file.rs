@@ -371,14 +371,15 @@ async fn nested_shapes_put_block_offsets_on_the_real_bytes(cx: &mut TestAppConte
     assert!(failures.is_empty(), "嵌套层里的块内偏移落不到文件真实的字节上：\n{}", failures.join("\n"));
 }
 
-/// 块自己的字节被结构写回重新写过之后，解析期记的那份记号宽度必须作废。
+/// 块自己的字节被结构写回重新写过之后，那份记号宽度账要么按刚落笔的形状重记，要么
+/// 作废——就是不许留着旧的。
 ///
-/// 写回会改文件里这一行的形状：Setext 提成 ATX 就在行首多了 `# `，而块里还留着
-/// 「内容从第 0 个字节开始」那份旧账——照它换算，每个块内偏移整体漂两位（实测报
-/// 内容末尾在第 9 位，文件里在 11 位，中文还会切进字符中间）。作废之后位置换算自然
-/// 退回按文件量那一条，直到下一次重新解析给它新的账。
+/// 写回会改文件里这一行的形状：Setext 提成 ATX 就在行首多了 `# `，而块里若还留着
+/// 「内容从第 0 个字节开始」那份旧账，每个块内偏移都整体漂两位（实测报内容末尾在第 9 位，
+/// 文件里在 11 位，中文还会切进字符中间）。落笔的那一行是序列化拼出来的，拼出几位就记
+/// 几位（`written_line_ledger`），认不出形状的那一族才作废。
 #[gpui::test]
-async fn a_rewritten_block_drops_its_parse_time_prefix_record(cx: &mut TestAppContext) {
+async fn a_rewritten_block_refreshes_its_parse_time_prefix_record(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
     let (editor, cx) = cx.add_window_view(|_window, cx| {
@@ -406,15 +407,27 @@ async fn a_rewritten_block_drops_its_parse_time_prefix_record(cx: &mut TestAppCo
     });
     redraw(cx);
 
-    // 那一段字节被重新写过（`标题甲` + `=====` 变成 `# 标题甲`）：旧的账必须没了。
+    // 那一段字节被重新写过（`标题甲` + `=====` 变成 `# 标题甲`）：账要跟着新形状走。
     editor.read_with(cx, |editor, cx| {
         let heading = editor.document.root_blocks()[0].clone();
-        assert_eq!(heading.read(cx).kind(), BlockKind::Heading { level: 1 },
-            "这一步该把段落提成一级标题");
-        assert!(
-            heading.read(cx).record.source_line_prefixes.is_empty(),
-            "块自己的字节被重写之后还留着解析期的账：{:?}",
+        assert_eq!(
+            heading.read(cx).kind(),
+            BlockKind::Heading { level: 1 },
+            "这一步该把段落提成一级标题"
+        );
+        assert_eq!(
+            heading.read(cx).record.source_line_prefixes,
+            vec![2],
+            "提成 ATX 之后账里还是旧宽度（或者留着旧的）：{:?}",
             heading.read(cx).record.source_line_prefixes
+        );
+        let content = heading.read(cx).display_text().to_string();
+        let at_content_end =
+            editor.caret_source_offset(heading.entity_id(), content.len(), cx);
+        assert_eq!(
+            at_content_end,
+            Some(11),
+            "块内偏移要落在文件真实的字节上：`# 标题甲` 的内容末尾在 11"
         );
     });
 }
