@@ -860,9 +860,14 @@ pub(crate) fn collect_fenced_code_block(
     let prefixes: Vec<u32> = (start + 1..closing_index)
         .map(|at| (origins.get(at).copied().unwrap_or(0)) as u32)
         .collect();
-    let open_indent = lines[start].len() - strip_fence_indent(&lines[start]).unwrap_or("").len();
-    let close_indent =
-        lines[closing_index].len() - strip_fence_indent(&lines[closing_index]).unwrap_or("").len();
+    // 开闭两行的缩进按**文件那一行**记：上级容器已经吃掉的（`origins`）要一起算进去，
+    // 否则挂在列表项里的围栏报出来的宽度少几位，核对不上就交回按文件量那条路。
+    let open_indent = origins.get(start).copied().unwrap_or(0)
+        + lines[start].len()
+        - strip_fence_indent(&lines[start]).unwrap_or("").len();
+    let close_indent = origins.get(closing_index).copied().unwrap_or(0)
+        + lines[closing_index].len()
+        - strip_fence_indent(&lines[closing_index]).unwrap_or("").len();
     block.update(cx, |block, _cx| {
         block.record.source_line_prefixes = prefixes;
         block.record.source_fence_lines = Some((open_indent as u32, close_indent as u32));

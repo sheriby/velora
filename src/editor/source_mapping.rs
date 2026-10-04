@@ -380,6 +380,10 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// 的第 0 位；列表项里四格的围栏更是把字写进了父项那一行。
     /// 内容行按「文件那一行以模型存下的这段结尾」来夹，差出来的一截必须是纯空白；
     /// 对不上（引用里的围栏、行内还改了别的、行数不齐）就 `None`，退回按模型拼。
+    ///
+    /// 解析期记下的那份账（`recorded_fence_prefixes`）在的时候用不着它：只有运行时新建
+    /// 的块、或区间被重写导致账作废，才会走到这里。走过的行数照常计进
+    /// `line_prefix_measured` 那把量表，防护测试就是照它判「还在事后比」。
     fn measured_code_block_line_prefixes(
         &self,
         content: &str,
@@ -445,6 +449,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         {
             return None;
         }
+        self.line_prefix_measured
+            .set(self.line_prefix_measured.get() + lines.len() as u64);
         Some(MeasuredFencePrefixes {
             open: open_prefix,
             lines,
@@ -570,6 +576,9 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// 缩进代码块（四空格或制表符）在文件里就是那几行内容，没有围栏行；模型存的是
     /// 每行 dedent 之后那一段，dedent 吃掉几位是文件里的事。行数拿本块的 `source_span`
     /// 数——数不齐就说明这一块其实有围栏（围栏那两行不在内容里），交回围栏那条路。
+    ///
+    /// 解析期那份账（`recorded_indented_code_prefixes`）在的时候用不着它；走过的行数
+    /// 计进 `line_prefix_measured`。
     fn measured_indented_code_line_prefixes(
         &self,
         span: &Range<usize>,
@@ -608,6 +617,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             prefixes.push(file_indent - model_indent);
             line_index += 1;
         }
+        self.line_prefix_measured
+            .set(self.line_prefix_measured.get() + prefixes.len() as u64);
         Some(prefixes)
     }
 

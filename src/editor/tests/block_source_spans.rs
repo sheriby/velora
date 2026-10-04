@@ -749,8 +749,9 @@ async fn typing_inside_a_container_uses_the_parse_time_prefix(cx: &mut TestAppCo
 ///
 /// 以前这三个数都要拿文件行与模型序列化出来的围栏比着量：模型为了避开内容里的反引号
 /// 改用 `~~~`、缩进两格的围栏、列表里四格的那一种，每一种都量漂过（字落到内容行行首
-/// 或父项那一行）。现在缩进是 `strip_fence_indent` 当场知道的位数，内容行的继承量由
-/// `origins` 一路带下来。
+/// 或父项那一行）。现在内容行的继承量由 `origins` 带下来，开闭两行的缩进也按**文件那一
+/// 行**记（容器吃掉的几位一起算进去）——少这一截，挂在列表项里的围栏就核对不上，整块
+/// 交回按文件量那条路。
 #[gpui::test]
 async fn typing_inside_a_code_fence_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -769,6 +770,11 @@ async fn typing_inside_a_code_fence_uses_the_parse_time_prefix(cx: &mut TestAppC
             "列表里四格的围栏",
             "- 项丙\n  ```\n  let c = 3;\n  ```\n",
             "- 项丙\n  ```\n  let c = 3;写\n  ```\n",
+        ),
+        (
+            "列表里再往右一格的围栏",
+            "- 步骤\n    ```rust\n    let b = 2;\n    ```\n",
+            "- 步骤\n    ```rust\n    let b = 2;写\n    ```\n",
         ),
     ] {
         let (editor, cx) =
