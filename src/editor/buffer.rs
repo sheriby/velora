@@ -88,6 +88,10 @@ pub(crate) struct TextBuffer {
     /// 读侧的增量视图（文档大纲）用它判断「哪些块的字节真的动过」：没动过的块照用
     /// 自己上次的摘要，不必每按一个键就把整篇重扫一遍。
     dirty: Option<Range<usize>>,
+    /// 为了把字节偏移换算成行号，读了多少个字节。行号换算本该只问「这块有几个换行、
+    /// 都落在哪儿」，一次都不该碰正文——10 MiB 文档一次大纲同步实测 44ms，全是
+    /// `lines_and_line_starts` 沿块把字节数了一遍。先把这笔量出来，再把它归零。
+    line_probe_bytes: std::cell::Cell<usize>,
 }
 
 impl TextBuffer {
@@ -104,6 +108,7 @@ impl TextBuffer {
             shape: None,
             pristine: None,
             dirty: (!text.is_empty()).then_some(0..text.len()),
+            line_probe_bytes: std::cell::Cell::new(0),
         }
     }
 
@@ -230,6 +235,15 @@ impl TextBuffer {
         self.chunks.iter().map(|chunk| chunk.newlines).sum::<usize>() + 1
     }
 
+    /// 取走「为了算行号读了多少字节」并清零。闸门用它钉住「行号换算不许碰正文」。
+    pub(crate) fn take_line_probe_bytes(&self) -> usize {
+        self.line_probe_bytes.replace(0)
+    }
+
+    fn probed(&self, bytes: usize) {
+        self.line_probe_bytes.set(self.line_probe_bytes.get() + bytes);
+    }
+
     /// 第 `line` 行首个字节的偏移。`line` 越界时返回文末偏移。
     pub(crate) fn line_start(&self, line: usize) -> usize {
         if line == 0 {
@@ -239,6 +253,7 @@ impl TextBuffer {
         let mut seen = 0usize;
         for chunk in &self.chunks {
             if line <= seen + chunk.newlines {
+                self.probed(chunk.byte_len());
                 return base + nth_newline(&chunk.text, line - seen) + 1;
             }
             seen += chunk.newlines;
@@ -284,6 +299,7 @@ impl TextBuffer {
             .iter()
             .map(|earlier| earlier.newlines)
             .sum::<usize>();
+        self.probed(local);
         preceding + count_newlines(&chunk.text[..local])
     }
 
@@ -307,6 +323,7 @@ impl TextBuffer {
                 while target < offsets.len() && offsets[target] <= end {
                     let local = offsets[target].saturating_sub(base);
                     while scan < local {
+                        self.probed(1);
                         if bytes[scan] == b'\n' {
                             here_line += 1;
                             here_start = base + scan + 1;
@@ -317,8 +334,11 @@ impl TextBuffer {
                     target += 1;
                 }
             }
-            if let Some(last) = bytes.iter().rposition(|byte| *byte == b'\n') {
-                line_start = base + last + 1;
+            if chunk.newlines > 0 {
+                self.probed(bytes.len());
+                if let Some(last) = bytes.iter().rposition(|byte| *byte == b'\n') {
+                    line_start = base + last + 1;
+                }
             }
             line += chunk.newlines;
             base = end;

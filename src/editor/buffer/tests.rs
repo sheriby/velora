@@ -384,6 +384,30 @@ fn line_range_gives_the_bytes_of_that_line_without_the_newline() {
     assert_eq!(buffer.line_range(9), 7..7);
 }
 
+/// 行号换算读了多少字节要数得出来：问得越深，读得越多。这条在优化之后仍然成立
+/// （两边都是 0），它只钉住「计数器不是摆设」，不给优化设门槛——门槛写在
+/// `asking_for_line_numbers_does_not_read_the_text` 里。
+#[test]
+fn the_line_probe_counter_follows_how_deep_the_offsets_are() {
+    let line = "line 01234 with some english text and a bit more\n";
+    let text = format!("{}# heading at the end\n", line.repeat(4000));
+    let buffer = TextBuffer::from_text(&text);
+    buffer.take_line_probe_bytes();
+    buffer.lines_and_line_starts(&[0usize, 1, 40]);
+    let shallow = buffer.take_line_probe_bytes();
+    buffer.lines_and_line_starts(&[0usize, 1, 40, buffer.byte_len() - 1, buffer.byte_len()]);
+    let deep = buffer.take_line_probe_bytes();
+    assert!(
+        deep >= shallow,
+        "问整篇的行号反而比问开头读得少：{deep} < {shallow}，计数器漏档了"
+    );
+    assert_eq!(
+        buffer.take_line_probe_bytes(),
+        0,
+        "取走一次之后没再问任何东西，读数该是 0"
+    );
+}
+
 /// 比较一份等长但内容不同的文本时只能返回 `false`，不许 panic。
 ///
 /// 分块的边界是按缓冲区自己的字符切的；换一份内容时同样的偏移可能正好落在某个多
