@@ -475,7 +475,9 @@
             assert_eq!(visible.len(), 1);
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::Quote);
             assert_eq!(visible[0].entity.read(cx).display_text(), "first\n\nsecond");
-            assert_eq!(editor.document.markdown_text(cx), "> first\n> \n> second");
+            // 记号的写法是文件里的事实：`>`（记号后不带空格）序列化回来还是 `>`，
+            // 改成 `> ` 那种规范化只许住在「格式化文档」里。
+            assert_eq!(editor.document.markdown_text(cx), "> first\n>\n> second");
         });
     }
 

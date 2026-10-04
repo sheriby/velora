@@ -1024,27 +1024,47 @@ impl DocumentTree {
                 let title_markdown =
                     CalloutVariant::escape_plain_quote_header(&block_ref.record.title_markdown());
                 let indentation = "  ".repeat(list_depth);
+                let mut body: Vec<String> = Vec::new();
                 if !title_markdown.is_empty() || block_ref.children.is_empty() {
-                    for line in title_markdown.split('\n') {
-                        lines.push(format!("{indentation}> {line}"));
-                    }
+                    body.extend(title_markdown.split('\n').map(|line| line.to_string()));
                 }
 
                 if !block_ref.children.is_empty() {
-                    let mut child_lines = Vec::new();
                     Self::collect_markdown_lines(
                         &block_ref.children,
                         list_depth,
                         cx,
-                        &mut child_lines,
+                        &mut body,
                         false,
                     );
-                    lines.extend(
-                        child_lines
-                            .into_iter()
-                            .map(|line| format!("{indentation}> {line}")),
-                    );
                 }
+
+                // 引用每一行的记号写法是文件里的事实：`> `、不带空格的 `>`、懒续行干脆
+                // 没有记号。解析期已经记下每一行让开几字节，落笔就按它补——按模型统一拼
+                // `> ` 会把没碰过的那几行改写（`>乙引用` 变成 `> 乙引用`，空行多出尾随
+                // 空格），那是「格式化文档」才许做的事。
+                if list_depth == 0 && block_ref.quote_depth == 1 {
+                    let widths = &block_ref.record.source_line_prefixes;
+                    // 第一行必须有记号：`>` 是这一族存在的根据，记成 0 说明这份账不是
+                    // 从引用行上来的（比如刚用 `> ` 快捷键造出来的空引用，账还是段落那份）。
+                    if !widths.first().is_some_and(|width| *width >= 1) {
+                        lines.extend(body.into_iter().map(|line| format!("{indentation}> {line}")));
+                        return;
+                    }
+                    if widths.len() == body.len() {
+                        for (line, width) in body.iter().zip(widths) {
+                            let width = *width as usize;
+                            let marker = if width == 0 {
+                                String::new()
+                            } else {
+                                format!(">{}", " ".repeat(width - 1))
+                            };
+                            lines.push(format!("{marker}{line}"));
+                        }
+                        return;
+                    }
+                }
+                lines.extend(body.into_iter().map(|line| format!("{indentation}> {line}")));
             }
             BlockKind::Callout(variant) => {
                 let indentation = "  ".repeat(list_depth);

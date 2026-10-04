@@ -1573,6 +1573,80 @@ async fn splitting_a_paragraph_mid_line_inserts_the_block_break(cx: &mut TestApp
     assert_spans_tile_the_content(&spans, &buffer_text, "行中拆块之后");
 }
 
+/// 引用里按回车拆一行：这一块的其余各行是用户自己写的字节，一个字都不许动。
+///
+/// 这一族的拆行走「整块按模型序列化，再跟缓冲区 diff」，而模型里引用的记号统一是
+/// `> `，于是没编辑的 `>乙引用二` 被写成 `> 乙引用二`、空的那一行 `>` 被写成带尾随
+/// 空格的 `> `。规范化只许住在「格式化文档」那一条命令里（不变式 21）。
+#[gpui::test]
+async fn breaking_a_line_inside_a_quote_keeps_the_other_lines_as_written(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, ">甲引用一\n>\n>乙引用二\n".to_string(), None)
+    });
+    redraw(cx);
+
+    let target = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::Quote)
+            .map(|visible| visible.entity.clone())
+            .expect("夹具里应有一个引用块")
+    });
+    cx.update(|_window, cx| {
+        target.update(cx, |block, _cx| block.selected_range = 3..3);
+    });
+    cx.update(|window, cx| {
+        target.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        ">甲\n>引用一\n>\n>乙引用二\n",
+        "拆一行引用改写了没动过的那几行（记号被拼成 `> `、多出尾随空格）：{buffer_text:?}"
+    );
+}
+
+/// 中文行首打字改那份逐行的账：按字节比出来的公共前缀会停在多字节字符中间（`写` 与
+/// `前` 首字节相同），不退回字符边界就 panic，整块的位置换算跟着塌。
+#[gpui::test]
+async fn typing_at_the_head_of_a_cjk_quote_line_keeps_the_line_ledger(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> 前面那段\n>\n> 后面那段\n".to_string(), None)
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let quote = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind() == BlockKind::Quote)
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有一个引用块");
+            editor.focus_block(quote.entity_id());
+            quote.update(cx, |block, block_cx| block.move_to(0, block_cx));
+        });
+    });
+    redraw(cx);
+
+    cx.simulate_input("写");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "> 写前面那段\n>\n> 后面那段\n",
+        "中文行首打字把逐行的账改坏了：{buffer_text:?}"
+    );
+}
+
 /// 围栏里按回车只该多一个换行：内容行前导的空格既是文件里的字节，也是模型里的字节。
 #[gpui::test]
 async fn newline_in_a_fenced_code_block_inserts_only_a_line_break(cx: &mut TestAppContext) {

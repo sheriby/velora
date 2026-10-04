@@ -10,37 +10,48 @@ fn normalize_code_language_input(text: &str) -> String {
 }
 
 impl Block {
-    /// 代码块里打字、回车改的就是「块自己那几行」，行数一变，解析期记下的每行继承量
-    /// 要跟着改：拆出来的那一行还排在同一行里，让开的字节与原来那一行相同。
+    /// 代码块与引用容器里打字、回车改的就是「块自己那几行」，行数一变，解析期记下的
+    /// 每行宽度要跟着改：拆出来的那一行还排在同一行里，让开的字节与原来那一行相同。
     ///
     /// 不维护这份账，读侧一核对行数就作废、交回「拿文件行与模型行比」那一条：实测在
     /// `let a = 1;` 里回车再打一个字，比出来的那条路把模型新行开头的那个空格当成了
-    /// 容器让开的位数，字写到了空格之后（` 写1;`）。改不动的形状（一次改动跨过多行
-    /// 又生出多行）直接把账作废，宁可退回量那条路，也不要一份错账。
-    pub(super) fn adjust_code_line_prefixes_for_text_edit(&mut self, old_text: &str, new_text: &str) {
+    /// 容器让开的位数，字写到了空格之后（` 写1;`）；写侧同样按这份账补记号，账一缺，
+    /// 引用就统一拼成 `> `（`>乙引用` 被改写）。改不动的形状（一次改动跨过多行又生出
+    /// 多行）直接把账作废，宁可退回量那条路，也不要一份错账。
+    pub(super) fn adjust_line_prefixes_for_text_edit(&mut self, old_text: &str, new_text: &str) {
         let recorded = self.record.source_line_prefixes.clone();
         let old_lines = old_text.split('\n').count();
         if recorded.is_empty() || recorded.len() != old_lines || old_text == new_text {
             return;
         }
 
+        // 按字节比出来的公共前缀、公共后缀可能停在多字节字符中间（两个汉字共用一个
+        // 首字节就会这样），退到字符边界再用。
         let common_prefix = old_text
             .bytes()
             .zip(new_text.bytes())
             .take_while(|(before, after)| before == after)
             .count();
-        let rest_old = &old_text[common_prefix..];
-        let rest_new = &new_text[common_prefix..];
+        let mut prefix = common_prefix;
+        while !old_text.is_char_boundary(prefix) {
+            prefix -= 1;
+        }
+        let rest_old = &old_text[prefix..];
+        let rest_new = &new_text[prefix..];
         let common_suffix = rest_old
             .bytes()
             .rev()
             .zip(rest_new.bytes().rev())
             .take_while(|(before, after)| before == after)
             .count();
-        let changed_old = &rest_old[..rest_old.len() - common_suffix];
-        let changed_new = &rest_new[..rest_new.len() - common_suffix];
+        let mut suffix = common_suffix;
+        while !old_text.is_char_boundary(prefix + rest_old.len() - suffix) {
+            suffix -= 1;
+        }
+        let changed_old = &rest_old[..rest_old.len() - suffix];
+        let changed_new = &rest_new[..rest_new.len() - suffix];
 
-        let first_line = old_text[..common_prefix].matches('\n').count();
+        let first_line = old_text[..prefix].matches('\n').count();
         let last_line = first_line + changed_old.matches('\n').count();
         let next_lines = 1 + changed_new.matches('\n').count();
 
