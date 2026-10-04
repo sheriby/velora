@@ -1608,6 +1608,52 @@ async fn newline_in_a_fenced_code_block_inserts_only_a_line_break(cx: &mut TestA
     );
 }
 
+/// 挂在列表项里的围栏拆行：用户那四格缩进是文件里的字节，整块重贴会把它洗成模型
+/// 拼的两格（不变式 23 在读侧禁掉的那种写法，写侧同样禁）。
+#[gpui::test]
+async fn newline_in_a_list_nested_fence_keeps_the_indent_the_user_wrote(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "- 步骤\n    ```rust\n    let b = 2;\n    ```\n".to_string(),
+            None,
+        )
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let code = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind().is_code_block())
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有一个代码块");
+            editor.focus_block(code.entity_id());
+            code.update(cx, |block, block_cx| block.move_to(6, block_cx));
+        });
+    });
+    redraw(cx);
+
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    cx.simulate_input("写");
+    redraw(cx);
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    cx.simulate_input("字");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "- 步骤\n    ```rust\n    let b \n    写\n    字= 2;\n    ```\n",
+        "列表项里的围栏拆行把四格缩进重贴成了两格：{buffer_text:?}"
+    );
+}
+
 /// 表格加一行，只许多那一行——原有各行的列宽填充是用户写的字节。
 ///
 /// 「行列增删等于把整张表按新的列宽重排一遍」是方案 §6.3.1 要点名换掉的旧行为：

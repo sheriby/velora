@@ -957,6 +957,31 @@ impl DocumentTree {
         }
     }
 
+    /// 这一块在文件里每一行让开几字节：开栏行、每条内容行、闭合行。读侧用的就是这份账
+    /// （`recorded_fence_prefixes`），写侧落笔也得按它——两边一不一致，未编辑的行就会被
+    /// 重拼出来的记号改写。没有围栏行（缩进代码块）、行数对不上，都算这份账用不了。
+    ///
+    /// 引用里的也不适用：那份账把上级吃掉的 `> ` 一并记在里面，而引用那一段是父块给每一行
+    /// 补的记号，按这份数字再落一遍空格就成了 `>   ` 那种双重让位（口径与读侧同一处收口）。
+    fn recorded_code_block_widths(
+        block_ref: &Block,
+        content: &str,
+    ) -> Option<(usize, Vec<usize>, usize)> {
+        if block_ref.quote_depth > 0 {
+            return None;
+        }
+        let (open, close) = block_ref.record.source_fence_lines?;
+        let prefixes = &block_ref.record.source_line_prefixes;
+        if prefixes.len() != content.split('\n').count() {
+            return None;
+        }
+        Some((
+            open as usize,
+            prefixes.iter().map(|width| *width as usize).collect(),
+            close as usize,
+        ))
+    }
+
     fn collect_single_block_markdown_lines(
         block_ref: &Block,
         list_depth: usize,
@@ -970,14 +995,26 @@ impl DocumentTree {
                 }
             }
             BlockKind::CodeBlock { language } => {
-                let indentation = "  ".repeat(list_depth);
                 let lang_str = language.as_ref().map(|s| s.as_ref()).unwrap_or("");
+                let content = block_ref.record.title.visible_text();
                 let fence = super::persistence::safe_code_fence_with_info(
-                    &block_ref.record.title.visible_text(),
+                    &content,
                     language.as_ref().map(|language| language.as_ref()),
                 );
+                // 每一行让开几字节先问解析期记下的那份账（不变式 23）：按 `list_depth`
+                // 拼「每级两个空格」会把列表项里那四格缩进洗成两格，用户没碰的行也跟着改。
+                if let Some((open, widths, close)) =
+                    Self::recorded_code_block_widths(block_ref, &content)
+                {
+                    lines.push(format!("{}{fence}{lang_str}", " ".repeat(open)));
+                    for (code_line, width) in content.split('\n').zip(widths) {
+                        lines.push(format!("{}{code_line}", " ".repeat(width)));
+                    }
+                    lines.push(format!("{}{fence}", " ".repeat(close)));
+                    return;
+                }
+                let indentation = "  ".repeat(list_depth);
                 lines.push(format!("{indentation}{fence}{lang_str}"));
-                let content = block_ref.record.title.visible_text();
                 for code_line in content.split('\n') {
                     lines.push(format!("{indentation}{code_line}"));
                 }
