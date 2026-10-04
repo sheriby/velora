@@ -50,7 +50,7 @@ impl Editor {
         }
 
         let old_len = old_span.end - old_span.start;
-        let applied = self.buffer.edit(old_span, &new_source);
+        let applied = self.buffer.edit(old_span.clone(), &new_source);
         self.record_buffer_edit(applied.clone());
         let delta = new_source.len() as i64 - old_len as i64;
         if delta == 0 {
@@ -63,7 +63,11 @@ impl Editor {
                 table_span.start..(table_span.end as i64 + delta) as usize,
             );
         }
-        self.shift_root_spans_after(applied.new_range.end, delta);
+        // 平移起点必须是**编辑前**坐标（old_span.end，格子在表内的右邻）：契约是
+        // 「等于被替换字节段的终点」。传编辑后的 new_range.end 会把「格子增长量
+        // 超过格子起点到表尾的距离」的后续根块整批漏移——过期区间仍在界内，
+        // 下一次写回就落错字节。
+        self.shift_root_spans_after(old_span.end, delta);
         true
     }
 
