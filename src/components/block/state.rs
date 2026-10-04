@@ -563,6 +563,12 @@ pub struct BlockRecord {
     /// 不是序列化之后反推出来的——这是「块是文本的投影」这条不变式的载体。
     /// 子块与新建块暂时没有区间（`None`），等接入写回路径后由重投影补上。
     pub source_span: Option<std::ops::Range<usize>>,
+    /// 这一块的内容每一行，在自己那一行里**让开了几个字节**（本块的记号，如
+    /// `# `、`- `、`> `；键在解析期由剥记号的那段代码顺手记下，不是事后拿文件行
+    /// 与模型行比出来的）。空表是「解析器没记」，位置换算退回按文件量。
+    /// 记号宽度是文件里的事实：按模型拼（`# `、列表每级两个空格）在缩进过的标题、
+    /// `#标题` 这类写法上整体漂一位，字就落进别的字节里。
+    pub source_line_prefixes: Vec<u32>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -584,6 +590,7 @@ impl BlockRecord {
             raw_fallback: None,
             list_marker: ListMarkerStyle::default(),
             source_span: None,
+            source_line_prefixes: Vec::new(),
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };

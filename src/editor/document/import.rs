@@ -361,12 +361,16 @@ impl Editor {
                 continue;
             }
 
-            if let Some((level, content)) = BlockKind::parse_atx_heading_line(line) {
-                roots.push(native_block(
-                    cx,
-                    BlockKind::Heading { level },
-                    content,
-                ));
+            if let Some((level, content, marker_len)) =
+                BlockKind::parse_atx_heading_line_with_marker(line)
+            {
+                let heading = native_block(cx, BlockKind::Heading { level }, content);
+                // 记号（本行前导缩进 + `#…` + 那一个空格）占几位，是剥它的那段代码
+                // 当场就知道的事实：记下来，位置换算就不必事后拿文件行与模型行比。
+                heading.update(cx, |heading, _cx| {
+                    heading.record.source_line_prefixes = vec![marker_len as u32];
+                });
+                roots.push(heading);
                 spans.push(index..index + 1);
                 index += 1;
                 continue;

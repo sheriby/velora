@@ -876,6 +876,49 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         Some((consumed, child_dedent))
     }
 
+    /// 解析期就记在块上的每行记号宽度，直接拿来用（见 `BlockRecord::source_line_prefixes`）。
+    ///
+    /// 这是删掉「事后拿文件行与模型行比」那一层的正路：宽度是剥记号那段代码当场知道的
+    /// 事实，不是比出来的猜测。还没记到的形状（引用/列表里的子块——上级容器吃掉的字节没进
+    /// 这份账；多行块的续行、代码围栏、表格格子同理）交回 `measured_block_line_prefixes`。
+    /// 行数对不上、块起点不在行首、记号宽度比那一行还长，都算「这份数据不能用」，交回量。
+    fn recorded_block_line_prefixes(
+        &self,
+        block: &Entity<Block>,
+        content_markdown: &str,
+        absolute_start: usize,
+        quote_depth: usize,
+        list_dedent: usize,
+        cx: &App,
+    ) -> Option<MeasuredBlockLines> {
+        if quote_depth != 0 || list_dedent != 0 {
+            return None;
+        }
+        let recorded = block.read(cx).record.source_line_prefixes.clone();
+        let model_lines = content_markdown.split('\n').count();
+        if recorded.is_empty() || recorded.len() != model_lines {
+            return None;
+        }
+        let first_line = self.buffer.line_of(absolute_start);
+        if self.buffer.line_start(first_line) != absolute_start {
+            return None;
+        }
+        let mut prefixes = Vec::with_capacity(recorded.len());
+        let mut file_lens = Vec::with_capacity(recorded.len());
+        for (offset, prefix) in recorded.iter().enumerate() {
+            let range = self.buffer.line_range(first_line + offset);
+            let prefix = *prefix as usize;
+            if prefix > range.len() {
+                return None;
+            }
+            prefixes.push(prefix);
+            file_lens.push(range.len() - prefix);
+        }
+        self.line_prefix_from_record
+            .set(self.line_prefix_from_record.get() + prefixes.len() as u64);
+        Some(MeasuredBlockLines { prefixes, file_lens })
+    }
+
     /// 这一块的内容每一行在自己那一行里让开几个字节：首行走 `measured_block_prefix`
     /// （本块的记号在那里量），续行按「这一行的容器记号 + 缩进差」量。
     ///
@@ -928,6 +971,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             prefixes.push(prefix);
             file_lens.push(file_line.len() - prefix);
         }
+        self.line_prefix_measured
+            .set(self.line_prefix_measured.get() + prefixes.len() as u64);
         Some(MeasuredBlockLines { prefixes, file_lens })
     }
 
@@ -1088,7 +1133,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             }
             BlockKind::Heading { level } => {
                 let markdown = title.expect("heading title").markdown().to_string();
-                let measured_lines = line_prefixes(&markdown);
+                let measured_lines = self
+                    .recorded_block_line_prefixes(
+                        block,
+                        &markdown,
+                        absolute_start,
+                        quote_depth,
+                        list_dedent,
+                        cx,
+                    )
+                    .or_else(|| line_prefixes(&markdown));
                 self.push_measured_inline_mapping(
                     block,
                     markdown,

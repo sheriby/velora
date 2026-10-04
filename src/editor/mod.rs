@@ -173,6 +173,12 @@ pub struct Editor {
     outline_lines_scanned: std::cell::Cell<u64>,
     /// 性能计数器：大纲重建累计耗时。
     outline_nanos: std::cell::Cell<u64>,
+    /// 计数器：块内每行的记号宽度有几行是**解析期记下来的**（数据）。
+    line_prefix_from_record: std::cell::Cell<u64>,
+    /// 计数器：有几行还在事后拿文件行与模型行比（`measured_block_line_prefixes` 那一族）。
+    /// 比出来的宽度是「猜」：缩进过两格、`#标题` 少一个空格、硬换行被序列化成 `\\`，
+    /// 每种写法都能把它带漂一位，字就落进别的字节里。#33 的进度就看这一档往 0 降。
+    line_prefix_measured: std::cell::Cell<u64>,
     /// 计数器：光标滚动实际改动的次数。撤销等操作会替换整篇块，
     /// 用旧布局的边界先滚一次、下一帧再纠正，就会让用户看到来回滚。
     caret_scroll_applications: std::cell::Cell<u64>,
@@ -628,6 +634,8 @@ impl Editor {
             outline_full_rescans: std::cell::Cell::default(),
             outline_lines_scanned: std::cell::Cell::default(),
             outline_nanos: std::cell::Cell::default(),
+            line_prefix_from_record: std::cell::Cell::default(),
+            line_prefix_measured: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),
             prev_mounted_run: None,
             scroll_settle_frames: 0,

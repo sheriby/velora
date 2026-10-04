@@ -453,3 +453,94 @@ async fn source_document_line_numbers_follow_the_buffer(cx: &mut TestAppContext)
         "前面多了一行，后面那块的行号没跟着挪"
     );
 }
+
+/// ATX 标题的内容起点是**解析期**记下的数据，不是事后拿文件行与模型行比出来的。
+///
+/// 记号宽度按模型拼（一律 `# `）会漂位：缩进过的 `  # 标题`、`#  记号后两个空格`
+/// 都不是「两个字节」。这一档先只管根块自己那一行（引用/列表里的子块还要把上级容器
+/// 吃掉的字节一起记，那是后面的事），所以用例都是顶格文档里的单行标题。
+#[gpui::test]
+async fn an_atx_heading_remembers_where_its_content_starts(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let cases: &[(&str, u32)] = &[
+        ("# 顶格标题", 2),
+        ("  # 两格缩进", 4),
+        ("### 三级标题", 4),
+        ("#  记号后两个空格", 2),
+        ("# 尾部井号 #", 2),
+    ];
+    for (line, expected) in cases {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, format!("{line}\n\n正文。\n"), None)
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            let heading = editor.document.root_blocks()[0].clone();
+            let record = heading.read(cx).record.clone();
+            assert_eq!(
+                record.source_line_prefixes,
+                vec![*expected],
+                "「{line}」的记号宽度没在解析期记下来"
+            );
+            // 记下的那一位必须正落在内容上：从它起读，文件里就是这一块的内容。
+            let span = record.source_span.clone().expect("标题块该有源码区间");
+            let content = record.title.markdown_offset_map().markdown().to_string();
+            let from = span.start + *expected as usize;
+            assert_eq!(
+                editor.buffer.slice(from..from + content.len()),
+                content,
+                "「{line}」按记下的宽度读不出自己的内容"
+            );
+        });
+    }
+}
+
+/// 打字用的那一行记号宽度，来自解析期记下的数据，不是事后拿文件行与模型行比出来的。
+///
+/// 这两个计数器是 #33 的量表：`line_prefix_measured` 该随着一族一族形状迁移一路降到 0
+/// （引用/列表里的子块、多行块续行、代码围栏、表格格子还没记到，仍要走比出来那条路）。
+#[gpui::test]
+async fn typing_in_an_atx_heading_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 甲标题\n\n## 乙标题\n".to_string(), None)
+    });
+    editor.update(cx, |editor, _cx| {
+        let root = editor.document.root_blocks()[0].clone();
+        editor.focus_block(root.entity_id());
+    });
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _| {
+        (
+            editor.line_prefix_from_record.get(),
+            editor.line_prefix_measured.get(),
+        )
+    });
+    cx.simulate_input("写");
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| {
+        (
+            editor.line_prefix_from_record.get(),
+            editor.line_prefix_measured.get(),
+        )
+    });
+    assert!(
+        after.0 > before.0,
+        "这一次按键没用上解析期记下的记号宽度（记下来的行数没涨）"
+    );
+    assert_eq!(
+        after.1 - before.1,
+        0,
+        "标题那一行的宽度还在事后拿文件行与模型行比：比出来的数是猜的，\
+         缩进过、少个空格、行内有转义就漂一位，字会写进邻居的字节里"
+    );
+    // 落点还是对的：写在内容最前面的那个字，落在 `# ` 之后。
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.buffer.slice(editor.buffer.line_range(0)),
+            "# 写甲标题",
+            "记号宽度换了来源，落点就该一样对"
+        );
+    });
+}
