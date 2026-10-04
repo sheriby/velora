@@ -627,7 +627,7 @@ impl Editor {
                             usize::MAX,
                             &anchor_origins,
                         );
-                        attach_child_blocks(&block, children, cx);
+                        attach_item_child(&block, children, lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
                         saw_child = true;
@@ -642,7 +642,7 @@ impl Editor {
                             break;
                         }
 
-                        attach_child_blocks(&block, vec![quote], cx);
+                        attach_item_child(&block, vec![quote], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
                         saw_child = true;
@@ -653,7 +653,7 @@ impl Editor {
                         && let Some((code_block, consumed)) =
                             collect_fenced_code_block(cx, &anchor_dedented, 0, &anchor_origins)
                     {
-                        attach_child_blocks(&block, vec![code_block], cx);
+                        attach_item_child(&block, vec![code_block], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
                         saw_child = true;
@@ -668,7 +668,7 @@ impl Editor {
                         } else {
                             raw_block_from_region(cx, &anchor_dedented, &anchor_origins, 0..table_end)
                         };
-                        attach_child_blocks(&block, vec![child], cx);
+                        attach_item_child(&block, vec![child], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += table_end;
                         pending_blank_lines = 0;
                         saw_child = true;
@@ -676,10 +676,10 @@ impl Editor {
                     }
 
                     if starts_with_standalone_image_child_paragraph(&anchor_dedented) {
-                        attach_child_blocks(
+                        attach_item_child(
                             &block,
                             vec![standalone_image_block(cx, anchor_dedented[0].clone())],
-                            cx,
+                            lines, origins, body_index, pending_blank_lines, cx,
                         );
                         body_index += 1;
                         pending_blank_lines = 0;
@@ -705,7 +705,7 @@ impl Editor {
                                 );
                             };
 
-                            attach_child_blocks(&block, vec![code_block], cx);
+                            attach_item_child(&block, vec![code_block], lines, origins, body_index, pending_blank_lines, cx);
                             body_index += consumed;
                             pending_blank_lines = 0;
                             saw_child = true;
@@ -715,10 +715,10 @@ impl Editor {
 
                     if is_reference_definition_start(&anchor_dedented[0]) {
                         let consumed = collect_reference_definition_region(&anchor_dedented, 0);
-                        attach_child_blocks(
+                        attach_item_child(
                             &block,
                             vec![raw_block_from_region(cx, &anchor_dedented, &anchor_origins, 0..consumed)],
-                            cx,
+                            lines, origins, body_index, pending_blank_lines, cx,
                         );
                         body_index += consumed;
                         pending_blank_lines = 0;
@@ -729,7 +729,7 @@ impl Editor {
                     if let Some((comment, consumed)) =
                         collect_comment_block(cx, &anchor_dedented, 0, &anchor_origins)
                     {
-                        attach_child_blocks(&block, vec![comment], cx);
+                        attach_item_child(&block, vec![comment], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
                         saw_child = true;
@@ -738,7 +738,7 @@ impl Editor {
 
                     if is_block_html_start(&anchor_dedented[0]) {
                         let consumed = collect_block_html_region(&anchor_dedented, 0);
-                        attach_child_blocks(
+                        attach_item_child(
                             &block,
                             vec![html_or_raw_block_from_region(
                                 cx,
@@ -746,6 +746,10 @@ impl Editor {
                                 &anchor_origins,
                                 0..consumed,
                             )],
+                            lines,
+                            origins,
+                            body_index,
+                            pending_blank_lines,
                             cx,
                         );
                         body_index += consumed;
@@ -756,10 +760,10 @@ impl Editor {
 
                     if is_footnote_definition_start(&anchor_dedented[0]) {
                         let consumed = collect_footnote_definition_region(&anchor_dedented, 0);
-                        attach_child_blocks(
+                        attach_item_child(
                             &block,
                             vec![raw_block_from_region(cx, &anchor_dedented, &anchor_origins, 0..consumed)],
-                            cx,
+                            lines, origins, body_index, pending_blank_lines, cx,
                         );
                         body_index += consumed;
                         pending_blank_lines = 0;
@@ -769,12 +773,16 @@ impl Editor {
 
                     if is_display_math_start(&anchor_dedented[0]) {
                         let consumed = collect_display_math_region(&anchor_dedented, 0);
-                        attach_child_blocks(
+                        attach_item_child(
                             &block,
                             vec![math_or_raw_block(
                                 cx,
                                 dedent_math_region(&anchor_dedented[..consumed]),
                             )],
+                            lines,
+                            origins,
+                            body_index,
+                            pending_blank_lines,
                             cx,
                         );
                         body_index += consumed;
@@ -791,7 +799,7 @@ impl Editor {
                     if should_promote_plain_child {
                         let (paragraph, consumed) =
                             Self::collect_paragraph_block(cx, &anchor_dedented, 0, &anchor_origins);
-                        attach_child_blocks(&block, vec![paragraph], cx);
+                        attach_item_child(&block, vec![paragraph], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
                         saw_child = true;
@@ -815,7 +823,7 @@ impl Editor {
                             unreachable!("indented code prefix disappeared after detection");
                         };
 
-                        attach_child_blocks(&block, vec![code_block], cx);
+                        attach_item_child(&block, vec![code_block], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
                         saw_child = true;

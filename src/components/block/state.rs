@@ -569,6 +569,12 @@ pub struct BlockRecord {
     /// 记号宽度是文件里的事实：按模型拼（`# `、列表每级两个空格）在缩进过的标题、
     /// `#标题` 这类写法上整体漂一位，字就落进别的字节里。
     pub source_line_prefixes: Vec<u32>,
+    /// 这一块挂在容器里时，**它前面那段空行**在文件里占几个字节（每行连自己那个换行一起算）。
+    /// 0 是「上面就是紧挨着的一行」或「解析器没记」。位置换算把兄弟块之间的接缝一律算成
+    /// 一个换行，可项的正文与续段之间在文件里隔着空行（`- 外甲` 空一行 `  内乙`）——少算
+    /// 那几位，续段的起点就抬到上一行的换行上，打字会写进空行里。空行的字节是解析器一眼
+    /// 看见的事实，跟着记下来。
+    pub source_separator_bytes: u32,
     /// 代码围栏的开行与闭合行各自让开几字节（文件里的缩进位数）。解析期认出围栏时
     /// 就知道这两个数；`None` 是「不是围栏代码块，或没记」。缩进代码块没有这两行。
     pub source_fence_lines: Option<(u32, u32)>,
@@ -594,6 +600,7 @@ impl BlockRecord {
             list_marker: ListMarkerStyle::default(),
             source_span: None,
             source_line_prefixes: Vec::new(),
+            source_separator_bytes: 0,
             source_fence_lines: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),

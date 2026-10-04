@@ -1153,6 +1153,7 @@ impl Editor {
         block.update(cx, |block, _cx| {
             block.record.source_span = Some(span);
             block.record.source_line_prefixes.clear();
+            block.record.source_separator_bytes = 0;
         });
         for child in children {
             Self::invalidate_record_prefixes(&child, cx);
@@ -1163,6 +1164,7 @@ impl Editor {
         let children = block.read(cx).children.clone();
         block.update(cx, |block, _cx| {
             block.record.source_line_prefixes.clear();
+            block.record.source_separator_bytes = 0;
         });
         for child in children {
             Self::invalidate_record_prefixes(&child, cx);

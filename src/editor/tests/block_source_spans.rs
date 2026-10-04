@@ -842,6 +842,87 @@ async fn an_atomic_block_in_a_quote_remembers_what_its_lines_yielded(cx: &mut Te
     }
 }
 
+/// 列表项里「空行之后那一段」的落点：前面隔了几行空行也是解析期记下的事实。
+///
+/// 走树把兄弟块之间的接缝一律算成「一个换行」，可文件里项的正文与续段之间隔着空行
+/// （`- 外甲` 空一行 `  内乙`）。少算那一位，续段的起点就落在上一行的换行上——实测在
+/// 续段块首打一个字，字写进了那个空行（`- 外甲\n写\n  内乙\n`），行首的缩进也没了。
+/// 引用那边不会错，因为它把空行折成了显式的分隔子块；列表这一族没有。
+#[gpui::test]
+async fn typing_at_the_head_of_a_list_item_continuation_lands_on_its_own_line(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for (name, source, wanted, caret, expected) in [
+        ("空行后的续段", "- 外甲\n\n  内乙\n", "内乙", 0, "- 外甲\n\n  写内乙\n"),
+        // 紧挨着的那一行没有折成单独的子块，它就是项自己的第二行内容（`move_to` 按字节走：
+        // 「外甲\n」是 3+3+1 个字节，第二行的起点在 7）。
+        ("紧挨着的续段", "- 外甲\n  内乙\n", "外甲\n内乙", 7, "- 外甲\n  写内乙\n"),
+        (
+            "第三段",
+            "- 外甲\n\n  内乙\n\n  丙段\n",
+            "丙段",
+            0,
+            "- 外甲\n\n  内乙\n\n  写丙段\n",
+        ),
+        ("空行里带空格", "- 外甲\n \n  内乙\n", "内乙", 0, "- 外甲\n \n  写内乙\n"),
+        ("有序项的续段", "1. 外甲\n\n   内乙\n", "内乙", 0, "1. 外甲\n\n   写内乙\n"),
+        ("任务项的续段", "- [ ] 外甲\n\n  内乙\n", "内乙", 0, "- [ ] 外甲\n\n  写内乙\n"),
+        (
+            "空行后的围栏",
+            "- 外甲\n\n  ```rust\n  let a = 1;\n  ```\n",
+            "let a = 1;",
+            0,
+            "- 外甲\n\n  ```rust\n  写let a = 1;\n  ```\n",
+        ),
+        // 对照：引用把整段正文收在自己身上（空行那一位也在），第二段就在同一块里
+        // ——「甲段\n\n」是 3+3+1+1 个字节，第二段的起点在 8。
+        (
+            "引用里的第二段",
+            "> 甲段\n>\n> 乙段\n",
+            "甲段\n\n乙段",
+            8,
+            "> 甲段\n>\n> 写乙段\n",
+        ),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        redraw(cx);
+        let target = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .into_iter()
+                .find(|item| item.entity.read(cx).display_text() == wanted)
+                .map(|item| item.entity.clone())
+                .unwrap_or_else(|| panic!("夹具里该有 {wanted:?} 那一块"))
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(target.entity_id()));
+            target.update(cx, |block, block_cx| block.move_to(caret, block_cx));
+        });
+        redraw(cx);
+
+        let before = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+            )
+        });
+        cx.simulate_input("写");
+        redraw(cx);
+        let after = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+                editor.buffer.text(),
+            )
+        });
+        assert_eq!(after.1 - before.1, 0, "{name}：这一行还在事后拿文件行与模型比");
+        assert_eq!(after.2, expected, "{name}：字落错了字节");
+    }
+}
+
 /// 挂在容器里的「整块原样保留」形状（HTML、注释、数学、分隔线、认不出的语法）也按解析期
 /// 记下的宽度落笔。
 ///

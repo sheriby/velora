@@ -790,6 +790,36 @@ pub(crate) fn attach_child_blocks(
     });
 }
 
+/// 列表项的子块：把它**前面那段空行**在文件里占的字节记到块上，再挂上去。
+///
+/// 位置换算把兄弟块之间的接缝一律算成「一个换行」，可项的正文与续段之间在文件里隔着空行
+/// （`- 外甲` 空一行 `  内乙`）：少算那几位，续段的起点就抬到上一行的换行上（实测在续段
+/// 块首打一个字，字写进了那个空行）。空行每一行的字节 = 上级容器已经让开的（`origins`）
+/// 加上这一行剩下的，再加上它自己的换行——都是这里当场看得见的事实。
+pub(crate) fn attach_item_child(
+    parent: &Entity<crate::editor::Block>,
+    children: Vec<Entity<crate::editor::Block>>,
+    lines: &[String],
+    origins: &[usize],
+    at: usize,
+    blank_lines: usize,
+    cx: &mut Context<Editor>,
+) {
+    if blank_lines > 0 && at >= blank_lines {
+        let separator = (at - blank_lines..at)
+            .map(|line| {
+                origins.get(line).copied().unwrap_or(0) + lines[line].len() + 1
+            })
+            .sum::<usize>();
+        if let Some(first) = children.first() {
+            first.update(cx, |child, _cx| {
+                child.record.source_separator_bytes = separator as u32;
+            });
+        }
+    }
+    attach_child_blocks(parent, children, cx);
+}
+
 pub(crate) fn build_code_block(
     cx: &mut Context<Editor>,
     language: Option<SharedString>,

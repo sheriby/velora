@@ -1556,7 +1556,10 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut total_len = own_len;
         for child in children {
             if total_len > 0 {
-                total_len += 1;
+                // 兄弟块之间的接缝按**文件里的字节**走：一律算一个换行，就把隔着空行的那块
+                // 抬到了上一行的换行上（实测在列表项的续段块首打字，字写进了那个空行）。
+                // 空行占几位是解析器看见空行段时记在子块上的（`source_separator_bytes`）。
+                total_len += 1 + child.read(cx).record.source_separator_bytes as usize;
             }
             total_len += self.collect_single_block_source_mappings(
                 &child,
