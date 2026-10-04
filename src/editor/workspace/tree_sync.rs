@@ -403,14 +403,7 @@ impl Editor {
         range: &Range<usize>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let mappings = self.build_source_target_mappings(cx);
-        let Some(entity_id) = mappings
-            .iter()
-            .find(|mapping| {
-                Self::source_range_contains(&mapping.full_source_range, range.start)
-            })
-            .map(|mapping| mapping.entity.entity_id())
-        else {
+        let Some(entity_id) = self.block_id_at_source_offset(range.start, cx) else {
             return false;
         };
         let Some(target_index) = self.document.visible_index_for_entity_id(entity_id) else {

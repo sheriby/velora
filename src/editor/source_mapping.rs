@@ -453,7 +453,7 @@ impl Editor {
             &runtime.header,
             mappings,
         );
-        for (row_index, row) in table.rows.iter().enumerate() {
+        for row_index in 0..table.rows.len() {
             let Some(cells) = runtime.rows.get(row_index) else {
                 continue;
             };
@@ -763,6 +763,133 @@ impl Editor {
         self.build_source_target_mappings_with_block_ranges(cx).0
     }
 
+    /// 一根块（连着它的子块）的映射，锚在它自己的 `source_span` 上。
+    ///
+    /// 返回 `false` = 这一根还没有区间（刚插进树、尚未写回缓冲区），什么都没写。
+    /// 块内部的偏移仍由 `collect_single_block_source_mappings` 重建，所以映射要钳在
+    /// 本块的区间里并落在字符边界上——写法不规范的块长度与缓冲区对不上时，既不能
+    /// panic，也不能越界吃到邻居的字节。
+    fn push_root_source_mappings(
+        &self,
+        block: &Entity<Block>,
+        mappings: &mut Vec<SourceTargetMapping>,
+        block_ranges: &mut HashMap<EntityId, Range<usize>>,
+        cx: &App,
+    ) -> bool {
+        let Some(span) = block.read(cx).record.source_span.clone() else {
+            return false;
+        };
+        if Self::is_empty_root_paragraph(block.read(cx)) {
+            // 空根块无文本映射，但要有零宽 span 让跨块选区边界能解析。
+            block_ranges.insert(block.entity_id(), span.start..span.start);
+            return true;
+        }
+        let prior_mapping_count = mappings.len();
+        self.collect_single_block_source_mappings(
+            block,
+            0,
+            0,
+            span.start,
+            mappings,
+            block_ranges,
+            cx,
+        );
+        for mapping in &mut mappings[prior_mapping_count..] {
+            let start = mapping.full_source_range.start.min(span.end);
+            let mut end = mapping.full_source_range.end.min(span.end);
+            while end > start && !self.buffer.is_char_boundary(end) {
+                end -= 1;
+            }
+            mapping.full_source_range = start..end;
+        }
+        // 根块的范围就是它在缓冲区里的区间：跨块选区按它取整块，
+        // 不能按重建出来的长度算（写法不规范时两者长度不同）。
+        block_ranges.insert(block.entity_id(), span);
+        true
+    }
+
+    /// 只重建与 `range` 相交的那几根块的映射（再各带左右紧邻的一根）。
+    ///
+    /// 跳转、点大纲、恢复选区这类落点只可能落在被点到的那几块里，为它们把整篇重拼
+    /// 一遍是 O(文档)：1 MiB 实测一次 227ms，10 MiB 就是秒级，而大纲跟随滚动每一帧
+    /// 都在这条链上。多带紧邻的一根是因为端点落在两块之间的空行时，
+    /// `endpoint_for_source_offset` 要按距离挑最近的一块，少带就挑到别处去了。
+    pub(super) fn source_mappings_in_range(
+        &self,
+        range: &Range<usize>,
+        cx: &App,
+    ) -> Vec<SourceTargetMapping> {
+        let started = std::time::Instant::now();
+        self.source_mapping_builds
+            .set(self.source_mapping_builds.get() + 1);
+        let mut mappings = Vec::new();
+        let mut block_ranges = HashMap::new();
+        let roots = self.document.root_blocks();
+        let mut visit = vec![false; roots.len()];
+        let mut previous = None;
+        let mut next = None;
+        for (index, block) in roots.iter().enumerate() {
+            let Some(span) = block.read(cx).record.source_span.clone() else {
+                continue;
+            };
+            if span.start <= range.end && span.end >= range.start {
+                visit[index] = true;
+            } else if span.end < range.start {
+                previous = Some(index);
+            } else if next.is_none() {
+                next = Some(index);
+            }
+        }
+        for index in [previous, next].into_iter().flatten() {
+            visit[index] = true;
+        }
+
+        let mut built = 0usize;
+        for (index, block) in roots.iter().enumerate() {
+            if !visit[index] {
+                continue;
+            }
+            built += self.push_root_source_mappings(block, &mut mappings, &mut block_ranges, cx) as usize;
+        }
+        if built == 0 {
+            // 窗口里一根有区间的块都没有（编辑中途刚插进树的块）：这时只能整篇走查，
+            // 让零宽锚点把端点解出来。
+            return self.build_source_target_mappings(cx);
+        }
+        self.source_mapping_nanos.set(
+            self.source_mapping_nanos.get()
+                + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
+        mappings
+    }
+
+    /// 「这个字节落在哪一块」按块自己的区间回答。
+    ///
+    /// 根块的区间就挂在块上；只有落进容器（引用、列表）才把那**一根**块的子块映射
+    /// 重建出来看是里头的哪一块。以前这类问题（点大纲、跳转、展开折叠）都是先整篇
+    /// 重拼一遍，成本随文档长。
+    pub(super) fn block_id_at_source_offset(&self, offset: usize, cx: &App) -> Option<EntityId> {
+        let root = self.document.root_blocks().into_iter().find(|block| {
+            block
+                .read(cx)
+                .record
+                .source_span
+                .as_ref()
+                .is_some_and(|span| span.contains(&offset) || span.start == offset)
+        })?;
+        if root.read(cx).children.is_empty() {
+            return Some(root.entity_id());
+        }
+        let mut mappings = Vec::new();
+        let mut block_ranges = HashMap::new();
+        self.push_root_source_mappings(&root, &mut mappings, &mut block_ranges, cx);
+        mappings
+            .iter()
+            .find(|mapping| mapping.full_source_range.contains(&offset))
+            .map(|mapping| mapping.entity.entity_id())
+            .or_else(|| Some(root.entity_id()))
+    }
+
     /// Like [`Self::build_source_target_mappings`], but also returns the source
     /// span of every block keyed by entity id. Atomic blocks (e.g. tables) have
     /// no per-block text mapping, so this is the only way to recover their full
@@ -846,44 +973,21 @@ impl Editor {
                 }
                 for block in roots.iter().skip(start_index) {
                     let id = block.entity_id();
-                    let Some(span) = block.read(cx).record.source_span.clone() else {
+                    let prior_mapping_count = mappings.len();
+                    if !self.push_root_source_mappings(block, &mut mappings, &mut block_ranges, cx) {
                         // 这个根块还没有区间（刚插进树、尚未写回缓冲区）：给一个
                         // 就近的零宽锚点，跨块选区的端点才解析得出来。真正的区间
                         // 要等写回那一步才有。
                         block_ranges.insert(id, next_anchor..next_anchor);
                         continue;
-                    };
-                    next_anchor = (span.end + 1).min(self.buffer.byte_len());
-                    if Self::is_empty_root_paragraph(block.read(cx)) {
-                        // 空根块无文本映射，但要有零宽 span 让跨块选区边界
-                        // 能解析（否则删除选区会中止）。
-                        block_ranges.insert(id, span.start..span.start);
-                        continue;
                     }
-                    let prior_mapping_count = mappings.len();
-                    self.collect_single_block_source_mappings(
-                        block,
-                        0,
-                        0,
-                        span.start,
-                        &mut mappings,
-                        &mut block_ranges,
-                        cx,
-                    );
-                    // 保险：块内映射钳在本块的区间里并落在字符边界上。锚点已
-                    // 精确，但个别块的映射记账长度与缓冲区跨度的任何微小出入
-                    // 都不允许变成 panic，也不允许越界吃到邻居的字节。
-                    for mapping in &mut mappings[prior_mapping_count..] {
-                        let start = mapping.full_source_range.start.min(span.end);
-                        let mut end = mapping.full_source_range.end.min(span.end);
-                        while end > start && !self.buffer.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        mapping.full_source_range = start..end;
-                    }
-                    // 根块的范围就是它在缓冲区里的区间：跨块选区按它取整块，
-                    // 不能按重建出来的长度算（写法不规范时两者长度不同）。
-                    block_ranges.insert(id, span.clone());
+                    next_anchor = block
+                        .read(cx)
+                        .record
+                        .source_span
+                        .as_ref()
+                        .map(|span| (span.end + 1).min(self.buffer.byte_len()))
+                        .unwrap_or(next_anchor);
                     if target.is_some_and(|id| {
                         mappings[prior_mapping_count..]
                             .iter()

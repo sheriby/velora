@@ -338,7 +338,7 @@ impl Editor {
             return false;
         }
 
-        let mappings = self.build_source_target_mappings(cx);
+        let mappings = self.source_mappings_in_range(&snapshot.range, cx);
         let Some(start) = self.endpoint_for_source_offset(snapshot.range.start, &mappings, cx)
         else {
             return false;
@@ -675,7 +675,7 @@ impl Editor {
         if source_range.is_empty() {
             return;
         }
-        let mappings = self.build_source_target_mappings(cx);
+        let mappings = self.source_mappings_in_range(&source_range, cx);
         let Some(start) = self.endpoint_for_source_offset(source_range.start, &mappings, cx) else {
             return;
         };

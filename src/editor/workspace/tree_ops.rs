@@ -261,13 +261,12 @@ impl Editor {
         line: usize,
         cx: &App,
     ) -> Option<Entity<crate::editor::Block>> {
-        let (_, ranges) = self.build_source_target_mappings_with_block_ranges(cx);
+        // 「这一行的第一个字节落在哪一块」由块自己的区间说了算；为它整篇重拼一遍
+        // source mapping 是 O(文档)，而这条在每次点大纲、每帧滚动跟随上都要走。
         let line_start = self.buffer.line_range(line).start;
-        ranges
-            .iter()
-            .find(|(_, range)| range.contains(&line_start) || range.start == line_start)
-            .map(|(entity_id, _)| *entity_id)
-            .and_then(|entity_id| self.document.block_entity_at_location(entity_id, cx))
+        let entity_id = self.block_id_at_source_offset(line_start, cx)?;
+        let block = self.document.block_entity_at_location(entity_id, cx)?;
+        matches!(block.read(cx).kind(), BlockKind::Heading { .. }).then_some(block)
     }
 
     /// Expands the file tree to the given path so it is visible (roadmap D1).

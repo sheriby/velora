@@ -250,7 +250,7 @@ impl Editor {
                     return;
                 }
 
-                let mappings = self.build_source_target_mappings(cx);
+                let mappings = self.source_mappings_in_range(&snapshot.range, cx);
                 let exact_mapping = mappings.iter().find(|mapping| {
                     let contains_start = Self::source_range_contains(
                         &mapping.full_source_range,
