@@ -465,7 +465,12 @@ impl Block {
 
         self.record.kind = next_kind;
         self.record.list_marker = next_list_marker;
+        let old_visible_text = old_title.visible_text();
         self.record.set_title(normalized_title);
+        if self.record.kind.is_code_block() {
+            let next_visible_text = self.record.title.visible_text();
+            self.adjust_code_line_prefixes_for_text_edit(&old_visible_text, &next_visible_text);
+        }
         self.numbered_list_restart_requested = should_restart_numbered_list;
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();

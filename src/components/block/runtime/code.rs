@@ -10,6 +10,49 @@ fn normalize_code_language_input(text: &str) -> String {
 }
 
 impl Block {
+    /// 代码块里打字、回车改的就是「块自己那几行」，行数一变，解析期记下的每行继承量
+    /// 要跟着改：拆出来的那一行还排在同一行里，让开的字节与原来那一行相同。
+    ///
+    /// 不维护这份账，读侧一核对行数就作废、交回「拿文件行与模型行比」那一条：实测在
+    /// `let a = 1;` 里回车再打一个字，比出来的那条路把模型新行开头的那个空格当成了
+    /// 容器让开的位数，字写到了空格之后（` 写1;`）。改不动的形状（一次改动跨过多行
+    /// 又生出多行）直接把账作废，宁可退回量那条路，也不要一份错账。
+    pub(super) fn adjust_code_line_prefixes_for_text_edit(&mut self, old_text: &str, new_text: &str) {
+        let recorded = self.record.source_line_prefixes.clone();
+        let old_lines = old_text.split('\n').count();
+        if recorded.is_empty() || recorded.len() != old_lines || old_text == new_text {
+            return;
+        }
+
+        let common_prefix = old_text
+            .bytes()
+            .zip(new_text.bytes())
+            .take_while(|(before, after)| before == after)
+            .count();
+        let rest_old = &old_text[common_prefix..];
+        let rest_new = &new_text[common_prefix..];
+        let common_suffix = rest_old
+            .bytes()
+            .rev()
+            .zip(rest_new.bytes().rev())
+            .take_while(|(before, after)| before == after)
+            .count();
+        let changed_old = &rest_old[..rest_old.len() - common_suffix];
+        let changed_new = &rest_new[..rest_new.len() - common_suffix];
+
+        let first_line = old_text[..common_prefix].matches('\n').count();
+        let last_line = first_line + changed_old.matches('\n').count();
+        let next_lines = 1 + changed_new.matches('\n').count();
+
+        let kept = if next_lines == 1 || last_line == first_line {
+            vec![recorded[first_line]; next_lines]
+        } else {
+            self.record.source_line_prefixes.clear();
+            return;
+        };
+        self.record.source_line_prefixes.splice(first_line..=last_line, kept);
+    }
+
     pub(crate) fn code_highlight_result(&self) -> Option<&CodeHighlightResult> {
         self.code_highlight.as_ref()
     }

@@ -1573,6 +1573,41 @@ async fn splitting_a_paragraph_mid_line_inserts_the_block_break(cx: &mut TestApp
     assert_spans_tile_the_content(&spans, &buffer_text, "行中拆块之后");
 }
 
+/// 围栏里按回车只该多一个换行：内容行前导的空格既是文件里的字节，也是模型里的字节。
+#[gpui::test]
+async fn newline_in_a_fenced_code_block_inserts_only_a_line_break(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "```rust\nlet a = 1;\n```\n".to_string(), None)
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let code = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind().is_code_block())
+                .map(|visible| visible.entity.clone())
+                .expect("夹具里应有一个代码块");
+            editor.focus_block(code.entity_id());
+            code.update(cx, |block, block_cx| block.move_to(7, block_cx));
+        });
+    });
+    redraw(cx);
+
+    cx.dispatch_action(Newline);
+    redraw(cx);
+    cx.simulate_input("写");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text,
+        "```rust\nlet a =\n写 1;\n```\n",
+        "围栏里回车多改了字节（换行以外还动了内容行的空格或落点）：{buffer_text:?}"
+    );
+}
+
 /// 表格加一行，只许多那一行——原有各行的列宽填充是用户写的字节。
 ///
 /// 「行列增删等于把整张表按新的列宽重排一遍」是方案 §6.3.1 要点名换掉的旧行为：
