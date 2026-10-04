@@ -377,6 +377,12 @@ impl DocumentTree {
     /// 区间写回只替换这一段字节，所以别的块不会被重新序列化。列表项与引用块
     /// 递归带上整棵子树，宽度和导入时记下的那段行区间一致。
     pub(crate) fn block_markdown_source(&self, block: &Entity<Block>, cx: &App) -> String {
+        // 源码/代码文档的块没有 markdown 形状：它的「源码」就是它自己那份文本。
+        // 走序列化会给它补一对 ``` 围栏，而文件里根本没有围栏那两行——按区间写回
+        // 就等于把围栏写进用户的纯文本文件。
+        if block.read(cx).is_source_raw_mode() {
+            return block.read(cx).display_text().to_string();
+        }
         let mut lines = Vec::new();
         Self::collect_single_block_markdown_lines(block.read(cx), 0, cx, &mut lines);
         lines.join("\n")

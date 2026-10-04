@@ -395,6 +395,7 @@ impl Editor {
                     BlockKind::Paragraph
                 };
                 let roots = Self::build_source_document_roots(kind, &source, cx);
+                Self::attach_source_slice_spans(&self.buffer, &roots, cx);
                 self.document.replace_roots(roots, cx);
                 self.table_cells.clear();
             }

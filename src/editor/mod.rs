@@ -508,7 +508,9 @@ impl Editor {
         let mut roots = if source_mode_fallback_required {
             let block = Self::new_block(cx, BlockRecord::paragraph(normalized.clone()));
             block.update(cx, |block, _cx| block.set_source_document_mode());
-            vec![block]
+            let roots = vec![block];
+            Self::attach_source_slice_spans(&buffer, &roots, cx);
+            roots
         } else {
             let lines = Arc::new(Self::split_markdown_lines(&normalized));
             let (roots, root_spans, next_line) = Self::build_root_block_chunk(
@@ -837,6 +839,7 @@ impl Editor {
                 }
             }
         }
+        Self::attach_source_slice_spans(&self.buffer, &roots, cx);
         self.document.append_roots(roots, cx);
 
         if offset < tail.source.len() {
@@ -864,6 +867,9 @@ impl Editor {
     pub(crate) fn flush_pending_materialization(&mut self, cx: &mut Context<Self>) {
         self.document.flush_pending_tail(cx);
         self.document.flush_pending_source(cx);
+        if self.view_mode == ViewMode::Source {
+            self.reattach_source_document_spans(cx);
+        }
     }
 
     pub(crate) fn from_file_source(
@@ -936,6 +942,43 @@ impl Editor {
                 block.record.source_span = Some(span);
             });
         }
+    }
+
+    /// 源码/代码文档的根块区间：每根块是缓冲区的一段切片，块与块之间只隔一个换行。
+    ///
+    /// 推进量取块自己的文本长度，所以 `buffer.slice(span) == block.display_text()`
+    /// 恒成立——这一档没有记号、没有空行分隔、也没有跨块容器，块落在哪一位不需要问
+    /// 解析器（渲染态那套「按行区间换算」在这里没有对应的东西）。
+    ///
+    /// 块文本加起来比缓冲区还长（尾部还在后台续建到一半、或某一步没落笔）就一根都不挂：
+    /// 没有区间的块自然退回整篇重投影那一档，挂错位置的区间会让字节写到邻居身上。
+    pub(crate) fn attach_source_slice_spans(
+        buffer: &buffer::TextBuffer,
+        roots: &[Entity<Block>],
+        cx: &mut App,
+    ) {
+        let total = buffer.byte_len();
+        let mut spans = Vec::with_capacity(roots.len());
+        let mut offset = 0usize;
+        for block in roots {
+            let len = block.read(cx).display_text().len();
+            if offset + len > total {
+                return;
+            }
+            spans.push(offset..offset + len);
+            offset += len + 1;
+        }
+        for (block, span) in roots.iter().zip(spans) {
+            block.update(cx, |block, _cx| {
+                block.record.source_span = Some(span);
+            });
+        }
+    }
+
+    /// 树里已经有一批源码文档的根块：按上面的口径把区间全部重挂一遍。
+    fn reattach_source_document_spans(&self, cx: &mut Context<Self>) {
+        let roots = self.document.root_blocks().to_vec();
+        Self::attach_source_slice_spans(&self.buffer, &roots, cx);
     }
 
     /// 把这个块当前的源码写回它自己占的缓冲区区间——只经唯一写入口
@@ -1080,6 +1123,13 @@ impl Editor {
         before: &[(EntityId, Option<std::ops::Range<usize>>)],
         cx: &mut Context<Self>,
     ) -> bool {
+        // 这一段要写的文本是按**渲染态的接缝规则**拼的：根块之间空一行、代码块补一对
+        // 围栏。源码/代码文档的根块之间只隔一个换行，文件里也没有围栏行——拿这套拼法
+        // 写下去会把用户的纯文本改成 markdown。这一档对源码文档不适用，结构命令仍走
+        // 整篇重投影（`raw_source_text` 那份拼接才是它的接缝口径）。
+        if self.view_mode == ViewMode::Source {
+            return false;
+        }
         let Some(anchor_index) = before.iter().position(|(id, _)| *id == anchor.entity_id()) else {
             return false;
         };
@@ -1368,6 +1418,8 @@ impl Editor {
                     + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
             );
             self.apply_resynced_text(&text);
+            // 整篇落笔之后区间要重挂：缓冲区刚被换成块树拼出来的那份文本。
+            self.reattach_source_document_spans(cx);
         }
     }
 

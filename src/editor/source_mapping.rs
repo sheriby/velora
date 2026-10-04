@@ -1546,93 +1546,59 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut mappings = Vec::new();
         let mut block_ranges = HashMap::new();
 
-        match self.view_mode {
-            ViewMode::Rendered => {
-                // 锚点就是每个根块在缓冲区里的区间：位置与文本同源，不再按
-                // 「块间必有空行」自行记账——那条路在非规范输入（相邻根块、
-                // 编辑后状态）会累积漂移，甚至切进多字节字符中间直接 coredump
-                // （用户报修）。块内部的偏移仍由下面的重建算出，写法不规范的
-                // 块（表格列宽填充）会在块内漂几个字节，但绝不会再漂到别的块里。
-                let mut next_anchor = 0usize;
-                let roots = self.document.root_blocks();
-                // 只要某一根的映射时，前面那些根块不必走查：锚点就是它自己的区间，
-                // 走查它没有意义，而这一跳正是「打字 = O(这一块)」的关键。
-                let start_index = match target {
-                    Some(id) => self
-                        .document
-                        .root_ancestor_of(id)
-                        .and_then(|root| {
-                            roots.iter().position(|block| block.entity_id() == root.entity_id())
-                        })
-                        .unwrap_or(0),
-                    None => 0,
-                };
-                if start_index > 0 {
-                    next_anchor = roots[start_index - 1]
-                        .read(cx)
-                        .record
-                        .source_span
-                        .as_ref()
-                        .map(|span| (span.end + 1).min(self.buffer.byte_len()))
-                        .unwrap_or(0);
-                }
-                for block in roots.iter().skip(start_index) {
-                    let id = block.entity_id();
-                    let prior_mapping_count = mappings.len();
-                    if !self.push_root_source_mappings(block, &mut mappings, &mut block_ranges, cx) {
-                        // 这个根块还没有区间（刚插进树、尚未写回缓冲区）：给一个
-                        // 就近的零宽锚点，跨块选区的端点才解析得出来。真正的区间
-                        // 要等写回那一步才有。
-                        block_ranges.insert(id, next_anchor..next_anchor);
-                        continue;
-                    }
-                    next_anchor = block
-                        .read(cx)
-                        .record
-                        .source_span
-                        .as_ref()
-                        .map(|span| (span.end + 1).min(self.buffer.byte_len()))
-                        .unwrap_or(next_anchor);
-                    if target.is_some_and(|id| {
-                        mappings[prior_mapping_count..]
-                            .iter()
-                            .any(|mapping| mapping.entity.entity_id() == id)
-                    }) {
-                        break;
-                    }
-                }
+        // 位置与文本同源：两种视图都按「根块在缓冲区里的区间」起锚。源码/代码文档的块
+        // 是缓冲区的一段切片（区间由 `attach_source_slice_spans` 挂上，块内偏移是恒等
+        // 换算），渲染态的区间由导入器按行换算。以前源码模式另走一遍「按序列化长度累加
+        // absolute」的记账，还要先把整篇缓冲区拷出来——一次按键 O(文档) 就在这两条上。
+        //
+        // 块内部的偏移仍由下面的重建算出，写法不规范的块（表格列宽填充）会在块内漂几个
+        // 字节，但绝不会再漂到别的块里。
+        let mut next_anchor = 0usize;
+        let roots = self.document.root_blocks();
+        // 只要某一根的映射时，前面那些根块不必走查：锚点就是它自己的区间，
+        // 走查它没有意义，而这一跳正是「打字 = O(这一块)」的关键。
+        let start_index = match target {
+            Some(id) => self
+                .document
+                .root_ancestor_of(id)
+                .and_then(|root| {
+                    roots.iter().position(|block| block.entity_id() == root.entity_id())
+                })
+                .unwrap_or(0),
+            None => 0,
+        };
+        if start_index > 0 {
+            next_anchor = roots[start_index - 1]
+                .read(cx)
+                .record
+                .source_span
+                .as_ref()
+                .map(|span| (span.end + 1).min(self.buffer.byte_len()))
+                .unwrap_or(0);
+        }
+        for block in roots.iter().skip(start_index) {
+            let id = block.entity_id();
+            let prior_mapping_count = mappings.len();
+            if !self.push_root_source_mappings(block, &mut mappings, &mut block_ranges, cx) {
+                // 这个根块还没有区间（刚插进树、尚未写回缓冲区）：给一个
+                // 就近的零宽锚点，跨块选区的端点才解析得出来。真正的区间
+                // 要等写回那一步才有。
+                block_ranges.insert(id, next_anchor..next_anchor);
+                continue;
             }
-            ViewMode::Source => {
-                // 源码模式：块即原始行，保持记账走查；边界钳制防越界。
-                let source = self.current_document_source(cx);
-                let mut absolute = 0usize;
-                for block in self.document.root_blocks() {
-                    let is_empty_root = Self::is_empty_root_paragraph(block.read(cx));
-                    if is_empty_root {
-                        block_ranges.insert(block.entity_id(), absolute..absolute);
-                        continue;
-                    }
-                    let prior_mapping_count = mappings.len();
-                    absolute += self.collect_single_block_source_mappings(
-                        block,
-                        0,
-                        0,
-                        0,
-                        absolute,
-                        &mut mappings,
-                        &mut block_ranges,
-                        cx,
-                    );
-                    for mapping in &mut mappings[prior_mapping_count..] {
-                        let start = mapping.full_source_range.start;
-                        let mut end = mapping.full_source_range.end.min(source.len());
-                        while end > start && !source.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        mapping.full_source_range = start..end;
-                    }
-                    absolute += 1;
-                }
+            next_anchor = block
+                .read(cx)
+                .record
+                .source_span
+                .as_ref()
+                .map(|span| (span.end + 1).min(self.buffer.byte_len()))
+                .unwrap_or(next_anchor);
+            if target.is_some_and(|id| {
+                mappings[prior_mapping_count..]
+                    .iter()
+                    .any(|mapping| mapping.entity.entity_id() == id)
+            }) {
+                break;
             }
         }
 

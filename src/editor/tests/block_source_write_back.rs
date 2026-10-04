@@ -2846,3 +2846,45 @@ async fn typing_in_a_code_document_with_chinese_lands_on_the_caret_bytes(
         "代码文档里打字没落在光标那几位字节上"
     );
 }
+
+/// 源码/代码文档里按回车：结构写回那几档的接缝规则是渲染态的（根块之间空一行、
+/// 代码块补一对围栏），拿它写纯文本文件会把 markdown 记号塞进用户的代码。
+/// 这一档在源码视图不适用，回车只该在光标处落一个换行。
+#[gpui::test]
+async fn newline_in_a_code_document_inserts_only_a_line_break(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "print(1)\nprint(2)\n";
+    let path = std::env::temp_dir().join(format!("velora-code-nl-{}.py", std::process::id()));
+    fs::write(&path, source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    redraw(cx);
+
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks().first().cloned().expect("有根块")
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(first.entity_id()));
+        first.update(cx, |block, block_cx| block.move_to(8, block_cx));
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        first.update(cx, |block, cx| block.on_newline(&Newline, window, cx));
+    });
+    redraw(cx);
+
+    let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    // 「分成两根块」是这一档原有的行为（两根块之间隔一个换行，所以文件里多一个空行）；
+    // 这条守卫盯的是新风险：源码视图的块一旦有了区间，结构写回那档就会拿渲染态的接缝
+    // 规则（根块之间空一行、代码块补围栏）往纯文本里写 markdown。
+    assert_eq!(
+        file, "print(1)\n\nprint(2)\n",
+        "代码文档的回车写出了 markdown 形状"
+    );
+}

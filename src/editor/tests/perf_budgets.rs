@@ -714,25 +714,19 @@ fn dispatch(
     redraw(cx);
 }
 
-/// 阶段 2「增量重投影」：在引用块里按回车，只该重投影这一根引用。
-///
-/// 引用行的换行可能改结构（行首变成 `- 项` 就不再是引用行了），所以这条路要走
-/// `normalize_rendered_quote_structure`。但那一步现在做的是「整棵树落进缓冲区 +
-/// 整篇重解析」：60 根块的文档里改一根引用，实体全部换掉、未编辑块的字节也被
-/// 重新序列化一遍。这里两个数一起守：整篇序列化 0 次，重投影出来的根块数有界。
 /// 源码模式（未闭合的 fenced div、不支持的 admonition 触发的整篇兜底）打字：
-/// 这一档是「整篇落笔」，闸门必须数得到，同时文件以外一个字节都不能动。
-///
-/// 数不到就等于给整篇重投影开了后门：以前 `resync_buffer_from_projection` 的源码/
-/// 代码分支不加 `source_serializations`，白名单空表看起来全绿，实际 1 MiB 的源码模式
-/// 文档一次按键 2.28 秒（成本随文档线性增长，其中大头是把整篇文本重解析成行内树）。
+/// 阶段 2 第 3 条——源码模式就是缓冲区的一份视图，一次按键只该落在光标那一段字节上。
+/// 以前这一档走 `raw_source_text`：整篇文本从块树重拼、整篇比较、整篇落笔，
+/// 1 MiB 实测一次按键 2.28 秒（大头是把整篇文本重解析成行内树）。闸门数得到它
+/// 之后（`ed2df8f`），这一步要求它归零。
 #[gpui::test]
-async fn source_mode_typing_is_counted_and_preserves_every_other_byte(cx: &mut TestAppContext) {
+async fn source_mode_typing_writes_through_the_buffer_and_preserves_every_other_byte(
+    cx: &mut TestAppContext,
+) {
     init_editor_test_app(cx);
     let source = "::: {.column-margin}\n未闭合的 div\n".to_string();
-    let (editor, cx) = cx.add_window_view(|_window, cx| {
-        Editor::from_markdown(cx, source.clone(), None)
-    });
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.clone(), None));
     redraw(cx);
 
     let (mode, roots, before) = editor.read_with(cx, |editor, _cx| {
@@ -751,9 +745,9 @@ async fn source_mode_typing_is_counted_and_preserves_every_other_byte(cx: &mut T
     let (after, buffer) = editor.read_with(cx, |editor, _cx| {
         (editor.source_serializations.get(), editor.buffer.text())
     });
-    assert!(
-        after > before,
-        "源码模式的一次整篇落笔没进闸门分子：这条路径又一次成了隐形成本"
+    assert_eq!(
+        after, before,
+        "源码模式打字又走了一遍整篇落笔（这一键多付 {after} 次 O(文档) 序列化）"
     );
     assert_eq!(
         buffer,
@@ -762,6 +756,127 @@ async fn source_mode_typing_is_counted_and_preserves_every_other_byte(cx: &mut T
     );
 }
 
+/// 代码/纯文本文档（`.py`、`.txt` 这类整篇按行分块的源码视图）打字同上：一次按键
+/// 一次整篇落笔，1 MiB 的 `.rs` 文件就是秒级。这一档的块本来就是缓冲区的一段切片，
+/// 区间应该现成。
+#[gpui::test]
+async fn typing_in_a_code_document_writes_through_the_buffer(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut source = String::from("def 甲():\n    return 1\n");
+    for index in 0..600 {
+        source.push_str(&format!("# 第 {index} 行注释\n"));
+    }
+    let path = std::env::temp_dir().join(format!("velora-code-gate-{}.py", std::process::id()));
+    fs::write(&path, &source).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = crate::editor::encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    redraw(cx);
+
+    let (mode, roots, before) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.view_mode,
+            editor.document.root_blocks().len(),
+            editor.source_serializations.get(),
+        )
+    });
+    assert_eq!(mode, crate::editor::ViewMode::Source, "代码文档该是源码视图");
+    assert!(roots >= 2, "夹具得分成几块才测得出「只动这一块」：{roots} 块");
+
+    cx.simulate_input("X");
+    redraw(cx);
+
+    let (after, buffer) = editor.read_with(cx, |editor, _cx| {
+        (editor.source_serializations.get(), editor.buffer.text())
+    });
+    assert_eq!(
+        after, before,
+        "代码文档打字又走了一遍整篇落笔（这一键多付 {after} 次 O(文档) 序列化）"
+    );
+    assert_eq!(
+        buffer,
+        format!("X{source}"),
+        "代码文档打字改动了光标以外不该动的字节"
+    );
+}
+
+/// 1 MiB 的文档切到源码视图再打字：这一档以前一次按键 2.28 秒（整篇重拼 + 整篇比较 +
+/// 整篇落笔）。源码/代码文档的块带着自己那段缓冲区区间后，按键只该付「这一块」的钱，
+/// 全文级遍数归零。夹具由 `scripts/generate-fixtures.mjs` 生成且被 gitignore，缺失即跳过。
+#[gpui::test]
+async fn one_mib_source_mode_typing_stays_within_budget(cx: &mut TestAppContext) {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/one-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        return;
+    }
+    init_editor_test_app(cx);
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while editor.read_with(cx, |editor, _| editor.document.pending_tail().is_some()) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    let (mode, serializations_before, full_before, len_before) =
+        editor.read_with(cx, |editor, _cx| {
+            (
+                editor.view_mode,
+                editor.source_serializations.get(),
+                editor.source_mapping_full_builds.get(),
+                editor.buffer.byte_len(),
+            )
+        });
+    assert_eq!(mode, crate::editor::ViewMode::Source, "夹具该切到源码视图");
+
+    let start = Instant::now();
+    cx.simulate_input("x");
+    redraw(cx);
+    let typed = start.elapsed();
+    let (serializations, full, len_after) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.source_serializations.get() - serializations_before,
+            editor.source_mapping_full_builds.get() - full_before,
+            editor.buffer.byte_len(),
+        )
+    });
+    eprintln!(
+        "[measure] 1 MiB 源码模式一次按键 {typed:?}（整篇落笔 {serializations} 次，整篇 mapping {full} 次）"
+    );
+    assert_eq!(
+        len_after,
+        len_before + 1,
+        "这个字没进缓冲区：0 次落笔是因为没干活，还是因为压根没打字"
+    );
+    assert_eq!(
+        len_after,
+        len_before + 1,
+        "这个字没进缓冲区：0 次落笔是因为没干活，还是因为压根没打字"
+    );
+    assert_eq!(serializations, 0, "1 MiB 源码模式打字还在整篇落笔");
+    assert_eq!(full, 0, "1 MiB 源码模式打字还在整篇重建 mapping");
+    assert!(
+        typed < Duration::from_millis(600),
+        "1 MiB 源码模式一次按键 {typed:?}，偏出预算"
+    );
+}
+
+/// 阶段 2「增量重投影」：在引用块里按回车，只该重投影这一根引用。
+///
+/// 引用行的换行可能改结构（行首变成 `- 项` 就不再是引用行了），所以这条路要走
+/// `normalize_rendered_quote_structure`。但那一步现在做的是「整棵树落进缓冲区 +
+/// 整篇重解析」：60 根块的文档里改一根引用，实体全部换掉、未编辑块的字节也被
+/// 重新序列化一遍。这里两个数一起守：整篇序列化 0 次，重投影出来的根块数有界。
 #[gpui::test]
 async fn entering_a_quote_reprojects_only_that_quote(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
