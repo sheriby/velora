@@ -632,3 +632,59 @@ async fn typing_in_a_list_item_uses_the_parse_time_prefix(cx: &mut TestAppContex
         assert_eq!(after.2, expected, "{name}：字落错了字节");
     }
 }
+
+/// 上级容器吃掉的字节（引用的 `> `、列表的缩进）跟着一起进账，所以**容器里的块**
+/// 也按解析期记下的宽度落笔——这一族以前每次换算都要把 `>` 与缩进重量一遍。
+#[gpui::test]
+async fn typing_inside_a_container_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (name, source, expected) in [
+        ("引用正文", "> 引用里的段落\n", "> 引用里的段落写\n"),
+        ("记号后没空格", ">引用二\n", ">引用二写\n"),
+        ("记号后三格缩进", ">   引用三\n", ">   引用三写\n"),
+        ("嵌套列表项", "- 项甲\n  - 子乙\n", "- 项甲\n  - 子乙写\n"),
+        ("四格缩进的嵌套项", "- 项丙\n    - 子丁\n", "- 项丙\n    - 子丁写\n"),
+        ("项里的续段", "- 项戊\n  续在第二行\n", "- 项戊\n  续在第二行写\n"),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        // 打在最后一块的内容末尾（嵌套形状里那就是最深/最后的那一层）。
+        let target = editor.update(cx, |editor, cx| {
+            let last = editor
+                .document
+                .visible_blocks()
+                .last()
+                .expect("夹具里该有可见块")
+                .entity
+                .clone();
+            editor.focus_block(last.entity_id());
+            last.update(cx, |block, block_cx| block.move_to(block.visible_len(), block_cx));
+            last
+        });
+        redraw(cx);
+
+        let before = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+            )
+        });
+        let _ = target;
+        cx.simulate_input("写");
+        redraw(cx);
+        let after = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+                editor.buffer.text(),
+            )
+        });
+        assert!(after.0 > before.0, "{name}：打字没用上解析期记下的记号宽度");
+        assert_eq!(
+            after.1 - before.1,
+            0,
+            "{name}：这一行还在事后拿文件行与模型行比"
+        );
+        assert_eq!(after.2, expected, "{name}：字落错了字节");
+    }
+}

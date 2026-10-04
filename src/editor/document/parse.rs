@@ -241,6 +241,34 @@ pub(crate) fn strip_leading_columns(line: &str, columns: usize) -> Option<&str> 
     None
 }
 
+/// `dedent_lines` 的同款，另外把「这一行的内容在文件那一行里已经让开了几字节」一起算出来。
+///
+/// 上级容器（引用的 `> `、列表的缩进）剥掉的字节是解析期就知道的事实；带着它递归下去，
+/// 块就能把自己每一行的记号宽度记成**文件口径**的绝对值（`BlockRecord::source_line_prefixes`），
+/// 位置换算不必事后拿文件行与模型行比。`origins` 短于 `lines` 时缺的部分按 0 算。
+pub(crate) fn dedent_lines_with_origins(
+    lines: &[String],
+    columns: usize,
+    origins: &[usize],
+) -> (Vec<String>, Vec<usize>) {
+    let mut texts = Vec::with_capacity(lines.len());
+    let mut moved = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        let inherited = origins.get(index).copied().unwrap_or(0);
+        match strip_leading_columns(line, columns) {
+            Some(dedented) => {
+                moved.push(inherited + (line.len() - dedented.len()));
+                texts.push(dedented.to_string());
+            }
+            None => {
+                moved.push(inherited);
+                texts.push(line.clone());
+            }
+        }
+    }
+    (texts, moved)
+}
+
 pub(crate) fn dedent_lines(lines: &[String], columns: usize) -> Vec<String> {
     lines
         .iter()

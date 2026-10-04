@@ -234,7 +234,7 @@ impl Editor {
 
             if parse_opening_fence(line).is_some() {
                 let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index) else {
-                    let paragraph = Self::collect_paragraph_block(cx, lines, index);
+                    let paragraph = Self::collect_paragraph_block(cx, lines, index, &[]);
                     roots.push(paragraph.0);
                     spans.push(index..paragraph.1);
                     index = paragraph.1;
@@ -349,7 +349,7 @@ impl Editor {
                 // top-level items.
                 let remaining = cursor.root_budget.saturating_sub(roots.len()).max(1);
                 let (blocks, block_spans, next_index) =
-                    Self::collect_list_blocks(cx, lines, index, remaining);
+                    Self::collect_list_blocks(cx, lines, index, remaining, &[]);
                 for (block, block_span) in blocks.into_iter().zip(block_spans) {
                     roots.push(block);
                     spans.push(block_span);
@@ -359,7 +359,7 @@ impl Editor {
             }
 
             if is_quote_start(line) {
-                let (block, next_index) = Self::collect_quote_block(cx, lines, index);
+                let (block, next_index) = Self::collect_quote_block(cx, lines, index, &[]);
                 roots.push(block);
                 spans.push(index..next_index);
                 index = next_index;
@@ -416,7 +416,7 @@ impl Editor {
                 continue;
             }
 
-            let paragraph = Self::collect_paragraph_block(cx, lines, index);
+            let paragraph = Self::collect_paragraph_block(cx, lines, index, &[]);
             roots.push(paragraph.0);
             spans.push(index..paragraph.1);
             index = paragraph.1;

@@ -879,21 +879,18 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// 解析期就记在块上的每行记号宽度，直接拿来用（见 `BlockRecord::source_line_prefixes`）。
     ///
     /// 这是删掉「事后拿文件行与模型行比」那一层的正路：宽度是剥记号那段代码当场知道的
-    /// 事实，不是比出来的猜测。还没记到的形状（引用/列表里的子块——上级容器吃掉的字节没进
-    /// 这份账；多行块的续行、代码围栏、表格格子同理）交回 `measured_block_line_prefixes`。
+    /// 事实，不是比出来的猜测，而且带着上级容器（引用的 `>`、列表的缩进）已经吃掉的字节
+    /// ——`collect_quote_block` 与 `dedent_lines_with_origins` 把每行的继承量一路传下来。
+    /// 还没记到的形状交回 `measured_block_line_prefixes`：代码围栏、缩进代码块、表格格子，
+    /// 以及容器自己那份多行正文（空行段折进行数就对不上，见下）。
     /// 行数对不上、块起点不在行首、记号宽度比那一行还长，都算「这份数据不能用」，交回量。
     fn recorded_block_line_prefixes(
         &self,
         block: &Entity<Block>,
         content_markdown: &str,
         absolute_start: usize,
-        quote_depth: usize,
-        list_dedent: usize,
         cx: &App,
     ) -> Option<MeasuredBlockLines> {
-        if quote_depth != 0 || list_dedent != 0 {
-            return None;
-        }
         let recorded = block.read(cx).record.source_line_prefixes.clone();
         let model_lines = content_markdown.split('\n').count();
         if recorded.is_empty() || recorded.len() != model_lines {
@@ -1090,14 +1087,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             self.measured_block_prefix(absolute_start, quote_depth, list_dedent, &kind);
         let kind_for_measure = kind.clone();
         let line_prefixes = |markdown: &str| {
-            self.recorded_block_line_prefixes(
-                block,
-                markdown,
-                absolute_start,
-                quote_depth,
-                list_dedent,
-                cx,
-            )
+            self.recorded_block_line_prefixes(block, markdown, absolute_start, cx)
             .or_else(|| {
                 self.measured_block_line_prefixes(
                     markdown,

@@ -17,6 +17,7 @@ impl Editor {
         cx: &mut Context<Self>,
         lines: &[String],
         start: usize,
+        origins: &[usize],
     ) -> (Entity<crate::editor::Block>, usize) {
         let mut paragraph_lines = vec![lines[start].to_string()];
         let mut index = start + 1;
@@ -31,37 +32,60 @@ impl Editor {
         }
 
         let content = paragraph_lines.join("\n");
-        let line_count = paragraph_lines.len();
         let block = native_block(cx, BlockKind::Paragraph, content);
-        // 根段落一行都没剥（内容就是文件那一行），所以每行的记号宽度是 0——
-        // 这是解析期就知道的事实，交给位置换算直接用，不再拿文件行与模型行比。
+        // 段落一行都不剥（内容就是传进来的那一行），所以宽度就是上级容器已经吃掉的
+        // 那几字节——解析期就知道的事实，交给位置换算直接用，不再拿文件行与模型行比。
+        let prefixes: Vec<u32> = (start..index)
+            .map(|at| origins.get(at).copied().unwrap_or(0) as u32)
+            .collect();
         block.update(cx, |block, _cx| {
-            block.record.source_line_prefixes = vec![0u32; line_count];
+            block.record.source_line_prefixes = prefixes;
         });
         (block, index)
+    }
+
+    /// 容器里连续几行普通文本拼成的段落子块：每行的记号宽度就是上级容器已经吃掉的
+    /// 那几字节（解析期的事实），位置换算不再拿文件行与模型行比。
+    fn paragraph_child_block(
+        cx: &mut Context<Self>,
+        text: String,
+        prefixes: Vec<u32>,
+    ) -> Entity<crate::editor::Block> {
+        let block = native_block(cx, BlockKind::Paragraph, text);
+        block.update(cx, |block, _cx| {
+            block.record.source_line_prefixes = prefixes;
+        });
+        block
     }
 
     pub(crate) fn collect_quote_block(
         cx: &mut Context<Self>,
         lines: &[String],
         start: usize,
+        origins: &[usize],
     ) -> (Entity<crate::editor::Block>, usize) {
         let end = collect_quote_raw_region(lines, start);
         let region = &lines[start..end];
         let mut dequoted = Vec::with_capacity(region.len());
-        for line in region {
+        // 每一行被 `>` 记号吃掉几字节，是这里现算的事实——带着它往下递归，子块记的
+        // 宽度就是**文件那一行**的绝对值（`BlockRecord::source_line_prefixes`）。
+        let mut dequoted_origins = Vec::with_capacity(region.len());
+        for (offset, line) in region.iter().enumerate() {
+            let inherited = origins.get(start + offset).copied().unwrap_or(0);
             if line.trim().is_empty() {
                 dequoted.push(String::new());
+                dequoted_origins.push(inherited + line.len());
                 continue;
             }
 
             let Some(content) = strip_one_quote_level(line) else {
                 return (raw_block(cx, region.join("\n")), end);
             };
+            dequoted_origins.push(inherited + (line.len() - content.len()));
             dequoted.push(content);
         }
 
-        let Some(block) = Self::build_native_quote_block(cx, &dequoted) else {
+        let Some(block) = Self::build_native_quote_block(cx, &dequoted, &dequoted_origins) else {
             return (raw_block(cx, region.join("\n")), end);
         };
 
@@ -71,19 +95,27 @@ impl Editor {
     pub(crate) fn build_native_quote_block(
         cx: &mut Context<Self>,
         lines: &[String],
+        origins: &[usize],
     ) -> Option<Entity<crate::editor::Block>> {
+        let inherited = |at: usize| origins.get(at).copied().unwrap_or(0);
         if let Some(header_index) = lines.iter().position(|line| !line.trim().is_empty())
             && let Some((variant, title)) = CalloutVariant::parse_header_line(&lines[header_index])
         {
             return Self::build_native_callout_block(
                 cx,
                 &lines[header_index + 1..],
+                &origins[header_index + 1..],
                 variant,
                 title,
             );
         }
 
         let mut title_markdown = String::new();
+        // 引用自己那份正文的每一行让开几字节（文件口径）。空行段折成一行、开头的
+        // 空行没有内容行，这两种都会让「内容第 i 行」对不上「文件第 i 行」——那时
+        // 整份账作废（`title_desynced`），位置换算交回按文件量。
+        let mut title_prefixes: Vec<u32> = Vec::new();
+        let mut title_desynced = false;
         let mut children = Vec::new();
         let mut index = 0usize;
         let mut pending_blank_lines = 0usize;
@@ -180,7 +212,7 @@ impl Editor {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
-                let (quote, consumed) = Self::collect_quote_block(cx, lines, index);
+                let (quote, consumed) = Self::collect_quote_block(cx, lines, index, origins);
                 if quote.read(cx).kind() == BlockKind::RawMarkdown {
                     return None;
                 }
@@ -196,7 +228,7 @@ impl Editor {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let (list_blocks, _nested_spans, consumed) =
-                    Self::collect_list_blocks(cx, lines, index, usize::MAX);
+                    Self::collect_list_blocks(cx, lines, index, usize::MAX, origins);
                 if list_blocks
                     .iter()
                     .any(|block| block.read(cx).kind() == BlockKind::RawMarkdown)
@@ -247,6 +279,7 @@ impl Editor {
                 continue;
             }
 
+            let paragraph_start = index;
             let mut paragraph_lines = vec![line.clone()];
             index += 1;
             while index < lines.len() {
@@ -279,23 +312,34 @@ impl Editor {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
-                children.push(native_block(
+                children.push(Self::paragraph_child_block(
                     cx,
-                    BlockKind::Paragraph,
                     paragraph_lines.join("\n"),
+                    (paragraph_start..index).map(|at| inherited(at) as u32).collect(),
                 ));
                 pending_blank_lines = 0;
                 continue;
             }
 
             if !title_markdown.is_empty() {
+                if pending_blank_lines > 1 {
+                    title_desynced = true;
+                } else if pending_blank_lines == 1 {
+                    // 分隔出来的那一个空内容行，就是紧挨着的前一行空行。
+                    let blank = paragraph_start - 1;
+                    title_prefixes.push((inherited(blank) + lines[blank].len()) as u32);
+                }
                 title_markdown.push_str(if pending_blank_lines > 0 {
                     "\n\n"
                 } else {
                     "\n"
                 });
+            } else if pending_blank_lines > 0 {
+                // 开头的空行在内容里没有对应行，行号从这一步就错位了。
+                title_desynced = true;
             }
             title_markdown.push_str(&paragraph_lines.join("\n"));
+            title_prefixes.extend((paragraph_start..index).map(|at| inherited(at) as u32));
             pending_blank_lines = 0;
         }
 
@@ -304,6 +348,11 @@ impl Editor {
         }
 
         let block = native_block(cx, BlockKind::Quote, title_markdown);
+        if !title_desynced && !title_prefixes.is_empty() {
+            block.update(cx, |block, _cx| {
+                block.record.source_line_prefixes = title_prefixes;
+            });
+        }
         attach_child_blocks(&block, children, cx);
         Some(block)
     }
@@ -311,9 +360,11 @@ impl Editor {
     pub(crate) fn build_native_callout_block(
         cx: &mut Context<Self>,
         lines: &[String],
+        origins: &[usize],
         variant: CalloutVariant,
         title: String,
     ) -> Option<Entity<crate::editor::Block>> {
+        let inherited = |at: usize| origins.get(at).copied().unwrap_or(0);
         let mut children = Vec::new();
         let mut index = 0usize;
         let mut pending_blank_lines = 0usize;
@@ -381,7 +432,7 @@ impl Editor {
             }
 
             if is_quote_start(line) {
-                let (quote, consumed) = Self::collect_quote_block(cx, lines, index);
+                let (quote, consumed) = Self::collect_quote_block(cx, lines, index, origins);
                 if quote.read(cx).kind() == BlockKind::RawMarkdown {
                     return None;
                 }
@@ -392,7 +443,7 @@ impl Editor {
 
             if parse_list_marker(line).is_some() {
                 let (list_blocks, _nested_spans, consumed) =
-                    Self::collect_list_blocks(cx, lines, index, usize::MAX);
+                    Self::collect_list_blocks(cx, lines, index, usize::MAX, origins);
                 if list_blocks
                     .iter()
                     .any(|block| block.read(cx).kind() == BlockKind::RawMarkdown)
@@ -426,6 +477,7 @@ impl Editor {
                 continue;
             }
 
+            let paragraph_start = index;
             let mut paragraph_lines = vec![line.clone()];
             index += 1;
             while index < lines.len() {
@@ -444,10 +496,10 @@ impl Editor {
                 index += 1;
             }
 
-            children.push(native_block(
+            children.push(Self::paragraph_child_block(
                 cx,
-                BlockKind::Paragraph,
                 paragraph_lines.join("\n"),
+                (paragraph_start..index).map(|at| inherited(at) as u32).collect(),
             ));
         }
 
@@ -471,6 +523,7 @@ impl Editor {
         lines: &[String],
         start: usize,
         item_budget: usize,
+        origins: &[usize],
     ) -> (
         Vec<Entity<crate::editor::Block>>,
         Vec<std::ops::Range<usize>>,
@@ -481,6 +534,8 @@ impl Editor {
         // （子项在父项区间里），所以只在顶层这一层记账。
         let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
         let mut index = start;
+        // 「这一行已经被上级容器吃掉了几个字节」。根块传的是空表（一律 0）。
+        let inherited = |at: usize| origins.get(at).copied().unwrap_or(0);
 
         while index < lines.len() {
             // Stop on a top-level item boundary once this call has built its
@@ -525,10 +580,12 @@ impl Editor {
             // 记号的写法是原文的一部分：块带着它，显示与序列化才不改用户写的 `+`、`1)`。
             block.update(cx, |block, _cx| {
                 block.record.list_marker = marker.style;
-                if !marker_is_math {
-                    block.record.source_line_prefixes = vec![marker_width as u32];
-                }
             });
+            // 项自己内容的每一行让开几字节，一行一行跟着 `append_markdown_to_block` 记。
+            // 空行段超过一行时模型里的空行比文件里的少，行号对不上，整块的账作废。
+            let mut item_prefixes: Vec<u32> =
+                if marker_is_math { Vec::new() } else { vec![(inherited(index) + marker_width) as u32] };
+            let mut prefixes_desynced = marker_is_math;
             let mut body_index = index + 1;
             let mut pending_blank_lines = 0usize;
             let mut fallback_raw = false;
@@ -551,12 +608,23 @@ impl Editor {
 
                 let (line_indent_columns, _) = leading_indent_columns_and_bytes(line);
                 if line_indent_columns > marker.indent_columns {
-                    let anchor_dedented =
-                        dedent_lines(&lines[body_index..item_end], line_indent_columns);
+                    let range = body_index..item_end;
+                    let slice_origins: Vec<usize> =
+                        range.clone().map(inherited).collect();
+                    let (anchor_dedented, anchor_origins) = dedent_lines_with_origins(
+                        &lines[range],
+                        line_indent_columns,
+                        &slice_origins,
+                    );
 
                     if parse_list_marker(&anchor_dedented[0]).is_some() {
-                        let (children, _child_spans, consumed) =
-                            Self::collect_list_blocks(cx, &anchor_dedented, 0, usize::MAX);
+                        let (children, _child_spans, consumed) = Self::collect_list_blocks(
+                            cx,
+                            &anchor_dedented,
+                            0,
+                            usize::MAX,
+                            &anchor_origins,
+                        );
                         attach_child_blocks(&block, children, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
@@ -565,7 +633,8 @@ impl Editor {
                     }
 
                     if is_quote_start(&anchor_dedented[0]) {
-                        let (quote, consumed) = Self::collect_quote_block(cx, &anchor_dedented, 0);
+                        let (quote, consumed) =
+                            Self::collect_quote_block(cx, &anchor_dedented, 0, &anchor_origins);
                         if quote.read(cx).kind() == BlockKind::RawMarkdown {
                             fallback_raw = true;
                             break;
@@ -713,7 +782,7 @@ impl Editor {
                             .is_some();
                     if should_promote_plain_child {
                         let (paragraph, consumed) =
-                            Self::collect_paragraph_block(cx, &anchor_dedented, 0);
+                            Self::collect_paragraph_block(cx, &anchor_dedented, 0, &anchor_origins);
                         attach_child_blocks(&block, vec![paragraph], cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
@@ -751,6 +820,15 @@ impl Editor {
                     trimmed,
                     cx,
                 );
+                if pending_blank_lines == 1 {
+                    // 分隔出来的那一个空内容行，就是文件里紧挨着的前一行空行。
+                    let blank = body_index - 1;
+                    item_prefixes.push((inherited(blank) + lines[blank].len()) as u32);
+                } else if pending_blank_lines > 1 {
+                    prefixes_desynced = true;
+                }
+                item_prefixes
+                    .push((inherited(body_index) + (line.len() - trimmed.len())) as u32);
                 pending_blank_lines = 0;
                 body_index += 1;
             }
@@ -758,6 +836,11 @@ impl Editor {
             if fallback_raw {
                 roots.push(raw_block(cx, lines[index..item_end].join("\n")));
             } else {
+                if !prefixes_desynced {
+                    block.update(cx, |block, _cx| {
+                        block.record.source_line_prefixes = item_prefixes;
+                    });
+                }
                 roots.push(block);
             }
             spans.push(index..item_end);

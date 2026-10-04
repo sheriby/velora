@@ -1138,6 +1138,37 @@ impl Editor {
         true
     }
 
+    /// 把 `block` 的源码区间换成新的，并让它连子块在解析期记下的记号宽度一起作废。
+    ///
+    /// 这一段字节被重新写过（拆块、合块、Setext 提成 ATX……），块自己那一行的形状
+    /// 可能跟着变了：旧账让每个块内偏移整体漂几位（实测报内容末尾在第 9 位，文件里在
+    /// 11 位）。容器的行也一样会把改动传给子块（`>` 写成 `>>` 时每行的继承量都变），
+    /// 所以递归到子块。清掉之后位置换算交回按文件量那一条，直到重新解析给它新的账。
+    fn reanchor_record_span(
+        block: &Entity<Block>,
+        span: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let children = block.read(cx).children.clone();
+        block.update(cx, |block, _cx| {
+            block.record.source_span = Some(span);
+            block.record.source_line_prefixes.clear();
+        });
+        for child in children {
+            Self::invalidate_record_prefixes(&child, cx);
+        }
+    }
+
+    fn invalidate_record_prefixes(block: &Entity<Block>, cx: &mut Context<Self>) {
+        let children = block.read(cx).children.clone();
+        block.update(cx, |block, _cx| {
+            block.record.source_line_prefixes.clear();
+        });
+        for child in children {
+            Self::invalidate_record_prefixes(&child, cx);
+        }
+    }
+
     /// 结构变更（拆块、合块）之后，把被换掉的那一段连续根块写回缓冲区。
     ///
     /// `before` 是变更前的根块布局。用「首尾对齐」算出 old_run / new_run：变更
@@ -1286,13 +1317,7 @@ impl Editor {
             else {
                 continue;
             };
-            block.update(cx, |block, _cx| {
-                block.record.source_span = Some(span);
-                // 这一段字节被重新写过（拆块、合块、Setext 提成 ATX……），块自己
-                // 那一行的形状可能跟着变了，解析期记下的记号宽度就此过期。清掉它，
-                // 位置换算交回按文件量那一条，直到下一次重新解析给它新的账。
-                block.record.source_line_prefixes.clear();
-            });
+            Self::reanchor_record_span(&block, span, cx);
         }
         // 拆块拆出的空块在段首：空段落序列化不出字节，分不到区间，留着旧的整块
         // 区间就是过期区间——下一次按区间写会把字节落错位置。它在文件里就是接缝上
