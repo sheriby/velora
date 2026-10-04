@@ -483,8 +483,10 @@ impl Editor {
         self.pending_scroll_recheck_after_layout = true;
         self.last_scroll_viewport_size = None;
         // 走到这里缓冲区已经是目标状态（两条路都以它为准重解析过），调用方随后的
-        // 落笔不该再来一遍整篇重投影。
-        self.skip_next_resync = true;
+        // 落笔不该再来一遍整篇重投影。只把「区间写回成功」这个事实传出去：写回
+        // 失败时上面的 resync 已经把投影刷进缓冲区，再设标志就会吃掉调用方
+        // 下一次的落笔（skip_next_resync 是一次性标志，见 resync 的 mem::take）。
+        self.skip_next_resync = wrote_region;
     }
 
     pub(super) fn undo_document(&mut self, cx: &mut Context<Self>) {

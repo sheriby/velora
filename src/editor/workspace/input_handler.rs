@@ -438,9 +438,23 @@ fn outline_headings(
     let mut headings = Vec::new();
     let mut fence = fence_in;
     let mut previous: Option<(usize, &str)> = None;
+    // front matter：文档最前面的 `---` 围栏对，与导入器同一条规则——整个块是
+    // 一个 FrontMatter 块，里面的 `#` 与划线都不是大纲条目。
+    let mut in_front_matter = false;
 
     for (offset, line) in lines.lines().enumerate() {
         let trimmed = line.trim_start();
+        if first_line == 0 && offset == 0 && line.trim_end_matches('\r') == "---" {
+            in_front_matter = true;
+            continue;
+        }
+        if in_front_matter {
+            if line.trim_end_matches('\r') == "---" {
+                in_front_matter = false;
+            }
+            previous = None;
+            continue;
+        }
         if let Some((marker, len)) = fence {
             if is_closing_fence(trimmed, marker, len) {
                 fence = None;
@@ -457,7 +471,7 @@ fn outline_headings(
 
         let heading = match BlockKind::parse_atx_heading_line(line) {
             Some((level, title)) => Some((offset, level, title)),
-            None => match setext_level(trimmed).zip(previous) {
+            None => match BlockKind::parse_setext_underline(line).zip(previous) {
                 Some((level, (caption_index, caption)))
                     if is_setext_caption(caption.trim()) =>
                 {
@@ -545,15 +559,6 @@ pub(crate) fn nest_outline_headings(headings: &[OutlineHeading]) -> Vec<Workspac
 pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
     let (headings, _) = outline_headings(0, markdown, None);
     nest_outline_headings(&headings)
-}
-
-/// 这一行是不是 Setext 划线（`===` 一级、`---` 二级）。
-fn setext_level(trimmed: &str) -> Option<u8> {
-    let marker = trimmed.chars().next()?;
-    if !matches!(marker, '=' | '-') || !trimmed.chars().all(|ch| ch == marker) {
-        return None;
-    }
-    Some(if marker == '=' { 1 } else { 2 })
 }
 
 /// 划线上方那行能不能当标题正文：列表项、引用、分隔线、围栏这些都不算。

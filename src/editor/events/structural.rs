@@ -330,8 +330,29 @@ impl Editor {
             return;
         }
         let trailing = Self::new_block(cx, BlockRecord::paragraph(String::new()));
+        let is_root_level = location.parent.is_none();
         self.document
-            .insert_blocks_at(location.parent, location.index + 1, vec![trailing], cx);
+            .insert_blocks_at(location.parent, location.index + 1, vec![trailing.clone()], cx);
+        if is_root_level {
+            // 尾段落要在缓冲区里有立足之地：补上分隔空行、给它挂零宽区间。否则
+            // 在它里面的第一次击键找不到落点，退整篇重投影——别的块的字节
+            //（表格列宽、定界符写法）就被这一次打字洗掉了。
+            let total = self.buffer.byte_len();
+            let separator: &str = if total == 0 {
+                ""
+            } else if self.buffer.byte_at(total - 1) == Some(b'\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            if !separator.is_empty() {
+                let applied = self.buffer.edit(total..total, separator);
+                self.record_buffer_edit(applied);
+            }
+            let end = self.buffer.byte_len();
+            self.document
+                .set_source_span(trailing.entity_id(), end..end);
+        }
     }
 
     pub(crate) fn apply_paragraph_shortcuts(

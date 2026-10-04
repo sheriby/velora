@@ -653,6 +653,9 @@ impl Editor {
                 });
 
                 let Some(moved) = moved else {
+                    // prepare 之后早退必须把组收掉：挂着空组会让下一次动作并进
+                    // 这一步的撤销组，选区快照也是上一次的。
+                    self.finalize_pending_undo_capture(cx);
                     return;
                 };
 
