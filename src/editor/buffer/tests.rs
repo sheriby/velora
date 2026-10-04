@@ -304,6 +304,52 @@ fn line_offsets_stay_correct_across_many_chunks() {
 }
 
 #[test]
+fn lines_and_line_starts_agrees_with_asking_one_offset_at_a_time() {
+    // ASCII 的夹具行：探针偏移要点点在字符边界上才好对照单点版。
+    let line = "line 01234 with some english text and a bit more\n";
+    let text = format!("{}# heading at the end\n", line.repeat(4000));
+    let mut buffer = TextBuffer::from_text(&text);
+    assert!(buffer.chunks.len() > 30, "夹具得跨很多块才测得出批量换算");
+    // 编辑把块切开，于是「一块的边界」既有多块的行也有碎块的行。
+    buffer.edit(line.len()..line.len(), "!");
+    let total = buffer.byte_len();
+
+    // 行首、行中、块边界、文末都点一遍；升序传给批量版。
+    let mut offsets = vec![0usize, 1, 7, 40, 41, 1000, 8192, 9000, total - 1, total];
+    for line_index in [1usize, 2, 39, 40, 4001] {
+        offsets.push(buffer.line_start(line_index));
+    }
+    offsets.sort_unstable();
+    offsets.dedup();
+
+    for (offset, (line_of_batch, line_start_of_batch)) in offsets
+        .iter()
+        .copied()
+        .zip(buffer.lines_and_line_starts(&offsets))
+    {
+        assert_eq!(
+            (line_of_batch, line_start_of_batch),
+            (buffer.line_of(offset), buffer.line_start(buffer.line_of(offset))),
+            "偏移 {offset} 的批量行号与单点问的不一样"
+        );
+    }
+}
+
+#[test]
+fn byte_len_survives_many_edits_without_counting_the_chunks() {
+    let mut buffer = TextBuffer::from_text("first\nsecond\nthird\n");
+    for _ in 0..200 {
+        buffer.edit(6..6, "inserted text\n");
+        buffer.edit(0..5, "");
+    }
+    assert_eq!(
+        buffer.byte_len(),
+        buffer.text().len(),
+        "byte_len 与内容对不上了"
+    );
+}
+
+#[test]
 fn an_edit_forces_reencoding_by_shape_and_ends_the_pristine_copy() {
     let raw = "正文一\r\n正文二\r\n".as_bytes().to_vec();
     let mut buffer = TextBuffer::from_text("正文一\n正文二\n");

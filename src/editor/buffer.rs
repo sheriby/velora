@@ -72,6 +72,10 @@ pub(crate) struct AppliedEdit {
 #[derive(Clone)]
 pub(crate) struct TextBuffer {
     chunks: Vec<Chunk>,
+    /// 全文字节数。逐块加起来是 O(文本块数)，而 `byte_len` 在按根块走一圈的循环里
+    /// 会被调到 O(根块数 × 文本块数)（10 MiB 文档一次按键 6 秒就是这么来的），
+    /// 所以它必须是 O(1)：只有 [`edit`](Self::edit) 会动内容，跟着它记就行。
+    total_bytes: usize,
     /// 锚点槽位 → 当前绝对字节偏移；`None` 是空槽（可回收）。
     anchors: Vec<Option<usize>>,
     free_anchor_slots: Vec<usize>,
@@ -80,17 +84,26 @@ pub(crate) struct TextBuffer {
     /// 打开时的原始字节。只在整个缓冲区一次编辑都没落过的时候有效——
     /// 那时「保存」可以是把这份字节原样写回去，一个字节都不必重新生成。
     pristine: Option<Arc<[u8]>>,
+    /// 自上次取走以来被改过的字节范围（保守：历次编辑的最小起点到最大终点）。
+    /// 读侧的增量视图（文档大纲）用它判断「哪些块的字节真的动过」：没动过的块照用
+    /// 自己上次的摘要，不必每按一个键就把整篇重扫一遍。
+    dirty: Option<Range<usize>>,
 }
 
 impl TextBuffer {
     /// 以给定文本建一个缓冲区。切分只按字节预算走，内容一字不改。
+    ///
+    /// 整个内容都算「刚改过的」：派生数据（大纲这类增量视图）于是第一次一定重算，
+    /// 不会因为「一个字节都没编辑过」而留着上一份文档的结果。
     pub(crate) fn from_text(text: &str) -> Self {
         Self {
             chunks: chunkify(text),
+            total_bytes: text.len(),
             anchors: Vec::new(),
             free_anchor_slots: Vec::new(),
             shape: None,
             pristine: None,
+            dirty: (!text.is_empty()).then_some(0..text.len()),
         }
     }
 
@@ -154,7 +167,7 @@ impl TextBuffer {
     }
 
     pub(crate) fn byte_len(&self) -> usize {
-        self.chunks.iter().map(Chunk::byte_len).sum()
+        self.total_bytes
     }
 
     /// 取 `range` 指向的字节区间。
@@ -274,6 +287,45 @@ impl TextBuffer {
         preceding + count_newlines(&chunk.text[..local])
     }
 
+    /// 一次遍历把多个**升序**字节偏移的「（所在行, 本行首字节偏移）」一起取回来。
+    ///
+    /// 单点问 [`line_of`](Self::line_of) 是沿文本块累加换行数的线性活（这里没有行
+    /// 索引树），在「逐根块」的循环里调它就变成 O(根块数 × 文本块数)——10 MiB 文档
+    /// 一次按键 6 秒就是这么来的。批量问一次只走一遍块。越界的偏移钳到文末。
+    pub(crate) fn lines_and_line_starts(&self, offsets: &[usize]) -> Vec<(usize, usize)> {
+        let mut out = vec![(self.line_count() - 1, self.byte_len()); offsets.len()];
+        let mut base = 0usize; // 当前文本块首字节的绝对偏移
+        let mut line = 0usize; // 该块首字节所在行
+        let mut line_start = 0usize; // 那一行的首字节偏移
+        let mut target = 0usize;
+        for chunk in &self.chunks {
+            let bytes = chunk.text.as_bytes();
+            let end = base + bytes.len();
+            if target < offsets.len() && offsets[target] <= end {
+                let mut scan = 0usize;
+                let (mut here_line, mut here_start) = (line, line_start);
+                while target < offsets.len() && offsets[target] <= end {
+                    let local = offsets[target].saturating_sub(base);
+                    while scan < local {
+                        if bytes[scan] == b'\n' {
+                            here_line += 1;
+                            here_start = base + scan + 1;
+                        }
+                        scan += 1;
+                    }
+                    out[target] = (here_line, here_start);
+                    target += 1;
+                }
+            }
+            if let Some(last) = bytes.iter().rposition(|byte| *byte == b'\n') {
+                line_start = base + last + 1;
+            }
+            line += chunk.newlines;
+            base = end;
+        }
+        out
+    }
+
     /// 把 `range` 指向的字节区间换成 `text`：区间的左邻与右邻字节一字不动。
     ///
     /// 这是全编辑器唯一的文本写入口——块树、撤销、保存都必须经过它，
@@ -291,6 +343,11 @@ impl TextBuffer {
 
         let removed = self.slice(range.clone());
         self.pristine = None;
+        let new_range = range.start..range.start + text.len();
+        self.dirty = Some(match self.dirty.take() {
+            Some(seen) => seen.start.min(new_range.start)..seen.end.max(new_range.end),
+            None => new_range.clone(),
+        });
         self.shift_anchors(&range, text.len());
 
         // 只在两个端点处切块，端点之间的整块被移除，新文本单独成分块。
@@ -298,11 +355,19 @@ impl TextBuffer {
         let start = self.split_at(range.start);
         let end = self.split_at(range.end);
         self.chunks.splice(start..end, chunkify(text));
+        self.total_bytes += text.len();
+        self.total_bytes -= removed.len();
 
         AppliedEdit {
             removed,
-            new_range: range.start..range.start + text.len(),
+            new_range,
         }
+    }
+
+    /// 取走「被改过的字节范围」并清空；`None` 是「自上次取走以来一个字都没改」。
+    /// 谁取走谁负责把这段范围内的派生数据重算一遍——所以取走之后必须真的重算。
+    pub(crate) fn take_dirty_region(&mut self) -> Option<Range<usize>> {
+        self.dirty.take()
     }
 
     fn shift_anchors(&mut self, range: &Range<usize>, inserted: usize) {
