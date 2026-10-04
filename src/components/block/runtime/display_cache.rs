@@ -110,7 +110,12 @@ impl Block {
     }
 
     pub(crate) fn sync_footnote_registry(&mut self, footnote_registry: Arc<FootnoteRegistry>) {
-        if self.footnote_registry == footnote_registry {
+        // 注册表没换人也要回填：编辑后的重解析按源码形状存片段（`[^1]`，序号留空），
+        // 而段首打一个字不会换注册表。不在这里贴回序号，屏幕上就是 `[^1]`，
+        // 可见长度还多出 3 个字节，光标与字数都跟着错。
+        if self.footnote_registry == footnote_registry
+            && !self.record.title.has_unresolved_footnote_references()
+        {
             return;
         }
 

@@ -1260,12 +1260,6 @@ async fn typing_one_char_only_changes_the_text_at_the_caret(cx: &mut TestAppCont
             ));
             continue;
         }
-        // 脚注引用是这条守卫目前唯一让路的形状，见
-        // `typing_next_to_a_footnote_reference_renders_the_raw_markdown`（钉住现状，不是认可）：
-        // 重解析把 `[^1]` 当源码形状存进片段，序号要等注册表换人时才贴回去，而打字不换注册表。
-        if *name == "脚注定义" {
-            continue;
-        }
         for (index, (before, after)) in visible_before.iter().zip(&visible_after).enumerate() {
             let expected = if index == 0 {
                 format!("X{before}")
@@ -1309,15 +1303,55 @@ fn block_text_snapshot(block: &crate::editor::Block) -> String {
     format!("{}\u{2}{}", cells(&[table.header.clone()]), cells(&table.rows))
 }
 
-/// 已知缺陷（钉住现状，不是认可）：脚注引用旁边打字会把 `¹` 变回原文 `[^1]`。
+/// 脚注引用旁边打字，序号要还贴在原地。
 ///
-/// 两条解析路径对脚注片段的「可见文本」口径不同：导入时按注册表贴序号（`¹`），
-/// 编辑后的重解析按源码形状存（`[^1]`）并把序号留空，而序号回填只在注册表换人时做
-/// （`sync_footnote_registry` 早早 return）。字节没被动过（缓冲区仍是 `[^1]`），坏的是
-/// 渲染与可见长度——光标与字数都会差出一截。`typing_one_char_only_changes_the_text_at_the_caret`
-/// 因此对这一个形状让路。
+/// 编辑后的重解析按源码形状存片段（`[^1]`，序号留空），序号回填不能只等注册表换人——
+/// 在段首打一个字根本不换注册表，于是渲染与可见长度都会差出一截。字节这边一直是好的
+/// （缓冲区仍是 `[^1]`），坏的是看得见的形状，所以断言两条：可见文本仍是上标，字节仍只有 X。
 #[gpui::test]
-async fn typing_next_to_a_footnote_reference_renders_the_raw_markdown(
+async fn typing_next_to_a_footnote_reference_keeps_the_ordinal_label(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const SOURCE: &str = "有脚注[^1]。\n\n[^1]: 脚注内容\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, SOURCE.to_string(), None));
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+    }).expect("应有第一个块");
+    assert_eq!(
+        first.read_with(cx, |block, _cx| block.record.title.visible_text()),
+        "有脚注\u{b9}。",
+        "脚注引用现在的可见形状变了：这条测试的对照要跟着改"
+    );
+
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    cx.simulate_input("X");
+    redraw(cx);
+
+    let (after, cursor) = first.read_with(cx, |block, _cx| {
+        (block.record.title.visible_text(), block.cursor_offset())
+    });
+    assert_eq!(
+        after, "X有脚注\u{b9}。",
+        "打字把脚注引用打回了源码形状，序号丢了"
+    );
+    assert_eq!(cursor, 1, "光标没停在刚打的那个字之后");
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.buffer.text()),
+        "X有脚注[^1]。\n\n[^1]: 脚注内容\n",
+        "字节层面被改写了：那已经不是这条测试的范围"
+    );
+}
+
+/// 删掉脚注引用前面的那个字：序号也要还在。
+///
+/// 序号回填不是只有打字会用到——删除同样走「按可见文本重解析」这条路，片段会退回
+/// 源码形状（`[^1]`），差别只在光标位置不动。
+#[gpui::test]
+async fn deleting_a_char_next_to_a_footnote_reference_keeps_the_ordinal_label(
     cx: &mut TestAppContext,
 ) {
     init_editor_test_app(cx);
@@ -1329,23 +1363,70 @@ async fn typing_next_to_a_footnote_reference_renders_the_raw_markdown(
     let first = editor.read_with(cx, |editor, _cx| {
         editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
     }).expect("应有第一个块");
-    let before = first.read_with(cx, |block, _cx| block.record.title.visible_text());
-    assert_eq!(before, "有脚注\u{b9}。", "脚注引用现在的可见形状变了：这条测试的对照要跟着改");
+    // 「注」与序号之间：删掉的是「注」，脚注引用本身不动。
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 9..9);
+    });
+    cx.simulate_keystrokes("backspace");
+    redraw(cx);
+
+    let clean = first.read_with(cx, |block, _cx| block.record.title.visible_text());
+    assert_eq!(
+        clean, "有脚\u{b9}。",
+        "删掉脚注引用旁边的字，序号该还贴在原地"
+    );
+    assert_eq!(
+        editor.read_with(cx, |editor, _cx| editor.buffer.text()),
+        "有脚[^1]。\n\n[^1]: 脚注内容\n",
+        "字节层面被改写了：那已经不是这条测试的范围"
+    );
+}
+
+/// 两个脚注引用之间打字：两个序号都得还在，而且各归各的号。
+///
+/// 回填是「片段按顺序对上注册表里这一块的 occurrences」，一次编辑里只要有一个对不上，
+/// 后面的就整排退回源码形状。光标压着脚注原子时还多一重：显示空间会把光标碰到的原子
+/// 摊成源码形状（`[^2]`），跟代码片段一个规矩，所以光标位置按干净空间核对。
+#[gpui::test]
+async fn typing_between_two_footnote_references_keeps_both_ordinals(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const SOURCE: &str = "甲[^1]乙[^2]丙。\n\n[^1]: 一\n\n[^2]: 二\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, SOURCE.to_string(), None));
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks().first().map(|visible| visible.entity.clone())
+    }).expect("应有第一个块");
+    let caret = first.read_with(cx, |block, _cx| {
+        block
+            .display_text()
+            .find('\u{b2}')
+            .expect("第二个脚注引用的上标应在显示文本里")
+    });
 
     cx.update(|_window, cx| {
-        first.update(cx, |block, _cx| block.selected_range = 0..0);
+        first.update(cx, |block, _cx| block.selected_range = caret..caret);
     });
     cx.simulate_input("X");
     redraw(cx);
 
-    let after = first.read_with(cx, |block, _cx| block.record.title.visible_text());
+    let (clean, cursor_clean) = first.read_with(cx, |block, _cx| {
+        let cursor = block.current_to_clean_range(block.cursor_offset()..block.cursor_offset());
+        (block.record.title.visible_text(), cursor.start)
+    });
     assert_eq!(
-        after, "X有脚注[^1]。",
-        "脚注引用的形状处理变了：并进 `typing_one_char_only_changes_the_text_at_the_caret`"
+        clean,
+        "甲\u{b9}乙X\u{b2}丙。",
+        "两个脚注引用之间打字，序号该原样留着"
+    );
+    assert_eq!(
+        cursor_clean, 9,
+        "光标没停在刚打的那个字之后：clean={clean:?} cursor_clean={cursor_clean}"
     );
     assert_eq!(
         editor.read_with(cx, |editor, _cx| editor.buffer.text()),
-        "X有脚注[^1]。\n\n[^1]: 脚注内容\n",
+        "甲[^1]乙X[^2]丙。\n\n[^1]: 一\n\n[^2]: 二\n",
         "字节层面被改写了：那已经不是这条测试的范围"
     );
 }

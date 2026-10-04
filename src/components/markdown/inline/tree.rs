@@ -128,6 +128,17 @@ impl InlineTextTree {
             .any(|fragment| fragment.footnote.is_some())
     }
 
+    /// 编辑后的重解析只认得出 `[^1]` 这个源码形状，序号要等注册表贴上来。
+    /// 「还没贴上」就是这个谓词：它决定了一次同步有没有活可干。
+    pub(crate) fn has_unresolved_footnote_references(&self) -> bool {
+        self.fragments.iter().any(|fragment| {
+            fragment
+                .footnote
+                .as_ref()
+                .is_some_and(|footnote| footnote.ordinal.is_none())
+        })
+    }
+
     pub(crate) fn apply_footnote_reference_state(
         &mut self,
         mut resolve: impl FnMut(&str) -> Option<(usize, usize)>,
