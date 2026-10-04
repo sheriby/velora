@@ -621,3 +621,40 @@ async fn document_find_highlights_map_only_the_blocks_with_hits(cx: &mut TestApp
         "表格那一格里的命中也该有高亮：{texts:?}"
     );
 }
+
+/// 全文替换的计数不许虚报：映射在非规范前缀的块上会漂，替换不了的命中要保守
+/// 跳过（换算出的可见切片必须等于搜到的原文），能替换的逐块直改、只付一次
+/// 映射构建。
+#[gpui::test]
+async fn replace_all_replaces_exactly_the_hits_it_reports(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "> 引用甲\n\n正文甲、又是甲。\n".into(), None)
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.open_document_find(cx);
+        editor.workspace.search_query = "甲".into();
+        editor.workspace.replace_query = "乙".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+
+    let replaced = cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.replace_all_document_matches(window, cx))
+    });
+    cx.run_until_parked();
+
+    assert_eq!(replaced, 3, "替换计数与命中数不符");
+    let buffer = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer, "> 引用乙\n\n正文乙、又是乙。\n",
+        "替换后的文本不对：{buffer:?}"
+    );
+}

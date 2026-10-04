@@ -160,12 +160,14 @@ impl Editor {
             self.focus_block(new_paragraph.entity_id());
         }
 
-        self.rebuild_image_runtimes(cx);
+        // 图片/链接注册表在**落笔之后**刷新：它读的是缓冲区文本，写回前调它
+        // 拿到的还是旧字节，注册表会比文档晚一拍。
         if self.write_back_structural_change(&region_anchor, Some(&roots_before), cx) {
             self.mark_dirty_written_back(cx);
         } else {
             self.mark_dirty(cx);
         }
+        self.rebuild_image_runtimes(cx);
         self.finalize_pending_undo_capture(cx);
         cx.notify();
         true

@@ -439,12 +439,13 @@ impl Editor {
                 });
 
                 self.focus_block(block.entity_id());
-                self.rebuild_image_runtimes(cx);
+                // 注册表在落笔之后刷新（读的是缓冲区，写回前调是旧字节）。
                 if self.write_back_structural_change(&block, roots_before.as_deref(), cx) {
                     self.mark_dirty_written_back(cx);
                 } else {
                     self.mark_dirty(cx);
                 }
+                self.rebuild_image_runtimes(cx);
                 self.finalize_pending_undo_capture(cx);
                 cx.notify();
             }

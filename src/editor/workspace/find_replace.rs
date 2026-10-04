@@ -393,27 +393,65 @@ impl Editor {
         let source = self.current_document_source(cx);
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let replacement = self.workspace.replace_query.clone();
-        let mut ranges = Vec::new();
+        let mut hits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
         let mut absolute = 0usize;
         for raw_line in source.split_inclusive('\n') {
             let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
             for found in matcher.find_in_line(line) {
-                ranges.push(absolute + found.start..absolute + found.end);
+                hits.push((
+                    absolute + found.start..absolute + found.end,
+                    line[found.start..found.end].to_string(),
+                ));
             }
             absolute += raw_line.len();
         }
-        let mut replaced = 0usize;
-        for range in ranges.iter().rev() {
-            self.apply_selection_snapshot_in_current_mode(
-                &UndoSelectionSnapshot {
-                    range: range.clone(),
-                    reversed: false,
-                },
-                cx,
-            );
-            if self.replace_selected_block_text(&replacement, window, cx) {
-                replaced += 1;
+        if hits.is_empty() {
+            self.workspace.document_active_range = None;
+            return 0;
+        }
+
+        // 整批共用一次映射构建（旧实现每个命中付两次整篇重建），并把每个命中
+        // 换算成「块 + 可见区间」，换算完**核对**落点：映射按规范前缀记账，
+        // 非规范前缀的块（`>引用`）上会漂——可见切片必须等于搜到的原文，不等
+        // 就保守跳过，绝不替换到错误的位置、也不许替换计数虚报。
+        let mappings = self.build_source_target_mappings(cx);
+        let mut targets: Vec<(
+            gpui::Entity<crate::components::Block>,
+            std::ops::Range<usize>,
+        )> = Vec::new();
+        for (range, matched) in &hits {
+            let Some(mapping) = mappings.iter().find(|mapping| {
+                mapping.full_source_range.start <= range.start
+                    && range.end <= mapping.full_source_range.end
+            }) else {
+                continue;
+            };
+            let local_start = range.start - mapping.full_source_range.start;
+            let local_end = range.end - mapping.full_source_range.start;
+            let max_content = mapping.source_to_content.len().saturating_sub(1);
+            let content_start =
+                mapping.source_to_content[local_start.min(max_content)];
+            let content_end = mapping.source_to_content[local_end.min(max_content)];
+            let visible = mapping
+                .entity
+                .read(cx)
+                .markdown_range_to_current_range(content_start..content_end);
+            let block_text = mapping.entity.read(cx).display_text().to_string();
+            if visible.end > block_text.len() || block_text[visible.clone()] != *matched {
+                continue;
             }
+            targets.push((mapping.entity.clone(), visible));
+        }
+
+        // 从后往前替换：前面的命中区间不受后面的改动影响（同一块内的多个命中同理）。
+        let mut replaced = 0usize;
+        for (entity, visible) in targets.iter().rev() {
+            entity.update(cx, |block, cx| {
+                let utf16 = block.range_to_utf16(visible);
+                use gpui::EntityInputHandler;
+                block.replace_text_in_range(Some(utf16), &replacement, window, cx);
+            });
+            replaced += 1;
         }
         self.workspace.document_active_range = None;
         replaced

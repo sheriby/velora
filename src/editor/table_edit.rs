@@ -44,6 +44,14 @@ impl Editor {
         let Some(old_span) = self.table_cell_source_range(binding) else {
             return false;
         };
+        // 与 write_back_block_source 同一道守卫：区间可能已经过期（表格刚被结构
+        // 操作重写过、区间还没跟上），拿过期区间去 edit 会撞字符边界断言。
+        if old_span.end > self.buffer.byte_len()
+            || !self.buffer.is_char_boundary(old_span.start)
+            || !self.buffer.is_char_boundary(old_span.end)
+        {
+            return false;
+        }
         let new_source = serialize_table_cell_markdown(&binding.cell.read(cx).record.title);
         if self.buffer.slice(old_span.clone()) == new_source {
             return true;
@@ -559,12 +567,19 @@ impl Editor {
     /// [`Self::write_back_table_row_deletion`]），只有算不出行形状时（转义竖线、
     /// 单元格里有换行、表挂在容器里没有自己的区间）才重拼这张表——那仍然只在它
     /// 自己的区间内。
+    /// 表格结构命令只重写这张表所在的根块区间，表外的块一个字节都不动。
+    /// 区间挂在根块上：容器里的表格（引用/列表内）没有自己的区间，直接拿表块
+    /// 去写必然失败、退整篇重投影，把表外的 `__强调__` 一起洗掉。
     pub(super) fn write_back_table_structure_edit(
         &mut self,
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) {
-        if self.write_back_block_source(table_block, cx) {
+        let root = self
+            .document
+            .root_ancestor_of(table_block.entity_id())
+            .unwrap_or_else(|| table_block.clone());
+        if self.write_back_block_source(&root, cx) {
             self.mark_dirty_written_back(cx);
         } else {
             self.mark_dirty(cx);
