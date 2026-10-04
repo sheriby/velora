@@ -241,6 +241,10 @@ pub(crate) struct WorkspaceAutosaveDocument {
     pub(super) file_version: u64,
     pub(super) path: PathBuf,
     pub(super) markdown: String,
+    /// 活动文档的落盘字节（未编辑=原始字节，编辑过=按 FileShape 重编码）。
+    /// 后台标签没有缓冲区，只有切换时存下的 LF 文本——形状丢失是已知限制
+    /// （tab 快照携带 FileShape 是独立工作项），此时为 `None`，退写文本。
+    pub(super) bytes: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

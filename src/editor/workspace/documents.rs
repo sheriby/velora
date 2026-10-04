@@ -153,6 +153,9 @@ impl Editor {
         cx: &App,
     ) -> Vec<WorkspaceAutosaveDocument> {
         self.snapshot_current_document(cx);
+        // 活动文档的落盘字节直接取自缓冲区；后台标签退写文本（见 struct 注释）。
+        let active_bytes = self.document_bytes_for_save();
+        let active_path = self.file_path.clone();
         self.workspace
             .open_documents
             .iter()
@@ -162,6 +165,7 @@ impl Editor {
                 file_version: tab.file_version,
                 path: tab.path.clone(),
                 markdown: tab.markdown.clone(),
+                bytes: (active_path.as_ref() == Some(&tab.path)).then(|| active_bytes.clone()),
             })
             .collect()
     }

@@ -1027,3 +1027,125 @@ async fn pasting_crlf_clipboard_text_into_a_crlf_code_file_never_writes_crcrlf(
     let saved_again = fs::read(&path).expect("read saved file");
     assert_eq!(saved_again, saved, "第二次保存改写了字节（版本号自误判）");
 }
+
+/// 脏文档被 autosave 时，活动文档落盘的是**缓冲区字节**：CRLF 文件不能被洗成
+/// LF（那是「打开没动的字节被改写」的旁门版本）。手动保存已有此保证，这里钉
+/// autosave 这条旁路。
+#[gpui::test]
+async fn autosaving_a_dirty_crlf_document_keeps_its_line_endings(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-crlf-autosave-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create test workspace");
+    let path = root.join("autosave.rs");
+    fs::write(&path, "first\r\nlast\r\n").expect("write code file");
+    let cleanup_root = root.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(cleanup_root);
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        });
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    // 改一个字（文档变脏），等 autosave 防抖到期。
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().unwrap().clone()
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "X", window, cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+
+    let saved = fs::read(&path).expect("read autosaved file");
+    assert!(
+        !saved.windows(3).any(|window| window == b"\r\r\n"),
+        "autosave 落盘出现 \\r\\r\\n：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+    assert!(
+        saved.starts_with(b"Xfirst\r\nlast\r\n"),
+        "autosave 把 CRLF 文件洗成了别的形状：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+}
+
+/// 外部改动触发的重载也必须接上原始字节与文件形状：重载换掉了整个缓冲区，
+/// 不接上的话重载后的第一次保存就把 CRLF 全文件洗成 LF。
+#[gpui::test]
+async fn reloading_an_externally_changed_file_keeps_its_shape(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-crlf-reload-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create test workspace");
+    let path = root.join("reload.rs");
+    fs::write(&path, "first\r\nlast\r\n").expect("write code file");
+    let cleanup_root = root.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(cleanup_root);
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        });
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    // 外部把文件改成别的 CRLF 内容，然后走重载。
+    fs::write(&path, "changed\r\nexternally\r\n").expect("external write");
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reload_externally_changed_document(&path, cx)
+        });
+    });
+    cx.run_until_parked();
+
+    // 重载后的文档是外部新内容；再编辑一个字并保存，CRLF 必须原样保留。
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().unwrap().clone()
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "X", window, cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.save_document(window, cx))
+    });
+    cx.run_until_parked();
+
+    let saved = fs::read(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        b"Xchanged\r\nexternally\r\n".to_vec(),
+        "重载后的保存把文件形状洗掉了：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+}

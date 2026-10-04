@@ -105,6 +105,9 @@ struct PendingAutosaveDocument {
     path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
     file_version: Option<u64>,
+    /// 活动文档的落盘字节（缓冲区原始字节/按形状重编码）。`None` = 后台标签，
+    /// 退写恢复快照里的文本（形状丢失是已知限制）。
+    bytes: Option<Vec<u8>>,
 }
 
 impl Editor {
@@ -153,6 +156,7 @@ impl Editor {
                                 temp_path: Some(autosave_temp_path(&document.path)),
                                 file_version: Some(document.file_version),
                                 path: Some(document.path),
+                                bytes: document.bytes,
                             })
                             .collect::<Vec<_>>();
                         if editor.document_dirty && editor.file_path.is_none() {
@@ -165,6 +169,7 @@ impl Editor {
                                 path: None,
                                 temp_path: None,
                                 file_version: None,
+                                bytes: None,
                             });
                         }
                         if documents.is_empty() {
@@ -196,7 +201,14 @@ impl Editor {
                                     .map_err(|error| (failing_path.clone(), error))?;
                             }
                             if let Some(temp_path) = document.temp_path {
-                                std::fs::write(temp_path, &document.recovery.markdown)
+                                // 优先写缓冲区字节：CRLF/GB18030 文档经 autosave
+                                // 不能被洗成 LF/UTF-8（那是「打开没动的字节被改写」
+                                // 的旁门版本）。
+                                let payload = document
+                                    .bytes
+                                    .as_deref()
+                                    .unwrap_or(document.recovery.markdown.as_bytes());
+                                std::fs::write(temp_path, payload)
                                     .map_err(|error| {
                                         (failing_path.clone(), anyhow::Error::from(error))
                                     })?;
@@ -282,6 +294,7 @@ impl Editor {
                                 file_version: file_content_version(&document.recovery.markdown),
                                 path: path.clone(),
                                 markdown: document.recovery.markdown.clone(),
+                                bytes: document.bytes.clone(),
                             });
                         }
                         if editor.mark_workspace_documents_saved(&saved_documents) {
@@ -355,7 +368,12 @@ impl Editor {
                             markdown: document.markdown.clone(),
                         })?;
                         verify_file_version(&document.path, document.file_version)?;
-                        std::fs::write(&temp_path, &document.markdown).with_context(|| {
+                        // 同 autosave：活动文档优先写缓冲区字节，后台标签退写文本。
+                        let payload = document
+                            .bytes
+                            .as_deref()
+                            .unwrap_or(document.markdown.as_bytes());
+                        std::fs::write(&temp_path, payload).with_context(|| {
                             format!("failed to stage '{}'", document.path.display())
                         })?;
                         verify_file_version(&document.path, document.file_version)?;

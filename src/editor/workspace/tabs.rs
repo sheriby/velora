@@ -51,23 +51,23 @@ impl Editor {
         {
             return;
         }
-        let Ok(disk) = crate::editor::encoding::read_document_string(path) else {
+        let Ok(document) = crate::editor::encoding::load_document(path) else {
             return;
         };
+        let disk = document.text;
         // 标签缓存与缓冲区一样存 LF 文本，磁盘上的 CRLF 不是「外部改动」：按规范化
         // 后的版本号比，否则每次监听事件都会把干净文件当成被改了，重新导入一遍。
         let disk_version = crate::editor::persistence::file_content_version(&disk);
         if disk_version == crate::editor::persistence::file_content_version(&cached_markdown) {
             return;
         }
-        let disk_text = disk.replace("\r\n", "\n").replace('\r', "\n");
         if let Some(tab) = self
             .workspace
             .open_documents
             .iter_mut()
             .find(|tab| tab.path == path)
         {
-            tab.markdown = disk_text;
+            tab.markdown = disk.clone();
             tab.file_version = disk_version;
         }
         if is_active {
@@ -77,6 +77,9 @@ impl Editor {
             } else {
                 self.replace_document_from_code_source(disk, path, cx);
             }
+            // 重载换掉了整个缓冲区：原始字节与文件形状必须跟着接上，否则重载之后
+            // 的第一次保存就把 CRLF/GB18030 全文件洗成 LF/UTF-8。
+            self.attach_file_origin(document.raw);
         }
         cx.notify();
     }
@@ -591,6 +594,9 @@ impl Editor {
                 if !tab.dirty {
                     continue;
                 }
+                // 已知限制：后台标签没有缓冲区，`tab.markdown` 是切换时存下的
+                // LF 文本——这里写出去会把 CRLF/GB18030 洗成 LF/UTF-8。修法是让
+                // tab 快照携带字节与 FileShape（独立工作项，见 FIXPLAN B2）。
                 match std::fs::write(&tab.path, tab.markdown.as_str()) {
                     Ok(()) => {
                         let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);

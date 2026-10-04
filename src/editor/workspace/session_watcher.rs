@@ -155,6 +155,9 @@ impl Editor {
             if !tab.dirty {
                 continue;
             }
+                // 已知限制：后台标签没有缓冲区，`tab.markdown` 是切换时存下的
+                // LF 文本——这里写出去会把 CRLF/GB18030 洗成 LF/UTF-8。修法是让
+                // tab 快照携带字节与 FileShape（独立工作项，见 FIXPLAN B2）。
             match std::fs::write(&tab.path, tab.markdown.as_str()) {
                 Ok(()) => {
                     let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);
