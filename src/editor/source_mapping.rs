@@ -865,18 +865,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         Some((consumed, child_dedent))
     }
 
-    /// 单行内容的块才敢用量出来的前缀：多行内容里每一行的记号宽度这里量不到，
-    /// 仍按模型拼（并把引用包裹交给 `quote_depth`）。量到了就说明头记号已经含
-        /// 这一块的内容每一行在自己那一行里让开几个字节：首行走 `measured_block_prefix`
+    /// 这一块的内容每一行在自己那一行里让开几个字节：首行走 `measured_block_prefix`
     /// （本块的记号在那里量），续行按「这一行的容器记号 + 缩进差」量。
     ///
     /// 多行内容以前整块退回按模型拼（续行一律 `> `、列表续段一律每级两个空格），于是
     /// 文件里写 `>引用二`（记号后没空格）就整体少一位、写 `>   引用三` 就多一位——字落进
     /// 上一行的内容里；四空格嵌套列表的续段更狠，整块重贴时把用户那四格缩进洗成两格。
-    /// 续行没有自己的记号，只有上级容器吃掉的缩进，而那位数是逐级 dedent 累出来的、
-    /// 这里只带得到累计值，所以按「文件这行剥掉容器记号后的缩进 − 模型这行的缩进」量：
-    /// 差出来那截就是上级容器从这行吃掉的字节。对不上（负数、引用记号剥不动、行不在
-    /// 缓冲区里）整块退回按模型拼。
+    /// 续行没有自己的记号，被上级容器吃掉的缩进又不存在模型里，所以按「文件这行剥掉
+    /// 容器记号后的缩进 − 模型这行的缩进」量：差出来那截就是被吃掉的字节数，这个口径
+    /// 不问解析器逐级 dedent 的账怎么算。对不上（负数、引用记号剥不动、行不在缓冲区里）
+    /// 整块退回按模型拼。
     fn measured_block_line_prefixes(
         &self,
         content_markdown: &str,
@@ -894,7 +892,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
 
         let levels = quote_depth + usize::from(matches!(kind, BlockKind::Quote));
         let mut line_index = self.buffer.line_of(absolute_start);
-        for (index, model_line) in model_lines.iter().enumerate().skip(1) {
+        for model_line in model_lines.iter().skip(1) {
             line_index += 1;
             let range = self.buffer.line_range(line_index);
             if range.start >= self.buffer.byte_len() {
