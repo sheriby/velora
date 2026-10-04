@@ -255,7 +255,7 @@ impl Editor {
                 continue;
             }
 
-            if let Some((block, end)) = collect_comment_block(cx, lines, index) {
+            if let Some((block, end)) = collect_comment_block(cx, lines, index, &[]) {
                 roots.push(block);
                 spans.push(index..end);
                 index = end;

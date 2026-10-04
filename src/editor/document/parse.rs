@@ -906,13 +906,76 @@ pub(crate) fn math_or_raw_block(cx: &mut Context<Editor>, markdown: String) -> E
     }
 }
 
+/// 这一块在文件里就是 `lines[region]` 那几行、模型里存的是它们剥掉上级容器记号之后的样子时，
+/// 把「每一行让开几字节」记到块上（不变式 23）。
+///
+/// 这一族形状（HTML、注释、数学、认不出的语法）在模型里存的就是原文，事后**没有记号可剥**
+/// 可比——读侧只有解析期这一趟知道上级容器吃掉了多少字节。全零（顶格的块，谁也没剥）就不记，
+/// 那份账与不记等价。
+pub(crate) fn note_region_line_prefixes(
+    block: &Entity<crate::editor::Block>,
+    origins: &[usize],
+    region: std::ops::Range<usize>,
+    cx: &mut Context<Editor>,
+) {
+    let prefixes = region
+        .map(|at| origins.get(at).copied().unwrap_or(0) as u32)
+        .collect::<Vec<_>>();
+    if prefixes.iter().all(|prefix| *prefix == 0) {
+        return;
+    }
+    block.update(cx, |block, _cx| {
+        block.record.source_line_prefixes = prefixes;
+    });
+}
+
+/// `raw_block` 的容器版：整段原样保留，顺带把每一行让开的字节记下来。
+pub(crate) fn raw_block_from_region(
+    cx: &mut Context<Editor>,
+    lines: &[String],
+    origins: &[usize],
+    region: std::ops::Range<usize>,
+) -> Entity<crate::editor::Block> {
+    let block = raw_block(cx, lines[region.clone()].join("\n"));
+    note_region_line_prefixes(&block, origins, region, cx);
+    block
+}
+
+/// `html_or_raw_block` 的容器版。
+pub(crate) fn html_or_raw_block_from_region(
+    cx: &mut Context<Editor>,
+    lines: &[String],
+    origins: &[usize],
+    region: std::ops::Range<usize>,
+) -> Entity<crate::editor::Block> {
+    let block = html_or_raw_block(cx, lines[region.clone()].join("\n"));
+    note_region_line_prefixes(&block, origins, region, cx);
+    block
+}
+
+/// `math_or_raw_block` 的容器版（只给「模型里就是这一段」的形状用：数学内容再剥一层缩进的
+/// 那种写法每一行对不上文件，别记）。
+pub(crate) fn math_or_raw_block_from_region(
+    cx: &mut Context<Editor>,
+    lines: &[String],
+    origins: &[usize],
+    region: std::ops::Range<usize>,
+) -> Entity<crate::editor::Block> {
+    let block = math_or_raw_block(cx, lines[region.clone()].join("\n"));
+    note_region_line_prefixes(&block, origins, region, cx);
+    block
+}
+
 pub(crate) fn collect_comment_block(
     cx: &mut Context<Editor>,
     lines: &[String],
     start: usize,
+    origins: &[usize],
 ) -> Option<(Entity<crate::editor::Block>, usize)> {
     let end = collect_closed_html_comment_region(lines, start)?;
-    Some((comment_block(cx, lines[start..end].join("\n")), end))
+    let block = comment_block(cx, lines[start..end].join("\n"));
+    note_region_line_prefixes(&block, origins, start..end, cx);
+    Some((block, end))
 }
 
 pub(crate) fn native_block(

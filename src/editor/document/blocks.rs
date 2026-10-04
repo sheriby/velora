@@ -138,7 +138,7 @@ impl Editor {
                 if let Some(table) = parse_table_region(table_region) {
                     children.push(Self::new_block(cx, BlockRecord::table(table)));
                 } else {
-                    children.push(raw_block(cx, table_region.join("\n")));
+                    children.push(raw_block_from_region(cx, lines, origins, index..table_end));
                 }
                 saw_child = true;
                 pending_blank_lines = 0;
@@ -162,7 +162,7 @@ impl Editor {
                 }
             }
 
-            if let Some((comment, consumed)) = collect_comment_block(cx, lines, index) {
+            if let Some((comment, consumed)) = collect_comment_block(cx, lines, index, origins) {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
@@ -178,7 +178,7 @@ impl Editor {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let html_end = collect_block_html_region(lines, index);
-                children.push(html_or_raw_block(cx, lines[index..html_end].join("\n")));
+                children.push(html_or_raw_block_from_region(cx, lines, origins, index..html_end));
                 saw_child = true;
                 pending_blank_lines = 0;
                 index = html_end;
@@ -190,7 +190,7 @@ impl Editor {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
                 let math_end = collect_display_math_region(lines, index);
-                children.push(math_or_raw_block(cx, lines[index..math_end].join("\n")));
+                children.push(math_or_raw_block_from_region(cx, lines, origins, index..math_end));
                 saw_child = true;
                 pending_blank_lines = 0;
                 index = math_end;
@@ -201,7 +201,7 @@ impl Editor {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
                 }
-                children.push(raw_block(cx, lines[index..unsupported_end].join("\n")));
+                children.push(raw_block_from_region(cx, lines, origins, index..unsupported_end));
                 saw_child = true;
                 pending_blank_lines = 0;
                 index = unsupported_end;
@@ -389,7 +389,7 @@ impl Editor {
                 if let Some(table) = parse_table_region(table_region) {
                     children.push(Self::new_block(cx, BlockRecord::table(table)));
                 } else {
-                    children.push(raw_block(cx, table_region.join("\n")));
+                    children.push(raw_block_from_region(cx, lines, origins, index..table_end));
                 }
                 index = table_end;
                 continue;
@@ -406,7 +406,7 @@ impl Editor {
                 }
             }
 
-            if let Some((comment, consumed)) = collect_comment_block(cx, lines, index) {
+            if let Some((comment, consumed)) = collect_comment_block(cx, lines, index, origins) {
                 children.push(comment);
                 index = consumed;
                 continue;
@@ -414,20 +414,20 @@ impl Editor {
 
             if is_block_html_start(line) {
                 let html_end = collect_block_html_region(lines, index);
-                children.push(html_or_raw_block(cx, lines[index..html_end].join("\n")));
+                children.push(html_or_raw_block_from_region(cx, lines, origins, index..html_end));
                 index = html_end;
                 continue;
             }
 
             if is_display_math_start(line) {
                 let math_end = collect_display_math_region(lines, index);
-                children.push(math_or_raw_block(cx, lines[index..math_end].join("\n")));
+                children.push(math_or_raw_block_from_region(cx, lines, origins, index..math_end));
                 index = math_end;
                 continue;
             }
 
             if let Some(unsupported_end) = collect_unsupported_quote_region(lines, index) {
-                children.push(raw_block(cx, lines[index..unsupported_end].join("\n")));
+                children.push(raw_block_from_region(cx, lines, origins, index..unsupported_end));
                 index = unsupported_end;
                 continue;
             }
@@ -666,7 +666,7 @@ impl Editor {
                         let child = if let Some(table) = parse_root_table_region(table_region) {
                             Self::new_block(cx, BlockRecord::table(table))
                         } else {
-                            raw_block(cx, table_region.join("\n"))
+                            raw_block_from_region(cx, &anchor_dedented, &anchor_origins, 0..table_end)
                         };
                         attach_child_blocks(&block, vec![child], cx);
                         body_index += table_end;
@@ -717,7 +717,7 @@ impl Editor {
                         let consumed = collect_reference_definition_region(&anchor_dedented, 0);
                         attach_child_blocks(
                             &block,
-                            vec![raw_block(cx, anchor_dedented[..consumed].join("\n"))],
+                            vec![raw_block_from_region(cx, &anchor_dedented, &anchor_origins, 0..consumed)],
                             cx,
                         );
                         body_index += consumed;
@@ -727,7 +727,7 @@ impl Editor {
                     }
 
                     if let Some((comment, consumed)) =
-                        collect_comment_block(cx, &anchor_dedented, 0)
+                        collect_comment_block(cx, &anchor_dedented, 0, &anchor_origins)
                     {
                         attach_child_blocks(&block, vec![comment], cx);
                         body_index += consumed;
@@ -740,9 +740,11 @@ impl Editor {
                         let consumed = collect_block_html_region(&anchor_dedented, 0);
                         attach_child_blocks(
                             &block,
-                            vec![html_or_raw_block(
+                            vec![html_or_raw_block_from_region(
                                 cx,
-                                anchor_dedented[..consumed].join("\n"),
+                                &anchor_dedented,
+                                &anchor_origins,
+                                0..consumed,
                             )],
                             cx,
                         );
@@ -756,7 +758,7 @@ impl Editor {
                         let consumed = collect_footnote_definition_region(&anchor_dedented, 0);
                         attach_child_blocks(
                             &block,
-                            vec![raw_block(cx, anchor_dedented[..consumed].join("\n"))],
+                            vec![raw_block_from_region(cx, &anchor_dedented, &anchor_origins, 0..consumed)],
                             cx,
                         );
                         body_index += consumed;

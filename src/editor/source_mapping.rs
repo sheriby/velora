@@ -1047,6 +1047,51 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         Some(MeasuredBlockLines { prefixes, file_lens })
     }
 
+    /// 切片块（渲染视图里就是文件那几位字节的形状）每一行在自己那一行里让开几字节：
+    /// 只让**上级容器的记号**（引用的 `>`、列表的缩进），剥完必须与模型这一行一模一样。
+    ///
+    /// 这一族在模型里没有记号可问（内容就是原文），所以块上没记到那份账时只能按容器记号
+    /// 量：量不出（行首不是块起点、剥不动、剥完不等）就交回恒等表——那是顶格切片的口径。
+    fn measured_slice_line_prefixes(
+        &self,
+        content: &str,
+        absolute_start: usize,
+        quote_depth: usize,
+        list_dedent: usize,
+    ) -> Option<MeasuredBlockLines> {
+        let first_line = self.buffer.line_of(absolute_start);
+        if self.buffer.line_start(first_line) != absolute_start {
+            return None;
+        }
+        let model_lines = content.split('\n').collect::<Vec<_>>();
+        let mut prefixes = Vec::with_capacity(model_lines.len());
+        let mut file_lens = Vec::with_capacity(model_lines.len());
+        for (index, model_line) in model_lines.iter().enumerate() {
+            let range = self.buffer.line_range(first_line + index);
+            if range.start >= self.buffer.byte_len() {
+                return None;
+            }
+            let file_line = self.buffer.slice(range.clone());
+            let mut rest = file_line.clone();
+            let mut consumed = 0usize;
+            for _ in 0..quote_depth {
+                let stripped = super::document::strip_one_quote_level(&rest)?;
+                consumed += rest.len() - stripped.len();
+                rest = stripped;
+            }
+            let stripped = super::document::strip_leading_columns(&rest, list_dedent)?;
+            consumed += rest.len() - stripped.len();
+            if stripped != *model_line {
+                return None;
+            }
+            prefixes.push(consumed);
+            file_lens.push(range.len() - consumed);
+        }
+        self.line_prefix_measured
+            .set(self.line_prefix_measured.get() + prefixes.len() as u64);
+        Some(MeasuredBlockLines { prefixes, file_lens })
+    }
+
     /// 这一块的内容每一行在自己那一行里让开几个字节：首行走 `measured_block_prefix`
     /// （本块的记号在那里量），续行按「这一行的容器记号 + 缩进差」量。
     ///
@@ -1177,6 +1222,35 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         // 围栏长度`）会切进多字节字符中间——`def 甲():` 里 `甲` 占三位，切在第 5 位直接
         // panic。内容偏移与源码偏移只差一个块起点。
         if block.read(cx).is_source_raw_mode() {
+            // 挂在容器里的切片块（引用/列表里的 HTML、注释、数学、认不出的语法）：可见文本
+            // 是**剥掉容器记号**那一段，而走树交下来的起点是整行的行首，恒等表于是把内容第
+            // 0 位算到 `>` 记号上（实测在 `> <p>甲文</p>` 块首打一个字，字写在 `>` 前面，
+            // 整块掉出引用）。每一行让开几字节走解析期记在块上的那一份账。
+            // 顶格的切片块（源码/代码文档）本来没有记号可让，继续用恒等表。
+            if quote_depth > 0 || list_dedent > 0 {
+                let content = block.read(cx).display_text().to_string();
+                let measured = self
+                    .recorded_block_line_prefixes(block, &content, absolute_start, cx)
+                    .or_else(|| {
+                        self.measured_slice_line_prefixes(
+                            &content,
+                            absolute_start,
+                            quote_depth,
+                            list_dedent,
+                        )
+                    });
+                if let Some(measured) = measured {
+                    let len = self.push_line_prefixed_inline_mapping(
+                        block,
+                        content,
+                        &measured,
+                        absolute_start,
+                        mappings,
+                    );
+                    block_ranges.insert(block.entity_id(), absolute_start..absolute_start + len);
+                    return len;
+                }
+            }
             return self.push_source_slice_mapping(
                 block,
                 absolute_start,

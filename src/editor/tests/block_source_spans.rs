@@ -753,6 +753,163 @@ async fn typing_inside_a_code_fence_uses_the_parse_time_prefix(cx: &mut TestAppC
     }
 }
 
+/// 挂在容器里的「整块原样保留」形状（HTML、注释、数学、认不出的语法）在解析期就记下
+/// 自己每一行让开几字节。
+///
+/// 这一族在模型里存的就是文件那几行，只是上级容器（引用的 `>`、列表的缩进）吃掉的记号
+/// 不在模型里——事后**没有记号可剥**可比，只有剥它的那段代码当场知道。不记下来，读侧就
+/// 只能把「块起点」当成内容起点，而那是整行的行首。
+#[gpui::test]
+async fn an_atomic_block_in_a_quote_remembers_what_its_lines_yielded(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (name, source, expected) in [
+        ("引用里的 HTML", "> <p>甲文</p>\n", &[2u32][..]),
+        ("引用里的注释", "> <!-- 说明 -->\n", &[2][..]),
+        ("引用里的分隔线", "> ---\n", &[2][..]),
+        ("引用里认不出的标题", "> ## 乙标题\n", &[2][..]),
+        ("引用记号后不带空格", "><p>丙文</p>\n", &[1][..]),
+        ("两层引用里认不出的标题", ">> ## 丁题\n", &[3][..]),
+        (
+            "引用里的多行数学",
+            "> $$\n> x^2\n> $$\n",
+            &[2, 2, 2][..],
+        ),
+        (
+            "列表项里的 HTML",
+            "- 项甲\n  <p>戊文</p>\n",
+            &[2][..],
+        ),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let leaf = editor
+                .document
+                .visible_blocks()
+                .into_iter()
+                .filter(|item| item.entity.read(cx).children.is_empty())
+                .find(|item| !item.entity.read(cx).display_text().is_empty())
+                .map(|item| item.entity.clone())
+                .expect("夹具里该有一片可见的块");
+            let (prefixes, content, span) = leaf.read_with(cx, |block, _cx| {
+                (
+                    block.record.source_line_prefixes.clone(),
+                    block.display_text().to_string(),
+                    block.record.source_span.clone(),
+                )
+            });
+            assert_eq!(
+                prefixes,
+                expected.to_vec(),
+                "{name}：每一行让开几字节没在解析期记下来（区间={span:?}）"
+            );
+            // 记下的那一份账必须在文件里读得通：从某一行起，每一行「让开这么多字节」剩下的
+            // 正好是这一块显示的那一行，一个字节不多、一个字节不少。
+            let root = editor
+                .document
+                .root_ancestor_of(leaf.entity_id())
+                .expect("夹具的块挂在某根块下");
+            let root_span = root
+                .read(cx)
+                .record
+                .source_span
+                .clone()
+                .expect("根块该有源码区间");
+            let first_line = editor.buffer.line_of(root_span.start);
+            let last_line = editor.buffer.line_of(root_span.end);
+            let model_lines = content.split('\n').collect::<Vec<_>>();
+            let reads_true_at = (first_line..=last_line).find(|start| {
+                model_lines.iter().enumerate().all(|(index, line)| {
+                    let Some(anchor) = start.checked_add(index) else {
+                        return false;
+                    };
+                    if anchor > last_line {
+                        return false;
+                    }
+                    let range = editor.buffer.line_range(anchor);
+                    let prefix = prefixes[index] as usize;
+                    range.len() == prefix + line.len()
+                        && editor.buffer.slice(range.start + prefix..range.end) == *line
+                })
+            });
+            assert!(
+                reads_true_at.is_some(),
+                "{name}：记下的宽度（{prefixes:?}）在文件里读不出这一块的内容\n\
+                 缓冲区是 {source:?}，块显示的是 {content:?}"
+            );
+        });
+    }
+}
+
+/// 挂在容器里的「整块原样保留」形状（HTML、注释、数学、分隔线、认不出的语法）也按解析期
+/// 记下的宽度落笔。
+///
+/// 这些块在渲染视图里就是文件那几位字节（`EditMode::SourceRaw`），读侧走的是「切片恒等」
+/// 那条捷径：内容第 0 个字节 = 块起点。块挂在引用里时块起点是**整行的行首**，于是内容第
+/// 0 位算到了 `>` 记号上（实测在 `> <p>甲文</p>` 块首打一个字，字写在 `>` 前面，整块掉出
+/// 引用）。上级容器吃掉几字节是剥记号那段代码当场知道的事实，跟着 `origins` 一起记下来。
+#[gpui::test]
+async fn typing_at_the_head_of_an_atomic_block_in_a_quote_stays_after_the_marker(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for (name, source, expected) in [
+        ("引用里的 HTML", "> <p>甲文</p>\n", "> 写<p>甲文</p>\n"),
+        ("引用里的注释", "> <!-- 说明 -->\n", "> 写<!-- 说明 -->\n"),
+        ("引用里的分隔线", "> ---\n", "> 写---\n"),
+        ("引用里认不出的标题", "> ## 乙标题\n", "> 写## 乙标题\n"),
+        ("引用记号后不带空格", "><p>丙文</p>\n", ">写<p>丙文</p>\n"),
+        ("两层引用里认不出的标题", ">> ## 丁题\n", ">> 写## 丁题\n"),
+        (
+            "引用里的多行数学",
+            "> $$\n> x^2\n> $$\n",
+            "> 写$$\n> x^2\n> $$\n",
+        ),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        redraw(cx);
+        let target = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .into_iter()
+                .filter(|item| item.entity.read(cx).children.is_empty())
+                .find(|item| !item.entity.read(cx).display_text().is_empty())
+                .map(|item| item.entity.clone())
+                .expect("夹具里该有一片可打字的块")
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(target.entity_id()));
+            target.update(cx, |block, block_cx| block.move_to(0, block_cx));
+        });
+        redraw(cx);
+
+        let before = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+            )
+        });
+        cx.simulate_input("写");
+        redraw(cx);
+        let after = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+                editor.buffer.text(),
+            )
+        });
+        assert!(
+            after.0 > before.0,
+            "{name}：打字没用上解析期记下的记号宽度"
+        );
+        assert_eq!(after.1 - before.1, 0, "{name}：这一行还在事后拿文件行与模型比");
+        assert_eq!(after.2, expected, "{name}：字落错了字节（写到了容器记号前面？）");
+    }
+}
+
 /// 缩进代码块（四空格与制表符两种写法）同样按解析期记下的账落笔。
 ///
 /// 这一档在文件里就是那几行内容，模型存的是每行剥掉缩进记号之后那一段——剥掉几位是
