@@ -53,6 +53,7 @@ actions!(
         OutdentBlock,
         ExitCodeBlock,
         SaveDocument,
+        FormatDocument,
         NewWindow,
         OpenFile,
         OpenFolder,
@@ -182,6 +183,7 @@ pub(crate) enum ShortcutCommand {
     ExitCodeBlock,
     SaveDocument,
     SaveDocumentAs,
+    FormatDocument,
     FileHistory,
     PrintDocument,
     NewWindow,
@@ -517,6 +519,13 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         context: None,
     },
     ShortcutDefinition {
+        command: ShortcutCommand::FormatDocument,
+        id: "format_document",
+        category: ShortcutCategory::File,
+        default_keys: &["cmd-shift-l", "ctrl-shift-l"],
+        context: None,
+    },
+    ShortcutDefinition {
         // ⌘P 已用于快速打开（QuickOpen），打印使用 ⌥⌘P。
         command: ShortcutCommand::PrintDocument,
         id: "print_document",
@@ -803,6 +812,7 @@ fn key_binding_for(
         ShortcutCommand::ExitCodeBlock => KeyBinding::new(key, ExitCodeBlock, context),
         ShortcutCommand::SaveDocument => KeyBinding::new(key, SaveDocument, context),
         ShortcutCommand::SaveDocumentAs => KeyBinding::new(key, SaveDocumentAs, context),
+        ShortcutCommand::FormatDocument => KeyBinding::new(key, FormatDocument, context),
         ShortcutCommand::FileHistory => KeyBinding::new(key, FileHistory, context),
         ShortcutCommand::PrintDocument => KeyBinding::new(key, PrintDocument, context),
         ShortcutCommand::NewWindow => KeyBinding::new(key, NewWindow, context),

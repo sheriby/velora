@@ -655,6 +655,29 @@ impl BlockRecord {
         self.sync_raw_fallback();
     }
 
+    /// 把这份记录里「用户自己写的记号」清成默认写法：列表记号（`+`/`1)`）与行内强调
+    /// 记号（`__`），表格连带每一格。显式「格式化文档」专用，见
+    /// [`InlineTextTree::reset_emphasis_markers`]。
+    ///
+    /// 走 [`Self::set_title`] 而不是就地改树：markdown 备忘按 `title_revision` 缓存，
+    /// 版本号不动就会把旧写法继续交出去。
+    pub fn canonicalize_writing_style(&mut self) {
+        self.list_marker = ListMarkerStyle::default();
+        let mut title = self.title.clone();
+        title.reset_emphasis_markers();
+        self.set_title(title);
+        if let Some(table) = self.table.as_mut() {
+            for cell in table.header.iter_mut() {
+                cell.reset_emphasis_markers();
+            }
+            for row in table.rows.iter_mut() {
+                for cell in row.iter_mut() {
+                    cell.reset_emphasis_markers();
+                }
+            }
+        }
+    }
+
     /// Export the block title as Markdown: fragment style flags are
     /// serialized back to delimiter markers via [`InlineTextTree::serialize_markdown`].
     ///

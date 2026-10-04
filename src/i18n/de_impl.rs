@@ -109,6 +109,7 @@ impl I18nStringsDe {
             menu_save: self.menu_save.unwrap_or(defaults.menu_save),
             menu_save_as: self.menu_save_as.unwrap_or(defaults.menu_save_as),
             menu_file_history: self.menu_file_history.unwrap_or(defaults.menu_file_history),
+            menu_format_document: self.menu_format_document.unwrap_or(defaults.menu_format_document),
             image_reveal_in_file_manager: self
                 .image_reveal_in_file_manager
                 .unwrap_or(defaults.image_reveal_in_file_manager),
@@ -380,6 +381,9 @@ impl I18nStringsDe {
             preferences_shortcut_save_document_as: self
                 .preferences_shortcut_save_document_as
                 .unwrap_or(defaults.preferences_shortcut_save_document_as),
+            preferences_shortcut_format_document: self
+                .preferences_shortcut_format_document
+                .unwrap_or(defaults.preferences_shortcut_format_document),
             preferences_shortcut_new_window: self
                 .preferences_shortcut_new_window
                 .unwrap_or(defaults.preferences_shortcut_new_window),

@@ -25,6 +25,17 @@ impl InlineTextTree {
         }])
     }
 
+    /// 把「强调用哪个记号」这份写法数据清回默认（`*` / `**`）。
+    ///
+    /// 只有显式的「格式化文档」会调它：打字、保存、撤销这些隐式路径一律不许碰写法。
+    /// `escaped_offsets` 不动——反斜杠转义是**语义**（那是个字面星号），抹掉它会让
+    /// `\*不强调\*` 变成强调，改的就不是写法而是文档的意思了。
+    pub fn reset_emphasis_markers(&mut self) {
+        for fragment in &mut self.fragments {
+            fragment.style.emphasis_marker = None;
+        }
+    }
+
     /// Parse marker-based Markdown into the internal fragment representation.
     ///
     /// Markers (`**`, `*`, `<u>`, `<strong>`, `<em>`) are consumed and

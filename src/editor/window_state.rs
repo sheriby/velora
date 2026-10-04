@@ -690,6 +690,56 @@ impl Editor {
         }
     }
 
+    /// 显式「格式化文档」：把整篇按**模型的规范化写法**重新落一遍字节。
+    ///
+    /// 规范化（Setext→ATX、`__粗__`→`**粗**`、`1)`→`1.`、表格列宽重排）只允许出现在
+    /// 这一条命令里。打开、打字、保存、撤销走的都是「按区间落笔」，用户没碰过的写法一个
+    /// 字节都不动——那是缓冲区当事实源换来的性质，混进隐式路径就全废了。
+    ///
+    /// 一次格式化是一条**可撤销**的编辑组：落笔仍走最小差异，撤销把原字节逐段放回去
+    /// （而不是「再规范化一次」）。已经规范化到位的那一次什么都不做：不动字节、不标脏、
+    /// 不留空撤销组。
+    pub(crate) fn format_document(&mut self, cx: &mut Context<Self>) {
+        // 源码/代码视图没有「模型的写法」可言：那里的块就是文件本身。
+        if self.view_mode != ViewMode::Rendered {
+            return;
+        }
+        self.flush_pending_materialization(cx);
+        // 先把「用户自己选的记号」这份数据清成默认（`__`→`**`、`1)`→`1.`），再序列化。
+        // 不清的话拿不到规范化结果——那些记号正是保真那批提交特意存进模型的。
+        self.document.canonicalize_writing_style(cx);
+        let started = std::time::Instant::now();
+        let (serialized, _) = self.document.markdown_text_with_block_spans(cx);
+        // 这一次整篇落笔是命令自己付的账，不在按键路径上（闸门量的是后者），
+        // 但计数器必须数得到——漏一档就等于给隐形成本开门。
+        self.source_serializations
+            .set(self.source_serializations.get() + 1);
+        self.source_serialization_nanos.set(
+            self.source_serialization_nanos.get()
+                + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
+        let text = self.resynced_text(&serialized);
+        if self.buffer.matches_text(text.as_ref()) {
+            return;
+        }
+        let selection = self.capture_source_selection_snapshot(cx);
+        self.prepare_undo_capture(
+            crate::components::UndoCaptureKind::NonCoalescible,
+            cx,
+        );
+        // `apply_resynced_text` 会把文件原来那个末行换行补回来，并且只写真正的差异。
+        self.apply_resynced_text(&text);
+        // 缓冲区已经是目标状态：别让紧随其后的重同步再把整篇序列化一遍。
+        self.skip_next_resync = true;
+        self.finish_dirty(cx);
+        // 从缓冲区重建投影：区间、写法数据（现在按规范文本重新量）、表格与图片运行时
+        // 都跟着这份新文本走，模型与文件才是同一份文档。
+        self.rebuild_document_from_buffer(cx);
+        self.apply_selection_snapshot_in_current_mode(&selection, cx);
+        self.finalize_pending_undo_capture(cx);
+        cx.notify();
+    }
+
     /// 链接跳转要 `&mut Window`，且不能在本次窗口更新里重入，因此与 wikilink
     /// 一样延后到当前更新结束后执行。
     pub(crate) fn defer_open_link(&mut self, open_target: String, cx: &mut Context<Self>) {

@@ -93,6 +93,8 @@ pub struct I18nStrings {
     pub menu_save_as: String,
     /// 文件历史菜单项与浮层标题。
     pub menu_file_history: String,
+    /// 显式「格式化文档」菜单项与命令面板条目。
+    pub menu_format_document: String,
     /// 图片右键菜单：在文件管理器中显示。
     pub image_reveal_in_file_manager: String,
     /// 图片右键菜单：复制图片地址。
@@ -232,6 +234,7 @@ pub struct I18nStrings {
     pub preferences_shortcut_exit_code_block: String,
     pub preferences_shortcut_save_document: String,
     pub preferences_shortcut_save_document_as: String,
+    pub preferences_shortcut_format_document: String,
     pub preferences_shortcut_new_window: String,
     pub preferences_shortcut_open_file: String,
     pub preferences_shortcut_quit_application: String,

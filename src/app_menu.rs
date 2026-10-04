@@ -16,7 +16,7 @@ pub(super) use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
-    QuitApplication, SaveDocument,
+    FormatDocument, QuitApplication, SaveDocument,
     FileHistory,
     SaveDocumentAs,
     SelectLanguage, SelectTheme, ShowAbout, CopyAsHtml, ToggleFocusMode, ToggleFullscreen,

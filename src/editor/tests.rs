@@ -9,6 +9,7 @@ mod common;
 mod editing_misc;
 mod export_drop;
 mod footnotes;
+mod format_command;
 mod image_runtime;
 mod import_perf;
 mod keyboard_nav;

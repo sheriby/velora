@@ -376,6 +376,16 @@ impl DocumentTree {
     ///
     /// 区间写回只替换这一段字节，所以别的块不会被重新序列化。列表项与引用块
     /// 递归带上整棵子树，宽度和导入时记下的那段行区间一致。
+    /// 把整棵树（每根块连着子树）的写法数据清成默认写法。
+    ///
+    /// 只有显式的「格式化文档」调这一步：清完再序列化，交出去的就是模型那份规范写法；
+    /// 落笔之后调用方要从缓冲区重建投影，让写法数据按新文本重新量一遍。
+    pub(crate) fn canonicalize_writing_style(&mut self, cx: &mut Context<Editor>) {
+        for root in self.roots.clone() {
+            root.update(cx, |block, cx| block.canonicalize_writing_style(cx));
+        }
+    }
+
     pub(crate) fn block_markdown_source(&self, block: &Entity<Block>, cx: &App) -> String {
         // 源码/代码文档的块没有 markdown 形状：它的「源码」就是它自己那份文本。
         // 走序列化会给它补一对 ``` 围栏，而文件里根本没有围栏那两行——按区间写回

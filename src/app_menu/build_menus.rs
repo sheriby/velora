@@ -505,6 +505,9 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &FileHistory, cx| {
         dispatch_menu_action(&FileHistory, cx);
     });
+    cx.on_action(|_: &FormatDocument, cx| {
+        dispatch_menu_action(&FormatDocument, cx);
+    });
     cx.on_action(|_: &ExportHtml, cx| {
         dispatch_menu_action(&ExportHtml, cx);
     });

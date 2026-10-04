@@ -54,6 +54,8 @@ pub(crate) fn dispatch_menu_action_for_editor(
         let _ = target.update(cx, |editor, cx| editor.request_save_document(cx));
     } else if action.as_any().is::<SaveDocumentAs>() {
         let _ = target.update(cx, |editor, cx| editor.request_save_document_as(cx));
+    } else if action.as_any().is::<FormatDocument>() {
+        let _ = target.update(cx, |editor, cx| editor.format_document(cx));
     } else if action.as_any().is::<ExportHtml>() {
         let _ = target.update(cx, |editor, cx| {
             editor.export_document_via_prompt(ExportFormat::Html, window, cx);

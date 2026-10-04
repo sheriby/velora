@@ -472,14 +472,24 @@ impl Block {
         self.edit_mode.uses_raw_text_editing()
     }
 
+    /// 显式「格式化文档」的那一步：把自己和**整棵子树**的写法数据清成默认写法。
+    ///
+    /// 子块要一起清——引用/标注里的正文、列表项里的段落各有各的强调记号，只清根块
+    /// 会留下半新半旧的写法。
+    pub(crate) fn canonicalize_writing_style(&mut self, cx: &mut Context<Self>) {
+        self.record.canonicalize_writing_style();
+        for child in self.children.clone() {
+            child.update(cx, |child, cx| child.canonicalize_writing_style(cx));
+        }
+    }
+
     pub(crate) fn set_source_raw_mode(&mut self) {
         self.clear_inline_projection();
         self.edit_mode = EditMode::SourceRaw;
         self.show_source_line_numbers = false;
     }
 
-    pub(crate) fn set_source_document_mode(&mut self) {
-        self.set_source_raw_mode();
+    pub(crate) fn set_source_document_mode(&mut self) {        self.set_source_raw_mode();
         self.show_source_line_numbers = true;
     }
 

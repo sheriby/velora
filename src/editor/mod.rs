@@ -1430,27 +1430,34 @@ impl Editor {
     /// 走 `edit` 而不是整个换掉缓冲区，是为了让撤销组拿到它的逆操作；文本没变时
     /// 什么都不做，「打开后没改过」那份原始字节也就保住了。
     fn apply_resynced_text(&mut self, text: &str) {
-        // 序列化把每根块当「一行」，行尾那个换行不在它的产物里。缓冲区原本以换行
-        // 结尾时必须补回来，否则走一次兜底档位就吃掉文件的末行换行（CRLF 文件连带
-        // 少一个 `\r`）——那是用户没改过的字节。
-        let mut kept;
-        let text = if !text.ends_with('\n')
-            && self.buffer.byte_len() > 0
-            && self.buffer.byte_at(self.buffer.byte_len() - 1) == Some(b'\n')
-        {
-            kept = text.to_string();
-            kept.push('\n');
-            kept.as_str()
-        } else {
-            text
-        };
-        if self.buffer.matches_text(text) {
+        let text = self.resynced_text(text);
+        if self.buffer.matches_text(text.as_ref()) {
             return;
         }
         // 仍然只写最小差异：整篇重投影这一遍已经把全文序列化过了，代价付了就付，
         // 但撤销组不该因此再存一份全文副本（文档 86 KiB × 200 步 = 17 MB）。
         let range = 0..self.buffer.byte_len();
-        self.write_minimal_diff(range, text);
+        self.write_minimal_diff(range, text.as_ref());
+    }
+
+    /// 整篇落笔的文本口径：序列化把每根块当「一行」，行尾那个换行不在它的产物里，
+    /// 而缓冲区原本以换行结尾时必须补回来——否则走一次整篇落笔就吃掉文件的末行换行
+    /// （CRLF 文件连带少一个 `\r`），那是用户没改过的字节。
+    ///
+    /// `apply_resynced_text` 与显式的 `format_document` 共用这一条，两边对「目标文本
+    /// 长什么样」的理解必须一致，否则「有没有变化」这个问题会答错（答错就多留一条空
+    /// 撤销组、把文档标脏）。
+    fn resynced_text<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
+        if text.ends_with('\n')
+            || self.buffer.byte_len() == 0
+            || self.buffer.byte_at(self.buffer.byte_len() - 1) != Some(b'\n')
+        {
+            return std::borrow::Cow::Borrowed(text);
+        }
+        let mut kept = String::with_capacity(text.len() + 1);
+        kept.push_str(text);
+        kept.push('\n');
+        std::borrow::Cow::Owned(kept)
     }
 
     /// 按重投影出来的文本重建所有根块的源码区间。
