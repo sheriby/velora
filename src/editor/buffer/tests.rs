@@ -408,6 +408,74 @@ fn the_line_probe_counter_follows_how_deep_the_offsets_are() {
     );
 }
 
+/// 换算行号本该只问「这块有几个换行、都落在哪儿」，不该把正文读一遍。
+///
+/// 大纲按根块走一圈时要把每块起点的字节偏移换成整篇行号：10 MiB 代码文档实测一次
+/// 同步 44ms，全花在这个换算上（沿块把字节数一遍）。这笔必须与文档多大无关。
+#[test]
+fn asking_for_line_numbers_does_not_read_the_text() {
+    let line = "line 01234 with some english text and a bit more\n";
+    let text = format!("{}# heading at the end\n", line.repeat(4000));
+    let mut buffer = TextBuffer::from_text(&text);
+    assert!(buffer.chunks.len() > 30, "夹具得跨很多块才测得出名堂");
+    let total = buffer.byte_len();
+    buffer.take_line_probe_bytes();
+
+    // 批量问：偏移全挤在文档开头那一小段里（大纲按根块走一圈就是这个形状）。
+    let offsets = [0usize, 1, 40, line.len(), line.len() * 2];
+    let answers = buffer.lines_and_line_starts(&offsets);
+    assert_eq!(answers[4], (2, line.len() * 2), "顺手钉一下结果本身");
+    let batched = buffer.take_line_probe_bytes();
+    assert_eq!(
+        batched, 0,
+        "批量行号换算读了 {batched} 字节正文：它该只问每块的换行表，\
+         与文档多大无关（10 MiB 一次大纲同步的 44ms 就是这么来的）"
+    );
+
+    // 单点问：`line_of` 与 `line_start` 也不许碰正文。
+    for offset in [0usize, 1, 40, line.len(), total - 1] {
+        buffer.line_of(offset);
+    }
+    let single = buffer.take_line_probe_bytes();
+    assert_eq!(single, 0, "line_of 读了 {single} 字节正文");
+    for line_index in [1usize, 2, 39, 4000] {
+        buffer.line_start(line_index);
+    }
+    let starts = buffer.take_line_probe_bytes();
+    assert_eq!(starts, 0, "line_start 读了 {starts} 字节正文");
+}
+
+/// 换行索引的**维护**成本只跟着改动走：切块是把两张表分开（一个字节都不重读），
+/// 只有新进来的那段文本要现数一遍换行。
+#[test]
+fn rebuilding_the_line_index_costs_only_the_edited_bytes() {
+    let line = "line 01234 with some english text and a bit more\n";
+    let text = format!("{}# heading at the end\n", line.repeat(4000));
+    let mut buffer = TextBuffer::from_text(&text);
+    buffer.take_line_probe_bytes();
+
+    // 在文档中间插一个换行：正文一个字节都没挪，只数了插进去的那一行。
+    buffer.edit(text.len() / 2..text.len() / 2, "\n");
+    let inserted = buffer.take_line_probe_bytes();
+    assert_eq!(inserted, 1, "插一行却读了 {inserted} 字节正文");
+
+    // 删一段也照样只按删掉的那段计（这里删的是既有换行，不新增文本）。
+    buffer.edit(text.len() / 2..text.len() / 2 + 1, "");
+    assert_eq!(buffer.take_line_probe_bytes(), 0);
+
+    // 行号还是对的：切块之后两张表拼起来等于原文的换行位置。
+    assert_eq!(
+        buffer.line_count(),
+        4002,
+        "插入又删掉一个换行，行数该回到原样（4000 行正文 + 最后一行 + 末尾空行）"
+    );
+    assert_eq!(
+        buffer.line_start(3000),
+        line.len() * 3000,
+        "换行表切过之后行首偏移漂了"
+    );
+}
+
 /// 比较一份等长但内容不同的文本时只能返回 `false`，不许 panic。
 ///
 /// 分块的边界是按缓冲区自己的字符切的；换一份内容时同样的偏移可能正好落在某个多

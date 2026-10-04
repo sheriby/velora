@@ -24,8 +24,11 @@ const MAX_CHUNK_BYTES: usize = 4096;
 #[derive(Clone)]
 struct Chunk {
     text: String,
-    /// 本块内 `'\n'` 的个数，行号换算靠它，不必重扫文本。
-    newlines: usize,
+    /// 本块里每个 `'\n'` 的**块内**字节偏移，升序。行数就是它的长度，
+    /// 「这个偏移落在第几行」「这一行从哪儿起」都在这张短表里二分——行号换算
+    /// 于是只问索引，一次都不读正文。块上限 [`MAX_CHUNK_BYTES`] = 4096 字节，
+    /// 偏移塞得进 `u16`，代价是每行两个字节（10 MiB 那份 58.5 万行 = 1.2MB）。
+    newlines: Vec<u16>,
 }
 
 impl Chunk {
@@ -33,19 +36,50 @@ impl Chunk {
         self.text.len()
     }
 
+    fn line_count(&self) -> usize {
+        self.newlines.len()
+    }
+
     fn new(text: String) -> Self {
-        let newlines = count_newlines(&text);
+        let newlines = newline_offsets(&text);
         Self { text, newlines }
     }
 
+    /// 在块内 `local` 处切开：左半留给本块，右半交出去。换行表跟着切，
+    /// 不重读任何字节。
     fn split_at(&mut self, local: usize) -> Chunk {
         debug_assert!(
             self.text.is_char_boundary(local),
             "切分点 {local} 落在多字节字符中间"
         );
         let right = self.text.split_off(local);
-        self.newlines = count_newlines(&self.text);
-        Chunk::new(right)
+        let keep = self.newlines.partition_point(|at| (*at as usize) < local);
+        let mut right_newlines = self.newlines.split_off(keep);
+        for at in &mut right_newlines {
+            *at = (*at as usize - local) as u16;
+        }
+        Self {
+            text: right,
+            newlines: right_newlines,
+        }
+    }
+
+    /// 块内这个偏移之前有几个换行（=它落在块内的第几行）。
+    fn lines_before(&self, local: usize) -> usize {
+        self.newlines.partition_point(|at| (*at as usize) < local)
+    }
+
+    /// 块内第 `nth` 个换行符（1 基）的偏移；没有就按「块尾」算。
+    fn newline(&self, nth: usize) -> usize {
+        match self.newlines.get(nth - 1) {
+            Some(at) => *at as usize,
+            None => self.byte_len(),
+        }
+    }
+
+    /// 块内最后一个换行符的偏移。
+    fn last_newline(&self) -> Option<usize> {
+        self.newlines.last().map(|at| *at as usize)
     }
 }
 
@@ -88,9 +122,13 @@ pub(crate) struct TextBuffer {
     /// 读侧的增量视图（文档大纲）用它判断「哪些块的字节真的动过」：没动过的块照用
     /// 自己上次的摘要，不必每按一个键就把整篇重扫一遍。
     dirty: Option<Range<usize>>,
-    /// 为了把字节偏移换算成行号，读了多少个字节。行号换算本该只问「这块有几个换行、
-    /// 都落在哪儿」，一次都不该碰正文——10 MiB 文档一次大纲同步实测 44ms，全是
-    /// `lines_and_line_starts` 沿块把字节数了一遍。先把这笔量出来，再把它归零。
+    /// 为了建「这块里有几个换行、都落在哪儿」那张索引，读了多少字节正文。只有建块
+    /// 与插入新文本会读（按那份文本自己的长度计），**查询行号一律不许读正文**——
+    /// 问的是每块那张换行偏移表。以前查询侧每批量换算都要沿块把正文数一遍（实测一个
+    /// 196KB 的夹具读 196119 字节 = 整篇一次，10 MiB 一次大纲同步因此约 5ms）；闸门
+    /// `asking_for_line_numbers_does_not_read_the_text` 钉住查询读 0 字节，
+    /// `rebuilding_the_line_index_costs_only_the_edited_bytes` 钉住维护成本只跟着
+    /// 改动走、不跟着文档长。
     line_probe_bytes: std::cell::Cell<usize>,
 }
 
@@ -100,15 +138,17 @@ impl TextBuffer {
     /// 整个内容都算「刚改过的」：派生数据（大纲这类增量视图）于是第一次一定重算，
     /// 不会因为「一个字节都没编辑过」而留着上一份文档的结果。
     pub(crate) fn from_text(text: &str) -> Self {
+        let chunks = chunkify(text);
+        let probed = text.len();
         Self {
-            chunks: chunkify(text),
+            chunks,
             total_bytes: text.len(),
             anchors: Vec::new(),
             free_anchor_slots: Vec::new(),
             shape: None,
             pristine: None,
             dirty: (!text.is_empty()).then_some(0..text.len()),
-            line_probe_bytes: std::cell::Cell::new(0),
+            line_probe_bytes: std::cell::Cell::new(probed),
         }
     }
 
@@ -232,10 +272,10 @@ impl TextBuffer {
     /// 行数按 `split('\n')` 计：`"a\n"` 是 2 行（第二行为空），空文档是 1 行。
     /// 与编辑器状态栏、搜索结果的行号口径一致。
     pub(crate) fn line_count(&self) -> usize {
-        self.chunks.iter().map(|chunk| chunk.newlines).sum::<usize>() + 1
+        self.chunks.iter().map(Chunk::line_count).sum::<usize>() + 1
     }
 
-    /// 取走「为了算行号读了多少字节」并清零。闸门用它钉住「行号换算不许碰正文」。
+    /// 取走「建/维护换行索引读了多少字节」并清零。查询行号不该让它动一下。
     pub(crate) fn take_line_probe_bytes(&self) -> usize {
         self.line_probe_bytes.replace(0)
     }
@@ -252,11 +292,10 @@ impl TextBuffer {
         let mut base = 0usize;
         let mut seen = 0usize;
         for chunk in &self.chunks {
-            if line <= seen + chunk.newlines {
-                self.probed(chunk.byte_len());
-                return base + nth_newline(&chunk.text, line - seen) + 1;
+            if line <= seen + chunk.line_count() {
+                return base + chunk.newline(line - seen) + 1;
             }
-            seen += chunk.newlines;
+            seen += chunk.line_count();
             base += chunk.byte_len();
         }
         self.byte_len()
@@ -297,10 +336,9 @@ impl TextBuffer {
         );
         let preceding = self.chunks[..chunk_index]
             .iter()
-            .map(|earlier| earlier.newlines)
+            .map(Chunk::line_count)
             .sum::<usize>();
-        self.probed(local);
-        preceding + count_newlines(&chunk.text[..local])
+        preceding + chunk.lines_before(local)
     }
 
     /// 一次遍历把多个**升序**字节偏移的「（所在行, 本行首字节偏移）」一起取回来。
@@ -308,6 +346,8 @@ impl TextBuffer {
     /// 单点问 [`line_of`](Self::line_of) 是沿文本块累加换行数的线性活（这里没有行
     /// 索引树），在「逐根块」的循环里调它就变成 O(根块数 × 文本块数)——10 MiB 文档
     /// 一次按键 6 秒就是这么来的。批量问一次只走一遍块。越界的偏移钳到文末。
+    ///
+    /// 走的是每块那张换行偏移表：一次正文都不读，代价与文档多大无关。
     pub(crate) fn lines_and_line_starts(&self, offsets: &[usize]) -> Vec<(usize, usize)> {
         let mut out = vec![(self.line_count() - 1, self.byte_len()); offsets.len()];
         let mut base = 0usize; // 当前文本块首字节的绝对偏移
@@ -315,32 +355,25 @@ impl TextBuffer {
         let mut line_start = 0usize; // 那一行的首字节偏移
         let mut target = 0usize;
         for chunk in &self.chunks {
-            let bytes = chunk.text.as_bytes();
-            let end = base + bytes.len();
-            if target < offsets.len() && offsets[target] <= end {
-                let mut scan = 0usize;
-                let (mut here_line, mut here_start) = (line, line_start);
-                while target < offsets.len() && offsets[target] <= end {
-                    let local = offsets[target].saturating_sub(base);
-                    while scan < local {
-                        self.probed(1);
-                        if bytes[scan] == b'\n' {
-                            here_line += 1;
-                            here_start = base + scan + 1;
-                        }
-                        scan += 1;
-                    }
-                    out[target] = (here_line, here_start);
-                    target += 1;
-                }
+            let end = base + chunk.byte_len();
+            while target < offsets.len() && offsets[target] <= end {
+                let local = offsets[target].saturating_sub(base);
+                let inside = chunk.lines_before(local);
+                let start = if inside == 0 {
+                    line_start
+                } else {
+                    base + chunk.newline(inside) + 1
+                };
+                out[target] = (line + inside, start);
+                target += 1;
             }
-            if chunk.newlines > 0 {
-                self.probed(bytes.len());
-                if let Some(last) = bytes.iter().rposition(|byte| *byte == b'\n') {
-                    line_start = base + last + 1;
-                }
+            if target >= offsets.len() {
+                break;
             }
-            line += chunk.newlines;
+            if let Some(last) = chunk.last_newline() {
+                line_start = base + last + 1;
+            }
+            line += chunk.line_count();
             base = end;
         }
         out
@@ -372,8 +405,11 @@ impl TextBuffer {
 
         // 只在两个端点处切块，端点之间的整块被移除，新文本单独成分块。
         // 顺序要紧：切分起点会插入一个块，终点必须在切完之后重新算。
+        // 切块只是把两张换行表分开（哪一侧都不重读正文），只有新进来的这段文本
+        // 要现数一遍换行——所以一次编辑的索引成本是 O(改动大小)，不是 O(文档大小)。
         let start = self.split_at(range.start);
         let end = self.split_at(range.end);
+        self.probed(text.len());
         self.chunks.splice(start..end, chunkify(text));
         self.total_bytes += text.len();
         self.total_bytes -= removed.len();
@@ -469,20 +505,12 @@ fn char_boundary_floor(text: &str, wanted: usize) -> usize {
     boundary
 }
 
-/// 块内第 `nth` 个换行符的字节偏移（1 基）。找不到时返回文本长度。
-fn nth_newline(text: &str, nth: usize) -> usize {
-    let mut seen = 0usize;
-    for (index, byte) in text.bytes().enumerate() {
-        if byte == b'\n' {
-            seen += 1;
-            if seen == nth {
-                return index;
-            }
-        }
-    }
-    text.len()
-}
-
-fn count_newlines(text: &str) -> usize {
-    text.bytes().filter(|byte| *byte == b'\n').count()
+/// 这段文本里每个换行符的偏移（升序）。块只有 [`MAX_CHUNK_BYTES`] 大，所以偏移
+/// 塞得进 `u16`；行号换算全指着这张表，再也不按字节数行。
+fn newline_offsets(text: &str) -> Vec<u16> {
+    debug_assert!(text.len() <= u16::MAX as usize, "块太大，u16 装不下换行偏移");
+    text.bytes()
+        .enumerate()
+        .filter_map(|(index, byte)| (byte == b'\n').then(|| index as u16))
+        .collect()
 }

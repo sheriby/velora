@@ -331,8 +331,10 @@ async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext
 /// 换成 ten-mib.md 就是 10 MiB 那档）。一次大纲同步的开销：
 /// 改前 **142ms、重扫 585499 行（=全文）、每帧整篇重扫 1 次**；
 /// 改后 **44ms、重扫 512 行（=改动那一片）、整篇重扫 0 次**。
-/// 剩下的 44ms 不在重扫上，而在「把每根块的起点换算成整篇行号」那一次按字节数行的
-/// 走查——缓冲区还没有行索引，那是下一个与文档大小同向的项。
+/// 这 44ms 后来又拆开量过一次（临时打段计时）：按字节数行号那一段约 5ms（换成每块
+/// 的换行偏移表之后 0.26ms，见 `asking_for_line_numbers_does_not_read_the_text`），
+/// 按块走查 0.54ms，剩下的 **约 37ms 全在「把 5.3 万条标题拼成一棵树」**——标题树是
+/// 整篇一份，任何一次改动都要重拼，那是另一档与文档同向的开销。
 #[gpui::test]
 async fn one_mib_code_document_with_a_fence_on_the_seam_scans_one_chunk(
     cx: &mut TestAppContext,
