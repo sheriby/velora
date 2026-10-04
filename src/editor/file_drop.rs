@@ -272,7 +272,7 @@ impl Editor {
                 }
                 _ => Self::build_source_document_roots(chunk_kind, &normalized, cx),
             };
-            Self::attach_source_slice_spans(&self.buffer, &built, cx);
+            self.attach_source_slice_spans(&built, cx);
             built
         } else {
             self.rebuild_root_blocks_from_buffer(cx)

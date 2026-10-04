@@ -529,11 +529,14 @@ impl Editor {
         let source_mode_fallback_required =
             Self::markdown_requires_source_mode_fallback(&normalized);
         let mut pending_tail = None;
+        let mut initial_spans: Vec<(gpui::EntityId, std::ops::Range<usize>)> = Vec::new();
         let mut roots = if source_mode_fallback_required {
             let block = Self::new_block(cx, BlockRecord::paragraph(normalized.clone()));
             block.update(cx, |block, _cx| block.set_source_document_mode());
             let roots = vec![block];
-            Self::attach_source_slice_spans(&buffer, &roots, cx);
+            if let Some(spans) = Self::source_slice_span_ranges(&buffer, &roots, cx) {
+                initial_spans.extend(roots.iter().map(|block| block.entity_id()).zip(spans));
+            }
             roots
         } else {
             let lines = Arc::new(Self::split_markdown_lines(&normalized));
@@ -556,7 +559,12 @@ impl Editor {
                     lines,
                 });
             }
-            Self::attach_root_spans(&buffer, &roots, &root_spans, 0, cx);
+            initial_spans.extend(
+                roots
+                    .iter()
+                    .map(|block| block.entity_id())
+                    .zip(Self::root_span_ranges(&buffer, &root_spans, 0)),
+            );
             roots
         };
         if roots.is_empty() {
@@ -564,6 +572,9 @@ impl Editor {
         }
 
         let mut document = DocumentTree::new(roots);
+        for (entity_id, span) in initial_spans {
+            document.set_source_span(entity_id, span);
+        }
         document.set_pending_tail(pending_tail);
         document.rebuild_metadata_and_snapshot(cx);
         let pending_focus = document.first_root().map(|block| block.entity_id());
@@ -787,7 +798,7 @@ impl Editor {
             .collect::<Vec<_>>();
         let next_line = tail.next_line + consumed;
         // 续建块的行区间要加上这一片在全文里的行基址，否则第二块之后全部错位。
-        Self::attach_root_spans(&self.buffer, &roots, &root_spans, tail.next_line, cx);
+        self.attach_root_spans(&roots, &root_spans, tail.next_line);
         self.document.append_roots(roots, cx);
         for block in tables {
             let Some(table) = block.read(cx).record.table.clone() else {
@@ -953,27 +964,37 @@ impl Editor {
     ///
     /// 唯一的例外是文档末尾没有换行符：那里没有换行可减，最后一块的区间右端
     /// 就是文档末尾，减一个字节会把块内容和多字节字符一起切坏。
-    pub(crate) fn attach_root_spans(
+    pub(crate) fn root_span_ranges(
         buffer: &buffer::TextBuffer,
+        line_spans: &[std::ops::Range<usize>],
+        line_base: usize,
+    ) -> Vec<std::ops::Range<usize>> {
+        let total = buffer.byte_len();
+        let ends_with_newline = buffer.line_start(buffer.line_count().saturating_sub(1)) >= total;
+        line_spans
+            .iter()
+            .map(|span| {
+                let start = buffer.line_start(line_base + span.start).min(total);
+                let raw_end = buffer.line_start(line_base + span.end).min(total);
+                let end = if raw_end < total || ends_with_newline {
+                    raw_end.saturating_sub(1)
+                } else {
+                    raw_end
+                };
+                start..end.max(start)
+            })
+            .collect()
+    }
+
+    pub(crate) fn attach_root_spans(
+        &mut self,
         roots: &[Entity<Block>],
         line_spans: &[std::ops::Range<usize>],
         line_base: usize,
-        cx: &mut App,
     ) {
-        let total = buffer.byte_len();
-        let ends_with_newline = buffer.line_start(buffer.line_count().saturating_sub(1)) >= total;
-        for (block, span) in roots.iter().zip(line_spans) {
-            let start = buffer.line_start(line_base + span.start).min(total);
-            let raw_end = buffer.line_start(line_base + span.end).min(total);
-            let end = if raw_end < total || ends_with_newline {
-                raw_end.saturating_sub(1)
-            } else {
-                raw_end
-            };
-            let span = start..end.max(start);
-            block.update(cx, |block, _cx| {
-                block.record.source_span = Some(span);
-            });
+        let spans = Self::root_span_ranges(&self.buffer, line_spans, line_base);
+        for (block, span) in roots.iter().zip(spans) {
+            self.document.set_source_span(block.entity_id(), span);
         }
     }
 
@@ -985,33 +1006,38 @@ impl Editor {
     ///
     /// 块文本加起来比缓冲区还长（尾部还在后台续建到一半、或某一步没落笔）就一根都不挂：
     /// 没有区间的块自然退回整篇重投影那一档，挂错位置的区间会让字节写到邻居身上。
-    pub(crate) fn attach_source_slice_spans(
+    pub(crate) fn source_slice_span_ranges(
         buffer: &buffer::TextBuffer,
         roots: &[Entity<Block>],
-        cx: &mut App,
-    ) {
+        cx: &App,
+    ) -> Option<Vec<std::ops::Range<usize>>> {
         let total = buffer.byte_len();
         let mut spans = Vec::with_capacity(roots.len());
         let mut offset = 0usize;
         for block in roots {
             let len = block.read(cx).display_text().len();
             if offset + len > total {
-                return;
+                return None;
             }
             spans.push(offset..offset + len);
             offset += len + 1;
         }
+        Some(spans)
+    }
+
+    pub(crate) fn attach_source_slice_spans(&mut self, roots: &[Entity<Block>], cx: &mut App) {
+        let Some(spans) = Self::source_slice_span_ranges(&self.buffer, roots, cx) else {
+            return;
+        };
         for (block, span) in roots.iter().zip(spans) {
-            block.update(cx, |block, _cx| {
-                block.record.source_span = Some(span);
-            });
+            self.document.set_source_span(block.entity_id(), span);
         }
     }
 
     /// 树里已经有一批源码文档的根块：按上面的口径把区间全部重挂一遍。
-    fn reattach_source_document_spans(&self, cx: &mut Context<Self>) {
+    fn reattach_source_document_spans(&mut self, cx: &mut Context<Self>) {
         let roots = self.document.root_blocks().to_vec();
-        Self::attach_source_slice_spans(&self.buffer, &roots, cx);
+        self.attach_source_slice_spans(&roots, cx);
     }
 
     /// 把这个块当前的源码写回它自己占的缓冲区区间——只经唯一写入口
@@ -1046,7 +1072,7 @@ impl Editor {
         let Some(root) = self.document.root_ancestor_of(block.entity_id()) else {
             return false;
         };
-        let Some(span) = root.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(root.entity_id()) else {
             return false;
         };
         // 换算出来的位置必须在缓冲区里、也得落在这一根块的区间内：映射表是按块树
@@ -1062,10 +1088,9 @@ impl Editor {
         let applied = self.buffer.edit(at..at, &inserted);
         self.record_buffer_edit(applied);
         let delta = inserted.len() as i64;
-        root.update(cx, |root, _cx| {
-            root.record.source_span = Some(span.start..span.end + delta as usize);
-        });
-        self.shift_root_spans_after(span.end, delta, cx);
+        self.document
+            .set_source_span(root.entity_id(), span.start..span.end + delta as usize);
+        self.shift_root_spans_after(span.end, delta);
         true
     }
 
@@ -1118,7 +1143,7 @@ impl Editor {
         block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(old_span) = block.read(cx).record.source_span.clone() else {
+        let Some(old_span) = self.document.source_span_of(block.entity_id()) else {
             return false;
         };
         // 区间是这一根块上一次写回时挂上的字节位；中途有人（比如标注结构的归一化）
@@ -1135,11 +1160,12 @@ impl Editor {
 
         let old_len = old_span.end - old_span.start;
         let delta = self.write_minimal_diff(old_span.clone(), &new_source);
-        block.update(cx, |block, _cx| {
-            block.record.source_span = Some(old_span.start..old_span.start + (old_len as i64 + delta) as usize);
-        });
+        self.document.set_source_span(
+            block.entity_id(),
+            old_span.start..old_span.start + (old_len as i64 + delta) as usize,
+        );
         if delta != 0 {
-            self.shift_root_spans_after(old_span.end, delta, cx);
+            self.shift_root_spans_after(old_span.end, delta);
         }
         true
     }
@@ -1188,14 +1214,15 @@ impl Editor {
     /// 11 位）。容器的行也一样会把改动传给子块（`>` 写成 `>>` 时每行的继承量都变），
     /// 所以递归到子块。清掉之后位置换算交回按文件量那一条，直到重新解析给它新的账。
     fn reanchor_record_span(
+        &mut self,
         block: &Entity<Block>,
         span: std::ops::Range<usize>,
         cx: &mut Context<Self>,
     ) {
         let children = block.read(cx).children.clone();
         let ledger = Self::written_line_ledger(block.read(cx));
+        self.document.set_source_span(block.entity_id(), span);
         block.update(cx, |block, _cx| {
-            block.record.source_span = Some(span);
             block.record.source_separator_bytes = 0;
             match ledger {
                 Some((prefixes, fence)) => {
@@ -1243,7 +1270,7 @@ impl Editor {
         let Some(anchor_index) = before.iter().position(|(id, _)| *id == anchor.entity_id()) else {
             return false;
         };
-        let after = self.document.root_layout(cx);
+        let after = self.document.root_layout();
         let suffix = before
             .iter()
             .rev()
@@ -1283,7 +1310,6 @@ impl Editor {
                 region_end,
                 new_end - anchor_index,
                 old_end < before.len(),
-                cx,
             );
         };
 
@@ -1311,7 +1337,7 @@ impl Editor {
             {
                 let applied = self.buffer.edit(region_end + 1..region_end + 1, &added);
                 self.record_buffer_edit(applied);
-                self.shift_root_spans_after(region_end + 1, added.len() as i64, cx);
+                self.shift_root_spans_after(region_end + 1, added.len() as i64);
                 return true;
             }
         }
@@ -1356,7 +1382,7 @@ impl Editor {
         let delta = self.write_minimal_diff(region_start..region_end, &text);
         // 先平移再分配：新块区间的右端可能已经越过 region_end（拆块会变长）。
         if delta != 0 {
-            self.shift_root_spans_after(region_start, delta, cx);
+            self.shift_root_spans_after(region_start, delta);
         }
         let assigned: Vec<EntityId> = local_spans.iter().map(|(id, _)| *id).collect();
         for (id, local) in local_spans {
@@ -1369,18 +1395,17 @@ impl Editor {
             else {
                 continue;
             };
-            Self::reanchor_record_span(&block, span, cx);
+            self.reanchor_record_span(&block, span, cx);
         }
         // 拆块拆出的空块在段首：空段落序列化不出字节，分不到区间，留着旧的整块
         // 区间就是过期区间——下一次按区间写会把字节落错位置。它在文件里就是接缝上
         // 的那一行，记零宽在段首。
         if !assigned.contains(&anchor.entity_id())
             && text.starts_with('\n')
-            && anchor.read(cx).record.source_span.is_some()
+            && self.document.source_span_of(anchor.entity_id()).is_some()
         {
-            anchor.update(cx, |block, _cx| {
-                block.record.source_span = Some(region_start..region_start);
-            });
+            self.document
+                .set_source_span(anchor.entity_id(), region_start..region_start);
         }
         // 这一段里的区间接缝被重新分配过：落在里面的块要重算派生数据（大纲摘要）。
         // 块的字节可以一个字没动，但它现在指着的是另一段字节——只问缓冲区「哪些字节
@@ -1399,7 +1424,6 @@ impl Editor {
         region_end: usize,
         blank_roots: usize,
         has_next_root: bool,
-        cx: &mut Context<Self>,
     ) -> bool {
         if blank_roots == 0 {
             return false;
@@ -1430,30 +1454,29 @@ impl Editor {
         self.record_buffer_edit(applied);
         let delta = filler.len() as i64 - (eaten - region_start) as i64;
         if delta != 0 {
-            self.shift_root_spans_after(eaten, delta, cx);
+            self.shift_root_spans_after(eaten, delta);
         }
         true
     }
 
-    /// 编辑点之后的根块区间整体平移；之前的块字节没被碰到，区间自然不动。
-    fn shift_root_spans_after(&mut self, from: usize, delta: i64, cx: &mut App) {
-        let total = self.buffer.byte_len() as i64;
-        let moved = self
-            .document
-            .root_blocks()
-            .iter()
-            .filter_map(|block| {
-                let span = block.read(cx).record.source_span.clone()?;
-                (span.start >= from).then_some((block.clone(), span))
-            })
-            .collect::<Vec<_>>();
-        for (block, span) in moved {
-            let start = (span.start as i64 + delta).clamp(0, total) as usize;
-            let end = (span.end as i64 + delta).clamp(0, total) as usize;
-            block.update(cx, |block, _cx| {
-                block.record.source_span = Some(start..end.max(start));
-            });
+    /// 一次编辑落在某根块自己身上：它的区间尾部跟着涨/缩 `delta`，
+    /// 编辑点（编辑前坐标 `from`）之后的块整体平移。
+    fn grow_root_span_after_edit(&mut self, block: &Entity<Block>, delta: i64, from: usize) {
+        if let Some(span) = self.document.source_span_of(block.entity_id()) {
+            self.document.set_source_span(
+                block.entity_id(),
+                span.start..(span.end as i64 + delta).max(span.start as i64) as usize,
+            );
         }
+        self.shift_root_spans_after(from, delta);
+    }
+
+    /// 编辑点之后的区间整体平移；之前的块字节没被碰到，区间自然不动。
+    /// 表在块树那边（`DocumentTree::shift_source_spans_after`），一趟紧凑循环——
+    /// 以前逐块 `read`+`update` 10 万根实体，实测一次按键 57ms。
+    fn shift_root_spans_after(&mut self, from: usize, delta: i64) {
+        let total = self.buffer.byte_len();
+        self.document.shift_source_spans_after(from, delta, total);
     }
 
     /// 结构命令的写回入口：先看根块序列变了没有。
@@ -1478,7 +1501,7 @@ impl Editor {
         let unchanged_sequence = before
             .iter()
             .map(|(id, _)| *id)
-            .eq(self.document.root_layout(cx).into_iter().map(|(id, _)| id));
+            .eq(self.document.root_layout().into_iter().map(|(id, _)| id));
         unchanged_sequence && self.write_back_block_source(&root, cx)
     }
 
@@ -1516,7 +1539,7 @@ impl Editor {
                 self.apply_resynced_text(&text);
                 // 区间只有在它派生自的那份文本里才成立：跳过重投影时也别动区间，
                 // 写回路径已经把区间按缓冲区字节摆好了。
-                self.reattach_root_spans(&block_spans, &text, cx);
+                self.reattach_root_spans(&block_spans, &text);
             }
         } else if !skip_resync {
             // 源码/代码文档：缓冲区装的是不套围栏的源码文本。这一遍同样是 O(文档)
@@ -1576,7 +1599,6 @@ impl Editor {
         &mut self,
         block_spans: &[(EntityId, std::ops::Range<usize>)],
         text: &str,
-        cx: &mut Context<Self>,
     ) {
         let roots = self.document.root_blocks().to_vec();
         for block in roots {
@@ -1595,9 +1617,10 @@ impl Editor {
                     Some(start..end.max(start))
                 })
                 .unwrap_or_default();
-            block.update(cx, |block, _cx| {
-                block.record.source_span = span;
-            });
+            match span {
+                Some(span) => self.document.set_source_span(block.entity_id(), span),
+                None => self.document.clear_source_span(block.entity_id()),
+            }
         }
     }
 

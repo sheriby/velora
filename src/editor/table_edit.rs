@@ -13,9 +13,8 @@ impl Editor {
     pub(crate) fn table_cell_source_range(
         &self,
         binding: &TableCellBinding,
-        cx: &App,
     ) -> Option<Range<usize>> {
-        let span = binding.table_block.read(cx).record.source_span.clone()?;
+        let span = self.document.source_span_of(binding.table_block.entity_id())?;
         let raw = self.buffer.slice(span.clone());
         // 视觉行 0 是表头（源码第 0 行），1 起是数据行：中间那条分隔行没有格子。
         let line_index = if binding.position.row == 0 {
@@ -42,7 +41,7 @@ impl Editor {
         binding: &TableCellBinding,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(old_span) = self.table_cell_source_range(binding, cx) else {
+        let Some(old_span) = self.table_cell_source_range(binding) else {
             return false;
         };
         let new_source = serialize_table_cell_markdown(&binding.cell.read(cx).record.title);
@@ -58,13 +57,13 @@ impl Editor {
             return true;
         }
         // 表根块的区间要跟着涨：这一格就在它里面。它后面的根块整体平移。
-        if let Some(table_span) = binding.table_block.read(cx).record.source_span.clone() {
-            binding.table_block.update(cx, |block, _cx| {
-                block.record.source_span =
-                    Some(table_span.start..(table_span.end as i64 + delta) as usize);
-            });
+        if let Some(table_span) = self.document.source_span_of(binding.table_block.entity_id()) {
+            self.document.set_source_span(
+                binding.table_block.entity_id(),
+                table_span.start..(table_span.end as i64 + delta) as usize,
+            );
         }
-        self.shift_root_spans_after(applied.new_range.end, delta, cx);
+        self.shift_root_spans_after(applied.new_range.end, delta);
         true
     }
 
@@ -102,7 +101,7 @@ impl Editor {
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
             return false;
         };
         let Some(columns) = table_block
@@ -138,12 +137,7 @@ impl Editor {
         let applied = self.buffer.edit(offset..offset, &inserted);
         self.record_buffer_edit(applied);
         let delta = inserted.len() as i64;
-        table_block.update(cx, |block, _cx| {
-            if let Some(span) = &block.record.source_span {
-                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
-            }
-        });
-        self.shift_root_spans_after(offset, delta, cx);
+        self.grow_root_span_after_edit(table_block, delta as i64, offset);
         true
     }
 
@@ -162,7 +156,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         let (Some(span), Some((columns, rows_left))) = (
-            table_block.read(cx).record.source_span.clone(),
+            self.document.source_span_of(table_block.entity_id()),
             table_block
                 .read(cx)
                 .record
@@ -194,12 +188,7 @@ impl Editor {
         let applied = self.buffer.edit(from..to, "");
         self.record_buffer_edit(applied);
         let delta = from as i64 - to as i64;
-        table_block.update(cx, |block, _cx| {
-            if let Some(span) = &block.record.source_span {
-                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
-            }
-        });
-        self.shift_root_spans_after(to, delta, cx);
+        self.grow_root_span_after_edit(table_block, delta as i64, to);
         true
     }
 
@@ -218,7 +207,7 @@ impl Editor {
         alignment: TableColumnAlignment,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
             return false;
         };
         let Some((columns, rows)) = table_block
@@ -255,13 +244,7 @@ impl Editor {
         self.record_buffer_edit(applied);
         let delta = new_line.len() as i64 - (old_line_range.end - old_line_range.start) as i64;
         if delta != 0 {
-            table_block.update(cx, |block, _cx| {
-                if let Some(span) = &block.record.source_span {
-                    block.record.source_span =
-                        Some(span.start..(span.end as i64 + delta) as usize);
-                }
-            });
-            self.shift_root_spans_after(old_line_range.end, delta, cx);
+            self.grow_root_span_after_edit(table_block, delta as i64, old_line_range.end);
         }
         true
     }
@@ -280,7 +263,7 @@ impl Editor {
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
             return false;
         };
         let Some(table) = table_block.read(cx).record.table.clone() else {
@@ -325,13 +308,7 @@ impl Editor {
             self.record_buffer_edit(applied);
             moved += text.len();
         }
-        table_block.update(cx, |block, _cx| {
-            if let Some(span) = &block.record.source_span {
-                block.record.source_span =
-                    Some(span.start..(span.end as i64 + moved as i64) as usize);
-            }
-        });
-        self.shift_root_spans_after(boundary, moved as i64, cx);
+        self.grow_root_span_after_edit(table_block, moved as i64, boundary);
         true
     }
 
@@ -348,7 +325,7 @@ impl Editor {
         column: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
             return false;
         };
         let Some((rows, columns)) = table_block
@@ -384,12 +361,7 @@ impl Editor {
             self.record_buffer_edit(applied);
         }
         let delta = -(moved as i64);
-        table_block.update(cx, |block, _cx| {
-            if let Some(span) = &block.record.source_span {
-                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
-            }
-        });
-        self.shift_root_spans_after(boundary, delta, cx);
+        self.grow_root_span_after_edit(table_block, delta as i64, boundary);
         true
     }
 
@@ -408,7 +380,7 @@ impl Editor {
         visual_b: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
             return false;
         };
         let Some(rows) = table_block
@@ -462,7 +434,7 @@ impl Editor {
         column_b: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
             return false;
         };
         let Some((rows, columns)) = table_block
@@ -532,7 +504,7 @@ impl Editor {
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(span) = table_block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(table_block.entity_id()) else {
             return false;
         };
         let Some((rows, columns)) = table_block
@@ -571,12 +543,7 @@ impl Editor {
 
         let delta = cut_from as i64 - cut_to as i64 + promoted_text.len() as i64
             - (header_range.end - header_range.start) as i64;
-        table_block.update(cx, |block, _cx| {
-            if let Some(span) = &block.record.source_span {
-                block.record.source_span = Some(span.start..(span.end as i64 + delta) as usize);
-            }
-        });
-        self.shift_root_spans_after(boundary, delta, cx);
+        self.grow_root_span_after_edit(table_block, delta as i64, boundary);
         true
     }
 
@@ -1248,7 +1215,7 @@ impl Editor {
         };
         // Insert the replacement paragraph after the table first, then remove the
         // table, so the document is never momentarily empty.
-        let roots_before = self.document.root_layout(cx);
+        let roots_before = self.document.root_layout();
         let paragraph = Self::new_block(cx, BlockRecord::paragraph(String::new()));
         self.document.insert_blocks_at(
             location.parent.clone(),

@@ -69,7 +69,7 @@ impl Editor {
                 | BlockEvent::RequestCalloutBreak
                 | BlockEvent::RequestDelete
         )
-        .then(|| self.document.root_layout(cx));
+        .then(|| self.document.root_layout());
         let visible_before = self.document.flatten_visible_blocks();
         let current_visible_index = visible_before
             .iter()
@@ -719,7 +719,7 @@ impl Editor {
                 }
 
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
-                let roots_before = self.document.root_layout(cx);
+                let roots_before = self.document.root_layout();
 
                 let downgraded = self.document.with_structure_mutation(cx, |document, cx| {
                     let (moved, removed_location) =

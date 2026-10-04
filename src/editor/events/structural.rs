@@ -119,7 +119,7 @@ impl Editor {
         // event (nothing had changed yet), so start a fresh one here that spans
         // the heading/separator conversion. prepare is a no-op if one is pending.
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
-        let roots_before = self.document.root_layout(cx);
+        let roots_before = self.document.root_layout();
         // 被换掉的那一段：成标题时是「标题行 + 下划线行」，做分隔线时就是下划线那行。
         let region_anchor = target.clone().unwrap_or_else(|| block.clone());
 
@@ -218,7 +218,7 @@ impl Editor {
         let header_index = location.index - 1;
         let removed_delimiter = block.entity_id();
         let removed_header = prev.entity_id();
-        let roots_before = self.document.root_layout(cx);
+        let roots_before = self.document.root_layout();
         let table_block = Self::new_table_block(cx, table);
         let new_paragraph = Self::new_block(cx, BlockRecord::paragraph(String::new()));
         self.document.with_structure_mutation(cx, |document, cx| {
@@ -268,7 +268,7 @@ impl Editor {
         });
 
         let removed_id = row_block.entity_id();
-        let roots_before = self.document.root_layout(cx);
+        let roots_before = self.document.root_layout();
         self.document.with_structure_mutation(cx, |document, cx| {
             let _ = document.remove_block_by_id_raw(removed_id, cx);
         });

@@ -223,7 +223,7 @@ impl Editor {
         }
 
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
-        let roots_before = self.document.root_layout(cx);
+        let roots_before = self.document.root_layout();
         self.document.with_structure_mutation(cx, |document, cx| {
             let _ = document.remove_block_by_id_raw(block.entity_id(), cx);
             parent.update(cx, |parent, cx| {

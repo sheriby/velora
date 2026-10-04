@@ -576,10 +576,6 @@ pub struct BlockRecord {
     pub raw_fallback: Option<String>,
     /// 列表项自己写的记号（`+`/`*`/`-`、`.`/`)`）。见 [`ListMarkerStyle`]。
     pub list_marker: ListMarkerStyle,
-    /// 该块在文档缓冲区里占的源码区间（字节）。由导入器在解析时记录，
-    /// 不是序列化之后反推出来的——这是「块是文本的投影」这条不变式的载体。
-    /// 子块与新建块暂时没有区间（`None`），等接入写回路径后由重投影补上。
-    pub source_span: Option<std::ops::Range<usize>>,
     /// 这一块的内容每一行，在自己那一行里**让开了几个字节**（本块的记号，如
     /// `# `、`- `、`> `；键在解析期由剥记号的那段代码顺手记下，不是事后拿文件行
     /// 与模型行比出来的）。空表是「解析器没记」，位置换算退回按文件量。
@@ -622,7 +618,6 @@ impl BlockRecord {
             content: Vec::new(),
             raw_fallback: None,
             list_marker: ListMarkerStyle::default(),
-            source_span: None,
             source_line_prefixes: Vec::new(),
             source_separator_bytes: 0,
             source_fence_lines: None,

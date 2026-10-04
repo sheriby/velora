@@ -723,7 +723,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             ),
             None => {
                 // 没有围栏的缩进代码块：文件里就是那几行内容，前后不该补 phantom 围栏行。
-                let span = block.read(cx).record.source_span.clone();
+                let span = self.document.source_span_of(block.entity_id());
                 let indented = self
                     .recorded_indented_code_prefixes(
                         block,
@@ -814,7 +814,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         ) else {
             return 0;
         };
-        let Some(span) = block_ref.record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(block.entity_id()) else {
             // 挂在容器里的表格没有自己的源码区间（区间只挂在根块上），那就到**所在根块**
             // 的原文里量同一套格子。
             return self.push_table_mappings_in_root(block, absolute_start, mappings, cx);
@@ -898,7 +898,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let Some(root) = self.document.root_ancestor_of(block.entity_id()) else {
             return 0;
         };
-        let Some(root_span) = root.read(cx).record.source_span.clone() else {
+        let Some(root_span) = self.document.source_span_of(root.entity_id()) else {
             return 0;
         };
         if absolute_start >= self.buffer.byte_len() || root_span.end <= root_span.start {
@@ -1603,11 +1603,11 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         cx: &App,
     ) -> Option<Range<usize>> {
         let block = self.document.block_entity_by_id(entity_id)?;
-        if let Some(span) = block.read(cx).record.source_span.clone() {
+        if let Some(span) = self.document.source_span_of(block.entity_id()) {
             return Some(span);
         }
         let root = self.document.root_ancestor_of(entity_id)?;
-        if root.read(cx).record.source_span.is_some() {
+        if self.document.source_span_of(root.entity_id()).is_some() {
             // 挂在容器里的子块：只重建它那**一根**块的映射。
             let mut mappings = Vec::new();
             let mut ranges = HashMap::new();
@@ -1624,7 +1624,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut anchor = 0usize;
         for sibling in self.document.root_blocks().iter() {
             let id = sibling.entity_id();
-            let span = sibling.read(cx).record.source_span.clone();
+            let span = self.document.source_span_of(sibling.entity_id());
             if id == root.entity_id() {
                 return Some(anchor..anchor);
             }
@@ -1648,7 +1648,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         block_ranges: &mut HashMap<EntityId, Range<usize>>,
         cx: &App,
     ) -> bool {
-        let Some(span) = block.read(cx).record.source_span.clone() else {
+        let Some(span) = self.document.source_span_of(block.entity_id()) else {
             return false;
         };
         if Self::is_empty_root_paragraph(block.read(cx)) {
@@ -1702,7 +1702,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut previous = None;
         let mut next = None;
         for (index, block) in roots.iter().enumerate() {
-            let Some(span) = block.read(cx).record.source_span.clone() else {
+            let Some(span) = self.document.source_span_of(block.entity_id()) else {
                 continue;
             };
             if span.start <= range.end && span.end >= range.start {
@@ -1743,10 +1743,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// 重拼一遍，成本随文档长。
     pub(super) fn block_id_at_source_offset(&self, offset: usize, cx: &App) -> Option<EntityId> {
         let root = self.document.root_blocks().into_iter().find(|block| {
-            block
-                .read(cx)
-                .record
-                .source_span
+            self.document
+                .source_span_of(block.entity_id())
                 .as_ref()
                 .is_some_and(|span| span.contains(&offset) || span.start == offset)
         })?;
@@ -1836,10 +1834,9 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             None => 0,
         };
         if start_index > 0 {
-            next_anchor = roots[start_index - 1]
-                .read(cx)
-                .record
-                .source_span
+            next_anchor = self
+                .document
+                .source_span_of(roots[start_index - 1].entity_id())
                 .as_ref()
                 .map(|span| (span.end + 1).min(self.buffer.byte_len()))
                 .unwrap_or(0);
@@ -1854,10 +1851,9 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 block_ranges.insert(id, next_anchor..next_anchor);
                 continue;
             }
-            next_anchor = block
-                .read(cx)
-                .record
-                .source_span
+            next_anchor = self
+                .document
+                .source_span_of(block.entity_id())
                 .as_ref()
                 .map(|span| (span.end + 1).min(self.buffer.byte_len()))
                 .unwrap_or(next_anchor);

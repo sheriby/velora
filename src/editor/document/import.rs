@@ -46,7 +46,7 @@ impl Editor {
         }
         self.roots_reprojected
             .set(self.roots_reprojected.get() + roots.len() as u64);
-        Self::attach_root_spans(&self.buffer, &roots, &root_spans, 0, cx);
+        self.attach_root_spans(&roots, &root_spans, 0);
         roots
     }
 
@@ -70,7 +70,7 @@ impl Editor {
         }
         let roots = self.document.root_blocks().to_vec();
         let root = roots.get(root_index)?.clone();
-        let span = root.read(cx).record.source_span.clone()?;
+        let span = self.document.source_span_of(root.entity_id())?;
         if span.end > self.buffer.byte_len() {
             return None;
         }
@@ -105,7 +105,7 @@ impl Editor {
             }
             self.roots_reprojected
                 .set(self.roots_reprojected.get() + new_roots.len() as u64);
-            Self::attach_root_spans(&self.buffer, &new_roots, &spans, line_base, cx);
+            self.attach_root_spans(&new_roots, &spans, line_base);
             self.document
                 .replace_root_range(root_index..root_index + 1, new_roots, cx);
             return Some(parsed_lines);

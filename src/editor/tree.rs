@@ -103,6 +103,12 @@ impl VisibleTreeSnapshot {
 /// subset of Markdown that the importer and serializer can reconstruct.
 pub(super) struct DocumentTree {
     roots: Vec<Entity<Block>>,
+    /// 块的源码区间（字节）。**唯一的事实源在这里**，不在块上：一次编辑之后，
+    /// 编辑点之后的每一根块都要整体平移，而块是 GPUI 实体——逐个 `read`+`update`
+    /// 10 万根块实测 57ms（10 MiB 一次按键）。这一张表平移是一趟紧凑循环，
+    /// 同样的编辑 0.5ms 以内。写回那几档自己重新落笔的块，随后用
+    /// [`Self::set_source_span`] 覆盖自己那一条。
+    source_spans: HashMap<EntityId, std::ops::Range<usize>>,
     snapshot: VisibleTreeSnapshot,
     pending: Option<PendingTail>,
     /// P6a：代码/纯文本文档的原始字节尾部（与 `pending` 互斥使用）。
@@ -120,9 +126,38 @@ pub(super) struct DocumentTree {
 }
 
 impl DocumentTree {
+    /// 这一块的源码区间；没有登记过（子块、新建块）返回 `None`。
+    pub(crate) fn source_span_of(&self, entity_id: EntityId) -> Option<std::ops::Range<usize>> {
+        self.source_spans.get(&entity_id).cloned()
+    }
+
+    /// 登记/覆盖这一块的源码区间（写回路径落笔之后调用）。
+    pub(crate) fn set_source_span(&mut self, entity_id: EntityId, span: std::ops::Range<usize>) {
+        self.source_spans.insert(entity_id, span);
+    }
+
+    /// 拿掉这一块的区间（重投影后分不到区间、块被删除时调用）。
+    pub(crate) fn clear_source_span(&mut self, entity_id: EntityId) {
+        self.source_spans.remove(&entity_id);
+    }
+
+    /// 一次缓冲区编辑之后平移：`from` 之后的区间整体挪 `delta`（`from` 用编辑前的
+    /// 坐标，等于被替换字节段的终点）。被编辑的那一块自己是写回方，随后会覆盖。
+    pub(crate) fn shift_source_spans_after(&mut self, from: usize, delta: i64, total: usize) {
+        for span in self.source_spans.values_mut() {
+            if span.start < from {
+                continue;
+            }
+            let start = (span.start as i64 + delta).clamp(0, total as i64) as usize;
+            let end = (span.end as i64 + delta).clamp(0, total as i64) as usize;
+            *span = start..end.max(start);
+        }
+    }
+
     pub(super) fn new(roots: Vec<Entity<Block>>) -> Self {
         Self {
             roots,
+            source_spans: HashMap::new(),
             snapshot: VisibleTreeSnapshot::default(),
             pending: None,
             pending_source: None,
@@ -258,6 +293,11 @@ impl DocumentTree {
     }
 
     pub(super) fn replace_roots(&mut self, roots: Vec<Entity<Block>>, cx: &mut Context<Editor>) {
+        // 旧实体整棵作废（slotmap 的 id 带代次，槽位复用也不会撞上），它们的区间
+        // 一起丢掉；新根块的区间由调用方在换进来之前挂好，这里按 id 保留。
+        let live: std::collections::HashSet<EntityId> =
+            roots.iter().map(|block| block.entity_id()).collect();
+        self.source_spans.retain(|id, _| live.contains(id));
         self.roots = roots;
         // The replacement defines the whole document, so any not-yet-built tail
         // belongs to the previous content.
@@ -278,6 +318,9 @@ impl DocumentTree {
         if range.start > self.roots.len() || range.end < range.start || range.end > self.roots.len()
         {
             return;
+        }
+        for block in &self.roots[range.clone()] {
+            self.source_spans.remove(&block.entity_id());
         }
         self.roots.splice(range, roots);
         self.rebuild_metadata_and_snapshot(cx);
@@ -447,10 +490,10 @@ impl DocumentTree {
     ///
     /// 结构事件用它对比变更前后，算出「哪几根块被换成了哪几根」，只重写那一段
     /// 字节。这里只碰整数与句柄，比整篇序列化便宜得多。
-    pub(crate) fn root_layout(&self, cx: &App) -> Vec<(gpui::EntityId, Option<std::ops::Range<usize>>)> {
+    pub(crate) fn root_layout(&self) -> Vec<(gpui::EntityId, Option<std::ops::Range<usize>>)> {
         self.roots
             .iter()
-            .map(|block| (block.entity_id(), block.read(cx).record.source_span.clone()))
+            .map(|block| (block.entity_id(), self.source_span_of(block.entity_id())))
             .collect()
     }
 
@@ -732,6 +775,7 @@ impl DocumentTree {
     ) -> Option<(Entity<Block>, BlockLocation)> {
         self.flush_pending_tail(cx);
         let location = self.find_block_location(entity_id)?;
+        self.source_spans.remove(&entity_id);
         let removed = if let Some(parent) = location.parent.clone() {
             let mut removed = None;
             parent.update(cx, |parent, _cx| {

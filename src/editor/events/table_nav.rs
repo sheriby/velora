@@ -233,7 +233,7 @@ impl Editor {
                 self.clear_table_axis_selection(cx);
                 self.sync_table_record_from_runtime(&binding.table_block, cx);
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
-                let roots_before = self.document.root_layout(cx);
+                let roots_before = self.document.root_layout();
                 let new_block = Self::new_block(cx, BlockRecord::paragraph(String::new()));
                 self.document.insert_blocks_at(
                     location.parent,

@@ -502,11 +502,9 @@ impl Editor {
         let total = self.buffer.byte_len();
         let mut cursor = 0usize;
         for block in self.document.root_blocks().to_vec() {
-            let start = block
-                .read(cx)
-                .record
-                .source_span
-                .clone()
+            let start = self
+                .document
+                .source_span_of(block.entity_id())
                 .map(|span| span.start)
                 .unwrap_or(cursor)
                 .min(total);

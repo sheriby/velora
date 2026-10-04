@@ -15,17 +15,15 @@ pub(super) fn root_block_spans(
     editor: &gpui::Entity<Editor>,
     cx: &mut gpui::VisualTestContext,
 ) -> (Vec<(std::ops::Range<usize>, String)>, String) {
-    editor.read_with(cx, |editor, cx| {
+    editor.read_with(cx, |editor, _cx| {
         let spans = editor
             .document
             .root_blocks()
             .iter()
             .map(|block| {
-                let span = block
-                    .read(cx)
-                    .record
-                    .source_span
-                    .clone()
+                let span = editor
+                    .document
+                    .source_span_of(block.entity_id())
                     .unwrap_or_else(|| panic!("有块没挂上源码区间"));
                 let text = editor.buffer.slice(span.clone());
                 (span, text)
@@ -414,7 +412,7 @@ async fn source_document_line_numbers_follow_the_buffer(cx: &mut TestAppContext)
                 .root_blocks()
                 .iter()
                 .filter_map(|block| {
-                    let span = block.read(cx).record.source_span.clone()?;
+                    let span = editor.document.source_span_of(block.entity_id())?;
                     let shown = block.read(cx).source_line_start();
                     let truth = editor.buffer.line_of(span.start) + 1;
                     (shown != truth).then_some((shown, truth))
@@ -483,7 +481,10 @@ async fn an_atx_heading_remembers_where_its_content_starts(cx: &mut TestAppConte
                 "「{line}」的记号宽度没在解析期记下来"
             );
             // 记下的那一位必须正落在内容上：从它起读，文件里就是这一块的内容。
-            let span = record.source_span.clone().expect("标题块该有源码区间");
+            let span = editor
+                .document
+                .source_span_of(heading.entity_id())
+                .expect("标题块该有源码区间");
             let content = record.title.markdown_offset_map().markdown().to_string();
             let from = span.start + *expected as usize;
             assert_eq!(
@@ -854,11 +855,11 @@ async fn an_atomic_block_in_a_quote_remembers_what_its_lines_yielded(cx: &mut Te
                 .find(|item| !item.entity.read(cx).display_text().is_empty())
                 .map(|item| item.entity.clone())
                 .expect("夹具里该有一片可见的块");
-            let (prefixes, content, span) = leaf.read_with(cx, |block, _cx| {
+            let span = editor.document.source_span_of(leaf.entity_id());
+            let (prefixes, content) = leaf.read_with(cx, |block, _cx| {
                 (
                     block.record.source_line_prefixes.clone(),
                     block.display_text().to_string(),
-                    block.record.source_span.clone(),
                 )
             });
             assert_eq!(
@@ -872,11 +873,9 @@ async fn an_atomic_block_in_a_quote_remembers_what_its_lines_yielded(cx: &mut Te
                 .document
                 .root_ancestor_of(leaf.entity_id())
                 .expect("夹具的块挂在某根块下");
-            let root_span = root
-                .read(cx)
-                .record
-                .source_span
-                .clone()
+            let root_span = editor
+                .document
+                .source_span_of(root.entity_id())
                 .expect("根块该有源码区间");
             let first_line = editor.buffer.line_of(root_span.start);
             let last_line = editor.buffer.line_of(root_span.end);
@@ -1118,6 +1117,7 @@ async fn an_indented_code_block_does_not_eat_the_separator_line_after_it(
 
     editor.read_with(cx, |editor, cx| {
         let roots = editor.document.root_blocks();
+        let code_id = roots[0].entity_id();
         let code = roots[0].read(cx);
         assert_eq!(
             code.display_text(),
@@ -1130,11 +1130,11 @@ async fn an_indented_code_block_does_not_eat_the_separator_line_after_it(
             "账的行数要跟模型这一族每一行对得上"
         );
         // `    let indented = 1;` 占 0..21，那行空的是接缝，不属于这一块。
-        assert_eq!(
-            code.record.source_span.clone().map(|span| (span.start, span.end)),
-            Some((0, 21)),
-            "代码块的区间多包了接缝那一行"
-        );
+        let span = editor
+            .document
+            .source_span_of(code_id)
+            .map(|span| (span.start, span.end));
+        assert_eq!(span, Some((0, 21)), "代码块的区间多包了接缝那一行");
     });
     let (spans, _) = root_block_spans(&editor, cx);
     assert_eq!(
@@ -1142,4 +1142,34 @@ async fn an_indented_code_block_does_not_eat_the_separator_line_after_it(
         2,
         "接缝那一行被吃掉之后，正文就不是独立的一根块了：{spans:?}"
     );
+}
+
+/// 打字只改一处字节，编辑点之后每一根块的区间都要跟着挪——一根都不许留在原地。
+///
+/// 区间表在块树那边（`DocumentTree::source_spans`），编辑之后走一趟紧凑的平移，
+/// 不再逐块读实体再写回（10 MiB 一次按键实测 57ms）。这条守卫钉的是平移这件事
+/// 本身：打一个字之后，所有根块的区间必须仍然把文件铺满、互不重叠，且每一段都
+/// 读得回本块的内容——漏平移的那一根在这里立刻露出来。
+#[gpui::test]
+async fn typing_at_the_document_head_keeps_every_root_span_tiled(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..120)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    assert!(editor.read_with(cx, |editor, _| editor.document.root_count()) > 100);
+
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.root_blocks()[0].clone();
+        editor.focus_block(first.entity_id());
+        first.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+    cx.simulate_input("字");
+    redraw(cx);
+
+    let (spans, buffer_text) = root_block_spans(&editor, cx);
+    assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "段首打一个字之后");
 }

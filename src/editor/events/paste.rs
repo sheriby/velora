@@ -434,7 +434,7 @@ impl Editor {
         }
 
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
-        let roots_before = self.document.root_layout(cx);
+        let roots_before = self.document.root_layout();
         let can_insert_image_block = self.view_mode == crate::editor::ViewMode::Rendered
             && block.read(cx).kind() == BlockKind::Paragraph
             && self.table_cell_binding(block.entity_id()).is_none()

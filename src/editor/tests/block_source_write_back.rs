@@ -86,7 +86,9 @@ async fn spans_still_tile_the_document_after_an_edit(cx: &mut TestAppContext) {
                 .document
                 .root_blocks()
                 .iter()
-                .find(|block| block.read(cx).record.source_span.as_ref() == Some(span))
+                .find(|block| {
+                    editor.document.source_span_of(block.entity_id()).as_ref() == Some(span)
+                })
                 .unwrap_or_else(|| panic!("区间 {span:?} 对不上任何块"));
             let visible = block.read(cx).record.title.visible_text().to_string();
             let missing = visible
@@ -130,12 +132,12 @@ async fn a_structural_edit_writes_through_its_interval_and_reanchors_every_block
 
     // 每根块都还挂着区间：漏挂的块在位置换算里不存在，表现就是光标落回 0、
     // 点了搜索结果没反应。拆出来的空块记零宽在段首。
-    editor.read_with(cx, |editor, cx| {
+    editor.read_with(cx, |editor, _cx| {
         let missing = editor
             .document
             .root_blocks()
             .iter()
-            .filter(|block| block.read(cx).record.source_span.is_none())
+            .filter(|block| editor.document.source_span_of(block.entity_id()).is_none())
             .count();
         assert_eq!(missing, 0, "拆块后有 {missing} 根块丢了区间");
         assert!(editor.document.root_count() > 3, "拆块后根块数应该增加");
@@ -154,12 +156,12 @@ fn present_root_spans(
     editor: &gpui::Entity<Editor>,
     cx: &mut gpui::VisualTestContext,
 ) -> (Vec<std::ops::Range<usize>>, String) {
-    editor.read_with(cx, |editor, cx| {
+    editor.read_with(cx, |editor, _cx| {
         let spans = editor
             .document
             .root_blocks()
             .iter()
-            .filter_map(|block| block.read(cx).record.source_span.clone())
+            .filter_map(|block| editor.document.source_span_of(block.entity_id()))
             .collect::<Vec<_>>();
         (spans, editor.buffer.text())
     })

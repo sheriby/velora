@@ -38,7 +38,7 @@ impl Editor {
                 // 那一根块**重建它自己的映射。没命中的块连换算都不需要，整篇重拼
                 // source mapping 是白付的 O(文档)——查询没改、只是重算一遍高亮也要付。
                 for root in self.document.root_blocks().to_vec() {
-                    let Some(span) = root.read(cx).record.source_span.clone() else {
+                    let Some(span) = self.document.source_span_of(root.entity_id()) else {
                         continue;
                     };
                     let text = self.buffer.slice(span.clone());
@@ -507,7 +507,7 @@ impl Editor {
     /// 搬运）再把整篇按行重扫一遍（实测一次按键 105ms / 58.5 万行）。现在改问缓冲区
     /// 「哪些字节被改过」，只重扫改动落到的那几根块——一根块的行数是局部量，与文档
     /// 多大无关。
-    pub(crate) fn sync_workspace_outline(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_workspace_outline(&mut self, _cx: &mut Context<Self>) {
         // 懒导入还没接完：文档本身还不完整，这一段一帧都不必动（旧实现靠「整篇
         // 文本没变」短路，于是一边续建一边留着半份大纲，`[TOC]` 直到第一次编辑
         // 才补全）。续建结束时根块数与上次同步对不上，那时一次建全。
@@ -540,7 +540,7 @@ impl Editor {
         // O(根块数 × 文本块数)——10 MiB 那份实测把一次按键拖到 6.3 秒。
         let spans: Vec<Option<Range<usize>>> = roots
             .iter()
-            .map(|root| root.read(cx).record.source_span.clone())
+            .map(|root| self.document.source_span_of(root.entity_id()))
             .collect();
         let mut order = (0..roots.len())
             .filter_map(|index| spans[index].as_ref().map(|span| (span.start, index)))

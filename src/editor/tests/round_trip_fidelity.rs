@@ -386,12 +386,12 @@ async fn splitting_the_first_block_only_touches_that_blocks_bytes(cx: &mut TestA
             continue;
         };
         // 缓冲区是 LF 空间，块区间也记在这套坐标里，所以这条对照走缓冲区而不是磁盘。
-        let (buffer_before, own_span, serializations_before) = editor.read_with(cx, |editor, cx| {
-            let span = first.read(cx).record.source_span.clone().or_else(|| {
+        let (buffer_before, own_span, serializations_before) = editor.read_with(cx, |editor, _cx| {
+            let span = editor.document.source_span_of(first.entity_id()).or_else(|| {
                 editor
                     .document
                     .root_ancestor_of(first.entity_id())
-                    .and_then(|root| root.read(cx).record.source_span.clone())
+                    .and_then(|root| editor.document.source_span_of(root.entity_id()))
             });
             (
                 editor.buffer.text(),
