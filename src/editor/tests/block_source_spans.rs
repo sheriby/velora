@@ -752,3 +752,53 @@ async fn typing_inside_a_code_fence_uses_the_parse_time_prefix(cx: &mut TestAppC
         assert_eq!(after.2, expected, "{name}：字落错了字节");
     }
 }
+
+/// 缩进代码块（四空格与制表符两种写法）同样按解析期记下的账落笔。
+///
+/// 这一档在文件里就是那几行内容，模型存的是每行剥掉缩进记号之后那一段——剥掉几位是
+/// `strip_indented_code_prefix` 当场知道的，以前每次换算都要拿本块的 `source_span` 数
+/// 行数、再逐行比缩进（数不齐还得猜「这块其实有围栏」）。
+#[gpui::test]
+async fn typing_inside_an_indented_code_block_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 打在内容行的中间：块末的那一位本来就走整块写回那一档（缩进代码块会被补成围栏），
+    // 这里要钉的是「行内的落点按记下的宽度」。
+    for (name, source, caret, expected) in [
+        ("四格缩进", "正文。\n\n    let a = 1;\n", 2, "正文。\n\n    le写t a = 1;\n"),
+        ("制表符缩进", "正文。\n\n\tlet b = 2;\n", 2, "正文。\n\n\tle写t b = 2;\n"),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        editor.update(cx, |editor, cx| {
+            let last = editor
+                .document
+                .visible_blocks()
+                .last()
+                .expect("夹具里该有可见块")
+                .entity
+                .clone();
+            editor.focus_block(last.entity_id());
+            last.update(cx, |block, block_cx| block.move_to(caret, block_cx));
+        });
+        redraw(cx);
+
+        let before = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+            )
+        });
+        cx.simulate_input("写");
+        redraw(cx);
+        let after = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+                editor.buffer.text(),
+            )
+        });
+        assert!(after.0 > before.0, "{name}：打字没用上解析期记下的记号宽度");
+        assert_eq!(after.1 - before.1, 0, "{name}：这一行还在事后比缩进");
+        assert_eq!(after.2, expected, "{name}：字落错了字节");
+    }
+}

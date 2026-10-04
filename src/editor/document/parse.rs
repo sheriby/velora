@@ -845,15 +845,23 @@ pub(crate) fn collect_indented_code_block(
     cx: &mut Context<Editor>,
     lines: &[String],
     start: usize,
+    origins: &[usize],
 ) -> Option<(Entity<crate::editor::Block>, usize)> {
     let stripped = strip_indented_code_prefix(&lines[start])?;
+    // 每一行被缩进记号吃掉几字节：本行剥掉的（`strip_indented_code_prefix` 当场知道）
+    // 加上上级容器已经剥掉的（`origins`）。空行整行都是记号。
+    let mut prefixes = vec![(origins.get(start).copied().unwrap_or(0)
+        + (lines[start].len() - stripped.len())) as u32];
     let mut code_lines = vec![stripped.to_string()];
     let mut code_index = start + 1;
     while code_index < lines.len() {
+        let inherited = origins.get(code_index).copied().unwrap_or(0);
         if let Some(stripped) = strip_indented_code_prefix(&lines[code_index]) {
+            prefixes.push((inherited + (lines[code_index].len() - stripped.len())) as u32);
             code_lines.push(stripped.to_string());
             code_index += 1;
         } else if lines[code_index].trim().is_empty() {
+            prefixes.push((inherited + lines[code_index].len()) as u32);
             code_lines.push(String::new());
             code_index += 1;
         } else {
@@ -861,10 +869,11 @@ pub(crate) fn collect_indented_code_block(
         }
     }
 
-    Some((
-        build_code_block(cx, None, code_lines.join("\n")),
-        code_index,
-    ))
+    let block = build_code_block(cx, None, code_lines.join("\n"));
+    block.update(cx, |block, _cx| {
+        block.record.source_line_prefixes = prefixes;
+    });
+    Some((block, code_index))
 }
 
 pub(crate) fn raw_block(cx: &mut Context<Editor>, markdown: String) -> Entity<crate::editor::Block> {

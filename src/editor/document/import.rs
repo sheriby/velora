@@ -331,7 +331,7 @@ impl Editor {
             }
 
             if strip_indented_code_prefix(line).is_some() {
-                let Some((block, next_index)) = collect_indented_code_block(cx, lines, index)
+                let Some((block, next_index)) = collect_indented_code_block(cx, lines, index, &[])
                 else {
                     unreachable!("indented code prefix disappeared after detection");
                 };

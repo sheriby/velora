@@ -268,7 +268,7 @@ impl Editor {
             }
 
             if strip_indented_code_prefix(line).is_some()
-                && let Some((code_block, consumed)) = collect_indented_code_block(cx, lines, index)
+                && let Some((code_block, consumed)) = collect_indented_code_block(cx, lines, index, origins)
             {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
@@ -472,7 +472,7 @@ impl Editor {
             }
 
             if strip_indented_code_prefix(line).is_some()
-                && let Some((code_block, consumed)) = collect_indented_code_block(cx, lines, index)
+                && let Some((code_block, consumed)) = collect_indented_code_block(cx, lines, index, origins)
             {
                 children.push(code_block);
                 index = consumed;
@@ -688,13 +688,17 @@ impl Editor {
                     }
 
                     if line_indent_columns >= marker.content_indent_columns {
-                        let content_dedented = dedent_lines(
-                            &lines[body_index..item_end],
+                        let content_range = body_index..item_end;
+                        let content_slice_origins: Vec<usize> =
+                            content_range.clone().map(inherited).collect();
+                        let (content_dedented, content_origins) = dedent_lines_with_origins(
+                            &lines[content_range],
                             marker.content_indent_columns,
+                            &content_slice_origins,
                         );
                         if strip_indented_code_prefix(&content_dedented[0]).is_some() {
                             let Some((code_block, consumed)) =
-                                collect_indented_code_block(cx, &content_dedented, 0)
+                                collect_indented_code_block(cx, &content_dedented, 0, &content_origins)
                             else {
                                 unreachable!(
                                     "indented code prefix disappeared after child detection"
@@ -794,11 +798,17 @@ impl Editor {
                 }
 
                 if line_indent_columns >= marker.content_indent_columns {
-                    let content_dedented =
-                        dedent_lines(&lines[body_index..item_end], marker.content_indent_columns);
+                    let content_range = body_index..item_end;
+                    let content_slice_origins: Vec<usize> =
+                        content_range.clone().map(inherited).collect();
+                    let (content_dedented, content_origins) = dedent_lines_with_origins(
+                        &lines[content_range],
+                        marker.content_indent_columns,
+                        &content_slice_origins,
+                    );
                     if strip_indented_code_prefix(&content_dedented[0]).is_some() {
                         let Some((code_block, consumed)) =
-                            collect_indented_code_block(cx, &content_dedented, 0)
+                            collect_indented_code_block(cx, &content_dedented, 0, &content_origins)
                         else {
                             unreachable!("indented code prefix disappeared after detection");
                         };

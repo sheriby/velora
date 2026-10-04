@@ -527,6 +527,44 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         })
     }
 
+    /// 缩进代码块的内容行让开几字节，先问解析期记下的那份账（`source_line_prefixes`，
+    /// `source_fence_lines` 是 `None` 说明这一档没有围栏行）。行数对不上、起点不在行首、
+    /// 引用里的（`>` 那一族账不在里面）都算不能用。
+    fn recorded_indented_code_prefixes(
+        &self,
+        block: &Entity<Block>,
+        content: &str,
+        absolute_start: usize,
+        quote_depth: usize,
+        cx: &App,
+    ) -> Option<Vec<usize>> {
+        if quote_depth > 0 || block.read(cx).record.source_fence_lines.is_some() {
+            return None;
+        }
+        let prefixes: Vec<usize> = block
+            .read(cx)
+            .record
+            .source_line_prefixes
+            .iter()
+            .map(|at| *at as usize)
+            .collect();
+        let model_lines = if content.is_empty() {
+            0
+        } else {
+            content.split('\n').count()
+        };
+        if prefixes.len() != model_lines {
+            return None;
+        }
+        let line = self.buffer.line_of(absolute_start);
+        if self.buffer.line_start(line) != absolute_start {
+            return None;
+        }
+        self.line_prefix_from_record
+            .set(self.line_prefix_from_record.get() + prefixes.len() as u64);
+        Some(prefixes)
+    }
+
     /// 量出来：这一段缩进代码块的内容行各自在自己那一行里让开几个字节。
     ///
     /// 缩进代码块（四空格或制表符）在文件里就是那几行内容，没有围栏行；模型存的是
@@ -675,16 +713,25 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             None => {
                 // 没有围栏的缩进代码块：文件里就是那几行内容，前后不该补 phantom 围栏行。
                 let span = block.read(cx).record.source_span.clone();
-                match span
-                    .as_ref()
-                    .and_then(|span| {
-                        self.measured_indented_code_line_prefixes(
-                            span,
-                            &content,
-                            absolute_start,
-                            quote_depth,
-                        )
-                    }) {
+                let indented = self
+                    .recorded_indented_code_prefixes(
+                        block,
+                        &content,
+                        absolute_start,
+                        quote_depth,
+                        cx,
+                    )
+                    .or_else(|| {
+                        span.as_ref().and_then(|span| {
+                            self.measured_indented_code_line_prefixes(
+                                span,
+                                &content,
+                                absolute_start,
+                                quote_depth,
+                            )
+                        })
+                    });
+                match indented {
                     Some(prefixes) => {
                         Self::build_indented_code_content_mapping(&content, &prefixes)
                     }
