@@ -102,6 +102,7 @@ Workspace (src/editor/workspace.rs)
 13. **「这个字节落在哪一块」按块的区间问，不整篇重拼映射**：`block_id_at_source_offset` 先问根块自己的 `source_span`，只有落进容器（引用、列表）才把**那一根**块的子块映射重建出来；`source_mappings_in_range`（src/editor/source_mapping.rs）只重建与给定区间相交的根块，再各带左右紧邻的一根——端点落在两块之间的空行时，`endpoint_for_source_offset` 要按距离挑最近的一块，少带就挑到别处去了。之前点一次大纲标题要走四次整篇重建（`heading_block_at_source_line`、`unfold_sections_covering_source_range`、`apply_marked_source_range`、`apply_selection_snapshot_in_current_mode`），每次都是 O(文档)：1 MiB 实测一次 227ms，10 MiB 就是秒级。守卫：`clicking_an_outline_heading_unfolds_it_without_a_document_wide_mapping`（`source_mapping_full_builds` 增量为 0，同时钉住那个 Setext 标题确实被展开）。
 14. **跨块复制交出去的是缓冲区里的那段字节**：`cross_block_selected_markdown`（src/editor/selection.rs）现在就是 `buffer.slice(选区的源区间)`。以前它按块树的序列化口径逐块重拼、再按「块间补空行、紧排列表项不补」的规则粘起来——Setext 的下划线在这趟里丢掉（复制—粘贴之后那一块不再是标题），`__强调__` 与 `1)` 也随时可能被洗成别的写法，而且为了算边界还要整篇重拼 source mapping。端点换算用 `source_mapping_for_entity`（只走这一根块），拿不到映射的原子块（表格整块）退回它自己的 `source_span`；两者都没有区间时（刚插进树、尚未写回的空段落）给一个就近的零宽锚点，删除才不因它中止。守卫：`copying_a_cross_block_selection_gives_the_bytes_from_the_file`、`copy_then_paste_a_cross_block_selection_keeps_the_writing_style`、`delete_selection_*`。
 15. **子块在它那一行的起点也按文件量**：走查算子块的绝对位置时，前缀以前是按模型拼的（列表每级两个空格、引用一律 `> `）。文件里缩进四格、制表符、`>引用`（记号后没空格）时整条链就漂几个字节——实测在 `- 父甲` / `(四空格)- 子乙` 的子项里打一个字，文件变成 `- X父甲`：字节进了**父项那一行**，屏幕上子项却照常多出那个字符（制表符那一例更狠，落笔顺手把 `\t` 洗成两个空格）。`measured_block_prefix` 用解析器自己的剥记号函数把「本行里内容从第几个字节开始」量出来：引用每层都在自己那一行上，逐层重量；列表的上级只留下缩进，交给本块的记号（`parse_list_marker` 把前导空白一并吃掉）或段落继承来的 `list_dedent`（父项记号的实测宽度）吃掉。量不到就退回按模型拼——多行内容（每行的记号宽度这里量不到）、起点不是行首、起点落在多字节字符中间（说明上游的字节账已经错）。守卫：`typing_in_an_indented_list_item_lands_on_that_item`（四空格/制表符/引用里四空格/缩进四格的序号项，钉到文件字节）、`nested_shapes_put_block_offsets_on_the_real_bytes`（10 个嵌套形状钉块内偏移末端落在文件真字节上）、闸门里多出的那一步「子项里打字」。这张量表放不下多行块（脚注定义续行、引用容器正文——可见文本跨行，行间还夹着各自记号）与缩进过的代码围栏，后者是同一族的下一笔（`push_code_block_mapping` 仍按每级两个空格拼缩进）。
+16. **围栏行与内容行的缩进也按文件量**（`measured_code_block_line_prefixes`）：模型里根本没有围栏那两行（映射从绝对起点直接拼围栏加信息串），内容行存的是**上级容器 dedent 之后**那一段——于是两级缩进都不在模型里，按 `render_depth` 拼「每级两个空格」就整体漂。实测（2026-10-04）缩进两格的围栏里在内容第 3 个字符处打一个字，字落到内容行的行首（文件 `X  let a`，屏幕 `  Xlet a`）；列表项里四格的那种，字写进了同一根列表的 `- 步骤` 那一行。量法：围栏开行按「文件那一行去掉围栏与信息串之后剩下的必须是纯空白」，内容行按「文件行的缩进 − 模型行的缩进」——**只比缩进不比整行**，因为算光标时这一次按键的字节已经在模型里、还没进缓冲区，要求「文件那行以模型这段结尾」在算的一刻就不成立了。闭合行与开行同规矩（文件写的围栏与信息串对不上就不量，比如信息串里带反引号而模型改用 `~~~~` 那类）。守卫：`typing_inside_an_indented_code_fence_lands_on_those_bytes`（两格、列表里四格）、`typing_at_the_end_of_an_indented_fence_line_keeps_the_fence_indent`（块末的光标走整块写回，围栏两行的缩进与信息串得原样）、`nested_shapes_put_block_offsets_on_the_real_bytes` 里那格围栏。还没做的是**缩进代码块**：制表符开头的 ` ``` ` 按 CommonMark 就是缩进代码块（制表符算四列，超过围栏允许的三列），而它的映射现在照样给内容补上 phantom 的围栏行，光标因此落进围栏文字里（实测制表符缩进那一例写成 `<TAB>```ruXst`）。
 
 
 ## 4. Undo/历史（src/editor/history.rs）
@@ -148,9 +149,9 @@ Workspace (src/editor/workspace.rs)
   并钉住正文与表格格子两处命中）。`build_source_target_mappings` 只剩两处入口：源码模式的高亮
   （那里的块是按行切的投影，位置不挂 `source_span`，模式属性使然）与窗口内一根有区间的块都没有时的
   退回。**块内**那段前缀重建已经收窄：单行内容的块（标题、段落、列表项、任务项、单子块引用）
-  现在按文件量记号宽度（不变式 15），仍按模型拼的只剩两类——多行内容的块（每一行的记号宽度
-  这里量不到，要等逐行区间）与代码围栏的缩进（`push_code_block_mapping` 还在按每级两个空格拼，
-  实测缩进过两格/四格/制表符的围栏打字会落进围栏那一行）。再往下要等
+  按文件量记号宽度（不变式 15），代码围栏的开行、内容行、闭合行也按文件量（不变式 16）。
+  仍按模型拼的只剩两类——多行内容的块（每一行的记号宽度这里量不到，要等逐行区间）与
+  缩进代码块（映射还给内容补 phantom 的围栏行）。再往下要等
   每个子块与每个格子都在解析期记下自己的字节区间才能删（方案 §4 的 `SourceRegion`，表格 cells 已经在
   按结构量了）。
 - **大纲跟随滚动已经不付全文的钱**（`sync_outline_follow_scroll`，src/editor/workspace/tree_sync.rs）：

@@ -285,29 +285,32 @@ async fn typing_in_a_setext_heading_keeps_the_underline_and_the_offsets(cx: &mut
 /// 按模型拼记号，越深的层级漂得越多。
 ///
 /// 这张表按「整段可见文本应是文件里连续的一段」比对，所以放不下**多行块**（脚注定义
-/// 的续行、引用容器的正文——它们的可见文本在文件里跨行，行与行之间还夹着各自的记号），
-/// 也放不下缩进过的代码围栏（围栏内容的缩进是另一笔账，由 `typing_inside_an_indented_code_fence_lands_on_those_bytes`
-/// 盯着）。
+/// 的续行、引用容器的正文——它们的可见文本在文件里跨行，行与行之间还夹着各自的记号）。
+/// 缩进过的代码围栏在这张表里量的是内容行末尾落得准不准（围栏行自己的缩进由
+/// `typing_inside_an_indented_code_fence_lands_on_those_bytes` 钉）。
 #[gpui::test]
 async fn nested_shapes_put_block_offsets_on_the_real_bytes(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
-    // (名字, 文件内容, 目标块在它可见文本里的位置)
-    const SHAPES: [(&str, &str, &str); 10] = [
-        ("列表套列表", "- 项甲\n  - 子乙\n", "子乙"),
-        ("制表符分隔的子弹", "-\t项丙\n", "项丙"),
-        ("星号子弹", "* 项丁\n", "项丁"),
-        ("加号子弹", "+ 项戊\n", "项戊"),
-        ("五位开头的序号", "5. 项己\n", "项己"),
-        ("引用里的列表", "> - 项庚\n", "项庚"),
-        ("引用里两个空格", ">  段辛\n", "段辛"),
-        ("标注里的正文", "> [!NOTE] 提示壬\n> 正文癸\n", "正文癸"),
-        ("行尾闭合记号的标题", "# 标题寅 #\n", "标题寅"),
-        ("标题前三个空格", "   # 标题卯\n", "标题卯"),
+    // (名字, 文件内容, 目标块的可见文本含这段, 问的是块内第几个字节；`usize::MAX` = 末尾)
+    const SHAPES: [(&str, &str, &str, usize); 11] = [
+        ("列表套列表", "- 项甲\n  - 子乙\n", "子乙", usize::MAX),
+        ("制表符分隔的子弹", "-\t项丙\n", "项丙", usize::MAX),
+        ("星号子弹", "* 项丁\n", "项丁", usize::MAX),
+        ("加号子弹", "+ 项戊\n", "项戊", usize::MAX),
+        ("五位开头的序号", "5. 项己\n", "项己", usize::MAX),
+        ("引用里的列表", "> - 项庚\n", "项庚", usize::MAX),
+        ("引用里两个空格", ">  段辛\n", "段辛", usize::MAX),
+        ("标注里的正文", "> [!NOTE] 提示壬\n> 正文癸\n", "正文癸", usize::MAX),
+        // 代码块的可见文本含内容行的缩进，问块内第 4 个字节（`let` 的 `t`）；
+        // 「块内最后一个位置」对围栏说的是整块（含闭合行）末尾，那是另一笔账。
+        ("缩进两格的代码围栏", "  ```rust\n  let 丑 = 1;\n  ```\n", "let 丑 = 1;", 4),
+        ("行尾闭合记号的标题", "# 标题寅 #\n", "标题寅", usize::MAX),
+        ("标题前三个空格", "   # 标题卯\n", "标题卯", usize::MAX),
     ];
 
     let mut failures = Vec::new();
-    for (name, source_text, want_content) in SHAPES {
+    for (name, source_text, want_content, want_offset) in SHAPES {
         let (editor, cx) = cx.add_window_view(|_window, cx| {
             Editor::from_markdown(cx, source_text.to_string(), None)
         });
@@ -332,7 +335,11 @@ async fn nested_shapes_put_block_offsets_on_the_real_bytes(cx: &mut TestAppConte
             };
             let content = target.read_with(cx, |block, _| block.record.title.visible_text());
             let id = target.entity_id();
-            let length = content.len();
+            let length = if want_offset == usize::MAX {
+                content.len()
+            } else {
+                want_offset
+            };
             (
                 content,
                 editor.caret_source_offset(id, length, cx),
@@ -349,7 +356,11 @@ async fn nested_shapes_put_block_offsets_on_the_real_bytes(cx: &mut TestAppConte
             failures.push(format!("  [{name}] {content:?} 不在文件里：夹具变了"));
             continue;
         };
-        let expected = at + content.len();
+        let expected = if want_offset == usize::MAX {
+            at + content.len()
+        } else {
+            at + want_offset
+        };
         if offset_at_content_end != Some(expected) {
             failures.push(format!(
                 "  [{name}] 内容 {content:?} 的末尾报 {offset_at_content_end:?}，文件里在 {expected}"

@@ -2464,6 +2464,83 @@ async fn copy_then_paste_a_cross_block_selection_keeps_the_writing_style(cx: &mu
     );
 }
 
+/// 缩进过的代码围栏里打字，落点必须在那几行内容里。
+///
+/// 代码块的映射按「每级两个空格」拼围栏行的缩进，可缩进几位是文件里的事：根块缩进
+/// 两格、列表项里缩进四格都会让块内偏移整体漂几个字节。实测（2026-10-04）：缩进两格
+/// 的围栏里在内容第 2 个字符处打一个字，字落到了内容行的**行首**（文件成 `X  let a`，
+/// 屏幕成 `  Xlet a`）；列表项里四格那种更狠——字写进了同一根列表的 `- 步骤` 那一行。
+/// 围栏行的缩进按文件量（`measured_code_block_line_prefixes`），内容行按「文件那行的
+/// 缩进 − 模型那行的缩进」量：模型存的那一段是上级容器 dedent 之后的，两级缩进都不在
+/// 模型里。
+///
+/// 制表符缩进的围栏不在这张表里：`\t```rust` 按 CommonMark 就是缩进代码块（制表符算
+/// 四列，超过围栏允许的三列），不是围栏。它是另一族账——缩进代码块的映射现在还给内容
+/// 补上 phantom 的围栏行，光标因此落进围栏文字里（`\t```ruXst`）。
+#[gpui::test]
+async fn typing_inside_an_indented_code_fence_lands_on_those_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const SHAPES: [(&str, &str, &str); 2] = [
+        (
+            "根块缩进两格",
+            "  ```rust\n  let a = 1;\n  ```\n",
+            "  ```rust\n  Xlet a = 1;\n  ```\n",
+        ),
+        (
+            "列表项里缩进四格",
+            "- 步骤\n    ```rust\n    let b = 2;\n    ```\n",
+            "- 步骤\n    ```rust\n    leXt b = 2;\n    ```\n",
+        ),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, source_text, want_file) in SHAPES {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source_text.to_string(), None)
+        });
+        redraw(cx);
+
+        let code = editor.read_with(cx, |editor, cx| {
+            let mut blocks = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.clone())
+                .collect::<Vec<_>>();
+            for visible in editor.document.visible_blocks() {
+                blocks.extend(visible.entity.read_with(cx, |block, _| block.children.clone()));
+            }
+            blocks
+                .into_iter()
+                .find(|block| {
+                    block.read_with(cx, |block, _| {
+                        matches!(block.kind(), BlockKind::CodeBlock { .. })
+                    })
+                })
+                .expect("夹具应有代码块")
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(code.entity_id()));
+            code.update(cx, |block, block_cx| block.move_to(2, block_cx));
+        });
+        redraw(cx);
+        cx.simulate_input("X");
+        redraw(cx);
+
+        let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+        if file != want_file {
+            failures.push(format!(
+                "  [{name}] 打进去的字节不在内容行里：{file:?}（应为 {want_file:?}）"
+            ));
+        }
+        // 屏幕那一份由渲染侧的不变式盯（`typing_one_char_only_changes_the_text_at_the_caret`），
+        // 这里只钉文件：文件是事实源，屏幕应当是它的投影。
+    }
+
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
 /// 缩进不是每级两个空格的列表，打字也要落在那一项的字节上。
 ///
 /// 走查算子块的绝对位置时，前缀是按模型拼的（列表每级两个空格、引用一律 `> `）。
@@ -2547,4 +2624,39 @@ async fn typing_in_an_indented_list_item_lands_on_that_item(cx: &mut TestAppCont
     }
 
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// 光标压在缩进围栏的内容行末尾打一个字，围栏那两行的缩进不能被洗掉。
+///
+/// 「块内最后一个位置」的换算对代码块说的是整块（含闭合行）末尾，落在本块区间之外，
+/// 于是这一键走整块写回。整块写回按模型重贴围栏——两格的缩进、`rust` 那串信息都在
+/// 模型里，可文件里那两行是用户自己写的。这里钉住：字加在内容末尾，围栏两行原样。
+#[gpui::test]
+async fn typing_at_the_end_of_an_indented_fence_line_keeps_the_fence_indent(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "  ```rust\n  let a = 1;\n  ```\n";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, source.to_string(), None)
+    });
+    redraw(cx);
+
+    let code = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    let caret = code.read_with(cx, |block, _cx| block.visible_len());
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(code.entity_id()));
+        code.update(cx, |block, block_cx| block.move_to(caret, block_cx));
+    });
+    redraw(cx);
+    cx.simulate_input("X");
+    redraw(cx);
+
+    let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        file, "  ```rust\n  let a = 1;X\n  ```\n",
+        "块末的光标打一个字，不该把围栏的缩进或信息串洗成别的写法"
+    );
 }

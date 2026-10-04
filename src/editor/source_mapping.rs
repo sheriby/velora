@@ -5,8 +5,29 @@ use std::ops::Range;
 use super::table_edit::cell_content_range_in_line;
 use super::*;
 
-impl Editor {
-    /// 读取侧（搜索、大纲、状态栏、跳转）看到的文档文本。
+/// 围栏各行在它自己那一行里让开几个字节，按文件量（`measured_code_block_line_prefixes`）。
+/// 模型不存围栏行，内容行前面被上级容器吃掉的那几列缩进也不在模型里，而映射的起点
+/// 是整行的行首——这几位只能从缓冲区量回来。
+pub(super) struct MeasuredFencePrefixes {
+    pub open: usize,
+    pub lines: Vec<usize>,
+    pub close: usize,
+}
+
+fn fence_line_width(measured: Option<&MeasuredFencePrefixes>, uniform: usize, index: usize) -> usize {
+    match measured {
+        Some(prefixes) => prefixes.lines.get(index).copied().unwrap_or(0),
+        None => uniform,
+    }
+}
+
+fn leading_blank_bytes(line: &str) -> usize {
+    line.bytes()
+        .take_while(|byte| *byte == b' ' || *byte == b'\t')
+        .count()
+}
+
+impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到的文档文本。
     ///
     /// 就是缓冲区里的那份——也就是文件里的那份。以前这里重新序列化块树，
     /// 于是搜索命中的行号与字节区间说的是「模型眼里的文档」，用户看到的
@@ -71,14 +92,22 @@ impl Editor {
         content: &str,
         indentation: &str,
         language: Option<&SharedString>,
+        measured: Option<&MeasuredFencePrefixes>,
     ) -> (String, Vec<usize>, Vec<usize>) {
         let fence = self::persistence::safe_code_fence_with_info(
             content,
             language.map(|language| language.as_ref()),
         );
+        let uniform = indentation.len();
         let mut full = String::new();
         let mut content_to_source = vec![0; content.len() + 1];
         let mut source_to_content = vec![0];
+
+        let open_prefix = measured.map(|prefixes| prefixes.open).unwrap_or(0);
+        if open_prefix > 0 {
+            full.push_str(&" ".repeat(open_prefix));
+            source_to_content.resize(full.len() + 1, 0);
+        }
 
         full.push_str(&fence);
         if let Some(language) = language {
@@ -87,8 +116,12 @@ impl Editor {
         full.push('\n');
         source_to_content.resize(full.len() + 1, 0);
 
+        let mut line_index = 0usize;
         let prefix_start = full.len();
-        full.push_str(indentation);
+        let width = fence_line_width(measured, uniform, line_index);
+        if width > 0 {
+            full.push_str(&" ".repeat(width));
+        }
         source_to_content.resize(full.len() + 1, 0);
         for index in prefix_start..=full.len() {
             source_to_content[index] = 0;
@@ -109,8 +142,12 @@ impl Editor {
             }
             content_offset += ch.len_utf8();
             if ch == '\n' {
+                line_index += 1;
                 let line_prefix_start = full.len();
-                full.push_str(indentation);
+                let width = fence_line_width(measured, uniform, line_index);
+                if width > 0 {
+                    full.push_str(&" ".repeat(width));
+                }
                 source_to_content.resize(full.len() + 1, content_offset);
                 for index in line_prefix_start..=full.len() {
                     source_to_content[index] = content_offset;
@@ -122,6 +159,11 @@ impl Editor {
 
         full.push('\n');
         source_to_content.resize(full.len() + 1, content.len());
+        let close_prefix = measured.map(|prefixes| prefixes.close).unwrap_or(0);
+        if close_prefix > 0 {
+            full.push_str(&" ".repeat(close_prefix));
+            source_to_content.resize(full.len() + 1, content.len());
+        }
         full.push_str(&fence);
         source_to_content.resize(full.len() + 1, content.len());
         source_to_content[full.len()] = content.len();
@@ -243,6 +285,86 @@ impl Editor {
         full_text.len()
     }
 
+    /// 量出来：围栏的开行列、每一条内容行、闭合列各自在自己那一行里让开几个字节。
+    ///
+    /// 模型里存的是「内容行去掉上级容器吃掉的缩进」那一段，围栏行根本不在模型里，
+    /// 而映射的起点是整行的行首。按 `render_depth` 拼「每级两个空格」在缩进两格、
+    /// 四格、制表符的围栏里整体漂——实测在 `  ```rust` 围栏里打一个字，字节落在内容行
+    /// 的第 0 位；列表项里四格的围栏更是把字写进了父项那一行。
+    /// 内容行按「文件那一行以模型存下的这段结尾」来夹，差出来的一截必须是纯空白；
+    /// 对不上（引用里的围栏、行内还改了别的、行数不齐）就 `None`，退回按模型拼。
+    fn measured_code_block_line_prefixes(
+        &self,
+        content: &str,
+        language: Option<&SharedString>,
+        absolute_start: usize,
+        quote_depth: usize,
+    ) -> Option<MeasuredFencePrefixes> {
+        // 引用里的围栏每一行还要让开 `>`，那是另一族账（`wrap_source_mapping_with_quotes`
+        // 现在按每级 `> ` 拼），这里先不碰。
+        if quote_depth > 0 || !self.buffer.is_char_boundary(absolute_start) {
+            return None;
+        }
+        let fence = persistence::safe_code_fence_with_info(
+            content,
+            language.map(|language| language.as_ref()),
+        );
+        let mut line_index = self.buffer.line_of(absolute_start);
+        let open_range = self.buffer.line_range(line_index);
+        if open_range.start != absolute_start {
+            return None;
+        }
+        let open_line = self.buffer.slice(open_range);
+        let open_body = format!("{fence}{}", language.map(|l| l.as_str()).unwrap_or(""));
+        let open_prefix = open_line.len().checked_sub(open_body.len())?;
+        if !open_line[..open_prefix].chars().all(|ch| ch == ' ' || ch == '\t')
+            || !open_line.ends_with(open_body.as_str())
+        {
+            return None;
+        }
+
+        let model_lines: Vec<&str> = if content.is_empty() {
+            Vec::new()
+        } else {
+            content.split('\n').collect()
+        };
+        line_index += 1;
+        let mut lines = Vec::with_capacity(model_lines.len());
+        for model_line in &model_lines {
+            let range = self.buffer.line_range(line_index);
+            if range.start >= self.buffer.byte_len() {
+                return None;
+            }
+            // 只比缩进，不比整行：这一次按键的字节已经进了模型、还没进缓冲区，
+            // 要求「文件那行以模型这段结尾」在算光标时就成立、算完就又不成立了。
+            let file_line = self.buffer.slice(range);
+            let file_indent = leading_blank_bytes(&file_line);
+            let model_indent = leading_blank_bytes(model_line);
+            if model_indent > file_indent {
+                return None;
+            }
+            lines.push(file_indent - model_indent);
+            line_index += 1;
+        }
+
+        let close_range = self.buffer.line_range(line_index);
+        if close_range.start > self.buffer.byte_len() {
+            return None;
+        }
+        let close_line = self.buffer.slice(close_range);
+        let close_prefix = close_line.len().checked_sub(fence.len())?;
+        if !close_line.ends_with(fence.as_str())
+            || !close_line[..close_prefix].chars().all(|ch| ch == ' ' || ch == '\t')
+        {
+            return None;
+        }
+        Some(MeasuredFencePrefixes {
+            open: open_prefix,
+            lines,
+            close: close_prefix,
+        })
+    }
+
     pub(super) fn push_code_block_mapping(
         &self,
         block: &Entity<Block>,
@@ -263,8 +385,14 @@ impl Editor {
             )
         };
 
-        let (full_text, content_to_source, source_to_content) =
-            Self::build_code_block_content_mapping(&content, &indentation, language.as_ref());
+        let measured =
+            self.measured_code_block_line_prefixes(&content, language.as_ref(), absolute_start, quote_depth);
+        let (full_text, content_to_source, source_to_content) = Self::build_code_block_content_mapping(
+            &content,
+            &indentation,
+            language.as_ref(),
+            measured.as_ref(),
+        );
         let (full_text, content_to_source, source_to_content) =
             Self::wrap_source_mapping_with_quotes(
                 full_text,
