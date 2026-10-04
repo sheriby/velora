@@ -469,17 +469,132 @@ impl Editor {
         (lines[last_index].0 + lines[last_index].1.len()) - header_start
     }
 
+    /// 量出来：这一块的内容在它**那一行**里从第几个字节开始，顺带量出它的子块
+    /// 在该行里要跟着让开几列（本块记号自己的宽度）。
+    ///
+    /// 逐层用解析器自己的剥记号函数（`strip_one_quote_level`、`parse_list_marker`、
+    /// `parse_atx_heading_line_with_marker`、`strip_leading_columns`）把容器记号与本块
+    /// 记号连同它们吃掉的空白剥掉，剩下的就是内容起点。按模型拼（列表每级两个空格、
+    /// 引用一律 `> `）在缩进四格、制表符、`>引用` 这类写法里会整体漂——块内偏移错位
+    /// 之后，打字会落进别的行（实测四空格嵌套列表里打一个字，字节进了父项那一行）。
+    /// 引用每层都在自己那一行上，所以每行都重量；列表的上级只留下缩进，交给本块的
+    /// 记号（或段落继承来的 `list_dedent`）吃掉。
+    /// 这一行与模型对不上（剥不动、起点不在行首）就 `None`，调用方退回按模型拼。
+    fn measured_block_prefix(
+        &self,
+        at: usize,
+        quote_depth: usize,
+        list_dedent: usize,
+        kind: &BlockKind,
+    ) -> Option<(usize, usize)> {
+        // 起点落在多字节字符中间，说明上游的字节账已经错了，量不出这一行是啥。
+        if !self.buffer.is_char_boundary(at) {
+            return None;
+        }
+        let line_range = self.buffer.line_range(self.buffer.line_of(at));
+        if line_range.start != at {
+            return None;
+        }
+        let line = self.buffer.slice(line_range);
+        let mut consumed = 0usize;
+        for _ in 0..quote_depth {
+            let stripped = super::document::strip_one_quote_level(&line[consumed..])?;
+            consumed += line[consumed..].len() - stripped.len();
+        }
+        let rest = line[consumed..].to_string();
+        let mut child_dedent = list_dedent;
+        match kind {
+            BlockKind::Quote => {
+                let stripped = super::document::strip_one_quote_level(&rest)?;
+                consumed += rest.len() - stripped.len();
+            }
+            BlockKind::BulletedListItem
+            | BlockKind::TaskListItem { .. }
+            | BlockKind::NumberedListItem => {
+                let marker = super::document::parse_list_marker(&rest)?;
+                consumed += rest.len() - marker.text.len();
+                child_dedent = rest.len() - marker.text.len();
+            }
+            BlockKind::Heading { .. } => {
+                // Setext 标题的内容行没有记号：导入把整行（连前导空白）当内容收，
+                // 所以量到 0 才是对的。
+                if let Some((_level, _content, marker_len)) =
+                    BlockKind::parse_atx_heading_line_with_marker(&rest)
+                {
+                    consumed += marker_len;
+                }
+            }
+            BlockKind::Paragraph => {
+                if let Some(stripped) = super::document::strip_leading_columns(&rest, list_dedent) {
+                    consumed += rest.len() - stripped.len();
+                }
+            }
+            _ => return None,
+        }
+        Some((consumed, child_dedent))
+    }
+
+    /// 单行内容的块才敢用量出来的前缀：多行内容里每一行的记号宽度这里量不到，
+    /// 仍按模型拼（并把引用包裹交给 `quote_depth`）。量到了就说明头记号已经含
+    /// `>`，调用方要把 `quote_depth` 记作 0，别再叠一层包裹。
+    fn measured_inline_prefix(
+        &self,
+        content_markdown: &str,
+        measured: Option<(usize, usize)>,
+    ) -> Option<String> {
+        if content_markdown.contains('\n') {
+            return None;
+        }
+        measured.map(|(offset, _)| " ".repeat(offset))
+    }
+
+    /// 单行内容的块用量出来的前缀落笔（它已含本行所有容器记号，所以引用包裹不再叠一层），
+    /// 量不到时退回按模型拼的那对前缀。
+    fn push_measured_inline_mapping(
+        &self,
+        block: &Entity<Block>,
+        content_markdown: String,
+        composed_first: String,
+        composed_continuation: String,
+        measured_first: Option<String>,
+        quote_depth: usize,
+        absolute_start: usize,
+        mappings: &mut Vec<SourceTargetMapping>,
+    ) -> usize {
+        match measured_first {
+            Some(first) => self.push_inline_block_mapping(
+                block,
+                content_markdown,
+                first.clone(),
+                first,
+                0,
+                absolute_start,
+                mappings,
+            ),
+            None => self.push_inline_block_mapping(
+                block,
+                content_markdown,
+                composed_first,
+                composed_continuation,
+                quote_depth,
+                absolute_start,
+                mappings,
+            ),
+        }
+    }
+
     pub(super) fn collect_single_block_source_mappings(
         &self,
         block: &Entity<Block>,
         list_depth: usize,
+        list_dedent: usize,
         quote_depth: usize,
         absolute_start: usize,
         mappings: &mut Vec<SourceTargetMapping>,
         block_ranges: &mut HashMap<EntityId, Range<usize>>,
         cx: &App,
     ) -> usize {
-        let (kind, list_ordinal, title, content_marker_len, children) = {
+        let (kind, list_ordinal, title, children) = {
             let block_ref = block.read(cx);
             let kind = block_ref.kind();
             let title = (!matches!(
@@ -499,10 +614,12 @@ impl Editor {
                 kind,
                 block_ref.list_ordinal,
                 title,
-                block_ref.record.content_marker_len,
                 block_ref.children.clone(),
             )
         };
+
+        // 记号在本行里占几位是文件里的事实，按模型拼会整体漂（见 `measured_block_prefix`）。
+        let measured = self.measured_block_prefix(absolute_start, quote_depth, list_dedent, &kind);
 
         let own_len = match kind {
             BlockKind::Table => self.push_table_mappings(
@@ -540,69 +657,80 @@ impl Editor {
                     .len()
                 }
             }
-            BlockKind::Heading { level } => self.push_inline_block_mapping(
-                block,
-                title.expect("heading title").markdown().to_string(),
-                // 记号在这一行里占几位：导入时量过就按量到的算。Setext 标题的内容行
-                // 根本没有 `# `，缩进过的 ATX 前面还压着空格——按模型拼一个 `# `，
-                // 块内每个偏移就整体漂几个字节。
-                match content_marker_len {
-                    Some(marker_len) if list_depth == 0 => " ".repeat(marker_len),
-                    _ => format!(
+            BlockKind::Heading { level } => {
+                let markdown = title.expect("heading title").markdown().to_string();
+                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                self.push_measured_inline_mapping(
+                    block,
+                    markdown,
+                    format!(
                         "{}{} ",
                         "  ".repeat(list_depth),
                         "#".repeat(level as usize)
                     ),
-                },
-                String::new(),
-                quote_depth,
-                absolute_start,
-                mappings,
-            ),
+                    String::new(),
+                    measured_first,
+                    quote_depth,
+                    absolute_start,
+                    mappings,
+                )
+            }
             BlockKind::Paragraph => {
+                let markdown = title.expect("paragraph title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
-                self.push_inline_block_mapping(
+                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                self.push_measured_inline_mapping(
                     block,
-                    title.expect("paragraph title").markdown().to_string(),
+                    markdown,
                     indentation.clone(),
                     indentation,
+                    measured_first,
                     quote_depth,
                     absolute_start,
                     mappings,
                 )
             }
             BlockKind::BulletedListItem => {
+                let markdown = title.expect("bullet title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
-                self.push_inline_block_mapping(
+                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                self.push_measured_inline_mapping(
                     block,
-                    title.expect("bullet title").markdown().to_string(),
+                    markdown,
                     format!("{indentation}- "),
                     format!("{indentation}  "),
+                    measured_first,
                     quote_depth,
                     absolute_start,
                     mappings,
                 )
             }
             BlockKind::TaskListItem { checked } => {
+                let markdown = title.expect("task title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
-                self.push_inline_block_mapping(
+                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                self.push_measured_inline_mapping(
                     block,
-                    title.expect("task title").markdown().to_string(),
+                    markdown,
                     format!("{indentation}- [{}] ", if checked { "x" } else { " " }),
                     format!("{indentation}      "),
+                    measured_first,
                     quote_depth,
                     absolute_start,
                     mappings,
                 )
             }
             BlockKind::NumberedListItem => {
+                let markdown = title.expect("numbered title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let ordinal = list_ordinal.unwrap_or(1);
-                self.push_inline_block_mapping(
+                let measured_first = self.measured_inline_prefix(&markdown, measured);
+                self.push_measured_inline_mapping(
                     block,
-                    title.expect("numbered title").markdown().to_string(),
+                    markdown,
                     format!("{indentation}{ordinal}. "),
                     format!("{indentation}   "),
+                    measured_first,
                     quote_depth,
                     absolute_start,
                     mappings,
@@ -613,11 +741,13 @@ impl Editor {
                 if title.is_empty() && !children.is_empty() {
                     0
                 } else {
-                    self.push_inline_block_mapping(
+                    let measured_first = self.measured_inline_prefix(&title, measured);
+                    self.push_measured_inline_mapping(
                         block,
                         title,
                         String::new(),
                         String::new(),
+                        measured_first,
                         quote_depth + 1,
                         absolute_start,
                         mappings,
@@ -719,6 +849,7 @@ impl Editor {
                 total_len += self.collect_single_block_source_mappings(
                     child,
                     2,
+                    4,
                     quote_depth,
                     absolute_start + total_len,
                     mappings,
@@ -735,6 +866,9 @@ impl Editor {
         }
 
         let child_list_depth = list_depth + usize::from(kind.is_list_item());
+        let child_list_dedent = measured
+            .map(|(_, dedent)| dedent)
+            .unwrap_or(list_dedent + 2 * usize::from(kind.is_list_item()));
         let child_quote_depth = quote_depth + usize::from(kind.is_quote_container());
         let mut total_len = own_len;
         for child in children {
@@ -744,6 +878,7 @@ impl Editor {
             total_len += self.collect_single_block_source_mappings(
                 &child,
                 child_list_depth,
+                child_list_dedent,
                 child_quote_depth,
                 absolute_start + total_len,
                 mappings,
@@ -827,6 +962,7 @@ impl Editor {
         let prior_mapping_count = mappings.len();
         self.collect_single_block_source_mappings(
             block,
+            0,
             0,
             0,
             span.start,
@@ -1050,6 +1186,7 @@ impl Editor {
                     let prior_mapping_count = mappings.len();
                     absolute += self.collect_single_block_source_mappings(
                         block,
+                        0,
                         0,
                         0,
                         absolute,

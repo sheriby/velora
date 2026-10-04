@@ -2463,3 +2463,88 @@ async fn copy_then_paste_a_cross_block_selection_keeps_the_writing_style(cx: &mu
         "复制—粘贴一趟把没编辑过的写法洗掉了：{text:?}"
     );
 }
+
+/// 缩进不是每级两个空格的列表，打字也要落在那一项的字节上。
+///
+/// 走查算子块的绝对位置时，前缀是按模型拼的（列表每级两个空格、引用一律 `> `）。
+/// 文件里缩进四格或制表符时，块内偏移就整体漂几个字节——实测在 `- 父甲 / (四空格)- 子乙`
+/// 的子项里打一个字，字节落进**父项那一行**（文件变成 `- X父甲`），而屏幕上子项一个字
+/// 没变。屏幕与文件说的不是同一件事，写的还是错的字节。
+#[gpui::test]
+async fn typing_in_an_indented_list_item_lands_on_that_item(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const SHAPES: [(&str, &str, &str); 4] = [
+        (
+            "四空格嵌套项",
+            "- 父甲\n    - 子乙\n",
+            "- 父甲\n    - X子乙\n",
+        ),
+        (
+            "制表符嵌套项",
+            "- 父丙\n\t- 子丁\n",
+            "- 父丙\n\t- X子丁\n",
+        ),
+        (
+            "引用里的四空格嵌套项",
+            "> - 父戊\n>     - 子己\n",
+            "> - 父戊\n>     - X子己\n",
+        ),
+        (
+            "缩进四格的序号项",
+            "1. 父庚\n    2. 子辛\n",
+            "1. 父庚\n    2. X子辛\n",
+        ),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, source_text, want_file) in SHAPES {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source_text.to_string(), None)
+        });
+        redraw(cx);
+
+        let item = editor.read_with(cx, |editor, cx| {
+            let mut blocks = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.clone())
+                .collect::<Vec<_>>();
+            let mut frontier = blocks.clone();
+            while let Some(block) = frontier.pop() {
+                let children = block.read_with(cx, |block, _| block.children.clone());
+                frontier.extend(children.iter().cloned());
+                blocks.extend(children);
+            }
+            blocks
+                .into_iter()
+                .find(|block| {
+                    let text = block.read_with(cx, |block, _| block.record.title.visible_text());
+                    text.starts_with('子')
+                })
+                .expect("夹具应有子项")
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(item.entity_id()));
+            item.update(cx, |block, block_cx| block.move_to(0, block_cx));
+        });
+        redraw(cx);
+        cx.simulate_input("X");
+        redraw(cx);
+
+        let (file, visible) = editor.read_with(cx, |editor, cx| {
+            (
+                editor.buffer.text(),
+                item.read_with(cx, |block, _cx| block.record.title.visible_text()),
+            )
+        });
+        if file != want_file {
+            failures.push(format!(
+                "  [{name}] 字节没落进子项那一行：{file:?}（应为 {want_file:?}），屏幕上子项是 {visible:?}"
+            ));
+        }
+    }
+
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}

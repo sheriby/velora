@@ -97,10 +97,11 @@ Workspace (src/editor/workspace.rs)
 8. **字节保真**由另一组按字节断言的测试守（src/editor/tests/round_trip_fidelity.rs、block_source_write_back.rs、block_source_spans.rs）：`__下划线__` 写法、字面转义 `\*`、Setext、表格列宽、CRLF、末行换行、无末行换行，打开—编辑—保存之后没改过的字节必须逐字节还是磁盘上那样。
 9. **`record.title == parse(buffer[span])` 的渲染侧对照**：`typing_one_char_only_changes_the_text_at_the_caret` 对全部保真形状（含脚注定义）断言「打一个字只动光标那一个字」——本块可见文本正好多出那一个字符，其余块的可见文本一字不改。字节表盯磁盘，这条盯投影：写法被重新解释时（`\*` 读成强调、脚注退回源码形状），字节可能没变而渲染已经变了。
 10. **脚注序号是渲染形状，不是字节形状**：`[^1]` 进树是一个带 `InlineFootnoteReference` 的片段，可见文本按注册表贴成 `¹`。编辑后的重解析认得出 `[^1]` 这个形状、认不出序号（片段 `ordinal` 为空，文本退回源码形状），所以 `sync_footnote_registry` 不能只在注册表换人时回填——段首打一个字并不换注册表，不回填的话屏幕上就是 `[^1]`，可见长度多出三个字节，光标与字数都跟着错。回填排在写回**之后**，因此缓冲区里始终是 `[^1]`（`typing_next_to_a_footnote_reference_keeps_the_ordinal_label`、`typing_between_two_footnote_references_keeps_both_ordinals`、`deleting_a_char_next_to_a_footnote_reference_keeps_the_ordinal_label`）。
-11. **记号占几字节是解析时量出来的数据**（`BlockRecord::content_marker_len`，src/components/block/state.rs）：导入时 ATX 记 `parse_atx_heading_line_with_marker` 量到的宽度（含前导缩进与记号后面那个空格），Setext 记 `0`——内容行里根本没有 `# `。读侧的标题映射按这个宽度起算内容（src/editor/source_mapping.rs 的 Heading 分支），不再按模型拼一个 `# ` 猜：猜错就整块偏移整体漂，Setext 漂两字节还会切进中文字符中间，搜索命中的选区、高亮、行列号、粘贴插入点说的都不是那几个字节。`None` = 编辑中新建的块，规范记号就是文件里的那个。守卫：`block_offsets_land_on_the_bytes_the_file_actually_has`、`typing_in_a_setext_heading_keeps_the_underline_and_the_offsets`。
+11. **记号占几字节是当场从文件量出来的**（`measured_block_prefix`，src/editor/source_mapping.rs）：ATX 标题按 `parse_atx_heading_line_with_marker` 量的宽度（含前导缩进与记号后面那个空格），Setext 量到 `0`——内容行里根本没有 `# `。读侧的标题映射按这个宽度起算内容，不再按模型拼一个 `# ` 猜：猜错就整块偏移整体漂，Setext 漂两字节还会切进中文字符中间，搜索命中的选区、高亮、行列号、粘贴插入点说的都不是那几个字节。这曾记在 `BlockRecord::content_marker_len` 上（导入时量一次），2026-10-04 换成走查时现量——同一把尺要能覆盖嵌套层（见 15），而记在块里只有导入过的那几个形状有值。守卫：`block_offsets_land_on_the_bytes_the_file_actually_has`、`typing_in_a_setext_heading_keeps_the_underline_and_the_offsets`。
 12. **段首的落点在记号后面**：`mapping_source_offset`（src/editor/selection.rs）把「块内第 n 个可见字符」换算成缓冲区字节，第 0 个也不例外——它以前直接返回整块起点，而起点含 `# `、`- `、`> ` 这些记号，于是在标题开头打一个字，字落进 `#` 前面（屏幕上是标题 `X标题`，磁盘上是 `X# 标题`，重新打开就是个段落）。记号宽度既然是数据，插入点就只能在它后面。守卫：`typing_at_the_start_of_a_block_lands_after_its_marker`（七种写法逐个钉落点、kind 与光标）、`typing_at_the_start_of_a_heading_keeps_the_marker_on_disk`（钉到磁盘，并重新打开确认还是标题）。
 13. **「这个字节落在哪一块」按块的区间问，不整篇重拼映射**：`block_id_at_source_offset` 先问根块自己的 `source_span`，只有落进容器（引用、列表）才把**那一根**块的子块映射重建出来；`source_mappings_in_range`（src/editor/source_mapping.rs）只重建与给定区间相交的根块，再各带左右紧邻的一根——端点落在两块之间的空行时，`endpoint_for_source_offset` 要按距离挑最近的一块，少带就挑到别处去了。之前点一次大纲标题要走四次整篇重建（`heading_block_at_source_line`、`unfold_sections_covering_source_range`、`apply_marked_source_range`、`apply_selection_snapshot_in_current_mode`），每次都是 O(文档)：1 MiB 实测一次 227ms，10 MiB 就是秒级。守卫：`clicking_an_outline_heading_unfolds_it_without_a_document_wide_mapping`（`source_mapping_full_builds` 增量为 0，同时钉住那个 Setext 标题确实被展开）。
 14. **跨块复制交出去的是缓冲区里的那段字节**：`cross_block_selected_markdown`（src/editor/selection.rs）现在就是 `buffer.slice(选区的源区间)`。以前它按块树的序列化口径逐块重拼、再按「块间补空行、紧排列表项不补」的规则粘起来——Setext 的下划线在这趟里丢掉（复制—粘贴之后那一块不再是标题），`__强调__` 与 `1)` 也随时可能被洗成别的写法，而且为了算边界还要整篇重拼 source mapping。端点换算用 `source_mapping_for_entity`（只走这一根块），拿不到映射的原子块（表格整块）退回它自己的 `source_span`；两者都没有区间时（刚插进树、尚未写回的空段落）给一个就近的零宽锚点，删除才不因它中止。守卫：`copying_a_cross_block_selection_gives_the_bytes_from_the_file`、`copy_then_paste_a_cross_block_selection_keeps_the_writing_style`、`delete_selection_*`。
+15. **子块在它那一行的起点也按文件量**：走查算子块的绝对位置时，前缀以前是按模型拼的（列表每级两个空格、引用一律 `> `）。文件里缩进四格、制表符、`>引用`（记号后没空格）时整条链就漂几个字节——实测在 `- 父甲` / `(四空格)- 子乙` 的子项里打一个字，文件变成 `- X父甲`：字节进了**父项那一行**，屏幕上子项却照常多出那个字符（制表符那一例更狠，落笔顺手把 `\t` 洗成两个空格）。`measured_block_prefix` 用解析器自己的剥记号函数把「本行里内容从第几个字节开始」量出来：引用每层都在自己那一行上，逐层重量；列表的上级只留下缩进，交给本块的记号（`parse_list_marker` 把前导空白一并吃掉）或段落继承来的 `list_dedent`（父项记号的实测宽度）吃掉。量不到就退回按模型拼——多行内容（每行的记号宽度这里量不到）、起点不是行首、起点落在多字节字符中间（说明上游的字节账已经错）。守卫：`typing_in_an_indented_list_item_lands_on_that_item`（四空格/制表符/引用里四空格/缩进四格的序号项，钉到文件字节）、`nested_shapes_put_block_offsets_on_the_real_bytes`（10 个嵌套形状钉块内偏移末端落在文件真字节上）、闸门里多出的那一步「子项里打字」。这张量表放不下多行块（脚注定义续行、引用容器正文——可见文本跨行，行间还夹着各自记号）与缩进过的代码围栏，后者是同一族的下一笔（`push_code_block_mapping` 仍按每级两个空格拼缩进）。
 
 
 ## 4. Undo/历史（src/editor/history.rs）
@@ -146,7 +147,10 @@ Workspace (src/editor/workspace.rs)
   `document_find_highlights_map_only_the_blocks_with_hits`（`source_mapping_full_builds` 增量为 0，
   并钉住正文与表格格子两处命中）。`build_source_target_mappings` 只剩两处入口：源码模式的高亮
   （那里的块是按行切的投影，位置不挂 `source_span`，模式属性使然）与窗口内一根有区间的块都没有时的
-  退回。剩下的猜测式记账是 `collect_single_block_source_mappings` 里**块内**那段前缀重建——它要等
+  退回。**块内**那段前缀重建已经收窄：单行内容的块（标题、段落、列表项、任务项、单子块引用）
+  现在按文件量记号宽度（不变式 15），仍按模型拼的只剩两类——多行内容的块（每一行的记号宽度
+  这里量不到，要等逐行区间）与代码围栏的缩进（`push_code_block_mapping` 还在按每级两个空格拼，
+  实测缩进过两格/四格/制表符的围栏打字会落进围栏那一行）。再往下要等
   每个子块与每个格子都在解析期记下自己的字节区间才能删（方案 §4 的 `SourceRegion`，表格 cells 已经在
   按结构量了）。
 - **大纲跟随滚动已经不付全文的钱**（`sync_outline_follow_scroll`，src/editor/workspace/tree_sync.rs）：

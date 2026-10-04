@@ -277,3 +277,85 @@ async fn typing_in_a_setext_heading_keeps_the_underline_and_the_offsets(cx: &mut
         "记号宽度在编辑后漂了：内容 {content:?} 的末尾报 {offset_at_content_end:?}"
     );
 }
+
+/// 挂在容器里的写法也要把块内偏移落在文件的真字节上。
+///
+/// 上一张表量的是根块那一行；这一张量的是**嵌套**：列表套列表、引用里的列表、标注里
+/// 的正文、`*`/`+` 子弹、五位序号、制表符分隔、行尾还挂着闭合 `#` 的标题。读侧一旦
+/// 按模型拼记号，越深的层级漂得越多。
+///
+/// 这张表按「整段可见文本应是文件里连续的一段」比对，所以放不下**多行块**（脚注定义
+/// 的续行、引用容器的正文——它们的可见文本在文件里跨行，行与行之间还夹着各自的记号），
+/// 也放不下缩进过的代码围栏（围栏内容的缩进是另一笔账，由 `typing_inside_an_indented_code_fence_lands_on_those_bytes`
+/// 盯着）。
+#[gpui::test]
+async fn nested_shapes_put_block_offsets_on_the_real_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    // (名字, 文件内容, 目标块在它可见文本里的位置)
+    const SHAPES: [(&str, &str, &str); 10] = [
+        ("列表套列表", "- 项甲\n  - 子乙\n", "子乙"),
+        ("制表符分隔的子弹", "-\t项丙\n", "项丙"),
+        ("星号子弹", "* 项丁\n", "项丁"),
+        ("加号子弹", "+ 项戊\n", "项戊"),
+        ("五位开头的序号", "5. 项己\n", "项己"),
+        ("引用里的列表", "> - 项庚\n", "项庚"),
+        ("引用里两个空格", ">  段辛\n", "段辛"),
+        ("标注里的正文", "> [!NOTE] 提示壬\n> 正文癸\n", "正文癸"),
+        ("行尾闭合记号的标题", "# 标题寅 #\n", "标题寅"),
+        ("标题前三个空格", "   # 标题卯\n", "标题卯"),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, source_text, want_content) in SHAPES {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source_text.to_string(), None)
+        });
+        redraw(cx);
+
+        let (content, offset_at_content_end, source, found) = editor.read_with(cx, |editor, cx| {
+            let mut blocks = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .map(|visible| visible.entity.clone())
+                .collect::<Vec<_>>();
+            for visible in editor.document.visible_blocks() {
+                blocks.extend(visible.entity.read_with(cx, |block, _| block.children.clone()));
+            }
+            let Some(target) = blocks.iter().find(|block| {
+                block
+                    .read_with(cx, |block, _| block.record.title.visible_text())
+                    .contains(want_content)
+            }) else {
+                return (String::new(), None, editor.buffer.text(), false);
+            };
+            let content = target.read_with(cx, |block, _| block.record.title.visible_text());
+            let id = target.entity_id();
+            let length = content.len();
+            (
+                content,
+                editor.caret_source_offset(id, length, cx),
+                editor.buffer.text(),
+                true,
+            )
+        });
+
+        if !found {
+            failures.push(format!("  [{name}] 块树里找不到含 {want_content:?} 的块"));
+            continue;
+        }
+        let Some(at) = source.find(content.as_str()) else {
+            failures.push(format!("  [{name}] {content:?} 不在文件里：夹具变了"));
+            continue;
+        };
+        let expected = at + content.len();
+        if offset_at_content_end != Some(expected) {
+            failures.push(format!(
+                "  [{name}] 内容 {content:?} 的末尾报 {offset_at_content_end:?}，文件里在 {expected}"
+            ));
+        }
+    }
+
+    assert!(failures.is_empty(), "嵌套层里的块内偏移落不到文件真实的字节上：\n{}", failures.join("\n"));
+}

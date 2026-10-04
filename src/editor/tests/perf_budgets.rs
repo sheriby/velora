@@ -542,6 +542,16 @@ async fn a_real_editing_session_never_falls_back_to_whole_document_serialization
     count_step(&mut offenders, "勾任务复选框", &mut before, &editor, cx);
 
     let nested = visible_block_with_text("嵌套乙", &editor, cx);
+    // 子项里打字：嵌套那层的记号宽度得按文件量，块自己的字节才算得出来。
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(nested.entity_id()));
+        nested.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+    cx.simulate_input("写");
+    redraw(cx);
+    count_step(&mut offenders, "子项里打字", &mut before, &editor, cx);
+
     dispatch(&editor, nested.clone(), crate::components::BlockEvent::RequestIndent, cx);
     count_step(&mut offenders, "缩进", &mut before, &editor, cx);
     dispatch(&editor, nested.clone(), crate::components::BlockEvent::RequestOutdent, cx);
