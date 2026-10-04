@@ -1033,6 +1033,7 @@ struct WholeDocumentPasses {
     snapshot_rebuilds: u64,
     snapshot_nanos: u64,
     row_plan_rebuilds: u64,
+    row_plan_nanos: u64,
     source_mapping_full_builds: u64,
     word_count_scans: u64,
     source_serializations: u64,
@@ -1051,6 +1052,7 @@ fn whole_document_passes(
         snapshot_rebuilds: editor.document.snapshot_rebuilds.get(),
         snapshot_nanos: editor.document.snapshot_nanos.get(),
         row_plan_rebuilds: editor.row_plan_rebuilds.get(),
+        row_plan_nanos: editor.row_plan_nanos.get(),
         source_mapping_full_builds: editor.source_mapping_full_builds.get(),
         word_count_scans: editor.word_count_scans.get(),
         source_serializations: editor.source_serializations.get(),
@@ -1145,13 +1147,14 @@ async fn probe_attribute_ten_mib_markdown_keystroke(cx: &mut TestAppContext) {
         let cost = start.elapsed();
         let after = whole_document_passes(&editor, cx);
         eprintln!(
-            "[attr] markdown 第 {i} 次按键 {cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.1}ms；投影重排 {}；行计划 {}；整篇 mapping {}；整篇落笔 {}；整篇渲染 {}",
+            "[attr] markdown 第 {i} 次按键 {cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.1}ms；投影重排 {}；行计划 {} 次 {:.1}ms；整篇 mapping {}；整篇落笔 {}；整篇渲染 {}",
             after.outline_rebuilds - before.outline_rebuilds,
             after.outline_full_rescans - before.outline_full_rescans,
             after.outline_lines_scanned - before.outline_lines_scanned,
             (after.outline_nanos - before.outline_nanos) as f64 / 1e6,
             after.snapshot_rebuilds - before.snapshot_rebuilds,
             after.row_plan_rebuilds - before.row_plan_rebuilds,
+            (after.row_plan_nanos - before.row_plan_nanos) as f64 / 1e6,
             after.source_mapping_full_builds - before.source_mapping_full_builds,
             after.source_serializations - before.source_serializations,
             after.whole_document_renders - before.whole_document_renders,
