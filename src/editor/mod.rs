@@ -178,6 +178,16 @@ pub struct Editor {
     outline_lines_scanned: std::cell::Cell<u64>,
     /// 性能计数器：大纲重建累计耗时。
     outline_nanos: std::cell::Cell<u64>,
+    /// 计数器：侧栏大纲**上一帧**建了几行元素。行数只该随视口高度长
+    /// （窗口化后每帧只建视口那几十行）；它跟着文档里的标题数长，就说明
+    /// 一整棵树又被走成了元素树。
+    outline_rows_rendered: std::cell::Cell<u64>,
+    /// 计数器：上一帧大纲窗口从第几行开始——随滚动走。它不跟着滚动走，
+    /// 就是窗口没接上滚动位置。
+    outline_first_row_rendered: std::cell::Cell<u64>,
+    /// 侧栏大纲首帧还没有滚动视口尺寸时续挂的帧数（上限与正文冷启动共用同一个
+    /// 手法：排下一帧，量到尺寸就停，避免每帧重排）。
+    outline_fill_frames: u8,
     /// 计数器：块内每行的记号宽度有几行是**解析期记下来的**（数据）。
     line_prefix_from_record: std::cell::Cell<u64>,
     /// 计数器：有几行还在事后拿文件行与模型行比（`measured_block_line_prefixes` 那一族）。
@@ -651,6 +661,9 @@ impl Editor {
             outline_full_rescans: std::cell::Cell::default(),
             outline_lines_scanned: std::cell::Cell::default(),
             outline_nanos: std::cell::Cell::default(),
+            outline_rows_rendered: std::cell::Cell::default(),
+            outline_first_row_rendered: std::cell::Cell::default(),
+            outline_fill_frames: 0,
             line_prefix_from_record: std::cell::Cell::default(),
             line_prefix_measured: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),

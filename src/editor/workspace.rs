@@ -32,6 +32,18 @@ const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
 const GENERIC_FILE_ICON: &str = "icon/workspace/generic-file.svg";
 const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
 const WORKSPACE_NODE_INDENT: f32 = 16.0;
+/// 大纲行数超过这个数就按视口开窗渲染：元素树一帧只建视口那几十行。
+/// 小树（几百行以内）照旧整棵走一遍，行为与既有交互完全相同。
+const OUTLINE_WINDOW_THRESHOLD_ROWS: usize = 200;
+/// 窗口上下各多铺几行：滚动时先看到内容、再补精确边界，不是先看到空档。
+const OUTLINE_WINDOW_OVERDRAW_ROWS: usize = 8;
+/// 首帧还没有滚动视口尺寸时先铺的行数（随后排一帧补上）。
+const OUTLINE_WINDOW_FALLBACK_ROWS: usize = 120;
+/// 补帧上限：量到尺寸就停，避免每帧重排（与正文冷启动同数）。
+const OUTLINE_FILL_MAX_FRAMES: u8 = 8;
+/// 面板滚动容器的上下内边距（`#workspace-panel-scroll` 的 `py(6)`）。
+/// 行在内容坐标系里的起点要减掉它才是「第几行」。
+const WORKSPACE_PANEL_PADDING_Y: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WorkspaceTab {
@@ -59,7 +71,8 @@ pub(crate) struct WorkspaceTreeNode {
     id: String,
     label: String,
     kind: WorkspaceTreeKind,
-    children: Vec<WorkspaceTreeNode>,
+    /// 归因探针（`perf_budgets.rs`）拿它数侧栏总节点数，故对 editor 树可见。
+    pub(super) children: Vec<WorkspaceTreeNode>,
 }
 
 struct WorkspaceTooltip {
@@ -246,7 +259,7 @@ pub(super) struct WorkspaceState {
     /// 外部修改冲突（自动保存检测到磁盘内容变了）：独立于 `file_error`，
     /// 只有该文件被重新加载才清除，扫描或普通错误清空不得影响它。
     external_change_conflict: Option<(PathBuf, String)>,
-    outline_tree: Vec<WorkspaceTreeNode>,
+    pub(super) outline_tree: Vec<WorkspaceTreeNode>,
     /// 大纲的增量缓存：每根块「自己那几行里有哪些标题」的摘要，按「块的 EntityId +
     /// 走进这块时的围栏状态」存。键用 EntityId 而不是下标：重投影只换掉改动那几根的实体，
     /// 新 id 自然没缓存（于是重算），没动的块 id 不变（于是照用），删掉的块在下次重建时
@@ -264,7 +277,7 @@ pub(super) struct WorkspaceState {
     outline_dirty: Option<Range<usize>>,
     /// 扁平标题清单（roadmap C2）：供正文里的 `[TOC]` 块渲染目录。
     pub(crate) toc_entries: Vec<TocEntry>,
-    expanded: HashSet<String>,
+    pub(super) expanded: HashSet<String>,
     /// 外部文件事件的树刷新防抖代数（见 `schedule_workspace_tree_refresh`）。
     tree_refresh_generation: u32,
     pub(super) selected: Option<WorkspaceSelection>,

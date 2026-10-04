@@ -212,6 +212,7 @@ Workspace (src/editor/workspace.rs)
 | 同上，区间平移那一档（2026-10-04） | 写回段 **57ms → ~1ms**：区间表从块实体搬到块树（不变式 25；106,455 根块不再逐个 `read`+`update`）。按键总量 195–233ms → **144–186ms**（六键实测），行计划仍是里面最大的一笔（41–44ms） |
 | 10 MiB 代码文档一次大纲同步（围栏压在 512 行切片接缝上） | 改前 **142ms，重扫 585499 行（=全文），每帧整篇重扫 1 次**；改后 **44ms，重扫 512 行（=改动那一片），整篇重扫 0 次**（2026-10-04） |
 | 同上，那 40ms 拆段量（临时段计时，2026-10-04 深夜） | 按字节数行号 **5ms → 0.26ms**（每块记换行偏移表，`99a7f93`）、按块走查 0.54ms、**拼那棵 5.3 万节点的标题树 37ms**（未解，树是整篇一份） |
+| 10 MiB 代码文档，侧栏大纲页签开着时一次按键（2026-10-04） | 改前 **2.3–2.6s**：53,227 行大纲**每帧整棵树走成元素树**（这一档比同文档其他线性成本加起来大一个量级）；按视口开窗后 **350–395ms**，剩下的是大纲同步 130ms（整树重拼，下一档）与行计划 2×~90ms。闸门 `outline_panel_renders_only_the_rows_in_the_viewport`（3,000 标题，一帧 ≤200 行，且窗口跟着滚动走） |
 | 单次全文操作 | 序列化 1 MiB 31.8µs；数 32 万词 6.9ms；建 15968 条 mapping 236.8ms |
 | 撤销栈 200 步 | ≤ 64 KiB（存的是增量；旧制最坏 200 × 文档大小） |
 
@@ -234,6 +235,6 @@ Workspace (src/editor/workspace.rs)
 「把 5.3 万条标题拼成一棵树」**——标题树整篇一份，节点 id 又记着整篇行号，任何一处改动都重拼全树，
 那是下一档要按改动那段增量拼的活。诊断探针：
 `cargo test probe_attribute_ten_mib -- --ignored --nocapture`。
-计数入口：`Editor::{source_serializations, source_mapping_builds, source_mapping_full_builds, word_count_scans, row_plan_rebuilds, roots_reprojected, outline_rebuilds, outline_lines_scanned, outline_full_rescans}`、
+计数入口：`Editor::{source_serializations, source_mapping_builds, source_mapping_full_builds, word_count_scans, row_plan_rebuilds, roots_reprojected, outline_rebuilds, outline_lines_scanned, outline_full_rescans, outline_rows_rendered, outline_first_row_rendered}`、
 `DocumentTree::{whole_document_renders, snapshot_rebuilds}`。性能优化进行中的设计记录见 [performance.md](./performance.md)。
 

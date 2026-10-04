@@ -1423,3 +1423,114 @@ async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestA
          行元数据还在逐块问实体要"
     );
 }
+
+/// 归因探针（markdown 那份 + **大纲页签打开**）：`[TOC]` 之外，侧栏的大纲页签
+/// 是大纲的另一个读者——它一出现，(a) 每次同步都要把 5 万条标题重新拼成一棵树
+/// （`install_outline`），(b) 每帧还要把整棵树走成元素树。按视口开窗后 (b) 没了：
+/// 实测一次按键 2.3–2.6s → 350–395ms，剩下的是 (a) 的 130ms 与行计划的 90ms。
+/// 跑法：`cargo test probe_attribute_ten_mib_markdown_with_outline -- --ignored --nocapture`。
+#[gpui::test]
+#[ignore]
+async fn probe_attribute_ten_mib_markdown_with_outline_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/ten-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping");
+        return;
+    }
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while editor.read_with(cx, |editor, _| editor.document.pending_tail().is_some()) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    editor.update(cx, |editor, _cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        fn count(nodes: &[crate::editor::workspace::WorkspaceTreeNode]) -> usize {
+            nodes.iter().map(|node| 1 + count(&node.children)).sum()
+        }
+        eprintln!(
+            "[attr-outline] 目录条目 {} 条、顶层 {}、侧栏节点总数 {}、展开 {} 项",
+            editor.workspace.toc_entries.len(),
+            editor.workspace.outline_tree.len(),
+            count(&editor.workspace.outline_tree),
+            editor.workspace.expanded.len(),
+        );
+    });
+
+    for i in 0..3 {
+        let before = whole_document_passes(&editor, cx);
+        let start = Instant::now();
+        cx.simulate_input("x");
+        redraw(cx);
+        let cost = start.elapsed();
+        let after = whole_document_passes(&editor, cx);
+        eprintln!(
+            "[attr-outline] 第 {i} 次按键 {cost:?}：大纲 {} 次（整篇 {}）/ {} 行 / {:.1}ms；行计划 {} 次 {}ms",
+            after.outline_rebuilds - before.outline_rebuilds,
+            after.outline_full_rescans - before.outline_full_rescans,
+            after.outline_lines_scanned - before.outline_lines_scanned,
+            (after.outline_nanos - before.outline_nanos) as f64 / 1e6,
+            after.row_plan_rebuilds - before.row_plan_rebuilds,
+            after.row_plan_nanos - before.row_plan_nanos,
+        );
+    }
+}
+
+/// 侧栏大纲的渲染闸门：3,000 条标题全展开时，一帧只许把视口里那几十行建成元素。
+/// 10 MiB 代码文档实测 53,227 条大纲，旧实现每帧把整棵树走成元素树（打开大纲页签
+/// 后一次按键 2.3–2.6s 里的大头，其他线性成本加起来不到 300ms）——大纲面板和正文
+/// 一样要按视口开窗。
+#[gpui::test]
+async fn outline_panel_renders_only_the_rows_in_the_viewport(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = (0..3000)
+        .map(|index| format!("# 标题 {index}\n\n正文 {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+    editor.update(cx, |editor, _cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+    });
+    redraw(cx);
+    redraw(cx);
+    let (rows, headings) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.outline_rows_rendered.get(),
+            editor.workspace.outline_tree.len(),
+        )
+    });
+    assert_eq!(headings, 3000, "前置：大纲树应有 3000 条标题");
+    assert!(rows > 0, "大纲面板一帧都没渲染，闸门测不到东西");
+    assert!(
+        rows <= 200,
+        "一帧渲染了 {rows} 行大纲（共 {headings} 条）：侧栏没有按视口裁剪"
+    );
+
+    // 滚动之后窗口要跟着走：滚到第 1000 行附近，那一行得落在窗口里。
+    editor.update(cx, |editor, _cx| {
+        editor.workspace.tree_scroll_handle.set_offset(gpui::point(
+            gpui::px(0.0),
+            gpui::px(6.0 + 1000.0 * 24.0),
+        ));
+    });
+    redraw(cx);
+    let (first, rows) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.outline_first_row_rendered.get(),
+            editor.outline_rows_rendered.get(),
+        )
+    });
+    assert!(
+        (first as usize) <= 1000 && 1000 < first as usize + rows as usize,
+        "滚到第 1000 行后窗口是 {first}..{}：窗口没跟着滚动走",
+        first as usize + rows as usize
+    );
+}

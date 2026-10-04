@@ -31,7 +31,7 @@ impl Editor {
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor),
-            WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor),
+            WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor, cx),
             WorkspaceTab::Backlinks => {
                 self.render_workspace_backlinks_panel(theme, strings, window, cx)
             }
@@ -92,21 +92,107 @@ impl Editor {
         )
     }
     pub(crate) fn render_workspace_outline_tree(
-        &self,
+        &mut self,
         theme: &Theme,
         strings: &I18nStrings,
         editor: &WeakEntity<Editor>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.workspace.outline_tree.is_empty() {
             return self.render_workspace_empty_state("", &strings.workspace_empty_outline, theme);
         }
+        let (element, needs_fill) = {
+            let rows = self.workspace_outline_rows();
+            let window = self.workspace_outline_window(rows.len());
+            self.outline_rows_rendered.set(window.len() as u64);
+            self.outline_first_row_rendered.set(window.start as u64);
+            let needs_fill = rows.len() > OUTLINE_WINDOW_THRESHOLD_ROWS
+                && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
 
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .children(self.render_workspace_nodes(&self.workspace.outline_tree, 0, theme, editor))
-            .into_any_element()
+            let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
+            // 上下各垫一段等高空白：滚动条的长度与位置仍按整棵树算，
+            // 中间只挂视口里那一窗真节点。
+            if window.start > 0 {
+                elements.push(
+                    div()
+                        .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
+                        .flex_shrink_0()
+                        .into_any_element(),
+                );
+            }
+            for (node, depth) in &rows[window.clone()] {
+                elements.push(self.render_workspace_node(node, *depth, theme, editor));
+            }
+            let below = rows.len() - window.end;
+            if below > 0 {
+                elements.push(
+                    div()
+                        .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
+                        .flex_shrink_0()
+                        .into_any_element(),
+                );
+            }
+            let element = div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .children(elements)
+                .into_any_element();
+            (element, needs_fill)
+        };
+        // 首帧还没量过滚动视口：先铺一小段，立刻排下一帧补齐（与正文冷启动
+        // 续挂同一手法，帧数封顶，量到尺寸即停）。
+        if needs_fill && self.outline_fill_frames < OUTLINE_FILL_MAX_FRAMES {
+            self.outline_fill_frames += 1;
+            self.schedule_followup_frame(cx);
+        } else if !needs_fill {
+            self.outline_fill_frames = 0;
+        }
+        element
+    }
+
+    /// 视口内的行区间：行高固定，从滚动偏移直接除得出来。
+    fn workspace_outline_window(&self, total: usize) -> Range<usize> {
+        if total <= OUTLINE_WINDOW_THRESHOLD_ROWS {
+            return 0..total;
+        }
+        let viewport_height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
+        if viewport_height <= 0.0 {
+            return 0..OUTLINE_WINDOW_FALLBACK_ROWS.min(total);
+        }
+        let scrolled =
+            (f32::from(self.workspace.tree_scroll_handle.offset().y) - WORKSPACE_PANEL_PADDING_Y)
+                .max(0.0);
+        let first = (scrolled / WORKSPACE_NODE_HEIGHT) as usize;
+        let visible = (viewport_height / WORKSPACE_NODE_HEIGHT).ceil() as usize + 1;
+        let start = first.saturating_sub(OUTLINE_WINDOW_OVERDRAW_ROWS);
+        let end = (first + visible + OUTLINE_WINDOW_OVERDRAW_ROWS).min(total);
+        start..end
+    }
+
+    /// 展开状态下的标题树按行摊平：`(节点, 深度)` 的顺序就是屏幕顺序。
+    fn workspace_outline_rows(&self) -> Vec<(&WorkspaceTreeNode, usize)> {
+        fn walk<'a>(
+            nodes: &'a [WorkspaceTreeNode],
+            depth: usize,
+            expanded: &HashSet<String>,
+            rows: &mut Vec<(&'a WorkspaceTreeNode, usize)>,
+        ) {
+            for node in nodes {
+                rows.push((node, depth));
+                if !node.children.is_empty() && expanded.contains(&node.id) {
+                    walk(&node.children, depth + 1, expanded, rows);
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        walk(
+            &self.workspace.outline_tree,
+            0,
+            &self.workspace.expanded,
+            &mut rows,
+        );
+        rows
     }
 
     pub(crate) fn render_workspace_empty_state(
