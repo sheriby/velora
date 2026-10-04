@@ -2214,3 +2214,124 @@ async fn pasting_an_image_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAp
         "粘图片把表格的列宽填充重排了：{table_lines:?}"
     );
 }
+
+/// 光标停在段首打字，落点要在记号**后面**。
+///
+/// 块内第 0 个可见字符走了一条捷径：直接取整块的起点，而起点含 `# `、`- `、`> ` 这些
+/// 记号。于是在标题开头打一个字，字落到了 `#` 前面——屏幕上是标题 `X标题甲`，文件里却是
+/// `X# 标题甲`（已经不是标题了），没被编辑的记号还整体后移一格。
+#[gpui::test]
+async fn typing_at_the_start_of_a_block_lands_after_its_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const SHAPES: [(&str, &str, &str); 7] = [
+        ("ATX 标题", "# 标题甲\n", "# X标题甲\n"),
+        ("两个空格的 ATX 标题", "#  标题乙\n", "# X 标题乙\n"),
+        ("缩进两格的 ATX 标题", "  # 标题丙\n", "  # X标题丙\n"),
+        ("setext 标题", "标题丁\n-----\n", "X标题丁\n-----\n"),
+        ("两个空格的子弹", "-  项戊\n", "- X 项戊\n"),
+        ("没勾选的任务框", "- [ ] 项己\n", "- [ ] X项己\n"),
+        ("引用块", "> 段庚\n", "> X段庚\n"),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, source_text, want_buffer) in SHAPES {
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, source_text.to_string(), None)
+        });
+        redraw(cx);
+
+        let block = editor.read_with(cx, |editor, _cx| {
+            editor.document.visible_blocks()[0].entity.clone()
+        });
+        cx.update(|_window, cx| {
+            block.update(cx, |block, _cx| block.selected_range = 0..0);
+        });
+        cx.simulate_input("X");
+        redraw(cx);
+
+        let (buffer, kind, caret) = editor.read_with(cx, |editor, cx| {
+            (
+                editor.buffer.text(),
+                block.read_with(cx, |block, _cx| block.kind()),
+                block.read_with(cx, |block, _cx| block.selected_range.start),
+            )
+        });
+        if buffer != want_buffer {
+            failures.push(format!(
+                "  [{name}] 打进去的字节不在记号后面：{buffer:?}（应为 {want_buffer:?}）"
+            ));
+        }
+        if source_text.starts_with('#') || source_text.starts_with("标题丁") {
+            if !matches!(kind, BlockKind::Heading { .. }) {
+                failures.push(format!("  [{name}] 段首打字把标题不再是标题：kind={kind:?}"));
+            }
+        }
+        if caret != 1 {
+            failures.push(format!(
+                "  [{name}] 打完一个字光标应在第 1 个可见字符，实际 {caret}"
+            ));
+        }
+    }
+
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+/// 段首打字之后，磁盘上那一行还得是标题。
+///
+/// 落点算错到记号前面时，屏幕与文件就分家了：树里这块仍是标题（显示 `X标题甲`），
+/// 文件里却是 `X# 标题甲`——重新打开它是个段落。这条把落点钉到磁盘上，并确认没碰
+/// 别的块。
+#[gpui::test]
+async fn typing_at_the_start_of_a_heading_keeps_the_marker_on_disk(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("start-of-heading");
+    fs::write(&path, "# 标题甲\n\n- 项乙\n").expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let heading = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    cx.update(|_window, cx| {
+        heading.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    cx.simulate_input("X");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved, "# X标题甲\n\n- 项乙\n",
+        "段首打字把记号挤到了文字后面，或顺手改写了别的块"
+    );
+
+    // 重新打开：文件里这一行仍然解析成标题，而不是一个以 `X#` 开头的段落。
+    let reopened = encoding::load_document(&path).expect("reopen saved file");
+    let reopen_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, reopened, Some(reopen_path))
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let first = editor.document.visible_blocks()[0]
+            .entity
+            .read_with(cx, |block, _cx| (block.kind(), block.display_text().to_string()));
+        assert_eq!(
+            first,
+            (BlockKind::Heading { level: 1 }, "X标题甲".to_string()),
+            "保存后的文件重新打开不再是那个标题"
+        );
+    });
+}

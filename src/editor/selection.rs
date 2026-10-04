@@ -551,16 +551,18 @@ impl Editor {
     ) -> Option<usize> {
         let block = mapping.entity.read(cx);
         let visible_len = block.visible_len();
-        if offset == 0 {
-            return Some(mapping.full_source_range.start);
-        }
         if offset >= visible_len {
             return Some(mapping.full_source_range.end);
+        }
+        // 第 0 个可见字符也在内容里，就要按内容区间换算：`full_source_range.start` 含
+        // `# `、`- `、`> ` 这些记号，段首打字直接落它就把字插到了记号前面。
+        if mapping.content_to_source.is_empty() {
+            return Some(mapping.full_source_range.start);
         }
         let markdown_offset = block
             .current_range_to_markdown_range(offset..offset)
             .start;
-        let max_content = mapping.content_to_source.len().saturating_sub(1);
+        let max_content = mapping.content_to_source.len() - 1;
         Some(
             mapping.full_source_range.start
                 + mapping.content_to_source[markdown_offset.min(max_content)],
