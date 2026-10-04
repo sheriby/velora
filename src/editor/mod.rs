@@ -1356,8 +1356,17 @@ impl Editor {
                 self.reattach_root_spans(&block_spans, &text, cx);
             }
         } else if !skip_resync {
-            // 源码/代码文档：缓冲区装的是不套围栏的源码文本。
+            // 源码/代码文档：缓冲区装的是不套围栏的源码文本。这一遍同样是 O(文档)
+            // 的整篇落笔，闸门必须看得见（实测 1 MiB 的源码模式文档一次按键 2.28 秒，
+            // 以前这里连计数都不加，白名单空表反而掩盖了它）。
+            let started = std::time::Instant::now();
             let text = self.document.raw_source_text(cx);
+            self.source_serializations
+                .set(self.source_serializations.get() + 1);
+            self.source_serialization_nanos.set(
+                self.source_serialization_nanos.get()
+                    + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+            );
             self.apply_resynced_text(&text);
         }
     }

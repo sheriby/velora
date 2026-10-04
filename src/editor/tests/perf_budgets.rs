@@ -720,6 +720,48 @@ fn dispatch(
 /// `normalize_rendered_quote_structure`。但那一步现在做的是「整棵树落进缓冲区 +
 /// 整篇重解析」：60 根块的文档里改一根引用，实体全部换掉、未编辑块的字节也被
 /// 重新序列化一遍。这里两个数一起守：整篇序列化 0 次，重投影出来的根块数有界。
+/// 源码模式（未闭合的 fenced div、不支持的 admonition 触发的整篇兜底）打字：
+/// 这一档是「整篇落笔」，闸门必须数得到，同时文件以外一个字节都不能动。
+///
+/// 数不到就等于给整篇重投影开了后门：以前 `resync_buffer_from_projection` 的源码/
+/// 代码分支不加 `source_serializations`，白名单空表看起来全绿，实际 1 MiB 的源码模式
+/// 文档一次按键 2.28 秒（成本随文档线性增长，其中大头是把整篇文本重解析成行内树）。
+#[gpui::test]
+async fn source_mode_typing_is_counted_and_preserves_every_other_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "::: {.column-margin}\n未闭合的 div\n".to_string();
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, source.clone(), None)
+    });
+    redraw(cx);
+
+    let (mode, roots, before) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.view_mode,
+            editor.document.root_blocks().len(),
+            editor.source_serializations.get(),
+        )
+    });
+    assert_eq!(mode, crate::editor::ViewMode::Source, "夹具该走源码模式兜底");
+    assert_eq!(roots, 1, "源码模式该是整篇一个块");
+
+    cx.simulate_input("X");
+    redraw(cx);
+
+    let (after, buffer) = editor.read_with(cx, |editor, _cx| {
+        (editor.source_serializations.get(), editor.buffer.text())
+    });
+    assert!(
+        after > before,
+        "源码模式的一次整篇落笔没进闸门分子：这条路径又一次成了隐形成本"
+    );
+    assert_eq!(
+        buffer,
+        "X::: {.column-margin}\n未闭合的 div\n",
+        "源码模式打字改动了光标以外不该动的字节"
+    );
+}
+
 #[gpui::test]
 async fn entering_a_quote_reprojects_only_that_quote(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

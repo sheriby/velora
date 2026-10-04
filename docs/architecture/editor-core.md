@@ -94,6 +94,11 @@ Workspace (src/editor/workspace.rs)
 5. **重投影从「整棵树重新解析」换成「只重解析变了的那一段」**：`reproject_root_region`（src/editor/document/import.rs）把一根根块换成它那段行重新解析出的若干根块（窗口 = 本段行 + 前瞻 ≤2 行，且要求解析结果落在本段内才接受，否则放弃走全量 `rebuild_root_blocks_from_buffer`）；计数器 `Editor::roots_reprojected` 记增量重投影了几根。
 6. **引用敏感的块才刷新运行时**（`changed_block_needs_runtime_context_refresh`，src/editor/runtime_context.rs）：image/link/footnote 注册表从 `buffer.text()` 解析，且刷新必须排在写回**之后**，否则读到的是改动前的文本（`editing_image_reference_definition_refreshes_existing_image` 钉住这一顺序）。
 7. **闸门**：`a_real_editing_session_never_falls_back_to_whole_document_serialization`（src/editor/tests/perf_budgets.rs）把打字、回车拆块、勾任务框、缩进/提级/降级、标注里拆块、表格加行/删行/调对齐/加删列/移动行列、删整张表、多行粘贴一条条走一遍，断言 `source_serializations + whole_document_renders` 增量为 0。白名单常量 `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED` 现在是空表——每加一条命令都只能让它更短。
+   **源码模式那一档也计数**（2026-10-04）：`resync_buffer_from_projection` 的源码/代码分支以前不加
+   `source_serializations`，白名单空表看着全绿，实际未闭合 fenced div / 不支持 admonition 触发的
+   整篇兜底里，1 MiB 文档一次按键实测 **2.28 秒**（成本随文档线性增长，大头是把整篇文本重解析成
+   行内树）。现在它进分子了，守卫 `source_mode_typing_is_counted_and_preserves_every_other_byte`
+   （同时钉住字节：除了光标那一个字符，其余原样）。「源码模式直接编辑缓冲区」是还没签字的一笔。
 8. **字节保真**由另一组按字节断言的测试守（src/editor/tests/round_trip_fidelity.rs、block_source_write_back.rs、block_source_spans.rs）：`__下划线__` 写法、字面转义 `\*`、Setext、表格列宽、CRLF、末行换行、无末行换行，打开—编辑—保存之后没改过的字节必须逐字节还是磁盘上那样。
 9. **`record.title == parse(buffer[span])` 的渲染侧对照**：`typing_one_char_only_changes_the_text_at_the_caret` 对全部保真形状（含脚注定义）断言「打一个字只动光标那一个字」——本块可见文本正好多出那一个字符，其余块的可见文本一字不改。字节表盯磁盘，这条盯投影：写法被重新解释时（`\*` 读成强调、脚注退回源码形状），字节可能没变而渲染已经变了。
 10. **脚注序号是渲染形状，不是字节形状**：`[^1]` 进树是一个带 `InlineFootnoteReference` 的片段，可见文本按注册表贴成 `¹`。编辑后的重解析认得出 `[^1]` 这个形状、认不出序号（片段 `ordinal` 为空，文本退回源码形状），所以 `sync_footnote_registry` 不能只在注册表换人时回填——段首打一个字并不换注册表，不回填的话屏幕上就是 `[^1]`，可见长度多出三个字节，光标与字数都跟着错。回填排在写回**之后**，因此缓冲区里始终是 `[^1]`（`typing_next_to_a_footnote_reference_keeps_the_ordinal_label`、`typing_between_two_footnote_references_keeps_both_ordinals`、`deleting_a_char_next_to_a_footnote_reference_keeps_the_ordinal_label`）。
