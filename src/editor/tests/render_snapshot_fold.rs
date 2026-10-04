@@ -64,12 +64,15 @@ async fn heading_fold_hides_section_content(cx: &mut TestAppContext) {
         heading.update(cx, |block, _cx| block.folded = true);
 
         let filtered = editor
-            .apply_heading_fold_filter(
-                editor.document.visible_blocks().to_vec(),
-                cx,
-            )
+            .apply_heading_fold_filter(cx)
             .iter()
-            .map(|visible| visible.entity.read(cx).display_text().to_string())
+            .map(|&index| {
+                editor.document.visible_blocks()[index as usize]
+                    .entity
+                    .read(cx)
+                    .display_text()
+                    .to_string()
+            })
             .collect::<Vec<_>>();
 
         // 折叠章节内容 alpha/beta 被隐藏，下一同级标题保持可见。
@@ -87,7 +90,7 @@ async fn heading_fold_chevron_marks_only_foldable_headings(cx: &mut TestAppConte
     let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
 
     editor.update(cx, |editor, cx| {
-        editor.apply_heading_fold_filter(editor.document.visible_blocks().to_vec(), cx);
+        editor.apply_heading_fold_filter(cx);
         let visible = editor.document.visible_blocks().to_vec();
         let foldable = visible
             .iter()

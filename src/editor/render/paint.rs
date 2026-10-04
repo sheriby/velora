@@ -93,10 +93,9 @@ impl Render for Editor {
             None => {
                 self.row_plan_rebuilds.set(self.row_plan_rebuilds.get() + 1);
                 let plan_started = std::time::Instant::now();
-                let visible_blocks =
-                    self.apply_heading_fold_filter(self.document.visible_blocks().to_vec(), cx);
+                let kept = self.apply_heading_fold_filter(cx);
                 let plan = std::sync::Arc::new(self.build_rendered_row_plan(
-                    &visible_blocks,
+                    &kept,
                     plan_key.0,
                     plan_key.1,
                     plan_key.2,

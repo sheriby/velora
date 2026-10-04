@@ -187,9 +187,15 @@ async fn heading_fold_chevron_renders_and_click_toggles_fold(cx: &mut TestAppCon
     editor.update(cx, |editor, cx| {
         assert!(heading.read(cx).folded);
         let filtered = editor
-            .apply_heading_fold_filter(editor.document.visible_blocks().to_vec(), cx)
+            .apply_heading_fold_filter(cx)
             .iter()
-            .map(|visible| visible.entity.read(cx).display_text().to_string())
+            .map(|&index| {
+                editor.document.visible_blocks()[index as usize]
+                    .entity
+                    .read(cx)
+                    .display_text()
+                    .to_string()
+            })
             .collect::<Vec<_>>();
         assert_eq!(filtered, vec!["Section".to_string(), "Empty".to_string()]);
     });

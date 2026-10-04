@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 pub(super) use gpui::*;
 
-pub(super) use super::{Editor, InfoDialogKind, MountedRun};
+pub(super) use super::{Editor, InfoDialogKind, MountedRun, tree::VisibleTreeAnchors};
 pub(super) use crate::app_menu::{dispatch_menu_action_for_editor, welcome_recent_entries};
 pub(super) use crate::components::CalloutVariant;
 pub(super) use crate::components::{AddLanguageConfig, AddThemeConfig, Block, BlockKind, NoRecentFiles};
@@ -79,35 +79,51 @@ fn tibetan_font_fallbacks_for_target_os(target_os: &str) -> Vec<String> {
 }
 
 /// Adjacent-row metadata used to collapse spacing inside visual groups.
+///
+/// 同一份数据也是折叠过滤的廉价闸门：`heading_level` 决定要不要读实体看折叠状态，
+/// `is_toc` / `had_toc` 决定要不要为一个 `[TOC]` 块算目录条目。可见列表同步时
+/// 顺手记下（见 `DocumentTree::sync_block_list`），行计划重建就不再逐块读实体。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RenderedRowSpacingInfo {
-    quote_group_anchor: Option<uuid::Uuid>,
-    visible_quote_group_anchor: Option<uuid::Uuid>,
-    callout_anchor: Option<uuid::Uuid>,
-    callout_variant: Option<CalloutVariant>,
-    is_callout_header: bool,
-    footnote_anchor: Option<uuid::Uuid>,
-    is_footnote_header: bool,
-    heading_level: Option<u8>,
-    is_list_item: bool,
+    pub(crate) quote_group_anchor: Option<uuid::Uuid>,
+    pub(crate) visible_quote_group_anchor: Option<uuid::Uuid>,
+    pub(crate) callout_anchor: Option<uuid::Uuid>,
+    pub(crate) callout_variant: Option<CalloutVariant>,
+    pub(crate) is_callout_header: bool,
+    pub(crate) footnote_anchor: Option<uuid::Uuid>,
+    pub(crate) is_footnote_header: bool,
+    pub(crate) heading_level: Option<u8>,
+    pub(crate) is_list_item: bool,
+    /// 这一块的显示文本是不是 `[TOC]`（同步那趟从块上读出来的）。
+    pub(crate) is_toc: bool,
+    /// 这一块手上是不是挂着目录条目（上一趟 `[TOC]` 留下的，需要清掉）。
+    pub(crate) had_toc: bool,
 }
 
 impl RenderedRowSpacingInfo {
-    fn from_block(block: &Block) -> Self {
-        let kind = block.kind();
+    /// 由可见列表同步那一趟刚算出来的锚点构造。字段取自**本次**计算而不是块上
+    /// 的旧值——同一趟里旧值还没写回块。
+    pub(crate) fn from_visible_tree_sync(
+        kind: &BlockKind,
+        anchors: VisibleTreeAnchors,
+        is_toc: bool,
+        had_toc: bool,
+    ) -> Self {
         Self {
-            quote_group_anchor: block.quote_group_anchor,
-            visible_quote_group_anchor: block.visible_quote_group_anchor,
-            callout_anchor: block.callout_anchor,
-            callout_variant: block.callout_variant,
+            quote_group_anchor: anchors.quote_group_anchor,
+            visible_quote_group_anchor: anchors.visible_quote_group_anchor,
+            callout_anchor: anchors.callout_anchor,
+            callout_variant: anchors.callout_variant,
             is_callout_header: kind.is_callout(),
-            footnote_anchor: block.footnote_anchor,
+            footnote_anchor: anchors.footnote_anchor,
             is_footnote_header: kind.is_footnote_definition(),
-            heading_level: match &kind {
+            heading_level: match kind {
                 BlockKind::Heading { level } => Some(*level),
                 _ => None,
             },
             is_list_item: kind.is_list_item(),
+            is_toc,
+            had_toc,
         }
     }
 }
@@ -583,11 +599,19 @@ fn footnote_group_shell(
 }
 
 impl Editor {
-    /// P4b：对可见块序列做一次折叠过滤后的分组扫描，产出可复用的行计划。
-    /// 只读块元数据，不构建任何元素。
+    /// 计数器：行计划重建路上每读一个块实体加一。闸门看的就是它——见
+    /// `row_plan_rebuild_reads_only_the_headings_not_every_block`。
+    pub(crate) fn count_row_plan_block_read(&self) {
+        self.row_plan_block_reads
+            .set(self.row_plan_block_reads.get() + 1);
+    }
+
+    /// P4b：对折叠过滤剩下的那段可见序列做一次分组扫描，产出可复用的行计划。
+    /// `kept` 是过滤后的可见下标（升序）。行元数据全部取自同步可见列表那一趟
+    /// 记下的快照，所以这里不读任何块实体；`rows` 只在真正需要挂元素时才克隆实体。
     fn build_rendered_row_plan(
         &self,
-        visible: &[super::tree::VisibleBlock],
+        kept: &[u32],
         revision: u64,
         fold_version: u64,
         toc_version: u64,
@@ -602,74 +626,82 @@ impl Editor {
             .dimensions
             .block_min_height
             .max(1.0);
-        let spacing_of = |visible: &super::tree::VisibleBlock| -> RenderedRowSpacingInfo {
-            RenderedRowSpacingInfo::from_block(visible.entity.read(cx))
+        let spacing_of = |index: usize| -> RenderedRowSpacingInfo {
+            self.document.row_spacing_at(index)
         };
-        let mut rows: Vec<RenderedRowPlanRow> = Vec::with_capacity(visible.len());
-        let mut index = 0usize;
-        while index < visible.len() {
-            let first_spacing = spacing_of(&visible[index]);
-            let first_id = visible[index].entity.entity_id();
+        let entity_of = |index: usize| self.document.visible_blocks()[index].entity.clone();
+        let mut rows: Vec<RenderedRowPlanRow> = Vec::with_capacity(kept.len());
+        let mut position = 0usize;
+        while position < kept.len() {
+            let first_index = kept[position] as usize;
+            let first_spacing = spacing_of(first_index);
+            let first_id = self.document.visible_blocks()[first_index]
+                .entity
+                .entity_id();
             if let (Some(callout_anchor), Some(callout_variant)) = (
                 first_spacing.callout_anchor,
                 first_spacing.callout_variant,
             ) {
                 let mut members = Vec::new();
-                let mut group_end = index;
-                while group_end < visible.len()
-                    && spacing_of(&visible[group_end]).callout_anchor == Some(callout_anchor)
+                let mut group_end = position;
+                while group_end < kept.len()
+                    && spacing_of(kept[group_end] as usize).callout_anchor
+                        == Some(callout_anchor)
                 {
+                    let index = kept[group_end] as usize;
                     members.push(RenderedGroupMember {
-                        entity: visible[group_end].entity.clone(),
-                        spacing: spacing_of(&visible[group_end]),
+                        entity: entity_of(index),
+                        spacing: spacing_of(index),
                     });
                     group_end += 1;
                 }
                 rows.push(RenderedRowPlanRow {
-                    visible_start: index,
+                    visible_start: position,
                     first_id,
                     body: RenderedRowBody::Group {
                         callout_variant: Some(callout_variant),
                         members,
                     },
                 });
-                index = group_end;
+                position = group_end;
                 continue;
             }
 
             if let Some(footnote_anchor) = first_spacing.footnote_anchor {
                 let mut members = Vec::new();
-                let mut group_end = index;
-                while group_end < visible.len()
-                    && spacing_of(&visible[group_end]).footnote_anchor == Some(footnote_anchor)
+                let mut group_end = position;
+                while group_end < kept.len()
+                    && spacing_of(kept[group_end] as usize).footnote_anchor
+                        == Some(footnote_anchor)
                 {
+                    let index = kept[group_end] as usize;
                     members.push(RenderedGroupMember {
-                        entity: visible[group_end].entity.clone(),
-                        spacing: spacing_of(&visible[group_end]),
+                        entity: entity_of(index),
+                        spacing: spacing_of(index),
                     });
                     group_end += 1;
                 }
                 rows.push(RenderedRowPlanRow {
-                    visible_start: index,
+                    visible_start: position,
                     first_id,
                     body: RenderedRowBody::Group {
                         callout_variant: None,
                         members,
                     },
                 });
-                index = group_end;
+                position = group_end;
                 continue;
             }
 
             rows.push(RenderedRowPlanRow {
-                visible_start: index,
+                visible_start: position,
                 first_id,
                 body: RenderedRowBody::Ordinary {
-                    entity: visible[index].entity.clone(),
+                    entity: entity_of(first_index),
                     spacing: first_spacing,
                 },
             });
-            index += 1;
+            position += 1;
         }
 
         // P7：行元数据与 stride 初值在构建期一次算好，未变更帧零重算。

@@ -187,85 +187,72 @@ impl Editor {
         }
     }
 
-    pub(crate) fn apply_heading_fold_filter(
-        &mut self,
-        all: Vec<crate::editor::tree::VisibleBlock>,
-        cx: &mut Context<Self>,
-    ) -> Vec<crate::editor::tree::VisibleBlock> {
-        for (index, visible) in all.iter().enumerate() {
-            // P4b 后这里只在行计划重建时运行，但仍是 O(文档)：先做最廉价
-            // 的类型判断，[TOC] 全文 trim 比较只可能命中 Paragraph。
-            let kind = visible.entity.read(cx).kind();
-            if !matches!(kind, BlockKind::Paragraph) {
-                let level = match kind {
-                    BlockKind::Heading { level } => level,
-                    _ => continue,
-                };
-                let has_section = all.get(index + 1).is_some_and(|next| {
-                    match next.entity.read(cx).kind() {
-                        BlockKind::Heading { level: next_level } => next_level > level,
-                        _ => true,
-                    }
-                });
-                visible
+    /// 折叠过滤 + `[TOC]` 条目落账，返回**活下来的可见下标**（升序）。
+    ///
+    /// 块的类型、层级、是不是 `[TOC]`、手上有没有目录条目，全部读可见列表那一趟
+    /// 记下的元数据（`DocumentTree::row_spacing_at`），所以这两遍扫不再逐块读实体：
+    /// 10 MiB 一次按键的行计划重建里，实体读取从「每个可见块两次」降到
+    /// 「每个标题一次」（chevron 的 `foldable` 与折叠状态 `folded` 住在块上）。
+    /// 元数据是文本形状，靠「文本变了就重跑同步」保新鲜——这条前提由
+    /// `typing_a_toc_marker_fills_its_entries_on_that_frame` 钉住。
+    pub(crate) fn apply_heading_fold_filter(&mut self, cx: &mut Context<Self>) -> Vec<u32> {
+        let all = self.document.visible_blocks().len();
+        for index in 0..all {
+            let meta = self.document.row_spacing_at(index);
+            if let Some(level) = meta.heading_level {
+                let has_section = index + 1 < all
+                    && match self.document.row_spacing_at(index + 1).heading_level {
+                        Some(next_level) => next_level > level,
+                        None => true,
+                    };
+                self.document.visible_blocks()[index]
                     .entity
                     .update(cx, |block, _cx| block.foldable = has_section);
                 continue;
             }
-            let (is_toc, had_toc) = {
-                let block = visible.entity.read(cx);
-                (
-                    block.display_text().trim().eq_ignore_ascii_case("[toc]"),
-                    !block.toc_entries.is_empty(),
-                )
-            };
-            if is_toc {
+            if !meta.is_toc && !meta.had_toc {
+                continue;
+            }
+            self.count_row_plan_block_read();
+            let entity = self.document.visible_blocks()[index].entity.clone();
+            if meta.is_toc {
                 // `[TOC]` 就是大纲的一个读者：它出现的那一帧要把清单算出来（同步
                 // 自己会先比一次「有没有什么变了」，没变时这里几乎不花钱），
                 // 否则刚打完 `[TOC]` 的那一帧会拿到上一份、甚至空的条目。
                 self.sync_workspace_outline(cx);
                 let entries = self.workspace.toc_entries.clone();
-                visible
-                    .entity
-                    .update(cx, |block, _cx| block.toc_entries = entries);
-            } else if had_toc {
-                visible
-                    .entity
-                    .update(cx, |block, _cx| block.toc_entries.clear());
+                entity.update(cx, |block, _cx| block.toc_entries = entries);
+            } else {
+                entity.update(cx, |block, _cx| block.toc_entries.clear());
             }
-            let level = match kind {
-                BlockKind::Heading { level } => level,
-                _ => continue,
-            };
-            let has_section = all.get(index + 1).is_some_and(|next| {
-                match next.entity.read(cx).kind() {
-                    BlockKind::Heading { level: next_level } => next_level > level,
-                    _ => true,
-                }
-            });
-            visible
-                .entity
-                .update(cx, |block, _cx| block.foldable = has_section);
+            // 条目刚被写上或清掉，快照里那条 `had_toc` 跟着更新（下一趟过滤
+            // 才知道这条还需不需要动）。
+            self.document.refresh_row_spacing_for(entity.entity_id(), cx);
         }
-        let mut filtered = Vec::with_capacity(all.len());
+        let mut filtered = Vec::with_capacity(all);
         let mut hide_below_level: Option<u8> = None;
-        for visible in all {
-            let block = visible.entity.read(cx);
-            match block.kind() {
-                BlockKind::Heading { level } => {
+        for index in 0..all {
+            let meta = self.document.row_spacing_at(index);
+            match meta.heading_level {
+                Some(level) => {
                     if let Some(hide) = hide_below_level
                         && level <= hide
                     {
                         hide_below_level = None;
                     }
-                    if block.folded {
+                    self.count_row_plan_block_read();
+                    if self.document.visible_blocks()[index]
+                        .entity
+                        .read(cx)
+                        .folded
+                    {
                         hide_below_level = Some(level);
                     }
-                    filtered.push(visible);
+                    filtered.push(index as u32);
                 }
-                _ => {
+                None => {
                     if hide_below_level.is_none() {
-                        filtered.push(visible);
+                        filtered.push(index as u32);
                     }
                 }
             }

@@ -108,9 +108,15 @@ async fn heading_fold_chevron_toggle_hides_section_and_refocuses_heading(
         assert_eq!(editor.pending_focus, Some(heading.entity_id()));
         assert_eq!(editor.active_entity_id, Some(heading.entity_id()));
         let filtered = editor
-            .apply_heading_fold_filter(editor.document.visible_blocks().to_vec(), cx)
+            .apply_heading_fold_filter(cx)
             .iter()
-            .map(|visible| visible.entity.read(cx).display_text().to_string())
+            .map(|&index| {
+                editor.document.visible_blocks()[index as usize]
+                    .entity
+                    .read(cx)
+                    .display_text()
+                    .to_string()
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             filtered,

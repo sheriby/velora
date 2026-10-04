@@ -482,3 +482,52 @@ async fn fresh_edit_clears_pending_redo_history(cx: &mut TestAppContext) {
     });
 }
 
+
+#[gpui::test]
+async fn typing_a_toc_marker_fills_its_entries_on_that_frame(cx: &mut TestAppContext) {
+    // 折叠过滤读的是「同步可见列表那一趟记下的 `[TOC]` 形状」，不再逐块读实体。
+    // 这条测试钉住它的前提：段落的文本一变，那一趟必跟着重跑，所以刚把
+    // `待填` 改成 `[TOC]` 的这一帧就拿到条目；改回去的这一帧条目又被清掉。
+    init_editor_test_app(cx);
+    let markdown = "# Title\n\n待填\n\n## Section";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.into(), None));
+    redraw(cx);
+
+    let paragraph = editor.update(cx, |editor, _cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        assert_eq!(visible.len(), 3, "夹具该是 Title / 待填 / Section 三块");
+        visible[1].entity.clone()
+    });
+
+    let retype = |text: &'static str, cx: &mut gpui::VisualTestContext| {
+        editor.update(cx, |editor, cx| {
+            editor.focus_block(paragraph.entity_id());
+            let len = paragraph.read_with(cx, |block, _cx| block.visible_len());
+            paragraph.update(cx, |block, block_cx| {
+                block.replace_text_in_visible_range(0..len, text, None, false, block_cx);
+            });
+        });
+        redraw(cx);
+    };
+
+    retype("[TOC]", cx);
+    paragraph.read_with(cx, |block, _cx| {
+        let titles = block
+            .toc_entries
+            .iter()
+            .map(|entry| entry.title.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            vec!["Title".to_string(), "Section".to_string()],
+            "改成 `[TOC]` 的这一帧就该有目录条目"
+        );
+    });
+
+    retype("待填", cx);
+    assert!(
+        paragraph.read_with(cx, |block, _cx| block.toc_entries.is_empty()),
+        "文本不再是 `[TOC]`，条目要跟着清掉，否则块上挂着过期目录"
+    );
+}

@@ -80,6 +80,9 @@ impl Editor {
             BlockEvent::Changed => {
                 // [[ 补全跟随编辑刷新（依据本次编辑后的文本与光标）。
                 self.update_wikilink_completion_for_block(&block, cx);
+                // 文本形状（`[TOC]`）变了就当场刷新快照里那一条元数据：整棵同步
+                // 只在结构变化时重跑，这条编辑不改结构。
+                self.document.refresh_row_spacing_for(block.entity_id(), cx);
 
                 let should_restart_numbered_list = block.update(cx, |block, _cx| {
                     block.take_numbered_list_restart_requested()

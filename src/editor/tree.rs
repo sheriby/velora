@@ -57,6 +57,16 @@ pub(crate) struct VisibleBlock {
     pub entity: Entity<Block>,
 }
 
+/// 可见列表同步那一趟算出的分组锚点：写回块上的同一份，也存进快照，
+/// 让行计划重建时不必再逐块读实体。
+pub(crate) struct VisibleTreeAnchors {
+    pub quote_group_anchor: Option<uuid::Uuid>,
+    pub visible_quote_group_anchor: Option<uuid::Uuid>,
+    pub callout_anchor: Option<uuid::Uuid>,
+    pub callout_variant: Option<CalloutVariant>,
+    pub footnote_anchor: Option<uuid::Uuid>,
+}
+
 /// A block's position inside the runtime tree.
 #[derive(Clone)]
 pub(super) struct BlockLocation {
@@ -68,6 +78,8 @@ pub(super) struct BlockLocation {
 #[derive(Default, Clone)]
 pub(super) struct VisibleTreeSnapshot {
     visible: Vec<VisibleBlock>,
+    /// 与 `visible` 一一对齐的行元数据（`RenderedRowPlan` 的分组与折叠过滤读它）。
+    row_spacing: Vec<crate::editor::render::RenderedRowSpacingInfo>,
     visible_index_by_entity: HashMap<EntityId, usize>,
     location_by_entity: HashMap<EntityId, BlockLocation>,
     last_visible_descendant_by_entity: HashMap<EntityId, EntityId>,
@@ -76,6 +88,7 @@ pub(super) struct VisibleTreeSnapshot {
 impl VisibleTreeSnapshot {
     fn clear(&mut self) {
         self.visible.clear();
+        self.row_spacing.clear();
         self.visible_index_by_entity.clear();
         self.location_by_entity.clear();
         self.last_visible_descendant_by_entity.clear();
@@ -153,6 +166,31 @@ impl DocumentTree {
 
     pub(super) fn visible_blocks(&self) -> &[VisibleBlock] {
         &self.snapshot.visible
+    }
+
+    /// 第 `index` 个可见块的行元数据，就是 [`Self::visible_blocks`] 那一趟同步记下的
+    /// 那一份（两块 vec 同进同出，所以直接下标）。行计划重建靠它取代逐块 `entity.read`。
+    pub(crate) fn row_spacing_at(&self, index: usize) -> crate::editor::render::RenderedRowSpacingInfo {
+        self.snapshot.row_spacing[index]
+    }
+
+    /// 块自己的文本变了：`[TOC]` 是一个**文本形状**，而整棵同步只在结构变化时
+    /// 重跑，所以命中这里的块要当场把它那一条元数据刷新（折叠过滤随后读到的
+    /// 就是新形状，而不是导入那一刻的旧文本）。
+    pub(super) fn refresh_row_spacing_for(&mut self, entity_id: EntityId, cx: &App) {
+        let Some(index) = self.visible_index_for_entity_id(entity_id) else {
+            return;
+        };
+        let Some(visible) = self.snapshot.visible.get(index) else {
+            return;
+        };
+        let block = visible.entity.read(cx);
+        let is_paragraph = block.kind() == BlockKind::Paragraph;
+        let is_toc = is_paragraph && block.display_text().trim().eq_ignore_ascii_case("[toc]");
+        let had_toc = is_paragraph && !block.toc_entries.is_empty();
+        let spacing = &mut self.snapshot.row_spacing[index];
+        spacing.is_toc = is_toc;
+        spacing.had_toc = had_toc;
     }
 
     pub(super) fn flatten_visible_blocks(&self) -> Vec<VisibleBlock> {
@@ -754,30 +792,27 @@ impl DocumentTree {
         let mut previous_was_list_item = seeds.previous_was_list_item;
         for (index, block) in blocks.iter().enumerate() {
             let entity_id = block.entity_id();
-            let visible_index = snapshot.visible.len();
-            snapshot.visible.push(VisibleBlock {
-                entity: block.clone(),
-            });
-            snapshot
-                .visible_index_by_entity
-                .insert(entity_id, visible_index);
-            snapshot.location_by_entity.insert(
-                entity_id,
-                BlockLocation {
-                    parent: parent_entity.clone(),
-                    index,
-                },
-            );
-
-            let (block_id, kind, children, is_empty_paragraph) = {
+            let (block_id, kind, children, is_empty_paragraph, had_toc, is_toc) = {
                 let block_ref = block.read(cx);
+                let kind = block_ref.kind();
+                let children = block_ref.children.clone();
+                // `[TOC]` 是一个段落的文本形状：这一段顺手读出来，折叠过滤那一趟
+                // 就不必再为每个段落读一次实体（闸门：
+                // `row_plan_rebuild_reads_only_the_headings_not_every_block`）。
+                let title_visible = (kind == BlockKind::Paragraph)
+                    .then(|| block_ref.record.title.visible_text());
                 (
                     block_ref.record.id,
-                    block_ref.kind(),
-                    block_ref.children.clone(),
-                    block_ref.kind() == BlockKind::Paragraph
-                        && block_ref.record.title.visible_text().is_empty()
+                    kind,
+                    children,
+                    title_visible
+                        .as_deref()
+                        .is_some_and(|text| text.is_empty())
                         && block_ref.children.is_empty(),
+                    title_visible.is_some() && !block_ref.toc_entries.is_empty(),
+                    title_visible
+                        .as_deref()
+                        .is_some_and(|text| text.trim().eq_ignore_ascii_case("[toc]")),
                 )
             };
             let parent_is_list_item = parent_entity
@@ -830,6 +865,37 @@ impl DocumentTree {
             };
             let child_list_depth = list_depth + usize::from(kind.is_list_item());
             let list_group_separator_candidate = is_empty_paragraph && previous_was_list_item;
+
+            // 可见列表与行元数据成对记下：这一趟算出的锚点此刻还在局部变量里
+            // （块上写的是上一趟的），行计划重建读这一份就够了，不必逐块读实体。
+            let visible_index = snapshot.visible.len();
+            snapshot.visible.push(VisibleBlock {
+                entity: block.clone(),
+            });
+            snapshot.row_spacing.push(
+                super::render::RenderedRowSpacingInfo::from_visible_tree_sync(
+                    &kind,
+                    VisibleTreeAnchors {
+                        quote_group_anchor,
+                        visible_quote_group_anchor,
+                        callout_anchor,
+                        callout_variant,
+                        footnote_anchor,
+                    },
+                    is_toc,
+                    had_toc,
+                ),
+            );
+            snapshot
+                .visible_index_by_entity
+                .insert(entity_id, visible_index);
+            snapshot.location_by_entity.insert(
+                entity_id,
+                BlockLocation {
+                    parent: parent_entity.clone(),
+                    index,
+                },
+            );
 
             block.update(cx, move |block, _cx| {
                 block.record.parent = parent_id;

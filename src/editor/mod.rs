@@ -157,6 +157,11 @@ pub struct Editor {
     word_count_scans: std::cell::Cell<u64>,
     /// 性能计数器：行结构计划重建次数（每键重建整篇计划是 P2 热点）。
     row_plan_rebuilds: std::cell::Cell<u64>,
+    /// 计数器：一次行计划重建里**读了几个块实体**。折叠过滤与分组扫描原来每个可见
+    /// 块都要 `entity.read` 一遍（10 MiB 实测 159,683 块 → 121ms 里的大头），
+    /// 行元数据缓存进可见列表快照后，这个数只该随「标题数 + 目录候选数」长，
+    /// 不该随文档长度长。
+    row_plan_block_reads: std::cell::Cell<u64>,
     /// 性能计数器：重投影出来的**根块数**。整篇重解析一次就是「文档有多少根块」，
     /// 区域重解析只重建改动那一段的几根——增量重投影要守的就是这个数不跟着文档长。
     roots_reprojected: std::cell::Cell<u64>,
@@ -629,6 +634,7 @@ impl Editor {
             source_mapping_full_builds: std::cell::Cell::default(),
             word_count_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),
+            row_plan_block_reads: std::cell::Cell::default(),
             roots_reprojected: std::cell::Cell::default(),
             outline_rebuilds: std::cell::Cell::default(),
             outline_full_rescans: std::cell::Cell::default(),

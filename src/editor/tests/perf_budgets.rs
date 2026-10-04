@@ -1369,3 +1369,57 @@ async fn a_real_editing_session_never_measures_marker_widths_after_the_fact(
         "这些形状还在事后拿文件行与模型行比记号宽度：{offenders:?}"
     );
 }
+
+#[gpui::test]
+async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestAppContext) {
+    // 行结构计划每键重建一次，重建里「读了几个块实体」就是它随文档长度长的系数
+    // （10 MiB 实测 159,683 个可见块全读一遍，121ms 的大头就在这里）。折叠过滤与
+    // 分组扫描要的行元数据，在同步可见列表那一步已经逐块算过一遍并写回块上——
+    // 缓存进快照之后，这里只该按标题数读（折叠状态与 chevron），目录那一路只读
+    // `[TOC]` 候选，其余块连实体都不碰。
+    init_editor_test_app(cx);
+    let sections = 100usize;
+    let markdown = (0..sections)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+
+    let blocks = editor.read_with(cx, |editor, _| editor.document.visible_blocks().len());
+    editor.update(cx, |editor, _cx| {
+        let last = editor.document.visible_blocks()[blocks - 1].entity.entity_id();
+        editor.focus_block(last);
+        editor.row_plan_block_reads.set(0);
+        editor.row_plan_rebuilds.set(0);
+    });
+    redraw(cx);
+    editor.update(cx, |editor, _cx| {
+        editor.row_plan_block_reads.set(0);
+        editor.row_plan_rebuilds.set(0);
+    });
+
+    cx.simulate_input("字");
+    redraw(cx);
+
+    let (reads, rebuilds, snapshot_rebuilds) = editor.read_with(cx, |editor, _| {
+        (
+            editor.row_plan_block_reads.get(),
+            editor.row_plan_rebuilds.get(),
+            editor.document.snapshot_rebuilds.get(),
+        )
+    });
+    eprintln!(
+        "可见块 {blocks} · 行计划重建 {rebuilds} 次 · 投影重排 {snapshot_rebuilds} 次 · 读实体 {reads} 次"
+    );
+    assert!(
+        rebuilds >= 1,
+        "这次按键没重建行计划，闸门测不到东西"
+    );
+    assert!(
+        reads <= sections as u64 * 2 + 16,
+        "一次按键的行计划重建读了 {reads} 个块实体（可见块 {blocks}、标题 {sections}）：\
+         行元数据还在逐块问实体要"
+    );
+}
