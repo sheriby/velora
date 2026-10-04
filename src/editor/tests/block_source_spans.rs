@@ -1102,3 +1102,44 @@ async fn typing_inside_an_indented_code_block_uses_the_parse_time_prefix(cx: &mu
         assert_eq!(after.2, expected, "{name}：字落错了字节");
     }
 }
+
+/// 缩进代码块不该把块后面那行分隔空行吃进内容：CommonMark 只在后面还接着缩进内容时，
+/// 空行才算属于这一族。吃了它，模型的行数与文件的行数就差了 1，解析期那份账一核对就
+/// 作废（缩进代码块里每一步都在事后比），渲染上还多出一个空档。
+#[gpui::test]
+async fn an_indented_code_block_does_not_eat_the_separator_line_after_it(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "    let indented = 1;\n\n正文。\n".to_string(), None)
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let roots = editor.document.root_blocks();
+        let code = roots[0].read(cx);
+        assert_eq!(
+            code.display_text(),
+            "let indented = 1;",
+            "缩进代码块把块后的分隔空行吃进了内容"
+        );
+        assert_eq!(
+            code.record.source_line_prefixes,
+            vec![4],
+            "账的行数要跟模型这一族每一行对得上"
+        );
+        // `    let indented = 1;` 占 0..21，那行空的是接缝，不属于这一块。
+        assert_eq!(
+            code.record.source_span.clone().map(|span| (span.start, span.end)),
+            Some((0, 21)),
+            "代码块的区间多包了接缝那一行"
+        );
+    });
+    let (spans, _) = root_block_spans(&editor, cx);
+    assert_eq!(
+        spans.len(),
+        2,
+        "接缝那一行被吃掉之后，正文就不是独立的一根块了：{spans:?}"
+    );
+}

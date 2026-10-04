@@ -889,20 +889,28 @@ pub(crate) fn collect_indented_code_block(
         + (lines[start].len() - stripped.len())) as u32];
     let mut code_lines = vec![stripped.to_string()];
     let mut code_index = start + 1;
+    // 空行要等：只有后面还接着缩进内容，它才算属于这一族。块尾那一串空行是接缝，
+    // 吃掉它模型的行数就比文件多一行（解析期那份账一核对就作废），渲染上还多一个空档。
+    let mut pending_blanks: Vec<u32> = Vec::new();
     while code_index < lines.len() {
         let inherited = origins.get(code_index).copied().unwrap_or(0);
         if let Some(stripped) = strip_indented_code_prefix(&lines[code_index]) {
+            for blank in pending_blanks.drain(..) {
+                prefixes.push(blank);
+                code_lines.push(String::new());
+            }
             prefixes.push((inherited + (lines[code_index].len() - stripped.len())) as u32);
             code_lines.push(stripped.to_string());
             code_index += 1;
         } else if lines[code_index].trim().is_empty() {
-            prefixes.push((inherited + lines[code_index].len()) as u32);
-            code_lines.push(String::new());
+            pending_blanks.push((inherited + lines[code_index].len()) as u32);
             code_index += 1;
         } else {
             break;
         }
     }
+    // 没等到缩进内容的那几行留给接缝。
+    code_index -= pending_blanks.len();
 
     let block = build_code_block(cx, None, code_lines.join("\n"));
     block.update(cx, |block, _cx| {
