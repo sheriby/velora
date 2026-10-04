@@ -633,6 +633,7 @@ impl Editor {
             let source = self.buffer.text();
             rescanned_lines = self.buffer.line_count();
             self.install_outline(build_outline_tree(&source));
+            self.outline_rebuilds.set(self.outline_rebuilds.get() + 1);
         } else if changed {
             let mut headings: Vec<OutlineHeading> = Vec::new();
             for key in &walk {
@@ -640,16 +641,69 @@ impl Editor {
                     headings.extend(segment.headings.iter().cloned());
                 }
             }
-            self.install_outline(nest_outline_headings(&headings));
+            // 只有标题文字变了（层级与行号一个没动）就原地换标签：整树重拼在
+            // 10 MiB 文档上是一次按键 130ms，而「在标题里打字」正是每键都来的
+            // 那种改动。层级或行号动了（加标题、上方多/少了一行）才重拼。
+            if !self.relabel_outline_in_place(&headings) {
+                self.install_outline(nest_outline_headings(&headings));
+                self.outline_rebuilds.set(self.outline_rebuilds.get() + 1);
+            }
         }
-        self.outline_rebuilds
-            .set(self.outline_rebuilds.get() + u64::from(changed));
         self.outline_lines_scanned
             .set(self.outline_lines_scanned.get() + rescanned_lines as u64);
         self.outline_nanos.set(
             self.outline_nanos.get()
                 + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
         );
+    }
+
+    /// 标题集合「同层级、同行号，只有文字变了」时原地改标签，返回是否改成功。
+    /// 树的节点顺序与标题清单的顺序一致（`nest_outline_headings` 保序），所以
+    /// 两边并排走一遍就能核对；不一致（增删标题、行号平移）返回 false，由调用方
+    /// 退回整树重拼。原地改标签不动物件 id、`expanded`、选中态——行号没动，
+    /// 这些状态本来就还指着同一批节点。
+    fn relabel_outline_in_place(&mut self, headings: &[OutlineHeading]) -> bool {
+        fn walk(
+            nodes: &mut [WorkspaceTreeNode],
+            headings: &[OutlineHeading],
+            cursor: &mut usize,
+        ) -> bool {
+            for node in nodes.iter_mut() {
+                if let WorkspaceTreeKind::Heading { line, level } = node.kind {
+                    let Some(heading) = headings.get(*cursor) else {
+                        return false;
+                    };
+                    if heading.level != level || heading.line != line {
+                        return false;
+                    }
+                    if node.label != heading.label {
+                        node.label = heading.label.clone();
+                    }
+                    *cursor += 1;
+                }
+                if !walk(&mut node.children, headings, cursor) {
+                    return false;
+                }
+            }
+            true
+        }
+
+        let mut cursor = 0usize;
+        let mut tree = std::mem::take(&mut self.workspace.outline_tree);
+        let same = walk(&mut tree, headings, &mut cursor) && cursor == headings.len();
+        self.workspace.outline_tree = tree;
+        if !same {
+            return false;
+        }
+        for (entry, heading) in self.workspace.toc_entries.iter_mut().zip(headings) {
+            if entry.title != heading.label {
+                entry.title = heading.label.clone();
+            }
+            entry.line = heading.line;
+            entry.level = heading.level;
+        }
+        self.toc_state_version = self.toc_state_version.wrapping_add(1);
+        true
     }
 
     fn install_outline(&mut self, outline: Vec<WorkspaceTreeNode>) {

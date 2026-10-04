@@ -1426,8 +1426,9 @@ async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestA
 
 /// 归因探针（markdown 那份 + **大纲页签打开**）：`[TOC]` 之外，侧栏的大纲页签
 /// 是大纲的另一个读者——它一出现，(a) 每次同步都要把 5 万条标题重新拼成一棵树
-/// （`install_outline`），(b) 每帧还要把整棵树走成元素树。按视口开窗后 (b) 没了：
-/// 实测一次按键 2.3–2.6s → 350–395ms，剩下的是 (a) 的 130ms 与行计划的 90ms。
+/// （`install_outline`），(b) 每帧还要把整棵树走成元素树。按视口开窗后 (b) 没了、
+/// 原地换标签后 (a) 的整树重拼也没了：实测一次按键 2.3–2.6s → 318ms，剩下的大纲
+/// 93ms 是「每键仍走一遍 10.6 万根块 + 5.3 万条标题克隆」，行计划 2×~90ms。
 /// 跑法：`cargo test probe_attribute_ten_mib_markdown_with_outline -- --ignored --nocapture`。
 #[gpui::test]
 #[ignore]
@@ -1533,4 +1534,46 @@ async fn outline_panel_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
         "滚到第 1000 行后窗口是 {first}..{}：窗口没跟着滚动走",
         first as usize + rows as usize
     );
+}
+
+/// 在标题里打字是大纲最常见的改动：文字换了，层级与行号一个没动。
+/// 旧实现把 5.3 万条标题重新拼成一棵树（10 MiB 实测 130ms/键）；这类改动
+/// 应该原地改标签，不重拼树。
+#[gpui::test]
+async fn typing_inside_a_heading_updates_the_outline_in_place(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "# 甲\n\n正文一\n\n## 甲二\n\n# 乙\n\n正文二\n".to_string();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+        let first = editor.document.root_blocks()[0].clone();
+        editor.focus_block(first.entity_id());
+        first.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.workspace.toc_entries.len(), 3, "前置：三个标题");
+    });
+
+    let before = editor.read_with(cx, |editor, _| editor.outline_rebuilds.get());
+    cx.simulate_input("新");
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| editor.outline_rebuilds.get());
+    assert_eq!(
+        after - before,
+        0,
+        "在标题里打一个字重拼了整棵大纲树（层级与行号都没动）"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.workspace.outline_tree[0].label, "新甲",
+            "树上那个节点的标签没跟着换，面板会显示旧标题"
+        );
+        assert_eq!(
+            editor.workspace.toc_entries[0].title, "新甲",
+            "`[TOC]` 读的条目没跟着换"
+        );
+    });
 }

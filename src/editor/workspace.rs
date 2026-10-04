@@ -69,7 +69,8 @@ pub(super) enum WorkspaceTreeKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkspaceTreeNode {
     id: String,
-    label: String,
+    /// 面板渲染与大纲测试都要读它，故对 editor 树可见。
+    pub(super) label: String,
     kind: WorkspaceTreeKind,
     /// 归因探针（`perf_budgets.rs`）拿它数侧栏总节点数，故对 editor 树可见。
     pub(super) children: Vec<WorkspaceTreeNode>,
