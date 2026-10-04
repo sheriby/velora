@@ -763,13 +763,53 @@ impl Editor {
         self.build_source_target_mappings_with_block_ranges(cx).0
     }
 
+    /// 这一块在缓冲区里占哪一段：根块用自己的 `source_span`，挂在容器里的子块只重建
+    /// 它那**一根**块的映射，不为一个边界把整篇走查一遍。
+    pub(super) fn block_source_range(
+        &self,
+        entity_id: EntityId,
+        cx: &App,
+    ) -> Option<Range<usize>> {
+        let block = self.document.block_entity_by_id(entity_id)?;
+        if let Some(span) = block.read(cx).record.source_span.clone() {
+            return Some(span);
+        }
+        let root = self.document.root_ancestor_of(entity_id)?;
+        if root.read(cx).record.source_span.is_some() {
+            // 挂在容器里的子块：只重建它那**一根**块的映射。
+            let mut mappings = Vec::new();
+            let mut ranges = HashMap::new();
+            self.push_root_source_mappings(&root, &mut mappings, &mut ranges, cx);
+            return ranges.get(&entity_id).cloned().or_else(|| {
+                mappings
+                    .iter()
+                    .find(|mapping| mapping.entity.entity_id() == entity_id)
+                    .map(|mapping| mapping.full_source_range.clone())
+            });
+        }
+        // 刚插进树、还没写回缓冲区的块没有区间：给一个就近的零宽锚点（前一根块末尾
+        // 之后的那个字节），跨块选区的端点才解析得出来，删除不会因为一个空段落中止。
+        let mut anchor = 0usize;
+        for sibling in self.document.root_blocks().iter() {
+            let id = sibling.entity_id();
+            let span = sibling.read(cx).record.source_span.clone();
+            if id == root.entity_id() {
+                return Some(anchor..anchor);
+            }
+            if let Some(span) = span {
+                anchor = (span.end + 1).min(self.buffer.byte_len());
+            }
+        }
+        None
+    }
+
     /// 一根块（连着它的子块）的映射，锚在它自己的 `source_span` 上。
     ///
     /// 返回 `false` = 这一根还没有区间（刚插进树、尚未写回缓冲区），什么都没写。
     /// 块内部的偏移仍由 `collect_single_block_source_mappings` 重建，所以映射要钳在
     /// 本块的区间里并落在字符边界上——写法不规范的块长度与缓冲区对不上时，既不能
     /// panic，也不能越界吃到邻居的字节。
-    fn push_root_source_mappings(
+    pub(super) fn push_root_source_mappings(
         &self,
         block: &Entity<Block>,
         mappings: &mut Vec<SourceTargetMapping>,

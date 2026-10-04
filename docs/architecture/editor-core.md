@@ -100,6 +100,7 @@ Workspace (src/editor/workspace.rs)
 11. **记号占几字节是解析时量出来的数据**（`BlockRecord::content_marker_len`，src/components/block/state.rs）：导入时 ATX 记 `parse_atx_heading_line_with_marker` 量到的宽度（含前导缩进与记号后面那个空格），Setext 记 `0`——内容行里根本没有 `# `。读侧的标题映射按这个宽度起算内容（src/editor/source_mapping.rs 的 Heading 分支），不再按模型拼一个 `# ` 猜：猜错就整块偏移整体漂，Setext 漂两字节还会切进中文字符中间，搜索命中的选区、高亮、行列号、粘贴插入点说的都不是那几个字节。`None` = 编辑中新建的块，规范记号就是文件里的那个。守卫：`block_offsets_land_on_the_bytes_the_file_actually_has`、`typing_in_a_setext_heading_keeps_the_underline_and_the_offsets`。
 12. **段首的落点在记号后面**：`mapping_source_offset`（src/editor/selection.rs）把「块内第 n 个可见字符」换算成缓冲区字节，第 0 个也不例外——它以前直接返回整块起点，而起点含 `# `、`- `、`> ` 这些记号，于是在标题开头打一个字，字落进 `#` 前面（屏幕上是标题 `X标题`，磁盘上是 `X# 标题`，重新打开就是个段落）。记号宽度既然是数据，插入点就只能在它后面。守卫：`typing_at_the_start_of_a_block_lands_after_its_marker`（七种写法逐个钉落点、kind 与光标）、`typing_at_the_start_of_a_heading_keeps_the_marker_on_disk`（钉到磁盘，并重新打开确认还是标题）。
 13. **「这个字节落在哪一块」按块的区间问，不整篇重拼映射**：`block_id_at_source_offset` 先问根块自己的 `source_span`，只有落进容器（引用、列表）才把**那一根**块的子块映射重建出来；`source_mappings_in_range`（src/editor/source_mapping.rs）只重建与给定区间相交的根块，再各带左右紧邻的一根——端点落在两块之间的空行时，`endpoint_for_source_offset` 要按距离挑最近的一块，少带就挑到别处去了。之前点一次大纲标题要走四次整篇重建（`heading_block_at_source_line`、`unfold_sections_covering_source_range`、`apply_marked_source_range`、`apply_selection_snapshot_in_current_mode`），每次都是 O(文档)：1 MiB 实测一次 227ms，10 MiB 就是秒级。守卫：`clicking_an_outline_heading_unfolds_it_without_a_document_wide_mapping`（`source_mapping_full_builds` 增量为 0，同时钉住那个 Setext 标题确实被展开）。
+14. **跨块复制交出去的是缓冲区里的那段字节**：`cross_block_selected_markdown`（src/editor/selection.rs）现在就是 `buffer.slice(选区的源区间)`。以前它按块树的序列化口径逐块重拼、再按「块间补空行、紧排列表项不补」的规则粘起来——Setext 的下划线在这趟里丢掉（复制—粘贴之后那一块不再是标题），`__强调__` 与 `1)` 也随时可能被洗成别的写法，而且为了算边界还要整篇重拼 source mapping。端点换算用 `source_mapping_for_entity`（只走这一根块），拿不到映射的原子块（表格整块）退回它自己的 `source_span`；两者都没有区间时（刚插进树、尚未写回的空段落）给一个就近的零宽锚点，删除才不因它中止。守卫：`copying_a_cross_block_selection_gives_the_bytes_from_the_file`、`copy_then_paste_a_cross_block_selection_keeps_the_writing_style`、`delete_selection_*`。
 
 
 ## 4. Undo/历史（src/editor/history.rs）
@@ -139,12 +140,11 @@ Workspace (src/editor/workspace.rs)
   `BlockTextElement`，它读 `search_highlight_ranges`；由 `document_search_hit_inside_table_jumps`
   钉住），还没画出来的是那几个不走 `BlockTextElement` 的格子：含行内数学/上下标/内嵌图片的格子、
   长块兜底那一档，以及 HTML `<table>`（src/components/block/render/inline_visuals.rs、paint_parts.rs）。
-- **还没做完的（整篇 source mapping 重建的余下四个入口）**：`sync_document_search_highlights`
-  （src/editor/workspace/tree_sync.rs:30，搜索高亮本来就要扫全文，成本同阶）、`sync_outline_follow_scroll`
-  （同文件 :230，滚动跟随，还带一次全文换行符扫描——可改 `buffer.line_of`）、
-  `cross_block_source_range_for_normalized`（src/editor/selection.rs:602）与 `cross_block_selected_markdown`
-  （:510 的按 id 全篇表；两者都只问选区里那几块，可按各块的 `source_span` 算）。删掉这四个入口，
-  `build_source_target_mappings` 与 `collect_single_block_source_mappings` 里那套前缀重建才真能删。
+- **还没做完的（整篇 source mapping 重建的余下两个入口）**：`sync_document_search_highlights`
+  （src/editor/workspace/tree_sync.rs:30，搜索高亮本来就要扫全文，成本同阶）与 `sync_outline_follow_scroll`
+  （同文件 :230，滚动跟随，还带一次全文换行符扫描——可改 `buffer.line_of`，块的位置本来就挂在块上）。
+  删掉这两个入口，`build_source_target_mappings` 与 `collect_single_block_source_mappings` 里那套
+  前缀重建才真能删。
 
 
 ## 6. 持久化（src/editor/persistence.rs）

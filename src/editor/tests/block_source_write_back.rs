@@ -2335,3 +2335,131 @@ async fn typing_at_the_start_of_a_heading_keeps_the_marker_on_disk(cx: &mut Test
         );
     });
 }
+
+/// 跨块复制交出去的必须是文件里的那段字节。
+///
+/// `cross_block_selected_markdown` 按块树的序列化口径重新拼了一遍（Setext 折成一行 `#`、
+/// `__强调__` 变 `**强调**`、`1)` 变 `1.`、紧排的列表项之间补空行），于是复制—粘贴一次
+/// 就把从没编辑过的写法洗掉；为了算区间它还要把整篇 source mapping 重拼一遍（O(文档)）。
+/// 选区说的就是缓冲区里的位置，复制该还缓冲区里的那段字节。
+#[gpui::test]
+async fn copying_a_cross_block_selection_gives_the_bytes_from_the_file(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = concat!(
+        "标题甲\n",
+        "=====\n",
+        "\n",
+        "段落 with __强调__\n",
+        "\n",
+        "1) 第一项\n",
+        "2) 第二项\n",
+    );
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, source.to_string(), None)
+    });
+    redraw(cx);
+
+    let builds_before = editor.read_with(cx, |editor, _| editor.source_mapping_full_builds.get());
+    let copied = editor.update(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        let anchor = visible.first().expect("夹具应有可见块").entity.entity_id();
+        let focus = visible.last().expect("夹具应有可见块").entity.entity_id();
+        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: anchor,
+                offset: 0,
+            },
+            focus: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: focus,
+                offset: usize::MAX,
+            },
+        });
+        editor.cross_block_selected_markdown(cx)
+    });
+    let builds_after = editor.read_with(cx, |editor, _| editor.source_mapping_full_builds.get());
+
+    assert_eq!(
+        copied.as_deref(),
+        Some("标题甲\n=====\n\n段落 with __强调__\n\n1) 第一项\n2) 第二项"),
+        "复制出来的不是文件里的那段字节"
+    );
+    assert_eq!(
+        builds_after - builds_before,
+        0,
+        "复制一次跨块选区重拼了整篇 source mapping"
+    );
+}
+
+/// 复制—粘贴一趟之后，写法还得是原来的写法。
+///
+/// 复制交出去的是文件里那段字节，粘贴再把它原样落回缓冲区，所以 Setext 的下划线、
+/// `1)` 的序号、`__强调__` 那对下划线都该活着。以前复制先按块树的序列化口径洗一遍，
+/// 一趟复制—粘贴就把从没编辑过的写法改掉了。
+#[gpui::test]
+async fn copy_then_paste_a_cross_block_selection_keeps_the_writing_style(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = concat!(
+        "标题甲\n",
+        "=====\n",
+        "\n",
+        "段落 with __强调__\n",
+        "\n",
+        "1) 第一项\n",
+        "2) 第二项\n",
+        "\n",
+        "粘贴点\n",
+    );
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, source.to_string(), None)
+    });
+    redraw(cx);
+
+    let copied = editor.update(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        let anchor = visible.first().expect("夹具应有可见块").entity.entity_id();
+        let focus = visible[visible.len() - 2].entity.entity_id();
+        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: anchor,
+                offset: 0,
+            },
+            focus: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: focus,
+                offset: usize::MAX,
+            },
+        });
+        editor.cross_block_selected_markdown(cx)
+    });
+    let Some(copied) = copied else {
+        panic!("跨块复制应给出内容");
+    };
+
+    editor.update(cx, |editor, cx| {
+        let block = editor
+            .document
+            .visible_blocks()
+            .last()
+            .expect("粘贴点应在")
+            .entity
+            .clone();
+        let mut lines = copied.split('\n').map(str::to_string).collect::<Vec<_>>();
+        let trailing = lines.pop().unwrap_or_default();
+        editor.on_block_event(
+            block,
+            &BlockEvent::RequestPasteMultiline {
+                leading: InlineTextTree::plain(String::new()),
+                lines,
+                trailing: InlineTextTree::plain(trailing),
+                split_physical_lines: true,
+            },
+            cx,
+        );
+    });
+    redraw(cx);
+
+    let text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert!(
+        text.contains("=====") && text.contains("1) 第一项") && text.contains("__强调__"),
+        "复制—粘贴一趟把没编辑过的写法洗掉了：{text:?}"
+    );
+}
