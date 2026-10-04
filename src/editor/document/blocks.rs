@@ -243,7 +243,8 @@ impl Editor {
             }
 
             if parse_opening_fence(line).is_some()
-                && let Some((code_block, consumed)) = collect_fenced_code_block(cx, lines, index)
+                && let Some((code_block, consumed)) =
+                    collect_fenced_code_block(cx, lines, index, origins)
             {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
@@ -456,7 +457,8 @@ impl Editor {
             }
 
             if parse_opening_fence(line).is_some()
-                && let Some((code_block, consumed)) = collect_fenced_code_block(cx, lines, index)
+                && let Some((code_block, consumed)) =
+                    collect_fenced_code_block(cx, lines, index, origins)
             {
                 children.push(code_block);
                 index = consumed;
@@ -649,7 +651,7 @@ impl Editor {
 
                     if parse_opening_fence(&anchor_dedented[0]).is_some()
                         && let Some((code_block, consumed)) =
-                            collect_fenced_code_block(cx, &anchor_dedented, 0)
+                            collect_fenced_code_block(cx, &anchor_dedented, 0, &anchor_origins)
                     {
                         attach_child_blocks(&block, vec![code_block], cx);
                         body_index += consumed;

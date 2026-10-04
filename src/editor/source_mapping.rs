@@ -452,6 +452,81 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         })
     }
 
+    /// 围栏代码块的每一行让开几字节，先问解析期记下的那份账（`source_line_prefixes`
+    /// + `source_fence_lines`）。
+    ///
+    /// phantom 的围栏两行仍是按模型拼的（`safe_code_fence_with_info`），所以「文件里那
+    /// 两行确实就是这一对围栏、缩进就是记下的那位数」要当场核对：核对不上就交回按文件
+    /// 量那条路。引用里的围栏另有 `>` 那一族账（`wrap_source_mapping_with_quotes`），
+    /// 这份账里的继承量还不含它，先不接。
+    fn recorded_fence_prefixes(
+        &self,
+        block: &Entity<Block>,
+        content: &str,
+        language: Option<&SharedString>,
+        absolute_start: usize,
+        quote_depth: usize,
+        cx: &App,
+    ) -> Option<MeasuredFencePrefixes> {
+        if quote_depth > 0 || !self.buffer.is_char_boundary(absolute_start) {
+            return None;
+        }
+        let (open, close) = block.read(cx).record.source_fence_lines?;
+        let prefixes: Vec<usize> = block
+            .read(cx)
+            .record
+            .source_line_prefixes
+            .iter()
+            .map(|at| *at as usize)
+            .collect();
+        let model_lines: Vec<&str> = if content.is_empty() {
+            Vec::new()
+        } else {
+            content.split('\n').collect()
+        };
+        if prefixes.len() != model_lines.len() {
+            return None;
+        }
+
+        let fence = persistence::safe_code_fence_with_info(
+            content,
+            language.map(|language| language.as_ref()),
+        );
+        let open_body = format!("{fence}{}", language.map(|l| l.as_str()).unwrap_or(""));
+        let mut line_index = self.buffer.line_of(absolute_start);
+        let open_range = self.buffer.line_range(line_index);
+        if open_range.start != absolute_start {
+            return None;
+        }
+        let open_line = self.buffer.slice(open_range);
+        let recorded_open = open as usize;
+        // 减不动就是模型拼出来的围栏与文件那一行根本不是一个长度（内容里带反引号时
+        // 模型改用 `~~~` 那类），这份账用不了。
+        if open_line.len().checked_sub(open_body.len()) != Some(recorded_open)
+            || !open_line.ends_with(open_body.as_str())
+            || !open_line[..recorded_open].chars().all(|ch| ch == ' ' || ch == '\t')
+        {
+            return None;
+        }
+
+        line_index += 1 + model_lines.len();
+        let close_line = self.buffer.slice(self.buffer.line_range(line_index));
+        let recorded_close = close as usize;
+        if close_line.len().checked_sub(fence.len()) != Some(recorded_close)
+            || !close_line.ends_with(fence.as_str())
+            || !close_line[..recorded_close].chars().all(|ch| ch == ' ' || ch == '\t')
+        {
+            return None;
+        }
+        self.line_prefix_from_record
+            .set(self.line_prefix_from_record.get() + prefixes.len() as u64);
+        Some(MeasuredFencePrefixes {
+            open: recorded_open,
+            lines: prefixes,
+            close: recorded_close,
+        })
+    }
+
     /// 量出来：这一段缩进代码块的内容行各自在自己那一行里让开几个字节。
     ///
     /// 缩进代码块（四空格或制表符）在文件里就是那几行内容，没有围栏行；模型存的是
@@ -573,8 +648,23 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             )
         };
 
-        let measured =
-            self.measured_code_block_line_prefixes(&content, language.as_ref(), absolute_start, quote_depth);
+        let measured = self
+            .recorded_fence_prefixes(
+                block,
+                &content,
+                language.as_ref(),
+                absolute_start,
+                quote_depth,
+                cx,
+            )
+            .or_else(|| {
+                self.measured_code_block_line_prefixes(
+                    &content,
+                    language.as_ref(),
+                    absolute_start,
+                    quote_depth,
+                )
+            });
         let (full_text, content_to_source, source_to_content) = match measured.as_ref() {
             Some(prefixes) => Self::build_code_block_content_mapping(
                 &content,

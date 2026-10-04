@@ -688,3 +688,67 @@ async fn typing_inside_a_container_uses_the_parse_time_prefix(cx: &mut TestAppCo
         assert_eq!(after.2, expected, "{name}：字落错了字节");
     }
 }
+
+/// 代码围栏的每一行（开栏、内容、闭栏）让开几字节，也是解析期记下的账。
+///
+/// 以前这三个数都要拿文件行与模型序列化出来的围栏比着量：模型为了避开内容里的反引号
+/// 改用 `~~~`、缩进两格的围栏、列表里四格的那一种，每一种都量漂过（字落到内容行行首
+/// 或父项那一行）。现在缩进是 `strip_fence_indent` 当场知道的位数，内容行的继承量由
+/// `origins` 一路带下来。
+#[gpui::test]
+async fn typing_inside_a_code_fence_uses_the_parse_time_prefix(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (name, source, expected) in [
+        (
+            "顶格围栏",
+            "```rust\nlet a = 1;\n```\n",
+            "```rust\nlet a = 1;写\n```\n",
+        ),
+        (
+            "缩进两格的围栏",
+            "  ```rust\n  let b = 2;\n  ```\n",
+            "  ```rust\n  let b = 2;写\n  ```\n",
+        ),
+        (
+            "列表里四格的围栏",
+            "- 项丙\n  ```\n  let c = 3;\n  ```\n",
+            "- 项丙\n  ```\n  let c = 3;写\n  ```\n",
+        ),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+        let target = editor.update(cx, |editor, cx| {
+            let last = editor
+                .document
+                .visible_blocks()
+                .last()
+                .expect("夹具里该有可见块")
+                .entity
+                .clone();
+            editor.focus_block(last.entity_id());
+            last.update(cx, |block, block_cx| block.move_to(block.visible_len(), block_cx));
+            last
+        });
+        let _ = target;
+        redraw(cx);
+
+        let before = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+            )
+        });
+        cx.simulate_input("写");
+        redraw(cx);
+        let after = editor.read_with(cx, |editor, _| {
+            (
+                editor.line_prefix_from_record.get(),
+                editor.line_prefix_measured.get(),
+                editor.buffer.text(),
+            )
+        });
+        assert!(after.0 > before.0, "{name}：打字没用上解析期记下的记号宽度");
+        assert_eq!(after.1 - before.1, 0, "{name}：围栏的行还在事后拿文件行与模型比");
+        assert_eq!(after.2, expected, "{name}：字落错了字节");
+    }
+}

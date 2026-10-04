@@ -569,6 +569,9 @@ pub struct BlockRecord {
     /// 记号宽度是文件里的事实：按模型拼（`# `、列表每级两个空格）在缩进过的标题、
     /// `#标题` 这类写法上整体漂一位，字就落进别的字节里。
     pub source_line_prefixes: Vec<u32>,
+    /// 代码围栏的开行与闭合行各自让开几字节（文件里的缩进位数）。解析期认出围栏时
+    /// 就知道这两个数；`None` 是「不是围栏代码块，或没记」。缩进代码块没有这两行。
+    pub source_fence_lines: Option<(u32, u32)>,
     /// 标题树版本：每次 `set_title` 递增。markdown 序列化备忘键就靠它，
     /// 块自己的 markdown 只在自己被改时重算（P2：序列化曾占每键成本大半）。
     title_revision: u64,
@@ -591,6 +594,7 @@ impl BlockRecord {
             list_marker: ListMarkerStyle::default(),
             source_span: None,
             source_line_prefixes: Vec::new(),
+            source_fence_lines: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
         };

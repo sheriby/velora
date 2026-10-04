@@ -233,7 +233,7 @@ impl Editor {
             }
 
             if parse_opening_fence(line).is_some() {
-                let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index) else {
+                let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index, &[]) else {
                     let paragraph = Self::collect_paragraph_block(cx, lines, index, &[]);
                     roots.push(paragraph.0);
                     spans.push(index..paragraph.1);

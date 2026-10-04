@@ -808,6 +808,7 @@ pub(crate) fn collect_fenced_code_block(
     cx: &mut Context<Editor>,
     lines: &[String],
     start: usize,
+    origins: &[usize],
 ) -> Option<(Entity<crate::editor::Block>, usize)> {
     let fence = parse_opening_fence(&lines[start])?;
     let closing_index = find_matching_closing_fence(lines, start, &fence)?;
@@ -823,11 +824,21 @@ pub(crate) fn collect_fenced_code_block(
     // allocates the exact capacity in one shot, vs Vec::new() + while-push
     // which doubles the buffer 2-3 times for any non-trivial code block.
     let code_lines = lines[start + 1..closing_index].to_vec();
+    let block = build_code_block(cx, fence.language.clone(), code_lines.join("\n"));
+    // 每一行让开几字节 = 上级容器吃掉的（`origins`）+ 本行没剥的东西（内容行就是
+    // 切片里那一行，原样进模型）；开闭两行的缩进是 `strip_fence_indent` 当场知道的。
+    let prefixes: Vec<u32> = (start + 1..closing_index)
+        .map(|at| (origins.get(at).copied().unwrap_or(0)) as u32)
+        .collect();
+    let open_indent = lines[start].len() - strip_fence_indent(&lines[start]).unwrap_or("").len();
+    let close_indent =
+        lines[closing_index].len() - strip_fence_indent(&lines[closing_index]).unwrap_or("").len();
+    block.update(cx, |block, _cx| {
+        block.record.source_line_prefixes = prefixes;
+        block.record.source_fence_lines = Some((open_indent as u32, close_indent as u32));
+    });
 
-    Some((
-        build_code_block(cx, fence.language.clone(), code_lines.join("\n")),
-        closing_index + 1,
-    ))
+    Some((block, closing_index + 1))
 }
 
 pub(crate) fn collect_indented_code_block(
