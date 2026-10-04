@@ -1166,10 +1166,6 @@ impl Editor {
             .rfind('\n')
             .map(|index| index + 1)
             .unwrap_or(0);
-        let line_end_in_md = markdown[markdown_offset..]
-            .find('\n')
-            .map(|index| markdown_offset + index)
-            .unwrap_or(markdown.len());
         let within_before = &markdown[line_start_in_md..markdown_offset];
         if !within_before.is_empty() {
             return at >= within_before.len()

@@ -111,7 +111,7 @@ impl Editor {
         }
         self.roots_reprojected
             .set(self.roots_reprojected.get() + within as u64);
-        Self::attach_root_spans(&self.buffer, &new_roots[..within], &spans[..within], line_base, cx);
+        self.attach_root_spans(&new_roots[..within], &spans[..within], line_base);
         self.document
             .replace_root_range(root_index..root_index + 1, new_roots[..within].to_vec(), cx);
         Some(region_lines)
