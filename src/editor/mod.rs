@@ -1100,6 +1100,14 @@ impl Editor {
         if at < span.start || at > span.end {
             return false;
         }
+        // 映射按块的**序列化**记前缀（`"> "`、`"- "`、`"1. "`），用户写非规范前缀
+        //（或解析期账本对不上现状）时换算出的落点会整体漂移，而且仍然落在根块
+        // 区间内、上述守卫拦不住——直接 splice 会把字节插进相邻字符中间。落笔前
+        // 核对插入点两侧的缓冲区字节确实与模型一致：不一致就退整块写回（内容
+        // 正确，只是这一块的写法可能被规范化），绝不写错位。
+        if !self.insertion_context_matches_source(block, visible_offset, at, cx) {
+            return false;
+        }
 
         let applied = self.buffer.edit(at..at, &inserted);
         self.record_buffer_edit(applied);
@@ -1107,6 +1115,69 @@ impl Editor {
         self.document
             .set_source_span(root.entity_id(), span.start..span.end + delta as usize);
         self.shift_root_spans_after(span.end, delta);
+        true
+    }
+
+    /// 插入点两侧的缓冲区字节与模型一致吗？
+    ///
+    /// 映射声称「可见偏移 n 的插入点在源码字节 `at`」。这个换算建立在前缀规范
+    /// 的前提上；前提不成立（非规范前缀、解析期账过期）时 `at` 会漂移。核对
+    /// 办法：插入点之前的模型字节（同行）必须与缓冲区逐字节相同——字节都对上，
+    /// splice 就不可能插错；前文跨了行（行首还有没量过的容器前缀）就改核对
+    /// 插入点之后的同行字节。两个方向都对不上时返回 false，由调用方退整块写回。
+    fn insertion_context_matches_source(
+        &self,
+        block: &Entity<Block>,
+        visible_offset: usize,
+        at: usize,
+        cx: &App,
+    ) -> bool {
+        // 比对文本必须与映射的 content 同口径：代码/源码块用 display 文本 + 原样
+        // 偏移（`markdown()` 里是含缩进的原始字节，映射表的账记在内容上）；其余
+        // 块用 markdown + 映射偏移（与 `current_range_to_markdown_range` 的分派
+        // 同一条规则）。
+        let (markdown, markdown_offset) = {
+            let block_ref = block.read(cx);
+            if block_ref.uses_raw_text_editing() || block_ref.kind().is_code_block() {
+                let text = block_ref.display_text().to_string();
+                let offset = visible_offset.min(text.len());
+                (text, offset)
+            } else {
+                let markdown = block_ref
+                    .record
+                    .title
+                    .markdown_offset_map()
+                    .markdown()
+                    .to_string();
+                let markdown_offset = block_ref
+                    .current_range_to_markdown_range(visible_offset..visible_offset)
+                    .start;
+                (markdown, markdown_offset)
+            }
+        };
+        if markdown_offset > markdown.len() || !markdown.is_char_boundary(markdown_offset) {
+            return false;
+        }
+        // 行内局部核对：模型当前行里、插入点之前/之后的内容字节，必须与缓冲区
+        // 里 `at` 两侧逐字节相同。内容字节在模型与缓冲区里是同一份（容器前缀在
+        // 内容之前，不参与比较），所以逐行异形前缀的账、多行引用、缩进代码都
+        // 不会被误伤；账过期或前缀漂移时两侧对不上，退整块写回。
+        let line_start_in_md = markdown[..markdown_offset]
+            .rfind('\n')
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let line_end_in_md = markdown[markdown_offset..]
+            .find('\n')
+            .map(|index| markdown_offset + index)
+            .unwrap_or(markdown.len());
+        let within_before = &markdown[line_start_in_md..markdown_offset];
+        if !within_before.is_empty() {
+            return at >= within_before.len()
+                && self.buffer.is_char_boundary(at - within_before.len())
+                && self.buffer.slice(at - within_before.len()..at) == within_before;
+        }
+        // 行首插入（前文为空）有「行首 vs 内容起点」的歧义，且过期账在行首的
+        // 漂移方向不定：放行，交给既有的越界/边界守卫与整块写回兜底。
         true
     }
 
@@ -1162,6 +1233,12 @@ impl Editor {
         let Some(old_span) = self.document.source_span_of(block.entity_id()) else {
             return false;
         };
+        // 区间属于**在树里**的块：事件流程里「先摘块、后收尾」的路径会把已删除的
+        // 块传过来，拿幽灵块的旧区间写缓冲区等于复活已删内容。找不到位置就退回
+        // 整篇重投影。
+        if self.document.find_block_location(block.entity_id()).is_none() {
+            return false;
+        }
         // 区间是这一根块上一次写回时挂上的字节位；中途有人（比如标注结构的归一化）
         // 自己重投影了缓冲区，这个区间就是过期的。拿过期区间去写会越界，宁可退回
         // 整篇重投影。
@@ -1176,10 +1253,23 @@ impl Editor {
 
         let old_len = old_span.end - old_span.start;
         let delta = self.write_minimal_diff(old_span.clone(), &new_source);
-        self.document.set_source_span(
-            block.entity_id(),
-            old_span.start..old_span.start + (old_len as i64 + delta) as usize,
-        );
+        let new_span = old_span.start..old_span.start + (old_len as i64 + delta) as usize;
+        // 字节刚按本块账本拼出来重写：写侧认账的族（段落/标题/列表/代码）账随
+        // 字节仍然一致，把新区间连着账一起落——不重记的话旧账在下一次落笔时
+        // 行内漂移（过期账的错位，越界守卫拦不住）。写侧不认账的族（引用等，
+        // 账由解析期与 adjust 路径自管）不动账，过期由落笔前的上下文核对兜住。
+        let ledger = {
+            let block_ref = block.read(cx);
+            Self::written_line_ledger(block_ref)
+        };
+        self.document.set_source_span(block.entity_id(), new_span);
+        if let Some((prefixes, fence)) = ledger {
+            block.update(cx, |block, _cx| {
+                block.record.source_line_prefixes = prefixes;
+                block.record.source_fence_lines = fence;
+                block.record.source_separator_bytes = 0;
+            });
+        }
         if delta != 0 {
             self.shift_root_spans_after(old_span.end, delta);
         }
@@ -1209,8 +1299,15 @@ impl Editor {
                 };
                 return Some((widths, None));
             }
-            // 围栏那一族：根块落笔就是顶格那对围栏行加零缩进的内容行。
-            return Some((vec![0u32; lines], Some((0u32, 0u32))));
+            // 围栏那一族：落笔文本是按本块现有账拼的（`recorded_code_block_widths`），
+            // 重记也必须用同一份账——硬编码「顶格 (0,0)」会让缩进围栏在「结构写回 →
+            // 重记 → 再写回」两步之间被洗掉缩进。账不完整（没记过围栏行/行数不齐）
+            // 交回 None，写侧走它自己的族内回退。
+            let prefixes = block_ref.record.source_line_prefixes.clone();
+            if prefixes.len() == lines && let Some(fence) = block_ref.record.source_fence_lines {
+                return Some((prefixes, Some(fence)));
+            }
+            return None;
         }
         let simple = kind == BlockKind::Paragraph
             || matches!(kind, BlockKind::Heading { .. })
@@ -1257,6 +1354,9 @@ impl Editor {
         let children = block.read(cx).children.clone();
         block.update(cx, |block, _cx| {
             block.record.source_line_prefixes.clear();
+            // 围栏行的账一并清：留半份账（有围栏行没前缀）会让写侧的核对永远
+            // 失配，掉进 list_depth 规范分支把缩进洗掉。
+            block.record.source_fence_lines = None;
             block.record.source_separator_bytes = 0;
         });
         for child in children {

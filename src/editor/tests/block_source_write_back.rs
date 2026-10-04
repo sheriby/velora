@@ -3168,3 +3168,217 @@ async fn breaking_a_line_inside_a_callout_keeps_the_header_as_written(cx: &mut T
         "拆一行标注把用户写的小写记号拼成了规范大写：{buffer_text:?}"
     );
 }
+
+/// 表格最后一格里粘进超长内容：格子增长量超过「格子起点到表尾」的距离时，
+/// 平移起点必须还是**编辑前**坐标——传编辑后坐标会把后续根块区间整批漏移
+/// （过期区间仍在界内，越界守卫拦不住），下一次在后续块里落笔就写错字节。
+#[gpui::test]
+async fn pasting_into_the_last_table_cell_shifts_the_following_span_fully(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "| 甲 | 乙 |\n| - | - |\n| 1 | 2 |\n\n结尾段落\n";
+    let path = temp_markdown_path("table-last-cell-long-paste");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    let long_text = format!("很长的内容{}", "0123456789".repeat(30));
+    let para_before = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).display_text().contains("结尾段落"))
+            .and_then(|root| editor.document.source_span_of(root.entity_id()))
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            let table = editor
+                .document
+                .root_blocks()
+                .iter()
+                .find(|root| root.read(cx).kind() == BlockKind::Table)
+                .cloned()
+                .expect("夹具里应有一张表");
+            assert!(editor.focus_table_cell_position(
+                &table,
+                crate::components::TableCellPosition { row: 1, column: 1 },
+                cx
+            ));
+        });
+    });
+    redraw(cx);
+    cx.simulate_input(&long_text);
+    redraw(cx);
+
+    let para_after = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).display_text().contains("结尾段落"))
+            .and_then(|root| editor.document.source_span_of(root.entity_id()))
+    });
+    assert_eq!(
+        para_after.map(|span| span.start),
+        para_before.map(|span| span.start + long_text.len()),
+        "后续根块的区间没有按增长量平移（平移起点用错了坐标）"
+    );
+
+    // 后续块还能正确落笔：在段落末尾打字，字节落在它自己区间里。
+    let paragraph = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .find(|root| root.read(cx).display_text().contains("结尾段落"))
+            .cloned()
+            .expect("段落")
+    });
+    let len = paragraph.read_with(cx, |block, _cx| block.visible_len());
+    cx.update(|_window, cx| {
+        paragraph.update(cx, |block, _cx| block.selected_range = len..len);
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(paragraph.entity_id()));
+    redraw(cx);
+    cx.simulate_input("尾");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    assert_eq!(
+        saved,
+        format!("| 甲 | 乙 |\n| - | - |\n| 1 | {long_text}2 |\n\n结尾段落尾\n"),
+        "后续块里打的字落错了字节：{saved:?}"
+    );
+}
+
+/// 带子块的引用（账只记标题行）：在标题里打一个字会整根重写（标题账过期），
+/// 随后在子块里打字必须交回**按文件量**的那条路——子块账已随整根重写作废，
+/// 再用就是行内错位。
+#[gpui::test]
+async fn typing_in_a_child_after_the_quote_root_was_rewritten_lands_correctly(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = ">引用文字\n>- 项一\n";
+    let path = temp_markdown_path("quote-child-stale-ledger");
+    fs::write(&path, FIXTURE).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(open_path))
+    });
+    redraw(cx);
+
+    // 第一个字打在引用标题末尾：Changed → 整根重写（序列化规范化），账本必须
+    // 随之重记/作废。
+    let title = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::Quote)
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有引用标题块")
+    });
+    let title_len = title.read_with(cx, |block, _cx| block.visible_len());
+    cx.update(|_window, cx| {
+        title.update(cx, |block, _cx| block.selected_range = title_len..title_len);
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(title.entity_id()));
+    redraw(cx);
+    cx.simulate_input("甲");
+    redraw(cx);
+
+    // 第二个字打在子块（列表项）末尾：这里踩的是过期账。
+    let child = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind().is_list_item())
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有列表子块")
+    });
+    let child_len = child.read_with(cx, |block, _cx| block.visible_len());
+    cx.update(|_window, cx| {
+        child.update(cx, |block, _cx| block.selected_range = child_len..child_len);
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(child.entity_id()));
+    redraw(cx);
+    cx.simulate_input("乙");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let saved = fs::read_to_string(&path).expect("read saved file");
+    // 逐行记号账（7c0fcf9）让整根重写也保留非规范前缀；账随重写作废/重记后，
+    // 子块的第二个字落在正确字节上——两个「乙」都不许串位。
+    assert_eq!(
+        saved, ">引用文字甲\n>- 项一乙\n",
+        "子块里的字被过期账写错了位：{saved:?}"
+    );
+}
+
+/// 整篇 resync 按序列化重写之后，解析期账本必须全部重记/作废：带子块的
+/// 非规范引用经一次兜底档位就变成规范形，旧账还描述着重写前的形状——
+/// 下一次落笔用它就是行内错位。
+#[gpui::test]
+async fn resync_refreshes_the_ledger_before_the_next_keystroke(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, ">- 项一\n".to_string(), None));
+    redraw(cx);
+
+    // 兜底档位：声明「树说了算」→ 整篇按序列化重写（`>- 项一` 变 `> - 项一`）。
+    editor.update(cx, |editor, cx| editor.mark_dirty(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.buffer.text(), "> - 项一\n", "resync 没把缓冲区刷成序列化形");
+    });
+
+    // resync 之后的第一个字打在子块末尾：踩的就是刚过期的账。
+    let child = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind().is_list_item())
+            .map(|visible| visible.entity.clone())
+            .expect("应有列表子块")
+    });
+    let child_len = child.read_with(cx, |block, _cx| block.visible_len());
+    cx.update(|_window, cx| {
+        child.update(cx, |block, _cx| block.selected_range = child_len..child_len);
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(child.entity_id()));
+    redraw(cx);
+    cx.simulate_input("乙");
+    redraw(cx);
+
+    let buffer_text = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        buffer_text, "> - 项一乙\n",
+        "resync 后的第一次落笔用了过期账，字落错了位：{buffer_text:?}"
+    );
+}
