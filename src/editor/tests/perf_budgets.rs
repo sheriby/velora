@@ -1689,3 +1689,41 @@ async fn typing_in_a_heading_without_a_toc_block_reuses_the_row_plan(cx: &mut Te
         assert_eq!(editor.workspace.toc_entries[0].title, "新甲", "大纲条目没跟上");
     });
 }
+
+/// 段首打 `# ` 是「同一个实体就地换 kind」：行计划的行元数据必须跟着刷新
+/// （heading_level 等），否则行距停在段落档、错到下一次结构变化为止。
+#[gpui::test]
+async fn typing_a_heading_prefix_updates_the_row_metadata(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "正文一段。\n".to_string(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.root_blocks()[0].clone();
+        editor.focus_block(first.entity_id());
+        first.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+
+    // 在段首敲 `# `：实体没换、可见列表没变，但块的 kind 变成了标题。
+    cx.simulate_input("# ");
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor
+                .document
+                .root_blocks()[0]
+                .read(_cx)
+                .kind()
+                == crate::components::BlockKind::Heading { level: 1 },
+            "前置：段首 # 加空格应把段落变成一级标题"
+        );
+        let spacing = editor.document.row_spacing_at(0);
+        assert_eq!(
+            spacing.heading_level,
+            Some(1),
+            "行元数据没跟上 kind 变化：行距会停在段落档"
+        );
+    });
+}

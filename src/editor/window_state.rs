@@ -491,28 +491,34 @@ impl Editor {
         self.refresh_document_find_after_edit(cx);
     }
 
-    /// 源码分块文档的行号续号：每块的首行行号**问缓冲区**（它区间起点在第几行，
-    /// Fenwick 查询），不再逐块把文本 `split('\n')` 数一遍——那等于每按一个键就把整篇
-    /// 文本重扫一次，而这份信息缓冲区本来就有。（分块见 `build_source_document_roots`；
-    /// 渲染模式文档没有行号槽。）
+    /// 源码分块文档的行号续号：先收集各块区间起点，再用缓冲区的批量换算
+    /// `lines_and_line_starts` 一趟 O(全文) 算出所有行号。逐块调 `line_of` 是
+    /// O(根块数 × chunk 数) 的平方项（代码文档按 512 行切片，10 MiB 就是百万步级）；
+    /// 区间起点天然升序，正是批量接口要的形状。
     fn refresh_source_line_starts(&mut self, cx: &mut Context<Self>) {
         if !(self.code_document || self.source_mode_fallback_required) {
             return;
         }
         let total = self.buffer.byte_len();
+        let blocks = self.document.root_blocks().to_vec();
+        let starts: Vec<Option<usize>> = blocks
+            .iter()
+            .map(|block| self.document.source_span_of(block.entity_id()).map(|span| span.start))
+            .collect();
+        // 没挂区间的块沿用前一块的续号（旧行为），批量接口只吃有区间的。
+        let mut known: Vec<(usize, usize)> = Vec::new(); // (序号, 字节偏移)
         let mut cursor = 0usize;
-        for block in self.document.root_blocks().to_vec() {
-            let start = self
-                .document
-                .source_span_of(block.entity_id())
-                .map(|span| span.start)
-                .unwrap_or(cursor)
-                .min(total);
-            let line = self.buffer.line_of(start) + 1;
-            let length = block.read(cx).display_text().len();
-            block.update(cx, |block, _cx| block.set_source_line_start(line));
-            // 下一片从「这片文本 + 它们之间那个换行」之后开始。
+        for (index, start) in starts.iter().enumerate() {
+            let start = (*start).unwrap_or(cursor).min(total);
+            known.push((index, start));
+            let length = blocks[index].read(cx).display_text().len();
             cursor = (start + length + 1).min(total);
+        }
+        let lines = self.buffer.lines_and_line_starts(
+            &known.iter().map(|(_, offset)| *offset).collect::<Vec<_>>(),
+        );
+        for ((index, _), (line_index, _)) in known.iter().zip(&lines) {
+            blocks[*index].update(cx, |block, _cx| block.set_source_line_start(line_index + 1));
         }
     }
 

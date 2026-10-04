@@ -242,7 +242,37 @@ impl DocumentTree {
         let is_paragraph = block.kind() == BlockKind::Paragraph;
         let is_toc = is_paragraph && block.display_text().trim().eq_ignore_ascii_case("[toc]");
         let had_toc = is_paragraph && !block.toc_entries.is_empty();
+        // kind 可推导的字段也要跟上：段首打 `# `/`- `/`> ` 是**同一个实体**就地
+        // 换 kind（可见列表不变，不走重建那趟），行计划缓存键里这些字段若停在
+        // 旧值，行距就一直是段落档直到下一次结构变化。
+        let kind = block.kind().clone();
+        let heading_level = match &kind {
+            BlockKind::Heading { level } => Some(*level),
+            _ => None,
+        };
+        let is_list_item = kind.is_list_item();
+        let callout_variant = match &kind {
+            BlockKind::Callout(variant) => Some(*variant),
+            _ => None,
+        };
+        let is_callout_header = kind.is_callout();
+        let is_footnote_header = kind.is_footnote_definition();
+        drop(block);
         let spacing = &mut self.snapshot.row_spacing[index];
+        let mut changed = false;
+        if spacing.heading_level != heading_level
+            || spacing.is_list_item != is_list_item
+            || spacing.callout_variant != callout_variant
+            || spacing.is_callout_header != is_callout_header
+            || spacing.is_footnote_header != is_footnote_header
+        {
+            spacing.heading_level = heading_level;
+            spacing.is_list_item = is_list_item;
+            spacing.callout_variant = callout_variant;
+            spacing.is_callout_header = is_callout_header;
+            spacing.is_footnote_header = is_footnote_header;
+            changed = true;
+        }
         if spacing.is_toc != is_toc || spacing.had_toc != had_toc {
             if spacing.is_toc != is_toc {
                 if is_toc {
@@ -253,6 +283,9 @@ impl DocumentTree {
             }
             spacing.is_toc = is_toc;
             spacing.had_toc = had_toc;
+            changed = true;
+        }
+        if changed {
             self.row_meta_version = self.row_meta_version.wrapping_add(1);
         }
     }
@@ -260,6 +293,7 @@ impl DocumentTree {
     pub(super) fn flatten_visible_blocks(&self) -> Vec<VisibleBlock> {
         self.snapshot.visible.clone()
     }
+
 
     pub(super) fn focused_block_entity_id(&self, window: &Window, cx: &App) -> Option<EntityId> {
         self.snapshot
