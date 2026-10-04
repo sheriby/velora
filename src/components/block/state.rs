@@ -197,6 +197,38 @@ impl ListMarkerStyle {
     }
 }
 
+/// 分隔线的写法：`---`、`***` 还是 `___`。显示上是同一个东西，写回时不能
+/// 把用户敲的那个换成别的。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SeparatorMarker {
+    #[default]
+    Hyphen,
+    Asterisk,
+    Underscore,
+}
+
+impl SeparatorMarker {
+    /// 从分隔线原文认出写法；认不出（含规范 `---`）回退默认。
+    pub fn detect(value: &str) -> Self {
+        let trimmed = value.trim();
+        if trimmed.contains('*') {
+            Self::Asterisk
+        } else if trimmed.contains('_') {
+            Self::Underscore
+        } else {
+            Self::Hyphen
+        }
+    }
+
+    fn marker_str(self) -> &'static str {
+        match self {
+            Self::Hyphen => "---",
+            Self::Asterisk => "***",
+            Self::Underscore => "___",
+        }
+    }
+}
+
 impl BlockKind {
     /// Returns true when blocks of this kind may own child blocks in the
     /// current runtime tree.
@@ -576,6 +608,7 @@ pub struct BlockRecord {
     pub raw_fallback: Option<String>,
     /// 列表项自己写的记号（`+`/`*`/`-`、`.`/`)`）。见 [`ListMarkerStyle`]。
     pub list_marker: ListMarkerStyle,
+    pub separator_marker: SeparatorMarker,
     /// 这一块的内容每一行，在自己那一行里**让开了几个字节**（本块的记号，如
     /// `# `、`- `、`> `；键在解析期由剥记号的那段代码顺手记下，不是事后拿文件行
     /// 与模型行比出来的）。空表是「解析器没记」，位置换算退回按文件量。
@@ -618,6 +651,7 @@ impl BlockRecord {
             content: Vec::new(),
             raw_fallback: None,
             list_marker: ListMarkerStyle::default(),
+            separator_marker: SeparatorMarker::default(),
             source_line_prefixes: Vec::new(),
             source_separator_bytes: 0,
             source_fence_lines: None,
@@ -756,7 +790,7 @@ impl BlockRecord {
         let title_markdown = self.title_markdown_for_output();
         match self.kind {
             BlockKind::Paragraph => indent_multiline(&title_markdown, &indentation),
-            BlockKind::Separator => "---".to_string(),
+            BlockKind::Separator => self.separator_marker.marker_str().to_string(),
             BlockKind::Heading { level } => {
                 format!(
                     "{indentation}{} {title_markdown}",

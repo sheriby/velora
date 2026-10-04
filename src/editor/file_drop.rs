@@ -456,6 +456,7 @@ impl Editor {
         // 部分落盘就是打开时那份原文。取块树序列化会先把下划线强调变成星号、把表格
         // 列宽重新对齐。
         let markdown = self.document_bytes_for_save();
+        let saved_text = self.document_text_for_save();
         let (default_dir, suggested_name) = self.save_dialog_defaults();
         let prompt = cx.prompt_for_new_path(&default_dir, suggested_name.as_deref());
         let weak_editor = cx.entity().downgrade();
@@ -506,7 +507,7 @@ impl Editor {
 
             let saved_path = save_path.clone();
             let replace_result = weak_editor.update(cx, move |this, cx| {
-                this.apply_successful_save(saved_path, cx);
+                this.apply_successful_save(saved_path, saved_text, cx);
                 this.pending_drop_replace_path = Some(drop_path);
                 this.replace_after_successful_save_async(cx)
             });

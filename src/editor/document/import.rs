@@ -393,10 +393,10 @@ impl Editor {
             }
 
             if BlockKind::parse_separator_line(line) {
-                roots.push(Self::new_block(
-                    cx,
-                    BlockRecord::new(BlockKind::Separator, InlineTextTree::plain(String::new())),
-                ));
+                let mut record =
+                    BlockRecord::new(BlockKind::Separator, InlineTextTree::plain(String::new()));
+                record.separator_marker = crate::components::SeparatorMarker::detect(line);
+                roots.push(Self::new_block(cx, record));
                 spans.push(index..index + 1);
                 index += 1;
                 continue;

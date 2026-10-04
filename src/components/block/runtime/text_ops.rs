@@ -29,8 +29,12 @@ impl Block {
     /// capturing undo, so editor-level flows that already manage those can
     /// reuse the conversion.
     pub(crate) fn make_separator(&mut self) {
+        // 先认下用户敲的是哪种写法（`***`/`___`/`---`），再清内容——清完就没
+        // 得认了，序列化只会写默认的 `---`。
+        let marker = crate::components::SeparatorMarker::detect(&self.display_text());
         self.clear_inline_projection();
         self.record.kind = BlockKind::Separator;
+        self.record.separator_marker = marker;
         self.record.raw_fallback = None;
         self.record.set_title(InlineTextTree::plain(String::new()));
         self.quote_reparse_requested = false;

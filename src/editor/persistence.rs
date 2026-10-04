@@ -512,9 +512,17 @@ impl Editor {
         }
     }
 
-    pub(super) fn apply_successful_save(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub(super) fn apply_successful_save(
+        &mut self,
+        path: PathBuf,
+        saved_text: String,
+        cx: &mut Context<Self>,
+    ) {
         self.document_revision = self.document_revision.wrapping_add(1);
-        let saved_markdown = self.document_text_for_save();
+        // 版本号必须来自**实际写盘的那份字节**对应的文本：另存流程在弹面板前就
+        // 取了字节，面板期间缓冲区再变的话，完成时现取的文本与磁盘就对不上了，
+        // 下一次校验会把自己写的文件误判成外部修改。
+        let saved_markdown = saved_text;
         self.file_version = Some(file_content_version(&saved_markdown));
         // 标签里的版本号也要跟上（自动保存按它校验磁盘，见
         // mark_workspace_document_saved）。
@@ -576,9 +584,10 @@ impl Editor {
             return false;
         }
         let bytes = self.document_bytes_for_save();
+        let saved_text = self.document_text_for_save();
         match write_atomic(path, &bytes) {
             Ok(_) => {
-                self.apply_successful_save(path.to_path_buf(), cx);
+                self.apply_successful_save(path.to_path_buf(), saved_text, cx);
                 window.set_window_edited(false);
                 true
             }
@@ -600,6 +609,7 @@ impl Editor {
         }
         // 先取字节再弹面板：未编辑的文档保存的就是打开时那份原始字节。
         let markdown = self.document_bytes_for_save();
+        let saved_text = self.document_text_for_save();
         let (default_dir, suggested_name) = self.save_dialog_defaults();
         let prompt = cx.prompt_for_new_path(&default_dir, suggested_name.as_deref());
         let weak_editor = cx.entity().downgrade();
@@ -655,7 +665,7 @@ impl Editor {
 
             let path_for_state = path.clone();
             let _ = weak_editor.update(cx, move |this, cx| {
-                this.apply_successful_save(path_for_state, cx);
+                this.apply_successful_save(path_for_state, saved_text, cx);
             });
             let _ = cx.update_window(
                 window_handle,

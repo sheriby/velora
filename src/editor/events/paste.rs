@@ -291,20 +291,37 @@ impl Editor {
         Some(format!("./{}", Self::markdown_path_string(relative)))
     }
 
-    pub(crate) fn pasted_image_markdown(&self, source: &PastedImageSource) -> anyhow::Result<String> {
+    /// 物化粘贴的图片并产出引用它的 markdown。`created` 为 `Some(路径)` 时表示
+    /// 这次调用**新建**了图片文件（剪贴板写入或复制），调用方若最终没有把它写进
+    /// 文档，应当删掉它，别留孤儿资源。
+    pub(crate) fn pasted_image_markdown(
+        &self,
+        source: &PastedImageSource,
+    ) -> anyhow::Result<(String, Option<std::path::PathBuf>)> {
         let root_dir = self.image_paste_root_dir()?;
         let (path, relative) = self.materialize_pasted_image(source)?;
+        let created = Self::materialized_image_was_created(source, &path);
         let path_text = if relative {
             Self::relative_markdown_path(&root_dir, &path)
                 .ok_or_else(|| anyhow!("failed to create a relative image path"))?
         } else {
             Self::markdown_path_string(&path)
         };
-        Ok(format!(
+        let markdown = format!(
             "![{}]({})",
             Self::markdown_image_alt(&path),
             Self::markdown_image_target(&path_text)
-        ))
+        );
+        Ok((markdown, created.then_some(path)))
+    }
+
+    /// 物化结果是不是这次调用新建的文件（决定失败时能否安全删除）。
+    fn materialized_image_was_created(source: &PastedImageSource, materialized: &PathBuf) -> bool {
+        match source {
+            // behavior = None 时直接引用原路径，没有新建。
+            PastedImageSource::LocalPath(path) => path != materialized,
+            PastedImageSource::ClipboardImage(_) => true,
+        }
     }
 
     pub(crate) fn show_image_paste_error(&mut self, err: anyhow::Error, cx: &mut Context<Self>) {
@@ -332,7 +349,7 @@ impl Editor {
         markdown: &str,
         trailing: &InlineTextTree,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let (kind, title, cursor) = block.read_with(cx, |block, _cx| {
             let mut title = leading.clone();
             title.append_tree(Self::inserted_image_tree_for_block(block, markdown));
@@ -346,6 +363,7 @@ impl Editor {
         }
         self.focus_block(block.entity_id());
         self.rebuild_image_runtimes(cx);
+        true
     }
 
     pub(crate) fn insert_image_block_after_paragraph(
@@ -355,9 +373,9 @@ impl Editor {
         markdown: &str,
         trailing: &InlineTextTree,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let Some(location) = self.document.find_block_location(block.entity_id()) else {
-            return;
+            return false;
         };
         let leading_empty = leading.visible_len() == 0;
         let trailing_empty = trailing.visible_len() == 0;
@@ -383,7 +401,7 @@ impl Editor {
             }
             self.focus_block(image_block.entity_id());
             self.rebuild_image_runtimes(cx);
-            return;
+            return true;
         }
 
         Self::set_block_title_and_kind(
@@ -405,6 +423,7 @@ impl Editor {
             .insert_blocks_at(location.parent, location.index + 1, inserted, cx);
         self.focus_block(image_block.entity_id());
         self.rebuild_image_runtimes(cx);
+        true
     }
 
     pub(crate) fn handle_paste_image_request(
@@ -415,8 +434,8 @@ impl Editor {
         trailing: &InlineTextTree,
         cx: &mut Context<Self>,
     ) {
-        let markdown = match self.pasted_image_markdown(source) {
-            Ok(markdown) => markdown,
+        let (markdown, created_path) = match self.pasted_image_markdown(source) {
+            Ok(result) => result,
             Err(err) => {
                 self.show_image_paste_error(err, cx);
                 return;
@@ -440,12 +459,19 @@ impl Editor {
             && self.table_cell_binding(block.entity_id()).is_none()
             && !block.read(cx).uses_raw_text_editing();
 
-        if can_insert_image_block {
-            self.insert_image_block_after_paragraph(&block, leading, &markdown, trailing, cx);
+        let inserted = if can_insert_image_block {
+            self.insert_image_block_after_paragraph(&block, leading, &markdown, trailing, cx)
         } else {
             self.replace_current_block_selection_with_image_text(
                 &block, leading, &markdown, trailing, cx,
-            );
+            )
+        };
+        if !inserted {
+            // 图片文件已经落盘、文档却没接收（锚点不在树里等边角）：删掉刚建的
+            // 文件，别在磁盘上留孤儿资源。
+            if let Some(path) = created_path {
+                let _ = std::fs::remove_file(&path);
+            }
         }
 
         // 一段变三段（前面 + 图片行 + 后面）改的是根块序列，但变的只有落点那一段：
