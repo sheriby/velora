@@ -924,3 +924,75 @@ async fn entering_a_quote_reprojects_only_that_quote(cx: &mut TestAppContext) {
         "在引用里按回车重投影了 {rebuilt} 根块（全文 {root_count} 根），只该动这一根引用"
     );
 }
+
+/// 1 MiB 的代码/纯文本文件（按 512 行一块分块）打一个字：实测 26ms，整篇落笔 0 次。
+/// 这条把探针钉成闸门——这一档以前每次按键都要整篇重拼再整篇比较（源码模式那份成本
+/// 与文档同长），现在块带着自己的缓冲区区间，只动光标那一段。
+#[gpui::test]
+async fn one_mib_code_document_typing_stays_within_budget(cx: &mut TestAppContext) {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/one-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        return;
+    }
+    init_editor_test_app(cx);
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    let path = std::env::temp_dir().join(format!("velora-budget-code-{}.py", std::process::id()));
+    fs::write(&path, &markdown).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = crate::editor::encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while editor.read_with(cx, |editor, _| {
+        editor.document.pending_source().is_some() || editor.document.pending_tail().is_some()
+    }) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+
+    let (mode, serializations_before, full_before, len_before) =
+        editor.read_with(cx, |editor, _cx| {
+            (
+                editor.view_mode,
+                editor.source_serializations.get(),
+                editor.source_mapping_full_builds.get(),
+                editor.buffer.byte_len(),
+            )
+        });
+    assert_eq!(mode, crate::editor::ViewMode::Source, "代码文件该是源码视图");
+
+    let passes_before = perf_passes(&editor, cx);
+    let start = Instant::now();
+    cx.simulate_input("x");
+    redraw(cx);
+    let typed = start.elapsed();
+    let (serializations, full, len_after) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.source_serializations.get() - serializations_before,
+            editor.source_mapping_full_builds.get() - full_before,
+            editor.buffer.byte_len(),
+        )
+    });
+    let delta = perf_delta(passes_before, perf_passes(&editor, cx));
+    eprintln!(
+        "[measure] 1 MiB 代码文档一次按键 {typed:?}（整篇落笔 {serializations} 次，遍数 (序列化, mapping, 字数, 行计划) = {delta:?}）"
+    );
+    assert_eq!(
+        len_after,
+        len_before + 1,
+        "这个字没进缓冲区：0 次落笔是因为没干活，还是因为压根没打字"
+    );
+    assert_eq!(serializations, 0, "1 MiB 代码文档打字还在整篇落笔");
+    assert_eq!(full, 0, "1 MiB 代码文档打字还在整篇重建 mapping");
+    assert!(
+        typed < Duration::from_millis(400),
+        "1 MiB 代码文档一次按键 {typed:?}，偏出预算（空闲机器上实测 26ms）"
+    );
+}
