@@ -118,6 +118,7 @@ Workspace (src/editor/workspace.rs)
 19. **「块内最后一个位置」的落点按映射表，不按块区间末尾**：`mapping_source_offset`（src/editor/selection.rs）在 `offset >= visible_len` 时以前直接交 `full_source_range.end`，而块区间是可以压着不属于内容的字节的（`# 标题寅 #` 的闭合 `#`、围栏的闭合行、行尾空格）。现在交 `content_to_source` 的最后一项——内容在文件里真正结束的那一位。跨块选区端点、源码/渲染视图切换后的光标、查找命中选中、大纲改名时的选中区间都读这一个换算（改这一步时它们各有测试红过，落点按内容末尾走才全部对上）。
 20. **源码/代码文档的块就是缓冲区的一段切片**：文件里既没有 ``` 围栏行、也没有列表记号，所以区间不问解析器——`attach_source_slice_spans`（src/editor/mod.rs）按「块自己的文本长度 + 一个块间换行」推进，`buffer.slice(span) == block.display_text()` 恒成立，块内位置换算也就是恒等表（`push_source_slice_mapping`）。两条推论：`block_markdown_source` 对 source-raw 的块交回那份原文（走序列化会给它补一对围栏，等于把 markdown 写进用户的纯文本文件），而**结构写回那几档对源码文档不适用**（`write_back_root_region` 在 Source 视图直接退回）——渲染态的接缝是「根块之间空一行」，源码视图的接缝是「隔一个换行」。这一档以前没有区间，位置靠「拷整篇文本 + 累加序列化长度」记账，还拿围栏口径去量代码文档的行：`这一行字节数 − 围栏长度` 会切进多字节字符中间（`def 甲():` 一打字就 panic）。守卫：`typing_in_a_code_document_with_chinese_lands_on_the_caret_bytes`、`source_mode_typing_writes_through_the_buffer_and_preserves_every_other_byte`、`typing_in_a_code_document_writes_through_the_buffer`、`newline_in_a_code_document_inserts_only_a_line_break`、`one_mib_source_mode_typing_stays_within_budget`。
 21. **规范化只住在「格式化文档」这一条命令里**（`format_document`，src/editor/window_state.rs；命令注册表 id `format_document`，默认键 `cmd/ctrl-shift-L`）：Setext→ATX、`__粗__`→`**粗**`、`1)`→`1.`、表格列宽重排、根块之间补分隔空行，**只**在这条命令里发生；打开、打字、保存、撤销、重投影一律不许规范化——那是缓冲区当事实源换来的性质，混进隐式路径就全废了。三步：①`DocumentTree::canonicalize_writing_style` 把模型里那份「用户自己选的记号」数据清成默认（`BlockRecord::list_marker`、`InlineStyle::emphasis_marker`，含子树与表格每一格；**`escaped_offsets` 不清**，反斜杠转义是语义不是写法）；②按默认写法序列化，与缓冲区比对，没变就什么都不做（不动字节、不标脏、不留空撤销组）；③变了走一次 `apply_resynced_text`（最小差异，撤销组因此只存真正的差）再 `rebuild_document_from_buffer` 重挂投影。第三步是必须的：撤销只把字节放回去，而写法数据记在树里，不重投影的话树里还留着默认记号——用户撤销成功了，再打一个字又被 `**` 覆盖回去。这一条命令自己付一次整篇序列化，`source_serializations` 数得到（有意不加豁免：漏一档计数就等于给隐形成本开门），但它**不出现在按键路径上**——闸门量的是后者。守卫：`formatting_the_document_writes_the_models_canonical_style`、`undo_after_formatting_restores_the_original_bytes`、`formatting_an_already_canonical_document_writes_nothing`、`typing_never_formats_the_document`、`formatting_a_source_document_does_nothing`、`formatting_again_after_an_undo_still_normalizes`。
+22. **读侧的派生视图只重算「被改过的字节所在的块」**：文档大纲（侧栏「大纲」页签与正文 `[TOC]`）是块树的一份投影，它以前每帧拿整篇文本比较一次再把整篇按行重扫（实测一次按键 105ms / 58.5 万行，且不在任何计数器里）。现在它按根块缓存行摘要（`OutlineSegment`：这段的标题 + 段字节数 + 退出时的围栏状态），摘要键是块的 `EntityId`——重投影换掉的实体自然没缓存于是重算，没动的块至多平移行号。判断「这块动过没有」有三个信号，缺一个就会算错（两个都是差分测试抓出来的真缺陷）：①缓冲区记的 `take_dirty_region` 与这块区间相交；②段的**字节数**变了（拆块合块把接缝重新分配，块自己的字节可以一个字没动却指着另一段字节，`write_back_root_region` 为此调 `note_outline_dirty_region`）；③区间起点没落在行首 / 未闭合的围栏跨过块边界 → 段与段不再独立，退回整篇重扫（`outline_full_rescans` 数得到：markdown 文档实测 0，源码视图按 512 行切块时 ``` 围栏会跨边界，那一档还在退）。另外**没人看就不算**：侧栏收起时不再每帧重算，`[TOC]` 块改成在自己需要的那一帧直接要清单（旧实现靠「整篇文本没变」短路，懒导入续建期间一直留着半份大纲，`[TOC]` 要到第一次编辑才补全）。加新的读侧视图（搜索索引、反链、字数）照这一条办，并先把成本接进计数器。守卫：`the_incremental_outline_matches_a_whole_document_scan`（9 种形状 × 每根块块首打字与回车，逐条与整篇扫比对）、`the_outline_is_only_built_for_a_reader`、`ten_mib_typing_does_not_scan_the_whole_document`、`lines_and_line_starts_agrees_with_asking_one_offset_at_a_time`、`byte_len_survives_many_edits_without_counting_the_chunks`。
 
 
 ## 4. Undo/历史（src/editor/history.rs）
@@ -199,15 +200,24 @@ Workspace (src/editor/workspace.rs)
 | 1 MiB 一次按键 | 52.5ms；整篇遍数 = 序列化 0 / mapping 3 / 字数 0 / 行计划 2 |
 | 1 MiB 源码模式一次按键 | 改前 **1.99s（整篇落笔 1 次）**，改后 141ms（整篇落笔 0 次、整篇 mapping 0 次）（2026-10-04） |
 | 1 MiB 五个静止帧 | 7.1ms，遍数全 0（不打字不重算任何东西） |
-| 10 MiB 一次按键 | 635ms，序列化 0 次、整篇 mapping 0 次（预算 1500ms） |
+| 10 MiB 一次按键（markdown） | 改前 **546ms，其中大纲把整篇按行重扫 585499 行**；改后 **241ms**，大纲重扫 0 行（2026-10-04，预算 1500ms） |
 | 单次全文操作 | 序列化 1 MiB 31.8µs；数 32 万词 6.9ms；建 15968 条 mapping 236.8ms |
 | 撤销栈 200 步 | ≤ 64 KiB（存的是增量；旧制最坏 200 × 文档大小） |
 
-**剩下的线性成本**：10 MiB 那 635ms 不在文档模型上，而在行计划重建与可见列表重排（单块 10 MB 文本
-的 shaping）——按行窗口渲染没做，属于独立工作。源码模式同一处根，而且更直白：这一档的**可见列表不
-裁剪**（1 MiB 的文档 115 根块全部算「可见」，10 MiB 是 1144 根），每键 2 次行计划重建就随文档长
+**已经解决的一档**：10 MiB 按键里最大的一笔不是文档模型，而是**侧栏大纲**——它每帧先拿整篇文本
+比较一次，再把整个缓冲区按行重扫一遍找标题（`build_outline_tree`，实测一次按键 105ms / 58.5 万行，
+占那次渲染的 74%）。它当时不在任何计数器里，所以「整篇落笔 0 次」的闸门全绿也看不见它：继
+`ed2df8f` 之后第二处「计数器漏一档 = 闸门盲区」。现在它有三个计数器
+（`outline_rebuilds` / `outline_lines_scanned` / `outline_full_rescans`），实现改成按根块缓存行摘要、
+只重扫被改过的字节所在的块，并且没人看（侧栏收起又没 `[TOC]` 块）就不算。
+
+**剩下的线性成本**：241ms 仍与文档大小同向，在行计划重建与可见列表重排（markdown 那份 10 MiB 是
+106456 根块，源码视图按 512 行切块则是 1144 根）。源码模式同一处根，而且更直白：这一档的**可见列表
+不裁剪**（1 MiB 的文档 115 根块全部算「可见」，10 MiB 是 1144 根），每键 2 次行计划重建就随文档长
 （实测 1 MiB 141ms、10 MiB 1.37s，整篇落笔都是 0 次）。静止帧 5 帧只要 4.9ms，说明贵的不是绘制本身，
-是每键重排这份整篇的可见列表。两条都要「块内/列表也按行窗口投影」才解得掉。诊断探针：`VELORA_PERF_FILE=<file> cargo test manual_markdown_load_probe -- --ignored --nocapture`。
-计数入口：`Editor::{source_serializations, source_mapping_builds, source_mapping_full_builds, word_count_scans, row_plan_rebuilds, roots_reprojected}`、
-`DocumentTree::whole_document_renders`。性能优化进行中的设计记录见 [performance.md](./performance.md)。
+是每键重排这份整篇的可见列表。两条都要「块内/列表也按行窗口投影」才解得掉。另一处已知退路：源码
+视图按行切块时 ``` 围栏会跨过块边界，段与段不再独立，大纲只能整篇重扫（`outline_full_rescans` 数得
+到，markdown 文档实测 0）。诊断探针：`cargo test probe_attribute_ten_mib -- --ignored --nocapture`。
+计数入口：`Editor::{source_serializations, source_mapping_builds, source_mapping_full_builds, word_count_scans, row_plan_rebuilds, roots_reprojected, outline_rebuilds, outline_lines_scanned, outline_full_rescans}`、
+`DocumentTree::{whole_document_renders, snapshot_rebuilds}`。性能优化进行中的设计记录见 [performance.md](./performance.md)。
 
