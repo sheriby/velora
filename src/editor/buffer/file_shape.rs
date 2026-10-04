@@ -43,9 +43,18 @@ impl FileShape {
     }
 
     /// 把规范文本还原成磁盘字节。
+    ///
+    /// 缓冲区本该是 LF 规范文本；万一有路径漏了归一（比如剪贴板带进来的 `\r`），
+    /// 这里是最后一道闸：先折平再升格，绝不把 `\r\r\n` 写上磁盘——那不只是多出
+    /// 空行，还会让版本号校验把自己写的文件误判成外部修改。
     pub(crate) fn encode(&self, text: &str) -> Vec<u8> {
+        let text: Cow<'_, str> = if text.contains('\r') {
+            Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
+        } else {
+            Cow::Borrowed(text)
+        };
         let body = match self.line_ending {
-            LineEnding::LF => Cow::Borrowed(text),
+            LineEnding::LF => text,
             LineEnding::CRLF => Cow::Owned(text.replace('\n', "\r\n")),
         };
         match self.encoding {

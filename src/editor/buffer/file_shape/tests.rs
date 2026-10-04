@@ -83,3 +83,22 @@ fn a_file_with_lone_carriage_returns_bytes_as_lf_instead_of_corrupting_them() {
         "单独的 \\r 不该被判成 CRLF"
     );
 }
+
+#[test]
+fn encode_folds_stray_carriage_returns_before_upgrading_line_endings() {
+    // 缓冲区里混进了 `\r`（比如剪贴板带进来的）时，CRLF 升格绝不能再套一层：
+    // `\r\n` → `\r\r\n` 是字节损坏，还会让版本号校验把自己写的文件误判成
+    // 外部修改。encode 是最后一道闸：先折平再升格。
+    let shape = FileShape {
+        encoding: TextEncoding::Utf8,
+        line_ending: LineEnding::CRLF,
+    };
+    assert_eq!(shape.encode("a\r\nb"), utf8_bytes("a\r\nb"));
+    assert_eq!(shape.encode("a\rb"), utf8_bytes("a\r\nb"));
+    assert_eq!(shape.encode("a\r\nb\rc\n"), utf8_bytes("a\r\nb\r\nc\r\n"));
+    let lf_shape = FileShape {
+        encoding: TextEncoding::Utf8,
+        line_ending: LineEnding::LF,
+    };
+    assert_eq!(lf_shape.encode("a\r\nb"), utf8_bytes("a\nb"));
+}

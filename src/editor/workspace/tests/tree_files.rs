@@ -948,3 +948,82 @@ async fn a_longer_fence_above_pulls_the_following_chunks_inside_it(cx: &mut Test
         );
     });
 }
+/// CRLF 代码文件里粘贴带 `\r\n` 的剪贴板文本，磁盘上绝不允许出现 `\r\r\n`。
+///
+/// 缓冲区是 LF 规范空间：剪贴板的 CRLF 原样落进去，保存时 FileShape 再升格一次
+/// 就是 `\r\r\n`——字节损坏（重开多出空行），而且版本号会把自己写的文件误判成
+/// 外部修改，整个文件被锁死到重载为止。粘贴入口归一 + encode 兜底，两道闸。
+#[gpui::test]
+async fn pasting_crlf_clipboard_text_into_a_crlf_code_file_never_writes_crcrlf(
+    cx: &mut TestAppContext,
+) {
+    use crate::components::Paste;
+
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-crlf-paste-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create test workspace");
+    let path = root.join("paste.rs");
+    let original = "first\r\nlast\r\n";
+    fs::write(&path, original).expect("write code file");
+    let cleanup_root = root.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(cleanup_root);
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        });
+    });
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("x\r\ny".into()));
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().unwrap().clone()
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            let len = block.visible_len();
+            block.selected_range = len..len;
+        });
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| block.on_paste(&Paste, window, cx));
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.save_document(window, cx))
+    });
+    cx.run_until_parked();
+
+    let saved = fs::read(&path).expect("read saved file");
+    // A2 的契约：绝不出现 `\r\r\n`（粘进来的 CRLF 先折平、保存时只升格一次）。
+    // 末行的尾换行由代码文档自己的重同步约定决定（总是补齐），不在本条管。
+    assert!(
+        !saved.windows(3).any(|w| w == b"\r\r\n"),
+        "落盘字节出现 \\r\\r\\n（CRLF 被升格了两次）：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+    assert!(
+        saved.windows(4).any(|w| w == b"x\r\ny"),
+        "粘贴的内容没按 CRLF 形状落盘：{:?}",
+        String::from_utf8_lossy(&saved)
+    );
+
+    // 第二次保存不得把自己写的文件误判成外部修改：保存要成功，字节要稳定。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.save_document(window, cx))
+    });
+    cx.run_until_parked();
+    let saved_again = fs::read(&path).expect("read saved file");
+    assert_eq!(saved_again, saved, "第二次保存改写了字节（版本号自误判）");
+}

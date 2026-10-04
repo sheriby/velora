@@ -193,6 +193,10 @@ impl Block {
             let Some(text) = item.text() else {
                 return;
             };
+            // 缓冲区是 LF 规范空间（行尾由 FileShape 在保存时还原）：剪贴板里的
+            // CRLF 原样落进缓冲区，CRLF 文档保存时会被再升格一次成 `\r\r\n`，
+            // 字节就此损坏。所有粘贴分支（跨块选区、raw/代码、单行）都吃归一后的文本。
+            let text = text.replace("\r\n", "\n").replace('\r', "\n");
             // 选中文本后粘贴 URL → 生成 [选中](url) 链接（roadmap B5）。
             let trimmed = text.trim();
             if Self::is_bare_url(trimmed)
