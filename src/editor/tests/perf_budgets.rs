@@ -267,6 +267,8 @@ async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext
         (
             editor.source_serializations.get(),
             editor.source_mapping_full_builds.get(),
+            editor.outline_lines_scanned.get(),
+            editor.buffer.line_count(),
         )
     });
     let start = Instant::now();
@@ -277,12 +279,16 @@ async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext
         (
             editor.source_serializations.get(),
             editor.source_mapping_full_builds.get(),
+            editor.outline_lines_scanned.get(),
+            editor.buffer.line_count(),
         )
     });
     eprintln!(
-        "[measure] 10 MiB 一次按键 {typed:?}，整篇遍数 (序列化, mapping) = ({}, {})",
+        "[measure] 10 MiB 一次按键 {typed:?}，整篇遍数 (序列化, mapping) = ({}, {})，大纲扫了 {} 行 / 全文 {} 行",
         after.0 - before.0,
-        after.1 - before.1
+        after.1 - before.1,
+        after.2 - before.2,
+        after.3,
     );
     assert_eq!(after.0 - before.0, 0, "10 MiB 一次按键出现整篇序列化");
     assert_eq!(
@@ -995,4 +1001,95 @@ async fn one_mib_code_document_typing_stays_within_budget(cx: &mut TestAppContex
         typed < Duration::from_millis(400),
         "1 MiB 代码文档一次按键 {typed:?}，偏出预算（空闲机器上实测 26ms）"
     );
+}
+
+/// 一次按键要付的「把整篇文档再走一遍」的遍数。归因探针用它前后作差：
+/// 哪一项跟着文档长度长，哪一项就是那一键的线性成本来源。
+#[derive(Clone, Copy, Default)]
+struct WholeDocumentPasses {
+    outline_rebuilds: u64,
+    outline_lines_scanned: u64,
+    outline_nanos: u64,
+    snapshot_rebuilds: u64,
+    snapshot_nanos: u64,
+    row_plan_rebuilds: u64,
+    source_mapping_full_builds: u64,
+    word_count_scans: u64,
+    source_serializations: u64,
+    whole_document_renders: u64,
+}
+
+fn whole_document_passes(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut gpui::VisualTestContext,
+) -> WholeDocumentPasses {
+    editor.read_with(cx, |editor, _cx| WholeDocumentPasses {
+        outline_rebuilds: editor.outline_rebuilds.get(),
+        outline_lines_scanned: editor.outline_lines_scanned.get(),
+        outline_nanos: editor.outline_nanos.get(),
+        snapshot_rebuilds: editor.document.snapshot_rebuilds.get(),
+        snapshot_nanos: editor.document.snapshot_nanos.get(),
+        row_plan_rebuilds: editor.row_plan_rebuilds.get(),
+        source_mapping_full_builds: editor.source_mapping_full_builds.get(),
+        word_count_scans: editor.word_count_scans.get(),
+        source_serializations: editor.source_serializations.get(),
+        whole_document_renders: editor.document.whole_document_renders.get(),
+    })
+}
+
+/// 归因探针：10 MiB 文档一次按键的钱花在哪。跑法：
+/// `cargo test probe_attribute_ten_mib -- --ignored --nocapture`。
+#[gpui::test]
+#[ignore]
+async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/ten-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping");
+        return;
+    }
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    let path = std::env::temp_dir().join(format!("velora-probe-attr-{}.py", std::process::id()));
+    fs::write(&path, &markdown).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+    let document = crate::editor::encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view(move |_window, cx| {
+        Editor::from_loaded_document(cx, document, Some(path.clone()))
+    });
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while editor.read_with(cx, |editor, _| {
+        editor.document.pending_source().is_some() || editor.document.pending_tail().is_some()
+    }) {
+        assert!(Instant::now() < deadline, "续建未完成");
+        cx.run_until_parked();
+    }
+    redraw(cx);
+    let lines = editor.read_with(cx, |editor, _| editor.buffer.line_count());
+    let roots = editor.read_with(cx, |editor, _| editor.document.root_count());
+    for i in 0..3 {
+        let before = whole_document_passes(&editor, cx);
+        let start = Instant::now();
+        cx.simulate_input("x");
+        redraw(cx);
+        let cost = start.elapsed();
+        let after = whole_document_passes(&editor, cx);
+        eprintln!(
+            "[attr] 第 {i} 次按键 {cost:?}：大纲 {} 次 / {} 行 / {:.0}ms；投影重排 {} 次 {:.0}ms；行计划 {}；整篇 mapping {}；字数扫描 {}；整篇落笔 {}；整篇渲染 {}",
+            after.outline_rebuilds - before.outline_rebuilds,
+            after.outline_lines_scanned - before.outline_lines_scanned,
+            (after.outline_nanos - before.outline_nanos) as f64 / 1e6,
+            after.snapshot_rebuilds - before.snapshot_rebuilds,
+            (after.snapshot_nanos - before.snapshot_nanos) as f64 / 1e6,
+            after.row_plan_rebuilds - before.row_plan_rebuilds,
+            after.source_mapping_full_builds - before.source_mapping_full_builds,
+            after.word_count_scans - before.word_count_scans,
+            after.source_serializations - before.source_serializations,
+            after.whole_document_renders - before.whole_document_renders,
+        );
+    }
+    eprintln!("[attr] 文档 {lines} 行、{roots} 根块");
 }

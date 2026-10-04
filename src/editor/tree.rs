@@ -99,6 +99,11 @@ pub(super) struct DocumentTree {
     /// 号）——正常编辑序列里必须是 0：每多一次，未编辑块的原始字节就多被洗一次，
     /// 成本也跟着文档长度长。
     pub(crate) whole_document_renders: std::cell::Cell<u64>,
+    /// 整棵投影重排了几次、花了多久：`rebuild_metadata_and_snapshot` 会把**每一根**
+    /// 块重新过一遍（折叠状态、行号、可见列表）。按键路径上它每键出现一次就是
+    /// O(文档)：10 MiB 一次按键那 175 毫秒的第一嫌疑就是这里，先把它变成数得到的东西。
+    pub(crate) snapshot_rebuilds: std::cell::Cell<u64>,
+    pub(crate) snapshot_nanos: std::cell::Cell<u64>,
 }
 
 impl DocumentTree {
@@ -109,6 +114,8 @@ impl DocumentTree {
             pending: None,
             pending_source: None,
             whole_document_renders: std::cell::Cell::new(0),
+            snapshot_rebuilds: std::cell::Cell::new(0),
+            snapshot_nanos: std::cell::Cell::new(0),
         }
     }
 
@@ -619,6 +626,7 @@ impl DocumentTree {
     /// UUIDs, child UUID lists, render depth, numbered-list ordinals, and the
     /// visible snapshot.
     pub(super) fn rebuild_metadata_and_snapshot(&mut self, cx: &mut Context<Editor>) {
+        let started = std::time::Instant::now();
         Self::normalize_block_list(&mut self.roots, cx);
         self.snapshot.clear();
         Self::sync_block_list(
@@ -636,6 +644,11 @@ impl DocumentTree {
             cx,
             &mut self.snapshot,
             SyncSeeds::default(),
+        );
+        self.snapshot_rebuilds
+            .set(self.snapshot_rebuilds.get() + 1);
+        self.snapshot_nanos.set(
+            self.snapshot_nanos.get() + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
         );
     }
 

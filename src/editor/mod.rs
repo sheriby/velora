@@ -160,6 +160,15 @@ pub struct Editor {
     /// 性能计数器：重投影出来的**根块数**。整篇重解析一次就是「文档有多少根块」，
     /// 区域重解析只重建改动那一段的几根——增量重投影要守的就是这个数不跟着文档长。
     roots_reprojected: std::cell::Cell<u64>,
+    /// 性能计数器：文档大纲真正重建了几次（侧栏收起也算，`[TOC]` 靠它）。
+    /// 大纲把整个缓冲区按行重扫一遍找标题，一次就是 O(文档)——它此前不在任何
+    /// 计数器里，所以「整篇落笔 0 次」全绿的同时，10 MiB 一次按键仍有 110ms
+    /// 花在这里（实测占该键渲染量的 74%）。
+    outline_rebuilds: std::cell::Cell<u64>,
+    /// 计数器：大纲重建累计扫过的**行数**（问缓冲区的行计数，不是数换行符）。
+    outline_lines_scanned: std::cell::Cell<u64>,
+    /// 性能计数器：大纲重建累计耗时。
+    outline_nanos: std::cell::Cell<u64>,
     /// 计数器：光标滚动实际改动的次数。撤销等操作会替换整篇块，
     /// 用旧布局的边界先滚一次、下一帧再纠正，就会让用户看到来回滚。
     caret_scroll_applications: std::cell::Cell<u64>,
@@ -611,6 +620,9 @@ impl Editor {
             word_count_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),
             roots_reprojected: std::cell::Cell::default(),
+            outline_rebuilds: std::cell::Cell::default(),
+            outline_lines_scanned: std::cell::Cell::default(),
+            outline_nanos: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),
             prev_mounted_run: None,
             scroll_settle_frames: 0,

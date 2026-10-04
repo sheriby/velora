@@ -503,7 +503,15 @@ impl Editor {
         }
 
         let source = self.buffer.text();
+        let started = std::time::Instant::now();
         let outline = build_outline_tree(&source);
+        self.outline_rebuilds
+            .set(self.outline_rebuilds.get() + 1);
+        self.outline_lines_scanned
+            .set(self.outline_lines_scanned.get() + self.buffer.line_count() as u64);
+        self.outline_nanos.set(
+            self.outline_nanos.get() + started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+        );
         prune_outline_state(&mut self.workspace, &outline);
         // Expand headings down to H3 by default so the outline is usable
         // without clicking through every level; users can still collapse.
