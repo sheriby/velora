@@ -1477,15 +1477,11 @@ fn realigned_delimiter_cell(cell: &str, alignment: TableColumnAlignment) -> Opti
     Some(cell)
 }
 
-/// 一行表格里第 `column` 个格子的**内容**字节区间（两侧的填充空格不算在内）。
+/// 一行表格里每一格的**槽位**字节区间（含两侧的填充空格）。
 ///
-/// 反斜杠转义的 `|` 不算列分隔符；首尾没有外层管道符的写法也能量出来。空格全占
-/// 的空格，内容区间取零宽、插在第一个空格后面，写进去就是「往这格里加字」。
-pub(crate) fn cell_content_range_in_line(
-    line: &str,
-    line_start: usize,
-    column: usize,
-) -> Option<Range<usize>> {
+/// 这是量格子位置唯一的一把尺：反斜杠转义的 `|` 不算列分隔符，首尾没有外层管道符的
+/// 写法（`Name | Score`）也能量出来；外层管道符两侧那个空槽不算数据格。
+pub(crate) fn table_row_slots(line: &str) -> Vec<Range<usize>> {
     let bytes = line.as_bytes();
     let mut slots: Vec<Range<usize>> = Vec::new();
     let mut start = 0usize;
@@ -1509,8 +1505,20 @@ pub(crate) fn cell_content_range_in_line(
     if slots.last().is_some_and(|slot| slot.is_empty()) {
         slots.pop();
     }
+    slots
+}
 
-    let slot = slots.get(column)?.clone();
+/// 一行表格里第 `column` 个格子的**内容**字节区间（两侧的填充空格不算在内）。
+///
+/// 空格全占的空格，内容区间取零宽、插在第一个空格后面，写进去就是「往这格里加字」。
+pub(crate) fn cell_content_range_in_line(
+    line: &str,
+    line_start: usize,
+    column: usize,
+) -> Option<Range<usize>> {
+    let bytes = line.as_bytes();
+    let slot = table_row_slots(line).into_iter().nth(column)?;
+
     let mut left = slot.start;
     while left < slot.end && matches!(bytes[left], b' ' | b'\t') {
         left += 1;

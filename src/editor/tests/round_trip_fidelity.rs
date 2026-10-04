@@ -1196,6 +1196,244 @@ async fn a_quote_table_maps_columns_after_its_container_marker(cx: &mut TestAppC
     }
 }
 
+/// 表格的格子按「哪一张表、第几行、第几列」报出它在文件里的区间与光标偏移。
+///
+/// 表与表的顺序按块树里的顺序（与映射无关），所以两张表头一模一样的表也不会混在一起。
+fn nested_table_cells_by_table(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut gpui::VisualTestContext,
+) -> Vec<Vec<((usize, usize), Option<std::ops::Range<usize>>, Option<usize>)>> {
+    editor.read_with(cx, |editor, cx| {
+        let tables = editor
+            .document
+            .visible_blocks()
+            .into_iter()
+            .filter(|visible| visible.entity.read(cx).kind() == BlockKind::Table)
+            .map(|visible| visible.entity.entity_id())
+            .collect::<Vec<_>>();
+        let mut per_table = vec![Vec::new(); tables.len()];
+        for binding in editor.table_cells.values() {
+            let Some(index) = tables
+                .iter()
+                .position(|id| *id == binding.table_block.entity_id())
+            else {
+                continue;
+            };
+            let position = binding
+                .cell
+                .read_with(cx, |block, _cx| block.table_cell_position())
+                .expect("格子绑定应有位置");
+            let range = editor
+                .source_mapping_for_entity(binding.cell.entity_id(), cx)
+                .map(|mapping| mapping.full_source_range);
+            let caret = editor.caret_source_offset(binding.cell.entity_id(), 0, cx);
+            per_table[index].push(((position.row, position.column), range, caret));
+        }
+        for cells in &mut per_table {
+            cells.sort_by_key(|(position, _, _)| *position);
+        }
+        per_table
+    })
+}
+
+/// 一格的映射落在缓冲区第几行（缺映射报 `None`）。
+fn nested_table_cell_lines(
+    cells: &[((usize, usize), Option<std::ops::Range<usize>>, Option<usize>)],
+    source: &str,
+) -> Vec<Option<usize>> {
+    cells
+        .iter()
+        .map(|(_, range, _)| {
+            range
+                .as_ref()
+                .map(|range| source[..range.start].matches('\n').count())
+        })
+        .collect()
+}
+
+/// 容器里的表格**表头写着转义管道符**时，每一格仍要说得出它在文件里的哪几个字节。
+///
+/// 这张表在哪里、有多大，读侧原来是靠「拿表头序列化出来的文字回原文里搜同一行」找的。
+/// 搜的口径与量格子的口径不是同一把尺：`a\|b` 里的 `\|` 是格子里的内容，旧口径按裸 `|`
+/// 切列，切出 3 段对不上模型的 2 格，于是**整张表一个映射都没有**——光标停在格子里算不出
+/// 缓冲区偏移，粘贴、跳转、状态栏的行列号只能退回默认位置。
+#[gpui::test]
+async fn a_quote_table_with_an_escaped_pipe_in_its_header_still_maps_every_cell(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> | a\\|b | 数量 |\n> | --- | --- |\n> | 1 | 2 |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let tables = nested_table_cells_by_table(&editor, cx);
+    let source = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(tables.len(), 1, "夹具里该有一张表");
+    let cells = &tables[0];
+    assert_eq!(cells.len(), 4, "夹具的格子数变了：对照要跟着改");
+
+    // 期望的是**文件里的那几位字节**：转义的那一格连反斜杠一起算，不是模型序列化出来的文字。
+    let expected: [((usize, usize), &str); 4] = [
+        ((0, 0), "a\\|b"),
+        ((0, 1), "数量"),
+        ((1, 0), "1"),
+        ((1, 1), "2"),
+    ];
+    for index in 0..expected.len() {
+        let (position, want_slice) = &expected[index];
+        let (cell, range, caret) = &cells[index];
+        let label = format!("第 {} 行第 {} 列", cell.0 + 1, cell.1 + 1);
+        assert_eq!(cell, position, "{label} 的位置对不上");
+        let range = range.clone().unwrap_or_else(|| panic!("{label} 没有映射"));
+        assert_eq!(
+            &source[range.clone()],
+            *want_slice,
+            "{label} 量到的原文不是它自己那格的字节"
+        );
+        assert_eq!(
+            caret,
+            &Some(range.start),
+            "{label} 光标在格子开头却算不出缓冲区偏移"
+        );
+    }
+}
+
+/// 同一个引用块里有两张表头一模一样的表：每一张的格子落在**自己**那几行里。
+///
+/// 旧读侧在整根块的原文里搜表头，搜到两处再靠「离走树算出的起点最近」猜哪张是本表；
+/// 猜错就是两张表的格子互换字节。现在起点是走树带下来的事实，核对只看结构
+/// （格数、定界行、行数），不再有两处可选。
+#[gpui::test]
+async fn two_quote_tables_with_the_same_header_map_to_their_own_rows(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> | 甲 | 乙 |\n> | --- | --- |\n> | 1 | 2 |\n>\n\
+        > | 甲 | 乙 |\n> | --- | --- |\n> | 3 | 4 |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let tables = nested_table_cells_by_table(&editor, cx);
+    let source = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(tables.len(), 2, "夹具里该有两张表");
+
+    let missing = tables
+        .iter()
+        .flatten()
+        .filter(|(_, range, _)| range.is_none())
+        .count();
+    assert_eq!(missing, 0, "有格子说不出自己在文件里的区间：{tables:?}");
+
+    // 第一张表占文件的第 0、2 行，第二张占第 4、6 行（表头行 + 数据行）。
+    assert_eq!(
+        nested_table_cell_lines(&tables[0], &source),
+        vec![Some(0), Some(0), Some(2), Some(2)],
+        "第一张表的格子没落在它自己那两行里"
+    );
+    assert_eq!(
+        nested_table_cell_lines(&tables[1], &source),
+        vec![Some(4), Some(4), Some(6), Some(6)],
+        "第二张表的格子被算到别处去了"
+    );
+    assert_eq!(&source[tables[0][2].1.clone().expect("有映射")], "1");
+    assert_eq!(&source[tables[1][2].1.clone().expect("有映射")], "3");
+}
+
+/// 表前面还挂着别的子块（列表、代码围栏）时，表的落点要跟着走树算出的偏移走。
+///
+/// 这张表的位置是「前面每一块在文件里占了多少字节」累加出来的，累加口径一旦按模型拼
+/// （列表两个空格、围栏补 phantom 行），表就往旁边漂，格子量到邻居的字节。
+#[gpui::test]
+async fn a_quote_table_below_a_list_and_a_fence_maps_to_the_rows_it_is_on(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> - 项甲\n>\n> ```\n> code\n> ```\n>\n\
+        > | 甲 | 乙 |\n> | --- | --- |\n> | 1 | 2 |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let tables = nested_table_cells_by_table(&editor, cx);
+    let source = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(tables.len(), 1, "夹具里该有一张表");
+    let lines = nested_table_cell_lines(&tables[0], &source);
+    assert_eq!(
+        lines,
+        vec![Some(6), Some(6), Some(8), Some(8)],
+        "表前面的列表与围栏把落点带偏了：{lines:?}\n缓冲区是 {source:?}"
+    );
+    let wanted = ["甲", "乙", "1", "2"];
+    for (index, (position, range, _)) in tables[0].iter().enumerate() {
+        let range = range.clone().unwrap_or_else(|| panic!("{:?} 没有映射", position));
+        assert_eq!(
+            &source[range],
+            wanted[index],
+            "第 {} 行第 {} 列量到的原文不是它自己那格的字节",
+            position.0 + 1,
+            position.1 + 1
+        );
+    }
+}
+
+/// 在表**上面**打字之后，容器里那张表的格子还指着它那几行。
+///
+/// 走树算出的起点是唯一的落点来源，所以同块里前面那一段一变色（引用行重写、字节平移），
+/// 累加就得跟着准。这里在段落里打一个字，再逐格核对区间仍在表自己的行里、字节仍是那一格。
+#[gpui::test]
+async fn typing_above_a_nested_table_keeps_its_cells_on_their_own_rows(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    const FIXTURE: &str = "> 前言\n>\n> | 甲 | 乙 |\n> | --- | --- |\n> | 1 | 2 |\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, FIXTURE.to_string(), None));
+    redraw(cx);
+
+    let intro = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .into_iter()
+            .find(|visible| visible.entity.read(cx).display_text() == "前言")
+            .map(|visible| visible.entity.clone())
+            .expect("夹具里该有那段话")
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(intro.entity_id()));
+        intro.update(cx, |block, block_cx| block.move_to(0, block_cx));
+    });
+    redraw(cx);
+    cx.simulate_input("写");
+    redraw(cx);
+
+    let tables = nested_table_cells_by_table(&editor, cx);
+    let source = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        source, "> 写前言\n>\n> | 甲 | 乙 |\n> | --- | --- |\n> | 1 | 2 |\n",
+        "打字这一步把别的字节也改了：{source:?}"
+    );
+    assert_eq!(tables.len(), 1, "夹具里该有一张表");
+    let lines = nested_table_cell_lines(&tables[0], &source);
+    assert_eq!(
+        lines,
+        vec![Some(2), Some(2), Some(4), Some(4)],
+        "上面那一段变长之后，表的格子没跟着平移到自己那两行：{lines:?}"
+    );
+    let wanted = ["甲", "乙", "1", "2"];
+    for (index, (position, range, _)) in tables[0].iter().enumerate() {
+        let range = range.clone().unwrap_or_else(|| panic!("{:?} 没有映射", position));
+        assert_eq!(
+            &source[range],
+            wanted[index],
+            "第 {} 行第 {} 列量到的原文不是它自己那格的字节",
+            position.0 + 1,
+            position.1 + 1
+        );
+    }
+}
 /// 拆一个 `1)` 的列表项，两个半截都还得写 `1)`/`2)`，不许变成 `1.`。
 ///
 /// 用户在原文里用的是圆括号，编辑器却把项当成「只有序号、没有写法」的东西：显示按

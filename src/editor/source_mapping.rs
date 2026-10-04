@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use super::table_edit::cell_content_range_in_line;
+use super::table_edit::{cell_content_range_in_line, table_row_slots};
 use super::*;
 
 /// 逐行量出来的结果：每行在自己那一行里让开几个前缀字节，以及这一行在**文件里**占几个
@@ -861,13 +861,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         }
     }
 
-    /// 容器里的表格（挂在引用/列表根块下，没有自己的源码区间）的映射：在它**所在根块**的
-    /// 原文里先按表头那一行定位这张表，再把每行的格子按原文量出来。
+    /// 容器里的表格（挂在引用/列表根块下，没有自己的源码区间）的映射：表格从哪一行起头
+    /// 是**走树算出来的事实**（父块的映射已经把它自己每一行的容器记号让开了），落点那一行
+    /// 再按结构量每一格。
     ///
-    /// 不按「列宽 = 内容长 + 3」推算——那条口径在用户填过宽度的列上会漂（实测漂 3 字节，
-    /// 命中选中的是 `" | 苹"` 而不是 `苹果`）。同一个根块里有几张表头相同的表时，取离本块
-    /// 在走树时算出的起点最近的那一张。定位不到表头、行数与模型对不上，就什么都不推，命中
-    /// 退回宿主表格块。
+    /// 以前是拿表头**序列化出来**的文字回原文里搜这一行：写法与序列化口径不一致时整张表
+    /// 一个映射都没有（实测表头写 `> | a\|b |` 的引用表——旧口径按裸管道符切列，切出 3 段
+    /// 对不上模型的 2 格），光标停在格子里算不出缓冲区偏移，粘贴、跳转、行列号只能退回
+    /// 默认位置；同一根块里有几张表头相同的表时，还得靠「离起点最近」猜哪张是本表。
+    /// 现在只做**结构**核对：格数与模型一致、下一行是定界行、再往后行数够，且这些都落在
+    /// 本根块的区间里。对不上就什么都不推，命中退回宿主表格块。
     fn push_table_mappings_in_root(
         &self,
         block: &Entity<Block>,
@@ -887,65 +890,56 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let Some(root_span) = root.read(cx).record.source_span.clone() else {
             return 0;
         };
-        let header = table
-            .header
-            .iter()
-            .map(serialize_table_cell_markdown)
-            .collect::<Vec<_>>();
-        let mut outer_header = vec![String::new()];
-        outer_header.extend(header.iter().cloned());
-        outer_header.push(String::new());
-
-        let raw = self.buffer.slice(root_span.clone());
-        let mut lines: Vec<(usize, String)> = Vec::new();
-        let mut line_start = root_span.start;
-        for line in raw.split('\n') {
-            lines.push((line_start, line.to_string()));
-            line_start += line.len() + 1;
-        }
-        let mut candidates = lines.iter().enumerate().filter_map(|(index, (start, line))| {
-            let cells = table_row_cells(line);
-            (cells == header || cells == outer_header).then_some((index, *start))
-        });
-        let (header_index, header_start) = match candidates.next() {
-            Some(first) => candidates
-                .fold(first, |best, candidate| {
-                    if (candidate.1 as i64 - absolute_start as i64).abs()
-                        < (best.1 as i64 - absolute_start as i64).abs()
-                    {
-                        candidate
-                    } else {
-                        best
-                    }
-                },
-                ),
-            None => return 0,
-        };
-        // 表头之后是分隔行，再往后才是数据行；行数与模型对不上就什么都不推。
-        let body_start = header_index + 2;
-        if lines.len() < body_start + table.rows.len() {
+        if absolute_start >= self.buffer.byte_len() || root_span.end <= root_span.start {
             return 0;
         }
-        self.push_table_row_mappings(
-            &lines[header_index].1,
-            header_start,
-            &runtime.header,
-            mappings,
-        );
-        for row_index in 0..table.rows.len() {
-            let Some(cells) = runtime.rows.get(row_index) else {
-                continue;
-            };
-            let (start, line) = &lines[body_start + row_index];
-            self.push_table_row_mappings(line, *start, cells, mappings);
+
+        let header = self.buffer.line_range(self.buffer.line_of(absolute_start));
+        if header.start < root_span.start {
+            return 0;
         }
-        let last_index = if table.rows.is_empty() {
-            header_index + 1
-        } else {
-            body_start + table.rows.len() - 1
+        let header_line = self.buffer.slice(header.clone());
+        if table_row_slots(table_row_core(&header_line)).len() != table.header.len() {
+            return 0;
         }
-        .min(lines.len() - 1);
-        (lines[last_index].0 + lines[last_index].1.len()) - header_start
+
+        // 表头之后是定界行，再往后才是数据行；两者都还得起源于本根块的区间。
+        let delimiter_start = header.end + 1;
+        if delimiter_start >= self.buffer.byte_len() || delimiter_start > root_span.end {
+            return 0;
+        }
+        let delimiter = self.buffer.line_range(self.buffer.line_of(delimiter_start));
+        let delimiter_line = self.buffer.slice(delimiter.clone());
+        if !is_table_delimiter_slots(table_row_core(&delimiter_line), table.header.len()) {
+            return 0;
+        }
+
+        // 数据行要够模型的行数，且都落在本根块的区间里；差一行就整张表不推，
+        // 免得推了一半再把长度报成 0，把后面兄弟块的落点带偏。
+        let mut row_ranges = Vec::with_capacity(table.rows.len());
+        let mut at = delimiter.end + 1;
+        for _ in 0..table.rows.len() {
+            if at >= self.buffer.byte_len() || at > root_span.end {
+                return 0;
+            }
+            let row = self.buffer.line_range(self.buffer.line_of(at));
+            at = row.end + 1;
+            row_ranges.push(row);
+        }
+        let last_row_end = row_ranges
+            .last()
+            .map(|row| row.end)
+            .unwrap_or(delimiter.end);
+
+        self.push_table_row_mappings(&header_line, header.start, &runtime.header, mappings);
+        for (row_index, row) in row_ranges.iter().enumerate() {
+            let row_line = self.buffer.slice(row.clone());
+            if let Some(cells) = runtime.rows.get(row_index) {
+                self.push_table_row_mappings(&row_line, row.start, cells, mappings);
+            }
+        }
+
+        last_row_end - header.start
     }
 
     /// 量出来：这一块的内容在它**那一行**里从第几个字节开始，顺带量出它的子块
@@ -1793,13 +1787,11 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
 
 }
 
-/// 一行里按管道符切出的格文本：先去掉引用前缀 `>` 与缩进，再逐格 trim。
-fn table_row_cells(line: &str) -> Vec<String> {
-    let mut core = line.trim_start();
-    while let Some(rest) = core.strip_prefix('>') {
-        core = rest.trim_start();
-    }
-    core.split('|').map(|part| part.trim().to_string()).collect()
+/// 一行表格里表格本体从第几个字节开始：把容器记号让开。
+///
+/// 量格子的落点与核对结构都用这一份，两处口径必须一致。
+fn table_row_core(line: &str) -> &str {
+    &line[table_row_container_prefix(line)..]
 }
 
 /// 一行表格前挂着多少**容器记号**：缩进、引用块的 `>`（可以嵌套），到表格真正开始为止。
@@ -1820,4 +1812,17 @@ fn table_row_container_prefix(line: &str) -> usize {
             None => return consumed,
         }
     }
+}
+
+/// 这一行是不是那张表的**定界行**：格数与表头一致，每格只有 `-`、`:` 与填充空格。
+///
+/// 用的是量格子同一把尺（`table_row_slots`：转义的 `|` 不算列分隔），所以表头里的
+/// 写法不会把定界行看成别的行。
+fn is_table_delimiter_slots(line: &str, columns: usize) -> bool {
+    let slots = table_row_slots(line);
+    slots.len() == columns
+        && slots.iter().all(|slot| {
+            let cell = line[slot.clone()].trim();
+            cell.contains('-') && cell.chars().all(|ch| matches!(ch, '-' | ':'))
+        })
 }
