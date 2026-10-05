@@ -7,9 +7,9 @@ use gpui::*;
 
 use super::Editor;
 use crate::components::{
-    BoldSelection, CodeSelection, HighlightSelection, InlineFormat, ItalicSelection,
-    StrikethroughSelection, SubscriptSelection, SuperscriptSelection, UnderlineSelection,
-    UndoCaptureKind,
+    BoldSelection, ClearFormatSelection, CodeSelection, HighlightSelection, InlineFormat,
+    ItalicSelection, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,
+    UnderlineSelection, UndoCaptureKind,
 };
 
 /// 选区上的一次行内改动：开关某一种格式，或者把选区里所有样式记号剥掉。
@@ -181,5 +181,16 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.handle_inline_format_capture(InlineFormat::Subscript, cx);
+    }
+
+    pub(crate) fn on_clear_format_capture(
+        &mut self,
+        _: &ClearFormatSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.clear_inline_format_on_selection(cx) {
+            cx.stop_propagation();
+        }
     }
 }

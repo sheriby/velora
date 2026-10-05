@@ -55,6 +55,7 @@ actions!(
         HighlightSelection,
         SuperscriptSelection,
         SubscriptSelection,
+        ClearFormatSelection,
         LinkSelection,
         InsertImage,
         Heading1,
@@ -198,6 +199,8 @@ pub(crate) enum ShortcutCommand {
     StrikethroughSelection,
     SuperscriptSelection,
     SubscriptSelection,
+    HighlightSelection,
+    ClearFormatSelection,
     LinkSelection,
     InsertImage,
     IndentBlock,
@@ -531,6 +534,20 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         id: "subscript_selection",
         category: ShortcutCategory::Formatting,
         default_keys: &["cmd-shift--", "ctrl-shift--"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::HighlightSelection,
+        id: "highlight_selection",
+        category: ShortcutCategory::Formatting,
+        default_keys: &["cmd-shift-h", "ctrl-shift-h"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::ClearFormatSelection,
+        id: "clear_format_selection",
+        category: ShortcutCategory::Formatting,
+        default_keys: &["cmd-\\", "ctrl-\\"],
         context: BLOCK_CONTEXT,
     },
     ShortcutDefinition {
@@ -887,6 +904,10 @@ fn key_binding_for(
             KeyBinding::new(key, SuperscriptSelection, context)
         }
         ShortcutCommand::SubscriptSelection => KeyBinding::new(key, SubscriptSelection, context),
+        ShortcutCommand::HighlightSelection => KeyBinding::new(key, HighlightSelection, context),
+        ShortcutCommand::ClearFormatSelection => {
+            KeyBinding::new(key, ClearFormatSelection, context)
+        }
         ShortcutCommand::LinkSelection => KeyBinding::new(key, LinkSelection, context),
         ShortcutCommand::InsertImage => KeyBinding::new(key, InsertImage, context),
         ShortcutCommand::IndentBlock => KeyBinding::new(key, IndentBlock, context),

@@ -818,6 +818,7 @@ impl Render for Editor {
             .capture_action(cx.listener(Self::on_code_capture))
             .capture_action(cx.listener(Self::on_superscript_capture))
             .capture_action(cx.listener(Self::on_subscript_capture))
+            .capture_action(cx.listener(Self::on_clear_format_capture))
             .capture_action(cx.listener(Self::on_link_selection_capture))
             .capture_action(cx.listener(Self::on_insert_image_capture))
             .capture_action(cx.listener(Self::on_heading1_capture))

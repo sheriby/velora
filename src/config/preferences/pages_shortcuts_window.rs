@@ -57,8 +57,8 @@ impl PreferencesWindow {
             ShortcutCommand::Copy => strings.preferences_shortcut_copy.clone(),
             ShortcutCommand::Cut => strings.preferences_shortcut_cut.clone(),
             ShortcutCommand::Paste => strings.preferences_shortcut_paste.clone(),
-            // 这两条还没有独立的 `preferences_shortcut_*` 键，先借右键菜单那两条文案
-            // （FP9 的键位表对齐一并整）。
+            // 这几条借命令自己在菜单上的那条文案：同一个概念在两个地方出现两次，
+            // 用同一份字符串才不会出现「菜单叫这个、偏好页叫那个」。
             ShortcutCommand::PasteAsPlainText => strings.context_menu_paste_as_plain_text.clone(),
             ShortcutCommand::CopyAsMarkdown => strings.context_menu_copy_as_markdown.clone(),
             ShortcutCommand::Undo => strings.preferences_shortcut_undo.clone(),
@@ -78,6 +78,8 @@ impl PreferencesWindow {
                 strings.format_superscript.clone()
             }
             ShortcutCommand::SubscriptSelection => strings.format_subscript.clone(),
+            ShortcutCommand::HighlightSelection => strings.format_highlight.clone(),
+            ShortcutCommand::ClearFormatSelection => strings.format_clear.clone(),
             ShortcutCommand::LinkSelection => strings.insert_link.clone(),
             ShortcutCommand::InsertImage => strings.insert_image.clone(),
             ShortcutCommand::IndentBlock => strings.preferences_shortcut_indent_block.clone(),

@@ -232,3 +232,45 @@ async fn a_collapsed_selection_formats_nothing_and_reports_unsupported(cx: &mut 
         "塌成一点的跨块选区动了字节"
     );
 }
+
+/// ⌘⇧H 这一条键位要真的按得动：块内聚焦、选中一段字，敲键走到标记文本那条入口。
+#[gpui::test]
+async fn cmd_shift_h_marks_the_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None)
+    });
+    redraw(cx);
+
+    focus_block_at(&editor, 0, cx);
+    select(&editor, 0, 0..5, cx);
+    cx.simulate_keystrokes("cmd-shift-h");
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "==alpha== one\n\nbeta two\n",
+        "⌘⇧H 没走到标记文本那条入口"
+    );
+}
+
+/// ⌘\ 这一条键位与菜单里「清除格式」那一行走同一条入口：只剥掉选区里的记号。
+#[gpui::test]
+async fn cmd_backslash_clears_the_styles_in_the_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "alpha **one** beta\n".to_string(), None)
+    });
+    redraw(cx);
+
+    focus_block_at(&editor, 0, cx);
+    select(&editor, 0, 6..9, cx);
+    cx.simulate_keystrokes("cmd-\\");
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "alpha one beta\n",
+        "⌘\\ 没把选区里的粗体记号剥掉"
+    );
+}

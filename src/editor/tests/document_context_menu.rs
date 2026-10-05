@@ -612,8 +612,8 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
     );
 }
 
-/// 菜单里每一行的快捷键那一列按主题给的那份键位显示；标记文本与段落那一档
-/// 还没有键位（FP9 一并对齐），留空但不换行宽。
+/// 「格式」那一档十行的快捷键那一列都要显示出来，其中标记文本与清除格式这两行是
+/// FP9b 才补上键位的；段落与插入那一档还没有键位，留空但不换行宽。
 #[gpui::test]
 async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -633,6 +633,9 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         InlineFormat::Underline,
         InlineFormat::Strikethrough,
         InlineFormat::Code,
+        InlineFormat::Highlight,
+        InlineFormat::Superscript,
+        InlineFormat::Subscript,
     ] {
         let label = shortcut_of(DocumentMenuCommand::Format(format), cx)
             .unwrap_or_else(|| panic!("{format:?} 这一行该有默认键位"));
@@ -642,10 +645,32 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         );
     }
     assert_eq!(
-        shortcut_of(DocumentMenuCommand::Format(InlineFormat::Highlight), cx),
-        None,
-        "标记文本还没有键位（FP9 一并补），不该凭空造一个"
+        shortcut_of(DocumentMenuCommand::Format(InlineFormat::Highlight), cx).as_deref(),
+        Some("⌘⇧H"),
+        "标记文本的键位要与方案里写的那一条一致"
     );
+    assert_eq!(
+        shortcut_of(DocumentMenuCommand::ClearFormat, cx).as_deref(),
+        Some("⌘\\"),
+        "清除格式的键位要与方案里写的那一条一致"
+    );
+
+    // 段落与插入那一档刻意不给键位：那一列留空，行序与行高都不受影响。
+    for command in [
+        DocumentMenuCommand::Heading(2),
+        DocumentMenuCommand::NormalText,
+        DocumentMenuCommand::BulletList,
+        DocumentMenuCommand::Quote,
+        DocumentMenuCommand::CodeBlock,
+        DocumentMenuCommand::InsertTable,
+        DocumentMenuCommand::InsertCodeBlock,
+    ] {
+        assert_eq!(
+            shortcut_of(command, cx),
+            None,
+            "{command:?} 这一行还没有键位，不该凭空造一个"
+        );
+    }
 
     // 有键位的主菜单行也一样显示。
     for command in [

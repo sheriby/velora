@@ -595,13 +595,14 @@ pub(crate) fn document_menu_shortcut(
             ShortcutCommand::SuperscriptSelection
         }
         DocumentMenuCommand::Format(InlineFormat::Subscript) => ShortcutCommand::SubscriptSelection,
+        DocumentMenuCommand::Format(InlineFormat::Highlight) => ShortcutCommand::HighlightSelection,
+        DocumentMenuCommand::ClearFormat => ShortcutCommand::ClearFormatSelection,
         DocumentMenuCommand::Link => ShortcutCommand::LinkSelection,
         DocumentMenuCommand::InsertImage => ShortcutCommand::InsertImage,
         DocumentMenuCommand::ToggleSourceView => ShortcutCommand::ToggleViewMode,
-        // 标记文本、清除格式与段落那一档还没有快捷键位（FP9 一并对齐），先留空。
-        DocumentMenuCommand::Format(InlineFormat::Highlight)
-        | DocumentMenuCommand::ClearFormat
-        | DocumentMenuCommand::Heading(_)
+        // 段落与插入那一档不给默认键：标题的 ⌘1..⌘6 与本仓换标签的 ⌘1-9 撞车，列表、引用、
+        // 代码块与目录、分割线这些也没有通行的键位可以对齐，硬造一串反而要多记一件事。
+        DocumentMenuCommand::Heading(_)
         | DocumentMenuCommand::NormalText
         | DocumentMenuCommand::BulletList
         | DocumentMenuCommand::NumberedList
