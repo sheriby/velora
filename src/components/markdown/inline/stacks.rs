@@ -466,11 +466,6 @@ pub(crate) fn is_emphasis_punctuation(ch: char) -> bool {
     }
 }
 
-/// 强调意义上的「词内字符」：既不是空白也不是标点。
-pub(crate) fn is_emphasis_word_char(ch: char) -> bool {
-    !ch.is_whitespace() && !is_emphasis_punctuation(ch)
-}
-
 pub(crate) fn can_open_script(tokens: &[CharToken], index: usize, marker: char) -> bool {
     if token_is_backslash_escaped(tokens, index) {
         return false;

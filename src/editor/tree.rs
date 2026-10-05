@@ -257,7 +257,6 @@ impl DocumentTree {
         };
         let is_callout_header = kind.is_callout();
         let is_footnote_header = kind.is_footnote_definition();
-        drop(block);
         let spacing = &mut self.snapshot.row_spacing[index];
         let mut changed = false;
         if spacing.heading_level != heading_level
@@ -477,6 +476,9 @@ impl DocumentTree {
         }
     }
 
+    /// 整篇序列化但不记块区间——只有测试断言用它。生产侧一律走
+    /// [`markdown_text_with_block_spans`](Self::markdown_text_with_block_spans)。
+    #[cfg(test)]
     pub(super) fn markdown_text(&self, cx: &App) -> String {
         self.whole_document_renders
             .set(self.whole_document_renders.get() + 1);

@@ -1,7 +1,7 @@
 //! 文档文本缓冲区：编辑器里**唯一的内容事实源**。
 //!
 //! 背景见 `docs/plans/2026-10-02-buffer-as-source-of-truth-refactor.md`：块树是本
-//! 结构的投影，每个块持有一段指向这里的字节区间（[`Anchor`]）；保存写的就是这里，
+//! 结构的投影，每个块持有一段指向这里的字节区间（span）；保存写的就是这里，
 //! 绝不从块树重新生成 markdown——那是「打开不编辑、保存被改写」的根因。
 //!
 //! 文本按 [`MAX_CHUNK_BYTES`] 分块存放，一次编辑只重建它真正碰到的那几个块，
@@ -83,15 +83,6 @@ impl Chunk {
     }
 }
 
-/// 指向缓冲区内某个位置的锚点：随编辑自动平移，本身只是个槽位编号。
-///
-/// 块树的 span 全用它表示，所以「第 k 块的起止字节」不需要任何反推换算：
-/// 编辑落在别处时它自己跟着移动，编辑落在本块时由该块重新取锚。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Anchor {
-    slot: usize,
-}
-
 /// 一次已经落地的编辑，自带逆操作。撤销栈只要把这些逆操作按反序重放，
 /// 不需要再存任何全文快照。
 #[derive(Clone, Debug)]
@@ -110,9 +101,6 @@ pub(crate) struct TextBuffer {
     /// 会被调到 O(根块数 × 文本块数)（10 MiB 文档一次按键 6 秒就是这么来的），
     /// 所以它必须是 O(1)：只有 [`edit`](Self::edit) 会动内容，跟着它记就行。
     total_bytes: usize,
-    /// 锚点槽位 → 当前绝对字节偏移；`None` 是空槽（可回收）。
-    anchors: Vec<Option<usize>>,
-    free_anchor_slots: Vec<usize>,
     /// 这个缓冲区对应的文件形状；非文件来源（粘贴片段、恢复快照）为 `None`。
     shape: Option<FileShape>,
     /// 打开时的原始字节。只在整个缓冲区一次编辑都没落过的时候有效——
@@ -143,8 +131,6 @@ impl TextBuffer {
         Self {
             chunks,
             total_bytes: text.len(),
-            anchors: Vec::new(),
-            free_anchor_slots: Vec::new(),
             shape: None,
             pristine: None,
             dirty: (!text.is_empty()).then_some(0..text.len()),
@@ -159,6 +145,8 @@ impl TextBuffer {
     }
 
     /// 一次编辑都没落过时为真；此时 [`file_bytes`](Self::file_bytes) 就是原字节。
+    /// 只有测试闸门读它——生产侧一律直接要 [`file_bytes`](Self::file_bytes)。
+    #[cfg(test)]
     pub(crate) fn is_pristine(&self) -> bool {
         self.pristine.is_some()
     }
@@ -231,44 +219,6 @@ impl TextBuffer {
         out
     }
 
-    /// 取两个锚点之间的文本——这就是「块 span 的原文」。
-    pub(crate) fn slice_span(&self, range: Range<Anchor>) -> String {
-        self.slice(self.resolve(range.start)..self.resolve(range.end))
-    }
-
-    /// 把当前字节偏移绑成一个跨编辑稳定的锚点。用完要 [`free_anchor`](Self::free_anchor)。
-    pub(crate) fn anchor_at(&mut self, offset: usize) -> Anchor {
-        let offset = offset.min(self.byte_len());
-        match self.free_anchor_slots.pop() {
-            Some(slot) => {
-                self.anchors[slot] = Some(offset);
-                Anchor { slot }
-            }
-            None => {
-                self.anchors.push(Some(offset));
-                Anchor {
-                    slot: self.anchors.len() - 1,
-                }
-            }
-        }
-    }
-
-    /// 释放锚点槽位（块被删除时调用）。释放后再解析该锚点是编程错误。
-    pub(crate) fn free_anchor(&mut self, anchor: Anchor) {
-        if let Some(slot) = self.anchors.get_mut(anchor.slot) {
-            if std::mem::replace(slot, None).is_some() {
-                self.free_anchor_slots.push(anchor.slot);
-            }
-        }
-    }
-
-    /// 解析锚点为当前偏移。
-    pub(crate) fn resolve(&self, anchor: Anchor) -> usize {
-        self.anchors[anchor.slot]
-            .expect("解析了一个已释放的锚点")
-            .min(self.byte_len())
-    }
-
     /// 行数按 `split('\n')` 计：`"a\n"` 是 2 行（第二行为空），空文档是 1 行。
     /// 与编辑器状态栏、搜索结果的行号口径一致。
     pub(crate) fn line_count(&self) -> usize {
@@ -276,6 +226,8 @@ impl TextBuffer {
     }
 
     /// 取走「建/维护换行索引读了多少字节」并清零。查询行号不该让它动一下。
+    /// 只有测试闸门读它（生产没有消费方）。
+    #[cfg(test)]
     pub(crate) fn take_line_probe_bytes(&self) -> usize {
         self.line_probe_bytes.replace(0)
     }
@@ -401,7 +353,6 @@ impl TextBuffer {
             Some(seen) => seen.start.min(new_range.start)..seen.end.max(new_range.end),
             None => new_range.clone(),
         });
-        self.shift_anchors(&range, text.len());
 
         // 只在两个端点处切块，端点之间的整块被移除，新文本单独成分块。
         // 顺序要紧：切分起点会插入一个块，终点必须在切完之后重新算。
@@ -424,21 +375,6 @@ impl TextBuffer {
     /// 谁取走谁负责把这段范围内的派生数据重算一遍——所以取走之后必须真的重算。
     pub(crate) fn take_dirty_region(&mut self) -> Option<Range<usize>> {
         self.dirty.take()
-    }
-
-    fn shift_anchors(&mut self, range: &Range<usize>, inserted: usize) {
-        let deleted = range.end - range.start;
-        let delta = inserted as isize - deleted as isize;
-        for offset in self.anchors.iter_mut() {
-            let Some(at) = offset else { continue };
-            if *at > range.end {
-                *at = (*at as isize + delta).max(range.end as isize) as usize;
-            } else if *at > range.start {
-                // 落在被删文本内部的锚点，钳到编辑起点。
-                *at = range.start;
-            }
-            // 锚点正好等于 range.start：留在原地。
-        }
     }
 
     /// 确保存在一个以 `offset` 开头的块，返回它的下标。

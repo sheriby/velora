@@ -124,66 +124,6 @@ fn line_offsets_resolve_both_ways_and_survive_edits() {
 }
 
 #[test]
-fn an_anchor_shifts_with_edits_before_it_and_stays_put_after() {
-    let mut buffer = TextBuffer::from_text("第一段\n第二段\n第三段");
-    let second_at = buffer.text().find("第二段").expect("fixture");
-    let anchor = buffer.anchor_at(second_at);
-    let tail = buffer.anchor_at(buffer.byte_len());
-
-    // 在它之前插入：锚点右移，且仍指向「第二段」开头。
-    buffer.edit(0..0, "前言\n");
-    let moved = buffer.resolve(anchor);
-    assert!(moved > second_at, "锚点没有随前面的插入右移");
-    let after = buffer.text();
-    assert_eq!(&after[moved..moved + "第二段".len()], "第二段");
-
-    // 在它之后插入：锚点不动。
-    let before = buffer.resolve(anchor);
-    let end = buffer.byte_len();
-    buffer.edit(end..end, "\n后记");
-    assert_eq!(buffer.resolve(anchor), before);
-    assert_eq!(buffer.resolve(tail), end);
-}
-
-#[test]
-fn an_anchor_inside_deleted_text_clamps_to_a_valid_offset() {
-    let mut buffer = TextBuffer::from_text("keep this and drop that");
-    let doomed = buffer.anchor_at("keep this and ".len());
-    let kept = buffer.anchor_at(0);
-
-    buffer.edit("keep this ".len()..buffer.byte_len(), "");
-
-    assert_eq!(buffer.text(), "keep this ");
-    assert_eq!(buffer.resolve(kept), 0);
-    // 指向被删内容的锚点必须落在合法位置，并且解析出的文本不再是旧内容。
-    let resolved = buffer.resolve(doomed);
-    assert!(resolved <= buffer.byte_len(), "解析越界：{resolved}");
-    assert_eq!(buffer.slice(resolved..buffer.byte_len()), "");
-}
-
-#[test]
-fn a_span_between_two_anchors_still_yields_its_original_text() {
-    let filler = "填充行 filler line。\n";
-    let mut buffer = TextBuffer::from_text(&filler.repeat(3000));
-
-    // 取中间某一行当「块 span」，然后在它之前大量编辑。
-    let start = buffer.line_start(1500);
-    let end = buffer.line_start(1501);
-    let original = buffer.slice(start..end);
-    let span_start = buffer.anchor_at(start);
-    let span_end = buffer.anchor_at(end);
-
-    for _ in 0..50 {
-        buffer.edit(0..0, "插一行\n");
-    }
-    let last = buffer.byte_len();
-    buffer.edit(last - 1..last, "");
-
-    assert_eq!(buffer.slice_span(span_start..span_end), original);
-    assert_eq!(buffer.resolve(span_start), buffer.line_start(1550));
-}
-
-#[test]
 fn an_edit_returns_the_inverse_that_restores_the_previous_text() {
     let mut buffer = TextBuffer::from_text("第一段\n第二段\n第三段");
     let start = buffer.line_start(1);
@@ -205,27 +145,6 @@ fn an_edit_returns_the_inverse_that_restores_the_previous_text() {
     buffer.edit(again.new_range.clone(), &again.removed);
     assert_eq!(buffer.text(), "第一段\n第二段\n第三段");
     let _ = removed;
-}
-
-#[test]
-fn freeing_an_anchor_returns_its_slot_and_shifts_stay_correct() {
-    let mut buffer = TextBuffer::from_text("aaaaaaaa");
-    let first = buffer.anchor_at(1);
-    let second = buffer.anchor_at(2);
-    buffer.free_anchor(second);
-
-    buffer.edit(0..0, "X");
-    assert_eq!(buffer.resolve(first), 2);
-
-    // 释放后的槽位被新锚点复用，不会无限增长。
-    let slots_before = buffer.anchors.len();
-    let third = buffer.anchor_at(0);
-    buffer.free_anchor(first);
-    let reused = buffer.anchor_at(3);
-    assert_eq!(buffer.anchors.len(), slots_before);
-    assert_eq!(reused.slot, first.slot);
-    assert_eq!(buffer.resolve(third), 0);
-    assert_eq!(buffer.resolve(reused), 3);
 }
 
 #[test]

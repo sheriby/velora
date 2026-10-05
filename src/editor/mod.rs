@@ -419,6 +419,8 @@ struct HistoryEntry {
 
 impl HistoryEntry {
     /// 撤销栈闸门盯的这个数：正常打字与拆合块之后，它不该随文档大小增长。
+    /// 只有测试闸门读它（见 `undo_history_byte_len`）。
+    #[cfg(test)]
     pub(crate) fn byte_len(&self) -> usize {
         self.edits.iter().map(|edit| edit.removed.len()).sum()
     }

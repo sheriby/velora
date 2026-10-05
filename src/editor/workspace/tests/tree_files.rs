@@ -990,8 +990,8 @@ async fn pasting_crlf_clipboard_text_into_a_crlf_code_file_never_writes_crcrlf(
     let block = editor.read_with(cx, |editor, _| {
         editor.document.first_root().unwrap().clone()
     });
-    cx.update(|window, cx| {
-        block.update(cx, |block, cx| {
+    cx.update(|_window, cx| {
+        block.update(cx, |block, _cx| {
             let len = block.visible_len();
             block.selected_range = len..len;
         });

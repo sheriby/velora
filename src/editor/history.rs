@@ -55,7 +55,8 @@ impl Editor {
     /// 撤销栈占用的字节数（条目负载，不含结构体本身）。
     ///
     /// 这是「撤销存增量而不是存全文」那条性质的闸门：正常打字与拆块之后，
-    /// 它不该随文档大小增长。
+    /// 它不该随文档大小增长。只有测试闸门读它。
+    #[cfg(test)]
     pub(crate) fn undo_history_byte_len(&self) -> usize {
         self.undo_history
             .iter()

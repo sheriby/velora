@@ -627,7 +627,6 @@ impl Editor {
         if rescan_everything {
             // 增量这条路对这个文档不成立（有块带不出可用的区间）：退回整篇扫一遍，
             // 缓存留空，下一帧重新按块算。
-            changed = true;
             self.outline_full_rescans
                 .set(self.outline_full_rescans.get() + 1);
             let source = self.buffer.text();
