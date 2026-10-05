@@ -158,6 +158,11 @@ pub(crate) fn build_menus(
             items: command_menu_items(&strings, CommandMenu::View),
         },
         Menu {
+            // 「AI」是产品级专名,不做翻译(与 View 菜单的既有处理一致)。
+            name: "AI".into(),
+            items: command_menu_items(&strings, CommandMenu::Ai),
+        },
+        Menu {
             name: strings.menu_help.clone().into(),
             items: help_items,
         },
@@ -537,6 +542,10 @@ pub(crate) fn init(cx: &mut App) {
     });
     cx.on_action(|_: &OpenCommandPalette, cx| {
         dispatch_menu_action(&OpenCommandPalette, cx);
+    });
+    // ⌘J 在任何焦点状态下都可用(焦点在侧栏/查找条时也能唤起 AI)。
+    cx.on_action(|_: &OpenAiAssistant, cx| {
+        dispatch_menu_action(&OpenAiAssistant, cx);
     });
     cx.on_action(|_: &ZoomIn, cx| {
         dispatch_menu_action(&ZoomIn, cx);

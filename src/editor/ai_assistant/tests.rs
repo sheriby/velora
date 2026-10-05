@@ -310,3 +310,89 @@ async fn stream_cancel_flag_is_observed(cx: &mut TestAppContext) {
         let _ = Arc::new(AtomicBool::new(false));
     });
 }
+
+#[gpui::test]
+async fn ai_assistant_command_dispatch_toggles_the_panel(cx: &mut TestAppContext) {
+    init_test_app(cx);
+    // 应用级 on_action(⌘J 的兜底路由)在 app_menu::init 里注册。
+    cx.update(|cx| crate::app_menu::init(cx));
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        crate::editor::Editor::from_markdown(cx, "第一段".to_string(), None)
+    });
+    cx.update(|window, _cx| window.activate_window());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    // 菜单项/命令面板/⌘J 都经 dispatch_menu_action 落到编辑器切换入口。
+    // 注意:真机上它跑在 App 级 on_action 上下文里;测试也用 App 级 update,
+    // 从窗口自己的 update 里重入同一窗口会被 gpui 拒绝(Err 被吞)。
+    cx.cx.update(|cx| {
+        crate::app_menu::dispatch_menu_action(
+            &crate::components::OpenAiAssistant as &dyn gpui::Action,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.ai_assistant.is_some(), "命令应打开 AI 面板");
+    });
+
+    cx.cx.update(|cx| {
+        crate::app_menu::dispatch_menu_action(
+            &crate::components::OpenAiAssistant as &dyn gpui::Action,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.ai_assistant.is_none(), "再次执行命令应关闭面板");
+    });
+}
+
+#[gpui::test]
+async fn open_ai_assistant_closes_other_full_screen_overlays(cx: &mut TestAppContext) {
+    init_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        crate::editor::Editor::from_markdown(cx, "第一段".to_string(), None)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_command_palette(window, cx);
+        assert!(editor.command_palette.is_some());
+        editor.toggle_ai_assistant(window, cx);
+        assert!(editor.ai_assistant.is_some());
+        assert!(
+            editor.command_palette.is_none(),
+            "打开 AI 面板应收起命令面板"
+        );
+    });
+}
+
+#[test]
+fn ai_assistant_default_shortcut_is_cmd_j_or_ctrl_j() {
+    let keys = crate::components::resolved_shortcut_keys(
+        &std::collections::BTreeMap::new(),
+        crate::components::ShortcutCommand::OpenAiAssistant,
+    );
+    assert_eq!(keys, vec!["cmd-j".to_string(), "ctrl-j".to_string()]);
+}
+
+#[gpui::test]
+async fn context_menu_ai_row_opens_the_panel(cx: &mut TestAppContext) {
+    init_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        crate::editor::Editor::from_markdown(cx, "第一段".to_string(), None)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        // 直接构造渲染态右键菜单状态(与 on_block_context_menu_mouse_down
+        // 落到的状态一致),再点「AI 助手…」。
+        editor.context_menu = Some(crate::editor::ContextMenuState::Insert {
+            position: gpui::point(gpui::px(40.0), gpui::px(40.0)),
+            target: crate::editor::context_menu::TableInsertTarget::Append,
+            insert_hovered: false,
+            submenu_hovered: false,
+            submenu_open: false,
+        });
+        editor.on_context_menu_open_ai(&gpui::ClickEvent::default(), window, cx);
+        assert!(editor.context_menu.is_none(), "点 AI 行应先关右键菜单");
+        assert!(editor.ai_assistant.is_some(), "应打开 AI 面板");
+    });
+}

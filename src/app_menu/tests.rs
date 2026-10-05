@@ -64,9 +64,14 @@ mod tests {
     const VIEW_IDX: usize = 4;
 
     #[cfg(target_os = "macos")]
-    const HELP_IDX: usize = 6;
+    const AI_IDX: usize = 6;
     #[cfg(not(target_os = "macos"))]
-    const HELP_IDX: usize = 5;
+    const AI_IDX: usize = 5;
+
+    #[cfg(target_os = "macos")]
+    const HELP_IDX: usize = 7;
+    #[cfg(not(target_os = "macos"))]
+    const HELP_IDX: usize = 6;
 
     #[test]
     fn build_menus_uses_english_fallback_by_default() {
@@ -89,6 +94,7 @@ mod tests {
                 "Language",
                 "Theme",
                 "View",
+                "AI",
                 "Help"
             ]
         );
@@ -101,6 +107,7 @@ mod tests {
                 "Language",
                 "Theme",
                 "View",
+                "AI",
                 "Help"
             ]
         );
@@ -209,13 +216,14 @@ mod tests {
                 "语言",
                 "主题",
                 "视图",
+                "AI",
                 "帮助"
             ]
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             menu_names,
-            vec!["文件", "导出", "语言", "主题", "视图", "帮助"]
+            vec!["文件", "导出", "语言", "主题", "视图", "AI", "帮助"]
         );
 
         #[cfg(target_os = "macos")]

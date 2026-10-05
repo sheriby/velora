@@ -83,19 +83,40 @@ enum AiStreamMessage {
 }
 
 impl Editor {
-    #[allow(dead_code)] // 入口(⌘J/右键/命令面板)在下一提交接线
     pub(in crate::editor) fn ai_assistant_is_open(&self) -> bool {
         self.ai_assistant.is_some()
     }
 
     /// 打开 AI 面板(所有唤起路径的唯一入口)。重复唤起 = 重新定位。
     #[allow(dead_code)]
+    /// ⌘J / 菜单项 / 右键菜单共用的切换入口。
+    pub(crate) fn toggle_ai_assistant(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.ai_assistant.is_some() {
+            self.close_ai_assistant(cx);
+        } else {
+            self.open_ai_assistant(window, cx);
+        }
+    }
+
+    /// 动作处理器(gpui on_action 派发)。
+    pub(crate) fn on_open_ai_assistant(
+        &mut self,
+        _: &crate::components::OpenAiAssistant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_ai_assistant(window, cx);
+    }
+
     pub(in crate::editor) fn open_ai_assistant(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.dismiss_contextual_overlays(cx);
+        // 与其他全屏浮层互斥:面板接管焦点与键盘。
+        self.close_quick_open(cx);
+        self.close_command_palette(cx);
         // 锚点在打开瞬间捕获:焦点移进面板后选区会被块层收起,运行时再取
         // 就拿不到原文了。锚定「用户打开面板时看到的内容」也更符合直觉。
         let anchor = self.capture_ai_anchor(cx);
@@ -312,19 +333,6 @@ impl Editor {
         };
         self.spawn_ai_request(endpoint, messages, generation, cx);
         cx.notify();
-    }
-
-    /// 面板顶部输入框的回车:按自定义指令执行。
-    #[allow(dead_code)]
-    pub(in crate::editor) fn run_ai_custom_prompt(&mut self, cx: &mut Context<Self>) {
-        let Some(state) = self.ai_assistant.as_ref() else {
-            return;
-        };
-        let instruction = state.prompt.read(cx).value().trim().to_string();
-        if instruction.is_empty() {
-            return;
-        }
-        self.run_ai_action(AiAction::Custom(instruction), cx);
     }
 
     /// 工作线程跑阻塞式流式请求,增量经 channel 回 UI(`cx.spawn` 泵)。

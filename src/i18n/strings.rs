@@ -585,5 +585,6 @@ pub struct I18nStrings {
     pub preferences_ai_provider_ollama: String,
     /// AI 页:说明文案。
     pub preferences_ai_hint: String,
-}
+    /// 快捷键设置:AI 助手。
+    pub preferences_shortcut_open_ai_assistant: String,}
 

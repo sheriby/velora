@@ -15,7 +15,8 @@ pub(super) use crate::commands::{CommandMenu, CommandSpec};
 pub(super) use crate::components::{
     AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
-    NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
+    NewWindow, OpenAiAssistant, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences,
+    OpenRecentFile, PrintDocument,
     FormatDocument, QuitApplication, SaveDocument,
     FileHistory,
     SaveDocumentAs,
@@ -718,6 +719,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<ToggleViewMode>()
         || action.as_any().is::<ToggleFocusMode>()
         || action.as_any().is::<ToggleTypewriterMode>()
+        || action.as_any().is::<OpenAiAssistant>()
         || action.as_any().is::<FindInDocument>()
         || action.as_any().is::<FindNextMatch>()
         || action.as_any().is::<FindPreviousMatch>()
@@ -846,6 +848,10 @@ pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
         let _ = with_active_editor(cx, |editor, _, cx| editor.toggle_typewriter_mode(cx));
     } else if action.as_any().is::<FindInDocument>() {
         let _ = with_active_editor(cx, |editor, _, cx| editor.open_document_find(cx));
+    } else if action.as_any().is::<OpenAiAssistant>() {
+        let _ = with_active_editor(cx, |editor, window, cx| {
+            editor.toggle_ai_assistant(window, cx)
+        });
     } else if action.as_any().is::<FindNextMatch>() {
         let _ = with_active_editor(cx, |editor, window, cx| {
             editor.advance_search_match(false, window, cx)

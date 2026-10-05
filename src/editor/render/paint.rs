@@ -831,6 +831,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_select_tab_index))
             .on_action(cx.listener(Self::on_quick_open_action))
             .on_action(cx.listener(Self::on_open_command_palette))
+            .on_action(cx.listener(Self::on_open_ai_assistant))
             .on_action(cx.listener(Self::on_cursor_history_back))
             .on_action(cx.listener(Self::on_cursor_history_forward))
             .on_action(cx.listener(Self::on_copy_as_html))

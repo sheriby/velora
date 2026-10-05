@@ -194,6 +194,33 @@ impl Editor {
                             })
                             .child(
                                 div()
+                                    .id("editor-context-menu-ai")
+                                    .debug_selector(|| "editor-context-menu-ai".to_string())
+                                    .h(px(d.menu_item_height))
+                                    .px(px(d.menu_item_padding_x))
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .rounded(px(d.menu_item_radius))
+                                    .bg(c.dialog_surface)
+                                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                                    .active(|this| this.opacity(0.92))
+                                    .cursor_pointer()
+                                    .text_size(px(d.menu_text_size))
+                                    .font_weight(t.dialog_body_weight.to_font_weight())
+                                    .text_color(c.dialog_secondary_button_text)
+                                    .child(s.ai_assistant_menu.clone())
+                                    .child("✨")
+                                    .on_click(cx.listener(Self::on_context_menu_open_ai)),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(d.dialog_border_width.max(1.0)))
+                                    .bg(c.dialog_border),
+                            )
+                            .child(
+                                div()
                                     .id("editor-context-menu-insert")
                                     .h(px(d.menu_item_height))
                                     .px(px(d.menu_item_padding_x))

@@ -336,5 +336,5 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_ai_custom_provider: Option<String>,
     pub(crate) preferences_ai_provider_ollama: Option<String>,
     pub(crate) preferences_ai_hint: Option<String>,
-}
+    pub(crate) preferences_shortcut_open_ai_assistant: Option<String>,}
 

@@ -94,6 +94,9 @@ impl PreferencesWindow {
             ShortcutCommand::FindInDocument => {
                 strings.preferences_shortcut_find_in_document.clone()
             }
+            ShortcutCommand::OpenAiAssistant => {
+                strings.preferences_shortcut_open_ai_assistant.clone()
+            }
             ShortcutCommand::FindNextMatch => strings.preferences_shortcut_find_next_match.clone(),
             ShortcutCommand::FindPreviousMatch => {
                 strings.preferences_shortcut_find_previous_match.clone()

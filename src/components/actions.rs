@@ -82,6 +82,7 @@ actions!(
         FindPreviousMatch,
         QuickOpen,
         OpenCommandPalette,
+        OpenAiAssistant,
         CopyAsHtml,
         CursorHistoryBack,
         CursorHistoryForward,
@@ -195,6 +196,7 @@ pub(crate) enum ShortcutCommand {
     FindInDocument,
     FindNextMatch,
     FindPreviousMatch,
+    OpenAiAssistant,
     ToggleSidebar,
     ToggleFullscreen,
 }
@@ -582,6 +584,15 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         default_keys: &["cmd-f", "ctrl-f"],
         context: None,
     },
+    // AI 助手:⌘J(与 Notion AI 等编辑器内嵌 AI 的习惯一致)。全局绑定,
+    // 渲染/源码两种视图都可用。
+    ShortcutDefinition {
+        command: ShortcutCommand::OpenAiAssistant,
+        id: "open_ai_assistant",
+        category: ShortcutCategory::Edit,
+        default_keys: &["cmd-j", "ctrl-j"],
+        context: None,
+    },
     ShortcutDefinition {
         command: ShortcutCommand::FindNextMatch,
         id: "find_next_match",
@@ -822,6 +833,7 @@ fn key_binding_for(
         ShortcutCommand::DismissTransientUi => KeyBinding::new(key, DismissTransientUi, context),
         ShortcutCommand::ToggleViewMode => KeyBinding::new(key, ToggleViewMode, context),
         ShortcutCommand::FindInDocument => KeyBinding::new(key, FindInDocument, context),
+        ShortcutCommand::OpenAiAssistant => KeyBinding::new(key, OpenAiAssistant, context),
         ShortcutCommand::FindNextMatch => KeyBinding::new(key, FindNextMatch, context),
         ShortcutCommand::FindPreviousMatch => KeyBinding::new(key, FindPreviousMatch, context),
         ShortcutCommand::ToggleSidebar => KeyBinding::new(key, ToggleSidebar, context),

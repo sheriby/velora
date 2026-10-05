@@ -85,6 +85,17 @@ impl Editor {
         cx.notify();
     }
 
+    /// 右键菜单「AI 助手…」:关菜单、在光标处唤起 AI 面板。
+    pub(super) fn on_context_menu_open_ai(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = None;
+        self.open_ai_assistant(window, cx);
+    }
+
     /// 打开图片块右键菜单。
     pub(super) fn open_image_context_menu(
         &mut self,

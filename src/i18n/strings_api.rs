@@ -363,6 +363,8 @@ impl I18nStrings {
         strings.preferences_ai_custom_provider = "自定义".into();
         strings.preferences_ai_provider_ollama = "Ollama（本地）".into();
         strings.preferences_ai_hint = "面向任意 OpenAI 兼容服务（OpenAI、DeepSeek、智谱、Kimi、OpenRouter、本地 Ollama 等）。密钥只保存在本机 config.toml。".into();
+        strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
+        strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
         strings
     }
 
@@ -715,6 +717,7 @@ impl I18nStrings {
             ai_error_network: "Could not reach the AI service: {error}".into(),
             ai_error_http: "The AI service returned an error: {error}".into(),
             ai_error_protocol: "Unexpected response from the AI service: {error}".into(),
+            preferences_shortcut_open_ai_assistant: "AI Assistant".into(),
             preferences_nav_ai: "AI".into(),
             preferences_ai_provider: "Provider preset".into(),
             preferences_ai_api_base_url: "API base URL".into(),

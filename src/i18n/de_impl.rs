@@ -871,6 +871,9 @@ impl I18nStringsDe {
             ai_error_protocol: self
                 .ai_error_protocol
                 .unwrap_or(defaults.ai_error_protocol),
+            preferences_shortcut_open_ai_assistant: self
+                .preferences_shortcut_open_ai_assistant
+                .unwrap_or(defaults.preferences_shortcut_open_ai_assistant),
             preferences_nav_ai: self
                 .preferences_nav_ai
                 .unwrap_or(defaults.preferences_nav_ai),

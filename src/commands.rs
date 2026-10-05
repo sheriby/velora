@@ -12,7 +12,7 @@ use gpui::Action;
 
 use crate::components::{
     CloseWindow, CopyAsHtml, ExportHtml, ExportPdf, ExportPng, FindInDocument, FindNextMatch,
-    FindPreviousMatch, NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PrintDocument,
+    FindPreviousMatch, NewWindow, OpenAiAssistant, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PrintDocument,
     FileHistory, FormatDocument, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout,
     ToggleFocusMode, ToggleFullscreen,
     ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, ZoomIn, ZoomOut, ZoomReset,
@@ -26,6 +26,7 @@ pub(crate) enum CommandMenu {
     File,
     Export,
     View,
+    Ai,
     Help,
 }
 
@@ -138,6 +139,8 @@ static COMMANDS: &[CommandSpec] = &[
     command!(sep "zoom_in", View, command_zoom_in, ZoomIn),
     command!("zoom_out", View, command_zoom_out, ZoomOut),
     command!("zoom_reset", View, command_zoom_reset, ZoomReset),
+    // AI(编辑器内嵌 AI 助手的唯一命令入口)
+    command!(sep "open_ai_assistant", Ai, ai_assistant_menu, OpenAiAssistant),
     // 帮助
     command!("show_about", Help, menu_about, ShowAbout),
 ];
@@ -212,6 +215,14 @@ mod tests {
                 "copy_as_html",
             ]
         );
+    }
+
+    #[test]
+    fn ai_section_lists_the_assistant_entry() {
+        let ai_ids = super::commands_for(CommandMenu::Ai)
+            .map(|spec| spec.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ai_ids, vec!["open_ai_assistant"]);
     }
 
     #[test]
