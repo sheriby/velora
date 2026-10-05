@@ -108,6 +108,8 @@ impl Editor {
 
     /// 这一帧工具栏该锚在哪：渲染态、按区间写回的文档、没有别的浮层、鼠标已抬手，
     /// 且有一段量得到边界的选区。不成立时返回 None，一次选区扫描都不多做。
+    /// 「别的浮层」这一条不看层级只看状态：工具栏画在窗口根上，比画在正文区里的
+    /// 面板与快速打开更靠后，收不掉就会浮在它们之上。
     fn selection_toolbar_anchor(&self, cx: &App) -> Option<Bounds<Pixels>> {
         if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return None;
@@ -119,6 +121,8 @@ impl Editor {
             || self.info_dialog.is_some()
             || self.menu_bar_open.is_some()
             || self.wikilink_completion_is_open()
+            || self.quick_open.is_some()
+            || self.command_palette.is_some()
         {
             return None;
         }

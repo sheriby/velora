@@ -427,6 +427,49 @@ async fn the_toolbar_yields_to_the_context_menu_and_to_source_mode(cx: &mut Test
     );
 }
 
+/// 命令面板与 ⌘P 也是浮层：开着它们时工具栏要让位。这两层是画在正文区里、
+/// 工具栏画在窗口根上（后者更靠后，也就盖在前者之上），不收掉就会浮在面板之上。
+#[gpui::test]
+async fn the_toolbar_yields_to_the_command_palette_and_quick_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    select_head_of_first_block(&editor, cx);
+    assert!(toolbar_bounds(cx).is_some(), "前置：有选区时工具栏浮出来了");
+
+    cx.update(|window, cx| {
+        window.activate_window();
+        editor.update(cx, |editor, cx| editor.toggle_command_palette(window, cx));
+    });
+    redraw(cx);
+    assert!(
+        toolbar_is_hidden(cx),
+        "命令面板开着时工具栏还浮着，会压在面板的遮罩与列表之上"
+    );
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.toggle_command_palette(window, cx));
+        editor.update(cx, |editor, cx| editor.toggle_quick_open(window, cx));
+    });
+    redraw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.quick_open.is_some()),
+        "前置：快速打开已切换成打开"
+    );
+    assert!(toolbar_is_hidden(cx), "快速打开开着时工具栏也该让位");
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.toggle_quick_open(window, cx));
+    });
+    redraw(cx);
+    assert!(
+        toolbar_bounds(cx).is_some(),
+        "两个浮层都收起后，工具栏该跟着还在的选区自己回来，不用谁去重新点开"
+    );
+}
+
 /// 面板落点的三条规则：优先上方、上方放不下改下方、越界的边按视口收回。
 #[test]
 fn toolbar_origin_prefers_above_and_falls_back_below() {
