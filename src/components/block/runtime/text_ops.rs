@@ -132,6 +132,7 @@ impl Block {
             InlineFormat::Code => next_title.toggle_code(selection.clone()),
             InlineFormat::Superscript => next_title.toggle_superscript(selection.clone()),
             InlineFormat::Subscript => next_title.toggle_subscript(selection.clone()),
+            InlineFormat::Highlight => next_title.toggle_highlight(selection.clone()),
         };
         if !changed {
             return false;

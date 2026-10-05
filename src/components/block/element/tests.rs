@@ -331,6 +331,7 @@
                 true,
                 "Menlo",
                 px(13.0),
+                Hsla::from(rgba(0xfff4ce99)),
             );
             let marked_run = runs.last().expect("styled text should create a final run");
 
@@ -382,6 +383,7 @@
                     true,
                     "Menlo",
                     px(13.0),
+                    Hsla::from(rgba(0xfff4ce99)),
                 )
             });
 

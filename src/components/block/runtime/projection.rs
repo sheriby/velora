@@ -31,6 +31,8 @@ pub(super) enum ExpandedInlineKind {
     ItalicMarkdown,
     /// Strikethrough delimiters.
     Strikethrough,
+    /// Typora 式标记文本的 `==` 定界符。
+    Highlight,
     /// Code span backtick delimiters.
     Code,
     /// Superscript Markdown delimiters.
@@ -50,6 +52,7 @@ impl ExpandedInlineKind {
             Self::BoldMarkdown => style.bold,
             Self::ItalicMarkdown => style.italic,
             Self::Strikethrough => style.strikethrough,
+            Self::Highlight => style.highlight,
             Self::Code => style.code,
             Self::SuperscriptMarkdown | Self::SuperscriptHtml => {
                 style.script == InlineScript::Superscript
@@ -66,6 +69,7 @@ impl ExpandedInlineKind {
             Self::BoldMarkdown => "**",
             Self::ItalicMarkdown => "*",
             Self::Strikethrough => "~~",
+            Self::Highlight => "==",
             Self::Code => "`",
             Self::SuperscriptMarkdown => "^",
             Self::SuperscriptHtml => "<sup>",
@@ -89,6 +93,7 @@ impl ExpandedInlineKind {
             Self::BoldMarkdown => Some(StyleFlag::Bold),
             Self::ItalicMarkdown => Some(StyleFlag::Italic),
             Self::Strikethrough => Some(StyleFlag::Strikethrough),
+            Self::Highlight => Some(StyleFlag::Highlight),
             Self::Code => Some(StyleFlag::Code),
             Self::SuperscriptMarkdown | Self::SuperscriptHtml => Some(StyleFlag::Superscript),
             Self::SubscriptMarkdown | Self::SubscriptHtml => Some(StyleFlag::Subscript),
@@ -100,6 +105,7 @@ impl ExpandedInlineKind {
             Self::Link => 0,
             Self::BoldMarkdown => 1,
             Self::Strikethrough => 2,
+            Self::Highlight => 6,
             Self::SuperscriptMarkdown
             | Self::SuperscriptHtml
             | Self::SubscriptMarkdown
@@ -420,6 +426,7 @@ impl ExpandedInlineProjection {
             Some(ExpandedInlineKind::BoldMarkdown),
             Some(ExpandedInlineKind::ItalicMarkdown),
             Some(ExpandedInlineKind::Strikethrough),
+            Some(ExpandedInlineKind::Highlight),
             script_kind,
             Some(ExpandedInlineKind::Code),
         ]

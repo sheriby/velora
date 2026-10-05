@@ -1,4 +1,4 @@
-//! 行内格式（加粗/斜体/下划线/删除线/行内代码/上标/下标）在**编辑器层**的那一条入口。
+//! 行内格式（加粗/斜体/下划线/删除线/行内代码/上标/下标/标记文本）在**编辑器层**的那一条入口。
 //!
 //! 选区横跨多个块时，行内样式只能成立在自己的块里（markdown 的行内语法本来就不跨块），
 //! 所以这条入口按可见块切成几段分别处理，并且只开一个撤销组。快捷键、后面的选中工具栏
@@ -120,12 +120,13 @@ async fn toggling_bold_twice_gives_the_original_bytes_back(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn strikethrough_superscript_and_subscript_write_their_own_markers(cx: &mut TestAppContext) {
+async fn each_inline_format_writes_its_own_markers(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     for (label, format, expected) in [
         ("删除线", InlineFormat::Strikethrough, "~~alpha~~ one"),
         ("上标", InlineFormat::Superscript, "<sup>alpha</sup> one"),
         ("下标", InlineFormat::Subscript, "<sub>alpha</sub> one"),
+        ("标记文本", InlineFormat::Highlight, "==alpha== one"),
     ] {
         let (editor, cx) = cx.add_window_view(|_window, cx| {
             Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None)

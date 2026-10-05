@@ -113,6 +113,11 @@ strong code {{ font-weight: 700; }}
   background-color: var(--vlt-comment-bg);
   color: var(--vlt-text);
 }}
+/* 标记文本 `==x==` 导出为 mark 标签；配色与注释块同源，编辑态里的 `==` 底色也是这个。 */
+mark {{
+  background-color: var(--vlt-comment-bg);
+  color: inherit;
+}}
 .vlt-raw-html {{
   white-space: pre-wrap;
   background-color: var(--vlt-code-bg);

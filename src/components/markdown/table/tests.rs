@@ -78,6 +78,7 @@ mod tests {
                                 true,
                                 &fonts.code_family,
                                 px(fonts.code_size as f32),
+                                base.background_color.unwrap_or_default(),
                             );
                             let code_ranges: Vec<_> = block
                                 .inline_spans()

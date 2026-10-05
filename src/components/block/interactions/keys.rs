@@ -758,6 +758,15 @@ impl Block {
         self.toggle_inline_format(InlineFormat::Subscript, cx);
     }
 
+    pub(crate) fn on_highlight_selection(
+        &mut self,
+        _: &HighlightSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_inline_format(InlineFormat::Highlight, cx);
+    }
+
     pub(crate) fn on_exit_code_block(
         &mut self,
         _: &ExitCodeBlock,

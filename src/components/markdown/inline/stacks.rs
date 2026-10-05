@@ -106,6 +106,9 @@ pub(crate) fn stack_variants(
     if style.strikethrough {
         markdown_stack.push(Delimiter::StrikethroughMarkdown);
     }
+    if style.highlight {
+        markdown_stack.push(Delimiter::HighlightMarkdown);
+    }
     match style.script {
         InlineScript::Normal => {}
         InlineScript::Superscript
@@ -146,6 +149,9 @@ pub(crate) fn stack_variants(
     }
     if style.strikethrough {
         html_stack.push(Delimiter::StrikethroughMarkdown);
+    }
+    if style.highlight {
+        html_stack.push(Delimiter::HighlightMarkdown);
     }
     match style.script {
         InlineScript::Normal => {}
@@ -196,6 +202,7 @@ pub(crate) fn styles_match_ignoring_script(left: InlineStyle, right: InlineStyle
         && left.emphasis_marker == right.emphasis_marker
         && left.underline == right.underline
         && left.strikethrough == right.strikethrough
+        && left.highlight == right.highlight
         && left.code == right.code
 }
 
@@ -310,6 +317,7 @@ pub(crate) fn style_flag_enabled(style: InlineStyle, flag: StyleFlag) -> bool {
         StyleFlag::Italic => style.italic,
         StyleFlag::Underline => style.underline,
         StyleFlag::Strikethrough => style.strikethrough,
+        StyleFlag::Highlight => style.highlight,
         StyleFlag::Code => style.code,
         StyleFlag::Superscript => style.script == InlineScript::Superscript,
         StyleFlag::Subscript => style.script == InlineScript::Subscript,
@@ -339,6 +347,7 @@ pub(crate) fn set_style_flag(mut style: InlineStyle, flag: StyleFlag, enabled: b
         }
         StyleFlag::Underline => style.underline = enabled,
         StyleFlag::Strikethrough => style.strikethrough = enabled,
+        StyleFlag::Highlight => style.highlight = enabled,
         StyleFlag::Code => style.code = enabled,
         StyleFlag::Superscript => {
             style.script = if enabled {

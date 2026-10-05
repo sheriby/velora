@@ -33,6 +33,8 @@ pub(crate) enum Delimiter {
     ItalicMarkdown { marker: char },
     /// Markdown strikethrough marker `~~`.
     StrikethroughMarkdown,
+    /// Typora 式的标记文本 `==`。
+    HighlightMarkdown,
     /// Markdown superscript marker `^`.
     SuperscriptMarkdown,
     /// Markdown subscript marker `~`.
@@ -59,6 +61,7 @@ impl Delimiter {
             Self::BoldMarkdown { marker } => marker.to_string().repeat(2),
             Self::ItalicMarkdown { marker } => marker.to_string(),
             Self::StrikethroughMarkdown => "~~".into(),
+            Self::HighlightMarkdown => "==".into(),
             Self::SuperscriptMarkdown => "^".into(),
             Self::SubscriptMarkdown => "~".into(),
             Self::Underline => "<u>".into(),
@@ -75,6 +78,7 @@ impl Delimiter {
             Self::BoldMarkdown { marker } => marker.to_string().repeat(2),
             Self::ItalicMarkdown { marker } => marker.to_string(),
             Self::StrikethroughMarkdown => "~~".into(),
+            Self::HighlightMarkdown => "==".into(),
             Self::SuperscriptMarkdown => "^".into(),
             Self::SubscriptMarkdown => "~".into(),
             Self::Underline => "</u>".into(),
@@ -98,6 +102,7 @@ impl Delimiter {
             Self::BoldMarkdown { .. } => 0,
             Self::Underline => 1,
             Self::StrikethroughMarkdown => 2,
+            Self::HighlightMarkdown => 9,
             Self::SuperscriptMarkdown | Self::SubscriptMarkdown => 3,
             Self::ItalicMarkdown { .. } => 4,
             Self::SuperscriptHtml | Self::SubscriptHtml => 5,
@@ -126,6 +131,8 @@ pub(crate) enum StyleFlag {
     Underline,
     /// Strikethrough text.
     Strikethrough,
+    /// Typora 式的标记文本（`==…==`）。
+    Highlight,
     /// Inline code text.
     Code,
     /// Superscript text.
@@ -230,6 +237,9 @@ impl NormalizeBuilder {
         }
         if extra_style.strikethrough {
             style.strikethrough = true;
+        }
+        if extra_style.highlight {
+            style.highlight = true;
         }
         if extra_style.code {
             style.code = true;

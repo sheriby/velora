@@ -50,6 +50,7 @@ actions!(
         UnderlineSelection,
         CodeSelection,
         StrikethroughSelection,
+        HighlightSelection,
         SuperscriptSelection,
         SubscriptSelection,
         IndentBlock,

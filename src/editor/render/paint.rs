@@ -814,6 +814,7 @@ impl Render for Editor {
             .capture_action(cx.listener(Self::on_italic_capture))
             .capture_action(cx.listener(Self::on_underline_capture))
             .capture_action(cx.listener(Self::on_strikethrough_capture))
+            .capture_action(cx.listener(Self::on_highlight_capture))
             .capture_action(cx.listener(Self::on_code_capture))
             .capture_action(cx.listener(Self::on_superscript_capture))
             .capture_action(cx.listener(Self::on_subscript_capture))

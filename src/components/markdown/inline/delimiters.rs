@@ -10,6 +10,8 @@ pub(crate) fn match_open_delimiter(tokens: &[CharToken], index: usize) -> Option
         Some(Delimiter::Underline)
     } else if matches_sequence(tokens, index, "~~") {
         Some(Delimiter::StrikethroughMarkdown)
+    } else if matches_sequence(tokens, index, "==") {
+        Some(Delimiter::HighlightMarkdown)
     } else if matches_sequence(tokens, index, "^") && can_open_script(tokens, index, '^') {
         Some(Delimiter::SuperscriptMarkdown)
     } else if is_single_tilde_delimiter(tokens, index) && can_open_script(tokens, index, '~') {
@@ -131,6 +133,7 @@ pub(crate) fn emphasis_requires_body(delimiter: Delimiter) -> bool {
         Delimiter::BoldMarkdown { .. }
             | Delimiter::ItalicMarkdown { .. }
             | Delimiter::StrikethroughMarkdown
+            | Delimiter::HighlightMarkdown
             | Delimiter::BoldHtml
             | Delimiter::ItalicHtml
             | Delimiter::Underline

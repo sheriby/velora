@@ -228,6 +228,7 @@ fn rewrite_inline_math(markdown: &str, theme: &Theme) -> String {
 fn rewrite_inline_math_line(line: &str, theme: &Theme) -> String {
     let mut output = String::with_capacity(line.len());
     let mut index = 0usize;
+    let mut highlight_close: Option<usize> = None;
     while index < line.len() {
         if line[index..].starts_with('`') {
             let run_len = line[index..]
@@ -239,6 +240,25 @@ fn rewrite_inline_math_line(line: &str, theme: &Theme) -> String {
                 index = close + run_len;
                 continue;
             }
+        }
+
+        // `==x==` 是本仓库的标记文本写法，pulldown-cmark 不认识。只把两端换成
+        // `<mark>` 标签、中间原样留着，套在高亮里的强调才不会被压成字面文本。
+        if highlight_close == Some(index) {
+            output.push_str("</mark>");
+            highlight_close = None;
+            index += 2;
+            continue;
+        }
+        if highlight_close.is_none()
+            && line[index..].starts_with("==")
+            && !is_escaped_ascii(line, index)
+            && let Some(close) = locate_highlight_close(line, index)
+        {
+            output.push_str("<mark>");
+            highlight_close = Some(close);
+            index += 2;
+            continue;
         }
 
         if let Some((end, body)) = locate_inline_dollar_math_source(line, index)
@@ -324,8 +344,23 @@ fn locate_inline_script_source(line: &str, index: usize) -> Option<(usize, Strin
     }
 }
 
-fn locate_script_close(line: &str, index: usize, marker: char) -> Option<(usize, String)> {
-    let prev = previous_char(line, index)?;
+/// 从 `index` 处那对 `==` 往后找收尾，返回收尾那两位的起始下标。中间为空（`====`）
+/// 不算高亮，按字面写法定住。
+fn locate_highlight_close(line: &str, index: usize) -> Option<usize> {
+    let mut cursor = index + 2;
+    while cursor < line.len() {
+        if cursor > index + 2
+            && line[cursor..].starts_with("==")
+            && !is_escaped_ascii(line, cursor)
+        {
+            return Some(cursor);
+        }
+        cursor += line[cursor..].chars().next()?.len_utf8();
+    }
+    None
+}
+
+fn locate_script_close(line: &str, index: usize, marker: char) -> Option<(usize, String)> {    let prev = previous_char(line, index)?;
     if !prev.is_ascii_alphanumeric() {
         return None;
     }

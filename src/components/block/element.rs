@@ -174,6 +174,7 @@ pub(crate) fn build_text_runs(
     show_inline_code_backgrounds: bool,
     code_font_family: &str,
     code_font_size: Pixels,
+    highlight_bg: Hsla,
 ) -> Vec<TextRun> {
     let spans = input.inline_spans();
     let mut boundaries = vec![0, display_text.len()];
@@ -255,6 +256,9 @@ pub(crate) fn build_text_runs(
 
         // Inline code is painted as separate rounded fragments below the text.
         let mut background_color = base_run.background_color;
+        if inline_style.highlight {
+            background_color = Some(highlight_bg);
+        }
         if let Some(style) = html_style
             && let Some(color) = style.background_color
         {

@@ -39,6 +39,7 @@
                 italic: true,
                 underline: true,
                 strikethrough: false,
+                highlight: false,
                 code: false,
                 script: InlineScript::Normal,
                 emphasis_marker: Some('*'),
@@ -140,6 +141,45 @@
         assert_eq!(tree.visible_text(), "~~text");
         // 序列化保真：未配对的删除线记号原样写回（重读还是字面）。
         assert_eq!(tree.serialize_markdown(), "~~text");
+    }
+
+    #[test]
+    fn parses_and_serializes_highlight() {
+        let tree = InlineTextTree::from_markdown("==text==");
+        let cache = tree.render_cache();
+
+        assert_eq!(tree.visible_text(), "text");
+        assert!(cache.style_at(0).highlight);
+        assert_eq!(tree.serialize_markdown(), "==text==");
+    }
+
+    /// 高亮能与强调套在一起；同一句里后面那个没配对的 `==` 必须还是字面记号
+    /// （`1 == 2` 这种写法在数学与代码说明里很常见，是本仓库引入新语法的代价边界）。
+    /// 套叠的先后按样式栈序写回（强调在外、高亮在内），与 `~~` 已有的口径一致。
+    #[test]
+    fn highlight_nests_with_emphasis_and_leaves_an_unpaired_marker_literal() {
+        let tree = InlineTextTree::from_markdown("==**bold**== and 1 == 2");
+        let cache = tree.render_cache();
+
+        assert_eq!(tree.visible_text(), "bold and 1 == 2");
+        assert!(cache.style_at(0).highlight);
+        assert!(cache.style_at(0).bold);
+        assert!(!cache.style_at("bold".len()).highlight);
+        assert_eq!(tree.serialize_markdown(), "**==bold==** and 1 == 2");
+
+        // 再读一次样式不变：写回换了先后，但没把套叠读丢。
+        let again = InlineTextTree::from_markdown(&tree.serialize_markdown());
+        assert!(again.render_cache().style_at(0).highlight);
+        assert!(again.render_cache().style_at(0).bold);
+    }
+
+    #[test]
+    fn toggle_highlight_operates_on_selected_slice_only() {
+        let mut tree = InlineTextTree::plain("1234");
+        assert!(tree.toggle_highlight(1..3));
+        assert_eq!(tree.serialize_markdown(), "1==23==4");
+        assert!(tree.toggle_highlight(1..3));
+        assert_eq!(tree.serialize_markdown(), "1234");
     }
 
     #[test]

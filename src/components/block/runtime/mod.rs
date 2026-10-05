@@ -51,6 +51,8 @@ pub(crate) enum InlineFormat {
     Superscript,
     /// 下标：`~x~`。
     Subscript,
+    /// Typora 式的标记文本：`==x==`。
+    Highlight,
 }
 
 /// Editing semantics for the current block.

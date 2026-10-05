@@ -25,6 +25,8 @@ pub struct InlineStyle {
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
+    /// Typora 式的「标记文本」，写法是 `==…==`。
+    pub highlight: bool,
     pub code: bool,
     pub script: InlineScript,
     /// 强调（粗体/斜体）在原文里用的定界符：`*` 或 `_`。
@@ -74,6 +76,13 @@ impl InlineStyle {
         }
     }
 
+    pub fn with_highlight(self) -> Self {
+        Self {
+            highlight: true,
+            ..self
+        }
+    }
+
     pub fn with_code(self) -> Self {
         Self { code: true, ..self }
     }
@@ -110,6 +119,7 @@ impl InlineStyle {
             Delimiter::ItalicHtml => self.with_italic(),
             Delimiter::Underline => self.with_underline(),
             Delimiter::StrikethroughMarkdown => self.with_strikethrough(),
+            Delimiter::HighlightMarkdown => self.with_highlight(),
             Delimiter::CodeMarkdown { .. } => self.with_code(),
             Delimiter::SuperscriptMarkdown | Delimiter::SuperscriptHtml => self.with_superscript(),
             Delimiter::SubscriptMarkdown | Delimiter::SubscriptHtml => self.with_subscript(),

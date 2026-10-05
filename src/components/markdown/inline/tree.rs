@@ -788,7 +788,7 @@ impl InlineTextTree {
             // text, not extend the span past its visible closing/opening
             // marker when the caret is outside.
             if clamped == fragment_end && index + 1 == self.fragments.len() {
-                return if fragment.style.code || fragment.style.strikethrough {
+                return if fragment.style.code || fragment.style.strikethrough || fragment.style.highlight {
                     InlineInsertionAttributes::default()
                 } else {
                     InlineInsertionAttributes {
@@ -802,7 +802,7 @@ impl InlineTextTree {
             }
 
             if clamped == fragment_start && index == 0 {
-                return if fragment.style.code || fragment.style.strikethrough {
+                return if fragment.style.code || fragment.style.strikethrough || fragment.style.highlight {
                     InlineInsertionAttributes::default()
                 } else {
                     InlineInsertionAttributes {
@@ -849,6 +849,11 @@ impl InlineTextTree {
     /// 下标 `~x~`。
     pub fn toggle_subscript(&mut self, range: Range<usize>) -> bool {
         self.toggle_style(range, StyleFlag::Subscript)
+    }
+
+    /// Typora 式的标记文本 `==x==`。
+    pub fn toggle_highlight(&mut self, range: Range<usize>) -> bool {
+        self.toggle_style(range, StyleFlag::Highlight)
     }
 
     pub fn unwrap_styles_on_fragments(&mut self, targets: &[(usize, StyleFlag)]) {

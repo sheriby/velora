@@ -356,6 +356,9 @@ pub(crate) fn apply_extra_style_to_fragments(
         if extra_style.strikethrough {
             fragment.style.strikethrough = true;
         }
+        if extra_style.highlight {
+            fragment.style.highlight = true;
+        }
         if extra_style.code {
             fragment.style.code = true;
         }

@@ -395,6 +395,37 @@ mod tests {
         assert!(html.contains("H<sub>2</sub>O"));
     }
 
+    /// `==x==` 的导出：只把两端换成标签，中间留给 pulldown-cmark，所以套在高亮里的
+    /// 强调仍然按语法渲染。
+    #[test]
+    fn exports_highlight_as_mark_tag_and_keeps_nested_emphasis() {
+        let html = render_html(
+            "==marked== and **==both==**",
+            &Theme::default_theme(),
+            "Doc",
+        );
+
+        assert!(html.contains("<mark>marked</mark>"), "{html}");
+        assert!(
+            html.contains("<strong><mark>both</mark></strong>"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn export_highlight_rewrite_ignores_code_escaped_and_unpaired_markers() {
+        let html = render_html(
+            "`==x==` \\==x\\== and 1 == 2",
+            &Theme::default_theme(),
+            "Doc",
+        );
+
+        assert!(html.contains("<code>==x==</code>"), "{html}");
+        // 只在正文里比，样式表里那句注释也写着这两个等号。
+        let body = html.split("<body>").nth(1).unwrap_or_default();
+        assert!(!body.contains("<mark>"), "转义与没配对的 == 不该被当成高亮：{body}");
+    }
+
     #[test]
     fn export_script_rewrite_ignores_code_escaped_and_strikethrough() {
         let html = render_html(

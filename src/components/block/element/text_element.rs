@@ -134,6 +134,7 @@ impl Element for BlockTextElement {
                     show_inline_code_backgrounds,
                     &fonts.code_family,
                     px(fonts.code_size as f32),
+                    theme.colors.comment_bg,
                 )
             }
         } else {

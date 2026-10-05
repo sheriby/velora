@@ -7,8 +7,9 @@ use gpui::*;
 
 use super::Editor;
 use crate::components::{
-    BoldSelection, CodeSelection, InlineFormat, ItalicSelection, StrikethroughSelection,
-    SubscriptSelection, SuperscriptSelection, UnderlineSelection, UndoCaptureKind,
+    BoldSelection, CodeSelection, HighlightSelection, InlineFormat, ItalicSelection,
+    StrikethroughSelection, SubscriptSelection, SuperscriptSelection, UnderlineSelection,
+    UndoCaptureKind,
 };
 
 impl Editor {
@@ -116,6 +117,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.handle_inline_format_capture(InlineFormat::Strikethrough, cx);
+    }
+
+    pub(crate) fn on_highlight_capture(
+        &mut self,
+        _: &HighlightSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_inline_format_capture(InlineFormat::Highlight, cx);
     }
 
     pub(crate) fn on_code_capture(
