@@ -833,13 +833,22 @@ impl InlineTextTree {
         self.toggle_style(range, StyleFlag::Underline)
     }
 
-    #[allow(dead_code)]
     pub fn toggle_strikethrough(&mut self, range: Range<usize>) -> bool {
         self.toggle_style(range, StyleFlag::Strikethrough)
     }
 
     pub fn toggle_code(&mut self, range: Range<usize>) -> bool {
         self.toggle_style(range, StyleFlag::Code)
+    }
+
+    /// 上标 `^x^`。
+    pub fn toggle_superscript(&mut self, range: Range<usize>) -> bool {
+        self.toggle_style(range, StyleFlag::Superscript)
+    }
+
+    /// 下标 `~x~`。
+    pub fn toggle_subscript(&mut self, range: Range<usize>) -> bool {
+        self.toggle_style(range, StyleFlag::Subscript)
     }
 
     pub fn unwrap_styles_on_fragments(&mut self, targets: &[(usize, StyleFlag)]) {

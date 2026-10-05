@@ -33,6 +33,7 @@ pub(crate) mod encoding;
 mod events;
 mod export;
 mod file_drop;
+mod format_ops;
 mod history;
 mod persistence;
 mod render;

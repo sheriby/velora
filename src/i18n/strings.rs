@@ -233,6 +233,12 @@ pub struct I18nStrings {
     pub preferences_shortcut_italic_selection: String,
     pub preferences_shortcut_underline_selection: String,
     pub preferences_shortcut_code_selection: String,
+    /// 删除线的名字（快捷键页与选中菜单、右键菜单共用）。
+    pub format_strikethrough: String,
+    /// 上标的名字。
+    pub format_superscript: String,
+    /// 下标的名字。
+    pub format_subscript: String,
     pub preferences_shortcut_indent_block: String,
     pub preferences_shortcut_outdent_block: String,
     pub preferences_shortcut_exit_code_block: String,

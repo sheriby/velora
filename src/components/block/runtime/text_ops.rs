@@ -94,21 +94,47 @@ impl Block {
     /// which fragments have their [`InlineStyle`] flag flipped.
     ///
     /// Serializers later translate these flags back to markers on export.
-    pub(crate) fn toggle_inline_format(&mut self, format: InlineFormat, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_inline_format(
+        &mut self,
+        format: InlineFormat,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.selected_range.is_empty() || self.uses_raw_text_editing() {
-            return;
+            return false;
         }
 
+        let reversed = Some(self.selection_reversed);
+        self.toggle_inline_format_in_range(format, self.selected_range.clone(), reversed, cx)
+    }
+
+    /// 在指定的**可见文本**区间上开关一种行内格式。选中菜单与右键菜单拿到的选区可能
+    /// 只盖住一个块的一部分，也可能横跨多个块（那种情况由 `Editor` 逐块切段后调这里）。
+    /// 区间用屏幕上的坐标，块内自己换算到树里的坐标——调用方不需要知道标记占位。
+    /// 返回样式是否真的变了。
+    pub(crate) fn toggle_inline_format_in_range(
+        &mut self,
+        format: InlineFormat,
+        selection: Range<usize>,
+        reversed: Option<bool>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if selection.is_empty() || self.uses_raw_text_editing() {
+            return false;
+        }
+
+        let selection = self.current_to_clean_range(selection);
         let mut next_title = self.record.title.clone();
-        let selection = self.selection_clean_range();
         let changed = match format {
             InlineFormat::Bold => next_title.toggle_bold(selection.clone()),
             InlineFormat::Italic => next_title.toggle_italic(selection.clone()),
             InlineFormat::Underline => next_title.toggle_underline(selection.clone()),
+            InlineFormat::Strikethrough => next_title.toggle_strikethrough(selection.clone()),
             InlineFormat::Code => next_title.toggle_code(selection.clone()),
+            InlineFormat::Superscript => next_title.toggle_superscript(selection.clone()),
+            InlineFormat::Subscript => next_title.toggle_subscript(selection.clone()),
         };
         if !changed {
-            return;
+            return false;
         }
 
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
@@ -117,10 +143,11 @@ impl Block {
             selection.end,
             None,
             Some(selection),
-            Some(self.selection_reversed),
+            reversed,
             false,
             cx,
         );
+        true
     }
 
     fn current_line_layout_and_offset(&self) -> Option<(&WrappedLine, usize)> {

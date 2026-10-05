@@ -372,6 +372,15 @@ impl I18nStringsDe {
             preferences_shortcut_code_selection: self
                 .preferences_shortcut_code_selection
                 .unwrap_or(defaults.preferences_shortcut_code_selection),
+            format_strikethrough: self
+                .format_strikethrough
+                .unwrap_or(defaults.format_strikethrough),
+            format_superscript: self
+                .format_superscript
+                .unwrap_or(defaults.format_superscript),
+            format_subscript: self
+                .format_subscript
+                .unwrap_or(defaults.format_subscript),
             preferences_shortcut_indent_block: self
                 .preferences_shortcut_indent_block
                 .unwrap_or(defaults.preferences_shortcut_indent_block),

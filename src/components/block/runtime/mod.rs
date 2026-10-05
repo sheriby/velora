@@ -43,8 +43,14 @@ pub(crate) enum InlineFormat {
     Italic,
     /// Toggle underline formatting.
     Underline,
+    /// Toggle strikethrough formatting.
+    Strikethrough,
     /// Toggle inline code formatting.
     Code,
+    /// 上标：`^x^`。
+    Superscript,
+    /// 下标：`~x~`。
+    Subscript,
 }
 
 /// Editing semantics for the current block.

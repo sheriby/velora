@@ -13,12 +13,12 @@ use crate::components::markdown::inline::clamp_range_to_char_boundaries;
 
 /// Cross-block selection with endpoints ordered by visible block position.
 #[derive(Clone, Copy)]
-struct NormalizedCrossBlockSelection {
-    start: CrossBlockSelectionEndpoint,
-    end: CrossBlockSelectionEndpoint,
-    start_index: usize,
-    end_index: usize,
-    reversed: bool,
+pub(super) struct NormalizedCrossBlockSelection {
+    pub(super) start: CrossBlockSelectionEndpoint,
+    pub(super) end: CrossBlockSelectionEndpoint,
+    pub(super) start_index: usize,
+    pub(super) end_index: usize,
+    pub(super) reversed: bool,
 }
 
 impl Editor {
@@ -431,7 +431,10 @@ impl Editor {
         anchor_index == focus_index && selection.anchor.offset == selection.focus.offset
     }
 
-    fn normalized_cross_block_selection(&self, cx: &App) -> Option<NormalizedCrossBlockSelection> {
+    pub(super) fn normalized_cross_block_selection(
+        &self,
+        cx: &App,
+    ) -> Option<NormalizedCrossBlockSelection> {
         let selection = self.cross_block_selection?;
         let anchor = self.clamp_cross_block_endpoint(selection.anchor, cx)?;
         let focus = self.clamp_cross_block_endpoint(selection.focus, cx)?;
