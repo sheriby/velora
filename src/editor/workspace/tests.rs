@@ -4,6 +4,7 @@ mod document_find;
 mod external_changes;
 mod save_external;
 mod search;
+mod search_matcher_snapshot;
 mod sidebar;
 mod tabs_sessions;
 mod tree_files;
