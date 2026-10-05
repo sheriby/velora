@@ -820,40 +820,37 @@ impl Editor {
         if same_file
             && let Some(ordinal) = match_ordinal
         {
-            let source = self.current_document_source(cx);
-            let matcher =
-                SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
             // 行号语义（用户定盘）：工作区搜索读磁盘，报的是磁盘行号。读磁盘
             // 就允许文档是脏的——未保存的编辑会把行往上或往下推，行号与字节
             // 就近都不可靠。但「文件内第 k 个含词行」的对应关系不灭：编辑要么
-            // 增删含词行（那时命中本身也变了），要么只挪位置。用 ordinal 在
-            // 编辑器文本里数第 k 个含词行，再在该行内取第一个命中作为选区
-            // （用户报修：两个不同命中被解析到同一处，点击无反应）。
+            // 增删含词行（那时命中本身也变了），要么只挪位置。
+            // （用户报修：两个不同命中被解析到同一处，点击无反应。）
+            //
+            // 现在这层对应关系读的是文档命中表（§4.3 那张），取「第 k 个含命中
+            // 起点的行」的第一个命中——与旧的手写循环对非跨行查询逐位相同，但
+            // 跨行命中也能跳对，而且不再每次点击重扫整篇文档。
             //
             // 注意这与「读取侧换源到缓冲区」不是同一件事：文档内查找（⌘F）扫的
             // 是缓冲区，行号即文件行号；工作区扫描跨文件读磁盘，才需要这层对应。
-            let mut seen = 0usize;
-            let mut absolute = 0usize;
-            let mut range = None;
-            for raw_line in source.split_inclusive('\n') {
-                let line_text = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-                if let Some(first) = matcher.find_in_line(line_text).first() {
-                    if seen == ordinal {
-                        range = Some(absolute + first.start..absolute + first.end);
-                        break;
-                    }
-                    seen += 1;
-                }
-                absolute += raw_line.len();
-            }
-            let range = range.or_else(|| find_document_match_from(&source, &matcher, 0, false));
+            let range =
+                self.document_range_for_line_ordinal(ordinal, cx)
+                    .or_else(|| {
+                        // 表是空的（编辑把命中全删了）：退回旧实现那句「第一个命中」
+                        // 的兜底形状，仍然按当前文本算。
+                        let source = self.current_document_source(cx);
+                        let matcher = SearchMatcher::new(
+                            self.workspace.search_query.trim(),
+                            self.search_options(),
+                        );
+                        find_document_match_from(&source, &matcher, 0, false)
+                    });
             search_jump_debug(&format!(
                 "relocate disk_line={line:?} ordinal={ordinal} -> range={range:?}"
             ));
-            if let Some(range) = range
-                && source.is_char_boundary(range.start)
-                && source.is_char_boundary(range.end)
-            {
+            // 这里不再核对字符边界：区间的两个端点要么出自命中表、要么出自
+            // `find_document_match_from`，两条出口的引擎都统一过滤过边界
+            // （`search_engine.rs` 的硬闸门），旧的冗余守卫还多付一次整篇取文本。
+            if let Some(range) = range {
                 self.workspace.document_active_range = Some(range.clone());
                 self.jump_to_document_search_range(range, cx);
             }

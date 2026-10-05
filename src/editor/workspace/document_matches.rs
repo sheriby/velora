@@ -69,6 +69,41 @@ impl Editor {
         Some(hits)
     }
 
+    /// 工作区命中点进当前文档时的重新定位：磁盘扫描给出的序号在这边对位。
+    ///
+    /// 口径（方案文档 §4.7）：**第 k 个「含命中起点」的行**，取该行里第一个开始的
+    /// 命中，连同它跨到的那一段。对不跨行的查询，这个定义与被替换掉的手写循环
+    /// **逐位相同**——一条不跨行的命中，它所在的行就是它开始的行。只有真跨行命中
+    /// 才走出新语义，而那正是旧循环搜不出来的东西。
+    ///
+    /// 序号越界（未保存的编辑把那一行删掉了）退回第一个命中，保持旧实现的兜底形状。
+    pub(crate) fn document_range_for_line_ordinal(
+        &mut self,
+        ordinal: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        let hits = self.document_matches(cx)?;
+        let mut previous_line: Option<u64> = None;
+        let mut group = 0usize;
+        for hit in hits.iter() {
+            let starts_a_new_group = match (previous_line, hit.line) {
+                (None, _) => true,
+                (Some(seen), Some(line)) => line != seen,
+                (Some(_), None) => false,
+            };
+            if starts_a_new_group {
+                if group == ordinal {
+                    return Some(hit.range.clone());
+                }
+                group += 1;
+            }
+            if hit.line.is_some() {
+                previous_line = hit.line;
+            }
+        }
+        hits.first().map(|hit| hit.range.clone())
+    }
+
     /// 表里第 `index` 个命中的字节区间。
     pub(crate) fn document_match_at(&self, index: usize) -> Option<Range<usize>> {
         self.workspace
@@ -159,18 +194,33 @@ impl Editor {
     }
 }
 
-/// 命中所在行的起止（行末不含 LF）。文档范围投影与工作区扫描共用这一份算法，
-/// 两边算出的行内偏移、预览因此不会分叉。
+/// 命中**起始所在行**的起止（行末不含 LF）。文档范围投影与工作区扫描共用这一份
+/// 算法，两边算出的行内偏移、预览因此不会分叉。
+///
+/// 行尾要从 `range.start` 往后找：跨行命中的 `range.end` 已经在后面的行里了，
+/// 按它找会把后面那行也算成「本行」，预览带进换行、行内区间越过本行末尾。
 pub(crate) fn hit_line_bounds(source: &str, range: &Range<usize>) -> (usize, usize) {
     let line_start = source[..range.start]
         .rfind('\n')
         .map(|at| at + 1)
         .unwrap_or(0);
-    let line_end = source[range.end..]
+    let line_end = source[range.start..]
         .find('\n')
-        .map(|offset| range.end + offset)
+        .map(|offset| range.start + offset)
         .unwrap_or(source.len());
     (line_start, line_end)
+}
+
+/// 结果列表那一行的行内区间。侧栏按它切片渲染，所以它**不许越过本行末尾**：
+/// 跨行命中的尾部属于后面的行，这里只给起点所在那行里的部分，整段区间由
+/// `source_range` 承载（工作区侧的结果本来也不带 `source_range`——那是
+/// 「按当前文档坐标直接跳」的标记，脏文件必须走序号对位）。
+pub(crate) fn in_line_match_range(
+    range: &Range<usize>,
+    line_start: usize,
+    line_end: usize,
+) -> Range<usize> {
+    (range.start - line_start)..(range.end.min(line_end) - line_start)
 }
 
 /// 把命中表投影成侧栏的结果列表，`limit` 是原来的 200 条上限。
@@ -210,7 +260,7 @@ pub(crate) fn project_hits_into_rows(
             path: path.to_path_buf(),
             label: label.to_string(),
             line: Some(this_line as usize),
-            match_range: Some((hit.range.start - line_start)..(hit.range.end - line_start)),
+            match_range: Some(in_line_match_range(&hit.range, line_start, line_end)),
             source_range: Some(hit.range.clone()),
             match_ordinal: Some(assigned),
             preview: line_text.trim().chars().take(140).collect(),

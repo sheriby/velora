@@ -396,7 +396,7 @@ pub(crate) fn search_single_file(
             path: file.path.clone(),
             label: file.label.clone(),
             line: Some(line_number as usize),
-            match_range: Some((hit.range.start - line_start)..(hit.range.end - line_start)),
+            match_range: Some(in_line_match_range(&hit.range, line_start, line_end)),
             source_range: None,
             match_ordinal: Some(ordinal),
             preview: source[line_start..line_end].trim().chars().take(140).collect(),

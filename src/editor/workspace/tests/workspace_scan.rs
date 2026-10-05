@@ -378,3 +378,241 @@ fn defect_the_text_sniff_still_refuses_a_gb18030_file() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+/// 被替换掉的那段手写行走查，留在这里当**参照实现**：ordinal 对位的结果必须
+/// 与它逐位相同（方案文档 §4.7 的等价性论证）。
+fn legacy_range_for_ordinal(source: &str, query: &str, ordinal: usize) -> Option<Range<usize>> {
+    let matcher = SearchMatcher::new(query, SearchOptions::default());
+    let mut seen = 0usize;
+    let mut absolute = 0usize;
+    for raw_line in source.split_inclusive('\n') {
+        let line_text = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        if let Some(first) = matcher.find_in_line(line_text).first() {
+            if seen == ordinal {
+                return Some(absolute + first.start..absolute + first.end);
+            }
+            seen += 1;
+        }
+        absolute += raw_line.len();
+    }
+    None
+}
+
+#[gpui::test]
+async fn the_new_ordinal_walk_matches_the_hand_written_line_loop_byte_for_byte(
+    cx: &mut TestAppContext,
+) {
+    // ordinal 重定义（§4.7）的等价性闸门：不跨行的查询下，「第 k 个含命中起点的行」
+    // 与旧的「第 k 个含词行」必须是同一个答案——红一条就是等价性论证错了。
+    init(cx);
+    let corpora = [
+        "alpha one\nbeta\nalpha two\n\nbeta again\n",
+        "# 标题 alpha\n\n正文 beta\n\n- alpha 列表\n- beta 列表\n",
+        "alpha\nalpha\nalpha\n",
+        "一行 中文字 needle 结束\n中间\n中文 needle 再来\n",
+        "no hits at all\njust text\n",
+    ];
+    for source in corpora {
+        for query in ["alpha", "beta", "needle", "中文"] {
+            let (editor, cx) = cx.add_window_view(|_, cx| {
+                Editor::from_markdown(cx, source.to_string(), None)
+            });
+            cx.run_until_parked();
+            editor.update(cx, |editor, cx| {
+                editor.workspace.is_open = true;
+                editor.workspace.active_tab = WorkspaceTab::Search;
+                editor.workspace.search_scope = WorkspaceSearchScope::Document;
+                editor.workspace.search_query = query.to_string();
+                editor.schedule_workspace_search(cx);
+            });
+            cx.executor().advance_clock(Duration::from_millis(200));
+            cx.run_until_parked();
+            for ordinal in 0..8 {
+                let new = editor.update(cx, |editor, cx| {
+                    editor.document_range_for_line_ordinal(ordinal, cx)
+                });
+                let old = legacy_range_for_ordinal(source, query, ordinal);
+                match old {
+                    Some(expected) => assert_eq!(
+                        new,
+                        Some(expected.clone()),
+                        "语料 {source:?} 查询 {query} 第 {ordinal} 组：新对位必须等于手写循环"
+                    ),
+                    // 旧循环越界时退回第一个命中，新实现同口径。
+                    None => {
+                        let first = legacy_range_for_ordinal(source, query, 0);
+                        assert_eq!(
+                            new, first,
+                            "语料 {source:?} 查询 {query} 第 {ordinal} 组越界，应退回第一个命中"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn a_workspace_row_for_a_cross_line_hit_stays_inside_its_first_line(
+    cx: &mut TestAppContext,
+) {
+    // 侧栏按 match_range 在预览行上切片，跨行命中的行内区间越过本行末尾就会切坏。
+    let background = cx.executor();
+    let root = std::env::temp_dir().join(format!("velora-xline-row-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create dir");
+    fs::write(root.join("note.md"), "alpha\n\nmid\n").expect("write");
+
+    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let matcher = SearchMatcher::new(
+        r"alpha\n\n\w+",
+        SearchOptions {
+            use_regex: true,
+            ..SearchOptions::default()
+        },
+    );
+    let hits = search_workspace_files(&tree, &matcher, 200, &background).await;
+    assert_eq!(hits.len(), 1, "跨行模式在工作区里也要搜得到：{hits:?}");
+    let row = &hits[0];
+    assert_eq!(row.line, Some(1), "行号报命中起始行");
+    // 侧栏按 match_range 在 preview 那一行上切片，两者都只能描述起点行。
+    assert_eq!(
+        row.match_range,
+        Some(0..5),
+        "跨行命中在侧栏只报起点行内的 0..5；整段区间是跳转时按命中表重算的"
+    );
+    assert_eq!(row.preview, "alpha", "预览也只能是起点那一行：{:?}", row.preview);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[gpui::test]
+async fn clicking_a_cross_line_workspace_hit_selects_the_whole_span(cx: &mut TestAppContext) {
+    init(cx);
+    let root = std::env::temp_dir().join(format!("velora-xline-jump-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create dir");
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let path = root.join("note.md");
+    fs::write(&path, "alpha\n\nmid\n\nsecond note\n").expect("write");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+            editor.open_workspace_file(path.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_scope = WorkspaceSearchScope::Workspace;
+        editor.workspace.search_use_regex = true;
+        editor.workspace.search_query = r"alpha\n\n\w+".to_string();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    let index = editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.path == path)
+            .expect("工作区要有这条跨行命中")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.open_search_hit(index, window, cx));
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        let range = editor
+            .workspace
+            .document_active_range
+            .clone()
+            .expect("点击跨行命中应选出区间");
+        let source = editor.current_document_source(cx);
+        assert_eq!(
+            &source[range.clone()],
+            "alpha\n\nmid",
+            "跳过去必须把跨行的整段都选中，而不是只选起点那一行"
+        );
+    });
+}
+
+#[gpui::test]
+async fn clicking_a_workspace_hit_after_deleting_the_line_falls_back(cx: &mut TestAppContext) {
+    init(cx);
+    // §4.7 的脏文件极端情况：未保存的编辑把 ordinal 指向的那行删了。
+    // 不许 panic、不许选到半个字符，退回表里的第一个命中。
+    let root =
+        std::env::temp_dir().join(format!("velora-xline-fallback-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create dir");
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let path = root.join("note.md");
+    // 三段各占一个块（中间留空行），删掉最后一段就只剩两个命中组。
+    fs::write(&path, "needle one\n\nneedle two\n\nneedle three\n").expect("write");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+            editor.open_workspace_file(path.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_scope = WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "needle".to_string();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    let third = editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.match_ordinal == Some(2))
+            .expect("磁盘上第三条含词行要有结果")
+    });
+    // 删掉最后一段：ordinal 2 在缓冲区里已经没有对应的行了。
+    editor.update(cx, |editor, cx| {
+        let paragraph = editor.document.root_blocks().last().unwrap().clone();
+        paragraph.update(cx, |block, cx| {
+            block.prepare_undo_capture(crate::components::UndoCaptureKind::CoalescibleText, cx);
+            block.replace_text_in_visible_range(0..block.visible_len(), "", None, false, cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.open_search_hit(third, window, cx));
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        let range = editor
+            .workspace
+            .document_active_range
+            .clone()
+            .expect("越界也要落到某个命中上");
+        let source = editor.current_document_source(cx);
+        assert_eq!(
+            &source[range],
+            "needle",
+            "退回的第一个命中必须仍是命中文本"
+        );
+    });
+}
