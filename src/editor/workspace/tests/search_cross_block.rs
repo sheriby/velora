@@ -9,6 +9,7 @@ use super::super::{Editor, WorkspaceSearchScope, WorkspaceTab};
 use crate::editor::source_mapping::{clip_hit_to_span, hit_overlaps};
 use crate::editor::ViewMode;
 use gpui::TestAppContext;
+use std::fs;
 use std::ops::Range;
 use std::time::Duration;
 
@@ -408,4 +409,151 @@ async fn replace_all_mixes_block_and_cross_block_hits(cx: &mut TestAppContext) {
         "计数 {count}：块内与跨块两条链路混用时字节差异必须正好等于替换项"
     );
     assert_eq!(count, 2);
+}
+
+#[gpui::test]
+async fn jumping_to_a_cross_block_hit_centers_it_in_the_viewport(cx: &mut TestAppContext) {
+    init(cx);
+    // 阶段 3 闸门②的最后一项：跨块命中跳过去要能把视口滚到它居中。跨块命中的
+    // 选区落在**两根**块上，居中用的边界必须由起点那根提供——这条钉的就是这件事。
+    let mut md = String::from("# 标题\n\n开头 alpha\n");
+    for index in 0..40 {
+        md.push_str(&format!("\n填充段落 {}，撑开滚动空间。\n", index));
+    }
+    md.push_str("\nalpha\n\n收尾\n");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, md.to_string(), None));
+    cx.run_until_parked();
+    search_document_regex(&editor, r"alpha\n\n收尾", cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor
+                .workspace
+                .document_matches
+                .as_ref()
+                .expect("命中表要有")
+                .hits
+                .len(),
+            1,
+            "用例前提：一条跨块命中"
+        );
+    });
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.advance_search_match(false, window, cx));
+    });
+    for _ in 0..16 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let drift = editor.read_with(cx, |editor, cx| {
+        editor
+            .active_entity_id
+            .and_then(|id| {
+                editor
+                    .document
+                    .visible_blocks()
+                    .into_iter()
+                    .find(|visible| visible.entity.entity_id() == id)
+                    .map(|visible| visible.entity.clone())
+            })
+            .and_then(|target| target.read(cx).active_range_or_cursor_bounds())
+            .map(|bounds| {
+                let target_center = f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5;
+                let viewport_center = f32::from(editor.scroll_handle.bounds().top())
+                    + f32::from(editor.scroll_handle.bounds().size.height) * 0.5;
+                (target_center - viewport_center).abs()
+            })
+    });
+    let drift = drift.expect("跨块命中跳过去之后应有可测的边界");
+    assert!(
+        drift <= 2.0,
+        "跨块命中必须被精确居中，实际偏差 {drift}px"
+    );
+}
+
+#[gpui::test]
+async fn clicking_a_cross_line_workspace_hit_broken_by_an_edit_falls_back(
+    cx: &mut TestAppContext,
+) {
+    init(cx);
+    // 阶段 3 闸门⑦：跨行命中所在文件被未保存的编辑破坏（中间那行没了），
+    // ordinal 对位取不到那条命中——退回第一个仍然成立的命中，不 panic、
+    // 不选到半个字符上。
+    let root = std::env::temp_dir().join(format!(
+        "velora-xline-broken-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create dir");
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let path = root.join("note.md");
+    fs::write(&path, "alpha\n\nmid\n\nalpha\n\nlast\n").expect("write");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(&root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+            editor.open_workspace_file(path.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_scope = WorkspaceSearchScope::Workspace;
+        editor.workspace.search_use_regex = true;
+        editor.workspace.search_query = r"alpha\n\n\w+".to_string();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    let second = editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.match_ordinal == Some(1))
+            .expect("磁盘上第二条含命中行要有结果")
+    });
+
+    // 删掉第一处跨行命中用到的两段（"alpha" 与 "mid"）：缓冲区里只剩下
+    // "alpha\n\nlast"，也就是只有一个命中组，ordinal 1 已经越界。
+    editor.update(cx, |editor, cx| {
+        for block in editor.document.root_blocks()[..2].to_vec() {
+            block.update(cx, |block, cx| {
+                block.prepare_undo_capture(crate::components::UndoCaptureKind::CoalescibleText, cx);
+                block.replace_text_in_visible_range(0..block.visible_len(), "", None, false, cx);
+            });
+        }
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.open_search_hit(second, window, cx));
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        let range = editor
+            .workspace
+            .document_active_range
+            .clone()
+            .expect("命中被编辑破坏后也要落在一个区间上");
+        let source = editor.current_document_source(cx);
+        let text = source
+            .get(range.clone())
+            .unwrap_or_else(|| panic!("落点越界：{range:?} / 长度 {}", source.len()));
+        assert!(
+            text.contains("alpha"),
+            "退回的落点必须仍然是命中文本的一部分：{text:?}"
+        );
+        assert!(
+            source.is_char_boundary(range.start) && source.is_char_boundary(range.end),
+            "退回的落点两端都必须在字符边界上：{range:?}"
+        );
+    });
 }
