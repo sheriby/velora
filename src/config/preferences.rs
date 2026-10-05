@@ -321,10 +321,13 @@ pub(crate) struct AiPreferences {
 }
 
 /// 翻译默认目标:「跟随界面语言」。
+// 设置页/面板在后续提交接线,先放行过渡期 dead_code,接线时一并摘掉。
+#[allow(dead_code)]
 pub(crate) const AUTO_TRANSLATE_TARGET: &str = "auto";
 
 impl AiPreferences {
     /// 三元组齐全才能发起请求;缺任何一项都引导去设置页补齐。
+    #[allow(dead_code)]
     pub(crate) fn is_configured(&self) -> bool {
         !self.api_base_url.trim().is_empty()
             && !self.api_key.trim().is_empty()
@@ -332,6 +335,7 @@ impl AiPreferences {
     }
 
     /// 翻译默认目标:`auto` 表示跟随界面语言。
+    #[allow(dead_code)]
     pub(crate) fn translate_target(&self) -> &str {
         if self.translate_target.trim().is_empty() {
             AUTO_TRANSLATE_TARGET
@@ -796,6 +800,8 @@ impl EditorSettings {
     }
 
     /// AI 助手的服务端配置；全局未安装时回退磁盘/默认值。
+    // 读取方(设置页/面板)在后续提交接线,先放行过渡期 dead_code。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn ai(cx: &App) -> AiPreferences {
         cx.try_global::<Self>()
             .map(|settings| settings.ai.clone())
@@ -803,6 +809,7 @@ impl EditorSettings {
     }
 
     /// 整组替换 AI 配置并落盘（设置页保存、面板「去配置」共用）。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_ai(cx: &mut App, ai: AiPreferences) {
         if cx.try_global::<Self>().is_some() {
             cx.update_global::<Self, _>(|settings, _cx| settings.ai = ai.clone());
