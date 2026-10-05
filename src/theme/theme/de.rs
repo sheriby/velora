@@ -156,7 +156,7 @@ impl<'de> Deserialize<'de> for ThemeColors {
                 .unwrap_or_else(|| Hsla::from(rgba(0xffe06638))),
             search_active_highlight_bg: raw
                 .search_active_highlight_bg
-                .unwrap_or_else(|| Hsla::from(rgba(0xffe06680))),
+                .unwrap_or_else(|| Hsla::from(rgba(0xff9500b4))),
             callout_warning_border: raw
                 .callout_warning_border
                 .unwrap_or_else(|| Hsla::from(rgba(0xfb7185ff))),
