@@ -68,6 +68,8 @@ pub(crate) enum DocumentMenuCommand {
     /// 写法要成对补方括号与圆括号，走的也是另一条动作。
     Link,
     InsertTable,
+    /// 「插入 → 图片」：打开原生文件选择器，选中的图片走粘贴那条插入路径。
+    InsertImage,
     InsertCodeBlock,
     InsertMathBlock,
     InsertSeparator,
@@ -103,6 +105,7 @@ impl DocumentMenuCommand {
             Self::CodeBlock => "code-block",
             Self::Link => "link",
             Self::InsertTable => "table",
+            Self::InsertImage => "insert-image",
             Self::InsertCodeBlock => "insert-code-block",
             Self::InsertMathBlock => "insert-math-block",
             Self::InsertSeparator => "insert-separator",
@@ -131,6 +134,7 @@ impl DocumentMenuCommand {
             | Self::Copy
             | Self::Paste
             | Self::InsertTable
+            | Self::InsertImage
             | Self::InsertCodeBlock
             | Self::InsertMathBlock
             | Self::InsertSeparator
@@ -220,7 +224,8 @@ impl Editor {
         ]
     }
 
-    /// 二级菜单的行。插入那一档不含链接与图片——那两样写在行内，收在「格式」那一档。
+    /// 二级菜单的行。链接排在「格式」那一档（写法在行内，与八种行内样式同一条口径），
+    /// 图片与其余几样给的是整块，排在「插入」那一档。
     pub(crate) fn document_submenu_rows(
         &self,
         submenu: DocumentSubmenu,
@@ -307,6 +312,11 @@ impl Editor {
                 vec![
                     item(DocumentMenuCommand::InsertTable, "table", insertable),
                     item(
+                        DocumentMenuCommand::InsertImage,
+                        "insert-image",
+                        self.image_insert_is_available(cx),
+                    ),
+                    item(
                         DocumentMenuCommand::InsertCodeBlock,
                         "insert-code-block",
                         self.insert_block_target_is_available(InsertBlockTarget::CodeBlock, cx),
@@ -384,6 +394,7 @@ impl Editor {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
             }
             DocumentMenuCommand::InsertTable => self.open_table_insert_dialog_from_menu(cx),
+            DocumentMenuCommand::InsertImage => self.open_image_picker(cx),
             DocumentMenuCommand::InsertCodeBlock => {
                 self.insert_block_after_selection(InsertBlockTarget::CodeBlock, cx);
             }
@@ -493,6 +504,7 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::CodeBlock => strings.paragraph_code_block.clone(),
         DocumentMenuCommand::Link => strings.insert_link.clone(),
         DocumentMenuCommand::InsertTable => strings.context_menu_table.clone(),
+        DocumentMenuCommand::InsertImage => strings.insert_image.clone(),
         DocumentMenuCommand::InsertCodeBlock => strings.paragraph_code_block.clone(),
         DocumentMenuCommand::InsertMathBlock => strings.insert_math_block.clone(),
         DocumentMenuCommand::InsertSeparator => strings.insert_separator.clone(),
@@ -535,6 +547,7 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
         }
         DocumentMenuCommand::Format(InlineFormat::Subscript) => ShortcutCommand::SubscriptSelection,
         DocumentMenuCommand::Link => ShortcutCommand::LinkSelection,
+        DocumentMenuCommand::InsertImage => ShortcutCommand::InsertImage,
         DocumentMenuCommand::ToggleSourceView => ShortcutCommand::ToggleViewMode,
         // 标记文本与段落那一档还没有快捷键位（FP9 一并对齐），先留空。
         DocumentMenuCommand::Format(InlineFormat::Highlight)

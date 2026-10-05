@@ -342,6 +342,7 @@ async fn the_insert_row_in_the_context_menu_reaches_the_same_entry(cx: &mut Test
     redraw(cx);
     for name in [
         "table",
+        "insert-image",
         "insert-code-block",
         "insert-math-block",
         "insert-separator",

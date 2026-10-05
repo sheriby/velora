@@ -15,6 +15,7 @@ mod image_runtime;
 mod import_perf;
 mod inline_format;
 mod insert_blocks;
+mod insert_image;
 mod keyboard_nav;
 mod link_insert;
 mod knowledge_history;

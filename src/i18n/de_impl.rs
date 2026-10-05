@@ -748,6 +748,10 @@ impl I18nStringsDe {
                 .paragraph_code_block
                 .unwrap_or(defaults.paragraph_code_block),
             insert_link: self.insert_link.unwrap_or(defaults.insert_link),
+            insert_image: self.insert_image.unwrap_or(defaults.insert_image),
+            insert_image_prompt: self
+                .insert_image_prompt
+                .unwrap_or(defaults.insert_image_prompt),
             insert_math_block: self.insert_math_block.unwrap_or(defaults.insert_math_block),
             insert_separator: self.insert_separator.unwrap_or(defaults.insert_separator),
             insert_toc: self.insert_toc.unwrap_or(defaults.insert_toc),

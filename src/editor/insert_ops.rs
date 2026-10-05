@@ -7,6 +7,8 @@
 
 use gpui::*;
 
+use std::path::PathBuf;
+
 use super::Editor;
 use crate::components::{BlockKind, BlockRecord, CollapsedCaretAffinity, UndoCaptureKind};
 use crate::editor::{Block, ViewMode};
@@ -119,6 +121,70 @@ impl Editor {
         true
     }
 
+    /// 「插入 → 图片」这一行现在能不能点：渲染态、写得动缓冲区，并且有一个编辑目标。
+    /// 目标那块是不是正文不参与判断——落不进正文时由粘贴那条路改走块内替换。
+    pub(crate) fn image_insert_is_available(&self, cx: &App) -> bool {
+        self.view_mode == ViewMode::Rendered
+            && self.writes_through_the_buffer()
+            && self.current_edit_target_from_state(cx).is_some()
+    }
+
+    /// 把磁盘上的一张图片插到光标处。这一条同时服务拖放与「插入 → 图片」：
+    /// 光标那一段怎么切成「前面 / 图片行 / 后面」由 `handle_paste_image_request` 定，
+    /// 图片文件的落盘与相对路径写法也由它负责。返回值只说明有没有一个落点，
+    /// 图片本身读不读得动由那一条路自己报告。
+    pub(crate) fn insert_image_at_caret(&mut self, path: PathBuf, cx: &mut Context<Self>) -> bool {
+        // 落点与拖放那条路一致：没有焦点块时退回文档第一块。
+        let Some(block) = self
+            .current_edit_target_from_state(cx)
+            .or_else(|| self.document.first_root().cloned())
+        else {
+            return false;
+        };
+        let (leading, trailing) = block.update(cx, |block, _cx| block.paste_image_split());
+        self.handle_paste_image_request(
+            block,
+            &leading,
+            &crate::components::PastedImageSource::LocalPath(path),
+            &trailing,
+            cx,
+        );
+        true
+    }
+
+    /// 「插入 → 图片」选文件那一步：走原生文件选择器（本仓的守卫禁的是消息框，
+    /// 原生选择器在放行名单里），选完交回上面那条入口。gpui 的测试壳把
+    /// `prompt_for_paths` 写成 `unimplemented!()`，所以这一步用例不碰，测的是它交回的那条入口。
+    pub(crate) fn open_image_picker(&mut self, cx: &mut Context<Self>) {
+        if !self.image_insert_is_available(cx) {
+            return;
+        }
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(strings.insert_image_prompt.into()),
+            directory: self.open_dialog_start_dir(),
+        });
+        let weak_editor = cx.entity().downgrade();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let Some(path) = paths
+                .into_iter()
+                .find(|path| Block::is_supported_local_image_path(path))
+            else {
+                return;
+            };
+            let _ = weak_editor.update(cx, |editor, cx| {
+                editor.insert_image_at_caret(path, cx);
+            });
+        })
+        .detach();
+    }
+
     /// 「格式 → 链接」：把选中的那段包成 `[文字]()`，光标停在 `](` 之后等写地址。
     /// 链接文字不能跨块（markdown 的行内语法本来就不跨块），跨块选区按可见块逐段包，
     /// 全程只开一个撤销组——与行内格式同一条口径。
@@ -218,6 +284,19 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.insert_link_on_selection(cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    /// ⌘⇧I 走这里：只负责打开选择器，选完由 `open_image_picker` 的回调交回插入那条入口。
+    pub(crate) fn on_insert_image_capture(
+        &mut self,
+        _: &crate::components::InsertImage,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.image_insert_is_available(cx) {
+            self.open_image_picker(cx);
             cx.stop_propagation();
         }
     }

@@ -146,19 +146,7 @@ impl Editor {
         }
 
         if let Some(path) = Self::first_dropped_image_path(paths.paths()) {
-            let block = self
-                .active_entity_id
-                .and_then(|id| self.focusable_entity_by_id(id))
-                .or_else(|| self.document.first_root().cloned());
-            if let Some(block) = block {
-                let (leading, trailing) = block.update(cx, |block, _cx| block.paste_image_split());
-                self.handle_paste_image_request(
-                    block,
-                    &leading,
-                    &crate::components::PastedImageSource::LocalPath(path),
-                    &trailing,
-                    cx,
-                );
+            if self.insert_image_at_caret(path, cx) {
                 return;
             }
             self.show_image_paste_error(
