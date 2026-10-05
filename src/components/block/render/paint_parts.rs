@@ -194,10 +194,13 @@ impl Render for Block {
             };
 
             let source_base = if self.kind().is_code_block() {
-                source_base
+                source_base.font(font(fonts.code_family.clone()))
             } else if self.kind() == BlockKind::Comment {
                 source_base.bg(c.comment_bg).rounded_sm()
-            } else if focused {
+            } else if focused && !self.show_source_line_numbers() {
+                // 行号视图的块是 512 行一切的分块：聚焦底色会把整屏铺满
+                // （用户报修：markdown 源码界面一大片绿）。光标定位有当前行
+                // 高亮兜底，这里不再上块底色。
                 source_base.bg(c.source_mode_block_bg).rounded_sm()
             } else {
                 source_base
