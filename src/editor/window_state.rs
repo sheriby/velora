@@ -520,6 +520,12 @@ impl Editor {
         for ((index, _), (line_index, _)) in known.iter().zip(&lines) {
             blocks[*index].update(cx, |block, _cx| block.set_source_line_start(line_index + 1));
         }
+        // 行号栏宽度基准跟着总行数走：编辑增删行后各块同步更新，栏宽保持
+        // 全文档一致（用户报修：512 上下行号对不齐）。
+        let basis = self.buffer.line_count();
+        for block in &blocks {
+            block.update(cx, |block, _cx| block.set_source_line_gutter_basis(basis));
+        }
     }
 
     pub(super) fn request_active_block_scroll_into_view(&mut self, cx: &mut Context<Self>) {

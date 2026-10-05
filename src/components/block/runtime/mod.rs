@@ -216,6 +216,10 @@ pub struct Block {
     show_source_line_numbers: bool,
     /// 1-based 文档行号，本块第一行对应的行号（源码文档按行分块后行号槽续号用）。
     source_line_start: usize,
+    /// 行号栏宽度的**全文档基准**：整篇的总行数。各分块按它统一算栏宽，
+    /// 上下块的行号才右对齐（按块内最后行号算的话，513 行那块的栏会宽出
+    /// 一位——用户报修：512 上下行号对不齐）。0 = 未设置，按块内口径兜底。
+    source_line_gutter_basis: usize,
     pub(crate) table_runtime: Option<TableRuntime>,
     pub(crate) table_cell_position: Option<TableCellPosition>,
     pub(crate) table_cell_alignment: Option<TableColumnAlignment>,
@@ -346,6 +350,7 @@ impl Block {
             edit_mode,
             show_source_line_numbers: false,
             source_line_start: 1,
+            source_line_gutter_basis: 0,
             table_runtime: None,
             table_cell_position: None,
             table_cell_alignment: None,
@@ -412,6 +417,15 @@ impl Block {
 
     pub(crate) fn set_source_line_start(&mut self, start: usize) {
         self.source_line_start = start.max(1);
+    }
+
+    /// 全文档总行数（行号栏宽度基准）；0 = 未设置。
+    pub(crate) fn source_line_gutter_basis(&self) -> usize {
+        self.source_line_gutter_basis
+    }
+
+    pub(crate) fn set_source_line_gutter_basis(&mut self, basis: usize) {
+        self.source_line_gutter_basis = basis;
     }
 
     pub(crate) fn take_quote_reparse_requested(&mut self) -> bool {

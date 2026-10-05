@@ -144,10 +144,14 @@ impl Element for BlockTextElement {
         let code_size = runs.iter().filter_map(|run| run.font_size).fold(px(0.0), Pixels::max);
         let line_height = window.line_height().max(code_size * 1.35);
         let source_line_start = input.source_line_start();
+        // 栏宽按全文档基准算（整篇总行数），分块上下才右对齐；基准没挂上时
+        // 退回块内口径。
+        let gutter_width_basis = match input.source_line_gutter_basis() {
+            0 => source_line_start + source_line_count,
+            basis => basis,
+        };
         let source_line_number_gutter_width = show_source_line_numbers
-            .then(|| {
-                source_line_number_gutter_width(source_line_start + source_line_count, font_size)
-            })
+            .then(|| source_line_number_gutter_width(gutter_width_basis, font_size))
             .unwrap_or(px(0.0));
 
         // P3：shape 备忘键。任何影响 shape 结果的输入都进键：文本代数、
@@ -411,8 +415,13 @@ impl Element for BlockTextElement {
 
         let lines = request_layout.borrow_mut().take().unwrap_or_default();
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        // 与 request_layout 一致：栏宽按全文档基准（整篇总行数），分块对齐。
+        let gutter_width_basis = match input.source_line_gutter_basis() {
+            0 => lines.len().max(1) + input.source_line_start() - 1,
+            basis => basis,
+        };
         let source_line_number_gutter_width = show_source_line_numbers
-            .then(|| source_line_number_gutter_width(lines.len().max(1) + input.source_line_start() - 1, font_size))
+            .then(|| source_line_number_gutter_width(gutter_width_basis, font_size))
             .unwrap_or(px(0.0));
         let text_bounds = source_text_bounds(bounds, source_line_number_gutter_width);
         let source_line_numbers = if show_source_line_numbers {

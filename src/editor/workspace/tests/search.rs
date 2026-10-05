@@ -1236,6 +1236,71 @@ async fn first_click_into_a_freshly_opened_code_file_lands_in_the_right_chunk(
     });
 }
 
+/// 回归（用户报修 2026-10-05）：源码分块各自按「块内最后行号」算行号栏宽，
+/// 第二块算到 1024 行宽出一位，512 上下两段行号没有右对齐。栏宽必须按
+/// 全文档总行数统一。
+#[gpui::test]
+async fn source_chunk_gutters_share_one_width_basis(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-gutter-basis-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("wide.rs");
+    let lines: Vec<String> = (1..=1200).map(|index| format!("// 第 {index} 行")).collect();
+    fs::write(&path, lines.join("\n")).expect("write fixture");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path, window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    // 渲染几帧后，每根块都记录了自己的栏宽：三块必须一致。
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, cx| {
+        let roots = editor.document.root_blocks();
+        assert_eq!(roots.len(), 3, "1200 行应切成三根投影块");
+        let widths: Vec<f32> = roots
+            .iter()
+            .map(|block| f32::from(block.read(cx).last_gutter_width))
+            .collect();
+        assert!(
+            widths.iter().all(|width| *width > 0.0),
+            "源码分块都应带行号栏：{widths:?}"
+        );
+        assert!(
+            widths[0] == widths[1] && widths[1] == widths[2],
+            "分块的行号栏宽必须一致（右对齐）：{widths:?}"
+        );
+        // 基准 = 全文档总行数（1200 → 4 位），而不是块内最后行号。
+        for block in roots {
+            assert_eq!(
+                block.read(cx).source_line_gutter_basis(),
+                1200,
+                "行号栏宽度基准应为全文档总行数"
+            );
+        }
+    });
+}
+
 /// 回归（用户报修 2026-10-05）：源码文档按 512 行切块后，搜索跳转的选区被
 /// 钳进第一根投影块——512 行之外的命中点击后全部停在 512 行。选区必须
 /// 落进**包含它的那一根**投影块。

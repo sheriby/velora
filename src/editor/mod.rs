@@ -1048,6 +1048,13 @@ impl Editor {
         for (block, span) in roots.iter().zip(spans) {
             self.document.set_source_span(block.entity_id(), span);
         }
+        // 行号栏宽度用全文档总行数做统一基准：分块各按自己的最后行号算，
+        // 513 行那块的栏会宽出一位，上下行号对不齐（用户报修）。缓冲区在
+        // 打开时就是完整的，续建的块到这里也一并拿到正确的基准。
+        let basis = self.buffer.line_count();
+        for block in roots {
+            block.update(cx, |block, _cx| block.set_source_line_gutter_basis(basis));
+        }
     }
 
     /// 树里已经有一批源码文档的根块：按上面的口径把区间全部重挂一遍。
