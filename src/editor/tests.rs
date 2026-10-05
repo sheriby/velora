@@ -26,6 +26,7 @@ mod render_snapshot_fold;
 mod round_trip_fidelity;
 mod save_autosave_ime;
 mod scroll_window;
+mod selection_toolbar;
 mod source_selection;
 mod selection_mouse;
 mod table_runtime;

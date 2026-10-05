@@ -54,9 +54,9 @@ Typora 选中文字时浮出一行图标工具栏（粗体、斜体、删除线�
 
 选中菜单：
 
-- 一行，横向排布，图标按钮 26×26，圆角 5，图标 14px，颜色用 `dialog_secondary_button_text`，悬停 `dialog_secondary_button_hover`，按下有 0.92 透明度反馈。
+- 一行，横向排布，方形按钮 26×26，圆角与字号沿用主题的 `menu_item_radius`/`menu_text_size`，颜色用 `dialog_secondary_button_text`，悬停 `dialog_secondary_button_hover`，按下 0.92 透明度反馈（与标题栏按钮同一写法）。按钮上是字母形状而不是 SVG 图标：B 加粗、I 斜体、U 下划线、S 盖一条横线、`</>` 行内代码、A 带底色标记，本仓的 svg 清单（main.rs 的 `include_bytes!` 那一片）里没有格式类图标，为这一条临时造一套图形资产是另一件事；字母形状在中英文下都直接可读，不需要两份图形。
 - 位置：选区外接框的上方 8px；上方放不下就翻到下方 8px；左右按视口宽度夹紧（沿用 `context_menus.rs:99-107` 的 8px 夹紧写法）。
-- 出现时机：鼠标或键盘产生非空选区后出现；选区塌成光标、焦点离开文档、开始滚动、切换视图模式时立刻消失。不跟随选区拖动的中间过程（拖选中每次移动都会重排位置，视觉上会抖），只在选区确定后（鼠标抬起 / 键盘扩展一步）定位一次。
+- 出现时机：鼠标或键盘产生非空选区后出现；选区塌成光标、切到源码模式、右键菜单或任何浮层开着时不出现。拖动的中间过程不浮出（`cross_block_drag` 还开着就按住），只在抬手之后定位一次。滚动时不做特殊处理：选区还在，面板就跟着选区重算一次位置（比原地钉住准），整段滚出视口才收起。「焦点离开文档就收掉」这条没做：这个应用一篇一个 Editor 视图，选区在模型里留着、面板也就留着，窗口失焦时是否要藏起来涉及所有浮层的统一口径，不在这一笔。
 - 工具栏本身不吃键盘焦点（gpui 里按钮按下不影响块的焦点），保证按下去之后 ⌘Z、方向键仍然作用在文档上。
 - 每个按钮有悬停说明，写明中文名和快捷键。
 
@@ -86,7 +86,7 @@ FP5 动作层：链接、图片、插入类。链接走应用内小输入框（�
 
 FP6 右键菜单成形（已落地）。`ContextMenuState::Insert` 换成 `Document`（`open_submenu`/`hovered_submenu` 两个 `Option<DocumentSubmenu>` 取代原来那三个 bool），内容拆到 `src/editor/context_menu/document_menu.rs`：`document_menu_rows` 给编辑 → 格式 → 段落 → 插入 → 视图五段，格式八项与段落六加一项走二级面板，插入那一档目前只有表格（其余插入项在 FP5）。行点击走 `run_document_menu_command`：撤销/剪切/拷贝/粘贴/切换视图派发 gpui 动作，行内格式与段落转换调编辑器层入口（FP2、FP4a 那两条），也就是快捷键动作处理器所调的同一组函数。面板尺寸与落点在 `DocumentMenuGeometry::measure` / `document_menu_origins`：宽度按最宽一行估，右侧放不下时二级面板翻到主面板左侧，下沿越界时向上收，离窗口边缘留 6px。快捷键那一列取 `default_shortcut_key`（默认键位；用户自定的绑定在 FP9 与偏好页一并接）。`Insert`→`Document` 之后 `context_menu_panel_width` 这个主题字段不再有消费者，仍留着给表格轴与图片菜单那条路。验收：`src/editor/tests/document_context_menu.rs` 从真实右键事件起，断言全部行 id、两种置灰口径的行序行高不变、二级面板与父行对齐、点「加粗」与「二级标题」改字节且撤销一步复原、贴边右键整个菜单留在视口内、快捷键列按默认键位显示；`document_menu::tests` 两条纯函数用例盯落点夹紧与面板宽度。
 
-FP7 选中菜单。新增 `Editor::selection_toolbar: Option<SelectionToolbarState>`，锚点用 `active_range_or_cursor_bounds` + 跨块选区外接框；出现/消失规则按 §4；`render/paint.rs` 的层级里放在右键菜单之下、正文之上。验收：拖出选区后 `debug_bounds` 能取到工具栏；塌成光标后消失；点按钮改字节且文档焦点没丢。
+FP7 选中菜单（已落地）。新增 `Editor::selection_toolbar: Option<SelectionToolbarState>`（src/editor/mod.rs:287）与 src/editor/selection_toolbar.rs：锚点是 `selection_toolbar_anchor`（:109）——单块用块的 `selected_range`，跨块逐块量再并起来，为此在 Block 上把 `active_range_or_cursor_bounds` 里那一段量区间的算术拆成 `visible_range_bounds(range)`（src/components/block/runtime/text_ops.rs:555）；出现/消失口径见 §4。面板 7 项：「段落」下拉（六档标题 + 正文，行数据与右键菜单同一份 `document_submenu_rows`）加六颗行内格式按钮；按钮派发走 `run_selection_toolbar_command`（:523），调 FP2 与 FP4a 那两条编辑器层入口。落点 `toolbar_origin`（:163）：优先选区上方 8px、放不下改下方、横向居中并按视口收回，离边 6px；「段落」列表贴工具栏下沿，下方放不下贴到上沿（`heading_menu_offsets` :189）。本帧面板边界记在 `panel_bounds`，正文那层的按下落在里面时不当成正文落点（src/editor/selection.rs:81），否则一次按下先把选区收成光标、面板自己先消失。悬停说明复用 `HoverPreviewTooltip`，文字是「名字 + 默认键位」。验收：`src/editor/tests/selection_toolbar.rs` 九条，含真实拖动后浮出、拖动过程中不浮出、塌成光标收起、点加粗改字节且焦点与选区都不丢、点档位列表转标题且撤销一步复原、矮视口里不越界、与右键菜单互斥、源码模式不出、以及落点与离屏判定的两条纯函数用例。
 
 FP8 剪贴板补全。「粘贴为纯文本」（跳过 `html_paste` 转换）、「拷贝为 Markdown」（选区的 markdown 文本进剪贴板）、「清除格式」（剥掉选区里的 `** _ ` == ^ ~` 成对标记，保留反斜杠转义）各自动作 + 菜单行 + 快捷键位。验收：三条行为断言 + 清除格式对嵌套标记的用例。
 
@@ -103,6 +103,6 @@ FP9 文档与命令面板。`docs/architecture/` 里补选中菜单/右键菜单
 ## 7. 风险
 
 - R1：段落转换写前缀再 normalize，可能和「缓冲区是唯一事实源」的最小差异原则打架。做法是每次都开一个 `NonCoalescible` 撤销组，且断言改完的字节序列；FP4 若出现字节漂移（例如 CRLF 文件被洗成 LF），要先解决再往下走。
-- R2：选中工具栏在滚动与缩放时的定位。gpui 的绘制坐标随滚动变化，锚点每帧重算成本可控，但选区滚动出视口时要把工具栏藏掉。
+- R2：选中工具栏在滚动与缩放时的定位。已按「锚点每帧随选区重算」处理，选区整段不在视口里时由 `selection_is_on_screen`（:152）判掉；跨块时锚点要扫一遍可见块，成本是一次遍历加每块一次已缓存布局的取矩形，实测全量用例（含逐帧性能闸门）没有变化。
 - R3：`toggle_inline_format` 依赖块自己的 `selected_range`。跨块选区时焦点块的 `selected_range` 只是选区尾部那一小块，直接用会只格式化最后一行——FP2 必须在 Editor 层按块切片。
 - R4：菜单文案 5 个位点漏一个会在语言包导入校验（`i18n/manager.rs:205-222`）之外静默回退英文，靠 `config::preferences` 与 `i18n` 测试组兜住。

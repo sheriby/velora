@@ -12,6 +12,7 @@ mod render;
 mod runtime;
 mod state;
 
+pub(crate) use render::HoverPreviewTooltip;
 pub(crate) use crate::components::markdown::code_highlight::*;
 pub(crate) use crate::components::markdown::footnote::*;
 pub(crate) use crate::components::markdown::image::*;

@@ -1054,6 +1054,11 @@ impl Render for Editor {
         } else {
             base
         };
+        let base = if let Some(toolbar) = self.render_selection_toolbar(&theme, window, cx) {
+            base.child(toolbar)
+        } else {
+            base
+        };
         let base = if let Some(context_menu) =
             self.render_context_menu_overlay(&theme, window.viewport_size(), cx)
         {

@@ -9,12 +9,9 @@ pub(super) use crate::components::{DismissTransientUi, TableAxisKind, TableColum
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 pub(super) use document_menu::{
-    DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu, document_menu_label,
-    document_menu_origins, document_menu_shortcut, document_submenu_label,
+    DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
+    document_menu_label, document_menu_origins, document_menu_shortcut, document_submenu_label,
 };
-// 菜单命令只有测试在按名点名，生产路径都用行名与 enabled 记账。
-#[cfg(test)]
-pub(super) use document_menu::DocumentMenuCommand;
 
 /// Target block position for inserting a native table.
 #[derive(Clone, Copy)]

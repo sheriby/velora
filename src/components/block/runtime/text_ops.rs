@@ -530,33 +530,40 @@ impl Block {
     }
 
     pub(crate) fn active_range_or_cursor_bounds(&self) -> Option<Bounds<Pixels>> {
-        let bounds = self.last_bounds?;
-        let lines = self.last_layout.as_ref()?;
-        let line_height = self.last_line_height;
-        let text = self.display_text();
         let active_range = self
             .marked_range
             .clone()
             .unwrap_or_else(|| self.selected_range.clone());
-
         if active_range.is_empty() {
+            let bounds = self.last_bounds?;
+            let lines = self.last_layout.as_ref()?;
             return crate::components::block::element::cursor_bounds_for_offset(
                 lines,
                 bounds,
-                line_height,
-                text,
+                self.last_line_height,
+                self.display_text(),
                 self.cursor_offset(),
                 self.text_align(),
                 px(1.0),
             );
         }
+        self.visible_range_bounds(active_range)
+    }
 
+    /// 量一段**可见文本**坐标里的区间在屏幕上的外接框（窗口绝对像素坐标）。
+    /// 跨块选区要逐块量再并起来，选中工具栏的锚点就是这么来的。
+    pub(crate) fn visible_range_bounds(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Option<Bounds<Pixels>> {
+        let bounds = self.last_bounds?;
+        let lines = self.last_layout.as_ref()?;
         crate::components::block::element::range_bounds(
             lines,
             bounds,
-            line_height,
-            text,
-            active_range,
+            self.last_line_height,
+            self.display_text(),
+            range,
             self.text_align(),
         )
     }

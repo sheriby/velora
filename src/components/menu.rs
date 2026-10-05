@@ -75,6 +75,7 @@ pub(crate) fn menu_item(
     if enabled {
         row.id(name)
             .hover(|this| this.bg(colors.dialog_secondary_button_hover))
+            .active(|this| this.opacity(0.92))
             .cursor_pointer()
     } else {
         row.id(name)

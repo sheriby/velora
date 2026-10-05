@@ -76,6 +76,13 @@ impl Editor {
             }
         }
 
+        // 选中工具栏上的按下不当成正文落点：不然这一次按下先把选区收成光标，
+        // 工具栏自己就先消失了（与 [[ 补全浮层同一条口径）。
+        if self.selection_toolbar_contains_point(event.position) {
+            cx.propagate();
+            return;
+        }
+
         if event.button != MouseButton::Left {
             cx.propagate();
             return;

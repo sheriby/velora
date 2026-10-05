@@ -40,6 +40,7 @@ mod persistence;
 mod render;
 mod runtime_context;
 mod selection;
+mod selection_toolbar;
 mod source_mapping;
 mod status_bar;
 mod table_edit;
@@ -282,6 +283,8 @@ pub struct Editor {
     context_menu: Option<ContextMenuState>,
     table_insert_dialog: Option<TableInsertDialogState>,
     context_menu_submenu_close_task: Option<Task<()>>,
+    /// 选中一段文字后浮出的那条工具栏；None 表示这一帧没有可挂的选区。
+    selection_toolbar: Option<selection_toolbar::SelectionToolbarState>,
     table_axis_preview: Option<TableAxisSelection>,
     table_axis_selection: Option<TableAxisSelection>,
     cross_block_selection: Option<CrossBlockSelection>,
@@ -738,6 +741,7 @@ impl Editor {
             context_menu: None,
             table_insert_dialog: None,
             context_menu_submenu_close_task: None,
+            selection_toolbar: None,
             table_axis_preview: None,
             table_axis_selection: None,
             cross_block_selection: None,
