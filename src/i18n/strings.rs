@@ -494,6 +494,12 @@ pub struct I18nStrings {
     pub paragraph_heading6: String,
     /// 段落样式：正文。
     pub paragraph_normal_text: String,
+    /// 段落样式：无序列表。
+    pub paragraph_bullet_list: String,
+    /// 段落样式：有序列表。
+    pub paragraph_numbered_list: String,
+    /// 段落样式：任务列表。
+    pub paragraph_task_list: String,
     /// Table-axis menu item for left-aligning a column.
     pub table_axis_align_column_left: String,
     /// Table-axis menu item for center-aligning a column.

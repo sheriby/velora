@@ -4,9 +4,9 @@
 use super::common::*;
 use crate::components::{Block, InlineFormat};
 use crate::editor::context_menu::{
-    DocumentMenuCommand, DocumentMenuRow, DocumentSubmenu, document_menu_shortcut,
+    document_menu_shortcut, DocumentMenuCommand, DocumentMenuRow, DocumentSubmenu,
 };
-use gpui::{Entity, MouseButton, Modifiers, Size, point, px};
+use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
@@ -32,6 +32,20 @@ const FORMAT_ROWS: [&str; 8] = [
     "highlight",
     "superscript",
     "subscript",
+];
+
+/// 「段落」那一档：六个标题级别、正文、以及列表的三种。
+const PARAGRAPH_ROWS: [&str; 10] = [
+    "heading-1",
+    "heading-2",
+    "heading-3",
+    "heading-4",
+    "heading-5",
+    "heading-6",
+    "normal-text",
+    "bullet-list",
+    "numbered-list",
+    "task-list",
 ];
 
 fn visible_block(
@@ -294,6 +308,66 @@ async fn clicking_a_paragraph_row_turns_the_block_into_a_heading(cx: &mut TestAp
     assert_eq!(buffer_text(&editor, cx), TWO_PARAGRAPHS);
 }
 
+/// 段落菜单里的列表那三行与快捷键共用一条入口：写回的字节、撤销的步数都要对得上。
+#[gpui::test]
+async fn clicking_a_list_row_in_the_submenu_writes_the_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    select_head_of_first_block(&editor, cx);
+    right_click(&editor, 0, cx);
+    editor.update(cx, |editor, cx| {
+        editor.set_document_menu_hover(true, Some(DocumentSubmenu::Paragraph), cx)
+    });
+    redraw(cx);
+
+    click_row("task-list", cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "- [ ] alpha one\n\nbeta two\n",
+        "菜单里的「任务列表」没把这一段转成任务项"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        TWO_PARAGRAPHS,
+        "一次撤销该整步退回"
+    );
+}
+
+/// 已经是无序项时「无序列表」这一行还是可点的，点它是取消记号，不是没反应。
+#[gpui::test]
+async fn clicking_the_bullet_row_on_an_item_cancels_the_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "- alpha one\n\nbeta two\n".to_string(), None)
+    });
+    redraw(cx);
+
+    select_head_of_first_block(&editor, cx);
+    right_click(&editor, 0, cx);
+    editor.update(cx, |editor, cx| {
+        editor.set_document_menu_hover(true, Some(DocumentSubmenu::Paragraph), cx)
+    });
+    redraw(cx);
+
+    let paragraphs = submenu_enabled_rows(&editor, DocumentSubmenu::Paragraph, cx);
+    assert!(
+        enabled_of(&paragraphs, "bullet-list"),
+        "这一行点下去是取消记号，不该置灰：{paragraphs:?}"
+    );
+    click_row("bullet-list", cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "alpha one\n\nbeta two\n",
+        "「无序列表」没把这一项退回正文"
+    );
+}
+
 /// 没有选区时剪切/拷贝/格式那些项做不了，但行要留在原位：藏起来会让菜单高度跳，
 /// 用户也看不出「这一项存在，只是现在不能点」。
 #[gpui::test]
@@ -346,11 +420,24 @@ async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) 
     let formats = submenu_enabled_rows(&editor, DocumentSubmenu::Format, cx);
     assert_eq!(formats.len(), FORMAT_ROWS.len());
     assert!(formats.iter().all(|(_, enabled)| *enabled));
+    // 「段落」那一档看的是「这一块换得动吗」：这一段本来就是正文，「正文」这一行点不动，
+    // 标题与列表那几行仍然能换。
+    let paragraphs = submenu_enabled_rows(&editor, DocumentSubmenu::Paragraph, cx);
+    assert_eq!(
+        paragraphs.len(),
+        PARAGRAPH_ROWS.len(),
+        "段落那一档的行数变了，测试里的行名清单要跟着补"
+    );
     assert!(
-        submenu_enabled_rows(&editor, DocumentSubmenu::Paragraph, cx)
+        !enabled_of(&paragraphs, "normal-text"),
+        "光标已经在正文里，这一行还置着才对：{paragraphs:?}"
+    );
+    assert!(
+        paragraphs
             .iter()
+            .filter(|(name, _)| *name != "normal-text")
             .all(|(_, enabled)| *enabled),
-        "段落那一档只看能不能写，不看选区"
+        "标题与列表那几行都该换得动：{paragraphs:?}"
     );
 }
 

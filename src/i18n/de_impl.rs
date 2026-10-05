@@ -766,6 +766,15 @@ impl I18nStringsDe {
             paragraph_normal_text: self
                 .paragraph_normal_text
                 .unwrap_or(defaults.paragraph_normal_text),
+            paragraph_bullet_list: self
+                .paragraph_bullet_list
+                .unwrap_or(defaults.paragraph_bullet_list),
+            paragraph_numbered_list: self
+                .paragraph_numbered_list
+                .unwrap_or(defaults.paragraph_numbered_list),
+            paragraph_task_list: self
+                .paragraph_task_list
+                .unwrap_or(defaults.paragraph_task_list),
             table_axis_align_column_left: self
                 .table_axis_align_column_left
                 .unwrap_or(defaults.table_axis_align_column_left),

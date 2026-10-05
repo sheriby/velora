@@ -50,9 +50,18 @@ impl Block {
     ///
     /// 不发事件、不开撤销组：一条命令改多块时由 `Editor` 统一开一个撤销组、重建元数据、
     /// 把整段字节一次写回。返回种类是否真的变了。
-    pub(crate) fn set_kind_in_place(&mut self, next: BlockKind) -> bool {
+    /// `marker` 是列表记号的写法（`-`/`*`/`+`、`.`/`)`）；`None` 表示这块原来记的是什么
+    /// 就留什么。换进列表时由调用方从相邻项抄过来，用户写的 `+ `、`1)` 不该被换成规范形。
+    pub(crate) fn set_kind_in_place(
+        &mut self,
+        next: BlockKind,
+        marker: Option<crate::components::ListMarkerStyle>,
+    ) -> bool {
         if self.uses_raw_text_editing() || self.record.kind == next {
             return false;
+        }
+        if let Some(marker) = marker {
+            self.record.list_marker = marker;
         }
         self.record.kind = next;
         self.record.raw_fallback = None;

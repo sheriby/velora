@@ -3,7 +3,7 @@
 
 use super::common::*;
 use crate::components::Block;
-use gpui::{Entity, MouseButton, Modifiers, Point, px};
+use gpui::{px, Entity, Modifiers, MouseButton, Point};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
@@ -247,6 +247,43 @@ async fn the_heading_menu_lists_six_levels_and_plain_text(cx: &mut TestAppContex
     assert_eq!(buffer_text(&editor, cx), TWO_PARAGRAPHS);
 }
 
+/// 工具栏「标题」下拉与右键菜单的「段落」那一档同源：列表那三行也在这里，
+/// 点一行写回的是同一段字节。
+#[gpui::test]
+async fn the_paragraph_menu_offers_the_same_list_rows_as_the_context_menu(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    select_head_of_first_block(&editor, cx);
+    click_element("toolbar-heading", cx);
+    for name in [
+        "menu-item-heading-6",
+        "menu-item-normal-text",
+        "menu-item-bullet-list",
+        "menu-item-numbered-list",
+        "menu-item-task-list",
+    ] {
+        assert!(cx.debug_bounds(name).is_some(), "档位列表里没渲染出 {name}");
+    }
+
+    click_element("menu-item-numbered-list", cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "1. alpha one\n\nbeta two\n",
+        "工具栏里的「有序列表」没把这一段转成有序项"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        TWO_PARAGRAPHS,
+        "一次撤销该整步退回"
+    );
+}
+
 #[gpui::test]
 async fn the_toolbar_sits_above_the_selection(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -277,18 +314,28 @@ async fn the_toolbar_sits_above_the_selection(cx: &mut TestAppContext) {
 #[test]
 fn an_offscreen_selection_hides_the_toolbar() {
     let viewport = gpui::size(px(600.0), px(400.0));
-    let box_at = |x: f32, y: f32| {
-        gpui::Bounds::new(point(x, y), gpui::size(px(200.0), px(20.0)))
-    };
+    let box_at = |x: f32, y: f32| gpui::Bounds::new(point(x, y), gpui::size(px(200.0), px(20.0)));
     assert!(
         Editor::selection_is_on_screen(box_at(100.0, 100.0), viewport),
         "视口里的选区被判成了看不见"
     );
-    assert!(!Editor::selection_is_on_screen(box_at(100.0, 460.0), viewport));
-    assert!(!Editor::selection_is_on_screen(box_at(100.0, -40.0), viewport));
-    assert!(!Editor::selection_is_on_screen(box_at(700.0, 100.0), viewport));
+    assert!(!Editor::selection_is_on_screen(
+        box_at(100.0, 460.0),
+        viewport
+    ));
+    assert!(!Editor::selection_is_on_screen(
+        box_at(100.0, -40.0),
+        viewport
+    ));
+    assert!(!Editor::selection_is_on_screen(
+        box_at(700.0, 100.0),
+        viewport
+    ));
     // 只露一角也算看得见：工具栏还有得锚。
-    assert!(Editor::selection_is_on_screen(box_at(590.0, 395.0), viewport));
+    assert!(Editor::selection_is_on_screen(
+        box_at(590.0, 395.0),
+        viewport
+    ));
 }
 
 /// 视口压矮到只剩几行：工具栏放不下上半区时收到的仍是视口内，不露出一半。

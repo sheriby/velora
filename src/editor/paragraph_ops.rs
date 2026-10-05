@@ -6,7 +6,7 @@
 use gpui::*;
 
 use super::Editor;
-use crate::components::{BlockKind, UndoCaptureKind};
+use crate::components::{BlockKind, ListMarkerStyle, UndoCaptureKind};
 use crate::editor::{Block, ViewMode};
 
 /// 「段落」菜单的目标种类。
@@ -16,6 +16,12 @@ pub(crate) enum BlockKindTarget {
     Heading(u8),
     /// 普通段落。
     Paragraph,
+    /// 无序列表项；已经是无序项时等于取消。
+    BulletList,
+    /// 有序列表项；序号由所在列表组重算。
+    NumberedList,
+    /// 任务列表项；已经是任务项时退回普通无序项（去掉复选框）。
+    TaskList,
 }
 
 impl Editor {
@@ -45,9 +51,11 @@ impl Editor {
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
         let mut changed: Vec<Entity<Block>> = Vec::new();
         for root in &roots {
-            let next = root.read_with(cx, |block, _cx| target.next_kind(&block.kind()));
-            let Some(next) = next else { continue };
-            if root.update(cx, |block, _cx| block.set_kind_in_place(next)) {
+            let Some(next) = self.block_kind_conversion(root, target, cx) else {
+                continue;
+            };
+            let marker = self.list_marker_for_conversion(root, &next, cx);
+            if root.update(cx, |block, _cx| block.set_kind_in_place(next, marker)) {
                 changed.push(root.clone());
             }
         }
@@ -187,6 +195,78 @@ impl Editor {
             && self.document.block_markdown_source(&entity, cx) == self.buffer.slice(span)
     }
 
+    /// 换进列表时那颗记号的来源：同一族的前后邻项写过什么就用什么（`+ ` 不被换成 `- `，
+    /// `1)` 不被换成 `1.`）；没有同族邻项就交回 `None`，用块自己记过的那份或规范形。
+    fn list_marker_for_conversion(
+        &self,
+        root: &Entity<Block>,
+        next: &BlockKind,
+        cx: &App,
+    ) -> Option<ListMarkerStyle> {
+        if !next.is_list_item() {
+            return None;
+        }
+        let layout = self.document.root_layout();
+        let index = layout.iter().position(|(id, _)| *id == root.entity_id())?;
+        for neighbour in [index.checked_sub(1), Some(index + 1)]
+            .into_iter()
+            .flatten()
+        {
+            let Some((entity_id, _)) = layout.get(neighbour) else {
+                continue;
+            };
+            let Some(entity) = self.document.block_entity_by_id(*entity_id) else {
+                continue;
+            };
+            let block = entity.read(cx);
+            let current = block.kind();
+            // 有序是一族，无序与任务是一族（`- ` 与 `- [ ] ` 共用那颗记号）。
+            let same_family = if next.is_numbered_list_item() {
+                current.is_numbered_list_item()
+            } else {
+                current.is_list_item() && !current.is_numbered_list_item()
+            };
+            if same_family {
+                return Some(block.record.list_marker);
+            }
+        }
+        None
+    }
+
+    /// 「段落」这一档某一行现在能不能点：选区里至少有一块换得动。
+    /// 菜单的置灰与命令的实际行为读同一条（[`Self::block_kind_conversion`]），
+    /// 不会出现「点了没反应」。
+    pub(crate) fn block_kind_target_is_available(&self, target: BlockKindTarget, cx: &App) -> bool {
+        if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
+            return false;
+        }
+        self.selection_root_blocks(cx)
+            .into_iter()
+            .any(|root| self.block_kind_conversion(&root, target, cx).is_some())
+    }
+
+    /// 这一块换成 `target` 后的种类；换不动（种类本就一样、是容器或结构块、
+    /// 或者换过去会把子块的缩进层数打乱）时 None。
+    ///
+    /// 带子块的项只在「换进换出都还是列表项」时才动：序列化时子块的缩进层数
+    /// 跟着父块的种类走（`collect_single_block_markdown_lines` 里 `list_depth + 1`），
+    /// 换成标题或正文会把子块写成和父块平齐的行——块树里还是父子，文件里已经是两
+    /// 个根，字节与块树就对不上了。
+    fn block_kind_conversion(
+        &self,
+        root: &Entity<Block>,
+        target: BlockKindTarget,
+        cx: &App,
+    ) -> Option<BlockKind> {
+        let block = root.read(cx);
+        let current = block.kind();
+        let next = target.next_kind(&current)?;
+        if !block.children.is_empty() && !(current.is_list_item() && next.is_list_item()) {
+            return None;
+        }
+        Some(next)
+    }
+
     /// 键盘走这里：动作只带目标级别，落到 `apply_block_kind_to_selection`。
     pub(crate) fn apply_heading_level_to_selection(&mut self, level: u8, cx: &mut Context<Self>) {
         self.apply_block_kind_to_selection(BlockKindTarget::Heading(level), cx);
@@ -229,8 +309,9 @@ impl Editor {
 impl BlockKindTarget {
     /// 这一块换过去应该变成什么种类；不该动（已经一样、或本笔还不敢碰的种类）时 None。
     ///
-    /// 引用与标注是容器：换进去要把每一行的前缀补上、换出去要把子块安置好，
-    /// 那是 FP4 的第二段；表、代码块、公式块这类原子的结构块本身就不是「一段文字」。
+    /// 引用与标注是容器：换进去要把每一行的前缀补上、换出去要把子块安置好，那是 FP4b-2；
+    /// 表、代码块、公式块这类原子的结构块本身就不是「一段文字」，换进去要带正文，
+    /// 收在 FP4b-3。
     fn next_kind(self, current: &BlockKind) -> Option<BlockKind> {
         if current.is_atomic_structural() || current.is_quote_container() {
             return None;
@@ -241,6 +322,13 @@ impl BlockKindTarget {
             }
             Self::Heading(level) => BlockKind::Heading { level },
             Self::Paragraph => BlockKind::Paragraph,
+            Self::BulletList if *current == BlockKind::BulletedListItem => BlockKind::Paragraph,
+            Self::BulletList => BlockKind::BulletedListItem,
+            Self::NumberedList if *current == BlockKind::NumberedListItem => BlockKind::Paragraph,
+            Self::NumberedList => BlockKind::NumberedListItem,
+            // 任务项再点一次是去掉复选框，回到普通无序项，不是变段落。
+            Self::TaskList if current.is_task_list_item() => BlockKind::BulletedListItem,
+            Self::TaskList => BlockKind::TaskListItem { checked: false },
         };
         (next != *current).then_some(next)
     }

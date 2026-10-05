@@ -11,9 +11,10 @@ use std::time::Duration;
 
 use super::super::{ContextMenuState, Editor};
 use crate::components::{
-    Copy, Cut, InlineFormat, Paste, Redo, ShortcutCommand, ToggleViewMode, Undo,
-    default_shortcut_key, menu::MENU_ROW_GAP,
+    default_shortcut_key, menu::MENU_ROW_GAP, Copy, Cut, InlineFormat, Paste, Redo,
+    ShortcutCommand, ToggleViewMode, Undo,
 };
+use crate::editor::paragraph_ops::BlockKindTarget;
 use crate::theme::ThemeDimensions;
 
 /// 标题那一档的行 id，按下标取用（`level` 已经在 1..=6 内）。
@@ -57,8 +58,60 @@ pub(crate) enum DocumentMenuCommand {
     Format(InlineFormat),
     Heading(u8),
     NormalText,
+    BulletList,
+    NumberedList,
+    TaskList,
     InsertTable,
     ToggleSourceView,
+}
+
+impl DocumentMenuCommand {
+    /// 这一行的元素 id 兼测试选择器。菜单的行名只在这里定一次，
+    /// 行渲染、置灰与用例点名的都是同一个名字。
+    pub(crate) fn row_name(self) -> &'static str {
+        match self {
+            Self::Undo => "undo",
+            Self::Redo => "redo",
+            Self::Cut => "cut",
+            Self::Copy => "copy",
+            Self::Paste => "paste",
+            Self::Format(InlineFormat::Bold) => "bold",
+            Self::Format(InlineFormat::Italic) => "italic",
+            Self::Format(InlineFormat::Underline) => "underline",
+            Self::Format(InlineFormat::Strikethrough) => "strikethrough",
+            Self::Format(InlineFormat::Code) => "code",
+            Self::Format(InlineFormat::Highlight) => "highlight",
+            Self::Format(InlineFormat::Superscript) => "superscript",
+            Self::Format(InlineFormat::Subscript) => "subscript",
+            Self::Heading(level) => HEADING_ROW_NAMES[(level as usize) - 1],
+            Self::NormalText => "normal-text",
+            Self::BulletList => "bullet-list",
+            Self::NumberedList => "numbered-list",
+            Self::TaskList => "task-list",
+            Self::InsertTable => "table",
+            Self::ToggleSourceView => "toggle-source-view",
+        }
+    }
+
+    /// 这一行指向的段落转换目标；格式与编辑那几行返回 None。
+    /// 选中工具栏的档位列表用它把行数据映回自己的动作。
+    pub(crate) fn as_block_target(self) -> Option<BlockKindTarget> {
+        match self {
+            Self::Heading(level) => Some(BlockKindTarget::Heading(level)),
+            Self::NormalText => Some(BlockKindTarget::Paragraph),
+            Self::BulletList => Some(BlockKindTarget::BulletList),
+            Self::NumberedList => Some(BlockKindTarget::NumberedList),
+            Self::TaskList => Some(BlockKindTarget::TaskList),
+            Self::Format(_)
+            | Self::Undo
+            | Self::Redo
+            | Self::Cut
+            | Self::Copy
+            | Self::Paste
+            | Self::InsertTable
+            | Self::ToggleSourceView => None,
+        }
+    }
 }
 
 /// 渲染用的一行：条目、二级菜单入口，或分隔线。
@@ -150,34 +203,59 @@ impl Editor {
         let selectable = self.has_text_selection(cx);
         match submenu {
             DocumentSubmenu::Format => [
-                (InlineFormat::Bold, "bold"),
-                (InlineFormat::Italic, "italic"),
-                (InlineFormat::Underline, "underline"),
-                (InlineFormat::Strikethrough, "strikethrough"),
-                (InlineFormat::Code, "code"),
-                (InlineFormat::Highlight, "highlight"),
-                (InlineFormat::Superscript, "superscript"),
-                (InlineFormat::Subscript, "subscript"),
+                InlineFormat::Bold,
+                InlineFormat::Italic,
+                InlineFormat::Underline,
+                InlineFormat::Strikethrough,
+                InlineFormat::Code,
+                InlineFormat::Highlight,
+                InlineFormat::Superscript,
+                InlineFormat::Subscript,
             ]
             .into_iter()
-            .map(|(format, name)| DocumentMenuRow::Item {
-                command: DocumentMenuCommand::Format(format),
-                name,
-                enabled: selectable && self.writes_through_the_buffer(),
+            .map(|format| {
+                let command = DocumentMenuCommand::Format(format);
+                DocumentMenuRow::Item {
+                    enabled: selectable && self.writes_through_the_buffer(),
+                    name: command.row_name(),
+                    command,
+                }
             })
             .collect(),
-            DocumentSubmenu::Paragraph => (1..=6u8)
-                .map(|level| DocumentMenuRow::Item {
-                    command: DocumentMenuCommand::Heading(level),
-                    name: HEADING_ROW_NAMES[(level as usize) - 1],
-                    enabled: self.writes_through_the_buffer(),
-                })
-                .chain(std::iter::once(DocumentMenuRow::Item {
-                    command: DocumentMenuCommand::NormalText,
-                    name: "normal-text",
-                    enabled: self.writes_through_the_buffer(),
-                }))
-                .collect(),
+            DocumentSubmenu::Paragraph => {
+                let item = |command: DocumentMenuCommand| DocumentMenuRow::Item {
+                    enabled: self.block_kind_target_is_available(
+                        command.as_block_target().expect("这一档全是段落转换"),
+                        cx,
+                    ),
+                    name: command.row_name(),
+                    command,
+                };
+                // 分节只是把「标题—正文」与「列表」两族隔开；行数据仍是同一份，
+                // 三个入口（快捷键、这里、工具栏的下拉）拿到的顺序一致。
+                [
+                    DocumentMenuCommand::Heading(1),
+                    DocumentMenuCommand::Heading(2),
+                    DocumentMenuCommand::Heading(3),
+                    DocumentMenuCommand::Heading(4),
+                    DocumentMenuCommand::Heading(5),
+                    DocumentMenuCommand::Heading(6),
+                    DocumentMenuCommand::NormalText,
+                ]
+                .into_iter()
+                .map(item)
+                .chain([DocumentMenuRow::Separator])
+                .chain(
+                    [
+                        DocumentMenuCommand::BulletList,
+                        DocumentMenuCommand::NumberedList,
+                        DocumentMenuCommand::TaskList,
+                    ]
+                    .into_iter()
+                    .map(item),
+                )
+                .collect()
+            }
             DocumentSubmenu::Insert => vec![DocumentMenuRow::Item {
                 command: DocumentMenuCommand::InsertTable,
                 name: "table",
@@ -207,13 +285,19 @@ impl Editor {
                 self.toggle_inline_format_on_selection(format, cx);
             }
             DocumentMenuCommand::Heading(level) => {
-                self.apply_heading_level_to_selection(level, cx);
+                self.apply_block_kind_to_selection(BlockKindTarget::Heading(level), cx);
             }
             DocumentMenuCommand::NormalText => {
-                self.apply_block_kind_to_selection(
-                    super::super::paragraph_ops::BlockKindTarget::Paragraph,
-                    cx,
-                );
+                self.apply_block_kind_to_selection(BlockKindTarget::Paragraph, cx);
+            }
+            DocumentMenuCommand::BulletList => {
+                self.apply_block_kind_to_selection(BlockKindTarget::BulletList, cx);
+            }
+            DocumentMenuCommand::NumberedList => {
+                self.apply_block_kind_to_selection(BlockKindTarget::NumberedList, cx);
+            }
+            DocumentMenuCommand::TaskList => {
+                self.apply_block_kind_to_selection(BlockKindTarget::TaskList, cx);
             }
             DocumentMenuCommand::ToggleSourceView => {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
@@ -306,6 +390,9 @@ pub(crate) fn document_menu_label(
             _ => strings.paragraph_heading6.clone(),
         },
         DocumentMenuCommand::NormalText => strings.paragraph_normal_text.clone(),
+        DocumentMenuCommand::BulletList => strings.paragraph_bullet_list.clone(),
+        DocumentMenuCommand::NumberedList => strings.paragraph_numbered_list.clone(),
+        DocumentMenuCommand::TaskList => strings.paragraph_task_list.clone(),
         DocumentMenuCommand::InsertTable => strings.context_menu_table.clone(),
         DocumentMenuCommand::ToggleSourceView => strings.context_menu_toggle_source_view.clone(),
     }
@@ -348,6 +435,9 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
         DocumentMenuCommand::Format(InlineFormat::Highlight)
         | DocumentMenuCommand::Heading(_)
         | DocumentMenuCommand::NormalText
+        | DocumentMenuCommand::BulletList
+        | DocumentMenuCommand::NumberedList
+        | DocumentMenuCommand::TaskList
         | DocumentMenuCommand::InsertTable => return None,
     };
     Some(SharedString::from(key_label(default_shortcut_key(

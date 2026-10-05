@@ -7,13 +7,13 @@
 use gpui::*;
 
 use super::context_menu::{
-    DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
-    document_menu_label, document_menu_shortcut,
+    document_menu_label, document_menu_shortcut, DocumentMenuCommand, DocumentMenuGeometry,
+    DocumentMenuRow, DocumentSubmenu,
 };
 use super::paragraph_ops::BlockKindTarget;
 use super::{Editor, ViewMode};
 use crate::components::HoverPreviewTooltip;
-use crate::components::{InlineFormat, menu::menu_item};
+use crate::components::{menu::menu_item, InlineFormat};
 use crate::editor::render::estimated_menu_label_width;
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
@@ -36,8 +36,8 @@ const HEADING_ARROW: &str = "\u{2304}";
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum SelectionToolbarCommand {
     Format(InlineFormat),
-    Heading(u8),
-    NormalText,
+    /// 段落那一档的转换目标：六档标题、正文与三种列表，行数据与右键菜单同一份。
+    Paragraph(BlockKindTarget),
 }
 
 /// 工具栏的现场：本帧面板（含展开的档位列表）在屏幕上的框，与档位列表是否开着。
@@ -484,17 +484,10 @@ impl Editor {
                     name,
                     enabled,
                 } => {
-                    let Some(action) = (match command {
-                        DocumentMenuCommand::Heading(level) => {
-                            Some(SelectionToolbarCommand::Heading(*level))
-                        }
-                        DocumentMenuCommand::NormalText => {
-                            Some(SelectionToolbarCommand::NormalText)
-                        }
-                        _ => None,
-                    }) else {
+                    let Some(target) = command.as_block_target() else {
                         return div().into_any_element();
                     };
+                    let action = SelectionToolbarCommand::Paragraph(target);
                     let row = menu_item(
                         theme,
                         *name,
@@ -529,12 +522,8 @@ impl Editor {
             SelectionToolbarCommand::Format(format) => {
                 self.toggle_inline_format_on_selection(format, cx);
             }
-            SelectionToolbarCommand::Heading(level) => {
-                self.apply_heading_level_to_selection(level, cx);
-                self.close_selection_toolbar_heading_menu(cx);
-            }
-            SelectionToolbarCommand::NormalText => {
-                self.apply_block_kind_to_selection(BlockKindTarget::Paragraph, cx);
+            SelectionToolbarCommand::Paragraph(target) => {
+                self.apply_block_kind_to_selection(target, cx);
                 self.close_selection_toolbar_heading_menu(cx);
             }
         }
