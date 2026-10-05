@@ -247,7 +247,7 @@ impl Editor {
                 "workspace-search-regex",
                 ".*".to_string(),
                 self.workspace.search_use_regex,
-                strings.search_regex.clone(),
+                format!("{} — {}", strings.search_regex, strings.search_regex_hint),
             ))
             .child(toggle_chip(
                 &editor,

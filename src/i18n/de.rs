@@ -186,6 +186,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) search_case_sensitive: Option<String>,
     pub(crate) search_whole_word: Option<String>,
     pub(crate) search_regex: Option<String>,
+    pub(crate) search_regex_hint: Option<String>,
     pub(crate) search_invalid_pattern: Option<String>,
     pub(crate) search_fuzzy: Option<String>,
     pub(crate) search_fuzzy_short: Option<String>,

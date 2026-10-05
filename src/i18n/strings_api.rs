@@ -206,6 +206,7 @@ impl I18nStrings {
             search_case_sensitive: "区分大小写".into(),
             search_whole_word: "全字匹配".into(),
             search_regex: "正则表达式".into(),
+            search_regex_hint: "正则可跨行：写 \\n 或 [\\s\\S]；`.` 默认不跨行，加 (?s) 才行".into(),
             search_invalid_pattern: "正则表达式有误：".into(),
             search_fuzzy: "模糊匹配（按字符顺序）".into(),
             search_fuzzy_short: "模糊".into(),
@@ -538,6 +539,8 @@ impl I18nStrings {
             search_case_sensitive: "Match Case".into(),
             search_whole_word: "Match Whole Word".into(),
             search_regex: "Use Regular Expression".into(),
+            search_regex_hint: "Patterns can span lines with \\n or [\\s\\S]; \
+                               `.` stops at a newline unless you add (?s)".into(),
             search_invalid_pattern: "Invalid regular expression: ".into(),
             search_fuzzy: "Fuzzy Match (subsequence)".into(),
             search_fuzzy_short: "Fuzzy".into(),

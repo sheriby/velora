@@ -299,6 +299,8 @@ pub struct I18nStrings {
     pub search_whole_word: String,
     /// Toggle tooltip: interpret the query as a regular expression.
     pub search_regex: String,
+    /// 正则按钮的补充说明：跨行怎么写、`.` 为什么跨不了行。
+    pub search_regex_hint: String,
     /// 搜索框下方那一行的开头，后面接匹配引擎交回的原始诊断。
     pub search_invalid_pattern: String,
     /// Toggle tooltip: fuzzy (subsequence) matching.

@@ -183,6 +183,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "search_case_sensitive",
     "search_whole_word",
     "search_regex",
+    "search_regex_hint",
     "search_invalid_pattern",
     "search_fuzzy",
     "search_fuzzy_short",
