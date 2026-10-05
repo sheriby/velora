@@ -10,3 +10,4 @@ mod search_engine;
 mod sidebar;
 mod tabs_sessions;
 mod tree_files;
+mod workspace_scan;

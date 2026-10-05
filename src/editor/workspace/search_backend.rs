@@ -271,8 +271,9 @@ pub(crate) fn search_content_cache() -> &'static std::sync::Mutex<
     CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
-/// 读取文件内容用于搜索：命中缓存（mtime 未变）零拷贝返回；未命中读盘一次
-/// 并入缓存。非 UTF-8 文件返回 None（跳过内容搜索）。
+/// 读取文件内容用于搜索：命中缓存（mtime 与长度都没变）零拷贝返回；未命中读盘
+/// 一次并入缓存。解码走 `decode_document_bytes`——UTF-8 原样、GB18030 回退、
+/// 都不行才 lossy 兜底，与文档缓冲区拿到文本的方式**同一份实现**。
 pub(crate) fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
     let metadata = fs::metadata(path).ok()?;
     if metadata.len() > SEARCH_CACHE_MAX_FILE_BYTES {
@@ -295,10 +296,12 @@ pub(crate) fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
 
     // 读盘不持锁：并行分片时不能让一把缓存锁把所有 worker 串行化。
     let bytes = fs::read(path).ok()?;
-    let contents: std::sync::Arc<str> = match String::from_utf8(bytes) {
-        Ok(text) => std::sync::Arc::from(text),
-        Err(_) => return None,
-    };
+    // 与打开文档同一个解码函数。此前这里是 `String::from_utf8(bytes)` 失败就
+    // `return None`，整个文件跳过内容搜索——中文 Windows 上的 GBK/GB18030 笔记
+    // 因此永远搜不到正文（缺陷 #5）。缓存里存的仍是解码后的 UTF-8 文本，
+    // 所以后续的字节偏移一律按解码文本算。
+    let contents: std::sync::Arc<str> =
+        std::sync::Arc::from(crate::editor::encoding::decode_document_bytes(bytes));
 
     if let Ok(mut cache) = search_content_cache().lock() {
         if let Some(existing) = cache.get(path) {
