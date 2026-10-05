@@ -1,6 +1,29 @@
 use super::*;
 use crate::editor::{SourceTargetMapping, ViewMode};
 
+/// 命中与这一块有没有交集。跨块命中要落到它盖住的**每一**块上，所以判据不是
+/// 「命中被这块包住」。零宽命中按起点归块（它没有长度，沾不到下一块）。
+pub(crate) fn hit_overlaps(hit: &Range<usize>, span: &Range<usize>) -> bool {
+    if hit.is_empty() {
+        return hit.start >= span.start && hit.start <= span.end;
+    }
+    hit.start < span.end && hit.end > span.start
+}
+
+/// 把命中裁到 `block_start..block_end` 这一段里；裁完是空段就说明这块不沾。
+/// 裁完仍可能是零宽（命中本来就零宽且落在块内）。
+pub(crate) fn clip_hit_to_span(
+    hit: &Range<usize>,
+    block_start: usize,
+    block_end: usize,
+) -> Option<Range<usize>> {
+    let clipped = hit.start.max(block_start)..hit.end.min(block_end);
+    if clipped.is_empty() && !hit.is_empty() {
+        return None;
+    }
+    Some(clipped)
+}
+
 impl Editor {
     /// Opens a welcome-page recent entry: folders replace the working set,
     /// files open as a tab in this window.
@@ -42,15 +65,16 @@ impl Editor {
 
         match self.view_mode {
             ViewMode::Rendered => {
-                // 只为**有命中的那一根块**重建它自己的映射：没命中的块连换算都不需要，
-                // 整篇重拼 source mapping 是白付的 O(文档)。
+                // 只为**与本块有交集的那根块**重建它自己的映射：没沾到命中的块连换算
+                // 都不需要，整篇重拼 source mapping 是白付的 O(文档)。
+                // 判据是「有交集」而不是「被包住」——跨块命中要落到它盖住的每一根块上。
                 for root in self.document.root_blocks().to_vec() {
                     let Some(span) = self.document.source_span_of(root.entity_id()) else {
                         continue;
                     };
                     let hits: Vec<Range<usize>> = all_hits
                         .iter()
-                        .filter(|range| range.start >= span.start && range.end <= span.end)
+                        .filter(|range| hit_overlaps(range, &span))
                         .cloned()
                         .collect();
                     if hits.is_empty() {
@@ -83,10 +107,7 @@ impl Editor {
                 for mapping in &mappings {
                     let hits: Vec<Range<usize>> = all_hits
                         .iter()
-                        .filter(|range| {
-                            range.start >= mapping.full_source_range.start
-                                && range.end <= mapping.full_source_range.end
-                        })
+                        .filter(|range| hit_overlaps(range, &mapping.full_source_range))
                         .cloned()
                         .collect();
                     let Some((ranges, active_local)) =
@@ -109,6 +130,9 @@ impl Editor {
     }
 
     /// 把绝对的命中字节区间换算成这一块上的显示区间；没有落在这块里的命中就 `None`。
+    ///
+    /// 跨块命中在这里**按块裁段**：一块只拿到属于它那截，另一端落在别的块上的部分
+    /// 由那一根块负责。旧写法是「命中必须整条被这块包住」，于是跨块命中一块都不画。
     fn search_ranges_for_hits(
         mapping: &SourceTargetMapping,
         hits: &[Range<usize>],
@@ -119,11 +143,11 @@ impl Editor {
         let block_end = mapping.full_source_range.end;
         let mut ranges = Vec::new();
         for hit in hits {
-            if hit.start < block_start || hit.end > block_end {
+            let Some(clipped) = clip_hit_to_span(hit, block_start, block_end) else {
                 continue;
-            }
-            let local_start = hit.start - block_start;
-            let local_end = hit.end - block_start;
+            };
+            let local_start = clipped.start - block_start;
+            let local_end = clipped.end - block_start;
             if local_end >= mapping.source_to_content.len() {
                 continue;
             }
@@ -143,21 +167,21 @@ impl Editor {
         if ranges.is_empty() {
             return None;
         }
-        let active_local = active_range.as_ref().and_then(|active| {
-            if block_start > active.start || active.end > block_end {
-                return None;
-            }
-            let local = |offset: usize| {
-                let index = offset - block_start;
-                mapping.source_to_content[index.min(mapping.source_to_content.len() - 1)]
-            };
-            let content = local(active.start)..local(active.end);
-            let converted = mapping
-                .entity
-                .read(cx)
-                .markdown_range_to_current_range(content);
-            (!converted.is_empty()).then_some(converted)
-        });
+        let active_local = active_range
+            .as_ref()
+            .and_then(|active| clip_hit_to_span(active, block_start, block_end))
+            .and_then(|clipped| {
+                let local = |offset: usize| {
+                    let index = offset - block_start;
+                    mapping.source_to_content[index.min(mapping.source_to_content.len() - 1)]
+                };
+                let content = local(clipped.start)..local(clipped.end);
+                let converted = mapping
+                    .entity
+                    .read(cx)
+                    .markdown_range_to_current_range(content);
+                (!converted.is_empty()).then_some(converted)
+            });
         Some((ranges, active_local))
     }
 
