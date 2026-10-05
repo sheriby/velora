@@ -1,5 +1,5 @@
     use super::{
-        AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
+        AiPreferences, AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
         StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
         WritingWidthPreference,
@@ -341,6 +341,7 @@
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::Center,
+            ai: crate::config::preferences::AiPreferences::default(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -463,6 +464,7 @@
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::default(),
+            ai: crate::config::preferences::AiPreferences::default(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -803,4 +805,77 @@
                     .has_unsaved_changes())
                 .expect("preferences window should remain updateable")
         );
+    }
+
+    #[test]
+    fn ai_preferences_round_trip_through_config_file() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-ai-prefs-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        let mut preferences = AppPreferences::default();
+        preferences.ai = AiPreferences {
+            provider_id: "deepseek".into(),
+            api_base_url: "https://api.deepseek.com/v1".into(),
+            api_key: "sk-test".into(),
+            model: "deepseek-chat".into(),
+            translate_target: "en".into(),
+        };
+
+        save_app_preferences_with_dirs(&preferences, &dirs)
+            .expect("preferences should save to config.toml");
+        let loaded = read_app_preferences_with_dirs(&dirs).expect("preferences should read back");
+        assert_eq!(loaded.ai, preferences.ai);
+        assert!(loaded.ai.is_configured());
+        assert_eq!(loaded.ai.translate_target(), "en");
+
+        let text =
+            std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
+        assert!(text.contains("[ai]"));
+        assert!(text.contains("provider_id = \"deepseek\""));
+        assert!(text.contains("model = \"deepseek-chat\""));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_ai_section_reads_as_unconfigured() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-ai-prefs-legacy-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        std::fs::create_dir_all(root.clone()).expect("create root");
+        std::fs::write(
+            dirs.app_config_file(),
+            "preferences_version = 3\n\n[editor]\nautosave = true\n",
+        )
+        .expect("write legacy config");
+
+        let loaded = read_app_preferences_with_dirs(&dirs).expect("legacy config should read");
+        assert_eq!(loaded.ai, AiPreferences::default());
+        assert!(!loaded.ai.is_configured(), "缺 [ai] 段 = 未配置");
+        // translate_target 为空时按「跟随界面」解释。
+        assert_eq!(
+            loaded.ai.translate_target(),
+            super::AUTO_TRANSLATE_TARGET
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    async fn editor_settings_ai_getter_setter_round_trip(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        cx.update(|cx| {
+            let configured = AiPreferences {
+                provider_id: "custom".into(),
+                api_base_url: "http://127.0.0.1:11434/v1".into(),
+                api_key: "key".into(),
+                model: "llama3.1".into(),
+                translate_target: super::AUTO_TRANSLATE_TARGET.into(),
+            };
+            EditorSettings::set_ai(cx, configured.clone());
+            assert_eq!(EditorSettings::ai(cx), configured);
+            assert!(EditorSettings::ai(cx).is_configured());
+        });
     }

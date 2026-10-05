@@ -10,6 +10,7 @@ pub(crate) struct PreferencesFile {
     editor: EditorPreferencesFile,
     status_bar: StatusBarPreferencesFile,
     window: WindowPreferencesFile,
+    ai: AiPreferencesFile,
     keybindings: BTreeMap<String, Vec<String>>,
 }
 
@@ -105,6 +106,39 @@ struct StatusBarPreferencesFile {
     custom_buttons: Vec<StatusBarButton>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct AiPreferencesFile {
+    provider_id: String,
+    api_base_url: String,
+    api_key: String,
+    model: String,
+    translate_target: String,
+}
+
+impl From<&AiPreferences> for AiPreferencesFile {
+    fn from(value: &AiPreferences) -> Self {
+        Self {
+            provider_id: value.provider_id.clone(),
+            api_base_url: value.api_base_url.clone(),
+            api_key: value.api_key.clone(),
+            model: value.model.clone(),
+            translate_target: value.translate_target.clone(),
+        }
+    }
+}
+
+impl From<AiPreferencesFile> for AiPreferences {
+    fn from(value: AiPreferencesFile) -> Self {
+        Self {
+            provider_id: value.provider_id,
+            api_base_url: value.api_base_url,
+            api_key: value.api_key,
+            model: value.model,
+            translate_target: value.translate_target,
+        }
+    }
+}
+
 impl From<&StatusBarPreferences> for StatusBarPreferencesFile {
     fn from(value: &StatusBarPreferences) -> Self {
         Self {
@@ -160,6 +194,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 default_window_width: value.default_window_width,
                 default_window_height: value.default_window_height,
             },
+            ai: AiPreferencesFile::from(&value.ai),
             keybindings: normalize_shortcut_config(&value.keybindings),
         }
     }
@@ -493,6 +528,26 @@ pub(crate) fn app_preferences_from_toml_value(
         })
         .filter(|frame| frame.width > 200 && frame.height > 200);
 
+    // [ai] 段在旧版本配置里不存在:整段缺省 = 未配置,面板会引导去设置页。
+    let ai = value
+        .get("ai")
+        .map(|ai| {
+            let field = |key: &str| {
+                ai.get(key)
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            AiPreferences {
+                provider_id: field("provider_id"),
+                api_base_url: field("api_base_url"),
+                api_key: field("api_key"),
+                model: field("model"),
+                translate_target: field("translate_target"),
+            }
+        })
+        .unwrap_or_default();
+
     AppPreferences {
         startup_open,
         default_language_id,
@@ -515,6 +570,7 @@ pub(crate) fn app_preferences_from_toml_value(
         remember_window_bounds,
         window_frame,
         window_open_position,
+        ai,
         zoom_percent,
         default_window_width,
         default_window_height,

@@ -306,6 +306,41 @@ impl ExportThemePreference {
     }
 }
 
+/// AI 助手的服务端配置(OpenAI 兼容「地址/密钥/模型」三元组)。
+///
+/// 三项全非空才算已配置;`provider_id` 记录设置页选的预设(「自定义」时
+/// 三项全部手填),`translate_target` 是翻译动作的默认目标语言
+/// (`AUTO_TRANSLATE_TARGET` = 跟随界面语言)。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AiPreferences {
+    pub(crate) provider_id: String,
+    pub(crate) api_base_url: String,
+    pub(crate) api_key: String,
+    pub(crate) model: String,
+    pub(crate) translate_target: String,
+}
+
+/// 翻译默认目标:「跟随界面语言」。
+pub(crate) const AUTO_TRANSLATE_TARGET: &str = "auto";
+
+impl AiPreferences {
+    /// 三元组齐全才能发起请求;缺任何一项都引导去设置页补齐。
+    pub(crate) fn is_configured(&self) -> bool {
+        !self.api_base_url.trim().is_empty()
+            && !self.api_key.trim().is_empty()
+            && !self.model.trim().is_empty()
+    }
+
+    /// 翻译默认目标:`auto` 表示跟随界面语言。
+    pub(crate) fn translate_target(&self) -> &str {
+        if self.translate_target.trim().is_empty() {
+            AUTO_TRANSLATE_TARGET
+        } else {
+            self.translate_target.trim()
+        }
+    }
+}
+
 /// Last window frame (logical pixels) persisted across launches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WindowFrame {
@@ -348,6 +383,8 @@ pub(crate) struct AppPreferences {
     pub(crate) window_frame: Option<WindowFrame>,
     /// 新窗口打开位置（roadmap A2 报修补齐的设置项）。
     pub(crate) window_open_position: WindowOpenPosition,
+    /// AI 助手的服务端配置（OpenAI 兼容三元组 + 翻译默认目标）。
+    pub(crate) ai: AiPreferences,
     /// Session-wide text zoom in percent (60..=200).
     pub(crate) zoom_percent: i64,
     /// Default window width when no remembered frame applies.
@@ -380,6 +417,7 @@ impl Default for AppPreferences {
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::default(),
+            ai: AiPreferences::default(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -416,6 +454,7 @@ pub struct EditorSettings {
     default_window_width: i64,
     default_window_height: i64,
     window_open_position: WindowOpenPosition,
+    ai: AiPreferences,
 }
 
 impl Global for EditorSettings {}
@@ -541,6 +580,15 @@ impl EditorSettings {
                     .map(|preferences| preferences.external_change_policy)
             })
             .unwrap_or_default();
+        let ai = cx
+            .try_global::<Self>()
+            .map(|settings| settings.ai.clone())
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.ai)
+            })
+            .unwrap_or_default();
         let delete_policy = cx
             .try_global::<Self>()
             .map(|settings| settings.delete_policy)
@@ -566,6 +614,7 @@ impl EditorSettings {
             default_window_width,
             default_window_height,
             window_open_position,
+            ai,
             status_bar_settings: StatusBarSettings {
                 status_bar_enabled: status_bar.enabled,
                 status_bar_show_word_count: status_bar.show_word_count,
@@ -744,6 +793,23 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.delete_policy)
             .unwrap_or_default()
+    }
+
+    /// AI 助手的服务端配置；全局未安装时回退磁盘/默认值。
+    pub(crate) fn ai(cx: &App) -> AiPreferences {
+        cx.try_global::<Self>()
+            .map(|settings| settings.ai.clone())
+            .unwrap_or_default()
+    }
+
+    /// 整组替换 AI 配置并落盘（设置页保存、面板「去配置」共用）。
+    pub(crate) fn set_ai(cx: &mut App, ai: AiPreferences) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.ai = ai.clone());
+        }
+        if let Err(error) = update_app_preferences(|preferences| preferences.ai = ai) {
+            eprintln!("failed to save AI preferences: {error}");
+        }
     }
 
     pub(crate) fn set_delete_policy(cx: &mut App, policy: DeletePolicy) {
