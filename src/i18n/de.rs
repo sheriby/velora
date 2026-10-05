@@ -72,6 +72,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) save_failed_title: Option<String>,
     pub(crate) external_change_title: Option<String>,
     pub(crate) external_change_message: Option<String>,
+    pub(crate) external_change_reload: Option<String>,
+    pub(crate) external_change_save_as: Option<String>,
     pub(crate) export_failed_title: Option<String>,
     pub(crate) image_paste_failed_title: Option<String>,
     pub(crate) config_import_failed_title: Option<String>,

@@ -261,8 +261,55 @@ impl Editor {
         detail: String,
         cx: &mut Context<Self>,
     ) {
-        self.workspace.external_change_conflict = Some((path, detail.clone()));
+        self.workspace.external_change_conflict = Some((path.clone(), detail.clone()));
         self.report_workspace_file_error(detail, cx);
+        // 只留一条红字是不够的：这一篇既不能继续写（会盖掉外部改动），用户又不知道
+        // 该干什么。冲突一被记下就给一个能解除它的框（用户需求：重载 / 另存为）。
+        self.show_external_change_conflict_modal(path, cx);
+    }
+
+    /// 外部改动冲突的解除入口。「重载」放弃本地编辑（先存恢复快照），「另存为」
+    /// 保住当前内容写到别处；Esc /「继续编辑」什么都不做，冲突状态留着，
+    /// 于是自动保存继续暂停、红字继续在。
+    pub(crate) fn show_external_change_conflict_modal(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+        self.show_modal(
+            ModalSpec {
+                title: strings.external_change_title.clone().into(),
+                detail: Some(
+                    format!("{}\n\n{}", strings.external_change_message, path.display()).into(),
+                ),
+                buttons: vec![
+                    strings.external_change_reload.clone().into(),
+                    strings.external_change_save_as.clone().into(),
+                    strings.unsaved_changes_cancel.clone().into(),
+                ],
+                default_index: 0,
+                cancel_index: 2,
+            },
+            move |choice, editor, window, cx| match choice {
+                0 => editor.reload_conflicted_document(&path, cx),
+                1 => {
+                    // 另存为作用于活动文档：冲突在后台标签上时先把它切到台前，
+                    // 否则存出去的是另一篇。
+                    if editor.file_path.as_deref() != Some(&path) {
+                        editor.open_workspace_file_in_mode(
+                            path.clone(),
+                            WorkspaceOpenMode::Activate,
+                            window,
+                            cx,
+                        );
+                    }
+                    editor.request_save_document_as(cx);
+                }
+                _ => {}
+            },
+            cx,
+        );
     }
 
     /// 清空工作区错误提示；外部修改冲突未解决时保留提示。

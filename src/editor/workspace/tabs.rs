@@ -37,7 +37,6 @@ impl Editor {
         path: &Path,
         cx: &mut Context<Self>,
     ) {
-        let is_active = self.file_path.as_deref() == Some(path);
         let Some((cached_markdown, dirty)) = self.cached_tab_content_for_path(path, cx) else {
             return;
         };
@@ -54,13 +53,60 @@ impl Editor {
         let Ok(document) = crate::editor::encoding::load_document(path) else {
             return;
         };
-        let disk = document.text;
+        let disk = &document.text;
         // 标签缓存与缓冲区一样存 LF 文本，磁盘上的 CRLF 不是「外部改动」：按规范化
         // 后的版本号比，否则每次监听事件都会把干净文件当成被改了，重新导入一遍。
-        let disk_version = crate::editor::persistence::file_content_version(&disk);
+        let disk_version = crate::editor::persistence::file_content_version(disk);
         if disk_version == crate::editor::persistence::file_content_version(&cached_markdown) {
             return;
         }
+        self.apply_disk_reload(path, document, disk_version, cx);
+        cx.notify();
+    }
+
+    /// 冲突框里按「重载」：放弃本地编辑、读回磁盘那一版。放弃之前先把当前内容
+    /// 写成恢复快照——按下这个按钮不该丢字。
+    pub(crate) fn reload_conflicted_document(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.stash_local_content_for_recovery(path);
+        let Ok(document) = crate::editor::encoding::load_document(path) else {
+            self.workspace.file_error = Some(format!("无法读取：{}", path.display()));
+            cx.notify();
+            return;
+        };
+        let disk_version = crate::editor::persistence::file_content_version(&document.text);
+        self.apply_disk_reload(path, document, disk_version, cx);
+        // 内容与磁盘一致了：脏标记与版本号都要跟上记账，否则圆点继续亮着，
+        // 而下一次自动保存又会拿旧的版本号去校验新内容。
+        if let Some(tab) = self
+            .workspace
+            .open_documents
+            .iter_mut()
+            .find(|tab| tab.path == path)
+        {
+            tab.dirty = false;
+        }
+        if self.file_path.as_deref() == Some(path) {
+            self.file_version = Some(disk_version);
+            self.document_dirty = false;
+            self.pending_window_edited = false;
+            self.pending_window_unedited = true;
+            self.pending_window_title_refresh = true;
+        }
+        self.clear_external_change_conflict_for(path);
+        cx.notify();
+    }
+
+    /// 把刚读到的磁盘内容交还给这一篇：标签缓存、块树与原始字节一起换。
+    /// 干净重载与「冲突后选重载」共用这一处，区别只在调用方要不要跳过脏检查。
+    fn apply_disk_reload(
+        &mut self,
+        path: &Path,
+        document: crate::editor::encoding::LoadedDocument,
+        disk_version: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let is_active = self.file_path.as_deref() == Some(path);
+        let disk = document.text;
         if let Some(tab) = self
             .workspace
             .open_documents
@@ -83,7 +129,31 @@ impl Editor {
             // 的第一次保存就把 CRLF/GB18030 全文件洗成 LF/UTF-8。
             self.attach_file_origin(document.raw);
         }
-        cx.notify();
+    }
+
+    /// 这一篇当前的内容（活动文档或后台标签）先落一份恢复快照。
+    fn stash_local_content_for_recovery(&self, path: &Path) {
+        let (markdown, id) = if self.file_path.as_deref() == Some(path) {
+            (self.document_text_for_save(), self.recovery_id)
+        } else {
+            let Some(tab) = self
+                .workspace
+                .open_documents
+                .iter()
+                .find(|tab| tab.path == path)
+            else {
+                return;
+            };
+            (tab.markdown.clone(), tab.recovery_id)
+        };
+        let snapshot = crate::config::RecoverySnapshot {
+            id,
+            source_path: Some(path.to_path_buf()),
+            markdown,
+        };
+        if let Err(error) = crate::config::save_recovery_snapshot(&snapshot) {
+            eprintln!("failed to stash the discarded edits: {error}");
+        }
     }
 
     /// Cached markdown + dirty state for an open document path (watcher).

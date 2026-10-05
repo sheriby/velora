@@ -316,10 +316,10 @@ impl Editor {
                     })
                     .ok()
                     .flatten();
+                // 外部改动冲突的框由 `report_external_change_conflict` 那侧出（带
+                // 「重载 / 另存为」的解除入口），这里只补其它写盘失败的提示。
                 if let (Some(window_handle), Some(detail)) = (window_handle, conflict_detail) {
-                    if detail.starts_with("检测到外部修改") {
-                        Self::show_external_change_error(window_handle, detail, cx);
-                    } else {
+                    if !detail.starts_with("检测到外部修改") {
                         Self::show_workspace_save_error(window_handle, detail, cx);
                     }
                 }
@@ -580,8 +580,9 @@ impl Editor {
             // 应用内模态，不用系统原生弹窗（用户要求）。
             if detail.starts_with("检测到外部修改") {
                 self.report_workspace_file_error(detail.clone(), cx);
-                let message = format!("{}\n\n{}", strings.external_change_message, path.display());
-                self.show_message_modal(strings.external_change_title.clone(), message, cx);
+                // 手动保存撞上的冲突与自动保存撞上的同一个问题，给同一个解除入口
+                // （重载 / 另存为），不再只有一块「好」按钮。
+                self.show_external_change_conflict_modal(path.to_path_buf(), cx);
             } else {
                 self.show_message_modal(strings.save_failed_title.clone(), detail.clone(), cx);
             }

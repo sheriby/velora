@@ -197,6 +197,12 @@ Workspace (src/editor/workspace.rs)
   标记还原——它就记在缓冲区的 `FileShape` 里。
 - **原子写**：`write_atomic` = 同目录临时文件 + `sync_all` + `rename`。
 - **外部修改检测**：`file_content_version`（规范化文本 DefaultHasher）；手动保存与 autosave 前 `verify_file_version` 重读比对，不一致则报「外部修改」。
+  冲突有两个解除入口，都由 `show_external_change_conflict_modal`（src/editor/workspace/documents.rs:274）出：`report_external_change_conflict`
+  记下冲突时（自动保存撞上）与 `save_to_existing_path` 拒绝写盘时（⌘S 撞上）。三位按钮是「重载磁盘版本 / 另存为… / 继续编辑」，
+  默认位是重载、cancel 位是继续编辑（Esc 与点遮罩走它，什么都不做——冲突留着、自动保存继续停摆，红字也留着）。「重载」=
+  `reload_conflicted_document`（src/editor/workspace/tabs.rs:69）先把当前内容 `stash_local_content_for_recovery` 进恢复快照再
+  `apply_disk_reload`，并把脏标记与版本号按「内容与磁盘一致」重新记账；「另存为」= 冲突在后台标签时先 `Activate` 过来，再
+  `request_save_document_as`。自动保存失败那一侧不再补出只有「好」按钮的提示框（同一件事弹两次）。
 - **Autosave**：`schedule_autosave` 防抖后台任务（默认 800ms，`[editor] autosave_debounce_ms`）；IME 组合中跳过；后台写恢复快照 + 临时文件，回主线程校对 revision 后落盘。
   `[editor] autosave = false`（默认 true）只关掉**落盘那一半**：`PendingAutosaveDocument.temp_path` 置 `None`，恢复快照照写、`verify_file_version` 照跑，
   于是真文件不动而外部改动仍会被发现；末尾 rename 循环本就按 `temp_path` 跳过，脏标记因此不会清（标签上的圆点继续亮）。关掉的不是检测，检测与写入是两件事。

@@ -141,6 +141,10 @@ pub struct I18nStrings {
     pub external_change_title: String,
     /// Message shown when a file changes outside the app.
     pub external_change_message: String,
+    /// 外部改动冲突框：放弃本地编辑、读回磁盘那一版。
+    pub external_change_reload: String,
+    /// 外部改动冲突框：把当前编辑内容另存到新路径。
+    pub external_change_save_as: String,
     /// Title of the export failure prompt.
     pub export_failed_title: String,
     /// Title of the image-paste failure prompt.

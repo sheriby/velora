@@ -161,6 +161,12 @@ impl I18nStringsDe {
             external_change_message: self
                 .external_change_message
                 .unwrap_or(defaults.external_change_message),
+            external_change_reload: self
+                .external_change_reload
+                .unwrap_or(defaults.external_change_reload),
+            external_change_save_as: self
+                .external_change_save_as
+                .unwrap_or(defaults.external_change_save_as),
             export_failed_title: self
                 .export_failed_title
                 .unwrap_or(defaults.export_failed_title),

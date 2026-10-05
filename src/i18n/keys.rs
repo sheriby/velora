@@ -69,6 +69,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "save_failed_title",
     "external_change_title",
     "external_change_message",
+    "external_change_reload",
+    "external_change_save_as",
     "export_failed_title",
     "image_paste_failed_title",
     "config_import_failed_title",
