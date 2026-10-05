@@ -168,8 +168,16 @@ pub(crate) fn fuzzy_subsequence_ranges(line: &str, query: &str) -> Vec<Range<usi
     let positions: Vec<(usize, char)> = line.char_indices().collect();
     let mut ranges = Vec::new();
     for start_index in 0..positions.len() {
-        let mut query_index = 0usize;
-        let mut cursor = start_index;
+        // 起点必须真的命中查询首字符：以前从这里往后扫到能补全子序列就算命中，
+        // 区间会从没参与匹配的字符开始（用户报修：模糊模式下高亮落在命中词
+        // 前面的字上）。
+        let (start_offset, start_char) = positions[start_index];
+        let folded_start = start_char.to_lowercase().next().unwrap_or(start_char);
+        if folded_start != query_chars[0] {
+            continue;
+        }
+        let mut query_index = 1usize;
+        let mut cursor = start_index + 1;
         while cursor < positions.len() && query_index < query_chars.len() {
             let (_, line_char) = positions[cursor];
             let folded = line_char.to_lowercase().next().unwrap_or(line_char);
@@ -179,12 +187,11 @@ pub(crate) fn fuzzy_subsequence_ranges(line: &str, query: &str) -> Vec<Range<usi
             cursor += 1;
         }
         if query_index == query_chars.len() {
-            let start = positions[start_index].0;
             let end = positions
                 .get(cursor)
                 .map(|(offset, _)| *offset)
                 .unwrap_or(line.len());
-            ranges.push(start..end);
+            ranges.push(start_offset..end);
         }
     }
     ranges

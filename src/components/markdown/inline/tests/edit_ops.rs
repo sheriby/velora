@@ -56,10 +56,9 @@
         );
 
         assert_eq!(result.tree.visible_text(), "alpha**`<u>x</u>`**");
-        assert_eq!(
-            result.tree.serialize_markdown(),
-            "alpha\\*\\*\\`\\<u>x\\</u>\\`\\*\\*"
-        );
+        // raw 编辑路径（代码块/raw 块）的文本就是源码本身：序列化原样写回，
+        // 不加转义——这些块重读时不走行内 markdown 解析，记号保持字面。
+        assert_eq!(result.tree.serialize_markdown(), "alpha**`<u>x</u>`**");
     }
 
     #[test]
@@ -139,7 +138,8 @@
     fn unmatched_strikethrough_markers_stay_literal() {
         let tree = InlineTextTree::from_markdown("~~text");
         assert_eq!(tree.visible_text(), "~~text");
-        assert_eq!(tree.serialize_markdown(), "\\~\\~text");
+        // 序列化保真：未配对的删除线记号原样写回（重读还是字面）。
+        assert_eq!(tree.serialize_markdown(), "~~text");
     }
 
     #[test]
@@ -590,7 +590,8 @@
     fn unclosed_backtick_is_literal() {
         let tree = InlineTextTree::from_markdown("a `b");
         assert_eq!(tree.visible_text(), "a `b");
-        assert_eq!(tree.serialize_markdown(), "a \\`b");
+        // 序列化保真：未闭合的反引号原样写回（重读还是字面，写法不许被洗）。
+        assert_eq!(tree.serialize_markdown(), "a `b");
     }
 
     #[test]
@@ -875,9 +876,13 @@
             format!("a{}b", backslashes(1))
         );
         assert_eq!(InlineTextTree::from_markdown("\\*b").visible_text(), "*b");
-        // 写回源文件时每个可见反斜杠转义一次
+        // 写回源文件：只有会被重读吃掉的反斜杠才转义（`\\` 后面的第一个 `\`
+        // 要保护，第二个后面跟普通字符就原样）。整体重读必须还原出两个反斜杠。
+        let written = visible(&format!("a{}b", backslashes(2))).serialize_markdown();
+        assert_eq!(written, format!("a{}b", backslashes(3)));
         assert_eq!(
-            visible(&format!("a{}b", backslashes(2))).serialize_markdown(),
-            format!("a{}b", backslashes(4))
+            InlineTextTree::from_markdown(&written).visible_text(),
+            format!("a{}b", backslashes(2)),
+            "写回再重读，用户敲的反斜杠一个不能少"
         );
     }

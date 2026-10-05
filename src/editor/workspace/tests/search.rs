@@ -1144,3 +1144,153 @@ async fn same_file_workspace_hit_jumps_by_the_file_line(cx: &mut TestAppContext)
         );
     });
 }
+
+/// 回归（用户报修 2026-10-05）：点击搜索结果跳转后，活动高亮落在命中词
+/// 前面的字上（截图：绿块盖住「（含测试）」的「含」，真正的命中没高亮）。
+/// 既有测试只守「buffer 区间 == 命中词」「选区 == 活动区间」——换算到块
+/// 显示文本这一步整体偏移时它们照样全绿。这条直接断言：每个块上高亮/
+/// 活动区间在显示文本里切出来的必须是命中词。结构复刻
+/// docs/architecture/overview.md：第 5 行是带 5 个内联链接的引用行，
+/// 第 9 行段落里是「（含测试）」。
+#[gpui::test]
+async fn workspace_hit_highlight_covers_the_match_text_in_the_block(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-hit-highlight-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("overview.md");
+    let source = concat!(
+        "# Velora Architecture Overview（总览）\n",
+        "\n",
+        "> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-09-30 随「巨型文件拆分」重构更新模块地图。**docs/ 下的历史文档可能过期，以本目录 + 代码为准。**\n",
+        "> 行号会漂移，函数名不会——引用以 `文件:函数名` 为主。\n",
+        "> 分册：[editor-core.md](./editor-core.md)（文档模型/编辑/undo/持久化） · [render-pipeline.md](./render-pipeline.md)（渲染/虚拟化/缓存） · [workspace-ui.md](./workspace-ui.md)（工作区/配置/主题/命令） · [testing-and-build.md](./testing-and-build.md)（测试/基准/构建/vendored 补丁） · [performance.md](./performance.md)（性能基线与优化台账）\n",
+        "\n",
+        "## Velora 是什么\n",
+        "\n",
+        "原生 Markdown 编辑器（对标 Typora/Obsidian），Rust + **vendored GPUI 0.2.2**（`[patch.crates-io]` 指向 `vendor/gpui`，带 5 组本地补丁，见 testing-and-build.md §6）。单 bin crate（~95k 行（含测试），`src/main.rs`），无 workspace。发版 macOS + Windows（交叉编译 `releasewin`）。\n",
+        "\n",
+        "### 文件组织约定（2026-09-30 重构后）\n",
+        "\n",
+        "除两个已声明的例外（`editor/render/paint.rs` 的单函数 `Render::render`、`block/render/paint_parts.rs` 的单函数 `Element::paint`），**所有源文件 ≤1000 行**。大模块一律按「`foo.rs` 根 + `foo/` 子目录」拆分：根放类型定义与模块声明，子文件按职责承载 `impl` 块；测试统一放 `<name>/tests.rs` 或 `<name>/tests/` 子目录（`mod tests;` 挂载），不再内联在源文件尾部。跨子模块共享的自由函数在根以 `pub(super) use child::*` 聚合导出。\n",
+    );
+    fs::write(&path, source).expect("write fixture");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let document = crate::editor::encoding::load_document(&path).expect("read fixture");
+    let open_path = path.clone();
+    let (editor, cx) =
+        cx.add_window_view(move |_, cx| Editor::from_loaded_document(cx, document, Some(open_path)));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "测试".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+
+    // 点第 5 行（引用分册行）的命中——真实报修场景。
+    let hit_index = editor.read_with(cx, |editor, _cx| {
+        editor
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.line == Some(5))
+            .expect("第 5 行的命中应在结果里")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(hit_index, window, cx)
+        });
+    });
+    cx.run_until_parked();
+    for _ in 0..8 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+
+    editor.read_with(cx, |editor, cx| {
+        let active = editor
+            .workspace
+            .document_active_range
+            .clone()
+            .expect("跳转后应有活动命中区间");
+        assert_eq!(
+            editor.buffer.slice(active),
+            "测试",
+            "活动命中区间必须恰好是命中词"
+        );
+
+        let mut checked = 0usize;
+        for visible in editor.document.visible_blocks() {
+            let block = visible.entity.read(cx);
+            let text = block.display_text();
+            let ranges = block
+                .search_highlight_ranges
+                .iter()
+                .map(|range| ("highlight", range.clone()))
+                .chain(
+                    block
+                        .search_active_range
+                        .iter()
+                        .map(|range| ("active", range.clone())),
+                );
+            for (label, range) in ranges {
+                checked += 1;
+                let sliced = text.get(range.clone());
+                assert_eq!(
+                    sliced.as_deref(),
+                    Some("测试"),
+                    "{label} 高亮错位：range={range:?}，块显示文本={text:?}"
+                );
+            }
+        }
+        assert!(checked > 0, "至少应有一个块带高亮");
+
+        // 诊断：扫描段落块 markdown→current 偏移表，找整体偏移的起点。
+        for visible in editor.document.visible_blocks() {
+            let block = visible.entity.read(cx);
+            if !block.display_text().starts_with("原生 Markdown") {
+                continue;
+            }
+            let map = block.record.title.markdown_offset_map();
+            let md = map.markdown().to_string();
+            eprintln!(
+                "[SWEEP] markdown={md:?}\n[SWEEP] visible={:?}",
+                block.display_text()
+            );
+            let mut shift_start = None;
+            let mut last_shift = 0i64;
+            for offset in 0..=md.len() {
+                let current = block.markdown_range_to_current_range(offset..offset).start;
+                let expected = offset as i64 - 8; // 前缀共剥掉 8 字节记号
+                let shift = current as i64 - expected;
+                if shift != last_shift {
+                    eprintln!(
+                        "[SWEEP] md={offset} ({:?}) current={current} shift={shift}",
+                        md.get(offset.saturating_sub(6)..offset + 6)
+                    );
+                    last_shift = shift;
+                    if shift_start.is_none() && offset > 0 {
+                        shift_start = Some(offset);
+                    }
+                }
+            }
+        }
+    });
+}

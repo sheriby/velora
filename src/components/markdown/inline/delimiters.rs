@@ -222,51 +222,48 @@ pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> 
     }
 }
 
-/// 序列化器在普通文字段里会转义的那些字符。「序列化会转义」与「重新解析时必须当字面
-/// 读」是同一条知识的两面（`flatten_tokens` 用它），所以只能有一处定义。
-pub(crate) fn is_escaped_by_serializer(ch: char) -> bool {
-    matches!(ch, '\\' | '*' | '_' | '~' | '^' | '`')
+/// 序列化只在 `escaped` 标出的位置写反斜杠——那些是**源码本就带着**的转义
+/// （可见文本里「源码用反斜杠换来的字面记号」的字节偏移，升序）。
+///
+/// 缓冲区是事实源：未编辑块的序列化必须逐字节还原用户写法，裸的 `*`/`~`/`_`
+/// 不许被洗成 `\*`/`\~`/`\_`——多出的反斜杠会让「块 markdown ↔ 缓冲区字节」
+/// 的对齐整体漂移（搜索高亮、选区落点全部错位，用户报修）。重新解析同一段
+/// 原文得到的仍是同一棵树：当时的定界符读法就是原文的读法。用户新敲的字面
+/// 记号同理保持原样（仍是语法候选，补齐配对才成强调）。
+/// 裸反斜杠写回时是否要转义成 `\\`：只有当后面跟着的字符能开启一次转义
+/// （重新解析会把这个反斜杠吃掉，用户的 `\\` 缩成 `\`、`\*` 丢星号）才需要。
+/// `C:\Users`、`a\b` 这类后面跟普通字符的反斜杠保持原样，字节不动。
+/// 片段末尾的反斜杠看不见下一个片段的首字符（链接的 `[`、别的片段的 `*`），
+/// 保守起见转义。
+fn backslash_needs_escape(text: &str, index: usize) -> bool {
+    let rest = &text[index + 1..];
+    match rest.chars().next() {
+        None => true,
+        Some('\\' | '*' | '_' | '~' | '[' | ']' | '`' | '^') => true,
+        Some('<') => ["<u>", "</u>", "<em>", "</em>", "<strong>", "</strong>"]
+            .iter()
+            .any(|marker| rest.starts_with(marker)),
+        _ => false,
+    }
 }
 
-/// 转义规则与 [`escape_literal_text_with_offset_map`] 完全一致，只是不建映射表。
-pub(crate) fn escape_literal_text(text: &str) -> String {
-    const ESCAPED_HTML_MARKERS: [&str; 6] =
-        ["</strong>", "<strong>", "</em>", "<em>", "</u>", "<u>"];
-    let mut escaped = String::with_capacity(text.len());
+pub(crate) fn escape_literal_text(text: &str, escaped: &[u32]) -> String {
+    let mut output = String::with_capacity(text.len());
     let mut index = 0usize;
-    'scan: while index < text.len() {
-        for marker in ESCAPED_HTML_MARKERS {
-            if text[index..].starts_with(marker) {
-                escaped.push('\\');
-                escaped.push_str(marker);
-                index += marker.len();
-                continue 'scan;
-            }
-        }
-
-        if text[index..].starts_with('_') {
-            // 词中下划线串既不能开启也不能关闭强调（CommonMark 侧翼规则）。
-            let run_len = text[index..].bytes().take_while(|byte| *byte == b'_').count();
-            let prev = text[..index].chars().next_back();
-            let next = text[index + run_len..].chars().next();
-            if prev.is_some_and(is_emphasis_word_char) && next.is_some_and(is_emphasis_word_char)
-            {
-                escaped.push_str(&text[index..index + run_len]);
-                index += run_len;
-                continue;
-            }
-        }
-
+    let mut escaped_iter = escaped.iter().copied();
+    let mut next_escaped = escaped_iter.next();
+    while index < text.len() {
         let ch = text[index..].chars().next().unwrap();
-        if is_escaped_by_serializer(ch) {
-            escaped.push('\\');
-            escaped.push(ch);
-        } else {
-            escaped.push(ch);
+        if next_escaped == Some(index as u32) {
+            output.push('\\');
+            next_escaped = escaped_iter.next();
+        } else if ch == '\\' && backslash_needs_escape(text, index) {
+            output.push('\\');
         }
+        output.push(ch);
         index += ch.len_utf8();
     }
-    escaped
+    output
 }
 
 /// 代码片段（行内 code）的空白填充规则，与映射版本一致。
@@ -284,184 +281,39 @@ pub(crate) fn escape_code_span_text(text: &str) -> String {
     markdown
 }
 
-pub(crate) fn escape_literal_text_with_offset_map(text: &str) -> InlineMarkdownOffsetMap {
-    let mut escaped = String::new();
+pub(crate) fn escape_literal_text_with_offset_map(
+    text: &str,
+    escaped: &[u32],
+) -> InlineMarkdownOffsetMap {
+    let mut markdown = String::with_capacity(text.len());
     let mut visible_to_markdown = vec![0; text.len() + 1];
     let mut markdown_to_visible = vec![0];
-    let mut index = 0;
+    let mut index = 0usize;
+    let mut escaped_iter = escaped.iter().copied();
+    let mut next_escaped = escaped_iter.next();
 
     while index < text.len() {
-        visible_to_markdown[index] = escaped.len();
-        if text[index..].starts_with("</strong>") {
-            let start = escaped.len();
-            escaped.push('\\');
-            escaped.push_str("</strong>");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 9;
-            continue;
-        }
-
-        if text[index..].starts_with("<strong>") {
-            let start = escaped.len();
-            escaped.push('\\');
-            escaped.push_str("<strong>");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 8;
-            continue;
-        }
-
-        if text[index..].starts_with("</em>") {
-            let start = escaped.len();
-            escaped.push('\\');
-            escaped.push_str("</em>");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 5;
-            continue;
-        }
-
-        if text[index..].starts_with("<em>") {
-            let start = escaped.len();
-            escaped.push('\\');
-            escaped.push_str("<em>");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 4;
-            continue;
-        }
-
-        if text[index..].starts_with("</u>") {
-            let start = escaped.len();
-            escaped.push('\\');
-            escaped.push_str("</u>");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 4;
-            continue;
-        }
-
-        if text[index..].starts_with("<u>") {
-            let start = escaped.len();
-            escaped.push('\\');
-            escaped.push_str("<u>");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 3;
-            continue;
-        }
-
-        if text[index..].starts_with('\\') {
-            let start = escaped.len();
-            escaped.push_str("\\\\");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 1;
-            continue;
-        }
-
-        if text[index..].starts_with('*') {
-            let start = escaped.len();
-            escaped.push_str("\\*");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 1;
-            continue;
-        }
-
-        if text[index..].starts_with('_') {
-            // 词中下划线串既不能开启也不能关闭强调（CommonMark 侧翼规则），转义只会把
-            // 用户的 `topic_embedding_attention` 改写成 `topic\_embedding\_attention`。
-            // 按整串输出：逐字符走会把串拆开，串内第二个下划线会被当成标点而被转义。
-            let run_len = text[index..].bytes().take_while(|byte| *byte == b'_').count();
-            let prev = text[..index].chars().next_back();
-            let next = text[index + run_len..].chars().next();
-            if prev.is_some_and(is_emphasis_word_char) && next.is_some_and(is_emphasis_word_char)
-            {
-                let start = escaped.len();
-                escaped.push_str(&text[index..index + run_len]);
-                markdown_to_visible.resize(escaped.len() + 1, index);
-                for local in 0..=escaped.len() - start {
-                    markdown_to_visible[start + local] = index;
-                }
-                index += run_len;
-                continue;
-            }
-
-            let start = escaped.len();
-            escaped.push_str("\\_");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 1;
-            continue;
-        }
-
-        if text[index..].starts_with('~') {
-            let start = escaped.len();
-            escaped.push_str("\\~");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 1;
-            continue;
-        }
-
-        if text[index..].starts_with('^') {
-            let start = escaped.len();
-            escaped.push_str("\\^");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 1;
-            continue;
-        }
-
-        if text[index..].starts_with('`') {
-            let start = escaped.len();
-            escaped.push_str("\\`");
-            markdown_to_visible.resize(escaped.len() + 1, index);
-            for local in 0..=escaped.len() - start {
-                markdown_to_visible[start + local] = index;
-            }
-            index += 1;
-            continue;
-        }
-
+        visible_to_markdown[index] = markdown.len();
         let ch = text[index..].chars().next().unwrap();
-        let start = escaped.len();
-        escaped.push(ch);
-        markdown_to_visible.resize(escaped.len() + 1, index);
-        for local in 0..=escaped.len() - start {
-            markdown_to_visible[start + local] = index;
+        let start = markdown.len();
+        if next_escaped == Some(index as u32) {
+            markdown.push('\\');
+            next_escaped = escaped_iter.next();
+        } else if ch == '\\' && backslash_needs_escape(text, index) {
+            markdown.push('\\');
+        }
+        markdown.push(ch);
+        markdown_to_visible.resize(markdown.len() + 1, index);
+        for local in start..markdown.len() {
+            markdown_to_visible[local] = index;
         }
         index += ch.len_utf8();
     }
-    visible_to_markdown[text.len()] = escaped.len();
-    markdown_to_visible[escaped.len()] = text.len();
+    visible_to_markdown[text.len()] = markdown.len();
+    markdown_to_visible[markdown.len()] = text.len();
 
     InlineMarkdownOffsetMap {
-        markdown: escaped,
+        markdown,
         visible_to_markdown,
         markdown_to_visible,
     }

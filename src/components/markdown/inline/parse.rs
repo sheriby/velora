@@ -151,6 +151,10 @@ pub(crate) struct CharToken {
     /// 定界符长得一样，可它已经不是语法候选了：再当定界符读一遍就是改写用户的写法。
     /// `InlineTextTree::escaped_offsets` 记的就是这些位置，重解析时原样带到新树里。
     pub(crate) escaped: bool,
+    /// 这个字符所属的**转义序列**在源可见文本里的区间（同一次 `\` 转义的所有字符
+    /// 共享同一个身份）。`emit_token` 靠它把同序列的连续字符并成一个转义区间——
+    /// `\</u>` 记一段，而相邻的两次 `\*` `\*` 保持两段，序列化才不会洗写法。
+    pub(crate) escaped_sequence: Option<std::ops::Range<u32>>,
 }
 
 /// Result of parsing a delimited inline region.
@@ -167,7 +171,10 @@ pub(crate) struct NormalizeBuilder {
     pub(crate) visible_to_normalized: Vec<usize>,
     pub(crate) normalized_len: usize,
     /// 输出树里那些「由源码转义而来」的字符的可见字节偏移。
-    pub(crate) escaped_offsets: Vec<u32>,
+    pub(crate) escaped_offsets: Vec<std::ops::Range<u32>>,
+    /// 上一颗带转义身份的 token 的序列身份：同序列的连续 token 并进同一个
+    /// 区间，不同序列（`\*\*` 的两颗星）保持各自一段。
+    pub(crate) last_escaped_sequence: Option<std::ops::Range<u32>>,
 }
 
 impl NormalizeBuilder {
@@ -177,6 +184,7 @@ impl NormalizeBuilder {
             visible_to_normalized: vec![0; input_len + 1],
             normalized_len: 0,
             escaped_offsets: Vec::new(),
+            last_escaped_sequence: None,
         }
     }
 
@@ -236,7 +244,25 @@ impl NormalizeBuilder {
         let text = token.ch.to_string();
         let start = self.normalized_len;
         if token.escaped {
-            self.escaped_offsets.push(start as u32);
+            // 一次转义序列记**一个**区间：同序列的连续字符并进去，序列化才好
+            // 在区间起点补回一个反斜杠（`\</u>` 不会洗成 `\<\/\u\>`）；相邻的
+            // 两次独立转义（`\*\*`）身份不同，保持两段。
+            let end = (start + text.len()) as u32;
+            if self.last_escaped_sequence == token.escaped_sequence
+                && token.escaped_sequence.is_some()
+                && self
+                    .escaped_offsets
+                    .last()
+                    .is_some_and(|range| range.end == start as u32)
+            {
+                let last = self.escaped_offsets.last_mut().expect("checked above");
+                last.end = end;
+            } else {
+                self.escaped_offsets.push(start as u32..end);
+            }
+            self.last_escaped_sequence = token.escaped_sequence.clone();
+        } else {
+            self.last_escaped_sequence = None;
         }
         for boundary in token.source_range.start..=token.source_range.end {
             self.visible_to_normalized[boundary] = start + (boundary - token.source_range.start);
@@ -305,7 +331,7 @@ impl NormalizeBuilder {
 pub(crate) fn flatten_tokens(
     fragments: &[InlineFragment],
     visible_text_mode: bool,
-    escaped_offsets: &[u32],
+    escaped_offsets: &[std::ops::Range<u32>],
 ) -> Vec<CharToken> {
     let mut tokens = Vec::new();
     let mut visible_offset = 0usize;
@@ -315,13 +341,14 @@ pub(crate) fn flatten_tokens(
         let holds_raw_markdown = fragment.footnote.is_some() || fragment.math.is_some();
         for ch in fragment.text.chars() {
             let len = ch.len_utf8();
-            // 这些偏移是递增记下的（解析与搬运都从左往右），二分以免一块里转义多了
-            // 就退化成每个字符扫一遍表。
-            let escaped = visible_text_mode
-                && !holds_raw_markdown
-                && escaped_offsets
-                    .binary_search(&(visible_offset as u32))
-                    .is_ok();
+            // 这些区间按起点升序且互不重叠（解析与搬运都从左往右），二分定位
+            // 起点，避免一块里转义多了就退化成每个字符扫一遍表。
+            let escaped_sequence = if visible_text_mode && !holds_raw_markdown {
+                escaped_sequence_at(escaped_offsets, visible_offset as u32)
+            } else {
+                None
+            };
+            let escaped = escaped_sequence.is_some();
             tokens.push(CharToken {
                 ch,
                 style: fragment.style,
@@ -331,12 +358,26 @@ pub(crate) fn flatten_tokens(
                     && !holds_raw_markdown
                     && (ch == '\\' || escaped),
                 escaped,
+                escaped_sequence,
             });
             visible_offset += len;
         }
     }
 
     tokens
+}
+
+/// 可见字节偏移落在哪个转义序列区间里（区间按起点升序、互不重叠）。
+fn escaped_sequence_at(
+    escaped_offsets: &[std::ops::Range<u32>],
+    offset: u32,
+) -> Option<std::ops::Range<u32>> {
+    let index = escaped_offsets.partition_point(|range| range.start <= offset);
+    if index > 0 && offset < escaped_offsets[index - 1].end {
+        Some(escaped_offsets[index - 1].clone())
+    } else {
+        None
+    }
 }
 
 /// Recursive-descent parser that consumes [`CharToken`]s and reconstructs
@@ -414,11 +455,21 @@ pub(crate) fn parse_until(
             builder.drop_token(&tokens[index]);
             let escaped_start = index + 1;
             let escaped_end = escaped_start + escaped_len;
+            // 同一次转义的字符共享一个**序列身份**（源码里这一段转义的跨度），
+            // emit_token 按身份把连续字符并成一个转义区间。
+            let sequence = tokens[escaped_start..escaped_end]
+                .first()
+                .map(|first| {
+                    let end = tokens[escaped_end - 1].source_range.end;
+                    first.source_range.start as u32..end as u32
+                })
+                .unwrap_or(0..0);
             for token in &tokens[escaped_start..escaped_end] {
                 // 转义来的字符从此是字面文本：把这一位带到输出树上，下一次重解析
                 // 就不该再把它读成定界符（可见文本模式下靠它分辨 `\*` 与没配对的 `*`）。
                 let mut escaped_token = token.clone();
                 escaped_token.escaped = true;
+                escaped_token.escaped_sequence = Some(sequence.clone());
                 builder.emit_token(&escaped_token, extra_style, extra_html_style);
             }
             index = escaped_end;

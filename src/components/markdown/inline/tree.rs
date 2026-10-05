@@ -4,13 +4,15 @@ use super::*;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InlineTextTree {
     pub(crate) fragments: Vec<InlineFragment>,
-    /// 源码里由反斜杠转义而来的那些字符，在这棵树**可见文本**里的字节偏移。
+    /// 源码里由反斜杠转义而来的那些**序列**，在这棵树**可见文本**里的字节区间
+    /// （升序、互不重叠；`\*` 是一位，`\</u>` 是四位——一次转义一个区间）。
     ///
     /// 可见文本分不出 `2 * 3` 里那颗没配对的星号和 `\*不强调\*` 里的星号——前者是语法
     /// 候选，用户补一颗就该成强调；后者已经不是语法，重读一遍会把用户的写法改掉，还会
     /// 把可见长度弄短，逼得编辑器放弃按区间写回。这份区别只有源码知道，所以解析时把它
-    /// 记下来，往后的每次编辑与重解析都原样带过去。
-    pub(crate) escaped_offsets: Vec<u32>,
+    /// 记下来，往后的每次编辑与重解析都原样带过去。序列化只在区间**起点**补回一个
+    /// 反斜杠，未编辑块才能逐字节还原用户写法。
+    pub(crate) escaped_offsets: Vec<std::ops::Range<u32>>,
 }
 
 impl InlineTextTree {
@@ -175,6 +177,28 @@ impl InlineTextTree {
         InlineRenderCache::from_tree(self)
     }
 
+    /// 树级 `escaped_offsets`（转义序列区间）里起点落在
+    /// `[start, start+run 可见长度)` 内的，换算成 run 局部坐标。
+    /// 序列不会骑在片段边界上（同一次转义的字符样式相同、合并进同一片段），
+    /// 所以只按起点判属就行。供序列化器决定哪些位置保留反斜杠。
+    fn escaped_within(
+        tree_escaped: &[std::ops::Range<u32>],
+        start: usize,
+        fragments: &[InlineFragment],
+    ) -> Vec<u32> {
+        let run_visible_len: u32 = fragments
+            .iter()
+            .map(|fragment| fragment.text.len() as u32)
+            .sum();
+        let start = start as u32;
+        let end = start + run_visible_len;
+        tree_escaped
+            .iter()
+            .filter(|range| range.start >= start && range.start < end)
+            .map(|range| range.start - start)
+            .collect()
+    }
+
     /// Serialize fragments back to Markdown text with optimal delimiter choices.
     ///
     /// Each fragment's style flags determine which markers surround its text.
@@ -210,16 +234,21 @@ impl InlineTextTree {
         }
 
         let mut output = String::new();
+        // 走查时跟着累计可见字节偏移：`escaped_offsets` 记的是树级可见位置，
+        // 交给 run 序列化器前要切成本 run 局部的。
+        let mut visible_start = 0usize;
         let mut index = 0usize;
         while index < self.fragments.len() {
             if let Some(footnote) = self.fragments[index].footnote.clone() {
                 output.push_str(&footnote.raw_markdown());
+                visible_start += self.fragments[index].text.len();
                 index += 1;
                 continue;
             }
 
             if let Some(math) = self.fragments[index].math.clone() {
                 output.push_str(&math.source);
+                visible_start += self.fragments[index].text.len();
                 index += 1;
                 continue;
             }
@@ -234,7 +263,10 @@ impl InlineTextTree {
                 end += 1;
             }
 
-            let run_markdown = serialize_fragment_run_markdown(&self.fragments[index..end]);
+            let run_markdown = serialize_fragment_run_markdown(
+                &self.fragments[index..end],
+                &Self::escaped_within(&self.escaped_offsets, visible_start, &self.fragments[index..end]),
+            );
             if let Some(link) = link {
                 output.push_str(link.open_marker());
                 output.push_str(&run_markdown);
@@ -249,6 +281,9 @@ impl InlineTextTree {
                 output.push_str(&run_markdown);
             }
 
+            for fragment in &self.fragments[index..end] {
+                visible_start += fragment.text.len();
+            }
             index = end;
         }
         output
@@ -335,8 +370,10 @@ impl InlineTextTree {
                 end += 1;
             }
 
-            let run_map =
-                serialize_fragment_run_markdown_with_offset_map(&self.fragments[index..end]);
+            let run_map = serialize_fragment_run_markdown_with_offset_map(
+                &self.fragments[index..end],
+                &Self::escaped_within(&self.escaped_offsets, visible_cursor, &self.fragments[index..end]),
+            );
             if let Some(link) = link {
                 let run_visible_len = run_map.visible_to_markdown.len().saturating_sub(1);
                 let link_start = output.len();
@@ -410,8 +447,9 @@ impl InlineTextTree {
 
 /// 与 [`serialize_fragment_run_markdown_with_offset_map`] 同一套分隔符选择与
 /// 转义规则，只产出 markdown 字符串（不建映射表）。两条路径的一致性由
-/// `serialize_markdown_matches_offset_map` 用例守住。
-fn serialize_fragment_run_markdown(fragments: &[InlineFragment]) -> String {
+/// `serialize_markdown_matches_offset_map` 用例守住。`escaped`：本 run 可见
+/// 文本里「源码本就转义」的字节偏移（升序、局部坐标），只有这些位置写反斜杠。
+fn serialize_fragment_run_markdown(fragments: &[InlineFragment], escaped: &[u32]) -> String {
     if fragments.is_empty() {
         return String::new();
     }
@@ -420,6 +458,7 @@ fn serialize_fragment_run_markdown(fragments: &[InlineFragment]) -> String {
     let mut output = String::new();
     let mut current_stack: Vec<Delimiter> = Vec::new();
     let mut current_html_style: Option<HtmlInlineStyle> = None;
+    let mut fragment_visible_start = 0usize;
 
     for (fragment, next_stack) in fragments.iter().zip(stacks.iter()) {
         if current_html_style != fragment.html_style {
@@ -444,9 +483,11 @@ fn serialize_fragment_run_markdown(fragments: &[InlineFragment]) -> String {
         } else if fragment.style.code {
             output.push_str(&escape_code_span_text(&fragment.text));
         } else {
-            output.push_str(&escape_literal_text(&fragment.text));
+            let local = escaped_within(escaped, fragment_visible_start, &fragment.text);
+            output.push_str(&escape_literal_text(&fragment.text, &local));
         }
 
+        fragment_visible_start += fragment.text.len();
         current_stack = next_stack.clone();
     }
 
@@ -458,8 +499,22 @@ fn serialize_fragment_run_markdown(fragments: &[InlineFragment]) -> String {
     output
 }
 
+/// 把 run 级的转义位置切到单个片段的局部坐标（`start`：片段在 run 可见文本
+/// 里的起点）。片段外的位置丢弃，片段内的整体左移。
+fn escaped_within(escaped: &[u32], start: usize, text: &str) -> Vec<u32> {
+    let end = (start + text.len()) as u32;
+    let start = start as u32;
+    escaped
+        .iter()
+        .copied()
+        .filter(|offset| *offset >= start && *offset < end)
+        .map(|offset| offset - start)
+        .collect()
+}
+
 fn serialize_fragment_run_markdown_with_offset_map(
     fragments: &[InlineFragment],
+    escaped: &[u32],
 ) -> InlineMarkdownOffsetMap {
     if fragments.is_empty() {
         return InlineMarkdownOffsetMap {
@@ -526,7 +581,8 @@ fn serialize_fragment_run_markdown_with_offset_map(
         } else if fragment.style.code {
             escape_code_span_text_with_offset_map(&fragment.text)
         } else {
-            escape_literal_text_with_offset_map(&fragment.text)
+            let local = escaped_within(escaped, visible_cursor, &fragment.text);
+            escape_literal_text_with_offset_map(&fragment.text, &local)
         };
         let escaped_start = output.len();
         output.push_str(escaped.markdown());
@@ -656,28 +712,34 @@ impl InlineTextTree {
 
         let mut left = Self::from_fragments(left);
         let mut right = Self::from_fragments(right);
-        // 转义位置跟着切口分两半，右半整体左移一个切口。
-        left.escaped_offsets = self
-            .escaped_offsets
-            .iter()
-            .filter(|offset| (**offset as usize) < clamped)
-            .copied()
-            .collect();
-        right.escaped_offsets = self
-            .escaped_offsets
-            .iter()
-            .filter_map(|offset| {
-                let offset = *offset as usize;
-                (offset >= clamped).then_some((offset - clamped) as u32)
-            })
-            .collect();
+        // 转义序列跟着切口分两半：整个落在左半的原样保留；骑在切口上的拆成
+        // 两段（切口落在字符边界上，见 clamp_to_char_boundary）；右半整体左移。
+        let mut left_ranges = Vec::new();
+        let mut right_ranges = Vec::new();
+        for range in &self.escaped_offsets {
+            let (start, end) = (range.start as usize, range.end as usize);
+            if end <= clamped {
+                left_ranges.push(range.clone());
+            } else if start >= clamped {
+                right_ranges.push((start - clamped) as u32..(end - clamped) as u32);
+            } else {
+                left_ranges.push(range.start..clamped as u32);
+                right_ranges.push(0..(end - clamped) as u32);
+            }
+        }
+        left.escaped_offsets = left_ranges;
+        right.escaped_offsets = right_ranges;
         (left, right)
     }
 
     pub fn append_tree(&mut self, other: Self) {
         let base = self.visible_len() as u32;
-        self.escaped_offsets
-            .extend(other.escaped_offsets.iter().map(|offset| offset + base));
+        self.escaped_offsets.extend(
+            other
+                .escaped_offsets
+                .iter()
+                .map(|range| (range.start + base)..(range.end + base)),
+        );
         self.fragments.extend(other.fragments);
         self.normalize_fragments();
     }

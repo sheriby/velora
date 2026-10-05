@@ -21,9 +21,18 @@ async fn typing_consecutive_backslashes_keeps_every_one(cx: &mut TestAppContext)
             );
         });
     }
-    editor.read_with(cx, |editor, cx| {
-        // 文件里每个可见反斜杠转义一次：3 个可见 -> 6 个字符
-        assert_eq!(editor.document.markdown_text(cx), format!("{}alpha", backslashes(6)));
+    // 写回保真（最小转义）：只有会被重读吃掉的反斜杠才翻倍——前两个后面
+    // 跟着 `\` 要保护，第三个后面是字母 `a` 原样保留（3 个可见 -> 5 个字符）。
+    let file = editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx));
+    assert_eq!(file, format!("{}alpha", backslashes(5)));
+    // 重读一遍：用户敲的三个反斜杠一个不能少。
+    let (reloaded, cx) =
+        cx.add_window_view(move |_window, cx| Editor::from_markdown(cx, file, None));
+    reloaded.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.visible_blocks()[0].entity.read(cx).display_text(),
+            format!("{}alpha", backslashes(3))
+        );
     });
 
     // 反斜杠不再吃掉后面的标记字符
@@ -38,9 +47,10 @@ async fn typing_consecutive_backslashes_keeps_every_one(cx: &mut TestAppContext)
             block.read(cx).display_text(),
             format!("{}*seed", backslashes(1))
         );
+        // `\` 后面跟着 `*`（可转义）：写回翻倍成 `\\`，重读还是「反斜杠 + 星号」。
         assert_eq!(
             editor.document.markdown_text(cx),
-            format!("{}*seed", backslashes(3))
+            format!("{}*seed", backslashes(2))
         );
     });
 
@@ -65,6 +75,8 @@ async fn typing_backslashes_in_link_blocks_does_not_multiply(cx: &mut TestAppCon
 
     // 用户报修：行首是自动链接的块里按反斜杠，可见数量按「两倍加一」翻倍
     // （1 -> 3 -> 7）。这三类块都走 markdown 源直编路径。
+    // 反斜杠的翻倍只发生在**插入点**（escape_markdown_insertion，防连锁翻倍）；
+    // 序列化按转义区间原样保留、不再叠加——文件里恒为「可见数 × 2」，重读不变。
     for source in [
         "<https://example.com> tail",
         "[a][b] tail",

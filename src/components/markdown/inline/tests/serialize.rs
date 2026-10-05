@@ -3,6 +3,39 @@
 
 
     #[test]
+    fn escaped_backslash_before_a_link_round_trips() {
+        // markdown 空间编辑把键入的反斜杠翻倍拼进源码（`\\[a](...)`），重解析
+        // 出一个带转义账的反斜杠；序列化必须原样写回两个字符，否则重读时
+        // `\[` 被当转义吃掉，用户的反斜杠凭空消失。
+        let markdown = "\\\\[a](https://example.com) tail";
+        let tree = InlineTextTree::from_markdown(markdown);
+        assert_eq!(tree.visible_text(), "\\a tail");
+        assert_eq!(tree.serialize_markdown(), markdown);
+    }
+
+    #[test]
+    fn serialize_round_trips_the_original_bytes_for_literal_markers() {
+        // 回归（用户报修 2026-10-05：搜索跳转高亮错位一个字符）：裸的 `~`/`*`/
+        // 反引号不许被洗成 `\~`/`\*`/`\``——多出的反斜杠让块 markdown 与缓冲区
+        // 字节错位，命中换算整体漂移。逐条断言：parse∘serialize == 恒等。
+        for text in [
+            "单 bin crate（~95k 行（含测试）",
+            "2 * 3 与 4_5",
+            "波浪号 ~ 和上标 ^ 记号",
+            "未闭合的 `code",
+            "Windows 路径 C:\\Users\\doc.md",
+        ] {
+            let tree = InlineTextTree::from_markdown(text);
+            assert_eq!(tree.serialize_markdown(), text, "写法被改写：{text:?}");
+        }
+        // 源码本就带转义的仍然原样保留。
+        for text in ["\\*不强调\\*", "a\\\\b", "\\</u>标签"] {
+            let tree = InlineTextTree::from_markdown(text);
+            assert_eq!(tree.serialize_markdown(), text, "转义写法被改写：{text:?}");
+        }
+    }
+
+    #[test]
     fn serialize_markdown_matches_offset_map() {
         // 无映射快路径必须与映射版本逐字节一致：保存/撤销/导出走前者，
         // 偏移映射走后者，两者一旦漂移，用户内容就会被改写。
@@ -107,7 +140,9 @@
         let tree = InlineTextTree::from_markdown("* a * _ b _");
 
         assert_eq!(tree.visible_text(), "* a * _ b _");
-        assert_eq!(tree.serialize_markdown(), "\\* a \\* \\_ b \\_");
+        // 序列化保真：空格旁的孤立记号是语法候选，写回不许洗成转义——
+        // 多出的反斜杠会把「块 markdown ↔ 缓冲区字节」的对齐整体推歪。
+        assert_eq!(tree.serialize_markdown(), "* a * _ b _");
     }
 
     #[test]
@@ -115,7 +150,7 @@
         let tree = InlineTextTree::from_markdown("1**234");
 
         assert_eq!(tree.visible_text(), "1**234");
-        assert_eq!(tree.serialize_markdown(), "1\\*\\*234");
+        assert_eq!(tree.serialize_markdown(), "1**234");
     }
 
     #[test]
@@ -129,7 +164,8 @@
 
         let leading = InlineTextTree::from_markdown("**word");
         assert_eq!(leading.visible_text(), "**word");
-        assert_eq!(leading.serialize_markdown(), "\\*\\*word");
+        // 序列化保真：不完整的强调开头原样写回。
+        assert_eq!(leading.serialize_markdown(), "**word");
 
         let trailing = InlineTextTree::from_markdown("**word*");
         assert_eq!(trailing.visible_text(), "**word*");
