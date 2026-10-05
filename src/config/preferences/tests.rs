@@ -1,5 +1,6 @@
     use super::{
-        AiPreferences, AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
+        AiPreferences, AppPreferences, AUTO_TRANSLATE_TARGET, ClickEvent, DeletePolicy,
+        EditorSettings, ExportThemePreference,
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
         StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
         WritingWidthPreference,
@@ -593,7 +594,7 @@
             preferences_cx.run_until_parked();
 
             let max_offset = handle
-                .update(&mut preferences_cx, |preferences, _window, _cx| {
+                .update(&mut preferences_cx, |preferences, _window, cx| {
                     preferences.page_scroll.max_offset()
                 })
                 .expect("preferences window should update");
@@ -651,7 +652,7 @@
                 preferences.default_window_width = 1280;
                 preferences.default_window_height = 800;
                 preferences.window_open_position = WindowOpenPosition::Center;
-                assert!(preferences.has_unsaved_changes());
+                assert!(preferences.has_unsaved_changes(cx));
             })
             .expect("preferences window should update");
     }
@@ -688,10 +689,10 @@
         preferences_cx.run_until_parked();
 
         handle
-            .update(&mut preferences_cx, |preferences, _window, _cx| {
+            .update(&mut preferences_cx, |preferences, _window, cx| {
                 assert_eq!(preferences.zoom_percent, 125, "点选后应写入 125%");
                 assert!(!preferences.zoom_dropdown_open, "点选后下拉应收起");
-                assert!(preferences.has_unsaved_changes(), "应进入待保存状态");
+                assert!(preferences.has_unsaved_changes(cx), "应进入待保存状态");
             })
             .expect("preferences window should update");
     }
@@ -721,8 +722,8 @@
         );
         assert!(
             !handle
-                .update(cx, |preferences, _window, _cx| preferences
-                    .has_unsaved_changes())
+                .update(cx, |preferences, _window, cx| preferences
+                    .has_unsaved_changes(cx))
                 .expect("preferences window should be updateable")
         );
     }
@@ -742,22 +743,22 @@
         cx.run_until_parked();
 
         handle
-            .update(cx, |preferences, _window, _cx| {
-                assert!(!preferences.has_unsaved_changes());
+            .update(cx, |preferences, _window, cx| {
+                assert!(!preferences.has_unsaved_changes(cx));
                 preferences.startup_open = StartupOpenPreference::LastOpenedFile;
-                assert!(preferences.has_unsaved_changes());
+                assert!(preferences.has_unsaved_changes(cx));
                 preferences.startup_open = StartupOpenPreference::NewFile;
-                assert!(!preferences.has_unsaved_changes());
+                assert!(!preferences.has_unsaved_changes(cx));
 
                 preferences.image_paste_behavior = ImagePasteBehavior::CopyToDocumentFolder;
-                assert!(preferences.has_unsaved_changes());
+                assert!(preferences.has_unsaved_changes(cx));
                 preferences.image_paste_behavior = ImagePasteBehavior::CopyToAssetsFolder;
-                assert!(!preferences.has_unsaved_changes());
+                assert!(!preferences.has_unsaved_changes(cx));
 
                 preferences
                     .keybindings
                     .insert("save_document".into(), vec!["ctrl-alt-s".into()]);
-                assert!(preferences.has_unsaved_changes());
+                assert!(preferences.has_unsaved_changes(cx));
             })
             .expect("preferences window should be updateable");
     }
@@ -779,7 +780,7 @@
         handle
             .update(cx, |preferences, window, cx| {
                 preferences.startup_open = StartupOpenPreference::LastOpenedFile;
-                assert!(preferences.has_unsaved_changes());
+                assert!(preferences.has_unsaved_changes(cx));
                 let saved = AppPreferences {
                     startup_open: StartupOpenPreference::LastOpenedFile,
                     ..AppPreferences::default()
@@ -801,8 +802,8 @@
         );
         assert!(
             !handle
-                .update(cx, |preferences, _window, _cx| preferences
-                    .has_unsaved_changes())
+                .update(cx, |preferences, _window, cx| preferences
+                    .has_unsaved_changes(cx))
                 .expect("preferences window should remain updateable")
         );
     }
@@ -878,4 +879,114 @@
             assert_eq!(EditorSettings::ai(cx), configured);
             assert!(EditorSettings::ai(cx).is_configured());
         });
+    }
+
+    #[gpui::test]
+    async fn ai_page_preset_fills_connection_fields_and_tracks_dirty(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        cx.run_until_parked();
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.set_nav_ai(&ClickEvent::default(), window, cx);
+                assert_eq!(preferences.nav, PreferencesNav::Ai);
+                // 初始(未配置)草稿:三元组全空。
+                assert!(!preferences.ai_draft(cx).is_configured());
+                assert!(!preferences.has_unsaved_changes(cx));
+            })
+            .expect("switch to AI page");
+
+        // 选「DeepSeek」预设:地址与模型按预设回填,密钥保持为空。
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.select_ai_provider(1, window, cx);
+                assert_eq!(preferences.ai_provider_id, "deepseek");
+            })
+            .expect("select deepseek preset");
+        preferences_cx.run_until_parked();
+        handle
+            .update(cx, |preferences, _window, cx| {
+                let draft = preferences.ai_draft(cx);
+                assert_eq!(
+                    draft.api_base_url, "https://api.deepseek.com/v1",
+                    "选预设应回填地址"
+                );
+                assert_eq!(draft.model, "deepseek-chat", "选预设应回填模型");
+                assert!(!draft.is_configured(), "密钥为空仍算未配置");
+                assert!(preferences.has_unsaved_changes(cx), "回填即进入待保存");
+            })
+            .expect("check preset draft");
+
+        // 选回「自定义」:不改地址模型,只换 id。
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.select_ai_provider(6, window, cx);
+                assert_eq!(preferences.ai_provider_id, "custom");
+                assert_eq!(preferences.ai_draft(cx).api_base_url, "https://api.deepseek.com/v1");
+            })
+            .expect("select custom preset");
+
+        // 保存路径:带密钥补全后保存,EditorSettings 与磁盘都应更新。
+        handle
+            .update(cx, |preferences, _window, cx| {
+                preferences.ai_api_key.update(cx, |field, cx| {
+                    field.set_value("sk-test", cx)
+                });
+            })
+            .expect("fill api key");
+        handle
+            .update(cx, |preferences, window, cx| {
+                assert!(preferences.has_unsaved_changes(cx));
+                preferences.save(&ClickEvent::default(), window, cx);
+                assert!(!preferences.has_unsaved_changes(cx), "保存后应清除待保存");
+            })
+            .expect("save ai preferences");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let ai = EditorSettings::ai(cx);
+            assert_eq!(ai.provider_id, "custom");
+            assert_eq!(ai.api_key, "sk-test");
+            assert!(ai.is_configured());
+        });
+    }
+
+    #[gpui::test]
+    async fn ai_page_translate_target_defaults_to_follow_ui(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let mut preferences = AppPreferences::default();
+        preferences.ai.translate_target = "ja".into();
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                preferences,
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        cx.run_until_parked();
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.set_nav_ai(&ClickEvent::default(), window, cx);
+                assert_eq!(preferences.ai_translate_target, "ja");
+                // 切回「跟随界面」。
+                preferences.select_ai_translate_target(
+                    AUTO_TRANSLATE_TARGET.to_string(),
+                    window,
+                    cx,
+                );
+                assert_eq!(preferences.ai_translate_target, AUTO_TRANSLATE_TARGET);
+                assert!(preferences.has_unsaved_changes(cx));
+            })
+            .expect("translate target round trip");
+        let _ = preferences_cx;
     }

@@ -330,6 +330,39 @@ impl I18nStrings {
         strings.preferences_image_paste_copy_to_assets_folder = "复制图片到 ./assets 文件夹".into();
         strings.preferences_image_paste_copy_to_named_assets_folder =
             "复制图片到 ./${filename}.assets 文件夹".into();
+        strings.ai_assistant = "AI 助手".into();
+        strings.ai_assistant_menu = "AI 助手…".into();
+        strings.ai_action_polish = "润色".into();
+        strings.ai_action_fix_grammar = "语法纠错".into();
+        strings.ai_action_translate = "翻译…".into();
+        strings.ai_action_summarize = "总结".into();
+        strings.ai_action_continue = "续写".into();
+        strings.ai_action_rewrite = "改写".into();
+        strings.ai_rewrite_tone_neutral = "常规".into();
+        strings.ai_rewrite_tone_professional = "更专业".into();
+        strings.ai_rewrite_tone_concise = "更简洁".into();
+        strings.ai_rewrite_tone_friendly = "更友好".into();
+        strings.ai_custom_placeholder = "输入自定义指令，回车执行…".into();
+        strings.ai_not_configured = "尚未配置 AI 服务，点击前往设置".into();
+        strings.ai_panel_replace = "替换选区".into();
+        strings.ai_panel_insert_below = "插入到下方".into();
+        strings.ai_panel_retry = "重试".into();
+        strings.ai_panel_stop = "停止".into();
+        strings.ai_panel_running = "生成中…".into();
+        strings.ai_panel_stale_document = "文档已修改，无法应用；请重试".into();
+        strings.ai_error_network = "无法连接 AI 服务：{error}".into();
+        strings.ai_error_http = "AI 服务返回错误：{error}".into();
+        strings.ai_error_protocol = "AI 服务响应异常：{error}".into();
+        strings.preferences_nav_ai = "AI".into();
+        strings.preferences_ai_provider = "服务商预设".into();
+        strings.preferences_ai_api_base_url = "API 地址".into();
+        strings.preferences_ai_api_key = "API 密钥".into();
+        strings.preferences_ai_model = "模型".into();
+        strings.preferences_ai_translate_target = "翻译默认目标".into();
+        strings.preferences_ai_translate_follow_ui = "跟随界面语言".into();
+        strings.preferences_ai_custom_provider = "自定义".into();
+        strings.preferences_ai_provider_ollama = "Ollama（本地）".into();
+        strings.preferences_ai_hint = "面向任意 OpenAI 兼容服务（OpenAI、DeepSeek、智谱、Kimi、OpenRouter、本地 Ollama 等）。密钥只保存在本机 config.toml。".into();
         strings
     }
 
@@ -659,6 +692,39 @@ impl I18nStrings {
             preferences_status_bar_show_cursor_position: "Cursor Position".into(),
             preferences_status_bar_show_sidebar_toggle: "Sidebar Toggle".into(),
             preferences_status_bar_show_mode_switch: "Mode Switch".into(),
+            ai_assistant: "AI Assistant".into(),
+            ai_assistant_menu: "AI Assistant…".into(),
+            ai_action_polish: "Improve writing".into(),
+            ai_action_fix_grammar: "Fix spelling & grammar".into(),
+            ai_action_translate: "Translate…".into(),
+            ai_action_summarize: "Summarize".into(),
+            ai_action_continue: "Continue writing".into(),
+            ai_action_rewrite: "Rewrite".into(),
+            ai_rewrite_tone_neutral: "Neutral".into(),
+            ai_rewrite_tone_professional: "More professional".into(),
+            ai_rewrite_tone_concise: "More concise".into(),
+            ai_rewrite_tone_friendly: "More friendly".into(),
+            ai_custom_placeholder: "Custom instruction; press Enter to run…".into(),
+            ai_not_configured: "AI service is not configured. Click to open settings.".into(),
+            ai_panel_replace: "Replace selection".into(),
+            ai_panel_insert_below: "Insert below".into(),
+            ai_panel_retry: "Retry".into(),
+            ai_panel_stop: "Stop".into(),
+            ai_panel_running: "Generating…".into(),
+            ai_panel_stale_document: "The document has changed; please try again.".into(),
+            ai_error_network: "Could not reach the AI service: {error}".into(),
+            ai_error_http: "The AI service returned an error: {error}".into(),
+            ai_error_protocol: "Unexpected response from the AI service: {error}".into(),
+            preferences_nav_ai: "AI".into(),
+            preferences_ai_provider: "Provider preset".into(),
+            preferences_ai_api_base_url: "API base URL".into(),
+            preferences_ai_api_key: "API key".into(),
+            preferences_ai_model: "Model".into(),
+            preferences_ai_translate_target: "Translation target".into(),
+            preferences_ai_translate_follow_ui: "Follow UI language".into(),
+            preferences_ai_custom_provider: "Custom".into(),
+            preferences_ai_provider_ollama: "Ollama (local)".into(),
+            preferences_ai_hint: "Works with any OpenAI-compatible service (OpenAI, DeepSeek, GLM, Kimi, OpenRouter, local Ollama…). The key stays in your local config.toml.".into(),
         }
     }
 

@@ -802,6 +802,105 @@ impl I18nStringsDe {
             preferences_status_bar_show_mode_switch: self
                 .preferences_status_bar_show_mode_switch
                 .unwrap_or(defaults.preferences_status_bar_show_mode_switch),
+            ai_assistant: self
+                .ai_assistant
+                .unwrap_or(defaults.ai_assistant),
+            ai_assistant_menu: self
+                .ai_assistant_menu
+                .unwrap_or(defaults.ai_assistant_menu),
+            ai_action_polish: self
+                .ai_action_polish
+                .unwrap_or(defaults.ai_action_polish),
+            ai_action_fix_grammar: self
+                .ai_action_fix_grammar
+                .unwrap_or(defaults.ai_action_fix_grammar),
+            ai_action_translate: self
+                .ai_action_translate
+                .unwrap_or(defaults.ai_action_translate),
+            ai_action_summarize: self
+                .ai_action_summarize
+                .unwrap_or(defaults.ai_action_summarize),
+            ai_action_continue: self
+                .ai_action_continue
+                .unwrap_or(defaults.ai_action_continue),
+            ai_action_rewrite: self
+                .ai_action_rewrite
+                .unwrap_or(defaults.ai_action_rewrite),
+            ai_rewrite_tone_neutral: self
+                .ai_rewrite_tone_neutral
+                .unwrap_or(defaults.ai_rewrite_tone_neutral),
+            ai_rewrite_tone_professional: self
+                .ai_rewrite_tone_professional
+                .unwrap_or(defaults.ai_rewrite_tone_professional),
+            ai_rewrite_tone_concise: self
+                .ai_rewrite_tone_concise
+                .unwrap_or(defaults.ai_rewrite_tone_concise),
+            ai_rewrite_tone_friendly: self
+                .ai_rewrite_tone_friendly
+                .unwrap_or(defaults.ai_rewrite_tone_friendly),
+            ai_custom_placeholder: self
+                .ai_custom_placeholder
+                .unwrap_or(defaults.ai_custom_placeholder),
+            ai_not_configured: self
+                .ai_not_configured
+                .unwrap_or(defaults.ai_not_configured),
+            ai_panel_replace: self
+                .ai_panel_replace
+                .unwrap_or(defaults.ai_panel_replace),
+            ai_panel_insert_below: self
+                .ai_panel_insert_below
+                .unwrap_or(defaults.ai_panel_insert_below),
+            ai_panel_retry: self
+                .ai_panel_retry
+                .unwrap_or(defaults.ai_panel_retry),
+            ai_panel_stop: self
+                .ai_panel_stop
+                .unwrap_or(defaults.ai_panel_stop),
+            ai_panel_running: self
+                .ai_panel_running
+                .unwrap_or(defaults.ai_panel_running),
+            ai_panel_stale_document: self
+                .ai_panel_stale_document
+                .unwrap_or(defaults.ai_panel_stale_document),
+            ai_error_network: self
+                .ai_error_network
+                .unwrap_or(defaults.ai_error_network),
+            ai_error_http: self
+                .ai_error_http
+                .unwrap_or(defaults.ai_error_http),
+            ai_error_protocol: self
+                .ai_error_protocol
+                .unwrap_or(defaults.ai_error_protocol),
+            preferences_nav_ai: self
+                .preferences_nav_ai
+                .unwrap_or(defaults.preferences_nav_ai),
+            preferences_ai_provider: self
+                .preferences_ai_provider
+                .unwrap_or(defaults.preferences_ai_provider),
+            preferences_ai_api_base_url: self
+                .preferences_ai_api_base_url
+                .unwrap_or(defaults.preferences_ai_api_base_url),
+            preferences_ai_api_key: self
+                .preferences_ai_api_key
+                .unwrap_or(defaults.preferences_ai_api_key),
+            preferences_ai_model: self
+                .preferences_ai_model
+                .unwrap_or(defaults.preferences_ai_model),
+            preferences_ai_translate_target: self
+                .preferences_ai_translate_target
+                .unwrap_or(defaults.preferences_ai_translate_target),
+            preferences_ai_translate_follow_ui: self
+                .preferences_ai_translate_follow_ui
+                .unwrap_or(defaults.preferences_ai_translate_follow_ui),
+            preferences_ai_custom_provider: self
+                .preferences_ai_custom_provider
+                .unwrap_or(defaults.preferences_ai_custom_provider),
+            preferences_ai_provider_ollama: self
+                .preferences_ai_provider_ollama
+                .unwrap_or(defaults.preferences_ai_provider_ollama),
+            preferences_ai_hint: self
+                .preferences_ai_hint
+                .unwrap_or(defaults.preferences_ai_hint),
         }
     }
 }

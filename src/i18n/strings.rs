@@ -519,5 +519,71 @@ pub struct I18nStrings {
     pub preferences_status_bar_show_sidebar_toggle: String,
     /// Label for the mode switch visibility.
     pub preferences_status_bar_show_mode_switch: String,
+    /// AI 助手(右键菜单/通用标签)。
+    pub ai_assistant: String,
+    /// AI 助手(菜单/命令面板条目)。
+    pub ai_assistant_menu: String,
+    /// AI 动作:润色。
+    pub ai_action_polish: String,
+    /// AI 动作:语法纠错。
+    pub ai_action_fix_grammar: String,
+    /// AI 动作:翻译。
+    pub ai_action_translate: String,
+    /// AI 动作:总结。
+    pub ai_action_summarize: String,
+    /// AI 动作:续写。
+    pub ai_action_continue: String,
+    /// AI 动作:改写。
+    pub ai_action_rewrite: String,
+    /// 改写语气:常规。
+    pub ai_rewrite_tone_neutral: String,
+    /// 改写语气:更专业。
+    pub ai_rewrite_tone_professional: String,
+    /// 改写语气:更简洁。
+    pub ai_rewrite_tone_concise: String,
+    /// 改写语气:更友好。
+    pub ai_rewrite_tone_friendly: String,
+    /// AI 面板:自定义指令输入占位符。
+    pub ai_custom_placeholder: String,
+    /// AI 面板:未配置提示。
+    pub ai_not_configured: String,
+    /// AI 面板:替换选区按钮。
+    pub ai_panel_replace: String,
+    /// AI 面板:插入到下方按钮。
+    pub ai_panel_insert_below: String,
+    /// AI 面板:重试按钮。
+    pub ai_panel_retry: String,
+    /// AI 面板:停止按钮。
+    pub ai_panel_stop: String,
+    /// AI 面板:生成中状态。
+    pub ai_panel_running: String,
+    /// AI 面板:文档漂移拒绝应用。
+    pub ai_panel_stale_document: String,
+    /// AI 错误:网络,模板支持 {error}。
+    pub ai_error_network: String,
+    /// AI 错误:HTTP,模板支持 {error}。
+    pub ai_error_http: String,
+    /// AI 错误:协议,模板支持 {error}。
+    pub ai_error_protocol: String,
+    /// 偏好设置侧栏:AI 页。
+    pub preferences_nav_ai: String,
+    /// AI 页:服务商预设。
+    pub preferences_ai_provider: String,
+    /// AI 页:API 地址。
+    pub preferences_ai_api_base_url: String,
+    /// AI 页:API 密钥。
+    pub preferences_ai_api_key: String,
+    /// AI 页:模型。
+    pub preferences_ai_model: String,
+    /// AI 页:翻译默认目标。
+    pub preferences_ai_translate_target: String,
+    /// AI 页:翻译跟随界面语言。
+    pub preferences_ai_translate_follow_ui: String,
+    /// AI 页:自定义服务商。
+    pub preferences_ai_custom_provider: String,
+    /// AI 页:Ollama 本地预设。
+    pub preferences_ai_provider_ollama: String,
+    /// AI 页:说明文案。
+    pub preferences_ai_hint: String,
 }
 

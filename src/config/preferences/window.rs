@@ -4,6 +4,7 @@ pub(crate) enum PreferencesNav {
     File,
     Theme,
     Image,
+    Ai,
     Shortcuts,
     StatusBar,
     Window,
@@ -54,6 +55,15 @@ pub(crate) struct PreferencesWindow {
     pub(super) window_open_position_dropdown_open: bool,
     pub(super) external_change_dropdown_open: bool,
     pub(super) delete_policy_dropdown_open: bool,
+    /// AI 页草稿:服务商与翻译目标是普通字段,三项连接信息长在 TextField 里。
+    pub(super) ai_provider_id: String,
+    pub(super) ai_translate_target: String,
+    pub(super) ai_base_url: gpui::Entity<TextField>,
+    pub(super) ai_api_key: gpui::Entity<TextField>,
+    pub(super) ai_model: gpui::Entity<TextField>,
+    pub(super) saved_ai: AiPreferences,
+    pub(super) ai_provider_dropdown_open: bool,
+    pub(super) ai_translate_dropdown_open: bool,
     pub(super) saved_tree_sort: TreeSortPreference,
     pub(super) saved_autosave_debounce_ms: u64,
     pub(super) saved_autosave: bool,
@@ -111,6 +121,20 @@ impl PreferencesWindow {
         let default_window_height = preferences.default_window_height;
         let external_change_policy = preferences.external_change_policy;
         let delete_policy = preferences.delete_policy;
+        let ai_field = |placeholder: String, value: &str, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                let mut field = TextField::new(placeholder, cx);
+                field.set_value(value, cx);
+                field
+            })
+        };
+        let ai_base_url = ai_field(
+            "https://api.openai.com/v1".into(),
+            &preferences.ai.api_base_url,
+            cx,
+        );
+        let ai_api_key = ai_field("sk-…".into(), &preferences.ai.api_key, cx);
+        let ai_model = ai_field("gpt-4o-mini".into(), &preferences.ai.model, cx);
         Self {
             nav: PreferencesNav::File,
             startup_open,
@@ -141,6 +165,14 @@ impl PreferencesWindow {
             window_open_position_dropdown_open: false,
             external_change_dropdown_open: false,
             delete_policy_dropdown_open: false,
+            ai_provider_id: preferences.ai.provider_id.clone(),
+            ai_translate_target: preferences.ai.translate_target.clone(),
+            ai_base_url,
+            ai_api_key,
+            ai_model,
+            saved_ai: preferences.ai.clone(),
+            ai_provider_dropdown_open: false,
+            ai_translate_dropdown_open: false,
             saved_tree_sort: tree_sort,
             saved_autosave_debounce_ms: autosave_debounce_ms,
             saved_autosave: autosave,
@@ -201,7 +233,18 @@ impl PreferencesWindow {
             .unwrap_or_else(|| strings.preferences_theme_system.clone())
     }
 
-    pub(crate) fn has_unsaved_changes(&self) -> bool {
+    /// AI 页的草稿值:下拉状态 + 三个 TextField 的当前内容。
+    pub(crate) fn ai_draft(&self, cx: &App) -> AiPreferences {
+        AiPreferences {
+            provider_id: self.ai_provider_id.clone(),
+            api_base_url: self.ai_base_url.read(cx).value().trim().to_string(),
+            api_key: self.ai_api_key.read(cx).value().to_string(),
+            model: self.ai_model.read(cx).value().trim().to_string(),
+            translate_target: self.ai_translate_target.clone(),
+        }
+    }
+
+    pub(crate) fn has_unsaved_changes(&self, cx: &App) -> bool {
         self.startup_open != self.saved_startup_open
             || self.selected_theme_id != self.saved_theme_id
             || self.image_paste_behavior != self.saved_image_paste_behavior
@@ -225,6 +268,7 @@ impl PreferencesWindow {
             || self.default_window_height != self.saved_default_window_height
             || self.external_change_policy != self.saved_external_change_policy
             || self.delete_policy != self.saved_delete_policy
+            || self.ai_draft(cx) != self.saved_ai
     }
 
     pub(crate) fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -342,6 +386,70 @@ impl PreferencesWindow {
         cx.notify();
     }
 
+    pub(crate) fn set_nav_ai(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.nav = PreferencesNav::Ai;
+        self.startup_dropdown_open = false;
+        self.theme_dropdown_open = false;
+        self.writing_width_dropdown_open = false;
+        self.image_dropdown_open = false;
+        self.recording_shortcut = None;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_ai_provider_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ai_provider_dropdown_open = !self.ai_provider_dropdown_open;
+        self.ai_translate_dropdown_open = false;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_ai_translate_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ai_translate_dropdown_open = !self.ai_translate_dropdown_open;
+        self.ai_provider_dropdown_open = false;
+        cx.notify();
+    }
+
+    /// 选服务商预设 = 回填「地址 + 模型」默认值(密钥不动),用户可再手改。
+    pub(crate) fn select_ai_provider(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(preset) = AI_PROVIDER_PRESETS.get(index) else {
+            return;
+        };
+        self.ai_provider_id = preset.id.to_string();
+        if !preset.base_url.is_empty() {
+            self.ai_base_url.update(cx, |field, cx| {
+                field.set_value(preset.base_url, cx)
+            });
+            self.ai_model.update(cx, |field, cx| field.set_value(preset.model, cx));
+        }
+        self.ai_provider_dropdown_open = false;
+        cx.notify();
+    }
+
+    pub(crate) fn select_ai_translate_target(
+        &mut self,
+        target_id: String,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ai_translate_target = target_id;
+        self.ai_translate_dropdown_open = false;
+        cx.notify();
+    }
+
     pub(crate) fn toggle_startup_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.startup_dropdown_open = !self.startup_dropdown_open;
         self.theme_dropdown_open = false;
@@ -417,7 +525,7 @@ impl PreferencesWindow {
     }
 
     pub(crate) fn save(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_unsaved_changes() {
+        if !self.has_unsaved_changes(cx) {
             return;
         }
 
@@ -471,6 +579,8 @@ impl PreferencesWindow {
         EditorSettings::set_external_change_policy(cx, self.external_change_policy);
         EditorSettings::set_delete_policy(cx, self.delete_policy);
         EditorSettings::set_window_open_position(cx, self.window_open_position);
+        let ai = self.ai_draft(cx);
+        EditorSettings::set_ai(cx, ai);
         cx.update_global::<EditorSettings, _>(|settings, _cx| {
             settings.default_window_width = self.default_window_width;
             settings.default_window_height = self.default_window_height;
@@ -534,6 +644,8 @@ impl PreferencesWindow {
         self.saved_default_window_height = self.default_window_height;
         self.saved_external_change_policy = self.external_change_policy;
         self.saved_delete_policy = self.delete_policy;
+        let ai = self.ai_draft(cx);
+        self.saved_ai = ai;
         cx.notify();
     }
 }

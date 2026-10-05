@@ -10,7 +10,7 @@ pub(super) use serde::{Deserialize, Serialize};
 
 pub(super) use super::{VeloraConfigDirs, read_recent_files};
 pub(super) use crate::components::{
-    ShortcutCategory, ShortcutCommand, ShortcutDefinition, install_keybindings,
+    ShortcutCategory, ShortcutCommand, ShortcutDefinition, TextField, install_keybindings,
     normalize_shortcut_config, normalize_shortcut_keys, resolved_shortcut_keys,
     shortcut_conflict_for, shortcut_definitions, switch::Switch,
 };
@@ -321,13 +321,11 @@ pub(crate) struct AiPreferences {
 }
 
 /// 翻译默认目标:「跟随界面语言」。
-// 设置页/面板在后续提交接线,先放行过渡期 dead_code,接线时一并摘掉。
-#[allow(dead_code)]
 pub(crate) const AUTO_TRANSLATE_TARGET: &str = "auto";
 
 impl AiPreferences {
     /// 三元组齐全才能发起请求;缺任何一项都引导去设置页补齐。
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_configured(&self) -> bool {
         !self.api_base_url.trim().is_empty()
             && !self.api_key.trim().is_empty()
@@ -335,7 +333,7 @@ impl AiPreferences {
     }
 
     /// 翻译默认目标:`auto` 表示跟随界面语言。
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn translate_target(&self) -> &str {
         if self.translate_target.trim().is_empty() {
             AUTO_TRANSLATE_TARGET
@@ -343,6 +341,90 @@ impl AiPreferences {
             self.translate_target.trim()
         }
     }
+}
+
+/// 服务商预设:选预设 = 回填「地址 + 模型」默认值,密钥仍由用户填。
+/// 全部走 OpenAI 兼容协议,新增服务商只是加一行,不动协议层。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AiProviderPreset {
+    pub(crate) id: &'static str,
+    /// 预设显示名;品牌名不翻译,「自定义/本地」用 i18n。
+    pub(crate) brand: &'static str,
+    /// i18n 键(仅 自定义/Ollama 需要);为空时用 brand。
+    pub(crate) label_key: Option<fn(&crate::i18n::I18nStrings) -> String>,
+    pub(crate) base_url: &'static str,
+    pub(crate) model: &'static str,
+}
+
+impl AiProviderPreset {
+    pub(crate) fn label(&self, strings: &crate::i18n::I18nStrings) -> String {
+        match self.label_key {
+            Some(label) => label(strings),
+            None => self.brand.to_string(),
+        }
+    }
+}
+
+pub(crate) const AI_PROVIDER_CUSTOM_ID: &str = "custom";
+
+pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
+    AiProviderPreset {
+        id: "openai",
+        brand: "OpenAI",
+        label_key: None,
+        base_url: "https://api.openai.com/v1",
+        model: "gpt-4o-mini",
+    },
+    AiProviderPreset {
+        id: "deepseek",
+        brand: "DeepSeek",
+        label_key: None,
+        base_url: "https://api.deepseek.com/v1",
+        model: "deepseek-chat",
+    },
+    AiProviderPreset {
+        id: "zhipu",
+        brand: "智谱 GLM",
+        label_key: None,
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        model: "glm-4-flash",
+    },
+    AiProviderPreset {
+        id: "moonshot",
+        brand: "Moonshot Kimi",
+        label_key: None,
+        base_url: "https://api.moonshot.cn/v1",
+        model: "moonshot-v1-8k",
+    },
+    AiProviderPreset {
+        id: "openrouter",
+        brand: "OpenRouter",
+        label_key: None,
+        base_url: "https://openrouter.ai/api/v1",
+        model: "openai/gpt-4o-mini",
+    },
+    AiProviderPreset {
+        id: "ollama",
+        brand: "Ollama",
+        label_key: Some(|strings| strings.preferences_ai_provider_ollama.clone()),
+        base_url: "http://localhost:11434/v1",
+        model: "llama3.1",
+    },
+    AiProviderPreset {
+        id: AI_PROVIDER_CUSTOM_ID,
+        brand: "",
+        label_key: Some(|strings| strings.preferences_ai_custom_provider.clone()),
+        base_url: "",
+        model: "",
+    },
+];
+
+/// 按 id 找预设;未知 id(手改配置)按「自定义」处理。
+pub(crate) fn ai_provider_preset(id: &str) -> &'static AiProviderPreset {
+    AI_PROVIDER_PRESETS
+        .iter()
+        .find(|preset| preset.id == id)
+        .unwrap_or(&AI_PROVIDER_PRESETS[AI_PROVIDER_PRESETS.len() - 1])
 }
 
 /// Last window frame (logical pixels) persisted across launches.
@@ -800,7 +882,6 @@ impl EditorSettings {
     }
 
     /// AI 助手的服务端配置；全局未安装时回退磁盘/默认值。
-    // 读取方(设置页/面板)在后续提交接线,先放行过渡期 dead_code。
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn ai(cx: &App) -> AiPreferences {
         cx.try_global::<Self>()
@@ -809,7 +890,6 @@ impl EditorSettings {
     }
 
     /// 整组替换 AI 配置并落盘（设置页保存、面板「去配置」共用）。
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_ai(cx: &mut App, ai: AiPreferences) {
         if cx.try_global::<Self>().is_some() {
             cx.update_global::<Self, _>(|settings, _cx| settings.ai = ai.clone());

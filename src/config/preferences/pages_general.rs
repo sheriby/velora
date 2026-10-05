@@ -607,3 +607,148 @@ impl PreferencesWindow {
         )
     }
 }
+
+impl PreferencesWindow {
+    /// AI 页:服务商预设、连接三元组(地址/密钥/模型)与翻译默认目标。
+    /// 说明文案放在卡片上方,一眼知道「任意 OpenAI 兼容服务都能接、密钥不出本机」。
+    pub(crate) fn render_ai_page(
+        &self,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let t = &theme.typography;
+
+        // 服务商下拉:当前选中的预设名(未知 id 按「自定义」显示)。
+        let current_provider = crate::config::preferences::ai_provider_preset(&self.ai_provider_id);
+        let mut provider_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-ai-provider-dropdown",
+                current_provider.label(strings),
+                theme,
+                Self::toggle_ai_provider_dropdown,
+                cx,
+            ));
+        if self.ai_provider_dropdown_open {
+            for (index, preset) in crate::config::preferences::AI_PROVIDER_PRESETS
+                .iter()
+                .enumerate()
+            {
+                let is_selected = preset.id == current_provider.id;
+                provider_dropdown = provider_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!("preferences-ai-provider-{index}")),
+                    preset.label(strings),
+                    is_selected,
+                    theme,
+                    move |this, _event, window, cx| this.select_ai_provider(index, window, cx),
+                    cx,
+                ));
+            }
+        }
+
+        // 翻译默认目标:「跟随界面」+ 九种目标语言(语言自称,不做 i18n)。
+        let translate_follow = self.ai_translate_target == AUTO_TRANSLATE_TARGET;
+        let current_translate = if translate_follow {
+            strings.preferences_ai_translate_follow_ui.clone()
+        } else {
+            crate::ai::TranslateTarget::from_id(&self.ai_translate_target)
+                .map(|target| target.label().to_string())
+                .unwrap_or_else(|| strings.preferences_ai_translate_follow_ui.clone())
+        };
+        let mut translate_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-ai-translate-dropdown",
+                current_translate,
+                theme,
+                Self::toggle_ai_translate_dropdown,
+                cx,
+            ));
+        if self.ai_translate_dropdown_open {
+            translate_dropdown = translate_dropdown.child(Self::dropdown_item(
+                "preferences-ai-translate-auto",
+                strings.preferences_ai_translate_follow_ui.clone(),
+                translate_follow,
+                theme,
+                |this, _event, window, cx| {
+                    this.select_ai_translate_target(
+                        AUTO_TRANSLATE_TARGET.to_string(),
+                        window,
+                        cx,
+                    );
+                },
+                cx,
+            ));
+            for target in crate::ai::TranslateTarget::ALL {
+                let is_selected = self.ai_translate_target == target.id();
+                let target_id = target.id().to_string();
+                translate_dropdown = translate_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!("preferences-ai-translate-{}", target.id())),
+                    target.label().to_string(),
+                    is_selected,
+                    theme,
+                    move |this, _event, window, cx| {
+                        this.select_ai_translate_target(target_id.clone(), window, cx);
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        let field = |entity: &gpui::Entity<TextField>| {
+            div().w(px(280.0)).child(entity.clone())
+        };
+
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .child(
+                div()
+                    .text_size(px(t.dialog_body_size))
+                    .text_color(c.dialog_muted)
+                    .child(strings.preferences_ai_hint.clone()),
+            )
+            .child(self.settings_card(
+                theme,
+                vec![
+                    self.settings_row(
+                        theme,
+                        strings.preferences_ai_provider.clone(),
+                        provider_dropdown,
+                    ),
+                    self.settings_row(
+                        theme,
+                        strings.preferences_ai_api_base_url.clone(),
+                        field(&self.ai_base_url),
+                    ),
+                    self.settings_row(
+                        theme,
+                        strings.preferences_ai_api_key.clone(),
+                        field(&self.ai_api_key),
+                    ),
+                    self.settings_row(
+                        theme,
+                        strings.preferences_ai_model.clone(),
+                        field(&self.ai_model),
+                    ),
+                ],
+            ))
+            .child(self.settings_card(
+                theme,
+                vec![self.settings_row(
+                    theme,
+                    strings.preferences_ai_translate_target.clone(),
+                    translate_dropdown,
+                )],
+            ))
+            .into_any_element()
+    }
+}
