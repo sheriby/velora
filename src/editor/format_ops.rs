@@ -100,10 +100,16 @@ impl Editor {
         changed
     }
 
-    /// 键盘走这里：跨块选区在编辑器层收掉（块自己看不到别的块），单块选区继续往下
-    /// 传给块，沿用块里已有的那条路径。
-    fn handle_inline_format_capture(&mut self, format: InlineFormat, cx: &mut Context<Self>) {
-        if self.cross_block_selection.is_none() {
+    /// 键盘、右键菜单与命令面板都到这里为止：焦点在某一块上时交给块自己（块里那条
+    /// 路径不动），跨块选区与「焦点被浮层借走」这两种由这一段收掉；后一种为什么要
+    /// 在编辑器层接手，见 `Self::block_focus_is_live`。
+    fn handle_inline_format_capture(
+        &mut self,
+        format: InlineFormat,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cross_block_selection.is_none() && self.block_focus_is_live(window, cx) {
             cx.propagate();
             return;
         }
@@ -114,73 +120,73 @@ impl Editor {
     pub(crate) fn on_bold_capture(
         &mut self,
         _: &BoldSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Bold, cx);
+        self.handle_inline_format_capture(InlineFormat::Bold, window, cx);
     }
 
     pub(crate) fn on_italic_capture(
         &mut self,
         _: &ItalicSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Italic, cx);
+        self.handle_inline_format_capture(InlineFormat::Italic, window, cx);
     }
 
     pub(crate) fn on_underline_capture(
         &mut self,
         _: &UnderlineSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Underline, cx);
+        self.handle_inline_format_capture(InlineFormat::Underline, window, cx);
     }
 
     pub(crate) fn on_strikethrough_capture(
         &mut self,
         _: &StrikethroughSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Strikethrough, cx);
+        self.handle_inline_format_capture(InlineFormat::Strikethrough, window, cx);
     }
 
     pub(crate) fn on_highlight_capture(
         &mut self,
         _: &HighlightSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Highlight, cx);
+        self.handle_inline_format_capture(InlineFormat::Highlight, window, cx);
     }
 
     pub(crate) fn on_code_capture(
         &mut self,
         _: &CodeSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Code, cx);
+        self.handle_inline_format_capture(InlineFormat::Code, window, cx);
     }
 
     pub(crate) fn on_superscript_capture(
         &mut self,
         _: &SuperscriptSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Superscript, cx);
+        self.handle_inline_format_capture(InlineFormat::Superscript, window, cx);
     }
 
     pub(crate) fn on_subscript_capture(
         &mut self,
         _: &SubscriptSelection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.handle_inline_format_capture(InlineFormat::Subscript, cx);
+        self.handle_inline_format_capture(InlineFormat::Subscript, window, cx);
     }
 
     pub(crate) fn on_clear_format_capture(

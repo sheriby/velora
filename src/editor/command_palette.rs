@@ -92,15 +92,50 @@ impl Editor {
             .collect()
     }
 
+    /// 收起面板并派发这条命令：与菜单项、快捷键同一条动作派发链路，视图级处理者
+    /// （缩放、拷贝为 HTML 等）一并生效。按回车与点一行共用这一段。
+    ///
+    /// 焦点还原排在下一帧的绘制里，本次派发读的是上一帧的派发路径，块那一层收不到
+    /// 动作；编辑类命令因此在编辑器层收口，判定见 `Editor::block_focus_is_live`。
+    fn run_palette_command(
+        &mut self,
+        action: Box<dyn Action>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_command_palette(cx);
+        window.dispatch_action(action, cx);
+    }
+
+    /// 回车执行当前选中的那一条；列表为空（查询没命中）就什么都不做。
+    fn run_selected_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selected) = self.command_palette.as_ref().map(|state| state.selected) else {
+            return;
+        };
+        let entries = self.filtered_commands(cx);
+        let Some(action) = entries
+            .get(selected.min(entries.len().saturating_sub(1)))
+            .map(|entry| entry.action.boxed_clone())
+        else {
+            return;
+        };
+        self.run_palette_command(action, window, cx);
+    }
+
     pub(super) fn on_command_palette_key_down(
         &mut self,
         event: &KeyDownEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let key = event.keystroke.key.clone();
         match key.as_str() {
             "escape" => {
                 self.close_command_palette(cx);
+                return;
+            }
+            "return" => {
+                self.run_selected_command(window, cx);
                 return;
             }
             "down" => {
@@ -187,12 +222,11 @@ pub(super) fn render_command_palette_overlay(
                     })
                     .child(entry.label.clone())
                     .on_click(move |_event, window, cx| {
-                        let _ = dispatch_editor.update(cx, |editor, _cx| {
-                            editor.command_palette = None;
+                        // 走标准动作派发：与菜单项、快捷键同一条链路，视图级处理者
+                        // （缩放、复制为 HTML 等）也会生效；收尾与按回车是同一条。
+                        let _ = dispatch_editor.update(cx, |editor, cx| {
+                            editor.run_palette_command(action.boxed_clone(), window, cx);
                         });
-                        // 走标准动作派发：与菜单项、快捷键同一条链路，
-                        // 视图级处理者（缩放、复制为 HTML 等）也会生效。
-                        window.dispatch_action(action.boxed_clone(), cx);
                     })
                     .into_any_element(),
             );
@@ -279,9 +313,9 @@ pub(super) fn render_command_palette_overlay(
                         )
                         .on_key_down({
                             let editor_handle = editor_handle.clone();
-                            move |event: &KeyDownEvent, _window, cx| {
+                            move |event: &KeyDownEvent, window, cx| {
                                 let _ = editor_handle.update(cx, |editor, cx| {
-                                    editor.on_command_palette_key_down(event, cx);
+                                    editor.on_command_palette_key_down(event, window, cx);
                                 });
                             }
                         }),

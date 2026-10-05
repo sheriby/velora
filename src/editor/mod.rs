@@ -25,6 +25,7 @@ use crate::components::{
     TableData, TableRuntime, UndoCaptureKind, serialize_table_cell_markdown,
 };
 mod buffer;
+mod clipboard_ops;
 mod close;
 mod context_menu;
 mod modal;

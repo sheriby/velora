@@ -11,19 +11,26 @@
 use gpui::Action;
 
 use crate::components::{
-    CloseWindow, CopyAsHtml, ExportHtml, ExportPdf, ExportPng, FindInDocument, FindNextMatch,
-    FindPreviousMatch, NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PrintDocument,
-    FileHistory, FormatDocument, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout,
-    ToggleFocusMode, ToggleFullscreen,
-    ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, ZoomIn, ZoomOut, ZoomReset,
+    BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
+    ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
+    FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
+    NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
+    PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout,
+    StrikethroughSelection, SubscriptSelection, SuperscriptSelection, ToggleFocusMode,
+    ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UnderlineSelection,
+    ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::i18n::I18nStrings;
 
 /// 命令所属的菜单。`App` 只在 macOS 出现（应用菜单），非 macOS 并入文件菜单。
+/// `Edit` 与 `Format` 是「只进命令面板」的两组：菜单栏沿用既有那五档不扩，
+/// 这两条动作在右键菜单与选中工具栏里已经点得到，面板只负责让人搜得到。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandMenu {
     App,
     File,
+    Edit,
+    Format,
     Export,
     View,
     Help,
@@ -84,6 +91,60 @@ static COMMANDS: &[CommandSpec] = &[
     command!("save_as", File, menu_save_as, SaveDocumentAs),
     command!("file_history", File, menu_file_history, FileHistory),
     command!(sep "format_document", File, menu_format_document, FormatDocument),
+    // 下面两组只进命令面板、不进系统菜单栏：动作在右键菜单与选中工具栏里点得到，
+    // 面板补的是「搜得到」这一条。id 与键位表里同一条命令的 id 一致。
+    command!(
+        "paste_as_plain_text",
+        Edit,
+        context_menu_paste_as_plain_text,
+        PasteAsPlainText
+    ),
+    command!(
+        "copy_as_markdown",
+        Edit,
+        context_menu_copy_as_markdown,
+        CopyAsMarkdown
+    ),
+    command!(sep "bold_selection", Format, format_bold, BoldSelection),
+    command!("italic_selection", Format, format_italic, ItalicSelection),
+    command!(
+        "underline_selection",
+        Format,
+        format_underline,
+        UnderlineSelection
+    ),
+    command!(
+        "strikethrough_selection",
+        Format,
+        format_strikethrough,
+        StrikethroughSelection
+    ),
+    command!("code_selection", Format, format_code, CodeSelection),
+    command!(
+        "highlight_selection",
+        Format,
+        format_highlight,
+        HighlightSelection
+    ),
+    command!(
+        "superscript_selection",
+        Format,
+        format_superscript,
+        SuperscriptSelection
+    ),
+    command!(
+        "subscript_selection",
+        Format,
+        format_subscript,
+        SubscriptSelection
+    ),
+    command!("link_selection", Format, insert_link, LinkSelection),
+    command!(
+        "clear_format_selection",
+        Format,
+        format_clear,
+        ClearFormatSelection
+    ),
     // 导出
     command!("export_html", Export, menu_export_html, ExportHtml),
     command!("export_pdf", Export, menu_export_pdf, ExportPdf),
@@ -91,7 +152,12 @@ static COMMANDS: &[CommandSpec] = &[
     command!("print", Export, menu_print, PrintDocument),
     command!("copy_as_html", Export, menu_copy_as_html, CopyAsHtml),
     // 视图
-    command!("toggle_sidebar", View, command_toggle_sidebar, ToggleSidebar),
+    command!(
+        "toggle_sidebar",
+        View,
+        command_toggle_sidebar,
+        ToggleSidebar
+    ),
     command!(
         "toggle_fullscreen",
         View,
@@ -212,6 +278,48 @@ mod tests {
                 "copy_as_html",
             ]
         );
+
+        let edit_ids = super::commands_for(CommandMenu::Edit)
+            .map(|spec| spec.id)
+            .collect::<Vec<_>>();
+        assert_eq!(edit_ids, vec!["paste_as_plain_text", "copy_as_markdown"]);
+
+        let format_ids = super::commands_for(CommandMenu::Format)
+            .map(|spec| spec.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            format_ids,
+            vec![
+                "bold_selection",
+                "italic_selection",
+                "underline_selection",
+                "strikethrough_selection",
+                "code_selection",
+                "highlight_selection",
+                "superscript_selection",
+                "subscript_selection",
+                "link_selection",
+                "clear_format_selection",
+            ]
+        );
+    }
+
+    /// 面板里这两条命令的 id 与键位表里同一条命令的 id 一致：偏好页改键、面板执行、
+    /// 菜单显示三处认的是同一个名字，任一处另起一个就叫不拢。
+    #[test]
+    fn palette_ids_for_the_editable_commands_match_the_shortcut_table() {
+        let definitions = crate::components::shortcut_definitions();
+        for menu in [CommandMenu::Edit, CommandMenu::Format] {
+            for spec in super::commands_for(menu) {
+                assert!(
+                    definitions
+                        .iter()
+                        .any(|definition| definition.id == spec.id),
+                    "{} 在命令面板里有，键位表里却没有同名条目",
+                    spec.id
+                );
+            }
+        }
     }
 
     #[test]

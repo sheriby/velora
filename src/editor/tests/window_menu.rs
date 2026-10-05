@@ -738,10 +738,15 @@ fn collect_prompt_offenders(dir: &std::path::Path, offenders: &mut Vec<String>) 
 }
 
 #[gpui::test]
-async fn every_registered_command_has_a_handler(cx: &mut TestAppContext) {
+async fn every_menu_bar_command_has_a_handler(cx: &mut TestAppContext) {
     // roadmap H5：注册表里的每条命令都必须有处理者——菜单项与命令面板条目
     // 都经 Action 派发，没有处理者的命令会变成「点了没反应」（菜单里还会变灰）。
-    // 这里用菜单启用判定 is_action_available 逐条把守。
+    // 这里用菜单启用判定 is_action_available 逐条把守，管的是进系统菜单栏的那五组。
+    //
+    // `Edit` 与 `Format` 两组不在这里：判定读的是渲染帧里从焦点往上那一条路径，
+    // 而这两条动作的处理者挂在文档与块那两层（实测 `Newline`、`BoldSelection`、
+    // `Undo` 在这里都报不可用，但同一个窗口里 `dispatch_action(BoldSelection)`
+    // 真的写出了 `**alpha**`）。那两条的可达性由 palette_commands.rs 逐条派发比字节把守。
     init_editor_test_app(cx);
     cx.update(|cx| crate::app_menu::init(cx));
     let (_editor, cx) = cx.add_window_view(|_window, cx| {
@@ -749,14 +754,22 @@ async fn every_registered_command_has_a_handler(cx: &mut TestAppContext) {
     });
     redraw(cx);
 
+    let menu_bar_groups = [
+        crate::commands::CommandMenu::App,
+        crate::commands::CommandMenu::File,
+        crate::commands::CommandMenu::Export,
+        crate::commands::CommandMenu::View,
+        crate::commands::CommandMenu::Help,
+    ];
     let mut missing = Vec::new();
-    for spec in crate::commands::commands() {
-        let action = spec.boxed_action();
-        if !cx.update(|_window, cx| cx.is_action_available(action.as_ref())) {
-            missing.push(spec.id);
+    for menu in menu_bar_groups {
+        for spec in crate::commands::commands_for(menu) {
+            let action = spec.boxed_action();
+            if !cx.update(|_window, cx| cx.is_action_available(action.as_ref())) {
+                missing.push(spec.id);
+            }
         }
     }
 
     assert!(missing.is_empty(), "以下命令没有处理者：{missing:?}");
 }
-

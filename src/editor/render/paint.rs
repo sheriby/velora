@@ -808,6 +808,7 @@ impl Render for Editor {
             )
             .capture_action(cx.listener(Self::on_copy_capture))
             .capture_action(cx.listener(Self::on_cut_capture))
+            .capture_action(cx.listener(Self::on_paste_as_plain_text_capture))
             .capture_action(cx.listener(Self::on_delete_capture))
             .capture_action(cx.listener(Self::on_delete_back_capture))
             .capture_action(cx.listener(Self::on_bold_capture))

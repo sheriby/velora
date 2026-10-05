@@ -324,6 +324,16 @@ impl Editor {
             })
     }
 
+    /// 窗口焦点此刻是不是落在某一个编辑目标（正文块或表格单元格）上。
+    ///
+    /// 命令面板与快速打开的输入框会把焦点借走，块那一层的处理者就此不在派发路径里。
+    /// 实测：面板里回车执行时当场派发，动作只走到文档根那一条链（编辑器层的捕获
+    /// 处理者收得到，块收不到，缓冲区不变）；等一次重绘之后再对同一块派发，块的处理者
+    /// 才触发。所以借走焦点的这两个入口，命令要在编辑器层收掉。
+    pub(super) fn block_focus_is_live(&self, window: &Window, cx: &App) -> bool {
+        self.focused_edit_target_entity_id(window, cx).is_some()
+    }
+
     pub(super) fn focused_edit_target(&self, window: &Window, cx: &App) -> Option<Entity<Block>> {
         self.focused_edit_target_entity_id(window, cx)
             .and_then(|entity_id| self.focusable_entity_by_id(entity_id))
