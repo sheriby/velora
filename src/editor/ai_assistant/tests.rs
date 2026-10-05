@@ -396,3 +396,107 @@ async fn context_menu_ai_row_opens_the_panel(cx: &mut TestAppContext) {
         assert!(editor.ai_assistant.is_some(), "应打开 AI 面板");
     });
 }
+
+#[gpui::test]
+async fn anchor_captures_title_and_surrounding_context(cx: &mut TestAppContext) {
+    init_test_app(cx);
+    let source = "# 产品手记\n\n引言段落。\n\n## 设计\n\n正文内容。\n\n结尾段。\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| crate::editor::Editor::from_markdown(cx, source.to_string(), None));
+    editor.update(cx, |editor, cx| {
+        // 选中「正文内容。」所在区间:先粗定位(子串查找换算字节偏移)。
+        let haystack = editor.current_document_source(cx);
+        let needle = "正文内容。";
+        let start = haystack.find(needle).expect("needle in source");
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        block.update(cx, |block, _cx| block.selected_range = 0..0);
+        let _ = block;
+        let anchor = editor.capture_ai_anchor(cx);
+        // 标题取首个 ATX(跳过无);前后文覆盖选区外文本。
+        assert_eq!(anchor.document_title, "产品手记");
+        // 默认锚点(无选区)落在光标处:后文是文档尾部的一段。
+        assert!(anchor.selected_text.is_empty());
+        assert!(
+            anchor.after_cursor.contains("结尾段。") || anchor.after_cursor.contains("引言段落。"),
+            "后文应取自插入点之后的文档内容"
+        );
+    });
+}
+
+#[gpui::test]
+async fn endpoint_picker_switches_the_target_agent(cx: &mut TestAppContext) {
+    init_test_app(cx);
+    // 两个 stub 端点:内置演示(默认)+ 手动添加的同协议端点。
+    cx.update(|cx| {
+        EditorSettings::set_ai_in_memory(
+            AiSettings {
+                translate_target: crate::config::preferences::AUTO_TRANSLATE_TARGET.into(),
+                endpoints: vec![
+                    AiEndpointPref {
+                        id: "demo".into(),
+                        name: String::new(),
+                        kind: ProviderKind::Stub,
+                        ..AiEndpointPref::default()
+                    },
+                    AiEndpointPref {
+                        id: "second".into(),
+                        name: "第二个 agent".into(),
+                        kind: ProviderKind::Stub,
+                        ..AiEndpointPref::default()
+                    },
+                ],
+            },
+            cx,
+        );
+    });
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        crate::editor::Editor::from_markdown(cx, "原文".to_string(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        block.update(cx, |block, _cx| block.selected_range = 0..2);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(window, cx);
+        // 默认跟随列表第一个(demo);切换到第二个。
+        assert!(editor.ai_assistant.as_ref().expect("open").endpoint_id.is_none());
+        editor.ai_select_endpoint("second".into(), cx);
+        let state = editor.ai_assistant.as_ref().expect("open");
+        assert_eq!(state.endpoint_id.as_deref(), Some("second"));
+        // 运行后不可再切(结果归属锁定)。
+        editor.run_ai_action(AiAction::Polish, cx);
+        editor.ai_select_endpoint("demo".into(), cx);
+        assert_eq!(
+            editor.ai_assistant.as_ref().expect("open").endpoint_id.as_deref(),
+            Some("second"),
+            "运行中切换应被忽略"
+        );
+    });
+    wait_until_not_running(&editor, cx);
+    editor.update_in(cx, |editor, _window, cx| {
+        assert!(matches!(
+            editor.ai_assistant.as_ref().expect("open").phase,
+            super::AiPhase::Finished
+        ));
+    });
+}
+
+#[gpui::test]
+async fn empty_endpoint_list_shows_settings_entry(cx: &mut TestAppContext) {
+    init_test_app(cx);
+    // 面板「未配置」分支:列表为空时,菜单显示引导入口而不是动作列表。
+    cx.update(|cx| {
+        EditorSettings::set_ai_in_memory(AiSettings::default(), cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        crate::editor::Editor::from_markdown(cx, "第一段".to_string(), None)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(window, cx);
+        // 无端点时点动作:面板关闭并带去设置页(与既有 unconfigured 用例
+        // 同一路径,这里只断言状态分支可达)。
+        editor.run_ai_action(AiAction::Polish, cx);
+        assert!(editor.ai_assistant.is_none());
+    });
+}

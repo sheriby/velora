@@ -88,12 +88,11 @@ fn first_atx_title(source: &str) -> String {
             continue;
         }
         let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
-        if (1..=6).contains(&hashes)
-            && trimmed[hashes..].starts_with(' ')
-            && let Some(title) = trimmed[hashes..].trim().strip_prefix("# ")
-        {
-            // `## ` 后再剥一个空格;再往后的内容是标题正文。
-            return title.to_string();
+        if (1..=6).contains(&hashes) {
+            let rest = &trimmed[hashes..];
+            if let Some(title) = rest.strip_prefix(' ') {
+                return title.trim().to_string();
+            }
         }
     }
     String::new()
@@ -732,9 +731,12 @@ fn ai_button(
         .into_any_element()
 }
 
-/// 一行动作:整行可点,悬停高亮;`expanded` 为真时行首箭头转向。
+/// 一行动作:图标 + 标签,整行可点,悬停高亮;`expanded` 为真时行尾箭头
+/// 转向(子菜单展开态)。
+#[allow(clippy::too_many_arguments)]
 fn ai_menu_row(
     id: impl Into<ElementId>,
+    icon: &'static str,
     label: String,
     expanded: Option<bool>,
     theme: &Theme,
@@ -761,7 +763,19 @@ fn ai_menu_row(
         .on_click(move |event: &ClickEvent, window, cx| {
             let _ = handle.update(cx, |editor, cx| on_click(editor, event, window, cx));
         })
-        .child(label)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    svg()
+                        .path(icon)
+                        .size(px(14.0))
+                        .text_color(c.dialog_muted),
+                )
+                .child(label),
+        )
         .when_some(expanded, |this, expanded| {
             this.child(
                 div()
@@ -828,16 +842,10 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                 .or_else(|| ai_settings.default_endpoint());
             let endpoint_label = selected
                 .map(|endpoint| {
-                    let name = {
-                        let trimmed = endpoint.name.trim();
-                        (!trimmed.is_empty())
-                            .then(|| trimmed.to_string())
-                            .unwrap_or_else(|| endpoint.display_name())
-                    };
                     let name = if is_stub(endpoint.kind) && endpoint.name.trim().is_empty() {
                         strings.ai_kind_stub.clone()
                     } else {
-                        name
+                        endpoint.display_name()
                     };
                     let kind = if is_stub(endpoint.kind) {
                         strings.ai_kind_stub.clone()
@@ -861,9 +869,9 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                 .child(endpoint_label);
             if ai_settings.endpoints.len() > 1 {
                 endpoint_row = endpoint_row
+                    .rounded(px(d.menu_item_radius))
                     .cursor_pointer()
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .rounded(px(d.menu_item_radius))
                     .child("⌄")
                     .on_click({
                         let handle = editor_handle.clone();
@@ -876,20 +884,13 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
             }
             body.push(endpoint_row.into_any_element());
 
-            // 下拉:列出全部端点(默认项带标记)。
+            // 端点下拉:列出全部端点(默认项带标记)。
             if state.endpoint_dropdown_open && ai_settings.endpoints.len() > 1 {
                 for (index, endpoint) in ai_settings.endpoints.iter().enumerate() {
-                    let name = {
-                        let trimmed = endpoint.name.trim();
-                        (!trimmed.is_empty())
-                            .then(|| trimmed.to_string())
-                            .unwrap_or_else(|| {
-                                if is_stub(endpoint.kind) {
-                                    strings.ai_kind_stub.clone()
-                                } else {
-                                    endpoint.kind.display_name().to_string()
-                                }
-                            })
+                    let name = if is_stub(endpoint.kind) && endpoint.name.trim().is_empty() {
+                        strings.ai_kind_stub.clone()
+                    } else {
+                        endpoint.display_name()
                     };
                     let kind = if is_stub(endpoint.kind) {
                         strings.ai_kind_stub.clone()
@@ -901,7 +902,9 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                         .unwrap_or(endpoint.is_default);
                     body.push(
                         div()
-                            .id(gpui::ElementId::Name(format!("ai-endpoint-pick-{index}").into()))
+                            .id(gpui::ElementId::Name(
+                                format!("ai-endpoint-pick-{index}").into(),
+                            ))
                             .debug_selector(move || format!("ai-endpoint-pick-{index}"))
                             .h(px(26.0))
                             .px(px(8.0))
@@ -943,16 +946,24 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                                         .child(strings.preferences_ai_default.clone()),
                                 )
                             })
-                            .when(is_selected, |this| {
-                                this.bg(c.selection)
-                            })
+                            .when(is_selected, |this| this.bg(c.selection))
                             .into_any_element(),
                     );
                 }
             }
+
             body.push(state.prompt.clone().into_any_element());
-            if !configured {
-                // 未配置:动作点不了也没意义,直接给一条入口。
+            // 输入框与动作列表之间一条细线,分组更清晰。
+            if configured {
+                body.push(
+                    div()
+                        .w_full()
+                        .h(px(1.0))
+                        .bg(c.dialog_border)
+                        .into_any_element(),
+                );
+            } else {
+                // 未配置(端点全删/没配完):动作点不了也没意义,给一条入口。
                 let handle = editor_handle.clone();
                 body.push(
                     div()
@@ -977,131 +988,142 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                         })
                         .into_any_element(),
                 );
-            } else {
                 body.push(
-                    ai_menu_row(
-                        "ai-action-polish",
-                        strings.ai_action_polish.clone(),
-                        None,
-                        theme,
-                        |editor, _event, _window, cx| {
-                            editor.run_ai_action(AiAction::Polish, cx);
-                        },
-                        &editor_handle,
-                    ),
+                    div()
+                        .w_full()
+                        .h(px(1.0))
+                        .bg(c.dialog_border)
+                        .into_any_element(),
                 );
-                body.push(
-                    ai_menu_row(
-                        "ai-action-fix-grammar",
-                        strings.ai_action_fix_grammar.clone(),
-                        None,
-                        theme,
-                        |editor, _event, _window, cx| {
-                            editor.run_ai_action(AiAction::FixGrammar, cx);
-                        },
-                        &editor_handle,
-                    ),
-                );
-                body.push(
-                    ai_menu_row(
-                        "ai-action-translate",
-                        strings.ai_action_translate.clone(),
-                        Some(state.translate_open),
-                        theme,
-                        |editor, _event, _window, cx| {
-                            if let Some(state) = editor.ai_assistant.as_mut() {
-                                state.translate_open = !state.translate_open;
-                                state.rewrite_open = false;
-                                cx.notify();
-                            }
-                        },
-                        &editor_handle,
-                    ),
-                );
-                if state.translate_open {
-                    for target in TranslateTarget::ALL {
-                        let target = *target;
-                        body.push(
-                            ai_menu_row(
-                                gpui::ElementId::Name(
-                                    format!("ai-translate-{}", target.id()).into(),
-                                ),
-                                target.label().to_string(),
-                                None,
-                                theme,
-                                move |editor, _event, _window, cx| {
-                                    editor.run_ai_action(AiAction::Translate(target), cx);
-                                },
-                                &editor_handle,
-                            ),
-                        );
-                    }
-                }
-                body.push(
-                    ai_menu_row(
-                        "ai-action-summarize",
-                        strings.ai_action_summarize.clone(),
-                        None,
-                        theme,
-                        |editor, _event, _window, cx| {
-                            editor.run_ai_action(AiAction::Summarize, cx);
-                        },
-                        &editor_handle,
-                    ),
-                );
-                body.push(
-                    ai_menu_row(
-                        "ai-action-continue",
-                        strings.ai_action_continue.clone(),
-                        None,
-                        theme,
-                        |editor, _event, _window, cx| {
-                            editor.run_ai_action(AiAction::ContinueWriting, cx);
-                        },
-                        &editor_handle,
-                    ),
-                );
-                body.push(
-                    ai_menu_row(
-                        "ai-action-rewrite",
-                        strings.ai_action_rewrite.clone(),
-                        Some(state.rewrite_open),
-                        theme,
-                        |editor, _event, _window, cx| {
-                            if let Some(state) = editor.ai_assistant.as_mut() {
-                                state.rewrite_open = !state.rewrite_open;
-                                state.translate_open = false;
-                                cx.notify();
-                            }
-                        },
-                        &editor_handle,
-                    ),
-                );
-                if state.rewrite_open {
-                    for (tone, label) in [
-                        (RewriteTone::Neutral, strings.ai_rewrite_tone_neutral.clone()),
-                        (
-                            RewriteTone::Professional,
-                            strings.ai_rewrite_tone_professional.clone(),
+            }
+
+            body.push(
+                ai_menu_row(
+                    "ai-action-polish",
+                    "icon/workspace/ai-polish.svg",
+                    strings.ai_action_polish.clone(),
+                    None,
+                    theme,
+                    |editor, _event, _window, cx| {
+                        editor.run_ai_action(AiAction::Polish, cx);
+                    },
+                    &editor_handle,
+                ),
+            );
+            body.push(
+                ai_menu_row(
+                    "ai-action-fix-grammar",
+                    "icon/workspace/ai-fix-grammar.svg",
+                    strings.ai_action_fix_grammar.clone(),
+                    None,
+                    theme,
+                    |editor, _event, _window, cx| {
+                        editor.run_ai_action(AiAction::FixGrammar, cx);
+                    },
+                    &editor_handle,
+                ),
+            );
+            body.push(
+                ai_menu_row(
+                    "ai-action-translate",
+                    "icon/workspace/ai-translate.svg",
+                    strings.ai_action_translate.clone(),
+                    Some(state.translate_open),
+                    theme,
+                    |editor, _event, _window, cx| {
+                        if let Some(state) = editor.ai_assistant.as_mut() {
+                            state.translate_open = !state.translate_open;
+                            state.rewrite_open = false;
+                            cx.notify();
+                        }
+                    },
+                    &editor_handle,
+                ),
+            );
+            if state.translate_open {
+                for target in TranslateTarget::ALL {
+                    let target = *target;
+                    body.push(
+                        ai_menu_row(
+                            gpui::ElementId::Name(format!("ai-translate-{}", target.id()).into()),
+                            "icon/workspace/ai-translate.svg",
+                            target.label().to_string(),
+                            None,
+                            theme,
+                            move |editor, _event, _window, cx| {
+                                editor.run_ai_action(AiAction::Translate(target), cx);
+                            },
+                            &editor_handle,
                         ),
-                        (RewriteTone::Concise, strings.ai_rewrite_tone_concise.clone()),
-                        (RewriteTone::Friendly, strings.ai_rewrite_tone_friendly.clone()),
-                    ] {
-                        body.push(
-                            ai_menu_row(
-                                gpui::ElementId::Name(
-                                    format!("ai-rewrite-{}", tone.id()).into(),
-                                ),
-                                label,
-                                None,
-                                theme,
-                                move |editor, _event, _window, cx| {
-                                    editor.run_ai_action(AiAction::Rewrite(tone), cx);
-                                },
-                                &editor_handle,
-                            ),
-                        );
-                    }
+                    );
+                }
+            }
+            body.push(
+                ai_menu_row(
+                    "ai-action-summarize",
+                    "icon/workspace/ai-summarize.svg",
+                    strings.ai_action_summarize.clone(),
+                    None,
+                    theme,
+                    |editor, _event, _window, cx| {
+                        editor.run_ai_action(AiAction::Summarize, cx);
+                    },
+                    &editor_handle,
+                ),
+            );
+            body.push(
+                ai_menu_row(
+                    "ai-action-continue",
+                    "icon/workspace/ai-continue.svg",
+                    strings.ai_action_continue.clone(),
+                    None,
+                    theme,
+                    |editor, _event, _window, cx| {
+                        editor.run_ai_action(AiAction::ContinueWriting, cx);
+                    },
+                    &editor_handle,
+                ),
+            );
+            body.push(
+                ai_menu_row(
+                    "ai-action-rewrite",
+                    "icon/workspace/ai-rewrite.svg",
+                    strings.ai_action_rewrite.clone(),
+                    Some(state.rewrite_open),
+                    theme,
+                    |editor, _event, _window, cx| {
+                        if let Some(state) = editor.ai_assistant.as_mut() {
+                            state.rewrite_open = !state.rewrite_open;
+                            state.translate_open = false;
+                            cx.notify();
+                        }
+                    },
+                    &editor_handle,
+                ),
+            );
+            if state.rewrite_open {
+                for (tone, label) in [
+                    (RewriteTone::Neutral, strings.ai_rewrite_tone_neutral.clone()),
+                    (
+                        RewriteTone::Professional,
+                        strings.ai_rewrite_tone_professional.clone(),
+                    ),
+                    (RewriteTone::Concise, strings.ai_rewrite_tone_concise.clone()),
+                    (RewriteTone::Friendly, strings.ai_rewrite_tone_friendly.clone()),
+                ] {
+                    body.push(
+                        ai_menu_row(
+                            gpui::ElementId::Name(format!("ai-rewrite-{}", tone.id()).into()),
+                            "icon/workspace/ai-rewrite.svg",
+                            label,
+                            None,
+                            theme,
+                            move |editor, _event, _window, cx| {
+                                editor.run_ai_action(AiAction::Rewrite(tone), cx);
+                            },
+                            &editor_handle,
+                        ),
+                    );
                 }
             }
         }
@@ -1315,7 +1337,13 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                     .shadow_lg()
                     .track_focus(&state.focus)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .children(body),
+                    .children(body)
+                    // 面板淡入:120ms 透明度过渡,出场不闪烁。
+                    .with_animation(
+                        "ai-panel-fade",
+                        Animation::new(Duration::from_millis(120)),
+                        |this, delta| this.opacity(0.55 + 0.45 * delta),
+                    ),
             )
             .into_any_element(),
     )
