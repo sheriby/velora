@@ -38,6 +38,8 @@ pub(crate) enum SelectionToolbarCommand {
     Format(InlineFormat),
     /// 「插入链接」：把选中的文字包成 `[文字]()`，光标停在括号里等写地址。
     Link,
+    /// 「清除格式」：剥掉选区里的行内样式记号，与右键菜单与 ⌘\ 同一条入口。
+    ClearFormat,
     /// 段落那一档的转换目标：六档标题、正文与三种列表，行数据与右键菜单同一份。
     Paragraph(BlockKindTarget),
 }
@@ -143,8 +145,8 @@ impl Editor {
     }
 
     fn toolbar_size(strings: &crate::i18n::I18nStrings, theme: &Theme) -> Size<Pixels> {
-        // 方形按钮：六个行内样式加一颗链接。
-        let square_buttons = FORMAT_BUTTONS.len() as f32 + 1.0;
+        // 方形按钮：六个行内样式、一颗链接、一颗清除格式。
+        let square_buttons = FORMAT_BUTTONS.len() as f32 + 2.0;
         let width = PANEL_PADDING * 2.0
             + Self::heading_button_width(strings, theme)
             + BUTTON_GAP
@@ -270,6 +272,7 @@ impl Editor {
             toolbar = toolbar.child(self.format_button(format, id, &strings, theme, cx));
         }
         toolbar = toolbar.child(self.link_button(&strings, theme, cx));
+        toolbar = toolbar.child(self.clear_format_button(&strings, theme, cx));
         if let Some((rows, geometry, offset, _)) = heading_menu.as_ref() {
             toolbar = toolbar.child(self.heading_menu_panel(
                 theme,
@@ -501,6 +504,50 @@ impl Editor {
             .into_any_element()
     }
 
+    /// 清除格式那颗方形按钮。本仓没有图标字体，按钮上的字就是它做的事：字母 `A`
+    /// 带样式、后面那个 `×` 把它去掉，与 `</>`、`[]()` 两颗同一个口径。
+    fn clear_format_button(
+        &self,
+        strings: &crate::i18n::I18nStrings,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let menu_command = DocumentMenuCommand::ClearFormat;
+        let label = document_menu_label(menu_command, strings);
+        let tooltip = match document_menu_shortcut(menu_command, cx) {
+            Some(shortcut) => format!("{label}  {shortcut}"),
+            None => label,
+        };
+        div()
+            .id("toolbar-clear-format")
+            .w(px(BUTTON_SIZE))
+            .h(px(BUTTON_SIZE))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(d.menu_item_radius))
+            .bg(c.dialog_surface)
+            .text_size(px(10.0))
+            .text_color(c.dialog_secondary_button_text)
+            .cursor_pointer()
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .active(|this| this.opacity(0.92))
+            .debug_selector(|| "toolbar-clear-format".to_string())
+            .tooltip(move |_, cx| {
+                cx.new(|_| HoverPreviewTooltip {
+                    label: tooltip.clone().into(),
+                })
+                .into()
+            })
+            .child("A\u{d7}")
+            .on_click(cx.listener(|editor, _event, _window, cx| {
+                editor.run_selection_toolbar_command(SelectionToolbarCommand::ClearFormat, cx);
+            }))
+            .into_any_element()
+    }
+
     /// 标题档位列表：与右键菜单段落那一档同一份行数据、同一条派发路径。
     /// `top` 是相对工具栏面板的偏移，所以它随工具栏一起摆放。
     fn heading_menu_panel(
@@ -580,6 +627,9 @@ impl Editor {
             }
             SelectionToolbarCommand::Link => {
                 self.insert_link_on_selection(cx);
+            }
+            SelectionToolbarCommand::ClearFormat => {
+                self.clear_inline_format_on_selection(cx);
             }
             SelectionToolbarCommand::Paragraph(target) => {
                 self.apply_block_kind_to_selection(target, cx);

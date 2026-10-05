@@ -7,7 +7,7 @@ use gpui::{px, Entity, Modifiers, MouseButton, Point};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
-const TOOLBAR_BUTTONS: [&str; 8] = [
+const TOOLBAR_BUTTONS: [&str; 9] = [
     "toolbar-heading",
     "toolbar-bold",
     "toolbar-italic",
@@ -16,6 +16,7 @@ const TOOLBAR_BUTTONS: [&str; 8] = [
     "toolbar-code",
     "toolbar-highlight",
     "toolbar-link",
+    "toolbar-clear-format",
 ];
 
 fn visible_block(
@@ -184,6 +185,59 @@ async fn clicking_bold_in_the_toolbar_edits_the_buffer_and_keeps_the_selection(
         buffer_text(&editor, cx),
         TWO_PARAGRAPHS,
         "工具栏这次改动撤销一步没复原"
+    );
+}
+
+#[gpui::test]
+async fn clicking_clear_format_in_the_toolbar_strips_the_selected_style(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "alpha **one** beta\n".to_string(), None)
+    });
+    redraw(cx);
+
+    // 选区按这一块当轮生效的屏幕文本来取（§7 的 R7 那条口径：不写死字节数）。焦点落进样式
+    // 片段之前，这一行的屏幕文本是 `alpha one beta`（14 字节），`one` 落在 `6..9`。
+    let block = visible_block(&editor, 0, cx);
+    let word = block.read_with(cx, |block, _cx| {
+        let start = block.display_text().find("one").expect("这一行里该有 one");
+        start..start + "one".len()
+    });
+    editor.update(cx, |editor, _cx| editor.focus_block(block.entity_id()));
+    block.update(cx, |block, _cx| block.selected_range = word.clone());
+    redraw(cx);
+    // 选区落进样式片段会让这一行当场显出记号（`alpha one beta` 14 字节 → `alpha **one** beta`
+    // 18 字节），工具栏按选区摆放，于是它整体右移 20px：实测第一帧面板在 x 505.5..825.5，
+    // 第二帧在 525.5..845.5。命中测试读的是上一帧的节点，只重绘一次就点会落在挪走前的位置，
+    // 命令收不到（去掉下面这次重绘，红在 `left: "alpha **one** beta\n" != right: "alpha one beta\n"`）。
+    redraw(cx);
+    let _ = toolbar_bounds(cx).expect("有选区就该有工具栏");
+    click_element("toolbar-clear-format", cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "alpha one beta\n",
+        "工具栏的「清除格式」没把选区里的粗体记号剥掉"
+    );
+    let focused = editor.read_with(cx, |editor, _| editor.active_entity_id);
+    assert_eq!(
+        focused,
+        Some(visible_block(&editor, 0, cx).entity_id()),
+        "点工具栏把编辑目标的焦点抢走了"
+    );
+    let selected =
+        visible_block(&editor, 0, cx).read_with(cx, |block, _cx| block.selected_range.clone());
+    assert_eq!(
+        selected, word,
+        "清除之后选区该留在原来那三个字上，实测 {selected:?}"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "alpha **one** beta\n",
+        "工具栏这次清除撤销一步没复原"
     );
 }
 
