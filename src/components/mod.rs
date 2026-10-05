@@ -16,6 +16,7 @@ pub(crate) const LONG_LINE_DISPLAY_CHARS: usize = 10_000;
 mod actions;
 mod block;
 pub(crate) mod latex;
+pub(crate) mod menu;
 pub(crate) mod markdown;
 pub(crate) mod mermaid;
 pub(crate) mod switch;

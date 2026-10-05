@@ -54,49 +54,26 @@ impl Editor {
         on_click: fn(&mut Editor, &ClickEvent, &mut Window, &mut Context<Editor>),
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
+        let row = crate::components::menu::menu_item(
+            theme,
+            id,
+            label,
+            None,
+            enabled,
+            danger,
+            false,
+            false,
+        );
         if enabled {
-            div()
-                .id(id)
-                .h(px(d.menu_item_height))
-                .px(px(d.menu_item_padding_x))
-                .flex()
-                .items_center()
-                .rounded(px(d.menu_item_radius))
-                .bg(c.dialog_surface)
-                .text_size(px(d.menu_text_size))
-                .font_weight(t.dialog_body_weight.to_font_weight())
-                .text_color(if danger {
-                    c.dialog_danger_button_bg
-                } else {
-                    c.dialog_secondary_button_text
-                })
-                .child(label)
-                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                .cursor_pointer()
-                .on_click(cx.listener(on_click))
-                .into_any_element()
+            row.on_click(cx.listener(on_click)).into_any_element()
         } else {
-            div()
-                .id(id)
-                .h(px(d.menu_item_height))
-                .px(px(d.menu_item_padding_x))
-                .flex()
-                .items_center()
-                .rounded(px(d.menu_item_radius))
-                .bg(c.dialog_surface)
-                .text_size(px(d.menu_text_size))
-                .font_weight(t.dialog_body_weight.to_font_weight())
-                .text_color(if danger {
-                    c.dialog_danger_button_bg
-                } else {
-                    c.dialog_muted
-                })
-                .child(label)
-                .into_any_element()
+            row.into_any_element()
         }
+    }
+
+    /// 一条分节线。
+    fn menu_separator(theme: &Theme) -> AnyElement {
+        crate::components::menu::menu_separator(theme).into_any_element()
     }
 
     pub(crate) fn render_context_menu_overlay(
@@ -259,12 +236,7 @@ impl Editor {
                             Self::on_align_table_column_right,
                             cx,
                         ),
-                        div()
-                            .mx(px(d.menu_separator_margin_x))
-                            .my(px(d.menu_separator_margin_y))
-                            .h(px(d.menu_separator_height))
-                            .bg(c.dialog_border)
-                            .into_any_element(),
+                        Self::menu_separator(theme).into_any_element(),
                         Self::render_axis_menu_item(
                             theme,
                             "table-axis-move-column-left",
@@ -283,12 +255,7 @@ impl Editor {
                             Self::on_move_table_column_right,
                             cx,
                         ),
-                        div()
-                            .mx(px(d.menu_separator_margin_x))
-                            .my(px(d.menu_separator_margin_y))
-                            .h(px(d.menu_separator_height))
-                            .bg(c.dialog_border)
-                            .into_any_element(),
+                        Self::menu_separator(theme).into_any_element(),
                         Self::render_axis_menu_item(
                             theme,
                             "table-axis-delete-column",
@@ -330,12 +297,7 @@ impl Editor {
                                     .into_any_element(),
                             );
                             items.push(
-                                div()
-                                    .mx(px(d.menu_separator_margin_x))
-                                    .my(px(d.menu_separator_margin_y))
-                                    .h(px(d.menu_separator_height))
-                                    .bg(c.dialog_border)
-                                    .into_any_element(),
+                                Self::menu_separator(theme).into_any_element(),
                             );
                         }
                         items.push(Self::render_axis_menu_item(
@@ -357,12 +319,7 @@ impl Editor {
                             cx,
                         ));
                         items.push(
-                            div()
-                                .mx(px(d.menu_separator_margin_x))
-                                .my(px(d.menu_separator_margin_y))
-                                .h(px(d.menu_separator_height))
-                                .bg(c.dialog_border)
-                                .into_any_element(),
+                            Self::menu_separator(theme).into_any_element(),
                         );
                         // Always enabled: deleting the header promotes the first
                         // body row, and deleting the last remaining row removes

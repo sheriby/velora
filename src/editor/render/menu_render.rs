@@ -213,13 +213,9 @@ impl Editor {
         let t = &theme.typography;
 
         match item {
-            OwnedMenuItem::Separator => div()
+            OwnedMenuItem::Separator => crate::components::menu::menu_separator(theme)
                 .id(("app-menu-separator", item_index))
                 .flex_shrink_0()
-                .mx(px(d.menu_separator_margin_x))
-                .my(px(d.menu_separator_margin_y))
-                .h(px(d.menu_separator_height))
-                .bg(c.dialog_border)
                 .into_any_element(),
             OwnedMenuItem::Action { name, action, .. } => {
                 let is_disabled = action.as_ref().as_any().is::<NoRecentFiles>();
@@ -379,16 +375,14 @@ impl Editor {
                         let submenu_width = menu_panel_width_for_labels(&submenu_labels, d);
                         let submenu_items = submenu.items.clone().into_iter().enumerate().map(
                             |(item_index, item)| match item {
-                                OwnedMenuItem::Separator => div()
-                                    .id((
-                                        "app-submenu-separator",
-                                        submenu_index * 1000 + item_index,
-                                    ))
-                                    .mx(px(d.menu_separator_margin_x))
-                                    .my(px(d.menu_separator_margin_y))
-                                    .h(px(d.menu_separator_height))
-                                    .bg(c.dialog_border)
-                                    .into_any_element(),
+                                OwnedMenuItem::Separator => {
+                                    crate::components::menu::menu_separator(theme)
+                                        .id((
+                                            "app-submenu-separator",
+                                            submenu_index * 1000 + item_index,
+                                        ))
+                                        .into_any_element()
+                                }
                                 OwnedMenuItem::Action { name, action, .. } => {
                                     let is_disabled =
                                         action.as_ref().as_any().is::<NoRecentFiles>();

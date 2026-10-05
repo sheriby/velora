@@ -1149,3 +1149,103 @@ async fn reloading_an_externally_changed_file_keeps_its_shape(cx: &mut TestAppCo
         String::from_utf8_lossy(&saved)
     );
 }
+
+/// 菜单行的几何必须来自同一份渲染：文件树右键与标签右键的两行高度都等于主题令牌
+/// `menu_item_height`。以前这两处各抄了一份行样式（32px 行高、10px 内边距），
+/// 与正文右键（28px、8px）不一致，同一个软件里两套菜单长得不一样。
+#[gpui::test]
+async fn every_context_menu_row_uses_the_same_geometry(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-menu-geometry-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("note.md");
+    fs::write(&path, "hello").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    editor.update(cx, |editor, cx| {
+        editor.open_workspace_context_menu(
+            point(px(60.0), px(120.0)),
+            Some(WorkspaceSelection::File(path.clone())),
+            cx,
+        )
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let tree_row = cx
+        .debug_bounds("menu-item-workspace-context-action-0")
+        .expect("文件树菜单的第一行");
+
+    editor.update(cx, |editor, cx| {
+        editor.open_tab_context_menu(point(px(80.0), px(40.0)), 0, cx)
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let tab_row = cx
+        .debug_bounds("menu-item-tab-context-action-0")
+        .expect("标签菜单的第一行");
+
+    let row_height = px(crate::theme::Theme::default_theme().dimensions.menu_item_height);
+    assert_eq!(
+        tree_row.size.height, row_height,
+        "文件树菜单的行高应是主题令牌的 {:?}，实测 {:?}",
+        row_height, tree_row.size.height
+    );
+    assert_eq!(
+        tab_row.size.height, tree_row.size.height,
+        "两个右键菜单的行高必须一致（同一份行渲染）"
+    );
+}
+
+/// 菜单分节线的画法收在 `src/components/menu.rs` 一处。`src/editor` 下再出现
+/// `menu_separator_margin_x` 就说明有人又手抄了一份分隔线。
+#[test]
+fn menu_separator_is_rendered_from_one_place() {
+    let mut offenders = Vec::new();
+    collect_menu_separator_offenders(std::path::Path::new("src/editor"), &mut offenders);
+    assert!(
+        offenders.is_empty(),
+        "菜单分隔线只应由 components::menu::menu_separator 画，手抄在：{offenders:?}"
+    );
+}
+
+fn collect_menu_separator_offenders(dir: &std::path::Path, offenders: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_menu_separator_offenders(&path, offenders);
+            continue;
+        }
+        if path.components().any(|part| part.as_os_str() == "tests") {
+            // 测试源码里会出现这个令牌名（本文件的守卫就是），不参与扫描。
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if text.contains("menu_separator_margin_x") {
+            offenders.push(path.display().to_string());
+        }
+    }
+}

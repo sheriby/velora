@@ -97,7 +97,10 @@ impl Editor {
             WorkspaceMenuAction::Paste,
         ));
         let width = 180.0;
-        let height = actions.len() as f32 * 32.0 + 8.0;
+        let dimensions = &theme.dimensions;
+        let height = actions.len() as f32
+            * (dimensions.menu_item_height + dimensions.menu_panel_gap)
+            + dimensions.menu_panel_padding * 2.0;
         let viewport = window.viewport_size();
         let left = f32::from(menu.position.x)
             .min((f32::from(viewport.width) - width - 8.0).max(8.0))
@@ -111,23 +114,17 @@ impl Editor {
             .enumerate()
             .map(|(index, (label, action))| {
                 let editor = editor.clone();
-                div()
-                    .id(("workspace-context-action", index))
-                    .h(px(32.0))
-                    .px(px(10.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(5.0))
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .text_color(if matches!(action, WorkspaceMenuAction::Delete) {
-                        theme.colors.dialog_danger_button_bg
-                    } else {
-                        theme.colors.dialog_body
-                    })
-                    .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
-                    .child(label)
-                    .on_click(move |_, window, cx| {
+                crate::components::menu::menu_item(
+                    theme,
+                    format!("workspace-context-action-{index}"),
+                    label,
+                    None,
+                    true,
+                    matches!(action, WorkspaceMenuAction::Delete),
+                    false,
+                    false,
+                )
+                .on_click(move |_, window, cx| {
                         let _ = editor.update(cx, |editor, cx| {
                             editor.workspace.context_menu = None;
                             match action {
@@ -235,7 +232,10 @@ impl Editor {
         }
 
         let width = 200.0;
-        let height = actions.len() as f32 * 32.0 + 8.0;
+        let dimensions = &theme.dimensions;
+        let height = actions.len() as f32
+            * (dimensions.menu_item_height + dimensions.menu_panel_gap)
+            + dimensions.menu_panel_padding * 2.0;
         let viewport = window.viewport_size();
         let left = f32::from(menu.position.x)
             .min((f32::from(viewport.width) - width - 8.0).max(8.0))
@@ -250,19 +250,17 @@ impl Editor {
             .map(|(index, (label, action))| {
                 let editor = editor.clone();
                 let target_path = target_path.clone();
-                div()
-                    .id(("tab-context-action", index))
-                    .h(px(32.0))
-                    .px(px(10.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(5.0))
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .text_color(theme.colors.dialog_body)
-                    .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
-                    .child(label)
-                    .on_click(move |_, window, cx| {
+                crate::components::menu::menu_item(
+                    theme,
+                    format!("tab-context-action-{index}"),
+                    label,
+                    None,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .on_click(move |_, window, cx| {
                         let _ = editor.update(cx, |editor, cx| {
                             editor.workspace.tab_context_menu = None;
                             editor.close_workspace_tabs_for_action(&target_path, action, window, cx);
