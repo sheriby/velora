@@ -1139,3 +1139,56 @@
             .expect("translate target round trip");
         let _ = preferences_cx;
     }
+
+    #[gpui::test]
+    async fn ai_page_renders_endpoint_list_and_editor_form(cx: &mut TestAppContext) {
+        // 交互方法级测试之外,页面本身也要真的把列表/表单画出来:
+        // 这里按 debug_selector 断言渲染产物,防止「逻辑对但没上屏」。
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        cx.run_until_parked();
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.set_nav_ai(&ClickEvent::default(), window, cx);
+            })
+            .expect("switch to AI page");
+        preferences_cx.run_until_parked();
+
+        // 出厂默认:一个演示端点占住列表第一行;「添加端点」入口可见。
+        assert!(
+            preferences_cx.debug_bounds("ai-endpoint-0").is_some(),
+            "端点列表应渲染第一行"
+        );
+        assert!(
+            preferences_cx.debug_bounds("ai-add-endpoint").is_some(),
+            "「添加端点」入口应渲染"
+        );
+        assert!(
+            preferences_cx
+                .debug_bounds("preferences-ai-save-endpoint")
+                .is_none(),
+            "未进入编辑时不应有保存端点按钮"
+        );
+
+        // 进入编辑:表单卡出现(保存按钮可见),编辑行替换为表单。
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.start_add_ai_endpoint(&ClickEvent::default(), window, cx);
+            })
+            .expect("start add endpoint");
+        preferences_cx.run_until_parked();
+        assert!(
+            preferences_cx
+                .debug_bounds("preferences-ai-save-endpoint")
+                .is_some(),
+            "编辑中应渲染「保存端点」按钮"
+        );
+    }

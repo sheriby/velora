@@ -500,3 +500,42 @@ async fn empty_endpoint_list_shows_settings_entry(cx: &mut TestAppContext) {
         assert!(editor.ai_assistant.is_none());
     });
 }
+
+#[gpui::test]
+async fn continue_writing_inserts_at_caret_without_selection(cx: &mut TestAppContext) {
+    // 续写是唯一免选区动作:光标即插入点。stub 剧本确定性回放,
+    // 校验「光标处直接衔接、不加空行」的插入语义。
+    init_test_app(cx);
+    configure_stub_ai(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        crate::editor::Editor::from_markdown(cx, "已是深夜。".to_string(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        block.update(cx, |block, _cx| {
+            let end = block.visible_len();
+            block.selected_range = end..end;
+        });
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(window, cx);
+        editor.run_ai_action(AiAction::ContinueWriting, cx);
+    });
+    wait_until_not_running(&editor, cx);
+    editor.update_in(cx, |editor, _window, cx| {
+        let expected = format!(
+            "已是深夜。{}",
+            crate::ai::script(&crate::ai::StubScenario::Continue)
+        );
+        assert!(editor.ai_apply(cx));
+        assert_eq!(
+            editor.current_document_source(cx),
+            expected,
+            "续写应直接衔接在光标处,不加空行"
+        );
+        // 一步撤销回到原文。
+        editor.undo_document(cx);
+        assert_eq!(editor.current_document_source(cx), "已是深夜。");
+    });
+}

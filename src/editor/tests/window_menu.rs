@@ -276,6 +276,10 @@ fn every_svg_icon_sets_its_own_text_color() {
             "components/block/render.rs",
             include_str!("../../components/block/render.rs"),
         ),
+        (
+            "editor/ai_assistant.rs",
+            include_str!("../ai_assistant.rs"),
+        ),
     ] {
         for (index, chain) in source.split("svg()").skip(1).enumerate() {
             let chain = &chain[..chain.find(';').unwrap_or(chain.len())];
