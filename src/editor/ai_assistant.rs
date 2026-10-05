@@ -18,11 +18,11 @@ use gpui::*;
 
 use super::Editor;
 use crate::ai::{
-    AiAction, AiEndpointConfig, AiPromptContext, AiRequestError, ProviderKind, RewriteTone,
-    TranslateTarget, build_prompt, default_client, stream_completion,
+    AiAction, AiEndpointConfig, AiPromptContext, AiRequestError, RewriteTone, TranslateTarget,
+    build_prompt, default_client, stream_completion,
 };
 use crate::components::{TextField, UndoCaptureKind};
-use crate::config::preferences::AiPreferences;
+use crate::config::preferences::AiSettings;
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 
@@ -299,16 +299,16 @@ impl Editor {
         action: AiAction,
         cx: &mut Context<Self>,
     ) {
-        let preferences = crate::config::EditorSettings::ai(cx);
-        if !preferences.is_configured() {
+        let ai_settings = crate::config::EditorSettings::ai(cx);
+        let endpoint = default_endpoint_from_settings(&ai_settings)
+            .filter(|endpoint| endpoint.is_configured());
+        let Some(endpoint) = endpoint else {
+            // 没有可用端点(全删了,或默认端点没配完):带去设置页补齐。
             self.close_ai_assistant(cx);
             let _ = crate::config::open_preferences_window_at(
                 cx,
                 crate::config::PreferencesNav::Ai,
             );
-            return;
-        }
-        let Some(endpoint) = endpoint_from_preferences(&preferences) else {
             return;
         };
         let (generation, prompt) = {
@@ -319,7 +319,7 @@ impl Editor {
             let Some(anchor) = state.anchor.clone() else {
                 return;
             };
-            let prompt = build_ai_prompt(&action, &anchor, &preferences);
+            let prompt = build_ai_prompt(&action, &anchor);
             state.phase = AiPhase::Running;
             state.action = Some(action);
             state.anchor = Some(anchor);
@@ -519,25 +519,15 @@ impl Editor {
     }
 }
 
-/// 从偏好里取请求端点;未配置返回 `None`。
-///
-/// 过渡期实现:旧版 `[ai]` 偏好只有一组 OpenAI 兼容配置,协议固定为
-/// chat-completions;多端点档案由后续提交的 `AiSettings` 取代。
-fn endpoint_from_preferences(preferences: &AiPreferences) -> Option<AiEndpointConfig> {
-    preferences.is_configured().then(|| AiEndpointConfig {
-        kind: ProviderKind::ChatCompletions,
-        base_url: preferences.api_base_url.trim().to_string(),
-        api_key: preferences.api_key.trim().to_string(),
-        model: preferences.model.trim().to_string(),
-    })
+/// 默认端点的传输配置;列表为空返回 `None`(面板引导去设置页)。
+fn default_endpoint_from_settings(settings: &AiSettings) -> Option<AiEndpointConfig> {
+    settings
+        .default_endpoint()
+        .map(|endpoint| endpoint.endpoint_config())
 }
 
 /// 组装一次请求的提示词(动作里的翻译目标已由面板解析好)。
-fn build_ai_prompt(
-    action: &AiAction,
-    anchor: &AiAnchor,
-    _preferences: &AiPreferences,
-) -> crate::ai::AiPrompt {
+fn build_ai_prompt(action: &AiAction, anchor: &AiAnchor) -> crate::ai::AiPrompt {
     let context = AiPromptContext {
         document_title: String::new(),
         selected: anchor.selected_text.clone(),
@@ -727,9 +717,11 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
     let strings = cx.global::<I18nManager>().strings_arc();
     let editor_handle = cx.entity().downgrade();
 
+    // 有可用端点就不再挡「未配置」:出厂演示端点保证 ⌘J 永远能跑通。
     let configured = {
-        let preferences = crate::config::EditorSettings::ai(cx);
-        preferences.is_configured()
+        let ai_settings = crate::config::EditorSettings::ai(cx);
+        default_endpoint_from_settings(&ai_settings)
+            .is_some_and(|endpoint| endpoint.is_configured())
     };
 
     let mut body: Vec<AnyElement> = Vec::new();

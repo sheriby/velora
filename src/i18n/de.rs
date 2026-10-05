@@ -336,5 +336,20 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_ai_custom_provider: Option<String>,
     pub(crate) preferences_ai_provider_ollama: Option<String>,
     pub(crate) preferences_ai_hint: Option<String>,
-    pub(crate) preferences_shortcut_open_ai_assistant: Option<String>,}
-
+    pub(crate) preferences_shortcut_open_ai_assistant: Option<String>,
+    pub(crate) ai_kind_stub: Option<String>,
+    pub(crate) ai_endpoint_unnamed: Option<String>,
+    pub(crate) preferences_ai_endpoints: Option<String>,
+    pub(crate) preferences_ai_add_endpoint: Option<String>,
+    pub(crate) preferences_ai_edit: Option<String>,
+    pub(crate) preferences_ai_delete: Option<String>,
+    pub(crate) preferences_ai_default: Option<String>,
+    pub(crate) preferences_ai_name: Option<String>,
+    pub(crate) preferences_ai_kind: Option<String>,
+    pub(crate) preferences_ai_test_connection: Option<String>,
+    pub(crate) preferences_ai_test_running: Option<String>,
+    pub(crate) preferences_ai_test_ok: Option<String>,
+    pub(crate) preferences_ai_test_failed: Option<String>,
+    pub(crate) preferences_ai_save_endpoint: Option<String>,
+    pub(crate) preferences_ai_stub_hint: Option<String>,
+}

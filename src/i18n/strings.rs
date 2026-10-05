@@ -586,5 +586,35 @@ pub struct I18nStrings {
     /// AI 页:说明文案。
     pub preferences_ai_hint: String,
     /// 快捷键设置:AI 助手。
-    pub preferences_shortcut_open_ai_assistant: String,}
-
+    pub preferences_shortcut_open_ai_assistant: String,
+    /// 协议形态:stub 演示后端(非专名,走 i18n)。
+    pub ai_kind_stub: String,
+    /// 端点名为空时的展示回退。
+    pub ai_endpoint_unnamed: String,
+    /// AI 页:端点列表标题。
+    pub preferences_ai_endpoints: String,
+    /// AI 页:新增端点。
+    pub preferences_ai_add_endpoint: String,
+    /// AI 页:编辑端点。
+    pub preferences_ai_edit: String,
+    /// AI 页:删除端点。
+    pub preferences_ai_delete: String,
+    /// AI 页:默认端点徽标。
+    pub preferences_ai_default: String,
+    /// AI 页:端点名称。
+    pub preferences_ai_name: String,
+    /// AI 页:端点协议。
+    pub preferences_ai_kind: String,
+    /// AI 页:测试连接按钮。
+    pub preferences_ai_test_connection: String,
+    /// AI 页:测试进行中。
+    pub preferences_ai_test_running: String,
+    /// AI 页:测试成功。
+    pub preferences_ai_test_ok: String,
+    /// AI 页:测试失败前缀。
+    pub preferences_ai_test_failed: String,
+    /// AI 页:保存端点按钮。
+    pub preferences_ai_save_endpoint: String,
+    /// AI 页:stub 端点提示。
+    pub preferences_ai_stub_hint: String,
+}

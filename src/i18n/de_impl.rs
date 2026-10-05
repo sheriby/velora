@@ -874,6 +874,51 @@ impl I18nStringsDe {
             preferences_shortcut_open_ai_assistant: self
                 .preferences_shortcut_open_ai_assistant
                 .unwrap_or(defaults.preferences_shortcut_open_ai_assistant),
+            ai_kind_stub: self
+                .ai_kind_stub
+                .unwrap_or(defaults.ai_kind_stub),
+            ai_endpoint_unnamed: self
+                .ai_endpoint_unnamed
+                .unwrap_or(defaults.ai_endpoint_unnamed),
+            preferences_ai_endpoints: self
+                .preferences_ai_endpoints
+                .unwrap_or(defaults.preferences_ai_endpoints),
+            preferences_ai_add_endpoint: self
+                .preferences_ai_add_endpoint
+                .unwrap_or(defaults.preferences_ai_add_endpoint),
+            preferences_ai_edit: self
+                .preferences_ai_edit
+                .unwrap_or(defaults.preferences_ai_edit),
+            preferences_ai_delete: self
+                .preferences_ai_delete
+                .unwrap_or(defaults.preferences_ai_delete),
+            preferences_ai_default: self
+                .preferences_ai_default
+                .unwrap_or(defaults.preferences_ai_default),
+            preferences_ai_name: self
+                .preferences_ai_name
+                .unwrap_or(defaults.preferences_ai_name),
+            preferences_ai_kind: self
+                .preferences_ai_kind
+                .unwrap_or(defaults.preferences_ai_kind),
+            preferences_ai_test_connection: self
+                .preferences_ai_test_connection
+                .unwrap_or(defaults.preferences_ai_test_connection),
+            preferences_ai_test_running: self
+                .preferences_ai_test_running
+                .unwrap_or(defaults.preferences_ai_test_running),
+            preferences_ai_test_ok: self
+                .preferences_ai_test_ok
+                .unwrap_or(defaults.preferences_ai_test_ok),
+            preferences_ai_test_failed: self
+                .preferences_ai_test_failed
+                .unwrap_or(defaults.preferences_ai_test_failed),
+            preferences_ai_save_endpoint: self
+                .preferences_ai_save_endpoint
+                .unwrap_or(defaults.preferences_ai_save_endpoint),
+            preferences_ai_stub_hint: self
+                .preferences_ai_stub_hint
+                .unwrap_or(defaults.preferences_ai_stub_hint),
             preferences_nav_ai: self
                 .preferences_nav_ai
                 .unwrap_or(defaults.preferences_nav_ai),

@@ -10,6 +10,28 @@ pub(crate) enum PreferencesNav {
     Window,
 }
 
+/// 正在编辑/新增的端点草稿:`id = None` 表示新增。字段值长在
+/// TextField 实体里(IME 可用),协议与预设是普通字段。
+pub(crate) struct AiEndpointDraft {
+    pub(super) id: Option<String>,
+    pub(super) name: Entity<TextField>,
+    pub(super) kind: crate::ai::ProviderKind,
+    pub(super) preset_id: String,
+    pub(super) base_url: Entity<TextField>,
+    pub(super) api_key: Entity<TextField>,
+    pub(super) model: Entity<TextField>,
+    pub(super) test: Option<AiTestState>,
+    pub(super) kind_dropdown_open: bool,
+    pub(super) preset_dropdown_open: bool,
+}
+
+/// 「测试连接」的状态。
+pub(crate) enum AiTestState {
+    Running,
+    Ok,
+    Failed(String),
+}
+
 /// Independent preferences window view.
 pub(crate) struct PreferencesWindow {
     pub(super) nav: PreferencesNav,
@@ -55,14 +77,10 @@ pub(crate) struct PreferencesWindow {
     pub(super) window_open_position_dropdown_open: bool,
     pub(super) external_change_dropdown_open: bool,
     pub(super) delete_policy_dropdown_open: bool,
-    /// AI 页草稿:服务商与翻译目标是普通字段,三项连接信息长在 TextField 里。
-    pub(super) ai_provider_id: String,
-    pub(super) ai_translate_target: String,
-    pub(super) ai_base_url: gpui::Entity<TextField>,
-    pub(super) ai_api_key: gpui::Entity<TextField>,
-    pub(super) ai_model: gpui::Entity<TextField>,
-    pub(super) saved_ai: AiPreferences,
-    pub(super) ai_provider_dropdown_open: bool,
+    /// AI 页草稿:端点档案列表 + 翻译目标;编辑中的端点单独长在草稿里。
+    pub(super) ai_settings: AiSettings,
+    pub(super) saved_ai: AiSettings,
+    pub(super) ai_editing: Option<AiEndpointDraft>,
     pub(super) ai_translate_dropdown_open: bool,
     pub(super) saved_tree_sort: TreeSortPreference,
     pub(super) saved_autosave_debounce_ms: u64,
@@ -121,20 +139,6 @@ impl PreferencesWindow {
         let default_window_height = preferences.default_window_height;
         let external_change_policy = preferences.external_change_policy;
         let delete_policy = preferences.delete_policy;
-        let ai_field = |placeholder: String, value: &str, cx: &mut Context<Self>| {
-            cx.new(|cx| {
-                let mut field = TextField::new(placeholder, cx);
-                field.set_value(value, cx);
-                field
-            })
-        };
-        let ai_base_url = ai_field(
-            "https://api.openai.com/v1".into(),
-            &preferences.ai.api_base_url,
-            cx,
-        );
-        let ai_api_key = ai_field("sk-…".into(), &preferences.ai.api_key, cx);
-        let ai_model = ai_field("gpt-4o-mini".into(), &preferences.ai.model, cx);
         Self {
             nav: PreferencesNav::File,
             startup_open,
@@ -165,13 +169,9 @@ impl PreferencesWindow {
             window_open_position_dropdown_open: false,
             external_change_dropdown_open: false,
             delete_policy_dropdown_open: false,
-            ai_provider_id: preferences.ai.provider_id.clone(),
-            ai_translate_target: preferences.ai.translate_target.clone(),
-            ai_base_url,
-            ai_api_key,
-            ai_model,
+            ai_settings: preferences.ai.clone(),
             saved_ai: preferences.ai.clone(),
-            ai_provider_dropdown_open: false,
+            ai_editing: None,
             ai_translate_dropdown_open: false,
             saved_tree_sort: tree_sort,
             saved_autosave_debounce_ms: autosave_debounce_ms,
@@ -233,14 +233,12 @@ impl PreferencesWindow {
             .unwrap_or_else(|| strings.preferences_theme_system.clone())
     }
 
-    /// AI 页的草稿值:下拉状态 + 三个 TextField 的当前内容。
-    pub(crate) fn ai_draft(&self, cx: &App) -> AiPreferences {
-        AiPreferences {
-            provider_id: self.ai_provider_id.clone(),
-            api_base_url: self.ai_base_url.read(cx).value().trim().to_string(),
-            api_key: self.ai_api_key.read(cx).value().to_string(),
-            model: self.ai_model.read(cx).value().trim().to_string(),
-            translate_target: self.ai_translate_target.clone(),
+    /// AI 页的草稿值:翻译目标 + 端点列表(编辑中的端点不计入,点了
+    /// 「保存端点」才进列表——页面级「待保存」的口径保持单一)。
+    pub(crate) fn ai_draft(&self) -> AiSettings {
+        AiSettings {
+            translate_target: self.ai_settings.translate_target.clone(),
+            endpoints: self.ai_settings.endpoints.clone(),
         }
     }
 
@@ -268,7 +266,7 @@ impl PreferencesWindow {
             || self.default_window_height != self.saved_default_window_height
             || self.external_change_policy != self.saved_external_change_policy
             || self.delete_policy != self.saved_delete_policy
-            || self.ai_draft(cx) != self.saved_ai
+            || self.ai_draft() != self.saved_ai
     }
 
     pub(crate) fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -396,14 +394,302 @@ impl PreferencesWindow {
         cx.notify();
     }
 
-    pub(crate) fn toggle_ai_provider_dropdown(
+    /// 正在编辑/新增的端点草稿。
+    pub(super) fn ai_editing(&self) -> Option<&AiEndpointDraft> {
+        self.ai_editing.as_ref()
+    }
+
+    pub(crate) fn start_add_ai_endpoint(
         &mut self,
         _: &ClickEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.ai_provider_dropdown_open = !self.ai_provider_dropdown_open;
-        self.ai_translate_dropdown_open = false;
+        let kind = crate::ai::ProviderKind::ChatCompletions;
+        let fields = |placeholder: String, value: &str, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                let mut field = TextField::new(placeholder, cx);
+                field.set_value(value, cx);
+                field
+            })
+        };
+        // 新端点默认套该协议的第一个预设,拿到手即可用。
+        let preset = AI_PROVIDER_PRESETS
+            .iter()
+            .find(|preset| preset.kind == kind)
+            .unwrap_or(&AI_PROVIDER_PRESETS[AI_PROVIDER_PRESETS.len() - 1]);
+        self.ai_editing = Some(AiEndpointDraft {
+            id: None,
+            name: fields("".into(), "", cx),
+            kind,
+            preset_id: preset.id.to_string(),
+            base_url: fields("https://api.openai.com/v1".into(), preset.base_url, cx),
+            api_key: fields("sk-…".into(), "", cx),
+            model: fields("gpt-4o-mini".into(), preset.model, cx),
+            test: None,
+            kind_dropdown_open: false,
+            preset_dropdown_open: false,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn start_edit_ai_endpoint(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fields = |placeholder: String, value: &str, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                let mut field = TextField::new(placeholder, cx);
+                field.set_value(value, cx);
+                field
+            })
+        };
+        let Some(endpoint) = self.ai_settings.endpoints.get(index) else {
+            return;
+        };
+        // 找得到同名预设就带上,找不到(手改配置)落「自定义」。
+        let preset_id = AI_PROVIDER_PRESETS
+            .iter()
+            .find(|preset| {
+                preset.kind == endpoint.kind
+                    && !preset.base_url.is_empty()
+                    && preset.base_url == endpoint.base_url.trim()
+            })
+            .map(|preset| preset.id.to_string())
+            .unwrap_or_else(|| AI_PROVIDER_CUSTOM_ID.to_string());
+        self.ai_editing = Some(AiEndpointDraft {
+            id: Some(endpoint.id.clone()),
+            name: fields("".into(), &endpoint.name, cx),
+            kind: endpoint.kind,
+            preset_id,
+            base_url: fields(
+                "https://api.openai.com/v1".into(),
+                &endpoint.base_url,
+                cx,
+            ),
+            api_key: fields("sk-…".into(), &endpoint.api_key, cx),
+            model: fields("gpt-4o-mini".into(), &endpoint.model, cx),
+            test: None,
+            kind_dropdown_open: false,
+            preset_dropdown_open: false,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_ai_endpoint_edit(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ai_editing = None;
+        cx.notify();
+    }
+
+    pub(crate) fn delete_ai_endpoint(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index < self.ai_settings.endpoints.len() {
+            self.ai_settings.endpoints.remove(index);
+            self.ai_settings.normalize_defaults();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_default_ai_endpoint(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (position, endpoint) in self.ai_settings.endpoints.iter_mut().enumerate() {
+            endpoint.is_default = position == index;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn save_ai_endpoint(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(draft) = self.ai_editing.take() else {
+            return;
+        };
+        let read = |field: &Entity<TextField>| field.read(cx).value().to_string();
+        // 编辑沿用原 id(默认位/面板选择不漂移);新增用时间戳级 id。
+        let endpoint_id = draft.id.clone().unwrap_or_else(|| {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default();
+            format!("ep-{nanos}")
+        });
+        let mut endpoint = AiEndpointPref {
+            id: endpoint_id.clone(),
+            name: read(&draft.name),
+            kind: draft.kind,
+            base_url: read(&draft.base_url),
+            api_key: read(&draft.api_key),
+            model: read(&draft.model),
+            is_default: false,
+        };
+        match self
+            .ai_settings
+            .endpoints
+            .iter_mut()
+            .find(|existing| existing.id == endpoint_id)
+        {
+            // 替换原位:默认位保持用户之前的选择。
+            Some(slot) => {
+                let is_default = slot.is_default;
+                *slot = endpoint;
+                slot.is_default = is_default;
+            }
+            // 新端点成为默认(用户刚配好它,意图明确)。
+            None => {
+                endpoint.is_default = true;
+                for existing in &mut self.ai_settings.endpoints {
+                    existing.is_default = false;
+                }
+                self.ai_settings.endpoints.push(endpoint);
+            }
+        }
+        self.ai_settings.normalize_defaults();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_ai_kind_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(draft) = self.ai_editing.as_mut() {
+            draft.kind_dropdown_open = !draft.kind_dropdown_open;
+            draft.preset_dropdown_open = false;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_ai_kind(
+        &mut self,
+        kind: crate::ai::ProviderKind,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(draft) = self.ai_editing.as_mut() else {
+            return;
+        };
+        draft.kind = kind;
+        draft.kind_dropdown_open = false;
+        // 换协议时自动套该协议的第一个预设(拿到手即可用);stub 无预设。
+        let preset = AI_PROVIDER_PRESETS
+            .iter()
+            .find(|preset| preset.kind == kind && preset.id != AI_PROVIDER_CUSTOM_ID);
+        if let Some(preset) = preset {
+            draft.preset_id = preset.id.to_string();
+            draft.base_url.update(cx, |field, cx| {
+                field.set_value(preset.base_url, cx)
+            });
+            draft.model.update(cx, |field, cx| field.set_value(preset.model, cx));
+        }
+        draft.test = None;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_ai_preset_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(draft) = self.ai_editing.as_mut() {
+            draft.preset_dropdown_open = !draft.preset_dropdown_open;
+            draft.kind_dropdown_open = false;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_ai_preset(
+        &mut self,
+        preset_id: String,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(draft) = self.ai_editing.as_mut() else {
+            return;
+        };
+        let Some(preset) = AI_PROVIDER_PRESETS
+            .iter()
+            .find(|preset| preset.id == preset_id)
+        else {
+            return;
+        };
+        draft.preset_id = preset.id.to_string();
+        if !preset.base_url.is_empty() {
+            draft.base_url.update(cx, |field, cx| {
+                field.set_value(preset.base_url, cx)
+            });
+            draft.model.update(cx, |field, cx| field.set_value(preset.model, cx));
+        }
+        draft.preset_dropdown_open = false;
+        draft.test = None;
+        cx.notify();
+    }
+
+    /// 「测试连接」:发一个最小请求;stub 立即成功。结果回填草稿,
+    /// 不经磁盘、不动端点列表。
+    pub(crate) fn test_ai_endpoint(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(draft) = self.ai_editing.as_ref() else {
+            return;
+        };
+        let read = |field: &Entity<TextField>| field.read(cx).value().trim().to_string();
+        let endpoint = crate::ai::AiEndpointConfig {
+            kind: draft.kind,
+            base_url: read(&draft.base_url),
+            api_key: read(&draft.api_key),
+            model: read(&draft.model),
+        };
+        let Some(draft) = self.ai_editing.as_mut() else {
+            return;
+        };
+        draft.test = Some(AiTestState::Running);
+        let handle = cx.entity().downgrade();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = std::thread::spawn(move || {
+                crate::ai::test_endpoint(&crate::ai::default_client(), &endpoint)
+            })
+            .join();
+            let _ = this.update(cx, |window, cx| {
+                let Some(draft) = window.ai_editing.as_mut() else {
+                    return;
+                };
+                draft.test = Some(match result {
+                    Ok(Ok(_reply)) => AiTestState::Ok,
+                    Ok(Err(error)) => AiTestState::Failed(match error {
+                        crate::ai::AiRequestError::Network(detail) => detail,
+                        crate::ai::AiRequestError::Protocol(detail) => detail,
+                        crate::ai::AiRequestError::Http { message, .. } => message,
+                        crate::ai::AiRequestError::Cancelled => "cancelled".to_string(),
+                    }),
+                    Err(_join) => AiTestState::Failed("test task panicked".to_string()),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -414,28 +700,6 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) {
         self.ai_translate_dropdown_open = !self.ai_translate_dropdown_open;
-        self.ai_provider_dropdown_open = false;
-        cx.notify();
-    }
-
-    /// 选服务商预设 = 回填「地址 + 模型」默认值(密钥不动),用户可再手改。
-    pub(crate) fn select_ai_provider(
-        &mut self,
-        index: usize,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(preset) = AI_PROVIDER_PRESETS.get(index) else {
-            return;
-        };
-        self.ai_provider_id = preset.id.to_string();
-        if !preset.base_url.is_empty() {
-            self.ai_base_url.update(cx, |field, cx| {
-                field.set_value(preset.base_url, cx)
-            });
-            self.ai_model.update(cx, |field, cx| field.set_value(preset.model, cx));
-        }
-        self.ai_provider_dropdown_open = false;
         cx.notify();
     }
 
@@ -445,7 +709,7 @@ impl PreferencesWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.ai_translate_target = target_id;
+        self.ai_settings.translate_target = target_id;
         self.ai_translate_dropdown_open = false;
         cx.notify();
     }
@@ -579,7 +843,7 @@ impl PreferencesWindow {
         EditorSettings::set_external_change_policy(cx, self.external_change_policy);
         EditorSettings::set_delete_policy(cx, self.delete_policy);
         EditorSettings::set_window_open_position(cx, self.window_open_position);
-        let ai = self.ai_draft(cx);
+        let ai = self.ai_draft();
         EditorSettings::set_ai(cx, ai);
         cx.update_global::<EditorSettings, _>(|settings, _cx| {
             settings.default_window_width = self.default_window_width;
@@ -644,7 +908,7 @@ impl PreferencesWindow {
         self.saved_default_window_height = self.default_window_height;
         self.saved_external_change_policy = self.external_change_policy;
         self.saved_delete_policy = self.delete_policy;
-        let ai = self.ai_draft(cx);
+        let ai = self.ai_draft();
         self.saved_ai = ai;
         cx.notify();
     }

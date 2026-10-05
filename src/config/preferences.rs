@@ -20,7 +20,7 @@ pub(super) use crate::window_chrome::{custom_titlebar_height, render_custom_titl
 
 const DEFAULT_THEME_ID: &str = "forest";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
-const PREFERENCES_VERSION: i64 = 3;
+const PREFERENCES_VERSION: i64 = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FontPreferences {
@@ -306,45 +306,113 @@ impl ExportThemePreference {
     }
 }
 
-/// AI 助手的服务端配置(OpenAI 兼容「地址/密钥/模型」三元组)。
+/// 一个 AI 端点档案(一个 agent)。
 ///
-/// 三项全非空才算已配置;`provider_id` 记录设置页选的预设(「自定义」时
-/// 三项全部手填),`translate_target` 是翻译动作的默认目标语言
-/// (`AUTO_TRANSLATE_TARGET` = 跟随界面语言)。
+/// `id` 是稳定标识(面板选择、默认位都认它,改名/重排不漂移);
+/// `name` 为空时 UI 层回退显示协议名;`kind` 决定传输协议与「哪些字段
+/// 必填」(stub 无需地址/密钥/模型)。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct AiPreferences {
-    pub(crate) provider_id: String,
-    pub(crate) api_base_url: String,
+pub(crate) struct AiEndpointPref {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) kind: crate::ai::ProviderKind,
+    pub(crate) base_url: String,
     pub(crate) api_key: String,
     pub(crate) model: String,
+    pub(crate) is_default: bool,
+}
+
+impl AiEndpointPref {
+    /// 传输层需要的连接配置(stub 的 is_configured 恒真)。
+    pub(crate) fn endpoint_config(&self) -> crate::ai::AiEndpointConfig {
+        crate::ai::AiEndpointConfig {
+            kind: self.kind,
+            base_url: self.base_url.trim().to_string(),
+            api_key: self.api_key.trim().to_string(),
+            model: self.model.trim().to_string(),
+        }
+    }
+
+    /// UI 展示名:空名回退到协议名(stub 由 UI 层换成「内置演示」)。
+    pub(crate) fn display_name(&self) -> String {
+        let trimmed = self.name.trim();
+        (!trimmed.is_empty())
+            .then(|| trimmed.to_string())
+            .unwrap_or_else(|| self.kind.display_name().to_string())
+    }
+}
+
+/// AI 助手设置:默认翻译目标 + 端点档案列表。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AiSettings {
     pub(crate) translate_target: String,
+    pub(crate) endpoints: Vec<AiEndpointPref>,
+}
+
+/// 出厂演示端点的固定 id(设置页可改名/删除,删除后面板给出引导)。
+pub(crate) const AI_DEMO_ENDPOINT_ID: &str = "built-in-demo";
+
+impl AiSettings {
+    /// 默认端点:显式 default 位优先,否则列表第一个。
+    pub(crate) fn default_endpoint(&self) -> Option<&AiEndpointPref> {
+        self.endpoints
+            .iter()
+            .find(|endpoint| endpoint.is_default)
+            .or_else(|| self.endpoints.first())
+    }
+
+    pub(crate) fn endpoint(&self, id: &str) -> Option<&AiEndpointPref> {
+        self.endpoints.iter().find(|endpoint| endpoint.id == id)
+    }
+
+    /// 同 [`Self::normalize_defaults`],但消费自身、返回收敛后的结果。
+    pub(crate) fn normalized(mut self) -> Self {
+        self.normalize_defaults();
+        self
+    }
+
+    /// 收敛默认位:至多一个;无人认领时给第一个。保存前调用。
+    pub(crate) fn normalize_defaults(&mut self) {
+        let mut claimed = false;
+        for endpoint in &mut self.endpoints {
+            endpoint.is_default = endpoint.is_default && !claimed;
+            claimed |= endpoint.is_default;
+        }
+        if !claimed && let Some(first) = self.endpoints.first_mut() {
+            first.is_default = true;
+        }
+    }
+
+    /// 迁移用:端点名为空时记下来源预设 id(设置页可再改名)。
+    pub(crate) fn named_after_provider(mut self, provider_id: &str) -> Self {
+        if let Some(first) = self.endpoints.first_mut() && first.name.trim().is_empty() {
+            first.name = provider_id.to_string();
+        }
+        self
+    }
+
+    /// 出厂默认:一个内置演示端点(stub),装好即可 ⌘J 上手。
+    pub(crate) fn with_demo_endpoint() -> Self {
+        Self {
+            translate_target: AUTO_TRANSLATE_TARGET.to_string(),
+            endpoints: vec![AiEndpointPref {
+                id: AI_DEMO_ENDPOINT_ID.to_string(),
+                name: String::new(),
+                kind: crate::ai::ProviderKind::Stub,
+                base_url: String::new(),
+                api_key: String::new(),
+                model: String::new(),
+                is_default: true,
+            }],
+        }
+    }
 }
 
 /// 翻译默认目标:「跟随界面语言」。
 pub(crate) const AUTO_TRANSLATE_TARGET: &str = "auto";
 
-impl AiPreferences {
-    /// 三元组齐全才能发起请求;缺任何一项都引导去设置页补齐。
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn is_configured(&self) -> bool {
-        !self.api_base_url.trim().is_empty()
-            && !self.api_key.trim().is_empty()
-            && !self.model.trim().is_empty()
-    }
-
-    /// 翻译默认目标:`auto` 表示跟随界面语言。
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn translate_target(&self) -> &str {
-        if self.translate_target.trim().is_empty() {
-            AUTO_TRANSLATE_TARGET
-        } else {
-            self.translate_target.trim()
-        }
-    }
-}
-
-/// 服务商预设:选预设 = 回填「地址 + 模型」默认值,密钥仍由用户填。
-/// 全部走 OpenAI 兼容协议,新增服务商只是加一行,不动协议层。
+/// 服务商预设:按协议分组,选预设 = 回填「地址 + 模型」默认值,密钥仍由
+/// 用户填。全部预设只描述「连谁」,协议细节在传输层;新增服务商只是加一行。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AiProviderPreset {
     pub(crate) id: &'static str,
@@ -352,6 +420,7 @@ pub(crate) struct AiProviderPreset {
     pub(crate) brand: &'static str,
     /// i18n 键(仅 自定义/Ollama 需要);为空时用 brand。
     pub(crate) label_key: Option<fn(&crate::i18n::I18nStrings) -> String>,
+    pub(crate) kind: crate::ai::ProviderKind,
     pub(crate) base_url: &'static str,
     pub(crate) model: &'static str,
 }
@@ -372,6 +441,7 @@ pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
         id: "openai",
         brand: "OpenAI",
         label_key: None,
+        kind: crate::ai::ProviderKind::ChatCompletions,
         base_url: "https://api.openai.com/v1",
         model: "gpt-4o-mini",
     },
@@ -379,6 +449,7 @@ pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
         id: "deepseek",
         brand: "DeepSeek",
         label_key: None,
+        kind: crate::ai::ProviderKind::ChatCompletions,
         base_url: "https://api.deepseek.com/v1",
         model: "deepseek-chat",
     },
@@ -386,6 +457,7 @@ pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
         id: "zhipu",
         brand: "智谱 GLM",
         label_key: None,
+        kind: crate::ai::ProviderKind::ChatCompletions,
         base_url: "https://open.bigmodel.cn/api/paas/v4",
         model: "glm-4-flash",
     },
@@ -393,6 +465,7 @@ pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
         id: "moonshot",
         brand: "Moonshot Kimi",
         label_key: None,
+        kind: crate::ai::ProviderKind::ChatCompletions,
         base_url: "https://api.moonshot.cn/v1",
         model: "moonshot-v1-8k",
     },
@@ -400,6 +473,7 @@ pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
         id: "openrouter",
         brand: "OpenRouter",
         label_key: None,
+        kind: crate::ai::ProviderKind::ChatCompletions,
         base_url: "https://openrouter.ai/api/v1",
         model: "openai/gpt-4o-mini",
     },
@@ -407,13 +481,31 @@ pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
         id: "ollama",
         brand: "Ollama",
         label_key: Some(|strings| strings.preferences_ai_provider_ollama.clone()),
+        kind: crate::ai::ProviderKind::ChatCompletions,
         base_url: "http://localhost:11434/v1",
         model: "llama3.1",
+    },
+    AiProviderPreset {
+        id: "anthropic",
+        brand: "Anthropic Claude",
+        label_key: None,
+        kind: crate::ai::ProviderKind::Messages,
+        base_url: "https://api.anthropic.com",
+        model: "claude-sonnet-4-5",
+    },
+    AiProviderPreset {
+        id: "openai-responses",
+        brand: "OpenAI Responses",
+        label_key: None,
+        kind: crate::ai::ProviderKind::Responses,
+        base_url: "https://api.openai.com/v1",
+        model: "gpt-4o-mini",
     },
     AiProviderPreset {
         id: AI_PROVIDER_CUSTOM_ID,
         brand: "",
         label_key: Some(|strings| strings.preferences_ai_custom_provider.clone()),
+        kind: crate::ai::ProviderKind::ChatCompletions,
         base_url: "",
         model: "",
     },
@@ -427,7 +519,7 @@ pub(crate) fn ai_provider_preset(id: &str) -> &'static AiProviderPreset {
         .unwrap_or(&AI_PROVIDER_PRESETS[AI_PROVIDER_PRESETS.len() - 1])
 }
 
-/// Last window frame (logical pixels) persisted across launches.
+/// Last window frame (logical pixels) persisted across launches./// Last window frame (logical pixels) persisted across launches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WindowFrame {
     pub(crate) x: i32,
@@ -470,7 +562,7 @@ pub(crate) struct AppPreferences {
     /// 新窗口打开位置（roadmap A2 报修补齐的设置项）。
     pub(crate) window_open_position: WindowOpenPosition,
     /// AI 助手的服务端配置（OpenAI 兼容三元组 + 翻译默认目标）。
-    pub(crate) ai: AiPreferences,
+    pub(crate) ai: AiSettings,
     /// Session-wide text zoom in percent (60..=200).
     pub(crate) zoom_percent: i64,
     /// Default window width when no remembered frame applies.
@@ -503,7 +595,7 @@ impl Default for AppPreferences {
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::default(),
-            ai: AiPreferences::default(),
+            ai: AiSettings::with_demo_endpoint(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -540,7 +632,7 @@ pub struct EditorSettings {
     default_window_width: i64,
     default_window_height: i64,
     window_open_position: WindowOpenPosition,
-    ai: AiPreferences,
+    ai: AiSettings,
 }
 
 impl Global for EditorSettings {}
@@ -740,7 +832,7 @@ impl EditorSettings {
 
     /// 测试专用：只改内存里的 AI 配置（同 set_autosave_in_memory 的理由）。
     #[cfg(test)]
-    pub(crate) fn set_ai_in_memory(ai: AiPreferences, cx: &mut App) {
+    pub(crate) fn set_ai_in_memory(ai: AiSettings, cx: &mut App) {
         if cx.try_global::<Self>().is_some() {
             cx.update_global::<Self, _>(|settings, _cx| settings.ai = ai);
         }
@@ -891,14 +983,14 @@ impl EditorSettings {
 
     /// AI 助手的服务端配置；全局未安装时回退磁盘/默认值。
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn ai(cx: &App) -> AiPreferences {
+    pub(crate) fn ai(cx: &App) -> AiSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.ai.clone())
             .unwrap_or_default()
     }
 
     /// 整组替换 AI 配置并落盘（设置页保存、面板「去配置」共用）。
-    pub(crate) fn set_ai(cx: &mut App, ai: AiPreferences) {
+    pub(crate) fn set_ai(cx: &mut App, ai: AiSettings) {
         if cx.try_global::<Self>().is_some() {
             cx.update_global::<Self, _>(|settings, _cx| settings.ai = ai.clone());
         }
@@ -1057,7 +1149,7 @@ pub(crate) use render::open_preferences_window;
 pub(crate) use render::open_preferences_window_at;
 #[cfg(test)]
 pub(crate) use render::{open_preferences_window_with_size, open_preferences_window_with_state};
-pub(crate) use window::{PreferencesNav, PreferencesWindow};
+pub(crate) use window::{AiEndpointDraft, AiTestState, PreferencesNav, PreferencesWindow};
 
 mod pages_general;
 mod pages_shortcuts_window;

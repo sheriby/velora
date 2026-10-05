@@ -1,5 +1,5 @@
     use super::{
-        AiPreferences, AppPreferences, AUTO_TRANSLATE_TARGET, ClickEvent, DeletePolicy,
+        AiEndpointPref, AiSettings, AppPreferences, AUTO_TRANSLATE_TARGET, ClickEvent, DeletePolicy,
         EditorSettings, ExportThemePreference,
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
         StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
@@ -122,7 +122,7 @@
         );
         let migrated_text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config should be migrated");
-        assert!(migrated_text.contains("preferences_version = 3"));
+        assert!(migrated_text.contains("preferences_version = 4"));
         assert!(migrated_text.contains("default_theme_id = \"forest\""));
         assert!(migrated_text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
 
@@ -342,7 +342,7 @@
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::Center,
-            ai: crate::config::preferences::AiPreferences::default(),
+            ai: AiSettings::with_demo_endpoint(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -465,7 +465,7 @@
             remember_window_bounds: true,
             window_frame: None,
             window_open_position: WindowOpenPosition::default(),
-            ai: crate::config::preferences::AiPreferences::default(),
+            ai: AiSettings::with_demo_endpoint(),
             zoom_percent: 100,
             default_window_width: 1080,
             default_window_height: 720,
@@ -809,38 +809,80 @@
     }
 
     #[test]
-    fn ai_preferences_round_trip_through_config_file() {
+    fn ai_endpoints_round_trip_through_config_file() {
         let root = std::env::temp_dir().join(format!(
             "velora-ai-prefs-{}",
             uuid::Uuid::new_v4()
         ));
         let dirs = VeloraConfigDirs::from_root(&root);
         let mut preferences = AppPreferences::default();
-        preferences.ai = AiPreferences {
-            provider_id: "deepseek".into(),
-            api_base_url: "https://api.deepseek.com/v1".into(),
-            api_key: "sk-test".into(),
-            model: "deepseek-chat".into(),
+        preferences.ai = AiSettings {
             translate_target: "en".into(),
+            endpoints: vec![
+                AiEndpointPref {
+                    id: "main".into(),
+                    name: "DeepSeek".into(),
+                    kind: crate::ai::ProviderKind::ChatCompletions,
+                    base_url: "https://api.deepseek.com/v1".into(),
+                    api_key: "sk-test".into(),
+                    model: "deepseek-chat".into(),
+                    is_default: true,
+                },
+                AiEndpointPref {
+                    id: "claude".into(),
+                    name: String::new(),
+                    kind: crate::ai::ProviderKind::Messages,
+                    base_url: "https://api.anthropic.com".into(),
+                    api_key: "sk-ant".into(),
+                    model: "claude-sonnet-4-5".into(),
+                    is_default: false,
+                },
+            ],
         };
 
         save_app_preferences_with_dirs(&preferences, &dirs)
             .expect("preferences should save to config.toml");
         let loaded = read_app_preferences_with_dirs(&dirs).expect("preferences should read back");
-        assert_eq!(loaded.ai, preferences.ai);
-        assert!(loaded.ai.is_configured());
-        assert_eq!(loaded.ai.translate_target(), "en");
+        assert_eq!(loaded.ai, preferences.ai, "多端点配置应无损往返");
+        assert_eq!(loaded.ai.default_endpoint().expect("default").id, "main");
+        assert_eq!(loaded.ai.translate_target, "en");
 
         let text =
             std::fs::read_to_string(dirs.app_config_file()).expect("config.toml should exist");
         assert!(text.contains("[ai]"));
-        assert!(text.contains("provider_id = \"deepseek\""));
-        assert!(text.contains("model = \"deepseek-chat\""));
+        assert!(text.contains("[[ai.endpoints]]"));
+        assert!(text.contains("kind = \"messages\""));
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn missing_ai_section_reads_as_unconfigured() {
+    fn v3_flat_ai_section_migrates_to_an_endpoint() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-ai-prefs-migrate-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        std::fs::create_dir_all(root.clone()).expect("create root");
+        std::fs::write(
+            dirs.app_config_file(),
+            "preferences_version = 3\n\n[editor]\nautosave = true\n\n[ai]\nprovider_id = \"deepseek\"\napi_base_url = \"https://api.deepseek.com/v1\"\napi_key = \"sk-old\"\nmodel = \"deepseek-chat\"\ntranslate_target = \"en\"\n",
+        )
+        .expect("write v3 config");
+
+        let loaded = read_app_preferences_with_dirs(&dirs).expect("v3 config should read");
+        // 旧的单组配置迁成一个默认 chat-completions 端点。
+        assert_eq!(loaded.ai.endpoints.len(), 1);
+        let endpoint = &loaded.ai.endpoints[0];
+        assert_eq!(endpoint.kind, crate::ai::ProviderKind::ChatCompletions);
+        assert_eq!(endpoint.base_url, "https://api.deepseek.com/v1");
+        assert_eq!(endpoint.model, "deepseek-chat");
+        assert!(endpoint.is_default);
+        assert_eq!(loaded.ai.translate_target, "en");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_ai_section_falls_back_to_the_demo_endpoint() {
         let root = std::env::temp_dir().join(format!(
             "velora-ai-prefs-legacy-{}",
             uuid::Uuid::new_v4()
@@ -854,35 +896,97 @@
         .expect("write legacy config");
 
         let loaded = read_app_preferences_with_dirs(&dirs).expect("legacy config should read");
-        assert_eq!(loaded.ai, AiPreferences::default());
-        assert!(!loaded.ai.is_configured(), "缺 [ai] 段 = 未配置");
+        // 没配置过 AI:出厂演示端点兜底,⌘J 开箱即可跑通。
+        assert_eq!(loaded.ai.endpoints.len(), 1);
+        assert_eq!(
+            loaded.ai.endpoints[0].kind,
+            crate::ai::ProviderKind::Stub
+        );
+        assert!(loaded.ai.default_endpoint().expect("default").is_default);
         // translate_target 为空时按「跟随界面」解释。
         assert_eq!(
-            loaded.ai.translate_target(),
+            loaded.ai.translate_target,
             super::AUTO_TRANSLATE_TARGET
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn normalize_defaults_keeps_at_most_one_default() {
+        let mut settings = AiSettings {
+            translate_target: String::new(),
+            endpoints: vec![
+                AiEndpointPref {
+                    id: "a".into(),
+                    is_default: true,
+                    ..AiEndpointPref::default()
+                },
+                AiEndpointPref {
+                    id: "b".into(),
+                    is_default: true,
+                    ..AiEndpointPref::default()
+                },
+            ],
+        };
+        settings.normalize_defaults();
+        assert_eq!(
+            settings.default_endpoint().expect("default").id,
+            "a",
+            "重复默认位取第一个"
+        );
+        assert!(!settings.endpoints[1].is_default);
+
+        settings.endpoints.clear();
+        settings.endpoints.push(AiEndpointPref {
+            id: "c".into(),
+            is_default: false,
+            ..AiEndpointPref::default()
+        });
+        settings.normalize_defaults();
+        assert!(
+            settings.endpoints[0].is_default,
+            "无人认领时第一个兜底"
+        );
     }
 
     #[gpui::test]
     async fn editor_settings_ai_getter_setter_round_trip(cx: &mut TestAppContext) {
         init_preferences_test_app(cx);
         cx.update(|cx| {
-            let configured = AiPreferences {
-                provider_id: "custom".into(),
-                api_base_url: "http://127.0.0.1:11434/v1".into(),
-                api_key: "key".into(),
-                model: "llama3.1".into(),
+            let configured = AiSettings {
                 translate_target: super::AUTO_TRANSLATE_TARGET.into(),
+                endpoints: vec![
+                    AiEndpointPref {
+                        id: "local".into(),
+                        name: "Ollama".into(),
+                        kind: crate::ai::ProviderKind::ChatCompletions,
+                        base_url: "http://127.0.0.1:11434/v1".into(),
+                        api_key: String::new(),
+                        model: "llama3.1".into(),
+                        is_default: true,
+                    },
+                    AiEndpointPref {
+                        id: "demo".into(),
+                        name: String::new(),
+                        kind: crate::ai::ProviderKind::Stub,
+                        ..AiEndpointPref::default()
+                    },
+                ],
             };
             EditorSettings::set_ai(cx, configured.clone());
             assert_eq!(EditorSettings::ai(cx), configured);
-            assert!(EditorSettings::ai(cx).is_configured());
+            assert_eq!(
+                EditorSettings::ai(cx)
+                    .default_endpoint()
+                    .expect("default")
+                    .id,
+                "local"
+            );
         });
     }
 
     #[gpui::test]
-    async fn ai_page_preset_fills_connection_fields_and_tracks_dirty(cx: &mut TestAppContext) {
+    async fn ai_page_endpoint_management_flow(cx: &mut TestAppContext) {
         init_preferences_test_app(cx);
         let handle = cx.update(|cx| {
             open_preferences_window_with_state(
@@ -899,63 +1003,105 @@
             .update(cx, |preferences, window, cx| {
                 preferences.set_nav_ai(&ClickEvent::default(), window, cx);
                 assert_eq!(preferences.nav, PreferencesNav::Ai);
-                // 初始(未配置)草稿:三元组全空。
-                assert!(!preferences.ai_draft(cx).is_configured());
+                // 出厂默认:一个内置演示端点占住默认位。
+                assert_eq!(preferences.ai_draft().endpoints.len(), 1);
+                assert_eq!(
+                    preferences.ai_draft().default_endpoint().expect("default").kind,
+                    crate::ai::ProviderKind::Stub
+                );
                 assert!(!preferences.has_unsaved_changes(cx));
             })
             .expect("switch to AI page");
 
-        // 选「DeepSeek」预设:地址与模型按预设回填,密钥保持为空。
+        // 新增端点:选 DeepSeek 预设(地址/模型自动回填),填密钥后保存。
         handle
             .update(cx, |preferences, window, cx| {
-                preferences.select_ai_provider(1, window, cx);
-                assert_eq!(preferences.ai_provider_id, "deepseek");
+                preferences.start_add_ai_endpoint(&ClickEvent::default(), window, cx);
+                let draft = preferences.ai_editing.as_ref().expect("draft open");
+                assert_eq!(draft.kind, crate::ai::ProviderKind::ChatCompletions);
+                preferences.select_ai_preset("deepseek".into(), window, cx);
             })
-            .expect("select deepseek preset");
+            .expect("start add endpoint with deepseek preset");
         preferences_cx.run_until_parked();
         handle
             .update(cx, |preferences, _window, cx| {
-                let draft = preferences.ai_draft(cx);
+                let draft = preferences.ai_editing.as_ref().expect("draft open");
                 assert_eq!(
-                    draft.api_base_url, "https://api.deepseek.com/v1",
+                    draft.base_url.read(cx).value(),
+                    "https://api.deepseek.com/v1",
                     "选预设应回填地址"
                 );
-                assert_eq!(draft.model, "deepseek-chat", "选预设应回填模型");
-                assert!(!draft.is_configured(), "密钥为空仍算未配置");
-                assert!(preferences.has_unsaved_changes(cx), "回填即进入待保存");
+                assert_eq!(draft.model.read(cx).value(), "deepseek-chat");
+                draft.api_key.update(cx, |field, cx| field.set_value("sk-test", cx));
+                // 编辑中的草稿不进入页面级「待保存」:保存端点后才计入。
+                assert!(!preferences.has_unsaved_changes(cx));
             })
-            .expect("check preset draft");
+            .expect("fill new endpoint fields");
 
-        // 选回「自定义」:不改地址模型,只换 id。
         handle
             .update(cx, |preferences, window, cx| {
-                preferences.select_ai_provider(6, window, cx);
-                assert_eq!(preferences.ai_provider_id, "custom");
-                assert_eq!(preferences.ai_draft(cx).api_base_url, "https://api.deepseek.com/v1");
+                preferences.save_ai_endpoint(&ClickEvent::default(), window, cx);
+                assert!(preferences.ai_editing.is_none(), "保存后收起草稿");
+                let draft = preferences.ai_draft();
+                assert_eq!(draft.endpoints.len(), 2, "演示端点 + 新端点");
+                let added = draft
+                    .endpoints
+                    .iter()
+                    .find(|endpoint| endpoint.model == "deepseek-chat")
+                    .expect("new endpoint in list");
+                assert!(added.is_default, "新端点应成为默认");
+                assert!(preferences.has_unsaved_changes(cx), "列表变了应进入待保存");
             })
-            .expect("select custom preset");
+            .expect("save endpoint");
 
-        // 保存路径:带密钥补全后保存,EditorSettings 与磁盘都应更新。
-        handle
-            .update(cx, |preferences, _window, cx| {
-                preferences.ai_api_key.update(cx, |field, cx| {
-                    field.set_value("sk-test", cx)
-                });
-            })
-            .expect("fill api key");
+        // 页面保存:EditorSettings 与磁盘同步。
         handle
             .update(cx, |preferences, window, cx| {
-                assert!(preferences.has_unsaved_changes(cx));
                 preferences.save(&ClickEvent::default(), window, cx);
                 assert!(!preferences.has_unsaved_changes(cx), "保存后应清除待保存");
             })
-            .expect("save ai preferences");
+            .expect("save preferences");
         cx.run_until_parked();
         cx.update(|cx| {
             let ai = EditorSettings::ai(cx);
-            assert_eq!(ai.provider_id, "custom");
-            assert_eq!(ai.api_key, "sk-test");
-            assert!(ai.is_configured());
+            assert_eq!(ai.endpoints.len(), 2);
+            assert_eq!(
+                ai.default_endpoint().expect("default").model,
+                "deepseek-chat"
+            );
+        });
+
+        // 删除:删掉默认端点后,默认位收敛到剩下的。
+        handle
+            .update(cx, |preferences, _window, cx| {
+                let default_index = preferences
+                    .ai_settings
+                    .endpoints
+                    .iter()
+                    .position(|endpoint| endpoint.is_default)
+                    .expect("default exists");
+                preferences.delete_ai_endpoint(default_index, _window, cx);
+                assert!(
+                    preferences
+                        .ai_draft()
+                        .endpoints
+                        .iter()
+                        .all(|endpoint| !endpoint.is_default)
+                        || preferences.ai_draft().endpoints.len() == 1
+                );
+            })
+            .expect("delete default endpoint");
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.save(&ClickEvent::default(), window, cx);
+            })
+            .expect("save after delete");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let ai = EditorSettings::ai(cx);
+            let mut ai = ai;
+            ai.normalize_defaults();
+            assert_eq!(ai.endpoints.len(), 1, "删得只剩一个");
         });
     }
 
@@ -973,18 +1119,21 @@
             )
         });
         cx.run_until_parked();
-        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        let preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
         handle
             .update(cx, |preferences, window, cx| {
                 preferences.set_nav_ai(&ClickEvent::default(), window, cx);
-                assert_eq!(preferences.ai_translate_target, "ja");
+                assert_eq!(preferences.ai_settings.translate_target, "ja");
                 // 切回「跟随界面」。
                 preferences.select_ai_translate_target(
                     AUTO_TRANSLATE_TARGET.to_string(),
                     window,
                     cx,
                 );
-                assert_eq!(preferences.ai_translate_target, AUTO_TRANSLATE_TARGET);
+                assert_eq!(
+                    preferences.ai_settings.translate_target,
+                    AUTO_TRANSLATE_TARGET
+                );
                 assert!(preferences.has_unsaved_changes(cx));
             })
             .expect("translate target round trip");

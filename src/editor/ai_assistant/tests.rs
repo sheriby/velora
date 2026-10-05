@@ -7,7 +7,8 @@ use gpui::TestAppContext;
 
 use super::strip_wrapping_code_fence;
 use crate::ai::{AiAction, TranslateTarget};
-use crate::config::preferences::{AiPreferences, EditorSettings};
+use crate::config::preferences::{AiEndpointPref, AiSettings, EditorSettings};
+use crate::ai::ProviderKind;
 
 fn init_test_app(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -18,43 +19,35 @@ fn init_test_app(cx: &mut TestAppContext) {
     });
 }
 
-fn configure_ai(port: u16, cx: &mut TestAppContext) {
+/// 面板 E2E 用 stub 演示端点:确定性剧本回放,不依赖外部服务。
+/// (三协议的真实 HTTP 往返由 ai::transport 的 mock 集成测试覆盖。)
+fn configure_stub_ai(cx: &mut TestAppContext) {
     cx.update(|cx| {
         EditorSettings::set_ai_in_memory(
-            AiPreferences {
-                provider_id: "custom".into(),
-                api_base_url: format!("http://127.0.0.1:{port}/v1"),
-                api_key: "test-key".into(),
-                model: "test-model".into(),
+            AiSettings {
                 translate_target: crate::config::preferences::AUTO_TRANSLATE_TARGET.into(),
+                endpoints: vec![AiEndpointPref {
+                    id: "test-stub".into(),
+                    name: String::new(),
+                    kind: ProviderKind::Stub,
+                    base_url: String::new(),
+                    api_key: String::new(),
+                    model: String::new(),
+                    is_default: true,
+                }],
             },
             cx,
         );
     });
 }
 
-/// 本地 mock:SSE 逐块吐 `chunks`,块间留一点间隙模拟流式。
-fn spawn_sse_server(chunks: Vec<&'static str>) -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let port = listener.local_addr().expect("addr").port();
-    std::thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        let _ = stream.write_all(
-            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
-        );
-        for chunk in chunks {
-            let payload = format!(
-                "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{chunk}\"}}}}]}}\n\n"
-            );
-            let _ = stream.write_all(payload.as_bytes());
-            let _ = stream.flush();
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        let _ = stream.write_all(b"data: [DONE]\n\n");
-    });
-    port
+/// stub 润色剧本(与 src/ai/stub.rs 保持一致;测试断言引用它)。
+fn stub_polish_script() -> &'static str {
+    "这段文字经过润色之后,表达更加流畅自然:句子主干清晰,修饰成分各归其位,而原文的意思与语气都原样保留。"
+}
+
+fn stub_summarize_script() -> &'static str {
+    "- 要点一:stub 演示会按动作回放对应的剧本。\n- 要点二:输出按流式分片,可随时停止。\n- 要点三:换成真实端点后即可用于生产。"
 }
 
 /// 轮询直到面板离开 Running(或超时),驱动异步泵。
@@ -117,8 +110,10 @@ async fn unconfigured_action_opens_preferences(cx: &mut TestAppContext) {
         crate::editor::Editor::from_markdown(cx, "第一段".to_string(), None)
     });
 
-    // 用例之间共享 config.toml:显式清掉内存里的 AI 配置,保证「未配置」。
-    cx.update(|_window, cx| EditorSettings::set_ai_in_memory(AiPreferences::default(), cx));
+    // 用例之间共享 config.toml:显式清空端点列表,保证「无可用端点」。
+    cx.update(|_window, cx| {
+        EditorSettings::set_ai_in_memory(AiSettings::default(), cx)
+    });
     editor.update_in(cx, |editor, window, cx| {
         editor.open_ai_assistant(window, cx);
         editor.run_ai_action(AiAction::Polish, cx);
@@ -135,8 +130,7 @@ async fn unconfigured_action_opens_preferences(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn polish_replaces_selection_and_is_undoable(cx: &mut TestAppContext) {
     init_test_app(cx);
-    let port = spawn_sse_server(vec!["改", "好", "的"]);
-    configure_ai(port, cx);
+    configure_stub_ai(cx);
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         crate::editor::Editor::from_markdown(cx, "一段原文".to_string(), None)
     });
@@ -156,12 +150,12 @@ async fn polish_replaces_selection_and_is_undoable(cx: &mut TestAppContext) {
     editor.update_in(cx, |editor, _window, cx| {
         let state = editor.ai_assistant.as_ref().expect("panel still open");
         assert!(matches!(state.phase, super::AiPhase::Finished), "应完成");
-        assert_eq!(state.result, "改好的");
+        assert_eq!(state.result, stub_polish_script());
         assert!(editor.ai_apply(cx), "应用应成功");
         assert!(editor.ai_assistant.as_ref().is_none(), "应用后关闭");
         assert_eq!(
             editor.current_document_source(cx),
-            "改好的",
+            stub_polish_script(),
             "选区应被结果替换"
         );
         // 一步撤销回到原文。
@@ -173,8 +167,7 @@ async fn polish_replaces_selection_and_is_undoable(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn summarize_inserts_below_selection(cx: &mut TestAppContext) {
     init_test_app(cx);
-    let port = spawn_sse_server(vec!["• 要点"]);
-    configure_ai(port, cx);
+    configure_stub_ai(cx);
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         crate::editor::Editor::from_markdown(cx, "长文正文".to_string(), None)
     });
@@ -192,7 +185,7 @@ async fn summarize_inserts_below_selection(cx: &mut TestAppContext) {
         assert!(editor.ai_apply(cx));
         assert_eq!(
             editor.current_document_source(cx),
-            "长文正文\n\n• 要点",
+            format!("长文正文\n\n{}", stub_summarize_script()),
             "总结应插入到选区下方,原文保留"
         );
     });
@@ -201,8 +194,7 @@ async fn summarize_inserts_below_selection(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn translate_uses_language_from_action(cx: &mut TestAppContext) {
     init_test_app(cx);
-    let port = spawn_sse_server(vec!["hello"]);
-    configure_ai(port, cx);
+    configure_stub_ai(cx);
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         crate::editor::Editor::from_markdown(cx, "你好".to_string(), None)
     });
@@ -218,15 +210,20 @@ async fn translate_uses_language_from_action(cx: &mut TestAppContext) {
     wait_until_not_running(&editor, cx);
     editor.update_in(cx, |editor, _window, cx| {
         assert!(editor.ai_apply(cx));
-        assert_eq!(editor.current_document_source(cx), "hello");
+        let expected_prefix = "Translation demo (→ English):";
+        assert!(
+            editor
+                .current_document_source(cx)
+                .starts_with(expected_prefix),
+            "翻译动作应回放翻译剧本"
+        );
     });
 }
 
 #[gpui::test]
 async fn applying_refuses_when_document_drifted(cx: &mut TestAppContext) {
     init_test_app(cx);
-    let port = spawn_sse_server(vec!["改好的"]);
-    configure_ai(port, cx);
+    configure_stub_ai(cx);
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         crate::editor::Editor::from_markdown(cx, "一段原文".to_string(), None)
     });
@@ -269,8 +266,7 @@ async fn applying_refuses_when_document_drifted(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn stop_keeps_partial_result_and_apply_works(cx: &mut TestAppContext) {
     init_test_app(cx);
-    let port = spawn_sse_server(vec!["部分"]);
-    configure_ai(port, cx);
+    configure_stub_ai(cx);
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         crate::editor::Editor::from_markdown(cx, "原文".to_string(), None)
     });
@@ -286,7 +282,11 @@ async fn stop_keeps_partial_result_and_apply_works(cx: &mut TestAppContext) {
     wait_until_not_running(&editor, cx);
     editor.update_in(cx, |editor, _window, cx| {
         assert!(editor.ai_apply(cx));
-        assert_eq!(editor.current_document_source(cx), "部分");
+        assert_eq!(
+            editor.current_document_source(cx),
+            stub_polish_script(),
+            "停止后应能应用已生成的部分"
+        );
     });
 }
 

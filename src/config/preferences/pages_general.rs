@@ -609,8 +609,16 @@ impl PreferencesWindow {
 }
 
 impl PreferencesWindow {
-    /// AI 页:服务商预设、连接三元组(地址/密钥/模型)与翻译默认目标。
-    /// 说明文案放在卡片上方,一眼知道「任意 OpenAI 兼容服务都能接、密钥不出本机」。
+    /// 协议形态的显示名:stub 不是专名,走 i18n。
+    fn ai_kind_label(kind: crate::ai::ProviderKind, strings: &crate::i18n::I18nStrings) -> String {
+        match kind {
+            crate::ai::ProviderKind::Stub => strings.ai_kind_stub.clone(),
+            other => other.display_name().to_string(),
+        }
+    }
+
+    /// AI 页:端点档案管理(列表/新增/编辑/删除/设默认/测试连接)、
+    /// 翻译默认目标。说明文案在顶部,一句话讲清多端点与密钥去向。
     pub(crate) fn render_ai_page(
         &self,
         theme: &Theme,
@@ -618,44 +626,177 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
+        let d = &theme.dimensions;
         let t = &theme.typography;
 
-        // 服务商下拉:当前选中的预设名(未知 id 按「自定义」显示)。
-        let current_provider = crate::config::preferences::ai_provider_preset(&self.ai_provider_id);
-        let mut provider_dropdown = div()
+        let mut column = div()
+            .w_full()
             .flex()
             .flex_col()
-            .gap(px(4.0))
-            .child(Self::dropdown_button(
-                "preferences-ai-provider-dropdown",
-                current_provider.label(strings),
-                theme,
-                Self::toggle_ai_provider_dropdown,
-                cx,
-            ));
-        if self.ai_provider_dropdown_open {
-            for (index, preset) in crate::config::preferences::AI_PROVIDER_PRESETS
-                .iter()
-                .enumerate()
-            {
-                let is_selected = preset.id == current_provider.id;
-                provider_dropdown = provider_dropdown.child(Self::dropdown_item(
-                    gpui::SharedString::from(format!("preferences-ai-provider-{index}")),
-                    preset.label(strings),
-                    is_selected,
-                    theme,
-                    move |this, _event, window, cx| this.select_ai_provider(index, window, cx),
-                    cx,
-                ));
-            }
+            .gap(px(14.0))
+            .child(
+                div()
+                    .text_size(px(t.dialog_body_size))
+                    .text_color(c.dialog_muted)
+                    .child(strings.preferences_ai_hint.clone()),
+            );
+
+        // ── 端点列表 ──
+        let mut list_rows: Vec<AnyElement> = Vec::new();
+        for (index, endpoint) in self.ai_settings.endpoints.iter().enumerate() {
+            let is_default = endpoint.is_default;
+            let kind_label = Self::ai_kind_label(endpoint.kind, strings);
+            let display_name = {
+                let name = endpoint.display_name();
+                if name == endpoint.kind.display_name()
+                    && endpoint.kind == crate::ai::ProviderKind::Stub
+                {
+                    strings.ai_kind_stub.clone()
+                } else if endpoint.name.trim().is_empty() {
+                    strings.ai_endpoint_unnamed.clone()
+                } else {
+                    name
+                }
+            };
+            let model = endpoint.model.trim().to_string();
+            list_rows.push(
+                div()
+                    .id(gpui::ElementId::Name(format!("ai-endpoint-{index}").into()))
+                    .debug_selector(move || format!("ai-endpoint-{index}"))
+                    .w_full()
+                    .min_h(px(44.0))
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        this.set_default_ai_endpoint(index, window, cx);
+                    }))
+                    .child(
+                        // 默认位:强调色圆点;非默认占位对齐。
+                        div()
+                            .w(px(8.0))
+                            .h(px(8.0))
+                            .rounded(px(4.0))
+                            .flex_shrink_0()
+                            .bg(if is_default {
+                                c.dialog_primary_button_bg
+                            } else {
+                                c.dialog_border
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(t.dialog_body_size))
+                                            .font_weight(t.dialog_button_weight.to_font_weight())
+                                            .text_color(c.dialog_title)
+                                            .truncate()
+                                            .child(display_name),
+                                    )
+                                    .when(is_default, |this| {
+                                        this.child(
+                                            div()
+                                                .px(px(5.0))
+                                                .py(px(1.0))
+                                                .rounded(px(4.0))
+                                                .bg(c.selection)
+                                                .text_size(px(10.0))
+                                                .text_color(c.dialog_title)
+                                                .child(strings.preferences_ai_default.clone()),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .text_size(px(11.0))
+                                    .text_color(c.dialog_muted)
+                                    .child(kind_label)
+                                    .when(!model.is_empty(), |this| {
+                                        this.child(div().child(model.clone()))
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .child(Self::ai_small_button(
+                                gpui::ElementId::Name(format!("ai-endpoint-edit-{index}").into()),
+                                strings.preferences_ai_edit.clone(),
+                                theme,
+                                move |this, _event, window, cx| {
+                                    this.start_edit_ai_endpoint(index, window, cx);
+                                },
+                                cx,
+                            ))
+                            .child(Self::ai_small_button(
+                                gpui::ElementId::Name(format!("ai-endpoint-delete-{index}").into()),
+                                strings.preferences_ai_delete.clone(),
+                                theme,
+                                move |this, _event, window, cx| {
+                                    this.delete_ai_endpoint(index, window, cx);
+                                },
+                                cx,
+                            )),
+                    )
+                    .into_any_element(),
+            );
+        }
+        list_rows.push(
+            div()
+                .id("ai-add-endpoint")
+                .debug_selector(|| "ai-add-endpoint".to_string())
+                .w_full()
+                .h(px(36.0))
+                .px(px(12.0))
+                .flex()
+                .items_center()
+                .rounded(px(d.menu_item_radius))
+                .border(px(d.dialog_border_width))
+                .border_color(c.dialog_border)
+                .bg(c.dialog_surface)
+                .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                .cursor_pointer()
+                .text_size(px(t.dialog_body_size))
+                .text_color(c.dialog_primary_button_bg)
+                .child(strings.preferences_ai_add_endpoint.clone())
+                .on_click(cx.listener(Self::start_add_ai_endpoint))
+                .into_any_element(),
+        );
+        column = column.child(self.settings_card(theme, list_rows));
+
+        // ── 编辑中的端点表单 ──
+        if let Some(draft) = self.ai_editing() {
+            column = column.child(self.render_ai_endpoint_editor(draft, theme, strings, cx));
         }
 
-        // 翻译默认目标:「跟随界面」+ 九种目标语言(语言自称,不做 i18n)。
-        let translate_follow = self.ai_translate_target == AUTO_TRANSLATE_TARGET;
+        // ── 翻译默认目标 ──
+        let translate_follow =
+            self.ai_settings.translate_target == AUTO_TRANSLATE_TARGET;
         let current_translate = if translate_follow {
             strings.preferences_ai_translate_follow_ui.clone()
         } else {
-            crate::ai::TranslateTarget::from_id(&self.ai_translate_target)
+            crate::ai::TranslateTarget::from_id(&self.ai_settings.translate_target)
                 .map(|target| target.label().to_string())
                 .unwrap_or_else(|| strings.preferences_ai_translate_follow_ui.clone())
         };
@@ -686,10 +827,13 @@ impl PreferencesWindow {
                 cx,
             ));
             for target in crate::ai::TranslateTarget::ALL {
-                let is_selected = self.ai_translate_target == target.id();
+                let is_selected = self.ai_settings.translate_target == target.id();
                 let target_id = target.id().to_string();
                 translate_dropdown = translate_dropdown.child(Self::dropdown_item(
-                    gpui::SharedString::from(format!("preferences-ai-translate-{}", target.id())),
+                    gpui::SharedString::from(format!(
+                        "preferences-ai-translate-{}",
+                        target.id()
+                    )),
                     target.label().to_string(),
                     is_selected,
                     theme,
@@ -700,55 +844,256 @@ impl PreferencesWindow {
                 ));
             }
         }
+        column = column.child(self.settings_card(
+            theme,
+            vec![self.settings_row(
+                theme,
+                strings.preferences_ai_translate_target.clone(),
+                translate_dropdown,
+            )],
+        ));
 
-        let field = |entity: &gpui::Entity<TextField>| {
-            div().w(px(280.0)).child(entity.clone())
-        };
+        column.into_any_element()
+    }
+
+    /// 列表行右侧的小按钮(编辑/删除)。
+    fn ai_small_button(
+        id: impl Into<ElementId>,
+        label: String,
+        theme: &Theme,
+        on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let t = &theme.typography;
+        div()
+            .id(id.into())
+            .h(px(24.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .rounded(px(4.0))
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            .cursor_pointer()
+            .text_size(px(11.0))
+            .text_color(c.dialog_muted)
+            .child(SharedString::from(label))
+            .on_click(cx.listener(on_click))
+            .into_any_element()
+    }
+
+    /// 编辑中的端点表单卡:名称/协议/预设 + 连接三项(stub 免填)+ 测试连接。
+    fn render_ai_endpoint_editor(
+        &self,
+        draft: &AiEndpointDraft,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let t = &theme.typography;
+        let is_stub = draft.kind == crate::ai::ProviderKind::Stub;
+
+        // 协议下拉。
+        let mut kind_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-ai-kind-dropdown",
+                Self::ai_kind_label(draft.kind, strings),
+                theme,
+                Self::toggle_ai_kind_dropdown,
+                cx,
+            ));
+        if draft.kind_dropdown_open {
+            for kind in crate::ai::ProviderKind::ALL {
+                let selected = *kind == draft.kind;
+                kind_dropdown = kind_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!("preferences-ai-kind-{}", kind.id())),
+                    Self::ai_kind_label(*kind, strings),
+                    selected,
+                    theme,
+                    move |this, _event, window, cx| this.select_ai_kind(*kind, window, cx),
+                    cx,
+                ));
+            }
+        }
+
+        // 预设下拉(只列与当前协议匹配的预设 + 自定义)。
+        let current_preset = crate::config::preferences::ai_provider_preset(&draft.preset_id);
+        let mut preset_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-ai-preset-dropdown",
+                current_preset.label(strings),
+                theme,
+                Self::toggle_ai_preset_dropdown,
+                cx,
+            ));
+        if draft.preset_dropdown_open {
+            for preset in crate::config::preferences::AI_PROVIDER_PRESETS
+                .iter()
+                .filter(|preset| {
+                    preset.kind == draft.kind || preset.id == AI_PROVIDER_CUSTOM_ID
+                })
+            {
+                let selected = preset.id == draft.preset_id;
+                let preset_id = preset.id.to_string();
+                preset_dropdown = preset_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!("preferences-ai-preset-{}", preset.id)),
+                    preset.label(strings),
+                    selected,
+                    theme,
+                    move |this, _event, window, cx| {
+                        this.select_ai_preset(preset_id.clone(), window, cx);
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        let field = |entity: &gpui::Entity<TextField>| div().w(px(280.0)).child(entity.clone());
+
+        let mut rows: Vec<AnyElement> = vec![
+            self.settings_row(
+                theme,
+                strings.preferences_ai_name.clone(),
+                field(&draft.name),
+            ),
+            self.settings_row(theme, strings.preferences_ai_kind.clone(), kind_dropdown),
+            self.settings_row(theme, strings.preferences_ai_provider.clone(), preset_dropdown),
+        ];
+        if is_stub {
+            rows.push(
+                div()
+                    .px(px(14.0))
+                    .py(px(8.0))
+                    .text_size(px(t.dialog_body_size))
+                    .text_color(c.dialog_muted)
+                    .child(strings.preferences_ai_stub_hint.clone())
+                    .into_any_element(),
+            );
+        } else {
+            rows.extend([
+                self.settings_row(
+                    theme,
+                    strings.preferences_ai_api_base_url.clone(),
+                    field(&draft.base_url),
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_ai_api_key.clone(),
+                    field(&draft.api_key),
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_ai_model.clone(),
+                    field(&draft.model),
+                ),
+            ]);
+        }
+
+        // 测试连接 + 结果。
+        let mut test_row = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(Self::ai_small_button(
+                "preferences-ai-test",
+                strings.preferences_ai_test_connection.clone(),
+                theme,
+                |this, _event, _window, cx| this.test_ai_endpoint(_event, _window, cx),
+                cx,
+            ));
+        match &draft.test {
+            Some(AiTestState::Running) => {
+                test_row = test_row.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(c.dialog_muted)
+                        .child(strings.preferences_ai_test_running.clone()),
+                );
+            }
+            Some(AiTestState::Ok) => {
+                test_row = test_row.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(c.dialog_primary_button_bg)
+                        .child(strings.preferences_ai_test_ok.clone()),
+                );
+            }
+            Some(AiTestState::Failed(message)) => {
+                test_row = test_row.child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_size(px(11.0))
+                        .text_color(c.dialog_danger_button_bg)
+                        .truncate()
+                        .child(message.clone()),
+                );
+            }
+            None => {}
+        }
+        rows.push(test_row.into_any_element());
+
+        // 页脚:取消 + 保存端点。
+        rows.push(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap(px(6.0))
+                .child(Self::ai_small_button(
+                    "preferences-ai-cancel-edit",
+                    strings.preferences_cancel.clone(),
+                    theme,
+                    |this, event, window, cx| this.cancel_ai_endpoint_edit(event, window, cx),
+                    cx,
+                ))
+                .child(
+                    div()
+                        .id("preferences-ai-save-endpoint")
+                        .debug_selector(|| "preferences-ai-save-endpoint".to_string())
+                        .h(px(26.0))
+                        .px(px(10.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px((d.dialog_radius - 4.0).max(3.0)))
+                        .bg(c.dialog_primary_button_bg)
+                        .hover(|this| this.bg(c.dialog_primary_button_hover))
+                        .cursor_pointer()
+                        .text_size(px(t.dialog_button_size))
+                        .font_weight(t.dialog_button_weight.to_font_weight())
+                        .text_color(c.dialog_primary_button_text)
+                        .child(strings.preferences_ai_save_endpoint.clone())
+                        .on_click(cx.listener(Self::save_ai_endpoint)),
+                )
+                .into_any_element(),
+        );
 
         div()
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(14.0))
+            .gap(px(8.0))
             .child(
                 div()
                     .text_size(px(t.dialog_body_size))
-                    .text_color(c.dialog_muted)
-                    .child(strings.preferences_ai_hint.clone()),
+                    .font_weight(t.dialog_button_weight.to_font_weight())
+                    .text_color(c.dialog_title)
+                    .child(if draft.id.is_some() {
+                        strings.preferences_ai_edit.clone()
+                    } else {
+                        strings.preferences_ai_add_endpoint.clone()
+                    }),
             )
-            .child(self.settings_card(
-                theme,
-                vec![
-                    self.settings_row(
-                        theme,
-                        strings.preferences_ai_provider.clone(),
-                        provider_dropdown,
-                    ),
-                    self.settings_row(
-                        theme,
-                        strings.preferences_ai_api_base_url.clone(),
-                        field(&self.ai_base_url),
-                    ),
-                    self.settings_row(
-                        theme,
-                        strings.preferences_ai_api_key.clone(),
-                        field(&self.ai_api_key),
-                    ),
-                    self.settings_row(
-                        theme,
-                        strings.preferences_ai_model.clone(),
-                        field(&self.ai_model),
-                    ),
-                ],
-            ))
-            .child(self.settings_card(
-                theme,
-                vec![self.settings_row(
-                    theme,
-                    strings.preferences_ai_translate_target.clone(),
-                    translate_dropdown,
-                )],
-            ))
+            .child(self.settings_card(theme, rows))
             .into_any_element()
     }
 }

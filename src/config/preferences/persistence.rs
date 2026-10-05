@@ -10,7 +10,7 @@ pub(crate) struct PreferencesFile {
     editor: EditorPreferencesFile,
     status_bar: StatusBarPreferencesFile,
     window: WindowPreferencesFile,
-    ai: AiPreferencesFile,
+    ai: AiSectionFile,
     keybindings: BTreeMap<String, Vec<String>>,
 }
 
@@ -106,39 +106,6 @@ struct StatusBarPreferencesFile {
     custom_buttons: Vec<StatusBarButton>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct AiPreferencesFile {
-    provider_id: String,
-    api_base_url: String,
-    api_key: String,
-    model: String,
-    translate_target: String,
-}
-
-impl From<&AiPreferences> for AiPreferencesFile {
-    fn from(value: &AiPreferences) -> Self {
-        Self {
-            provider_id: value.provider_id.clone(),
-            api_base_url: value.api_base_url.clone(),
-            api_key: value.api_key.clone(),
-            model: value.model.clone(),
-            translate_target: value.translate_target.clone(),
-        }
-    }
-}
-
-impl From<AiPreferencesFile> for AiPreferences {
-    fn from(value: AiPreferencesFile) -> Self {
-        Self {
-            provider_id: value.provider_id,
-            api_base_url: value.api_base_url,
-            api_key: value.api_key,
-            model: value.model,
-            translate_target: value.translate_target,
-        }
-    }
-}
-
 impl From<&StatusBarPreferences> for StatusBarPreferencesFile {
     fn from(value: &StatusBarPreferences) -> Self {
         Self {
@@ -150,6 +117,73 @@ impl From<&StatusBarPreferences> for StatusBarPreferencesFile {
             custom_buttons: value.custom_buttons.clone(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct AiSectionFile {
+    translate_target: String,
+    #[serde(default)]
+    endpoints: Vec<AiEndpointFile>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AiEndpointFile {
+    id: String,
+    name: String,
+    kind: String,
+    #[serde(default)]
+    base_url: String,
+    #[serde(default)]
+    api_key: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default, rename = "default")]
+    is_default: bool,
+}
+
+fn ai_section_file(value: &AiSettings) -> AiSectionFile {
+    AiSectionFile {
+        translate_target: value.translate_target.clone(),
+        endpoints: value
+            .endpoints
+            .iter()
+            .map(|endpoint| AiEndpointFile {
+                id: endpoint.id.clone(),
+                name: endpoint.name.clone(),
+                kind: endpoint.kind.id().to_string(),
+                base_url: endpoint.base_url.clone(),
+                api_key: endpoint.api_key.clone(),
+                model: endpoint.model.clone(),
+                is_default: endpoint.is_default,
+            })
+            .collect(),
+    }
+}
+
+fn ai_section_from_file(section: AiSectionFile) -> AiSettings {
+    AiSettings {
+        translate_target: section.translate_target,
+        endpoints: section
+            .endpoints
+            .into_iter()
+            .enumerate()
+            .map(|(index, endpoint)| AiEndpointPref {
+                id: {
+                    let id = endpoint.id.trim().to_string();
+                    // 空缺 id(手改配置)按序号补,保证面板选择有稳定锚点。
+                    (!id.is_empty()).then_some(id).unwrap_or_else(|| format!("endpoint-{index}"))
+                },
+                name: endpoint.name,
+                kind: crate::ai::ProviderKind::from_id(&endpoint.kind)
+                    .unwrap_or(crate::ai::ProviderKind::ChatCompletions),
+                base_url: endpoint.base_url,
+                api_key: endpoint.api_key,
+                model: endpoint.model,
+                is_default: endpoint.is_default,
+            })
+            .collect(),
+    }
+    .normalized()
 }
 
 impl From<&AppPreferences> for PreferencesFile {
@@ -194,7 +228,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 default_window_width: value.default_window_width,
                 default_window_height: value.default_window_height,
             },
-            ai: AiPreferencesFile::from(&value.ai),
+            ai: ai_section_file(&value.ai),
             keybindings: normalize_shortcut_config(&value.keybindings),
         }
     }
@@ -291,7 +325,49 @@ pub(crate) fn load_preferences_from_toml_value(
     if version < 2 && preferences.fonts.markdown_family == ".SystemUIFont" {
         preferences.fonts.markdown_family = "theme".into();
     }
+    if version < 4 {
+        migrate_ai_section_to_endpoints(value, &mut preferences);
+    }
     (preferences, true)
+}
+
+/// v3 → v4:旧 `[ai]` 是平铺的一组 OpenAI 兼容配置;升级成端点档案。
+/// 有配置 → 迁成默认 chat-completions 端点;没配置 → 出厂演示端点(stub),
+/// 保证 ⌘J 永远可用。
+fn migrate_ai_section_to_endpoints(value: &toml::Value, preferences: &mut AppPreferences) {
+    if !preferences.ai.endpoints.is_empty() {
+        // 已经是新格式(或本轮解析拿到了端点),不动。
+        preferences.ai.normalize_defaults();
+        return;
+    }
+    let old = value.get("ai");
+    let field = |key: &str| {
+        old.and_then(|ai| ai.get(key))
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let base_url = field("api_base_url");
+    let model = field("model");
+    if base_url.is_empty() && model.is_empty() {
+        preferences.ai = AiSettings::with_demo_endpoint();
+        return;
+    }
+    let provider_id = field("provider_id");
+    preferences.ai = AiSettings {
+        translate_target: field("translate_target"),
+        endpoints: vec![AiEndpointPref {
+            id: "default".to_string(),
+            name: String::new(),
+            kind: crate::ai::ProviderKind::ChatCompletions,
+            base_url,
+            api_key: field("api_key"),
+            model,
+            is_default: true,
+        }],
+    }
+    .named_after_provider(&provider_id);
 }
 
 pub(crate) fn load_or_create_app_preferences() -> anyhow::Result<AppPreferences> {
@@ -528,22 +604,57 @@ pub(crate) fn app_preferences_from_toml_value(
         })
         .filter(|frame| frame.width > 200 && frame.height > 200);
 
-    // [ai] 段在旧版本配置里不存在:整段缺省 = 未配置,面板会引导去设置页。
+    // [ai] 段:新格式 = translate_target + endpoints 数组;旧格式(v3)是
+    // 平铺的「单组 OpenAI 兼容配置」,由 load_preferences_from_toml_value
+    // 迁移成一个端点档案。
     let ai = value
         .get("ai")
         .map(|ai| {
-            let field = |key: &str| {
-                ai.get(key)
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string()
-            };
-            AiPreferences {
-                provider_id: field("provider_id"),
-                api_base_url: field("api_base_url"),
-                api_key: field("api_key"),
-                model: field("model"),
-                translate_target: field("translate_target"),
+            let translate_target = ai
+                .get("translate_target")
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let endpoints = ai
+                .get("endpoints")
+                .and_then(|endpoints| endpoints.as_array())
+                .map(|endpoints| {
+                    endpoints
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, endpoint)| {
+                            let field = |key: &str| {
+                                endpoint
+                                    .get(key)
+                                    .and_then(toml::Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string()
+                            };
+                            let id = field("id");
+                            // 无 id 的条目按序号补齐,不静默丢弃。
+                            let id = (!id.trim().is_empty())
+                                .then_some(id)
+                                .unwrap_or_else(|| format!("endpoint-{index}"));
+                            Some(AiEndpointPref {
+                                id,
+                                name: field("name"),
+                                kind: crate::ai::ProviderKind::from_id(&field("kind"))
+                                    .unwrap_or(crate::ai::ProviderKind::ChatCompletions),
+                                base_url: field("base_url"),
+                                api_key: field("api_key"),
+                                model: field("model"),
+                                is_default: endpoint
+                                    .get("default")
+                                    .and_then(toml::Value::as_bool)
+                                    .unwrap_or(false),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            AiSettings {
+                translate_target,
+                endpoints,
             }
         })
         .unwrap_or_default();

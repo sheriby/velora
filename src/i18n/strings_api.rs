@@ -362,9 +362,24 @@ impl I18nStrings {
         strings.preferences_ai_translate_follow_ui = "跟随界面语言".into();
         strings.preferences_ai_custom_provider = "自定义".into();
         strings.preferences_ai_provider_ollama = "Ollama（本地）".into();
-        strings.preferences_ai_hint = "面向任意 OpenAI 兼容服务（OpenAI、DeepSeek、智谱、Kimi、OpenRouter、本地 Ollama 等）。密钥只保存在本机 config.toml。".into();
+        strings.preferences_ai_hint = "可同时配置多个 AI 端点：OpenAI 兼容服务（DeepSeek、智谱、Kimi、Ollama 等）、Anthropic 或 OpenAI Responses，面板里随时切换；星标为默认端点。密钥只保存在本机 config.toml。".into();
         strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
         strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
+        strings.ai_kind_stub = "内置演示".into();
+        strings.ai_endpoint_unnamed = "未命名端点".into();
+        strings.preferences_ai_endpoints = "端点".into();
+        strings.preferences_ai_add_endpoint = "添加端点…".into();
+        strings.preferences_ai_edit = "编辑".into();
+        strings.preferences_ai_delete = "删除".into();
+        strings.preferences_ai_default = "默认".into();
+        strings.preferences_ai_name = "名称".into();
+        strings.preferences_ai_kind = "协议".into();
+        strings.preferences_ai_test_connection = "测试连接".into();
+        strings.preferences_ai_test_running = "正在测试…".into();
+        strings.preferences_ai_test_ok = "连接成功".into();
+        strings.preferences_ai_test_failed = "连接失败".into();
+        strings.preferences_ai_save_endpoint = "保存端点".into();
+        strings.preferences_ai_stub_hint = "内置演示无需密钥,离线回放固定剧本,用来熟悉操作;接入真实服务请换其他协议。".into();
         strings
     }
 
@@ -718,6 +733,21 @@ impl I18nStrings {
             ai_error_http: "The AI service returned an error: {error}".into(),
             ai_error_protocol: "Unexpected response from the AI service: {error}".into(),
             preferences_shortcut_open_ai_assistant: "AI Assistant".into(),
+            ai_kind_stub: "Built-in demo".into(),
+            ai_endpoint_unnamed: "Unnamed endpoint".into(),
+            preferences_ai_endpoints: "Endpoints".into(),
+            preferences_ai_add_endpoint: "Add endpoint…".into(),
+            preferences_ai_edit: "Edit".into(),
+            preferences_ai_delete: "Delete".into(),
+            preferences_ai_default: "Default".into(),
+            preferences_ai_name: "Name".into(),
+            preferences_ai_kind: "Protocol".into(),
+            preferences_ai_test_connection: "Test connection".into(),
+            preferences_ai_test_running: "Testing…".into(),
+            preferences_ai_test_ok: "Works".into(),
+            preferences_ai_test_failed: "Failed".into(),
+            preferences_ai_save_endpoint: "Save endpoint".into(),
+            preferences_ai_stub_hint: "The built-in demo replays fixed scripts offline so you can try the flow. Pick another protocol to connect a real service.".into(),
             preferences_nav_ai: "AI".into(),
             preferences_ai_provider: "Provider preset".into(),
             preferences_ai_api_base_url: "API base URL".into(),
@@ -727,7 +757,7 @@ impl I18nStrings {
             preferences_ai_translate_follow_ui: "Follow UI language".into(),
             preferences_ai_custom_provider: "Custom".into(),
             preferences_ai_provider_ollama: "Ollama (local)".into(),
-            preferences_ai_hint: "Works with any OpenAI-compatible service (OpenAI, DeepSeek, GLM, Kimi, OpenRouter, local Ollama…). The key stays in your local config.toml.".into(),
+            preferences_ai_hint: "Configure multiple AI endpoints — OpenAI-compatible services (DeepSeek, GLM, Kimi, Ollama…), Anthropic, or OpenAI Responses — and switch between them in the panel. The starred endpoint is the default. Keys stay in your local config.toml.".into(),
         }
     }
 
