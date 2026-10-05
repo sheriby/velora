@@ -158,8 +158,13 @@ impl Render for Editor {
         let viewport_width = f32::from(viewport_bounds.size.width.max(px(1.0)));
         let has_overflow = max_scroll_y > 0.5;
 
-        let centered_width = if self.code_tab_active() {
-            (viewport_width - 72.0).max(1.0)
+        // 行号视图（代码文件 / 切到源码的文档）：列宽吃满内容盒，不再居中留白。
+        // 行号左边的空 = 滚动区左 padding（减半后 12）+ 块壳自身 block_padding_x
+        // （12），合计 24——原来是 24+12+12=48，用户报修太空、整小一半。
+        let source_view =
+            self.code_document || self.view_mode == crate::editor::ViewMode::Source;
+        let centered_width = if source_view {
+            (viewport_width - d.editor_padding * 1.5).max(1.0)
         } else {
             Self::centered_column_width(viewport_width, &theme.dimensions)
                 .min(writing_width.max_width(theme.dimensions.writing_max_width))
@@ -547,7 +552,13 @@ impl Render for Editor {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_editor_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_editor_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_editor_scroll_wheel))
-            .p(px(d.editor_padding))
+            // 行号视图左 padding 减半：行号贴窗口左缘（用户报修：左边空隙大）。
+            .pl(px(if source_view {
+                d.editor_padding * 0.5
+            } else {
+                d.editor_padding
+            }))
+            .pr(px(d.editor_padding))
             .pt(px(if self.code_tab_active() {
                 24.0
             } else if self.typewriter_mode && self.view_mode == crate::editor::ViewMode::Rendered {

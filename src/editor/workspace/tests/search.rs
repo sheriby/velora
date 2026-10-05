@@ -1298,6 +1298,15 @@ async fn source_chunk_gutters_share_one_width_basis(cx: &mut TestAppContext) {
                 "行号栏宽度基准应为全文档总行数"
             );
         }
+        // 行号视图的内容列要贴近窗口左缘：左 inset = 半个滚动 padding(12) +
+        // 块壳 padding(12) = 24px（原来 24+12+12=48，用户报修太空、减半）。
+        let first = roots[0].read(cx);
+        let content_left = f32::from(first.last_bounds.expect("块应有布局").left())
+            - f32::from(first.last_gutter_width);
+        assert!(
+            content_left < 30.0,
+            "行号视图内容列应贴近窗口左缘：content_left={content_left}"
+        );
     });
 }
 

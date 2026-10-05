@@ -131,7 +131,11 @@ impl Editor {
         }
 
         // 右下角的模式切换按钮（用户需求：阅读时长信息换成源码切换）。
-        right_items.push(self.render_view_mode_toggle(theme, cx));
+        // 普通文本/代码文件与无法渲染的 markdown 没有渲染视图可切，不显示
+        // （用户报修：纯文本文件右下角不该有源码图标）。
+        if !(self.code_document || self.source_mode_fallback_required) {
+            right_items.push(self.render_view_mode_toggle(theme, cx));
+        }
 
         if self.long_source_block_hint(cx) {
             right_items.push(
