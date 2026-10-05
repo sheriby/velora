@@ -68,6 +68,7 @@ benches/ scripts/ tests/fixtures/
 6. **GPUI 限制**：svg 不继承父 div text_color；`.id()` 后变 Stateful 类型（if/else 分支需 into_any_element 统一）；TextRun 逐段字号是本地补丁（Linux 未接）。
 7. **所有提示用应用内模态**，禁系统原生弹窗（源码审计测试守卫）。
 8. **cargo build 与 cargo test 都要过**（test-only 代码只在测试构建存在）。
+9. **一个动作只有一处实现**：快捷键、正文右键菜单、选中工具栏、命令面板四条入口汇到编辑器层同一组函数上，可用判定也只有一份（菜单灰掉的命令键位按下去同样不写）；新增一条命令要四条一起有，见 editor-core.md §8。
 
 ## 当前性能要点
 

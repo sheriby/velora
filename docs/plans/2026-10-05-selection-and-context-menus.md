@@ -112,7 +112,9 @@ FP9c 命令面板补齐：「编辑」两条与「格式」十条（已落地）
 
 面板的输入框持有窗口焦点，而这一族的处理者挂在块那一层，实测收不到动作：当场派发 `BoldSelection` 时派发路径长 9（根 → 文档 → 面板输入框那一条），块不在其中；把窗口焦点当场指回那一块仍然不触发，因为 `Window::dispatch_action` 找的是上一帧的派发节点，而那一帧还带着面板；等一次重绘之后再派发同一个动作，块的处理者才触发并写出 `**alpha**`。`window.on_next_frame` 那一条路在本仓的测试里不触发（TestWindow 不走 `on_request_frame`），留一条测不到的路径不如把收口写清楚：「焦点被浮层借走」这一种由编辑器层接手，判定是 `Editor::block_focus_is_live`（src/editor/runtime_context.rs:333）。八种行内格式的捕获处理者按它决定交给块还是在编辑器层切块处理（src/editor/format_ops.rs:106），「粘贴为纯文本」加同口径的 `on_paste_as_plain_text_capture`（src/editor/clipboard_ops.rs:13，注册在 src/editor/render/paint.rs:811）——两处都在焦点不在块上时代为认出当前编辑目标，再调块里那唯一的实现（跨块选区、剪贴板图片那些分支一起跟着走），焦点在块上时原样往下传，⌘V 与 ⌘⇧V 那条路径一字未动。刻意不做：撤销、重做、剪切、拷贝、粘贴五条不进面板（面板原先就没有它们，这一笔只补与两套菜单同源的那十二条）；段落与插入两档同理不进（那两档的默认键还没有，面板里搜得到却按不了比搜不到更难看，等动作与处理器一并补）。验收：`src/editor/tests/palette_commands.rs` 四条——十二条逐条从面板执行比字节（改前红值：`bold_selection` 那条 `left: "alpha one\n\nbeta two\n"`，`paste_as_plain_text` 那条 `left: "选中文字\n\n别段\n"`）、打完查询词回车执行的是筛后那一条（标签从注册表现取，界面语言换了也不写死）、查无命中时回车既不动文档也不收起面板。
 
-FP9 文档与命令面板。`docs/architecture/` 里补选中菜单/右键菜单的入口、状态机与渲染层级；新命令进 `COMMANDS` 与 `SHORTCUT_DEFINITIONS`（有守卫测试要求两处对齐）。
+FP9d 文档（已落地）。`docs/architecture/editor-core.md` 新增 §8「四处入口一套实现：正文右键菜单、选中工具栏与命令面板」，记的是四入口汇到哪几个函数、可用判定那一份在哪、两套浮层的状态字段与开合路径、二级面板悬停的 120ms、几何与夹取规则、渲染层级（都挂窗口根而不是滚动区）、块级命令为什么必须在编辑器层收口（`Window::dispatch_action` 读上一帧的派发树）、一条命令的键位仪式那八处、以及已知边界（段落与插入两档无默认键也不进面板、上标下标与清除格式不在工具栏、图片与表格轴两个面板不走 `document_menu_origins`）。`overview.md` 的关键不变量加第 9 条（一个动作只有一处实现，新增命令四入口要一起有），`workspace-ui.md` §8 那行命令面板与 §9 那行浮层各补一句并指回 §8。
+
+FP7b 工具栏让位补齐（已落地）。FP7 那份「没有别的浮层」的判断漏了命令面板与快速打开两层（src/editor/selection_toolbar.rs:111 的注释早就写着这一条，代码里缺判断）：工具栏挂在窗口根、比画在正文区里的这两层晚进树，于是选中一段文字再按 ⇧⌘P，工具栏浮在面板的遮罩与列表之上。修法是让锚点不成立而不是在渲染里再收一次——锚点是工具栏开合的唯一来源，每帧现算，当场置 None 只压得住一帧。用例 `selection_toolbar::the_toolbar_yields_to_the_command_palette_and_quick_open` 钉三条：面板开着不出现、快速打开开着不出现、两层都收起后随还在的选区自己回来；改前红在「命令面板开着时工具栏还浮着，会压在面板的遮罩与列表之上」。`dismiss_contextual_overlays` 仍不收工具栏（它是现算的现场，不是需要谁去关的状态）。
 
 ## 6. 边界与代价
 

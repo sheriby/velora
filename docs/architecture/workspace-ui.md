@@ -61,10 +61,10 @@
 - **大纲**：`sync_workspace_outline` 仅当缓冲区内容与 `outline_source` 不同才重建（比较零拷贝，`build_outline_tree` 用 pulldown-cmark，围栏代码安全）；滚动跟随高亮按字节偏移分区 + `outline_follow_cache`（按 revision 键）。
 - **搜索**：`schedule_workspace_search` 代数计数 + 120ms 去抖；工作区域走缓存的树、文档域走源码，均在 background executor + catch_unwind；结果上限 200；**重搜期间保留旧结果**（防闪空白）；文档内命中经 `sync_document_search_highlights` 画进块。
 - ⌘P 快速切换（quick_open.rs）：过滤 `workspace_text_files()`，上限 12，IME 输入路由经 Editor 的 input handler。
-- ⇧⌘P 命令面板（command_palette.rs）：条目来自 `commands::commands()`；派发走真实 `window.dispatch_action`（与菜单/快捷键同路径）。
+- ⇧⌘P 命令面板（command_palette.rs）：条目来自 `commands::commands()`（`Edit`/`Format` 两档只进面板、不进系统菜单栏）；按回车与点一行同一条收尾 `run_palette_command`（:100）→ `window.dispatch_action`。面板输入框持有窗口焦点，块那一层不在派发路径上（派发读的是上一帧的派发树），所以块级命令在编辑器层收口，见 editor-core.md §8。
 
 ## 9. 窗口 chrome 与覆盖层
 
 - window_chrome.rs：macOS 原生红绿灯；Windows/Linux `WindowDecorations::Client` + 自绘 AppControls；拖拽区 `WindowControlArea::Drag`；Linux GNOME 读 gsettings button-layout；标签条并入标题栏。
-- modal.rs：所有提示走应用内模态（`ModalSpec`/`show_modal`，源码审计测试禁原生弹窗）；context_menu.rs 右键菜单；quick_open/command_palette 浮层。
+- modal.rs：所有提示走应用内模态（`ModalSpec`/`show_modal`，源码审计测试禁原生弹窗）；context_menu.rs 右键菜单；quick_open/command_palette 浮层。正文右键菜单与选中工具栏两套菜单的入口、状态、置灰判定与落点见 editor-core.md §8；它们与 ⌘P/⇧⌘P 都挂在窗口根而不是滚动区里（src/editor/render/paint.rs:1062、:1067），层级上晚进树者画在上——`selection_toolbar_anchor`（src/editor/selection_toolbar.rs:111）那串「没有别的浮层」的判断因此要把每一个浮层都列进去。
 - 事件路由：`on_editor_key_down_capture`（src/editor/events.rs 捕获阶段）→ 焦点块 → 覆盖层（`OverlayInputKind`）。
