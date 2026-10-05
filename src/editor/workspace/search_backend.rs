@@ -52,6 +52,15 @@ impl SearchMatcher {
         }
     }
 
+    /// 整段文本里的全部命中（绝对字节区间 + 行号）。编译失败时交回空表。
+    #[cfg(test)]
+    pub(crate) fn find_all_in_text(&self, source: &str) -> Vec<SearchHit> {
+        match self.engine.as_ref() {
+            Some(engine) => engine.find_all(source.as_bytes()),
+            None => Vec::new(),
+        }
+    }
+
     /// Whether a filename matches (fuzzy subsequence or substring).
     pub(crate) fn matches_filename(&self, name: &str) -> bool {
         if self.options.fuzzy && !self.options.use_regex {
@@ -434,6 +443,15 @@ pub(crate) async fn search_workspace_files(
     hits
 }
 
+/// 扫一遍文档文本并投影成结果列表的行。
+///
+/// 投影本身是 `document_matches::project_hits_into_rows`——侧栏结果列表走的是
+/// 同一份实现，所以这里不可能和命中表算出两样东西。
+///
+/// 生产侧不再需要它：文档范围的扫描已经并进 `Editor::document_matches` 那张表
+/// （调度器直接要表再投影）。留在这里只服务那批把「结果列表」当被测对象的行为
+/// 快照与测试。
+#[cfg(test)]
 pub(crate) fn search_document_source(
     source: &str,
     matcher: &SearchMatcher,
@@ -444,38 +462,7 @@ pub(crate) fn search_document_source(
     if matcher.is_empty() || limit == 0 {
         return Vec::new();
     }
-    let mut hits = Vec::new();
-    let mut absolute = 0usize;
-    let mut content_ordinal = 0usize;
-    for (line_index, raw_line) in source.split_inclusive('\n').enumerate() {
-        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        let mut first_of_line = true;
-        for range in matcher.find_in_line(line) {
-            hits.push(WorkspaceSearchHit {
-                path: path.to_path_buf(),
-                label: label.to_string(),
-                line: Some(line_index + 1),
-                match_range: Some(range.start..range.end),
-                source_range: Some(absolute + range.start..absolute + range.end),
-                // ordinal 按「含词行」计（每行首个命中递增），与磁盘扫描
-                // 的口径一致，跳转按行对应。
-                match_ordinal: Some(if first_of_line {
-                    let ordinal = content_ordinal;
-                    content_ordinal += 1;
-                    first_of_line = false;
-                    ordinal
-                } else {
-                    content_ordinal
-                }),
-                preview: line.trim().chars().take(140).collect(),
-            });
-            if hits.len() == limit {
-                return hits;
-            }
-        }
-        absolute += raw_line.len();
-    }
-    hits
+    project_hits_into_rows(&matcher.find_all_in_text(source), source, path, label, limit)
 }
 
 /// Next match at or after `from` (or before, when reversing) across the whole

@@ -26,7 +26,15 @@ impl Editor {
             return;
         }
 
-        let matcher = SearchMatcher::new(&query, self.search_options());
+        // 命中读那张文档命中表：与结果列表、跳转、全部替换同一份数据。
+        // 旧实现是在这里再扫一遍（逐根块取切片喂引擎），于是「列表说有这个命中」
+        // 和「高亮画在哪儿」是两次独立计算。
+        let all_hits: Vec<Range<usize>> = self
+            .document_matches(cx)
+            .iter()
+            .flat_map(|hits| hits.iter())
+            .map(|hit| hit.range.clone())
+            .collect();
         // 活动命中（循环跳转/点击结果选中的那个）单独标记，让用户在多个
         // 命中之间能看出当前在哪一个。
         let active_range = self.workspace.document_active_range.clone();
@@ -34,18 +42,16 @@ impl Editor {
 
         match self.view_mode {
             ViewMode::Rendered => {
-                // 命中先在缓冲区里按字节找（不把整篇复制出来），然后只为**有命中的
-                // 那一根块**重建它自己的映射。没命中的块连换算都不需要，整篇重拼
-                // source mapping 是白付的 O(文档)——查询没改、只是重算一遍高亮也要付。
+                // 只为**有命中的那一根块**重建它自己的映射：没命中的块连换算都不需要，
+                // 整篇重拼 source mapping 是白付的 O(文档)。
                 for root in self.document.root_blocks().to_vec() {
                     let Some(span) = self.document.source_span_of(root.entity_id()) else {
                         continue;
                     };
-                    let text = self.buffer.slice(span.clone());
-                    let hits: Vec<Range<usize>> = matcher
-                        .find_in_line(&text)
-                        .into_iter()
-                        .map(|found| span.start + found.start..span.start + found.end)
+                    let hits: Vec<Range<usize>> = all_hits
+                        .iter()
+                        .filter(|range| range.start >= span.start && range.end <= span.end)
+                        .cloned()
                         .collect();
                     if hits.is_empty() {
                         continue;
@@ -73,19 +79,15 @@ impl Editor {
             ViewMode::Source => {
                 // 源码模式的块是按行切的投影，位置不挂在 `source_span` 上，仍按整篇
                 // 走查算出每块的源码区间。
-                let source = self.current_document_source(cx);
                 let mappings = self.build_source_target_mappings(cx);
                 for mapping in &mappings {
-                    let Some(text) = source.get(mapping.full_source_range.clone()) else {
-                        continue;
-                    };
-                    let hits: Vec<Range<usize>> = matcher
-                        .find_in_line(text)
-                        .into_iter()
-                        .map(|found| {
-                            mapping.full_source_range.start + found.start
-                                ..mapping.full_source_range.start + found.end
+                    let hits: Vec<Range<usize>> = all_hits
+                        .iter()
+                        .filter(|range| {
+                            range.start >= mapping.full_source_range.start
+                                && range.end <= mapping.full_source_range.end
                         })
+                        .cloned()
                         .collect();
                     let Some((ranges, active_local)) =
                         Self::search_ranges_for_hits(mapping, &hits, &active_range, cx)

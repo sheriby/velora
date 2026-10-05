@@ -17,6 +17,9 @@ pub(crate) use file_shape::FileShape;
 use std::ops::Range;
 use std::sync::Arc;
 
+/// 给每份新建的缓冲区发一个进程内唯一的身份号。
+static NEXT_BUFFER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// 单个文本块的字节上限。10 MiB 文档约 2560 块。
 const MAX_CHUNK_BYTES: usize = 4096;
 
@@ -118,6 +121,16 @@ pub(crate) struct TextBuffer {
     /// `rebuilding_the_line_index_costs_only_the_edited_bytes` 钉住维护成本只跟着
     /// 改动走、不跟着文档长。
     line_probe_bytes: std::cell::Cell<usize>,
+    /// 内容被改过多少次。读侧的派生缓存（搜索命中表）用它做失效判断：
+    /// 只有 [`edit`](Self::edit) 会动内容，所以跟着它自增就足够，不需要比较字节。
+    revision: u64,
+    /// 这份缓冲区的身份号，进程内单调递增、每份唯一。
+    ///
+    /// 只有 `revision` 不够：**两份从没被编辑过的文档 revision 都是 0**，于是
+    /// 「A.md 搜完切到 B.md 搜同一个词」会命中上一份文档的缓存，把 A 的命中
+    /// 区间当成 B 的（实测就是搜索跳转后高亮整体消失）。身份号让缓存键跨文档
+    /// 也不会撞车。
+    identity: u64,
 }
 
 impl TextBuffer {
@@ -135,6 +148,8 @@ impl TextBuffer {
             pristine: None,
             dirty: (!text.is_empty()).then_some(0..text.len()),
             line_probe_bytes: std::cell::Cell::new(probed),
+            revision: 0,
+            identity: NEXT_BUFFER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -201,6 +216,16 @@ impl TextBuffer {
 
     pub(crate) fn byte_len(&self) -> usize {
         self.total_bytes
+    }
+
+    /// 内容版本号：每次 [`edit`](Self::edit) 自增。派生缓存拿它做失效判断。
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// 这份缓冲区的身份号，与内容改了多少次无关。见 `identity` 字段的说明。
+    pub(crate) fn identity(&self) -> u64 {
+        self.identity
     }
 
     /// 取 `range` 指向的字节区间。
@@ -347,6 +372,7 @@ impl TextBuffer {
         );
 
         let removed = self.slice(range.clone());
+        self.revision = self.revision.wrapping_add(1);
         self.pristine = None;
         let new_range = range.start..range.start + text.len();
         self.dirty = Some(match self.dirty.take() {

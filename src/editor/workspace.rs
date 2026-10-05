@@ -309,6 +309,11 @@ pub(super) struct WorkspaceState {
     search_pending: bool,
     /// 模式编译失败时引擎交回的诊断，显示在搜索框下方。
     search_error: Option<String>,
+    /// 当前文档的命中表缓存（见 `document_matches.rs`）。查询、开关或缓冲区
+    /// 版本任一变了就重算；结果列表、高亮、跳转、全部替换四处都读它。
+    document_matches: Option<DocumentMatchTable>,
+    /// 文档范围当前停在第几个命中（全表索引，不是侧栏那 200 行的索引）。
+    document_active_index: Option<usize>,
     search_generation: u64,
     /// 顶栏标签条横向滚动（诊断/断言用）。
     pub(crate) tabs_scroll_handle: ScrollHandle,
@@ -369,6 +374,8 @@ impl Default for WorkspaceState {
             document_active_range: None,
             search_pending: false,
             search_error: None,
+            document_matches: None,
+            document_active_index: None,
             search_generation: 0,
             tabs_scroll_handle: ScrollHandle::new(),
             tree_scan_task: None,
@@ -481,8 +488,10 @@ pub(super) use input_handler::*;
 pub(super) use render_panel::*;
 pub(super) use search_backend::*;
 pub(super) use search_engine::*;
+pub(super) use document_matches::*;
 
 mod context_menus;
+mod document_matches;
 mod documents;
 mod file_tree;
 mod find_replace;
