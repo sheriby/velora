@@ -469,25 +469,20 @@ impl Editor {
         range: &Range<usize>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(entity_id) = self.block_id_at_source_offset(range.start, cx) else {
-            return false;
-        };
-        let Some(target_index) = self.document.visible_index_for_entity_id(entity_id) else {
-            return false;
-        };
-        let visible = self.document.visible_blocks().to_vec();
+        // 两端各查一次：跨块命中的尾段可能落在另一章节里，而那章节正好是折叠的——
+        // 只看起点就会「跳过去了，但尾巴还折着」。零宽命中没有「尾字节」，只查起点。
+        let mut tail_offsets = vec![range.start];
+        if !range.is_empty() {
+            tail_offsets.push(range.end - 1);
+        }
         let mut covering: Vec<(u8, EntityId)> = Vec::new();
-        for visible_block in visible.iter().take(target_index) {
-            let block = visible_block.entity.read(cx);
-            if let BlockKind::Heading { level } = block.kind() {
-                while covering
-                    .last()
-                    .is_some_and(|(hide_below, _)| level <= *hide_below)
-                {
-                    covering.pop();
-                }
-                if block.folded {
-                    covering.push((level, visible_block.entity.entity_id()));
+        for offset in tail_offsets {
+            let Some(entity_id) = self.block_id_at_source_offset(offset, cx) else {
+                continue;
+            };
+            for item in self.folded_headings_above(entity_id, cx) {
+                if !covering.iter().any(|(_, id)| *id == item.1) {
+                    covering.push(item);
                 }
             }
         }
@@ -505,6 +500,31 @@ impl Editor {
             });
         }
         unfolded
+    }
+
+    /// 按折叠栈算出「盖住这一块」的那些折叠标题，从文档序头部扫到这块的位置。
+    /// 返回 `(标题层级, 标题块 id)`，由外层到内层。
+    fn folded_headings_above(&self, entity_id: EntityId, cx: &App) -> Vec<(u8, EntityId)> {
+        let Some(target_index) = self.document.visible_index_for_entity_id(entity_id) else {
+            return Vec::new();
+        };
+        let visible = self.document.visible_blocks().to_vec();
+        let mut covering: Vec<(u8, EntityId)> = Vec::new();
+        for visible_block in visible.iter().take(target_index) {
+            let block = visible_block.entity.read(cx);
+            if let BlockKind::Heading { level } = block.kind() {
+                while covering
+                    .last()
+                    .is_some_and(|(hide_below, _)| level <= *hide_below)
+                {
+                    covering.pop();
+                }
+                if block.folded {
+                    covering.push((level, visible_block.entity.entity_id()));
+                }
+            }
+        }
+        covering
     }
 
     /// 记一笔「这段字节里的区间接缝被重新分过」。写回层按区间拆块/合块时调它：

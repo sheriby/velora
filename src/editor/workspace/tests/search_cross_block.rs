@@ -209,3 +209,76 @@ async fn a_cross_block_hit_still_highlights_after_switching_to_source_mode(
         );
     });
 }
+
+/// 折叠某根顶层标题并让折叠状态生效（与 document_find 那批用例同一写法）。
+fn fold_heading(editor: &mut Editor, index: usize, cx: &mut gpui::Context<Editor>) {
+    let heading = editor.document.root_blocks()[index].clone();
+    heading.update(cx, |block, _cx| block.folded = true);
+    editor.fold_state_version = editor.fold_state_version.wrapping_add(1);
+}
+
+#[gpui::test]
+async fn a_cross_block_hit_unfolds_the_section_its_tail_lands_in(cx: &mut TestAppContext) {
+    init(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(
+            cx,
+            "# A\n\nneedle 起\n\n# B\n\nneedle 尾\n".to_string(),
+            None,
+        )
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        fold_heading(editor, 2, cx);
+    });
+    search_document_regex(&editor, r"needle 起[\s\S]*?needle 尾", cx);
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.document.root_blocks()[2].read(cx).folded,
+            "用例前提：搜索本身不该把 B 段展开"
+        );
+    });
+    editor.update(cx, |editor, cx| {
+        editor.find_next_document_match(false, cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        let active = editor.workspace.document_active_range.clone().expect("要有活动命中");
+        assert!(!active.is_empty(), "命中要盖住两段");
+        assert!(
+            !editor.document.root_blocks()[2].read(cx).folded,
+            "尾段落在全是折叠的那段内容里时，这一节必须跟着展开——只看命中起点做不到"
+        );
+    });
+}
+
+#[gpui::test]
+async fn a_cross_block_hit_unfolds_every_section_it_touches(cx: &mut TestAppContext) {
+    init(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(
+            cx,
+            "# A\n\nneedle 起\n\n# B\n\nneedle 尾\n".to_string(),
+            None,
+        )
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        fold_heading(editor, 0, cx);
+        fold_heading(editor, 2, cx);
+    });
+    search_document_regex(&editor, r"needle 起[\s\S]*?needle 尾", cx);
+    editor.update(cx, |editor, cx| {
+        editor.find_next_document_match(false, cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        let folded = editor
+            .document
+            .root_blocks()
+            .iter()
+            .filter(|block| block.read(cx).folded)
+            .count();
+        assert_eq!(folded, 0, "两端各自所在的折叠节都要展开：{folded}");
+    });
+}
