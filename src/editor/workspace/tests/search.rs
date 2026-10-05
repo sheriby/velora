@@ -1145,6 +1145,97 @@ async fn same_file_workspace_hit_jumps_by_the_file_line(cx: &mut TestAppContext)
     });
 }
 
+/// 回归（用户报修 2026-10-05）：刚打开的代码文件只同步建首块（512 行），
+/// 其余进 PendingSourceTail 后台续建——第一次点击 512 行之外的命中时投影块
+/// 还不存在，选区被钳进首块末尾，再点才对。跳转前必须把续建落地。
+#[gpui::test]
+async fn first_click_into_a_freshly_opened_code_file_lands_in_the_right_chunk(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-first-click-chunk-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("big.rs");
+    let mut lines = Vec::new();
+    for index in 1..=1200 {
+        if index == 600 || index == 1100 {
+            lines.push(format!("// 第 {index} 行 针脚标记"));
+        } else {
+            lines.push(format!("// 第 {index} 行"));
+        }
+    }
+    fs::write(&path, lines.join("\n")).expect("write fixture");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    // 从空编辑器出发：点中的文件此前从未打开——复刻「第一次点击」。
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "针脚".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+
+    let scanned_path = path.canonicalize().expect("canonicalize fixture path");
+    let hit_index = editor.read_with(cx, |editor, _cx| {
+        editor
+            .workspace
+            .search_results
+            .iter()
+            .position(|hit| hit.path == scanned_path && hit.line == Some(600))
+            .expect("第 600 行的命中应在结果里")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_search_hit(hit_index, window, cx)
+        });
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(matches!(
+            editor.view_mode,
+            crate::editor::ViewMode::Source
+        ));
+        // 续建已落地：1200 行 = 512+512+176 三根投影块。
+        assert_eq!(editor.document.root_count(), 3);
+        let active_id = editor.active_entity_id.expect("跳转后应有活动块");
+        let roots = editor.document.root_blocks();
+        let chunk_index = roots
+            .iter()
+            .position(|block| block.entity_id() == active_id)
+            .expect("活动块应是一根源码投影块");
+        assert_eq!(
+            chunk_index, 1,
+            "第一次点击也要落进包含命中的第二根投影块"
+        );
+        let block = roots[chunk_index].read(cx);
+        let range = block.selected_range.clone();
+        assert_eq!(
+            block.display_text().get(range).map(str::to_owned).as_deref(),
+            Some("针脚"),
+            "选区应恰好盖住命中词"
+        );
+    });
+}
+
 /// 回归（用户报修 2026-10-05）：源码文档按 512 行切块后，搜索跳转的选区被
 /// 钳进第一根投影块——512 行之外的命中点击后全部停在 512 行。选区必须
 /// 落进**包含它的那一根**投影块。

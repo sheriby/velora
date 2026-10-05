@@ -113,6 +113,11 @@ impl Editor {
         if std::env::var("VELORA_SEARCH_JUMP_DEBUG").as_deref() == Ok("1") {
             eprintln!("[SEARCHJUMP] jump range={range:?}");
         }
+        // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建。落点在
+        // 未物化的部分时，选区找不到归属的投影块，会被钳进首块末尾——用户
+        // 报修：第一次点击命中停在 512 行，再点才对。跳转前先把续建落地；
+        // 已物化的文档这里是空操作。
+        self.flush_pending_materialization(cx);
         self.push_cursor_location(cx);
         // 命中在折叠标题的章节里时先展开：块被折叠过滤不挂载，既画不出高亮
         // 也滚不过去（用户报修）。
