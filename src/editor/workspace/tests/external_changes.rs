@@ -3,8 +3,8 @@ use gpui::{TestAppContext, px};
 use std::fs;
 use std::time::Duration;
 
-/// 撑起可滚动的正文：每段一行，段间空行分开。
-fn long_markdown(paragraphs: usize) -> String {
+/// 撑起可滚动的正文：每段一行，段间空行分开。给同级的标签用例复用。
+pub(super) fn long_markdown(paragraphs: usize) -> String {
     (1..=paragraphs)
         .map(|index| format!("第 {index} 段：一行用来把正文撑出视口的中文内容。"))
         .collect::<Vec<_>>()
@@ -262,6 +262,14 @@ async fn reloading_an_externally_changed_document_keeps_source_mode_and_viewport
             editor.scroll_handle.offset().y,
             offset_before,
             "外部重载把视口弹回了文档顶部"
+        );
+        // 块树要跟着模式走：源码视图按 512 行切缓冲区（这篇 400 段只有两根），
+        // 渲染态才是 markdown 解析出的 400 根。只对模式不对树时，位置换算会把块起点
+        // 当行首去问行号，`TextBuffer::line_of` 直接断言失败。
+        assert!(
+            editor.document.root_count() < 20,
+            "源码模式下块树没跟着模式建，实测 {} 根（渲染态解析会是 400 根）",
+            editor.document.root_count()
         );
     });
 }

@@ -265,6 +265,16 @@ impl Editor {
         snapshot: &UndoSelectionSnapshot,
         cx: &mut Context<Self>,
     ) {
+        // 这里的偏移来自**上一份**内容（撤销快照、切视图前记的、标签上次离开时的、
+        // 外部改动之前的）：文档插过或删过字节之后，那个字节位可能正落在多字节字符
+        // 中间，而这条链路上的行号与块区间换算处处按字符边界走（`line_of` 会直接
+        // 断言失败）。两端各自退回边界；取整单调，所以 `start <= end` 不会被破坏。
+        let clamped = UndoSelectionSnapshot {
+            range: self.buffer.floor_char_boundary(snapshot.range.start)
+                ..self.buffer.floor_char_boundary(snapshot.range.end),
+            reversed: snapshot.reversed,
+        };
+        let snapshot = &clamped;
         match self.view_mode {
             ViewMode::Source => {
                 // 源码文档按 512 行切成多根投影块（SOURCE_DOCUMENT_CHUNK_LINES）：

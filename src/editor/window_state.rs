@@ -412,6 +412,18 @@ impl Editor {
         crate::app_menu::uninstall_cli_tool(cx);
     }
 
+    /// 记下这一篇文档的阅读现场：模式、视口偏移、光标区间。
+    ///
+    /// 只在「马上要换掉整棵块树、但文档还是这篇或要切回另一篇」的入口用；
+    /// 现场要在换之前取，块树一换旧实体 id 就作废了。
+    pub(crate) fn capture_document_view(&self, cx: &App) -> DocumentView {
+        DocumentView {
+            view_mode: self.view_mode,
+            scroll_y: f32::from(self.scroll_handle.offset().y),
+            selection: self.capture_source_selection_snapshot(cx),
+        }
+    }
+
     pub(crate) fn toggle_view_mode(&mut self, cx: &mut Context<Self>) {
         self.end_block_pointer_selection_sessions(cx);
         let selection_snapshot = self.capture_source_selection_snapshot(cx);

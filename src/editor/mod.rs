@@ -403,11 +403,25 @@ struct ScrollbarDragSession {
     max_scroll_y: f32,
 }
 
-/// Source-mode selection snapshot stored with undo history.
+/// 一次「换掉整棵块树」之后要把选区放回原处时所记的区间，单位是缓冲区偏移。
+/// 撤销、切视图、外部改动重载、标签切换共用这一份形状。
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct UndoSelectionSnapshot {
+pub(crate) struct UndoSelectionSnapshot {
     range: std::ops::Range<usize>,
     reversed: bool,
+}
+
+/// 一篇文档的阅读现场：视图模式、视口纵向偏移（像素，负值向下）、光标区间。
+///
+/// 只换内容、不换文档的路径靠它把现场交还给用户——外部改动重载当场记下再交回，
+/// 标签切换则把它存在标签上（`WorkspaceDocumentTab::view`），切回来时交回。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DocumentView {
+    view_mode: ViewMode,
+    /// 存 `f32` 而不是 `Pixels`：`Pixels` 没有 `Debug`，标签要能打印。代价是这一项
+    /// 只能比到 `PartialEq`——浮点相等在这里就是「同一个偏移」，不做近似。
+    scroll_y: f32,
+    selection: UndoSelectionSnapshot,
 }
 
 /// One undo history entry containing source text and selection state.

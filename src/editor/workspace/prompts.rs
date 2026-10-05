@@ -423,13 +423,18 @@ impl Editor {
                             if let Some(tab) = next_tab {
                                 editor.recovery_id = tab.recovery_id;
                                 let file_version = tab.file_version;
+                                let view = tab.view.clone();
                                 editor.recovery_source_path = None;
                                 editor.is_recovered_document = false;
                                 editor.workspace.active_document = Some(tab.path.clone());
                                 if is_code_file(&tab.path) {
-                                    editor.replace_document_from_code_source(tab.markdown, tab.path, cx);
+                                    editor.restore_document_from_code_source(
+                                        tab.markdown, tab.path, view, cx,
+                                    );
                                 } else {
-                                    editor.replace_document_from_markdown(tab.markdown, Some(tab.path), cx);
+                                    editor.restore_document_from_markdown(
+                                        tab.markdown, tab.path, view, cx,
+                                    );
                                 }
                                 editor.document_dirty = tab.dirty;
                                 editor.file_version = Some(file_version);

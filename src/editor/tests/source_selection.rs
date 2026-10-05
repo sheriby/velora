@@ -169,6 +169,51 @@ async fn a_source_selection_past_the_end_of_the_file_clamps_instead_of_panicking
     });
 }
 
+/// 快照里的偏移属于**上一份**内容：文档插过或删过字节之后，那个字节位可能正落在
+/// 多字节字符中间，而选区落地的整条链路（行号、块区间换算）处处按字符边界走，
+/// `TextBuffer::line_of` 会直接断言失败。两种视图都取整到边界，不许 panic。
+#[gpui::test]
+async fn a_snapshot_offset_inside_a_multibyte_character_clamps_instead_of_panicking(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let text = "第一段内容。\n\n第二段内容。\n".to_string();
+    // 「段」占三个字节，取它中间那一字节作偏移——正是外部改动把内容挪了一位之后
+    // 旧偏移会变成的样子。
+    let split = text.find('段').expect("fixture has 段") + 1;
+    assert!(
+        !text.is_char_boundary(split),
+        "用例前提：{split} 应落在多字节字符中间"
+    );
+
+    for source_mode in [false, true] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, text.clone(), None));
+        cx.run_until_parked();
+        if source_mode {
+            editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+            cx.run_until_parked();
+        }
+        editor.update(cx, |editor, cx| {
+            editor.apply_selection_snapshot_in_current_mode(
+                &UndoSelectionSnapshot {
+                    range: split..split,
+                    reversed: false,
+                },
+                cx,
+            );
+        });
+        editor.read_with(cx, |editor, cx| {
+            let landed = editor.capture_source_selection_snapshot(cx).range.start;
+            assert!(
+                editor.buffer.is_char_boundary(landed),
+                "{}模式下落点 {landed} 仍不在字符边界上",
+                if source_mode { "源码" } else { "渲染" }
+            );
+        });
+    }
+}
+
 /// 源码模式取选区快照必须按**缓冲区偏移**记账：光标落在第 2 块之后，读回来的
 /// 却还是「第一块的本地偏移」，等于把落点说成文件开头。撤销、切视图、外部改动
 /// 重载都以这份快照为锚，取错一位就全错。

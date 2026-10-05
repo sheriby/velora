@@ -72,10 +72,12 @@ impl Editor {
         }
         if is_active {
             let path = path.to_path_buf();
+            // 还是这一篇：现场当场记下再交回去，模式、视口、光标都不动。
+            let view = self.capture_document_view(cx);
             if is_markdown_file(&path) {
-                self.reload_document_from_markdown(disk, path, cx);
+                self.restore_document_from_markdown(disk, path, Some(view), cx);
             } else {
-                self.reload_document_from_code_source(disk, path, cx);
+                self.restore_document_from_code_source(disk, path, Some(view), cx);
             }
             // 重载换掉了整个缓冲区：原始字节与文件形状必须跟着接上，否则重载之后
             // 的第一次保存就把 CRLF/GB18030 全文件洗成 LF/UTF-8。
@@ -310,6 +312,9 @@ impl Editor {
             .iter()
             .find(|tab| tab.path == path)
             .cloned();
+        // 这个标签上次离开时的阅读现场。取不到就是本次会话第一次读这篇，按打开新
+        // 文档的口径走（渲染态、文档顶部）。
+        let cached_view = cached.as_ref().and_then(|tab| tab.view.clone());
         // `raw` 是本次读盘拿到的原始字节；脏标签的内容来自内存而不是磁盘，
         // 那种情况没有「原样写回」的依据，留空。
         let (markdown, raw, dirty, recovery_id, file_version) = if let Some(tab) = cached {
@@ -362,6 +367,7 @@ impl Editor {
                 markdown: markdown.clone(),
                 dirty,
                 preview,
+                view: None,
             });
         }
         if let Some(tab) = self
@@ -387,9 +393,9 @@ impl Editor {
         // Markdown rendering is for .md/.markdown only; every other text file
         // (code, dotfiles, plain text) opens as monospace source text.
         if is_markdown_document(&path) {
-            self.replace_document_from_markdown(markdown, Some(path.clone()), cx);
+            self.restore_document_from_markdown(markdown, path.clone(), cached_view, cx);
         } else {
-            self.replace_document_from_code_source(markdown, path.clone(), cx);
+            self.restore_document_from_code_source(markdown, path.clone(), cached_view, cx);
         }
         self.attach_file_origin(raw);
         self.document_dirty = dirty;
@@ -443,6 +449,7 @@ impl Editor {
             markdown: String::new(),
             dirty: false,
             preview: false,
+            view: None,
         });
         self.workspace.active_document = Some(path.clone());
         self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));

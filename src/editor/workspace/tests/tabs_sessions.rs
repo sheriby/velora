@@ -362,3 +362,140 @@ async fn clicking_a_file_keeps_the_tree_scroll_offset(cx: &mut TestAppContext) {
     assert_eq!(settled, scrolled, "重扫落地后滚动位置仍应保持");
 }
 
+/// 标签之间来回切，每篇的阅读现场（视图模式 / 视口 / 光标）都得是自己那份：
+/// 切走时记在标签上、切回来交还。同源缺陷——切换以前等于重开一篇，模式跳回
+/// 渲染态、视口弹回顶部，与外部改动重载那笔是一个根。
+#[gpui::test]
+async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-tab-reading-position-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    // macOS 的 /var → /private/var 符号链接：树里与标签的路径都按 canonical 走。
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let alpha = root.join("alpha.md");
+    let beta = root.join("beta.md");
+    let text = super::external_changes::long_markdown(400);
+    // 落点要取在字符边界上：整篇是中文，任意字节位会把选区劈进多字节字符中间。
+    let mut caret = 1234usize;
+    while !text.is_char_boundary(caret) {
+        caret -= 1;
+    }
+    fs::write(&alpha, &text).unwrap();
+    fs::write(&beta, &text).unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.workspace.is_open = false;
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha.clone(), window, cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    // alpha 的现场：源码模式、滚到中段、光标放在缓冲区中段的一个字符边界上。
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.update(cx, |editor, cx| {
+        editor.set_vertical_scroll_offset(px(-3000.0), cx);
+        let block = editor.document.root_blocks()[0].clone();
+        editor.active_entity_id = Some(block.entity_id());
+        block.update(cx, |block, _cx| block.selected_range = caret..caret);
+    });
+    let alpha_view = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    assert!(
+        matches!(alpha_view.view_mode, crate::editor::ViewMode::Source)
+            && alpha_view.scroll_y < 0.0
+            && alpha_view.selection.range == (caret..caret),
+        "前置：alpha 应在源码模式、已滚开、光标在中段，实测 {alpha_view:?}"
+    );
+
+    // beta：本次会话第一次读它——渲染态、文档顶部，不许继承 alpha 的现场。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(beta.clone(), window, cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.view_mode,
+            crate::editor::ViewMode::Rendered,
+            "第一次打开 beta 不应带着 alpha 的源码模式"
+        );
+        assert_eq!(
+            editor.scroll_handle.offset().y,
+            px(0.0),
+            "第一次打开 beta 应从文档顶部开始"
+        );
+    });
+
+    // beta 自己的现场：滚一段。
+    editor.update(cx, |editor, cx| {
+        editor.set_vertical_scroll_offset(px(-1200.0), cx);
+    });
+    let beta_view = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    assert!(beta_view.scroll_y < 0.0, "前置：beta 应已滚开，实测 {beta_view:?}");
+
+    // 切回 alpha：模式、视口、光标按它那份交还（跑几帧，夹取与校正都在这些帧里发生）。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha.clone(), window, cx)
+        })
+    });
+    cx.run_until_parked();
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    let restored = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    assert_eq!(
+        restored.view_mode, alpha_view.view_mode,
+        "切回 alpha 把源码模式换掉了，实测 {restored:?}"
+    );
+    assert_eq!(
+        restored.scroll_y, alpha_view.scroll_y,
+        "切回 alpha 的视口不对：应 {}，实测 {}",
+        alpha_view.scroll_y, restored.scroll_y
+    );
+    assert_eq!(
+        restored.selection.range, alpha_view.selection.range,
+        "切回 alpha 的光标不对：应 {:?}，实测 {:?}",
+        alpha_view.selection.range, restored.selection.range
+    );
+
+    // 再切回 beta：它那一份没被 alpha 盖掉。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(beta.clone(), window, cx)
+        })
+    });
+    cx.run_until_parked();
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    let restored = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    assert_eq!(
+        restored, beta_view,
+        "切回 beta 没有还原它自己的阅读现场（现场必须是按篇存的）"
+    );
+}
+

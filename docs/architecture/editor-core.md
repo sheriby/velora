@@ -141,6 +141,10 @@ Workspace (src/editor/workspace.rs)
 - undo/redo 之后：缓冲区已经是目标状态，置 `skip_next_resync = true`；投影按 `rebuild_document_from_buffer`
   （从缓冲区重新解析，**不是**从块树序列化）重建，`apply_selection_snapshot_in_current_mode` 把选区
   放回缓冲区坐标里的那几个字节。
+- 那份快照里的偏移属于**上一份**内容：文档被外部插过或删过字节之后，它可能正落在多字节字符中间，
+  而落地链路上的行号与块区间换算处处按字符边界走（`TextBuffer::line_of` 直接断言失败）。
+  `apply_selection_snapshot_in_current_mode` 入口处把两端各自退回 `floor_char_boundary`（取整单调，
+  `start <= end` 不破坏）。守卫：`a_snapshot_offset_inside_a_multibyte_character_clamps_instead_of_panicking`。
 - **内存预算有闸门**：`two_hundred_undo_steps_stay_within_the_memory_budget`（200 步 ≤ 8 MiB，且
   ≤ 64 KiB 的绝对上限）与 `undo_memory_does_not_scale_with_document_size`（同样动作在大文档上记的
   字节数不跟着文档长）——初稿写的「10MB × 200 ≈ 2GB」是这次还掉的账。
@@ -194,7 +198,18 @@ Workspace (src/editor/workspace.rs)
 - **原子写**：`write_atomic` = 同目录临时文件 + `sync_all` + `rename`。
 - **外部修改检测**：`file_content_version`（规范化文本 DefaultHasher）；手动保存与 autosave 前 `verify_file_version` 重读比对，不一致则报「外部修改」。
 - **Autosave**：`schedule_autosave` 防抖后台任务（默认 800ms，`[editor] autosave_debounce_ms`）；IME 组合中跳过；后台写恢复快照 + 临时文件，回主线程校对 revision 后落盘。
-- **Watcher**（src/editor/watcher.rs）：每工作区递归 notify 监听，干净标签自动重载，脏标签走冲突提示。重载与打开共用整篇导入（`replace_document_content`），靠 `ImportKind` 分口径：`Reload` 只换内容，视图模式、视口偏移与光标都留在原处（光标按缓冲区偏移取快照、把后台续建落地之后再落回新块树），undo 栈仍清空；`Open` 是换文档，现场一律归零。
+- **Watcher**（src/editor/watcher.rs）：每工作区递归 notify 监听，干净标签自动重载，脏标签走冲突提示。
+  重载与打开共用整篇导入（`replace_document_content`），靠 `ImportKind` 分口径：`Restore(view)` 只换内容，
+  视图模式、视口偏移与光标都按交回来的那份 `DocumentView` 摆（先 `flush_pending_materialization` 再落选区，
+  undo 栈仍清空）；`Open` 是换文档，现场一律归零。
+- **块树要跟着模式建**：源码视图的块是缓冲区的 512 行切片，渲染态的块是 markdown 解析的结果。
+  只把 `view_mode` 换过去、树还按渲染态建，位置换算就会拿非行首的块起点去问行号，
+  `TextBuffer::line_of` 直接断言失败（标签切换回到源码态时实测到）。守卫：
+  `reloading_an_externally_changed_document_keeps_source_mode_and_viewport` 里那条根块数断言。
+- **标签的阅读现场**：`WorkspaceDocumentTab::view` 在切走时由 `snapshot_current_document` 记下，切回来交还
+  （`open_workspace_file` 与关闭标签后激活邻居都走同一条入口）。本次会话没读过的标签是 `None`，按 `Open`
+  从顶部与渲染态起步。现场只在进程内，不写进会话文件。守卫：
+  `switching_tabs_keeps_each_documents_reading_position`。
 - **关闭流**（src/editor/close.rs）：脏文档拦截为应用内对话框；保存后关闭经 `pending_close_after_save`。
 
 ## 7. 已知性能事实（dev 构建，闸门测试实测）

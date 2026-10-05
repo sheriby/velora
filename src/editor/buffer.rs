@@ -440,6 +440,20 @@ impl TextBuffer {
             None => offset == 0,
         }
     }
+
+    /// 把偏移向左退到字符边界（越界先钳到文末）。
+    ///
+    /// 用在「拿一份**旧内容**里记下的字节偏移去问现在这份内容」的地方：外部改动
+    /// 插过或删过字节之后，那个偏移可能正落在多字节字符中间，而后续的行号与块区间
+    /// 换算处处按边界走（[`line_of`](Self::line_of) 直接断言失败）。
+    pub(crate) fn floor_char_boundary(&self, offset: usize) -> usize {
+        let mut offset = offset.min(self.byte_len());
+        // UTF-8 的字符最长 4 字节，最多退三步。
+        while offset > 0 && !self.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    }
 }
 
 /// 按字节预算切文本，切点只落在字符边界上。

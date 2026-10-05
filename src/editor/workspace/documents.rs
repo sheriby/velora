@@ -9,6 +9,9 @@ impl Editor {
                 let file_version = self
                     .file_version
                     .unwrap_or_else(|| crate::editor::persistence::file_content_version(&markdown));
+                // 路径换了但显示的还是这一篇：现场归它，落到哪个分支都按此刻的记，
+                // 不留旧标签那份可能对不上活文档的机会。
+                let view = self.capture_document_view(cx);
                 let previous_index = previous.as_ref().and_then(|previous| {
                     self.workspace
                         .open_documents
@@ -33,6 +36,7 @@ impl Editor {
                         tab.file_version = file_version;
                         tab.markdown = markdown;
                         tab.dirty = false;
+                        tab.view = Some(view.clone());
                     } else {
                         let tab = &mut self.workspace.open_documents[previous_index];
                         tab.path = path.clone();
@@ -40,6 +44,7 @@ impl Editor {
                         tab.file_version = file_version;
                         tab.markdown = markdown;
                         tab.dirty = false;
+                        tab.view = Some(view.clone());
                     }
                 } else if let Some(current_index) = current_index {
                     let tab = &mut self.workspace.open_documents[current_index];
@@ -47,6 +52,7 @@ impl Editor {
                     tab.file_version = file_version;
                     tab.markdown = markdown;
                     tab.dirty = false;
+                    tab.view = Some(view.clone());
                 } else {
                     self.workspace.open_documents.push(WorkspaceDocumentTab {
                         path: path.clone(),
@@ -55,6 +61,7 @@ impl Editor {
                         markdown,
                         dirty: false,
                         preview: false,
+                        view: Some(view),
                     });
                 }
                 if self.workspace.selected == previous.map(WorkspaceSelection::File) {
@@ -115,16 +122,20 @@ impl Editor {
                 markdown,
                 dirty: self.document_dirty,
                 preview: false,
+                view: None,
             });
         }
         self.workspace.active_document = Some(path);
     }
 
-    pub(crate) fn snapshot_current_document(&mut self, _cx: &App) {
+    pub(crate) fn snapshot_current_document(&mut self, cx: &App) {
         let Some(path) = self.file_path.clone() else {
             return;
         };
         let markdown = self.document_text_for_save();
+        // 离开这一篇之前把现场记在它的标签上：切回来时按这份交还（见
+        // `WorkspaceDocumentTab::view`）。自动保存也走这里，记的是当时的真实现场。
+        let view = self.capture_document_view(cx);
         if let Some(tab) = self
             .workspace
             .open_documents
@@ -133,6 +144,7 @@ impl Editor {
         {
             tab.markdown = markdown;
             tab.dirty = self.document_dirty;
+            tab.view = Some(view);
         } else {
             self.workspace.open_documents.push(WorkspaceDocumentTab {
                 path: path.clone(),
@@ -143,6 +155,7 @@ impl Editor {
                 markdown,
                 dirty: self.document_dirty,
                 preview: false,
+                view: Some(view),
             });
         }
         self.workspace.active_document = Some(path);

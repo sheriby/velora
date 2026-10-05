@@ -11,7 +11,9 @@ pub(super) use gpui::*;
 pub(super) use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 pub(super) use unicode_segmentation::UnicodeSegmentation;
 
-pub(super) use super::{BlockKind, CursorLocation, Editor, UndoSelectionSnapshot, CURSOR_HISTORY_LIMIT};
+pub(super) use super::{
+    BlockKind, CursorLocation, DocumentView, Editor, UndoSelectionSnapshot, CURSOR_HISTORY_LIMIT,
+};
 pub(super) use crate::editor::modal::ModalSpec;
 pub(super) use crate::components::{CursorHistoryBack, CursorHistoryForward, TocEntry};
 pub(super) use crate::config::TreeSortPreference;
@@ -97,7 +99,7 @@ impl Render for WorkspaceTooltip {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WorkspaceDocumentTab {
     path: PathBuf,
     recovery_id: uuid::Uuid,
@@ -107,6 +109,10 @@ pub(crate) struct WorkspaceDocumentTab {
     /// 预览标签（用户需求）：单击树节点打开，切换到其它文件时未修改的
     /// 预览标签被替换、不再占据标签栏；双击打开或产生修改后转为固定展示。
     preview: bool,
+    /// 这一篇的阅读现场（视图模式 / 视口偏移 / 光标）。切走时由
+    /// `snapshot_current_document` 记下，切回来按它交还（`ImportKind::Restore`）。
+    /// `None` = 本次会话还没在这里读过，首次打开按渲染态、文档顶部起步。
+    view: Option<DocumentView>,
 }
 
 /// 打开文件时的标签模式（用户需求：单击预览、双击固定）。

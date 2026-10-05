@@ -6,7 +6,7 @@ use anyhow::{Context as AnyhowContext, Result};
 use gpui::*;
 
 use super::tree::PendingSourceTail;
-use super::{Editor, ViewMode};
+use super::{DocumentView, Editor, ViewMode};
 use crate::components::{Block, BlockKind, BlockRecord};
 use crate::i18n::I18nManager;
 
@@ -40,12 +40,20 @@ pub(super) fn split_source_document_chunks(source: &str) -> Vec<String> {
         .collect()
 }
 
-/// 整篇导入的两种口径。区别只在「阅读现场」：打开另一篇文档要把视图模式、
-/// 视口、光标归零重来；同一篇从磁盘重载只换内容，用户读到哪就停在哪。
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// 整篇导入的两种口径。区别只在「阅读现场」：`Open` 是换一篇文档，视图模式、视口、
+/// 光标归零重来；`Restore` 只换内容，现场按交回来的那份接着用（同一篇从磁盘重载、
+/// 切回一篇读过的标签都走它）。
 pub(super) enum ImportKind {
     Open,
-    Reload,
+    Restore(DocumentView),
+}
+
+/// 有现场就交还，没有就归零——`Option<DocumentView>` 到口径的这一层转换只在这里做一次。
+fn import_kind_from_view(view: Option<DocumentView>) -> ImportKind {
+    match view {
+        Some(view) => ImportKind::Restore(view),
+        None => ImportKind::Open,
+    }
 }
 
 /// 代码文档的高亮语言：按扩展名，无扩展名（`.gitignore` 之类）按 `text`。
@@ -245,20 +253,29 @@ impl Editor {
         );
     }
 
-    /// 外部改动重载：与打开共用导入流程，但阅读现场留在原处（见 `ImportKind`）。
-    pub(super) fn reload_document_from_markdown(
+    /// 换内容，并尽量把阅读现场交还给用户：`view` 给得出来就按它摆（外部改动重载、
+    /// 切回一个读过的标签），给不出来（本次会话第一次读这篇）按打开新文档的口径归零。
+    pub(super) fn restore_document_from_markdown(
         &mut self,
         markdown: String,
         file_path: PathBuf,
+        view: Option<DocumentView>,
         cx: &mut Context<Self>,
     ) {
-        self.replace_document_content(markdown, Some(file_path), None, ImportKind::Reload, cx);
+        self.replace_document_content(
+            markdown,
+            Some(file_path),
+            None,
+            import_kind_from_view(view),
+            cx,
+        );
     }
 
-    pub(super) fn reload_document_from_code_source(
+    pub(super) fn restore_document_from_code_source(
         &mut self,
         source: String,
         file_path: PathBuf,
+        view: Option<DocumentView>,
         cx: &mut Context<Self>,
     ) {
         let language = code_language_for_path(&file_path);
@@ -266,7 +283,7 @@ impl Editor {
             source,
             Some(file_path),
             Some(language),
-            ImportKind::Reload,
+            import_kind_from_view(view),
             cx,
         );
     }
@@ -279,10 +296,11 @@ impl Editor {
         kind: ImportKind,
         cx: &mut Context<Self>,
     ) {
-        // 重载只换内容：光标先按缓冲区偏移记下来，块树重建之后再落回新的树。
-        // 打开新文档不需要——现场一律归零。
-        let reloaded_selection =
-            (kind == ImportKind::Reload).then(|| self.capture_source_selection_snapshot(cx));
+        // `Restore` 那份现场由调用方在换内容之前记好，这里只负责在块树重建之后交还。
+        let restored_view = match kind {
+            ImportKind::Open => None,
+            ImportKind::Restore(view) => Some(view),
+        };
         // P6 顺手项：LF 文档（常见日志/代码）零拷贝直通，避免两次全文分配。
         let had_cr = markdown.contains('\r');
         let normalized = if had_cr {
@@ -297,6 +315,17 @@ impl Editor {
         self.code_document = is_code;
         let source_mode_fallback_required =
             !is_code && Self::markdown_requires_source_mode_fallback(&normalized);
+        // 视图口径要在建块树之前定下来：源码视图的块是缓冲区的连续切片，渲染视图的块
+        // 是 markdown 解析的结果。先按渲染建、再把模式换成源码，两套位置换算就对不上
+        // ——块起点不再落在行首，问行号那一步直接断言失败。
+        let view_mode = if is_code || source_mode_fallback_required {
+            ViewMode::Source
+        } else if let Some(view) = &restored_view {
+            // 交还现场：用户在读哪一面就从哪一面接着读。
+            view.view_mode
+        } else {
+            ViewMode::Rendered
+        };
         let mut pending_code_tail = None;
         let mut roots = if is_code || source_mode_fallback_required {
             // 大纯文本文件不再整文件压进单块：按行分块让视口窗口化能裁剪
@@ -329,6 +358,17 @@ impl Editor {
             };
             self.attach_source_slice_spans(&built, cx);
             built
+        } else if view_mode == ViewMode::Source {
+            // 交还的现场是源码视图，而这是一篇 markdown：整篇按源码切片直编，
+            // 高亮语言记 markdown——与「渲染↔源码」切换用的是同一个入口。
+            let built = Self::build_source_document_roots(
+                BlockKind::Paragraph,
+                &normalized,
+                Some("markdown"),
+                cx,
+            );
+            self.attach_source_slice_spans(&built, cx);
+            built
         } else {
             self.rebuild_root_blocks_from_buffer(cx)
         };
@@ -359,14 +399,7 @@ impl Editor {
             .detach();
         }
         self.file_path = file_path;
-        self.view_mode = if is_code || source_mode_fallback_required {
-            ViewMode::Source
-        } else if kind == ImportKind::Reload {
-            // 重载不改视图：用户在读哪一面就从哪一面接着读。
-            self.view_mode
-        } else {
-            ViewMode::Rendered
-        };
+        self.view_mode = view_mode;
         self.source_mode_fallback_required = source_mode_fallback_required;
         // 导入视为一次修订：按 revision 缓存的统计（字数/行数等）全部失效。
         self.document_revision = self.document_revision.wrapping_add(1);
@@ -395,8 +428,8 @@ impl Editor {
         self.sync_table_axis_visuals(cx);
         self.clear_cross_block_selection(cx);
 
-        match kind {
-            ImportKind::Open => {
+        match restored_view {
+            None => {
                 self.pending_scroll_active_block_into_view = true;
                 self.pending_scroll_recheck_after_layout = true;
                 self.last_scroll_viewport_size = None;
@@ -404,26 +437,25 @@ impl Editor {
                 self.pending_focus = self.first_focusable_entity_id(cx);
                 self.active_entity_id = self.pending_focus;
             }
-            ImportKind::Reload => {
-                // 阅读现场原样保留。不挂「滚到活动块」：活动块通常是文档首块，
-                // 一挂就把视口拽回顶部（用户报修）；内容变矮时 gpui 会自行把
-                // 偏移夹回可滚范围，不需要我们介入。
+            Some(view) => {
+                // 视口按交回来的那份摆好，并且不挂「滚到活动块」——挂了就会把视口
+                // 拽向活动块（通常是文档首块），用户报修的正是这个。内容变矮时
+                // gpui 在布局那一趟把偏移夹回可滚范围并写回，这里不必介入。
                 self.pending_scroll_active_block_into_view = false;
                 self.pending_scroll_center_into_view = false;
                 self.pending_scroll_recheck_after_layout = false;
-                // 整棵块树已经换掉：旧实体 id 一律作废，先把它们清空，再由选区
-                // 快照把光标落到新树上覆盖的那一根（跨块选区只恢复选区本身，
-                // 不写活动块，落点就按文档首块，与打开新文档同口径）。
+                self.scroll_handle
+                    .set_offset(point(px(0.0), px(view.scroll_y)));
+                // 块树整棵换掉，旧实体 id 一律作废：先清空，再由选区快照把光标落到
+                // 新树上覆盖它的那一根（跨块选区只恢复选区本身、不写活动块，那种
+                // 落点按文档首块，与打开新文档同口径）。
                 self.pending_focus = None;
                 self.active_entity_id = None;
-                if let Some(snapshot) = reloaded_selection {
-                    // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建：
-                    // 落点在未物化的部分时选区找不到归属的投影块，会被钳进首块
-                    // 末尾（与搜索跳转同一处报修）。先把续建落地，已物化的文档
-                    // 这里是空操作。
-                    self.flush_pending_materialization(cx);
-                    self.apply_selection_snapshot_in_current_mode(&snapshot, cx);
-                }
+                // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建：落点在
+                // 未物化的部分时选区找不到归属块，会被钳进首块末尾（与搜索跳转同一处
+                // 报修）。先把续建落地，已物化的文档这里是空操作。
+                self.flush_pending_materialization(cx);
+                self.apply_selection_snapshot_in_current_mode(&view.selection, cx);
                 if self.active_entity_id.is_none() {
                     self.pending_focus = self.first_focusable_entity_id(cx);
                     self.active_entity_id = self.pending_focus;

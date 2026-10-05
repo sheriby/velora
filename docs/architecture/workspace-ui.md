@@ -17,14 +17,14 @@
 
 - `active_tab: {Files, Search, Outline}`、`root`、`file_tree: Option<WorkspaceTreeNode>`（递归 children）、`outline_tree`/`toc_entries`、`expanded: HashSet<String>`、`open_documents: Vec<WorkspaceDocumentTab>`、搜索/替换全套状态、`panel_width` 等。
 - **标签是快照不是 Editor 实体**：`WorkspaceDocumentTab { path, recovery_id, file_version, markdown, dirty }`。单个 Editor 在切换激活标签时换入换出 `DocumentTree` 内容（`snapshot_current_document` 把**缓冲区文本**存回标签——自动保存与恢复快照的内容来源就是它，取块树序列化的话一份没编辑过的文件进快照就已经被洗过一遍）。
-- 打开文件流：树节点点击 → `open_workspace_file`：UTF-16 BOM/文本嗅探（`has_utf16_bom`/`is_likely_text_file`）→ 推标签 → `reveal_path_in_tree` 展开祖先 → `replace_document_from_markdown` 或 `replace_document_from_code_source`（分流见 editor-core.md §2）→ 调度 autosave + `persist_session`。
+- 打开文件流：树节点点击 → `open_workspace_file`：UTF-16 BOM/文本嗅探（`has_utf16_bom`/`is_likely_text_file`）→ 推标签 → `reveal_path_in_tree` 展开祖先 → `restore_document_from_markdown` 或 `restore_document_from_code_source`（分流见 editor-core.md §2）——标签上存着这篇的阅读现场就按它交还，本次会话没读过才按新文档从顶部与渲染态起步（见 editor-core.md §6）→ 调度 autosave + `persist_session`。现场只活在这一进程里，不写进会话文件。
 - `set_workspace_root`：canonicalize、按根恢复侧栏宽、剪枝根外标签、启动 watcher、持久化会话。
 
 ## 3. 文件树与监听
 
 - `scan_workspace_dir`：递归 `fs::read_dir`，跳过 `.git/target/node_modules/.worktrees/dist`；分类 Markdown/Code/Other；排序（名称/时间/类型，`TreeSortPreference`）。
 - **异步扫描**：`sync_workspace_file_tree_inner` 用 `cx.background_spawn` + 代数计数器（`tree_scan_generation`），过期结果丢弃；过滤模式渲染扁平命中列表（≤50）。
-- **监听**（src/editor/watcher.rs）：notify 递归 watcher，Modify/Create 事件经 mpsc 泵到 `reload_externally_changed_document`（只重载干净标签）。
+- **监听**（src/editor/watcher.rs）：notify 递归 watcher，Modify/Create/Remove 事件经 mpsc 泵到 `on_watched_path_changed` → `reload_externally_changed_document`（只重载干净标签，重载走 `ImportKind::Restore`：模式、视口、光标都不动，见 editor-core.md §6）。
 
 ## 4. 命令/动作系统
 
