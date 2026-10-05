@@ -494,3 +494,20 @@ grep-matcher = "0.1.9"
 数字账：测试数 1385 → **1392 通过**（+4 条缓存驱逐与记账、+3 条性能闸门），
 0 失败、6 ignored，编译零警告。`cargo test --bin velora` 全跑约 119 秒。
 
+**覆盖矩阵（§7.5 的交付）**——按测试文件给账（条数是 `#[gpui::test]` / `#[test]` 计数），
+点名的是缺陷类与闸门类用例；其余用例名本身就写着钉的是什么，不再逐条列成 100 多行的
+表（那种表只会烂掉）。
+
+| 测试文件 | 钉住的行为类别 | 关联条目 | 点名用例 |
+|---|---|---|---|
+| `tests/search_engine.rs`（21） | 引擎封装：模式组合 × 中/英/表格/CJK/emoji/坏模式/零宽、跨行档、相邻重复区间去重 | #1 #3 #4；R1 R10 R12 | 用例名自述 |
+| `tests/search_matcher_snapshot.rs`（32） | 阶段 0 行为快照；换引擎后 3 条按新语义迁移，3 条仍是缺陷 | #1 #3 #4（修复后期望）；#2 仍在册 | `unicode_case_folding_now_finds_the_dotted_capital_i`、`defect_regex_mode_ignores_the_fuzzy_option`、`defect_patterns_cannot_span_lines`、`defect_document_scope_ordinals_are_not_unique` |
+| `tests/workspace_scan.rs`（12） | 工作区扫描的解码口径、CRLF、无行尾、ordinal 对位 | #5（阶段 2 修）、#5b（在册不修）、#6、§4.7 | `the_same_text_searches_identically_whether_it_is_utf8_or_gb18030`、`defect_the_text_sniff_still_refuses_a_gb18030_file`、`the_new_ordinal_walk_matches_the_hand_written_line_loop_byte_for_byte`、`a_workspace_row_for_a_cross_line_hit_stays_inside_its_first_line` |
+| `tests/document_matches.rs`（7） | 命中表的复用、失效、坏查询清空、四处同源 | R3、D4 | `the_hit_table_drives_every_search_path`、`the_hit_table_is_reused_while_nothing_changes`、`a_query_that_fails_to_compile_clears_the_table`、`a_zero_width_match_does_not_stall_navigation` |
+| `tests/search_cross_block.rs`（12） | 跨块命中的高亮切段、折叠展开、视图切换、滚动居中、脏文件退回 | D6、§4.6、R5、R13 | `a_cross_block_match_highlights_every_block_it_covers`、`the_active_cross_block_hit_is_marked_on_every_block_it_covers`、`a_cross_block_hit_unfolds_the_section_its_tail_lands_in`、`jumping_to_a_cross_block_hit_centers_it_in_the_viewport`、`clicking_a_cross_line_workspace_hit_broken_by_an_edit_falls_back` |
+| `editor/tests/source_selection.rs`（3） | 源码模式真跨块选区与端点裁切 | D7、R6 | `a_source_selection_spanning_a_chunk_boundary_lands_on_both_chunks`、`a_smaller_source_selection_clears_the_stale_chunks`、`a_source_selection_past_the_end_of_the_file_clamps_instead_of_panicking` |
+| `tests/search.rs`（22） | 面板行为、跳转与滚动、脏文件落点、表格内命中、源码模式落点 | §7.2 闸门②、D4、§4.7 | `workspace_search_jump_scrolls_to_unpainted_matches`、`cycling_hits_within_one_viewport_still_centers`、`clicking_a_search_hit_in_a_dirty_file_lands_on_the_match`、`document_search_hit_inside_table_jumps` |
+| `tests/document_find.rs`（15） | 文内查找的导航与高亮，含「刷高亮不许重拼整篇 mapping」 | §7.4 前身 | 用例名自述 |
+| `tests/search_perf.rs`（3） | 三道性能闸门：扫描预算、跳转不重扫、跳转不重铺 | §7.4、#8 #9 | `searching_a_ten_mib_document_stays_within_budget`、`document_jump_does_not_rescan_the_buffer`、`jumping_between_matches_leaves_the_other_blocks_alone` |
+| `search_backend.rs` 的 tests 模块（4） | 内容缓存驱逐序与字节记账 | #8（阶段 4 修） | `eviction_does_not_walk_the_whole_table_on_every_insert`、`rewriting_a_path_reaccounts_instead_of_double_counting` |
+
