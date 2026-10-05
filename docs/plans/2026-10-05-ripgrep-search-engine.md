@@ -338,6 +338,9 @@ pub(crate) struct DocumentMatchTable {
 
 一份表格写进阶段 4 的 commit body：每条既有搜索测试 + 每条新增测试 → 钉住的行为 → 属于哪个缺陷编号。便于日后回归定位。
 
+> 阶段 4 交付说明：落成了「文件级矩阵 + 编号 → 用例反向索引」（见 §11 末尾），不是逐条 135 行的长表——
+> 反向索引才是回归时按缺陷号找测试的那张地图，逐条长表里 90% 的行只是把用例名直译一遍，会烂掉。
+
 ## 8. 风险登记册
 
 | # | 风险 | 概率/影响 | 处置 |
@@ -491,8 +494,28 @@ grep-matcher = "0.1.9"
   面板内报诊断、四处读同一张命中表」这套说法；旧文案里「ASCII 查询不区分大小写、非
   ASCII 按原文精确匹配」那句已经不符合 Unicode 折叠后的实际，删掉。
 
-数字账：测试数 1385 → **1392 通过**（+4 条缓存驱逐与记账、+3 条性能闸门），
-0 失败、6 ignored，编译零警告。`cargo test --bin velora` 全跑约 119 秒。
+- 补齐初稿留下的三处缺口（`e7f9da2`、`e51f9ea`、`f7b1916`）：
+  · **R12 的界面那一半**：`.*` 按钮的 tooltip 现在写明「正则可跨行：写 \n 或
+    [\s\S]；`.` 默认不跨行，加 (?s) 才行」，i18n 新键 `search_regex_hint`（中英两份）。
+    行为测试 `a_dot_still_does_not_cross_a_line` 早就在，缺的是让用户看得见这件事。
+  · **§7.3 的全量一致性属性测试**：`random_documents_keep_all_four_search_paths_on_one_hit_set`
+    随机生成 24 篇 markdown × 随机开关，逐轮比「表 == 引擎独立扫出的集合」「结果列表
+    == 表」「高亮段数之和 == 命中数」「F3 走一圈的落点序列 == 表」「替换计数 == 命中数
+    且替换后重扫归零」。命中数 1–13、0 轮跳过、1.33 秒。用反向验证确认它抓得住退化：
+    临时让高亮每根块少画一段，它立刻红在第 0 轮并报出查询、四个开关与左右值。
+  · **§5 阶段 1 闸门②的参照被悄悄掏空**（本轮发现的真问题）：`8e98c8c` 删掉手写层之后，
+    那条对照测试里的 `legacy_hits` 用的 `SearchMatcher::find_in_line` 已经只剩转调引擎，
+    于是「新旧引擎对照」退化成「引擎和引擎比」——测试全绿，但不再比任何东西。修法是把
+    退役算法原样誊进测试（`hand_written_*` 五函数，取自 `git show e8c8cf3`，连它三个已知
+    缺陷一起抄），并把「字面量 + 全词」的两种形态补进对照矩阵。临时把誊本里的
+    `case_insensitive(!match_case)` 改成恒 `true`，对照立刻红在「正则·区分大小写 /
+    "NEEDLE"」，证明参照本身有效。这类**静默失效**是「测试绿着但已经不比东西」的典型，
+    记在这里是给后来人的提醒：把参照实现换成生产代码的门面，就等于删掉了测试。
+- 覆盖矩阵（§7.5）按「文件级矩阵 + 编号→用例反向索引」交付，见下一小节；没做逐条 135 行
+  的长表，理由写在矩阵表前那句里。
+
+数字账：测试数 1385 → **1393 通过**（+4 条缓存驱逐与记账、+3 条性能闸门、+1 条随机一致性
+属性测试），0 失败、6 ignored，编译零警告。`cargo test --bin velora` 全跑约 98 秒。
 
 **覆盖矩阵（§7.5 的交付）**——按测试文件给账（条数是 `#[gpui::test]` / `#[test]` 计数），
 点名的是缺陷类与闸门类用例；其余用例名本身就写着钉的是什么，不再逐条列成 100 多行的
@@ -509,5 +532,35 @@ grep-matcher = "0.1.9"
 | `tests/search.rs`（22） | 面板行为、跳转与滚动、脏文件落点、表格内命中、源码模式落点 | §7.2 闸门②、D4、§4.7 | `workspace_search_jump_scrolls_to_unpainted_matches`、`cycling_hits_within_one_viewport_still_centers`、`clicking_a_search_hit_in_a_dirty_file_lands_on_the_match`、`document_search_hit_inside_table_jumps` |
 | `tests/document_find.rs`（15） | 文内查找的导航与高亮，含「刷高亮不许重拼整篇 mapping」 | §7.4 前身 | 用例名自述 |
 | `tests/search_perf.rs`（3） | 三道性能闸门：扫描预算、跳转不重扫、跳转不重铺 | §7.4、#8 #9 | `searching_a_ten_mib_document_stays_within_budget`、`document_jump_does_not_rescan_the_buffer`、`jumping_between_matches_leaves_the_other_blocks_alone` |
+| `tests/search_random_consistency.rs`（1） | 随机文档 × 随机开关下的四处同源 | §7.3、D4 | `random_documents_keep_all_four_search_paths_on_one_hit_set` |
 | `search_backend.rs` 的 tests 模块（4） | 内容缓存驱逐序与字节记账 | #8（阶段 4 修） | `eviction_does_not_walk_the_whole_table_on_every_insert`、`rewriting_a_path_reaccounts_instead_of_double_counting` |
+
+**附录：编号 → 用例的反向索引**（回归时按缺陷号直接找到该跑哪条；搜索链路当前 135 条用例，名单以 `cargo test --bin velora -- --list` 为准）
+
+| 编号 | 钉住它的用例 |
+|---|---|
+| #1 正则模式吃掉全词 | `whole_word_option_applies_in_regex_mode_now`、`whole_word_now_applies_in_regex_mode_too` |
+| #2 正则模式吃掉模糊（仍在册：正则优先） | `defect_regex_mode_ignores_the_fuzzy_option` |
+| #3 坏正则静默退化成字面量 | `invalid_regex_reports_a_diagnosis_and_stops_searching`、`an_invalid_regex_reports_the_engine_diagnosis_instead_of_degrading`、`a_query_that_fails_to_compile_clears_the_table` |
+| #4 模式不能跨行 | 旧行为 `defect_patterns_cannot_span_lines`；新行为 `a_regex_pattern_can_span_lines`、`clicking_a_cross_line_workspace_hit_selects_the_whole_span`、`a_workspace_row_for_a_cross_line_hit_stays_inside_its_first_line` |
+| #5 非 UTF-8 内容搜不到 | `workspace_search_finds_content_in_a_gb18030_file`、`the_same_text_searches_identically_whether_it_is_utf8_or_gb18030`、`a_crlf_file_keeps_the_same_lines_and_ranges_as_its_lf_twin`、`a_file_with_crlf_line_endings_keeps_the_carriage_return_out_of_matches` |
+| #5b 打开侧仍拒 GB18030（在册不修） | `defect_the_text_sniff_still_refuses_a_gb18030_file` |
+| #6 两套口径（要保留） | `the_two_scopes_report_the_same_line_and_range_for_the_same_file`、`workspace_scope_lists_one_row_per_line_and_document_scope_lists_every_hit`、`one_file_contributes_every_matching_line_up_to_the_global_limit` |
+| #8 缓存驱逐 O(条目数) | `eviction_does_not_walk_the_whole_table_on_every_insert`、`eviction_follows_insertion_order_and_keeps_the_byte_accounting_exact`、`rewriting_a_path_reaccounts_instead_of_double_counting`、`a_single_file_bigger_than_the_budget_is_not_cached` |
+| #9 改查询那次仍是全量同步（在册不修） | 没有守卫；量尺在 `searching_a_ten_mib_document_stays_within_budget`（首键那一笔）与 §11 阶段 4 的实测数字 |
+| §4.4 / R1 零宽命中越界 | `engine_never_returns_a_range_inside_a_multi_byte_character`、`snapshot_zero_width_regex_matches_only_char_boundaries`、`snapshot_other_zero_width_patterns_stay_on_char_boundaries`、`a_zero_width_match_on_a_line_boundary_is_reported_once`、`a_zero_width_match_does_not_stall_navigation`、`zero_width_matches_land_on_the_same_positions_as_the_old_engine` |
+| R2 未登记的行为偏移 | `engine_agrees_with_the_hand_written_matcher_on_every_shape`（参照是退役手写层的算法誊本）、`snapshot_*` 全套 |
+| R3 命中表陈旧 | `editing_the_document_invalidates_the_hit_table`、`switching_documents_does_not_reuse_the_previous_documents_hit_table`、`the_hit_table_is_reused_while_nothing_changes` |
+| D4 四处同源 | `the_hit_table_drives_every_search_path`、`random_documents_keep_all_four_search_paths_on_one_hit_set` |
+| D2/D6 跨行 + R10 两侧同开 | `a_regex_pattern_can_span_lines`、`turning_on_multi_line_does_not_move_the_line_anchored_semantics`、`a_match_ending_with_a_newline_keeps_every_byte`、`first_per_line_keeps_the_first_hit_of_each_matching_line` |
+| R12 `.` 不跨行（防直觉） | `a_dot_still_does_not_cross_a_line`；界面文案见 `search_regex_hint` |
+| §4.6 / R5 跨块高亮与折叠 | `a_cross_block_match_highlights_every_block_it_covers`、`hit_segmentation_clips_at_the_block_boundary`、`a_within_block_match_still_highlights_exactly_once`、`the_active_cross_block_hit_is_marked_on_every_block_it_covers`、`a_cross_block_hit_unfolds_the_section_its_tail_lands_in`、`a_cross_block_hit_unfolds_every_section_it_touches`、`document_find_highlights_map_only_the_blocks_with_hits` |
+| §4.7 ordinal 重定义 | `the_new_ordinal_walk_matches_the_hand_written_line_loop_byte_for_byte`、`defect_document_scope_ordinals_are_not_unique`、`same_file_workspace_hit_jumps_by_the_file_line` |
+| D7 源码模式真跨块选区 | `a_source_selection_spanning_a_chunk_boundary_lands_on_both_chunks`、`a_smaller_source_selection_clears_the_stale_chunks`、`a_source_selection_past_the_end_of_the_file_clamps_instead_of_panicking`、`source_mode_jump_lands_in_the_chunk_containing_the_hit` |
+| D8 / R7 跨块真替换 | `replace_all_replaces_cross_block_hits_for_real`、`undo_steps_a_cross_block_replace_all_back_whole`、`replace_all_mixes_block_and_cross_block_hits`、`replace_all_replaces_exactly_the_hits_it_reports` |
+| §7.2 跳转与居中 | `workspace_search_jump_scrolls_to_unpainted_matches`、`cycling_hits_within_one_viewport_still_centers`、`jumping_to_a_cross_block_hit_centers_it_in_the_viewport`、`document_find_navigates_beyond_sidebar_result_limit`、`document_find_enter_right_after_typing_still_jumps`、`document_find_jump_keeps_the_query_field_focused` |
+| R13 脏文件里命中被破坏 | `clicking_a_cross_line_workspace_hit_broken_by_an_edit_falls_back`、`clicking_a_workspace_hit_after_deleting_the_line_falls_back`、`clicking_a_search_hit_in_a_dirty_file_lands_on_the_match` |
+| §7.4 性能闸门 | `searching_a_ten_mib_document_stays_within_budget`、`document_jump_does_not_rescan_the_buffer`、`jumping_between_matches_leaves_the_other_blocks_alone` |
+| 有意的 Unicode 折叠差异 | `unicode_case_folding_finds_what_the_hand_written_fold_missed`、`unicode_case_folding_now_finds_the_dotted_capital_i`、`snapshot_accented_latin_folds_case` |
+
 
