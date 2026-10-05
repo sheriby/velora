@@ -495,6 +495,9 @@ impl I18nStringsDe {
                 .search_whole_word
                 .unwrap_or(defaults.search_whole_word),
             search_regex: self.search_regex.unwrap_or(defaults.search_regex),
+            search_invalid_pattern: self
+                .search_invalid_pattern
+                .unwrap_or(defaults.search_invalid_pattern),
             search_fuzzy: self.search_fuzzy.unwrap_or(defaults.search_fuzzy),
             search_fuzzy_short: self
                 .search_fuzzy_short

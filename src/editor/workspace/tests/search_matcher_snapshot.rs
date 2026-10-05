@@ -1,17 +1,24 @@
-//! 阶段 0：搜索匹配层的行为快照。
+//! 搜索匹配层的行为快照。
 //!
-//! 这一文件的目的不是「断言搜索应该怎样」，而是**把 `search_backend.rs` 此刻
-//! 的实际行为逐条记下来**，让后面换匹配引擎时任何行为漂移都只能是一条被点名、
-//! 被解释的 diff，而不是一次静默的回归。因此其中一部分用例钉的是**已知缺陷**
-//! （函数名以 `defect_` 开头）：它们现在必须绿，换成 ripgrep 之后会被改写成
-//! 「修复后的期望」，每一条改写都要在提交的 diff 里单独说明。
+//! 这一文件的目的不是「断言搜索应该怎样」，而是把匹配层的实际行为逐条记下来，
+//! 让任何行为漂移都只能是一条被点名、被解释的改动，而不是一次静默的回归。
 //!
-//! 探针实测（`/tmp/rgprobe`）给出的四类必须被这些用例盯住的差异：
-//! - 正则模式下 `whole_word` / `fuzzy` 两个选项被完全忽略；
-//! - 非法正则静默退化成字面量搜索；
-//! - 逐行匹配，模式无法跨行；
-//! - `grep-regex` 的零宽命中会落在非 UTF-8 字符边界（`snapshot_zero_width_*`
-//!   钉住现状只在字符边界上给零宽命中，这一条是换引擎时唯一的硬闸门）。
+//! 阶段 0 建立时其中有六条以 `defect_` 开头，钉的是当时已知的缺陷。接入 ripgrep
+//! 引擎之后有三条翻成了「记录修复」，函数名跟着改：
+//! - `whole_word_option_applies_in_regex_mode_now`
+//!   （原 defect_regex_mode_ignores_the_whole_word_option）；
+//! - `invalid_regex_reports_a_diagnosis_and_stops_searching`
+//!   （原 defect_invalid_regex_degrades_to_a_literal_search）；
+//! - `unicode_case_folding_now_finds_the_dotted_capital_i`
+//!   （原 defect_turkish_dotted_capital_i_is_not_found）。
+//! 剩下三条仍然是缺陷快照，保留 `defect_` 前缀，等各自的阶段处理：正则模式下
+//! 模糊开关被忽略、逐行匹配无法跨行、文档范围的命中序号会重复。
+//!
+//! 探针实测（`/tmp/rgprobe`）盯住的最大一条风险写在
+//! `snapshot_zero_width_regex_matches_only_char_boundaries`：`grep-regex` 的
+//! `find_iter` 在零宽命中上按**字节**步进，会吐出落在多字节字符内部的区间，
+//! 而现状的 `regex` crate 按**字符**步进不会。那条用例逐位钉住起点集合，是换
+//! 引擎时的硬闸门——出口过滤器一旦被删掉，它就该红。
 
 use super::super::{
     SearchMatcher, SearchOptions, find_document_match_from, search_document_source,
@@ -272,18 +279,23 @@ fn snapshot_fuzzy_is_case_insensitive() {
 // ------------------------------------------------------------------ 已知缺陷
 
 #[test]
-fn defect_regex_mode_ignores_the_whole_word_option() {
-    // 现状：find_in_line 拿到编译好的 regex 就提前返回，whole_word 的事后过滤
-    // 永远走不到（search_backend.rs:43 对 :59-61）。探针实测复现。
-    let matcher = SearchMatcher::new("needle", options(false, true, true, false));
-    assert_eq!(
-        hits("NeedleHere", &matcher).len(),
-        1,
-        "开着「ab」却仍把 NeedleHere 当命中——这是缺陷，换引擎后要改断言"
+fn whole_word_option_applies_in_regex_mode_now() {
+    // 阶段 0 快照里这条叫 defect_regex_mode_ignores_the_whole_word_option：手写层
+    // 拿到编译好的正则就提前返回（search_backend.rs:43），whole_word 的事后过滤
+    // 永远走不到，实测把 NeedleHere 也算命中。换成引擎后词边界编进模式本身，
+    // 两档一致，所以断言从「记录缺陷」翻成「记录修复」。
+    let regex_word = SearchMatcher::new("needle", options(false, true, true, false));
+    assert!(
+        hits("NeedleHere", &regex_word).is_empty(),
+        "正则模式 + 词边界必须排掉 NeedleHere"
     );
-    // 同一个查询关掉正则开关时，词边界是生效的：两条一路对比才看得出漏了。
-    let literal = SearchMatcher::new("needle", options(false, true, false, false));
-    assert!(hits("NeedleHere", &literal).is_empty());
+    assert_eq!(hits("(needle) and NEEDLE here", &regex_word).len(), 2);
+    let literal_word = SearchMatcher::new("needle", options(false, true, false, false));
+    assert!(hits("NeedleHere", &literal_word).is_empty());
+    assert_eq!(hits("(needle) and NEEDLE here", &literal_word).len(), 2);
+    // 不加词边界时两档照旧能命中粘连的那一个。
+    let loose = SearchMatcher::new("needle", options(false, false, true, false));
+    assert_eq!(hits("NeedleHere", &loose).len(), 1);
 }
 
 #[test]
@@ -299,36 +311,46 @@ fn defect_regex_mode_ignores_the_fuzzy_option() {
 }
 
 #[test]
-fn defect_invalid_regex_degrades_to_a_literal_search() {
-    // 现状：build().ok() 把非法正则换成 None，于是整条查询当字面量继续搜
-    // （search_backend.rs:26）。用户以为在跑正则，实际不是。
-    let matcher = SearchMatcher::new("a{2,", options(false, false, true, false));
-    assert_eq!(
-        hits("a{2, and nothing", &matcher),
-        vec![(0, 4, "a{2,".to_string())],
-        "非法正则被静默当成字面量——这是缺陷，换引擎后要改成报诊断"
-    );
-    for bad in [
-        "(unclosed", "a|*", r"\p{Bad}", "[z-a]", r"(?i(a",
-    ] {
+fn invalid_regex_reports_a_diagnosis_and_stops_searching() {
+    // 阶段 0 快照里这条叫 defect_invalid_regex_degrades_to_a_literal_search：
+    // 手写层 build().ok() 之后把整条非法正则当**字面量**继续搜，用户以为在跑
+    // 正则。换成引擎后交回诊断，并且不再给出结果。
+    for bad in ["a{2,", "(unclosed", "a|*", "[z-a]"] {
         let matcher = SearchMatcher::new(bad, options(false, false, true, false));
         assert!(
-            matcher.find_in_line(&format!("prefix {bad} suffix")).len() == 1,
-            "非法正则 {bad:?} 现在会静默退化成字面量命中"
+            matcher.find_in_line(&format!("prefix {bad} suffix")).is_empty(),
+            "非法正则 {bad:?} 不能再搜出任何东西"
+        );
+        let message = matcher
+            .error_message()
+            .unwrap_or_else(|| panic!("非法正则 {bad:?} 必须交回诊断"));
+        assert!(
+            message.contains("regex parse error") && message.contains("error:"),
+            "{bad:?} 的诊断应当来自引擎且说明原因：{message}"
         );
     }
+    // 合法的查询不该带诊断。
+    assert_eq!(
+        SearchMatcher::new("a+", options(false, false, true, false)).error_message(),
+        None
+    );
 }
 
 #[test]
-fn defect_turkish_dotted_capital_i_is_not_found() {
-    // 现状：非 ASCII 分支用「逐字符 to_lowercase」比较，İ 折叠出两个字符
-    // （i + U+0307），于是那个 match 分支直接落回「原字符 == 查询字符」，
-    // 永远不相等。ripgrep 走正确的 Unicode 折叠会找到它。
+fn unicode_case_folding_now_finds_the_dotted_capital_i() {
+    // 阶段 0 快照里这条叫 defect_turkish_dotted_capital_i_is_not_found：
+    // 手写层用「逐字符 to_lowercase」比较，İ 折叠出两个字符（i + U+0307），
+    // 于是那个分支落回「原字符 == 查询字符」，永远不相等。引擎走正确的
+    // Unicode 折叠，现在找得到。
     let matcher = plain("\u{130}");
-    assert!(
-        matcher.find_in_line("Istanbul \u{130}stanbul").is_empty(),
-        "İ 的大小写不敏感匹配在现状实现里失败——这是缺陷"
+    let line = "Istanbul \u{130}stanbul";
+    assert_eq!(
+        hits(line, &matcher),
+        vec![(9, 11, "\u{130}".to_string())],
+        "İ 的大小写不敏感匹配现在应当成立"
     );
+    // 重音字母这一族本来就对着，翻修之后不能退回去。
+    assert_eq!(hits("École primaire", &plain("école")).len(), 1);
 }
 
 // ------------------------------------------------------------------ 字符边界

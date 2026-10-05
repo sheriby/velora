@@ -307,6 +307,8 @@ pub(super) struct WorkspaceState {
     search_results: Vec<WorkspaceSearchHit>,
     document_active_range: Option<Range<usize>>,
     search_pending: bool,
+    /// 模式编译失败时引擎交回的诊断，显示在搜索框下方。
+    search_error: Option<String>,
     search_generation: u64,
     /// 顶栏标签条横向滚动（诊断/断言用）。
     pub(crate) tabs_scroll_handle: ScrollHandle,
@@ -366,6 +368,7 @@ impl Default for WorkspaceState {
             search_results: Vec::new(),
             document_active_range: None,
             search_pending: false,
+            search_error: None,
             search_generation: 0,
             tabs_scroll_handle: ScrollHandle::new(),
             tree_scan_task: None,
@@ -477,6 +480,7 @@ pub(super) use file_tree::*;
 pub(super) use input_handler::*;
 pub(super) use render_panel::*;
 pub(super) use search_backend::*;
+pub(super) use search_engine::*;
 
 mod context_menus;
 mod documents;
@@ -490,6 +494,7 @@ mod render_search;
 mod render_tabs;
 mod render_tree;
 mod search_backend;
+mod search_engine;
 mod session_watcher;
 mod sidebar;
 mod tabs;

@@ -114,8 +114,37 @@ impl Editor {
                     .child(toggle_button),
             )
             .children(replace_input)
-            .child(options_row);
+            .child(options_row)
+            .children(self.render_search_pattern_error(strings, theme));
         header.into_any_element()
+    }
+
+    /// 模式编译失败时的那一行提示：本地化的前缀 + 匹配引擎交回的原始诊断。
+    /// 诊断原文是多行的（带一个 `^` 指出出错列），所以整行截断，鼠标悬停看全文。
+    pub(crate) fn render_search_pattern_error(
+        &self,
+        strings: &I18nStrings,
+        theme: &Theme,
+    ) -> Option<AnyElement> {
+        let message = self.workspace.search_error.as_ref()?;
+        let c = &theme.colors;
+        let summary = message.lines().next().unwrap_or(message.as_str()).to_string();
+        let detail = message.clone();
+        Some(
+            div()
+                .id("workspace-search-pattern-error")
+                .w_full()
+                .px(px(2.0))
+                .text_size(px(11.0))
+                .text_color(c.dialog_danger_button_text)
+                .truncate()
+                .child(format!("{}{summary}", strings.search_invalid_pattern))
+                .tooltip(move |_, cx| {
+                    let detail = detail.clone();
+                    cx.new(|_| WorkspaceTooltip { label: detail.into() }).into()
+                })
+                .into_any_element(),
+        )
     }
 
     /// Option toggles (case / whole word / regex / fuzzy), the scope switch,

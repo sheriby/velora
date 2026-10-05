@@ -57,6 +57,14 @@ encoding_rs = "0.8"
 anyhow = "1"
 base64 = "0.23"
 regex = "1"
+# 搜索匹配层：ripgrep 的本体库（进程内调用，不起 rg 子进程）。grep-regex 把
+# regex 引擎适配成 grep-matcher 的 Matcher trait，grep-searcher 负责按行迭代、
+# 绝对字节偏移记账与提前停止。三者的传递依赖（bstr / aho-corasick /
+# regex-automata / regex-syntax / memchr / memmap2 / log）已全部在 Cargo.lock
+# 里且版本精确对上，零重复编译单元。方案见 docs/plans/2026-10-05-ripgrep-search-engine.md。
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+grep-matcher = "0.1.9"
 notify = "6"
 uuid = "1.23"
 gpui = { version = "0.2", features = ["runtime_shaders"] }

@@ -9,62 +9,52 @@ pub(crate) struct SearchOptions {
     pub(super) fuzzy: bool,
 }
 
-/// Compiled search query. Regex compilation failures degrade to a plain
-/// substring search so a bad pattern never silently kills search.
+/// 一次搜索的编译结果。匹配本身交给 ripgrep 引擎（`search_engine::CompiledQuery`），
+/// 这个类型只保留调用方惯用的「一次喂一行」的接口，并把编译诊断带出来给面板显示。
 #[derive(Clone)]
 pub(crate) struct SearchMatcher {
     query: String,
     options: SearchOptions,
-    regex: Option<regex::Regex>,
+    /// 编译失败时为 `None`：此时一切搜索都交回空结果，由 `error_message` 说明原因。
+    engine: Option<CompiledQuery>,
+    error: Option<QueryError>,
 }
 
 impl SearchMatcher {
     pub(crate) fn new(query: &str, options: SearchOptions) -> Self {
-        let regex = if options.use_regex {
-            let mut builder = regex::RegexBuilder::new(query);
-            builder.case_insensitive(!options.match_case);
-            builder.build().ok()
-        } else {
-            None
+        let (engine, error) = match CompiledQuery::compile(query, options) {
+            Ok(engine) => (Some(engine), None),
+            Err(error) => (None, Some(error)),
         };
         Self {
             query: query.to_string(),
             options,
-            regex,
+            engine,
+            error,
         }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.query.trim().is_empty() && self.regex.is_none()
+        self.query.trim().is_empty()
     }
 
-    /// Byte ranges of every match inside `line`.
+    /// 模式编译失败时引擎给的诊断原文（带出错列的 `^` 定位）。
+    /// 调用方把它显示在搜索框下方，而不是继续搜出误导性的结果。
+    pub(crate) fn error_message(&self) -> Option<&str> {
+        self.error.as_ref().map(|error| error.message.as_str())
+    }
+
+    /// 一行内的全部命中字节区间。
     pub(crate) fn find_in_line(&self, line: &str) -> Vec<Range<usize>> {
-        if let Some(regex) = self.regex.as_ref() {
-            return regex
-                .find_iter(line)
-                .map(|m| m.start()..m.end())
-                .collect();
+        match self.engine.as_ref() {
+            Some(engine) => engine.find_in_line(line),
+            None => Vec::new(),
         }
-        if self.options.fuzzy {
-            return fuzzy_subsequence_ranges(line, &self.query);
-        }
-        let mut ranges = if self.options.match_case {
-            line.match_indices(&self.query)
-                .map(|(start, matched)| start..start + matched.len())
-                .collect()
-        } else {
-            case_insensitive_ranges(line, &self.query)
-        };
-        if self.options.whole_word {
-            ranges.retain(|range| is_word_boundary(line, range));
-        }
-        ranges
     }
 
     /// Whether a filename matches (fuzzy subsequence or substring).
     pub(crate) fn matches_filename(&self, name: &str) -> bool {
-        if self.options.fuzzy {
+        if self.options.fuzzy && !self.options.use_regex {
             return !fuzzy_subsequence_ranges(name, &self.query).is_empty();
         }
         if self.options.match_case {
@@ -195,21 +185,6 @@ pub(crate) fn fuzzy_subsequence_ranges(line: &str, query: &str) -> Vec<Range<usi
         }
     }
     ranges
-}
-
-pub(crate) fn is_word_boundary(line: &str, range: &Range<usize>) -> bool {
-    let word_char = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let before = line[..range.start]
-        .chars()
-        .next_back()
-        .map(word_char)
-        .unwrap_or(false);
-    let after = line[range.end..]
-        .chars()
-        .next()
-        .map(word_char)
-        .unwrap_or(false);
-    !before && !after
 }
 
 /// 工作区搜索的待扫文件（树序）。`searchable` 为 false 的文件（非文本）只

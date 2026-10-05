@@ -16,6 +16,16 @@ impl Editor {
         self.workspace.search_active_index = None;
         self.workspace.document_active_range = None;
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
+        // 模式编译失败：把引擎交回的原始诊断显示在搜索框下方，并**停止搜索**。
+        // 旧行为是静默退化成字面量继续搜——用户以为在跑正则，实际搜的是另一回事。
+        self.workspace.search_error = matcher.error_message().map(str::to_string);
+        if self.workspace.search_error.is_some() {
+            self.workspace.search_results.clear();
+            self.workspace.search_pending = false;
+            self.sync_document_search_highlights(cx);
+            cx.notify();
+            return;
+        }
         let scope = self.workspace.search_scope;
         let tree = self.workspace.file_tree.clone();
         if matcher.is_empty() || (scope == WorkspaceSearchScope::Workspace && tree.is_none()) {

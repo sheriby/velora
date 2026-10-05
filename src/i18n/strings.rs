@@ -299,6 +299,8 @@ pub struct I18nStrings {
     pub search_whole_word: String,
     /// Toggle tooltip: interpret the query as a regular expression.
     pub search_regex: String,
+    /// 搜索框下方那一行的开头，后面接匹配引擎交回的原始诊断。
+    pub search_invalid_pattern: String,
     /// Toggle tooltip: fuzzy (subsequence) matching.
     pub search_fuzzy: String,
     /// Short chip label for fuzzy matching.

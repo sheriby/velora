@@ -5,6 +5,7 @@ mod external_changes;
 mod save_external;
 mod search;
 mod search_matcher_snapshot;
+mod search_engine;
 mod sidebar;
 mod tabs_sessions;
 mod tree_files;
