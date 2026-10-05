@@ -502,6 +502,10 @@ pub struct I18nStrings {
     pub paragraph_task_list: String,
     pub paragraph_quote: String,
     pub paragraph_code_block: String,
+    pub insert_math_block: String,
+    pub insert_separator: String,
+    pub insert_toc: String,
+    pub insert_front_matter: String,
     /// Table-axis menu item for left-aligning a column.
     pub table_axis_align_column_left: String,
     /// Table-axis menu item for center-aligning a column.

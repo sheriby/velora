@@ -14,6 +14,7 @@ mod format_command;
 mod image_runtime;
 mod import_perf;
 mod inline_format;
+mod insert_blocks;
 mod keyboard_nav;
 mod knowledge_history;
 mod knowledge_recovery;

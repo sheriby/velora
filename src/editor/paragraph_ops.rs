@@ -151,7 +151,7 @@ impl Editor {
     }
 
     /// 选区盖住的可见块各自往上找到根块，按文档顺序去重。
-    fn selection_root_blocks(&self, cx: &App) -> Vec<Entity<Block>> {
+    pub(crate) fn selection_root_blocks(&self, cx: &App) -> Vec<Entity<Block>> {
         let mut covered: Vec<EntityId> = Vec::new();
         if let Some(normalized) = self.normalized_cross_block_selection(cx) {
             for index in normalized.start_index..=normalized.end_index {

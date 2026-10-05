@@ -35,6 +35,7 @@ mod export;
 mod file_drop;
 mod format_ops;
 mod history;
+mod insert_ops;
 mod paragraph_ops;
 mod persistence;
 mod render;

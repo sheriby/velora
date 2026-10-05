@@ -747,6 +747,12 @@ impl I18nStringsDe {
             paragraph_code_block: self
                 .paragraph_code_block
                 .unwrap_or(defaults.paragraph_code_block),
+            insert_math_block: self.insert_math_block.unwrap_or(defaults.insert_math_block),
+            insert_separator: self.insert_separator.unwrap_or(defaults.insert_separator),
+            insert_toc: self.insert_toc.unwrap_or(defaults.insert_toc),
+            insert_front_matter: self
+                .insert_front_matter
+                .unwrap_or(defaults.insert_front_matter),
             table_axis_align_column_left: self
                 .table_axis_align_column_left
                 .unwrap_or(defaults.table_axis_align_column_left),

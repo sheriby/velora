@@ -14,6 +14,7 @@ use crate::components::{
     default_shortcut_key, menu::MENU_ROW_GAP, Copy, Cut, InlineFormat, Paste, Redo,
     ShortcutCommand, ToggleViewMode, Undo,
 };
+use crate::editor::insert_ops::InsertBlockTarget;
 use crate::editor::paragraph_ops::BlockKindTarget;
 use crate::theme::ThemeDimensions;
 
@@ -64,6 +65,11 @@ pub(crate) enum DocumentMenuCommand {
     Quote,
     CodeBlock,
     InsertTable,
+    InsertCodeBlock,
+    InsertMathBlock,
+    InsertSeparator,
+    InsertToc,
+    InsertFrontMatter,
     ToggleSourceView,
 }
 
@@ -93,6 +99,11 @@ impl DocumentMenuCommand {
             Self::Quote => "quote",
             Self::CodeBlock => "code-block",
             Self::InsertTable => "table",
+            Self::InsertCodeBlock => "insert-code-block",
+            Self::InsertMathBlock => "insert-math-block",
+            Self::InsertSeparator => "insert-separator",
+            Self::InsertToc => "insert-toc",
+            Self::InsertFrontMatter => "insert-front-matter",
             Self::ToggleSourceView => "toggle-source-view",
         }
     }
@@ -115,6 +126,11 @@ impl DocumentMenuCommand {
             | Self::Copy
             | Self::Paste
             | Self::InsertTable
+            | Self::InsertCodeBlock
+            | Self::InsertMathBlock
+            | Self::InsertSeparator
+            | Self::InsertToc
+            | Self::InsertFrontMatter
             | Self::ToggleSourceView => None,
         }
     }
@@ -264,11 +280,44 @@ impl Editor {
                 )
                 .collect()
             }
-            DocumentSubmenu::Insert => vec![DocumentMenuRow::Item {
-                command: DocumentMenuCommand::InsertTable,
-                name: "table",
-                enabled: self.writes_through_the_buffer(),
-            }],
+            DocumentSubmenu::Insert => {
+                let item = |command: DocumentMenuCommand, name: &'static str, enabled: bool| {
+                    DocumentMenuRow::Item {
+                        command,
+                        name,
+                        enabled,
+                    }
+                };
+                let insertable = self.writes_through_the_buffer();
+                vec![
+                    item(DocumentMenuCommand::InsertTable, "table", insertable),
+                    item(
+                        DocumentMenuCommand::InsertCodeBlock,
+                        "insert-code-block",
+                        self.insert_block_target_is_available(InsertBlockTarget::CodeBlock, cx),
+                    ),
+                    item(
+                        DocumentMenuCommand::InsertMathBlock,
+                        "insert-math-block",
+                        self.insert_block_target_is_available(InsertBlockTarget::MathBlock, cx),
+                    ),
+                    item(
+                        DocumentMenuCommand::InsertSeparator,
+                        "insert-separator",
+                        self.insert_block_target_is_available(InsertBlockTarget::Separator, cx),
+                    ),
+                    item(
+                        DocumentMenuCommand::InsertToc,
+                        "insert-toc",
+                        self.insert_block_target_is_available(InsertBlockTarget::Toc, cx),
+                    ),
+                    item(
+                        DocumentMenuCommand::InsertFrontMatter,
+                        "insert-front-matter",
+                        self.insert_block_target_is_available(InsertBlockTarget::FrontMatter, cx),
+                    ),
+                ]
+            }
         }
     }
 
@@ -317,6 +366,21 @@ impl Editor {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
             }
             DocumentMenuCommand::InsertTable => self.open_table_insert_dialog_from_menu(cx),
+            DocumentMenuCommand::InsertCodeBlock => {
+                self.insert_block_after_selection(InsertBlockTarget::CodeBlock, cx);
+            }
+            DocumentMenuCommand::InsertMathBlock => {
+                self.insert_block_after_selection(InsertBlockTarget::MathBlock, cx);
+            }
+            DocumentMenuCommand::InsertSeparator => {
+                self.insert_block_after_selection(InsertBlockTarget::Separator, cx);
+            }
+            DocumentMenuCommand::InsertToc => {
+                self.insert_block_after_selection(InsertBlockTarget::Toc, cx);
+            }
+            DocumentMenuCommand::InsertFrontMatter => {
+                self.insert_block_after_selection(InsertBlockTarget::FrontMatter, cx);
+            }
         }
     }
 
@@ -410,6 +474,11 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::Quote => strings.paragraph_quote.clone(),
         DocumentMenuCommand::CodeBlock => strings.paragraph_code_block.clone(),
         DocumentMenuCommand::InsertTable => strings.context_menu_table.clone(),
+        DocumentMenuCommand::InsertCodeBlock => strings.paragraph_code_block.clone(),
+        DocumentMenuCommand::InsertMathBlock => strings.insert_math_block.clone(),
+        DocumentMenuCommand::InsertSeparator => strings.insert_separator.clone(),
+        DocumentMenuCommand::InsertToc => strings.insert_toc.clone(),
+        DocumentMenuCommand::InsertFrontMatter => strings.insert_front_matter.clone(),
         DocumentMenuCommand::ToggleSourceView => strings.context_menu_toggle_source_view.clone(),
     }
 }
@@ -456,7 +525,12 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
         | DocumentMenuCommand::TaskList
         | DocumentMenuCommand::Quote
         | DocumentMenuCommand::CodeBlock
-        | DocumentMenuCommand::InsertTable => return None,
+        | DocumentMenuCommand::InsertTable
+        | DocumentMenuCommand::InsertCodeBlock
+        | DocumentMenuCommand::InsertMathBlock
+        | DocumentMenuCommand::InsertSeparator
+        | DocumentMenuCommand::InsertToc
+        | DocumentMenuCommand::InsertFrontMatter => return None,
     };
     Some(SharedString::from(key_label(default_shortcut_key(
         shortcut,
