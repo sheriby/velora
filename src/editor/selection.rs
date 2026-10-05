@@ -638,7 +638,7 @@ impl Editor {
     /// 必须走区间：整篇写入之后重同步会从块树重新序列化全文，不相干的块就跟着
     /// 被洗（表格列宽填充重算、`__强调__` 变 `**…**`、Setext 转 ATX），撤销条目
     /// 也退化成一份全文副本。
-    fn write_back_cross_block_source_edit(
+    pub(crate) fn write_back_cross_block_source_edit(
         &mut self,
         source_range: Range<usize>,
         new_text: &str,

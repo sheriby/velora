@@ -1,4 +1,6 @@
 use super::*;
+use crate::components::UndoCaptureKind;
+use crate::editor::SourceTargetMapping;
 
 impl Editor {
     pub(crate) fn search_options(&self) -> SearchOptions {
@@ -420,51 +422,90 @@ impl Editor {
             return 0;
         }
 
-        // 整批共用一次映射构建（旧实现每个命中付两次整篇重建），并把每个命中
-        // 换算成「块 + 可见区间」，换算完**核对**落点：映射按规范前缀记账，
-        // 非规范前缀的块（`>引用`）上会漂——可见切片必须等于搜到的原文，不等
-        // 就保守跳过，绝不替换到错误的位置、也不许替换计数虚报。
+        // 整批共用一次映射构建（旧实现每个命中付两次整篇重建），先把每条命中
+        // 换算成「块 + 可见区间」；换算不过去的一律留给缓冲区字节写回。
         let mappings = self.build_source_target_mappings(cx);
-        let mut targets: Vec<(
-            gpui::Entity<crate::components::Block>,
-            std::ops::Range<usize>,
-        )> = Vec::new();
+        let mut plan: Vec<Option<(Entity<crate::components::Block>, std::ops::Range<usize>)>> =
+            Vec::with_capacity(hits.len());
         for (range, matched) in &hits {
-            let Some(mapping) = mappings.iter().find(|mapping| {
-                mapping.full_source_range.start <= range.start
-                    && range.end <= mapping.full_source_range.end
-            }) else {
-                continue;
-            };
-            let local_start = range.start - mapping.full_source_range.start;
-            let local_end = range.end - mapping.full_source_range.start;
-            let max_content = mapping.source_to_content.len().saturating_sub(1);
-            let content_start =
-                mapping.source_to_content[local_start.min(max_content)];
-            let content_end = mapping.source_to_content[local_end.min(max_content)];
-            let visible = mapping
-                .entity
-                .read(cx)
-                .markdown_range_to_current_range(content_start..content_end);
-            let block_text = mapping.entity.read(cx).display_text().to_string();
-            if visible.end > block_text.len() || block_text[visible.clone()] != *matched {
-                continue;
-            }
-            targets.push((mapping.entity.clone(), visible));
+            plan.push(Self::block_target_for_hit(&mappings, range, matched, cx));
         }
 
-        // 从后往前替换：前面的命中区间不受后面的改动影响（同一块内的多个命中同理）。
+        // 从后往前处理：改一条只会影响它**之后**的偏移，剩下的都在它之前，
+        // 所以偏移一直有效。跨块命中走缓冲区写回，那条会重建整篇投影——块实体
+        // 从此不能再拿旧的换算结果，剩下的必须现算，否则写进一块已脱离文档的
+        // 实体上就是白写（不报错、也不替换）。
         let mut replaced = 0usize;
-        for (entity, visible) in targets.iter().rev() {
-            entity.update(cx, |block, cx| {
-                let utf16 = block.range_to_utf16(visible);
-                use gpui::EntityInputHandler;
-                block.replace_text_in_range(Some(utf16), &replacement, window, cx);
-            });
+        let mut fresh_mappings: Option<Vec<SourceTargetMapping>> = None;
+        let mut buffer_capture_started = false;
+        for index in (0..hits.len()).rev() {
+            let (range, matched) = (&hits[index].0, &hits[index].1);
+            let target = match fresh_mappings.as_ref() {
+                Some(mappings) => {
+                    Self::block_target_for_hit(mappings, range, matched, cx)
+                }
+                None => plan[index].clone(),
+            };
+            if let Some((entity, visible)) = target {
+                entity.update(cx, |block, cx| {
+                    let utf16 = block.range_to_utf16(&visible);
+                    use gpui::EntityInputHandler;
+                    block.replace_text_in_range(Some(utf16), &replacement, window, cx);
+                });
+                replaced += 1;
+                continue;
+            }
+            // 跨块命中（以及映射换算落不准的）直接按缓冲区字节区间替换：
+            // 这一段字节就是搜到的原文，位置由构造保证，不存在换算漂移。
+            if !buffer_capture_started {
+                // 整批的缓冲区写回共用一次撤销捕获（与替换单条跨块命中同一档），
+                // 撤销时这一批一起退回，不会退一半留下半替的文档。
+                self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+                buffer_capture_started = true;
+            }
+            self.write_back_cross_block_source_edit(range.clone(), &replacement, cx);
             replaced += 1;
+            fresh_mappings = Some(self.build_source_target_mappings(cx));
+        }
+        if buffer_capture_started {
+            // 这批缓冲区写回收进同一次撤销捕获：不 finalize 的话撤销栈上什么都不会
+            // 留下，「全部替换」按一次撤销就退不回去（与粘贴、表格编辑同一套路子：
+            // 谁开捕获谁收尾）。
+            self.finalize_pending_undo_capture(cx);
         }
         self.workspace.document_active_range = None;
         replaced
+    }
+
+    /// 把一条命中换算成「哪一块的哪一段可见区间」；这块装不下它，或换算回来的
+    /// 文本对不上搜到的原文，就交回 `None`（调用方退回缓冲区字节写回）。
+    ///
+    /// 核对不能省：映射按规范前缀记账，非规范前缀的块（`>引用`）上会漂——
+    /// 宁可少换一处，也绝不替换到错误的位置、绝不许替换计数虚报。
+    fn block_target_for_hit(
+        mappings: &[SourceTargetMapping],
+        range: &std::ops::Range<usize>,
+        matched: &str,
+        cx: &App,
+    ) -> Option<(Entity<crate::components::Block>, std::ops::Range<usize>)> {
+        let mapping = mappings.iter().find(|mapping| {
+            mapping.full_source_range.start <= range.start
+                && range.end <= mapping.full_source_range.end
+        })?;
+        let local_start = range.start - mapping.full_source_range.start;
+        let local_end = range.end - mapping.full_source_range.start;
+        let max_content = mapping.source_to_content.len().saturating_sub(1);
+        let content_start = mapping.source_to_content[local_start.min(max_content)];
+        let content_end = mapping.source_to_content[local_end.min(max_content)];
+        let visible = mapping
+            .entity
+            .read(cx)
+            .markdown_range_to_current_range(content_start..content_end);
+        let block_text = mapping.entity.read(cx).display_text().to_string();
+        if visible.end > block_text.len() || block_text[visible.clone()] != *matched {
+            return None;
+        }
+        Some((mapping.entity.clone(), visible))
     }
 
     /// Runs `replace_text_in_range` on the block that currently holds the

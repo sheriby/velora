@@ -286,3 +286,126 @@ async fn a_cross_block_hit_unfolds_every_section_it_touches(cx: &mut TestAppCont
         assert_eq!(folded, 0, "两端各自所在的折叠节都要展开：{folded}");
     });
 }
+
+/// 起一个文档范围的正则搜索并设好替换文本。
+fn search_and_set_replacement(
+    editor: &gpui::Entity<Editor>,
+    query: &str,
+    replacement: &str,
+    cx: &mut TestAppContext,
+) {
+    editor.update(cx, |editor, _cx| {
+        editor.workspace.replace_query = replacement.to_string();
+    });
+    search_document_regex(editor, query, cx);
+}
+
+#[gpui::test]
+async fn replace_all_replaces_cross_block_hits_for_real(cx: &mut TestAppContext) {
+    init(cx);
+    // 两根命中各自跨过一道块界。改前映射换算装不下它们，`continue` 静默跳过——
+    // 用户按「全部替换」，计数报 0、正文一个字没动。
+    let source = "alpha\n\nmid\n\nalpha\n\nend\n";
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.to_string(), None));
+    cx.run_until_parked();
+    search_and_set_replacement(&editor, r"alpha\n\n\w+", "Z", cx);
+    editor.read_with(cx, |editor, _cx| {
+        let ranges = editor
+            .workspace
+            .document_matches
+            .as_ref()
+            .expect("命中表要有")
+            .hits
+            .iter()
+            .map(|hit| hit.range.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, vec![0..10, 12..22], "用例前提：两条都是跨块命中");
+    });
+
+    let count = editor.update_in(cx, |editor, window, cx| {
+        editor.replace_all_document_matches(window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(count, 2, "两条跨块命中都要真换掉（改前这里是 0）");
+
+    // 闸门一：替换后重扫，命中必须归零。
+    search_document_regex(&editor, r"alpha\n\n\w+", cx);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor
+                .workspace
+                .document_matches
+                .as_ref()
+                .map(|table| table.hits.is_empty())
+                .unwrap_or(true),
+            "替换完再搜同一条模式必须一条命中都没有"
+        );
+    });
+
+    // 闸门二：整篇的字节差异恰好等于「按同序把这两段换成 Z」，不多不少。
+    let after = editor.read_with(cx, |editor, cx| editor.current_document_source(cx));
+    let mut expected = source.to_string();
+    // 「alpha\n\nmid」是 0..10（10 个字节），「alpha\n\nend」是 12..22。
+    for range in [12..22, 0..10] {
+        expected.replace_range(range, "Z");
+    }
+    assert_eq!(after, expected, "只能改这两段字节：{after:?}");
+}
+
+#[gpui::test]
+async fn undo_steps_a_cross_block_replace_all_back_whole(cx: &mut TestAppContext) {
+    init(cx);
+    // 一批跨块替换共用一次撤销捕获：撤销要整批退回，不能留下半替的文档。
+    let source = "alpha\n\nmid\n\nalpha\n\nend\n";
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.to_string(), None));
+    cx.run_until_parked();
+    search_and_set_replacement(&editor, r"alpha\n\n\w+", "Z", cx);
+    let count = editor.update_in(cx, |editor, window, cx| {
+        editor.replace_all_document_matches(window, cx)
+    });
+    assert_eq!(count, 2);
+    cx.run_until_parked();
+
+    // 撤销要能把这一批退回原文：一段一条撤销记录，逐段退回，最后一笔回到初始文本。
+    let mut restored = String::new();
+    for step in 0..6 {
+        editor.update(cx, |editor, cx| editor.undo_document(cx));
+        cx.run_until_parked();
+        restored = editor.read_with(cx, |editor, cx| editor.current_document_source(cx));
+        assert!(
+            restored.contains("Z") || restored == source,
+            "第 {step} 次撤销之后不该出现替换项之外的内容：{restored:?}"
+        );
+        if restored == source {
+            break;
+        }
+    }
+    assert_eq!(restored, source, "撤销必须把这一批跨块替换逐段退回原文");
+}
+
+#[gpui::test]
+async fn replace_all_mixes_block_and_cross_block_hits(cx: &mut TestAppContext) {
+    init(cx);
+    // 同一批里既有块内命中也有跨块命中：两条链路混用时偏移不能互相踩坏。
+    let source = "alpha here\n\nalpha\n\nmid\n";
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.to_string(), None));
+    cx.run_until_parked();
+    search_and_set_replacement(&editor, r"alpha\n\n\w+|alpha here", "Q", cx);
+    let count = editor.update_in(cx, |editor, window, cx| {
+        editor.replace_all_document_matches(window, cx)
+    });
+    cx.run_until_parked();
+    let after = editor.read_with(cx, |editor, cx| editor.current_document_source(cx));
+    let mut expected = source.to_string();
+    // 「alpha here」是块内命中（0..10），「alpha\n\nmid」是跨块命中（12..22）。
+    expected.replace_range(12..22, "Q");
+    expected.replace_range(0..10, "Q");
+    assert_eq!(
+        after, expected,
+        "计数 {count}：块内与跨块两条链路混用时字节差异必须正好等于替换项"
+    );
+    assert_eq!(count, 2);
+}
