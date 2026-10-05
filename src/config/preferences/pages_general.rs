@@ -865,7 +865,6 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
-        let t = &theme.typography;
         div()
             .id(id.into())
             .h(px(24.0))

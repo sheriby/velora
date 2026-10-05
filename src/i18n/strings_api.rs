@@ -364,7 +364,9 @@ impl I18nStrings {
         strings.preferences_ai_provider_ollama = "Ollama（本地）".into();
         strings.preferences_ai_hint = "可同时配置多个 AI 端点：OpenAI 兼容服务（DeepSeek、智谱、Kimi、Ollama 等）、Anthropic 或 OpenAI Responses，面板里随时切换；星标为默认端点。密钥只保存在本机 config.toml。".into();
         strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
+        strings.ai_panel_endpoint = "AI 端点".into();
         strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
+        strings.ai_panel_endpoint = "AI 端点".into();
         strings.ai_kind_stub = "内置演示".into();
         strings.ai_endpoint_unnamed = "未命名端点".into();
         strings.preferences_ai_endpoints = "端点".into();
@@ -733,6 +735,7 @@ impl I18nStrings {
             ai_error_http: "The AI service returned an error: {error}".into(),
             ai_error_protocol: "Unexpected response from the AI service: {error}".into(),
             preferences_shortcut_open_ai_assistant: "AI Assistant".into(),
+            ai_panel_endpoint: "AI endpoint".into(),
             ai_kind_stub: "Built-in demo".into(),
             ai_endpoint_unnamed: "Unnamed endpoint".into(),
             preferences_ai_endpoints: "Endpoints".into(),

@@ -268,11 +268,6 @@ pub(crate) fn message_from_error_body(body: &str) -> String {
     text
 }
 
-/// 端点是否走真实网络(stub 在本进程内回放,不建连接)。
-pub(crate) fn uses_network(kind: ProviderKind) -> bool {
-    !matches!(kind, ProviderKind::Stub)
-}
-
 /// 测试支撑:本地 TCP mock 服务器与请求行读取,各协议的集成测试共用。
 #[cfg(test)]
 pub(crate) mod test_support {

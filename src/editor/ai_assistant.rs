@@ -19,7 +19,7 @@ use gpui::*;
 use super::Editor;
 use crate::ai::{
     AiAction, AiEndpointConfig, AiPromptContext, AiRequestError, RewriteTone, TranslateTarget,
-    build_prompt, default_client, stream_completion,
+    build_prompt, default_client, is_stub, stream_completion,
 };
 use crate::components::{TextField, UndoCaptureKind};
 use crate::config::preferences::AiSettings;
@@ -54,13 +54,58 @@ pub(in crate::editor) struct AiAnchor {
     pub(in crate::editor) selected_text: String,
     /// 插入点之前的短上下文,应用时校验「前面还是这段话」。
     pub(in crate::editor) tail_context: String,
-    /// 光标/选区之前的文档文本(续写提示词用,已截断)。
+    /// 光标/选区之前的文档文本(续写起点/连贯性参考,已截断)。
     pub(in crate::editor) before_cursor: String,
+    /// 光标/选区之后的文档文本(连贯性参考,已截断)。
+    pub(in crate::editor) after_cursor: String,
+    /// 文档标题:首个 ATX 标题(围栏外),空文档为空。
+    pub(in crate::editor) document_title: String,
+}
+
+/// 取文档首个 ATX 标题行(`# `~`###### `),跳过围栏内与 front matter。
+/// 编辑器树里没有现成的「首标题」查询,这里对源码做一次轻量线性扫描
+/// ——只在打开面板时跑一次,成本可忽略。
+fn first_atx_title(source: &str) -> String {
+    let mut in_fence: Option<(char, usize)> = None;
+    let mut in_front_matter = source.starts_with("---\n");
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if in_front_matter {
+            if trimmed == "---" {
+                in_front_matter = false;
+            }
+            continue;
+        }
+        if let Some((marker, len)) = in_fence {
+            if trimmed.starts_with(marker) && trimmed.chars().take_while(|ch| *ch == marker).count() >= len {
+                in_fence = None;
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            let marker = trimmed.chars().next().expect("checked prefix");
+            in_fence = Some((marker, trimmed.chars().take_while(|ch| *ch == marker).count()));
+            continue;
+        }
+        let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
+        if (1..=6).contains(&hashes)
+            && trimmed[hashes..].starts_with(' ')
+            && let Some(title) = trimmed[hashes..].trim().strip_prefix("# ")
+        {
+            // `## ` 后再剥一个空格;再往后的内容是标题正文。
+            return title.to_string();
+        }
+    }
+    String::new()
 }
 
 pub(in crate::editor) struct AiAssistantState {
     pub(in crate::editor) phase: AiPhase,
     pub(in crate::editor) action: Option<AiAction>,
+    /// 面板里选中的端点;`None` = 跟随默认端点。
+    pub(in crate::editor) endpoint_id: Option<String>,
+    /// 菜单相的端点下拉是否展开。
+    pub(in crate::editor) endpoint_dropdown_open: bool,
     pub(in crate::editor) anchor: Option<AiAnchor>,
     /// 自定义指令输入(菜单阶段显示)。
     pub(in crate::editor) prompt: Entity<TextField>,
@@ -145,6 +190,8 @@ impl Editor {
         self.ai_assistant = Some(AiAssistantState {
             phase: AiPhase::Menu,
             action: None,
+            endpoint_id: None,
+            endpoint_dropdown_open: false,
             anchor: Some(anchor),
             prompt,
             translate_open: false,
@@ -237,12 +284,22 @@ impl Editor {
             context_start -= 1;
         }
         let before_cursor = self.buffer.slice(context_start..head);
+        // 插入点之后的文档文本(连贯性参考,按字符边界截)。
+        let tail_end = (head + 600).min(self.buffer.byte_len());
+        let mut tail_end = tail_end;
+        while tail_end < self.buffer.byte_len() && !self.buffer.text().is_char_boundary(tail_end) {
+            tail_end += 1;
+        }
+        let after_cursor = self.buffer.slice(head..tail_end);
+        let document_title = first_atx_title(&self.current_document_source(cx));
 
         AiAnchor {
             source_range,
             selected_text,
             tail_context,
             before_cursor,
+            after_cursor,
+            document_title,
         }
     }
 
@@ -293,6 +350,32 @@ impl Editor {
         end..end
     }
 
+    /// 菜单相切换目标端点(运行中/完成后不可切,避免结果归属混乱)。
+    pub(in crate::editor) fn ai_select_endpoint(
+        &mut self,
+        id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.ai_assistant.as_mut() else {
+            return;
+        };
+        if matches!(state.phase, AiPhase::Menu) {
+            state.endpoint_id = Some(id);
+            state.endpoint_dropdown_open = false;
+            cx.notify();
+        }
+    }
+
+    pub(in crate::editor) fn ai_toggle_endpoint_dropdown(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.ai_assistant.as_mut() else {
+            return;
+        };
+        if matches!(state.phase, AiPhase::Menu) {
+            state.endpoint_dropdown_open = !state.endpoint_dropdown_open;
+            cx.notify();
+        }
+    }
+
     /// 执行一个动作:未配置 → 带去设置页;已配置 → 起流式请求。
     pub(in crate::editor) fn run_ai_action(
         &mut self,
@@ -300,10 +383,18 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let ai_settings = crate::config::EditorSettings::ai(cx);
-        let endpoint = default_endpoint_from_settings(&ai_settings)
-            .filter(|endpoint| endpoint.is_configured());
+        let selected_id = self
+            .ai_assistant
+            .as_ref()
+            .and_then(|state| state.endpoint_id.clone());
+        let endpoint_pref = selected_id
+            .as_deref()
+            .and_then(|id| ai_settings.endpoint(id))
+            .or_else(|| ai_settings.default_endpoint());
+        let endpoint = endpoint_pref.map(|pref| pref.endpoint_config());
+        let endpoint = endpoint.filter(|endpoint| endpoint.is_configured());
         let Some(endpoint) = endpoint else {
-            // 没有可用端点(全删了,或默认端点没配完):带去设置页补齐。
+            // 选中(或默认)的端点没配完:带去设置页补齐。
             self.close_ai_assistant(cx);
             let _ = crate::config::open_preferences_window_at(
                 cx,
@@ -529,10 +620,10 @@ fn default_endpoint_from_settings(settings: &AiSettings) -> Option<AiEndpointCon
 /// 组装一次请求的提示词(动作里的翻译目标已由面板解析好)。
 fn build_ai_prompt(action: &AiAction, anchor: &AiAnchor) -> crate::ai::AiPrompt {
     let context = AiPromptContext {
-        document_title: String::new(),
+        document_title: anchor.document_title.clone(),
         selected: anchor.selected_text.clone(),
         before_cursor: anchor.before_cursor.clone(),
-        after_cursor: String::new(),
+        after_cursor: anchor.after_cursor.clone(),
     };
     build_prompt(action, &context)
 }
@@ -727,6 +818,138 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
     let mut body: Vec<AnyElement> = Vec::new();
     match state.phase {
         AiPhase::Menu => {
+            // 端点行:显示当前目标(选中或默认);多端点时可下拉切换,
+            // 单端点只读展示——一行讲清「这次请求会发给谁」。
+            let ai_settings = crate::config::EditorSettings::ai(cx);
+            let selected = state
+                .endpoint_id
+                .as_deref()
+                .and_then(|id| ai_settings.endpoint(id))
+                .or_else(|| ai_settings.default_endpoint());
+            let endpoint_label = selected
+                .map(|endpoint| {
+                    let name = {
+                        let trimmed = endpoint.name.trim();
+                        (!trimmed.is_empty())
+                            .then(|| trimmed.to_string())
+                            .unwrap_or_else(|| endpoint.display_name())
+                    };
+                    let name = if is_stub(endpoint.kind) && endpoint.name.trim().is_empty() {
+                        strings.ai_kind_stub.clone()
+                    } else {
+                        name
+                    };
+                    let kind = if is_stub(endpoint.kind) {
+                        strings.ai_kind_stub.clone()
+                    } else {
+                        endpoint.kind.display_name().to_string()
+                    };
+                    format!("{name} · {kind}")
+                })
+                .unwrap_or_else(|| strings.ai_kind_stub.clone());
+            let mut endpoint_row = div()
+                .id("ai-panel-endpoint")
+                .debug_selector(|| "ai-panel-endpoint".to_string())
+                .h(px(28.0))
+                .px(px(8.0))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .text_size(px(t.dialog_body_size))
+                .text_color(c.dialog_muted)
+                .child("✦")
+                .child(endpoint_label);
+            if ai_settings.endpoints.len() > 1 {
+                endpoint_row = endpoint_row
+                    .cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .rounded(px(d.menu_item_radius))
+                    .child("⌄")
+                    .on_click({
+                        let handle = editor_handle.clone();
+                        move |_event, _window, cx| {
+                            let _ = handle.update(cx, |editor, cx| {
+                                editor.ai_toggle_endpoint_dropdown(cx);
+                            });
+                        }
+                    });
+            }
+            body.push(endpoint_row.into_any_element());
+
+            // 下拉:列出全部端点(默认项带标记)。
+            if state.endpoint_dropdown_open && ai_settings.endpoints.len() > 1 {
+                for (index, endpoint) in ai_settings.endpoints.iter().enumerate() {
+                    let name = {
+                        let trimmed = endpoint.name.trim();
+                        (!trimmed.is_empty())
+                            .then(|| trimmed.to_string())
+                            .unwrap_or_else(|| {
+                                if is_stub(endpoint.kind) {
+                                    strings.ai_kind_stub.clone()
+                                } else {
+                                    endpoint.kind.display_name().to_string()
+                                }
+                            })
+                    };
+                    let kind = if is_stub(endpoint.kind) {
+                        strings.ai_kind_stub.clone()
+                    } else {
+                        endpoint.kind.display_name().to_string()
+                    };
+                    let is_selected = selected
+                        .map(|selected| selected.id == endpoint.id)
+                        .unwrap_or(endpoint.is_default);
+                    body.push(
+                        div()
+                            .id(gpui::ElementId::Name(format!("ai-endpoint-pick-{index}").into()))
+                            .debug_selector(move || format!("ai-endpoint-pick-{index}"))
+                            .h(px(26.0))
+                            .px(px(8.0))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .rounded(px(d.menu_item_radius))
+                            .cursor_pointer()
+                            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                            .text_size(px(t.dialog_body_size))
+                            .text_color(c.dialog_body)
+                            .on_click({
+                                let handle = editor_handle.clone();
+                                let endpoint_id = endpoint.id.clone();
+                                move |_event, _window, cx| {
+                                    let _ = handle.update(cx, |editor, cx| {
+                                        editor.ai_select_endpoint(endpoint_id.clone(), cx);
+                                    });
+                                }
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .child(name)
+                                    .child(
+                                        div()
+                                            .text_size(px(10.0))
+                                            .text_color(c.dialog_muted)
+                                            .child(kind),
+                                    ),
+                            )
+                            .when(endpoint.is_default, |this| {
+                                this.child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(c.dialog_muted)
+                                        .child(strings.preferences_ai_default.clone()),
+                                )
+                            })
+                            .when(is_selected, |this| {
+                                this.bg(c.selection)
+                            })
+                            .into_any_element(),
+                    );
+                }
+            }
             body.push(state.prompt.clone().into_any_element());
             if !configured {
                 // 未配置:动作点不了也没意义,直接给一条入口。

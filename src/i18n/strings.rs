@@ -587,6 +587,8 @@ pub struct I18nStrings {
     pub preferences_ai_hint: String,
     /// 快捷键设置:AI 助手。
     pub preferences_shortcut_open_ai_assistant: String,
+    /// AI 面板:端点选择行标签。
+    pub ai_panel_endpoint: String,
     /// 协议形态:stub 演示后端(非专名,走 i18n)。
     pub ai_kind_stub: String,
     /// 端点名为空时的展示回退。

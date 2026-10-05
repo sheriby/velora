@@ -874,6 +874,9 @@ impl I18nStringsDe {
             preferences_shortcut_open_ai_assistant: self
                 .preferences_shortcut_open_ai_assistant
                 .unwrap_or(defaults.preferences_shortcut_open_ai_assistant),
+            ai_panel_endpoint: self
+                .ai_panel_endpoint
+                .unwrap_or(defaults.ai_panel_endpoint),
             ai_kind_stub: self
                 .ai_kind_stub
                 .unwrap_or(defaults.ai_kind_stub),

@@ -5,9 +5,7 @@
 
 use std::sync::atomic::AtomicBool;
 
-use super::{
-    message_from_error_body, read_plain_json, read_sse, send_post, AiRequestError, SseOutcome,
-};
+use super::{read_plain_json, read_sse, send_post, AiRequestError, SseOutcome};
 use crate::ai::endpoint::AiEndpointConfig;
 use crate::ai::prompts::AiPrompt;
 
@@ -102,11 +100,6 @@ pub(crate) fn stream(
     }, on_delta)
 }
 
-/// 错误体优先取 provider 的 error.message(公开给设置页测试用)。
-pub(crate) fn error_message(body: &str) -> String {
-    message_from_error_body(body)
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicBool;
@@ -185,10 +178,13 @@ mod tests {
     #[test]
     fn error_message_prefers_the_provider_message() {
         assert_eq!(
-            error_message(r#"{"error":{"message":"bad key","type":"auth"}}"#),
+            super::super::message_from_error_body(r#"{"error":{"message":"bad key","type":"auth"}}"#),
             "bad key"
         );
-        assert_eq!(error_message("plain text"), "plain text");
+        assert_eq!(
+            super::super::message_from_error_body("plain text"),
+            "plain text"
+        );
     }
 
     #[test]

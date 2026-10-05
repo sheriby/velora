@@ -365,12 +365,6 @@ impl AiSettings {
         self.endpoints.iter().find(|endpoint| endpoint.id == id)
     }
 
-    /// 同 [`Self::normalize_defaults`],但消费自身、返回收敛后的结果。
-    pub(crate) fn normalized(mut self) -> Self {
-        self.normalize_defaults();
-        self
-    }
-
     /// 收敛默认位:至多一个;无人认领时给第一个。保存前调用。
     pub(crate) fn normalize_defaults(&mut self) {
         let mut claimed = false;

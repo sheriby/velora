@@ -346,7 +346,7 @@ pub(crate) fn build_prompt(action: &AiAction, context: &AiPromptContext) -> AiPr
     }
 }
 
-/// stub 端点的协议展示名交给 UI 层本地化;这里只提供判断便于各处分流。
+/// stub 端点判断(UI 层用它把协议名换成「内置演示」)。
 pub(crate) fn is_stub(kind: ProviderKind) -> bool {
     matches!(kind, ProviderKind::Stub)
 }

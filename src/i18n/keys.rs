@@ -334,6 +334,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_ai_provider_ollama",
     "preferences_ai_hint",
     "preferences_shortcut_open_ai_assistant",
+    "ai_panel_endpoint",
     "ai_kind_stub",
     "ai_endpoint_unnamed",
     "preferences_ai_endpoints",

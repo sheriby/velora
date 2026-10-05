@@ -160,31 +160,6 @@ fn ai_section_file(value: &AiSettings) -> AiSectionFile {
     }
 }
 
-fn ai_section_from_file(section: AiSectionFile) -> AiSettings {
-    AiSettings {
-        translate_target: section.translate_target,
-        endpoints: section
-            .endpoints
-            .into_iter()
-            .enumerate()
-            .map(|(index, endpoint)| AiEndpointPref {
-                id: {
-                    let id = endpoint.id.trim().to_string();
-                    // 空缺 id(手改配置)按序号补,保证面板选择有稳定锚点。
-                    (!id.is_empty()).then_some(id).unwrap_or_else(|| format!("endpoint-{index}"))
-                },
-                name: endpoint.name,
-                kind: crate::ai::ProviderKind::from_id(&endpoint.kind)
-                    .unwrap_or(crate::ai::ProviderKind::ChatCompletions),
-                base_url: endpoint.base_url,
-                api_key: endpoint.api_key,
-                model: endpoint.model,
-                is_default: endpoint.is_default,
-            })
-            .collect(),
-    }
-    .normalized()
-}
 
 impl From<&AppPreferences> for PreferencesFile {
     fn from(value: &AppPreferences) -> Self {

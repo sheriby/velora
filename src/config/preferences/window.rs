@@ -242,7 +242,7 @@ impl PreferencesWindow {
         }
     }
 
-    pub(crate) fn has_unsaved_changes(&self, cx: &App) -> bool {
+    pub(crate) fn has_unsaved_changes(&self, _cx: &App) -> bool {
         self.startup_open != self.saved_startup_open
             || self.selected_theme_id != self.saved_theme_id
             || self.image_paste_behavior != self.saved_image_paste_behavior
@@ -666,7 +666,6 @@ impl PreferencesWindow {
             return;
         };
         draft.test = Some(AiTestState::Running);
-        let handle = cx.entity().downgrade();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let result = std::thread::spawn(move || {
                 crate::ai::test_endpoint(&crate::ai::default_client(), &endpoint)
