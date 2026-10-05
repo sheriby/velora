@@ -19,8 +19,14 @@ pub(crate) mod latex;
 pub(crate) mod markdown;
 pub(crate) mod mermaid;
 pub(crate) mod switch;
+// 下一提交(设置 AI 页)即接入;过渡期放行 dead_code。
+#[allow(dead_code)]
+mod text_field;
 
 pub use crate::editor::Editor;
+// 设置页(AI 配置)在下一提交接入;先放行过渡期 unused。
+#[allow(unused_imports)]
+pub(crate) use text_field::*;
 #[allow(unused_imports)]
 pub(crate) use crate::editor::InfoDialogKind;
 pub use actions::*;
