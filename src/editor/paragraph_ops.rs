@@ -24,6 +24,8 @@ pub(crate) enum BlockKindTarget {
     TaskList,
     /// 引用（`> ` 那一族）；已经在引用里时等于取消引用。
     Quote,
+    /// 代码块（围栏那一族）；已经在代码块里时等于退回正文。
+    CodeBlock,
 }
 
 impl Editor {
@@ -274,6 +276,11 @@ impl Editor {
             // 另一块，文件里读回来是两根，块树里还是一根。
             return None;
         }
+        if current.is_code_block() && next != BlockKind::Paragraph {
+            // 代码块里那一份是原文，可以多行；只有退回正文这一条是逐行对得上的，
+            // 换成标题、列表或引用会把围栏内的原文按另一族的记号重写。
+            return None;
+        }
         Some(next)
     }
 
@@ -323,7 +330,9 @@ impl BlockKindTarget {
     /// 这一档接；标注（`> [!note]`）带头部与子块，仍不接。表、代码块、公式块这类原子的
     /// 结构块本身就不是「一段文字」，换进去要带正文，收在 FP4b-3。
     fn next_kind(self, current: &BlockKind) -> Option<BlockKind> {
-        if current.is_atomic_structural() || matches!(current, BlockKind::Callout(_)) {
+        // 代码块这一族单列（它也算原子的结构块）：正文整块就是原文，换进换出都对得上。
+        // 表、公式、mermaid、HTML、注释、原始 markdown、front matter 与标注不接。
+        if (current.is_atomic_structural() && !current.is_code_block()) || current.is_callout() {
             return None;
         }
         let next = match self {
@@ -341,6 +350,8 @@ impl BlockKindTarget {
             Self::TaskList => BlockKind::TaskListItem { checked: false },
             Self::Quote if *current == BlockKind::Quote => BlockKind::Paragraph,
             Self::Quote => BlockKind::Quote,
+            Self::CodeBlock if current.is_code_block() => BlockKind::Paragraph,
+            Self::CodeBlock => BlockKind::CodeBlock { language: None },
         };
         (next != *current).then_some(next)
     }

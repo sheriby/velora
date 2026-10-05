@@ -57,11 +57,19 @@ impl Block {
         next: BlockKind,
         marker: Option<crate::components::ListMarkerStyle>,
     ) -> bool {
-        if self.uses_raw_text_editing() || self.record.kind == next {
+        // 源码原文那份不动；代码块是「整块正文就是原文」，换得出去也换得进来，
+        // 由 `sync_edit_mode_from_kind` 改编辑模式。
+        if self.edit_mode == EditMode::SourceRaw || self.record.kind == next {
             return false;
         }
         if let Some(marker) = marker {
             self.record.list_marker = marker;
+        }
+        if !next.is_code_block() {
+            // 换出代码块那一族：围栏行与「文件里本来是四格缩进」这两本账跟着清，
+            // 留着的话下一次序列化还会按代码块的形状写（把正文包进围栏、或补回缩进）。
+            self.record.code_is_indented = false;
+            self.record.source_fence_lines = None;
         }
         self.record.kind = next;
         self.record.raw_fallback = None;
@@ -232,9 +240,11 @@ impl Block {
             return false;
         };
 
-        let current_y =
-            crate::components::block::element::wrapped_line_top(lines, self.last_line_height, current_line_idx)
-                + current_position.y;
+        let current_y = crate::components::block::element::wrapped_line_top(
+            lines,
+            self.last_line_height,
+            current_line_idx,
+        ) + current_position.y;
         let target_y = if direction < 0 {
             current_y - self.last_line_height + self.last_line_height / 2.0
         } else {
@@ -245,14 +255,22 @@ impl Block {
         }
 
         let total_height = lines.iter().fold(px(0.0), |height, line| {
-            height + crate::components::block::element::wrapped_line_height(line, self.last_line_height)
+            height
+                + crate::components::block::element::wrapped_line_height(
+                    line,
+                    self.last_line_height,
+                )
         });
         if target_y >= total_height {
             return false;
         }
 
         let Some((target_line_idx, target_y_in_line)) =
-            crate::components::block::element::wrapped_line_for_y(lines, self.last_line_height, target_y)
+            crate::components::block::element::wrapped_line_for_y(
+                lines,
+                self.last_line_height,
+                target_y,
+            )
         else {
             return false;
         };
@@ -291,8 +309,10 @@ impl Block {
         let target_layout = &lines[target_line_idx];
         let target_x = preferred_x.unwrap_or(px(0.0));
         let target_y = if prefer_last_line {
-            crate::components::block::element::wrapped_line_height(target_layout, self.last_line_height)
-                - self.last_line_height / 2.0
+            crate::components::block::element::wrapped_line_height(
+                target_layout,
+                self.last_line_height,
+            ) - self.last_line_height / 2.0
         } else {
             self.last_line_height / 2.0
         };
@@ -518,13 +538,19 @@ impl Block {
         let text = self.display_text();
         let ranges = crate::components::block::element::hard_line_ranges(text);
         let relative_y = position.y - bounds.top();
-        let Some((line_idx, y_in_line)) =
-            crate::components::block::element::wrapped_line_for_y(lines, self.last_line_height, relative_y)
-        else {
+        let Some((line_idx, y_in_line)) = crate::components::block::element::wrapped_line_for_y(
+            lines,
+            self.last_line_height,
+            relative_y,
+        ) else {
             return 0;
         };
         let layout = &lines[line_idx];
-        let origin_x = crate::components::block::element::aligned_line_left(layout, *bounds, self.text_align());
+        let origin_x = crate::components::block::element::aligned_line_left(
+            layout,
+            *bounds,
+            self.text_align(),
+        );
 
         let offset_in_line = match layout.closest_index_for_position(
             point(position.x - origin_x, y_in_line),

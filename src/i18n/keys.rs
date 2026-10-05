@@ -290,6 +290,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "paragraph_numbered_list",
     "paragraph_task_list",
     "paragraph_quote",
+    "paragraph_code_block",
     "table_axis_align_column_left",
     "table_axis_align_column_center",
     "table_axis_align_column_right",

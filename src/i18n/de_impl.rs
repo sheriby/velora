@@ -744,6 +744,9 @@ impl I18nStringsDe {
                 .paragraph_task_list
                 .unwrap_or(defaults.paragraph_task_list),
             paragraph_quote: self.paragraph_quote.unwrap_or(defaults.paragraph_quote),
+            paragraph_code_block: self
+                .paragraph_code_block
+                .unwrap_or(defaults.paragraph_code_block),
             table_axis_align_column_left: self
                 .table_axis_align_column_left
                 .unwrap_or(defaults.table_axis_align_column_left),

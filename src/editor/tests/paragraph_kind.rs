@@ -808,3 +808,201 @@ async fn a_list_item_with_children_only_switches_within_the_list_family(cx: &mut
         "写下去的字节读不回同一个结构"
     );
 }
+
+// ── 代码块那一档 ────────────────────────────────────────────────────────────
+
+#[gpui::test]
+async fn a_paragraph_becomes_a_fenced_code_block_and_the_second_press_gives_it_back(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(apply(&editor, BlockKindTarget::CodeBlock, cx));
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "```\n标题甲\n```\n\n正文乙\n",
+        "补一对围栏，正文原样进围栏；第二块那行不动"
+    );
+    assert_eq!(
+        kinds(&editor, cx),
+        vec![
+            "CodeBlock { language: None }".to_string(),
+            "Paragraph".to_string()
+        ],
+        "块树与写回的字节不一致"
+    );
+
+    assert!(apply(&editor, BlockKindTarget::CodeBlock, cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        TWO_PARAGRAPHS,
+        "已经在代码块里再点一次该退回正文，连那对围栏一起收掉"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "```\n标题甲\n```\n\n正文乙\n",
+        "一步撤销该退回上一次"
+    );
+}
+
+/// 带语言写的围栏换成正文：语言号是那一对围栏行的一部分，收掉围栏就一起没了；
+/// 写下去的字节必须读回同一份结构。
+#[gpui::test]
+async fn a_fenced_code_block_switches_to_plain_text_and_loses_the_info_string(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "```rust\n代码甲\n```\n\n正文乙\n".to_string(), None)
+    });
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(apply(&editor, BlockKindTarget::Paragraph, cx));
+    redraw(cx);
+
+    let text = buffer_text(&editor, cx);
+    assert_eq!(
+        text, "代码甲\n\n正文乙\n",
+        "只该动那三行围栏，正文与邻块原样"
+    );
+    assert_eq!(
+        kinds(&editor, cx),
+        vec!["Paragraph".to_string(), "Paragraph".to_string()],
+        "块树与写回的字节不一致"
+    );
+
+    let reread = cx.new(|cx| Editor::from_markdown(cx, text, None));
+    let reread_kinds = reread.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| format!("{:?}", visible.entity.read(cx).kind()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        reread_kinds,
+        kinds(&editor, cx),
+        "写下去的字节读不回同一个结构"
+    );
+}
+
+/// 缩进写法的代码块（没有围栏行）换成正文：那四格缩进跟着去掉，块树里也不留
+/// 「文件里本来是缩进」那本账。
+#[gpui::test]
+async fn an_indented_code_block_switches_to_plain_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "    缩进代码甲\n\n正文乙\n".to_string(), None)
+    });
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(apply(&editor, BlockKindTarget::Paragraph, cx));
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "缩进代码甲\n\n正文乙\n",
+        "缩进写法换成正文要把那四格去掉"
+    );
+    let flags = editor.read_with(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.read(cx);
+        (
+            block.record.code_is_indented,
+            block.record.source_fence_lines,
+        )
+    });
+    assert_eq!(
+        flags,
+        (false, None),
+        "换出缩进代码块之后还留着缩进那一族的账"
+    );
+}
+
+/// 代码块只给「退回正文」这一条出路：那份是原文，换成标题、列表或引用都会把
+/// 围栏里的多行内容按另一族的记号重写。
+#[gpui::test]
+async fn a_code_block_only_gives_way_to_plain_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "```\n代码甲\n代码乙\n```\n".to_string(), None)
+    });
+    redraw(cx);
+
+    let before = buffer_text(&editor, cx);
+    put_caret(&editor, 0, 3, cx);
+    for target in [
+        BlockKindTarget::Heading(2),
+        BlockKindTarget::BulletList,
+        BlockKindTarget::Quote,
+    ] {
+        assert!(
+            !apply(&editor, target, cx),
+            "{target:?} 不该把代码块换成别的形状"
+        );
+        assert!(
+            !available(&editor, target, cx),
+            "菜单里 {target:?} 那一行该跟着置灰"
+        );
+    }
+    assert_eq!(buffer_text(&editor, cx), before, "被拒的换种类动了字节");
+    assert!(
+        available(&editor, BlockKindTarget::CodeBlock, cx),
+        "同一处选区里「代码块」那一行（退回正文）该能点"
+    );
+}
+
+/// 要包的正文里本来就有围栏行：序列化改用 `~~~` 那一对，写下去的字节读回来还是代码块。
+#[gpui::test]
+async fn a_body_containing_a_fence_line_wraps_with_the_other_marker(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> ```\n>\n> 甲引用\n".to_string(), None)
+    });
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(
+        apply(&editor, BlockKindTarget::CodeBlock, cx),
+        "引用里那几行该能整块换进代码块"
+    );
+    redraw(cx);
+
+    let text = buffer_text(&editor, cx);
+    assert_eq!(
+        text, "~~~\n```\n\n甲引用\n~~~\n",
+        "正文里有反引号围栏，外侧那对改用波浪号"
+    );
+    assert_eq!(
+        kinds(&editor, cx),
+        vec!["CodeBlock { language: None }".to_string()],
+        "块树与写回的字节不一致"
+    );
+
+    let reread = cx.new(|cx| Editor::from_markdown(cx, text, None));
+    let reread_kinds = reread.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| format!("{:?}", visible.entity.read(cx).kind()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        reread_kinds,
+        kinds(&editor, cx),
+        "写下去的字节读不回同一个结构"
+    );
+}

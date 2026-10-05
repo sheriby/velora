@@ -34,8 +34,8 @@ const FORMAT_ROWS: [&str; 8] = [
     "subscript",
 ];
 
-/// 「段落」那一档：六个标题级别、正文、列表的三种与引用。
-const PARAGRAPH_ROWS: [&str; 11] = [
+/// 「段落」那一档：六个标题级别、正文、列表的三种、引用与代码块。
+const PARAGRAPH_ROWS: [&str; 12] = [
     "heading-1",
     "heading-2",
     "heading-3",
@@ -47,6 +47,7 @@ const PARAGRAPH_ROWS: [&str; 11] = [
     "numbered-list",
     "task-list",
     "quote",
+    "code-block",
 ];
 
 fn visible_block(
@@ -366,6 +367,44 @@ async fn clicking_the_bullet_row_on_an_item_cancels_the_marker(cx: &mut TestAppC
         buffer_text(&editor, cx),
         "alpha one\n\nbeta two\n",
         "「无序列表」没把这一项退回正文"
+    );
+}
+
+/// 「段落」档里的「代码块」这一行：点下去补一对围栏。退回正文那一半走同一条入口，
+/// 但代码块上弹不出这套菜单（那条口径在 `a_right_click_on_a_code_block_does_not_open_the_document_menu`），
+/// 所以那一步在这里按编辑器层入口验。
+#[gpui::test]
+async fn clicking_the_code_block_row_fences_the_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    select_head_of_first_block(&editor, cx);
+    right_click(&editor, 0, cx);
+    editor.update(cx, |editor, cx| {
+        editor.set_document_menu_hover(true, Some(DocumentSubmenu::Paragraph), cx)
+    });
+    redraw(cx);
+
+    click_row("code-block", cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "```\nalpha one\n```\n\nbeta two\n",
+        "菜单里的「代码块」没把这一段包进围栏"
+    );
+
+    editor.update(cx, |editor, cx| {
+        editor.apply_block_kind_to_selection(
+            crate::editor::paragraph_ops::BlockKindTarget::CodeBlock,
+            cx,
+        )
+    });
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "alpha one\n\nbeta two\n",
+        "同一处入口再点一次该退回正文，连那对围栏一起收掉"
     );
 }
 

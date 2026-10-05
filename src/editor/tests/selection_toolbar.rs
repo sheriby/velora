@@ -265,6 +265,7 @@ async fn the_paragraph_menu_offers_the_same_list_rows_as_the_context_menu(cx: &m
         "menu-item-numbered-list",
         "menu-item-task-list",
         "menu-item-quote",
+        "menu-item-code-block",
     ] {
         assert!(cx.debug_bounds(name).is_some(), "档位列表里没渲染出 {name}");
     }
@@ -282,6 +283,30 @@ async fn the_paragraph_menu_offers_the_same_list_rows_as_the_context_menu(cx: &m
         buffer_text(&editor, cx),
         TWO_PARAGRAPHS,
         "一次撤销该整步退回"
+    );
+}
+
+/// 代码块上弹不出正文右键菜单，退回正文那一步由工具栏这一档给：选中代码块里的文字，
+/// 下拉里的「代码块」这一行点下去就收掉围栏。
+#[gpui::test]
+async fn the_paragraph_row_unfences_a_code_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "```\n代码甲\n```\n\n正文乙\n".to_string(), None)
+    });
+    redraw(cx);
+
+    let block = visible_block(&editor, 0, cx);
+    editor.update(cx, |editor, _cx| editor.focus_block(block.entity_id()));
+    block.update(cx, |block, _cx| block.selected_range = 0..3);
+    redraw(cx);
+    click_element("toolbar-heading", cx);
+    click_element("menu-item-code-block", cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "代码甲\n\n正文乙\n",
+        "工具栏里的「代码块」没把这一段从围栏里放出来"
     );
 }
 

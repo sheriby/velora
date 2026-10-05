@@ -62,6 +62,7 @@ pub(crate) enum DocumentMenuCommand {
     NumberedList,
     TaskList,
     Quote,
+    CodeBlock,
     InsertTable,
     ToggleSourceView,
 }
@@ -90,6 +91,7 @@ impl DocumentMenuCommand {
             Self::NumberedList => "numbered-list",
             Self::TaskList => "task-list",
             Self::Quote => "quote",
+            Self::CodeBlock => "code-block",
             Self::InsertTable => "table",
             Self::ToggleSourceView => "toggle-source-view",
         }
@@ -105,6 +107,7 @@ impl DocumentMenuCommand {
             Self::NumberedList => Some(BlockKindTarget::NumberedList),
             Self::TaskList => Some(BlockKindTarget::TaskList),
             Self::Quote => Some(BlockKindTarget::Quote),
+            Self::CodeBlock => Some(BlockKindTarget::CodeBlock),
             Self::Format(_)
             | Self::Undo
             | Self::Redo
@@ -254,6 +257,7 @@ impl Editor {
                         DocumentMenuCommand::NumberedList,
                         DocumentMenuCommand::TaskList,
                         DocumentMenuCommand::Quote,
+                        DocumentMenuCommand::CodeBlock,
                     ]
                     .into_iter()
                     .map(item),
@@ -305,6 +309,9 @@ impl Editor {
             }
             DocumentMenuCommand::Quote => {
                 self.apply_block_kind_to_selection(BlockKindTarget::Quote, cx);
+            }
+            DocumentMenuCommand::CodeBlock => {
+                self.apply_block_kind_to_selection(BlockKindTarget::CodeBlock, cx);
             }
             DocumentMenuCommand::ToggleSourceView => {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
@@ -401,6 +408,7 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::NumberedList => strings.paragraph_numbered_list.clone(),
         DocumentMenuCommand::TaskList => strings.paragraph_task_list.clone(),
         DocumentMenuCommand::Quote => strings.paragraph_quote.clone(),
+        DocumentMenuCommand::CodeBlock => strings.paragraph_code_block.clone(),
         DocumentMenuCommand::InsertTable => strings.context_menu_table.clone(),
         DocumentMenuCommand::ToggleSourceView => strings.context_menu_toggle_source_view.clone(),
     }
@@ -447,6 +455,7 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
         | DocumentMenuCommand::NumberedList
         | DocumentMenuCommand::TaskList
         | DocumentMenuCommand::Quote
+        | DocumentMenuCommand::CodeBlock
         | DocumentMenuCommand::InsertTable => return None,
     };
     Some(SharedString::from(key_label(default_shortcut_key(
