@@ -597,7 +597,7 @@ pub(crate) fn app_preferences_from_toml_value(
                     endpoints
                         .iter()
                         .enumerate()
-                        .filter_map(|(index, endpoint)| {
+                        .map(|(index, endpoint)| {
                             let field = |key: &str| {
                                 endpoint
                                     .get(key)
@@ -605,12 +605,12 @@ pub(crate) fn app_preferences_from_toml_value(
                                     .unwrap_or_default()
                                     .to_string()
                             };
-                            let id = field("id");
                             // 无 id 的条目按序号补齐,不静默丢弃。
-                            let id = (!id.trim().is_empty())
-                                .then_some(id)
-                                .unwrap_or_else(|| format!("endpoint-{index}"));
-                            Some(AiEndpointPref {
+                            let mut id = field("id");
+                            if id.trim().is_empty() {
+                                id = format!("endpoint-{index}");
+                            }
+                            AiEndpointPref {
                                 id,
                                 name: field("name"),
                                 kind: crate::ai::ProviderKind::from_id(&field("kind"))
@@ -622,7 +622,7 @@ pub(crate) fn app_preferences_from_toml_value(
                                     .get("default")
                                     .and_then(toml::Value::as_bool)
                                     .unwrap_or(false),
-                            })
+                            }
                         })
                         .collect::<Vec<_>>()
                 })

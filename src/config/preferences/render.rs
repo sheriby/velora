@@ -1,4 +1,9 @@
 use super::*;
+
+/// 侧栏导航项:id、显示名、选中态、点击处理。
+type PreferencesNavItem =
+    (&'static str, String, bool, fn(&mut PreferencesWindow, &ClickEvent, &mut Window, &mut Context<PreferencesWindow>));
+
 impl Render for PreferencesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.system_appearance_subscription.is_none() {
@@ -37,7 +42,7 @@ impl Render for PreferencesWindow {
 
             // 侧边栏：左对齐 + 选中强调条（旧版把标签右对齐地堆在 30% 宽的栏里，
             // 看起来像没有设计）。
-            let nav_items: [(&'static str, String, bool, fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>)); 7] = [
+            let nav_items: [PreferencesNavItem; 7] = [
                 (
                     "preferences-nav-file",
                     strings.preferences_nav_file.clone(),
