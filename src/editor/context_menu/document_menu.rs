@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use super::super::{ContextMenuState, Editor};
 use crate::components::{
-    CopyAsMarkdown, effective_shortcut_key, menu::MENU_ROW_GAP, Copy, Cut, InlineFormat, Paste,
-    PasteAsPlainText, Redo, ShortcutCommand, ToggleViewMode, Undo,
+    Copy, CopyAsHtml, CopyAsMarkdown, Cut, InlineFormat, Paste, PasteAsPlainText, Redo, SelectAll,
+    ShortcutCommand, ToggleViewMode, Undo, effective_shortcut_key, menu::MENU_ROW_GAP,
 };
 use crate::editor::insert_ops::InsertBlockTarget;
 use crate::editor::paragraph_ops::BlockKindTarget;
@@ -60,6 +60,10 @@ pub(crate) enum DocumentMenuCommand {
     PasteAsPlainText,
     /// 「拷贝为 Markdown」：选区的源码文本（无选区时整篇）进剪贴板。
     CopyAsMarkdown,
+    /// 「全选」：一次选当前这一块，再选整篇（与 ⌘A 那一条循环同源）。
+    SelectAll,
+    /// 「拷贝为 HTML」：整篇的 HTML 进剪贴板，与导出那一条同一份内容。
+    CopyAsHtml,
     Format(InlineFormat),
     Heading(u8),
     NormalText,
@@ -96,6 +100,8 @@ impl DocumentMenuCommand {
             Self::Paste => "paste",
             Self::PasteAsPlainText => "paste-as-plain-text",
             Self::CopyAsMarkdown => "copy-as-markdown",
+            Self::SelectAll => "select-all",
+            Self::CopyAsHtml => "copy-as-html",
             Self::Format(InlineFormat::Bold) => "bold",
             Self::Format(InlineFormat::Italic) => "italic",
             Self::Format(InlineFormat::Underline) => "underline",
@@ -145,6 +151,8 @@ impl DocumentMenuCommand {
             | Self::Paste
             | Self::PasteAsPlainText
             | Self::CopyAsMarkdown
+            | Self::SelectAll
+            | Self::CopyAsHtml
             | Self::InsertTable
             | Self::InsertImage
             | Self::InsertCodeBlock
@@ -220,8 +228,19 @@ impl Editor {
                 enabled: editable && cx.read_from_clipboard().is_some(),
             },
             DocumentMenuRow::Item {
+                command: DocumentMenuCommand::SelectAll,
+                name: "select-all",
+                enabled: !self.document.root_blocks().is_empty(),
+            },
+            DocumentMenuRow::Separator,
+            DocumentMenuRow::Item {
                 command: DocumentMenuCommand::CopyAsMarkdown,
                 name: "copy-as-markdown",
+                enabled: !self.document.root_blocks().is_empty(),
+            },
+            DocumentMenuRow::Item {
+                command: DocumentMenuCommand::CopyAsHtml,
+                name: "copy-as-html",
                 enabled: !self.document.root_blocks().is_empty(),
             },
             DocumentMenuRow::Separator,
@@ -398,6 +417,8 @@ impl Editor {
             DocumentMenuCommand::CopyAsMarkdown => {
                 window.dispatch_action(Box::new(CopyAsMarkdown), cx);
             }
+            DocumentMenuCommand::SelectAll => window.dispatch_action(Box::new(SelectAll), cx),
+            DocumentMenuCommand::CopyAsHtml => window.dispatch_action(Box::new(CopyAsHtml), cx),
             DocumentMenuCommand::Format(format) => {
                 self.toggle_inline_format_on_selection(format, cx);
             }
@@ -529,6 +550,8 @@ pub(crate) fn document_menu_label(
             strings.context_menu_paste_as_plain_text.clone()
         }
         DocumentMenuCommand::CopyAsMarkdown => strings.context_menu_copy_as_markdown.clone(),
+        DocumentMenuCommand::SelectAll => strings.preferences_shortcut_select_all.clone(),
+        DocumentMenuCommand::CopyAsHtml => strings.menu_copy_as_html.clone(),
         DocumentMenuCommand::Format(format) => inline_format_label(format, strings),
         DocumentMenuCommand::Heading(level) => match level {
             1 => strings.paragraph_heading1.clone(),
@@ -584,6 +607,9 @@ pub(crate) fn document_menu_shortcut(
         DocumentMenuCommand::Paste => ShortcutCommand::Paste,
         DocumentMenuCommand::PasteAsPlainText => ShortcutCommand::PasteAsPlainText,
         DocumentMenuCommand::CopyAsMarkdown => ShortcutCommand::CopyAsMarkdown,
+        DocumentMenuCommand::SelectAll => ShortcutCommand::SelectAll,
+        // 「拷贝为 HTML」的 ⌘⇧C 是写死的一份绑定（src/components/actions.rs 末尾），
+        // 不在键位表里，因此这一列留空——等它补成表内条目时一起显示。
         DocumentMenuCommand::Format(InlineFormat::Bold) => ShortcutCommand::BoldSelection,
         DocumentMenuCommand::Format(InlineFormat::Italic) => ShortcutCommand::ItalicSelection,
         DocumentMenuCommand::Format(InlineFormat::Underline) => ShortcutCommand::UnderlineSelection,
@@ -614,7 +640,8 @@ pub(crate) fn document_menu_shortcut(
         | DocumentMenuCommand::InsertMathBlock
         | DocumentMenuCommand::InsertSeparator
         | DocumentMenuCommand::InsertToc
-        | DocumentMenuCommand::InsertFrontMatter => return None,
+        | DocumentMenuCommand::InsertFrontMatter
+        | DocumentMenuCommand::CopyAsHtml => return None,
     };
     Some(SharedString::from(key_label(&effective_shortcut_key(
         shortcut, cx,

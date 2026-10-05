@@ -10,15 +10,17 @@ use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
-/// 主菜单十一行加三条分节：行 id 与 `document_menu_rows` 里给的一致。
-const MAIN_ROWS: [&str; 11] = [
+/// 主菜单十三行加四条分节：行 id 与 `document_menu_rows` 里给的一致。
+const MAIN_ROWS: [&str; 13] = [
     "undo",
     "redo",
     "cut",
     "copy",
     "paste",
     "paste-as-plain-text",
+    "select-all",
     "copy-as-markdown",
+    "copy-as-html",
     "format",
     "paragraph",
     "insert",
@@ -37,6 +39,56 @@ const FORMAT_ROWS: [&str; 10] = [
     "link",
     "clear-format",
 ];
+
+/// 菜单里的「全选」与 ⌘A 是同一条循环：第一次选当前这一块，紧接着再来一次选整篇。
+#[gpui::test]
+async fn the_select_all_row_follows_the_same_cycle_as_the_key(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    click_row("select-all", cx);
+    let block = visible_block(&editor, 0, cx);
+    assert_eq!(
+        block.read_with(cx, |block, _| block.selected_range.clone()),
+        0..9,
+        "第一次该把「alpha one」这九个字选上"
+    );
+    assert!(
+        editor.read_with(cx, |editor, _| editor.cross_block_selection.is_none()),
+        "第一次不该直接跳到整篇"
+    );
+
+    right_click(&editor, 0, cx);
+    click_row("select-all", cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.cross_block_selection.is_some()),
+        "紧接着再来一次该选整篇"
+    );
+}
+
+/// 「拷贝为 HTML」给的是渲染过的那份，且不动文档字节。
+#[gpui::test]
+async fn the_copy_as_html_row_puts_rendered_html_on_the_clipboard(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let document = "前 **加粗** 后\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, document.to_string(), None));
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    click_row("copy-as-html", cx);
+    let html = cx
+        .update(|_window, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+        .expect("剪贴板里该有那份 HTML");
+    assert!(
+        html.contains("<strong>加粗</strong>"),
+        "拷贝为 HTML 给的该是渲染过的那份：{html}"
+    );
+    assert_eq!(buffer_text(&editor, cx), document, "拷贝不该改文档");
+}
 
 /// 「段落」那一档：六个标题级别、正文、列表的三种、引用与代码块。
 const PARAGRAPH_ROWS: [&str; 12] = [
@@ -677,6 +729,7 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         DocumentMenuCommand::Undo,
         DocumentMenuCommand::Copy,
         DocumentMenuCommand::Paste,
+        DocumentMenuCommand::SelectAll,
         DocumentMenuCommand::ToggleSourceView,
     ] {
         let label = shortcut_of(command, cx).expect("这几行都有默认键位");
@@ -685,6 +738,17 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
             "{label} 这一列没渲染出来"
         );
     }
+    assert_eq!(
+        shortcut_of(DocumentMenuCommand::SelectAll, cx).as_deref(),
+        Some("⌘A"),
+        "「全选」那一列显示的是与 ⌘A 同一条键位"
+    );
+    // 「拷贝为 HTML」的 ⌘⇧C 是写死的一份绑定，不在键位表里，这一列留空。
+    assert_eq!(
+        shortcut_of(DocumentMenuCommand::CopyAsHtml, cx),
+        None,
+        "没有表内键位的行不该凭空造一个"
+    );
 }
 
 /// 「切换源码模式」这一行派发的是与 `⌘/` 同一个动作，两条路径不能各自长出一份行为。
