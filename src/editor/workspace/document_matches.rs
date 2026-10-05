@@ -159,6 +159,20 @@ impl Editor {
     }
 }
 
+/// 命中所在行的起止（行末不含 LF）。文档范围投影与工作区扫描共用这一份算法，
+/// 两边算出的行内偏移、预览因此不会分叉。
+pub(crate) fn hit_line_bounds(source: &str, range: &Range<usize>) -> (usize, usize) {
+    let line_start = source[..range.start]
+        .rfind('\n')
+        .map(|at| at + 1)
+        .unwrap_or(0);
+    let line_end = source[range.end..]
+        .find('\n')
+        .map(|offset| range.end + offset)
+        .unwrap_or(source.len());
+    (line_start, line_end)
+}
+
 /// 把命中表投影成侧栏的结果列表，`limit` 是原来的 200 条上限。
 ///
 /// 序号口径与被替换掉的手写实现逐位一致：每根「含命中的行」计一个序号，同一行的
@@ -179,14 +193,7 @@ pub(crate) fn project_hits_into_rows(
         if out.len() >= limit {
             break;
         }
-        let line_start = source[..hit.range.start]
-            .rfind('\n')
-            .map(|at| at + 1)
-            .unwrap_or(0);
-        let line_end = source[hit.range.end..]
-            .find('\n')
-            .map(|offset| hit.range.end + offset)
-            .unwrap_or(source.len());
+        let (line_start, line_end) = hit_line_bounds(source, &hit.range);
         let line_text = &source[line_start..line_end];
         let this_line = hit
             .line

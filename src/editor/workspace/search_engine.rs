@@ -99,6 +99,58 @@ impl CompiledQuery {
         hits
     }
 
+    /// 每根「含命中的行」只留第一个命中，最多取 `max_lines` 行，够数就让引擎
+    /// 停下不再读后面的内容。对应 ripgrep CLI 的 `-m/--max-count`（按行计），
+    /// 工作区结果列表的口径正是「一行一条」，所以它用这个而不是 `find_all`。
+    pub(crate) fn find_first_per_line(&self, haystack: &[u8], max_lines: usize) -> Vec<SearchHit> {
+        if self.is_empty() || max_lines == 0 {
+            return Vec::new();
+        }
+        let Some(matcher) = self.matcher.as_ref() else {
+            // 模糊模式没有行级早停可用（子序列匹配走的是整行文本），
+            // 先算全表再按行取第一条。
+            let all = match self.fuzzy {
+                true => Self::fuzzy_hits(haystack, &self.query),
+                false => return Vec::new(),
+            };
+            return Self::first_hit_per_line(all, max_lines);
+        };
+        let mut hits = Vec::new();
+        let mut searcher = SearcherBuilder::new().line_number(true).build();
+        {
+            let mut sink = FirstPerLineSink {
+                matcher,
+                haystack,
+                hits: &mut hits,
+                last_line: None,
+                max_lines,
+            };
+            let _ = searcher.search_slice(matcher.as_ref(), haystack, &mut sink);
+        }
+        hits
+    }
+
+    /// 把「每行可能有好几个命中」的表压成「每行只留第一个」，取满 `max_lines` 行为止。
+    pub(crate) fn first_hit_per_line(hits: Vec<SearchHit>, max_lines: usize) -> Vec<SearchHit> {
+        let mut out = Vec::with_capacity(max_lines.min(hits.len()));
+        let mut last_line: Option<u64> = None;
+        for hit in hits {
+            if out.len() >= max_lines {
+                break;
+            }
+            let Some(line) = hit.line else {
+                out.push(hit);
+                continue;
+            };
+            if Some(line) == last_line {
+                continue;
+            }
+            last_line = Some(line);
+            out.push(hit);
+        }
+        out
+    }
+
     /// 单行里的命中区间。给「手上只有一行文本」的调用方用（逐行扫磁盘文件、
     /// 逐块扫缓冲区切片）。
     pub(crate) fn find_in_line(&self, line: &str) -> Vec<Range<usize>> {
@@ -180,32 +232,81 @@ impl Sink for HitSink<'_> {
 
     fn matched(&mut self, _searcher: &Searcher, report: &SinkMatch) -> Result<bool, Self::Error> {
         let base = report.absolute_byte_offset() as usize;
-        // 逐行策略下 bytes() 是整行含终止符；把终止符摘掉，命中就不会跨行——
-        // 这与被替换掉的手写层口径一致（`strip_suffix('\n')`）。
-        let reported = report.bytes();
-        let line = match reported.last() {
-            Some(b'\n') => &reported[..reported.len() - 1],
-            _ => reported,
-        };
-        let mut local: Vec<(usize, usize)> = Vec::new();
-        // RegexMatcher 的错误类型是 NoError（不可能失败）；这里只是把结果消费掉，
-        // 真出错也只会退回「无命中」，不会 panic（NoError 的 Display 自己是会 panic 的，
-        // 所以不要把 error 拿出来格式化）。
-        self.matcher
-            .find_iter(line, |matched| {
-                local.push((matched.start(), matched.end()));
-                true
-            })
-            .map_err(|_| std::io::Error::other("matcher failed"))?;
-        for (start, end) in local {
-            let range = (base + start)..(base + end);
-            if CompiledQuery::is_on_char_boundary(self.haystack, &range) {
-                self.hits.push(SearchHit {
-                    range,
-                    line: report.line_number(),
-                });
-            }
+        for range in local_matches(self.matcher, report, self.haystack, base)? {
+            self.hits.push(SearchHit {
+                range,
+                line: report.line_number(),
+            });
         }
         Ok(true)
     }
+}
+
+/// 每根含命中的行只留第一个命中，留够 `max_lines` 行就交回 `false` 让引擎停止读取。
+struct FirstPerLineSink<'a> {
+    matcher: &'a Arc<RegexMatcher>,
+    haystack: &'a [u8],
+    hits: &'a mut Vec<SearchHit>,
+    /// 上一个已收录的命中起始行。行模式下每个 report 就是一行，这个字段是
+    /// 为「同一个行号被报两次」兜底——跨行模式（阶段 3）一定会用到。
+    last_line: Option<u64>,
+    max_lines: usize,
+}
+
+impl Sink for FirstPerLineSink<'_> {
+    type Error = std::io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, report: &SinkMatch) -> Result<bool, Self::Error> {
+        let base = report.absolute_byte_offset() as usize;
+        let line = report.line_number();
+        if self.last_line == line && line.is_some() {
+            return Ok(self.hits.len() < self.max_lines);
+        }
+        let Some(range) = local_matches(self.matcher, report, self.haystack, base)?
+            .into_iter()
+            .next()
+        else {
+            return Ok(true);
+        };
+        self.last_line = line;
+        self.hits.push(SearchHit { range, line });
+        // 收满就停：`false` 让 grep-searcher 不再往下看剩余内容。
+        Ok(self.hits.len() < self.max_lines)
+    }
+}
+
+/// 一次 report 里的全部命中区间（绝对字节）。
+///
+/// `SinkMatch::bytes()` 给的是命中所在的**整行**，不是命中本身，所以要在这段
+/// 字节上再跑一次 `Matcher::find_iter` 才能拿到精确区间——ripgrep 自己做高亮
+/// 也是这个路子。
+fn local_matches(
+    matcher: &RegexMatcher,
+    report: &SinkMatch<'_>,
+    haystack: &[u8],
+    base: usize,
+) -> Result<Vec<Range<usize>>, std::io::Error> {
+    // 逐行策略下 bytes() 是整行含终止符；把终止符摘掉，命中就不会跨行——
+    // 这与被替换掉的手写层口径一致（`strip_suffix('\n')`）。
+    let reported = report.bytes();
+    let line = match reported.last() {
+        Some(b'\n') => &reported[..reported.len() - 1],
+        _ => reported,
+    };
+    let mut local: Vec<(usize, usize)> = Vec::new();
+    // RegexMatcher 的错误类型是 NoError（不可能失败）；这里只是把结果消费掉，
+    // 真出错也只会退回「无命中」，不会 panic（NoError 的 Display 自己是会 panic 的，
+    // 所以不要把 error 拿出来格式化）。
+    matcher
+        .find_iter(line, |matched| {
+            local.push((matched.start(), matched.end()));
+            true
+        })
+        .map_err(|_| std::io::Error::other("matcher failed"))?;
+    Ok(local
+        .into_iter()
+        .map(|(start, end)| (base + start)..(base + end))
+        // 硬闸门：落在多字节字符内部的区间一律丢掉（见模块说明第 2 条）。
+        .filter(|range| CompiledQuery::is_on_char_boundary(haystack, range))
+        .collect())
 }

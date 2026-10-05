@@ -323,3 +323,78 @@ fn find_in_line_matches_a_single_line_without_offsets() {
     );
     assert!(engine.find_in_line("").is_empty());
 }
+
+#[test]
+fn first_per_line_keeps_the_first_hit_of_each_matching_line() {
+    let source = "needle one and NEEDLE two\nquiet\n第三行 needle 在此\n";
+    let engine = compile("needle", SearchOptions::default());
+    let hits = engine.find_first_per_line(source.as_bytes(), 10);
+    assert_eq!(
+        hits.iter()
+            .map(|hit| (hit.range.clone(), hit.line))
+            .collect::<Vec<_>>(),
+        vec![(0..6, Some(1)), (42..48, Some(3))],
+        "每根含命中的行只留第一个命中，行号按 LF 数（第三行起点 32，第三行 6 字节 + 空格 1 字节）"
+    );
+}
+
+#[test]
+fn first_per_line_stops_once_it_has_enough_lines() {
+    // 工作区的 200 条上限走的是这条早停：收满就不读文件剩余部分。
+    let source = "a needle\n".repeat(500);
+    let engine = compile("needle", SearchOptions::default());
+    let hits = engine.find_first_per_line(source.as_bytes(), 3);
+    assert_eq!(hits.len(), 3, "要 3 行就给 3 行");
+    assert_eq!(
+        hits.iter().map(|hit| hit.line).collect::<Vec<_>>(),
+        vec![Some(1), Some(2), Some(3)]
+    );
+    assert!(engine.find_first_per_line(source.as_bytes(), 0).is_empty());
+}
+
+#[test]
+fn first_per_line_is_just_find_all_grouped_by_line() {
+    // 两条出口必须是同一个规则：早停只是提前收工，不能改变留下来的那些。
+    let corpora = [
+        "needle one and NEEDLE two\nquiet\n第三行 needle 在此\n",
+        "第一行 needle\n第二行 needle 与 needle 两次\n没有命中\n结尾 needle",
+        "a\nneedle\r\nneedle at crlf\r\n\n\nneedle\n",
+        "中文 needle 中文\n",
+    ];
+    let modes = [
+        ("默认", SearchOptions::default()),
+        (
+            "区分大小写",
+            SearchOptions {
+                match_case: true,
+                ..SearchOptions::default()
+            },
+        ),
+        (
+            "正则",
+            SearchOptions {
+                use_regex: true,
+                ..SearchOptions::default()
+            },
+        ),
+        (
+            "模糊",
+            SearchOptions {
+                fuzzy: true,
+                ..SearchOptions::default()
+            },
+        ),
+    ];
+    for source in corpora {
+        for (label, options) in modes {
+            let engine = compile("needle", options);
+            let grouped =
+                CompiledQuery::first_hit_per_line(engine.find_all(source.as_bytes()), usize::MAX);
+            let early_stopped = engine.find_first_per_line(source.as_bytes(), usize::MAX);
+            assert_eq!(
+                early_stopped, grouped,
+                "语料 {source:?} 模式 {label}：早停出口与全表分组必须同一条"
+            );
+        }
+    }
+}

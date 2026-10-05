@@ -11,7 +11,7 @@
 //! A 的命中区间当成 B 的，实测表现是跳转后高亮整体消失。键里补了缓冲区身份号
 //! 之后才修好，这条用例就是那段过程的记录。
 
-use super::super::{Editor, WorkspaceSearchScope, WorkspaceTab};
+use super::super::{Editor, SearchHit, WorkspaceSearchScope, WorkspaceTab};
 use crate::components::UndoCaptureKind;
 use gpui::TestAppContext;
 use std::fs;
@@ -53,6 +53,20 @@ fn table_ranges(editor: &gpui::Entity<Editor>, cx: &mut TestAppContext) -> Vec<s
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default()
+    })
+}
+
+/// 表里那份命中集合的 `Arc` 本体（不是地址）；断言「复用/重算」时抓着它才可靠。
+fn table_hits(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut TestAppContext,
+) -> Option<std::sync::Arc<Vec<SearchHit>>> {
+    editor.read_with(cx, |editor, _cx| {
+        editor
+            .workspace
+            .document_matches
+            .as_ref()
+            .map(|table| table.hits.clone())
     })
 }
 
@@ -222,39 +236,31 @@ async fn the_hit_table_is_reused_while_nothing_changes(cx: &mut TestAppContext) 
     });
     cx.run_until_parked();
     search_document(&editor, "needle", cx);
-    let first = editor.read_with(cx, |editor, _cx| {
-        editor
-            .workspace
-            .document_matches
-            .as_ref()
-            .map(|table| std::sync::Arc::as_ptr(&table.hits))
-    });
-    // 同一个查询、同一版内容再要一次：必须拿到同一份表（指针相同），不重扫文档。
+    // 三份都抓着 `Arc` 本体而不是裸地址：旧表一旦被替换，`Arc::as_ptr` 记下的
+    // 那块地址就还给了分配器，新表很可能正好落在同一个地址上，于是「相同」与
+    // 「不同」两种断言同时失真（阶段 2 改了堆使用形状，这条就这样假红过一轮）。
+    // 抓着 Arc 就保证了地址不会被复用，指针比较才是真的在比「是不是同一份表」。
+    let first = table_hits(&editor, cx).expect("第一次搜索要有表");
+    // 同一个查询、同一版内容再要一次：必须拿到同一份表，不重扫文档。
     editor.update(cx, |editor, cx| {
         assert!(editor.document_matches(cx).is_some());
     });
-    let second = editor.read_with(cx, |editor, _cx| {
-        editor
-            .workspace
-            .document_matches
-            .as_ref()
-            .map(|table| std::sync::Arc::as_ptr(&table.hits))
-    });
-    assert_eq!(first, second, "没有任何东西变化时不该重算命中表");
+    let second = table_hits(&editor, cx).expect("再要一次还要有表");
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &second),
+        "没有任何东西变化时不该重算命中表"
+    );
 
     // 换个开关就必须重算。
     editor.update(cx, |editor, _cx| {
         editor.workspace.search_match_case = true;
     });
     search_document(&editor, "needle", cx);
-    let third = editor.read_with(cx, |editor, _cx| {
-        editor
-            .workspace
-            .document_matches
-            .as_ref()
-            .map(|table| std::sync::Arc::as_ptr(&table.hits))
-    });
-    assert_ne!(first, third, "搜索开关变了必须重算命中表");
+    let third = table_hits(&editor, cx).expect("换开关之后还要有表");
+    assert!(
+        !std::sync::Arc::ptr_eq(&first, &third),
+        "搜索开关变了必须重算命中表"
+    );
 }
 
 #[gpui::test]

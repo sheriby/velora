@@ -61,6 +61,15 @@ impl SearchMatcher {
         }
     }
 
+    /// 每根含命中的行只留第一个命中，最多 `max_lines` 行，收满引擎就停止读取。
+    /// 工作区结果列表的「一行一条」口径走这里（相当于 `rg -m`）。
+    pub(crate) fn find_first_line_hits(&self, source: &str, max_lines: usize) -> Vec<SearchHit> {
+        match self.engine.as_ref() {
+            Some(engine) => engine.find_first_per_line(source.as_bytes(), max_lines),
+            None => Vec::new(),
+        }
+    }
+
     /// Whether a filename matches (fuzzy subsequence or substring).
     pub(crate) fn matches_filename(&self, name: &str) -> bool {
         if self.options.fuzzy && !self.options.use_regex {
@@ -372,27 +381,26 @@ pub(crate) fn search_single_file(
     let Some(source) = cached_file_source(&file.path) else {
         return;
     };
-    let mut content_ordinal = 0usize;
-    for (index, raw_line) in source.split_inclusive('\n').enumerate() {
-        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        let matches = matcher.find_in_line(line);
-        if let Some(first) = matches.first() {
-            hits.push(WorkspaceSearchHit {
-                path: file.path.clone(),
-                label: file.label.clone(),
-                line: Some(index + 1),
-                match_range: Some(first.clone()),
-                source_range: None,
-                match_ordinal: Some(content_ordinal),
-                preview: line.trim().chars().take(140).collect(),
-            });
-            content_ordinal += 1;
-            // 每文件全量收集（此前硬编码 3 条，用户报修「结果不全」）；
-            // 只受全局 limit 约束。
-            if hits.len() >= limit {
-                break;
-            }
-        }
+    // 行切分、字节偏移记账、模式编译与匹配全部交给 ripgrep；这里只把它交回的
+    // 「每根含命中行的第一个命中」换算成侧栏一行（行内偏移 + 预览）。
+    // `remaining` 是本轮还剩多少条位置：每文件全量收集（此前硬编码 3 条，用户
+    // 报修「结果不全」），只受全局 limit 约束——收满引擎就停止读文件剩余部分。
+    let remaining = limit - hits.len();
+    let file_hits = matcher.find_first_line_hits(&source, remaining);
+    for (ordinal, hit) in file_hits.iter().enumerate() {
+        let (line_start, line_end) = hit_line_bounds(&source, &hit.range);
+        let line_number = hit
+            .line
+            .unwrap_or_else(|| source[..line_start].matches('\n').count() as u64 + 1);
+        hits.push(WorkspaceSearchHit {
+            path: file.path.clone(),
+            label: file.label.clone(),
+            line: Some(line_number as usize),
+            match_range: Some((hit.range.start - line_start)..(hit.range.end - line_start)),
+            source_range: None,
+            match_ordinal: Some(ordinal),
+            preview: source[line_start..line_end].trim().chars().take(140).collect(),
+        });
     }
 }
 
