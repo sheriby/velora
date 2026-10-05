@@ -261,10 +261,25 @@
             assert_eq!(visible.len(), 1);
             let block = visible[0].entity.read(cx);
             assert_eq!(block.kind(), BlockKind::MathBlock);
-            assert_eq!(block.display_text(), "$$\n\n$$");
+            assert_eq!(block.display_text(), "$$\n$$");
             assert_eq!(block.selected_range, 3..3);
             assert!(block.uses_raw_text_editing());
-            assert_eq!(editor.document.markdown_text(cx), "$$\n\n$$");
+            assert_eq!(editor.document.markdown_text(cx), "$$\n$$");
+            // 空正文那对记号必须紧挨着：`$$\n\n$$` 读回来是两块原始 markdown。
+            let written = editor.document.markdown_text(cx);
+            let reread = cx.new(|cx| Editor::from_markdown(cx, written.clone(), None));
+            let reread_kinds = reread
+                .read(cx)
+                .document
+                .root_blocks()
+                .iter()
+                .map(|block| block.read(cx).kind())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                reread_kinds,
+                vec![BlockKind::MathBlock],
+                "打字产生的空公式块，落盘字节读回来不是一个公式块：{written:?}"
+            );
         });
     }
 
@@ -351,10 +366,10 @@
             let visible = editor.document.visible_blocks();
             assert_eq!(visible.len(), 2);
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::MathBlock);
-            assert_eq!(visible[0].entity.read(cx).display_text(), "$$\n\n$$");
+            assert_eq!(visible[0].entity.read(cx).display_text(), "$$\n$$");
             assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
             assert_eq!(visible[1].entity.read(cx).display_text(), "");
-            assert_eq!(editor.document.markdown_text(cx), "$$\n\n$$\n\n");
+            assert_eq!(editor.document.markdown_text(cx), "$$\n$$\n\n");
         });
     }
 

@@ -174,6 +174,38 @@
         });
     }
 
+    /// 收尾记号前空一行是常见写法（在公式里按回车、或手写出一对紧挨空行的 `$$`）：
+    /// 那一行是这个块的结束行，不是下一块的开头，整块不能散成原始 markdown。
+    #[gpui::test]
+    async fn display_math_region_survives_a_blank_line_before_the_closing_marker(
+        cx: &mut TestAppContext,
+    ) {
+        for markdown in [
+            "$$\n\n$$".to_string(),
+            "$$\n\\int_0^1 x^2 dx\n\n$$".to_string(),
+            "前段\n\n$$\na = 1\n\n$$\n\n后段".to_string(),
+        ] {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
+            editor.update(cx, |editor, cx| {
+                let kinds = editor
+                    .document
+                    .visible_blocks()
+                    .iter()
+                    .map(|item| item.entity.read(cx).kind())
+                    .collect::<Vec<_>>();
+                assert!(
+                    kinds.contains(&BlockKind::MathBlock),
+                    "公式块在空行处断了：{markdown:?} 读回 {kinds:?}"
+                );
+                assert_eq!(
+                    editor.document.markdown_text(cx),
+                    markdown,
+                    "读回来再写出去不该改字节"
+                );
+            });
+        }
+    }
+
     #[gpui::test]
     async fn imports_single_line_display_math_between_paragraphs(cx: &mut TestAppContext) {
         let markdown = "before\n$$x^2$$\nafter".to_string();

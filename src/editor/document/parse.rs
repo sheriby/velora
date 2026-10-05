@@ -578,7 +578,13 @@ pub(crate) fn collect_display_math_region(lines: &[String], start: usize) -> usi
                 lookahead += 1;
             }
 
-            if lookahead >= lines.len() || looks_like_root_block_start(lines, lookahead) {
+            // 空行后面那行以 `$$` 收尾时，它是本块的结束行而不是下一块的开头
+            // （`$$\n\n$$`、以及在公式里空一行都是这种形状），继续往后扫。
+            let closes_this_region =
+                lookahead < lines.len() && lines[lookahead].trim_end().ends_with("$$");
+            let region_ends = lookahead >= lines.len()
+                || (!closes_this_region && looks_like_root_block_start(lines, lookahead));
+            if region_ends {
                 return lookahead;
             }
         }

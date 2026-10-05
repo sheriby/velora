@@ -308,8 +308,7 @@ impl Editor {
             InsertBlockTarget::CodeBlock => {
                 BlockRecord::with_plain_text(BlockKind::CodeBlock { language: None }, String::new())
             }
-            // 两条记号紧挨着：`$$\n\n$$` 这种中间空一行的写法解析器不认（会被切成两块
-            // 原始 markdown），空公式只能写成一前一后两行。
+            // 空公式的两条记号紧挨着写，与打字那一路（`enter_math_block` 的空正文）同一个形状。
             InsertBlockTarget::MathBlock => BlockRecord::math("$$\n$$".to_string()),
             InsertBlockTarget::Separator => {
                 BlockRecord::with_plain_text(BlockKind::Separator, String::new())
