@@ -112,7 +112,7 @@ async fn unconfigured_action_opens_preferences(cx: &mut TestAppContext) {
 
     // 用例之间共享 config.toml:显式清空端点列表,保证「无可用端点」。
     cx.update(|_window, cx| {
-        EditorSettings::set_ai_in_memory(AiSettings::default(), cx)
+        EditorSettings::set_ai_in_memory(AiSettings::empty(), cx)
     });
     editor.update_in(cx, |editor, window, cx| {
         editor.open_ai_assistant(window, cx);
@@ -487,7 +487,7 @@ async fn empty_endpoint_list_shows_settings_entry(cx: &mut TestAppContext) {
     init_test_app(cx);
     // 面板「未配置」分支:列表为空时,菜单显示引导入口而不是动作列表。
     cx.update(|cx| {
-        EditorSettings::set_ai_in_memory(AiSettings::default(), cx);
+        EditorSettings::set_ai_in_memory(AiSettings::empty(), cx);
     });
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         crate::editor::Editor::from_markdown(cx, "第一段".to_string(), None)

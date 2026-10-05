@@ -23,14 +23,21 @@ mod chat_completions;
 mod messages;
 mod responses;
 
-/// 面板/设置页共用的默认客户端:连接 10s,整体 5min 上限;
-/// 流式取消走 cancel 标志,不靠超时。
+/// 面板/设置页共用的默认客户端(进程级单例,复用连接池):
+/// 连接 10s、整体 5min 上限。「停止」走 cancel 标志,按 chunk 粒度生效;
+/// reqwest 的 blocking 构建器没有读空闲超时,阻塞中的单次 read 最长要等
+/// 整体超时才返回——这是传输层的已知边界。
 pub(crate) fn default_client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(300))
-        .build()
-        .expect("default http client")
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(300))
+                .build()
+                .expect("default http client")
+        })
+        .clone()
 }
 
 /// 请求失败的原因。网络细节原样保留,给用户看的措辞由 UI 层按
@@ -123,14 +130,18 @@ pub(crate) fn send_post(
     for (name, value) in headers {
         request = request.header(*name, value);
     }
-    let mut response = request
+    let response = request
         .body(body)
         .send()
         .map_err(|error| AiRequestError::Network(error.to_string()))?;
     let status = response.status();
     if !status.is_success() {
+        // 错误体截断在 64 KiB:够放下任何 provider 的诊断,不给恶意/异常
+        // 服务端灌爆内存的机会。
         let mut error_body = String::new();
-        let _ = response.read_to_string(&mut error_body);
+        let _ = response
+            .take(64 * 1024)
+            .read_to_string(&mut error_body);
         let mut message = message_from_error_body(&error_body);
         if message.is_empty() {
             message = AiRequestError::status_hint(status.as_u16())
@@ -263,7 +274,11 @@ pub(crate) fn message_from_error_body(body: &str) -> String {
     }
     let mut text = body.trim().to_string();
     if text.len() > 300 {
-        text = format!("{}…", &text[..text.floor_char_boundary(300)]);
+        let mut cut = 300;
+        while cut > 0 && !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text = format!("{}…", &text[..cut]);
     }
     text
 }

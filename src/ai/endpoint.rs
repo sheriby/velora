@@ -13,9 +13,6 @@
 /// - `Responses`:OpenAI Responses API(instructions + input,SSE 事件流)。
 /// - `Messages`:Anthropic Messages API(x-api-key + 顶层 system,content 块流)。
 /// - `Stub`:内置演示后端,无网络、按动作回放剧本,供试用与测试。
-// Responses/Messages/Stub 的构造点与元数据的读取方在配置层/设置页
-// (本系列后续提交)接线;过渡期放行。
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum ProviderKind {
     #[default]
@@ -27,7 +24,6 @@ pub(crate) enum ProviderKind {
 
 impl ProviderKind {
     /// 稳定存储与配置文件用的标识。
-    #[allow(dead_code)]
     pub(crate) fn id(self) -> &'static str {
         match self {
             ProviderKind::ChatCompletions => "chat-completions",
@@ -59,6 +55,11 @@ impl ProviderKind {
     /// 是否需要服务地址(stub 不需要)。
     pub(crate) fn needs_base_url(self) -> bool {
         !matches!(self, ProviderKind::Stub)
+    }
+
+    /// 是否为内置演示后端(UI 层用它把协议名换成「内置演示」)。
+    pub(crate) fn is_stub(self) -> bool {
+        matches!(self, ProviderKind::Stub)
     }
 
     pub(crate) const ALL: &'static [ProviderKind] = &[

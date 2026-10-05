@@ -266,4 +266,29 @@ mod tests {
             "Third-party sources and licenses are documented in the project."
         );
     }
+
+    #[test]
+    fn every_registered_key_exists_and_is_non_empty_in_both_builtin_languages() {
+        // 守护:i18n 五处(strings/zh/en/de/de_impl/keys)任何一处漏改,
+        // 这里先红。键非空是硬要求——空串会渲染成空白 UI。
+        use serde_json::Value;
+        for (language_id, strings) in [
+            ("zh-CN", I18nStrings::zh_cn()),
+            ("en-US", I18nStrings::en_us()),
+        ] {
+            let serialized = serde_json::to_value(&strings).expect("strings serialize");
+            let Value::Object(map) = serialized else {
+                panic!("strings should serialize to an object");
+            };
+            for key in super::super::keys::I18N_STRING_KEYS {
+                let value = map
+                    .get(*key)
+                    .unwrap_or_else(|| panic!("{language_id} 缺少键 {key}"));
+                let text = value
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{language_id} 的键 {key} 不是字符串"));
+                assert!(!text.trim().is_empty(), "{language_id} 的键 {key} 为空");
+            }
+        }
+    }
 }

@@ -39,6 +39,13 @@ pub(crate) fn write_config_file_atomic(path: &Path, contents: &str) -> std::io::
         .unwrap_or_default();
     let temp = path.with_file_name(format!(".{file_name}.velora-{}.tmp", uuid::Uuid::new_v4()));
     std::fs::write(&temp, contents)?;
+    // config.toml 里可能存 AI 服务的 API 密钥:限文件主可读写(仅类 Unix
+    // 有权限模型;Windows 默认按用户目录 ACL,已够用)。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600));
+    }
     match std::fs::rename(&temp, path) {
         Ok(()) => Ok(()),
         Err(error) => {

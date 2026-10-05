@@ -408,10 +408,13 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) {
         let kind = crate::ai::ProviderKind::ChatCompletions;
-        let fields = |placeholder: String, value: &str, cx: &mut Context<Self>| {
+        let fields = |placeholder: String, value: &str, masked: bool, cx: &mut Context<Self>| {
             cx.new(|cx| {
                 let mut field = TextField::new(placeholder, cx);
                 field.set_value(value, cx);
+                if masked {
+                    field = field.masked();
+                }
                 field
             })
         };
@@ -422,12 +425,17 @@ impl PreferencesWindow {
             .unwrap_or(&AI_PROVIDER_PRESETS[AI_PROVIDER_PRESETS.len() - 1]);
         self.ai_editing = Some(AiEndpointDraft {
             id: None,
-            name: fields("".into(), "", cx),
+            name: fields("".into(), "", false, cx),
             kind,
             preset_id: preset.id.to_string(),
-            base_url: fields("https://api.openai.com/v1".into(), preset.base_url, cx),
-            api_key: fields("sk-…".into(), "", cx),
-            model: fields("gpt-4o-mini".into(), preset.model, cx),
+            base_url: fields(
+                "https://api.openai.com/v1".into(),
+                preset.base_url,
+                false,
+                cx,
+            ),
+            api_key: fields("sk-…".into(), "", true, cx),
+            model: fields("gpt-4o-mini".into(), preset.model, false, cx),
             test: None,
             test_seq: 0,
             kind_dropdown_open: false,
@@ -442,10 +450,13 @@ impl PreferencesWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let fields = |placeholder: String, value: &str, cx: &mut Context<Self>| {
+        let fields = |placeholder: String, value: &str, masked: bool, cx: &mut Context<Self>| {
             cx.new(|cx| {
                 let mut field = TextField::new(placeholder, cx);
                 field.set_value(value, cx);
+                if masked {
+                    field = field.masked();
+                }
                 field
             })
         };
@@ -464,16 +475,17 @@ impl PreferencesWindow {
             .unwrap_or_else(|| AI_PROVIDER_CUSTOM_ID.to_string());
         self.ai_editing = Some(AiEndpointDraft {
             id: Some(endpoint.id.clone()),
-            name: fields("".into(), &endpoint.name, cx),
+            name: fields("".into(), &endpoint.name, false, cx),
             kind: endpoint.kind,
             preset_id,
             base_url: fields(
                 "https://api.openai.com/v1".into(),
                 &endpoint.base_url,
+                false,
                 cx,
             ),
-            api_key: fields("sk-…".into(), &endpoint.api_key, cx),
-            model: fields("gpt-4o-mini".into(), &endpoint.model, cx),
+            api_key: fields("sk-…".into(), &endpoint.api_key, true, cx),
+            model: fields("gpt-4o-mini".into(), &endpoint.model, false, cx),
             test: None,
             test_seq: 0,
             kind_dropdown_open: false,

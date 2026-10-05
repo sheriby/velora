@@ -119,14 +119,16 @@ impl From<&StatusBarPreferences> for StatusBarPreferencesFile {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+// 只有写路径用 serde;读路径走手写解析(app_preferences_from_toml_value),
+// 因为要做按序号补 id、未知协议回退等容错,serde 表达不了。
+#[derive(Serialize)]
 struct AiSectionFile {
     translate_target: String,
     #[serde(default)]
     endpoints: Vec<AiEndpointFile>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct AiEndpointFile {
     id: String,
     name: String,
@@ -325,9 +327,17 @@ fn migrate_ai_section_to_endpoints(value: &toml::Value, preferences: &mut AppPre
     };
     let base_url = field("api_base_url");
     let model = field("model");
-    if base_url.is_empty() && model.is_empty() {
+    let api_key = field("api_key");
+    // 任一连接字段非空都算「配过」:只填了密钥也迁走,不丢用户的值。
+    if base_url.is_empty() && model.is_empty() && api_key.is_empty() {
         preferences.ai = AiSettings::with_demo_endpoint();
         return;
+    }
+    if !base_url.is_empty() && model.is_empty() {
+        eprintln!(
+            "velora: migrating legacy [ai] config with empty model; \
+             the endpoint will need its model filled in the settings"
+        );
     }
     let provider_id = field("provider_id");
     preferences.ai = AiSettings {
@@ -610,11 +620,21 @@ pub(crate) fn app_preferences_from_toml_value(
                             if id.trim().is_empty() {
                                 id = format!("endpoint-{index}");
                             }
+                            let kind = field("kind");
+                            let kind = crate::ai::ProviderKind::from_id(&kind)
+                                .unwrap_or_else(|| {
+                                    if !kind.trim().is_empty() {
+                                        eprintln!(
+                                            "velora: unknown AI endpoint kind '{kind}'; \
+                                             falling back to chat-completions"
+                                        );
+                                    }
+                                    crate::ai::ProviderKind::ChatCompletions
+                                });
                             AiEndpointPref {
                                 id,
                                 name: field("name"),
-                                kind: crate::ai::ProviderKind::from_id(&field("kind"))
-                                    .unwrap_or(crate::ai::ProviderKind::ChatCompletions),
+                                kind,
                                 base_url: field("base_url"),
                                 api_key: field("api_key"),
                                 model: field("model"),
@@ -684,9 +704,20 @@ where
     let preferences = match std::fs::read_to_string(&path) {
         Ok(text) => toml::from_str::<toml::Value>(&text)
             .map(|value| load_preferences_from_toml_value(&value, detected_language_id).0)
-            .unwrap_or_else(|_| AppPreferences {
-                default_language_id: detected_language_id.into(),
-                ..AppPreferences::default()
+            .unwrap_or_else(|error| {
+                // 解析失败(手改笔误/写坏):备份原件再落默认值。文件里可能
+                // 存着 API 密钥,不能让一次坏语法把它无声无息地抹掉。
+                let backup = path.with_extension("toml.bak");
+                let _ = std::fs::copy(&path, &backup);
+                eprintln!(
+                    "velora: config.toml failed to parse ({error}); the original file \
+                     was copied to {}",
+                    backup.display()
+                );
+                AppPreferences {
+                    default_language_id: detected_language_id.into(),
+                    ..AppPreferences::default()
+                }
             }),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => AppPreferences {
             default_language_id: detected_language_id.into(),

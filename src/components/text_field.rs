@@ -27,6 +27,8 @@ pub(crate) struct TextField {
     placeholder: SharedString,
     /// 回车回调(AI 面板用它触发自定义指令;设置页不用)。
     on_enter: Option<OnEnterCallback>,
+    /// 密钥模式:渲染成圆点(值本身仍是明文,测试连接用得到)。
+    masked: bool,
 }
 
 impl TextField {
@@ -38,7 +40,14 @@ impl TextField {
             focus: cx.focus_handle(),
             placeholder: placeholder.into(),
             on_enter: None,
+            masked: false,
         }
+    }
+
+    /// 密钥模式:内容显示为圆点,长度与真实值一致。
+    pub(crate) fn masked(mut self) -> Self {
+        self.masked = true;
+        self
     }
 
     /// 注册回车回调。
@@ -473,6 +482,10 @@ impl Render for TextField {
             })
             .child(if empty {
                 self.placeholder.clone()
+            } else if self.masked {
+                let dots: String =
+                    "\u{2022}".repeat(self.value.chars().count().min(64));
+                dots.into()
             } else {
                 self.value.clone().into()
             })

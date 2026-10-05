@@ -9,8 +9,6 @@
 //! 上下文只作连贯性参考,契约里明确「不得输出」;模型偶发的整段围栏包裹
 //! 由 `strip_wrapping_code_fence` 在应用前兜底。
 
-use super::endpoint::ProviderKind;
-
 /// 翻译目标语言。语言名用各自的自称(简体中文/English/日本語…),这是
 /// 翻译类 UI 的惯例:用户不需要先懂界面语言才认得目标语言。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +93,17 @@ impl RewriteTone {
 }
 
 /// 一个 AI 动作。替换类动作以 `selected` 为工作对象,续写以光标前文为起点。
+///
+/// 新增动作的完整清单(缺一就可能「菜单里有、行为不对」):
+/// 1. 本枚举加一臂;
+/// 2. [`AiAction::directive`] 加一条任务指令;
+/// 3. [`AiAction::replaces_selection`] 声明替换还是插入(漏了会静默变
+///    成「插入到下方」);
+/// 4. [`AiAction::stub_scenario`] + stub.rs 加回放剧本;
+/// 5. 面板菜单(render_ai_assistant_overlay 的 Menu 分支)加一行
+///    `ai_menu_row`,子菜单动作再加展开组;
+/// 6. i18n 五处(ai_action_* 文案);
+/// 7. 需要独立图标时在 assets/icon/workspace/ 加 ai-*.svg。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AiAction {
     /// 润色:表达更流畅、更清晰,语义与语言不变。
@@ -346,9 +355,22 @@ pub(crate) fn build_prompt(action: &AiAction, context: &AiPromptContext) -> AiPr
     }
 }
 
-/// stub 端点判断(UI 层用它把协议名换成「内置演示」)。
-pub(crate) fn is_stub(kind: ProviderKind) -> bool {
-    matches!(kind, ProviderKind::Stub)
+/// 解析「翻译默认目标」:设置为 auto(或空)时跟随界面语言,否则按 id。
+/// 设置页保存的 translate_target 由这里消费——设置不至于「存了没人读」。
+pub(crate) fn resolve_default_translate_target(
+    preference: &str,
+    ui_language_id: &str,
+) -> TranslateTarget {
+    let preference = preference.trim();
+    if preference.is_empty() || preference == "auto" {
+        if ui_language_id.starts_with("zh") {
+            TranslateTarget::SimplifiedChinese
+        } else {
+            TranslateTarget::English
+        }
+    } else {
+        TranslateTarget::from_id(preference).unwrap_or(TranslateTarget::English)
+    }
 }
 
 #[cfg(test)]
@@ -539,7 +561,8 @@ mod tests {
 
     #[test]
     fn stub_kind_flag_matches_provider_kind() {
-        assert!(is_stub(ProviderKind::Stub));
-        assert!(!is_stub(ProviderKind::ChatCompletions));
+        use crate::ai::endpoint::ProviderKind;
+        assert!(ProviderKind::Stub.is_stub());
+        assert!(!ProviderKind::ChatCompletions.is_stub());
     }
 }

@@ -19,7 +19,7 @@ use gpui::*;
 use super::Editor;
 use crate::ai::{
     AiAction, AiEndpointConfig, AiPromptContext, AiRequestError, RewriteTone, TranslateTarget,
-    build_prompt, default_client, is_stub, stream_completion,
+    build_prompt, default_client, stream_completion,
 };
 use crate::components::{TextField, UndoCaptureKind};
 use crate::config::preferences::AiSettings;
@@ -176,7 +176,7 @@ impl Editor {
         let prompt = cx.new(|cx| {
             TextField::new(placeholder, cx).on_enter(move |field, _window, cx| {
                 // 回车即执行;内容保留,便于改两个字再跑。
-                let instruction = field.value().trim().to_string();
+                let instruction: String = field.value().trim().chars().take(2000).collect();
                 if instruction.is_empty() {
                     return;
                 }
@@ -791,12 +791,26 @@ fn ai_menu_row(
         .into_any_element()
 }
 
+/// 预览区渲染的行数上限:超长结果只画尾部,避免每个增量都重铺上千行
+/// (O(n²) 渲染会让长流卡顿)。
+const RESULT_PREVIEW_MAX_LINES: usize = 400;
+
 /// 流式/完成状态的正文:按行渲染(空行占位),保证换行可见。
 fn ai_result_lines(text: &str, theme: &Theme, muted: bool) -> AnyElement {
     let c = &theme.colors;
     let t = &theme.typography;
     let mut column = div().w_full().flex().flex_col();
-    for line in text.split('\n') {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let skipped = lines.len().saturating_sub(RESULT_PREVIEW_MAX_LINES);
+    if skipped > 0 {
+        column = column.child(
+            div()
+                .text_size(px(t.dialog_body_size))
+                .text_color(c.dialog_muted)
+                .child(format!("…(前 {skipped} 行已省略,应用后为全文)")),
+        );
+    }
+    for line in lines.into_iter().skip(skipped) {
         if line.is_empty() {
             column = column.child(div().h(px(t.text_size * 0.6)));
             continue;
@@ -847,12 +861,12 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                 .or_else(|| ai_settings.default_endpoint());
             let endpoint_label = selected
                 .map(|endpoint| {
-                    let name = if is_stub(endpoint.kind) && endpoint.name.trim().is_empty() {
+                    let name = if endpoint.kind.is_stub() && endpoint.name.trim().is_empty() {
                         strings.ai_kind_stub.clone()
                     } else {
                         endpoint.display_name()
                     };
-                    let kind = if is_stub(endpoint.kind) {
+                    let kind = if endpoint.kind.is_stub() {
                         strings.ai_kind_stub.clone()
                     } else {
                         endpoint.kind.display_name().to_string()
@@ -892,12 +906,12 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
             // 端点下拉:列出全部端点(默认项带标记)。
             if state.endpoint_dropdown_open && ai_settings.endpoints.len() > 1 {
                 for (index, endpoint) in ai_settings.endpoints.iter().enumerate() {
-                    let name = if is_stub(endpoint.kind) && endpoint.name.trim().is_empty() {
+                    let name = if endpoint.kind.is_stub() && endpoint.name.trim().is_empty() {
                         strings.ai_kind_stub.clone()
                     } else {
                         endpoint.display_name()
                     };
-                    let kind = if is_stub(endpoint.kind) {
+                    let kind = if endpoint.kind.is_stub() {
                         strings.ai_kind_stub.clone()
                     } else {
                         endpoint.kind.display_name().to_string()
@@ -1046,6 +1060,34 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
                 ),
             );
             if state.translate_open {
+                // 第一行:按设置的「翻译默认目标」翻译(auto = 跟随界面)。
+                let default_target = {
+                    let ai_settings = crate::config::EditorSettings::ai(cx);
+                    let preference = ai_settings.translate_target.clone();
+                    let ui_language = cx.global::<I18nManager>().current_language_id();
+                    crate::ai::resolve_default_translate_target(
+                        &preference,
+                        ui_language,
+                    )
+                };
+                let default_label =
+                    format!("{}({})", strings.preferences_ai_translate_follow_ui, default_target.label());
+                body.push(
+                    ai_menu_row(
+                        "ai-translate-default",
+                        "icon/workspace/ai-translate.svg",
+                        default_label,
+                        None,
+                        theme,
+                        move |editor, _event, _window, cx| {
+                            editor.run_ai_action(
+                                AiAction::Translate(default_target),
+                                cx,
+                            );
+                        },
+                        &editor_handle,
+                    ),
+                );
                 for target in TranslateTarget::ALL {
                     let target = *target;
                     body.push(

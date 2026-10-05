@@ -343,10 +343,31 @@ impl AiEndpointPref {
 }
 
 /// AI 助手设置:默认翻译目标 + 端点档案列表。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// `Default` 即出厂状态(带内置演示端点)——「装好就能 ⌘J」是产品承诺,
+/// 不能靠每个调用点记得用 `with_demo_endpoint()`。
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AiSettings {
     pub(crate) translate_target: String,
     pub(crate) endpoints: Vec<AiEndpointPref>,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        Self::with_demo_endpoint()
+    }
+}
+
+impl AiSettings {
+    /// 真正的空配置(无任何端点):面板会引导去设置页。测试与「用户删光
+    /// 端点」的语义用它,与 `Default` 的出厂状态区分。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn empty() -> Self {
+        Self {
+            translate_target: AUTO_TRANSLATE_TARGET.to_string(),
+            endpoints: Vec::new(),
+        }
+    }
 }
 
 /// 出厂演示端点的固定 id(设置页可改名/删除,删除后面板给出引导)。
@@ -506,11 +527,20 @@ pub(crate) const AI_PROVIDER_PRESETS: &[AiProviderPreset] = &[
 ];
 
 /// 按 id 找预设;未知 id(手改配置)按「自定义」处理。
+/// 「自定义」按 id 查找,不依赖它在数组里的位置。
 pub(crate) fn ai_provider_preset(id: &str) -> &'static AiProviderPreset {
     AI_PROVIDER_PRESETS
         .iter()
         .find(|preset| preset.id == id)
-        .unwrap_or(&AI_PROVIDER_PRESETS[AI_PROVIDER_PRESETS.len() - 1])
+        .unwrap_or_else(|| ai_custom_preset())
+}
+
+/// 「自定义」预设的句柄(表单回退与新增端点的缺省形态)。
+pub(crate) fn ai_custom_preset() -> &'static AiProviderPreset {
+    AI_PROVIDER_PRESETS
+        .iter()
+        .find(|preset| preset.id == AI_PROVIDER_CUSTOM_ID)
+        .expect("custom preset is registered")
 }
 
 /// Last window frame (logical pixels) persisted across launches./// Last window frame (logical pixels) persisted across launches.
@@ -975,8 +1005,7 @@ impl EditorSettings {
             .unwrap_or_default()
     }
 
-    /// AI 助手的服务端配置；全局未安装时回退磁盘/默认值。
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// AI 助手设置；全局未安装时回退出厂默认(内置演示端点)。
     pub(crate) fn ai(cx: &App) -> AiSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.ai.clone())
