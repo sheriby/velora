@@ -1145,6 +1145,68 @@ async fn same_file_workspace_hit_jumps_by_the_file_line(cx: &mut TestAppContext)
     });
 }
 
+/// 回归（用户报修 2026-10-05）：源码文档按 512 行切块后，搜索跳转的选区被
+/// 钳进第一根投影块——512 行之外的命中点击后全部停在 512 行。选区必须
+/// 落进**包含它的那一根**投影块。
+#[gpui::test]
+async fn source_mode_jump_lands_in_the_chunk_containing_the_hit(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let mut lines = Vec::new();
+    for index in 1..=1200 {
+        if index == 600 || index == 1100 {
+            lines.push(format!("第 {index} 行 针脚标记"));
+        } else {
+            lines.push(format!("第 {index} 行"));
+        }
+    }
+    let source = lines.join("\n");
+    let (editor, cx) = cx.add_window_view(move |_, cx| Editor::from_markdown(cx, source, None));
+    editor.update(cx, |editor, cx| {
+        editor.toggle_view_mode(cx);
+        assert!(matches!(editor.view_mode, crate::editor::ViewMode::Source));
+        // 1200 行 → 512+512+176 三根投影块
+        assert_eq!(editor.document.root_count(), 3);
+        editor.open_document_find(cx);
+        editor.workspace.search_query = "针脚".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+
+    // 命中分别在第二、第三根块里（600 行 / 1100 行），逐个点击。
+    for (hit_index, expected_chunk) in [(0usize, 1usize), (1usize, 2usize)] {
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_search_hit(hit_index, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        editor.read_with(cx, |editor, cx| {
+            let active_id = editor.active_entity_id.expect("跳转后应有活动块");
+            let roots = editor.document.root_blocks();
+            let chunk_index = roots
+                .iter()
+                .position(|block| block.entity_id() == active_id)
+                .expect("活动块应是一根源码投影块");
+            assert_eq!(
+                chunk_index, expected_chunk,
+                "跳转应落进包含命中的那根投影块"
+            );
+            let block = roots[chunk_index].read(cx);
+            let range = block.selected_range.clone();
+            assert_eq!(
+                block.display_text().get(range).map(str::to_owned).as_deref(),
+                Some("针脚"),
+                "选区应恰好盖住命中词"
+            );
+        });
+    }
+}
+
 /// 回归（用户报修 2026-10-05）：点击搜索结果跳转后，活动高亮落在命中词
 /// 前面的字上（截图：绿块盖住「（含测试）」的「含」，真正的命中没高亮）。
 /// 既有测试只守「buffer 区间 == 命中词」「选区 == 活动区间」——换算到块

@@ -254,21 +254,61 @@ impl Editor {
     ) {
         match self.view_mode {
             ViewMode::Source => {
-                let Some(block) = self.document.first_root().cloned() else {
+                // 源码文档按 512 行切成多根投影块（SOURCE_DOCUMENT_CHUNK_LINES）：
+                // 选区必须写进**包含落点的那一根**。以前一律钳在第一根块的长度
+                // 里——文件超过 512 行后，512 行之外的搜索命中、大纲与 `[TOC]`
+                // 跳转全部落在第一块末尾（用户报修：点击都停在 512 行）。
+                let mappings = self.source_mappings_in_range(&snapshot.range, cx);
+                let target = mappings
+                    .iter()
+                    .find(|mapping| {
+                        Self::source_range_contains(&mapping.full_source_range, snapshot.range.start)
+                    })
+                    .or_else(|| {
+                        // 落点在块与块之间的换行上时按就近取；没有投影块
+                        // （刚插入、还没写回缓冲区的块）退回第一根块的老口径。
+                        mappings.iter().min_by_key(|mapping| {
+                            Self::source_offset_distance(
+                                &mapping.full_source_range,
+                                snapshot.range.start,
+                            )
+                        })
+                    });
+                let Some(mapping) = target else {
+                    let Some(block) = self.document.first_root().cloned() else {
+                        return;
+                    };
+                    let len = block.read(cx).visible_len();
+                    let selected_range =
+                        snapshot.range.start.min(len)..snapshot.range.end.min(len);
+                    block.update(cx, move |block, cx| {
+                        block.selected_range = selected_range.clone();
+                        block.selection_reversed = snapshot.reversed;
+                        block.marked_range = None;
+                        block.vertical_motion_x = None;
+                        block.cursor_blink_epoch = Instant::now();
+                        cx.notify();
+                    });
+                    self.pending_focus = Some(block.entity_id());
+                    self.active_entity_id = Some(block.entity_id());
                     return;
                 };
-                let len = block.read(cx).visible_len();
-                let selected_range = snapshot.range.start.min(len)..snapshot.range.end.min(len);
-                block.update(cx, move |block, cx| {
-                    block.selected_range = selected_range.clone();
+                // 源码切片的 content 偏移就是块内偏移（恒等表），选区端点钳进
+                // 本块：跨块的选区先落到起点所在的那一根。
+                let chunk_start = mapping.full_source_range.start;
+                let chunk_len = mapping.full_source_range.len();
+                let selected_range = (snapshot.range.start - chunk_start).min(chunk_len)
+                    ..(snapshot.range.end - chunk_start).min(chunk_len);
+                mapping.entity.update(cx, move |block, cx| {
+                    block.selected_range = selected_range;
                     block.selection_reversed = snapshot.reversed;
                     block.marked_range = None;
                     block.vertical_motion_x = None;
                     block.cursor_blink_epoch = Instant::now();
                     cx.notify();
                 });
-                self.pending_focus = Some(block.entity_id());
-                self.active_entity_id = Some(block.entity_id());
+                self.pending_focus = Some(mapping.entity.entity_id());
+                self.active_entity_id = Some(mapping.entity.entity_id());
             }
             ViewMode::Rendered => {
                 if self.apply_cross_block_selection_snapshot_if_possible(snapshot, cx) {
