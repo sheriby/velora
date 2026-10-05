@@ -9,6 +9,7 @@ mod search_cross_block;
 mod search_engine;
 mod search_matcher_snapshot;
 mod search_perf;
+mod search_random_consistency;
 mod sidebar;
 mod tabs_sessions;
 mod tree_files;
