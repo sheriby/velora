@@ -55,6 +55,8 @@ impl Editor {
             }
         }
         let compiled = super::CompiledQuery::compile(&query, options).ok()?;
+        self.document_match_scans
+            .set(self.document_match_scans.get() + 1);
         // 引擎扫的是缓冲区这一份事实源，所以行号与字节区间和用户看到的文件一致。
         // 实测把 10 MiB 拼成一个 String 只要 0.26 毫秒，不值得为它做流式读。
         let source = self.current_document_source(cx);

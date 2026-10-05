@@ -149,6 +149,21 @@ pub(crate) struct WorkspaceSearchHit {
     preview: String,
 }
 
+/// 全量高亮同步的输入指纹。这几项一个都没变，就说明这一次只是**活动命中**挪了位
+/// （F3/F4 循环、点结果行），其余块上的普通命中高亮一条都不必重算。
+/// `root_count` 跟着后台续建走：续建只是补投影块，不动缓冲区版本，
+/// 少了这一项就会把「新块还没高亮」当成「高亮过了」。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SearchHighlightKey {
+    identity: u64,
+    revision: u64,
+    query: String,
+    options: search_backend::SearchOptions,
+    rendered: bool,
+    fold_state_version: u64,
+    root_count: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum WorkspaceSearchScope {
     #[default]

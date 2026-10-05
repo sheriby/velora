@@ -10,6 +10,26 @@ impl Editor {
     /// mappings onto the owning block. 工作区范围（所有文件）的命中跳转过去
     /// 之后同样要看到高亮——用户报修过跳转后无高亮。
     pub(crate) fn sync_document_search_highlights(&mut self, cx: &mut Context<Self>) {
+        let query = self.workspace.search_query.trim().to_string();
+        let active = self.workspace.is_open
+            && self.workspace.active_tab == WorkspaceTab::Search
+            && !query.is_empty();
+        let key = SearchHighlightKey {
+            identity: self.buffer.identity(),
+            revision: self.buffer.revision(),
+            query: query.clone(),
+            options: self.search_options(),
+            rendered: matches!(self.view_mode, ViewMode::Rendered),
+            fold_state_version: self.fold_state_version,
+            root_count: self.document.root_count(),
+        };
+        if active && key.rendered && self.search_highlight_key.as_ref() == Some(&key) {
+            // 查询、开关、文档内容、视图模式、折叠状态、块数量都没变，这一次只是
+            // 活动命中换了位置。普通命中的高亮一条都没变，不必重算。
+            self.move_active_search_highlight(cx);
+            return;
+        }
+
         let previous = std::mem::take(&mut self.search_highlighted_blocks);
         for entity in &previous {
             let _ = entity.update(cx, |block, _| {
@@ -17,12 +37,9 @@ impl Editor {
                 block.search_active_range = None;
             });
         }
-
-        let query = self.workspace.search_query.trim().to_string();
-        let active = self.workspace.is_open
-            && self.workspace.active_tab == WorkspaceTab::Search
-            && !query.is_empty();
+        self.search_active_blocks.clear();
         if !active {
+            self.search_highlight_key = None;
             cx.notify();
             return;
         }
@@ -40,6 +57,7 @@ impl Editor {
         // 命中之间能看出当前在哪一个。
         let active_range = self.workspace.document_active_range.clone();
         let mut highlighted = Vec::new();
+        let mut active_marked = Vec::new();
 
         match self.view_mode {
             ViewMode::Rendered => {
@@ -50,11 +68,7 @@ impl Editor {
                     let Some(span) = self.document.source_span_of(root.entity_id()) else {
                         continue;
                     };
-                    let hits: Vec<Range<usize>> = all_hits
-                        .iter()
-                        .filter(|range| hit_overlaps(range, &span))
-                        .cloned()
-                        .collect();
+                    let hits = Self::hits_overlapping(&all_hits, &span);
                     if hits.is_empty() {
                         continue;
                     }
@@ -72,8 +86,11 @@ impl Editor {
                         let entity = mapping.entity.clone();
                         entity.update(cx, |block, _| {
                             block.search_highlight_ranges = ranges;
-                            block.search_active_range = active_local;
+                            block.search_active_range = active_local.clone();
                         });
+                        if active_local.is_some() {
+                            active_marked.push(entity.clone());
+                        }
                         highlighted.push(entity);
                     }
                 }
@@ -83,11 +100,7 @@ impl Editor {
                 // 走查算出每块的源码区间。
                 let mappings = self.build_source_target_mappings(cx);
                 for mapping in &mappings {
-                    let hits: Vec<Range<usize>> = all_hits
-                        .iter()
-                        .filter(|range| hit_overlaps(range, &mapping.full_source_range))
-                        .cloned()
-                        .collect();
+                    let hits = Self::hits_overlapping(&all_hits, &mapping.full_source_range);
                     let Some((ranges, active_local)) =
                         Self::search_ranges_for_hits(mapping, &hits, &active_range, cx)
                     else {
@@ -96,15 +109,83 @@ impl Editor {
                     let entity = mapping.entity.clone();
                     entity.update(cx, |block, _| {
                         block.search_highlight_ranges = ranges;
-                        block.search_active_range = active_local;
+                        block.search_active_range = active_local.clone();
                     });
+                    if active_local.is_some() {
+                        active_marked.push(entity.clone());
+                    }
                     highlighted.push(entity);
                 }
             }
         }
 
         self.search_highlighted_blocks = highlighted;
+        self.search_active_blocks = active_marked;
+        self.search_highlight_key = Some(key);
         cx.notify();
+    }
+
+    /// 只把「活动命中」那一条的单独标记从上一处挪到新处，其余块上的普通命中高亮
+    /// 一个字都不动。
+    ///
+    /// 全量同步要为每根沾到命中的块重算它自己的 source mapping：10 MiB 文档里一个
+    /// 常用词有 53 227 处命中、也就有 53 227 根块要重算，实测一次「下一个」9.95 秒
+    /// （1 MiB / 5 322 处是 317 毫秒）。循环跳转改的只有活动命中那一条。
+    fn move_active_search_highlight(&mut self, cx: &mut Context<Self>) {
+        let previous = std::mem::take(&mut self.search_active_blocks);
+        for entity in &previous {
+            let _ = entity.update(cx, |block, _| block.search_active_range = None);
+        }
+        let Some(active) = self.workspace.document_active_range.clone() else {
+            cx.notify();
+            return;
+        };
+        let mut marked = Vec::new();
+        for root in self.document.root_blocks().to_vec() {
+            let Some(span) = self.document.source_span_of(root.entity_id()) else {
+                continue;
+            };
+            if !hit_overlaps(&active, &span) {
+                continue;
+            }
+            let mut mappings = Vec::new();
+            let mut block_ranges = std::collections::HashMap::new();
+            self.source_mapping_builds
+                .set(self.source_mapping_builds.get() + 1);
+            self.push_root_source_mappings(&root, &mut mappings, &mut block_ranges, cx);
+            for mapping in &mappings {
+                let Some(local) = Self::active_range_on_mapping(mapping, &active, cx) else {
+                    continue;
+                };
+                let entity = mapping.entity.clone();
+                entity.update(cx, |block, _| block.search_active_range = Some(local));
+                marked.push(entity);
+            }
+        }
+        self.search_active_blocks = marked;
+        cx.notify();
+    }
+
+    /// 从按起点升序的命中表里取出与这块区间有交集的那几条。
+    ///
+    /// 先用一次二分跳到「可能伸进本块」的第一条命中，再往后看到越过本块右边为止：
+    /// 每根块的代价是 O(log 命中数 + 本块命中数)，与块的走查顺序无关。
+    /// 旧写法对每根块都把全表重筛一遍，53 227 根块 × 53 227 条命中，一次「下一个」
+    /// 实测 26.3 秒——跳转本身不重扫文档，却被这一步拖死。
+    fn hits_overlapping(hits: &[Range<usize>], span: &Range<usize>) -> Vec<Range<usize>> {
+        // 二分只丢「整条都在本块左边」的命中；零宽命中要留在窗口里，所以判据用
+        // 严格小于，与 `hit_overlaps` 对空区间的口径一致。
+        let first = hits.partition_point(|hit| hit.end < span.start);
+        let mut picked = Vec::new();
+        for hit in &hits[first..] {
+            if hit.start >= span.end {
+                break;
+            }
+            if hit_overlaps(hit, span) {
+                picked.push(hit.clone());
+            }
+        }
+        picked
     }
 
     /// 把绝对的命中字节区间换算成这一块上的显示区间；没有落在这块里的命中就 `None`。
@@ -147,20 +228,29 @@ impl Editor {
         }
         let active_local = active_range
             .as_ref()
-            .and_then(|active| clip_hit_to_span(active, block_start, block_end))
-            .and_then(|clipped| {
-                let local = |offset: usize| {
-                    let index = offset - block_start;
-                    mapping.source_to_content[index.min(mapping.source_to_content.len() - 1)]
-                };
-                let content = local(clipped.start)..local(clipped.end);
-                let converted = mapping
-                    .entity
-                    .read(cx)
-                    .markdown_range_to_current_range(content);
-                (!converted.is_empty()).then_some(converted)
-            });
+            .and_then(|active| Self::active_range_on_mapping(mapping, active, cx));
         Some((ranges, active_local))
+    }
+
+    /// 活动命中落在这一块上的那一段——跨块命中只取属于本块的那一截。
+    fn active_range_on_mapping(
+        mapping: &SourceTargetMapping,
+        active: &Range<usize>,
+        cx: &App,
+    ) -> Option<Range<usize>> {
+        let block_start = mapping.full_source_range.start;
+        let block_end = mapping.full_source_range.end;
+        let clipped = clip_hit_to_span(active, block_start, block_end)?;
+        let local = |offset: usize| {
+            let index = offset - block_start;
+            mapping.source_to_content[index.min(mapping.source_to_content.len() - 1)]
+        };
+        let content = local(clipped.start)..local(clipped.end);
+        let converted = mapping
+            .entity
+            .read(cx)
+            .markdown_range_to_current_range(content);
+        (!converted.is_empty()).then_some(converted)
     }
 
     /// Cycles the file tree sort order (roadmap D2) and rescans.

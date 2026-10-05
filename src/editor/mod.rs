@@ -157,6 +157,9 @@ pub struct Editor {
     source_mapping_full_builds: std::cell::Cell<u64>,
     /// 性能计数器：状态栏整篇字数扫描次数（unicode 分词在大文档里很贵）。
     word_count_scans: std::cell::Cell<u64>,
+    /// 性能计数器：文档命中表**重扫整篇**的次数。缓存命中不算；
+    /// 每键之外的动作（跳转、点结果行、切视图）只许复用，不许重扫。
+    document_match_scans: std::cell::Cell<u64>,
     /// 性能计数器：行结构计划重建次数（每键重建整篇计划是 P2 热点）。
     row_plan_rebuilds: std::cell::Cell<u64>,
     /// 计数器：一次行计划重建里**读了几个块实体**。折叠过滤与分组扫描原来每个可见
@@ -253,6 +256,10 @@ pub struct Editor {
     /// Blocks currently carrying in-document search highlights (roadmap B2);
     /// tracked so the next sync can clear them cheaply.
     pub(super) search_highlighted_blocks: Vec<Entity<Block>>,
+    /// 上一次画上「活动命中」单独标记的那几根块；循环跳转只挪这几块上的标记。
+    pub(super) search_active_blocks: Vec<Entity<Block>>,
+    /// 上一次全量高亮同步的输入指纹。对得上就走只挪标记的快路径。
+    pub(super) search_highlight_key: Option<workspace::SearchHighlightKey>,
     /// Quick file switcher overlay (⌘P); `None` while closed.
     quick_open: Option<quick_open::QuickOpenState>,
     /// Command palette overlay (⇧⌘P); `None` while closed.
@@ -662,6 +669,7 @@ impl Editor {
             source_mapping_builds: std::cell::Cell::default(),
             source_mapping_full_builds: std::cell::Cell::default(),
             word_count_scans: std::cell::Cell::default(),
+            document_match_scans: std::cell::Cell::default(),
             row_plan_rebuilds: std::cell::Cell::default(),
             row_plan_block_reads: std::cell::Cell::default(),
             roots_reprojected: std::cell::Cell::default(),
@@ -699,6 +707,8 @@ impl Editor {
             pending_folder_choice: None,
             show_welcome: false,
             search_highlighted_blocks: Vec::new(),
+            search_active_blocks: Vec::new(),
+            search_highlight_key: None,
             quick_open: None,
             command_palette: None,
             external_watcher: None,
