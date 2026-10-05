@@ -234,3 +234,28 @@ async fn the_paste_as_plain_text_row_in_the_menu_reaches_the_same_action(cx: &mu
         "菜单里那一行的「粘贴为纯文本」要与键位同一条：落的还是那几个字"
     );
 }
+
+/// 同一个窗口里连着走两轮「选区 → 右键 → 点菜单行」（方案 §7 的 R7）：每一轮的落点
+/// 都按当轮生效的那份选区，第二轮不沿用第一轮的位置。选区要按块当前那份屏幕文本取——
+/// 同一块在两种写法下屏幕文本的字节数不同（R8），写死一个数会让第二轮只盖住半句，
+/// 看着像落点错了，其实是选区本来就只到那儿。
+#[gpui::test]
+async fn two_menu_rounds_land_on_the_selection_in_effect(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(MARKDOWN_DOC, cx);
+    redraw(cx);
+    set_clipboard(URL, cx);
+
+    for round in 0..2 {
+        let visible_len =
+            visible_block(&editor, 0, cx).read_with(cx, |block, _| block.visible_len());
+        select(&editor, 0, 0..visible_len, cx);
+        right_click(&editor, 0, cx);
+        click_row("paste-as-plain-text", cx);
+        assert_eq!(
+            buffer_text(&editor, cx),
+            format!("{URL}\n\n另一段\n"),
+            "第 {round} 轮把整块选中再点「粘贴为纯文本」，落的该只是那个网址"
+        );
+    }
+}
