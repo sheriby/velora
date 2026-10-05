@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use super::super::{ContextMenuState, Editor};
 use crate::components::{
-    CopyAsMarkdown, default_shortcut_key, menu::MENU_ROW_GAP, Copy, Cut, InlineFormat, Paste,
+    CopyAsMarkdown, effective_shortcut_key, menu::MENU_ROW_GAP, Copy, Cut, InlineFormat, Paste,
     PasteAsPlainText, Redo, ShortcutCommand, ToggleViewMode, Undo,
 };
 use crate::editor::insert_ops::InsertBlockTarget;
@@ -570,8 +570,12 @@ fn inline_format_label(format: InlineFormat, strings: &crate::i18n::I18nStrings)
     }
 }
 
-/// 行右侧的快捷键文字；没有快捷键位的条目返回 None（留空位对齐，菜单宽度不跳）。
-pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<SharedString> {
+/// 行右侧的快捷键文字，取当前生效的那份键位（用户在偏好页改过就是改成的键）；
+/// 没有快捷键位的条目返回 None（留空位对齐，菜单宽度不跳）。
+pub(crate) fn document_menu_shortcut(
+    command: DocumentMenuCommand,
+    cx: &App,
+) -> Option<SharedString> {
     let shortcut = match command {
         DocumentMenuCommand::Undo => ShortcutCommand::Undo,
         DocumentMenuCommand::Redo => ShortcutCommand::Redo,
@@ -611,8 +615,8 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
         | DocumentMenuCommand::InsertToc
         | DocumentMenuCommand::InsertFrontMatter => return None,
     };
-    Some(SharedString::from(key_label(default_shortcut_key(
-        shortcut,
+    Some(SharedString::from(key_label(&effective_shortcut_key(
+        shortcut, cx,
     )?)))
 }
 
@@ -687,10 +691,13 @@ pub(crate) struct DocumentMenuGeometry {
 }
 
 impl DocumentMenuGeometry {
+    /// `shortcut_of` 由调用方给（渲染路径用当前生效的键位，纯函数用例给一份桩），
+    /// 面板宽度按屏上真要写出来的那串按键估，用户改过键位也不会截字。
     pub(crate) fn measure(
         rows: &[DocumentMenuRow],
         strings: &crate::i18n::I18nStrings,
         dimensions: &ThemeDimensions,
+        shortcut_of: &dyn Fn(DocumentMenuCommand) -> Option<SharedString>,
     ) -> Self {
         let mut widest = 0.0_f32;
         // 第一行的顶部就是面板内边距；往下逐行累加行高与行间距。
@@ -710,7 +717,7 @@ impl DocumentMenuGeometry {
                 }
             };
             top += row_height;
-            widest = widest.max(Self::row_width(row, strings, dimensions));
+            widest = widest.max(Self::row_width(row, strings, dimensions, shortcut_of));
         }
         // 末尾再补一份内边距：面板高度 = 最后一行底部 + 内边距。
         let height = top + dimensions.menu_panel_padding;
@@ -728,13 +735,14 @@ impl DocumentMenuGeometry {
         row: &DocumentMenuRow,
         strings: &crate::i18n::I18nStrings,
         dimensions: &ThemeDimensions,
+        shortcut_of: &dyn Fn(DocumentMenuCommand) -> Option<SharedString>,
     ) -> f32 {
         let text_size = dimensions.menu_text_size;
         let (label, shortcut, submenu) = match row {
             DocumentMenuRow::Separator => return 0.0,
             DocumentMenuRow::Item { command, .. } => (
                 document_menu_label(*command, strings),
-                document_menu_shortcut(*command),
+                shortcut_of(*command),
                 false,
             ),
             DocumentMenuRow::Submenu { id, .. } => {
@@ -816,7 +824,12 @@ mod tests {
     };
     use crate::i18n::I18nStrings;
     use crate::theme::Theme;
-    use gpui::{point, px, Size};
+    use gpui::{point, px, SharedString, Size};
+
+    /// 纯函数用例没有 App，快捷键那一列给一份固定文字：测的是「这一列要算进宽度」。
+    fn stub_shortcut(command: DocumentMenuCommand) -> Option<SharedString> {
+        (command == DocumentMenuCommand::Undo).then(|| SharedString::from("Ctrl+Z"))
+    }
 
     fn rows(count: usize) -> Vec<DocumentMenuRow> {
         (0..count)
@@ -833,8 +846,9 @@ mod tests {
     fn menu_origins_are_pulled_back_at_the_viewport_edges() {
         let dimensions = Theme::default_theme().dimensions;
         let strings = I18nStrings::zh_cn();
-        let main = DocumentMenuGeometry::measure(&rows(12), &strings, &dimensions);
-        let submenu = DocumentMenuGeometry::measure(&rows(4), &strings, &dimensions);
+        let main = DocumentMenuGeometry::measure(&rows(12), &strings, &dimensions, &stub_shortcut);
+        let submenu =
+            DocumentMenuGeometry::measure(&rows(4), &strings, &dimensions, &stub_shortcut);
         let viewport = Size {
             width: px(600.0),
             height: px(900.0),
@@ -889,9 +903,24 @@ mod tests {
     #[test]
     fn panel_size_follows_the_widest_row() {
         let dimensions = Theme::default_theme().dimensions;
-        let zh = DocumentMenuGeometry::measure(&rows(3), &I18nStrings::zh_cn(), &dimensions);
-        let en = DocumentMenuGeometry::measure(&rows(3), &I18nStrings::en_us(), &dimensions);
-        let single = DocumentMenuGeometry::measure(&rows(1), &I18nStrings::zh_cn(), &dimensions);
+        let zh = DocumentMenuGeometry::measure(
+            &rows(3),
+            &I18nStrings::zh_cn(),
+            &dimensions,
+            &stub_shortcut,
+        );
+        let en = DocumentMenuGeometry::measure(
+            &rows(3),
+            &I18nStrings::en_us(),
+            &dimensions,
+            &stub_shortcut,
+        );
+        let single = DocumentMenuGeometry::measure(
+            &rows(1),
+            &I18nStrings::zh_cn(),
+            &dimensions,
+            &stub_shortcut,
+        );
         assert!(
             f32::from(en.size.width) > f32::from(zh.size.width),
             "英文行该比中文行宽：{:?} vs {:?}",

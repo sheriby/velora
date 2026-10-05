@@ -911,13 +911,41 @@ fn key_binding_for(
     }
 }
 
-/// 某条命令的默认键（用户自定的绑定不在这里，那是命令面板与偏好页一并接的那一档）。
-pub(crate) fn default_shortcut_key(command: ShortcutCommand) -> Option<&'static str> {
-    SHORTCUT_DEFINITIONS
-        .iter()
-        .find(|definition| definition.command == command)
-        .and_then(|definition| definition.default_keys.first())
-        .copied()
+/// 命令当前生效的主按键，给菜单的快捷键列与工具栏的悬停说明读。
+///
+/// 表在 [`install_keybindings`] 绑键位的那一步一起写下：读到的就是实际按得动的那颗键，
+/// 用户在偏好页改过绑定后，菜单那一列跟着改，不会停在默认键上。
+pub(crate) struct EffectiveShortcuts {
+    primary: BTreeMap<ShortcutCommand, String>,
+}
+
+impl Global for EffectiveShortcuts {}
+
+impl EffectiveShortcuts {
+    fn build(config: &BTreeMap<String, Vec<String>>) -> Self {
+        let normalized = normalize_shortcut_config(config);
+        let mut primary = BTreeMap::new();
+        for definition in SHORTCUT_DEFINITIONS {
+            let keys = normalized
+                .get(definition.id)
+                .cloned()
+                .unwrap_or_else(|| default_keys(*definition));
+            if let Some(key) = keys.first() {
+                primary.insert(definition.command, key.clone());
+            }
+        }
+        Self { primary }
+    }
+
+    fn key(&self, command: ShortcutCommand) -> Option<&str> {
+        self.primary.get(&command).map(String::as_str)
+    }
+}
+
+/// 某条命令当前生效的主按键（`cmd-shift-x` 这一类写法）；不在键位表里的命令返回 None。
+pub(crate) fn effective_shortcut_key(command: ShortcutCommand, cx: &App) -> Option<String> {
+    let shortcuts = cx.try_global::<EffectiveShortcuts>()?;
+    shortcuts.key(command).map(str::to_owned)
 }
 
 pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Vec<KeyBinding> {
@@ -963,6 +991,7 @@ pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Ve
 
 pub(crate) fn install_keybindings(cx: &mut App, config: &BTreeMap<String, Vec<String>>) {
     cx.bind_keys(resolved_keybindings(config));
+    cx.set_global(EffectiveShortcuts::build(config));
 }
 
 /// Register key bindings for the block editor.

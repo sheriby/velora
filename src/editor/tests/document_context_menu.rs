@@ -2,7 +2,7 @@
 //! 二级面板的展开与落点，以及点一行确实改缓冲区且撤销一步能复原。
 
 use super::common::*;
-use crate::components::{Block, InlineFormat};
+use crate::components::{Block, InlineFormat, install_keybindings};
 use crate::editor::context_menu::{
     document_menu_shortcut, DocumentMenuCommand, DocumentMenuRow, DocumentSubmenu,
 };
@@ -111,8 +111,9 @@ fn shortcut_selector(label: &str) -> &'static str {
 }
 
 /// 某一行的快捷键文字（没有键位时是 None）。
-fn shortcut_of(command: DocumentMenuCommand) -> Option<String> {
-    document_menu_shortcut(command).map(|label| label.to_string())
+fn shortcut_of(command: DocumentMenuCommand, cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_window, cx| document_menu_shortcut(command, cx))
+        .map(|label| label.to_string())
 }
 
 fn click_row(name: &'static str, cx: &mut VisualTestContext) {
@@ -633,7 +634,7 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         InlineFormat::Strikethrough,
         InlineFormat::Code,
     ] {
-        let label = shortcut_of(DocumentMenuCommand::Format(format))
+        let label = shortcut_of(DocumentMenuCommand::Format(format), cx)
             .unwrap_or_else(|| panic!("{format:?} 这一行该有默认键位"));
         assert!(
             cx.debug_bounds(shortcut_selector(&label)).is_some(),
@@ -641,7 +642,7 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         );
     }
     assert_eq!(
-        shortcut_of(DocumentMenuCommand::Format(InlineFormat::Highlight)),
+        shortcut_of(DocumentMenuCommand::Format(InlineFormat::Highlight), cx),
         None,
         "标记文本还没有键位（FP9 一并补），不该凭空造一个"
     );
@@ -653,7 +654,7 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         DocumentMenuCommand::Paste,
         DocumentMenuCommand::ToggleSourceView,
     ] {
-        let label = shortcut_of(command).expect("这几行都有默认键位");
+        let label = shortcut_of(command, cx).expect("这几行都有默认键位");
         assert!(
             cx.debug_bounds(shortcut_selector(&label)).is_some(),
             "{label} 这一列没渲染出来"
@@ -712,5 +713,36 @@ async fn right_click_keeps_the_selection_it_opened_with(cx: &mut TestAppContext)
         buffer_text(&editor, cx),
         TWO_PARAGRAPHS,
         "只是弹菜单不该改字节"
+    );
+}
+
+/// 偏好页改过键位之后，菜单那一列写的是改成的那颗键，而不是默认键：
+/// 显示的那一份与真正绑上去的那一份同源（`install_keybindings` 一处写下）。
+#[gpui::test]
+async fn the_shortcut_column_shows_the_users_own_binding(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut config = std::collections::BTreeMap::new();
+    config.insert("bold_selection".to_string(), vec!["cmd-alt-b".to_string()]);
+    cx.update(|cx| install_keybindings(cx, &config));
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    editor.update(cx, |editor, cx| {
+        editor.set_document_menu_hover(true, Some(DocumentSubmenu::Format), cx)
+    });
+    redraw(cx);
+
+    let label = shortcut_of(DocumentMenuCommand::Format(InlineFormat::Bold), cx)
+        .expect("加粗这一行总有键位可显示");
+    assert_eq!(label, "⌥⌘B", "菜单那一列要写用户自己定的那颗键");
+    assert!(
+        cx.debug_bounds(shortcut_selector("⌥⌘B")).is_some(),
+        "改过的键位没渲染进菜单那一列"
+    );
+    assert!(
+        cx.debug_bounds(shortcut_selector("⌘B")).is_none(),
+        "默认键 ⌘B 不该还挂在屏幕上"
     );
 }

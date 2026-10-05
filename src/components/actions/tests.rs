@@ -228,3 +228,28 @@
 
         assert_eq!(conflict.id, "cut");
     }
+
+    #[test]
+    fn effective_shortcut_table_follows_installed_bindings() {
+        let mut config = BTreeMap::new();
+        config.insert("bold_selection".to_string(), vec!["cmd-alt-b".to_string()]);
+        // `ctrl-x` 与「剪切」撞车，这条自定义会被退回默认键——显示表要跟着实际绑上的那颗。
+        config.insert("copy".to_string(), vec!["ctrl-x".to_string()]);
+
+        let shortcuts = super::EffectiveShortcuts::build(&config);
+        assert_eq!(
+            shortcuts.key(ShortcutCommand::BoldSelection),
+            Some("alt-cmd-b"),
+            "改过绑定的命令，显示的那颗键要改成用户定的（写进表里的是规范化后的键序）"
+        );
+        assert_eq!(
+            shortcuts.key(ShortcutCommand::Copy),
+            Some("cmd-c"),
+            "撞车而被退回默认键的命令，显示表不能留着那颗绑不上的键"
+        );
+        assert_eq!(
+            shortcuts.key(ShortcutCommand::ItalicSelection),
+            Some("cmd-i"),
+            "没改过的命令仍是默认键"
+        );
+    }

@@ -258,7 +258,8 @@ async fn the_insert_menu_offers_the_picture_row_on_the_same_terms(cx: &mut TestA
         "图片排在表格之后、其余五类块之前：{rows:?}"
     );
     assert!(
-        document_menu_shortcut(DocumentMenuCommand::InsertImage).is_some(),
-        "「插入 → 图片」这一行的快捷键列要给出默认键位"
+        cx.update(|_window, cx| document_menu_shortcut(DocumentMenuCommand::InsertImage, cx))
+            .is_some(),
+        "「插入 → 图片」这一行的快捷键列要给出生效键位"
     );
 }

@@ -238,7 +238,10 @@ impl Editor {
             .is_some_and(|state| state.heading_menu_open);
         let heading_menu = heading_menu_open.then(|| {
             let rows = self.document_submenu_rows(DocumentSubmenu::Paragraph, cx);
-            let geometry = DocumentMenuGeometry::measure(&rows, &strings, &theme.dimensions);
+            let geometry =
+                DocumentMenuGeometry::measure(&rows, &strings, &theme.dimensions, &|command| {
+                    document_menu_shortcut(command, cx)
+                });
             let (offset, menu_origin) =
                 Self::heading_menu_offsets(origin, size, geometry.size, viewport);
             (rows, geometry, offset, menu_origin)
@@ -362,7 +365,7 @@ impl Editor {
         let d = &theme.dimensions;
         let menu_command = DocumentMenuCommand::Format(format);
         let label = document_menu_label(menu_command, strings);
-        let tooltip = match document_menu_shortcut(menu_command) {
+        let tooltip = match document_menu_shortcut(menu_command, cx) {
             Some(shortcut) => format!("{label}  {shortcut}"),
             None => label,
         };
@@ -462,7 +465,7 @@ impl Editor {
         let d = &theme.dimensions;
         let menu_command = DocumentMenuCommand::Link;
         let label = document_menu_label(menu_command, strings);
-        let tooltip = match document_menu_shortcut(menu_command) {
+        let tooltip = match document_menu_shortcut(menu_command, cx) {
             Some(shortcut) => format!("{label}  {shortcut}"),
             None => label,
         };

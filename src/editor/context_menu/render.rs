@@ -95,14 +95,19 @@ impl Editor {
                 ..
             } => {
                 let rows = self.document_menu_rows(cx);
-                let panel = DocumentMenuGeometry::measure(&rows, &s, d);
+                // 宽度按当前生效的键位那一列估，用户改过绑定也不会截字。
+                let shortcut_of = &|command| document_menu_shortcut(command, cx);
+                let panel = DocumentMenuGeometry::measure(&rows, &s, d, shortcut_of);
                 // 二级面板与父行顶部对齐；父行离底部太近时由落点函数向上收。
                 let submenu_panels = open_submenu.map(|submenu| {
                     let sub_rows = self.document_submenu_rows(submenu, cx);
                     let index = rows.iter().position(|row| {
                         matches!(row, DocumentMenuRow::Submenu { id, .. } if *id == submenu)
                     });
-                    (DocumentMenuGeometry::measure(&sub_rows, &s, d), panel.row_top(index))
+                    (
+                        DocumentMenuGeometry::measure(&sub_rows, &s, d, shortcut_of),
+                        panel.row_top(index),
+                    )
                 });
                 let (origin, submenu_origin) = document_menu_origins(
                     *position,
@@ -647,7 +652,7 @@ impl Editor {
                     theme,
                     name,
                     document_menu_label(command, strings),
-                    document_menu_shortcut(command),
+                    document_menu_shortcut(command, cx),
                     enabled,
                     false,
                     false,
