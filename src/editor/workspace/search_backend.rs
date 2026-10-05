@@ -193,16 +193,72 @@ pub(crate) struct SearchContentCacheEntry {
     /// 化发现（两个都同就认了，属于极端情况）。
     len: u64,
     contents: std::sync::Arc<str>,
-    last_used: std::time::Instant,
 }
 
-pub(crate) fn search_content_cache() -> &'static std::sync::Mutex<
-    HashMap<PathBuf, SearchContentCacheEntry>,
-> {
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<HashMap<PathBuf, SearchContentCacheEntry>>,
-    > = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+/// 工作区内容缓存：条目按路径查，驱逐按插入序，总字节数即时记账。
+///
+/// 改前的写法是每次插入都把整表求和一遍、超限再线性找最久未用的条目——2000
+/// 文件 / 约 140 MB 语料顶穿 128 MB 预算后，每插一条都要走一遍全表，热跑比冷跑
+/// 慢 45%（缺陷 #8）。这里把这两处都换成 O(1)。
+///
+/// 驱逐顺序与改前实际一致：命中路径从不更新 `last_used`，所以那套「LRU」本来就
+/// 等价于插入序，`order` 队列只是把这件事写明并省去全表扫描。
+pub(crate) struct SearchContentCache {
+    entries: HashMap<PathBuf, SearchContentCacheEntry>,
+    /// 插入序队列，元素是 (路径, 那次插入记账的字节数)。同一路径被覆盖插入时，
+    /// 旧队列项弹出时对不上当前条目的字节数，跳过即可——`total_bytes` 始终等于
+    /// 表内条目字节之和，不会漂。
+    order: std::collections::VecDeque<(PathBuf, usize)>,
+    total_bytes: usize,
+    max_bytes: usize,
+}
+
+impl SearchContentCache {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: std::collections::VecDeque::new(),
+            total_bytes: 0,
+            max_bytes,
+        }
+    }
+
+    fn get(&self, path: &Path) -> Option<&SearchContentCacheEntry> {
+        self.entries.get(path)
+    }
+
+    /// 收下这个条目；超单条预算就拒收，否则按插入序逐出最早的条目直到放得下。
+    fn insert(&mut self, path: &Path, mtime: std::time::SystemTime, len: u64, contents: std::sync::Arc<str>) {
+        let bytes = contents.len();
+        if bytes > self.max_bytes {
+            return;
+        }
+        while self.total_bytes + bytes > self.max_bytes {
+            let Some((key, accounted)) = self.order.pop_front() else {
+                return;
+            };
+            if self.entries.get(&key).map(|entry| entry.contents.len()) == Some(accounted) {
+                self.entries.remove(&key);
+                self.total_bytes -= accounted;
+            }
+        }
+        if let Some(previous) = self.entries.insert(
+            path.to_path_buf(),
+            SearchContentCacheEntry { mtime, len, contents },
+        ) {
+            self.total_bytes -= previous.contents.len();
+        }
+        self.total_bytes += bytes;
+        self.order.push_back((path.to_path_buf(), bytes));
+    }
+}
+
+pub(crate) fn search_content_cache() -> &'static std::sync::Mutex<SearchContentCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<SearchContentCache>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        std::sync::Mutex::new(SearchContentCache::new(SEARCH_CACHE_MAX_BYTES))
+    })
 }
 
 /// 读取文件内容用于搜索：命中缓存（mtime 与长度都没变）零拷贝返回；未命中读盘
@@ -243,35 +299,9 @@ pub(crate) fn cached_file_source(path: &Path) -> Option<std::sync::Arc<str>> {
                 return Some(existing.contents.clone());
             }
         }
-        // 粗粒度总量记账：超限就把最久未用的条目逐出，直到放得下。单文件
-        // 上限 20MB 远小于总上限，刚插入的条目不会被自己挤掉。
-        let inserted = contents.len();
-        if inserted <= SEARCH_CACHE_MAX_BYTES {
-            while cache.len() * 4 > SEARCH_CACHE_MAX_BYTES
-                || cache.values().map(|entry| entry.contents.len()).sum::<usize>()
-                    > SEARCH_CACHE_MAX_BYTES - inserted
-            {
-                let oldest = cache
-                    .iter()
-                    .min_by_key(|(_, entry)| entry.last_used)
-                    .map(|(key, _)| key.clone());
-                match oldest {
-                    Some(key) => {
-                        cache.remove(&key);
-                    }
-                    None => break,
-                }
-            }
-            cache.insert(
-                path.to_path_buf(),
-                SearchContentCacheEntry {
-                    mtime,
-                    len,
-                    contents: contents.clone(),
-                    last_used: std::time::Instant::now(),
-                },
-            );
-        }
+        // 总量记账在缓存内部：超预算就按插入序逐出，直到放得下。单文件上限
+        // 20MB 远小于总上限，刚插入的条目不会被自己挤掉。
+        cache.insert(path, mtime, len, contents.clone());
     }
     Some(contents)
 }
@@ -522,4 +552,141 @@ pub(crate) fn is_code_file(path: &Path) -> bool {
             .iter()
             .any(|candidate| extension.eq_ignore_ascii_case(candidate))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    // 不写 `use super::*`：父模块 glob 了 `gpui::*`，其中的 `test` 属性宏会把内建
+    // 的 `#[test]` 顶掉（展开成 gpui 的测试脚手架，直接撞编译递归上限）。
+    use super::SearchContentCache;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant, SystemTime};
+
+    fn contents(bytes: usize) -> Arc<str> {
+        Arc::from("x".repeat(bytes))
+    }
+
+    fn path_at(index: usize) -> PathBuf {
+        PathBuf::from(format!("/corpus/file-{index}.md"))
+    }
+
+    /// 记账自证：`total_bytes` 必须始终等于表内条目字节之和。
+    fn accounted(cache: &SearchContentCache) -> usize {
+        cache.entries.values().map(|e| e.contents.len()).sum()
+    }
+
+    #[test]
+    fn eviction_follows_insertion_order_and_keeps_the_byte_accounting_exact() {
+        let mut cache = SearchContentCache::new(1_000);
+        for index in 0..50 {
+            cache.insert(&path_at(index), SystemTime::now(), 1, contents(120));
+            assert_eq!(
+                cache.total_bytes,
+                accounted(&cache),
+                "第 {index} 次插入后记账漂了"
+            );
+            assert!(cache.total_bytes <= 1_000, "超预算");
+        }
+        // 120 字节一条，预算最多容纳 8 条；最早插入的 42 条必须已被逐出。
+        for index in 0..42 {
+            assert!(
+                cache.get(&path_at(index)).is_none(),
+                "{index} 号最早插入，应当已被逐出"
+            );
+        }
+        for index in 42..50 {
+            assert!(cache.get(&path_at(index)).is_some(), "{index} 号还该在表里");
+        }
+    }
+
+    #[test]
+    fn rewriting_a_path_reaccounts_instead_of_double_counting() {
+        let mut cache = SearchContentCache::new(10_000);
+        cache.insert(&path_at(0), SystemTime::now(), 1, contents(4_000));
+        cache.insert(&path_at(0), SystemTime::now(), 2, contents(1_000));
+        assert_eq!(cache.total_bytes, 1_000, "同一路径覆盖后只按最新那份记账");
+        assert_eq!(cache.entries.len(), 1);
+
+        // 队列里那条 4000 字节的旧项此时是陈迹：弹出它对不上当前条目，必须跳过
+        // 而不是减出负数。逼它出来。
+        cache.insert(&path_at(1), SystemTime::now(), 1, contents(9_500));
+        assert_eq!(cache.total_bytes, accounted(&cache));
+        assert_eq!(cache.total_bytes, 9_500);
+        assert!(cache.get(&path_at(0)).is_none(), "陈迹跳过后仍要逐出真正最早的那份");
+    }
+
+    #[test]
+    fn a_single_file_bigger_than_the_budget_is_not_cached() {
+        let mut cache = SearchContentCache::new(100);
+        cache.insert(&path_at(0), SystemTime::now(), 1, contents(101));
+        assert!(cache.entries.is_empty());
+        assert!(cache.order.is_empty());
+        assert_eq!(cache.total_bytes, 0);
+    }
+
+    /// 缺陷 #8 的账单：旧写法每插一条都要把整表求和一遍、超限再线性找最久未用，
+    /// 条目数一多开销按平方长；新写法只从队头弹，按线性长。这里在同一进程里
+    /// 把旧写法照抄一遍做 A/B，钉住这条不再退步。
+    #[test]
+    fn eviction_does_not_walk_the_whole_table_on_every_insert() {
+        const ENTRIES: usize = 1_200;
+        const ENTRY_BYTES: usize = 100;
+        const BUDGET: usize = ENTRY_BYTES * 300;
+
+        let mut best = Duration::MAX;
+        for _ in 0..3 {
+            let started = Instant::now();
+            let mut cache = SearchContentCache::new(BUDGET);
+            for index in 0..ENTRIES {
+                cache.insert(&path_at(index), SystemTime::now(), 1, contents(ENTRY_BYTES));
+            }
+            let elapsed = started.elapsed();
+            best = best.min(elapsed);
+        }
+        let new = best;
+
+        struct OldEntry {
+            contents: Arc<str>,
+            last_used: Instant,
+        }
+        let started = Instant::now();
+        let mut old: HashMap<PathBuf, OldEntry> = HashMap::new();
+        for index in 0..ENTRIES {
+            let contents = contents(ENTRY_BYTES);
+            let inserted = contents.len();
+            while old.len() * 4 > BUDGET
+                || old.values()
+                    .map(|entry| entry.contents.len())
+                    .sum::<usize>()
+                    > BUDGET - inserted
+            {
+                let oldest = old
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.last_used)
+                    .map(|(key, _)| key.clone());
+                match oldest {
+                    Some(key) => {
+                        old.remove(&key);
+                    }
+                    None => break,
+                }
+            }
+            old.insert(
+                path_at(index),
+                OldEntry {
+                    contents,
+                    last_used: Instant::now(),
+                },
+            );
+        }
+        let old = started.elapsed();
+
+        eprintln!("[measure] 驱逐 1200 次：旧写法 {old:?}，新写法 {new:?}");
+        assert!(
+            new * 4 <= old,
+            "新写法 {new:?} 应当远快于旧写法 {old:?}——每插一条不再全表扫描才算修住了缺陷 #8"
+        );
+    }
 }
