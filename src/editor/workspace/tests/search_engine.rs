@@ -21,6 +21,14 @@ fn compile(query: &str, options: SearchOptions) -> CompiledQuery {
     CompiledQuery::compile(query, options).expect("编译成功")
 }
 
+/// 正则模式（大小写不敏感，与面板默认一致）。跨行档在正则模式下由引擎打开。
+fn regex_options() -> SearchOptions {
+    SearchOptions {
+        use_regex: true,
+        ..SearchOptions::default()
+    }
+}
+
 /// 手写实现的口径：逐行喂，行内命中换算成整篇的绝对区间。
 fn legacy_hits(source: &str, query: &str, options: SearchOptions) -> Vec<Range<usize>> {
     let matcher = SearchMatcher::new(query, options);
@@ -397,4 +405,120 @@ fn first_per_line_is_just_find_all_grouped_by_line() {
             );
         }
     }
+}
+
+#[test]
+fn a_regex_pattern_can_span_lines() {
+    // 阶段 3 的入口：正则模式下引擎开着 `-U` 那一档，模式里写了换行就真跨行。
+    let source = "first\nneedle.\nsecond\nlast\n";
+    let engine = compile("needle\\.\\nsecond", regex_options());
+    let hits = engine.find_all(source.as_bytes());
+    assert_eq!(
+        hits.iter().map(|hit| hit.range.clone()).collect::<Vec<_>>(),
+        vec![6..20],
+        "命中要一直延伸到第二行的 second：{hits:?}"
+    );
+    assert_eq!(&source[6..20], "needle.\nsecond");
+    assert_eq!(hits[0].line, Some(2), "行号报的是命中**起始**所在行");
+}
+
+#[test]
+fn a_dot_still_does_not_cross_a_line() {
+    // 防直觉的一条（风险登记 R12）：开着跨行不等于 `.` 能跨行——`.` 默认不匹配
+    // `\n`，要跨得写 `\n`、`[\s\S]` 或开 `(?s)`。与 ripgrep 的行为一致。
+    let source = "first\nneedle.\nsecond\nlast\n";
+    let engine = compile("needle.{0,12}last", regex_options());
+    assert!(engine.find_all(source.as_bytes()).is_empty(), "`.` 不该跨过换行");
+    let engine = compile("needle.*second", regex_options());
+    assert!(engine.find_all(source.as_bytes()).is_empty(), "同一根行里没有 second");
+    let engine = compile("needle[\\s\\S]*?last", regex_options());
+    let hits = engine.find_all(source.as_bytes());
+    assert_eq!(
+        hits.iter().map(|hit| hit.range.clone()).collect::<Vec<_>>(),
+        vec![6..25],
+        "写了 [\\s\\S] 就该跨到 last"
+    );
+}
+
+#[test]
+fn a_match_ending_with_a_newline_keeps_every_byte() {
+    // 实测抓到的坑：`local_matches` 原本无条件把 report 字节尾部的换行摘掉
+    // （行式策略需要，因为那时 bytes() 是整行），跨行策略下 bytes() 就是命中本身，
+    // 一摘就把 `needle\\n` 这类模式整个吃掉，`[\\s\\S]+` 也少算一个字节。
+    let source = "needle\nsecond\n";
+    let cases = [
+        ("needle\\n", 0..7),
+        ("n.*?e\\n", 0..7),
+        ("[\\s\\S]+", 0..14),
+        ("needle\\nsecond", 0..13),
+    ];
+    for (pattern, expected) in cases {
+        let engine = compile(pattern, regex_options());
+        let hits = engine.find_all(source.as_bytes());
+        assert_eq!(
+            hits.iter().map(|hit| hit.range.clone()).collect::<Vec<_>>(),
+            vec![expected.clone()],
+            "模式 {pattern} 的区间应当含住结尾的换行：{hits:?}"
+        );
+        assert!(
+            source.is_char_boundary(expected.start) && source.is_char_boundary(expected.end),
+            "模式 {pattern} 的区间两端都必须在字符边界上"
+        );
+    }
+}
+
+#[test]
+fn turning_on_multi_line_does_not_move_the_line_anchored_semantics() {
+    // 开着 `-U` 之后，`^` 仍然按「每根行的行首」算——这与换引擎前逐行喂的口径
+    // 相同（旧实现把每一行单独喂给正则，`^` 自然就是行首）。这条挡的是
+    // 「开跨行把 ^ 改成整篇开头」这种静默漂移。
+    let source = "first\nneedle.\nsecond\nlast\n";
+    let engine = compile("^needle", regex_options());
+    let hits = engine.find_all(source.as_bytes());
+    assert_eq!(
+        hits.iter().map(|hit| hit.range.clone()).collect::<Vec<_>>(),
+        vec![6..12]
+    );
+    assert_eq!(hits[0].line, Some(2));
+    // 字面量模式（输入框单行，跨不跨行都没区别）结果一致。
+    let plain = compile("needle", SearchOptions::default());
+    assert_eq!(
+        plain.find_all(source.as_bytes())
+            .iter()
+            .map(|hit| hit.range.clone())
+            .collect::<Vec<_>>(),
+        vec![6..12]
+    );
+}
+
+#[test]
+fn a_zero_width_match_on_a_line_boundary_is_reported_once() {
+    // 跨行档的实测坑：行尾/行首是同一个字节位置，零宽命中会被当成「上一行结尾」
+    // 和「下一行开头」各报一次。区间相同的相邻两次报告就是同一个命中，只留一条——
+    // 否则结果列表、跳转都会多出一个不存在的命中，`x*` 在 "ab\nab\n" 上实测就是这样。
+    let source = "ab\nab\n";
+    let engine = compile("x*", regex_options());
+    let hits = engine.find_all(source.as_bytes());
+    assert_eq!(
+        hits.iter().map(|hit| hit.range.clone()).collect::<Vec<_>>(),
+        vec![0..0, 1..1, 2..2, 3..3, 4..4, 5..5, 6..6],
+        "每个位置一条，行交界不许重复"
+    );
+    let mut starts = hits
+        .iter()
+        .map(|hit| hit.range.start)
+        .collect::<Vec<_>>();
+    starts.dedup();
+    assert_eq!(starts.len(), hits.len(), "命中区间必须互不重复");
+
+    // 空行同样只在交界处报一次。
+    let engine = compile("x*", regex_options());
+    let ranges = engine
+        .find_all("a\n\nb\n".as_bytes())
+        .iter()
+        .map(|hit| hit.range.clone())
+        .collect::<Vec<_>>();
+    let mut deduped = ranges.clone();
+    deduped.dedup();
+    assert_eq!(deduped, ranges, "空行相邻的两个边界也不该重复：{ranges:?}");
 }

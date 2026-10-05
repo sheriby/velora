@@ -406,6 +406,11 @@ fn snapshot_other_zero_width_patterns_stay_on_char_boundaries() {
 fn defect_patterns_cannot_span_lines() {
     // 搜索是逐行喂的，所以带 \n 的模式永远空手。现状实现与调用方都建立在
     // 「一个命中不跨行」之上，跨行能力要等阶段 3。
+    //
+    // 阶段 3a 更新：引擎已经能跨行（见 `search_engine.rs::a_regex_pattern_can_span_lines`，
+    // `needle\.\nsecond` 实测命中 6..20）。这条断言之所以还是 `None`，是因为
+    // `find_document_match_from` 这个**手写行走查 helper** 自己按行切——它排在
+    // §4.7 的重定位改造与阶段 4 的删除清单里，等它退役时这条快照一并改写。
     let source = "a needle.\nsecond line\n";
     let matcher = SearchMatcher::new(
         r"needle\.\nsecond",

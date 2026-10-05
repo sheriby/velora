@@ -85,7 +85,12 @@ impl CompiledQuery {
         };
         let mut hits = Vec::new();
         // 复用同一个 searcher：它内部持有行缓冲，反复搜索不再重新分配。
-        let mut searcher = SearcherBuilder::new().line_number(true).build();
+        // `multi_line(true)` 只放行策略的一半——另一半是 matcher 得声明
+        // `line_terminator() == None`，两边都对上引擎才真走跨行。
+        let mut searcher = SearcherBuilder::new()
+            .line_number(true)
+            .multi_line(true)
+            .build();
         {
             let mut sink = HitSink {
                 matcher,
@@ -116,7 +121,10 @@ impl CompiledQuery {
             return Self::first_hit_per_line(all, max_lines);
         };
         let mut hits = Vec::new();
-        let mut searcher = SearcherBuilder::new().line_number(true).build();
+        let mut searcher = SearcherBuilder::new()
+            .line_number(true)
+            .multi_line(true)
+            .build();
         {
             let mut sink = FirstPerLineSink {
                 matcher,
@@ -205,7 +213,8 @@ fn is_char_boundary(haystack: &[u8], at: usize) -> bool {
 }
 
 /// 把模式组合交给引擎：大小写、字面量、单词边界三档与 ripgrep CLI 的
-/// `--ignore-case` / `--fixed-strings` / `--word-regexp` 一一对应。
+/// `--ignore-case` / `--fixed-strings` / `--word-regexp` 一一对应，
+/// 跨行档（`-U`）在正则模式下打开。
 fn build_matcher(query: &str, options: SearchOptions) -> Result<RegexMatcher, QueryError> {
     let mut builder = RegexMatcherBuilder::new();
     builder.case_insensitive(!options.match_case);
@@ -214,6 +223,12 @@ fn build_matcher(query: &str, options: SearchOptions) -> Result<RegexMatcher, Qu
     }
     if options.whole_word {
         builder.word(true);
+    }
+    if options.use_regex {
+        // 与 ripgrep 的 `-U/--multiline` 同一档：模式里写了 `\n`、`[\s\S]` 或开了
+        // `(?s)` 才真会跨行，`.*` 之类默认仍然不跨过换行（`.` 不匹配 `\n`）。
+        // 字面量模式的输入框是单行的，装了也没有模式能跨行，所以只在正则下打开。
+        builder.multi_line(true);
     }
     builder
         .build(query)
@@ -233,6 +248,12 @@ impl Sink for HitSink<'_> {
     fn matched(&mut self, _searcher: &Searcher, report: &SinkMatch) -> Result<bool, Self::Error> {
         let base = report.absolute_byte_offset() as usize;
         for range in local_matches(self.matcher, report, self.haystack, base)? {
+            // 跨行档下，行尾那个零宽命中会被当成「上一行的结尾」和「下一行的开头」
+            // 各报一次（实测 `x*` 在 "ab\nab\n" 上吐出两个 3..3）。区间完全相同的
+            // 相邻两次报告就是同一个命中，留一条。
+            if self.hits.last().is_some_and(|previous| previous.range == range) {
+                continue;
+            }
             self.hits.push(SearchHit {
                 range,
                 line: report.line_number(),
@@ -268,6 +289,9 @@ impl Sink for FirstPerLineSink<'_> {
         else {
             return Ok(true);
         };
+        if self.hits.last().is_some_and(|previous| previous.range == range) {
+            return Ok(self.hits.len() < self.max_lines);
+        }
         self.last_line = line;
         self.hits.push(SearchHit { range, line });
         // 收满就停：`false` 让 grep-searcher 不再往下看剩余内容。
@@ -286,12 +310,20 @@ fn local_matches(
     haystack: &[u8],
     base: usize,
 ) -> Result<Vec<Range<usize>>, std::io::Error> {
-    // 逐行策略下 bytes() 是整行含终止符；把终止符摘掉，命中就不会跨行——
-    // 这与被替换掉的手写层口径一致（`strip_suffix('\n')`）。
+    // 行式策略下 `bytes()` 是「命中所在的整行 + 行终止符」，摘掉终止符命中才不会
+    // 跨行——这与被替换掉的手写层口径一致（`strip_suffix('\n')`）。
+    // 跨行策略下 `bytes()` 就是命中本身，绝不能摘：实测 `needle\n` 这类
+    // 以换行结尾的模式，摘完尾部换行再重跑一遍匹配就什么都找不到了，
+    // `[\s\S]+` 则会少算一个字节。判据用 matcher 自己声明的行终止符，
+    // 而不是猜调用方开了哪一档。
     let reported = report.bytes();
-    let line = match reported.last() {
-        Some(b'\n') => &reported[..reported.len() - 1],
-        _ => reported,
+    let line = if matcher.line_terminator().is_some() {
+        match reported.last() {
+            Some(b'\n') => &reported[..reported.len() - 1],
+            _ => reported,
+        }
+    } else {
+        reported
     };
     let mut local: Vec<(usize, usize)> = Vec::new();
     // RegexMatcher 的错误类型是 NoError（不可能失败）；这里只是把结果消费掉，
