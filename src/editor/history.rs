@@ -448,18 +448,20 @@ impl Editor {
                 self.rebuild_image_runtimes(cx);
             }
             ViewMode::Source => {
-                let kind = if self.code_tab_active() {
+                // markdown 源码分块是 Paragraph：高亮语言记在块上；代码文件的
+                // 块是 CodeBlock，语言在 kind 里。
+                let (kind, source_language) = if self.code_tab_active() {
                     let language = self
                         .file_path
                         .as_ref()
                         .or(self.recovery_source_path.as_ref())
                         .and_then(|path| path.extension())
                         .map(|extension| extension.to_string_lossy().into_owned().into());
-                    BlockKind::CodeBlock { language }
+                    (BlockKind::CodeBlock { language }, None)
                 } else {
-                    BlockKind::Paragraph
+                    (BlockKind::Paragraph, Some("markdown"))
                 };
-                let roots = Self::build_source_document_roots(kind, &source, cx);
+                let roots = Self::build_source_document_roots(kind, &source, source_language, cx);
                 self.attach_source_slice_spans(&roots, cx);
                 self.document.replace_roots(roots, cx);
                 self.table_cells.clear();

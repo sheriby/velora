@@ -74,7 +74,12 @@ impl Block {
                 language.as_deref().map(|value| &**value),
                 self.render_cache.visible_text(),
             ),
-            _ => None,
+            // 源码文档的 markdown 分块是 Paragraph：语言在打开/切视图时记在
+            // 块上（"markdown"），高亮与代码文件同一条管线（用户报修：源码
+            // 模式要有基础语法高亮）。
+            _ => self.source_language.as_deref().and_then(|language| {
+                highlight_code_block(Some(language), self.render_cache.visible_text())
+            }),
         };
     }
 

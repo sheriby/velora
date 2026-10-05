@@ -112,7 +112,9 @@ impl Element for BlockTextElement {
         };
 
         let runs: Vec<TextRun> = if !is_placeholder {
-            if input.kind().is_code_block() {
+            // 代码块与带高亮语言的源码分块（markdown 源码）走高亮管线；
+            // 其余按 markdown 行内样式上色。
+            if input.kind().is_code_block() || input.code_highlight_result().is_some() {
                 build_code_text_runs(
                     input,
                     &display_text,

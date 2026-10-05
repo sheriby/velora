@@ -531,3 +531,39 @@ async fn typing_a_toc_marker_fills_its_entries_on_that_frame(cx: &mut TestAppCon
         "文本不再是 `[TOC]`，条目要跟着清掉，否则块上挂着过期目录"
     );
 }
+
+#[gpui::test]
+async fn markdown_source_mode_highlights_with_monospace_pipeline(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 用户报修：markdown 源码模式没有等宽字体、没有基础语法高亮（对标
+    // VS Code 的 markdown 源码视图）。切到源码后：分块走高亮管线（markdown
+    // 语法 span）、行号标志打开（等宽字体与行号对齐都靠它）。
+    let markdown = "# 标题\n\n正文 `code` **粗体**。\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.into(), None));
+    editor.update(cx, |editor, cx| {
+        editor.toggle_view_mode(cx);
+        assert!(matches!(editor.view_mode, ViewMode::Source));
+    });
+
+    editor.read_with(cx, |editor, cx| {
+        let roots = editor.document.root_blocks();
+        // 源码分块按 512 行切，4 行的文档就一块（整篇在里面）。
+        assert_eq!(roots.len(), 1);
+        for block in roots {
+            let block = block.read(cx);
+            assert!(
+                block.show_source_line_numbers(),
+                "源码分块都应带行号标志（等宽字体与行号绘制的开关）"
+            );
+        }
+        let highlight = roots[0]
+            .read(cx)
+            .code_highlight_result()
+            .expect("markdown 源码分块应有高亮结果");
+        assert!(
+            !highlight.spans.is_empty(),
+            "标题/#、code span、粗体记号应产出高亮 span"
+        );
+    });
+}

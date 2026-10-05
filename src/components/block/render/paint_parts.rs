@@ -168,6 +168,10 @@ impl Render for Block {
             } else if !focused && self.cursor_blink_task.is_some() {
                 self.cursor_blink_task = None;
             }
+            // 行号视图（源码文档分块）与代码块一样用等宽字体和代码字号：
+            // 行号跟着正文字体走，等宽才能上下对齐（用户报修：markdown 源码
+            // 模式要用等宽字体、行号没对齐）。
+            let source_document = self.show_source_line_numbers();
             let source_base = self
                 .render_shell(
                     block_id.clone(),
@@ -179,7 +183,7 @@ impl Render for Block {
                     d,
                     cx,
                 )
-                .text_size(px(if self.kind().is_code_block() {
+                .text_size(px(if self.kind().is_code_block() || source_document {
                     t.code_size
                 } else {
                     t.text_size
@@ -187,17 +191,17 @@ impl Render for Block {
                 .text_color(c.text_default)
                 .line_height(relative(t.text_line_height));
 
-            let source_base = if self.kind().is_code_block() {
+            let source_base = if self.kind().is_code_block() || source_document {
                 source_base.font(font(fonts.code_family.clone()))
             } else {
                 source_base
             };
 
             let source_base = if self.kind().is_code_block() {
-                source_base.font(font(fonts.code_family.clone()))
+                source_base
             } else if self.kind() == BlockKind::Comment {
                 source_base.bg(c.comment_bg).rounded_sm()
-            } else if focused && !self.show_source_line_numbers() {
+            } else if focused && !source_document {
                 // 行号视图的块是 512 行一切的分块：聚焦底色会把整屏铺满
                 // （用户报修：markdown 源码界面一大片绿）。光标定位有当前行
                 // 高亮兜底，这里不再上块底色。

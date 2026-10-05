@@ -220,6 +220,9 @@ pub struct Block {
     /// 上下块的行号才右对齐（按块内最后行号算的话，513 行那块的栏会宽出
     /// 一位——用户报修：512 上下行号对不齐）。0 = 未设置，按块内口径兜底。
     source_line_gutter_basis: usize,
+    /// 源码文档分块的高亮语言（markdown 源码块是 Paragraph，语言记在这里；
+    /// 代码文件的块是 CodeBlock，语言在 kind 里）。
+    source_language: Option<SharedString>,
     pub(crate) table_runtime: Option<TableRuntime>,
     pub(crate) table_cell_position: Option<TableCellPosition>,
     pub(crate) table_cell_alignment: Option<TableColumnAlignment>,
@@ -351,6 +354,7 @@ impl Block {
             show_source_line_numbers: false,
             source_line_start: 1,
             source_line_gutter_basis: 0,
+            source_language: None,
             table_runtime: None,
             table_cell_position: None,
             table_cell_alignment: None,
@@ -426,6 +430,12 @@ impl Block {
 
     pub(crate) fn set_source_line_gutter_basis(&mut self, basis: usize) {
         self.source_line_gutter_basis = basis;
+    }
+
+    /// 源码文档分块的高亮语言（markdown 源码 = "markdown"）。设置即重算高亮。
+    pub(crate) fn set_source_language(&mut self, language: &str) {
+        self.source_language = Some(language.to_string().into());
+        self.sync_code_highlight();
     }
 
     pub(crate) fn take_quote_reparse_requested(&mut self) -> bool {

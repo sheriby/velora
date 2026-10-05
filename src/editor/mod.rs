@@ -545,7 +545,10 @@ impl Editor {
         let mut initial_spans: Vec<(gpui::EntityId, std::ops::Range<usize>)> = Vec::new();
         let mut roots = if source_mode_fallback_required {
             let block = Self::new_block(cx, BlockRecord::paragraph(normalized.clone()));
-            block.update(cx, |block, _cx| block.set_source_document_mode());
+            block.update(cx, |block, _cx| {
+                block.set_source_document_mode();
+                block.set_source_language("markdown");
+            });
             let roots = vec![block];
             if let Some(spans) = Self::source_slice_span_ranges(&buffer, &roots, cx) {
                 initial_spans.extend(roots.iter().map(|block| block.entity_id()).zip(spans));

@@ -16,7 +16,7 @@ pub(super) use crate::components::HtmlCssColor;
 pub(super) use crate::theme::{ThemeColors, ThemeManager};
 
 const SOURCE_LINE_NUMBER_MIN_DIGITS: usize = 2;
-const SOURCE_LINE_NUMBER_GAP: f32 = 12.0;
+const SOURCE_LINE_NUMBER_GAP: f32 = 16.0;
 const SOURCE_LINE_NUMBER_DIGIT_WIDTH_RATIO: f32 = 0.62;
 
 pub(crate) fn prose_line_breaks(text: &str) -> Vec<usize> {

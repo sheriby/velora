@@ -43,17 +43,24 @@ pub(super) fn split_source_document_chunks(source: &str) -> Vec<String> {
 impl Editor {
     /// 构建源码模式（整文件直编）的根块列表：按行分块 + 连续源码行号。
     /// 导入（`replace_document_content`）与 undo 恢复共用，保证 undo 后
-    /// 不会退化回整文件单块。
+    /// 不会退化回整文件单块。`source_language`：markdown 源码分块是
+    /// Paragraph，高亮语言记在块上（代码文件的块自带 kind 里的语言）。
     pub(super) fn build_source_document_roots(
         kind: BlockKind,
         source: &str,
+        source_language: Option<&str>,
         cx: &mut Context<Self>,
     ) -> Vec<Entity<Block>> {
         let mut blocks = Vec::new();
         for chunk in split_source_document_chunks(source) {
             let record = BlockRecord::with_plain_text(kind.clone(), chunk);
             let block = Self::new_block(cx, record);
-            block.update(cx, |block, _cx| block.set_source_document_mode());
+            block.update(cx, |block, _cx| {
+                block.set_source_document_mode();
+                if let Some(language) = source_language {
+                    block.set_source_language(language);
+                }
+            });
             blocks.push(block);
         }
         let mut next_line = 1usize;
@@ -268,9 +275,10 @@ impl Editor {
                         source: normalized[end..].to_string(),
                         next_line: SOURCE_DOCUMENT_CHUNK_LINES,
                     });
-                    Self::build_source_document_roots(chunk_kind, &normalized[..end - 1], cx)
+                    // 代码文件的块语言在 kind 里，无需额外记。
+                    Self::build_source_document_roots(chunk_kind, &normalized[..end - 1], None, cx)
                 }
-                _ => Self::build_source_document_roots(chunk_kind, &normalized, cx),
+                _ => Self::build_source_document_roots(chunk_kind, &normalized, None, cx),
             };
             self.attach_source_slice_spans(&built, cx);
             built
