@@ -595,6 +595,9 @@ impl I18nStringsDe {
             preferences_file_autosave_debounce: self
                 .preferences_file_autosave_debounce
                 .unwrap_or(defaults.preferences_file_autosave_debounce),
+            preferences_autosave: self
+                .preferences_autosave
+                .unwrap_or(defaults.preferences_autosave),
             preferences_window_remember_bounds: self
                 .preferences_window_remember_bounds
                 .unwrap_or(defaults.preferences_window_remember_bounds),

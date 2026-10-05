@@ -379,6 +379,8 @@ pub struct I18nStrings {
     pub preferences_file_tree_sort: String,
     /// 文件页：自动保存间隔行标签。
     pub preferences_file_autosave_debounce: String,
+    /// 文件页：自动保存开关行标签。
+    pub preferences_autosave: String,
     /// 窗口页：记住窗口位置与大小开关标签。
     pub preferences_window_remember_bounds: String,
     pub preferences_file_external_change: String,

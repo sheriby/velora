@@ -40,6 +40,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) page_scroll: ScrollHandle,
     pub(super) tree_sort: TreeSortPreference,
     pub(super) autosave_debounce_ms: u64,
+    pub(super) autosave: bool,
     pub(super) remember_window_bounds: bool,
     pub(super) window_open_position: WindowOpenPosition,
     pub(super) smart_punctuation: bool,
@@ -55,6 +56,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) delete_policy_dropdown_open: bool,
     pub(super) saved_tree_sort: TreeSortPreference,
     pub(super) saved_autosave_debounce_ms: u64,
+    pub(super) saved_autosave: bool,
     pub(super) saved_remember_window_bounds: bool,
     pub(super) saved_window_open_position: WindowOpenPosition,
     pub(super) saved_smart_punctuation: bool,
@@ -100,6 +102,7 @@ impl PreferencesWindow {
         let keybindings = preferences.keybindings;
         let tree_sort = preferences.tree_sort;
         let autosave_debounce_ms = preferences.autosave_debounce_ms;
+        let autosave = preferences.autosave;
         let remember_window_bounds = preferences.remember_window_bounds;
         let window_open_position = preferences.window_open_position;
         let smart_punctuation = preferences.smart_punctuation;
@@ -124,6 +127,7 @@ impl PreferencesWindow {
             saved_keybindings: keybindings,
             tree_sort,
             autosave_debounce_ms,
+            autosave,
             remember_window_bounds,
             window_open_position,
             smart_punctuation,
@@ -139,6 +143,7 @@ impl PreferencesWindow {
             delete_policy_dropdown_open: false,
             saved_tree_sort: tree_sort,
             saved_autosave_debounce_ms: autosave_debounce_ms,
+            saved_autosave: autosave,
             saved_remember_window_bounds: remember_window_bounds,
             saved_window_open_position: window_open_position,
             saved_smart_punctuation: smart_punctuation,
@@ -211,6 +216,7 @@ impl PreferencesWindow {
             || self.status_bar_show_mode_switch != self.saved_status_bar_show_mode_switch
             || self.tree_sort != self.saved_tree_sort
             || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
+            || self.autosave != self.saved_autosave
             || self.remember_window_bounds != self.saved_remember_window_bounds
             || self.window_open_position != self.saved_window_open_position
             || self.smart_punctuation != self.saved_smart_punctuation
@@ -436,6 +442,7 @@ impl PreferencesWindow {
             self.remember_window_bounds,
             self.window_open_position,
             self.smart_punctuation,
+            self.autosave,
             self.zoom_percent,
             self.default_window_width,
             self.default_window_height,
@@ -459,6 +466,7 @@ impl PreferencesWindow {
         EditorSettings::set_tree_sort(cx, self.tree_sort);
         EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
         EditorSettings::set_smart_punctuation(cx, self.smart_punctuation);
+        EditorSettings::set_autosave(cx, self.autosave);
         EditorSettings::set_zoom_percent(cx, self.zoom_percent);
         EditorSettings::set_external_change_policy(cx, self.external_change_policy);
         EditorSettings::set_delete_policy(cx, self.delete_policy);
@@ -517,6 +525,7 @@ impl PreferencesWindow {
         self.saved_status_bar_show_mode_switch = self.status_bar_show_mode_switch;
         self.saved_tree_sort = self.tree_sort;
         self.saved_autosave_debounce_ms = self.autosave_debounce_ms;
+        self.saved_autosave = self.autosave;
         self.saved_remember_window_bounds = self.remember_window_bounds;
         self.saved_window_open_position = self.window_open_position;
         self.saved_smart_punctuation = self.smart_punctuation;

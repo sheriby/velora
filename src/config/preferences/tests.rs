@@ -245,6 +245,7 @@
         assert_eq!(preferences.default_theme_id, "velora-light");
         assert_eq!(preferences.export_theme, ExportThemePreference::Current);
         assert!(!preferences.smart_punctuation);
+        assert!(preferences.autosave);
         assert_eq!(preferences.external_change_policy, ExternalChangePolicy::Auto);
         assert_eq!(preferences.delete_policy, DeletePolicy::Trash);
         assert_eq!(preferences.writing_width, WritingWidthPreference::Theme);
@@ -334,6 +335,7 @@
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
+            autosave: true,
             tree_sort: TreeSortPreference::default(),
             new_file_template: String::new(),
             remember_window_bounds: true,
@@ -455,6 +457,7 @@
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
+            autosave: true,
             tree_sort: TreeSortPreference::default(),
             new_file_template: String::new(),
             remember_window_bounds: true,
@@ -479,6 +482,8 @@
             800,
             true,
             WindowOpenPosition::Center,
+            true,
+            // 两个相邻的 bool 各给一个非默认方向，位置写反就会被下面两行抓住。
             false,
             110,
             1280,
@@ -490,6 +495,8 @@
         .expect("window preferences should save");
         assert_eq!(saved.tree_sort, TreeSortPreference::Name);
         assert_eq!(saved.autosave_debounce_ms, 800);
+        assert!(!saved.autosave);
+        assert!(saved.smart_punctuation);
         assert!(saved.remember_window_bounds);
         assert_eq!(saved.zoom_percent, 110);
         assert_eq!(saved.default_window_width, 1280);

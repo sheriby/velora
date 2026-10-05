@@ -225,6 +225,13 @@ impl PreferencesWindow {
                     cx.notify();
                 }));
 
+        let autosave_toggle = crate::components::switch::Switch::new("preferences-autosave")
+            .checked(self.autosave)
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.autosave = !this.autosave;
+                cx.notify();
+            }));
+
         self.settings_card(
             theme,
             vec![
@@ -234,6 +241,7 @@ impl PreferencesWindow {
                     strings.preferences_file_tree_sort.clone(),
                     tree_sort_dropdown,
                 ),
+                self.settings_row(theme, strings.preferences_autosave.clone(), autosave_toggle),
                 self.settings_row(
                     theme,
                     strings.preferences_file_autosave_debounce.clone(),

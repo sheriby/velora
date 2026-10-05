@@ -794,3 +794,162 @@ async fn window_title_tracks_file_and_edited_state(cx: &mut TestAppContext) {
     );
 }
 
+/// 自动保存开关的落点：文档放在用例独占的目录里，这样「有没有留下 .velora-*.tmp」
+/// 才只反映本篇的行为（`temp_markdown_path` 共用系统临时目录，并列用例会互相看到残留）。
+fn isolated_doc_dir(cx: &mut TestAppContext, test_name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "velora-{test_name}-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create document dir");
+    // macOS 上 /var ↔ /private/var 是两个名字：不 canonicalize，编辑器算出的路径与
+    // 断言里的对不上，临时残留也就扫不准。
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let cleanup = root.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(cleanup);
+    });
+    root
+}
+
+/// 目录里留下的 autosave 临时文件名（`.velora-*.tmp`）。
+fn leftover_autosave_temps(dir: &std::path::Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .expect("list document dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".velora-"))
+        .collect()
+}
+
+fn set_autosave_switch(cx: &mut TestAppContext, autosave: bool) {
+    cx.update(|cx| {
+        crate::config::EditorSettings::init(cx, true);
+        crate::config::EditorSettings::set_autosave_in_memory(autosave, cx);
+    });
+}
+
+fn edit_first_block(editor: &gpui::Entity<Editor>, cx: &mut VisualTestContext, text: &str) {
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(InlineTextTree::plain(text.to_string()));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+}
+
+#[gpui::test]
+async fn autosave_off_leaves_the_file_alone_but_still_notices_external_edits(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    set_autosave_switch(cx, false);
+
+    let root = isolated_doc_dir(cx, "autosave-off");
+    let path = root.join("note.md");
+    fs::write(&path, "alpha").expect("write initial markdown");
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+
+    edit_first_block(&editor, cx, "our edits");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read file"),
+        "alpha",
+        "关掉自动保存后，编辑不该写进真文件"
+    );
+    let leftovers = leftover_autosave_temps(&root);
+    assert!(
+        leftovers.is_empty(),
+        "关掉自动保存不该在同一目录留下临时文件，实测 {leftovers:?}"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.document_dirty,
+            "没落盘的编辑要一直算未保存（标签上的圆点得亮着）"
+        );
+        assert!(
+            !editor.has_external_autosave_conflict(),
+            "文件没被动过就不该报冲突"
+        );
+    });
+
+    // 关掉的只是「写真文件」这一半：恢复快照照旧落盘，崩了不能丢字。
+    // 按 `<id>.json` 那条路径点名查，不用 `read_recovery_snapshots()` 扫目录——
+    // 并列用例会在同一时刻删自己那份快照，整目录扫一遍会 Err 掉（实测过一次假红）。
+    let recovery_dir = crate::config::VeloraConfigDirs::from_system()
+        .expect("config dirs")
+        .recovery_dir();
+    assert!(
+        recovery_dir.join(format!("{recovery_id}.json")).is_file(),
+        "关掉自动保存后这一篇仍要有恢复快照"
+    );
+
+    // 检测不跟着写入一起关掉：外部改动照样在下一次防抖 tick 上被认出来。
+    fs::write(&path, "external edits").expect("external write");
+    edit_first_block(&editor, cx, "our edits again");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.has_external_autosave_conflict(),
+            "关掉自动保存也要发现外部改动，否则用户的编辑会被后来的写入静默覆盖"
+        );
+    });
+    assert_eq!(
+        fs::read_to_string(&path).expect("read file"),
+        "external edits",
+        "报冲突也不能把外部改动写掉"
+    );
+}
+
+#[gpui::test]
+async fn autosave_on_writes_the_edited_file_and_clears_the_dirty_flag(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    set_autosave_switch(cx, true);
+
+    let root = isolated_doc_dir(cx, "autosave-on");
+    let path = root.join("note.md");
+    fs::write(&path, "alpha").expect("write initial markdown");
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+
+    edit_first_block(&editor, cx, "our edits");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read file"),
+        "our edits",
+        "开关开着时防抖到点就要落盘（与关掉那一对，差的只有这个开关）"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        assert!(!editor.document_dirty, "落盘之后不该再算未保存");
+    });
+    let leftovers = leftover_autosave_temps(&root);
+    assert!(
+        leftovers.is_empty(),
+        "rename 之后不该留下临时文件，实测 {leftovers:?}"
+    );
+}

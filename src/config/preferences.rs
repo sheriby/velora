@@ -338,6 +338,9 @@ pub(crate) struct AppPreferences {
     pub(crate) status_bar: StatusBarPreferences,
     /// Debounce before dirty changes are autosaved/recovery-snapshotted (ms).
     pub(crate) autosave_debounce_ms: u64,
+    /// 自动落盘开关（默认开）。关掉后编辑内容只写恢复快照，真文件只有
+    /// ⌘S 与关闭时保存才动；外部改动的检测不受它影响。
+    pub(crate) autosave: bool,
     /// File tree ordering: "name" | "mtime" | "type".
     pub(crate) tree_sort: TreeSortPreference,
     pub(crate) new_file_template: String,
@@ -371,6 +374,7 @@ impl Default for AppPreferences {
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),
             autosave_debounce_ms: 800,
+            autosave: true,
             tree_sort: TreeSortPreference::default(),
             new_file_template: String::new(),
             remember_window_bounds: true,
@@ -406,6 +410,7 @@ pub struct EditorSettings {
     workspace_sidebar_width: u16,
     zoom_percent: i64,
     autosave_debounce_ms: u64,
+    autosave: bool,
     tree_sort: TreeSortPreference,
     new_file_template: String,
     default_window_width: i64,
@@ -480,6 +485,15 @@ impl EditorSettings {
                     .map(|preferences| preferences.autosave_debounce_ms)
             })
             .unwrap_or(800);
+        let autosave = cx
+            .try_global::<Self>()
+            .map(|settings| settings.autosave)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.autosave)
+            })
+            .unwrap_or(true);
         let tree_sort = cx
             .try_global::<Self>()
             .map(|settings| settings.tree_sort)
@@ -546,6 +560,7 @@ impl EditorSettings {
             workspace_sidebar_width,
             zoom_percent,
             autosave_debounce_ms,
+            autosave,
             tree_sort,
             new_file_template,
             default_window_width,
@@ -579,6 +594,13 @@ impl EditorSettings {
             smart_punctuation,
             &StatusBarPreferences::default(),
         );
+    }
+
+    /// 测试专用：只改内存里的自动保存开关，不碰 config.toml（用例之间共用
+    /// 一份配置目录，落盘会互相覆盖）。
+    #[cfg(test)]
+    pub(crate) fn set_autosave_in_memory(autosave: bool, cx: &mut App) {
+        cx.update_global::<Self, _>(|settings, _cx| settings.autosave = autosave);
     }
 
     /// Whether typed straight quotes/dashes become typographic forms.
@@ -673,6 +695,22 @@ impl EditorSettings {
             update_app_preferences(|preferences| preferences.autosave_debounce_ms = ms)
         {
             eprintln!("failed to save autosave debounce: {error}");
+        }
+    }
+
+    /// 自动落盘开关（默认开）。关掉只是不写真文件——恢复快照与外部改动检测照跑。
+    pub(crate) fn autosave(cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .map(|settings| settings.autosave)
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn set_autosave(cx: &mut App, autosave: bool) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.autosave = autosave);
+        }
+        if let Err(error) = update_app_preferences(|preferences| preferences.autosave = autosave) {
+            eprintln!("failed to save autosave switch: {error}");
         }
     }
 

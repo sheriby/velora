@@ -124,7 +124,7 @@ The main `config.toml` sections:
 | Section | Keys | Controls |
 | --- | --- | --- |
 | `[window]` | `default_window_width`, `default_window_height`, `open_position`, `remember_bounds`, `zoom_percent` | Default size, centered vs. remembered opening position, window memory, UI zoom |
-| `[editor]` | `tree_sort`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width` | File-tree sort, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width |
+| `[editor]` | `tree_sort`, `autosave`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width` | File-tree sort, autosave on/off, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width |
 | `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |
 
 ## 📄 License

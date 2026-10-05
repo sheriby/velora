@@ -226,6 +226,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) command_zoom_reset: Option<String>,
     pub(crate) preferences_file_tree_sort: Option<String>,
     pub(crate) preferences_file_autosave_debounce: Option<String>,
+    pub(crate) preferences_autosave: Option<String>,
     pub(crate) preferences_window_remember_bounds: Option<String>,
     pub(crate) preferences_file_external_change: Option<String>,
     pub(crate) preferences_external_change_auto: Option<String>,

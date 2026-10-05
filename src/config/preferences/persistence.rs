@@ -32,6 +32,7 @@ struct EditorPreferencesFile {
     writing_width: String,
     workspace_sidebar_width: u16,
     autosave_debounce_ms: u64,
+    autosave: bool,
     tree_sort: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     new_file_template: String,
@@ -146,6 +147,7 @@ impl From<&AppPreferences> for PreferencesFile {
                 writing_width: value.writing_width.as_str().into(),
                 workspace_sidebar_width: value.workspace_sidebar_width,
                 autosave_debounce_ms: value.autosave_debounce_ms,
+                autosave: value.autosave,
                 tree_sort: value.tree_sort.as_str().into(),
                 new_file_template: value.new_file_template.clone(),
             },
@@ -393,6 +395,10 @@ pub(crate) fn app_preferences_from_toml_value(
         .and_then(|ms| u64::try_from(ms).ok())
         .filter(|ms| (100..=30_000).contains(ms))
         .unwrap_or(800);
+    let autosave = editor
+        .and_then(|editor| editor.get("autosave"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(true);
 
     let status_bar = value
         .get("status_bar")
@@ -501,6 +507,7 @@ pub(crate) fn app_preferences_from_toml_value(
         writing_width,
         workspace_sidebar_width,
         autosave_debounce_ms,
+        autosave,
         tree_sort,
         new_file_template,
         keybindings,
@@ -652,6 +659,7 @@ pub(crate) fn save_preferences_from_window(
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
+    autosave: bool,
     zoom_percent: i64,
     default_window_width: i64,
     default_window_height: i64,
@@ -672,6 +680,7 @@ pub(crate) fn save_preferences_from_window(
         remember_window_bounds,
         window_open_position,
         smart_punctuation,
+        autosave,
         zoom_percent,
         default_window_width,
         default_window_height,
@@ -695,6 +704,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
+    autosave: bool,
     zoom_percent: i64,
     default_window_width: i64,
     default_window_height: i64,
@@ -714,6 +724,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     preferences.remember_window_bounds = remember_window_bounds;
     preferences.window_open_position = window_open_position;
     preferences.smart_punctuation = smart_punctuation;
+    preferences.autosave = autosave;
     preferences.external_change_policy = external_change_policy;
     preferences.delete_policy = delete_policy;
     preferences.zoom_percent = zoom_percent.clamp(60, 200);

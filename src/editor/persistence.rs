@@ -144,6 +144,7 @@ impl Editor {
                         if editor.has_marked_document_text(cx) {
                             return None;
                         }
+                        let autosave_writes = crate::config::EditorSettings::autosave(cx);
                         let mut documents = editor
                             .dirty_workspace_documents(cx)
                             .into_iter()
@@ -153,7 +154,11 @@ impl Editor {
                                     source_path: Some(document.path.clone()),
                                     markdown: document.markdown,
                                 },
-                                temp_path: Some(autosave_temp_path(&document.path)),
+                                // 自动保存关掉时不给临时路径：后台那一趟只写恢复快照
+                                // 并校验文件版本，末尾的 rename 循环按 `temp_path` 跳过
+                                // 这一篇，真文件不动。
+                                temp_path: autosave_writes
+                                    .then(|| autosave_temp_path(&document.path)),
                                 file_version: Some(document.file_version),
                                 path: Some(document.path),
                                 bytes: document.bytes,

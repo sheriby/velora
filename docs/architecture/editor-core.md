@@ -198,6 +198,8 @@ Workspace (src/editor/workspace.rs)
 - **原子写**：`write_atomic` = 同目录临时文件 + `sync_all` + `rename`。
 - **外部修改检测**：`file_content_version`（规范化文本 DefaultHasher）；手动保存与 autosave 前 `verify_file_version` 重读比对，不一致则报「外部修改」。
 - **Autosave**：`schedule_autosave` 防抖后台任务（默认 800ms，`[editor] autosave_debounce_ms`）；IME 组合中跳过；后台写恢复快照 + 临时文件，回主线程校对 revision 后落盘。
+  `[editor] autosave = false`（默认 true）只关掉**落盘那一半**：`PendingAutosaveDocument.temp_path` 置 `None`，恢复快照照写、`verify_file_version` 照跑，
+  于是真文件不动而外部改动仍会被发现；末尾 rename 循环本就按 `temp_path` 跳过，脏标记因此不会清（标签上的圆点继续亮）。关掉的不是检测，检测与写入是两件事。
 - **Watcher**（src/editor/watcher.rs）：每工作区递归 notify 监听，干净标签自动重载，脏标签走冲突提示。
   重载与打开共用整篇导入（`replace_document_content`），靠 `ImportKind` 分口径：`Restore(view)` 只换内容，
   视图模式、视口偏移与光标都按交回来的那份 `DocumentView` 摆（先 `flush_pending_materialization` 再落选区，

@@ -223,6 +223,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "command_zoom_reset",
     "preferences_file_tree_sort",
     "preferences_file_autosave_debounce",
+    "preferences_autosave",
     "preferences_window_remember_bounds",
     "preferences_file_external_change",
     "preferences_external_change_auto",
