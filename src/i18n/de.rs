@@ -278,6 +278,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) context_menu_cut: Option<String>,
     pub(crate) context_menu_copy: Option<String>,
     pub(crate) context_menu_paste: Option<String>,
+    pub(crate) context_menu_paste_as_plain_text: Option<String>,
+    pub(crate) context_menu_copy_as_markdown: Option<String>,
     pub(crate) context_menu_format: Option<String>,
     pub(crate) context_menu_paragraph: Option<String>,
     pub(crate) context_menu_insert: Option<String>,

@@ -275,6 +275,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "context_menu_cut",
     "context_menu_copy",
     "context_menu_paste",
+    "context_menu_paste_as_plain_text",
+    "context_menu_copy_as_markdown",
     "context_menu_format",
     "context_menu_paragraph",
     "context_menu_insert",

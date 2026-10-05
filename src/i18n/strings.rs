@@ -472,6 +472,8 @@ pub struct I18nStrings {
     pub context_menu_copy: String,
     /// 文本右键菜单：粘贴。
     pub context_menu_paste: String,
+    pub context_menu_paste_as_plain_text: String,
+    pub context_menu_copy_as_markdown: String,
     /// 文本右键菜单：格式二级子菜单。
     pub context_menu_format: String,
     /// 文本右键菜单：段落二级子菜单。

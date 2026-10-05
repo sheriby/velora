@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use super::super::{ContextMenuState, Editor};
 use crate::components::{
-    default_shortcut_key, menu::MENU_ROW_GAP, Copy, Cut, InlineFormat, Paste, Redo,
-    ShortcutCommand, ToggleViewMode, Undo,
+    CopyAsMarkdown, default_shortcut_key, menu::MENU_ROW_GAP, Copy, Cut, InlineFormat, Paste,
+    PasteAsPlainText, Redo, ShortcutCommand, ToggleViewMode, Undo,
 };
 use crate::editor::insert_ops::InsertBlockTarget;
 use crate::editor::paragraph_ops::BlockKindTarget;
@@ -56,6 +56,10 @@ pub(crate) enum DocumentMenuCommand {
     Cut,
     Copy,
     Paste,
+    /// 「粘贴为纯文本」：只用剪贴板的文本味道，不转 HTML、不把网址写成链接。
+    PasteAsPlainText,
+    /// 「拷贝为 Markdown」：选区的源码文本（无选区时整篇）进剪贴板。
+    CopyAsMarkdown,
     Format(InlineFormat),
     Heading(u8),
     NormalText,
@@ -88,6 +92,8 @@ impl DocumentMenuCommand {
             Self::Cut => "cut",
             Self::Copy => "copy",
             Self::Paste => "paste",
+            Self::PasteAsPlainText => "paste-as-plain-text",
+            Self::CopyAsMarkdown => "copy-as-markdown",
             Self::Format(InlineFormat::Bold) => "bold",
             Self::Format(InlineFormat::Italic) => "italic",
             Self::Format(InlineFormat::Underline) => "underline",
@@ -133,6 +139,8 @@ impl DocumentMenuCommand {
             | Self::Cut
             | Self::Copy
             | Self::Paste
+            | Self::PasteAsPlainText
+            | Self::CopyAsMarkdown
             | Self::InsertTable
             | Self::InsertImage
             | Self::InsertCodeBlock
@@ -201,6 +209,16 @@ impl Editor {
                 command: DocumentMenuCommand::Paste,
                 name: "paste",
                 enabled: editable && cx.read_from_clipboard().is_some(),
+            },
+            DocumentMenuRow::Item {
+                command: DocumentMenuCommand::PasteAsPlainText,
+                name: "paste-as-plain-text",
+                enabled: editable && cx.read_from_clipboard().is_some(),
+            },
+            DocumentMenuRow::Item {
+                command: DocumentMenuCommand::CopyAsMarkdown,
+                name: "copy-as-markdown",
+                enabled: !self.document.root_blocks().is_empty(),
             },
             DocumentMenuRow::Separator,
             DocumentMenuRow::Submenu {
@@ -363,6 +381,12 @@ impl Editor {
             DocumentMenuCommand::Cut => window.dispatch_action(Box::new(Cut), cx),
             DocumentMenuCommand::Copy => window.dispatch_action(Box::new(Copy), cx),
             DocumentMenuCommand::Paste => window.dispatch_action(Box::new(Paste), cx),
+            DocumentMenuCommand::PasteAsPlainText => {
+                window.dispatch_action(Box::new(PasteAsPlainText), cx);
+            }
+            DocumentMenuCommand::CopyAsMarkdown => {
+                window.dispatch_action(Box::new(CopyAsMarkdown), cx);
+            }
             DocumentMenuCommand::Format(format) => {
                 self.toggle_inline_format_on_selection(format, cx);
             }
@@ -487,6 +511,10 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::Cut => strings.context_menu_cut.clone(),
         DocumentMenuCommand::Copy => strings.context_menu_copy.clone(),
         DocumentMenuCommand::Paste => strings.context_menu_paste.clone(),
+        DocumentMenuCommand::PasteAsPlainText => {
+            strings.context_menu_paste_as_plain_text.clone()
+        }
+        DocumentMenuCommand::CopyAsMarkdown => strings.context_menu_copy_as_markdown.clone(),
         DocumentMenuCommand::Format(format) => inline_format_label(format, strings),
         DocumentMenuCommand::Heading(level) => match level {
             1 => strings.paragraph_heading1.clone(),
@@ -535,6 +563,8 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
         DocumentMenuCommand::Cut => ShortcutCommand::Cut,
         DocumentMenuCommand::Copy => ShortcutCommand::Copy,
         DocumentMenuCommand::Paste => ShortcutCommand::Paste,
+        DocumentMenuCommand::PasteAsPlainText => ShortcutCommand::PasteAsPlainText,
+        DocumentMenuCommand::CopyAsMarkdown => ShortcutCommand::CopyAsMarkdown,
         DocumentMenuCommand::Format(InlineFormat::Bold) => ShortcutCommand::BoldSelection,
         DocumentMenuCommand::Format(InlineFormat::Italic) => ShortcutCommand::ItalicSelection,
         DocumentMenuCommand::Format(InlineFormat::Underline) => ShortcutCommand::UnderlineSelection,

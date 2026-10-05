@@ -175,6 +175,27 @@ impl Block {
     }
 
     pub(crate) fn on_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        self.paste_from_clipboard(false, window, cx);
+    }
+
+    /// ⌘⇧V：只按剪贴板里的纯文本落笔。与「粘贴」差两件事——不读粘贴板的 HTML 味道
+    /// （不做 HTML→markdown 转换），也不把「选中文字后粘一个网址」改写成链接。
+    /// 剪贴板里只有图片没有文字时仍走图片那一条：那是唯一能落的东西，丢了用户会以为按键坏了。
+    pub(crate) fn on_paste_as_plain_text(
+        &mut self,
+        _: &PasteAsPlainText,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.paste_from_clipboard(true, window, cx);
+    }
+
+    fn paste_from_clipboard(
+        &mut self,
+        plain_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.kind().is_separator() && !self.uses_raw_text_editing() {
             return;
         }
@@ -197,9 +218,11 @@ impl Block {
             // CRLF 原样落进缓冲区，CRLF 文档保存时会被再升格一次成 `\r\r\n`，
             // 字节就此损坏。所有粘贴分支（跨块选区、raw/代码、单行）都吃归一后的文本。
             let text = text.replace("\r\n", "\n").replace('\r', "\n");
-            // 选中文本后粘贴 URL → 生成 [选中](url) 链接（roadmap B5）。
+            // 选中文本后粘贴 URL → 生成 [选中](url) 链接（roadmap B5）。「粘贴为纯文本」
+            // 不做这一步：用户要的是那几个字面字符。
             let trimmed = text.trim();
-            if Self::is_bare_url(trimmed)
+            if !plain_only
+                && Self::is_bare_url(trimmed)
                 && self.editor_selection_range.is_none()
                 && !self.selected_range.is_empty()
             {
@@ -209,8 +232,12 @@ impl Block {
             // Clipboard HTML flavors convert to Markdown here (roadmap B3);
             // plain-text clipboards pass through untouched.
             #[cfg(target_os = "macos")]
-            let text = crate::components::markdown::html_paste::maybe_markdown_from_clipboard(&text);
-            if let Some(source) = Self::pasted_image_source_from_text(&text) {
+            let text = if plain_only {
+                text
+            } else {
+                crate::components::markdown::html_paste::maybe_markdown_from_clipboard(&text)
+            };
+            if !plain_only && let Some(source) = Self::pasted_image_source_from_text(&text) {
                 let (leading, trailing) = self.paste_image_split();
                 cx.emit(BlockEvent::RequestPasteImage {
                     leading,

@@ -57,6 +57,10 @@ impl PreferencesWindow {
             ShortcutCommand::Copy => strings.preferences_shortcut_copy.clone(),
             ShortcutCommand::Cut => strings.preferences_shortcut_cut.clone(),
             ShortcutCommand::Paste => strings.preferences_shortcut_paste.clone(),
+            // 这两条还没有独立的 `preferences_shortcut_*` 键，先借右键菜单那两条文案
+            // （FP9 的键位表对齐一并整）。
+            ShortcutCommand::PasteAsPlainText => strings.context_menu_paste_as_plain_text.clone(),
+            ShortcutCommand::CopyAsMarkdown => strings.context_menu_copy_as_markdown.clone(),
             ShortcutCommand::Undo => strings.preferences_shortcut_undo.clone(),
             ShortcutCommand::Redo => strings.preferences_shortcut_redo.clone(),
             ShortcutCommand::BoldSelection => strings.preferences_shortcut_bold_selection.clone(),

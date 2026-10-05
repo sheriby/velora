@@ -17,9 +17,10 @@ use crate::components::{
     BlockDown, BlockUp, BoldSelection, CodeSelection, Copy, Cut, Delete, DeleteBack,
     HighlightSelection, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,
     DismissTransientUi, End, ExitCodeBlock, FocusNext, FocusPrev, Home, IndentBlock,
-    ItalicSelection, MoveLeft, MoveRight, Newline, OutdentBlock, Paste, SelectAll, SelectEnd,
-    SelectHome, SelectLeft, SelectRight, UnderlineSelection, WordDeleteBack, WordDeleteForward,
-    WordMoveLeft, WordMoveRight, WordSelectLeft, WordSelectRight,
+    ItalicSelection, MoveLeft, MoveRight, Newline, OutdentBlock, Paste, PasteAsPlainText,
+    SelectAll, SelectEnd, SelectHome, SelectLeft, SelectRight, UnderlineSelection,
+    WordDeleteBack, WordDeleteForward, WordMoveLeft, WordMoveRight, WordSelectLeft,
+    WordSelectRight,
 };
 
 impl Block {

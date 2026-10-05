@@ -698,6 +698,12 @@ impl I18nStringsDe {
             context_menu_redo: self.context_menu_redo.unwrap_or(defaults.context_menu_redo),
             context_menu_cut: self.context_menu_cut.unwrap_or(defaults.context_menu_cut),
             context_menu_copy: self.context_menu_copy.unwrap_or(defaults.context_menu_copy),
+            context_menu_paste_as_plain_text: self
+                .context_menu_paste_as_plain_text
+                .unwrap_or(defaults.context_menu_paste_as_plain_text),
+            context_menu_copy_as_markdown: self
+                .context_menu_copy_as_markdown
+                .unwrap_or(defaults.context_menu_copy_as_markdown),
             context_menu_paste: self
                 .context_menu_paste
                 .unwrap_or(defaults.context_menu_paste),

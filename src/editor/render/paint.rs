@@ -851,6 +851,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_cursor_history_back))
             .on_action(cx.listener(Self::on_cursor_history_forward))
             .on_action(cx.listener(Self::on_copy_as_html))
+            .on_action(cx.listener(Self::on_copy_as_markdown))
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_zoom_reset))

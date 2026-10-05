@@ -10,13 +10,15 @@ use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
-/// 主菜单九行加三条分节：行 id 与 `document_menu_rows` 里给的一致。
-const MAIN_ROWS: [&str; 9] = [
+/// 主菜单十一行加三条分节：行 id 与 `document_menu_rows` 里给的一致。
+const MAIN_ROWS: [&str; 11] = [
     "undo",
     "redo",
     "cut",
     "copy",
     "paste",
+    "paste-as-plain-text",
+    "copy-as-markdown",
     "format",
     "paragraph",
     "insert",

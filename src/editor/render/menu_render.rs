@@ -642,6 +642,15 @@ impl Editor {
         self.copy_as_html(cx);
     }
 
+    pub(crate) fn on_copy_as_markdown(
+        &mut self,
+        _: &crate::components::CopyAsMarkdown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.copy_as_markdown(cx);
+    }
+
     pub(crate) fn on_zoom_in(
         &mut self,
         _: &crate::components::ZoomIn,
