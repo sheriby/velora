@@ -341,8 +341,8 @@ async fn the_conflict_modal_reload_reads_the_disk_version_back(cx: &mut TestAppC
         .recovery_dir();
     let stashed = fs::read_to_string(recovery_dir.join(format!("{recovery_id}.json")))
         .expect("按「重载」放弃的编辑要有恢复快照");
-    // 这一份也可能只是自动保存 tick 写的（它在前一步就存过同样的内容），所以
-    // stash 那一步的牙齿在 `..._save_as_...` 那条用例里——那里自动保存没 tick 过。
+    // 这一份也可能只是自动保存 tick 写的（它在前一步就存过同样的内容）。真正能证明
+    // stash 这一步的是 `..._save_as_...` 那条用例——那里自动保存一次都没跑过。
     assert!(
         stashed.contains("our edit"),
         "放弃掉的那笔编辑要留在恢复快照里，实测 {stashed:?}"
