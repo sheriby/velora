@@ -266,6 +266,8 @@ pub struct Editor {
     /// Command palette overlay (⇧⌘P); `None` while closed.
     command_palette: Option<command_palette::CommandPaletteState>,
     ai_assistant: Option<ai_assistant::AiAssistantState>,
+    /// AI 请求代号:面板开合不归零,旧面板的幸存工作线程无法冒充新会话。
+    ai_generation: u64,
     /// Workspace change watcher (roadmap D3); `None` until a root is set.
     external_watcher: Option<notify::RecommendedWatcher>,
     /// 已启动文件监听的工作区根：同一根不重复启动（含隐含根）。
@@ -728,6 +730,7 @@ impl Editor {
             quick_open: None,
             command_palette: None,
             ai_assistant: None,
+            ai_generation: 0,
             external_watcher: None,
             watched_workspace_root: None,
             last_outline_follow_offset: f32::NAN,

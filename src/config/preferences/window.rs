@@ -21,6 +21,8 @@ pub(crate) struct AiEndpointDraft {
     pub(super) api_key: Entity<TextField>,
     pub(super) model: Entity<TextField>,
     pub(super) test: Option<AiTestState>,
+    /// 本草稿发起过的最大测试代号;慢探测返回旧代号时丢弃。
+    pub(super) test_seq: u64,
     pub(super) kind_dropdown_open: bool,
     pub(super) preset_dropdown_open: bool,
 }
@@ -427,6 +429,7 @@ impl PreferencesWindow {
             api_key: fields("sk-…".into(), "", cx),
             model: fields("gpt-4o-mini".into(), preset.model, cx),
             test: None,
+            test_seq: 0,
             kind_dropdown_open: false,
             preset_dropdown_open: false,
         });
@@ -472,6 +475,7 @@ impl PreferencesWindow {
             api_key: fields("sk-…".into(), &endpoint.api_key, cx),
             model: fields("gpt-4o-mini".into(), &endpoint.model, cx),
             test: None,
+            test_seq: 0,
             kind_dropdown_open: false,
             preset_dropdown_open: false,
         });
@@ -495,8 +499,18 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) {
         if index < self.ai_settings.endpoints.len() {
+            let removed_id = self.ai_settings.endpoints[index].id.clone();
             self.ai_settings.endpoints.remove(index);
             self.ai_settings.normalize_defaults();
+            // 删掉的正是编辑中的端点:收起草稿,避免「保存」把它复活。
+            if self
+                .ai_editing
+                .as_ref()
+                .and_then(|draft| draft.id.as_deref())
+                .is_some_and(|id| id == removed_id)
+            {
+                self.ai_editing = None;
+            }
         }
         cx.notify();
     }
@@ -587,6 +601,11 @@ impl PreferencesWindow {
         let Some(draft) = self.ai_editing.as_mut() else {
             return;
         };
+        if draft.kind == kind {
+            draft.kind_dropdown_open = false;
+            cx.notify();
+            return;
+        }
         draft.kind = kind;
         draft.kind_dropdown_open = false;
         // 换协议时自动套该协议的第一个预设(拿到手即可用);stub 无预设。
@@ -652,38 +671,48 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(draft) = self.ai_editing.as_ref() else {
-            return;
+        let (test_seq, endpoint) = {
+            let Some(draft) = self.ai_editing.as_ref() else {
+                return;
+            };
+            let read = |field: &Entity<TextField>| field.read(cx).value().trim().to_string();
+            let endpoint = crate::ai::AiEndpointConfig {
+                kind: draft.kind,
+                base_url: read(&draft.base_url),
+                api_key: read(&draft.api_key),
+                model: read(&draft.model),
+            };
+            (draft.test_seq + 1, endpoint)
         };
-        let read = |field: &Entity<TextField>| field.read(cx).value().trim().to_string();
-        let endpoint = crate::ai::AiEndpointConfig {
-            kind: draft.kind,
-            base_url: read(&draft.base_url),
-            api_key: read(&draft.api_key),
-            model: read(&draft.model),
-        };
-        let Some(draft) = self.ai_editing.as_mut() else {
-            return;
-        };
-        draft.test = Some(AiTestState::Running);
+        {
+            let Some(draft) = self.ai_editing.as_mut() else {
+                return;
+            };
+            draft.test_seq = test_seq;
+            draft.test = Some(AiTestState::Running);
+        }
+        // 探测放后台执行器,不占 UI 异步线程;结果按代号回填,迟到的旧探测
+        // 落在换掉的草稿上会被丢弃。
+        let probe = cx
+            .background_executor()
+            .spawn(async move { crate::ai::test_endpoint(&crate::ai::default_client(), &endpoint) });
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = std::thread::spawn(move || {
-                crate::ai::test_endpoint(&crate::ai::default_client(), &endpoint)
-            })
-            .join();
+            let result = probe.await;
             let _ = this.update(cx, |window, cx| {
                 let Some(draft) = window.ai_editing.as_mut() else {
                     return;
                 };
+                if draft.test_seq != test_seq {
+                    return;
+                }
                 draft.test = Some(match result {
-                    Ok(Ok(_reply)) => AiTestState::Ok,
-                    Ok(Err(error)) => AiTestState::Failed(match error {
+                    Ok(_) => AiTestState::Ok,
+                    Err(error) => AiTestState::Failed(match error {
                         crate::ai::AiRequestError::Network(detail) => detail,
                         crate::ai::AiRequestError::Protocol(detail) => detail,
                         crate::ai::AiRequestError::Http { message, .. } => message,
                         crate::ai::AiRequestError::Cancelled => "cancelled".to_string(),
                     }),
-                    Err(_join) => AiTestState::Failed("test task panicked".to_string()),
                 });
                 cx.notify();
             });

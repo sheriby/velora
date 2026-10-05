@@ -114,7 +114,8 @@ pub(in crate::editor) struct AiAssistantState {
     pub(in crate::editor) origin: Point<Pixels>,
     pub(in crate::editor) result: String,
     pub(in crate::editor) error: Option<String>,
-    /// 递增使旧流的增量/完成事件失效。
+    /// 本轮请求的代号:与 Editor 上的单调计数对齐才生效——旧面板的
+    /// 幸存工作线程携带旧代号,无法再注入新会话。
     pub(in crate::editor) generation: u64,
     pub(in crate::editor) cancel: Arc<AtomicBool>,
     pub(in crate::editor) focus: FocusHandle,
@@ -198,7 +199,7 @@ impl Editor {
             origin,
             result: String::new(),
             error: None,
-            generation: 0,
+            generation: self.ai_generation,
             cancel: Arc::new(AtomicBool::new(false)),
             focus,
         });
@@ -235,7 +236,8 @@ impl Editor {
             return;
         };
         state.cancel.store(true, Ordering::Relaxed);
-        state.generation += 1;
+        self.ai_generation += 1;
+        state.generation = self.ai_generation;
         if state.result.is_empty() {
             state.phase = AiPhase::Menu;
             state.action = None;
@@ -382,16 +384,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let ai_settings = crate::config::EditorSettings::ai(cx);
-        let selected_id = self
-            .ai_assistant
-            .as_ref()
-            .and_then(|state| state.endpoint_id.clone());
-        let endpoint_pref = selected_id
-            .as_deref()
-            .and_then(|id| ai_settings.endpoint(id))
-            .or_else(|| ai_settings.default_endpoint());
-        let endpoint = endpoint_pref.map(|pref| pref.endpoint_config());
-        let endpoint = endpoint.filter(|endpoint| endpoint.is_configured());
+        let endpoint = resolve_ai_endpoint(self.ai_assistant.as_ref(), &ai_settings);
         let Some(endpoint) = endpoint else {
             // 选中(或默认)的端点没配完:带去设置页补齐。
             self.close_ai_assistant(cx);
@@ -402,6 +395,8 @@ impl Editor {
             return;
         };
         let (generation, prompt) = {
+            self.ai_generation += 1;
+            let generation = self.ai_generation;
             let Some(state) = self.ai_assistant.as_mut() else {
                 return;
             };
@@ -412,14 +407,13 @@ impl Editor {
             let prompt = build_ai_prompt(&action, &anchor);
             state.phase = AiPhase::Running;
             state.action = Some(action);
-            state.anchor = Some(anchor);
             state.translate_open = false;
             state.rewrite_open = false;
             state.result.clear();
             state.error = None;
-            state.generation += 1;
+            state.generation = generation;
             state.cancel = Arc::new(AtomicBool::new(false));
-            (state.generation, prompt)
+            (generation, prompt)
         };
         self.spawn_ai_request(endpoint, prompt, generation, cx);
         cx.notify();
@@ -503,7 +497,8 @@ impl Editor {
         if state.generation != generation || !matches!(state.phase, AiPhase::Running) {
             return;
         }
-        state.generation += 1;
+        self.ai_generation += 1;
+        state.generation = self.ai_generation;
         match result {
             Ok(full) => {
                 state.result = full;
@@ -561,9 +556,11 @@ impl Editor {
             return false;
         }
 
-        // 防漂移:替换类校验整段原文;插入类校验插入点前的短上下文。
+        // 防漂移:替换类与「有选区的插入类」都校验整段原文(总结插到选区
+        // 末尾,选区内部被改过同样会错位);仅无选区插入(续写)校验插入点
+        // 前的短上下文——它的插入点就是捕获时的光标,start 即 end。
         let insert_only = !action.replaces_selection();
-        let drifted = if insert_only {
+        let drifted = if insert_only && anchor.selected_text.is_empty() {
             let start = anchor.source_range.start;
             !anchor.tail_context.is_empty()
                 && (start < anchor.tail_context.len()
@@ -609,11 +606,18 @@ impl Editor {
     }
 }
 
-/// 默认端点的传输配置;列表为空返回 `None`(面板引导去设置页)。
-fn default_endpoint_from_settings(settings: &AiSettings) -> Option<AiEndpointConfig> {
-    settings
-        .default_endpoint()
+/// 解析本次请求的端点:面板选中优先,否则默认端点。
+/// 面板的「已配置」横幅、动作派发都用这一个函数,口径不会分叉。
+fn resolve_ai_endpoint(
+    state: Option<&AiAssistantState>,
+    settings: &AiSettings,
+) -> Option<AiEndpointConfig> {
+    let selected = state.and_then(|state| state.endpoint_id.as_deref());
+    selected
+        .and_then(|id| settings.endpoint(id))
+        .or_else(|| settings.default_endpoint())
         .map(|endpoint| endpoint.endpoint_config())
+        .filter(|endpoint| endpoint.is_configured())
 }
 
 /// 组装一次请求的提示词(动作里的翻译目标已由面板解析好)。
@@ -823,11 +827,12 @@ pub(in crate::editor) fn render_ai_assistant_overlay(
     let editor_handle = cx.entity().downgrade();
 
     // 有可用端点就不再挡「未配置」:出厂演示端点保证 ⌘J 永远能跑通。
-    let configured = {
-        let ai_settings = crate::config::EditorSettings::ai(cx);
-        default_endpoint_from_settings(&ai_settings)
-            .is_some_and(|endpoint| endpoint.is_configured())
-    };
+    // 解析口径与动作派发同一函数:选中 → 默认。
+    let configured = resolve_ai_endpoint(
+        editor.ai_assistant.as_ref(),
+        &crate::config::EditorSettings::ai(cx),
+    )
+    .is_some();
 
     let mut body: Vec<AnyElement> = Vec::new();
     match state.phase {
