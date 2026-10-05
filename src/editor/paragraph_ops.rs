@@ -22,6 +22,8 @@ pub(crate) enum BlockKindTarget {
     NumberedList,
     /// 任务列表项；已经是任务项时退回普通无序项（去掉复选框）。
     TaskList,
+    /// 引用（`> ` 那一族）；已经在引用里时等于取消引用。
+    Quote,
 }
 
 impl Editor {
@@ -264,6 +266,14 @@ impl Editor {
         if !block.children.is_empty() && !(current.is_list_item() && next.is_list_item()) {
             return None;
         }
+        if current == BlockKind::Quote
+            && matches!(next, BlockKind::Heading { .. })
+            && block.record.title.visible_text().contains('\n')
+        {
+            // 引用把整段文字存在自己那份标题里，可以多行；换成标题会把那行换行写成
+            // 另一块，文件里读回来是两根，块树里还是一根。
+            return None;
+        }
         Some(next)
     }
 
@@ -309,11 +319,11 @@ impl Editor {
 impl BlockKindTarget {
     /// 这一块换过去应该变成什么种类；不该动（已经一样、或本笔还不敢碰的种类）时 None。
     ///
-    /// 引用与标注是容器：换进去要把每一行的前缀补上、换出去要把子块安置好，那是 FP4b-2；
-    /// 表、代码块、公式块这类原子的结构块本身就不是「一段文字」，换进去要带正文，
-    /// 收在 FP4b-3。
+    /// 引用把整段文字存在自己那份标题里（可以多行），换进换出动的就是这一块自己的字节，
+    /// 这一档接；标注（`> [!note]`）带头部与子块，仍不接。表、代码块、公式块这类原子的
+    /// 结构块本身就不是「一段文字」，换进去要带正文，收在 FP4b-3。
     fn next_kind(self, current: &BlockKind) -> Option<BlockKind> {
-        if current.is_atomic_structural() || current.is_quote_container() {
+        if current.is_atomic_structural() || matches!(current, BlockKind::Callout(_)) {
             return None;
         }
         let next = match self {
@@ -329,6 +339,8 @@ impl BlockKindTarget {
             // 任务项再点一次是去掉复选框，回到普通无序项，不是变段落。
             Self::TaskList if current.is_task_list_item() => BlockKind::BulletedListItem,
             Self::TaskList => BlockKind::TaskListItem { checked: false },
+            Self::Quote if *current == BlockKind::Quote => BlockKind::Paragraph,
+            Self::Quote => BlockKind::Quote,
         };
         (next != *current).then_some(next)
     }

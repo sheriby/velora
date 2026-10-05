@@ -34,8 +34,8 @@ const FORMAT_ROWS: [&str; 8] = [
     "subscript",
 ];
 
-/// 「段落」那一档：六个标题级别、正文、以及列表的三种。
-const PARAGRAPH_ROWS: [&str; 10] = [
+/// 「段落」那一档：六个标题级别、正文、列表的三种与引用。
+const PARAGRAPH_ROWS: [&str; 11] = [
     "heading-1",
     "heading-2",
     "heading-3",
@@ -46,6 +46,7 @@ const PARAGRAPH_ROWS: [&str; 10] = [
     "bullet-list",
     "numbered-list",
     "task-list",
+    "quote",
 ];
 
 fn visible_block(
@@ -365,6 +366,54 @@ async fn clicking_the_bullet_row_on_an_item_cancels_the_marker(cx: &mut TestAppC
         buffer_text(&editor, cx),
         "alpha one\n\nbeta two\n",
         "「无序列表」没把这一项退回正文"
+    );
+}
+
+/// 段落菜单里的「引用」这一行：写回行记号，再点一次取消。
+#[gpui::test]
+async fn clicking_the_quote_row_wraps_and_unwraps_the_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    select_head_of_first_block(&editor, cx);
+    right_click(&editor, 0, cx);
+    editor.update(cx, |editor, cx| {
+        editor.set_document_menu_hover(true, Some(DocumentSubmenu::Paragraph), cx)
+    });
+    redraw(cx);
+
+    click_row("quote", cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "> alpha one\n\nbeta two\n",
+        "菜单里的「引用」没把这一段包起来"
+    );
+
+    right_click(&editor, 0, cx);
+    editor.update(cx, |editor, cx| {
+        editor.set_document_menu_hover(true, Some(DocumentSubmenu::Paragraph), cx)
+    });
+    redraw(cx);
+    let paragraphs = submenu_enabled_rows(&editor, DocumentSubmenu::Paragraph, cx);
+    assert!(
+        enabled_of(&paragraphs, "quote"),
+        "这一行点下去是取消引用，不该置灰：{paragraphs:?}"
+    );
+    click_row("quote", cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        TWO_PARAGRAPHS,
+        "已经在引用里再点一次该取消引用"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "> alpha one\n\nbeta two\n",
+        "一步撤销该退回上一次"
     );
 }
 

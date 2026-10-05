@@ -500,6 +500,7 @@ pub struct I18nStrings {
     pub paragraph_numbered_list: String,
     /// 段落样式：任务列表。
     pub paragraph_task_list: String,
+    pub paragraph_quote: String,
     /// Table-axis menu item for left-aligning a column.
     pub table_axis_align_column_left: String,
     /// Table-axis menu item for center-aligning a column.

@@ -96,9 +96,7 @@ impl I18nStringsDe {
             menu_new_window: self.menu_new_window.unwrap_or(defaults.menu_new_window),
             menu_close_window: self.menu_close_window.unwrap_or(defaults.menu_close_window),
             menu_open_file: self.menu_open_file.unwrap_or(defaults.menu_open_file),
-            menu_open_folder: self
-                .menu_open_folder
-                .unwrap_or(defaults.menu_open_folder),
+            menu_open_folder: self.menu_open_folder.unwrap_or(defaults.menu_open_folder),
             menu_open_recent_file: self
                 .menu_open_recent_file
                 .unwrap_or(defaults.menu_open_recent_file),
@@ -109,14 +107,18 @@ impl I18nStringsDe {
             menu_save: self.menu_save.unwrap_or(defaults.menu_save),
             menu_save_as: self.menu_save_as.unwrap_or(defaults.menu_save_as),
             menu_file_history: self.menu_file_history.unwrap_or(defaults.menu_file_history),
-            menu_format_document: self.menu_format_document.unwrap_or(defaults.menu_format_document),
+            menu_format_document: self
+                .menu_format_document
+                .unwrap_or(defaults.menu_format_document),
             image_reveal_in_file_manager: self
                 .image_reveal_in_file_manager
                 .unwrap_or(defaults.image_reveal_in_file_manager),
             image_copy_address: self
                 .image_copy_address
                 .unwrap_or(defaults.image_copy_address),
-            file_history_empty: self.file_history_empty.unwrap_or(defaults.file_history_empty),
+            file_history_empty: self
+                .file_history_empty
+                .unwrap_or(defaults.file_history_empty),
             menu_quit: self.menu_quit.unwrap_or(defaults.menu_quit),
             menu_export_html: self.menu_export_html.unwrap_or(defaults.menu_export_html),
             menu_export_pdf: self.menu_export_pdf.unwrap_or(defaults.menu_export_pdf),
@@ -372,30 +374,18 @@ impl I18nStringsDe {
             preferences_shortcut_code_selection: self
                 .preferences_shortcut_code_selection
                 .unwrap_or(defaults.preferences_shortcut_code_selection),
-            format_bold: self
-                .format_bold
-                .unwrap_or(defaults.format_bold),
-            format_italic: self
-                .format_italic
-                .unwrap_or(defaults.format_italic),
-            format_underline: self
-                .format_underline
-                .unwrap_or(defaults.format_underline),
-            format_code: self
-                .format_code
-                .unwrap_or(defaults.format_code),
-            format_highlight: self
-                .format_highlight
-                .unwrap_or(defaults.format_highlight),
+            format_bold: self.format_bold.unwrap_or(defaults.format_bold),
+            format_italic: self.format_italic.unwrap_or(defaults.format_italic),
+            format_underline: self.format_underline.unwrap_or(defaults.format_underline),
+            format_code: self.format_code.unwrap_or(defaults.format_code),
+            format_highlight: self.format_highlight.unwrap_or(defaults.format_highlight),
             format_strikethrough: self
                 .format_strikethrough
                 .unwrap_or(defaults.format_strikethrough),
             format_superscript: self
                 .format_superscript
                 .unwrap_or(defaults.format_superscript),
-            format_subscript: self
-                .format_subscript
-                .unwrap_or(defaults.format_subscript),
+            format_subscript: self.format_subscript.unwrap_or(defaults.format_subscript),
             preferences_shortcut_indent_block: self
                 .preferences_shortcut_indent_block
                 .unwrap_or(defaults.preferences_shortcut_indent_block),
@@ -521,13 +511,9 @@ impl I18nStringsDe {
             search_case_sensitive: self
                 .search_case_sensitive
                 .unwrap_or(defaults.search_case_sensitive),
-            search_whole_word: self
-                .search_whole_word
-                .unwrap_or(defaults.search_whole_word),
+            search_whole_word: self.search_whole_word.unwrap_or(defaults.search_whole_word),
             search_regex: self.search_regex.unwrap_or(defaults.search_regex),
-            search_regex_hint: self
-                .search_regex_hint
-                .unwrap_or(defaults.search_regex_hint),
+            search_regex_hint: self.search_regex_hint.unwrap_or(defaults.search_regex_hint),
             search_invalid_pattern: self
                 .search_invalid_pattern
                 .unwrap_or(defaults.search_invalid_pattern),
@@ -584,9 +570,7 @@ impl I18nStringsDe {
             quick_open_no_results: self
                 .quick_open_no_results
                 .unwrap_or(defaults.quick_open_no_results),
-            tree_sort_prefix: self
-                .tree_sort_prefix
-                .unwrap_or(defaults.tree_sort_prefix),
+            tree_sort_prefix: self.tree_sort_prefix.unwrap_or(defaults.tree_sort_prefix),
             tree_sort_name: self.tree_sort_name.unwrap_or(defaults.tree_sort_name),
             tree_sort_mtime: self.tree_sort_mtime.unwrap_or(defaults.tree_sort_mtime),
             tree_sort_type: self.tree_sort_type.unwrap_or(defaults.tree_sort_type),
@@ -605,9 +589,7 @@ impl I18nStringsDe {
             command_find_in_document: self
                 .command_find_in_document
                 .unwrap_or(defaults.command_find_in_document),
-            command_find_next: self
-                .command_find_next
-                .unwrap_or(defaults.command_find_next),
+            command_find_next: self.command_find_next.unwrap_or(defaults.command_find_next),
             command_find_previous: self
                 .command_find_previous
                 .unwrap_or(defaults.command_find_previous),
@@ -655,9 +637,7 @@ impl I18nStringsDe {
             status_bar_long_block_source: self
                 .status_bar_long_block_source
                 .unwrap_or(defaults.status_bar_long_block_source),
-            menu_copy_as_html: self
-                .menu_copy_as_html
-                .unwrap_or(defaults.menu_copy_as_html),
+            menu_copy_as_html: self.menu_copy_as_html.unwrap_or(defaults.menu_copy_as_html),
             workspace_duplicate: self
                 .workspace_duplicate
                 .unwrap_or(defaults.workspace_duplicate),
@@ -682,13 +662,9 @@ impl I18nStringsDe {
                 .workspace_open_unsupported_message
                 .unwrap_or(defaults.workspace_open_unsupported_message),
             tab_close: self.tab_close.unwrap_or(defaults.tab_close),
-            tab_close_others: self
-                .tab_close_others
-                .unwrap_or(defaults.tab_close_others),
+            tab_close_others: self.tab_close_others.unwrap_or(defaults.tab_close_others),
             tab_close_left: self.tab_close_left.unwrap_or(defaults.tab_close_left),
-            tab_close_right: self
-                .tab_close_right
-                .unwrap_or(defaults.tab_close_right),
+            tab_close_right: self.tab_close_right.unwrap_or(defaults.tab_close_right),
             tab_close_all: self.tab_close_all.unwrap_or(defaults.tab_close_all),
             tab_close_dirty_title: self
                 .tab_close_dirty_title
@@ -718,18 +694,10 @@ impl I18nStringsDe {
             context_menu_toggle_source_view: self
                 .context_menu_toggle_source_view
                 .unwrap_or(defaults.context_menu_toggle_source_view),
-            context_menu_undo: self
-                .context_menu_undo
-                .unwrap_or(defaults.context_menu_undo),
-            context_menu_redo: self
-                .context_menu_redo
-                .unwrap_or(defaults.context_menu_redo),
-            context_menu_cut: self
-                .context_menu_cut
-                .unwrap_or(defaults.context_menu_cut),
-            context_menu_copy: self
-                .context_menu_copy
-                .unwrap_or(defaults.context_menu_copy),
+            context_menu_undo: self.context_menu_undo.unwrap_or(defaults.context_menu_undo),
+            context_menu_redo: self.context_menu_redo.unwrap_or(defaults.context_menu_redo),
+            context_menu_cut: self.context_menu_cut.unwrap_or(defaults.context_menu_cut),
+            context_menu_copy: self.context_menu_copy.unwrap_or(defaults.context_menu_copy),
             context_menu_paste: self
                 .context_menu_paste
                 .unwrap_or(defaults.context_menu_paste),
@@ -775,6 +743,7 @@ impl I18nStringsDe {
             paragraph_task_list: self
                 .paragraph_task_list
                 .unwrap_or(defaults.paragraph_task_list),
+            paragraph_quote: self.paragraph_quote.unwrap_or(defaults.paragraph_quote),
             table_axis_align_column_left: self
                 .table_axis_align_column_left
                 .unwrap_or(defaults.table_axis_align_column_left),
@@ -828,15 +797,11 @@ impl I18nStringsDe {
             image_loading_with_alt_template: self
                 .image_loading_with_alt_template
                 .unwrap_or(defaults.image_loading_with_alt_template),
-            image_load_failed: self
-                .image_load_failed
-                .unwrap_or(defaults.image_load_failed),
+            image_load_failed: self.image_load_failed.unwrap_or(defaults.image_load_failed),
             code_language_placeholder: self
                 .code_language_placeholder
                 .unwrap_or(defaults.code_language_placeholder),
-            code_copy_button: self
-                .code_copy_button
-                .unwrap_or(defaults.code_copy_button),
+            code_copy_button: self.code_copy_button.unwrap_or(defaults.code_copy_button),
             status_bar_files: self.status_bar_files.unwrap_or(defaults.status_bar_files),
             status_bar_mode_source: self
                 .status_bar_mode_source
@@ -889,4 +854,3 @@ impl I18nStringsDe {
         }
     }
 }
-

@@ -3,6 +3,7 @@
 //!
 //! 标题与正文是一档，无序 / 有序 / 任务列表是另一档：后者的记号跟着同族邻项写，
 //! 序号接所在列表组，带子块的父项只在列表这一族内部换。
+//! 引用是第三档：整段文字存在这一块自己的标题里，跨行的引用只许换成正文。
 
 use super::common::*;
 use crate::components::{Heading2, ParagraphText};
@@ -38,6 +39,13 @@ fn put_caret(editor: &Entity<Editor>, index: usize, offset: usize, cx: &mut Visu
 fn apply(editor: &Entity<Editor>, target: BlockKindTarget, cx: &mut VisualTestContext) -> bool {
     editor.update(cx, |editor, cx| {
         editor.apply_block_kind_to_selection(target, cx)
+    })
+}
+
+/// 菜单那一行的置灰口径（与 `apply` 走同一条判断）。
+fn available(editor: &Entity<Editor>, target: BlockKindTarget, cx: &mut VisualTestContext) -> bool {
+    editor.read_with(cx, |editor, cx| {
+        editor.block_kind_target_is_available(target, cx)
     })
 }
 
@@ -226,11 +234,16 @@ async fn turning_a_list_item_into_a_heading_keeps_the_sibling_item_a_list(cx: &m
     );
 }
 
+/// 标注（`> [!note]`）带头部与子块，这一笔不动它。
 #[gpui::test]
-async fn containers_and_structural_blocks_are_left_alone(cx: &mut TestAppContext) {
+async fn a_callout_is_left_alone(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_window, cx| {
-        Editor::from_markdown(cx, "> 引用甲\n\n```text\n代码乙\n```\n".to_string(), None)
+        Editor::from_markdown(
+            cx,
+            "> [!note] 标注甲\n>\n> 引用乙\n\n正文丙\n".to_string(),
+            None,
+        )
     });
     redraw(cx);
 
@@ -238,18 +251,250 @@ async fn containers_and_structural_blocks_are_left_alone(cx: &mut TestAppContext
     put_caret(&editor, 0, 3, cx);
     assert!(
         !apply(&editor, BlockKindTarget::Heading(2), cx),
-        "引用是容器，本笔不该动它"
+        "标注有头部与子块，这一笔不该动它"
     );
-    let quote_target = visible_block(&editor, 1, cx);
+    assert!(
+        !apply(&editor, BlockKindTarget::Paragraph, cx),
+        "标注换成正文要把子块安置进根序列，这一笔不该动它"
+    );
+    assert_eq!(buffer_text(&editor, cx), before, "被拒的换种类动了字节");
+}
+
+#[gpui::test]
+async fn structural_blocks_are_left_alone(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "正文甲\n\n```text\n代码乙\n```\n".to_string(), None)
+    });
+    redraw(cx);
+
+    let before = buffer_text(&editor, cx);
+    let code_target = visible_block(&editor, 1, cx);
     editor.update(cx, |editor, _cx| {
-        editor.focus_block(quote_target.entity_id());
+        editor.focus_block(code_target.entity_id());
     });
     redraw(cx);
     assert!(
         !apply(&editor, BlockKindTarget::Heading(2), cx),
         "代码块是原子的结构块，不该被换成标题"
     );
+    assert!(
+        !apply(&editor, BlockKindTarget::Quote, cx),
+        "代码块也不该被换成引用"
+    );
     assert_eq!(buffer_text(&editor, cx), before, "被拒的换种类动了字节");
+}
+
+// ── 引用那一档 ──────────────────────────────────────────────────────────────
+
+#[gpui::test]
+async fn a_paragraph_becomes_a_quote_and_the_second_press_cancels_it(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(apply(&editor, BlockKindTarget::Quote, cx));
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "> 标题甲\n\n正文乙\n",
+        "记号只补在这一行开头，别处字节原样"
+    );
+    assert_eq!(
+        kinds(&editor, cx),
+        vec!["Quote".to_string(), "Paragraph".to_string()],
+        "块树与写回的字节不一致"
+    );
+
+    assert!(apply(&editor, BlockKindTarget::Quote, cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        TWO_PARAGRAPHS,
+        "已经在引用里再点一次该取消引用，逐字节回到原样"
+    );
+}
+
+/// 引用里那一段跨两行：换成正文只去掉每行的 `> `，两行仍是同一块。
+#[gpui::test]
+async fn a_multi_line_quote_switches_to_plain_text_without_splitting(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> 甲引用\n> 乙引用\n\n正文丙\n".to_string(), None)
+    });
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(apply(&editor, BlockKindTarget::Paragraph, cx));
+    redraw(cx);
+
+    let text = buffer_text(&editor, cx);
+    assert_eq!(
+        text, "甲引用\n乙引用\n\n正文丙\n",
+        "两块引用之间的接缝与第三块都原样，只去掉这一块的行记号"
+    );
+    assert_eq!(
+        kinds(&editor, cx),
+        vec!["Paragraph".to_string(), "Paragraph".to_string()],
+        "跨两行的引用换完该还是一块（多出来那根就说明按行拆了）"
+    );
+
+    let reread = cx.new(|cx| Editor::from_markdown(cx, text, None));
+    let reread_kinds = reread.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| format!("{:?}", visible.entity.read(cx).kind()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        reread_kinds,
+        kinds(&editor, cx),
+        "写下去的字节读不回同一个结构"
+    );
+}
+
+/// 跨两行的引用换不出「标题」这一档：换成正文可以，换标题会把那行换行写成另一块。
+#[gpui::test]
+async fn a_multi_line_quote_refuses_a_heading_and_the_row_is_greyed(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> 甲引用\n> 乙引用\n".to_string(), None)
+    });
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(
+        !apply(&editor, BlockKindTarget::Heading(2), cx),
+        "跨行的引用换标题会把第二行留在原地当另一块"
+    );
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "> 甲引用\n> 乙引用\n",
+        "被拒的换种类动了字节"
+    );
+    assert!(
+        !available(&editor, BlockKindTarget::Heading(2), cx),
+        "菜单里「二级标题」这一行该跟着置灰"
+    );
+    assert!(
+        available(&editor, BlockKindTarget::Paragraph, cx),
+        "同一处选区里「正文」这一行该能点"
+    );
+}
+
+#[gpui::test]
+async fn a_single_line_quote_becomes_a_heading_without_touching_the_neighbour(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "> 标题甲\n\n正文乙\n".to_string(), None)
+    });
+    redraw(cx);
+
+    put_caret(&editor, 0, 3, cx);
+    assert!(apply(&editor, BlockKindTarget::Heading(2), cx));
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "## 标题甲\n\n正文乙\n",
+        "引用换成标题：行记号 `> ` 换成 `## `，接缝与邻块原样"
+    );
+    assert_eq!(
+        kinds(&editor, cx),
+        vec!["Heading { level: 2 }".to_string(), "Paragraph".to_string()],
+        "块树与写回的字节不一致"
+    );
+}
+
+/// 列表项换引用：`- ` 换成 `> `，同组另一项不动。
+#[gpui::test]
+async fn a_list_item_becomes_a_quote(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "- 项甲\n- 项乙\n".to_string(), None)
+    });
+    redraw(cx);
+
+    put_caret(&editor, 1, 3, cx);
+    assert!(apply(&editor, BlockKindTarget::Quote, cx));
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "- 项甲\n\n> 项乙\n",
+        "列表项换成引用，接缝上要多空一行；第一项那行字节原样"
+    );
+    assert_eq!(
+        kinds(&editor, cx),
+        vec!["BulletedListItem".to_string(), "Quote".to_string()],
+        "块树与写回的字节不一致"
+    );
+}
+
+/// 选区盖住两段正文：两段各成一块引用，字节之间要留那行空行——不留的话
+/// `> 甲一` 与 `> 乙二` 会被读回成同一块两行的引用。
+#[gpui::test]
+async fn a_selection_over_two_paragraphs_makes_two_quotes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "甲一\n\n乙二\n".to_string(), None)
+    });
+    redraw(cx);
+
+    let (first, last) = (visible_block(&editor, 0, cx), visible_block(&editor, 1, cx));
+    editor.update(cx, |editor, _cx| {
+        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: first.entity_id(),
+                offset: 0,
+            },
+            focus: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: last.entity_id(),
+                offset: 2,
+            },
+        });
+    });
+
+    assert!(apply(&editor, BlockKindTarget::Quote, cx));
+    redraw(cx);
+
+    let text = buffer_text(&editor, cx);
+    assert_eq!(text, "> 甲一\n\n> 乙二\n", "两块引用之间那行空行不能少");
+    assert_eq!(
+        kinds(&editor, cx),
+        vec!["Quote".to_string(), "Quote".to_string()],
+        "块树与写回的字节不一致"
+    );
+
+    let reread = cx.new(|cx| Editor::from_markdown(cx, text, None));
+    let reread_kinds = reread.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| format!("{:?}", visible.entity.read(cx).kind()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        reread_kinds,
+        vec!["Quote".to_string(), "Quote".to_string()],
+        "写下去的字节读不回两块引用"
+    );
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "甲一\n\n乙二\n",
+        "一次撤销要把两块一起退回"
+    );
 }
 
 // ── 列表那一档 ──────────────────────────────────────────────────────────────

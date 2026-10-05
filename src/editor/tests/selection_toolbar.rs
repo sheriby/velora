@@ -264,6 +264,7 @@ async fn the_paragraph_menu_offers_the_same_list_rows_as_the_context_menu(cx: &m
         "menu-item-bullet-list",
         "menu-item-numbered-list",
         "menu-item-task-list",
+        "menu-item-quote",
     ] {
         assert!(cx.debug_bounds(name).is_some(), "档位列表里没渲染出 {name}");
     }

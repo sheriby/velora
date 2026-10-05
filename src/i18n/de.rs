@@ -292,6 +292,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) paragraph_bullet_list: Option<String>,
     pub(crate) paragraph_numbered_list: Option<String>,
     pub(crate) paragraph_task_list: Option<String>,
+    pub(crate) paragraph_quote: Option<String>,
     pub(crate) table_axis_align_column_left: Option<String>,
     pub(crate) table_axis_align_column_center: Option<String>,
     pub(crate) table_axis_align_column_right: Option<String>,
