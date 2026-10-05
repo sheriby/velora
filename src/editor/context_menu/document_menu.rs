@@ -71,6 +71,8 @@ pub(crate) enum DocumentMenuCommand {
     /// 「格式 → 链接」：把选中的那段包成 `[文字]()`。不是行内样式标记，
     /// 写法要成对补方括号与圆括号，走的也是另一条动作。
     Link,
+    /// 「格式 → 清除格式」：剥掉选区里的行内样式记号，不动链接与块级记号。
+    ClearFormat,
     InsertTable,
     /// 「插入 → 图片」：打开原生文件选择器，选中的图片走粘贴那条插入路径。
     InsertImage,
@@ -110,6 +112,7 @@ impl DocumentMenuCommand {
             Self::Quote => "quote",
             Self::CodeBlock => "code-block",
             Self::Link => "link",
+            Self::ClearFormat => "clear-format",
             Self::InsertTable => "table",
             Self::InsertImage => "insert-image",
             Self::InsertCodeBlock => "insert-code-block",
@@ -134,6 +137,7 @@ impl DocumentMenuCommand {
             Self::CodeBlock => Some(BlockKindTarget::CodeBlock),
             Self::Format(_)
             | Self::Link
+            | Self::ClearFormat
             | Self::Undo
             | Self::Redo
             | Self::Cut
@@ -274,12 +278,19 @@ impl Editor {
                         selectable && self.writes_through_the_buffer(),
                     )
                 })
-                // 链接不挑选区：只有光标也能点，写完停在括号里等地址。
+                // 分隔线之后两行：链接补 `[文字]()` 外壳、清除格式剥掉已有的样式记号。
                 .chain([DocumentMenuRow::Separator])
-                .chain([item(
-                    DocumentMenuCommand::Link,
-                    self.link_insert_is_available(cx),
-                )])
+                .chain(
+                    [
+                        (DocumentMenuCommand::Link, self.link_insert_is_available(cx)),
+                        (
+                            DocumentMenuCommand::ClearFormat,
+                            selectable && self.writes_through_the_buffer(),
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(command, enabled)| item(command, enabled)),
+                )
                 .collect()
             }
             DocumentSubmenu::Paragraph => {
@@ -414,6 +425,9 @@ impl Editor {
             DocumentMenuCommand::Link => {
                 self.insert_link_on_selection(cx);
             }
+            DocumentMenuCommand::ClearFormat => {
+                self.clear_inline_format_on_selection(cx);
+            }
             DocumentMenuCommand::ToggleSourceView => {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
             }
@@ -531,6 +545,7 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::Quote => strings.paragraph_quote.clone(),
         DocumentMenuCommand::CodeBlock => strings.paragraph_code_block.clone(),
         DocumentMenuCommand::Link => strings.insert_link.clone(),
+        DocumentMenuCommand::ClearFormat => strings.format_clear.clone(),
         DocumentMenuCommand::InsertTable => strings.context_menu_table.clone(),
         DocumentMenuCommand::InsertImage => strings.insert_image.clone(),
         DocumentMenuCommand::InsertCodeBlock => strings.paragraph_code_block.clone(),
@@ -579,8 +594,9 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
         DocumentMenuCommand::Link => ShortcutCommand::LinkSelection,
         DocumentMenuCommand::InsertImage => ShortcutCommand::InsertImage,
         DocumentMenuCommand::ToggleSourceView => ShortcutCommand::ToggleViewMode,
-        // 标记文本与段落那一档还没有快捷键位（FP9 一并对齐），先留空。
+        // 标记文本、清除格式与段落那一档还没有快捷键位（FP9 一并对齐），先留空。
         DocumentMenuCommand::Format(InlineFormat::Highlight)
+        | DocumentMenuCommand::ClearFormat
         | DocumentMenuCommand::Heading(_)
         | DocumentMenuCommand::NormalText
         | DocumentMenuCommand::BulletList

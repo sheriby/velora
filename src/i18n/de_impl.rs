@@ -754,6 +754,7 @@ impl I18nStringsDe {
                 .paragraph_code_block
                 .unwrap_or(defaults.paragraph_code_block),
             insert_link: self.insert_link.unwrap_or(defaults.insert_link),
+            format_clear: self.format_clear.unwrap_or(defaults.format_clear),
             insert_image: self.insert_image.unwrap_or(defaults.insert_image),
             insert_image_prompt: self
                 .insert_image_prompt

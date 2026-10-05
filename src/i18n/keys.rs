@@ -294,6 +294,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "paragraph_quote",
     "paragraph_code_block",
     "insert_link",
+    "format_clear",
     "insert_image",
     "insert_image_prompt",
     "insert_math_block",

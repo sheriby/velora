@@ -25,7 +25,7 @@ const MAIN_ROWS: [&str; 11] = [
     "toggle-source-view",
 ];
 
-const FORMAT_ROWS: [&str; 9] = [
+const FORMAT_ROWS: [&str; 10] = [
     "bold",
     "italic",
     "underline",
@@ -35,6 +35,7 @@ const FORMAT_ROWS: [&str; 9] = [
     "superscript",
     "subscript",
     "link",
+    "clear-format",
 ];
 
 /// 「段落」那一档：六个标题级别、正文、列表的三种、引用与代码块。

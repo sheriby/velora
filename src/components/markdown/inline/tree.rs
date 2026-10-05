@@ -856,6 +856,43 @@ impl InlineTextTree {
         self.toggle_style(range, StyleFlag::Highlight)
     }
 
+    /// 剥掉这一段里所有成对的行内样式记号：粗体、斜体、下划线、删除线、标记文本、
+    /// 行内代码、上标、下标。链接不动（那是结构不是样式），HTML 行内样式也不动——
+    /// 那一族来自粘贴进来的 `<span style=…>`，不在这一档口径里。
+    /// 切法与 `toggle_style` 一致：只在选区覆盖到的那一段上生效，边界处把片段切开。
+    pub fn clear_styles_in_range(&mut self, range: Range<usize>) -> bool {
+        if range.is_empty() {
+            return false;
+        }
+
+        let clamped_start = range.start.min(self.visible_len());
+        let clamped_end = range.end.min(self.visible_len());
+        if clamped_start >= clamped_end {
+            return false;
+        }
+
+        let (before, tail) = self.split_at(clamped_start);
+        let (mut middle, after) = tail.split_at(clamped_end - clamped_start);
+        let had_style = middle
+            .fragments
+            .iter()
+            .any(|fragment| fragment.style != InlineStyle::default());
+        if !had_style {
+            return false;
+        }
+
+        for fragment in &mut middle.fragments {
+            fragment.style = InlineStyle::default();
+        }
+        middle.normalize_fragments();
+
+        let mut next = before;
+        next.append_tree(middle);
+        next.append_tree(after);
+        *self = next;
+        true
+    }
+
     pub fn unwrap_styles_on_fragments(&mut self, targets: &[(usize, StyleFlag)]) {
         if targets.is_empty() {
             return;

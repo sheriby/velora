@@ -505,6 +505,7 @@ pub struct I18nStrings {
     pub paragraph_quote: String,
     pub paragraph_code_block: String,
     pub insert_link: String,
+    pub format_clear: String,
     pub insert_image: String,
     pub insert_image_prompt: String,
     pub insert_math_block: String,

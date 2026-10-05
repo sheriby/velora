@@ -12,6 +12,13 @@ use crate::components::{
     UndoCaptureKind,
 };
 
+/// 选区上的一次行内改动：开关某一种格式，或者把选区里所有样式记号剥掉。
+#[derive(Clone, Copy)]
+enum InlineSelectionEdit {
+    Format(InlineFormat),
+    ClearStyles,
+}
+
 impl Editor {
     /// 在当前选区上开关一种行内格式，返回是否改到了内容。
     ///
@@ -22,11 +29,29 @@ impl Editor {
         format: InlineFormat,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.apply_inline_selection_edit(InlineSelectionEdit::Format(format), cx)
+    }
+
+    /// 「清除格式」：剥掉选区里的行内样式记号。块级记号（`#`、`-`、`>`、围栏）与链接不动，
+    /// 那两样不是「样式」。跨块与撤销口径与开关一种格式完全同一条。
+    pub(crate) fn clear_inline_format_on_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        self.apply_inline_selection_edit(InlineSelectionEdit::ClearStyles, cx)
+    }
+
+    /// 选区上的一次行内改动，两条入口共用这一段切块与记账。
+    fn apply_inline_selection_edit(
+        &mut self,
+        edit: InlineSelectionEdit,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(normalized) = self.normalized_cross_block_selection(cx) else {
             let Some(target) = self.current_edit_target_from_state(cx) else {
                 return false;
             };
-            return target.update(cx, |block, cx| block.toggle_inline_format(format, cx));
+            return target.update(cx, |block, cx| match edit {
+                InlineSelectionEdit::Format(format) => block.toggle_inline_format(format, cx),
+                InlineSelectionEdit::ClearStyles => block.clear_inline_format(cx),
+            });
         };
         let block_count = normalized.end_index - normalized.start_index + 1;
         let mut changed = false;
@@ -54,13 +79,16 @@ impl Editor {
             if start >= end {
                 continue;
             }
-            if entity.update(cx, |block, cx| {
-                block.toggle_inline_format_in_range(
+            if entity.update(cx, |block, cx| match edit {
+                InlineSelectionEdit::Format(format) => block.toggle_inline_format_in_range(
                     format,
                     start..end,
                     Some(normalized.reversed),
                     cx,
-                )
+                ),
+                InlineSelectionEdit::ClearStyles => {
+                    block.clear_inline_styles_in_range(start..end, Some(normalized.reversed), cx)
+                }
             }) {
                 changed = true;
             }

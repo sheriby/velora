@@ -214,6 +214,48 @@ impl Block {
         true
     }
 
+    /// 在当前选区上剥掉行内样式记号：菜单与快捷键的「清除格式」走这里。
+    pub(crate) fn clear_inline_format(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.selected_range.is_empty() || self.uses_raw_text_editing() {
+            return false;
+        }
+
+        let reversed = Some(self.selection_reversed);
+        self.clear_inline_styles_in_range(self.selected_range.clone(), reversed, cx)
+    }
+
+    /// 在指定的**可见文本**区间上剥掉行内样式记号。坐标口径与
+    /// [`Self::toggle_inline_format_in_range`] 一致：调用方给屏幕上的坐标，块自己换算到树里。
+    /// 返回是否真剥掉了什么。
+    pub(crate) fn clear_inline_styles_in_range(
+        &mut self,
+        selection: Range<usize>,
+        reversed: Option<bool>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if selection.is_empty() || self.uses_raw_text_editing() {
+            return false;
+        }
+
+        let selection = self.current_to_clean_range(selection);
+        let mut next_title = self.record.title.clone();
+        if !next_title.clear_styles_in_range(selection.clone()) {
+            return false;
+        }
+
+        self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        self.apply_title_edit(
+            next_title,
+            selection.end,
+            None,
+            Some(selection),
+            reversed,
+            false,
+            cx,
+        );
+        true
+    }
+
     fn current_line_layout_and_offset(&self) -> Option<(&WrappedLine, usize)> {
         let lines = self.last_layout.as_ref()?;
         let text = self.display_text();
