@@ -46,6 +46,23 @@ impl Block {
         self.clear_vertical_motion();
     }
 
+    /// 就地换块种类，不动标题文本。
+    ///
+    /// 不发事件、不开撤销组：一条命令改多块时由 `Editor` 统一开一个撤销组、重建元数据、
+    /// 把整段字节一次写回。返回种类是否真的变了。
+    pub(crate) fn set_kind_in_place(&mut self, next: BlockKind) -> bool {
+        if self.uses_raw_text_editing() || self.record.kind == next {
+            return false;
+        }
+        self.record.kind = next;
+        self.record.raw_fallback = None;
+        self.quote_reparse_requested = false;
+        self.clear_inline_projection();
+        self.sync_edit_mode_from_kind();
+        self.sync_render_cache();
+        true
+    }
+
     pub(crate) fn enter_code_block(
         &mut self,
         language: Option<SharedString>,

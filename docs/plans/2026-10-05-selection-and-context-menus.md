@@ -78,7 +78,9 @@ FP2 动作层：选区上的一行内格式。给 `InlineFormat` 加 `Strikethro
 
 FP3 高亮 `==x==`。新增 `StyleFlag::Highlight` + 分隔符解析 + 渲染颜色（用主题的强调色，浅色主题黄底、深色主题低饱和黄底），加 `InlineFormat::Highlight`。验收：解析往返测试（`==x==` 读进来 → 存出去不变形），toggle 用例，已有 markdown 测试无回归。
 
-FP4 动作层：段落转换。新增 `Editor::apply_block_kind_to_selection(BlockKindTarget, cx)`，`BlockKindTarget = Heading(1..=6) | Paragraph | Blockquote | BulletList | OrderedList | TaskList | CodeBlock | Separator`。实现按前缀写回缓冲区（`# ` / `> ` / `- ` / `1. ` / `- [ ] `）并走 `normalize_after_title_edit`，代码块与分隔线复用 `enter_code_block` / `convert_to_separator`。同一段落重复点同一个目标要能取消（标题→正文）。验收：每种目标一条断言（缓冲区字节 + 根块类型 + 撤销一步回到原样）。
+FP4a 动作层：段落转换的第一段——标题与正文。`Editor::apply_block_kind_to_selection(BlockKindTarget, cx)`（`src/editor/paragraph_ops.rs`），`BlockKindTarget = Heading(1..=6) | Paragraph`；对已经是这一级的标题再点一次等于取消。块的种类就地换（`Block::set_kind_in_place`，不发事件、不开撤销组），一次命令一个撤销组，字节按「前一块（仅当它的写法与文件一致）… 最后改到的那块」这一段区段写回，接缝空行由区段序列化按渲染态规则拼；引用与标注是容器、表/代码/公式是原子结构块，本段直接不动它们。验收：单块、跨块、取消、接缝、写回不碰邻居写法（Setext 夹具）五类用例。
+
+FP4b 动作层：段落转换的第二段——列表、引用、代码块。目标补 `Blockquote | BulletList | OrderedList | TaskList | CodeBlock | Separator`。要解决的是本段刻意留着的那几件：容器换入换出时子块与每行前缀的归属（`source_line_prefixes` 台账）、列表组被换掉中间一项后的重新编号与组分隔、`enter_code_block`/`make_separator` 会清掉正文（要改成带正文入参，参照 `enter_math_block(body)`）、用户自己选的记号（`+ `、`1)`、`***`）不许被洗成规范形。验收：每种目标一条（缓冲区字节 + 根块类型 + 撤销一步回到原样），外加「列表组中间换出去别的形状」的组合用例。
 
 FP5 动作层：链接、图片、插入类。链接走应用内小输入框（不再是系统弹窗，遵循本仓库「不用系统原生弹窗」的规矩），确定后调 `paste_url_as_link`；图片选择器复用粘贴路径；目录插 `[toc]`、Front Matter 插 `---\n---`、公式块复用 `enter_math_block`。验收：链接包裹选区的字节断言；目录/Front Matter 落到缓冲区且能被解析。
 

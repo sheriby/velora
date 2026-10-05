@@ -19,6 +19,7 @@ mod knowledge_recovery;
 mod loading_chunks;
 mod long_lines;
 mod perf_budgets;
+mod paragraph_kind;
 mod read_side_sees_the_file;
 mod render_snapshot_fold;
 mod round_trip_fidelity;
