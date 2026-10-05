@@ -790,12 +790,6 @@ impl Editor {
         let Some(hit) = self.workspace.search_results.get(index) else {
             return;
         };
-        search_jump_debug(&format!(
-            "click index={index} path={:?} line={:?} source_range={:?}",
-            hit.path.file_name(),
-            hit.line,
-            hit.source_range,
-        ));
         self.workspace.search_active_index = Some(index);
         if let Some(range) = hit.source_range.clone() {
             self.workspace.document_active_range = Some(range.clone());
@@ -803,7 +797,6 @@ impl Editor {
             return;
         }
         let path = hit.path.clone();
-        let line = hit.line;
         let match_ordinal = hit.match_ordinal;
         self.open_workspace_file(path.clone(), window, cx);
         // 路径表示可能不一致（树扫描 canonicalize，打开路径未必；macOS
@@ -832,24 +825,14 @@ impl Editor {
             //
             // 注意这与「读取侧换源到缓冲区」不是同一件事：文档内查找（⌘F）扫的
             // 是缓冲区，行号即文件行号；工作区扫描跨文件读磁盘，才需要这层对应。
-            let range =
-                self.document_range_for_line_ordinal(ordinal, cx)
-                    .or_else(|| {
-                        // 表是空的（编辑把命中全删了）：退回旧实现那句「第一个命中」
-                        // 的兜底形状，仍然按当前文本算。
-                        let source = self.current_document_source(cx);
-                        let matcher = SearchMatcher::new(
-                            self.workspace.search_query.trim(),
-                            self.search_options(),
-                        );
-                        find_document_match_from(&source, &matcher, 0, false)
-                    });
-            search_jump_debug(&format!(
-                "relocate disk_line={line:?} ordinal={ordinal} -> range={range:?}"
-            ));
-            // 这里不再核对字符边界：区间的两个端点要么出自命中表、要么出自
-            // `find_document_match_from`，两条出口的引擎都统一过滤过边界
-            // （`search_engine.rs` 的硬闸门），旧的冗余守卫还多付一次整篇取文本。
+            // 表里没有第 `ordinal` 组（未保存的编辑把那一行删掉了）时，
+            // `document_range_for_line_ordinal` 自己就退回表里的第一个命中；
+            // 表是空的说明这篇文档里已经没有命中了，此时不再有可退的位置——
+            // 旧实现那句 `find_document_match_from` 兜底在这个前提下是死代码
+            // （同一份文本、同一个引擎，取不到另一条结果），所以不再保留。
+            let range = self.document_range_for_line_ordinal(ordinal, cx);
+            // 区间出自命中表，两端一定在字符边界上（`search_engine.rs` 的硬闸门），
+            // 旧这里那句冗余的边界核对已经跟着手写层一起退役。
             if let Some(range) = range {
                 self.workspace.document_active_range = Some(range.clone());
                 self.jump_to_document_search_range(range, cx);
@@ -858,10 +841,5 @@ impl Editor {
     }
 }
 
-/// 搜索跳转链路调试开关：VELORA_SEARCH_JUMP_DEBUG=1 时输出关键节点。
-fn search_jump_debug(message: &str) {
-    if std::env::var("VELORA_SEARCH_JUMP_DEBUG").as_deref() == Ok("1") {
-        eprintln!("[SEARCHJUMP] {message}");
-    }
-}
+
 

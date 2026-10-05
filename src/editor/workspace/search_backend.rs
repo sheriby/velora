@@ -71,6 +71,9 @@ impl SearchMatcher {
     }
 
     /// Whether a filename matches (fuzzy subsequence or substring).
+    ///
+    /// 文件名匹配不是 ripgrep 的活（那是 `-g` 的 glob），所以这仍是自己做的子串
+    /// 比较；大小写不敏感那档用标准的 `to_lowercase` 折叠，不再是手写的滑窗。
     pub(crate) fn matches_filename(&self, name: &str) -> bool {
         if self.options.fuzzy && !self.options.use_regex {
             return !fuzzy_subsequence_ranges(name, &self.query).is_empty();
@@ -78,87 +81,9 @@ impl SearchMatcher {
         if self.options.match_case {
             name.contains(&self.query)
         } else {
-            case_insensitive_contains(name, &self.query)
+            name.to_lowercase().contains(&self.query.to_lowercase())
         }
     }
-}
-
-pub(crate) fn case_insensitive_contains(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if needle.is_ascii() {
-        haystack
-            .as_bytes()
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
-    } else {
-        !case_insensitive_ranges(haystack, needle).is_empty()
-    }
-}
-
-/// Case-insensitive byte ranges for one line. ASCII needles use a fast
-/// sliding compare; non-ASCII needles fall back to per-char lowercase
-/// comparison (haystack byte offsets stay stable because lowercase folding
-/// of a char never splits the position bookkeeping below).
-pub(crate) fn case_insensitive_ranges(line: &str, query: &str) -> Vec<Range<usize>> {
-    if query.is_empty() || line.is_empty() || line.len() < query.len() {
-        return Vec::new();
-    }
-    if query.is_ascii() {
-        let mut ranges = Vec::new();
-        let last = line.len() - query.len();
-        let bytes = line.as_bytes();
-        let first = query.as_bytes()[0];
-        let mut start = 0;
-        while start <= last {
-            // 先比对首字节再展开整窗：不命中位置只做一次单字节大小写不敏感
-            // 比较，避免每个位置都比完整窗口。
-            if bytes[start].eq_ignore_ascii_case(&first)
-                && bytes[start..start + query.len()].eq_ignore_ascii_case(query.as_bytes())
-            {
-                ranges.push(start..start + query.len());
-                start += query.len();
-            } else {
-                start += 1;
-            }
-        }
-        return ranges;
-    }
-
-    let query_chars: Vec<char> = query.to_lowercase().chars().collect();
-    if query_chars.is_empty() {
-        return Vec::new();
-    }
-    let mut ranges = Vec::new();
-    let char_positions: Vec<(usize, char)> = line.char_indices().collect();
-    for start_index in 0..char_positions.len() {
-        let mut query_index = 0usize;
-        let mut cursor = start_index;
-        while cursor < char_positions.len() && query_index < query_chars.len() {
-            let (_, line_char) = char_positions[cursor];
-            let mut folded = line_char.to_lowercase();
-            let matches = match (folded.next(), folded.next()) {
-                (Some(first), None) => first == query_chars[query_index],
-                _ => line_char == query_chars[query_index],
-            };
-            if !matches {
-                break;
-            }
-            query_index += 1;
-            cursor += 1;
-        }
-        if query_index == query_chars.len() {
-            let start = char_positions[start_index].0;
-            let end = if cursor < char_positions.len() {
-                char_positions[cursor].0
-            } else {
-                line.len()
-            };
-            ranges.push(start..end);
-        }
-    }
-    ranges
 }
 
 /// fzf-style subsequence match: every query char must appear in order
@@ -478,6 +403,10 @@ pub(crate) fn search_document_source(
 
 /// Next match at or after `from` (or before, when reversing) across the whole
 /// document source, wrapping around once.
+///
+/// 生产侧不再需要它：文档范围的跳转读命中表按索引取，工作区命中按 ordinal 对位
+/// 也读那张表。留在这里只服务阶段 0 那批把它当被测对象的行为快照。
+#[cfg(test)]
 pub(crate) fn find_document_match_from(
     source: &str,
     matcher: &SearchMatcher,

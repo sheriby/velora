@@ -113,9 +113,6 @@ impl Editor {
     }
 
     pub(crate) fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
-        if std::env::var("VELORA_SEARCH_JUMP_DEBUG").as_deref() == Ok("1") {
-            eprintln!("[SEARCHJUMP] jump range={range:?}");
-        }
         // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建。落点在
         // 未物化的部分时，选区找不到归属的投影块，会被钳进首块末尾——用户
         // 报修：第一次点击命中停在 512 行，再点才对。跳转前先把续建落地；
@@ -164,12 +161,6 @@ impl Editor {
         // 活动命中变了（跳转/循环）：重算文档内高亮，让用户看得出当前
         // 停在哪一个命中上（用户报修：来回跳毫无视觉反馈）。
         self.sync_document_search_highlights(cx);
-        if std::env::var("VELORA_SEARCH_JUMP_DEBUG").as_deref() == Ok("1") {
-            eprintln!(
-                "[SEARCHJUMP] jump flags set, active={:?}",
-                self.active_entity_id
-            );
-        }
         cx.notify();
     }
 
