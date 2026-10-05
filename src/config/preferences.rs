@@ -738,6 +738,14 @@ impl EditorSettings {
         cx.update_global::<Self, _>(|settings, _cx| settings.autosave = autosave);
     }
 
+    /// 测试专用：只改内存里的 AI 配置（同 set_autosave_in_memory 的理由）。
+    #[cfg(test)]
+    pub(crate) fn set_ai_in_memory(ai: AiPreferences, cx: &mut App) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.ai = ai);
+        }
+    }
+
     /// Whether typed straight quotes/dashes become typographic forms.
     /// Defaults to `false` when the global has not been installed.
     pub fn smart_punctuation(cx: &App) -> bool {
@@ -1046,6 +1054,7 @@ impl EditorSettings {
 
 pub(crate) use persistence::*;
 pub(crate) use render::open_preferences_window;
+pub(crate) use render::open_preferences_window_at;
 #[cfg(test)]
 pub(crate) use render::{open_preferences_window_with_size, open_preferences_window_with_state};
 pub(crate) use window::{PreferencesNav, PreferencesWindow};

@@ -893,7 +893,7 @@
             )
         });
         cx.run_until_parked();
-        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        let preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
 
         handle
             .update(cx, |preferences, window, cx| {

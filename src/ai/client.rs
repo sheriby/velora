@@ -9,8 +9,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::channel::mpsc::UnboundedSender;
-
 use super::sse::{SseEvent, SseParser};
 
 /// 单次请求的服务端配置(设置页的「地址/密钥/模型」三元组)。
@@ -162,11 +160,11 @@ fn message_from_error_body(body: &str) -> String {
     text
 }
 
-/// 流式补全。阻塞直至完成/失败/取消;每个增量经 `sender` 发出,返回完整文本。
+/// 流式补全。阻塞直至完成/失败/取消;每个增量回调 `on_delta`,返回完整文本。
 pub(crate) fn stream_chat_completion(
     config: &AiEndpointConfig,
     messages: &[ChatMessage],
-    sender: UnboundedSender<String>,
+    on_delta: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<String, AiRequestError> {
     let client = reqwest::blocking::Client::builder()
@@ -176,7 +174,7 @@ pub(crate) fn stream_chat_completion(
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|error| AiRequestError::Network(error.to_string()))?;
-    stream_chat_completion_with_client(&client, config, messages, sender, cancel)
+    stream_chat_completion_with_client(&client, config, messages, on_delta, cancel)
 }
 
 /// 同 [`stream_chat_completion`],但客户端由调用方注入(测试用短超时)。
@@ -184,7 +182,7 @@ pub(crate) fn stream_chat_completion_with_client(
     client: &reqwest::blocking::Client,
     config: &AiEndpointConfig,
     messages: &[ChatMessage],
-    sender: UnboundedSender<String>,
+    on_delta: &mut dyn FnMut(&str),
     cancel: Arc<AtomicBool>,
 ) -> Result<String, AiRequestError> {
     if config.base_url.trim().is_empty() {
@@ -240,7 +238,7 @@ pub(crate) fn stream_chat_completion_with_client(
         }
         return match content_from_completion_json(&body_text) {
             Some(content) => {
-                emit(&sender, &content);
+                on_delta(&content);
                 Ok(content)
             }
             None => Err(AiRequestError::Protocol(
@@ -277,14 +275,14 @@ pub(crate) fn stream_chat_completion_with_client(
             }
             if let Some(delta) = delta_from_sse_payload(&data) {
                 full.push_str(&delta);
-                emit(&sender, &delta);
+                on_delta(&delta);
             }
         }
     }
     for SseEvent { data } in parser.finish() {
         if let Some(delta) = delta_from_sse_payload(&data) {
             full.push_str(&delta);
-            emit(&sender, &delta);
+            on_delta(&delta);
         }
     }
     if full.is_empty() {
@@ -293,11 +291,6 @@ pub(crate) fn stream_chat_completion_with_client(
         ));
     }
     Ok(full)
-}
-
-fn emit(sender: &UnboundedSender<String>, delta: &str) {
-    // 接收端已关闭(UI 已关闭面板)只说明没人听了,流照样读完,不算失败。
-    let _ = sender.unbounded_send(delta.to_string());
 }
 
 #[cfg(test)]
@@ -406,24 +399,6 @@ mod tests {
         line
     }
 
-    fn collect_deltas(
-        mut receiver: futures::channel::mpsc::UnboundedReceiver<String>,
-    ) -> Vec<String> {
-        let (done_tx, done_rx) = std_mpsc::channel();
-        std::thread::spawn(move || {
-            let mut deltas = Vec::new();
-            while let Some(delta) =
-                futures::executor::block_on(futures::StreamExt::next(&mut receiver))
-            {
-                deltas.push(delta);
-            }
-            let _ = done_tx.send(deltas);
-        });
-        done_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("deltas within timeout")
-    }
-
     #[test]
     fn streams_deltas_from_a_live_sse_response() {
         let port = spawn_sse_server(|stream| {
@@ -449,17 +424,17 @@ mod tests {
             }
         });
 
-        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        let mut deltas = Vec::new();
         let result = stream_chat_completion_with_client(
             &short_client(),
             &config_at(port),
             &messages(),
-            sender,
+            &mut |delta| deltas.push(delta.to_string()),
             Arc::new(AtomicBool::new(false)),
         );
         let full = result.expect("stream succeeds");
         assert_eq!(full, "你好");
-        assert_eq!(collect_deltas(receiver), vec!["你".to_string(), "好".into()]);
+        assert_eq!(deltas, vec!["你".to_string(), "好".into()]);
     }
 
     #[test]
@@ -477,16 +452,16 @@ mod tests {
             stream.write_all(response.as_bytes()).expect("write");
         });
 
-        let (sender, receiver) = futures::channel::mpsc::unbounded();
+        let mut deltas = Vec::new();
         let result = stream_chat_completion_with_client(
             &short_client(),
             &config_at(port),
             &messages(),
-            sender,
+            &mut |delta| deltas.push(delta.to_string()),
             Arc::new(AtomicBool::new(false)),
         );
         assert_eq!(result.expect("ok"), "完整回答");
-        assert_eq!(collect_deltas(receiver), vec!["完整回答".to_string()]);
+        assert_eq!(deltas, vec!["完整回答".to_string()]);
     }
 
     #[test]
@@ -504,12 +479,11 @@ mod tests {
             stream.write_all(response.as_bytes()).expect("write");
         });
 
-        let (sender, _receiver) = futures::channel::mpsc::unbounded();
         let result = stream_chat_completion_with_client(
             &short_client(),
             &config_at(port),
             &messages(),
-            sender,
+            &mut |_| {},
             Arc::new(AtomicBool::new(false)),
         );
         match result {
@@ -541,7 +515,6 @@ mod tests {
             std::thread::sleep(Duration::from_secs(10));
         });
 
-        let (sender, _receiver) = futures::channel::mpsc::unbounded();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_thread = cancel.clone();
         let (result_tx, result_rx) = std_mpsc::channel();
@@ -554,7 +527,7 @@ mod tests {
                 &short_client(),
                 &config_at(port),
                 &messages(),
-                sender,
+                &mut |_| {},
                 cancel,
             );
             let _ = result_tx.send(result);
@@ -567,7 +540,6 @@ mod tests {
 
     #[test]
     fn empty_base_url_fails_fast_without_network() {
-        let (sender, _receiver) = futures::channel::mpsc::unbounded();
         let config = AiEndpointConfig {
             base_url: "  ".into(),
             api_key: String::new(),
@@ -577,7 +549,7 @@ mod tests {
             &short_client(),
             &config,
             &messages(),
-            sender,
+            &mut |_| {},
             Arc::new(AtomicBool::new(false)),
         );
         assert!(matches!(result, Err(AiRequestError::Protocol(_))));

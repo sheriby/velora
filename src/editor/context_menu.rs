@@ -363,6 +363,12 @@ impl Editor {
             self.close_menu_bar(cx);
             return;
         }
+        // AI 面板:生成中 Esc = 停止(保留部分结果),其余 = 关闭。
+        if self.ai_assistant_is_open() {
+            cx.stop_propagation();
+            self.ai_escape(cx);
+            return;
+        }
         self.dismiss_contextual_overlays(cx);
         // escape 由全局快捷键路由到这里，浮层面板自己的 key_down 收不到。
         self.close_quick_open(cx);

@@ -46,6 +46,7 @@ mod tests;
 mod tree;
 mod update;
 mod window_state;
+mod ai_assistant;
 mod command_palette;
 mod quick_open;
 mod watcher;
@@ -264,6 +265,7 @@ pub struct Editor {
     quick_open: Option<quick_open::QuickOpenState>,
     /// Command palette overlay (⇧⌘P); `None` while closed.
     command_palette: Option<command_palette::CommandPaletteState>,
+    ai_assistant: Option<ai_assistant::AiAssistantState>,
     /// Workspace change watcher (roadmap D3); `None` until a root is set.
     external_watcher: Option<notify::RecommendedWatcher>,
     /// 已启动文件监听的工作区根：同一根不重复启动（含隐含根）。
@@ -725,6 +727,7 @@ impl Editor {
             search_highlight_key: None,
             quick_open: None,
             command_palette: None,
+            ai_assistant: None,
             external_watcher: None,
             watched_workspace_root: None,
             last_outline_follow_offset: f32::NAN,

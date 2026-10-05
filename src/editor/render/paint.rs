@@ -1074,6 +1074,13 @@ impl Render for Editor {
         } else {
             base
         };
+        let base = if self.ai_assistant_is_open()
+            && let Some(overlay) = crate::editor::ai_assistant::render_ai_assistant_overlay(self, &theme, cx)
+        {
+            base.child(overlay)
+        } else {
+            base
+        };
         if let Some(kind) = self.info_dialog {
             base.child(self.render_info_dialog_overlay(&theme, kind, cx))
         } else if self.modal_is_open() {
