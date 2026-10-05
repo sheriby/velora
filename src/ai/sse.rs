@@ -53,20 +53,11 @@ fn find_event_end(buffer: &str) -> Option<usize> {
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
-            b'\n' => {
-                if index + 1 < bytes.len() && bytes[index + 1] == b'\n' {
-                    return Some(index + 2);
-                }
-                if index + 2 < bytes.len() && bytes[index + 1] == b'\r' && bytes[index + 2] == b'\n'
-                {
-                    return Some(index + 3);
-                }
+            b'\n' if bytes.get(index + 1) == Some(&b'\n') => return Some(index + 2),
+            b'\n' if bytes.get(index + 1) == Some(&b'\r') && bytes.get(index + 2) == Some(&b'\n') => {
+                return Some(index + 3);
             }
-            b'\r' => {
-                if index + 1 < bytes.len() && bytes[index + 1] == b'\r' {
-                    return Some(index + 2);
-                }
-            }
+            b'\r' if bytes.get(index + 1) == Some(&b'\r') => return Some(index + 2),
             _ => {}
         }
         index += 1;

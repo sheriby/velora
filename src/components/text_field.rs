@@ -13,6 +13,9 @@ use std::ops::Range;
 use gpui::*;
 use unicode_segmentation::UnicodeSegmentation;
 
+/// 回车回调签名。
+type OnEnterCallback = Box<dyn Fn(&mut TextField, &mut Window, &mut Context<TextField>) + 'static>;
+
 /// 单行文本输入。
 pub(crate) struct TextField {
     value: String,
@@ -23,7 +26,7 @@ pub(crate) struct TextField {
     focus: FocusHandle,
     placeholder: SharedString,
     /// 回车回调(AI 面板用它触发自定义指令;设置页不用)。
-    on_enter: Option<Box<dyn Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static>>,
+    on_enter: Option<OnEnterCallback>,
 }
 
 impl TextField {
@@ -107,7 +110,7 @@ impl TextField {
             // Shift 扩选:锚(start)不动,头(end)向左退一个字素。
             let target = self.value[..end]
                 .grapheme_indices(true)
-                .last()
+                .next_back()
                 .map(|(index, _)| index)
                 .unwrap_or(end);
             self.selected_range.end = target;
@@ -119,7 +122,7 @@ impl TextField {
         }
         let target = self.value[..start]
             .grapheme_indices(true)
-            .last()
+            .next_back()
             .map(|(index, _)| index)
             .unwrap_or(start);
         self.move_to(target, false);
@@ -159,7 +162,7 @@ impl TextField {
         let range = if selection.is_empty() {
             let start = self.value[..selection.start]
                 .grapheme_indices(true)
-                .last()
+                .next_back()
                 .map(|(index, _)| index)
                 .unwrap_or(selection.start);
             start..selection.start

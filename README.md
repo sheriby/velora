@@ -24,6 +24,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 - **Smart punctuation** (off by default, one switch in Settings) — context-aware curly quotes and `--` → em dash.
 - **VS Code–style find & replace** — powered by ripgrep's engine, in-process: case, whole-word, regex (multi-line patterns included) and fuzzy matching; every match is highlighted while the panel is open, and the result list, highlighting, jumping and replace-all read the same match table.
 - **Syntax highlighting** — Rust, JavaScript/TypeScript, C/C++, C#, Go, Java, PHP, Python, Ruby, HTML/CSS, JSON, YAML, TOML and Bash; other text files open and edit as plain text.
+- **Built-in AI assistant** — one panel, one entry point (`Cmd/Ctrl+J`, the right-click menu, the AI menu, or the command palette): polish, fix spelling & grammar, translate (nine target languages), summarize, continue writing, rewrite (four tones), and custom instructions against any OpenAI-compatible service. Results stream in, apply as a single undo step, and are refused if the document drifted. Bring your own key: OpenAI, DeepSeek, GLM, Kimi, OpenRouter, or a local Ollama.
 
 ### Workspace & knowledge
 
@@ -126,6 +127,7 @@ The main `config.toml` sections:
 | `[window]` | `default_window_width`, `default_window_height`, `open_position`, `remember_bounds`, `zoom_percent` | Default size, centered vs. remembered opening position, window memory, UI zoom |
 | `[editor]` | `tree_sort`, `autosave`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width` | File-tree sort, autosave on/off, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width |
 | `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |
+| `[ai]` | `provider_id`, `api_base_url`, `api_key`, `model`, `translate_target` | AI assistant connection (any OpenAI-compatible service) and the default translation target; absent section = not configured |
 
 ## 📄 License
 

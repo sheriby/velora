@@ -23,6 +23,7 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 - **编辑顺手事**——列表回车自动续写；选中输入配对符号自动环绕；选中文本粘贴 URL 生成链接；从浏览器或 Word 复制的内容粘贴时自动转 Markdown。
 - **智能标点**（默认关闭，设置中一键开启）——按上下文输出弯引号，`--` 转破折号。
 - **VS Code 风格查找替换**——匹配交给 ripgrep 的引擎（进程内调用）：大小写、全词、正则与模糊，正则可跨行；面板打开时正文实时高亮全部匹配，结果列表、高亮、跳转与全部替换读同一张命中表。
+- **AI 助手（内嵌）**——一个面板、一个入口（`⌘J`、右键菜单、菜单栏 AI 菜单或命令面板）：润色、语法纠错、翻译（九种目标语言）、总结、续写、改写（四档语气）与自定义指令，面向任意 OpenAI 兼容服务。结果流式预览，一次应用即一步撤销，文档被改过则拒绝套用。自带密钥即用：OpenAI、DeepSeek、智谱、Kimi、OpenRouter 或本地 Ollama。
 - **语法高亮**——Rust、JavaScript/TypeScript、C/C++、C#、Go、Java、PHP、Python、Ruby、HTML/CSS、JSON、YAML、TOML 与 Bash；其他文本文件按纯文本打开编辑。
 
 ### 工作区与知识管理
@@ -126,6 +127,7 @@ cargo test
 | `[window]` | `default_window_width`、`default_window_height`、`open_position`、`remember_bounds`、`zoom_percent` | 默认尺寸、居中还是记住位置打开、窗口记忆、界面缩放 |
 | `[editor]` | `tree_sort`、`autosave`、`autosave_debounce_ms`、`new_file_template`、`smart_punctuation`、`external_change_policy`、`delete_policy`、`workspace_sidebar_width` | 文件树排序、自动保存开关（关掉只停写文件，恢复快照与外部改动检测照跑）、自动保存间隔、新建文件模板（`{date}` 会展开）、智能标点、外部变更处理、移入废纸篓还是永久删除、侧栏宽度 |
 | `[export]` | `theme` | 导出 HTML、PDF 与 PNG 时使用 `current` / `light` / `dark` |
+| `[ai]` | `provider_id`、`api_base_url`、`api_key`、`model`、`translate_target` | AI 助手连接（任意 OpenAI 兼容服务）与默认翻译目标；缺省该分节即未配置 |
 
 ## 📄 许可证
 
