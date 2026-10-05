@@ -5,7 +5,7 @@
 //! 就是它临终前留下的口径。已知的、有意为之的差异只有四处，各自有独立用例点名，
 //! 不在对照测试的语料里。
 
-use super::super::{CompiledQuery, QueryError, SearchMatcher, SearchOptions};
+use super::super::{CompiledQuery, QueryError, SearchOptions};
 use std::ops::Range;
 
 fn options(match_case: bool, whole_word: bool, use_regex: bool, fuzzy: bool) -> SearchOptions {
@@ -29,19 +29,163 @@ fn regex_options() -> SearchOptions {
     }
 }
 
-/// 手写实现的口径：逐行喂，行内命中换算成整篇的绝对区间。
-fn legacy_hits(source: &str, query: &str, options: SearchOptions) -> Vec<Range<usize>> {
-    let matcher = SearchMatcher::new(query, options);
+/// 手写实现那一套算法的**誊本**（逐行喂，行内命中换算成整篇绝对区间）。
+///
+/// 为什么要在测试里留一份抄来的实现：`SearchMatcher` 换成转调引擎之后，这条对照
+/// 就退化成「引擎和引擎比」，等于没比。手写层从生产代码里退役（`8e98c8c`）之后，
+/// 唯一的出口证明只能靠把它的算法原样留在测试里——和 §4.7 那条 ordinal 对照测试
+/// 用的是同一个办法。誊本取自 `git show e8c8cf3:src/editor/workspace/search_backend.rs`，
+/// 连它的三个已知缺陷一起抄（正则模式吃掉 `whole_word`、吃掉 `fuzzy`、非法正则静默
+/// 退化成字面量），所以对照矩阵只比**没有有意差异**的那几种形态。
+fn hand_written_hits(source: &str, query: &str, options: SearchOptions) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut absolute = 0usize;
     for raw_line in source.split_inclusive('\n') {
         let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        for range in matcher.find_in_line(line) {
+        for range in hand_written_find_in_line(line, query, options) {
             out.push((absolute + range.start)..(absolute + range.end));
         }
         absolute += raw_line.len();
     }
     out
+}
+
+/// 旧 `SearchMatcher::find_in_line` 的分支顺序，一字不改。
+fn hand_written_find_in_line(line: &str, query: &str, options: SearchOptions) -> Vec<Range<usize>> {
+    if options.use_regex {
+        // 旧实现在这里 `.build().ok()`：非法正则静默退化成「没有正则」，
+        // 且 `whole_word`、`fuzzy` 两个开关在本分支被完全忽略（缺陷 #1、#2）。
+        let regex = regex::RegexBuilder::new(query)
+            .case_insensitive(!options.match_case)
+            .build();
+        if let Ok(regex) = regex {
+            return regex.find_iter(line).map(|m| m.start()..m.end()).collect();
+        }
+    }
+    if options.fuzzy && !options.use_regex {
+        return hand_written_fuzzy_ranges(line, query);
+    }
+    let mut ranges = if options.match_case {
+        line.match_indices(query)
+            .map(|(start, matched)| start..start + matched.len())
+            .collect()
+    } else {
+        hand_written_case_insensitive_ranges(line, query)
+    };
+    if options.whole_word {
+        ranges.retain(|range| hand_written_is_word_boundary(line, range));
+    }
+    ranges
+}
+
+/// 旧 `case_insensitive_ranges`：ASCII 走滑窗，非 ASCII 逐字符小写比较。
+fn hand_written_case_insensitive_ranges(line: &str, query: &str) -> Vec<Range<usize>> {
+    if query.is_empty() || line.is_empty() || line.len() < query.len() {
+        return Vec::new();
+    }
+    if query.is_ascii() {
+        let mut ranges = Vec::new();
+        let last = line.len() - query.len();
+        let bytes = line.as_bytes();
+        let first = query.as_bytes()[0];
+        let mut start = 0;
+        while start <= last {
+            if bytes[start].eq_ignore_ascii_case(&first)
+                && bytes[start..start + query.len()].eq_ignore_ascii_case(query.as_bytes())
+            {
+                ranges.push(start..start + query.len());
+                start += query.len();
+            } else {
+                start += 1;
+            }
+        }
+        return ranges;
+    }
+    let query_chars: Vec<char> = query.to_lowercase().chars().collect();
+    if query_chars.is_empty() {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let char_positions: Vec<(usize, char)> = line.char_indices().collect();
+    for start_index in 0..char_positions.len() {
+        let mut query_index = 0usize;
+        let mut cursor = start_index;
+        while cursor < char_positions.len() && query_index < query_chars.len() {
+            let (_, line_char) = char_positions[cursor];
+            let mut folded = line_char.to_lowercase();
+            let matches = match (folded.next(), folded.next()) {
+                (Some(first), None) => first == query_chars[query_index],
+                _ => line_char == query_chars[query_index],
+            };
+            if !matches {
+                break;
+            }
+            query_index += 1;
+            cursor += 1;
+        }
+        if query_index == query_chars.len() {
+            let start = char_positions[start_index].0;
+            let end = if cursor < char_positions.len() {
+                char_positions[cursor].0
+            } else {
+                line.len()
+            };
+            ranges.push(start..end);
+        }
+    }
+    ranges
+}
+
+/// 旧 `fuzzy_subsequence_ranges`：子序列匹配，区间从首字符覆盖到末字符。
+fn hand_written_fuzzy_ranges(line: &str, query: &str) -> Vec<Range<usize>> {
+    let query_chars: Vec<char> = query
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect();
+    if query_chars.is_empty() || line.is_empty() {
+        return Vec::new();
+    }
+    let positions: Vec<(usize, char)> = line.char_indices().collect();
+    let mut ranges = Vec::new();
+    for start_index in 0..positions.len() {
+        let (start_offset, start_char) = positions[start_index];
+        let folded_start = start_char.to_lowercase().next().unwrap_or(start_char);
+        if folded_start != query_chars[0] {
+            continue;
+        }
+        let mut query_index = 1usize;
+        let mut cursor = start_index + 1;
+        while cursor < positions.len() && query_index < query_chars.len() {
+            let (_, line_char) = positions[cursor];
+            let folded = line_char.to_lowercase().next().unwrap_or(line_char);
+            if folded == query_chars[query_index] {
+                query_index += 1;
+            }
+            cursor += 1;
+        }
+        if query_index == query_chars.len() {
+            let end = positions.get(cursor).map(|(offset, _)| *offset).unwrap_or(line.len());
+            ranges.push(start_offset..end);
+        }
+    }
+    ranges
+}
+
+/// 旧 `is_word_boundary`。
+fn hand_written_is_word_boundary(line: &str, range: &Range<usize>) -> bool {
+    let word_char = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let before = line[..range.start]
+        .chars()
+        .next_back()
+        .map(word_char)
+        .unwrap_or(false);
+    let after = line[range.end..]
+        .chars()
+        .next()
+        .map(word_char)
+        .unwrap_or(false);
+    !before && !after
 }
 
 /// 中英混排 + 表格 + 代码围栏 + 表情 + 空行 + 无尾换行的语料。
@@ -72,6 +216,8 @@ fn agreeing_modes() -> Vec<(&'static str, SearchOptions)> {
         ("正则 / 忽略大小写", options(false, false, true, false)),
         ("正则 / 区分大小写", options(true, false, true, false)),
         ("模糊", options(false, false, false, true)),
+        ("字面量 / 全词", options(false, true, false, false)),
+        ("字面量 / 全词 / 区分大小写", options(true, true, false, false)),
     ]
 }
 
@@ -117,7 +263,7 @@ fn engine_agrees_with_the_hand_written_matcher_on_every_shape() {
                     .into_iter()
                     .map(|hit| hit.range)
                     .collect();
-                let want = legacy_hits(&source, query, opts);
+                let want = hand_written_hits(&source, query, opts);
                 compared += 1;
                 assert_eq!(
                     got, want,
@@ -164,7 +310,7 @@ fn zero_width_matches_land_on_the_same_positions_as_the_old_engine() {
     assert_eq!(starts, vec![0, 1, 2, 3, 4, 5, 6, 7, 10, 13, 14, 15, 16]);
     assert_eq!(
         starts,
-        legacy_hits(line, "a*", options(false, false, true, false))
+        hand_written_hits(line, "a*", options(false, false, true, false))
             .into_iter()
             .map(|range| range.start)
             .collect::<Vec<_>>()
@@ -209,7 +355,7 @@ fn a_file_with_crlf_line_endings_keeps_the_carriage_return_out_of_matches() {
         .into_iter()
         .map(|hit| hit.range)
         .collect();
-    assert_eq!(hits, legacy_hits(source, "needle", SearchOptions::default()));
+    assert_eq!(hits, hand_written_hits(source, "needle", SearchOptions::default()));
     for hit in &hits {
         assert_eq!(&source[hit.clone()].to_lowercase(), "needle");
         assert!(!source[hit.clone()].contains('\r'));
