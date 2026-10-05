@@ -18,11 +18,11 @@ use gpui::*;
 
 use super::Editor;
 use crate::ai::{
-    AiAction, AiEndpointConfig, AiPromptContext, AiRequestError, ChatMessage, RewriteTone,
-    TranslateTarget, stream_chat_completion,
+    AiAction, AiEndpointConfig, AiPromptContext, AiRequestError, ProviderKind, RewriteTone,
+    TranslateTarget, build_prompt, default_client, stream_completion,
 };
 use crate::components::{TextField, UndoCaptureKind};
-use crate::config::preferences::{AiPreferences, AUTO_TRANSLATE_TARGET};
+use crate::config::preferences::AiPreferences;
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 
@@ -311,7 +311,7 @@ impl Editor {
         let Some(endpoint) = endpoint_from_preferences(&preferences) else {
             return;
         };
-        let (generation, messages) = {
+        let (generation, prompt) = {
             let Some(state) = self.ai_assistant.as_mut() else {
                 return;
             };
@@ -319,7 +319,7 @@ impl Editor {
             let Some(anchor) = state.anchor.clone() else {
                 return;
             };
-            let messages = build_ai_messages(&action, &anchor, &preferences, cx);
+            let prompt = build_ai_prompt(&action, &anchor, &preferences);
             state.phase = AiPhase::Running;
             state.action = Some(action);
             state.anchor = Some(anchor);
@@ -329,9 +329,9 @@ impl Editor {
             state.error = None;
             state.generation += 1;
             state.cancel = Arc::new(AtomicBool::new(false));
-            (state.generation, messages)
+            (state.generation, prompt)
         };
-        self.spawn_ai_request(endpoint, messages, generation, cx);
+        self.spawn_ai_request(endpoint, prompt, generation, cx);
         cx.notify();
     }
 
@@ -339,7 +339,7 @@ impl Editor {
     fn spawn_ai_request(
         &mut self,
         endpoint: AiEndpointConfig,
-        messages: Vec<ChatMessage>,
+        prompt: crate::ai::AiPrompt,
         generation: u64,
         cx: &mut Context<Self>,
     ) {
@@ -352,9 +352,11 @@ impl Editor {
         std::thread::Builder::new()
             .name("velora-ai".to_string())
             .spawn(move || {
-                let result = stream_chat_completion(
+                let client = default_client();
+                let result = stream_completion(
+                    &client,
                     &endpoint,
-                    &messages,
+                    &prompt,
                     &mut |delta| {
                         let _ = sender
                             .unbounded_send(AiStreamMessage::Delta(delta.to_string()));
@@ -518,44 +520,31 @@ impl Editor {
 }
 
 /// 从偏好里取请求端点;未配置返回 `None`。
+///
+/// 过渡期实现:旧版 `[ai]` 偏好只有一组 OpenAI 兼容配置,协议固定为
+/// chat-completions;多端点档案由后续提交的 `AiSettings` 取代。
 fn endpoint_from_preferences(preferences: &AiPreferences) -> Option<AiEndpointConfig> {
     preferences.is_configured().then(|| AiEndpointConfig {
+        kind: ProviderKind::ChatCompletions,
         base_url: preferences.api_base_url.trim().to_string(),
         api_key: preferences.api_key.trim().to_string(),
         model: preferences.model.trim().to_string(),
     })
 }
 
-/// 组装一次请求的消息序列。
-fn build_ai_messages(
+/// 组装一次请求的提示词(动作里的翻译目标已由面板解析好)。
+fn build_ai_prompt(
     action: &AiAction,
     anchor: &AiAnchor,
-    preferences: &AiPreferences,
-    cx: &App,
-) -> Vec<ChatMessage> {
-    let target = match action {
-        AiAction::Translate(_) => {
-            let preference = preferences.translate_target();
-            let target = if preference == AUTO_TRANSLATE_TARGET {
-                let ui_language = cx.global::<I18nManager>().current_language_id();
-                if ui_language.starts_with("zh") {
-                    TranslateTarget::SimplifiedChinese
-                } else {
-                    TranslateTarget::English
-                }
-            } else {
-                TranslateTarget::from_id(preference)
-                    .unwrap_or(TranslateTarget::English)
-            };
-            AiAction::Translate(target)
-        }
-        other => other.clone(),
-    };
+    _preferences: &AiPreferences,
+) -> crate::ai::AiPrompt {
     let context = AiPromptContext {
-        selected: (!anchor.selected_text.is_empty()).then_some(anchor.selected_text.clone()),
+        document_title: String::new(),
+        selected: anchor.selected_text.clone(),
         before_cursor: anchor.before_cursor.clone(),
+        after_cursor: String::new(),
     };
-    crate::ai::build_messages(&target, &context)
+    build_prompt(action, &context)
 }
 
 /// 把请求错误翻成用户能读的一句话(替换模板里的 `{error}`)。
