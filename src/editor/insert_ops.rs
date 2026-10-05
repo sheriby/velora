@@ -1,4 +1,5 @@
-//! 「插入」菜单那一档：在光标所在块之后（Front Matter 在文档最前）加一块。
+//! 「插入」菜单那一档：在光标所在块之后（Front Matter 在文档最前）加一块，
+//! 外加「格式 → 链接」这条写在行内的入口。
 //!
 //! 与换种类那一条入口（`paragraph_ops`）共用同一套规矩：一条命令一个撤销组，
 //! 字节只在插入点那一处落笔，插入点之后的根块区间整体跟着挪位，其余文件的字节
@@ -116,6 +117,109 @@ impl Editor {
         self.finalize_pending_undo_capture(cx);
         cx.notify();
         true
+    }
+
+    /// 「格式 → 链接」：把选中的那段包成 `[文字]()`，光标停在 `](` 之后等写地址。
+    /// 链接文字不能跨块（markdown 的行内语法本来就不跨块），跨块选区按可见块逐段包，
+    /// 全程只开一个撤销组——与行内格式同一条口径。
+    pub(crate) fn insert_link_on_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.link_insert_is_available(cx) {
+            return false;
+        }
+        self.flush_pending_materialization(cx);
+        let Some(normalized) = self.normalized_cross_block_selection(cx) else {
+            let Some(target) = self.current_edit_target_from_state(cx) else {
+                return false;
+            };
+            let range = target.read_with(cx, |block, _cx| block.selected_range.clone());
+            // 单块交给块自己改：`Changed` 那一条路负责写回字节与收撤销组。
+            return target.update(cx, |block, cx| block.wrap_visible_range_in_link(range, cx));
+        };
+
+        let block_count = normalized.end_index - normalized.start_index + 1;
+        let mut changed = false;
+        let mut caret_block: Option<Entity<Block>> = None;
+        let mut caret_offset = 0usize;
+        self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        for position in 0..block_count {
+            let index = normalized.start_index + position;
+            let Some(entity) = self
+                .document
+                .visible_blocks()
+                .get(index)
+                .map(|visible| visible.entity.clone())
+            else {
+                continue;
+            };
+            let start = if position == 0 {
+                normalized.start.offset
+            } else {
+                0
+            };
+            let end = if position + 1 == block_count {
+                normalized.end.offset
+            } else {
+                entity.read(cx).visible_len()
+            };
+            if start >= end {
+                continue;
+            }
+            if entity.update(cx, |block, cx| {
+                block.wrap_visible_range_in_link(start..end, cx)
+            }) {
+                changed = true;
+                if caret_block.is_none() {
+                    // 光标交给最靠近选区起点的那一段：地址从那一段写起。可见坐标是字节偏移，
+                    // 包完是 `[文字]()`，落在 `](` 之后即 `start + 1 + 文字长度 + 2`。
+                    caret_block = Some(entity.clone());
+                    caret_offset = start + 1 + (end - start) + 2;
+                }
+            }
+        }
+        if let Some(block) = caret_block {
+            self.focus_block(block.entity_id());
+            let offset = caret_offset;
+            block.update(cx, |block, _cx| {
+                block.assign_collapsed_selection_offset(
+                    offset,
+                    CollapsedCaretAffinity::Default,
+                    None,
+                );
+            });
+        }
+        self.finalize_pending_undo_capture(cx);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// 「格式 → 链接」这一行现在能不能点：渲染态、写得动缓冲区，并且选区真的选中了字。
+    /// 只有光标时点不动——空的 `[]()` 在行内树里存不住（重读时被当成空链接丢掉），
+    /// 与格式那一档其余八行同一条口径。
+    pub(crate) fn link_insert_is_available(&self, cx: &App) -> bool {
+        if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
+            return false;
+        }
+        if let Some(normalized) = self.normalized_cross_block_selection(cx) {
+            return normalized.end_index != normalized.start_index
+                || normalized.end.offset > normalized.start.offset;
+        }
+        self.current_edit_target_from_state(cx)
+            .is_some_and(|target| !target.read(cx).selected_range.is_empty())
+    }
+
+    /// ⌘K 走这里。链接的写法在行内，块自己看不到别的块，跨块选区只能在编辑器层收掉；
+    /// 单块的情况由 `insert_link_on_selection` 内部转回块那条路径。
+    pub(crate) fn on_link_selection_capture(
+        &mut self,
+        _: &crate::components::LinkSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.insert_link_on_selection(cx) {
+            cx.stop_propagation();
+        }
     }
 
     /// 新块那份记录。代码块与数学块的内容都存在块自己的标题里（序列化那一侧按

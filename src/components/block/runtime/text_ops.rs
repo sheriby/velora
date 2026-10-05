@@ -141,6 +141,35 @@ impl Block {
         self.toggle_inline_format_in_range(format, self.selected_range.clone(), reversed, cx)
     }
 
+    /// 把这一段**可见文本**包成 `[文字]()`：包完光标停在括号中间，等用户写地址。
+    /// 没有选中文字时不做任何事——空的 `[]()` 在行内树里存不住（重读时那四个字符被
+    /// 当成空链接丢掉），所以「只有光标」这一档留给选区。
+    /// 区间用屏幕上的坐标，与 [`Self::toggle_inline_format_in_range`] 同一个口径。
+    pub(crate) fn wrap_visible_range_in_link(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if range.is_empty() || self.uses_raw_text_editing() {
+            return false;
+        }
+        let text = self.display_text().to_string();
+        let range =
+            crate::components::markdown::inline::clamp_range_to_char_boundaries(&text, range);
+        if range.is_empty() {
+            return false;
+        }
+        let selected = text[range.clone()].to_string();
+        // 开组与记账沿用 `Changed` 那一条路：块只管改自己，缓冲区写回与撤销收口在编辑器。
+        self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        // 落点在 `[文字](` 之后，紧挨着待写的地址。
+        let caret = range.start + 1 + selected.len() + 2;
+        self.replace_text_in_visible_range(range, &format!("[{selected}]()"), None, false, cx);
+        self.assign_collapsed_selection_offset(caret, CollapsedCaretAffinity::Default, None);
+        cx.notify();
+        true
+    }
+
     /// 在指定的**可见文本**区间上开关一种行内格式。选中菜单与右键菜单拿到的选区可能
     /// 只盖住一个块的一部分，也可能横跨多个块（那种情况由 `Editor` 逐块切段后调这里）。
     /// 区间用屏幕上的坐标，块内自己换算到树里的坐标——调用方不需要知道标记占位。

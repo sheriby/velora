@@ -16,6 +16,7 @@ mod import_perf;
 mod inline_format;
 mod insert_blocks;
 mod keyboard_nav;
+mod link_insert;
 mod knowledge_history;
 mod knowledge_recovery;
 mod loading_chunks;

@@ -747,6 +747,7 @@ impl I18nStringsDe {
             paragraph_code_block: self
                 .paragraph_code_block
                 .unwrap_or(defaults.paragraph_code_block),
+            insert_link: self.insert_link.unwrap_or(defaults.insert_link),
             insert_math_block: self.insert_math_block.unwrap_or(defaults.insert_math_block),
             insert_separator: self.insert_separator.unwrap_or(defaults.insert_separator),
             insert_toc: self.insert_toc.unwrap_or(defaults.insert_toc),

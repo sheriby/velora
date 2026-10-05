@@ -7,7 +7,7 @@ use gpui::{px, Entity, Modifiers, MouseButton, Point};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
-const TOOLBAR_BUTTONS: [&str; 7] = [
+const TOOLBAR_BUTTONS: [&str; 8] = [
     "toolbar-heading",
     "toolbar-bold",
     "toolbar-italic",
@@ -15,6 +15,7 @@ const TOOLBAR_BUTTONS: [&str; 7] = [
     "toolbar-strikethrough",
     "toolbar-code",
     "toolbar-highlight",
+    "toolbar-link",
 ];
 
 fn visible_block(

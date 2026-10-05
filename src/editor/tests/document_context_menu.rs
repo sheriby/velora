@@ -23,7 +23,7 @@ const MAIN_ROWS: [&str; 9] = [
     "toggle-source-view",
 ];
 
-const FORMAT_ROWS: [&str; 8] = [
+const FORMAT_ROWS: [&str; 9] = [
     "bold",
     "italic",
     "underline",
@@ -32,6 +32,7 @@ const FORMAT_ROWS: [&str; 8] = [
     "highlight",
     "superscript",
     "subscript",
+    "link",
 ];
 
 /// 「段落」那一档：六个标题级别、正文、列表的三种、引用与代码块。
@@ -504,7 +505,7 @@ async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) 
         "置灰只是变色，行序与行高不能变"
     );
 
-    // 二级面板里同样的口径：格式那八行跟着选区走。
+    // 二级面板里同样的口径：格式那九行（八种行内样式与链接）都跟着选区走。
     let formats = submenu_enabled_rows(&editor, DocumentSubmenu::Format, cx);
     assert_eq!(formats.len(), FORMAT_ROWS.len());
     assert!(formats.iter().all(|(_, enabled)| *enabled));

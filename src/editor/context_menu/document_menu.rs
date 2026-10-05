@@ -64,6 +64,9 @@ pub(crate) enum DocumentMenuCommand {
     TaskList,
     Quote,
     CodeBlock,
+    /// 「格式 → 链接」：把选中的那段包成 `[文字]()`。不是行内样式标记，
+    /// 写法要成对补方括号与圆括号，走的也是另一条动作。
+    Link,
     InsertTable,
     InsertCodeBlock,
     InsertMathBlock,
@@ -98,6 +101,7 @@ impl DocumentMenuCommand {
             Self::TaskList => "task-list",
             Self::Quote => "quote",
             Self::CodeBlock => "code-block",
+            Self::Link => "link",
             Self::InsertTable => "table",
             Self::InsertCodeBlock => "insert-code-block",
             Self::InsertMathBlock => "insert-math-block",
@@ -120,6 +124,7 @@ impl DocumentMenuCommand {
             Self::Quote => Some(BlockKindTarget::Quote),
             Self::CodeBlock => Some(BlockKindTarget::CodeBlock),
             Self::Format(_)
+            | Self::Link
             | Self::Undo
             | Self::Redo
             | Self::Cut
@@ -215,8 +220,7 @@ impl Editor {
         ]
     }
 
-    /// 二级菜单的行。插入那一档目前只有表格——表格的尺寸由对话框定，
-    /// 其余插入项（链接、图片、代码块、分割线）排在后面的功能点里。
+    /// 二级菜单的行。插入那一档不含链接与图片——那两样写在行内，收在「格式」那一档。
     pub(crate) fn document_submenu_rows(
         &self,
         submenu: DocumentSubmenu,
@@ -224,26 +228,37 @@ impl Editor {
     ) -> Vec<DocumentMenuRow> {
         let selectable = self.has_text_selection(cx);
         match submenu {
-            DocumentSubmenu::Format => [
-                InlineFormat::Bold,
-                InlineFormat::Italic,
-                InlineFormat::Underline,
-                InlineFormat::Strikethrough,
-                InlineFormat::Code,
-                InlineFormat::Highlight,
-                InlineFormat::Superscript,
-                InlineFormat::Subscript,
-            ]
-            .into_iter()
-            .map(|format| {
-                let command = DocumentMenuCommand::Format(format);
-                DocumentMenuRow::Item {
-                    enabled: selectable && self.writes_through_the_buffer(),
+            DocumentSubmenu::Format => {
+                let item = |command: DocumentMenuCommand, enabled: bool| DocumentMenuRow::Item {
+                    enabled,
                     name: command.row_name(),
                     command,
-                }
-            })
-            .collect(),
+                };
+                [
+                    InlineFormat::Bold,
+                    InlineFormat::Italic,
+                    InlineFormat::Underline,
+                    InlineFormat::Strikethrough,
+                    InlineFormat::Code,
+                    InlineFormat::Highlight,
+                    InlineFormat::Superscript,
+                    InlineFormat::Subscript,
+                ]
+                .into_iter()
+                .map(|format| {
+                    item(
+                        DocumentMenuCommand::Format(format),
+                        selectable && self.writes_through_the_buffer(),
+                    )
+                })
+                // 链接不挑选区：只有光标也能点，写完停在括号里等地址。
+                .chain([DocumentMenuRow::Separator])
+                .chain([item(
+                    DocumentMenuCommand::Link,
+                    self.link_insert_is_available(cx),
+                )])
+                .collect()
+            }
             DocumentSubmenu::Paragraph => {
                 let item = |command: DocumentMenuCommand| DocumentMenuRow::Item {
                     enabled: self.block_kind_target_is_available(
@@ -362,6 +377,9 @@ impl Editor {
             DocumentMenuCommand::CodeBlock => {
                 self.apply_block_kind_to_selection(BlockKindTarget::CodeBlock, cx);
             }
+            DocumentMenuCommand::Link => {
+                self.insert_link_on_selection(cx);
+            }
             DocumentMenuCommand::ToggleSourceView => {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
             }
@@ -473,6 +491,7 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::TaskList => strings.paragraph_task_list.clone(),
         DocumentMenuCommand::Quote => strings.paragraph_quote.clone(),
         DocumentMenuCommand::CodeBlock => strings.paragraph_code_block.clone(),
+        DocumentMenuCommand::Link => strings.insert_link.clone(),
         DocumentMenuCommand::InsertTable => strings.context_menu_table.clone(),
         DocumentMenuCommand::InsertCodeBlock => strings.paragraph_code_block.clone(),
         DocumentMenuCommand::InsertMathBlock => strings.insert_math_block.clone(),
@@ -515,6 +534,7 @@ pub(crate) fn document_menu_shortcut(command: DocumentMenuCommand) -> Option<Sha
             ShortcutCommand::SuperscriptSelection
         }
         DocumentMenuCommand::Format(InlineFormat::Subscript) => ShortcutCommand::SubscriptSelection,
+        DocumentMenuCommand::Link => ShortcutCommand::LinkSelection,
         DocumentMenuCommand::ToggleSourceView => ShortcutCommand::ToggleViewMode,
         // 标记文本与段落那一档还没有快捷键位（FP9 一并对齐），先留空。
         DocumentMenuCommand::Format(InlineFormat::Highlight)

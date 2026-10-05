@@ -53,6 +53,7 @@ actions!(
         HighlightSelection,
         SuperscriptSelection,
         SubscriptSelection,
+        LinkSelection,
         Heading1,
         Heading2,
         Heading3,
@@ -192,6 +193,7 @@ pub(crate) enum ShortcutCommand {
     StrikethroughSelection,
     SuperscriptSelection,
     SubscriptSelection,
+    LinkSelection,
     IndentBlock,
     OutdentBlock,
     ExitCodeBlock,
@@ -509,6 +511,13 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         id: "subscript_selection",
         category: ShortcutCategory::Formatting,
         default_keys: &["cmd-shift--", "ctrl-shift--"],
+        context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        command: ShortcutCommand::LinkSelection,
+        id: "link_selection",
+        category: ShortcutCategory::Formatting,
+        default_keys: &["cmd-k", "ctrl-k"],
         context: BLOCK_CONTEXT,
     },
     ShortcutDefinition {
@@ -849,6 +858,7 @@ fn key_binding_for(
             KeyBinding::new(key, SuperscriptSelection, context)
         }
         ShortcutCommand::SubscriptSelection => KeyBinding::new(key, SubscriptSelection, context),
+        ShortcutCommand::LinkSelection => KeyBinding::new(key, LinkSelection, context),
         ShortcutCommand::IndentBlock => KeyBinding::new(key, IndentBlock, context),
         ShortcutCommand::OutdentBlock => KeyBinding::new(key, OutdentBlock, context),
         ShortcutCommand::ExitCodeBlock => KeyBinding::new(key, ExitCodeBlock, context),

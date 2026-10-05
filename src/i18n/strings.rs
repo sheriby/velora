@@ -502,6 +502,7 @@ pub struct I18nStrings {
     pub paragraph_task_list: String,
     pub paragraph_quote: String,
     pub paragraph_code_block: String,
+    pub insert_link: String,
     pub insert_math_block: String,
     pub insert_separator: String,
     pub insert_toc: String,

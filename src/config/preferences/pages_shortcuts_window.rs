@@ -74,6 +74,7 @@ impl PreferencesWindow {
                 strings.format_superscript.clone()
             }
             ShortcutCommand::SubscriptSelection => strings.format_subscript.clone(),
+            ShortcutCommand::LinkSelection => strings.insert_link.clone(),
             ShortcutCommand::IndentBlock => strings.preferences_shortcut_indent_block.clone(),
             ShortcutCommand::OutdentBlock => strings.preferences_shortcut_outdent_block.clone(),
             ShortcutCommand::ExitCodeBlock => strings.preferences_shortcut_exit_code_block.clone(),
