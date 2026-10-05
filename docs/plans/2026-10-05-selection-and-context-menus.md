@@ -1,7 +1,7 @@
 # 选中菜单与右键菜单（对齐 Typora）
 
 日期：2026-10-05
-状态：计划已定，按功能点顺序实现
+状态：FP1–FP11 全部落地，§5 逐条记了实现位置与验收用例。剩 FP4b-4（段落转换的标注那一档）留档不做：标注自己带头部与子块，换出去要先安置子块，代价见 §6 那两条；今天的事实是 `BlockKindTarget` 里没有标注这一档（「段落」那十二行不含它），标注块自己在 `next_kind` 的拒绝名单里（src/editor/paragraph_ops.rs:335，经 `block_kind_conversion` :267 供置灰与派发共用），这一条由既有的 `paragraph_kind::a_callout_is_left_alone`（src/editor/tests/paragraph_kind.rs:239）钉住换标题与换正文两条。
 
 ## 1. 这一期要解决的问题
 
@@ -72,9 +72,9 @@ Typora 选中文字时浮出一行图标工具栏（粗体、斜体、删除线�
 
 每个功能点自己跑定向测试 + 全量 + clippy，写完就提交一笔，不攒。
 
-FP1 菜单行渲染收口。新增一个通用行渲染：`(id, label, shortcut: Option<&str>, enabled, danger, on_click)`，支持分隔线与「右箭头 + 子菜单」；把 `render_axis_menu_item`、文件树菜单、标签菜单、插入子菜单里那 4 份重复行代码和 5 份分隔线代码收过来。验收：现有 3 个菜单测试仍通过；新增一条测试断言同一段代码渲染出的行高、内边距、快捷键文字位置一致。
+FP1 菜单行渲染收口（已落地）。新增一个通用行渲染：`(id, label, shortcut: Option<&str>, enabled, danger, on_click)`，支持分隔线与「右箭头 + 子菜单」；把 `render_axis_menu_item`、文件树菜单、标签菜单、插入子菜单里那 4 份重复行代码和 5 份分隔线代码收过来。验收：现有 3 个菜单测试仍通过；新增一条测试断言同一段代码渲染出的行高、内边距、快捷键文字位置一致。
 
-FP2 动作层：选区上的一行内格式。给 `InlineFormat` 加 `Strikethrough / Superscript / Subscript`，接上 `InlineTextTree` 已有的 `toggle_style`（去掉 `toggle_strikethrough` 的 `dead_code`），并把 toggle 入口提到 `Editor`：`toggle_inline_format_on_selection(InlineFormat, cx)`（`src/editor/format_ops.rs`），跨块选区按块逐个处理，全程一个撤销组；块的 `toggle_inline_format_in_range` 收**可见文本**坐标，块内自己换算到树内坐标，Editor 层不必知道标记占位。上标/下标按本仓库既有写法落 `<sup>x</sup>` / `<sub>x</sub>`，与 Typora 的默认输出一致（Typora 也认 `^x^` / `~x~`，读入路径已有）。置灰要用的判定函数（选区能否做行内格式）随 FP6 一起进，这一笔没有消费者，进来就是警告。验收：单块、跨块、空选区三类用例。
+FP2 动作层：选区上的一行内格式（已落地）。给 `InlineFormat` 加 `Strikethrough / Superscript / Subscript`，接上 `InlineTextTree` 已有的 `toggle_style`（去掉 `toggle_strikethrough` 的 `dead_code`），并把 toggle 入口提到 `Editor`：`toggle_inline_format_on_selection(InlineFormat, cx)`（`src/editor/format_ops.rs`），跨块选区按块逐个处理，全程一个撤销组；块的 `toggle_inline_format_in_range` 收**可见文本**坐标，块内自己换算到树内坐标，Editor 层不必知道标记占位。上标/下标按本仓库既有写法落 `<sup>x</sup>` / `<sub>x</sub>`，与 Typora 的默认输出一致（Typora 也认 `^x^` / `~x~`，读入路径已有）。置灰要用的判定函数（选区能否做行内格式）随 FP6 一起进，这一笔没有消费者，进来就是警告。验收：单块、跨块、空选区三类用例。
 
 FP3 高亮 `==x==`。新增 `StyleFlag::Highlight` + 分隔符解析 + 渲染颜色（用主题的强调色，浅色主题黄底、深色主题低饱和黄底），加 `InlineFormat::Highlight`。验收：解析往返测试（`==x==` 读进来 → 存出去不变形），toggle 用例，已有 markdown 测试无回归。
 
@@ -88,7 +88,7 @@ FP4b-3 动作层：段落转换的第四段——代码块（已落地）。目�
 
 分割线不进「换种类」这一档：正文换成分割线要把那一行文字丢掉，破坏性动作不该藏在段落菜单里。它改由插入那一档给（FP5 的「插入分隔线」，`make_separator` 那条路径本来就不需要正文入参）。
 
-FP4b-4 动作层：段落转换的第五段——标注（`> [!note]`）。标注自己带头部那颗变体记号（`callout_marker` 记用户写法）与正文子块，换进换出要把子块安置进根序列或收进容器，`source_separator_bytes` 那本空行账也要跟着重记；这一笔先把 `Callout` 留在 `next_kind` 的拒绝名单里（菜单那一行置灰）。验收：标注 ↔ 正文、标注换引用、多层嵌套标注各一条。
+FP4b-4 动作层：段落转换的第五段——标注（`> [!note]`）（本期不做）。标注自己带头部那颗变体记号（`callout_marker` 记用户写法）与正文子块，换进换出要把子块安置进根序列或收进容器，`source_separator_bytes` 那本空行账也要跟着重记；本期不做这一档：`BlockKindTarget`（src/editor/paragraph_ops.rs:14）没有标注这一档，「段落」那十二行里也就没有它；标注块自己在 `next_kind` 的拒绝名单里（:335，经 `block_kind_conversion` :267 同时供置灰与派发判定），所以既点不动也写不下——`paragraph_kind::a_callout_is_left_alone`（src/editor/tests/paragraph_kind.rs:239）钉住换标题与换正文两条都返回 false 且字节不动。补这一档时要写的验收：标注 ↔ 正文、标注换引用、多层嵌套标注各一条。
 
 FP5a 动作层：插入类的第一段——五类块（已落地）。新增 `src/editor/insert_ops.rs`：`InsertBlockTarget = CodeBlock | MathBlock | Separator | Toc | FrontMatter`，入口 `Editor::insert_block_after_selection`（一条命令一个撤销组）与 `insert_block_target_is_available`（菜单置灰与命令实际行为同一条）。落点在光标所在根块之后（跨块选区落在整段选区之后），Front Matter 例外——解析器只认第一行那对 `---`，它必须顶到 0 位，接缝空行补在它后面。字节只在插入点那一处写：`接缝 + 新块的 markdown`，写完把插入点之后的根块区间整体挪位、给新块挂自己的区间（不含两边接缝），算不出来（锚点块没有源码区间，后台续建到一半）才交回整篇重投影。新块是代码块 / 公式块 / 分割线这类「光标走过去就出不去」的形状时，跟着 `ensure_trailing_paragraph_after_structural` 补一块空段落当退路。插完光标交给新块：代码块落在围栏里那一行、公式块落在开栏之后、Front Matter 落在两条 `---` 中间那一行、目录落在 `[toc]` 末尾、分割线停在自己那行。两处实际形状靠探针量出来：空代码块序列化是 ` ```\n\n``` ` 三行；空公式块不能写成 `$$\n\n$$`（解析器会把它切成两块原始 markdown），只有 `$$\n$$` 读回来还是一块。验收：`src/editor/tests/insert_blocks.rs` 九条——每类各一条（缓冲区字节 + 根块种类顺序 + 光标落点 + 一步撤销），五类各插一次把字节重新读一遍比块树，Front Matter 那份「只能在最前面、一篇只能有一份」（第二份既拒又置灰），跨块选区的落点，没碰过的那块 Setext 标题字节不动（钉住不是整篇重投影），以及右键菜单点「目录」与编辑器层入口同一条（六行的行名全点名）。菜单行：`插入` 那一档从一行变六行（表格 + 五类），行名 `insert-code-block`…`insert-front-matter`；文案 4 个键 × 5 处（`insert_math_block` 公式块 / Math Block、`insert_separator` 分隔线 / Thematic Break、`insert_toc` 目录 / Table of Contents、`insert_front_matter` Front Matter），代码块那一行复用段落档已有的 `paragraph_code_block`。
 
