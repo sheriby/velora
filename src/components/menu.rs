@@ -7,6 +7,10 @@ use gpui::*;
 
 use crate::theme::Theme;
 
+/// 一行里「文字」与「快捷键」之间的那段间距。算面板宽度要用同一个数，
+/// 所以提成常量而不是写在这两处。
+pub(crate) const MENU_ROW_GAP: f32 = 12.0;
+
 /// 一行菜单项。`name` 同时用作元素 id 与测试选择器（`debug_bounds("menu-…")`），
 /// 这样菜单行的几何能在测试里点名验证。视觉状态在这里定，点击由调用方接：不可用的项
 /// 调用方不接 `on_click`，视觉上置灰但仍然占位——菜单宽度不能因为某一项不可用就变。
@@ -37,7 +41,7 @@ pub(crate) fn menu_item(
         .px(px(dimensions.menu_item_padding_x))
         .flex()
         .items_center()
-        .gap(px(12.0))
+        .gap(px(MENU_ROW_GAP))
         .rounded(px(dimensions.menu_item_radius))
         .bg(if active {
             colors.dialog_secondary_button_hover

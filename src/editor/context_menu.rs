@@ -1,7 +1,6 @@
 //! Rendered-mode context menus and native table insertion dialog.
 
 pub(super) use std::path::PathBuf;
-pub(super) use std::time::Duration;
 
 pub(super) use gpui::*;
 
@@ -9,6 +8,13 @@ pub(super) use super::{Editor, TableAxisSelection, ViewMode};
 pub(super) use crate::components::{DismissTransientUi, TableAxisKind, TableColumnAlignment, TableData};
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
+pub(super) use document_menu::{
+    DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu, document_menu_label,
+    document_menu_origins, document_menu_shortcut, document_submenu_label,
+};
+// 菜单命令只有测试在按名点名，生产路径都用行名与 enabled 记账。
+#[cfg(test)]
+pub(super) use document_menu::DocumentMenuCommand;
 
 /// Target block position for inserting a native table.
 #[derive(Clone, Copy)]
@@ -21,13 +27,14 @@ pub(super) enum TableInsertTarget {
 
 /// Rendered-mode context menu currently open in the editor.
 pub(super) enum ContextMenuState {
-    /// General block context menu with an insert submenu.
-    Insert {
+    /// 正文右键菜单：编辑 → 格式 → 段落 → 插入 → 视图五段，后三段走二级面板。
+    Document {
         position: Point<Pixels>,
         target: TableInsertTarget,
-        insert_hovered: bool,
-        submenu_hovered: bool,
-        submenu_open: bool,
+        /// 当前展开的二级菜单；None 表示只有主菜单。
+        open_submenu: Option<DocumentSubmenu>,
+        /// 鼠标正停在哪个二级菜单的父行或子面板上（两处都算命中，不藏起来）。
+        hovered_submenu: Option<DocumentSubmenu>,
     },
     /// Table row or column context menu for an existing native table.
     TableAxis {
@@ -75,12 +82,11 @@ impl Editor {
 
         self.close_menu_bar(cx);
         self.context_menu_submenu_close_task = None;
-        self.context_menu = Some(ContextMenuState::Insert {
+        self.context_menu = Some(ContextMenuState::Document {
             position,
             target,
-            insert_hovered: false,
-            submenu_hovered: false,
-            submenu_open: false,
+            open_submenu: None,
+            hovered_submenu: None,
         });
         cx.notify();
     }
@@ -189,90 +195,6 @@ impl Editor {
         }
     }
 
-    fn schedule_context_menu_submenu_close(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.context_menu, Some(ContextMenuState::Insert { .. })) {
-            return;
-        }
-
-        let weak_editor = cx.entity().downgrade();
-        self.context_menu_submenu_close_task = Some(cx.spawn(
-            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(120))
-                    .await;
-                let _ = weak_editor.update(cx, |editor, cx| {
-                    editor.context_menu_submenu_close_task = None;
-                    let Some(ContextMenuState::Insert {
-                        insert_hovered,
-                        submenu_hovered,
-                        submenu_open,
-                        ..
-                    }) = editor.context_menu.as_mut()
-                    else {
-                        return;
-                    };
-                    if !*insert_hovered && !*submenu_hovered && *submenu_open {
-                        *submenu_open = false;
-                        cx.notify();
-                    }
-                });
-            },
-        ));
-    }
-
-    fn set_context_menu_hover_state(
-        &mut self,
-        hovered: bool,
-        submenu: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let mut changed = false;
-        let mut should_clear_close = false;
-        let mut should_schedule_close = false;
-
-        if let Some(ContextMenuState::Insert {
-            insert_hovered,
-            submenu_hovered,
-            submenu_open,
-            ..
-        }) = self.context_menu.as_mut()
-        {
-            if submenu {
-                if *submenu_hovered != hovered {
-                    *submenu_hovered = hovered;
-                    changed = true;
-                }
-            } else if *insert_hovered != hovered {
-                *insert_hovered = hovered;
-                changed = true;
-            }
-
-            if hovered {
-                should_clear_close = true;
-                if !*submenu_open {
-                    *submenu_open = true;
-                    changed = true;
-                }
-            } else {
-                let insert_still_hovered = *insert_hovered;
-                let submenu_still_hovered = *submenu_hovered;
-                if !insert_still_hovered && !submenu_still_hovered {
-                    should_schedule_close = true;
-                }
-            }
-        }
-
-        if should_clear_close {
-            self.context_menu_submenu_close_task = None;
-        }
-        if should_schedule_close {
-            self.schedule_context_menu_submenu_close(cx);
-        }
-        if changed {
-            cx.notify();
-        }
-    }
-
     pub(super) fn on_editor_context_menu_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -369,31 +291,9 @@ impl Editor {
         self.close_command_palette(cx);
     }
 
-    pub(super) fn on_context_menu_insert_hover(
-        &mut self,
-        hovered: &bool,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_context_menu_hover_state(*hovered, false, cx);
-    }
-
-    pub(super) fn on_context_menu_submenu_hover(
-        &mut self,
-        hovered: &bool,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_context_menu_hover_state(*hovered, true, cx);
-    }
-
-    pub(super) fn on_open_table_insert_dialog(
-        &mut self,
-        _event: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(ContextMenuState::Insert { target, .. }) = self.context_menu.take() else {
+    /// 从当前正文菜单的插入位置打开表格对话框（菜单那一行与插入表格的命令共用这一条）。
+    pub(super) fn open_table_insert_dialog_from_menu(&mut self, cx: &mut Context<Self>) {
+        let Some(ContextMenuState::Document { target, .. }) = self.context_menu.take() else {
             return;
         };
         self.context_menu_submenu_close_task = None;
@@ -723,6 +623,7 @@ impl Editor {
     }
 }
 
+mod document_menu;
 mod render;
 
 #[cfg(test)]

@@ -79,6 +79,7 @@ impl Editor {
     pub(crate) fn render_context_menu_overlay(
         &self,
         theme: &Theme,
+        viewport: Size<Pixels>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let menu = self.context_menu.as_ref()?;
@@ -88,55 +89,36 @@ impl Editor {
         let s = cx.global::<I18nManager>().strings().clone();
 
         match menu {
-            ContextMenuState::Insert {
+            ContextMenuState::Document {
                 position,
-                submenu_open,
+                open_submenu,
                 ..
             } => {
-                let panel_x = position.x;
-                let panel_y = position.y;
-                let panel_width = px(d.context_menu_panel_width);
-
-                let submenu = submenu_open.then(|| {
-                    div()
-                        .id("editor-context-menu-submenu")
-                        .absolute()
-                        .left(panel_x + panel_width + px(d.context_menu_submenu_gap))
-                        .top(panel_y)
-                        .w(px(d.context_menu_submenu_width))
-                        .p(px(d.menu_panel_padding))
-                        .flex()
-                        .flex_col()
-                        .gap(px(d.menu_panel_gap))
-                        .occlude()
-                        .bg(c.dialog_surface)
-                        .border(px(d.dialog_border_width))
-                        .border_color(c.dialog_border)
-                        .rounded(px(d.menu_panel_radius))
-                        .shadow_lg()
-                        .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
-                            cx.stop_propagation()
-                        })
-                        .on_hover(cx.listener(Self::on_context_menu_submenu_hover))
-                        .child(
-                            div()
-                                .id("editor-context-menu-insert-table")
-                                .h(px(d.menu_item_height))
-                                .px(px(d.menu_item_padding_x))
-                                .flex()
-                                .items_center()
-                                .rounded(px(d.menu_item_radius))
-                                .bg(c.dialog_surface)
-                                .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                                .active(|this| this.opacity(0.92))
-                                .cursor_pointer()
-                                .text_size(px(d.menu_text_size))
-                                .font_weight(t.dialog_body_weight.to_font_weight())
-                                .text_color(c.dialog_secondary_button_text)
-                                .child(s.context_menu_table.clone())
-                                .on_click(cx.listener(Self::on_open_table_insert_dialog)),
-                        )
+                let rows = self.document_menu_rows(cx);
+                let panel = DocumentMenuGeometry::measure(&rows, &s, d);
+                // 二级面板与父行顶部对齐；父行离底部太近时由落点函数向上收。
+                let submenu_panels = open_submenu.map(|submenu| {
+                    let sub_rows = self.document_submenu_rows(submenu, cx);
+                    let index = rows.iter().position(|row| {
+                        matches!(row, DocumentMenuRow::Submenu { id, .. } if *id == submenu)
+                    });
+                    (DocumentMenuGeometry::measure(&sub_rows, &s, d), panel.row_top(index))
                 });
+                let (origin, submenu_origin) = document_menu_origins(
+                    *position,
+                    viewport,
+                    &panel,
+                    submenu_panels
+                        .as_ref()
+                        .map(|(geometry, top)| (geometry, *top)),
+                    px(d.context_menu_submenu_gap),
+                );
+                let submenu_panel = match (open_submenu, submenu_origin, submenu_panels.as_ref()) {
+                    (Some(submenu), Some(origin), Some((geometry, _))) => Some(
+                        self.render_document_submenu_panel(theme, &s, *submenu, origin, geometry, cx),
+                    ),
+                    _ => None,
+                };
 
                 let overlay = div()
                     .id("editor-context-menu-overlay")
@@ -154,13 +136,14 @@ impl Editor {
                         div()
                             .id("editor-context-menu-panel")
                             .absolute()
-                            .left(panel_x)
-                            .top(panel_y)
-                            .w(panel_width)
+                            .left(origin.x)
+                            .top(origin.y)
+                            .min_w(panel.size.width)
                             .p(px(d.menu_panel_padding))
                             .flex()
                             .flex_col()
                             .gap(px(d.menu_panel_gap))
+                            .occlude()
                             .bg(c.dialog_surface)
                             .border(px(d.dialog_border_width))
                             .border_color(c.dialog_border)
@@ -169,34 +152,15 @@ impl Editor {
                             .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
                                 cx.stop_propagation()
                             })
-                            .child(
-                                div()
-                                    .id("editor-context-menu-insert")
-                                    .h(px(d.menu_item_height))
-                                    .px(px(d.menu_item_padding_x))
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .rounded(px(d.menu_item_radius))
-                                    .bg(if *submenu_open {
-                                        c.dialog_secondary_button_hover
-                                    } else {
-                                        c.dialog_surface
-                                    })
-                                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                                    .text_size(px(d.menu_text_size))
-                                    .font_weight(t.dialog_body_weight.to_font_weight())
-                                    .text_color(c.dialog_secondary_button_text)
-                                    .child(s.context_menu_insert.clone())
-                                    .child("›")
-                                    .on_hover(cx.listener(Self::on_context_menu_insert_hover)),
+                            .children(
+                                rows.into_iter()
+                                    .map(|row| self.render_document_menu_row(theme, &s, row, *open_submenu, cx)),
                             ),
                     );
 
-                Some(if let Some(submenu) = submenu {
-                    overlay.child(submenu).into_any_element()
-                } else {
-                    overlay.into_any_element()
+                Some(match submenu_panel {
+                    Some(panel) => overlay.child(panel).into_any_element(),
+                    None => overlay.into_any_element(),
                 })
             }
             ContextMenuState::TableAxis {
@@ -658,5 +622,109 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+impl Editor {
+    /// 正文右键菜单的一行。行的视觉状态在 `components::menu::menu_item` 里定，
+    /// 这里只管「点下去派发哪个动作」与「悬停展开哪一块二级菜单」。
+    fn render_document_menu_row(
+        &self,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        row: DocumentMenuRow,
+        open_submenu: Option<DocumentSubmenu>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match row {
+            DocumentMenuRow::Separator => Self::menu_separator(theme).into_any_element(),
+            DocumentMenuRow::Item {
+                command,
+                name,
+                enabled,
+            } => {
+                let item = crate::components::menu::menu_item(
+                    theme,
+                    name,
+                    document_menu_label(command, strings),
+                    document_menu_shortcut(command),
+                    enabled,
+                    false,
+                    false,
+                    false,
+                );
+                if enabled {
+                    item.on_click(cx.listener(move |editor, _event, window, cx| {
+                        editor.run_document_menu_command(command, window, cx);
+                    }))
+                    .into_any_element()
+                } else {
+                    item.into_any_element()
+                }
+            }
+            DocumentMenuRow::Submenu { id, name } => {
+                let label = document_submenu_label(id, strings);
+                crate::components::menu::menu_item(
+                    theme,
+                    name,
+                    label,
+                    None,
+                    true,
+                    false,
+                    true,
+                    open_submenu == Some(id),
+                )
+                    .on_hover(cx.listener(move |editor, hovered: &bool, _window, cx| {
+                        editor.set_document_menu_hover(*hovered, Some(id), cx);
+                    }))
+                    .into_any_element()
+            }
+        }
+    }
+
+    /// 二级菜单的面板：与主菜单同款外观，贴在主菜单右侧。
+    fn render_document_submenu_panel(
+        &self,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        submenu: DocumentSubmenu,
+        origin: Point<Pixels>,
+        geometry: &DocumentMenuGeometry,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let d = &theme.dimensions;
+        let rows = self.document_submenu_rows(submenu, cx);
+        let panel_id = match submenu {
+            DocumentSubmenu::Format => "editor-context-menu-format",
+            DocumentSubmenu::Paragraph => "editor-context-menu-paragraph",
+            DocumentSubmenu::Insert => "editor-context-menu-insert",
+        };
+        div()
+            .id(panel_id)
+            .absolute()
+            .left(origin.x)
+            .top(origin.y)
+            .min_w(geometry.size.width)
+            .p(px(d.menu_panel_padding))
+            .flex()
+            .flex_col()
+            .gap(px(d.menu_panel_gap))
+            .occlude()
+            .bg(theme.colors.dialog_surface)
+            .border(px(d.dialog_border_width))
+            .border_color(theme.colors.dialog_border)
+            .rounded(px(d.menu_panel_radius))
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                cx.stop_propagation()
+            })
+            .on_hover(cx.listener(move |editor, hovered: &bool, _window, cx| {
+                editor.set_document_menu_hover(*hovered, Some(submenu), cx);
+            }))
+            .children(
+                rows.into_iter()
+                    .map(|row| self.render_document_menu_row(theme, strings, row, None, cx)),
+            )
+            .into_any_element()
     }
 }

@@ -5,6 +5,7 @@
 mod block_source_spans;
 mod block_source_write_back;
 mod common;
+mod document_context_menu;
 
 mod editing_misc;
 mod export_drop;

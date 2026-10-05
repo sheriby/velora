@@ -310,7 +310,7 @@ fn is_wide_menu_char(ch: char) -> bool {
     )
 }
 
-fn estimated_menu_label_width(label: &str, text_size: f32) -> f32 {
+pub(crate) fn estimated_menu_label_width(label: &str, text_size: f32) -> f32 {
     label
         .chars()
         .map(|ch| {

@@ -871,6 +871,15 @@ fn key_binding_for(
     }
 }
 
+/// 某条命令的默认键（用户自定的绑定不在这里，那是命令面板与偏好页一并接的那一档）。
+pub(crate) fn default_shortcut_key(command: ShortcutCommand) -> Option<&'static str> {
+    SHORTCUT_DEFINITIONS
+        .iter()
+        .find(|definition| definition.command == command)
+        .and_then(|definition| definition.default_keys.first())
+        .copied()
+}
+
 pub(crate) fn resolved_keybindings(config: &BTreeMap<String, Vec<String>>) -> Vec<KeyBinding> {
     let normalized = normalize_shortcut_config(config);
     let mut bindings = Vec::new();

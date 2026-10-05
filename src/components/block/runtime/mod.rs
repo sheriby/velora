@@ -35,7 +35,7 @@ use crate::components::{
 };
 
 /// Inline formatting command issued by editor actions.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InlineFormat {
     /// Toggle bold formatting.
     Bold,

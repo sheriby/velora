@@ -372,6 +372,21 @@ impl I18nStringsDe {
             preferences_shortcut_code_selection: self
                 .preferences_shortcut_code_selection
                 .unwrap_or(defaults.preferences_shortcut_code_selection),
+            format_bold: self
+                .format_bold
+                .unwrap_or(defaults.format_bold),
+            format_italic: self
+                .format_italic
+                .unwrap_or(defaults.format_italic),
+            format_underline: self
+                .format_underline
+                .unwrap_or(defaults.format_underline),
+            format_code: self
+                .format_code
+                .unwrap_or(defaults.format_code),
+            format_highlight: self
+                .format_highlight
+                .unwrap_or(defaults.format_highlight),
             format_strikethrough: self
                 .format_strikethrough
                 .unwrap_or(defaults.format_strikethrough),
@@ -700,12 +715,57 @@ impl I18nStringsDe {
             source_mode_fallback_message: self
                 .source_mode_fallback_message
                 .unwrap_or(defaults.source_mode_fallback_message),
+            context_menu_toggle_source_view: self
+                .context_menu_toggle_source_view
+                .unwrap_or(defaults.context_menu_toggle_source_view),
+            context_menu_undo: self
+                .context_menu_undo
+                .unwrap_or(defaults.context_menu_undo),
+            context_menu_redo: self
+                .context_menu_redo
+                .unwrap_or(defaults.context_menu_redo),
+            context_menu_cut: self
+                .context_menu_cut
+                .unwrap_or(defaults.context_menu_cut),
+            context_menu_copy: self
+                .context_menu_copy
+                .unwrap_or(defaults.context_menu_copy),
+            context_menu_paste: self
+                .context_menu_paste
+                .unwrap_or(defaults.context_menu_paste),
+            context_menu_format: self
+                .context_menu_format
+                .unwrap_or(defaults.context_menu_format),
+            context_menu_paragraph: self
+                .context_menu_paragraph
+                .unwrap_or(defaults.context_menu_paragraph),
             context_menu_insert: self
                 .context_menu_insert
                 .unwrap_or(defaults.context_menu_insert),
             context_menu_table: self
                 .context_menu_table
                 .unwrap_or(defaults.context_menu_table),
+            paragraph_heading1: self
+                .paragraph_heading1
+                .unwrap_or(defaults.paragraph_heading1),
+            paragraph_heading2: self
+                .paragraph_heading2
+                .unwrap_or(defaults.paragraph_heading2),
+            paragraph_heading3: self
+                .paragraph_heading3
+                .unwrap_or(defaults.paragraph_heading3),
+            paragraph_heading4: self
+                .paragraph_heading4
+                .unwrap_or(defaults.paragraph_heading4),
+            paragraph_heading5: self
+                .paragraph_heading5
+                .unwrap_or(defaults.paragraph_heading5),
+            paragraph_heading6: self
+                .paragraph_heading6
+                .unwrap_or(defaults.paragraph_heading6),
+            paragraph_normal_text: self
+                .paragraph_normal_text
+                .unwrap_or(defaults.paragraph_normal_text),
             table_axis_align_column_left: self
                 .table_axis_align_column_left
                 .unwrap_or(defaults.table_axis_align_column_left),

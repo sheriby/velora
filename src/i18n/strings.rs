@@ -233,6 +233,16 @@ pub struct I18nStrings {
     pub preferences_shortcut_italic_selection: String,
     pub preferences_shortcut_underline_selection: String,
     pub preferences_shortcut_code_selection: String,
+    /// 加粗的名字（快捷键页与右键菜单共用）。
+    pub format_bold: String,
+    /// 斜体的名字。
+    pub format_italic: String,
+    /// 下划线的名字。
+    pub format_underline: String,
+    /// 行内代码的名字。
+    pub format_code: String,
+    /// 标记文本的名字。
+    pub format_highlight: String,
     /// 删除线的名字（快捷键页与选中菜单、右键菜单共用）。
     pub format_strikethrough: String,
     /// 上标的名字。
@@ -450,10 +460,40 @@ pub struct I18nStrings {
     pub view_mode_switch_to_rendered: String,
     /// Explains why a document with ambiguous extensions stays in source mode.
     pub source_mode_fallback_message: String,
+    /// 文本右键菜单：切换源码模式的菜单项标签。
+    pub context_menu_toggle_source_view: String,
+    /// 文本右键菜单：撤销。
+    pub context_menu_undo: String,
+    /// 文本右键菜单：重做。
+    pub context_menu_redo: String,
+    /// 文本右键菜单：剪切。
+    pub context_menu_cut: String,
+    /// 文本右键菜单：拷贝。
+    pub context_menu_copy: String,
+    /// 文本右键菜单：粘贴。
+    pub context_menu_paste: String,
+    /// 文本右键菜单：格式二级子菜单。
+    pub context_menu_format: String,
+    /// 文本右键菜单：段落二级子菜单。
+    pub context_menu_paragraph: String,
     /// Root context-menu insert label.
     pub context_menu_insert: String,
     /// Insert submenu item for tables.
     pub context_menu_table: String,
+    /// 段落样式：一级标题。
+    pub paragraph_heading1: String,
+    /// 段落样式：二级标题。
+    pub paragraph_heading2: String,
+    /// 段落样式：三级标题。
+    pub paragraph_heading3: String,
+    /// 段落样式：四级标题。
+    pub paragraph_heading4: String,
+    /// 段落样式：五级标题。
+    pub paragraph_heading5: String,
+    /// 段落样式：六级标题。
+    pub paragraph_heading6: String,
+    /// 段落样式：正文。
+    pub paragraph_normal_text: String,
     /// Table-axis menu item for left-aligning a column.
     pub table_axis_align_column_left: String,
     /// Table-axis menu item for center-aligning a column.
