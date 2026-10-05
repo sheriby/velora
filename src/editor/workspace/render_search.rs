@@ -798,7 +798,9 @@ impl Editor {
         }
         let path = hit.path.clone();
         let match_ordinal = hit.match_ordinal;
-        self.open_workspace_file(path.clone(), window, cx);
+        // 搜索结果是「点开看看」：开成预览标签，点下一条替换上一条，不堆标签栏
+        // （用户需求）。改过的那篇由 `finish_dirty` 就地转固定，不会被替换掉。
+        self.open_workspace_file_in_mode(path.clone(), WorkspaceOpenMode::Preview, window, cx);
         // 路径表示可能不一致（树扫描 canonicalize，打开路径未必；macOS
         // /var ↔ /private/var）：字面比较失败会让整个跳转块静默跳过——
         // 用户报修「点了完全没反应」。双方 canonicalize 后再比。

@@ -113,9 +113,16 @@ impl Editor {
                                 .text_color(c.dialog_muted)
                                 .child(directory),
                         )
-                        .on_click(cx.listener(move |editor, _event, window, cx| {
+                        .on_click(cx.listener(move |editor, event, window, cx| {
                             editor.quick_open = None;
-                            editor.open_workspace_file(entry_path.clone(), window, cx);
+                            // ⌘P 是「点开看看」：单击开预览标签，双击转固定（与文件树同一判定）。
+                            let mode = Self::tree_click_open_mode(event);
+                            editor.open_workspace_file_in_mode(
+                                entry_path.clone(),
+                                mode,
+                                window,
+                                cx,
+                            );
                         }))
                         .into_any_element(),
                 );
@@ -288,7 +295,14 @@ impl Editor {
             return;
         };
         self.quick_open = None;
-        self.open_workspace_file(path, window, cx);
+        // 回车打开也按预览（与鼠标单击同口径，见 VS Code 的
+        // `workbench.editor.enablePreviewFromQuickOpen`）；改过它就自动转固定。
+        self.open_workspace_file_in_mode(
+            path,
+            crate::editor::workspace::WorkspaceOpenMode::Preview,
+            window,
+            cx,
+        );
     }
 
     /// Handles keystrokes on the quick-open overlay. Typing goes through the

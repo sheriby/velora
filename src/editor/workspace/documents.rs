@@ -128,6 +128,24 @@ impl Editor {
         self.workspace.active_document = Some(path);
     }
 
+    /// 把活动文档的标签从「预览」转成固定（用户需求：编辑过就不再是临时窗口）。
+    ///
+    /// 调用点是 `document_dirty` 从 false 翻 true 的那一次（`finish_dirty`），所以一次
+    /// 编辑会话只走一遍。转了固定之后，切走时它不再算「可替换的预览」，标签与内容都留着。
+    pub(crate) fn pin_active_preview_tab(&mut self) {
+        let Some(path) = self.file_path.as_deref() else {
+            return;
+        };
+        if let Some(tab) = self
+            .workspace
+            .open_documents
+            .iter_mut()
+            .find(|tab| tab.path == path)
+        {
+            tab.preview = false;
+        }
+    }
+
     pub(crate) fn snapshot_current_document(&mut self, cx: &App) {
         let Some(path) = self.file_path.clone() else {
             return;

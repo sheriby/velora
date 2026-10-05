@@ -493,6 +493,9 @@ impl Editor {
         self.document_revision = self.document_revision.wrapping_add(1);
         if !self.document_dirty {
             self.document_dirty = true;
+            // 临时（预览）标签的转正点：用户既然动过它，这篇就不再是「点开看看」。
+            // 也是在这里转固定，切走时它才不会作为可替换的预览被销毁。
+            self.pin_active_preview_tab();
             self.pending_window_edited = true;
             self.pending_window_unedited = false;
             self.pending_window_title_refresh = true;
@@ -815,7 +818,14 @@ impl Editor {
                     self.jump_to_heading_anchor(&anchor, cx);
                     return;
                 }
-                self.open_workspace_file(resolved, window, cx);
+                // 正文里点链接是浏览行为：开预览标签，连着点几个不堆标签栏
+                // （与搜索结果、⌘P 同口径）。
+                self.open_workspace_file_in_mode(
+                    resolved,
+                    crate::editor::workspace::WorkspaceOpenMode::Preview,
+                    window,
+                    cx,
+                );
             }
         }
     }

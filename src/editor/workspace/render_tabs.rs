@@ -153,13 +153,17 @@ impl Editor {
                         }
                         title_el.child(title)
                     })
-                    .children((dirty && !active).then(|| {
+                    .children(dirty.then(|| {
+                        // 未保存的圆点：每个脏标签都点，包括当前这一篇（用户需求：
+                        // 像 VS Code 那样在标签上标出「这篇改过还没落盘」）。此前刻意
+                        // 跳过活动标签，于是正在编辑的那篇反而没有标记。
                         div()
                             .w(px(7.0))
                             .h(px(7.0))
                             .flex_shrink_0()
                             .rounded(px(4.0))
                             .bg(c.dialog_primary_button_bg)
+                            .debug_selector(|| format!("document-tab-dirty-{index}"))
                     }))
                     .child(close_button)
                     .on_click(move |_event, window, cx| {

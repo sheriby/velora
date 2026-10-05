@@ -260,20 +260,6 @@ impl Editor {
             }
             return;
         }
-        // 单击/双击打开要替换旧的未修改预览标签：预览只在停留期间占据标签栏，
-        // 一旦切走就消失（用户需求），已修改的预览保留。这里只记录待删清单，
-        // 真正删除放在函数末尾——打开流程中的 snapshot_current_document 会把
-        // 旧活动文档推回标签集，提前删会被它再加回来。
-        let stale_previews: Vec<PathBuf> = if mode == WorkspaceOpenMode::Activate {
-            Vec::new()
-        } else {
-            self.workspace
-                .open_documents
-                .iter()
-                .filter(|tab| tab.preview && !tab.dirty && tab.path != path)
-                .map(|tab| tab.path.clone())
-                .collect()
-        };
         // Sniff the content, not the extension: dotfiles like .gitignore have
         // no extension but are text, while a .md full of NUL bytes is not
         // renderable. Non-text files still become the active tab; the content
@@ -306,6 +292,23 @@ impl Editor {
             self.workspace.file_error = None;
         }
         self.snapshot_current_document(cx);
+        // 单击/双击打开要替换掉「没改过」的预览标签：预览只在停留期间占标签栏，一切走
+        // 就消失（用户需求）。这份清单必须在 `snapshot_current_document` **之后**算——
+        // 活动标签的 `dirty` 只在那一步才写回，早算就还是打开时的 false，刚被改脏的这一篇
+        // 会被当成干净预览销毁。置脏的正规入口 `finish_dirty` 已就地转正，这里的先后是给
+        // 绕开它的入口（`prompts.rs:283`、`mod.rs:1820` 直接赋 `document_dirty`）兜底。
+        // 只记录清单、真正删除放在函数末尾：打开流程会把旧活动文档推回标签集，提前删会
+        // 被它再加回来。
+        let stale_previews: Vec<PathBuf> = if mode == WorkspaceOpenMode::Activate {
+            Vec::new()
+        } else {
+            self.workspace
+                .open_documents
+                .iter()
+                .filter(|tab| tab.preview && !tab.dirty && tab.path != path)
+                .map(|tab| tab.path.clone())
+                .collect()
+        };
         let cached = self
             .workspace
             .open_documents

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use gpui::{AnyElement, AppContext, Task, Window};
 
-use super::workspace::is_markdown_document;
+use super::workspace::{is_markdown_document, WorkspaceOpenMode};
 use super::Editor;
 use crate::theme::Theme;
 
@@ -475,9 +475,16 @@ impl Editor {
                     .rounded(px(4.0))
                     .cursor_pointer()
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                    .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                        // 反链/标签面板是「点开看看」：单击开预览标签，双击转固定
+                        // （与文件树同一判定；这里挂的是 mouse down，直接看 click_count）。
+                        let mode = if event.click_count >= 2 {
+                            WorkspaceOpenMode::Pinned
+                        } else {
+                            WorkspaceOpenMode::Preview
+                        };
                         let _ = click_editor.update(cx, |editor, cx| {
-                            editor.open_workspace_file(path.clone(), window, cx);
+                            editor.open_workspace_file_in_mode(path.clone(), mode, window, cx);
                         });
                     })
                     .child(

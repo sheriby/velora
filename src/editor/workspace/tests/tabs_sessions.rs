@@ -1,9 +1,11 @@
-use super::super::Editor;
+use super::super::{Editor, WorkspaceOpenMode, WorkspaceSearchScope};
+use crate::components::Block;
 use gpui::{
-    Modifiers, ScrollDelta, ScrollWheelEvent,
+    EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
     TestAppContext, TouchPhase, point, px,
 };
 use std::fs;
+use std::time::Duration;
 
 
 #[gpui::test]
@@ -139,19 +141,39 @@ async fn single_click_previews_and_double_click_pins_tabs(cx: &mut TestAppContex
         );
     });
 
-    // 已修改的预览标签切走后保留。
+    // 编辑过的预览标签当场转固定，切走不再被替换（用户需求：动过就不是临时窗口）。
+    // 走真实的打字路径（`finish_dirty` 是唯一的转正点），不手改 `tab.dirty`——旧写法
+    // 直接置位绕过了转正，把「预览可以带脏」这件不存在的事钉成了规矩。
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
             editor.open_workspace_file_in_mode(paths[3].clone(), preview, window, cx);
-            if let Some(tab) = editor
-                .workspace
-                .open_documents
-                .iter_mut()
-                .find(|tab| tab.path == paths[3])
-            {
-                tab.dirty = true;
-            }
         });
+    });
+    cx.run_until_parked();
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().expect("a block").clone()
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <Block as EntityInputHandler>::replace_text_in_range(block, None, "X", window, cx);
+        });
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let tab = editor
+            .workspace
+            .open_documents
+            .iter()
+            .find(|tab| tab.path == paths[3])
+            .expect("编辑的这篇应有标签");
+        assert!(editor.document_dirty, "前置：打字要留下未保存修改");
+        assert!(
+            !tab.preview,
+            "第一次改动就要把预览标签转成固定，否则切走会被当成干净预览销毁"
+        );
+    });
+    cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
             editor.open_workspace_file_in_mode(paths[4].clone(), preview, window, cx);
         });
@@ -160,7 +182,7 @@ async fn single_click_previews_and_double_click_pins_tabs(cx: &mut TestAppContex
         let tabs = &editor.workspace.open_documents;
         assert!(
             tabs.iter().any(|tab| tab.path == paths[3]),
-            "已修改的预览标签切走后应保留"
+            "已修改（已转固定）的标签切走后应保留"
         );
         assert_eq!(tabs.len(), 3);
     });
@@ -496,6 +518,251 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     assert_eq!(
         restored, beta_view,
         "切回 beta 没有还原它自己的阅读现场（现场必须是按篇存的）"
+    );
+}
+
+/// 「点开看看」的入口都开成预览标签：搜索结果、⌘P、正文链接连着点也只占一个标签位，
+/// 不再越点越多（用户报修）。改过的那一篇在 `finish_dirty` 就地转固定，不会被下一个
+/// 预览替换掉。
+#[gpui::test]
+async fn browsing_entries_keep_a_single_preview_tab(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-preview-browsing-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let home = root.join("home.md");
+    let alpha = root.join("alpha.md");
+    let beta = root.join("beta.md");
+    let gamma = root.join("gamma.md");
+    for path in [&alpha, &beta, &gamma] {
+        fs::write(path, "# 标题\n\n针脚 内容。\n").unwrap();
+    }
+    fs::write(&home, "# 首页\n\n见 [beta](beta.md)。\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.workspace.is_open = true;
+            editor.open_workspace_file(home.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    let tabs_of = |editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext| {
+        editor.read_with(cx, |editor, _| {
+            editor
+                .workspace
+                .open_documents
+                .iter()
+                .map(|tab| (tab.path.clone(), tab.preview))
+                .collect::<Vec<_>>()
+        })
+    };
+
+    // 1) 工作区搜索：先点 alpha 的命中，再点 beta 的命中——预览位始终只有一个。
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_query = "针脚".into();
+        editor.workspace.search_scope = WorkspaceSearchScope::Workspace;
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    let (alpha_hit, beta_hit) = editor.read_with(cx, |editor, _| {
+        let index = |name: &str| {
+            editor
+                .workspace
+                .search_results
+                .iter()
+                .position(|hit| {
+                    hit.path.file_name().map(|file| file == name).unwrap_or(false)
+                        && hit.line == Some(3)
+                })
+                .expect("a workspace hit")
+        };
+        (index("alpha.md"), index("beta.md"))
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.open_search_hit(alpha_hit, window, cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        tabs_of(&editor, cx),
+        vec![(home.clone(), false), (alpha.clone(), true)],
+        "搜索结果应开成预览标签，且固定标签留着"
+    );
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.open_search_hit(beta_hit, window, cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        tabs_of(&editor, cx),
+        vec![(home.clone(), false), (beta.clone(), true)],
+        "点第二条搜索命中要替换掉那个预览标签，而不是再加一个"
+    );
+
+    // 2) ⌘P 回车打开：仍只占那一个预览位。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.toggle_quick_open(window, cx));
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.replace_text_in_range(None, "gamma.md", window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        tabs_of(&editor, cx),
+        vec![(home.clone(), false), (gamma.clone(), true)],
+        "⌘P 打开的也应是预览标签"
+    );
+
+    // 3) 正文里点本地链接：同样替换那个预览位。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(home.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_link_target("beta.md".into(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        tabs_of(&editor, cx),
+        vec![(home.clone(), false), (beta.clone(), true)],
+        "正文链接点开的是预览标签；点开 home 也不该把预览位算进去"
+    );
+
+    // 4) 预览标签被编辑 → 当场转固定；再点开别的，它留着，预览位换到新那篇。
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().expect("a block").clone()
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <Block as EntityInputHandler>::replace_text_in_range(block, None, "X", window, cx);
+        });
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let tab = editor
+            .workspace
+            .open_documents
+            .iter()
+            .find(|tab| tab.path == beta)
+            .expect("beta 标签");
+        assert!(!tab.preview, "编辑过的预览标签要当场转固定");
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file_in_mode(
+                alpha.clone(),
+                WorkspaceOpenMode::Preview,
+                window,
+                cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        tabs_of(&editor, cx),
+        vec![(home.clone(), false), (beta.clone(), false), (alpha.clone(), true)],
+        "转过固定的那篇要留下，预览位只跟着当前这篇"
+    );
+}
+
+/// 未保存的圆点要标在**活动**标签上（用户需求：像 VS Code 那样在标签上点出「这篇改过
+/// 还没落盘」）。此前 `(dirty && !active)` 把正在编辑的那篇排除在外，反而是最需要标记
+/// 的一个没有标记。打字即亮，自动保存落盘即灭。
+#[gpui::test]
+async fn the_dirty_dot_marks_the_active_tab(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-dirty-dot-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let alpha = root.join("alpha.md");
+    fs::write(&alpha, "# alpha\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha.clone(), window, cx);
+        });
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("document-tab-dirty-0").is_none(),
+        "干净的标签不该点"
+    );
+
+    // 打一个字：脏了，而自动保存的防抖还没到点。
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().expect("a block").clone()
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            <Block as EntityInputHandler>::replace_text_in_range(block, None, "X", window, cx);
+        });
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.document_dirty, "前置：打字要留下未保存修改");
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("document-tab-dirty-0").is_some(),
+        "活动标签改了字要在标签上点出圆点"
+    );
+
+    // 自动保存落盘：圆点该跟着灭掉。
+    cx.executor().advance_clock(Duration::from_millis(1_200));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(!editor.document_dirty, "前置：防抖到点后要已落盘");
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("document-tab-dirty-0").is_none(),
+        "落盘之后圆点要消失"
+    );
+    assert_eq!(
+        fs::read_to_string(&alpha).unwrap(),
+        // 渲染态下标题的 content 起点在 `# ` 之后：块内偏移 0 就是那个「a」。
+        "# Xalpha\n",
+        "圆点灭掉要对应真落盘，不是标记被擦掉"
     );
 }
 

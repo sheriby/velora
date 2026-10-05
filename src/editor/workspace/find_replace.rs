@@ -199,7 +199,8 @@ impl Editor {
                 || name.as_deref() == Some(needle.as_str())
         });
         if let Some(path) = found {
-            self.open_workspace_file(path, window, cx);
+            // 链接目标按预览标签打开（与搜索结果同口径）：连着点几个链接不堆标签栏。
+            self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
             return;
         }
         // Create `<target>.md` at the workspace root.
@@ -217,7 +218,7 @@ impl Editor {
             }
             self.refresh_workspace_tree(cx);
         }
-        self.open_workspace_file(path, window, cx);
+        self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
     }
 
     /// `#tag` 点击：打开搜索面板并以工作区范围列出同类（roadmap C4）。
