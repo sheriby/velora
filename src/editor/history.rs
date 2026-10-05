@@ -1,5 +1,6 @@
 //! Undo history and selection snapshot restoration.
 
+use super::source_mapping::clip_hit_to_span;
 use super::*;
 
 impl Editor {
@@ -294,22 +295,51 @@ impl Editor {
                     self.active_entity_id = Some(block.entity_id());
                     return;
                 };
-                // 源码切片的 content 偏移就是块内偏移（恒等表），选区端点钳进
-                // 本块：跨块的选区先落到起点所在的那一根。
-                let chunk_start = mapping.full_source_range.start;
-                let chunk_len = mapping.full_source_range.len();
-                let selected_range = (snapshot.range.start - chunk_start).min(chunk_len)
-                    ..(snapshot.range.end - chunk_start).min(chunk_len);
-                mapping.entity.update(cx, move |block, cx| {
-                    block.selected_range = selected_range;
-                    block.selection_reversed = snapshot.reversed;
-                    block.marked_range = None;
-                    block.vertical_motion_x = None;
-                    block.cursor_blink_epoch = Instant::now();
-                    cx.notify();
-                });
-                self.pending_focus = Some(mapping.entity.entity_id());
-                self.active_entity_id = Some(mapping.entity.entity_id());
+                // 真跨块选区（D7）：源码视图的投影块就是缓冲区的连续切片，映射是
+                // 恒等的，所以被这个选区盖住的每一块各拿自己那截，不再钳进起点所在
+                // 的那一根。端点先裁后减：`source_mappings_in_range` 会连带返回区间
+                // 外的相邻块（它按 previous/next 各补一根），旧写法在那种块上直接
+                // `snapshot.range.start - chunk_start` 会下溢。
+                let anchor_id = mapping.entity.entity_id();
+                let mut covered_ids: Vec<EntityId> = Vec::new();
+                for mapping in &mappings {
+                    let chunk = &mapping.full_source_range;
+                    let Some(local) = clip_hit_to_span(&snapshot.range, chunk.start, chunk.end)
+                    else {
+                        continue;
+                    };
+                    let chunk_len = chunk.len();
+                    let selected = (local.start - chunk.start).min(chunk_len)
+                        ..(local.end - chunk.start).min(chunk_len);
+                    let is_anchor = mapping.entity.entity_id() == anchor_id;
+                    let entity = mapping.entity.clone();
+                    covered_ids.push(entity.entity_id());
+                    entity.update(cx, move |block, cx| {
+                        block.selected_range = selected;
+                        block.selection_reversed = snapshot.reversed;
+                        block.marked_range = None;
+                        if is_anchor {
+                            block.vertical_motion_x = None;
+                            block.cursor_blink_epoch = Instant::now();
+                        }
+                        cx.notify();
+                    });
+                }
+                // 上一次选区留在别的投影块上的残留要清掉，否则跨块选区收小之后
+                // 远处那块还画着旧的高亮。
+                for block in self.document.root_blocks() {
+                    if covered_ids.contains(&block.entity_id()) {
+                        continue;
+                    }
+                    block.update(cx, |block, cx| {
+                        if !block.selected_range.is_empty() {
+                            block.selected_range = 0..0;
+                            cx.notify();
+                        }
+                    });
+                }
+                self.pending_focus = Some(anchor_id);
+                self.active_entity_id = Some(anchor_id);
             }
             ViewMode::Rendered => {
                 if self.apply_cross_block_selection_snapshot_if_possible(snapshot, cx) {

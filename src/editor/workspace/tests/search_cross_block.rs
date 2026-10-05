@@ -5,10 +5,8 @@
 //! 于是跨块的命中一根块都不沾——结果列表里有它、跳转能落到它，正文里却什么都看不见。
 //! 现在按块裁段：一根块拿到属于它那截，盖到几块就画几段。
 
-use super::super::{
-    Editor, WorkspaceSearchScope, WorkspaceTab,
-    tree_sync::{clip_hit_to_span, hit_overlaps},
-};
+use super::super::{Editor, WorkspaceSearchScope, WorkspaceTab};
+use crate::editor::source_mapping::{clip_hit_to_span, hit_overlaps};
 use crate::editor::ViewMode;
 use gpui::TestAppContext;
 use std::ops::Range;
@@ -87,6 +85,12 @@ fn hit_segmentation_clips_at_the_block_boundary() {
     assert!(hit_overlaps(&zero, &right));
     assert_eq!(clip_hit_to_span(&zero, left.start, left.end), Some(8..8));
     assert_eq!(clip_hit_to_span(&zero, right.start, right.end), Some(8..8));
+
+    // 零宽区间整个落在块外面时不沾。取 max/min 会算出 20..20 落在 8..15 之外的
+    // 反向区间（`15..20` 那样的端点相减就下溢），所以这一支必须退回 None。
+    let outside = Range { start: 20, end: 20 };
+    assert!(!hit_overlaps(&outside, &right));
+    assert_eq!(clip_hit_to_span(&outside, right.start, right.end), None);
 }
 
 #[gpui::test]

@@ -5,6 +5,33 @@ use std::ops::Range;
 use super::table_edit::{cell_content_range_in_line, table_row_slots};
 use super::*;
 
+/// 一个字节区间（搜索命中、选区）与这一块有没有交集。
+///
+/// 跨块的区间要落到它盖住的**每一**块上，所以判据不是「被这块整条包住」。
+/// 零宽区间按起点归块——它没有长度，沾不到下一块去。
+pub(crate) fn hit_overlaps(hit: &Range<usize>, span: &Range<usize>) -> bool {
+    if hit.is_empty() {
+        return hit.start >= span.start && hit.start <= span.end;
+    }
+    hit.start < span.end && hit.end > span.start
+}
+
+/// 把区间裁到 `block_start..block_end` 这一段里；裁完是空段就说明这块不沾。
+///
+/// 零宽区间（空命中、光标）没有长度，只有起点落在块内才算沾到这块——直接取
+/// `max/min` 会算出 `8..5` 这种反向区间，端点相减就下溢，所以单独走一支。
+pub(crate) fn clip_hit_to_span(
+    hit: &Range<usize>,
+    block_start: usize,
+    block_end: usize,
+) -> Option<Range<usize>> {
+    if hit.is_empty() {
+        return (hit.start >= block_start && hit.start <= block_end).then_some(hit.clone());
+    }
+    let clipped = hit.start.max(block_start)..hit.end.min(block_end);
+    (!clipped.is_empty()).then_some(clipped)
+}
+
 /// 逐行量出来的结果：每行在自己那一行里让开几个前缀字节，以及这一行在**文件里**占几个
 /// 字节。后者与模型的 markdown 那行可以不等长（模型为保住一个字面反斜杠会多写一位），
 /// 位置换算按文件的长度走，`content_to_source` 说的才是缓冲区的坐标。

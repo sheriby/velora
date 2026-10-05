@@ -1,28 +1,6 @@
 use super::*;
+use crate::editor::source_mapping::{clip_hit_to_span, hit_overlaps};
 use crate::editor::{SourceTargetMapping, ViewMode};
-
-/// 命中与这一块有没有交集。跨块命中要落到它盖住的**每一**块上，所以判据不是
-/// 「命中被这块包住」。零宽命中按起点归块（它没有长度，沾不到下一块）。
-pub(crate) fn hit_overlaps(hit: &Range<usize>, span: &Range<usize>) -> bool {
-    if hit.is_empty() {
-        return hit.start >= span.start && hit.start <= span.end;
-    }
-    hit.start < span.end && hit.end > span.start
-}
-
-/// 把命中裁到 `block_start..block_end` 这一段里；裁完是空段就说明这块不沾。
-/// 裁完仍可能是零宽（命中本来就零宽且落在块内）。
-pub(crate) fn clip_hit_to_span(
-    hit: &Range<usize>,
-    block_start: usize,
-    block_end: usize,
-) -> Option<Range<usize>> {
-    let clipped = hit.start.max(block_start)..hit.end.min(block_end);
-    if clipped.is_empty() && !hit.is_empty() {
-        return None;
-    }
-    Some(clipped)
-}
 
 impl Editor {
     /// Opens a welcome-page recent entry: folders replace the working set,
