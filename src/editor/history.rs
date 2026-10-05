@@ -17,13 +17,24 @@ impl Editor {
         }
 
         if self.view_mode == ViewMode::Source {
-            return self
-                .document
-                .first_root()
+            // 源码视图按 512 行切成若干投影块，落点得按缓冲区偏移记账：
+            // 「所在块的起点 + 块内偏移」。此前固定读第一根的块内偏移——光标
+            // 落在第 2 块之后就把落点说成文件开头，撤销、切视图、外部改动重载
+            // 都以这份快照为锚，一处读错就一路错。
+            let target = self
+                .current_edit_target_from_state(cx)
+                .or_else(|| self.document.first_root().cloned());
+            return target
                 .map(|block| {
+                    let chunk_start = self
+                        .document
+                        .source_span_of(block.entity_id())
+                        .map(|span| span.start)
+                        .unwrap_or(0);
                     let block_ref = block.read(cx);
+                    let local = block_ref.selected_range.clone();
                     UndoSelectionSnapshot {
-                        range: block_ref.selected_range.clone(),
+                        range: chunk_start + local.start..chunk_start + local.end,
                         reversed: block_ref.selection_reversed,
                     }
                 })

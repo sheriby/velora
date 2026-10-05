@@ -40,6 +40,22 @@ pub(super) fn split_source_document_chunks(source: &str) -> Vec<String> {
         .collect()
 }
 
+/// 整篇导入的两种口径。区别只在「阅读现场」：打开另一篇文档要把视图模式、
+/// 视口、光标归零重来；同一篇从磁盘重载只换内容，用户读到哪就停在哪。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImportKind {
+    Open,
+    Reload,
+}
+
+/// 代码文档的高亮语言：按扩展名，无扩展名（`.gitignore` 之类）按 `text`。
+/// 不能返回 `None`——`replace_document_content` 把 `None` 当作 Markdown。
+fn code_language_for_path(path: &Path) -> SharedString {
+    path.extension()
+        .map(|extension| extension.to_string_lossy().into_owned().into())
+        .unwrap_or_else(|| SharedString::from("text"))
+}
+
 impl Editor {
     /// 构建源码模式（整文件直编）的根块列表：按行分块 + 连续源码行号。
     /// 导入（`replace_document_content`）与 undo 恢复共用，保证 undo 后
@@ -210,7 +226,7 @@ impl Editor {
         file_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        self.replace_document_content(markdown, file_path, None, cx);
+        self.replace_document_content(markdown, file_path, None, ImportKind::Open, cx);
     }
 
     pub(super) fn replace_document_from_code_source(
@@ -219,14 +235,40 @@ impl Editor {
         file_path: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        // Extension-less text files (dotfiles like .gitignore) must still load
-        // as code: a `None` language means "markdown" to
-        // `replace_document_content`, so give them an explicit `text` one.
-        let language = file_path
-            .extension()
-            .map(|extension| extension.to_string_lossy().into_owned().into())
-            .or_else(|| Some(SharedString::from("text")));
-        self.replace_document_content(source, Some(file_path), language, cx);
+        let language = code_language_for_path(&file_path);
+        self.replace_document_content(
+            source,
+            Some(file_path),
+            Some(language),
+            ImportKind::Open,
+            cx,
+        );
+    }
+
+    /// 外部改动重载：与打开共用导入流程，但阅读现场留在原处（见 `ImportKind`）。
+    pub(super) fn reload_document_from_markdown(
+        &mut self,
+        markdown: String,
+        file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_document_content(markdown, Some(file_path), None, ImportKind::Reload, cx);
+    }
+
+    pub(super) fn reload_document_from_code_source(
+        &mut self,
+        source: String,
+        file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let language = code_language_for_path(&file_path);
+        self.replace_document_content(
+            source,
+            Some(file_path),
+            Some(language),
+            ImportKind::Reload,
+            cx,
+        );
     }
 
     pub(super) fn replace_document_content(
@@ -234,8 +276,13 @@ impl Editor {
         markdown: String,
         file_path: Option<PathBuf>,
         code_language: Option<SharedString>,
+        kind: ImportKind,
         cx: &mut Context<Self>,
     ) {
+        // 重载只换内容：光标先按缓冲区偏移记下来，块树重建之后再落回新的树。
+        // 打开新文档不需要——现场一律归零。
+        let reloaded_selection =
+            (kind == ImportKind::Reload).then(|| self.capture_source_selection_snapshot(cx));
         // P6 顺手项：LF 文档（常见日志/代码）零拷贝直通，避免两次全文分配。
         let had_cr = markdown.contains('\r');
         let normalized = if had_cr {
@@ -314,6 +361,9 @@ impl Editor {
         self.file_path = file_path;
         self.view_mode = if is_code || source_mode_fallback_required {
             ViewMode::Source
+        } else if kind == ImportKind::Reload {
+            // 重载不改视图：用户在读哪一面就从哪一面接着读。
+            self.view_mode
         } else {
             ViewMode::Rendered
         };
@@ -345,12 +395,41 @@ impl Editor {
         self.sync_table_axis_visuals(cx);
         self.clear_cross_block_selection(cx);
 
-        self.pending_scroll_active_block_into_view = true;
-        self.pending_scroll_recheck_after_layout = true;
-        self.last_scroll_viewport_size = None;
-        self.scroll_handle.set_offset(point(px(0.0), px(0.0)));
-        self.pending_focus = self.first_focusable_entity_id(cx);
-        self.active_entity_id = self.pending_focus;
+        match kind {
+            ImportKind::Open => {
+                self.pending_scroll_active_block_into_view = true;
+                self.pending_scroll_recheck_after_layout = true;
+                self.last_scroll_viewport_size = None;
+                self.scroll_handle.set_offset(point(px(0.0), px(0.0)));
+                self.pending_focus = self.first_focusable_entity_id(cx);
+                self.active_entity_id = self.pending_focus;
+            }
+            ImportKind::Reload => {
+                // 阅读现场原样保留。不挂「滚到活动块」：活动块通常是文档首块，
+                // 一挂就把视口拽回顶部（用户报修）；内容变矮时 gpui 会自行把
+                // 偏移夹回可滚范围，不需要我们介入。
+                self.pending_scroll_active_block_into_view = false;
+                self.pending_scroll_center_into_view = false;
+                self.pending_scroll_recheck_after_layout = false;
+                // 整棵块树已经换掉：旧实体 id 一律作废，先把它们清空，再由选区
+                // 快照把光标落到新树上覆盖的那一根（跨块选区只恢复选区本身，
+                // 不写活动块，落点就按文档首块，与打开新文档同口径）。
+                self.pending_focus = None;
+                self.active_entity_id = None;
+                if let Some(snapshot) = reloaded_selection {
+                    // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建：
+                    // 落点在未物化的部分时选区找不到归属的投影块，会被钳进首块
+                    // 末尾（与搜索跳转同一处报修）。先把续建落地，已物化的文档
+                    // 这里是空操作。
+                    self.flush_pending_materialization(cx);
+                    self.apply_selection_snapshot_in_current_mode(&snapshot, cx);
+                }
+                if self.active_entity_id.is_none() {
+                    self.pending_focus = self.first_focusable_entity_id(cx);
+                    self.active_entity_id = self.pending_focus;
+                }
+            }
+        }
 
         self.undo_history.clear();
         self.redo_history.clear();

@@ -194,7 +194,7 @@ Workspace (src/editor/workspace.rs)
 - **原子写**：`write_atomic` = 同目录临时文件 + `sync_all` + `rename`。
 - **外部修改检测**：`file_content_version`（规范化文本 DefaultHasher）；手动保存与 autosave 前 `verify_file_version` 重读比对，不一致则报「外部修改」。
 - **Autosave**：`schedule_autosave` 防抖后台任务（默认 800ms，`[editor] autosave_debounce_ms`）；IME 组合中跳过；后台写恢复快照 + 临时文件，回主线程校对 revision 后落盘。
-- **Watcher**（src/editor/watcher.rs）：每工作区递归 notify 监听，干净标签自动重载，脏标签走冲突提示。
+- **Watcher**（src/editor/watcher.rs）：每工作区递归 notify 监听，干净标签自动重载，脏标签走冲突提示。重载与打开共用整篇导入（`replace_document_content`），靠 `ImportKind` 分口径：`Reload` 只换内容，视图模式、视口偏移与光标都留在原处（光标按缓冲区偏移取快照、把后台续建落地之后再落回新块树），undo 栈仍清空；`Open` 是换文档，现场一律归零。
 - **关闭流**（src/editor/close.rs）：脏文档拦截为应用内对话框；保存后关闭经 `pending_close_after_save`。
 
 ## 7. 已知性能事实（dev 构建，闸门测试实测）

@@ -73,9 +73,9 @@ impl Editor {
         if is_active {
             let path = path.to_path_buf();
             if is_markdown_file(&path) {
-                self.replace_document_from_markdown(disk, Some(path), cx);
+                self.reload_document_from_markdown(disk, path, cx);
             } else {
-                self.replace_document_from_code_source(disk, path, cx);
+                self.reload_document_from_code_source(disk, path, cx);
             }
             // 重载换掉了整个缓冲区：原始字节与文件形状必须跟着接上，否则重载之后
             // 的第一次保存就把 CRLF/GB18030 全文件洗成 LF/UTF-8。

@@ -169,3 +169,42 @@ async fn a_source_selection_past_the_end_of_the_file_clamps_instead_of_panicking
     });
 }
 
+/// 源码模式取选区快照必须按**缓冲区偏移**记账：光标落在第 2 块之后，读回来的
+/// 却还是「第一块的本地偏移」，等于把落点说成文件开头。撤销、切视图、外部改动
+/// 重载都以这份快照为锚，取错一位就全错。
+#[gpui::test]
+async fn a_source_caret_in_a_later_chunk_captures_its_buffer_offset(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let text = numbered_lines(1100);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, text.clone(), None));
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.toggle_view_mode(cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(matches!(editor.view_mode, ViewMode::Source));
+        assert_eq!(
+            editor.document.root_count(),
+            3,
+            "用例前提：1100 行按 512 行切成三根投影块"
+        );
+    });
+
+    let caret = chunk_start(&text, 2) + 5;
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[2].clone();
+        editor.active_entity_id = Some(block.entity_id());
+        block.update(cx, |block, _cx| block.selected_range = 5..5);
+    });
+    let snapshot = editor.read_with(cx, |editor, cx| {
+        editor.capture_source_selection_snapshot(cx)
+    });
+    assert_eq!(
+        snapshot.range,
+        caret..caret,
+        "光标在第 3 块，快照要给出缓冲区偏移 {caret}，实测 {:?}",
+        snapshot.range
+    );
+}
+

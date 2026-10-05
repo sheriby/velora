@@ -1792,7 +1792,13 @@ impl Editor {
             .or_else(|| Some("text".into()));
         let mut editor = Self::from_markdown(cx, snapshot.markdown.clone(), None);
         if !markdown_file {
-            editor.replace_document_content(snapshot.markdown, None, code_language, cx);
+            editor.replace_document_content(
+                snapshot.markdown,
+                None,
+                code_language,
+                file_drop::ImportKind::Open,
+                cx,
+            );
         }
         editor.recovery_id = snapshot.id;
         editor.recovery_source_path = snapshot.source_path;
