@@ -78,6 +78,11 @@ async fn latex_completion_confirms_template_in_math_block(cx: &mut TestAppContex
             text, "$$\n\\alpha \n$$",
             "确认该把 \\al 换成 \\alpha 加尾随空格，实际 {text:?}"
         );
+        // 确认是一次不可合并的 undo 组：连续确认不能被合并成一步。
+        assert_eq!(
+            editor.undo_history.len(),
+            1,
+        );
     });
 }
 
