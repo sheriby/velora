@@ -38,6 +38,18 @@ impl Editor {
             }
         }
 
+        // `\\` 公式补全同一条口径。
+        if self.latex_completion_is_open() {
+            let inside_panel = self
+                .latex_completion
+                .as_ref()
+                .and_then(|state| state.panel_bounds)
+                .is_some_and(|bounds| bounds.contains(&event.position));
+            if !inside_panel {
+                self.close_latex_completion(cx);
+            }
+        }
+
         // 选中工具栏上的按下不当成正文落点：不然这一次按下先把选区收成光标，
         // 工具栏自己就先消失了（与 [[ 补全浮层同一条口径）。
         if self.selection_toolbar_contains_point(event.position) {

@@ -17,10 +17,13 @@ impl Render for Editor {
                     // 三个浮层（模态/文件历史/[[ 补全）各自过滤按键；都未打开
                     // 时这里只有三次布尔检查，打字热路径无感。
                     let _ = editor.update(cx, |editor, cx| {
-                        let consumed = editor.modal_handle_keystroke(keystroke, window, cx);
-                        let consumed = consumed || editor.file_history_key_down(keystroke, cx);
+                        let mut consumed = editor.modal_handle_keystroke(keystroke, window, cx);
+                        consumed = consumed || editor.file_history_key_down(keystroke, cx);
                         if !consumed {
-                            editor.wikilink_completion_key_down(keystroke, cx);
+                            consumed = editor.wikilink_completion_key_down(keystroke, cx);
+                        }
+                        if !consumed {
+                            editor.latex_completion_key_down(keystroke, cx);
                         }
                     });
                 },

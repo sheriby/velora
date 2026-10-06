@@ -1,6 +1,8 @@
 //! LaTeX display-math parsing and RaTeX SVG rendering helpers.
 //! 缓存写入 velora 独立目录。
 
+mod symbols;
+
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -9,6 +11,8 @@ use std::path::PathBuf;
 use anyhow::{Context as _, anyhow};
 use directories::ProjectDirs;
 use gpui::{Hsla, Rgba};
+
+pub(crate) use symbols::{LatexSymbol, inside_inline_math, latex_command_before_cursor, latex_completions_for};
 
 /// 块级公式与行内公式同字号（用户报修：`$$ ... $$` 渲染出来明显偏大）。
 /// KaTeX/Typora 的 display 模式只改变极限位置，不放大字号。

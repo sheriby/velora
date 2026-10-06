@@ -39,6 +39,7 @@ mod file_drop;
 mod format_ops;
 mod history;
 mod insert_ops;
+mod latex_completion;
 mod paragraph_ops;
 mod persistence;
 mod render;
@@ -243,6 +244,8 @@ pub struct Editor {
     link_panels: workspace_index::LinkPanelState,
     /// [[ 补全会话（编辑锚定块，键经 intercept_keystrokes 拦截）。
     wikilink_completion: Option<workspace_index::WikilinkCompletion>,
+    /// `\\` 公式命令补全会话（数学块/行内公式里打反斜杠弹出）。
+    latex_completion: Option<latex_completion::LatexCompletion>,
     /// 文件历史浮层（保存版本浏览/恢复）。
     file_history_overlay: Option<file_history::FileHistoryOverlay>,
     /// 切换工作区后，下一帧（拿得到 `&mut Window` 时）要打开的标签页。
@@ -728,6 +731,7 @@ impl Editor {
             workspace_link_index: workspace_index::WorkspaceLinkIndex::default(),
             link_panels: workspace_index::LinkPanelState::default(),
             wikilink_completion: None,
+            latex_completion: None,
             file_history_overlay: None,
             pending_workspace_tab_activation: None,
             info_dialog: None,
