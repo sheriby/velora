@@ -25,6 +25,12 @@ pub(crate) enum MarkdownSourceState {
         fence_len: usize,
         language: Option<CodeLanguageKey>,
     },
+    /// `$$` 公式块内。
+    Math,
+    /// 文档头的 YAML frontmatter（`---` … `---`）内。
+    Frontmatter,
+    /// HTML 注释 `<!--` … `-->` 内。
+    HtmlComment,
 }
 
 /// 一次扫描的产出：着色区间 + 本块结束时的块级状态（给下一块的入口）。
@@ -126,7 +132,7 @@ impl<'a> Scanner<'a> {
         &line[indent..]
     }
 
-    fn scan_line(&mut self, line_start: usize, line: &str, _is_first_line: bool) {
+    fn scan_line(&mut self, line_start: usize, line: &str, is_first_line: bool) {
         if line.trim().is_empty() {
             self.flush_pending_paragraph();
             return;
@@ -140,6 +146,13 @@ impl<'a> Scanner<'a> {
         let content = Self::strip_indent(line);
         let content_start = line_start + (line.len() - content.len());
         let line_end = line_start + line.len();
+
+        // frontmatter 只可能开在文档第一行。
+        if is_first_line && content == "---" {
+            self.push(content_start..line_end, CodeHighlightClass::MarkdownMarker);
+            self.state = Some(MarkdownSourceState::Frontmatter);
+            return;
+        }
 
         if let Some(level) = parse_atx_heading(content) {
             self.flush_pending_paragraph();
@@ -190,6 +203,49 @@ impl<'a> Scanner<'a> {
                 fence_len: opener.run_len,
                 language: resolve_code_language_key(Some(info.trim())),
             });
+            return;
+        }
+
+        if content.starts_with("$$") {
+            self.flush_pending_paragraph();
+            self.push(content_start..content_start + 2, CodeHighlightClass::MarkdownMarker);
+            let body = &content[2..];
+            match body.find("$$") {
+                Some(offset) => {
+                    self.push(
+                        content_start + 2..content_start + 2 + offset,
+                        CodeHighlightClass::MarkdownCode,
+                    );
+                    self.push(
+                        content_start + 2 + offset..content_start + 2 + offset + 2,
+                        CodeHighlightClass::MarkdownMarker,
+                    );
+                }
+                None => {
+                    self.push(
+                        content_start + 2..line_end,
+                        CodeHighlightClass::MarkdownCode,
+                    );
+                    self.state = Some(MarkdownSourceState::Math);
+                }
+            }
+            return;
+        }
+
+        if content.starts_with("<!--") {
+            self.flush_pending_paragraph();
+            match content[4..].find("-->") {
+                Some(offset) => {
+                    self.push(
+                        content_start..content_start + 4 + offset + 3,
+                        CodeHighlightClass::Comment,
+                    );
+                }
+                None => {
+                    self.push(content_start..line_end, CodeHighlightClass::Comment);
+                    self.state = Some(MarkdownSourceState::HtmlComment);
+                }
+            }
             return;
         }
 
@@ -256,27 +312,70 @@ impl<'a> Scanner<'a> {
     /// 既有代码高亮管线）；区间要连续拼接才能整段解析，逐行散着发会丢多行
     /// 结构。
     fn scan_inside_state(&mut self, line_start: usize, line: &str, state: &MarkdownSourceState) {
-        let MarkdownSourceState::Fence {
-            fence_char,
-            fence_len,
-            language,
-        } = state;
-        let content = Self::strip_indent(line);
-        let content_start = line_start + (line.len() - content.len());
         let line_end = line_start + line.len();
-        let run_chars = content.chars().take_while(|c| *c == *fence_char).count();
-        if run_chars * fence_char.len_utf8() >= *fence_len
-            && content[run_chars * fence_char.len_utf8()..].trim().is_empty()
-        {
-            self.push(
-                content_start..content_start + run_chars * fence_char.len_utf8(),
-                CodeHighlightClass::MarkdownMarker,
-            );
-            self.state = None;
-            return;
-        }
-        if let Some(language) = language {
-            self.append_nested_region(*language, line_start..line_end);
+        match state {
+            MarkdownSourceState::Fence {
+                fence_char,
+                fence_len,
+                language,
+            } => {
+                let content = Self::strip_indent(line);
+                let content_start = line_start + (line.len() - content.len());
+                let run_chars = content.chars().take_while(|c| *c == *fence_char).count();
+                if run_chars * fence_char.len_utf8() >= *fence_len
+                    && content[run_chars * fence_char.len_utf8()..].trim().is_empty()
+                {
+                    self.push(
+                        content_start..content_start + run_chars * fence_char.len_utf8(),
+                        CodeHighlightClass::MarkdownMarker,
+                    );
+                    self.state = None;
+                    return;
+                }
+                // 带语言的围栏内容收进递归区；不带语言的保持正文色。
+                if let Some(language) = language {
+                    self.append_nested_region(*language, line_start..line_end);
+                }
+            }
+            MarkdownSourceState::Math => {
+                let content = Self::strip_indent(line);
+                let content_start = line_start + (line.len() - content.len());
+                match content.find("$$") {
+                    Some(offset) => {
+                        self.push(
+                            content_start..content_start + offset,
+                            CodeHighlightClass::MarkdownCode,
+                        );
+                        self.push(
+                            content_start + offset..content_start + offset + 2,
+                            CodeHighlightClass::MarkdownMarker,
+                        );
+                        self.state = None;
+                    }
+                    None => {
+                        self.push(content_start..line_end, CodeHighlightClass::MarkdownCode);
+                    }
+                }
+            }
+            MarkdownSourceState::Frontmatter => {
+                let content = Self::strip_indent(line);
+                let content_start = line_start + (line.len() - content.len());
+                if content == "---" || content == "..." {
+                    self.push(content_start..line_end, CodeHighlightClass::MarkdownMarker);
+                    self.state = None;
+                    return;
+                }
+                self.append_nested_region(CodeLanguageKey::Yaml, line_start..line_end);
+            }
+            MarkdownSourceState::HtmlComment => match line.find("-->") {
+                Some(offset) => {
+                    self.push(line_start..line_start + offset + 3, CodeHighlightClass::Comment);
+                    self.state = None;
+                }
+                None => {
+                    self.push(line_start..line_end, CodeHighlightClass::Comment);
+                }
+            },
         }
     }
 
@@ -1124,6 +1223,77 @@ mod tests {
         assert_eq!(
             classes_covering(text, "img/甲.png"),
             vec![CodeHighlightClass::MarkdownLinkUrl]
+        );
+    }
+
+    #[test]
+    fn display_math_blocks_color_content() {
+        let single = "$$x^2 + y^2$$";
+        assert_eq!(class_at(single, "$$"), Some(CodeHighlightClass::MarkdownMarker));
+        assert_eq!(
+            classes_covering(single, "x^2 + y^2"),
+            vec![CodeHighlightClass::MarkdownCode]
+        );
+
+        let multi = "$$\n\\int_0^1 x dx\n$$";
+        assert_eq!(
+            classes_covering(multi, "\\int_0^1 x dx"),
+            vec![CodeHighlightClass::MarkdownCode]
+        );
+    }
+
+    #[test]
+    fn frontmatter_highlights_as_yaml_only_at_document_start() {
+        let doc = "---\ntitle: \"甲\"\n---\n正文";
+        let (spans, state) = highlight_with(doc, true, None);
+        assert!(state.is_none());
+        assert!(
+            spans
+                .iter()
+                .any(|(range, class)| *class == CodeHighlightClass::String
+                    && doc[range.clone()].contains("甲")),
+            "frontmatter 正文应按 YAML 着色: {spans:?}"
+        );
+
+        // 文档中段的 `---` 不是 frontmatter，只是分隔线。
+        let mid = "正文一\n\n---\n\ntitle: \"乙\"\n";
+        let (mid_spans, _) = highlight_with(mid, false, None);
+        assert!(
+            !mid_spans
+                .iter()
+                .any(|(range, _)| mid[range.clone()].contains("乙")),
+            "非文档头的 --- 之后的文本不该按 YAML 着色: {mid_spans:?}"
+        );
+    }
+
+    #[test]
+    fn unterminated_frontmatter_threads_state() {
+        let (spans, state) = highlight_with("---\nkey: value\n", true, None);
+        assert_eq!(state, Some(MarkdownSourceState::Frontmatter));
+        assert!(spans
+            .iter()
+            .any(|(range, class)| *class == CodeHighlightClass::MarkdownMarker
+                && range.start == 0));
+        assert!(spans
+            .iter()
+            .any(|(range, class)| !matches!(class, CodeHighlightClass::MarkdownMarker)
+                && range.start > 4));
+    }
+
+    #[test]
+    fn html_comments_color_across_lines() {
+        let text = "<!-- 第一行\n第二行 -->\n正文";
+        let (spans, state) = highlight_with(text, false, None);
+        assert!(state.is_none());
+        assert!(
+            spans.iter().any(|(range, class)| *class == CodeHighlightClass::Comment
+                && text[range.clone()].contains("第一行")),
+            "注释首行应着注释色: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|(range, class)| *class == CodeHighlightClass::Comment
+                && text[range.clone()].contains("第二行")),
+            "注释续行应着注释色: {spans:?}"
         );
     }
 
