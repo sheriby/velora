@@ -59,6 +59,13 @@ struct ThemeColorsDe {
     code_syntax_property: Option<Hsla>,
     code_syntax_operator: Option<Hsla>,
     code_syntax_punctuation: Option<Hsla>,
+    md_syntax_heading: Option<Hsla>,
+    md_syntax_marker: Option<Hsla>,
+    md_syntax_emphasis_marker: Option<Hsla>,
+    md_syntax_code: Option<Hsla>,
+    md_syntax_link_text: Option<Hsla>,
+    md_syntax_link_url: Option<Hsla>,
+    md_syntax_label: Option<Hsla>,
     table_border: Option<Hsla>,
     table_header_bg: Option<Hsla>,
     current_line_bg: Option<Hsla>,
@@ -243,6 +250,27 @@ impl<'de> Deserialize<'de> for ThemeColors {
             code_syntax_punctuation: raw
                 .code_syntax_punctuation
                 .unwrap_or_else(|| Hsla::from(rgba(0xd4d4d4ff))),
+            md_syntax_heading: raw
+                .md_syntax_heading
+                .unwrap_or_else(|| Hsla::from(rgba(0x569cd6ff))),
+            md_syntax_marker: raw
+                .md_syntax_marker
+                .unwrap_or_else(|| Hsla::from(rgba(0x8a8a8aff))),
+            md_syntax_emphasis_marker: raw
+                .md_syntax_emphasis_marker
+                .unwrap_or_else(|| Hsla::from(rgba(0xd16969ff))),
+            md_syntax_code: raw
+                .md_syntax_code
+                .unwrap_or_else(|| Hsla::from(rgba(0xce9178ff))),
+            md_syntax_link_text: raw
+                .md_syntax_link_text
+                .unwrap_or_else(|| Hsla::from(rgba(0x3794ffff))),
+            md_syntax_link_url: raw
+                .md_syntax_link_url
+                .unwrap_or_else(|| Hsla::from(rgba(0xce9178ff))),
+            md_syntax_label: raw
+                .md_syntax_label
+                .unwrap_or_else(|| Hsla::from(rgba(0xc586c0ff))),
             table_border: raw
                 .table_border
                 .unwrap_or_else(|| Hsla::from(rgba(0x484644ff))),

@@ -169,6 +169,20 @@ pub struct ThemeColors {
     pub code_syntax_operator: Hsla,
     /// Syntax colour for punctuation inside code blocks.
     pub code_syntax_punctuation: Hsla,
+    /// Markdown 源码高亮：标题文字与标题记号。
+    pub md_syntax_heading: Hsla,
+    /// Markdown 源码高亮：结构记号（列表、引用、围栏、分隔线、`$$`）。
+    pub md_syntax_marker: Hsla,
+    /// Markdown 源码高亮：强调类定界符（`**`、`*`、`~~`、反引号）。
+    pub md_syntax_emphasis_marker: Hsla,
+    /// Markdown 源码高亮：行内代码、公式正文与转义。
+    pub md_syntax_code: Hsla,
+    /// Markdown 源码高亮：链接文字。
+    pub md_syntax_link_text: Hsla,
+    /// Markdown 源码高亮：链接地址。
+    pub md_syntax_link_url: Hsla,
+    /// Markdown 源码高亮：标签、标注标签与脚注引用。
+    pub md_syntax_label: Hsla,
     /// Border colour of native table cells.
     pub table_border: Hsla,
     /// Background of native table header cells.

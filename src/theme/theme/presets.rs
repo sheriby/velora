@@ -166,6 +166,13 @@ impl Theme {
                 code_syntax_property: Hsla::from(rgba(0x9cdcfeff)),
                 code_syntax_operator: Hsla::from(rgba(0xd4d4d4ff)),
                 code_syntax_punctuation: Hsla::from(rgba(0xd4d4d4ff)),
+                md_syntax_heading: Hsla::from(rgba(0x569cd6ff)),
+                md_syntax_marker: Hsla::from(rgba(0x8a8a8aff)),
+                md_syntax_emphasis_marker: Hsla::from(rgba(0xd16969ff)),
+                md_syntax_code: Hsla::from(rgba(0xce9178ff)),
+                md_syntax_link_text: Hsla::from(rgba(0x3794ffff)),
+                md_syntax_link_url: Hsla::from(rgba(0xce9178ff)),
+                md_syntax_label: Hsla::from(rgba(0xc586c0ff)),
                 table_border: Hsla::from(rgba(0x484644ff)),
                 table_header_bg: Hsla::from(rgba(0x333333ff)),
                 current_line_bg: Hsla::from(rgba(0xffffff0d)),
@@ -418,6 +425,13 @@ impl Theme {
                 code_syntax_property: Hsla::from(rgba(0x001080ff)),
                 code_syntax_operator: Hsla::from(rgba(0x393a34ff)),
                 code_syntax_punctuation: Hsla::from(rgba(0x393a34ff)),
+                md_syntax_heading: Hsla::from(rgba(0x0451a5ff)),
+                md_syntax_marker: Hsla::from(rgba(0x717984ff)),
+                md_syntax_emphasis_marker: Hsla::from(rgba(0xbf3f3fff)),
+                md_syntax_code: Hsla::from(rgba(0xa31515ff)),
+                md_syntax_link_text: Hsla::from(rgba(0x0b58caff)),
+                md_syntax_link_url: Hsla::from(rgba(0x986801ff)),
+                md_syntax_label: Hsla::from(rgba(0xaf00dbff)),
                 table_border: Hsla::from(rgba(0xd1d1d1ff)),
                 table_header_bg: Hsla::from(rgba(0xf3f2f1ff)),
                 current_line_bg: Hsla::from(rgba(0x0000000a)),
@@ -496,6 +510,18 @@ impl Theme {
         theme.dimensions.h1_border_width = 0.0;
         theme.dimensions.h1_margin_bottom = 10.0;
         theme.dimensions.table_cell_padding_y = 9.0;
+        // 源码高亮跟着换暖调：低饱和但仍是多色相（用户报修：源码高亮不能
+        // 一个颜色刷到底）。
+        {
+            let c = &mut theme.colors;
+            c.md_syntax_heading = Hsla::from(rgba(0x2b5f8aff));
+            c.md_syntax_marker = Hsla::from(rgba(0x8a7f70ff));
+            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xb45a3cff));
+            c.md_syntax_code = Hsla::from(rgba(0x9c4222ff));
+            c.md_syntax_link_text = Hsla::from(rgba(0x316aa5ff));
+            c.md_syntax_link_url = Hsla::from(rgba(0x9c6b1eff));
+            c.md_syntax_label = Hsla::from(rgba(0x7d4fb2ff));
+        }
         theme
     }
 
@@ -533,6 +559,18 @@ impl Theme {
         theme.dimensions.code_block_padding_x = 14.0;
         theme.dimensions.code_block_padding_y = 12.0;
         theme.dimensions.table_cell_padding_y = 7.0;
+        // 源码高亮刻意跳出绿色单色系（渲染视图的标题仍是绿色）；蓝色标题、
+        // 青绿代码、紫标签，参照 VS Code 语义（用户报修：源码模式满屏绿）。
+        {
+            let c = &mut theme.colors;
+            c.md_syntax_heading = Hsla::from(rgba(0x1e6fa8ff));
+            c.md_syntax_marker = Hsla::from(rgba(0x5e6b60ff));
+            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xc25e5eff));
+            c.md_syntax_code = Hsla::from(rgba(0x0f7b6cff));
+            c.md_syntax_link_text = Hsla::from(rgba(0x1a67c9ff));
+            c.md_syntax_link_url = Hsla::from(rgba(0x986801ff));
+            c.md_syntax_label = Hsla::from(rgba(0x8250dfff));
+        }
         theme
     }
 
@@ -557,6 +595,16 @@ impl Theme {
         theme.typography.h1_size = 31.0;
         theme.typography.h2_size = 23.0;
         theme.dimensions.block_gap = 7.0;
+        {
+            let c = &mut theme.colors;
+            c.md_syntax_heading = Hsla::from(rgba(0x79b8ffff));
+            c.md_syntax_marker = Hsla::from(rgba(0x8b9cb5ff));
+            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xe58a8aff));
+            c.md_syntax_code = Hsla::from(rgba(0xe8a878ff));
+            c.md_syntax_link_text = Hsla::from(rgba(0x58a6ffff));
+            c.md_syntax_link_url = Hsla::from(rgba(0xd7b17cff));
+            c.md_syntax_label = Hsla::from(rgba(0xc792c9ff));
+        }
         theme
     }
 
@@ -593,6 +641,16 @@ impl Theme {
         theme.dimensions.writing_max_width = 720.0;
         theme.dimensions.h1_border_width = 0.0;
         theme.dimensions.h1_margin_bottom = 10.0;
+        {
+            let c = &mut theme.colors;
+            c.md_syntax_heading = Hsla::from(rgba(0x8fb8d8ff));
+            c.md_syntax_marker = Hsla::from(rgba(0x9a8f85ff));
+            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xd98a7eff));
+            c.md_syntax_code = Hsla::from(rgba(0xd9a074ff));
+            c.md_syntax_link_text = Hsla::from(rgba(0x7fa8ccff));
+            c.md_syntax_link_url = Hsla::from(rgba(0xc99a6eff));
+            c.md_syntax_label = Hsla::from(rgba(0xb98bc0ff));
+        }
         theme
     }
 
