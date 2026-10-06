@@ -34,6 +34,7 @@ mod save_autosave_ime;
 mod scroll_window;
 mod selection_toolbar;
 mod source_selection;
+mod source_highlight;
 mod selection_mouse;
 mod table_runtime;
 mod tree_quick_open;
