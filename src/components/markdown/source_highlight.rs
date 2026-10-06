@@ -451,7 +451,25 @@ impl<'a> Scanner<'a> {
                 trimmed_start..trimmed_start + marker_len,
                 CodeHighlightClass::MarkdownMarker,
             );
-            self.scan_inline(trimmed_start + marker_len, &trimmed[marker_len..]);
+            let rest = &trimmed[marker_len..];
+            let rest_start = trimmed_start + marker_len;
+            // 任务列表的框也是记号（与顶层列表同一条口径）。
+            let after_bullet_space = rest.strip_prefix(' ').unwrap_or(rest);
+            let box_offset = rest.len() - after_bullet_space.len();
+            let after_box = task_box_len(after_bullet_space);
+            if let Some(box_len) = after_box {
+                self.push(
+                    rest_start + box_offset..rest_start + box_offset + box_len,
+                    CodeHighlightClass::MarkdownMarker,
+                );
+            }
+            match after_box {
+                Some(box_len) => self.scan_inline(
+                    rest_start + box_offset + box_len,
+                    &after_bullet_space[box_len..],
+                ),
+                None => self.scan_inline(rest_start, rest),
+            }
             return;
         }
         self.scan_inline(rest_start, rest);
@@ -981,6 +999,9 @@ mod tests {
             .collect()
     }
 
+    fn span_covering(text: &str, needle: &str) -> bool {
+        !classes_covering(text, needle).is_empty()
+    }
     fn class_at(text: &str, needle: &str) -> Option<CodeHighlightClass> {
         let start = text.find(needle).expect("needle in text");
         highlight(text)
@@ -1097,6 +1118,20 @@ mod tests {
             .find(|(range, _)| range.start == dash_pos)
             .map(|(_, class)| class);
         assert_eq!(dash_span, Some(CodeHighlightClass::MarkdownMarker));
+    }
+
+    #[test]
+    fn quote_inner_list_and_inline_constructs() {
+        // 引用剥掉 `> ` 之后，剩余部分还要按列表与行内构造着色。
+        let text = "> - [ ] 引用里的待办\n> 1. 有序 **加粗**";
+        assert_eq!(class_at(text, "[ ]"), Some(CodeHighlightClass::MarkdownMarker));
+        // 有序记号之后的内容不带记号色。
+        assert!(classes_covering(text, "有序").is_empty());
+        assert!(span_covering(text, "1."));
+        assert_eq!(
+            classes_covering(text, "加粗"),
+            vec![CodeHighlightClass::MarkdownStrong]
+        );
     }
 
     #[test]
