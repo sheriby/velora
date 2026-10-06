@@ -192,3 +192,37 @@ async fn formula_panel_binds_block_and_follows_caret(cx: &mut TestAppContext) {
         assert!(editor.formula_panel.is_none(), "同块再开一次该是收起");
     });
 }
+/// 面板绑定的块被删掉后，下一次点击自动收面板而不是 panic。
+#[gpui::test]
+async fn formula_panel_closes_when_target_block_is_gone(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, cx| {
+        editor.toggle_formula_panel_for_block(math.entity_id(), cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.formula_panel.is_some(), "面板该先打开");
+    });
+
+    // 模拟目标块从树里消失：把会话里的目标指到一个不在树上的实体 id。
+    editor.update(cx, |editor, _cx| {
+        if let Some(state) = editor.formula_panel.as_mut() {
+            state.target = gpui::EntityId::from(u64::MAX);
+        }
+    });
+    editor.update(cx, |editor, cx| {
+        editor.insert_latex_symbol(&LATEX_SYMBOLS[0], cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.formula_panel.is_none(),
+            "目标块不存在时点击该收面板"
+        );
+    });
+}
