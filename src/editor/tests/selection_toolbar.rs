@@ -3,7 +3,12 @@
 
 use super::common::*;
 use crate::components::Block;
-use gpui::{px, Entity, Modifiers, MouseButton, Point};
+use crate::editor::context_menu::{
+    DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu, document_menu_label,
+};
+use crate::i18n::{I18nManager, I18nStrings};
+use crate::theme::Theme;
+use gpui::{Entity, Font, FontStyle, FontWeight, Modifiers, MouseButton, Point, TextRun, px};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
@@ -141,12 +146,20 @@ async fn dragging_a_selection_pops_the_toolbar_after_the_button_is_released(
         editor.read_with(cx, |editor, _| editor.cross_block_selection.is_some()),
         "这段拖动应当成立为跨块选区"
     );
-    let _ = toolbar_bounds(cx).expect("抬手之后工具栏该浮出来");
+    let panel = toolbar_bounds(cx).expect("抬手之后工具栏该浮出来");
     for name in TOOLBAR_BUTTONS {
         let bounds = button_bounds(name, cx);
         assert!(
             f32::from(bounds.size.width) > 0.0 && f32::from(bounds.size.height) > 0.0,
             "{name} 没有尺寸"
+        );
+        // 面板的宽是按格子的数量与尺寸算出来的：算少了最后一颗会被挤出去或截掉，
+        // 这一条把「算的宽」与「摆出来的位置」钉在一起。
+        assert!(
+            f32::from(bounds.right()) <= f32::from(panel.right()) - 4.0 + f32::EPSILON,
+            "{name} 顶到面板外了：右边 {:.1} vs 面板右边 {:.1}",
+            f32::from(bounds.right()),
+            f32::from(panel.right()),
         );
     }
 }
@@ -546,4 +559,110 @@ fn toolbar_origin_prefers_above_and_falls_back_below() {
     assert!(f32::from(origin.x) + 200.0 <= 600.0 - 6.0 + f32::EPSILON);
     assert!(f32::from(origin.y) + 34.0 <= 400.0 - 6.0 + f32::EPSILON);
     assert!(f32::from(origin.y) >= 6.0);
+}
+
+/// 「段落」那一档的面板宽度按真实字体度量核一遍，中英文各核一次。
+///
+/// 宽度是估出来的（`estimated_menu_label_width`），估少了标签会被 `.truncate()` 切掉一角
+/// ——用户两次报修的都是这一处：「一级标题」只剩「一级标」。这里对同一批行数据算一份
+/// `DocumentMenuGeometry`，再用系统实际的文本度量量出最宽那一行，比两者：面板内框
+/// （面板宽 − 面板内边距与边框 − 行自己的左右内边距）要装得下量出来的字宽。
+/// 两份语言各核一遍，界面当前是哪国语言不影响这条判据。
+#[gpui::test]
+async fn the_paragraph_panel_fits_its_labels_measured_with_the_real_font(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    select_head_of_first_block(&editor, cx);
+    click_element("toolbar-heading", cx);
+    let panel = cx
+        .debug_bounds("editor-toolbar-heading-menu")
+        .expect("点「段落」那颗该展开那一档");
+
+    let commands = editor.read_with(cx, |editor, cx| {
+        editor
+            .document_submenu_rows(DocumentSubmenu::Paragraph, cx)
+            .iter()
+            .filter_map(|row| match row {
+                DocumentMenuRow::Item { command, .. } => Some(*command),
+                DocumentMenuRow::Separator | DocumentMenuRow::Submenu { .. } => None,
+            })
+            .collect::<Vec<_>>()
+    });
+    assert!(!commands.is_empty(), "「段落」那一档一行也没渲染出来");
+    let rows = commands
+        .iter()
+        .map(|command| DocumentMenuRow::Item {
+            command: *command,
+            name: "row",
+            enabled: true,
+        })
+        .collect::<Vec<_>>();
+
+    let dimensions = Theme::default_theme().dimensions;
+    let without_shortcut = |_command| None;
+    for (tag, strings) in [
+        ("中文", I18nStrings::zh_cn()),
+        ("英文", I18nStrings::en_us()),
+    ] {
+        let geometry =
+            DocumentMenuGeometry::measure(&rows, &strings, &dimensions, &without_shortcut);
+        let inner_box = f32::from(geometry.size.width)
+            - (dimensions.menu_panel_padding + dimensions.dialog_border_width) * 2.0
+            - dimensions.menu_item_padding_x * 2.0;
+        let labels = commands
+            .iter()
+            .map(|command| document_menu_label(*command, &strings).to_string())
+            .collect::<Vec<String>>();
+        let widest = cx.update(|window, _cx| {
+            let font = Font {
+                family: ".SystemUIFont".into(),
+                features: gpui::FontFeatures::default(),
+                fallbacks: None,
+                weight: FontWeight::NORMAL,
+                style: FontStyle::Normal,
+            };
+            labels
+                .iter()
+                .map(|label| {
+                    let run = TextRun {
+                        len: label.len(),
+                        font: font.clone(),
+                        color: gpui::black(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                        font_size: None,
+                    };
+                    window
+                        .text_system()
+                        .shape_text(
+                            label.clone().into(),
+                            px(dimensions.menu_text_size),
+                            &[run],
+                            None,
+                            None,
+                        )
+                        .expect("这一行该能量出来")
+                        .first()
+                        .map(|line| f32::from(line.width()))
+                        .expect("量出来至少有一行")
+                })
+                .fold(0.0_f32, f32::max)
+        });
+        assert!(
+            inner_box + 0.5 >= widest,
+            "{tag}：面板装不下最宽那一行：内框 {inner_box:?} vs 实测文字宽 {widest:?}（标签 {labels:?}）"
+        );
+    }
+    // 屏上那份面板与按当前语言算出来的这份要一致，否则说明渲染处另算了一套宽度。
+    let current = cx.update(|_window, cx| cx.global::<I18nManager>().strings().clone());
+    let current_geometry =
+        DocumentMenuGeometry::measure(&rows, &current, &dimensions, &without_shortcut);
+    assert_eq!(
+        f32::from(panel.size.width),
+        f32::from(current_geometry.size.width),
+        "屏上的面板宽与按当前语言算出来的对不上"
+    );
 }

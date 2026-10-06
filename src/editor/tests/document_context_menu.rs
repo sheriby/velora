@@ -561,10 +561,21 @@ async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) 
         "置灰只是变色，行序与行高不能变"
     );
 
-    // 二级面板里同样的口径：格式那九行（八种行内样式与链接）都跟着选区走。
+    // 二级面板里同样的口径：格式那九行（八种行内样式与链接）都跟着选区走；「清除格式」
+    // 还多看一眼选区里有没有样式可剥——这一段是裸字，剥不出东西，就该灰着。
     let formats = submenu_enabled_rows(&editor, DocumentSubmenu::Format, cx);
     assert_eq!(formats.len(), FORMAT_ROWS.len());
-    assert!(formats.iter().all(|(_, enabled)| *enabled));
+    assert!(
+        formats
+            .iter()
+            .filter(|(name, _)| *name != "clear-format")
+            .all(|(_, enabled)| *enabled),
+        "八种行内样式与链接在有选区时都该点得动：{formats:?}"
+    );
+    assert!(
+        !enabled_of(&formats, "clear-format"),
+        "选中的是没样式的裸字，「清除格式」点下去什么都不会变，该灰着：{formats:?}"
+    );
     // 「段落」那一档看的是「这一块换得动吗」：这一段本来就是正文，「正文」这一行点不动，
     // 标题与列表那几行仍然能换。
     let paragraphs = submenu_enabled_rows(&editor, DocumentSubmenu::Paragraph, cx);

@@ -14,7 +14,6 @@ use super::paragraph_ops::BlockKindTarget;
 use super::{Editor, ViewMode};
 use crate::components::HoverPreviewTooltip;
 use crate::components::{menu::menu_item, InlineFormat};
-use crate::editor::render::estimated_menu_label_width;
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 
@@ -27,10 +26,25 @@ const PANEL_PADDING: f32 = 4.0;
 const SELECTION_OFFSET: f32 = 8.0;
 /// 面板离窗口边缘的最小距离。
 const VIEWPORT_MARGIN: f32 = 6.0;
-/// 「标题」按钮里文字与箭头之间的间距。
-const HEADING_ARROW_GAP: f32 = 4.0;
-/// 箭头字形（下指的 chevron）。
-const HEADING_ARROW: &str = "\u{2304}";
+/// 「段落」那颗里的图标与箭头之间的间距。
+const HEADING_ARROW_GAP: f32 = 3.0;
+/// 图标格子里画的尺寸。
+const ICON_SIZE: f32 = 16.0;
+/// 「段落」那颗里那枚下箭头的尺寸（比图标小一档，它只是提示还有下一级）。
+const CHEVRON_SIZE: f32 = 12.0;
+/// 字母格子（B、I、U、S）的字号：比菜单正文大一档，才与旁边 16 的图标一样抢眼。
+const LETTER_SIZE: f32 = 13.5;
+/// `</>` 那颗的字号：三个字符要塞进 26 的方格，收小一档才不顶边。
+const CODE_SIZE: f32 = 11.0;
+/// 分节线：把一条按「段落 / 行内格式 / 链接与清除」分三截。
+const SEPARATOR_WIDTH: f32 = 1.0;
+const SEPARATOR_HEIGHT: f32 = 16.0;
+/// 一条上的子元素个数：「段落」一颗、六颗行内格式、链接、清除格式，再加两条分节线。
+const SLOT_COUNT: f32 = 11.0;
+
+/// 「段落」那颗的宽度：图标 + 间距 + 箭头 + 左右各一份留白。
+const HEADING_BUTTON_WIDTH: f32 =
+    ICON_SIZE + HEADING_ARROW_GAP + CHEVRON_SIZE + PANEL_PADDING * 2.0;
 
 /// 工具栏上的一次动作。
 #[derive(Clone, Copy, PartialEq)]
@@ -134,26 +148,23 @@ impl Editor {
         self.selection_screen_bounds(cx)
     }
 
-    /// 「标题」那颗按钮的宽度：中文「段落」两字加箭头，英文 `Paragraph` 加箭头，
-    /// 按文字估，最小仍是一颗方形按钮。
-    fn heading_button_width(strings: &crate::i18n::I18nStrings, theme: &Theme) -> f32 {
-        let text_size = theme.dimensions.menu_text_size;
-        let content = estimated_menu_label_width(&strings.context_menu_paragraph, text_size)
-            + HEADING_ARROW_GAP
-            + estimated_menu_label_width(HEADING_ARROW, text_size);
-        content.ceil().max(BUTTON_SIZE) + PANEL_PADDING
-    }
-
-    fn toolbar_size(strings: &crate::i18n::I18nStrings, theme: &Theme) -> Size<Pixels> {
-        // 方形按钮：六个行内样式、一颗链接、一颗清除格式。
-        let square_buttons = FORMAT_BUTTONS.len() as f32 + 2.0;
+    fn toolbar_size(theme: &Theme) -> Size<Pixels> {
+        // 九颗格子（六个行内样式、链接、清除格式）+「段落」那颗按图标算的宽 + 两条分节线，
+        // 子元素之间各一个间距；`SLOT_COUNT` 与 `render_selection_toolbar` 里挂的顺序一致。
+        // 边框那一份也要算进来：gpui 的描边画在边界之内，不算就会让最后一颗顶到边线上，
+        // 与菜单面板截字是同一处漏算。
+        let squares = (FORMAT_BUTTONS.len() as f32 + 2.0) * BUTTON_SIZE;
+        let separators = SEPARATOR_WIDTH * 2.0;
+        let border = theme.dimensions.dialog_border_width * 2.0;
         let width = PANEL_PADDING * 2.0
-            + Self::heading_button_width(strings, theme)
-            + BUTTON_GAP
-            + square_buttons * (BUTTON_SIZE + BUTTON_GAP);
+            + border
+            + HEADING_BUTTON_WIDTH
+            + squares
+            + separators
+            + BUTTON_GAP * (SLOT_COUNT - 1.0);
         Size {
             width: px(width.ceil()),
-            height: px(PANEL_PADDING * 2.0 + BUTTON_SIZE),
+            height: px(PANEL_PADDING * 2.0 + border + BUTTON_SIZE),
         }
     }
 
@@ -235,7 +246,7 @@ impl Editor {
             self.selection_toolbar = None;
             return None;
         }
-        let size = Self::toolbar_size(&strings, theme);
+        let size = Self::toolbar_size(theme);
         let origin = Self::toolbar_origin(selection, size, viewport);
 
         let heading_menu_open = self
@@ -261,18 +272,15 @@ impl Editor {
         state.panel_bounds = Some(panel);
 
         let mut toolbar = Self::toolbar_panel(theme, origin, size);
-        toolbar = toolbar.child(self.heading_button(
-            &strings,
-            theme,
-            Self::heading_button_width(&strings, theme),
-            heading_menu_open,
-            cx,
-        ));
+        toolbar = toolbar.child(self.heading_button(&strings, theme, heading_menu_open, cx));
+        toolbar = toolbar.child(Self::toolbar_separator(theme));
         for (format, id) in FORMAT_BUTTONS {
             toolbar = toolbar.child(self.format_button(format, id, &strings, theme, cx));
         }
+        toolbar = toolbar.child(Self::toolbar_separator(theme));
         toolbar = toolbar.child(self.link_button(&strings, theme, cx));
-        toolbar = toolbar.child(self.clear_format_button(&strings, theme, cx));
+        let clear_enabled = self.clear_format_is_available(cx);
+        toolbar = toolbar.child(self.clear_format_button(&strings, theme, clear_enabled, cx));
         if let Some((rows, geometry, offset, _)) = heading_menu.as_ref() {
             toolbar = toolbar.child(self.heading_menu_panel(
                 theme,
@@ -309,33 +317,33 @@ impl Editor {
             .debug_selector(|| "editor-selection-toolbar".to_string())
     }
 
+    /// 「段落」那颗：图标加一枚下箭头，点开的是与右键菜单同一份那十二行。
+    /// 格子里不放字——中英文都塞得下，但整条就成了一句横排的话，看着不像一排按钮。
     fn heading_button(
         &self,
         strings: &crate::i18n::I18nStrings,
         theme: &Theme,
-        width: f32,
         open: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
-        let label = strings.context_menu_paragraph.clone();
-        let tooltip = label.clone();
+        let tooltip = strings.context_menu_paragraph.clone();
         div()
             .id("toolbar-heading")
-            .w(px(width))
+            .w(px(HEADING_BUTTON_WIDTH))
             .h(px(BUTTON_SIZE))
             .flex()
             .items_center()
             .justify_center()
             .gap(px(HEADING_ARROW_GAP))
+            .flex_shrink_0()
             .rounded(px(d.menu_item_radius))
             .bg(if open {
                 c.dialog_secondary_button_hover
             } else {
                 c.dialog_surface
             })
-            .text_size(px(d.menu_text_size))
             .text_color(c.dialog_secondary_button_text)
             .cursor_pointer()
             .hover(|this| this.bg(c.dialog_secondary_button_hover))
@@ -347,8 +355,18 @@ impl Editor {
                 })
                 .into()
             })
-            .child(label)
-            .child(HEADING_ARROW)
+            .child(
+                svg()
+                    .path("icon/editor/paragraph.svg")
+                    .size(px(ICON_SIZE))
+                    .text_color(c.dialog_secondary_button_text),
+            )
+            .child(
+                svg()
+                    .path("icon/workspace/chevron-down.svg")
+                    .size(px(CHEVRON_SIZE))
+                    .text_color(c.dialog_muted),
+            )
             .on_click(cx.listener(|editor, _event, _window, cx| {
                 let Some(state) = editor.selection_toolbar.as_mut() else {
                     return;
@@ -356,6 +374,18 @@ impl Editor {
                 state.heading_menu_open = !state.heading_menu_open;
                 cx.notify();
             }))
+            .into_any_element()
+    }
+
+    /// 一条上的分节线：把「段落 / 行内格式 / 链接与清除」分三截。比再套一层面板便宜，
+    /// 也不改这一条的高度。
+    fn toolbar_separator(theme: &Theme) -> AnyElement {
+        div()
+            .w(px(SEPARATOR_WIDTH))
+            .h(px(SEPARATOR_HEIGHT))
+            .flex_shrink_0()
+            .rounded(px(SEPARATOR_WIDTH * 0.5))
+            .bg(theme.colors.dialog_border)
             .into_any_element()
     }
 
@@ -384,9 +414,10 @@ impl Editor {
             .flex()
             .items_center()
             .justify_center()
+            .flex_shrink_0()
             .rounded(px(d.menu_item_radius))
             .bg(c.dialog_surface)
-            .text_size(px(d.menu_text_size))
+            .text_size(px(LETTER_SIZE))
             .text_color(text_color)
             .cursor_pointer()
             .hover(|this| this.bg(c.dialog_secondary_button_hover))
@@ -438,6 +469,7 @@ impl Editor {
                 }))
                 .into_any_element(),
             InlineFormat::Code => button
+                .text_size(px(CODE_SIZE))
                 .child("</>")
                 .on_click(cx.listener(move |editor, _event, _window, cx| {
                     editor.run_selection_toolbar_command(command, cx);
@@ -445,11 +477,20 @@ impl Editor {
                 .into_any_element(),
             InlineFormat::Highlight => button
                 .child(
+                    // 一支荧光笔从字母下半截拖过去：这一格的颜色就是文档里
+                    // `==x==` 刷出来的那一份，看着像什么就干什么。
                     div()
-                        .px(px(3.0))
-                        .rounded(px(3.0))
-                        .bg(c.comment_bg)
-                        .text_color(text_color)
+                        .relative()
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(-1.5))
+                                .right(px(-1.5))
+                                .top(px(8.5))
+                                .h(px(7.0))
+                                .rounded(px(2.0))
+                                .bg(c.comment_bg),
+                        )
                         .child("A"),
                 )
                 .on_click(cx.listener(move |editor, _event, _window, cx| {
@@ -460,8 +501,8 @@ impl Editor {
         }
     }
 
-    /// 链接那颗方形按钮。本仓没有图标字体，按钮上的字就是它写下的写法（`[]()`），
-    /// 与 `</>` 那颗同一个口径；字号收小一档才塞得进 26 的方格。
+    /// 链接那颗方形按钮：一节链条。它做的事与右键菜单「格式 → 链接」同一件；
+    /// 这一条按 Typora 的口径只放符号与图标，动作的名字与快捷键在悬停说明里。
     fn link_button(
         &self,
         strings: &crate::i18n::I18nStrings,
@@ -485,11 +526,11 @@ impl Editor {
             .justify_center()
             .rounded(px(d.menu_item_radius))
             .bg(c.dialog_surface)
-            .text_size(px(10.0))
             .text_color(c.dialog_secondary_button_text)
             .cursor_pointer()
             .hover(|this| this.bg(c.dialog_secondary_button_hover))
             .active(|this| this.opacity(0.92))
+            .flex_shrink_0()
             .debug_selector(|| "toolbar-link".to_string())
             .tooltip(move |_, cx| {
                 cx.new(|_| HoverPreviewTooltip {
@@ -497,19 +538,27 @@ impl Editor {
                 })
                 .into()
             })
-            .child("[]()")
+            .child(
+                svg()
+                    .path("icon/editor/link.svg")
+                    .size(px(ICON_SIZE))
+                    .text_color(c.dialog_secondary_button_text),
+            )
             .on_click(cx.listener(|editor, _event, _window, cx| {
                 editor.run_selection_toolbar_command(SelectionToolbarCommand::Link, cx);
             }))
             .into_any_element()
     }
 
-    /// 清除格式那颗方形按钮。本仓没有图标字体，按钮上的字就是它做的事：字母 `A`
-    /// 带样式、后面那个 `×` 把它去掉，与 `</>`、`[]()` 两颗同一个口径。
+    /// 清除格式那颗方形按钮：一个 `A` 右上角缀一枚小 `×`，去掉的就是这个 A 身上的样式。
+    /// 它做的事与右键菜单「格式 → 清除格式」、⌘\ 同一条；悬停说明写全名与快捷键。
+    /// `enabled` 是「这段选区里有没有样式可剥」（`clear_format_is_available`）：没有就灰着，
+    /// 与右键菜单那一行同一个判定，两处不会一处亮一处灰。
     fn clear_format_button(
         &self,
         strings: &crate::i18n::I18nStrings,
         theme: &Theme,
+        enabled: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let c = &theme.colors;
@@ -520,7 +569,7 @@ impl Editor {
             Some(shortcut) => format!("{label}  {shortcut}"),
             None => label,
         };
-        div()
+        let button = div()
             .id("toolbar-clear-format")
             .w(px(BUTTON_SIZE))
             .h(px(BUTTON_SIZE))
@@ -529,11 +578,13 @@ impl Editor {
             .justify_center()
             .rounded(px(d.menu_item_radius))
             .bg(c.dialog_surface)
-            .text_size(px(10.0))
-            .text_color(c.dialog_secondary_button_text)
-            .cursor_pointer()
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .active(|this| this.opacity(0.92))
+            .text_size(px(LETTER_SIZE))
+            .text_color(if enabled {
+                c.dialog_secondary_button_text
+            } else {
+                c.dialog_muted
+            })
+            .flex_shrink_0()
             .debug_selector(|| "toolbar-clear-format".to_string())
             .tooltip(move |_, cx| {
                 cx.new(|_| HoverPreviewTooltip {
@@ -541,11 +592,36 @@ impl Editor {
                 })
                 .into()
             })
-            .child("A\u{d7}")
-            .on_click(cx.listener(|editor, _event, _window, cx| {
-                editor.run_selection_toolbar_command(SelectionToolbarCommand::ClearFormat, cx);
-            }))
-            .into_any_element()
+            .child(
+                // 与 B、I、U、S 走同一份字体渲染，只在右上角缀一枚收小、调淡的 `×`：
+                // 描出来的图标与打出来的字母摆在一排，字重与高度怎么都对不齐。
+                div().relative().child("A").child(
+                    div()
+                        .absolute()
+                        .top(px(-1.0))
+                        .right(px(-6.5))
+                        .text_size(px(9.5))
+                        .text_color(c.dialog_muted)
+                        .child("\u{d7}"),
+                ),
+            );
+        let button = if enabled {
+            button
+                .cursor_pointer()
+                .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                .active(|this| this.opacity(0.92))
+        } else {
+            button
+        };
+        if enabled {
+            button
+                .on_click(cx.listener(|editor, _event, _window, cx| {
+                    editor.run_selection_toolbar_command(SelectionToolbarCommand::ClearFormat, cx);
+                }))
+                .into_any_element()
+        } else {
+            button.into_any_element()
+        }
     }
 
     /// 标题档位列表：与右键菜单段落那一档同一份行数据、同一条派发路径。

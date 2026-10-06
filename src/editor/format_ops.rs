@@ -38,6 +38,43 @@ impl Editor {
         self.apply_inline_selection_edit(InlineSelectionEdit::ClearStyles, cx)
     }
 
+    /// 「清除格式」现在点得动吗：要有选区、写得动缓冲区，并且选区里确实挂着成对的行内样式。
+    /// 右键菜单那一行与选中工具栏那颗格子共用这一条判定；键盘不查它——按下去没有可剥的就
+    /// 什么都不做，与「菜单里灰掉的行按同一个键没反应」是同一条口径的两面。
+    pub(crate) fn clear_format_is_available(&self, cx: &App) -> bool {
+        if !self.has_text_selection(cx) || !self.writes_through_the_buffer() {
+            return false;
+        }
+        let Some(normalized) = self.normalized_cross_block_selection(cx) else {
+            let Some(target) = self.current_edit_target_from_state(cx) else {
+                return false;
+            };
+            return target.read(cx).has_inline_styles_in_selection();
+        };
+        let block_count = normalized.end_index - normalized.start_index + 1;
+        (0..block_count).any(|position| {
+            let Some(entity) = self
+                .document
+                .visible_blocks()
+                .get(normalized.start_index + position)
+                .map(|block| block.entity.clone())
+            else {
+                return false;
+            };
+            let start = if position == 0 {
+                normalized.start.offset
+            } else {
+                0
+            };
+            let end = if position + 1 == block_count {
+                normalized.end.offset
+            } else {
+                entity.read(cx).visible_len()
+            };
+            start < end && entity.read(cx).has_inline_styles_in_range(start..end)
+        })
+    }
+
     /// 选区上的一次行内改动，两条入口共用这一段切块与记账。
     fn apply_inline_selection_edit(
         &mut self,

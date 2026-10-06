@@ -298,13 +298,15 @@ impl Editor {
                     )
                 })
                 // 分隔线之后两行：链接补 `[文字]()` 外壳、清除格式剥掉已有的样式记号。
+                // 清除格式这一行的置灰多看一眼「有没有样式可剥」：只选中一串没样式的字时
+                // 点它确实什么都不发生，灰着比亮着诚实（判定与动作同源，见 `clear_format_is_available`）。
                 .chain([DocumentMenuRow::Separator])
                 .chain(
                     [
                         (DocumentMenuCommand::Link, self.link_insert_is_available(cx)),
                         (
                             DocumentMenuCommand::ClearFormat,
-                            selectable && self.writes_through_the_buffer(),
+                            self.clear_format_is_available(cx),
                         ),
                     ]
                     .into_iter()
@@ -710,6 +712,10 @@ fn readable_key(part: &str) -> String {
 const MENU_VIEWPORT_MARGIN: f32 = 6.0;
 /// 二级菜单父行右侧那枚箭头的占位。
 const SUBMENU_ARROW: &str = "\u{203a}";
+/// 一行宽度的余量：`estimated_menu_label_width` 是按字符类别估的，实测英文最宽那一行
+/// （`Numbered List`，12 号字）估出来只比真实宽度多 0.4px——换个字体回落或缩放就截字
+/// （用户报修：「一级标题」只剩「一级标」）。留 3px 让估算与度量之间有个缓冲。
+const MENU_ROW_WIDTH_ALLOWANCE: f32 = 3.0;
 
 /// 一列行的几何：面板尺寸与每一行的顶部偏移。渲染摆放与落点计算共用同一份，
 /// 免得两处对行高的理解不一致。
@@ -749,9 +755,14 @@ impl DocumentMenuGeometry {
         }
         // 末尾再补一份内边距：面板高度 = 最后一行底部 + 内边距。
         let height = top + dimensions.menu_panel_padding;
+        // 宽度同理：`row_width` 里只含行自己的左右内边距，面板还要各加一份
+        // `menu_panel_padding` 与一份边框。少算这些，面板的内框就比最宽那一行窄，
+        // 中文标签会被截掉半个字（`menu_item` 那一份是 `.truncate()`，截了不报错）。
+        let width =
+            widest + dimensions.menu_panel_padding * 2.0 + dimensions.dialog_border_width * 2.0;
         Self {
             size: Size {
-                width: px(widest.ceil()),
+                width: px(width.ceil()),
                 height: px(height.ceil()),
             },
             row_tops,
@@ -786,7 +797,7 @@ impl DocumentMenuGeometry {
             width += MENU_ROW_GAP
                 + crate::editor::render::estimated_menu_label_width(SUBMENU_ARROW, text_size);
         }
-        width + dimensions.menu_item_padding_x * 2.0
+        width + dimensions.menu_item_padding_x * 2.0 + MENU_ROW_WIDTH_ALLOWANCE
     }
 
     /// 第 `index` 行的顶部相对面板顶的偏移；越界与 `None` 都按面板顶部算。
@@ -968,5 +979,33 @@ mod tests {
             f32::from(single.size.width) > label_only + dimensions.menu_item_padding_x * 2.0,
             "宽度漏了快捷键那一列"
         );
+    }
+
+    /// 面板的内框要装得下最宽那一行：行自己带左右 `menu_item_padding_x`，面板还要各加一份
+    /// `menu_panel_padding`。少算后一份，中文标签就被 `.truncate()` 截掉半个字。
+    #[test]
+    fn panel_inner_box_fits_the_widest_row() {
+        let dimensions = Theme::default_theme().dimensions;
+        let rows = rows(12);
+        for (tag, strings) in [
+            ("中文", I18nStrings::zh_cn()),
+            ("英文", I18nStrings::en_us()),
+        ] {
+            let geometry =
+                DocumentMenuGeometry::measure(&rows, &strings, &dimensions, &stub_shortcut);
+            let widest = rows
+                .iter()
+                .map(|row| {
+                    DocumentMenuGeometry::row_width(row, &strings, &dimensions, &stub_shortcut)
+                })
+                .fold(0.0_f32, f32::max);
+            let inner_box = f32::from(geometry.size.width)
+                - dimensions.menu_panel_padding * 2.0
+                - dimensions.dialog_border_width * 2.0;
+            assert!(
+                inner_box + 0.5 >= widest,
+                "{tag}：面板内框比最宽那一行窄，标签会截字（内框 {inner_box:?} vs 行宽 {widest:?}）"
+            );
+        }
     }
 }

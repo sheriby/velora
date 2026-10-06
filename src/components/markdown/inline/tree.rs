@@ -893,6 +893,27 @@ impl InlineTextTree {
         true
     }
 
+    /// 这一段覆盖到的片段里有没有挂着成对的行内样式：[`Self::clear_styles_in_range`] 的
+    /// 只读版，口径与它一致——链接、脚注、公式与 HTML 行内样式都不算这一档要清的东西，
+    /// 所以只选中这几个字面时这里返回 false（点了也确实什么都不会变）。
+    pub fn has_styles_in_range(&self, range: Range<usize>) -> bool {
+        if range.is_empty() {
+            return false;
+        }
+        let start = range.start.min(self.visible_len());
+        let end = range.end.min(self.visible_len());
+        if start >= end {
+            return false;
+        }
+        let mut offset = 0usize;
+        self.fragments.iter().any(|fragment| {
+            let length = fragment.text.len();
+            let overlaps = offset < end && offset + length > start;
+            offset += length;
+            overlaps && fragment.style != InlineStyle::default()
+        })
+    }
+
     pub fn unwrap_styles_on_fragments(&mut self, targets: &[(usize, StyleFlag)]) {
         if targets.is_empty() {
             return;

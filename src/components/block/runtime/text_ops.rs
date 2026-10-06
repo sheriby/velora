@@ -262,6 +262,25 @@ impl Block {
         true
     }
 
+    /// 这一块在当前选区上有没有可剥的行内样式。菜单那一行与工具栏那颗格子的置灰判定读这一条，
+    /// 坐标换算与 [`Self::clear_inline_format`] 走同一个（屏幕坐标 → `current_to_clean_range` →
+    /// 树内坐标），所以不会出现「灰着却点得动」或「亮着却点不动」。
+    pub(crate) fn has_inline_styles_in_selection(&self) -> bool {
+        if self.selected_range.is_empty() || self.uses_raw_text_editing() {
+            return false;
+        }
+        self.has_inline_styles_in_range(self.selected_range.clone())
+    }
+
+    /// 指定的一段**可见文本**上有没有可剥的行内样式；跨块选区由 `Editor` 逐块切段后调这里。
+    pub(crate) fn has_inline_styles_in_range(&self, selection: Range<usize>) -> bool {
+        if self.uses_raw_text_editing() {
+            return false;
+        }
+        let selection = self.current_to_clean_range(selection);
+        self.record.title.has_styles_in_range(selection)
+    }
+
     fn current_line_layout_and_offset(&self) -> Option<(&WrappedLine, usize)> {
         let lines = self.last_layout.as_ref()?;
         let text = self.display_text();

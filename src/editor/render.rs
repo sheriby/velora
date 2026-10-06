@@ -321,7 +321,9 @@ pub(crate) fn estimated_menu_label_width(label: &str, text_size: f32) -> f32 {
             } else if ch.is_ascii() {
                 text_size * 0.62
             } else if is_wide_menu_char(ch) {
-                text_size
+                // 全角字的实际前进宽度比字号略大（回落字体与逐字取整都会多出来一点），
+                // 按整 1em 估会短半个字，中文菜单最后一行就被 `.truncate()` 切掉一角。
+                text_size * 1.06
             } else {
                 text_size * 0.85
             }
