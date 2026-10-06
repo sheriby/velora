@@ -1337,6 +1337,25 @@ mod tests {
     }
 
     #[test]
+    fn list_marker_takes_at_most_nine_digits() {
+        // CommonMark：有序记号最多 9 位数字，超过按普通文本。
+        assert_eq!(
+            class_at("123456789. 项", "123456789."),
+            Some(CodeHighlightClass::MarkdownMarker)
+        );
+        assert!(classes_covering("1234567890. 项", "1234567890.").is_empty());
+    }
+
+    #[test]
+    fn fence_info_string_cannot_contain_the_fence_char() {
+        // 信息串里再出现定界字符就不是围栏（CommonMark），整行当正文。
+        let text = "```a`b\n正文";
+        let (spans, state) = highlight_with(text, false, None);
+        assert!(state.is_none(), "信息串含反引号不该开栏");
+        assert!(spans.is_empty(), "不该有围栏记号: {spans:?}");
+    }
+
+    #[test]
     fn spans_are_sorted() {
         let text = "## 标题\n```js\nvar a\n```\n---\n> 引\n- 项";
         let spans = highlight(text);
