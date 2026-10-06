@@ -231,3 +231,33 @@ async fn formula_panel_closes_when_target_block_is_gone(cx: &mut TestAppContext)
         );
     });
 }
+/// 「ƒx 符号」按钮发出的 BlockEvent::RequestFormulaPanel 走编辑器事件臂
+/// 打开/关闭面板——按钮与面板之间的链路不能断。
+#[gpui::test]
+async fn fx_button_event_toggles_formula_panel(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    let event = crate::components::BlockEvent::RequestFormulaPanel;
+    editor.update(cx, |editor, cx| {
+        editor.on_block_event(math.clone(), &event, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.formula_panel.is_some(),
+            "事件应经编辑器事件臂打开面板"
+        );
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.on_block_event(math.clone(), &event, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.formula_panel.is_none(), "再发一次该收起");
+    });
+}
