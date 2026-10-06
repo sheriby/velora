@@ -10,15 +10,20 @@
 
 use std::ops::Range;
 
-use super::code_highlight::{CodeHighlightClass, CodeHighlightSpan};
+use super::code_highlight::{
+    CodeHighlightClass, CodeHighlightSpan, CodeLanguageKey, highlight_code_block,
+    resolve_code_language_key,
+};
 
 /// 跨块接缝的状态：本块开头是否正处于某个未闭合的围栏里。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum MarkdownSourceState {
-    /// ``` / ~~~ 围栏内；`fence_len` 是开栏定界符的字节数。
+    /// ``` / ~~~ 围栏内。`language` 是开栏信息串解析出的语言，续块内容要
+    /// 用同一个语言着色；`fence_len` 是开栏定界符的字节数。
     Fence {
         fence_char: char,
         fence_len: usize,
+        language: Option<CodeLanguageKey>,
     },
 }
 
@@ -43,6 +48,7 @@ pub(crate) fn highlight_markdown_source(
         spans: Vec::new(),
         state: entry,
         pending_paragraph: None,
+        nested_regions: Vec::new(),
     };
     let mut is_first_line = at_document_start;
     for (line_start, line) in MemLines::new(text) {
@@ -51,6 +57,7 @@ pub(crate) fn highlight_markdown_source(
     }
     let _ = at_document_start;
     scanner.flush_pending_paragraph();
+    scanner.highlight_nested_regions();
     scanner.spans.sort_by_key(|span| span.range.start);
     MarkdownSourceHighlight {
         spans: scanner.spans,
@@ -99,6 +106,8 @@ struct Scanner<'a> {
     state: Option<MarkdownSourceState>,
     /// 可能是 setext 标题正文的上一行：看到下划线行才定性，押着不发。
     pending_paragraph: Option<Range<usize>>,
+    /// 带语言的围栏正文区间：主循环收着，扫完统一递归着色。
+    nested_regions: Vec<(CodeLanguageKey, Range<usize>)>,
 }
 
 impl<'a> Scanner<'a> {
@@ -179,6 +188,7 @@ impl<'a> Scanner<'a> {
             self.state = Some(MarkdownSourceState::Fence {
                 fence_char: opener.fence_char,
                 fence_len: opener.run_len,
+                language: resolve_code_language_key(Some(info.trim())),
             });
             return;
         }
@@ -242,15 +252,18 @@ impl<'a> Scanner<'a> {
         self.pending_paragraph = Some(line_start..line_end);
     }
 
-    /// 处于围栏里的一行：闭合记号之外的内容暂不着色（行内与嵌套语言着色
-    /// 随后的功能点接入）。
+    /// 处于围栏里的一行：闭合记号之外的内容收进递归区（带语言时整段交给
+    /// 既有代码高亮管线）；区间要连续拼接才能整段解析，逐行散着发会丢多行
+    /// 结构。
     fn scan_inside_state(&mut self, line_start: usize, line: &str, state: &MarkdownSourceState) {
         let MarkdownSourceState::Fence {
             fence_char,
             fence_len,
+            language,
         } = state;
         let content = Self::strip_indent(line);
         let content_start = line_start + (line.len() - content.len());
+        let line_end = line_start + line.len();
         let run_chars = content.chars().take_while(|c| *c == *fence_char).count();
         if run_chars * fence_char.len_utf8() >= *fence_len
             && content[run_chars * fence_char.len_utf8()..].trim().is_empty()
@@ -260,6 +273,35 @@ impl<'a> Scanner<'a> {
                 CodeHighlightClass::MarkdownMarker,
             );
             self.state = None;
+            return;
+        }
+        if let Some(language) = language {
+            self.append_nested_region(*language, line_start..line_end);
+        }
+    }
+
+    fn append_nested_region(&mut self, language: CodeLanguageKey, range: Range<usize>) {
+        match self.nested_regions.last_mut() {
+            Some((existing, region)) if *existing == language && region.end == range.start => {
+                region.end = range.end;
+            }
+            _ => self.nested_regions.push((language, range)),
+        }
+    }
+
+    /// 把收好的围栏正文递归交给代码高亮，区间平移回本块坐标。
+    fn highlight_nested_regions(&mut self) {
+        let regions = std::mem::take(&mut self.nested_regions);
+        for (language, region) in regions {
+            let content = &self.text[region.clone()];
+            if let Some(result) = highlight_code_block(Some(language_key_name(language)), content) {
+                for span in result.spans {
+                    self.push(
+                        region.start + span.range.start..region.start + span.range.end,
+                        span.class,
+                    );
+                }
+            }
         }
     }
 
@@ -633,6 +675,33 @@ fn autolink_end(line: &str, open: usize) -> Option<usize> {
     (is_uri || is_email).then_some(close + 1)
 }
 
+fn language_key_name(key: CodeLanguageKey) -> &'static str {
+    match key {
+        CodeLanguageKey::Rust => "rust",
+        CodeLanguageKey::JavaScript => "javascript",
+        CodeLanguageKey::JavaScriptJsx => "jsx",
+        CodeLanguageKey::TypeScript => "typescript",
+        CodeLanguageKey::TypeScriptTsx => "tsx",
+        CodeLanguageKey::Json => "json",
+        CodeLanguageKey::Markdown => "markdown",
+        CodeLanguageKey::Bash => "bash",
+        CodeLanguageKey::C => "c",
+        CodeLanguageKey::Cpp => "cpp",
+        CodeLanguageKey::CSharp => "csharp",
+        CodeLanguageKey::Css => "css",
+        CodeLanguageKey::Go => "go",
+        CodeLanguageKey::Html => "html",
+        CodeLanguageKey::Java => "java",
+        CodeLanguageKey::Php => "php",
+        CodeLanguageKey::Python => "python",
+        CodeLanguageKey::Ruby => "ruby",
+        CodeLanguageKey::Yaml => "yaml",
+        CodeLanguageKey::Toml => "toml",
+        CodeLanguageKey::Mermaid => "mermaid",
+        CodeLanguageKey::PlainText => "text",
+    }
+}
+
 /// 整行（去尾空白）只由同一个字符构成且非空。
 fn line_of_single_char(trimmed: &str, ch: char) -> bool {
     !trimmed.is_empty() && trimmed.chars().all(|c| c == ch)
@@ -834,18 +903,54 @@ mod tests {
     }
 
     #[test]
-    fn fence_opens_and_closes_with_marker_colour() {
-        let text = "```rust\nlet a = 1;\n```\n正文";
+    fn fenced_code_with_language_highlights_content() {
+        let text = "```rust\nfn main() {}\n```\n";
         let (spans, state) = highlight_with(text, false, None);
         assert!(state.is_none());
+        assert!(
+            spans
+                .iter()
+                .any(|(range, class)| *class == CodeHighlightClass::Keyword
+                    && &text[range.clone()] == "fn"),
+            "rust 围栏内容应有 tree-sitter 关键字着色: {spans:?}"
+        );
         assert_eq!(
             class_at(text, "```rust"),
             Some(CodeHighlightClass::MarkdownMarker)
         );
-        assert_eq!(class_at(text, "```",), Some(CodeHighlightClass::MarkdownMarker));
-        // 围栏内容暂不着色（嵌套语言着色随后的功能点接入）。
-        assert!(classes_covering(text, "let a = 1;").is_empty());
-        let _ = spans;
+    }
+
+    #[test]
+    fn fence_crossing_chunk_seam_threads_state() {
+        let first = "正文\n```python\nx = 1\n";
+        let (first_spans, state) = highlight_with(first, false, None);
+        assert_eq!(
+            state,
+            Some(MarkdownSourceState::Fence {
+                fence_char: '`',
+                fence_len: 3,
+                language: Some(CodeLanguageKey::Python),
+            })
+        );
+        assert!(
+            first_spans
+                .iter()
+                .any(|(range, class)| *class == CodeHighlightClass::Variable
+                    && &first[range.clone()] == "x"),
+            "接缝前的围栏内容应已按 python 着色: {first_spans:?}"
+        );
+
+        let second = "y = 2\n```\n正文二";
+        let (second_spans, second_state) = highlight_with(second, false, state);
+        assert_eq!(second_state, None);
+        assert!(
+            second_spans
+                .iter()
+                .any(|(range, class)| *class == CodeHighlightClass::Variable
+                    && &second[range.clone()] == "y"),
+            "接缝之后的内容要接着用同一个语言着色: {second_spans:?}"
+        );
+        assert!(classes_covering(second, "正文二").is_empty());
     }
 
     #[test]
@@ -857,6 +962,7 @@ mod tests {
             Some(MarkdownSourceState::Fence {
                 fence_char: '~',
                 fence_len: 3,
+                language: None,
             })
         );
         assert_eq!(spans.len(), 1);
