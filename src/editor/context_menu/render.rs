@@ -659,7 +659,8 @@ impl Editor {
                     div()
                         .flex_shrink_0()
                         .w(px(QUICK_ACTION_DIVIDER_WIDTH))
-                        .h(px(16.0))
+                        // 竖线与图标一样高，不跟着格子长到 26。
+                        .h(px(crate::components::menu::MENU_ICON_SIZE))
                         .rounded(px(0.5))
                         .bg(c.dialog_border)
                         .into_any_element(),

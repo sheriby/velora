@@ -269,11 +269,22 @@ async fn right_click_inside_a_block_opens_the_document_menu(cx: &mut TestAppCont
         let bounds = row_bounds(name, cx);
         assert!(f32::from(bounds.size.height) > 0.0, "{name} 这一行没有高度");
     }
+    let panel = cx
+        .debug_bounds("editor-context-menu-panel")
+        .expect("主面板该有边界");
     for name in QUICK_ACTION_ROWS {
         let bounds = quick_action_bounds(name, cx);
         assert!(
             f32::from(bounds.size.width) > 0.0 && f32::from(bounds.size.height) > 0.0,
             "{name} 那一颗图标没有尺寸"
+        );
+        // 图标条整条也要在面板之内：面板的宽是按最宽那一行算的，算漏了就会顶到边线上
+        // （FP12 那处「最后一格顶到面板外」的同族）。
+        assert!(
+            f32::from(bounds.right()) <= f32::from(panel.right()) - 4.0 + f32::EPSILON,
+            "{name} 那一颗顶到面板外了：右边 {:?} vs 面板右边 {:?}",
+            f32::from(bounds.right()),
+            f32::from(panel.right())
         );
     }
     // 图标条在最上面，长行按复制为 → 格式 / 段落 / 插入 → 视图的顺序往下排。
