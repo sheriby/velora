@@ -137,8 +137,40 @@ impl Editor {
             .map(|bounds| point(bounds.right() + px(10.0), bounds.top()))
             .unwrap_or_else(|| point(viewport.width * 0.5, px(96.0)));
 
-        // 实时预览随后一笔接入；此处先占位。
-        let preview_element: AnyElement = div().into_any_element();
+        // 当前公式的实时预览：解析块原文取 $$ 体，交给 ratex；解析或渲染
+        // 失败就显示源码本身（空公式显示占位提示）。
+        let raw = block.read(cx).display_text().to_string();
+        let preview_body = crate::components::latex::parse_display_math_source(&raw)
+            .map(|source| source.body)
+            .unwrap_or_else(|| raw.clone());
+        let preview_element: AnyElement = if preview_body.trim().is_empty() {
+            div()
+                .text_size(px(t.text_size * 0.85))
+                .text_color(c.text_placeholder)
+                .child(strings.formula_panel_preview_empty.clone())
+                .into_any_element()
+        } else {
+            match crate::components::latex::render_display_math_svg(
+                &crate::components::latex::DisplayMathSource {
+                    raw: raw.clone(),
+                    body: preview_body.clone(),
+                },
+                c.text_default,
+                crate::components::latex::display_math_font_size(t.text_size),
+            ) {
+                Ok(rendered) => img(rendered.path)
+                    .max_h(px(72.0))
+                    .max_w(px(PANEL_WIDTH - PANEL_PADDING * 2.0))
+                    .object_fit(ObjectFit::Contain)
+                    .into_any_element(),
+                Err(_) => div()
+                    .font_family(crate::config::EditorSettings::fonts(cx).code_family)
+                    .text_size(px(t.text_size * 0.8))
+                    .text_color(c.dialog_muted)
+                    .child(preview_body.clone())
+                    .into_any_element(),
+            }
+        };
         let category = state.category;
         let tabs: Vec<AnyElement> = CATEGORIES
             .iter()
