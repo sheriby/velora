@@ -164,6 +164,9 @@ impl Editor {
             BlockEvent::RequestJumpToHeadingLine { line } => {
                 self.jump_to_source_line(*line, cx);
             }
+            BlockEvent::RequestFormulaPanel => {
+                self.toggle_formula_panel_for_block(block.entity_id(), cx);
+            }
             BlockEvent::RequestNewline {
                 trailing,
                 source_already_mutated,

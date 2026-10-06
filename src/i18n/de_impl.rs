@@ -763,6 +763,29 @@ impl I18nStringsDe {
                 .insert_image_prompt
                 .unwrap_or(defaults.insert_image_prompt),
             insert_math_block: self.insert_math_block.unwrap_or(defaults.insert_math_block),
+            insert_formula: self.insert_formula.unwrap_or(defaults.insert_formula),
+            formula_panel_hint: self.formula_panel_hint.unwrap_or(defaults.formula_panel_hint),
+            formula_panel_preview_empty: self
+                .formula_panel_preview_empty
+                .unwrap_or(defaults.formula_panel_preview_empty),
+            latex_category_greek: self
+                .latex_category_greek
+                .unwrap_or(defaults.latex_category_greek),
+            latex_category_operators: self
+                .latex_category_operators
+                .unwrap_or(defaults.latex_category_operators),
+            latex_category_arrows: self
+                .latex_category_arrows
+                .unwrap_or(defaults.latex_category_arrows),
+            latex_category_structures: self
+                .latex_category_structures
+                .unwrap_or(defaults.latex_category_structures),
+            latex_category_functions: self
+                .latex_category_functions
+                .unwrap_or(defaults.latex_category_functions),
+            latex_category_symbols: self
+                .latex_category_symbols
+                .unwrap_or(defaults.latex_category_symbols),
             insert_separator: self.insert_separator.unwrap_or(defaults.insert_separator),
             insert_toc: self.insert_toc.unwrap_or(defaults.insert_toc),
             insert_front_matter: self

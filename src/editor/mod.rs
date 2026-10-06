@@ -40,6 +40,7 @@ mod format_ops;
 mod history;
 mod insert_ops;
 mod latex_completion;
+mod formula_panel;
 mod paragraph_ops;
 mod persistence;
 mod render;
@@ -246,6 +247,8 @@ pub struct Editor {
     wikilink_completion: Option<workspace_index::WikilinkCompletion>,
     /// `\\` 公式命令补全会话（数学块/行内公式里打反斜杠弹出）。
     latex_completion: Option<latex_completion::LatexCompletion>,
+    /// 公式编辑器面板（点击插入符号与模板，见 formula_panel.rs）。
+    formula_panel: Option<formula_panel::FormulaPanelState>,
     /// 文件历史浮层（保存版本浏览/恢复）。
     file_history_overlay: Option<file_history::FileHistoryOverlay>,
     /// 切换工作区后，下一帧（拿得到 `&mut Window` 时）要打开的标签页。
@@ -732,6 +735,7 @@ impl Editor {
             link_panels: workspace_index::LinkPanelState::default(),
             wikilink_completion: None,
             latex_completion: None,
+            formula_panel: None,
             file_history_overlay: None,
             pending_workspace_tab_activation: None,
             info_dialog: None,

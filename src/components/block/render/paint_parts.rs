@@ -1463,7 +1463,44 @@ impl Render for Block {
                 } else {
                     self.render_math_content(&theme)
                 };
-                focused_base.w_full().child(child).into_any_element()
+                // 聚焦时右上角给一颗「ƒx 符号」：公式编辑器面板从这里打开，
+                // 面板绑定本块、插入走块内光标（用户要求：面板跟着公式走）。
+                let fx_button = focused.then(|| {
+                    div()
+                        .id(ElementId::Name(
+                            format!("math-fx-button-{}", self.record.id).into(),
+                        ))
+                        .debug_selector(|| "math-fx-button".to_string())
+                        .absolute()
+                        .top(px(0.0))
+                        .right(px(0.0))
+                        .h(px(22.0))
+                        .px(px(7.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(5.0))
+                        .border_1()
+                        .border_color(c.dialog_border)
+                        .bg(c.dialog_secondary_button_bg)
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .cursor_pointer()
+                        .text_size(px(t.text_size * 0.72))
+                        .text_color(c.dialog_muted)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_block, _event: &MouseDownEvent, _window, cx| {
+                                cx.stop_propagation();
+                                cx.emit(BlockEvent::RequestFormulaPanel);
+                            }),
+                        )
+                        .child("ƒx 符号")
+                });
+                focused_base
+                    .w_full()
+                    .relative()
+                    .child(child)
+                    .children(fx_button)
+                    .into_any_element()
             }
             BlockKind::MermaidBlock => {
                 if !focused {

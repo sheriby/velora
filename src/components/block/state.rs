@@ -1009,6 +1009,9 @@ pub enum BlockEvent {
     RequestSearchTag {
         query: String,
     },
+    /// 数学块头部的「ƒx 符号」按钮被点击：编辑器应为本块开/关公式编辑器
+    /// 面板（面板跟随块，插入走块内光标）。
+    RequestFormulaPanel,
     /// A `[[wikilink]]` was clicked; open the named workspace file, creating
     /// it when missing (roadmap C3).
     RequestOpenWikilink {

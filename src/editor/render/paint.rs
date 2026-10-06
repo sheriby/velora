@@ -1104,6 +1104,13 @@ impl Render for Editor {
         } else {
             base
         };
+        let base = if self.formula_panel.is_some()
+            && let Some(panel) = self.render_formula_panel_overlay(&theme, &strings, window, cx)
+        {
+            base.child(panel)
+        } else {
+            base
+        };
         let base = if self.file_history_is_open()
             && let Some(overlay) = self.render_file_history_overlay(&theme, &strings, cx)
         {

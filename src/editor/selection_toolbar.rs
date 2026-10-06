@@ -138,6 +138,7 @@ impl Editor {
             || self.menu_bar_open.is_some()
             || self.wikilink_completion_is_open()
             || self.latex_completion_is_open()
+            || self.formula_panel.is_some()
             || self.quick_open.is_some()
             || self.command_palette.is_some()
         {

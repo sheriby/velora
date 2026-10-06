@@ -12,7 +12,7 @@ use anyhow::{Context as _, anyhow};
 use directories::ProjectDirs;
 use gpui::{Hsla, Rgba};
 
-pub(crate) use symbols::{LatexSymbol, inside_inline_math, latex_command_before_cursor, latex_completions_for};
+pub(crate) use symbols::{LatexCategory, LatexSymbol, LATEX_SYMBOLS, inside_inline_math, latex_command_before_cursor, latex_completions_for};
 
 /// 块级公式与行内公式同字号（用户报修：`$$ ... $$` 渲染出来明显偏大）。
 /// KaTeX/Typora 的 display 模式只改变极限位置，不放大字号。

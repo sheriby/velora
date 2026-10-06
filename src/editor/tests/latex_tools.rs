@@ -1,6 +1,7 @@
 //! LaTeX 编辑三件套：等宽字体、`\` 命令补全、公式编辑器面板。
 
 use super::common::*;
+use crate::components::latex::LATEX_SYMBOLS;
 
 fn block_with_text(
     editor: &Editor,
@@ -126,3 +127,68 @@ async fn latex_completion_only_opens_in_math_context(cx: &mut TestAppContext) {
     });
 }
 
+/// 公式编辑器面板：从公式块上打开并绑定该块，插入跟随块内**当前光标**，
+/// 再点一次按钮收起。
+#[gpui::test]
+async fn formula_panel_binds_block_and_follows_caret(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, cx| {
+        editor.focus_block(math.entity_id());
+        editor.toggle_formula_panel_for_block(math.entity_id(), cx);
+    });
+
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_panel.as_ref().expect("面板该打开");
+        assert_eq!(state.target, math.entity_id(), "面板该绑定这个公式块");
+    });
+
+    // 光标在块首：点 frac 模板落进第一对花括号。
+    let frac = &LATEX_SYMBOLS[0];
+    assert_eq!(frac.name, "frac");
+    math.update(cx, |block, block_cx| block.move_to(3, block_cx));
+    editor.update(cx, |editor, cx| editor.insert_latex_symbol(frac, cx));
+    editor.read_with(cx, |_editor, cx| {
+        let text = math.read(cx).display_text();
+        assert_eq!(
+            text, "$$\n\\frac{}{}\n$$",
+            "第一格该写进光标处，实际 {text:?}"
+        );
+    });
+
+    // 光标挪到别处再点一格：插入跟随**当前**光标，不是冻结的旧插入点。
+    math.update(cx, |block, block_cx| {
+        let end = block.visible_len().saturating_sub(3); // 闭 $$ 之前
+        block.move_to(end, block_cx);
+    });
+    let alpha = LATEX_SYMBOLS
+        .iter()
+        .find(|entry| entry.name == "alpha")
+        .expect("符号表该有 alpha");
+    editor.update(cx, |editor, cx| editor.insert_latex_symbol(alpha, cx));
+    editor.read_with(cx, |editor, cx| {
+        let text = math.read(cx).display_text();
+        assert_eq!(
+            text, "$$\n\\frac{}{}\\alpha \n$$",
+            "第二格该跟着新光标走，实际 {text:?}"
+        );
+        assert!(
+            editor.formula_panel.is_some(),
+            "插入后面板保持打开便于连续输入"
+        );
+    });
+
+    // 再点一次按钮：同块的面板收起。
+    editor.update(cx, |editor, cx| {
+        editor.toggle_formula_panel_for_block(math.entity_id(), cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.formula_panel.is_none(), "同块再开一次该是收起");
+    });
+}

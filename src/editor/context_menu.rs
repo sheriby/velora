@@ -186,6 +186,7 @@ impl Editor {
         self.close_workspace_context_menu(cx);
         self.close_wikilink_completion(cx);
         self.close_latex_completion(cx);
+        self.close_formula_panel(cx);
         let had_menu = self.context_menu.take().is_some();
         let had_dialog = self.table_insert_dialog.take().is_some();
         let had_submenu_close = self.context_menu_submenu_close_task.take().is_some();
