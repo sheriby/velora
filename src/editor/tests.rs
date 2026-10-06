@@ -19,6 +19,7 @@ mod inline_format;
 mod insert_blocks;
 mod insert_image;
 mod keyboard_nav;
+mod latex_tools;
 mod link_insert;
 mod knowledge_history;
 mod knowledge_recovery;
