@@ -671,13 +671,16 @@ impl Editor {
             let tooltip = quick_action_tooltip(command, strings, cx);
             let name = command.row_name();
             let selector = format!("menu-quick-action-{name}");
+            // 六颗均分整条宽度：按自然宽度挤在左边，右边空出来的那一截正是用户看着
+            // 别扭的地方。格子高 26，宽交给 flex（面板最窄就是这一条自己的 169，
+            // 所以每颗不会低于 26）。
             let button = div()
                 .id(SharedString::from(selector.clone()))
-                .size(px(QUICK_ACTION_BUTTON_SIZE))
+                .flex_1()
+                .h(px(QUICK_ACTION_BUTTON_SIZE))
                 .flex()
                 .items_center()
                 .justify_center()
-                .flex_shrink_0()
                 .rounded(px(d.menu_item_radius))
                 .text_color(if enabled {
                     c.dialog_secondary_button_text
@@ -716,7 +719,6 @@ impl Editor {
         }
         div()
             .id("editor-context-menu-quick-actions")
-            .w_full()
             .h(px(QUICK_ACTION_BUTTON_SIZE))
             .flex()
             .items_center()

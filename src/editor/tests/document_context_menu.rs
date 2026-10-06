@@ -287,6 +287,25 @@ async fn right_click_inside_a_block_opens_the_document_menu(cx: &mut TestAppCont
             f32::from(panel.right())
         );
     }
+    // 六颗要排满这一条：第一颗贴着面板内框左边，最后一颗贴着右边。
+    // 按自然宽度挤在左半、右边空一截，看着就是没对齐（用户看图报修）。
+    let first = quick_action_bounds(QUICK_ACTION_ROWS[0], cx);
+    let last_name = QUICK_ACTION_ROWS.last().copied().unwrap();
+    let last = quick_action_bounds(last_name, cx);
+    let inner_left = f32::from(panel.left()) + 4.0 + 1.0;
+    let inner_right = f32::from(panel.right()) - 4.0 - 1.0;
+    assert!(
+        (f32::from(first.left()) - inner_left).abs() <= 1.0,
+        "图标条没贴着面板内框左边起排：第一颗左缘 {:?} vs 内框左边 {:?}",
+        f32::from(first.left()),
+        inner_left
+    );
+    assert!(
+        (f32::from(last.right()) - inner_right).abs() <= 1.0,
+        "图标条右边空着一截，六颗该均分整条宽度：最后一颗右缘 {:?} vs 内框右边 {:?}",
+        f32::from(last.right()),
+        inner_right
+    );
     // 图标条在最上面，长行按复制为 → 格式 / 段落 / 插入 → 视图的顺序往下排。
     let strip_bottom = f32::from(quick_action_bounds("undo", cx).bottom());
     let markdown_top = f32::from(row_bounds("copy-as-markdown", cx).top());
