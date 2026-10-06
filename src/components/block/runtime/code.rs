@@ -68,6 +68,21 @@ impl Block {
         self.code_highlight.as_ref()
     }
 
+    pub(crate) fn set_source_fence_entry(&mut self, entry: Option<MarkdownSourceState>) {
+        self.source_fence_entry = entry;
+    }
+
+    /// 本块结束时的块级状态（给下一块的入口）；只有 markdown 源码分块在
+    /// 高亮时顺带算出。
+    pub(crate) fn source_fence_exit(&self) -> Option<MarkdownSourceState> {
+        self.source_fence_exit.clone()
+    }
+
+    /// 重算 markdown 源码分块的高亮与接缝状态（entry 已被编辑器更新后调用）。
+    pub(crate) fn refresh_source_highlight(&mut self) {
+        self.sync_code_highlight();
+    }
+
     pub(super) fn sync_code_highlight(&mut self) {
         let result = match &self.record.kind {
             BlockKind::CodeBlock { language } => highlight_code_block(

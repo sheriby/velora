@@ -516,6 +516,11 @@ impl Editor {
                 let roots = Self::build_source_document_roots(kind, &source, source_language, cx);
                 self.attach_source_slice_spans(&roots, cx);
                 self.document.replace_roots(roots, cx);
+                // 围栏/公式/frontmatter 会跨 512 行分块的接缝：整棵重建后把
+                // 接缝状态从头串一遍，跨块的高亮才接得上。
+                if !self.code_tab_active() {
+                    self.resync_source_fence_states(cx);
+                }
                 self.table_cells.clear();
             }
         }

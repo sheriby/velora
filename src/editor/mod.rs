@@ -21,6 +21,7 @@ use crate::components::{
     FootnoteRegistry, FootnoteResolvedOccurrence, ImageReferenceDefinitions, InlineTextTree,
     LinkReferenceDefinitions, parse_image_reference_definitions, parse_link_reference_definitions,
 };
+use crate::components::markdown::source_highlight::MarkdownSourceState;
 use crate::components::{
     TableAxisHighlight, TableAxisKind, TableAxisMarker, TableCellPosition, TableColumnAlignment,
     TableData, TableRuntime, UndoCaptureKind, serialize_table_cell_markdown,
@@ -1107,6 +1108,24 @@ impl Editor {
     fn reattach_source_document_spans(&mut self, cx: &mut Context<Self>) {
         let roots = self.document.root_blocks().to_vec();
         self.attach_source_slice_spans(&roots, cx);
+    }
+
+    /// markdown 源码文档的接缝状态整棵重串一遍：每根块拿上一根的 exit 当
+    /// entry 重算高亮。打开、切视图、undo 重投影这些整棵重建的入口走这条，
+    /// O(文档) 一次——块级高亮扫描本身线性于块文本，加起来就是文档一遍。
+    pub(crate) fn resync_source_fence_states(&mut self, cx: &mut App) {
+        let roots = self.document.root_blocks().to_vec();
+        let mut state: Option<MarkdownSourceState> = None;
+        for block in &roots {
+            let entry = state.clone();
+            let mut exit = None;
+            block.update(cx, |block, _cx| {
+                block.set_source_fence_entry(entry);
+                block.refresh_source_highlight();
+                exit = block.source_fence_exit();
+            });
+            state = exit;
+        }
     }
 
     /// 把这个块当前的源码写回它自己占的缓冲区区间——只经唯一写入口

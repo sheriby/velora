@@ -392,6 +392,12 @@ impl Editor {
         // 导入视为一次修订：按 revision 缓存的统计（字数/行数等）全部失效。
         self.document_revision = self.document_revision.wrapping_add(1);
         self.document.replace_roots(roots, cx);
+        // markdown 源码视图：围栏/公式/frontmatter 会跨 512 行分块的接缝，
+        // 整棵装好后把接缝状态从头串一遍（代码文档走 tree-sitter 逐块解析，
+        // 不需要）。
+        if view_mode == ViewMode::Source && !self.code_document {
+            self.resync_source_fence_states(cx);
+        }
         if let Some(tail) = pending_code_tail {
             self.document.set_pending_source(Some(tail));
             self.start_pending_materialization_task(cx);
