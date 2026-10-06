@@ -1316,6 +1316,29 @@ mod tests {
     }
 
     #[test]
+    fn display_math_opens_only_at_line_start_like_the_parser() {
+        // 与 display_math/块解析器同口径：`$$` 只在（≤3 缩进的）行首开公式；
+        // 行中的金额、非行首的 $$ 都不进公式状态。
+        let text = "价格 $$5 与 $6 不同";
+        let (spans, state) = highlight_with(text, false, None);
+        assert!(state.is_none());
+        assert!(
+            !spans
+                .iter()
+                .any(|(range, _)| text[range.clone()].contains("$$")),
+            "行中 $$ 不该着公式色: {spans:?}"
+        );
+
+        let indented = "   $$x$$";
+        assert_eq!(
+            classes_covering(indented, "x"),
+            vec![CodeHighlightClass::MarkdownCode],
+            "≤3 空格缩进的行首 $$ 仍是公式"
+        );
+        let _ = state;
+    }
+
+    #[test]
     fn memlines_handles_empty_text_and_missing_trailing_newline() {
         // 行迭代是扫描器的地基：空文本、无换行尾、连续换行、多字节行界，
         // 任何一处差一都会让后续扫描整体错位。
