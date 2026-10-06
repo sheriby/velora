@@ -261,3 +261,40 @@ async fn fx_button_event_toggles_formula_panel(cx: &mut TestAppContext) {
         assert!(editor.formula_panel.is_none(), "再发一次该收起");
     });
 }
+/// 补全确认时目标块已不在树上：安全收场（收浮层、不插入）而不是 panic。
+#[gpui::test]
+async fn latex_completion_confirm_survives_missing_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\\al\n$$".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    let cursor = math.read_with(cx, |block, _cx| {
+        block.display_text().find("\\al").expect("\\al 在块里") + "\\al".len()
+    });
+    math.update(cx, |block, block_cx| block.move_to(cursor, block_cx));
+    editor.update(cx, |editor, cx| {
+        editor.update_latex_completion_for_block(&math, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(editor.latex_completion.is_some(), "前置：浮层该开着");
+    });
+
+    editor.update(cx, |editor, _cx| {
+        if let Some(state) = editor.latex_completion.as_mut() {
+            state.block_id = gpui::EntityId::from(u64::MAX);
+        }
+    });
+    editor.update(cx, |editor, cx| {
+        editor.confirm_latex_completion(0, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.latex_completion.is_none(),
+            "目标块不存在时确认该收浮层"
+        );
+    });
+}
