@@ -60,6 +60,30 @@ impl Block {
         }
     }
 
+    /// 块内**干净**可见长度：不含为了编辑而临时显形出来的 `**`、`](` 这类记号。
+    ///
+    /// 显形是跟着光标走的瞬时状态（光标进到粗体里就显出来，走开又收回去），
+    /// 跨块选区的端点存的是这个坐标系，不跟着显示长度变。
+    pub(crate) fn clean_visible_len(&self) -> usize {
+        self.record.title.visible_len()
+    }
+
+    /// 干净可见区间 → 当前显示区间：两端按「块首/块尾取外侧」的亲和性换算，
+    /// 于是显形出来的记号落在区间里侧，被区间盖住（高亮铺满整行、按删除
+    /// 连同 `**` 一起收掉）。跨块选区把干净端点落到某一根块上时走这一条。
+    pub(crate) fn clean_range_to_display_range(&self, range: Range<usize>) -> Range<usize> {
+        if range.is_empty() {
+            let offset = self.clean_to_current_cursor_offset(range.start);
+            return offset..offset;
+        }
+        let start_affinity = self
+            .caret_affinity_for_clean_offset(range.start, CollapsedCaretAffinity::Default);
+        let end_affinity =
+            self.caret_affinity_for_clean_offset(range.end, CollapsedCaretAffinity::Default);
+        self.clean_to_current_cursor_offset_with_affinity(range.start, start_affinity)
+            ..self.clean_to_current_cursor_offset_with_affinity(range.end, end_affinity)
+    }
+
     pub(crate) fn current_to_clean_range(&self, range: Range<usize>) -> Range<usize> {
         self.current_to_clean_offset(range.start)..self.current_to_clean_offset(range.end)
     }

@@ -2,6 +2,15 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+/// std 的 `str::floor_char_boundary` 还没稳定，测试自己往回退到字符边界。
+fn floor_char_boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
 #[test]
 fn buffer_holds_exactly_the_text_it_was_given() {
     let text = "# 标题\n\n正文 with emoji 🎉 和中文标点，以及 `code`。\n";
@@ -63,8 +72,8 @@ fn an_edit_spanning_several_chunks_still_replaces_only_that_range() {    // 造�
     );
 
     // 跨越若干块的删除。
-    let start = text.floor_char_boundary(10);
-    let end = text.floor_char_boundary(MAX_CHUNK_BYTES * 4 + 7);
+    let start = floor_char_boundary(&text, 10);
+    let end = floor_char_boundary(&text, MAX_CHUNK_BYTES * 4 + 7);
     let removed = &text[start..end];
     buffer.edit(start..end, "");
     assert_eq!(buffer.text(), format!("{}{}", &text[..start], &text[end..]));

@@ -202,7 +202,7 @@ impl Editor {
         let Some(selection) = self.cross_block_selection else {
             return false;
         };
-        let last_len = last.entity.read(cx).visible_len();
+        let last_len = last.entity.read(cx).clean_visible_len();
         selection.anchor
             == CrossBlockSelectionEndpoint {
                 entity_id: first.entity.entity_id(),
@@ -251,7 +251,7 @@ impl Editor {
         };
         let first_id = first.entity.entity_id();
         let last_id = last.entity.entity_id();
-        let last_len = last.entity.read(cx).visible_len();
+        let last_len = last.entity.read(cx).clean_visible_len();
 
         self.end_block_pointer_selection_sessions(cx);
         self.dismiss_contextual_overlays(cx);
@@ -378,6 +378,12 @@ impl Editor {
         true
     }
 
+    /// 屏幕上这一点对应的选区端点。
+    ///
+    /// 存的是块内**干净**偏移（可见文本的坐标，不含为了编辑显形出来的 `**` 这类记号）：
+    /// 拖动过程中起点块会因聚焦而显形、别的块又收回去，显示长度随时在变，端点要是记的
+    /// 是显示偏移，选区就跟着漂——画出来的高亮比选区的字节短一截，按删除留在文件里的
+    /// 又是另一段字节。命中测试给出的显示偏移在这里换算一次，之后就都按干净坐标算。
     fn cross_block_endpoint_for_point(
         &self,
         position: Point<Pixels>,
@@ -392,8 +398,9 @@ impl Editor {
             };
 
             if position.y < bounds.top() {
+                // 落点在这一块上方：归上一块的块尾；没有上一块就归它的块首。
                 if let Some((previous, _)) = previous {
-                    let offset = previous.read(cx).visible_len();
+                    let offset = previous.read(cx).clean_visible_len();
                     return Some(CrossBlockSelectionEndpoint {
                         entity_id: previous.entity_id(),
                         offset,
@@ -406,7 +413,8 @@ impl Editor {
             }
 
             if position.y <= bounds.bottom() {
-                let offset = entity.read(cx).index_for_mouse_position(position);
+                let block = entity.read(cx);
+                let offset = block.current_to_clean_offset(block.index_for_mouse_position(position));
                 return Some(CrossBlockSelectionEndpoint {
                     entity_id: entity.entity_id(),
                     offset,
@@ -418,7 +426,7 @@ impl Editor {
 
         previous.map(|(entity, _)| CrossBlockSelectionEndpoint {
             entity_id: entity.entity_id(),
-            offset: entity.read(cx).visible_len(),
+            offset: entity.read(cx).clean_visible_len(),
         })
     }
 
@@ -474,13 +482,17 @@ impl Editor {
         cx: &App,
     ) -> Option<CrossBlockSelectionEndpoint> {
         let entity = self.document.block_entity_by_id(endpoint.entity_id)?;
-        let len = entity.read(cx).visible_len();
+        let len = entity.read(cx).clean_visible_len();
         Some(CrossBlockSelectionEndpoint {
             entity_id: endpoint.entity_id,
             offset: endpoint.offset.min(len),
         })
     }
 
+    /// 把选区的干净区间铺到每一根块上。
+    ///
+    /// 先生成干净区间，再按各块自己的投影换成显示偏移：选区存的是干净坐标，
+    /// 高亮画的是显示坐标，换算只在这一处发生。
     fn sync_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) {
         let normalized = self.normalized_cross_block_selection(cx);
         let visible_blocks = self.document.visible_blocks().to_vec();
@@ -490,7 +502,7 @@ impl Editor {
                     return None;
                 }
                 let block = visible.entity.read(cx);
-                let len = block.visible_len();
+                let len = block.clean_visible_len();
                 let range = if selection.start_index == selection.end_index {
                     selection.start.offset.min(len)..selection.end.offset.min(len)
                 } else if index == selection.start_index {
@@ -500,6 +512,7 @@ impl Editor {
                 } else {
                     0..len
                 };
+                let range = block.clean_range_to_display_range(range);
                 (!range.is_empty()).then_some(range)
             });
 
@@ -529,6 +542,10 @@ impl Editor {
         self.mapping_source_offset(&mapping, display_offset, cx)
     }
 
+    /// 光标（或任一可见偏移）落在缓冲区的哪个字节。
+    ///
+    /// 只给**插入点**用：块首打一个字要落在 `**` 里面，这是对的口径。
+    /// 选区的区间端点不能走它，见 `mapping_source_range_endpoint`。
     fn mapping_source_offset(
         &self,
         mapping: &SourceTargetMapping,
@@ -562,6 +579,45 @@ impl Editor {
         )
     }
 
+    /// 选区端点（块内**干净**偏移）落在缓冲区的哪个字节。
+    ///
+    /// 与 `mapping_source_offset` 是两条口径。那条是插入点：块首打一个字要落在 `**`
+    /// 里面，于是「第 0 个可见字符」算的是它自己的位置（`**macOS**` 落在第 2 个字节）。
+    /// 这条是区间端点：从块首起选就是要把这一行开头藏着的记号一起选走，否则按删除会
+    /// 在文件里留下半截 `**`（用户报修的那一笔）。块尾仍停在内容末尾，用户自己写的
+    /// 闭合记号（`# 标题 #` 里后半个 `#`）不算内容。
+    fn mapping_source_range_endpoint(
+        &self,
+        mapping: &SourceTargetMapping,
+        clean_offset: usize,
+        at_end: bool,
+        cx: &App,
+    ) -> Option<usize> {
+        if !at_end && clean_offset == 0 {
+            // 整行起点，含 `- `、`> `、`# ` 这些不属于内容的记号：选区盖到块首就是把
+            // 这一行选走了，留下一个空列表项、一个空标题不是用户要的。
+            return Some(mapping.full_source_range.start);
+        }
+        let block = mapping.entity.read(cx);
+        if clean_offset >= block.clean_visible_len() {
+            return mapping
+                .content_to_source
+                .last()
+                .map(|offset| mapping.full_source_range.start + *offset)
+                .or(Some(mapping.full_source_range.end));
+        }
+        let markdown_offset = block
+            .record
+            .title
+            .markdown_offset_map()
+            .visible_to_markdown_offset(clean_offset);
+        let max_content = mapping.content_to_source.len().saturating_sub(1);
+        Some(
+            mapping.full_source_range.start
+                + mapping.content_to_source[markdown_offset.min(max_content)],
+        )
+    }
+
     fn endpoint_for_source_offset(
         &self,
         offset: usize,
@@ -583,7 +639,11 @@ impl Editor {
         let block = mapping.entity.read(cx);
         Some(CrossBlockSelectionEndpoint {
             entity_id: mapping.entity.entity_id(),
-            offset: block.markdown_offset_to_current_offset(content_offset),
+            offset: block
+                .record
+                .title
+                .markdown_offset_map()
+                .markdown_to_visible_offset(content_offset),
         })
     }
 
@@ -602,7 +662,9 @@ impl Editor {
                                cx: &App|
          -> Option<usize> {
             if let Some(mapping) = self.source_mapping_for_entity(endpoint.entity_id, cx)
-                && let Some(offset) = self.mapping_source_offset(&mapping, endpoint.offset, cx) {
+                && let Some(offset) =
+                    self.mapping_source_range_endpoint(&mapping, endpoint.offset, at_end, cx)
+            {
                 return Some(offset);
             }
             let range = self.block_source_range(visible.get(index)?.entity.entity_id(), cx)?;
@@ -791,7 +853,7 @@ impl Editor {
             let mut wrote_chunk = false;
             for index in selection.start_index..=selection.end_index {
                 let block = visible.get(index)?.entity.read(cx);
-                let len = block.visible_len();
+                let len = block.clean_visible_len();
                 let range = if selection.start_index == selection.end_index {
                     selection.start.offset.min(len)..selection.end.offset.min(len)
                 } else if index == selection.start_index {
@@ -801,6 +863,8 @@ impl Editor {
                 } else {
                     0..len
                 };
+                // 端点存的是干净坐标，状态栏读的是屏幕上的那串字：先换成显示偏移。
+                let range = block.clean_range_to_display_range(range);
                 let display = block.display_text();
                 let range = clamp_range_to_char_boundaries(display, range);
                 if range.is_empty() {

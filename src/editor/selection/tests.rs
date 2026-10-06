@@ -1,5 +1,5 @@
 mod tests {
-    use gpui::{AppContext, Bounds, Context, TestAppContext, point, px, size};
+    use gpui::{AppContext, Bounds, Context, Modifiers, MouseButton, TestAppContext, point, px, size};
 
     use super::super::{CrossBlockSelection, CrossBlockSelectionEndpoint, Editor};
     use crate::components::{Cut, Undo, UndoCaptureKind};
@@ -228,6 +228,153 @@ mod tests {
         drop(editor);
         app_cx.quit();
     }
+
+    /// README_CN.md 的「发布包」那两行，用户报修的那一段。
+    const PACKAGE_SECTION: &str = "## 发布包\n\n- **macOS**——执行 `scripts/package-macos.sh`，生成 `dist/velora.app` 与 `dist/velora-0.1.0.pkg`。安装包未签名、未公证，仅用于本机与小范围内部试用。\n- **Windows**——`scripts/package-windows.sh` 在 macOS 上交叉构建 x64 安装器（需要 MinGW-w64 与 NSIS），生成 `dist/velora-0.1.0-windows-x64-setup.exe`。Windows 实机验收安排在下一版。\n\n## ⚙️ 配置\n\n正文。\n";
+
+    /// 用户报修：两段全部选中之后按删除，文件里留下 `**`、`。` 这些半截记号。
+    ///
+    /// 根因是端点换算走了「插入点」那条口径：`**Windows**` 里第一个可见字符在文件里
+    /// 停在第 2 个字节上，拿它当区间起点，开头那两个 `*` 就没被选走，删完留在文件里。
+    #[test]
+    fn cross_block_selection_over_two_list_items_keeps_the_whole_lines() {
+        let mut app_cx = TestAppContext::single();
+        init_editor_test_app(&mut app_cx);
+        let (editor, window_cx) = app_cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, PACKAGE_SECTION.to_string(), None)
+        });
+        redraw(window_cx);
+
+        editor.update(window_cx, |editor, cx| {
+            let visible = editor.document.visible_blocks().to_vec();
+            assert_eq!(visible.len(), 5, "两个标题 + 两个列表项 + 正文");
+            let item1 = visible[1].entity.clone();
+            let item2 = visible[2].entity.clone();
+            // 夹具里这两块都还没聚焦，显示文本就是干净文本，两种坐标同长。
+            let item1_len = item1.read(cx).visible_len();
+            let item2_len = item2.read(cx).visible_len();
+
+            set_selection(editor, 1, 0, 2, item2_len, cx);
+
+            // 高亮铺满两行：端点在干净坐标里，各块按自己的投影换成显示偏移。
+            assert_eq!(item1.read(cx).editor_selection_range, Some(0..item1_len));
+            assert_eq!(item2.read(cx).editor_selection_range, Some(0..item2_len));
+
+            // 交出去的就是文件里那两行字节，连同行首的列表记号与 `**`。
+            let copied = editor.cross_block_selected_markdown(cx).expect("选区文本");
+            assert_eq!(
+                copied,
+                "- **macOS**——执行 `scripts/package-macos.sh`，生成 `dist/velora.app` 与 `dist/velora-0.1.0.pkg`。安装包未签名、未公证，仅用于本机与小范围内部试用。\n- **Windows**——`scripts/package-windows.sh` 在 macOS 上交叉构建 x64 安装器（需要 MinGW-w64 与 NSIS），生成 `dist/velora-0.1.0-windows-x64-setup.exe`。Windows 实机验收安排在下一版。"
+            );
+
+            assert!(editor.delete_cross_block_selection(cx));
+            let text = editor.document.markdown_text(cx);
+            assert!(!text.contains("macOS"), "第一行该整行没掉：{text:?}");
+            assert!(!text.contains("Windows"), "第二行该整行没掉：{text:?}");
+            assert!(!text.contains("下一版"), "尾巴该跟着走：{text:?}");
+            assert!(!text.contains("- **"), "不该留下半截 `**`：{text:?}");
+            assert!(text.contains("## 发布包"), "{text:?}");
+            assert!(text.contains("## ⚙️ 配置"), "{text:?}");
+        });
+        drop(editor);
+        app_cx.quit();
+    }
+
+    /// 用户报修的另一半：拖到行尾，最后两个字没高亮。
+    ///
+    /// 端点记的是拖动当刻那一段的显示偏移（`**` 还藏着，203 字节）；拖完之后光标落在
+    /// 这一段里、`**` 显形，同一块变成 207。高亮照旧铺到 203，尾巴那 4 个字节就没铺
+    /// 上（屏幕上就是最后两个字没高亮），按删除留下的字节也跟着对不上。
+    #[test]
+    fn cross_block_endpoints_survive_inline_delimiters_revealing() {
+        let mut app_cx = TestAppContext::single();
+        init_editor_test_app(&mut app_cx);
+        let (editor, window_cx) = app_cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, PACKAGE_SECTION.to_string(), None)
+        });
+        redraw(window_cx);
+
+        editor.update(window_cx, |editor, cx| {
+            let visible = editor.document.visible_blocks().to_vec();
+            let item2 = visible[2].entity.clone();
+            // 拖动当刻这一段的长度（`**` 还藏着，显示文本与干净文本同长）。
+            let collapsed_len = item2.read(cx).visible_len();
+
+            // 拖动当刻：光标还没进这一段，`**` 是藏着的。
+            set_selection(editor, 1, 0, 2, collapsed_len, cx);
+
+            // 拖完之后光标落在第二项里：`**` 显形，这一块的显示文本变长。
+            item2.update(cx, |block, cx| {
+                block.move_to(2, cx);
+                block.sync_inline_projection_for_focus(true);
+            });
+            let revealed_len = item2.read(cx).visible_len();
+            assert!(
+                revealed_len > collapsed_len,
+                "夹具前提：`**` 显形之后这一段更长（{collapsed_len} → {revealed_len}）"
+            );
+            editor.sync_cross_block_selection_visuals(cx);
+
+            assert_eq!(
+                item2.read(cx).editor_selection_range,
+                Some(0..revealed_len),
+                "高亮要铺到行尾：显形出来的记号也在选区内"
+            );
+
+            let copied = editor.cross_block_selected_markdown(cx).expect("选区文本");
+            assert!(copied.ends_with("下一版。"), "选区末尾到内容末尾：{copied:?}");
+
+            assert!(editor.delete_cross_block_selection(cx));
+            let text = editor.document.markdown_text(cx);
+            assert!(!text.contains("下一版"), "块尾那一段该被删掉：{text:?}");
+            assert!(text.contains("## ⚙️ 配置"), "后面的块不该被吃掉：{text:?}");
+        });
+        drop(editor);
+        app_cx.quit();
+    }
+
+    /// 鼠标那条路径：从第一项块首按住往下拖过两行。命中测试给的是显示偏移，
+    /// 存下来之前换算成干净偏移，否则「谁显形了」一变，同一段选区就跟着漂。
+    #[test]
+    fn dragging_over_two_list_items_selects_whole_lines() {
+        let mut app_cx = TestAppContext::single();
+        init_editor_test_app(&mut app_cx);
+        let (editor, window_cx) = app_cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, PACKAGE_SECTION.to_string(), None)
+        });
+        redraw(window_cx);
+        redraw(window_cx);
+
+        let (start, end) = editor.read_with(window_cx, |editor, cx| {
+            let visible = editor.document.visible_blocks().to_vec();
+            let first = visible[1].entity.read(cx).last_bounds.expect("第一项有布局");
+            let last = visible[2].entity.read(cx).last_bounds.expect("第二项有布局");
+            (
+                point(first.left() + px(2.0), first.top() + px(2.0)),
+                point(last.right() - px(2.0), last.bottom() + px(6.0)),
+            )
+        });
+        window_cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        redraw(window_cx);
+        window_cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        redraw(window_cx);
+        window_cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        redraw(window_cx);
+
+        editor.update(window_cx, |editor, cx| {
+            let copied = editor.cross_block_selected_markdown(cx).expect("拖动之后有选区");
+            assert!(copied.starts_with("- **macOS**"), "选区从行首起：{copied:?}");
+            assert!(copied.ends_with("下一版。"), "选区到行尾止：{copied:?}");
+
+            assert!(editor.delete_cross_block_selection(cx));
+            let text = editor.document.markdown_text(cx);
+            assert!(!text.contains("macOS") && !text.contains("Windows"), "{text:?}");
+            assert!(text.contains("## ⚙️ 配置"), "{text:?}");
+        });
+        drop(editor);
+        app_cx.quit();
+    }
+
 
     const TABLE_DOC: &str = "alpha\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\ngamma";
 

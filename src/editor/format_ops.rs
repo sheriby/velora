@@ -61,17 +61,21 @@ impl Editor {
             else {
                 return false;
             };
+            // 选区存的是干净坐标，块自己认的是显示坐标：换算完再问它有没有样式。
+            let block = entity.read(cx);
+            let len = block.clean_visible_len();
             let start = if position == 0 {
-                normalized.start.offset
+                normalized.start.offset.min(len)
             } else {
                 0
             };
             let end = if position + 1 == block_count {
-                normalized.end.offset
+                normalized.end.offset.min(len)
             } else {
-                entity.read(cx).visible_len()
+                len
             };
-            start < end && entity.read(cx).has_inline_styles_in_range(start..end)
+            let range = block.clean_range_to_display_range(start..end);
+            !range.is_empty() && block.has_inline_styles_in_range(range)
         })
     }
 
@@ -103,15 +107,22 @@ impl Editor {
             else {
                 continue;
             };
-            let start = if position == 0 {
-                normalized.start.offset
-            } else {
-                0
-            };
-            let end = if position + 1 == block_count {
-                normalized.end.offset
-            } else {
-                entity.read(cx).visible_len()
+            let (start, end) = {
+                // 选区存干净坐标，块那一侧认显示坐标。
+                let block = entity.read(cx);
+                let len = block.clean_visible_len();
+                let start = if position == 0 {
+                    normalized.start.offset.min(len)
+                } else {
+                    0
+                };
+                let end = if position + 1 == block_count {
+                    normalized.end.offset.min(len)
+                } else {
+                    len
+                };
+                let range = block.clean_range_to_display_range(start..end);
+                (range.start, range.end)
             };
             if start >= end {
                 continue;
