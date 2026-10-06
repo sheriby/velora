@@ -10,10 +10,15 @@ use crate::theme::Theme;
 /// 一行里「文字」与「快捷键」之间的那段间距。算面板宽度要用同一个数，
 /// 所以提成常量而不是写在这两处。
 pub(crate) const MENU_ROW_GAP: f32 = 12.0;
+/// 行首图标的框边。它与文字之间用的就是行内那一份 `MENU_ROW_GAP`（flex 的间距对
+/// 所有相邻子节点生效），量面板宽度时也按这两个数加，不留第三个常量去漂移。
+pub(crate) const MENU_ICON_SIZE: f32 = 16.0;
 
 /// 一行菜单项。`name` 同时用作元素 id 与测试选择器（`debug_bounds("menu-…")`），
 /// 这样菜单行的几何能在测试里点名验证。视觉状态在这里定，点击由调用方接：不可用的项
 /// 调用方不接 `on_click`，视觉上置灰但仍然占位——菜单宽度不能因为某一项不可用就变。
+/// `icon` 给的是资产路径（`icon/editor/*.svg`），`None` 就是纯文字行；置灰时图标跟着
+/// 换成 `dialog_muted`，与文字同一个口径。
 pub(crate) fn menu_item(
     theme: &Theme,
     name: impl Into<SharedString>,
@@ -23,6 +28,7 @@ pub(crate) fn menu_item(
     danger: bool,
     submenu: bool,
     active: bool,
+    icon: Option<SharedString>,
 ) -> Stateful<Div> {
     let name: SharedString = name.into();
     let colors = &theme.colors;
@@ -52,6 +58,22 @@ pub(crate) fn menu_item(
         .font_weight(typography.dialog_body_weight.to_font_weight())
         .text_color(text_color)
         .debug_selector(move || format!("menu-item-{selector}"))
+        .children(icon.map(|icon| {
+            let selector = name.clone();
+            div()
+                .flex_shrink_0()
+                .size(px(MENU_ICON_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .debug_selector(move || format!("menu-icon-{selector}"))
+                .child(
+                    svg()
+                        .path(icon)
+                        .size(px(MENU_ICON_SIZE))
+                        .text_color(text_color),
+                )
+        }))
         .child(
             div()
                 .flex_1()

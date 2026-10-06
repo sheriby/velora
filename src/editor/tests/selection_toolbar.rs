@@ -8,7 +8,7 @@ use crate::editor::context_menu::{
 };
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::Theme;
-use gpui::{Entity, Font, FontStyle, FontWeight, Modifiers, MouseButton, Point, TextRun, px};
+use gpui::{Entity, Modifiers, MouseButton, Point, px};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
@@ -615,42 +615,9 @@ async fn the_paragraph_panel_fits_its_labels_measured_with_the_real_font(cx: &mu
             .iter()
             .map(|command| document_menu_label(*command, &strings).to_string())
             .collect::<Vec<String>>();
-        let widest = cx.update(|window, _cx| {
-            let font = Font {
-                family: ".SystemUIFont".into(),
-                features: gpui::FontFeatures::default(),
-                fallbacks: None,
-                weight: FontWeight::NORMAL,
-                style: FontStyle::Normal,
-            };
-            labels
-                .iter()
-                .map(|label| {
-                    let run = TextRun {
-                        len: label.len(),
-                        font: font.clone(),
-                        color: gpui::black(),
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                        font_size: None,
-                    };
-                    window
-                        .text_system()
-                        .shape_text(
-                            label.clone().into(),
-                            px(dimensions.menu_text_size),
-                            &[run],
-                            None,
-                            None,
-                        )
-                        .expect("这一行该能量出来")
-                        .first()
-                        .map(|line| f32::from(line.width()))
-                        .expect("量出来至少有一行")
-                })
-                .fold(0.0_f32, f32::max)
-        });
+        let widest = real_label_widths(&labels, dimensions.menu_text_size, cx)
+            .into_iter()
+            .fold(0.0_f32, f32::max);
         assert!(
             inner_box + 0.5 >= widest,
             "{tag}：面板装不下最宽那一行：内框 {inner_box:?} vs 实测文字宽 {widest:?}（标签 {labels:?}）"

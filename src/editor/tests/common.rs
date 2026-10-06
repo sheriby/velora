@@ -4,8 +4,9 @@ pub(super) use std::sync::Arc;
 pub(super) use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) use gpui::{
-    AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, KeyDownEvent, Keystroke,
-    Modifiers, TestAppContext, VisualTestContext, WindowBounds, WindowHandle, px,
+    AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, Font, FontStyle, FontWeight,
+    KeyDownEvent, Keystroke, Modifiers, TestAppContext, TextRun, VisualTestContext, WindowBounds,
+    WindowHandle, px,
 };
 
 pub(super) use crate::editor::{Editor, MountedRun, ViewMode};
@@ -68,6 +69,48 @@ pub(super) fn perf_delta(
 pub(super) fn redraw(cx: &mut gpui::VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear());
     cx.run_until_parked();
+}
+
+/// 用系统真实字体逐条量出这些标签的像素宽，返回与输入同序的一份宽度。
+///
+/// 菜单的面板宽是按字符类别估出来的（`estimated_menu_label_width`），估少了标签会被
+/// `.truncate()` 切掉一角且不报错（用户两次报修的都是这一处）。守卫拿真实度量对一遍，
+/// 换字体或改系数时才会红。`cx.text_system()` 在 App 层不暴露度量接口，要走窗口那一份。
+pub(super) fn real_label_widths(
+    labels: &[String],
+    text_size: f32,
+    cx: &mut VisualTestContext,
+) -> Vec<f32> {
+    cx.update(|window, _cx| {
+        let font = Font {
+            family: ".SystemUIFont".into(),
+            features: gpui::FontFeatures::default(),
+            fallbacks: None,
+            weight: FontWeight::NORMAL,
+            style: FontStyle::Normal,
+        };
+        labels
+            .iter()
+            .map(|label| {
+                let run = TextRun {
+                    len: label.len(),
+                    font: font.clone(),
+                    color: gpui::black(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                    font_size: None,
+                };
+                window
+                    .text_system()
+                    .shape_text(label.clone().into(), px(text_size), &[run], None, None)
+                    .expect("这一行该能量出来")
+                    .first()
+                    .map(|line| f32::from(line.width()))
+                    .expect("量出来至少有一行")
+            })
+            .collect()
+    })
 }
 
 pub(super) fn activate_visual_window(cx: &mut VisualTestContext) -> AnyWindowHandle {

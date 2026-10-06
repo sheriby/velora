@@ -10,7 +10,8 @@ use crate::i18n::I18nManager;
 use crate::theme::Theme;
 pub(super) use document_menu::{
     DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
-    document_menu_label, document_menu_origins, document_menu_shortcut, document_submenu_label,
+    document_menu_command_icon, document_menu_label, document_menu_origins, document_menu_shortcut,
+    document_submenu_icon, document_submenu_label,
 };
 
 /// Target block position for inserting a native table.

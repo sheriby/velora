@@ -123,6 +123,7 @@ impl Editor {
                     matches!(action, WorkspaceMenuAction::Delete),
                     false,
                     false,
+                    None,
                 )
                 .on_click(move |_, window, cx| {
                         let _ = editor.update(cx, |editor, cx| {
@@ -259,6 +260,7 @@ impl Editor {
                     false,
                     false,
                     false,
+                    None,
                 )
                 .on_click(move |_, window, cx| {
                         let _ = editor.update(cx, |editor, cx| {

@@ -682,6 +682,8 @@ impl Editor {
                         false,
                         false,
                         false,
+                        // 面板里的行不带图标，与右键菜单二级面板同一口径。
+                        None,
                     );
                     if *enabled {
                         row.on_click(cx.listener(move |editor, _event, _window, cx| {

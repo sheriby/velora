@@ -63,6 +63,7 @@ impl Editor {
             danger,
             false,
             false,
+            None,
         );
         if enabled {
             row.on_click(cx.listener(on_click)).into_any_element()
@@ -140,6 +141,9 @@ impl Editor {
                     .child(
                         div()
                             .id("editor-context-menu-panel")
+                            // 测试按这个名字点名的就是这一份面板的边界（与工具栏
+                            // `editor-selection-toolbar` 同一个写法）。
+                            .debug_selector(|| "editor-context-menu-panel".to_string())
                             .absolute()
                             .left(origin.x)
                             .top(origin.y)
@@ -657,6 +661,7 @@ impl Editor {
                     false,
                     false,
                     false,
+                    document_menu_command_icon(command).map(SharedString::from),
                 );
                 if enabled {
                     item.on_click(cx.listener(move |editor, _event, window, cx| {
@@ -678,6 +683,7 @@ impl Editor {
                     false,
                     true,
                     open_submenu == Some(id),
+                    document_submenu_icon(id).map(SharedString::from),
                 )
                     .on_hover(cx.listener(move |editor, hovered: &bool, _window, cx| {
                         editor.set_document_menu_hover(*hovered, Some(id), cx);

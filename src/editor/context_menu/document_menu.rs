@@ -12,7 +12,8 @@ use std::time::Duration;
 use super::super::{ContextMenuState, Editor};
 use crate::components::{
     Copy, CopyAsHtml, CopyAsMarkdown, Cut, InlineFormat, Paste, PasteAsPlainText, Redo,
-    ShortcutCommand, ToggleViewMode, Undo, effective_shortcut_key, menu::MENU_ROW_GAP,
+    ShortcutCommand, ToggleViewMode, Undo, effective_shortcut_key,
+    menu::{MENU_ICON_SIZE, MENU_ROW_GAP},
 };
 use crate::editor::insert_ops::InsertBlockTarget;
 use crate::editor::paragraph_ops::BlockKindTarget;
@@ -37,6 +38,48 @@ pub(crate) fn document_submenu_label(
         DocumentSubmenu::Format => strings.context_menu_format.clone(),
         DocumentSubmenu::Paragraph => strings.context_menu_paragraph.clone(),
         DocumentSubmenu::Insert => strings.context_menu_insert.clone(),
+    }
+}
+
+/// 主面板一行的行首图标。渲染与量宽都读这一处，两边不会一处画了图标、另一处按纯文字算宽。
+/// 二级面板里的行不给图标：那一档排的是「一级标题」「有序列表」这种条目名，图标只会把每行拉宽。
+pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option<&'static str> {
+    match command {
+        DocumentMenuCommand::Undo => Some("icon/editor/undo.svg"),
+        DocumentMenuCommand::Redo => Some("icon/editor/redo.svg"),
+        DocumentMenuCommand::Cut => Some("icon/editor/cut.svg"),
+        DocumentMenuCommand::Copy => Some("icon/editor/copy.svg"),
+        DocumentMenuCommand::Paste => Some("icon/editor/paste.svg"),
+        DocumentMenuCommand::PasteAsPlainText => Some("icon/editor/paste-plain.svg"),
+        DocumentMenuCommand::CopyAsMarkdown => Some("icon/editor/copy-markdown.svg"),
+        DocumentMenuCommand::CopyAsHtml => Some("icon/editor/copy-html.svg"),
+        DocumentMenuCommand::ToggleSourceView => Some("icon/editor/toggle-source.svg"),
+        DocumentMenuCommand::Format(_)
+        | DocumentMenuCommand::Heading(_)
+        | DocumentMenuCommand::NormalText
+        | DocumentMenuCommand::BulletList
+        | DocumentMenuCommand::NumberedList
+        | DocumentMenuCommand::TaskList
+        | DocumentMenuCommand::Quote
+        | DocumentMenuCommand::CodeBlock
+        | DocumentMenuCommand::Link
+        | DocumentMenuCommand::ClearFormat
+        | DocumentMenuCommand::InsertTable
+        | DocumentMenuCommand::InsertImage
+        | DocumentMenuCommand::InsertCodeBlock
+        | DocumentMenuCommand::InsertMathBlock
+        | DocumentMenuCommand::InsertSeparator
+        | DocumentMenuCommand::InsertToc
+        | DocumentMenuCommand::InsertFrontMatter => None,
+    }
+}
+
+/// 三个二级菜单入口的行首图标。「段落」那一颗与选中工具栏共用同一份图形。
+pub(crate) fn document_submenu_icon(submenu: DocumentSubmenu) -> Option<&'static str> {
+    match submenu {
+        DocumentSubmenu::Format => Some("icon/editor/format.svg"),
+        DocumentSubmenu::Paragraph => Some("icon/editor/paragraph.svg"),
+        DocumentSubmenu::Insert => Some("icon/editor/insert.svg"),
     }
 }
 
@@ -741,8 +784,9 @@ impl DocumentMenuGeometry {
             top += row_height;
             widest = widest.max(Self::row_width(row, strings, dimensions, shortcut_of));
         }
-        // 末尾再补一份内边距：面板高度 = 最后一行底部 + 内边距。
-        let height = top + dimensions.menu_panel_padding;
+        // 末尾再补一份内边距：面板高度 = 最后一行底部 + 内边距。宽度那一条算过边框，
+        // 高度同理漏了会把面板下沿推出落点之外（`document_menu_origins` 按这份高夹紧）。
+        let height = top + dimensions.menu_panel_padding + dimensions.dialog_border_width * 2.0;
         // 宽度同理：`row_width` 里只含行自己的左右内边距，面板还要各加一份
         // `menu_panel_padding` 与一份边框。少算这些，面板的内框就比最宽那一行窄，
         // 中文标签会被截掉半个字（`menu_item` 那一份是 `.truncate()`，截了不报错）。
@@ -757,7 +801,7 @@ impl DocumentMenuGeometry {
         }
     }
 
-    /// 一行占的宽度：文字 + 快捷键那一列 + 二级菜单的箭头，再加左右内边距。
+    /// 一行占的宽度：图标那一列 + 文字 + 快捷键那一列 + 二级菜单的箭头，再加左右内边距。
     fn row_width(
         row: &DocumentMenuRow,
         strings: &crate::i18n::I18nStrings,
@@ -765,18 +809,27 @@ impl DocumentMenuGeometry {
         shortcut_of: &dyn Fn(DocumentMenuCommand) -> Option<SharedString>,
     ) -> f32 {
         let text_size = dimensions.menu_text_size;
-        let (label, shortcut, submenu) = match row {
+        let (label, shortcut, submenu, icon) = match row {
             DocumentMenuRow::Separator => return 0.0,
             DocumentMenuRow::Item { command, .. } => (
                 document_menu_label(*command, strings),
                 shortcut_of(*command),
                 false,
+                document_menu_command_icon(*command),
             ),
-            DocumentMenuRow::Submenu { id, .. } => {
-                (document_submenu_label(*id, strings), None, true)
-            }
+            DocumentMenuRow::Submenu { id, .. } => (
+                document_submenu_label(*id, strings),
+                None,
+                true,
+                document_submenu_icon(*id),
+            ),
         };
         let mut width = crate::editor::render::estimated_menu_label_width(&label, text_size);
+        // 行首图标占的那一列：图标框边一份，它与文字之间用的就是 flex 那一份行距。
+        // 这一列漏算就等于面板内框比行窄，中文标签被截掉半个字（FP12 那条根因）。
+        if icon.is_some() {
+            width += MENU_ICON_SIZE + MENU_ROW_GAP;
+        }
         if let Some(shortcut) = shortcut {
             width += MENU_ROW_GAP
                 + crate::editor::render::estimated_menu_label_width(shortcut.as_ref(), text_size);

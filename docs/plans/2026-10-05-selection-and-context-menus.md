@@ -200,3 +200,13 @@ FP13 段内拖动不再要求那一段先有焦点（已落地，用户报修）
 
 代价与刻意不做：撤销、重做、剪切、复制、粘贴、粘贴为纯文本六项不再有键位列（键位改在悬停说明里读生效键位表那一份），这是「一行顶六行」的代价；表格轴菜单、图片菜单、文件树与标签右键不在本期（它们没有这一族动作，图标另是一套）；不为图标条新增主题尺寸字段，先用 `src/components/menu.rs` 里的常量，与工具栏那份常量同形，等两处真要分别调参时再提到主题里。
 
+
+落地记录（第二期）：
+
+FP14 文案与行序（已落地）。两处中文值改口：`context_menu_copy` 拷贝→复制、`context_menu_copy_as_markdown` 拷贝为 Markdown→复制为 Markdown（src/i18n/strings_api.rs:302、:305）。改的是 `zh_cn()` 那一份的值，键名与 `keys.rs` 清单不动，`de_impl.rs:700` 的回退取的就是这份默认值，用户自己的语言包仍然覆盖；英文两处本来就是 Copy / Copy as Markdown，对不上的是中文这一侧。「全选」那一行连同 `DocumentMenuCommand::SelectAll` 变体、行名、label、shortcut、dispatch 四处分支一起从菜单上去掉，动作 `SelectAll`、键位 ⌘A 与块层那条循环一字未动；主菜单从十三行变十二行（src/editor/context_menu/document_menu.rs:234）。守卫从点菜单行那一路挪到按 ⌘A 那一路：`the_select_all_cycle_from_the_key_selects_the_block_then_the_document`（src/editor/tests/document_context_menu.rs:45），另加一条「菜单上不再挂着 ⌘A 那一列」。
+
+FP15 行前置图标（已落地）。`menu_item` 多一个 `icon` 参数（src/components/menu.rs:22，第九位），图标是 16 的框、与文字之间用的就是行内那一份 `MENU_ROW_GAP`（flex 的间距对所有相邻子节点生效，不留第三个常量去漂移），置灰时图标与文字一起换成 `dialog_muted`。图标只在一处定义：`document_menu_command_icon` 与 `document_submenu_icon`（src/editor/context_menu/document_menu.rs:46、:78），渲染与 `row_width` 共读，不会出现「画了图标、按纯文字算宽」。新画 11 枚描出来的 svg（`assets/icon/editor/`：undo、redo、cut、copy、paste、paste-plain、copy-markdown、copy-html、format、insert、toggle-source，16 的框、1.4-1.5 的描边，与既有的 paragraph、link 同一套画法），注册在 src/main.rs:253 那一片。二级面板的行仍然不带图标，工具栏「段落」那一档的面板同理（src/editor/selection_toolbar.rs:676 传 `None`）。
+
+- 真实度量守卫换了一份实现两处用：`real_label_widths` 提到 src/editor/tests/common.rs:79（原先内联在工具栏那条用例里），新增 `document_context_menu::the_main_panel_rows_draw_their_icons_inside_the_measured_box` 逐行核三件事——图标画得出且在面板之内、`图标列 + 标签实测宽 + 键位列 + 二级箭头` 装得下内框、屏上面板的宽高与 `DocumentMenuGeometry::measure` 一字不差。主面板为了这条守卫补了 `.debug_selector("editor-context-menu-panel")`（src/editor/context_menu/render.rs:146，与工具栏 `editor-selection-toolbar` 同一写法）。
+- 新守卫当场撞出第二处漏算（与 FP12 同族）：`measure` 的宽加过边框、高没加，实测屏上 389 vs 算出 387，差的正是上下各 1px 的边框（src/editor/context_menu/document_menu.rs:789 补上 `dialog_border_width * 2.0`）。这条不是观感问题：`document_menu_origins` 按这份高夹紧下沿，少算 2px 就让菜单比 intended 低 2px。
+- 图标的形状没在构建出的实机上看：用系统 QuickLook 把 13 枚 svg 各自栅格化成 128px 逐张看过（剪刀、带两行与带 T 的两份剪贴板、返回箭头、双向箭头、A、`</>`、Markdown 徽标都能读出来），落进菜单之后的观感以用户实机为准。

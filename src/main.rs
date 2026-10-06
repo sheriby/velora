@@ -256,6 +256,39 @@ impl AssetSource for VeloraAssets {
             "icon/editor/link.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/editor/link.svg"
             )))),
+            "icon/editor/format.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/format.svg"
+            )))),
+            "icon/editor/insert.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/insert.svg"
+            )))),
+            "icon/editor/undo.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/undo.svg"
+            )))),
+            "icon/editor/redo.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/redo.svg"
+            )))),
+            "icon/editor/cut.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/cut.svg"
+            )))),
+            "icon/editor/copy.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/copy.svg"
+            )))),
+            "icon/editor/paste.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/paste.svg"
+            )))),
+            "icon/editor/paste-plain.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/paste-plain.svg"
+            )))),
+            "icon/editor/copy-markdown.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/copy-markdown.svg"
+            )))),
+            "icon/editor/copy-html.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/copy-html.svg"
+            )))),
+            "icon/editor/toggle-source.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/editor/toggle-source.svg"
+            )))),
             "icon/velora.png" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/velora.png"
             )))),

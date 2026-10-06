@@ -2,9 +2,12 @@
 //! 二级面板的展开与落点，以及点一行确实改缓冲区且撤销一步能复原。
 
 use super::common::*;
+use crate::components::menu::{MENU_ICON_SIZE, MENU_ROW_GAP};
 use crate::components::{Block, InlineFormat, install_keybindings};
 use crate::editor::context_menu::{
-    document_menu_shortcut, DocumentMenuCommand, DocumentMenuRow, DocumentSubmenu,
+    DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
+    document_menu_command_icon, document_menu_label, document_menu_shortcut, document_submenu_icon,
+    document_submenu_label,
 };
 use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 
@@ -157,6 +160,11 @@ fn right_click_at(position: gpui::Point<gpui::Pixels>, cx: &mut VisualTestContex
 /// `debug_bounds` 只收 `&'static str`，选择器按行名现拼，就用仓里既有的 `Box::leak` 写法。
 fn item_selector(name: &'static str) -> &'static str {
     Box::leak(format!("menu-item-{name}").into_boxed_str())
+}
+
+/// 行首图标的选择器：`menu_item` 用行名给它命名，图标资产路径换了也不影响点名。
+fn icon_selector(name: &'static str) -> &'static str {
+    Box::leak(format!("menu-icon-{name}").into_boxed_str())
 }
 
 fn row_bounds(name: &'static str, cx: &mut VisualTestContext) -> gpui::Bounds<gpui::Pixels> {
@@ -850,5 +858,135 @@ async fn the_shortcut_column_shows_the_users_own_binding(cx: &mut TestAppContext
     assert!(
         cx.debug_bounds(shortcut_selector("⌘B")).is_none(),
         "默认键 ⌘B 不该还挂在屏幕上"
+    );
+}
+
+/// 主面板每一行的行首图标（FP15）。三件事钉在一起：图标真的画出来且在面板之内、
+/// 「图标列 + 真实字宽 + 键位列 + 二级箭头」装得下面板内框、屏上那份面板的宽与按
+/// 当前语言量出来的几何一字不差。图标列漏算进 `row_width`，就是「一级标题」只剩
+/// 「一级标」那处截字换个地方重演。
+#[gpui::test]
+async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    right_click(&editor, 0, cx);
+
+    let panel = cx
+        .debug_bounds("editor-context-menu-panel")
+        .expect("右键该有主面板");
+    let rows = editor.read_with(cx, |editor, app| editor.document_menu_rows(app));
+    let specs = rows
+        .iter()
+        .filter_map(|row| match row {
+            DocumentMenuRow::Item { command, name, .. } => Some((
+                *name,
+                Some(*command),
+                None,
+                document_menu_command_icon(*command),
+            )),
+            DocumentMenuRow::Submenu { id, name } => {
+                Some((*name, None, Some(*id), document_submenu_icon(*id)))
+            }
+            DocumentMenuRow::Separator => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        specs.iter().map(|(name, ..)| *name).collect::<Vec<_>>(),
+        MAIN_ROWS,
+        "主面板的行序与行名清单对不上"
+    );
+
+    let dimensions = Theme::default_theme().dimensions;
+    let text_size = dimensions.menu_text_size;
+    let strings = cx.update(|_window, app| app.global::<I18nManager>().strings().clone());
+    let labels = specs
+        .iter()
+        .map(|(_, command, submenu, _)| match (command, submenu) {
+            (Some(command), _) => document_menu_label(*command, &strings),
+            (_, Some(id)) => document_submenu_label(*id, &strings),
+            _ => String::new(),
+        })
+        .collect::<Vec<String>>();
+    let shortcut_rows = specs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, command, _, _))| {
+            command
+                .and_then(|command| shortcut_of(command, cx))
+                .map(|label| (index, label))
+        })
+        .collect::<Vec<_>>();
+    let label_widths = real_label_widths(&labels, text_size, cx);
+    let shortcut_texts = shortcut_rows
+        .iter()
+        .map(|(_, label)| label.clone())
+        .collect::<Vec<String>>();
+    let shortcut_widths = real_label_widths(&shortcut_texts, text_size, cx);
+    // 二级父行右侧那枚箭头：`menu_item` 画的就是这个字符（document_menu.rs 里的
+    // `SUBMENU_ARROW`，模块私有，这里按同一个码位写一遍）。
+    let arrow_width = real_label_widths(&["\u{203a}".to_string()], text_size, cx)[0];
+    let mut shortcut_by_row = vec![0.0_f32; specs.len()];
+    for (position, (row, _)) in shortcut_rows.iter().enumerate() {
+        shortcut_by_row[*row] = shortcut_widths[position];
+    }
+
+    // 面板内框：面板宽减掉面板自己的内边距与边框，再减掉行自己的左右内边距。
+    let inner_box = f32::from(panel.size.width)
+        - (dimensions.menu_panel_padding + dimensions.dialog_border_width) * 2.0
+        - dimensions.menu_item_padding_x * 2.0;
+    for (index, (name, _, submenu, icon)) in specs.iter().enumerate() {
+        let icon_path = icon.unwrap_or_else(|| panic!("{name} 这一行该有行首图标"));
+        let icon_bounds = cx
+            .debug_bounds(icon_selector(name))
+            .unwrap_or_else(|| panic!("{name} 那一行的图标（{icon_path}）没画出来"));
+        let row_box = row_bounds(name, cx);
+        assert!(
+            f32::from(icon_bounds.left()) >= f32::from(panel.left()),
+            "{name} 的图标跑到面板左边之外：图标左缘 {:?} vs 面板左缘 {:?}",
+            f32::from(icon_bounds.left()),
+            f32::from(panel.left())
+        );
+        assert!(
+            f32::from(row_box.right()) <= f32::from(panel.right()) + 0.5,
+            "{name} 这一行顶到面板之外了：行右缘 {:?} vs 面板右缘 {:?}",
+            f32::from(row_box.right()),
+            f32::from(panel.right())
+        );
+        // 图标那一列 + 标签 + 键位列（+ 二级的箭头）要在内框里。
+        let mut needed = MENU_ICON_SIZE + MENU_ROW_GAP + label_widths[index];
+        needed += shortcut_by_row[index];
+        if shortcut_by_row[index] > 0.0 {
+            needed += MENU_ROW_GAP;
+        }
+        if submenu.is_some() {
+            needed += MENU_ROW_GAP + arrow_width;
+        }
+        assert!(
+            inner_box + 0.5 >= needed,
+            "{name} 这一行装不进面板内框：内框 {inner_box:?} vs 要占 {needed:?}（标签「{}」实测 {:?}，图标列 {}）",
+            labels[index],
+            label_widths[index],
+            MENU_ICON_SIZE + MENU_ROW_GAP
+        );
+    }
+
+    // 屏上的面板宽与按当前语言算出来的几何一致，渲染处不许另算一套。分节线也在其中：
+    // 少了四条，面板高度就差出四条分节线的高度。
+    let geometry = cx.update(|_window, app| {
+        DocumentMenuGeometry::measure(&rows, &strings, &dimensions, &|command| {
+            document_menu_shortcut(command, app)
+        })
+    });
+    assert_eq!(
+        f32::from(panel.size.width),
+        f32::from(geometry.size.width),
+        "屏上的面板宽与按当前语言算出来的对不上"
+    );
+    assert_eq!(
+        f32::from(panel.size.height),
+        f32::from(geometry.size.height),
+        "屏上的面板高与按当前语言算出来的对不上"
     );
 }
