@@ -1316,6 +1316,27 @@ mod tests {
     }
 
     #[test]
+    fn memlines_handles_empty_text_and_missing_trailing_newline() {
+        // 行迭代是扫描器的地基：空文本、无换行尾、连续换行、多字节行界，
+        // 任何一处差一都会让后续扫描整体错位。
+        // 空文本产出一个空行（高亮侧无害：没有 span 会落在它上面）。
+        let text = "";
+        assert_eq!(MemLines::new(text).collect::<Vec<_>>(), vec![(0, "")]);
+
+        let text = "a";
+        let lines: Vec<_> = MemLines::new(text).collect();
+        assert_eq!(lines, vec![(0, "a")]);
+
+        let text = "甲\n\n乙";
+        let lines: Vec<_> = MemLines::new(text).collect();
+        assert_eq!(
+            lines,
+            vec![(0, "甲"), (4, ""), (5, "乙")],
+            "甲 = 3 字节，第二个空行的起点在 4+1"
+        );
+    }
+
+    #[test]
     fn spans_are_sorted() {
         let text = "## 标题\n```js\nvar a\n```\n---\n> 引\n- 项";
         let spans = highlight(text);
