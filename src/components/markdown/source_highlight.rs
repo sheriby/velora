@@ -64,7 +64,7 @@ pub(crate) fn highlight_markdown_source(
     let _ = at_document_start;
     scanner.flush_pending_paragraph();
     scanner.highlight_nested_regions();
-    scanner.spans.sort_by_key(|span| span.range.start);
+    scanner.merge_spans();
     MarkdownSourceHighlight {
         spans: scanner.spans,
         state: scanner.state,
@@ -386,6 +386,24 @@ impl<'a> Scanner<'a> {
             }
             _ => self.nested_regions.push((language, range)),
         }
+    }
+
+    /// 排序并合并相邻同类区间；产出必须有序（run 构建按序号推进）。
+    fn merge_spans(&mut self) {
+        self.spans.sort_by_key(|span| span.range.start);
+        let mut merged: Vec<CodeHighlightSpan> = Vec::with_capacity(self.spans.len());
+        for span in self.spans.drain(..) {
+            if span.range.start >= span.range.end {
+                continue;
+            }
+            match merged.last_mut() {
+                Some(last) if last.class == span.class && last.range.end >= span.range.start => {
+                    last.range.end = last.range.end.max(span.range.end);
+                }
+                _ => merged.push(span),
+            }
+        }
+        self.spans = merged;
     }
 
     /// 把收好的围栏正文递归交给代码高亮，区间平移回本块坐标。
@@ -1303,6 +1321,17 @@ mod tests {
         let spans = highlight(text);
         for pair in spans.windows(2) {
             assert!(pair[0].0.start < pair[1].0.start, "spans 必须升序: {pair:?}");
+        }
+    }
+
+    #[test]
+    fn spans_are_sorted_and_disjoint_on_rich_documents() {
+        // run 构建按序推进且假定互不重叠；这两条不变量破了，颜色就会串段。
+        let text = "## 标题 `code` **粗** [链](url) > 引\n```js\nvar a\n```\n$$x$$\n\n第二段 [甲](u) 乙 **丙**\\n";
+        let spans = highlight(text);
+        for pair in spans.windows(2) {
+            assert!(pair[0].0.start < pair[1].0.start, "spans 必须升序: {pair:?}");
+            assert!(pair[0].0.end <= pair[1].0.start, "spans 不得重叠: {pair:?}");
         }
     }
 }
