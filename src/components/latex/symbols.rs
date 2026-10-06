@@ -329,6 +329,25 @@ mod tests {
     }
 
     #[test]
+    fn every_panel_category_has_symbols() {
+        // 公式面板六个页签各对应一组符号；某个分类为空就是一页空格子。
+        for category in [
+            LatexCategory::Structures,
+            LatexCategory::Greek,
+            LatexCategory::Operators,
+            LatexCategory::Arrows,
+            LatexCategory::Functions,
+            LatexCategory::Symbols,
+        ] {
+            let count = LATEX_SYMBOLS
+                .iter()
+                .filter(|entry| entry.category == category)
+                .count();
+            assert!(count >= 4, "{category:?} 的符号少于 4 个: {count}");
+        }
+    }
+
+    #[test]
     fn every_symbol_preview_renders() {
         // 表里每条的 preview 必须能被 ratex 渲染——补全列表与面板都靠它出图，
         // 坏一条就是界面上一个空格子。
