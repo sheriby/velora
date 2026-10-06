@@ -565,9 +565,15 @@ impl Editor {
         let d = &theme.dimensions;
         let menu_command = DocumentMenuCommand::ClearFormat;
         let label = document_menu_label(menu_command, strings);
-        let tooltip = match document_menu_shortcut(menu_command, cx) {
-            Some(shortcut) => format!("{label}  {shortcut}"),
-            None => label,
+        // 灰着的那一颗没有悬停底色（点了不会有任何事发生），所以悬停说明要说出为什么，
+        // 否则这颗就成了「坏掉的按钮」——用户报修的就是这一处观感不一致。
+        let tooltip = if enabled {
+            match document_menu_shortcut(menu_command, cx) {
+                Some(shortcut) => format!("{label}  {shortcut}"),
+                None => label.to_string(),
+            }
+        } else {
+            format!("{label} · {}", strings.format_clear_unavailable)
         };
         let button = div()
             .id("toolbar-clear-format")

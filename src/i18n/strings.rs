@@ -506,6 +506,8 @@ pub struct I18nStrings {
     pub paragraph_code_block: String,
     pub insert_link: String,
     pub format_clear: String,
+    /// 选区里没有行内样式可剥时，工具栏那颗格子的悬停说明。
+    pub format_clear_unavailable: String,
     pub insert_image: String,
     pub insert_image_prompt: String,
     pub insert_math_block: String,

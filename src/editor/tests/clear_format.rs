@@ -236,3 +236,54 @@ async fn the_clear_format_row_in_the_format_menu_reaches_the_same_entry(cx: &mut
         "点完一行菜单该收起"
     );
 }
+
+/// 「清除格式」这一档现在点得动吗：判定要跟着选区里实际挂着的东西走。
+///
+/// 工具栏那颗格子与右键菜单那一行读的是同一条 `Editor::clear_format_is_available`，
+/// 三档口径分开钉：裸字（没东西可剥，灰）、带粗体（亮）、只有链接（灰——链接是结构
+/// 不是样式，与 `clearing_format_leaves_a_link_alone` 那条写回口径一字不差）。
+/// 跨块的那一段两头都问，只要有一头挂着样式就该亮。
+#[gpui::test]
+async fn clear_format_availability_follows_the_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(
+        "裸字一段\n\n**带粗体的一段**\n\n[链接文字](https://example.test)\n",
+        cx,
+    );
+    redraw(cx);
+    let available = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+        editor.read_with(cx, |editor, cx| editor.clear_format_is_available(cx))
+    };
+    let whole = |editor: &Entity<Editor>, index: usize, cx: &mut VisualTestContext| {
+        let len = visible_block(editor, index, cx).read_with(cx, |block, _| block.visible_len());
+        select(editor, index, 0..len, cx);
+    };
+
+    whole(&editor, 0, cx);
+    assert!(
+        !available(&editor, cx),
+        "选中的是没样式的裸字，这一档该点不动（灰着才对，别让人点了没反应）"
+    );
+
+    whole(&editor, 1, cx);
+    assert!(available(&editor, cx), "选中了带粗体那一段，这一档该点得动");
+
+    whole(&editor, 2, cx);
+    assert!(
+        !available(&editor, cx),
+        "只选中一个链接：链接不在「清除格式」这一档的口径里，该点不动"
+    );
+
+    // 裸字第 0 块 → 带粗体第 1 块：跨块里有一块挂着样式就该亮。
+    let second_len = visible_block(&editor, 1, cx).read_with(cx, |block, _| block.visible_len());
+    cross_block(&editor, (0, 0), (1, second_len), cx);
+    assert!(
+        available(&editor, cx),
+        "跨块选区覆盖到了粗体那一段，该点得动"
+    );
+    cross_block(&editor, (0, 0), (2, 2), cx);
+    assert!(
+        available(&editor, cx),
+        "跨块的另一头（第 2 块）只有链接，第 1 块仍带粗体，也该点得动"
+    );
+}

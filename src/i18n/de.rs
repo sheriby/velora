@@ -298,6 +298,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) paragraph_code_block: Option<String>,
     pub(crate) insert_link: Option<String>,
     pub(crate) format_clear: Option<String>,
+    pub(crate) format_clear_unavailable: Option<String>,
     pub(crate) insert_image: Option<String>,
     pub(crate) insert_image_prompt: Option<String>,
     pub(crate) insert_math_block: Option<String>,
