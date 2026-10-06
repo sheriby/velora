@@ -85,7 +85,7 @@ impl Editor {
                 self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
                 // [[ 补全跟随编辑刷新（依据本次编辑后的文本与光标）。
                 self.update_wikilink_completion_for_block(&block, cx);
-                // `\\` 公式补全同上：数学块/行内公式里的反斜杠命令。
+                // `\` 公式补全同上：数学块/行内公式里的反斜杠命令。
                 self.update_latex_completion_for_block(&block, cx);
                 // 文本形状（`[TOC]`）变了就当场刷新快照里那一条元数据：整棵同步
                 // 只在结构变化时重跑，这条编辑不改结构。
