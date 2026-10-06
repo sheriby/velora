@@ -378,16 +378,18 @@ impl Block {
             return;
         }
 
-        if was_focused {
-            self.is_selecting = true;
-            if event.modifiers.shift {
-                self.select_to(offset, cx);
-            } else {
-                self.move_to(offset, cx);
-            }
+        // 落点起不起选区与块有没有焦点无关：未聚焦时这一次按下同样要能拖出文字，
+        // 只是顺带把焦点请过来。原本只有已聚焦的分支才置 is_selecting，
+        // 在别的段落上拖就得先单击一次才拖得动。
+        self.is_selecting = true;
+        // shift+点仍然是「从这一段的旧锚点扩」而不是「从别段的锚点跨过来」，
+        // 未聚焦时保持旧的落光标口径，跨段的 shift 扩选不在这一笔。
+        if event.modifiers.shift && was_focused {
+            self.select_to(offset, cx);
         } else {
-            self.is_selecting = false;
             self.move_to(offset, cx);
+        }
+        if !was_focused {
             cx.emit(BlockEvent::RequestFocus);
         }
     }

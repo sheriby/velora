@@ -154,6 +154,13 @@ Workspace (src/editor/workspace.rs)
 - 每 Block 自持 `selected_range`（**块内**字节偏移）+ IME `marked_range`；焦点走每块
   `focus_handle`；Editor 记 `active_entity_id`。跨块选区：`CrossBlockSelection { anchor, focus }`
   （`{entity_id, offset}`，src/editor/selection.rs）。
+- **按下起不起选区与这一块有没有焦点无关**：`Block::on_mouse_down`（src/components/block/interactions/keys.rs:384）
+  两支都置 `is_selecting`，未聚焦时只多一句 `BlockEvent::RequestFocus`。段内拖动由块自己的
+  `on_mouse_move` 扩展，跨块那一段由编辑器层的 `on_editor_mouse_move` 负责，它对「锚点与落点同块」
+  直接返回（src/editor/selection.rs:117）——两条路各管一头，谁都不许把另一头的按下当成要求先聚焦。
+  未聚焦块的 `selected_range` 是焦点离开时留下的旧锚点，只在聚焦时被 `select_to` 用（shift+点），
+  所以跨段的 shift 扩选至今不成立，那是另一档。守卫：
+  `dragging_inside_a_paragraph_without_prior_focus_selects`。
 - **文档级位置一律用缓冲区字节坐标**：`record.source_span`、撤销/重做的 `UndoSelectionSnapshot.range`、
   搜索命中 `source_range`、大纲与锚点跳转、状态栏的「行 : 列」（`compute_source_cursor_position`，
   src/editor/status_bar.rs，直接在缓冲区里数行与字素）。这些都不要再引入「序列化文本里的偏移」。

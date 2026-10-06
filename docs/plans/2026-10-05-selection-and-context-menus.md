@@ -1,7 +1,7 @@
 # 选中菜单与右键菜单（对齐 Typora）
 
 日期：2026-10-05
-状态：FP1–FP12 全部落地，§5 逐条记了实现位置与验收用例。剩 FP4b-4（段落转换的标注那一档）留档不做：标注自己带头部与子块，换出去要先安置子块，代价见 §6 那两条；今天的事实是 `BlockKindTarget` 里没有标注这一档（「段落」那十二行不含它），标注块自己在 `next_kind` 的拒绝名单里（src/editor/paragraph_ops.rs:335，经 `block_kind_conversion` :267 供置灰与派发共用），这一条由既有的 `paragraph_kind::a_callout_is_left_alone`（src/editor/tests/paragraph_kind.rs:239）钉住换标题与换正文两条。
+状态：FP1–FP13 全部落地，§5 逐条记了实现位置与验收用例。剩 FP4b-4（段落转换的标注那一档）留档不做：标注自己带头部与子块，换出去要先安置子块，代价见 §6 那两条；今天的事实是 `BlockKindTarget` 里没有标注这一档（「段落」那十二行不含它），标注块自己在 `next_kind` 的拒绝名单里（src/editor/paragraph_ops.rs:335，经 `block_kind_conversion` :267 供置灰与派发共用），这一条由既有的 `paragraph_kind::a_callout_is_left_alone`（src/editor/tests/paragraph_kind.rs:239）钉住换标题与换正文两条。
 
 ## 1. 这一期要解决的问题
 
@@ -135,6 +135,8 @@ FP12 两套浮层的宽度算法与工具栏观感（已落地，用户看图报
 刻意不做：八种行内样式不做「已经带这个样式就置灰」——开关一种样式在没带样式的字上是有用功（加上），与清除格式那种「手上没东西可清」不是一回事；上标与下标仍不进工具栏（FP11 那条理由不变）；不给工具栏格子加图标底框或分组标题，分节线已经够把三截分开。
 
 验收：`src/editor/tests/clear_format.rs` 七条（新增的口径由第六、第七两条一起钉：菜单那一行与编辑器层入口同一条、裸字选区什么都剥不到也不报改动）、`document_context_menu::rows_that_cannot_run_stay_in_place_but_greyed`（裸字选区下「清除格式」灰、其余九行亮、行序与行高不变）、上一条里的三条宽度守卫。全量 `cargo test --bin velora` 1521 通过、0 失败、6 项 ignored。
+
+FP13 段内拖动不再要求那一段先有焦点（已落地，用户报修）。症状：去选另一段里的文字，按住拖动没有反应，必须先单击那一段把光标落下去，第二次才拖得动。根因在块层那一次按下：`Block::on_mouse_down`（src/components/block/interactions/keys.rs:331）原先只在「这一块已经聚焦」时置 `is_selecting`，未聚焦的分支只落光标再请求焦点；随后编辑器层的 `on_editor_mouse_move` 又对「锚点与落点在同一块」直接返回（src/editor/selection.rs:117，同块交给块自己处理），于是同一块内的拖动两边都不管，抬手之后选区停在 `1..1`。改法是把 `is_selecting` 从「聚焦与否」这两支里提出来，按下就起（src/components/block/interactions/keys.rs:384），未聚焦只多那一句请求焦点（:392-:393）；`select_to` 仍只在已聚焦的 shift+点那一条路上走（:387），未聚焦时照旧落光标。守卫 `selection_mouse::dragging_inside_a_paragraph_without_prior_focus_selects`（src/editor/tests/selection_mouse.rs:150）：先单击第一段并核 `active_entity_id` 落在它身上，再到第二段上按下—拖动—抬手，断言那一块的 `selected_range` 非空、编辑目标跟着换过来、选中工具栏也浮出。改前红值 `在没聚焦的段落里按下拖动该选出文字，实际选区是 1..1`。段落、代码块与表格格子的按下都挂在那一条处理者上（src/components/block/render/shell.rs:123），所以未聚焦的代码块与格子同样跟着修好；用例只核了段落那一支。刻意不做：跨段的 shift+点扩选——未聚焦块里那一份 `selected_range` 是焦点离开时留下的旧锚点，拿它当锚点会选出用户没打算要的一段，先按旧口径落光标；拖动从一个块内继续扩到相邻块仍然只由 `cross_block_drag` 那条既有路径负责，端点跨块时才成立。全量 `cargo test --bin velora` 1523 通过、0 失败、6 项 ignored。未在构建出的实机上手点过，验证走 gpui 测试里真实的按下—拖动—抬手事件序列与逐帧边界。
 
 ## 6. 边界与代价
 

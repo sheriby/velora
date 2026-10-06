@@ -147,6 +147,72 @@ seg_k (k ≥ 2) = [system]
 }
 
 #[gpui::test]
+async fn dragging_inside_a_paragraph_without_prior_focus_selects(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 用户报修：想去选另一段的文字，拖多少次都没反应，必须先单击那一段把光标
+    // 落下去，第二次才拖得动。落点在没有聚焦的块上时只放光标、不起选区。
+    let markdown = "alpha one beta\n\nsecond paragraph here\n";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.to_string(), None));
+    redraw(cx);
+    redraw(cx);
+
+    // 先单击第一段：焦点明确落在第 0 块上，第二段保持未聚焦。
+    let (first, first_center) = editor.read_with(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        let bounds = block.read(cx).last_bounds.expect("第一段该有布局边界");
+        (block.entity_id(), bounds.center())
+    });
+    cx.simulate_click(first_center, Modifiers::none());
+    redraw(cx);
+
+    let second = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[1].entity.clone()
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.active_entity_id,
+            Some(first),
+            "前置条件没搭好：单击第一段之后编辑目标不是第一段"
+        );
+    });
+
+    let (start, end) = second.read_with(cx, |block, _cx| {
+        let bounds = block.last_bounds.expect("第二段该有布局边界");
+        let y = bounds.top() + bounds.size.height * 0.5;
+        (
+            gpui::point(bounds.left() + px(6.0), y),
+            gpui::point(bounds.left() + px(72.0), y),
+        )
+    });
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_move(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+
+    second.read_with(cx, |block, _cx| {
+        assert!(
+            !block.selected_range.is_empty(),
+            "在没聚焦的段落里按下拖动该选出文字，实际选区是 {:?}",
+            block.selected_range
+        );
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.active_entity_id,
+            Some(second.entity_id()),
+            "拖完之后编辑目标该跟着换到被拖的那一段"
+        );
+    });
+    assert!(
+        cx.debug_bounds("editor-selection-toolbar").is_some(),
+        "选出别段的文字之后，选中工具栏也该浮出来"
+    );
+}
+
+#[gpui::test]
 async fn mouse_over_a_block_whose_text_shrank_since_layout_does_not_panic(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     // 指针定位用上一帧的 last_layout 行序去索引当前文本的行范围。文本在布局之后
