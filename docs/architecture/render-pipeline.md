@@ -44,6 +44,18 @@
 
 ## 5. Markdown vs 纯文本渲染差异
 
+- **源码视图的 markdown 语法高亮**（2026-10-07）：源码分块（Paragraph +
+  `source_language == "markdown"`）的高亮走手写逐行扫描器
+  （src/components/markdown/source_highlight.rs），不走 tree-sitter——后者
+  逐块解析拿不到跨 512 行接缝的围栏状态，捕获名也与主题色对不上。着色数据
+  是 `CodeHighlightSpan`（字节区间 + `CodeHighlightClass`），build 时经
+  `sync_code_highlight` 产出、build_text_runs 系的 `build_code_text_runs`
+  消费成 TextRun。跨块接缝：每块记 `source_fence_entry/exit`
+  （MarkdownSourceState：围栏/公式/frontmatter/HTML 注释），编辑器在整棵
+  重建时全量重串、打字后增量级联；高亮结果变化会递增
+  `highlight_generation`（进 shape 备忘键）。颜色取主题 `md_syntax_*` 七
+  字段，语义对齐 VS Code。
+
 - `ViewMode::Source` / 代码文件：全文档单块，`EditMode::SourceRaw` 渲染纯 `BlockTextElement` + 行号槽，无行内样式。
 - `ViewMode::Rendered`：行内样式 + 投影定界符（编辑中）+ 图片/数学/mermaid/HTML 块/表格/callout/脚注。
 - **长块护栏**：未聚焦且超 `LONG_BLOCK_SOURCE_LIMIT` 的块按纯 div 渲染、跳过 span 布局（`render_text_or_mixed_inline_visuals`）。

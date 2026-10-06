@@ -125,6 +125,15 @@ Workspace (src/editor/workspace.rs)
     - 列表项续段的接缝守卫：`typing_at_the_head_of_a_list_item_continuation_lands_on_its_own_line`（八种形状：空行后的续段、紧挨着的第二行、第三段、空行里带空格、有序项、任务项、空行后的围栏，外加引用里第二段作对照）。
 
 25. **块的源码区间存在块树的一张表里，一次编辑平移一趟，不逐块改实体**（`DocumentTree::source_spans` + `set_source_span`/`source_span_of`/`shift_source_spans_after`）：区间以前挂在 `BlockRecord` 上，每次编辑都要把编辑点之后的每一根块读出来、写回去（10 MiB 一次按键：106,455 根，收集 22ms + 平移 32ms = 57ms，占那次按键的三成）。现在表在树这一侧，一次编辑就是一趟 `values_mut` 紧凑循环（同一场景 <1ms）；落笔方照样覆盖自己那一条（`grow_root_span_after_edit`/`write_back_block_source`/`attach_root_spans`），删块/换根块时表跟着清。守卫 `typing_at_the_document_head_keeps_every_root_span_tiled`：在 120 根块的文档段首打一个字，所有区间仍把文件铺满、每段都读得回本块内容（去掉平移这一步它立刻红）。
+25. **源码视图 markdown 高亮的接缝状态是编辑器逐块串联的数据**
+    （`Block.source_fence_entry/exit`，src/components/block/runtime/code.rs 的
+    `sync_code_highlight`）：块文本变化时高亮随 `sync_render_cache` 重算，出口
+    状态顺带产出；入口由编辑器喂——整棵重建（打开/切视图/undo）后
+    `resync_source_fence_states` 全量重串，打字后
+    `cascade_source_fence_states_after` 增量级联（下一块入口一致就停，打字
+    热路径只多一次实体读）。高亮变化要递增 `highlight_generation` 推翻 shape
+    备忘，否则级联换色上不了屏（块文本没变、备忘键其余位不动）。渲染侧详情见
+    render-pipeline.md §5。
 24. **行结构计划读的是可见列表同步那一趟记下的元数据，不再逐块读实体**（`RenderedRowSpacingInfo`，src/editor/render.rs；`DocumentTree::row_spacing_at`）：行计划每键重建一次，「重建里读了几个块实体」就是它随文档长的系数——10 MiB 的 159,683 个可见块以前被读两遍（折叠过滤一遍、分组扫描一遍），实测 121ms。现在分组锚点（引用组、标注、脚注）、层级、列表标记这些**结构量**跟 `visible` 一起进快照（`sync_block_list` 本来就算出这些值写回块上，顺手存同一份；两块 vec 同进同出），折叠过滤只剩标题要碰实体（chevron 的 `foldable` 与 `folded` 是块自己的状态），`[TOC]` 候选之外一个不读。闸门 `row_plan_rebuild_reads_only_the_headings_not_every_block`：100 标题 / 200 块的文档一次按键，700 次实体读 → 100 次。
     但 `[TOC]` 是**文本形状**，而整棵同步只在结构变化时重跑：文本一变（`BlockEvent::Changed`）就当场刷新那一条的 `is_toc`/`had_toc`（`DocumentTree::refresh_row_spacing_for`），折叠过滤写完条目之后再刷一次。守卫 `typing_a_toc_marker_fills_its_entries_on_that_frame`：把 `待填` 改成 `[TOC]` 的**这一帧**就要有目录条目，改回去的这一帧条目被清掉。以后谁想让快照「不跟着文本走」，先看这条守卫——它钉的就是「文本形状与快照里的记号同帧一致」。
 
