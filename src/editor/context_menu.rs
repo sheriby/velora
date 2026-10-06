@@ -9,9 +9,9 @@ pub(super) use crate::components::{DismissTransientUi, TableAxisKind, TableColum
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 pub(super) use document_menu::{
-    DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
-    document_menu_command_icon, document_menu_label, document_menu_origins, document_menu_shortcut,
-    document_submenu_icon, document_submenu_label,
+    DOCUMENT_MENU_QUICK_ACTIONS, DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow,
+    DocumentSubmenu, document_menu_command_icon, document_menu_label, document_menu_origins,
+    document_menu_shortcut, document_submenu_icon, document_submenu_label, quick_action_tooltip,
 };
 
 /// Target block position for inserting a native table.

@@ -477,7 +477,7 @@ async fn the_toolbar_yields_to_the_context_menu_and_to_source_mode(cx: &mut Test
     cx.simulate_mouse_up(position, MouseButton::Right, Modifiers::none());
     redraw(cx);
     assert!(
-        cx.debug_bounds("menu-item-undo").is_some(),
+        cx.debug_bounds("editor-context-menu-panel").is_some(),
         "右键菜单该照常弹出"
     );
     assert!(toolbar_is_hidden(cx), "右键菜单开着时不该同时浮着工具栏");
@@ -586,7 +586,9 @@ async fn the_paragraph_panel_fits_its_labels_measured_with_the_real_font(cx: &mu
             .iter()
             .filter_map(|row| match row {
                 DocumentMenuRow::Item { command, .. } => Some(*command),
-                DocumentMenuRow::Separator | DocumentMenuRow::Submenu { .. } => None,
+                DocumentMenuRow::Separator
+                | DocumentMenuRow::Submenu { .. }
+                | DocumentMenuRow::QuickActions => None,
             })
             .collect::<Vec<_>>()
     });

@@ -97,6 +97,26 @@ fn row_bounds(name: &'static str, cx: &mut VisualTestContext) -> gpui::Bounds<gp
         .unwrap_or_else(|| panic!("菜单里没渲染出 {name} 这一行"))
 }
 
+/// 顶部图标条那一颗的边界与点击（剪切/复制/粘贴/粘贴为纯文本已经不在长行里了）。
+fn quick_action_bounds(
+    name: &'static str,
+    cx: &mut VisualTestContext,
+) -> gpui::Bounds<gpui::Pixels> {
+    let selector: &'static str = Box::leak(format!("menu-quick-action-{name}").into_boxed_str());
+    cx.debug_bounds(selector)
+        .unwrap_or_else(|| panic!("图标条里没渲染出 {name} 那一颗"))
+}
+
+fn click_quick_action(name: &'static str, cx: &mut VisualTestContext) {
+    let bounds = quick_action_bounds(name, cx);
+    let center = point(
+        bounds.left() + bounds.size.width * 0.5,
+        bounds.top() + bounds.size.height * 0.5,
+    );
+    cx.simulate_click(center, Modifiers::none());
+    redraw(cx);
+}
+
 fn click_row(name: &'static str, cx: &mut VisualTestContext) {
     let bounds = row_bounds(name, cx);
     let center = point(
@@ -194,14 +214,9 @@ async fn the_copy_as_markdown_row_in_the_menu_reaches_the_same_action(cx: &mut T
 
     select(&editor, 0, 0..14, cx);
     right_click(&editor, 0, cx);
-    for name in [
-        "cut",
-        "copy",
-        "paste",
-        "paste-as-plain-text",
-        "copy-as-markdown",
-    ] {
-        row_bounds(name, cx);
+    row_bounds("copy-as-markdown", cx);
+    for name in ["cut", "copy", "paste", "paste-as-plain-text"] {
+        quick_action_bounds(name, cx);
     }
 
     click_row("copy-as-markdown", cx);
@@ -226,7 +241,7 @@ async fn the_paste_as_plain_text_row_in_the_menu_reaches_the_same_action(cx: &mu
     set_clipboard("纯文本 **记号**", cx);
     select(&editor, 0, 0..12, cx);
     right_click(&editor, 0, cx);
-    click_row("paste-as-plain-text", cx);
+    click_quick_action("paste-as-plain-text", cx);
 
     assert_eq!(
         buffer_text(&editor, cx),
@@ -251,7 +266,7 @@ async fn two_menu_rounds_land_on_the_selection_in_effect(cx: &mut TestAppContext
             visible_block(&editor, 0, cx).read_with(cx, |block, _| block.visible_len());
         select(&editor, 0, 0..visible_len, cx);
         right_click(&editor, 0, cx);
-        click_row("paste-as-plain-text", cx);
+        click_quick_action("paste-as-plain-text", cx);
         assert_eq!(
             buffer_text(&editor, cx),
             format!("{URL}\n\n另一段\n"),

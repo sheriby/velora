@@ -694,7 +694,9 @@ impl Editor {
                         row.into_any_element()
                     }
                 }
-                DocumentMenuRow::Submenu { .. } => div().into_any_element(),
+                DocumentMenuRow::Submenu { .. } | DocumentMenuRow::QuickActions => {
+                    div().into_any_element()
+                }
             }))
             .into_any_element()
     }

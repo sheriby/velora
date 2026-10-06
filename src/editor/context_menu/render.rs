@@ -1,5 +1,10 @@
 use super::*;
 
+use super::document_menu::{
+    QUICK_ACTION_BUTTON_SIZE, QUICK_ACTION_DIVIDER_WIDTH, QUICK_ACTION_GAP,
+    QUICK_ACTION_GROUP_BREAK,
+};
+
 impl Editor {
     pub(super) fn on_toggle_table_headers(
         &mut self,
@@ -95,7 +100,7 @@ impl Editor {
                 open_submenu,
                 ..
             } => {
-                let rows = self.document_menu_rows(cx);
+                let rows = self.document_menu_rows();
                 // 宽度按当前生效的键位那一列估，用户改过绑定也不会截字。
                 let shortcut_of = &|command| document_menu_shortcut(command, cx);
                 let panel = DocumentMenuGeometry::measure(&rows, &s, d, shortcut_of);
@@ -635,6 +640,90 @@ impl Editor {
 }
 
 impl Editor {
+    /// 顶部那一行纯图标（Windows 11 的那一种）：六颗 26 的格子，「撤销/重做」与
+    /// 「剪切/复制/粘贴/粘贴为纯文本」两组之间一条竖线。格子上不放文字，标签与生效键位
+    /// 写在悬停说明里；点得动的格子才有底色与小手，点不动的连悬停反馈也没有——
+    /// 与选中工具栏那九颗同一口径。
+    fn render_document_menu_quick_actions(
+        &self,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let mut cells: Vec<AnyElement> = Vec::new();
+        for (index, command) in DOCUMENT_MENU_QUICK_ACTIONS.into_iter().enumerate() {
+            if index == QUICK_ACTION_GROUP_BREAK {
+                cells.push(
+                    div()
+                        .flex_shrink_0()
+                        .w(px(QUICK_ACTION_DIVIDER_WIDTH))
+                        .h(px(16.0))
+                        .rounded(px(0.5))
+                        .bg(c.dialog_border)
+                        .into_any_element(),
+                );
+            }
+            let enabled = self.quick_action_is_available(command, cx);
+            let icon = document_menu_command_icon(command).unwrap_or_default();
+            let tooltip = quick_action_tooltip(command, strings, cx);
+            let name = command.row_name();
+            let selector = format!("menu-quick-action-{name}");
+            let button = div()
+                .id(SharedString::from(selector.clone()))
+                .size(px(QUICK_ACTION_BUTTON_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .flex_shrink_0()
+                .rounded(px(d.menu_item_radius))
+                .text_color(if enabled {
+                    c.dialog_secondary_button_text
+                } else {
+                    c.dialog_muted
+                })
+                .debug_selector(move || selector.clone())
+                .tooltip(move |_, cx| {
+                    cx.new(|_| crate::components::HoverPreviewTooltip {
+                        label: tooltip.clone().into(),
+                    })
+                    .into()
+                })
+                .child(
+                    svg()
+                        .path(icon)
+                        .size(px(crate::components::menu::MENU_ICON_SIZE))
+                        .text_color(if enabled {
+                            c.dialog_secondary_button_text
+                        } else {
+                            c.dialog_muted
+                        }),
+                );
+            let button = if enabled {
+                button
+                    .cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .active(|this| this.opacity(0.92))
+                    .on_click(cx.listener(move |editor, _event, window, cx| {
+                        editor.run_document_menu_command(command, window, cx);
+                    }))
+            } else {
+                button
+            };
+            cells.push(button.into_any_element());
+        }
+        div()
+            .id("editor-context-menu-quick-actions")
+            .w_full()
+            .h(px(QUICK_ACTION_BUTTON_SIZE))
+            .flex()
+            .items_center()
+            .gap(px(QUICK_ACTION_GAP))
+            .children(cells)
+            .into_any_element()
+    }
+
     /// 正文右键菜单的一行。行的视觉状态在 `components::menu::menu_item` 里定，
     /// 这里只管「点下去派发哪个动作」与「悬停展开哪一块二级菜单」。
     fn render_document_menu_row(
@@ -647,6 +736,9 @@ impl Editor {
     ) -> AnyElement {
         match row {
             DocumentMenuRow::Separator => Self::menu_separator(theme).into_any_element(),
+            DocumentMenuRow::QuickActions => {
+                self.render_document_menu_quick_actions(theme, strings, cx)
+            }
             DocumentMenuRow::Item {
                 command,
                 name,

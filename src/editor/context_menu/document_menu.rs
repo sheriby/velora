@@ -215,7 +215,47 @@ pub(crate) enum DocumentMenuRow {
         id: DocumentSubmenu,
         name: &'static str,
     },
+    /// 顶部那一行纯图标：撤销/重做与剪切/复制/粘贴/粘贴为纯文本。六件事占一行，
+    /// 标签与生效键位写在每颗的悬停说明里。
+    QuickActions,
     Separator,
+}
+
+/// 图标条上的动作，按屏上从左到右的顺序。`QUICK_ACTION_GROUP_BREAK` 之前是一组
+/// （撤销、重做），之后是一组（剪切、复制、粘贴、粘贴为纯文本），两组之间一条竖线。
+pub(crate) const DOCUMENT_MENU_QUICK_ACTIONS: [DocumentMenuCommand; 6] = [
+    DocumentMenuCommand::Undo,
+    DocumentMenuCommand::Redo,
+    DocumentMenuCommand::Cut,
+    DocumentMenuCommand::Copy,
+    DocumentMenuCommand::Paste,
+    DocumentMenuCommand::PasteAsPlainText,
+];
+pub(super) const QUICK_ACTION_GROUP_BREAK: usize = 2;
+/// 格子的边长与间隙，与选中工具栏同一份尺寸；竖线 1px。
+pub(super) const QUICK_ACTION_BUTTON_SIZE: f32 = 26.0;
+pub(super) const QUICK_ACTION_GAP: f32 = 2.0;
+pub(super) const QUICK_ACTION_DIVIDER_WIDTH: f32 = 1.0;
+
+/// 图标条整条占的宽度：六颗格子、一条竖线，七个子节点之间六段间隙。
+pub(crate) fn quick_actions_width() -> f32 {
+    DOCUMENT_MENU_QUICK_ACTIONS.len() as f32 * QUICK_ACTION_BUTTON_SIZE
+        + QUICK_ACTION_DIVIDER_WIDTH
+        + QUICK_ACTION_GAP * (DOCUMENT_MENU_QUICK_ACTIONS.len() as f32)
+}
+
+/// 图标条那一颗的悬停说明：标签 + 生效键位。这一行不给文字，键位就写在这里，
+/// 与菜单行右侧那一列同源（都取 `document_menu_shortcut` 那一份生效绑定）。
+pub(crate) fn quick_action_tooltip(
+    command: DocumentMenuCommand,
+    strings: &crate::i18n::I18nStrings,
+    cx: &App,
+) -> String {
+    let label = document_menu_label(command, strings);
+    match document_menu_shortcut(command, cx) {
+        Some(shortcut) => format!("{label}  {shortcut}"),
+        None => label,
+    }
 }
 
 impl Editor {
@@ -230,42 +270,28 @@ impl Editor {
             .unwrap_or(false)
     }
 
-    /// 主菜单的行序：编辑 → 格式 → 段落 → 插入 → 视图。
-    pub(crate) fn document_menu_rows(&self, cx: &App) -> Vec<DocumentMenuRow> {
+    /// 图标条上一颗点得动吗。这六条判定与此前那六行菜单项一字不差，只是换了一处放：
+    /// 剪切看「有选区且写得动」，复制只看有选区，粘贴两条还要剪贴板里有东西，
+    /// 撤销/重做看对应的历史。
+    pub(crate) fn quick_action_is_available(&self, command: DocumentMenuCommand, cx: &App) -> bool {
         let selectable = self.has_text_selection(cx);
         let editable = self.writes_through_the_buffer();
+        match command {
+            DocumentMenuCommand::Undo => !self.undo_history.is_empty() && editable,
+            DocumentMenuCommand::Redo => !self.redo_history.is_empty() && editable,
+            DocumentMenuCommand::Cut => selectable && editable,
+            DocumentMenuCommand::Copy => selectable,
+            DocumentMenuCommand::Paste | DocumentMenuCommand::PasteAsPlainText => {
+                editable && cx.read_from_clipboard().is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图。
+    pub(crate) fn document_menu_rows(&self) -> Vec<DocumentMenuRow> {
         vec![
-            DocumentMenuRow::Item {
-                command: DocumentMenuCommand::Undo,
-                name: "undo",
-                enabled: !self.undo_history.is_empty() && editable,
-            },
-            DocumentMenuRow::Item {
-                command: DocumentMenuCommand::Redo,
-                name: "redo",
-                enabled: !self.redo_history.is_empty() && editable,
-            },
-            DocumentMenuRow::Separator,
-            DocumentMenuRow::Item {
-                command: DocumentMenuCommand::Cut,
-                name: "cut",
-                enabled: selectable && editable,
-            },
-            DocumentMenuRow::Item {
-                command: DocumentMenuCommand::Copy,
-                name: "copy",
-                enabled: selectable,
-            },
-            DocumentMenuRow::Item {
-                command: DocumentMenuCommand::Paste,
-                name: "paste",
-                enabled: editable && cx.read_from_clipboard().is_some(),
-            },
-            DocumentMenuRow::Item {
-                command: DocumentMenuCommand::PasteAsPlainText,
-                name: "paste-as-plain-text",
-                enabled: editable && cx.read_from_clipboard().is_some(),
-            },
+            DocumentMenuRow::QuickActions,
             DocumentMenuRow::Separator,
             DocumentMenuRow::Item {
                 command: DocumentMenuCommand::CopyAsMarkdown,
@@ -780,6 +806,7 @@ impl DocumentMenuGeometry {
                 DocumentMenuRow::Item { .. } | DocumentMenuRow::Submenu { .. } => {
                     dimensions.menu_item_height
                 }
+                DocumentMenuRow::QuickActions => QUICK_ACTION_BUTTON_SIZE,
             };
             top += row_height;
             widest = widest.max(Self::row_width(row, strings, dimensions, shortcut_of));
@@ -810,7 +837,9 @@ impl DocumentMenuGeometry {
     ) -> f32 {
         let text_size = dimensions.menu_text_size;
         let (label, shortcut, submenu, icon) = match row {
+            // 图标条没有文字可估：宽度就是那六颗格子加竖线与间隙，行高另说。
             DocumentMenuRow::Separator => return 0.0,
+            DocumentMenuRow::QuickActions => return quick_actions_width(),
             DocumentMenuRow::Item { command, .. } => (
                 document_menu_label(*command, strings),
                 shortcut_of(*command),

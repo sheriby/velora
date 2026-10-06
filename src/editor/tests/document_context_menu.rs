@@ -5,28 +5,32 @@ use super::common::*;
 use crate::components::menu::{MENU_ICON_SIZE, MENU_ROW_GAP};
 use crate::components::{Block, InlineFormat, install_keybindings};
 use crate::editor::context_menu::{
-    DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
-    document_menu_command_icon, document_menu_label, document_menu_shortcut, document_submenu_icon,
-    document_submenu_label,
+    DOCUMENT_MENU_QUICK_ACTIONS, DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow,
+    DocumentSubmenu, document_menu_command_icon, document_menu_label, document_menu_shortcut,
+    document_submenu_icon, document_submenu_label, quick_action_tooltip,
 };
 use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
-/// 主菜单十二行加四条分节：行 id 与 `document_menu_rows` 里给的一致。
-const MAIN_ROWS: [&str; 12] = [
-    "undo",
-    "redo",
-    "cut",
-    "copy",
-    "paste",
-    "paste-as-plain-text",
+/// 主面板的长行：图标条之外就剩这六行，行 id 与 `document_menu_rows` 里给的一致。
+const MAIN_ROWS: [&str; 6] = [
     "copy-as-markdown",
     "copy-as-html",
     "format",
     "paragraph",
     "insert",
     "toggle-source-view",
+];
+
+/// 顶部图标条那六颗，按屏上从左到右的顺序（与 `DOCUMENT_MENU_QUICK_ACTIONS` 同序）。
+const QUICK_ACTION_ROWS: [&str; 6] = [
+    "undo",
+    "redo",
+    "cut",
+    "copy",
+    "paste",
+    "paste-as-plain-text",
 ];
 
 const FORMAT_ROWS: [&str; 10] = [
@@ -172,6 +176,29 @@ fn row_bounds(name: &'static str, cx: &mut VisualTestContext) -> gpui::Bounds<gp
         .unwrap_or_else(|| panic!("菜单里没渲染出 {name} 这一行"))
 }
 
+fn quick_action_selector(name: &'static str) -> &'static str {
+    Box::leak(format!("menu-quick-action-{name}").into_boxed_str())
+}
+
+/// 图标条上那一颗的边界：不在就是没画出来。
+fn quick_action_bounds(
+    name: &'static str,
+    cx: &mut VisualTestContext,
+) -> gpui::Bounds<gpui::Pixels> {
+    cx.debug_bounds(quick_action_selector(name))
+        .unwrap_or_else(|| panic!("图标条里没渲染出 {name} 那一颗"))
+}
+
+/// 六颗此刻点得动吗，按 `QUICK_ACTION_ROWS` 的顺序。读的是渲染同一份判定。
+fn quick_action_states(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<bool> {
+    editor.read_with(cx, |editor, cx| {
+        DOCUMENT_MENU_QUICK_ACTIONS
+            .iter()
+            .map(|command| editor.quick_action_is_available(*command, cx))
+            .collect()
+    })
+}
+
 fn shortcut_selector(label: &str) -> &'static str {
     Box::leak(format!("menu-shortcut-{label}").into_boxed_str())
 }
@@ -210,19 +237,6 @@ fn menu_is_open(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> bool {
     editor.read_with(cx, |editor, _| editor.context_menu.is_some())
 }
 
-fn enabled_rows(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<(&'static str, bool)> {
-    editor.read_with(cx, |editor, cx| {
-        editor
-            .document_menu_rows(cx)
-            .into_iter()
-            .filter_map(|row| match row {
-                DocumentMenuRow::Item { name, enabled, .. } => Some((name, enabled)),
-                _ => None,
-            })
-            .collect()
-    })
-}
-
 fn submenu_enabled_rows(
     editor: &Entity<Editor>,
     submenu: DocumentSubmenu,
@@ -234,7 +248,9 @@ fn submenu_enabled_rows(
             .into_iter()
             .filter_map(|row| match row {
                 DocumentMenuRow::Item { name, enabled, .. } => Some((name, enabled)),
-                DocumentMenuRow::Submenu { .. } | DocumentMenuRow::Separator => None,
+                DocumentMenuRow::Submenu { .. }
+                | DocumentMenuRow::Separator
+                | DocumentMenuRow::QuickActions => None,
             })
             .collect()
     })
@@ -253,12 +269,27 @@ async fn right_click_inside_a_block_opens_the_document_menu(cx: &mut TestAppCont
         let bounds = row_bounds(name, cx);
         assert!(f32::from(bounds.size.height) > 0.0, "{name} 这一行没有高度");
     }
-    // 行的先后顺序就是菜单的分段顺序：撤销在最上，视图切换在最下。
-    let undo_top = f32::from(row_bounds("undo", cx).top());
-    let redo_top = f32::from(row_bounds("redo", cx).top());
-    let paste_top = f32::from(row_bounds("paste", cx).top());
+    for name in QUICK_ACTION_ROWS {
+        let bounds = quick_action_bounds(name, cx);
+        assert!(
+            f32::from(bounds.size.width) > 0.0 && f32::from(bounds.size.height) > 0.0,
+            "{name} 那一颗图标没有尺寸"
+        );
+    }
+    // 图标条在最上面，长行按复制为 → 格式 / 段落 / 插入 → 视图的顺序往下排。
+    let strip_bottom = f32::from(quick_action_bounds("undo", cx).bottom());
+    let markdown_top = f32::from(row_bounds("copy-as-markdown", cx).top());
+    let html_top = f32::from(row_bounds("copy-as-html", cx).top());
+    let format_top = f32::from(row_bounds("format", cx).top());
     let view_top = f32::from(row_bounds("toggle-source-view", cx).top());
-    assert!(undo_top < redo_top && redo_top < paste_top && paste_top < view_top);
+    assert!(
+        strip_bottom <= markdown_top,
+        "图标条该在第一条长行之上：图标条底 {strip_bottom} vs 第一行顶 {markdown_top}"
+    );
+    assert!(
+        markdown_top < html_top && html_top < format_top && format_top < view_top,
+        "长行的顺序变了"
+    );
     assert!(menu_is_open(&editor, cx));
 }
 
@@ -282,7 +313,11 @@ async fn hovering_the_format_row_opens_its_submenu_beside_the_parent_row(cx: &mu
         row_bounds(name, cx);
     }
     let submenu_left = f32::from(row_bounds("bold", cx).left());
-    let panel_right = f32::from(row_bounds("undo", cx).right());
+    let panel_right = f32::from(
+        cx.debug_bounds("editor-context-menu-panel")
+            .expect("主面板该有边界")
+            .right(),
+    );
     assert!(
         submenu_left > panel_right,
         "二级面板该开在主面板右侧：主面板右边 {panel_right}，二级左边 {submenu_left}"
@@ -537,33 +572,51 @@ async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) 
     redraw(cx);
 
     right_click(&editor, 0, cx);
-    let without_selection = enabled_rows(&editor, cx);
+    let quick_without = quick_action_states(&editor, cx);
     let geometry_without = MAIN_ROWS
         .iter()
         .map(|name| f32::from(row_bounds(name, cx).top()))
         .collect::<Vec<_>>();
-    for name in ["cut", "copy"] {
-        assert!(
-            !enabled_of(&without_selection, name),
-            "{name} 在无选区时还是可点的：{without_selection:?}"
-        );
+    let strip_without = QUICK_ACTION_ROWS
+        .iter()
+        .map(|name| {
+            let bounds = quick_action_bounds(name, cx);
+            (f32::from(bounds.top()), f32::from(bounds.left()))
+        })
+        .collect::<Vec<_>>();
+    for (command, enabled) in DOCUMENT_MENU_QUICK_ACTIONS.iter().zip(quick_without.iter()) {
+        if matches!(
+            command,
+            DocumentMenuCommand::Cut | DocumentMenuCommand::Copy
+        ) {
+            assert!(!enabled, "{} 在无选区时还是可点的", command.row_name());
+        }
     }
 
     select_head_of_first_block(&editor, cx);
     right_click(&editor, 0, cx);
-    let with_selection = enabled_rows(&editor, cx);
-    for name in ["cut", "copy"] {
-        assert!(
-            enabled_of(&with_selection, name),
-            "{name} 在有选区时还置着：{with_selection:?}"
-        );
+    let quick_with = quick_action_states(&editor, cx);
+    for (command, enabled) in DOCUMENT_MENU_QUICK_ACTIONS.iter().zip(quick_with.iter()) {
+        if matches!(
+            command,
+            DocumentMenuCommand::Cut | DocumentMenuCommand::Copy
+        ) {
+            assert!(enabled, "{} 在有选区时还置着", command.row_name());
+        }
     }
-    // 撤销/重做看历史、粘贴看剪贴板，这三行不随选区变。
-    for name in ["undo", "redo", "paste"] {
+    // 撤销/重做看历史、粘贴两颗看剪贴板，这四颗不随选区变。
+    for (index, command) in DOCUMENT_MENU_QUICK_ACTIONS.iter().enumerate() {
+        if matches!(
+            command,
+            DocumentMenuCommand::Cut | DocumentMenuCommand::Copy
+        ) {
+            continue;
+        }
         assert_eq!(
-            enabled_of(&with_selection, name),
-            enabled_of(&without_selection, name),
-            "{name} 这一行的可用性不该跟着选区变"
+            quick_with[index],
+            quick_without[index],
+            "{} 这一颗的可用性不该跟着选区变",
+            command.row_name()
         );
     }
     let geometry_with = MAIN_ROWS
@@ -573,6 +626,17 @@ async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) 
     assert_eq!(
         geometry_without, geometry_with,
         "置灰只是变色，行序与行高不能变"
+    );
+    let strip_with = QUICK_ACTION_ROWS
+        .iter()
+        .map(|name| {
+            let bounds = quick_action_bounds(name, cx);
+            (f32::from(bounds.top()), f32::from(bounds.left()))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        strip_without, strip_with,
+        "图标条的格子也不能因为某一颗变亮就挪位置"
     );
 
     // 二级面板里同样的口径：格式那九行（八种行内样式与链接）都跟着选区走；「清除格式」
@@ -672,7 +736,11 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
         f32::from(last.bottom())
     );
     assert!(
-        f32::from(row_bounds("undo", cx).right()) <= viewport_width,
+        f32::from(
+            cx.debug_bounds("editor-context-menu-panel")
+                .expect("主面板该有边界")
+                .right()
+        ) <= viewport_width,
         "主面板越过了视口右沿"
     );
 
@@ -682,7 +750,11 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
     });
     redraw(cx);
     let submenu_left = f32::from(row_bounds("heading-1", cx).left());
-    let panel_left = f32::from(row_bounds("undo", cx).left());
+    let panel_left = f32::from(
+        cx.debug_bounds("editor-context-menu-panel")
+            .expect("主面板该有边界")
+            .left(),
+    );
     assert!(
         submenu_left < panel_left,
         "窄视口里二级面板该翻到主面板左侧：{submenu_left} vs {panel_left}"
@@ -749,11 +821,8 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         );
     }
 
-    // 有键位的主菜单行也一样显示。
+    // 有键位的主菜单行也一样显示。图标条那六颗没有键位列，键位写在悬停说明里（下面那条断言）。
     for command in [
-        DocumentMenuCommand::Undo,
-        DocumentMenuCommand::Copy,
-        DocumentMenuCommand::Paste,
         DocumentMenuCommand::CopyAsMarkdown,
         DocumentMenuCommand::ToggleSourceView,
     ] {
@@ -767,6 +836,29 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
     assert!(
         cx.debug_bounds(shortcut_selector("⌘A")).is_none(),
         "菜单上没有走 ⌘A 的那一行了，键位列里不该还挂着它"
+    );
+    // 图标条那六颗：这一行不给文字，标签与生效键位就都写在悬停说明里，
+    // 与菜单行右侧那一列读的是同一份键位表。
+    let strings = cx.update(|_window, app| app.global::<I18nManager>().strings().clone());
+    for command in DOCUMENT_MENU_QUICK_ACTIONS {
+        let tooltip = cx.update(|_window, app| quick_action_tooltip(command, &strings, app));
+        let label = document_menu_label(command, &strings);
+        let shortcut = shortcut_of(command, cx)
+            .unwrap_or_else(|| panic!("{} 这一颗该有生效键位", command.row_name()));
+        assert_eq!(
+            tooltip,
+            format!("{label}  {shortcut}"),
+            "{} 的悬停说明该是「标签 + 键位」",
+            command.row_name()
+        );
+    }
+    assert_eq!(
+        cx.update(|_window, app| quick_action_tooltip(DocumentMenuCommand::Undo, &strings, app)),
+        format!(
+            "{}  ⌘Z",
+            document_menu_label(DocumentMenuCommand::Undo, &strings)
+        ),
+        "撤销那颗带上的是键位表里那一份撤销键"
     );
     // 「复制为 HTML」的 ⌘⇧C 是写死的一份绑定，不在键位表里，这一列留空。
     assert_eq!(
@@ -876,7 +968,7 @@ async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut T
     let panel = cx
         .debug_bounds("editor-context-menu-panel")
         .expect("右键该有主面板");
-    let rows = editor.read_with(cx, |editor, app| editor.document_menu_rows(app));
+    let rows = editor.read_with(cx, |editor, _app| editor.document_menu_rows());
     let specs = rows
         .iter()
         .filter_map(|row| match row {
@@ -889,7 +981,7 @@ async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut T
             DocumentMenuRow::Submenu { id, name } => {
                 Some((*name, None, Some(*id), document_submenu_icon(*id)))
             }
-            DocumentMenuRow::Separator => None,
+            DocumentMenuRow::Separator | DocumentMenuRow::QuickActions => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -988,5 +1080,40 @@ async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut T
         f32::from(panel.size.height),
         f32::from(geometry.size.height),
         "屏上的面板高与按当前语言算出来的对不上"
+    );
+}
+
+/// 图标条那一颗点下去走的是与键位同一条路：「剪切」把选中的那段收进剪贴板、从文档里删掉，
+/// 菜单同时收起。这一行不给文字，点得动与点不动都得从这一条用例上看得出来的差别。
+#[gpui::test]
+async fn clicking_the_strip_button_runs_the_same_action_as_the_key(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    select_head_of_first_block(&editor, cx);
+    right_click(&editor, 0, cx);
+    let bounds = quick_action_bounds("cut", cx);
+    cx.simulate_click(
+        point(
+            bounds.left() + bounds.size.width * 0.5,
+            bounds.top() + bounds.size.height * 0.5,
+        ),
+        Modifiers::none(),
+    );
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        " one\n\nbeta two\n",
+        "图标条上的「剪切」没走 ⌘X 那一条实现"
+    );
+    assert!(!menu_is_open(&editor, cx), "点完一颗该收起菜单");
+    assert_eq!(
+        cx.update(|_window, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("alpha"),
+        "剪下来的那五个字该在剪贴板里"
     );
 }

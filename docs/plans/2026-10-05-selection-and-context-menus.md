@@ -210,3 +210,13 @@ FP15 行前置图标（已落地）。`menu_item` 多一个 `icon` 参数（src/
 - 真实度量守卫换了一份实现两处用：`real_label_widths` 提到 src/editor/tests/common.rs:79（原先内联在工具栏那条用例里），新增 `document_context_menu::the_main_panel_rows_draw_their_icons_inside_the_measured_box` 逐行核三件事——图标画得出且在面板之内、`图标列 + 标签实测宽 + 键位列 + 二级箭头` 装得下内框、屏上面板的宽高与 `DocumentMenuGeometry::measure` 一字不差。主面板为了这条守卫补了 `.debug_selector("editor-context-menu-panel")`（src/editor/context_menu/render.rs:146，与工具栏 `editor-selection-toolbar` 同一写法）。
 - 新守卫当场撞出第二处漏算（与 FP12 同族）：`measure` 的宽加过边框、高没加，实测屏上 389 vs 算出 387，差的正是上下各 1px 的边框（src/editor/context_menu/document_menu.rs:789 补上 `dialog_border_width * 2.0`）。这条不是观感问题：`document_menu_origins` 按这份高夹紧下沿，少算 2px 就让菜单比 intended 低 2px。
 - 图标的形状没在构建出的实机上看：用系统 QuickLook 把 13 枚 svg 各自栅格化成 128px 逐张看过（剪刀、带两行与带 T 的两份剪贴板、返回箭头、双向箭头、A、`</>`、Markdown 徽标都能读出来），落进菜单之后的观感以用户实机为准。
+
+FP16 顶部图标条（已落地）。`DocumentMenuRow` 多一个 `QuickActions` 变体（src/editor/context_menu/document_menu.rs:208），行序变成「图标条 → 分节 → 复制为 Markdown → 复制为 HTML → 分节 → 格式 / 段落 / 插入 → 分节 → 切换源码模式」：六行长行 + 一条图标条 + 三条分节线，一共十行，此前是十三行加四条分节线。实测主面板从 389 高收到 234 高（宽 229，图标条自己 169 宽：六颗 26 的格子 + 一条 1px 竖线 + 六段 2px 间隙）。
+
+- 六颗的动作与键位一字未动：`run_document_menu_command`（src/editor/context_menu/document_menu.rs:460）还是那一条派发，格子按下就调它，菜单同时收起（收菜单在那条函数的开头，与长行同一处）。
+- 可用性收进一条判定：`Editor::quick_action_is_available`（src/editor/context_menu/document_menu.rs:276）——撤销/重做看对应历史且写得动，剪切看「有选区且写得动」，复制只看有选区，粘贴两颗还要剪贴板里有东西。此前那六行的置灰口径写在 `document_menu_rows` 里，行没了，判定搬进这一条，`document_menu_rows` 因此不再需要 `cx`（:292）。
+- 这一行不给文字，标签与生效键位写在悬停说明里：`quick_action_tooltip`（:249）取的就是菜单行右侧那一列同一份 `document_menu_shortcut`。点不动的格子没有底色也没有小手（与工具栏那颗「清除格式」同一口径）。
+- 几何：`measure` 把这一条按 26 高、169 宽算进行高与行宽（src/editor/context_menu/document_menu.rs:809、:842），二级面板与父行的对齐仍走 `row_top(index)`，图标条占第 0 行。
+- 守卫：`clicking_the_strip_button_runs_the_same_action_as_the_key`（src/editor/tests/document_context_menu.rs:1089）从真实的右键事件起，点图标条那颗「剪切」，比缓冲区字节、菜单收起与剪贴板内容；`rows_that_cannot_run_stay_in_place_but_greyed` 改成核这六颗的可用性随选区翻转、而六颗的格子与六行长行的位置一根都不动；`rows_show_their_shortcut_column_when_a_binding_exists` 补一条逐颗比悬停说明「标签 + 键位」。`clipboard_text.rs` 与 `selection_toolbar.rs` 里点长行的用例改点图标条（`click_quick_action`），菜单是否弹出的判据从 `menu-item-undo` 换成面板自己的边界。
+
+刻意不做：图标条上不给六颗加文字标签（加了就退回六行的老形状）；不做「悬停说明也画在格子上」的常驻小标签（Windows 11 也没做，且这一行离菜单边缘太近，常驻标签会挤掉二级面板的落点）；不给图标条加键盘方向键导航（右键菜单整体不支持方向键，§6 那条边界不变）。
