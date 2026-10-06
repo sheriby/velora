@@ -1,7 +1,7 @@
 # 选中菜单与右键菜单（对齐 Typora）
 
 日期：2026-10-05
-状态：FP1–FP13 全部落地，§5 逐条记了实现位置与验收用例。剩 FP4b-4（段落转换的标注那一档）留档不做：标注自己带头部与子块，换出去要先安置子块，代价见 §6 那两条；今天的事实是 `BlockKindTarget` 里没有标注这一档（「段落」那十二行不含它），标注块自己在 `next_kind` 的拒绝名单里（src/editor/paragraph_ops.rs:335，经 `block_kind_conversion` :267 供置灰与派发共用），这一条由既有的 `paragraph_kind::a_callout_is_left_alone`（src/editor/tests/paragraph_kind.rs:239）钉住换标题与换正文两条。
+状态：FP1–FP16 全部落地，§5 逐条记了实现位置与验收用例，第二期（右键菜单的观感）三条记在 §8 的落地记录。剩 FP4b-4（段落转换的标注那一档）留档不做：标注自己带头部与子块，换出去要先安置子块，代价见 §6 那两条；今天的事实是 `BlockKindTarget` 里没有标注这一档（「段落」那十二行不含它），标注块自己在 `next_kind` 的拒绝名单里（src/editor/paragraph_ops.rs:335，经 `block_kind_conversion` :267 供置灰与派发共用），这一条由既有的 `paragraph_kind::a_callout_is_left_alone`（src/editor/tests/paragraph_kind.rs:239）钉住换标题与换正文两条。
 
 ## 1. 这一期要解决的问题
 
