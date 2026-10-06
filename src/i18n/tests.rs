@@ -223,6 +223,15 @@ mod tests {
         assert_eq!(pack.id, "zh-CN");
         assert_eq!(pack.name, "简体中文");
         assert_eq!(pack.strings.menu_file, "文件菜单");
+        // 本轮新增的键在旧语言包里缺省时，必须回退到内置默认而不是留空
+        // （用户报修过外置语言包把界面刷成空白的一类问题）。
+        assert_eq!(pack.strings.insert_formula, "公式编辑器");
+        assert_eq!(pack.strings.formula_panel_hint, "点击插入到光标处，Esc 关闭。");
+        assert_eq!(
+            pack.strings.formula_panel_preview_empty,
+            "在上方输入公式，这里会实时预览。"
+        );
+        assert_eq!(pack.strings.latex_category_structures, "结构");
         assert_eq!(pack.strings.menu_export, "导出");
         assert_eq!(pack.strings.info_dialog_ok, "确定");
         assert_eq!(pack.strings.update_open_release, "前往下载");
