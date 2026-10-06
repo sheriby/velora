@@ -1,4 +1,7 @@
 use super::common::*;
+use crate::editor::{TableTextPosition, TableTextSelection};
+use crate::components::TableCellPosition;
+use gpui::{Bounds, Entity};
 
 #[gpui::test]
 async fn selection_word_count_stays_cheap_on_a_long_document(cx: &mut TestAppContext) {
@@ -312,3 +315,484 @@ async fn dragging_the_left_button_across_cjk_blocks_keeps_selecting(cx: &mut Tes
     });
 }
 
+/// 表格文档：一段正文 + 一张两列两行的表 + 一段正文（表里的字是 a b / c d）。
+const TABLE_DOC: &str = "alpha\n\n| a | b |\n| --- | --- |\n| c | d |\n\ngamma";
+
+/// 文档里那张表格块。
+fn table_entity(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Entity<Block> {
+    editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::Table)
+            .expect("文档里该有一张表")
+            .entity
+            .clone()
+    })
+}
+
+/// 表格的每一个格子：表头行在前，数据行随后。
+fn table_cells(cx: &gpui::App, table: &Entity<Block>) -> Vec<Entity<Block>> {
+    let runtime = table.read(cx).table_runtime.clone().expect("表格运行时");
+    runtime
+        .header
+        .iter()
+        .chain(runtime.rows.iter().flatten())
+        .cloned()
+        .collect()
+}
+
+/// `cell_position`（0 是表头行）那一格的当前布局边界。
+///
+/// 表格自己没有文本元素，几何全在格子上；`.last_bounds` 只有画过之后才有值。
+fn cell_bounds(
+    editor: &Entity<Editor>,
+    cx: &mut VisualTestContext,
+    cell_position: (usize, usize),
+) -> Bounds<gpui::Pixels> {
+    editor.read_with(cx, |editor, cx| cell_bounds_in(editor, cx, cell_position))
+}
+
+fn cell_bounds_in(
+    editor: &Editor,
+    cx: &gpui::App,
+    cell_position: (usize, usize),
+) -> Bounds<gpui::Pixels> {
+    let table = editor
+        .document
+        .visible_blocks()
+        .iter()
+        .find(|visible| visible.entity.read(cx).kind() == BlockKind::Table)
+        .expect("文档里该有一张表")
+        .entity
+        .clone();
+    let runtime = table.read(cx).table_runtime.clone().expect("表格运行时");
+    let (row, column) = cell_position;
+    let cell = if row == 0 {
+        runtime.header[column].clone()
+    } else {
+        runtime.rows[row - 1][column].clone()
+    };
+    cell.read(cx).last_bounds.expect("这一格该有布局边界")
+}
+
+/// 格子文字的左/右边缘：`index_for_mouse_position` 在格子的左端给 0、右端给格尾，
+/// 用它拿确定的偏移，不去猜测试文本系统里一个字符有多宽。
+fn cell_text_start(bounds: Bounds<gpui::Pixels>) -> gpui::Point<gpui::Pixels> {
+    gpui::point(bounds.left() + px(1.0), bounds.center().y)
+}
+
+fn cell_text_end(bounds: Bounds<gpui::Pixels>) -> gpui::Point<gpui::Pixels> {
+    gpui::point(bounds.right() - px(1.0), bounds.center().y)
+}
+
+/// 按下 → 拖过中间的落点 → 抬手。
+fn drag_across(
+    cx: &mut VisualTestContext,
+    start: gpui::Point<gpui::Pixels>,
+    waypoints: &[gpui::Point<gpui::Pixels>],
+    end: gpui::Point<gpui::Pixels>,
+) {
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    for waypoint in waypoints {
+        cx.simulate_mouse_move(*waypoint, gpui::MouseButton::Left, Modifiers::none());
+        redraw(cx);
+    }
+    cx.simulate_mouse_move(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+}
+
+/// 每一格上画着的选中高亮（没高亮就是 `None`）。
+fn cell_selection_ranges(
+    cx: &gpui::App,
+    table: &Entity<Block>,
+) -> Vec<Option<std::ops::Range<usize>>> {
+    table_cells(cx, table)
+        .into_iter()
+        .map(|cell| cell.read(cx).editor_selection_range.clone())
+        .collect()
+}
+
+/// 报修：按住拖动选不上表格里的文字，只能选出一个格子里的文字。
+///
+/// 现象：从 a 拖到 d，抬手后只有按下那一格自己的文字带着选中色，别的格子毫无反应。
+/// 根因：表格块没有自己的文本元素（格子才是文本），`last_bounds` 一直是空，落点换算
+/// 看不见这张表——表里任何一点都算到别的块的端点上，与按下时的端点同块同偏移，
+/// `on_editor_mouse_move` 的同块早退把选区一直压着不建。
+///
+/// 口径：表格就当成一片连着的文本，从 a 拖到 d 就是 a b c d 四个字选中；复制出去
+/// 同行的格用制表符接、行与行之间换行。
+#[gpui::test]
+async fn dragging_across_table_cells_selects_that_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let start = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    let end = cell_text_end(cell_bounds(&editor, cx, (1, 1)));
+    drag_across(cx, start, &[], end);
+
+    editor.read_with(cx, |editor, cx| {
+        let selection = editor
+            .table_text_selection
+            .expect("从 a 拖到 d 应当选出这几个字");
+        assert_eq!(selection.table_block_id, table.entity_id());
+        assert_eq!((selection.anchor.cell.row, selection.anchor.cell.column), (0, 0));
+        assert_eq!((selection.focus.cell.row, selection.focus.cell.column), (1, 1));
+        assert!(
+            editor.cross_block_selection.is_none(),
+            "跨格文本选区不该同时挂着跨块选区：{:?}",
+            editor.cross_block_selection
+        );
+        assert_eq!(
+            editor.table_text_selection_text(cx).as_deref(),
+            Some("a\tb\nc\td"),
+            "a b c d 四个字都该在选区里，同行用制表符接、换行分行"
+        );
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![
+                Some(0..1),
+                Some(0..1),
+                Some(0..1),
+                Some(0..1)
+            ],
+            "四个格子都该画出选中高亮"
+        );
+    });
+}
+
+/// 「选了多少就是多少」：只选到半格时，起点格与落点格只高亮选到的那一段。
+#[gpui::test]
+async fn cross_cell_selection_keeps_text_granularity(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown.to_string(), None)
+    });
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.visible_blocks()[0].entity.clone();
+        editor.table_text_selection = Some(TableTextSelection {
+            table_block_id: table.entity_id(),
+            // 从第一格的第二个字（b）选到最后一格的第一个字（g）。
+            anchor: TableTextPosition {
+                cell: TableCellPosition { row: 0, column: 0 },
+                offset: 1,
+            },
+            focus: TableTextPosition {
+                cell: TableCellPosition { row: 1, column: 1 },
+                offset: 1,
+            },
+        });
+        editor.sync_table_text_selection_visuals(cx);
+        assert_eq!(
+            editor.table_text_selection_text(cx).as_deref(),
+            Some("b\tcd\nef\tg"),
+            "半格的端点只带走选到的那几个字"
+        );
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![Some(1..2), Some(0..2), Some(0..2), Some(0..1)],
+            "起点格从起点选到格尾、落点格从格首选到落点、中间的整格"
+        );
+    });
+}
+
+/// 文字粒度：起点停在某一格的字尾、落点停在另一格的字首时，这两格的字不算选中。
+///
+/// 报修筑到「格子粒度」时这一条会红：那时只要碰到一格就把整格选上，a 和 d 也会跟着带走。
+#[gpui::test]
+async fn dragging_between_cell_edges_keeps_the_text_granularity(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let start = cell_text_end(cell_bounds(&editor, cx, (0, 0)));
+    let end = cell_text_start(cell_bounds(&editor, cx, (1, 1)));
+    drag_across(cx, start, &[], end);
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.table_text_selection_text(cx).as_deref(),
+            Some("b\nc"),
+            "从 a 的字尾拉到 d 的字首，只带走 b 与 c"
+        );
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![None, Some(0..1), Some(0..1), None],
+            "边界那两格只算格内真正的选中段：a 与 d 都不算"
+        );
+    });
+}
+
+/// 一格之内的拖动仍然是这一格自己的块内选区：不能因为落点在表格里就把整片格子选上。
+#[gpui::test]
+async fn dragging_inside_one_table_cell_keeps_the_selection_local(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let cell = editor.read_with(cx, |editor, cx| {
+        let table_block = editor.document.visible_blocks()[1].entity.clone();
+        table_block
+            .read(cx)
+            .table_runtime
+            .as_ref()
+            .expect("表格运行时")
+            .rows[0][0]
+            .clone()
+    });
+    let bounds = cell_bounds(&editor, cx, (1, 0));
+
+    drag_across(
+        cx,
+        cell_text_start(bounds),
+        &[],
+        gpui::point(bounds.left() + px(24.0), bounds.center().y),
+    );
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.table_text_selection.is_none(),
+            "一格之内的拖动不该变成跨格选区：{:?}",
+            editor.table_text_selection
+        );
+        assert!(
+            editor.cross_block_selection.is_none(),
+            "一格之内的拖动不该变成跨块选区"
+        );
+        assert!(
+            !cell.read(cx).selected_range.is_empty(),
+            "一格之内的拖动该由格子自己选出文字，实际选区是 {:?}",
+            cell.read(cx).selected_range
+        );
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![None, None, None, None],
+            "没有跨格选区时格子不该带选中高亮"
+        );
+    });
+}
+
+/// 点别处要能把跨格选区（连同格子上的高亮）收起。
+#[gpui::test]
+async fn clicking_elsewhere_clears_the_cross_cell_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let start = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    let end = cell_text_end(cell_bounds(&editor, cx, (1, 1)));
+    drag_across(cx, start, &[], end);
+
+    let paragraph = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("上面那一段该有布局边界")
+    });
+    let away = gpui::point(paragraph.left() + px(4.0), paragraph.center().y);
+    cx.simulate_mouse_down(away, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(away, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.table_text_selection.is_none(),
+            "点别处之后跨格选区该收起来：{:?}",
+            editor.table_text_selection
+        );
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![None, None, None, None],
+            "点别处之后格子上的高亮该收回去"
+        );
+    });
+}
+
+/// 删掉跨格选区：选中的那几段字没，表格结构与没选中的格子不动。
+#[gpui::test]
+async fn deleting_a_cross_cell_selection_clears_those_texts(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    // 选整个表头行（a 与 b）。
+    let start = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    let end = cell_text_end(cell_bounds(&editor, cx, (0, 1)));
+    drag_across(cx, start, &[], end);
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.table_text_selection_text(cx).as_deref(),
+            Some("a\tb"),
+            "前置条件：表头行那两个格子都在选区里"
+        );
+    });
+
+    cx.dispatch_action(DeleteBack);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.table_text_selection.is_none(),
+            "删完选区就该收起来：{:?}",
+            editor.table_text_selection
+        );
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "alpha\n\n|  |  |\n| --- | --- |\n| c | d |\n\ngamma",
+            "只该清掉表头行那两个字"
+        );
+    });
+
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx).trim(),
+            TABLE_DOC,
+            "一步撤销该把删掉的字原样放回来"
+        );
+    });
+}
+
+/// 直接敲字也要换掉跨格选区里的字（不能把这一次输入吞掉）。
+#[gpui::test]
+async fn typing_over_a_cross_cell_selection_replaces_it(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let start = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    let end = cell_text_end(cell_bounds(&editor, cx, (0, 1)));
+    drag_across(cx, start, &[], end);
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.table_text_selection.is_some(),
+            "前置条件：跨格选区该建起来"
+        );
+    });
+
+    cx.simulate_input("X");
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.table_text_selection.is_none(),
+            "打完字选区该收起来"
+        );
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "alpha\n\n| X |  |\n| --- | --- |\n| c | d |\n\ngamma",
+            "敲的字该落在选区起点那一格，选中的字一起换掉"
+        );
+    });
+}
+
+/// 从表格里往外拖：整张表跟着走进跨块选区（格子上的高亮也一起亮）。
+#[gpui::test]
+async fn dragging_from_a_table_cell_out_of_the_table_keeps_the_table(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "| a | b |\n| --- | --- |\n| c | d |\n\ngamma";
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, markdown.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let below_bounds = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[1]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("表格下面那一段该有布局边界")
+    });
+
+    let start = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    let last_cell_end = cell_text_end(cell_bounds(&editor, cx, (1, 1)));
+    let end = gpui::point(below_bounds.right() - px(4.0), below_bounds.center().y);
+    drag_across(cx, start, &[last_cell_end], end);
+
+    editor.read_with(cx, |editor, cx| {
+        let markdown = editor
+            .cross_block_selected_markdown(cx)
+            .expect("从表格拖到下面那一段应当有选区");
+        assert!(markdown.contains("| a | b |"), "选中文本缺整张表：{markdown:?}");
+        assert!(markdown.contains("| c | d |"), "选中文本缺数据行：{markdown:?}");
+        assert!(markdown.contains("gamma"), "选中文本缺下面那一段：{markdown:?}");
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![Some(0..1), Some(0..1), Some(0..1), Some(0..1)],
+            "整张表进了选区，每一格都该亮"
+        );
+    });
+}
+
+/// 从表格上面那一段拖进表格：选区要能跨进表里（此前拖进表里就停住）。
+#[gpui::test]
+async fn dragging_from_a_paragraph_into_a_table_includes_the_table(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let paragraph_bounds = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("表格上面那一段该有布局边界")
+    });
+
+    let start = gpui::point(paragraph_bounds.left() + px(1.0), paragraph_bounds.center().y);
+    let end = cell_text_end(cell_bounds(&editor, cx, (1, 1)));
+    drag_across(cx, start, &[], end);
+
+    editor.read_with(cx, |editor, cx| {
+        let markdown = editor
+            .cross_block_selected_markdown(cx)
+            .expect("从上面那一段拖进表格应当有选区");
+        assert!(markdown.contains("alpha"), "选中文本缺上面那一段：{markdown:?}");
+        assert!(markdown.contains("| a | b |"), "整张表该跟着进来：{markdown:?}");
+        assert!(markdown.contains("| c | d |"), "整张表该跟着进来：{markdown:?}");
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![Some(0..1), Some(0..1), Some(0..1), Some(0..1)],
+            "整张表在选区里，每一格都该亮"
+        );
+    });
+}

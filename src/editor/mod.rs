@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use gpui::*;
 
 use self::context_menu::{ContextMenuState, TableInsertDialogState};
+use self::selection::{TableTextPosition, TableTextSelection};
 use self::document::ChunkCursor;
 use self::tree::{DocumentTree, PendingSourceTail, PendingTail};
 use crate::components::{
@@ -289,6 +290,9 @@ pub struct Editor {
     selection_toolbar: Option<selection_toolbar::SelectionToolbarState>,
     table_axis_preview: Option<TableAxisSelection>,
     table_axis_selection: Option<TableAxisSelection>,
+    table_text_selection: Option<TableTextSelection>,
+    /// 已经铺到格子上的那一批跨格高亮（表格重建会换掉格子实体，位置解析不到就当没有）。
+    table_text_selection_painted: Vec<(EntityId, TableCellPosition)>,
     cross_block_selection: Option<CrossBlockSelection>,
     cross_block_drag: Option<CrossBlockDrag>,
     rendered_select_all_cycle: Option<RenderedSelectAllCycle>,
@@ -478,6 +482,9 @@ pub(super) struct CrossBlockSelection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CrossBlockDrag {
     pub(super) anchor: CrossBlockSelectionEndpoint,
+    /// 按下的那一下落在哪个表格格子上、格内第几个字。指针没离开这一格时选字仍是
+    /// 格子自己的事；离开之后编辑器才接手，把两格之间的文字按格切段选上。
+    pub(super) anchor_table_cell: Option<(EntityId, TableTextPosition)>,
 }
 
 /// Short-lived Ctrl/Cmd+A press counter for rendered-mode selection upgrade.
@@ -746,6 +753,8 @@ impl Editor {
             selection_toolbar: None,
             table_axis_preview: None,
             table_axis_selection: None,
+            table_text_selection: None,
+            table_text_selection_painted: Vec::new(),
             cross_block_selection: None,
             cross_block_drag: None,
             rendered_select_all_cycle: None,

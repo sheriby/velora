@@ -2,6 +2,10 @@
 
 use std::ops::Range;
 
+mod pointer;
+mod table;
+pub(super) use table::*;
+
 use gpui::*;
 
 use super::{
@@ -32,114 +36,32 @@ impl Editor {
                 }
             });
         }
+        // 表格格子上的跨块高亮跟着一起收（它们不在可见块列表里）。
+        for (table_block_id, position) in std::mem::take(&mut self.table_text_selection_painted) {
+            let Some(cell) = self.table_cell_entity(table_block_id, position, cx) else {
+                continue;
+            };
+            cell.update(cx, |cell, cx| {
+                if cell.editor_selection_range.take().is_some() {
+                    changed = true;
+                    cx.notify();
+                }
+            });
+        }
         changed
     }
 
     pub(super) fn clear_cross_block_selection(&mut self, cx: &mut Context<Self>) {
         let had_selection = self.cross_block_selection.take().is_some();
+        let had_table_selection = self.table_text_selection.take().is_some();
         self.cross_block_drag = None;
         let changed_visuals = self.clear_cross_block_selection_visuals(cx);
-        let changed = had_selection || changed_visuals;
+        let changed = had_selection || had_table_selection || changed_visuals;
         if changed {
             cx.notify();
         }
     }
 
-    fn begin_cross_block_drag_at_point(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let had_selection = self.cross_block_selection.take().is_some();
-        let changed_visuals = self.clear_cross_block_selection_visuals(cx);
-        let changed = had_selection || changed_visuals;
-        self.cross_block_drag = self
-            .cross_block_endpoint_for_point(position, cx)
-            .map(|anchor| CrossBlockDrag { anchor });
-        if changed {
-            cx.notify();
-        }
-    }
-
-    pub(super) fn on_editor_capture_mouse_down(
-        &mut self,
-        event: &MouseDownEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // [[ 补全浮层内的按下不动它：行确认靠 bubble 阶段的同一次按下；
-        // 落在浮层外的点击立即关闭。
-        if self.wikilink_completion_is_open() {
-            let inside_panel = self
-                .wikilink_completion
-                .as_ref()
-                .and_then(|state| state.panel_bounds)
-                .is_some_and(|bounds| bounds.contains(&event.position));
-            if !inside_panel {
-                self.close_wikilink_completion(cx);
-            }
-        }
-
-        // 选中工具栏上的按下不当成正文落点：不然这一次按下先把选区收成光标，
-        // 工具栏自己就先消失了（与 [[ 补全浮层同一条口径）。
-        if self.selection_toolbar_contains_point(event.position) {
-            cx.propagate();
-            return;
-        }
-
-        if event.button != MouseButton::Left {
-            cx.propagate();
-            return;
-        }
-
-        if self.view_mode != ViewMode::Rendered {
-            cx.propagate();
-            return;
-        }
-
-        self.rendered_select_all_cycle = None;
-        self.begin_cross_block_drag_at_point(event.position, cx);
-        cx.propagate();
-    }
-
-    pub(super) fn on_editor_mouse_move(
-        &mut self,
-        event: &MouseMoveEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !event.dragging() {
-            return;
-        }
-        let Some(drag) = self.cross_block_drag else {
-            return;
-        };
-        let Some(focus) = self.cross_block_endpoint_for_point(event.position, cx) else {
-            return;
-        };
-
-        if self.cross_block_selection.is_none() && drag.anchor.entity_id == focus.entity_id {
-            return;
-        }
-
-        let selection = CrossBlockSelection {
-            anchor: drag.anchor,
-            focus,
-        };
-        if self.cross_block_selection_is_empty(selection) {
-            self.cross_block_selection = None;
-        } else {
-            self.cross_block_selection = Some(selection);
-        }
-        self.sync_cross_block_selection_visuals(cx);
-        cx.notify();
-    }
-
-    pub(super) fn on_editor_mouse_up(
-        &mut self,
-        _event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.cross_block_drag = None;
-        self.end_block_pointer_selection_sessions(cx);
-    }
 
     pub(super) fn on_copy_capture(
         &mut self,
@@ -147,6 +69,11 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(text) = self.table_text_selection_text(cx) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            cx.stop_propagation();
+            return;
+        }
         let Some(markdown) = self.cross_block_selected_markdown(cx) else {
             cx.propagate();
             return;
@@ -156,6 +83,12 @@ impl Editor {
     }
 
     pub(super) fn on_cut_capture(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.table_text_selection_text(cx) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            self.replace_table_text_selection_with_text("", UndoCaptureKind::NonCoalescible, cx);
+            cx.stop_propagation();
+            return;
+        }
         let Some(markdown) = self.cross_block_selected_markdown(cx) else {
             cx.propagate();
             return;
@@ -171,7 +104,12 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.delete_cross_block_selection(cx) {
+        let handled = self.replace_table_text_selection_with_text(
+            "",
+            UndoCaptureKind::NonCoalescible,
+            cx,
+        ) || self.delete_cross_block_selection(cx);
+        if !handled {
             cx.propagate();
             return;
         }
@@ -184,7 +122,12 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.delete_cross_block_selection(cx) {
+        let handled = self.replace_table_text_selection_with_text(
+            "",
+            UndoCaptureKind::NonCoalescible,
+            cx,
+        ) || self.delete_cross_block_selection(cx);
+        if !handled {
             cx.propagate();
             return;
         }
@@ -378,57 +321,6 @@ impl Editor {
         true
     }
 
-    /// 屏幕上这一点对应的选区端点。
-    ///
-    /// 存的是块内**干净**偏移（可见文本的坐标，不含为了编辑显形出来的 `**` 这类记号）：
-    /// 拖动过程中起点块会因聚焦而显形、别的块又收回去，显示长度随时在变，端点要是记的
-    /// 是显示偏移，选区就跟着漂——画出来的高亮比选区的字节短一截，按删除留在文件里的
-    /// 又是另一段字节。命中测试给出的显示偏移在这里换算一次，之后就都按干净坐标算。
-    fn cross_block_endpoint_for_point(
-        &self,
-        position: Point<Pixels>,
-        cx: &App,
-    ) -> Option<CrossBlockSelectionEndpoint> {
-        let mut previous: Option<(Entity<Block>, Bounds<Pixels>)> = None;
-        for visible in self.document.visible_blocks() {
-            let entity = visible.entity.clone();
-            let bounds = entity.read(cx).last_bounds;
-            let Some(bounds) = bounds else {
-                continue;
-            };
-
-            if position.y < bounds.top() {
-                // 落点在这一块上方：归上一块的块尾；没有上一块就归它的块首。
-                if let Some((previous, _)) = previous {
-                    let offset = previous.read(cx).clean_visible_len();
-                    return Some(CrossBlockSelectionEndpoint {
-                        entity_id: previous.entity_id(),
-                        offset,
-                    });
-                }
-                return Some(CrossBlockSelectionEndpoint {
-                    entity_id: entity.entity_id(),
-                    offset: 0,
-                });
-            }
-
-            if position.y <= bounds.bottom() {
-                let block = entity.read(cx);
-                let offset = block.current_to_clean_offset(block.index_for_mouse_position(position));
-                return Some(CrossBlockSelectionEndpoint {
-                    entity_id: entity.entity_id(),
-                    offset,
-                });
-            }
-
-            previous = Some((entity, bounds));
-        }
-
-        previous.map(|(entity, _)| CrossBlockSelectionEndpoint {
-            entity_id: entity.entity_id(),
-            offset: entity.read(cx).clean_visible_len(),
-        })
-    }
 
     fn cross_block_selection_is_empty(&self, selection: CrossBlockSelection) -> bool {
         let Some(anchor_index) = self
@@ -523,6 +415,9 @@ impl Editor {
                 }
             });
         }
+        // 表格格子上的高亮由同一份选区状态派生：整张表落进跨块选区时，格子上也要亮，
+        // 不然用户看到的是「表格什么也没选中」。
+        self.sync_table_text_selection_visuals(cx);
     }
 
     /// 光标落在缓冲区的哪个字节：块内显示偏移 → 文件字节偏移。
@@ -753,6 +648,9 @@ impl Editor {
         undo_kind: UndoCaptureKind,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.table_text_selection.is_some() {
+            return self.replace_table_text_selection_with_text(new_text, undo_kind, cx);
+        }
         let Some(selection) = self.normalized_cross_block_selection(cx) else {
             return false;
         };
@@ -847,6 +745,9 @@ impl Editor {
     /// source mapping。旧的 `selected_markdown_text` 是 O(整篇)（600 块文档
     /// 实测 38ms/次），而状态栏每帧都要算一次，长文档拖动选择直接卡死。
     pub(crate) fn selected_visible_text(&self, cx: &App) -> Option<String> {
+        if let Some(text) = self.table_text_selection_text(cx) {
+            return Some(text);
+        }
         if let Some(selection) = self.normalized_cross_block_selection(cx) {
             let visible = self.document.visible_blocks();
             let mut text = String::new();
@@ -898,6 +799,11 @@ impl Editor {
     /// Returns the markdown text of the current selection, whether cross-block
     /// or within a single block. Returns `None` when nothing is selected.
     pub(crate) fn selected_markdown_text(&self, cx: &App) -> Option<String> {
+        // 表格里跨格选的那几个字也是一份「选中的文本」：交出去的是它们自己，
+        // 不然「复制为 Markdown」会以为没有选区、把整篇文档塞进剪贴板。
+        if let Some(text) = self.table_text_selection_text(cx) {
+            return Some(text);
+        }
         // Prefer cross-block selection when present.
         if let Some(text) = self.cross_block_selected_markdown(cx) {
             if !text.is_empty() {

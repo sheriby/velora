@@ -456,6 +456,7 @@ impl Editor {
         self.close_dialog_restore_focus = None;
         self.table_axis_preview = None;
         self.table_axis_selection = None;
+        self.table_text_selection = None;
         self.dismiss_contextual_overlays(cx);
         self.sync_table_axis_visuals(cx);
         // 模式切换会换掉整套块实体，文档内搜索高亮必须重算，否则正文里的

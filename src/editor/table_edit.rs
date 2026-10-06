@@ -1406,6 +1406,27 @@ impl Editor {
             }
         }
     }
+    /// 屏幕上这一点落在哪个表格格子上。
+    ///
+    /// 表格与格子都不注册进块树，可见块遍历看不见它们，落点换算要到这一层来问。
+    /// 返回的是「哪张表的第几格」而不是实体：拖动期间后台重建会换掉格子实体，
+    /// 位置不会失效。
+    pub(super) fn table_cell_at_point(
+        &self,
+        position: Point<Pixels>,
+        cx: &App,
+    ) -> Option<(EntityId, TableCellPosition)> {
+        self.table_cells
+            .values()
+            .find(|binding| {
+                binding
+                    .cell
+                    .read(cx)
+                    .last_bounds
+                    .is_some_and(|bounds| bounds.contains(&position))
+            })
+            .map(|binding| (binding.table_block.entity_id(), binding.position))
+    }
 }
 
 /// 一行表格里「真正的列分隔符」的字节位置。反斜杠转义的 `|` 不算列分隔符。

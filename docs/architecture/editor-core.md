@@ -157,7 +157,7 @@ Workspace (src/editor/workspace.rs)
 - **按下起不起选区与这一块有没有焦点无关**：`Block::on_mouse_down`（src/components/block/interactions/keys.rs:384）
   两支都置 `is_selecting`，未聚焦时只多一句 `BlockEvent::RequestFocus`。段内拖动由块自己的
   `on_mouse_move` 扩展，跨块那一段由编辑器层的 `on_editor_mouse_move` 负责，它对「锚点与落点同块」
-  直接返回（src/editor/selection.rs:117）——两条路各管一头，谁都不许把另一头的按下当成要求先聚焦。
+  直接返回（`src/editor/selection/pointer.rs:on_editor_mouse_move`）——两条路各管一头，谁都不许把另一头的按下当成要求先聚焦。
   未聚焦块的 `selected_range` 是焦点离开时留下的旧锚点，只在聚焦时被 `select_to` 用（shift+点），
   所以跨段的 shift 扩选至今不成立，那是另一档。守卫：
   `dragging_inside_a_paragraph_without_prior_focus_selects`。
@@ -170,7 +170,17 @@ Workspace (src/editor/workspace.rs)
   （`typing_does_not_rescan_status_bar_statistics_every_key`、`per_keystroke_document_passes_stay_bounded`）。
 - 表格单元格是独立 Block，经 `TableCellBinding` 绑定；它在原文里的字节区间由
   `table_cell_source_range`（src/editor/table_edit.rs）按「第几行第几列」从管道符之间量出来
-  ——不能拿格子文本去原文里找，用户刚打的字还没进文件。
+  ——不能拿格子文本去原文里找，用户刚打的字还没进文件。表格块自己没有文本元素（可见长度是 0），
+  `last_bounds` 一直是空，所以落点换算把「上一块底与下一块顶之间」那一段空间归给中间那些量不出
+  文本布局的块自己（`src/editor/selection/pointer.rs:cross_block_endpoint_for_point`），否则拖进
+  表里会算成上一段的块尾、被同块早退按住。
+- **表格里的拖选是「跨格文本选区」**：`TableTextSelection { table_block_id, anchor, focus }`
+  （src/editor/selection/table.rs），端点是「第几行第几列 + 格内干净偏移」。表格当成一片连着的
+  文本：高亮按格切段铺到格子的 `editor_selection_range`（起点格从起点选到格尾、落点格从格首选到
+  落点、中间的整格），复制/删除/打字替换按同一份切段走——删除是真删那几段字节（从后往前删，
+  一次撤销组），复制交出去的是可见文本（同行的格用制表符接、行与行之间换行）。指针没离开按下
+  那一格时选字仍是格子自己的块内选区，编辑器一个字都不碰；拖出表外则让位给跨块选区（整张表跟着
+  走进去）。
 - **还没做完的**：磁盘搜索命中里那些没有 `source_range` 的仍要靠 `match_ordinal`（在缓冲区里重数
   第 k 个含词行）定位。表格单元格里的搜索命中**已经画得出**（格子是独立 Block，走
   `BlockTextElement`，它读 `search_highlight_ranges`；由 `document_search_hit_inside_table_jumps`
