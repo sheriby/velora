@@ -148,3 +148,49 @@ async fn closing_a_fence_cascades_state_to_following_chunks(cx: &mut TestAppCont
         );
     });
 }
+/// 渲染 ↔ 源码切一个来回：块树整个换过，高亮与接缝状态要跟着重建，
+/// 不能留着渲染态块上的旧缓存。
+#[gpui::test]
+async fn toggling_view_modes_back_and_forth_keeps_highlighting(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "# 标题甲\n\n```rust\nfn main() {}\n```\n".to_string();
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+
+    for _ in 0..2 {
+        editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+        redraw(cx);
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.view_mode, ViewMode::Source);
+            let block = editor
+                .document
+                .root_blocks()
+                .first()
+                .cloned()
+                .expect("源码视图整篇一根块");
+            let result = block
+                .read(cx)
+                .code_highlight_result()
+                .expect("markdown 源码分块应有高亮结果");
+            let text = block.read(cx).display_text();
+            let title_end = text.find("标题甲").expect("标题") + "标题甲".len();
+            assert!(
+                result.spans.iter().any(|span| {
+                    matches!(span.class, CodeHighlightClass::MarkdownHeading(_))
+                        && span.range.start <= title_end
+                        && title_end <= span.range.end
+                }),
+                "往返之后标题色还在: {:?}",
+                result.spans
+            );
+        });
+
+        editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+        redraw(cx);
+        editor.read_with(cx, |editor, _cx| {
+            assert_eq!(editor.view_mode, ViewMode::Rendered);
+        });
+    }
+}
