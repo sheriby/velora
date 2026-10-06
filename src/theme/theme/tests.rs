@@ -1,7 +1,7 @@
 mod tests {
     use crate::theme::{Theme, ThemeManager};
     use crate::config::VeloraConfigDirs;
-    use gpui::{Rgba, WindowAppearance, rgba};
+    use gpui::{Hsla, Rgba, WindowAppearance, rgba};
 
     #[test]
     fn current_line_highlight_stays_transparent_and_theme_tinted() {
@@ -28,6 +28,45 @@ mod tests {
             line.g > line.r && line.g > line.b,
             "forest 当前行高亮应为 selection 淡绿系，实际 {line:?}"
         );
+    }
+
+    #[test]
+    fn md_syntax_colors_fall_back_for_legacy_theme_json() {
+        // 旧主题 JSON 没有 md_syntax_* 键：反序列化按 Dark+ 值兜底，不能
+        // 让自定义主题用户拿到黑色或空白。
+        let default_json = Theme::default_theme()
+            .to_json()
+            .expect("default theme should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&default_json).expect("default theme json should parse");
+        let mut object = parsed
+            .as_object()
+            .expect("theme should serialize to a json object")
+            .clone();
+        let colors = object
+            .get_mut("colors")
+            .and_then(|colors| colors.as_object_mut())
+            .expect("theme should include colors");
+        for key in [
+            "md_syntax_heading",
+            "md_syntax_marker",
+            "md_syntax_emphasis_marker",
+            "md_syntax_code",
+            "md_syntax_link_text",
+            "md_syntax_link_url",
+            "md_syntax_label",
+        ] {
+            colors.remove(key);
+        }
+        let json = serde_json::to_string(&object).expect("theme json should serialize");
+
+        let theme = Theme::from_json(&json).expect("theme without md_syntax_* should deserialize");
+        assert_eq!(
+            theme.colors.md_syntax_heading,
+            Hsla::from(rgba(0x569cd6ff)),
+            "缺省的 md_syntax_heading 按 Dark+ 标题蓝兜底"
+        );
+        assert_eq!(theme.colors.md_syntax_label, Hsla::from(rgba(0xc586c0ff)));
     }
 
     #[test]
