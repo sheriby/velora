@@ -737,7 +737,48 @@ pub(crate) fn code_highlight_font_decoration(
 
 #[cfg(test)]
 mod tests {
-    use super::{CodeLanguageKey, highlight_code_block, resolve_code_language_key};
+    use super::{CodeHighlightClass, CodeLanguageKey, code_highlight_color, highlight_code_block, resolve_code_language_key};
+    use crate::theme::Theme;
+
+    #[test]
+    fn builtin_themes_give_markdown_syntax_distinct_colours() {
+        // 用户报修：源码高亮满屏一个颜色。六套内置主题的 markdown 语义色
+        // 至少要有五种互不相同的取值——谁把字段映射到同一个来源，这条就红。
+        for theme in [
+            Theme::default_theme(),
+            Theme::light_theme(),
+            Theme::paper_theme(),
+            Theme::forest_theme(),
+            Theme::midnight_theme(),
+            Theme::ink_theme(),
+        ] {
+            let colors = [
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownHeading(1)),
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownMarker),
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownEmphasisMarker),
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownCode),
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownLinkText),
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownLinkUrl),
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownLabel),
+            ];
+            let distinct: std::collections::BTreeSet<u32> = colors
+                .iter()
+                .map(|color| {
+                    let rgba = gpui::Rgba::from(*color);
+                    ((rgba.r * 255.0).round() as u32) << 16
+                        | ((rgba.g * 255.0).round() as u32) << 8
+                        | ((rgba.b * 255.0).round() as u32)
+                })
+                .collect();
+            assert!(
+                distinct.len() >= 5,
+                "主题 {} 的 markdown 语义色坍缩成 {} 种: {:?}",
+                theme.name,
+                distinct.len(),
+                distinct
+            );
+        }
+    }
 
     #[test]
     fn balanced_bundle_aliases_resolve_to_expected_keys() {
