@@ -57,14 +57,17 @@ app_cx.quit();                    // 别拿 VisualTestContext 收尾，会 SIGSE
 
 手段：
 
-- `println!` 出左右值再用 `-- --nocapture` 看。GPUI 里 `entity.update` 内的 panic 有时不出现在 stdout，打印比断言可靠。
+- `println!` 出左右值再用 `-- --nocapture` 看。GPUI 里 `entity.update` 内的 panic 有时不出现在 stdout，打印比断言可靠；打印被工具链包装吃掉时直接跑 `target/debug/deps/velora-*` 里的测试二进制。
+- 「拖不动 / 选不上 / 点不中」的定位配方：在一个窗口级测试里先把现状打全——每个可见块的 `kind()` / `display_text()` / `last_bounds` / `clean_visible_len()`，格子的 `last_bounds`，再看 `cross_block_selection`、各块 `selected_range` / `editor_selection_range`、`active_entity_id`。谁没几何、谁没选区，一眼就出来，比读代码猜快得多。
 - 如果测试是先写、实现是后改的，改实现前先 `git stash push -- <实现文件>` 跑一遍，确认红点真的是测试带来的。
+- 新语义（以前根本没有这条路径）没法靠 stash 验红：把新分支临时改回旧行为（或改掉那一处判定）跑一遍，看断言红不红；验完立刻还原。
 
 ## 3 修到绿
 
 - 一次只改一处口径。修的是换算函数或状态所属的那一层，不在每个调用点打补丁。
-- 绿了立刻跑全量：`cargo build`（零警告）+ `cargo test --bin velora`。
-- 再 `git stash push -- <修复文件>` 验一次红、`git stash pop` 验绿：这一步证明「这条测试真的覆盖了这个 bug」，而不是碰巧绿。
+- 绿了先跑**相关那一组**（`cargo test --bin velora <关键词>`）；全量 `cargo build`（零警告）+ `cargo test --bin velora` 留到收尾各跑一次。全量 100–130 秒，改一版跑一版纯磨时间。
+- 再验一次「这条测试真的覆盖了这个 bug」：`git stash push -- <修复文件>` 跑一遍看红、`git stash pop` 看绿；新语义用上面那条「临时改回旧行为」的办法。
+- 报修里给的例子（键鼠序列、复制出去的形状、截图里的那几个字）就是验收口径，照它写断言；粒度或格式不清楚就先问一句，别自己发明一套再被打回。
 - 同族扫描：共享口径一改，grep 所有读者与写者（源改了消费者没跟 = 缺陷）。
 - 缓存类修复要确认 key / generation 覆盖全部输入（文本代数、字号、字体指纹、主题代数、换行宽……），漏一个输入就是下一次“不刷新”。
 - 遗留副作用（多一个空行、多一次重算）写进总结，不要静默吞掉。
@@ -81,6 +84,15 @@ app_cx.quit();                    // 别拿 VisualTestContext 收尾，会 SIGSE
 
 ## 5 本仓库抓手
 
-- 测试：`src/editor/tests/common.rs`（`init_editor_test_app`、`redraw`、`perf_passes`、`perf_delta`）、`src/editor/selection/tests.rs`（`set_selection`、`assign_visible_block_bounds`）、`src/components/block/runtime/tests/`（块级）。
-- 交互模拟：`cx.simulate_mouse_down/move/up(point(px(x), px(y)), MouseButton::Left, Modifiers::none())`、`cx.dispatch_action(Action)`。
-- 环境：stable 1.88，别用更新的 std API；`cargo test --bin velora`（无 lib target）。
+- 测试：`src/editor/tests/common.rs`（`init_editor_test_app`、`redraw`、`perf_passes`、`perf_delta`）、`src/editor/selection/tests.rs`（`set_selection`、`assign_visible_block_bounds`）、`src/editor/tests/selection_mouse.rs`（真实按下—拖动—抬手的选区报修都在这里）、`src/components/block/runtime/tests/`（块级）。
+- 交互模拟：`cx.simulate_mouse_down/move/up(point(px(x), px(y)), MouseButton::Left, Modifiers::none())`、`cx.dispatch_action(Action)`、`cx.simulate_input("x")`（敲字）。
+- 选区代码：`src/editor/selection.rs`（跨块）、`src/editor/selection/table.rs`（表格跨格）、`src/editor/selection/pointer.rs`（指针与「点 → 端点」换算）；两套坐标与表格两层的坑见 §6。
+- 环境：stable 1.88，别用更新的 std API；`cargo test --bin velora`（无 lib target）。全量只在收尾跑。
+
+## 6 表格与选区（本仓库专属的坑）
+
+- 表格是**两层**：表格块（`BlockKind::Table`）+ 格子。**格子不在块树里**——`visible_blocks()`、`block_entity_by_id()` 都找不到它们，只能从表格块的 `table_runtime`（`header` / `rows`）或编辑器里的 `table_cells` 绑定表拿；格子的几何是格子自己画完一帧后的 `last_bounds`。
+- 表格块**自己没有文本元素**：`last_bounds` 恒为空、`clean_visible_len()` 是 0、`index_for_mouse_position()` 恒给 0。任何「按可见块扫一遍」的代码（选区端点换算、命中测试、滚动锚点、大纲、搜索高亮）对表格内容都是瞎的——「表格里拖不动 / 选不上 / 点不中」的报修先查这一条。
+- 屏幕上的点归哪一根块只有一处换算：`cross_block_endpoint_for_point`（`src/editor/selection/pointer.rs`）。它看不见量不出文本布局的块（表格、分隔线、未聚焦的公式与图表）时，会把那一段空间算成「上一块的块尾」，再撞上 `on_editor_mouse_move` 的「锚点与落点同块就交给块自己」早退——拖动在那一块上会整段失效。改选区/命中先看这两处。
+- 同一段文本在块内有**两套坐标**：干净偏移（可见文本，跨块选区端点存这套）与显示偏移（编辑时显形出来的 `**` 这类记号也算，命中测试与高亮用这套）。换算只走 `clean_to_current_*` / `clean_range_to_display_range`，不要在两套之间手算加减。
+- 选区有两个模型：跨块是 `CrossBlockSelection`（`src/editor/selection.rs`，端点是「可见块 + 块内干净偏移」）；表格里跨格是 `TableTextSelection`（`src/editor/selection/table.rs`，端点是「第几行第几列 + 格内干净偏移」，高亮按格切段铺到格子的 `editor_selection_range`，复制交可见文本——同行制表符、行间换行）。格子的命中测试在 `table_edit.rs:table_cell_at_point`。
