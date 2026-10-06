@@ -89,6 +89,18 @@ pub(crate) enum CodeHighlightClass {
     MarkdownHeading(u8),
     /// Markdown 源码：结构记号（`#`、`>`、`-`、围栏、`$$` 等）。
     MarkdownMarker,
+    /// Markdown 源码：强调类定界符（`**`、`*`、`~~`），与结构记号分色。
+    MarkdownEmphasisMarker,
+    /// Markdown 源码：加粗内容（粗体字重，不另用颜色）。
+    MarkdownStrong,
+    /// Markdown 源码：斜体内容（斜体字形）。
+    MarkdownEmphasis,
+    /// Markdown 源码：删除线内容。
+    MarkdownStrikethrough,
+    /// Markdown 源码：行内代码与公式正文。
+    MarkdownCode,
+    /// Markdown 源码：反斜杠转义的字面字符。
+    MarkdownEscape,
     /// Markdown 源码：链接文字与图片替代文本。
     MarkdownLinkText,
     /// Markdown 源码：链接地址。
@@ -694,6 +706,13 @@ pub(crate) fn code_highlight_color(colors: &ThemeColors, class: CodeHighlightCla
         // 标题蓝、结构记号灰、链接文字与地址分色、标签紫）。
         CodeHighlightClass::MarkdownHeading(_) => colors.md_syntax_heading,
         CodeHighlightClass::MarkdownMarker => colors.md_syntax_marker,
+        CodeHighlightClass::MarkdownEmphasisMarker => colors.md_syntax_emphasis_marker,
+        CodeHighlightClass::MarkdownStrong | CodeHighlightClass::MarkdownEmphasis => {
+            colors.text_default
+        }
+        CodeHighlightClass::MarkdownStrikethrough => colors.text_default,
+        CodeHighlightClass::MarkdownCode => colors.md_syntax_code,
+        CodeHighlightClass::MarkdownEscape => colors.md_syntax_code,
         CodeHighlightClass::MarkdownLinkText => colors.md_syntax_link_text,
         CodeHighlightClass::MarkdownLinkUrl => colors.md_syntax_link_url,
         CodeHighlightClass::MarkdownLabel => colors.md_syntax_label,
@@ -706,6 +725,9 @@ pub(crate) fn code_highlight_font_decoration(
     class: CodeHighlightClass,
 ) -> (bool, bool, bool, bool) {
     match class {
+        CodeHighlightClass::MarkdownStrong => (true, false, false, false),
+        CodeHighlightClass::MarkdownEmphasis => (false, true, false, false),
+        CodeHighlightClass::MarkdownStrikethrough => (false, false, true, false),
         CodeHighlightClass::MarkdownLinkText | CodeHighlightClass::MarkdownLinkUrl => {
             (false, false, false, true)
         }

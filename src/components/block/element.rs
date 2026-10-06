@@ -343,15 +343,24 @@ fn build_code_text_runs(
             .map(|span| code_highlight_color(colors, span.class))
             .unwrap_or(base_run.color);
 
+        let mut font = base_run.font.clone();
+        let mut highlighted_strikethrough = false;
         let mut highlighted_underline = false;
         if let Some(span) = active_highlight {
-            let (_, _, _, underline) = code_highlight_font_decoration(span.class);
+            let (bold, italic, strike, underline) = code_highlight_font_decoration(span.class);
+            if bold && font.weight < FontWeight::BOLD {
+                font.weight = FontWeight::BOLD;
+            }
+            if italic {
+                font.style = FontStyle::Italic;
+            }
+            highlighted_strikethrough = strike;
             highlighted_underline = underline;
         }
 
         runs.push(TextRun {
             len: end - start,
-            font: base_run.font.clone(),
+            font,
             color: run_color,
             background_color: base_run.background_color,
             underline: (is_marked || highlighted_underline).then_some(UnderlineStyle {
@@ -359,7 +368,10 @@ fn build_code_text_runs(
                 thickness: underline_thickness,
                 wavy: false,
             }),
-            strikethrough: None,
+            strikethrough: highlighted_strikethrough.then_some(StrikethroughStyle {
+                color: Some(run_color),
+                thickness: underline_thickness,
+            }),
             font_size: None,
         });
     }

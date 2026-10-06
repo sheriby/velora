@@ -227,6 +227,13 @@ impl<'a> Scanner<'a> {
                     CodeHighlightClass::MarkdownMarker,
                 );
             }
+            match after_box {
+                Some(box_len) => self.scan_inline(
+                    rest_start + box_offset + box_len,
+                    &after_bullet_space[box_len..],
+                ),
+                None => self.scan_inline(rest_start, rest),
+            }
             return;
         }
 
@@ -277,13 +284,353 @@ impl<'a> Scanner<'a> {
                 trimmed_start..trimmed_start + label_len,
                 CodeHighlightClass::MarkdownLabel,
             );
+            self.scan_inline(trimmed_start + label_len, &trimmed[label_len..]);
+            return;
+        }
+        if let Some(marker_len) = parse_list_marker(trimmed) {
+            self.push(
+                trimmed_start..trimmed_start + marker_len,
+                CodeHighlightClass::MarkdownMarker,
+            );
+            self.scan_inline(trimmed_start + marker_len, &trimmed[marker_len..]);
+            return;
+        }
+        self.scan_inline(rest_start, rest);
+    }
+
+    /// 押着的 setext 候选行：下一行不是下划线时按普通正文发行内着色。
+    fn flush_pending_paragraph(&mut self) {
+        if let Some(range) = self.pending_paragraph.take() {
+            let line = &self.text[range.clone()];
+            self.scan_inline(range.start, line);
         }
     }
 
-    /// 押着的 setext 候选行：下一行不是下划线时放弃（行内着色随后接入）。
-    fn flush_pending_paragraph(&mut self) {
-        self.pending_paragraph.take();
+    /// 行内构造扫描：代码 span 优先（里面的 `*`、`[` 都不是记号），然后转义、
+    /// 强调、删除线、链接、图片、自动链接、脚注引用、双链与标签。
+    fn scan_inline(&mut self, range_start: usize, line: &str) {
+        let base = range_start;
+        let bytes = line.as_bytes();
+        let mut i = 0usize;
+        while i < line.len() {
+            match bytes[i] {
+                b'\\' if i + 1 < line.len() => {
+                    let next_len = utf8_len(bytes[i + 1]);
+                    self.push(base + i..base + i + 1 + next_len, CodeHighlightClass::MarkdownEscape);
+                    i += 1 + next_len;
+                }
+                b'`' => {
+                    let run = char_run(bytes, i, b'`');
+                    match find_backtick_run(bytes, i + run, run) {
+                        Some(close) => {
+                            self.push(base + i..base + close + run, CodeHighlightClass::MarkdownCode);
+                            i = close + run;
+                        }
+                        None => {
+                            i += run;
+                        }
+                    }
+                }
+                b'*' | b'_' => {
+                    let marker = bytes[i];
+                    let run = char_run(bytes, i, marker);
+                    if run >= 2 {
+                        match find_emphasis_close(bytes, i + run, marker, run) {
+                            Some(close) => {
+                                self.push(
+                                    base + i..base + i + run,
+                                    CodeHighlightClass::MarkdownEmphasisMarker,
+                                );
+                                self.push(
+                                    base + i + run..base + close,
+                                    CodeHighlightClass::MarkdownStrong,
+                                );
+                                self.push(
+                                    base + close..base + close + run,
+                                    CodeHighlightClass::MarkdownEmphasisMarker,
+                                );
+                                i = close + run;
+                            }
+                            None => {
+                                i += run;
+                            }
+                        }
+                    } else {
+                        // 单字符斜体：`_` 还要求不在词中（snake_case 不是斜体）。
+                        let opener_ok = i + 1 < line.len()
+                            && !bytes[i + 1].is_ascii_whitespace()
+                            && (marker == b'*'
+                                || i == 0
+                                || bytes[i - 1].is_ascii_whitespace()
+                                || bytes[i - 1].is_ascii_punctuation());
+                        let close = if opener_ok {
+                            find_emphasis_close(bytes, i + 1, marker, 1)
+                        } else {
+                            None
+                        };
+                        match close {
+                            Some(close) if close > i + 1 => {
+                                self.push(
+                                    base + i..base + i + 1,
+                                    CodeHighlightClass::MarkdownEmphasisMarker,
+                                );
+                                self.push(
+                                    base + i + 1..base + close,
+                                    CodeHighlightClass::MarkdownEmphasis,
+                                );
+                                self.push(
+                                    base + close..base + close + 1,
+                                    CodeHighlightClass::MarkdownEmphasisMarker,
+                                );
+                                i = close + 1;
+                            }
+                            _ => {
+                                i += 1;
+                            }
+                        }
+                    }
+                }
+                b'~' => {
+                    let run = char_run(bytes, i, b'~');
+                    if run == 2 {
+                        match find_exact(bytes, i + 2, b"~~") {
+                            Some(close) => {
+                                self.push(
+                                    base + i..base + i + 2,
+                                    CodeHighlightClass::MarkdownEmphasisMarker,
+                                );
+                                self.push(
+                                    base + i + 2..base + close,
+                                    CodeHighlightClass::MarkdownStrikethrough,
+                                );
+                                self.push(
+                                    base + close..base + close + 2,
+                                    CodeHighlightClass::MarkdownEmphasisMarker,
+                                );
+                                i = close + 2;
+                            }
+                            None => {
+                                i += run;
+                            }
+                        }
+                    } else {
+                        i += run;
+                    }
+                }
+                b'!' if i + 1 < line.len() && bytes[i + 1] == b'[' => {
+                    i += self.try_scan_link(base, bytes, i + 1, true);
+                }
+                b'[' => {
+                    i += self.try_scan_link(base, bytes, i, false);
+                }
+                b'<' => {
+                    i = match autolink_end(line, i) {
+                        Some(end) => {
+                            self.push(base + i..base + end, CodeHighlightClass::MarkdownLinkUrl);
+                            end
+                        }
+                        None => i + 1,
+                    };
+                }
+                b'#' if i == 0 || bytes[i - 1].is_ascii_whitespace() => {
+                    let mut end = i + 1;
+                    while end < line.len() && !bytes[end].is_ascii_whitespace() {
+                        end += 1;
+                    }
+                    if end > i + 1 {
+                        self.push(base + i..base + end, CodeHighlightClass::MarkdownLabel);
+                        i = end;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
     }
+
+    /// `[`（图片传 `[` 的位置并置 `image`）处尝试识别链接构造，返回消费掉的
+    /// 字节数（至少 1，识别失败时只当普通字符）。`base` 是本行在整块文本里的
+    /// 起始偏移——push 的是整块坐标，漏加就会把这一行的链接色画到别的行上。
+    fn try_scan_link(&mut self, base: usize, bytes: &[u8], open: usize, image: bool) -> usize {
+        let marker_open = if image { open - 1 } else { open };
+        let marker_len = if image { 2 } else { 1 };
+        let Some(close) = find_unescaped(bytes, open + 1, b']') else {
+            return 1;
+        };
+        // [label](url)
+        if bytes.get(close + 1) == Some(&b'(') {
+            if let Some(paren) = find_unescaped(bytes, close + 2, b')') {
+                self.push(
+                    base + marker_open..base + marker_open + marker_len,
+                    CodeHighlightClass::MarkdownMarker,
+                );
+                self.push(
+                    base + open + 1..base + close,
+                    CodeHighlightClass::MarkdownLinkText,
+                );
+                self.push(
+                    base + close..base + close + 2,
+                    CodeHighlightClass::MarkdownMarker,
+                );
+                self.push(
+                    base + close + 2..base + paren,
+                    CodeHighlightClass::MarkdownLinkUrl,
+                );
+                self.push(
+                    base + paren..base + paren + 1,
+                    CodeHighlightClass::MarkdownMarker,
+                );
+                return paren + 1 - marker_open;
+            }
+        }
+        // [label][ref]
+        if bytes.get(close + 1) == Some(&b'[') {
+            if let Some(ref_close) = find_unescaped(bytes, close + 2, b']') {
+                self.push(
+                    base + marker_open..base + marker_open + marker_len,
+                    CodeHighlightClass::MarkdownMarker,
+                );
+                self.push(
+                    base + open + 1..base + close,
+                    CodeHighlightClass::MarkdownLinkText,
+                );
+                self.push(
+                    base + close..base + close + 2,
+                    CodeHighlightClass::MarkdownMarker,
+                );
+                self.push(
+                    base + close + 2..base + ref_close,
+                    CodeHighlightClass::MarkdownLinkUrl,
+                );
+                self.push(
+                    base + ref_close..base + ref_close + 1,
+                    CodeHighlightClass::MarkdownMarker,
+                );
+                return ref_close + 1 - marker_open;
+            }
+        }
+        // [[wikilink]]：外层括号做记号，目标上链接色。
+        if bytes.get(open + 1) == Some(&b'[') && bytes.get(close + 1) == Some(&b']') {
+            self.push(
+                base + marker_open..base + open + 2,
+                CodeHighlightClass::MarkdownMarker,
+            );
+            self.push(
+                base + open + 2..base + close,
+                CodeHighlightClass::MarkdownLinkText,
+            );
+            self.push(
+                base + close..base + close + 2,
+                CodeHighlightClass::MarkdownMarker,
+            );
+            return close + 2 - marker_open;
+        }
+        // [^footnote] 引用（后面没跟地址的才算）。
+        if bytes.get(open + 1) == Some(&b'^') && close > open + 2 {
+            self.push(
+                base + marker_open..base + close + 1,
+                CodeHighlightClass::MarkdownLabel,
+            );
+            return close + 1 - marker_open;
+        }
+        1
+    }
+}
+
+fn utf8_len(first_byte: u8) -> usize {
+    match first_byte {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    }
+}
+
+fn char_run(bytes: &[u8], start: usize, marker: u8) -> usize {
+    let mut end = start;
+    while end < bytes.len() && bytes[end] == marker {
+        end += 1;
+    }
+    end - start
+}
+
+/// 从 `from` 起找一段等长的反引号闭合 run。
+fn find_backtick_run(bytes: &[u8], from: usize, len: usize) -> Option<usize> {
+    let mut i = from;
+    while i < bytes.len() {
+        if bytes[i] == b'`' {
+            let run = char_run(bytes, i, b'`');
+            if run == len {
+                return Some(i);
+            }
+            i += run;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+fn find_exact(bytes: &[u8], from: usize, pattern: &[u8]) -> Option<usize> {
+    bytes[from..]
+        .windows(pattern.len())
+        .position(|window| window == pattern)
+        .map(|offset| from + offset)
+}
+
+fn find_unescaped(bytes: &[u8], from: usize, marker: u8) -> Option<usize> {
+    let mut i = from;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                i += 2;
+            }
+            byte if byte == marker => return Some(i),
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+/// 强调闭定界符：与开定界符同字符、长度不少于 `len`，且前一个字符不是空白
+/// （内容不能为空）。
+fn find_emphasis_close(bytes: &[u8], from: usize, marker: u8, len: usize) -> Option<usize> {
+    let mut i = from;
+    while i < bytes.len() {
+        if bytes[i] == marker {
+            let run = char_run(bytes, i, marker);
+            if run >= len && i > from && !bytes[i - 1].is_ascii_whitespace() {
+                return Some(i);
+            }
+            i += run;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// `<scheme:...>` / `<email@host>` 形式的自动链接，返回闭合 `>` 之后的位置。
+fn autolink_end(line: &str, open: usize) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let close = find_unescaped(bytes, open + 1, b'>')?;
+    let inner = &line[open + 1..close];
+    let is_uri = inner.contains(':')
+        && inner.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && inner
+            .chars()
+            .take_while(|c| *c != ':')
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
+    let is_email = inner.contains('@')
+        && !inner.starts_with('@')
+        && !inner.ends_with('@')
+        && !inner.contains(char::is_whitespace);
+    (is_uri || is_email).then_some(close + 1)
 }
 
 /// 整行（去尾空白）只由同一个字符构成且非空。
@@ -464,8 +811,8 @@ mod tests {
             classes_covering(text, "界面预览"),
             vec![CodeHighlightClass::MarkdownHeading(2)]
         );
-        // 没跟空格的 `#` 不是标题。
-        assert_eq!(class_at("#tag 字", "#tag"), None);
+        // 没跟空格的 `#tag` 不是标题，是标签。
+        assert_eq!(class_at("#tag 字", "#tag"), Some(CodeHighlightClass::MarkdownLabel));
     }
 
     #[test]
@@ -551,6 +898,125 @@ mod tests {
         );
         assert_eq!(
             classes_covering(text, "https://example.com"),
+            vec![CodeHighlightClass::MarkdownLinkUrl]
+        );
+    }
+
+    #[test]
+    fn inline_code_span_takes_precedence_over_emphasis() {
+        let text = "前 `**not bold**` 后";
+        assert_eq!(
+            classes_covering(text, "**not bold**"),
+            vec![CodeHighlightClass::MarkdownCode]
+        );
+    }
+
+    #[test]
+    fn emphasis_uses_glyph_classes_not_color() {
+        let text = "粗 **加粗字** 斜 *斜体字* 删 ~~划掉~~";
+        assert_eq!(
+            classes_covering(text, "加粗字"),
+            vec![CodeHighlightClass::MarkdownStrong]
+        );
+        assert_eq!(
+            classes_covering(text, "斜体字"),
+            vec![CodeHighlightClass::MarkdownEmphasis]
+        );
+        assert_eq!(
+            classes_covering(text, "划掉"),
+            vec![CodeHighlightClass::MarkdownStrikethrough]
+        );
+        assert_eq!(
+            class_at(text, "**"),
+            Some(CodeHighlightClass::MarkdownEmphasisMarker)
+        );
+    }
+
+    #[test]
+    fn intraword_underscore_does_not_emphasize() {
+        let text = "snake_case_word 与 *真斜体*";
+        assert!(classes_covering(text, "snake_case_word").is_empty());
+        assert_eq!(
+            classes_covering(text, "真斜体"),
+            vec![CodeHighlightClass::MarkdownEmphasis]
+        );
+    }
+
+    #[test]
+    fn links_split_label_and_url() {
+        let text = "看 [文档](https://example.com/a) 与 ![图](img/甲.png)";
+        assert_eq!(
+            classes_covering(text, "文档"),
+            vec![CodeHighlightClass::MarkdownLinkText]
+        );
+        assert_eq!(
+            classes_covering(text, "https://example.com/a"),
+            vec![CodeHighlightClass::MarkdownLinkUrl]
+        );
+        assert_eq!(
+            classes_covering(text, "图"),
+            vec![CodeHighlightClass::MarkdownLinkText]
+        );
+        assert_eq!(
+            classes_covering(text, "img/甲.png"),
+            vec![CodeHighlightClass::MarkdownLinkUrl]
+        );
+        assert_eq!(class_at(text, "[文档]"), Some(CodeHighlightClass::MarkdownMarker));
+        assert_eq!(class_at(text, "![图]"), Some(CodeHighlightClass::MarkdownMarker));
+    }
+
+    #[test]
+    fn autolinks_and_footnotes_and_wikilinks() {
+        let text = "<https://example.com> 与 [^1] 注脚 与 [[笔记名]]";
+        assert_eq!(
+            classes_covering(text, "<https://example.com>"),
+            vec![CodeHighlightClass::MarkdownLinkUrl]
+        );
+        assert_eq!(class_at(text, "[^1]"), Some(CodeHighlightClass::MarkdownLabel));
+        assert_eq!(
+            classes_covering(text, "笔记名"),
+            vec![CodeHighlightClass::MarkdownLinkText]
+        );
+    }
+
+    #[test]
+    fn escapes_take_two_bytes_and_are_multibyte_safe() {
+        let text = "字面 \\* 不强调 \\」中";
+        let spans = highlight(text);
+        assert!(spans
+            .iter()
+            .any(|(range, class)| *class == CodeHighlightClass::MarkdownEscape
+                && &text[range.clone()] == "\\*"));
+        for (range, _) in spans {
+            assert!(text.is_char_boundary(range.start) && text.is_char_boundary(range.end));
+        }
+    }
+
+    #[test]
+    fn links_on_later_lines_do_not_bleed_into_earlier_ones() {
+        // 回归：try_scan_link 曾用行内相对偏移当整块坐标，第二行的链接色
+        // 会画到第一行的文字上（用户报修：README 第 7 行前半截被串色）。
+        let text = "# 标题\n\n看 [文档](https://example.com/a) 与 ![图](img/甲.png)\n";
+        let link_line_start = text.find("看 [文档]").expect("链接行");
+        let spans = highlight(text);
+        for (range, class) in &spans {
+            assert!(
+                !(range.end <= text.find("\n\n").unwrap()
+                    && matches!(class, CodeHighlightClass::MarkdownLinkText | CodeHighlightClass::MarkdownLinkUrl)),
+                "标题行的 span 不该是链接色: {range:?} {class:?}"
+            );
+            let _ = link_line_start;
+        }
+        assert_eq!(
+            classes_covering(text, "文档"),
+            vec![CodeHighlightClass::MarkdownLinkText]
+        );
+        assert_eq!(
+            classes_covering(text, "https://example.com/a"),
+            vec![CodeHighlightClass::MarkdownLinkUrl]
+        );
+        assert_eq!(
+            classes_covering(text, "img/甲.png"),
             vec![CodeHighlightClass::MarkdownLinkUrl]
         );
     }
