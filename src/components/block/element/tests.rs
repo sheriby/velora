@@ -627,3 +627,86 @@
         // 非括号字符 → None。
         assert_eq!(matching_bracket_pair("abc", 1), None);
     }
+
+    #[gpui::test]
+    async fn math_block_edits_run_in_the_code_font(cx: &mut TestAppContext) {
+        // 用户报修：数学块聚焦编辑的是 LaTeX 源码，等宽才对得清命令与下标；
+        // 普通段落不受影响。
+        let cx = cx.add_empty_window();
+        let math_block = cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::MathBlock,
+                    InlineTextTree::from_markdown("x^2 + \\frac{1}{2}"),
+                ),
+            )
+        });
+        let paragraph_block = cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::Paragraph,
+                    InlineTextTree::from_markdown("正文一段"),
+                ),
+            )
+        });
+
+        cx.update(|_window, app| {
+            let make_base_run = |len: usize| TextRun {
+                len,
+                font: font(".SystemUIFont"),
+                color: Hsla::from(rgba(0xffffffff)),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+                font_size: None,
+            };
+            let math_text: SharedString = math_block.read(app).display_text().to_string().into();
+            let math_runs = math_block.read_with(app, |block, _| {
+                super::build_text_runs(
+                    block,
+                    &math_text,
+                    &make_base_run(math_text.len()),
+                    px(1.0),
+                    Hsla::from(rgba(0x0066ccff)),
+                    Hsla::from(rgba(0x111111ff)),
+                    false,
+                    "Menlo",
+                    px(13.0),
+                    Hsla::from(rgba(0xfff4ce99)),
+                )
+            });
+            assert!(
+                math_runs
+                    .iter()
+                    .all(|run| run.font.family.as_ref() == "Menlo"),
+                "数学块的编辑 run 应全部等宽: {:?}",
+                math_runs.iter().map(|run| run.font.family.as_ref().to_owned()).collect::<Vec<_>>()
+            );
+
+            let body_text: SharedString =
+                paragraph_block.read(app).display_text().to_string().into();
+            let body_runs = paragraph_block.read_with(app, |block, _| {
+                super::build_text_runs(
+                    block,
+                    &body_text,
+                    &make_base_run(body_text.len()),
+                    px(1.0),
+                    Hsla::from(rgba(0x0066ccff)),
+                    Hsla::from(rgba(0x111111ff)),
+                    false,
+                    "Menlo",
+                    px(13.0),
+                    Hsla::from(rgba(0xfff4ce99)),
+                )
+            });
+            assert!(
+                body_runs
+                    .iter()
+                    .all(|run| run.font.family.as_ref() != "Menlo"),
+                "普通段落不该被换成等宽: {:?}",
+                body_runs.iter().map(|run| run.font.family.as_ref().to_owned()).collect::<Vec<_>>()
+            );
+        });
+    }
