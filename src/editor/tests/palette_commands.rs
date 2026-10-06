@@ -166,7 +166,7 @@ async fn the_palette_runs_the_clipboard_commands(cx: &mut TestAppContext) {
         "「粘贴为纯文本」从面板执行要对齐键位那条"
     );
 
-    // 「拷贝为 Markdown」：没有选区时给整篇源码，文件字节不动。
+    // 「复制为 Markdown」：没有选区时给整篇源码，文件字节不动。
     let (editor, cx) = open_editor(MARKDOWN_DOC, cx);
     redraw(cx);
     open_palette(&editor, cx);
@@ -180,7 +180,7 @@ async fn the_palette_runs_the_clipboard_commands(cx: &mut TestAppContext) {
         Some(MARKDOWN_DOC),
         "剪贴板里要带 `**`，那是文件里的那几个字节"
     );
-    assert_eq!(buffer_text(&editor, cx), MARKDOWN_DOC, "拷贝不该改文档");
+    assert_eq!(buffer_text(&editor, cx), MARKDOWN_DOC, "复制不该改文档");
 }
 /// 面板上一条的标签随界面语言变，用例取当下那份标签当查询词，不写死中文或英文。
 fn command_label(id: &str, cx: &mut VisualTestContext) -> String {

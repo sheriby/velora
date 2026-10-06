@@ -468,7 +468,7 @@ pub struct I18nStrings {
     pub context_menu_redo: String,
     /// 文本右键菜单：剪切。
     pub context_menu_cut: String,
-    /// 文本右键菜单：拷贝。
+    /// 文本右键菜单：复制。
     pub context_menu_copy: String,
     /// 文本右键菜单：粘贴。
     pub context_menu_paste: String,

@@ -394,8 +394,8 @@ impl Editor {
         cx.notify();
     }
 
-    /// 「拷贝为 Markdown」：把选区的源码文本（无选区时整篇）原样写进剪贴板。
-    /// 与「拷贝」两条不同的地方在内容来源：那一条走 gpui 自己的选区拷贝，
+    /// 「复制为 Markdown」：把选区的源码文本（无选区时整篇）原样写进剪贴板。
+    /// 与「复制」两条不同的地方在内容来源：那一条走 gpui 自己的选区拷贝，
     /// 拿的是渲染之后的可见文本（`**加粗**` 只剩「加粗」）；这一条拿的是文件里的那几个字节。
     pub(crate) fn copy_as_markdown(&mut self, cx: &mut Context<Self>) -> bool {
         let markdown = self

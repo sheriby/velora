@@ -10,15 +10,14 @@ use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
-/// 主菜单十三行加四条分节：行 id 与 `document_menu_rows` 里给的一致。
-const MAIN_ROWS: [&str; 13] = [
+/// 主菜单十二行加四条分节：行 id 与 `document_menu_rows` 里给的一致。
+const MAIN_ROWS: [&str; 12] = [
     "undo",
     "redo",
     "cut",
     "copy",
     "paste",
     "paste-as-plain-text",
-    "select-all",
     "copy-as-markdown",
     "copy-as-html",
     "format",
@@ -40,36 +39,43 @@ const FORMAT_ROWS: [&str; 10] = [
     "clear-format",
 ];
 
-/// 菜单里的「全选」与 ⌘A 是同一条循环：第一次选当前这一块，紧接着再来一次选整篇。
+/// 「全选」这一行不在菜单上了（第二期 FP14：⌘A 那条循环本来就在，菜单上多占一行没有
+/// 额外信息），留这条守卫从键位那一路钉住口径：第一次选当前这一块，紧接着再来一次选整篇。
 #[gpui::test]
-async fn the_select_all_row_follows_the_same_cycle_as_the_key(cx: &mut TestAppContext) {
+async fn the_select_all_cycle_from_the_key_selects_the_block_then_the_document(
+    cx: &mut TestAppContext,
+) {
     init_editor_test_app(cx);
     let (editor, cx) = cx
         .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
     redraw(cx);
 
-    right_click(&editor, 0, cx);
-    click_row("select-all", cx);
+    let first_center = block_center(&editor, 0, cx);
+    cx.simulate_click(first_center, Modifiers::none());
+    redraw(cx);
+
+    cx.simulate_keystrokes("cmd-a");
+    redraw(cx);
     let block = visible_block(&editor, 0, cx);
     assert_eq!(
         block.read_with(cx, |block, _| block.selected_range.clone()),
         0..9,
-        "第一次该把「alpha one」这九个字选上"
+        "第一次 ⌘A 该把「alpha one」这九个字选上"
     );
     assert!(
         editor.read_with(cx, |editor, _| editor.cross_block_selection.is_none()),
         "第一次不该直接跳到整篇"
     );
 
-    right_click(&editor, 0, cx);
-    click_row("select-all", cx);
+    cx.simulate_keystrokes("cmd-a");
+    redraw(cx);
     assert!(
         editor.read_with(cx, |editor, _| editor.cross_block_selection.is_some()),
         "紧接着再来一次该选整篇"
     );
 }
 
-/// 「拷贝为 HTML」给的是渲染过的那份，且不动文档字节。
+/// 「复制为 HTML」给的是渲染过的那份，且不动文档字节。
 #[gpui::test]
 async fn the_copy_as_html_row_puts_rendered_html_on_the_clipboard(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -85,9 +91,9 @@ async fn the_copy_as_html_row_puts_rendered_html_on_the_clipboard(cx: &mut TestA
         .expect("剪贴板里该有那份 HTML");
     assert!(
         html.contains("<strong>加粗</strong>"),
-        "拷贝为 HTML 给的该是渲染过的那份：{html}"
+        "复制为 HTML 给的该是渲染过的那份：{html}"
     );
-    assert_eq!(buffer_text(&editor, cx), document, "拷贝不该改文档");
+    assert_eq!(buffer_text(&editor, cx), document, "复制不该改文档");
 }
 
 /// 「段落」那一档：六个标题级别、正文、列表的三种、引用与代码块。
@@ -513,7 +519,7 @@ async fn clicking_the_quote_row_wraps_and_unwraps_the_block(cx: &mut TestAppCont
     );
 }
 
-/// 没有选区时剪切/拷贝/格式那些项做不了，但行要留在原位：藏起来会让菜单高度跳，
+/// 没有选区时剪切/复制/格式那些项做不了，但行要留在原位：藏起来会让菜单高度跳，
 /// 用户也看不出「这一项存在，只是现在不能点」。
 #[gpui::test]
 async fn rows_that_cannot_run_stay_in_place_but_greyed(cx: &mut TestAppContext) {
@@ -740,7 +746,7 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
         DocumentMenuCommand::Undo,
         DocumentMenuCommand::Copy,
         DocumentMenuCommand::Paste,
-        DocumentMenuCommand::SelectAll,
+        DocumentMenuCommand::CopyAsMarkdown,
         DocumentMenuCommand::ToggleSourceView,
     ] {
         let label = shortcut_of(command, cx).expect("这几行都有默认键位");
@@ -749,12 +755,12 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
             "{label} 这一列没渲染出来"
         );
     }
-    assert_eq!(
-        shortcut_of(DocumentMenuCommand::SelectAll, cx).as_deref(),
-        Some("⌘A"),
-        "「全选」那一列显示的是与 ⌘A 同一条键位"
+    // 「全选」那一行已经不在菜单上（FP14），⌘A 这条键位不该再出现在菜单里。
+    assert!(
+        cx.debug_bounds(shortcut_selector("⌘A")).is_none(),
+        "菜单上没有走 ⌘A 的那一行了，键位列里不该还挂着它"
     );
-    // 「拷贝为 HTML」的 ⌘⇧C 是写死的一份绑定，不在键位表里，这一列留空。
+    // 「复制为 HTML」的 ⌘⇧C 是写死的一份绑定，不在键位表里，这一列留空。
     assert_eq!(
         shortcut_of(DocumentMenuCommand::CopyAsHtml, cx),
         None,

@@ -1,4 +1,4 @@
-//! 「粘贴为纯文本」与「拷贝为 Markdown」：与「粘贴」「拷贝」并排的两条入口，
+//! 「粘贴为纯文本」与「复制为 Markdown」：与「粘贴」「复制」并排的两条入口，
 //! 差在内容来源——前者只用剪贴板的文本味道，后者取文件里的那几个字节而不是渲染后的字。
 //!
 //! 用例钉四件事：两条入口各自与对照那条的差异、剪贴板里到底进了什么、一步撤销回到原样、
@@ -182,7 +182,7 @@ async fn copy_as_markdown_without_a_selection_takes_the_whole_document(cx: &mut 
     assert_eq!(
         clipboard_text(cx).as_deref(),
         Some(MARKDOWN_DOC),
-        "没有选区时与「拷贝为 HTML」同一条口径：整篇源码进剪贴板"
+        "没有选区时与「复制为 HTML」同一条口径：整篇源码进剪贴板"
     );
 }
 
@@ -208,12 +208,12 @@ async fn the_copy_as_markdown_row_in_the_menu_reaches_the_same_action(cx: &mut T
     assert_eq!(
         clipboard_text(cx).as_deref(),
         Some("前 **加粗** 后"),
-        "菜单里那一行的「拷贝为 Markdown」要与键位同一条"
+        "菜单里那一行的「复制为 Markdown」要与键位同一条"
     );
     assert_eq!(
         buffer_text(&editor, cx),
         MARKDOWN_DOC,
-        "拷贝只动剪贴板，文档一个字节都不该改"
+        "复制只动剪贴板，文档一个字节都不该改"
     );
 }
 

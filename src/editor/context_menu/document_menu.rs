@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use super::super::{ContextMenuState, Editor};
 use crate::components::{
-    Copy, CopyAsHtml, CopyAsMarkdown, Cut, InlineFormat, Paste, PasteAsPlainText, Redo, SelectAll,
+    Copy, CopyAsHtml, CopyAsMarkdown, Cut, InlineFormat, Paste, PasteAsPlainText, Redo,
     ShortcutCommand, ToggleViewMode, Undo, effective_shortcut_key, menu::MENU_ROW_GAP,
 };
 use crate::editor::insert_ops::InsertBlockTarget;
@@ -58,11 +58,9 @@ pub(crate) enum DocumentMenuCommand {
     Paste,
     /// 「粘贴为纯文本」：只用剪贴板的文本味道，不转 HTML、不把网址写成链接。
     PasteAsPlainText,
-    /// 「拷贝为 Markdown」：选区的源码文本（无选区时整篇）进剪贴板。
+    /// 「复制为 Markdown」：选区的源码文本（无选区时整篇）进剪贴板。
     CopyAsMarkdown,
-    /// 「全选」：一次选当前这一块，再选整篇（与 ⌘A 那一条循环同源）。
-    SelectAll,
-    /// 「拷贝为 HTML」：整篇的 HTML 进剪贴板，与导出那一条同一份内容。
+    /// 「复制为 HTML」：整篇的 HTML 进剪贴板，与导出那一条同一份内容。
     CopyAsHtml,
     Format(InlineFormat),
     Heading(u8),
@@ -100,7 +98,6 @@ impl DocumentMenuCommand {
             Self::Paste => "paste",
             Self::PasteAsPlainText => "paste-as-plain-text",
             Self::CopyAsMarkdown => "copy-as-markdown",
-            Self::SelectAll => "select-all",
             Self::CopyAsHtml => "copy-as-html",
             Self::Format(InlineFormat::Bold) => "bold",
             Self::Format(InlineFormat::Italic) => "italic",
@@ -151,7 +148,6 @@ impl DocumentMenuCommand {
             | Self::Paste
             | Self::PasteAsPlainText
             | Self::CopyAsMarkdown
-            | Self::SelectAll
             | Self::CopyAsHtml
             | Self::InsertTable
             | Self::InsertImage
@@ -180,7 +176,7 @@ pub(crate) enum DocumentMenuRow {
 }
 
 impl Editor {
-    /// 当前是否有一段可选中的正文（跨块选区或块内选区）。剪切、拷贝与八种行内格式
+    /// 当前是否有一段可选中的正文（跨块选区或块内选区）。剪切、复制与八种行内格式
     /// 共用这一条判定；不成立时菜单把条目置灰而不是藏起来。
     pub(crate) fn has_text_selection(&self, cx: &App) -> bool {
         if self.cross_block_selection.is_some() {
@@ -226,11 +222,6 @@ impl Editor {
                 command: DocumentMenuCommand::PasteAsPlainText,
                 name: "paste-as-plain-text",
                 enabled: editable && cx.read_from_clipboard().is_some(),
-            },
-            DocumentMenuRow::Item {
-                command: DocumentMenuCommand::SelectAll,
-                name: "select-all",
-                enabled: !self.document.root_blocks().is_empty(),
             },
             DocumentMenuRow::Separator,
             DocumentMenuRow::Item {
@@ -419,7 +410,6 @@ impl Editor {
             DocumentMenuCommand::CopyAsMarkdown => {
                 window.dispatch_action(Box::new(CopyAsMarkdown), cx);
             }
-            DocumentMenuCommand::SelectAll => window.dispatch_action(Box::new(SelectAll), cx),
             DocumentMenuCommand::CopyAsHtml => window.dispatch_action(Box::new(CopyAsHtml), cx),
             DocumentMenuCommand::Format(format) => {
                 self.toggle_inline_format_on_selection(format, cx);
@@ -552,7 +542,6 @@ pub(crate) fn document_menu_label(
             strings.context_menu_paste_as_plain_text.clone()
         }
         DocumentMenuCommand::CopyAsMarkdown => strings.context_menu_copy_as_markdown.clone(),
-        DocumentMenuCommand::SelectAll => strings.preferences_shortcut_select_all.clone(),
         DocumentMenuCommand::CopyAsHtml => strings.menu_copy_as_html.clone(),
         DocumentMenuCommand::Format(format) => inline_format_label(format, strings),
         DocumentMenuCommand::Heading(level) => match level {
@@ -609,8 +598,7 @@ pub(crate) fn document_menu_shortcut(
         DocumentMenuCommand::Paste => ShortcutCommand::Paste,
         DocumentMenuCommand::PasteAsPlainText => ShortcutCommand::PasteAsPlainText,
         DocumentMenuCommand::CopyAsMarkdown => ShortcutCommand::CopyAsMarkdown,
-        DocumentMenuCommand::SelectAll => ShortcutCommand::SelectAll,
-        // 「拷贝为 HTML」的 ⌘⇧C 是写死的一份绑定（src/components/actions.rs 末尾），
+        // 「复制为 HTML」的 ⌘⇧C 是写死的一份绑定（src/components/actions.rs 末尾），
         // 不在键位表里，因此这一列留空——等它补成表内条目时一起显示。
         DocumentMenuCommand::Format(InlineFormat::Bold) => ShortcutCommand::BoldSelection,
         DocumentMenuCommand::Format(InlineFormat::Italic) => ShortcutCommand::ItalicSelection,
