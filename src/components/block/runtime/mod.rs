@@ -21,7 +21,8 @@ use super::{
     BlockEvent, BlockKind, BlockRecord, CalloutVariant, FootnoteRegistry, InlineFootnoteHit,
     UndoCaptureKind,
 };
-use super::{CodeHighlightResult, highlight_code_block};
+use super::{CodeHighlightResult, CodeLanguageKey, highlight_code_block};
+use crate::components::markdown::source_highlight::{MarkdownSourceState, highlight_markdown_source};
 use super::{
     ImageReferenceDefinitions, ImageResolvedSource, ImageSyntax, LinkReferenceDefinitions,
     parse_standalone_image, resolve_image_source, standalone_image_width_percent,
@@ -231,6 +232,14 @@ pub struct Block {
     /// 源码文档分块的高亮语言（markdown 源码块是 Paragraph，语言记在这里；
     /// 代码文件的块是 CodeBlock，语言在 kind 里）。
     source_language: Option<SharedString>,
+    /// markdown 源码分块的接缝状态：进入本块时所处的块级构造（上一块的
+    /// `source_fence_exit`），由编辑器逐块串联，高亮扫描拿它当初始状态。
+    source_fence_entry: Option<MarkdownSourceState>,
+    /// 本块结束时的接缝状态；`sync_code_highlight` 顺带算出。
+    source_fence_exit: Option<MarkdownSourceState>,
+    /// 高亮代数：高亮结果变化时递增，进 shape 备忘键——否则围栏状态级联
+    /// 更新（块文本没变）后新配色上不了屏。
+    highlight_generation: u64,
     pub(crate) table_runtime: Option<TableRuntime>,
     pub(crate) table_cell_position: Option<TableCellPosition>,
     pub(crate) table_cell_alignment: Option<TableColumnAlignment>,
@@ -363,6 +372,9 @@ impl Block {
             source_line_start: 1,
             source_line_gutter_basis: 0,
             source_language: None,
+            source_fence_entry: None,
+            source_fence_exit: None,
+            highlight_generation: 0,
             table_runtime: None,
             table_cell_position: None,
             table_cell_alignment: None,
@@ -574,6 +586,10 @@ impl Block {
         self.display_generation
     }
 
+    pub(crate) fn highlight_generation(&self) -> u64 {
+        self.highlight_generation
+    }
+
     /// 本块是否启用长行折叠：只有带行号槽的源码/源文件块（JSONL 等按行分块
     /// 打开的代码文档、降级源码模式的整文档块）才有行号可点、才有折叠意义。
     pub(crate) fn long_line_folding_enabled(&self) -> bool {
@@ -772,6 +788,9 @@ mod tests;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ShapeMemoKey {
     pub generation: u64,
+    /// 高亮代数：markdown 源码分块的接缝状态级联更新不改块文本，靠它把
+    /// 旧配色的 shape 备忘作废。
+    pub highlight_generation: u64,
     pub wrap_width: Option<u32>,
     pub wrap_prose: bool,
     pub space_prose: bool,

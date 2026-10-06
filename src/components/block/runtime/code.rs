@@ -69,18 +69,39 @@ impl Block {
     }
 
     pub(super) fn sync_code_highlight(&mut self) {
-        self.code_highlight = match &self.record.kind {
+        let result = match &self.record.kind {
             BlockKind::CodeBlock { language } => highlight_code_block(
                 language.as_deref().map(|value| &**value),
                 self.render_cache.visible_text(),
             ),
             // 源码文档的 markdown 分块是 Paragraph：语言在打开/切视图时记在
-            // 块上（"markdown"），高亮与代码文件同一条管线（用户报修：源码
-            // 模式要有基础语法高亮）。
+            // 块上（"markdown"）。tree-sitter 的 markdown grammar 是逐块解析，
+            // 拿不到跨 512 行接缝的围栏状态，捕获名也与主题色映射对不上
+            // （用户报修：源码模式没有高亮）——改走手写扫描器，接缝状态由
+            // 编辑器逐块串联。
             _ => self.source_language.as_deref().and_then(|language| {
-                highlight_code_block(Some(language), self.render_cache.visible_text())
+                if &**language == "markdown" {
+                    let highlight = highlight_markdown_source(
+                        self.render_cache.visible_text(),
+                        self.source_line_start == 1,
+                        self.source_fence_entry.clone(),
+                    );
+                    self.source_fence_exit = highlight.state;
+                    Some(CodeHighlightResult {
+                        language: CodeLanguageKey::Markdown,
+                        spans: highlight.spans,
+                    })
+                } else {
+                    highlight_code_block(Some(language), self.render_cache.visible_text())
+                }
             }),
         };
+        // 高亮变了要推翻形状备忘：备忘键命中时布局闭包会跳过 run 构建，
+        // 不递增的话新配色永远上不了屏。
+        if self.code_highlight != result {
+            self.highlight_generation = self.highlight_generation.wrapping_add(1);
+        }
+        self.code_highlight = result;
     }
 
     pub(crate) fn code_language_text(&self) -> &str {

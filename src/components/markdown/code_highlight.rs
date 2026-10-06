@@ -85,6 +85,16 @@ pub(crate) enum CodeHighlightClass {
     Operator,
     /// Punctuation token.
     Punctuation,
+    /// Markdown 源码：标题文字与标题记号（带级别；源码视图统一标题色）。
+    MarkdownHeading(u8),
+    /// Markdown 源码：结构记号（`#`、`>`、`-`、围栏、`$$` 等）。
+    MarkdownMarker,
+    /// Markdown 源码：链接文字与图片替代文本。
+    MarkdownLinkText,
+    /// Markdown 源码：链接地址。
+    MarkdownLinkUrl,
+    /// Markdown 源码：标注标签（`[!NOTE]`）、标签（`#tag`）、脚注引用（`[^1]`）。
+    MarkdownLabel,
 }
 
 /// Highlighted byte range inside a code block.
@@ -680,6 +690,26 @@ pub(crate) fn code_highlight_color(colors: &ThemeColors, class: CodeHighlightCla
         CodeHighlightClass::Property => colors.code_syntax_property,
         CodeHighlightClass::Operator => colors.code_syntax_operator,
         CodeHighlightClass::Punctuation => colors.code_syntax_punctuation,
+        // markdown 源码的语义色直接取主题的 md_syntax_*（VS Code 语义：
+        // 标题蓝、结构记号灰、链接文字与地址分色、标签紫）。
+        CodeHighlightClass::MarkdownHeading(_) => colors.md_syntax_heading,
+        CodeHighlightClass::MarkdownMarker => colors.md_syntax_marker,
+        CodeHighlightClass::MarkdownLinkText => colors.md_syntax_link_text,
+        CodeHighlightClass::MarkdownLinkUrl => colors.md_syntax_link_url,
+        CodeHighlightClass::MarkdownLabel => colors.md_syntax_label,
+    }
+}
+
+/// class 附带的字形修饰：加粗 / 斜体 / 删除线 / 下划线。链接文字与地址按
+/// 下划线（与渲染视图的链接一致），其余类不动字形。
+pub(crate) fn code_highlight_font_decoration(
+    class: CodeHighlightClass,
+) -> (bool, bool, bool, bool) {
+    match class {
+        CodeHighlightClass::MarkdownLinkText | CodeHighlightClass::MarkdownLinkUrl => {
+            (false, false, false, true)
+        }
+        _ => (false, false, false, false),
     }
 }
 

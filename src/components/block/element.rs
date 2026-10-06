@@ -10,7 +10,7 @@ pub(super) use gpui::*;
 
 pub(super) use super::{
     Block, BlockKind, InlineFootnoteHit, InlineLinkHit, ShapeMemoEntry, ShapeMemoKey,
-    code_highlight_color,
+    code_highlight_color, code_highlight_font_decoration,
 };
 pub(super) use crate::components::HtmlCssColor;
 pub(super) use crate::theme::{ThemeColors, ThemeManager};
@@ -336,18 +336,25 @@ fn build_code_text_runs(
         while span_idx < highlight_spans.len() && highlight_spans[span_idx].range.end <= start {
             span_idx += 1;
         }
-        let run_color = highlight_spans
+        let active_highlight = highlight_spans
             .get(span_idx)
-            .filter(|span| span.range.start <= start && start < span.range.end)
+            .filter(|span| span.range.start <= start && start < span.range.end);
+        let run_color = active_highlight
             .map(|span| code_highlight_color(colors, span.class))
             .unwrap_or(base_run.color);
+
+        let mut highlighted_underline = false;
+        if let Some(span) = active_highlight {
+            let (_, _, _, underline) = code_highlight_font_decoration(span.class);
+            highlighted_underline = underline;
+        }
 
         runs.push(TextRun {
             len: end - start,
             font: base_run.font.clone(),
             color: run_color,
             background_color: base_run.background_color,
-            underline: is_marked.then_some(UnderlineStyle {
+            underline: (is_marked || highlighted_underline).then_some(UnderlineStyle {
                 color: Some(run_color),
                 thickness: underline_thickness,
                 wavy: false,

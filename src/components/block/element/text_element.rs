@@ -175,6 +175,7 @@ impl Element for BlockTextElement {
             std::sync::Arc::as_ptr(&theme) as usize as u64;
         let memo_key_base = ShapeMemoKey {
             generation: input.display_generation(),
+            highlight_generation: input.highlight_generation(),
             wrap_width: None,
             wrap_prose,
             space_prose,
