@@ -68,6 +68,11 @@ impl Block {
         self.code_highlight.as_ref()
     }
 
+    /// 源码文档 markdown 分块的接缝状态：上一块带进来的块级构造。
+    pub(crate) fn source_fence_entry(&self) -> Option<MarkdownSourceState> {
+        self.source_fence_entry.clone()
+    }
+
     pub(crate) fn set_source_fence_entry(&mut self, entry: Option<MarkdownSourceState>) {
         self.source_fence_entry = entry;
     }

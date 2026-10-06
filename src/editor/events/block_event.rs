@@ -137,6 +137,10 @@ impl Editor {
                 } else {
                     self.mark_dirty(cx);
                 }
+                // markdown 源码视图：这次编辑若开/关了围栏、公式块，后续分块
+                // 的接缝状态要级联重串（一致时只多一次实体读；走了 mark_dirty
+                // 的整篇重投影会自己重串，这里立刻收敛为一次读）。
+                self.cascade_source_fence_states_after(block.entity_id(), cx);
                 // 引用定义要从缓冲区重解析，就得等这一笔落完：早一步读到的是改之前
                 // 的定义行——改 `[asset]:` 的地址，图片还指着旧地址
                 // （`editing_image_reference_definition_refreshes_existing_image`）。

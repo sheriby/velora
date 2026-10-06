@@ -1128,6 +1128,43 @@ impl Editor {
         }
     }
 
+    /// 编辑后的增量级联：编辑块自己的 exit 已随它的 `sync_code_highlight`
+    /// 更新。下一块的 entry 与之不一致（这次改动开/关了围栏、公式、frontmatter）
+    /// 才从下一块起重串；一致就立刻停——打字热路径为此只多一次实体读。
+    pub(crate) fn cascade_source_fence_states_after(
+        &mut self,
+        block_id: gpui::EntityId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.code_document || self.view_mode != ViewMode::Source {
+            return;
+        }
+        let Some(location) = self.document.find_block_location(block_id) else {
+            return;
+        };
+        if location.parent.is_some() {
+            return;
+        }
+        let roots = self.document.root_blocks().to_vec();
+        let Some(edited) = roots.get(location.index) else {
+            return;
+        };
+        let mut state = edited.read(cx).source_fence_exit();
+        for block in &roots[location.index + 1..] {
+            if block.read(cx).source_fence_entry() == state {
+                break;
+            }
+            let entry = state.clone();
+            let mut exit = None;
+            block.update(cx, |block, _cx| {
+                block.set_source_fence_entry(entry);
+                block.refresh_source_highlight();
+                exit = block.source_fence_exit();
+            });
+            state = exit;
+        }
+    }
+
     /// 把这个块当前的源码写回它自己占的缓冲区区间——只经唯一写入口
     /// [`buffer::TextBuffer::edit`]。
     ///
