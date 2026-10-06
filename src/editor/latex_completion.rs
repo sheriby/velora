@@ -2,7 +2,9 @@
 //! Esc 关闭。会话结构与 [[ 补全同构：锚定在某个块的某个反斜杠之后，随编辑
 //! 实时刷新。
 
-use gpui::{Bounds, Pixels};
+use gpui::*;
+
+use crate::theme::Theme;
 
 use crate::components::latex::{
     LatexSymbol, inside_inline_math, latex_command_before_cursor, latex_completions_for,
@@ -193,6 +195,124 @@ impl Editor {
         cx.notify();
     }
 
+    /// 补全浮层：锚在焦点块光标下方；布局未跟上（caret 无界）的帧不渲染。
+    /// 每行 = 等宽命令名 + ratex 渲染的预览图。
+    pub(crate) fn render_latex_completion_overlay(
+        &mut self,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<AnyElement> {
+        let state = self.latex_completion.as_ref()?;
+        let block = self.document.block_entity_by_id(state.block_id)?;
+        let caret_bounds = block.read(cx).active_range_or_cursor_bounds()?;
+        let c = &theme.colors;
+        let t = &theme.typography;
+        let viewport = window.viewport_size();
+        let row_count = state.results.len().max(1);
+        let panel_width = px(300.0);
+        let panel_height = px(30.0 * row_count as f32 + 8.0);
+        let left = caret_bounds
+            .left()
+            .min(viewport.width - panel_width - px(12.0))
+            .max(px(0.0));
+        let top = (caret_bounds.bottom() + px(4.0))
+            .min(viewport.height - panel_height - px(12.0))
+            .max(px(0.0));
+        let state = self.latex_completion.as_mut()?;
+        state.panel_bounds = Some(Bounds::new(point(left, top), size(panel_width, panel_height)));
+
+        let selected = state.selected;
+        let entries: Vec<&'static LatexSymbol> = state.results.clone();
+        let preview_color = c.text_default;
+        let preview_size = f32::from(t.text_size) * 0.9;
+        let code_family = crate::config::EditorSettings::fonts(cx).code_family;
+
+        let mut rows = Vec::new();
+        for (index, entry) in entries.iter().enumerate() {
+            let is_selected = index == selected;
+            let confirm = cx.listener(move |editor, _event: &MouseDownEvent, _window, cx| {
+                editor.confirm_latex_completion(index, cx);
+            });
+            // 预览渲染失败就退化成命令名文本，不出空格子。
+            let preview_element: AnyElement =
+                match crate::components::latex::render_inline_math_svg(
+                    entry.preview,
+                    preview_color,
+                    preview_size,
+                ) {
+                    Ok(rendered) => img(rendered.path)
+                        .max_h(px(preview_size * 1.65))
+                        .object_fit(ObjectFit::Contain)
+                        .into_any_element(),
+                    Err(_) => div()
+                        .text_size(px(t.text_size * 0.85))
+                        .text_color(c.text_placeholder)
+                        .child(entry.preview.to_string())
+                        .into_any_element(),
+                };
+            rows.push(
+                div()
+                    .id(gpui::ElementId::Name(format!("latex-entry-{index}").into()))
+                    .debug_selector(move || format!("latex-entry-{index}"))
+                    .h(px(30.0))
+                    .w_full()
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(8.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .bg(if is_selected {
+                        c.selection
+                    } else {
+                        hsla(0.0, 0.0, 0.0, 0.0)
+                    })
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .on_mouse_down(MouseButton::Left, confirm)
+                    .child(
+                        div()
+                            .min_w(px(96.0))
+                            .font_family(code_family.clone())
+                            .text_size(px(t.text_size * 0.85))
+                            .text_color(c.text_default)
+                            .child(format!("\\{}", entry.name)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .flex_1()
+                            .child(preview_element),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        Some(
+            div()
+                .id("latex-completion-panel")
+                .debug_selector(|| "latex-completion-panel".to_string())
+                .absolute()
+                .left(left)
+                .top(top)
+                .w(panel_width)
+                .bg(c.dialog_surface)
+                .border_1()
+                .border_color(c.dialog_border)
+                .rounded(px(6.0))
+                .shadow_lg()
+                .p(px(4.0))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .occlude()
+                .children(rows)
+                .into_any_element(),
+        )
+    }
 }
 
 #[cfg(test)]

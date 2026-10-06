@@ -1097,6 +1097,13 @@ impl Render for Editor {
         } else {
             base
         };
+        let base = if self.latex_completion_is_open()
+            && let Some(completion) = self.render_latex_completion_overlay(&theme, window, cx)
+        {
+            base.child(completion)
+        } else {
+            base
+        };
         let base = if self.file_history_is_open()
             && let Some(overlay) = self.render_file_history_overlay(&theme, &strings, cx)
         {
