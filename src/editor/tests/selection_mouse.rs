@@ -4,58 +4,6 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
-async fn selection_word_count_stays_cheap_on_a_long_document(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    // 状态栏每帧都要算选中词数。旧实现走 O(整篇) 的 markdown 序列化 +
-    // source mapping 重建（600 块文档实测 38ms/次），长文档拖动选择卡死。
-    let markdown = (0..300)
-        .map(|index| {
-            format!(
-                "## 第 {index} 节标题\n\n这是第 {index} 段中文正文，足够长以便换行，含标点与英文 mixed text。\n"
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
-    redraw(cx);
-
-    editor.update(cx, |editor, cx| {
-        let visible = editor.document.visible_blocks().to_vec();
-        let first = visible[0].entity.entity_id();
-        let last = visible[visible.len() - 1].entity.entity_id();
-        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
-            anchor: crate::editor::CrossBlockSelectionEndpoint {
-                entity_id: first,
-                offset: 0,
-            },
-            focus: crate::editor::CrossBlockSelectionEndpoint {
-                entity_id: last,
-                offset: usize::MAX,
-            },
-        });
-
-        let text = editor.selected_visible_text(cx).expect("selection text");
-        assert!(text.contains("第 0 节标题"), "选中文本应包含首块内容");
-
-        let calls = 20;
-        let start = Instant::now();
-        for _ in 0..calls {
-            let _ = editor.selected_visible_text(cx);
-        }
-        let per_call = start.elapsed() / calls;
-        println!(
-            "[measure] selected_visible_text 单次 = {per_call:?}（可见块 {} 个）",
-            visible.len()
-        );
-        assert!(
-            per_call < Duration::from_millis(5),
-            "状态栏选词路径又变回 O(整篇) 了：{per_call:?}（可见块 {} 个）",
-            visible.len()
-        );
-    });
-}
-
-#[gpui::test]
 async fn dragging_inside_a_rendered_code_block_does_not_panic(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     // 用户报修：在一篇长 markdown（含多个 fence）里，把鼠标放到 ``​`text`` 代码块内部

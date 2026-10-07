@@ -1,3 +1,12 @@
+//! 墙钟预算类性能闸门集中在这里：断言里量真实耗时（`typed < 1200ms` 这类），
+//! 慢机器或并发抢 CPU 下会假红，因此整族 `#[ignore]`，默认 `cargo test` 与 CI
+//! 都不跑。单独跑：`cargo test --bin velora -- --ignored --nocapture`；夹具由
+//! `node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成，缺失即自跳。
+//! 确定性计数闸门（数操作遍数、不量时间）不在此列，照常随默认测试跑。
+//! 两条跨子系统的墙钟闸门留在各自测试模块里原地 `#[ignore]`（字段私有，
+//! 搬过来要放宽生产可见性）：`workspace/tests/search_perf.rs` 的
+//! `searching_a_ten_mib_document_stays_within_budget`、`buffer/tests.rs` 的
+//! `an_edit_on_an_eight_mib_buffer_costs_nothing_proportional_to_the_text`。
 use super::common::*;
 
 #[gpui::test]
@@ -52,6 +61,7 @@ async fn typing_does_not_rescan_status_bar_statistics_every_key(cx: &mut TestApp
 }
 
 #[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     // P2 大文档输入预算：1 MiB 文档里一次按键的成本必须是「常数次全文遍数 +
     // 有界时间」，而不是随文档线性增长的多遍扫描。夹具由
@@ -249,6 +259,7 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
 /// 剩下的 241ms 仍与文档大小同向：可见列表没按视口裁剪，10 万根块的行计划与布局
 /// 还在里面（方案 §10 的按窗口物化那一档）。
 #[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/perf/ten-mib.md");
@@ -336,6 +347,7 @@ async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext
 /// 按块走查 0.54ms，剩下的 **约 37ms 全在「把 5.3 万条标题拼成一棵树」**——标题树是
 /// 整篇一份，任何一次改动都要重拼，那是另一档与文档同向的开销。
 #[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn one_mib_code_document_with_a_fence_on_the_seam_scans_one_chunk(
     cx: &mut TestAppContext,
 ) {
@@ -940,6 +952,7 @@ async fn typing_in_a_code_document_writes_through_the_buffer(cx: &mut TestAppCon
 /// 整篇落笔，每键一次），改成按区间落笔后实测 **141ms、整篇落笔 0 次**。夹具由
 /// `scripts/generate-fixtures.mjs` 生成且被 gitignore，缺失即跳过。
 #[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn one_mib_source_mode_typing_stays_within_budget(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/perf/one-mib.md");
@@ -1060,6 +1073,7 @@ async fn entering_a_quote_reprojects_only_that_quote(cx: &mut TestAppContext) {
 /// 这条把探针钉成闸门——这一档以前每次按键都要整篇重拼再整篇比较（源码模式那份成本
 /// 与文档同长），现在块带着自己的缓冲区区间，只动光标那一段。
 #[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn one_mib_code_document_typing_stays_within_budget(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/perf/one-mib.md");
@@ -1724,6 +1738,158 @@ async fn typing_a_heading_prefix_updates_the_row_metadata(cx: &mut TestAppContex
             spacing.heading_level,
             Some(1),
             "行元数据没跟上 kind 变化：行距会停在段落档"
+        );
+    });
+}
+
+
+/// roadmap G8 的墙钟预算（自 import_perf.rs 集中于此）：10 MiB 文档打开只建
+/// 首块（3 s 预算罩住的就是首块），其余在窗口可交互时后台续建。相对判据
+/// （打开 < 整篇/3）与逐块 µs 预算在并发跑测下也不抖；夹具缺失即自跳。
+#[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
+async fn large_document_opens_within_budget(cx: &mut TestAppContext) {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/perf/ten-mib.md");
+    if !fixture.is_file() {
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        return;
+    }
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+    });
+    let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
+    let bytes = markdown.len();
+    assert!(bytes >= 10 * 1024 * 1024, "fixture should be ~10 MiB");
+
+    let start = std::time::Instant::now();
+    let editor = cx.update(|cx| {
+        cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None))
+    });
+    let open_elapsed = start.elapsed();
+    eprintln!("G8: 10 MiB open(first chunk): {open_elapsed:?}");
+
+    let (first_blocks, pending, source_len) = cx.read(|cx| {
+        editor.read_with(cx, |editor, cx| {
+            (
+                editor.document.visible_blocks().len(),
+                editor.document.pending_tail().is_some(),
+                editor.document.markdown_text(cx).len(),
+            )
+        })
+    });
+    assert!(first_blocks > 0);
+    assert!(pending, "超大文档应先只建首块，其余挂起");
+    assert!(source_len >= 9 * 1024 * 1024, "未建完时序列化丢内容: {source_len}");
+    assert!(
+        first_blocks <= 4_000,
+        "打开时应只建首块（上限 4000），实测 {first_blocks} 块"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while cx.read(|cx| editor.read_with(cx, |editor, _cx| editor.document.pending_tail().is_some()))
+    {
+        assert!(Instant::now() < deadline, "续建未在预算时间内完成");
+        cx.run_until_parked();
+    }
+
+    let (blocks, text_len, text) = cx.read(|cx| {
+        editor.read_with(cx, |editor, cx| {
+            (
+                editor.document.visible_blocks().len(),
+                editor.document.markdown_text(cx).len(),
+                editor.document.markdown_text(cx),
+            )
+        })
+    });
+    let total_elapsed = start.elapsed();
+    eprintln!("G8: 续建完成 {total_elapsed:?}，{blocks} 块，文本 {text_len} 字节");
+    assert!(
+        blocks > first_blocks * 10,
+        "续建后块数未增长: {first_blocks} -> {blocks}"
+    );
+    // 打开只付首块的钱：打开耗时必须显著小于整篇建块成本。相对判据在并发
+    // 跑测下稳定，但打开的固定开销会随机器状态漂移，取 1/3 仍能抓住
+    // 「打开付整篇的钱」的失效模式（比值≈1）。
+    assert!(
+        open_elapsed * 3 < total_elapsed,
+        "打开 {open_elapsed:?} 与整篇建块 {total_elapsed:?} 不成比例：打开可能又付了整篇的钱"
+    );
+    assert!(text_len >= 9 * 1024 * 1024, "续建后文本仍不完整: {text_len}");
+
+    let single_pass = cx.update(|cx| {
+        cx.new(|cx| {
+            Editor::from_markdown_with_chunk_budget(cx, markdown.clone(), None, usize::MAX)
+        })
+    });
+    let expected = cx.read(|cx| {
+        single_pass.read_with(cx, |editor, cx| {
+            assert!(editor.document.pending_tail().is_none());
+            editor.document.markdown_text(cx)
+        })
+    });
+    assert_eq!(text, expected, "分块导入与整篇导入结果不一致");
+
+    // 防回归：首块 + 续建的总成本仍应在每块预算内（400 µs 容忍并发抢 CPU，
+    // 抓的是 2 倍以上的灾难性退步）。
+    let per_block_us = total_elapsed.as_micros() as f64 / blocks.max(1) as f64;
+    eprintln!("G8: {per_block_us:.1} µs/block（首块 + 续建，debug）");
+    assert!(
+        per_block_us <= 400.0,
+        "per-block open cost regressed: {per_block_us:.1} µs > 400 µs budget"
+    );
+}
+
+/// 状态栏选词的墙钟预算（自 selection_mouse.rs 集中于此）：600 块文档上
+/// `selected_visible_text` 单次不许退回 O(整篇)（旧实现实测 38ms/次）。
+#[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
+async fn selection_word_count_stays_cheap_on_a_long_document(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..300)
+        .map(|index| {
+            format!(
+                "## 第 {index} 节标题\n\n这是第 {index} 段中文正文，足够长以便换行，含标点与英文 mixed text。\n"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        let first = visible[0].entity.entity_id();
+        let last = visible[visible.len() - 1].entity.entity_id();
+        editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+            anchor: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: first,
+                offset: 0,
+            },
+            focus: crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: last,
+                offset: usize::MAX,
+            },
+        });
+
+        let text = editor.selected_visible_text(cx).expect("selection text");
+        assert!(text.contains("第 0 节标题"), "选中文本应包含首块内容");
+
+        let calls = 20;
+        let start = Instant::now();
+        for _ in 0..calls {
+            let _ = editor.selected_visible_text(cx);
+        }
+        let per_call = start.elapsed() / calls;
+        println!(
+            "[measure] selected_visible_text 单次 = {per_call:?}（可见块 {} 个）",
+            visible.len()
+        );
+        assert!(
+            per_call < Duration::from_millis(5),
+            "状态栏选词路径又变回 O(整篇) 了：{per_call:?}（可见块 {} 个）",
+            visible.len()
         );
     });
 }

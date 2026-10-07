@@ -1,5 +1,6 @@
-//! 搜索链路的性能闸门（方案文档 §7.4），笔法沿用 `editor/tests/perf_budgets.rs`：
-//! 夹具缺失就跳过、墙钟取最小值、机制断言用计数器差值。
+//! 搜索链路的确定性闸门（方案文档 §7.4）：机制断言用计数器差值，不量墙钟。
+//! 墙钟预算那条（整篇扫描 / 循环跳转耗时）已集中到 `editor/tests/perf_budgets.rs`，
+//! 随整族性能闸门默认 `#[ignore]`。
 //!
 //! 数字都量自 **debug profile**（`cargo test` 跑的那一档），闸门设在实测值的两倍
 //! 上下——先把退步挡住，不把最优值钉死。release 档还要快一到两个数量级。
@@ -63,8 +64,10 @@ fn open_document(
     Some((editor, bytes))
 }
 
-/// 10 MiB 文档：整篇扫描与循环跳转各自的预算。
+/// 10 MiB 文档：整篇扫描与循环跳转各自的预算。墙钟预算闸门，依赖机器速度，
+/// 随整族性能测试默认 `#[ignore]`；单独跑 `cargo test --bin velora -- --ignored`。
 #[gpui::test]
+#[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn searching_a_ten_mib_document_stays_within_budget(cx: &mut TestAppContext) {
     let Some((editor, bytes)) = open_document(cx, "ten-mib.md", "段落") else {
         return;
