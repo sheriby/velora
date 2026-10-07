@@ -78,11 +78,11 @@ impl Block {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let collapsed_blank_line = self.collapses_to_blank_gap(focused, source_mode);
-        // 源码模式：块就是一段缓冲区切片的文本，块内不能再吃上下内边距，
-        // 最小高度也不能顶开一个行高——否则相邻块之间凭空多出缝，行距翻倍。
-        let min_height = if source_mode {
-            0.0
-        } else if collapsed_blank_line {
+        // 源码模式：块内不再吃上下内边距（相邻块之间的 8px 会让行距翻倍）。
+        // 但最小高度必须留着 block_min_height——行计划的估算值就是它，两者不一致
+        // 时每行差几像素、几十行累计成漂移，虚拟滚动就会漏挂载屏幕上那几行，
+        // 表现成「空白行没有行号」。
+        let min_height = if collapsed_blank_line {
             dimensions.block_gap
         } else {
             dimensions.block_min_height

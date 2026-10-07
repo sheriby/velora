@@ -1245,6 +1245,10 @@ async fn user_toggled_source_mode_newline_continues_line_numbers(cx: &mut TestAp
 /// 源码模式的根块是缓冲区的**连续切片**：块与块之间不该有段间距，块内也不该
 /// 再吃一份 `block_padding_y`。否则一行文本的视觉高度变成「行高 + 2×padding +
 /// gap」，回车新建的块看起来行距突然翻倍（用户截图里 135 行以下那一段）。
+///
+/// 缝宽只容许一种来源：单行块的文本没顶满行盒的最小高度（`block_min_height`），
+/// 那零点几行高留在盒底。文本边界量的是块里的文本框，不是行盒，所以余量必须
+/// 按块自己的高度扣掉。
 #[gpui::test]
 async fn source_mode_rows_tile_the_view_without_gaps(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -1285,11 +1289,18 @@ async fn source_mode_rows_tile_the_view_without_gaps(cx: &mut TestAppContext) {
         .collect::<Option<Vec<_>>>()
         .expect("每根块都该有上一帧的几何");
     assert!(bounds.len() >= 3, "夹具该产出至少三根块，实测 {}", bounds.len());
+    let row_footprint = editor.read_with(cx, |_editor, cx| {
+        cx.global::<ThemeManager>().current_arc().dimensions.block_min_height
+    });
     for pair in bounds.windows(2) {
         let seam = f32::from(pair[1].top()) - f32::from(pair[0].bottom());
+        // 这一块的文本框顶不满行盒，剩下的那点余量落在盒底，是唯一的合法缝宽。
+        let box_slack = (row_footprint - f32::from(pair[0].size.height)).max(0.0);
         assert!(
-            seam.abs() <= 0.6,
-            "源码模式的相邻块必须首尾相接（一块一行就是一个行高），实测缝宽 {seam}px"
+            seam >= -0.6 && seam <= box_slack + 0.6,
+            "源码模式的相邻块之间不该有块间距与上下内边距：缝宽 {seam}px，\
+             行盒 {row_footprint}px 对文本框 {}px，最多允许 {box_slack}px 的盒底余量",
+            f32::from(pair[0].size.height),
         );
     }
     let single_line_heights: Vec<f32> = bounds
@@ -1447,4 +1458,64 @@ async fn source_mode_newline_block_gets_markdown_highlight(cx: &mut TestAppConte
         classes.contains(&CodeHighlightClass::MarkdownStrong),
         "源码模式回车新增的块没有 markdown 语法着色，classes={classes:?}"
     );
+}
+
+/// 源码模式一行的行距必须等于行计划的估算值（`block_min_height`）。两者不一致
+/// 时每行差几像素，几十行累计成漂移，虚拟滚动按漂移后的位置决定挂载哪些行，
+/// 于是屏幕上那几行根本没被挂载——表现就是「空白行不显示行号」（用户报修：
+/// 一直按回车，中间十几行没有行号）。
+#[gpui::test]
+async fn source_mode_row_pitch_matches_the_plan_estimate(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "line a\nline b\nline c".into(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    let last = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks().last().cloned().expect("有根块")
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+        last.update(cx, |block, cx| {
+            let tail = block.visible_len();
+            block.move_to(tail, cx);
+        });
+    });
+    redraw(cx);
+    for _ in 0..10 {
+        cx.dispatch_action(Newline);
+        redraw(cx);
+    }
+    cx.simulate_input("END");
+    redraw(cx);
+    redraw(cx);
+
+    let estimate = editor.read_with(cx, |_editor, cx| {
+        cx.global::<ThemeManager>().current_arc().dimensions.block_min_height
+    });
+    let tops = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .skip(1) // 第一块是多行的原文块，行距从它之后量
+            .map(|block| block.read(cx).last_bounds.map(|bounds| f32::from(bounds.top())))
+            .collect::<Option<Vec<_>>>()
+            .expect("这些块都该在视口内被挂载过")
+    });
+    assert!(tops.len() >= 8, "夹具该有 8 根以上单行块，实测 {}", tops.len());
+    for pair in tops.windows(2) {
+        let pitch = pair[1] - pair[0];
+        assert!(
+            (pitch - estimate).abs() <= 0.6,
+            "源码模式单行块的行距 {pitch}px 与行计划估算 {estimate}px 不一致：\
+             每行差 {}px，{} 行就漂 {}px，虚拟滚动会漏挂载视口内的行（行号消失）",
+            pitch - estimate,
+            tops.len(),
+            (pitch - estimate) * tops.len() as f32,
+        );
+    }
 }
