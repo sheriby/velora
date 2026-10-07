@@ -78,12 +78,16 @@ impl Block {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let collapsed_blank_line = self.collapses_to_blank_gap(focused, source_mode);
-        let min_height = if collapsed_blank_line {
+        // 源码模式：块就是一段缓冲区切片的文本，块内不能再吃上下内边距，
+        // 最小高度也不能顶开一个行高——否则相邻块之间凭空多出缝，行距翻倍。
+        let min_height = if source_mode {
+            0.0
+        } else if collapsed_blank_line {
             dimensions.block_gap
         } else {
             dimensions.block_min_height
         };
-        let padding_y = if collapsed_blank_line {
+        let padding_y = if source_mode || collapsed_blank_line {
             0.0
         } else {
             dimensions.block_padding_y

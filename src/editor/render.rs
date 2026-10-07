@@ -210,7 +210,9 @@ fn rendered_row_top_gap(
         return 0.0;
     }
     if !rendered_mode {
-        return default_gap;
+        // 源码模式的根块是缓冲区的连续切片：块边界就是一个换行，加任何段间距
+        // 都会让行距变成「行高 + gap」，看着像同一份文本被撑开（用户报修）。
+        return 0.0;
     }
 
     if let Some(level) = current.heading_level {

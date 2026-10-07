@@ -191,9 +191,11 @@
             rendered_row_top_gap(Some(list_item), list_item, 8.0, true),
             4.0
         );
+        // 源码模式的行是缓冲区的连续切片：块边界就是一个换行，这里给任何间距
+        // 都会在文本里凭空撑出一条缝（行距翻倍的根因）。
         assert_eq!(
             rendered_row_top_gap(Some(paragraph), heading, 8.0, false),
-            8.0
+            0.0
         );
     }
 

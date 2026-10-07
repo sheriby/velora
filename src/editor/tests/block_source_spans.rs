@@ -1241,3 +1241,150 @@ async fn user_toggled_source_mode_newline_continues_line_numbers(cx: &mut TestAp
         "行号栏宽基准该是全文档行数，实测 {bases:?} 对 {buffer_lines}"
     );
 }
+
+/// 源码模式的根块是缓冲区的**连续切片**：块与块之间不该有段间距，块内也不该
+/// 再吃一份 `block_padding_y`。否则一行文本的视觉高度变成「行高 + 2×padding +
+/// gap」，回车新建的块看起来行距突然翻倍（用户截图里 135 行以下那一段）。
+#[gpui::test]
+async fn source_mode_rows_tile_the_view_without_gaps(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "第一行\n\n第二行".into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    // 在文末连按两次回车：源码模式按块边界表示换行，会新建两根单行块。
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            let last = editor
+                .read_with(cx, |editor, _cx| {
+                    editor.document.root_blocks().last().cloned().expect("有根块")
+                });
+            last.update(cx, |block, cx| {
+                let tail = block.visible_len();
+                block.move_to(tail, cx);
+                block.on_newline(&Newline, window, cx);
+            });
+        });
+        redraw(cx);
+        redraw(cx);
+    }
+
+    let bounds = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .map(|block| block.read(_cx).last_bounds)
+            .collect::<Vec<_>>()
+    });
+    let bounds = bounds
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>()
+        .expect("每根块都该有上一帧的几何");
+    assert!(bounds.len() >= 3, "夹具该产出至少三根块，实测 {}", bounds.len());
+    for pair in bounds.windows(2) {
+        let seam = f32::from(pair[1].top()) - f32::from(pair[0].bottom());
+        assert!(
+            seam.abs() <= 0.6,
+            "源码模式的相邻块必须首尾相接（一块一行就是一个行高），实测缝宽 {seam}px"
+        );
+    }
+    let single_line_heights: Vec<f32> = bounds
+        .iter()
+        .skip(bounds.len() - 2)
+        .map(|bounds| f32::from(bounds.size.height))
+        .collect();
+    assert!(
+        single_line_heights.windows(2).all(|pair| (pair[0] - pair[1]).abs() <= 0.6),
+        "两根单行块的高度该一致（就是一个行高），实测 {single_line_heights:?}"
+    );
+    // 三行的块必须正好是单行块的三倍：只要块内还有上下内边距，这个比例就不成立
+    // （3×(行高+2p) ≠ 3×行高+2p），行距会随块数越攒越松。
+    let line_count = |text: &str| text.split('\n').count().max(1);
+    let first_height = f32::from(bounds[0].size.height);
+    let single_height = single_line_heights[0];
+    let first_lines = editor.read_with(cx, |editor, cx| {
+        line_count(
+            editor
+                .document
+                .root_blocks()
+                .first()
+                .expect("有根块")
+                .read(cx)
+                .display_text(),
+        )
+    });
+    assert!(
+        (first_height - single_height * first_lines as f32).abs() <= 1.0,
+        "源码模式的块高该严格等于「行数 × 单行高」：{} 行实测 {first_height}px，单行 {single_height}px",
+        first_lines
+    );
+}
+
+/// 从源码模式切回渲染态必须真的重新渲染：块不再是源码原样、行号栏关掉，且
+/// 源码模式里打的字照样在文档里。
+#[gpui::test]
+async fn toggling_back_from_source_mode_renders_again(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 标题\n\n**粗体** 文字".into(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    let last = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks().last().cloned().expect("有根块")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+        last.update(cx, |block, cx| {
+            let tail = block.visible_len();
+            block.move_to(tail, cx);
+            block.on_newline(&Newline, window, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_input("打字内容");
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    redraw(cx);
+
+    let (file, states) = editor.read_with(cx, |editor, cx| {
+        (
+            editor.buffer.text(),
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .map(|block| {
+                    let block = block.read(cx);
+                    (
+                        block.is_source_raw_mode(),
+                        block.show_source_line_numbers(),
+                        block.display_text().to_string(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+    });
+    assert!(
+        file.contains("打字内容"),
+        "源码模式里打的字没进缓冲区：{file:?}"
+    );
+    assert!(
+        states.iter().all(|(raw, numbers, _)| !*raw && !*numbers),
+        "切回渲染态后仍有块是源码原样/带行号：{states:?}"
+    );
+    assert!(
+        states
+            .iter()
+            .any(|(_, _, text)| text.contains("打字内容")),
+        "切回渲染态后找不到刚打的内容：{states:?}"
+    );
+}
