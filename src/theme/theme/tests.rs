@@ -48,7 +48,13 @@ mod tests {
             .and_then(|colors| colors.as_object_mut())
             .expect("theme should include colors");
         for key in [
-            "md_syntax_heading",
+            "md_syntax_heading1",
+            "md_syntax_heading2",
+            "md_syntax_heading3",
+            "md_syntax_heading4",
+            "md_syntax_heading5",
+            "md_syntax_heading6",
+            "md_syntax_strong",
             "md_syntax_marker",
             "md_syntax_emphasis_marker",
             "md_syntax_code",
@@ -62,9 +68,14 @@ mod tests {
 
         let theme = Theme::from_json(&json).expect("theme without md_syntax_* should deserialize");
         assert_eq!(
-            theme.colors.md_syntax_heading,
+            theme.colors.md_syntax_heading1,
             Hsla::from(rgba(0x569cd6ff)),
-            "缺省的 md_syntax_heading 按 Dark+ 标题蓝兜底"
+            "缺省的 md_syntax_heading1 按 Dark+ 标题蓝兜底"
+        );
+        assert_eq!(
+            theme.colors.md_syntax_strong,
+            Hsla::from(rgba(0xe5c07bff)),
+            "缺省的 md_syntax_strong 按 Dark+ 金色兜底"
         );
         assert_eq!(theme.colors.md_syntax_label, Hsla::from(rgba(0xc586c0ff)));
     }

@@ -166,9 +166,14 @@ impl Theme {
                 code_syntax_property: Hsla::from(rgba(0x9cdcfeff)),
                 code_syntax_operator: Hsla::from(rgba(0xd4d4d4ff)),
                 code_syntax_punctuation: Hsla::from(rgba(0xd4d4d4ff)),
-                md_syntax_heading: Hsla::from(rgba(0x569cd6ff)),
+                md_syntax_heading1: Hsla::from(rgba(0x569cd6ff)),
+                md_syntax_heading2: Hsla::from(rgba(0x4ec9b0ff)),
+                md_syntax_heading3: Hsla::from(rgba(0xc586c0ff)),
+                md_syntax_heading4: Hsla::from(rgba(0xdcdcaaff)),
+                md_syntax_heading5: Hsla::from(rgba(0xb5cea8ff)),
+                md_syntax_heading6: Hsla::from(rgba(0x9cdcfeff)),
                 md_syntax_marker: Hsla::from(rgba(0x8a8a8aff)),
-                md_syntax_emphasis_marker: Hsla::from(rgba(0xd16969ff)),
+                md_syntax_strong: Hsla::from(rgba(0xe5c07bff)),
                 md_syntax_code: Hsla::from(rgba(0xce9178ff)),
                 md_syntax_link_text: Hsla::from(rgba(0x3794ffff)),
                 md_syntax_link_url: Hsla::from(rgba(0xce9178ff)),
@@ -425,9 +430,14 @@ impl Theme {
                 code_syntax_property: Hsla::from(rgba(0x001080ff)),
                 code_syntax_operator: Hsla::from(rgba(0x393a34ff)),
                 code_syntax_punctuation: Hsla::from(rgba(0x393a34ff)),
-                md_syntax_heading: Hsla::from(rgba(0x0451a5ff)),
+                md_syntax_heading1: Hsla::from(rgba(0x0451a5ff)),
+                md_syntax_heading2: Hsla::from(rgba(0x098658ff)),
+                md_syntax_heading3: Hsla::from(rgba(0xaf00dbff)),
+                md_syntax_heading4: Hsla::from(rgba(0xe8590cff)),
+                md_syntax_heading5: Hsla::from(rgba(0x986801ff)),
+                md_syntax_heading6: Hsla::from(rgba(0x0b7285ff)),
                 md_syntax_marker: Hsla::from(rgba(0x717984ff)),
-                md_syntax_emphasis_marker: Hsla::from(rgba(0xbf3f3fff)),
+                md_syntax_strong: Hsla::from(rgba(0xc2255cff)),
                 md_syntax_code: Hsla::from(rgba(0xa31515ff)),
                 md_syntax_link_text: Hsla::from(rgba(0x0b58caff)),
                 md_syntax_link_url: Hsla::from(rgba(0x986801ff)),
@@ -514,9 +524,14 @@ impl Theme {
         // 一个颜色刷到底）。
         {
             let c = &mut theme.colors;
-            c.md_syntax_heading = Hsla::from(rgba(0x2b5f8aff));
+            c.md_syntax_heading1 = Hsla::from(rgba(0x2b5f8aff));
+            c.md_syntax_heading2 = Hsla::from(rgba(0x4a7a5aff));
+            c.md_syntax_heading3 = Hsla::from(rgba(0x7d4fb2ff));
+            c.md_syntax_heading4 = Hsla::from(rgba(0xb45a3cff));
+            c.md_syntax_heading5 = Hsla::from(rgba(0x9c6b1eff));
+            c.md_syntax_heading6 = Hsla::from(rgba(0x31708fff));
             c.md_syntax_marker = Hsla::from(rgba(0x8a7f70ff));
-            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xb45a3cff));
+            c.md_syntax_strong = Hsla::from(rgba(0x8a3a52ff));
             c.md_syntax_code = Hsla::from(rgba(0x9c4222ff));
             c.md_syntax_link_text = Hsla::from(rgba(0x316aa5ff));
             c.md_syntax_link_url = Hsla::from(rgba(0x9c6b1eff));
@@ -563,9 +578,14 @@ impl Theme {
         // 青绿代码、紫标签，参照 VS Code 语义（用户报修：源码模式满屏绿）。
         {
             let c = &mut theme.colors;
-            c.md_syntax_heading = Hsla::from(rgba(0x1e6fa8ff));
+            c.md_syntax_heading1 = Hsla::from(rgba(0x1e6fa8ff));
+            c.md_syntax_heading2 = Hsla::from(rgba(0x287a3dff));
+            c.md_syntax_heading3 = Hsla::from(rgba(0x8250dfff));
+            c.md_syntax_heading4 = Hsla::from(rgba(0x9a6700ff));
+            c.md_syntax_heading5 = Hsla::from(rgba(0xb3492fff));
+            c.md_syntax_heading6 = Hsla::from(rgba(0x5c6f91ff));
             c.md_syntax_marker = Hsla::from(rgba(0x5e6b60ff));
-            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xc25e5eff));
+            c.md_syntax_strong = Hsla::from(rgba(0xa83a5bff));
             c.md_syntax_code = Hsla::from(rgba(0x0f7b6cff));
             c.md_syntax_link_text = Hsla::from(rgba(0x1a67c9ff));
             c.md_syntax_link_url = Hsla::from(rgba(0x986801ff));
@@ -597,9 +617,14 @@ impl Theme {
         theme.dimensions.block_gap = 7.0;
         {
             let c = &mut theme.colors;
-            c.md_syntax_heading = Hsla::from(rgba(0x79b8ffff));
+            c.md_syntax_heading1 = Hsla::from(rgba(0x79b8ffff));
+            c.md_syntax_heading2 = Hsla::from(rgba(0x63d0b8ff));
+            c.md_syntax_heading3 = Hsla::from(rgba(0xc792c9ff));
+            c.md_syntax_heading4 = Hsla::from(rgba(0xe8c47cff));
+            c.md_syntax_heading5 = Hsla::from(rgba(0x9ecf9aff));
+            c.md_syntax_heading6 = Hsla::from(rgba(0xb0a8f0ff));
             c.md_syntax_marker = Hsla::from(rgba(0x8b9cb5ff));
-            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xe58a8aff));
+            c.md_syntax_strong = Hsla::from(rgba(0xf2b570ff));
             c.md_syntax_code = Hsla::from(rgba(0xe8a878ff));
             c.md_syntax_link_text = Hsla::from(rgba(0x58a6ffff));
             c.md_syntax_link_url = Hsla::from(rgba(0xd7b17cff));
@@ -643,9 +668,14 @@ impl Theme {
         theme.dimensions.h1_margin_bottom = 10.0;
         {
             let c = &mut theme.colors;
-            c.md_syntax_heading = Hsla::from(rgba(0x8fb8d8ff));
+            c.md_syntax_heading1 = Hsla::from(rgba(0x8fb8d8ff));
+            c.md_syntax_heading2 = Hsla::from(rgba(0x86c0a8ff));
+            c.md_syntax_heading3 = Hsla::from(rgba(0xd3a0c0ff));
+            c.md_syntax_heading4 = Hsla::from(rgba(0xd9b87cff));
+            c.md_syntax_heading5 = Hsla::from(rgba(0xc08a7aff));
+            c.md_syntax_heading6 = Hsla::from(rgba(0xa89ec4ff));
             c.md_syntax_marker = Hsla::from(rgba(0x9a8f85ff));
-            c.md_syntax_emphasis_marker = Hsla::from(rgba(0xd98a7eff));
+            c.md_syntax_strong = Hsla::from(rgba(0xd98a7eff));
             c.md_syntax_code = Hsla::from(rgba(0xd9a074ff));
             c.md_syntax_link_text = Hsla::from(rgba(0x7fa8ccff));
             c.md_syntax_link_url = Hsla::from(rgba(0xc99a6eff));

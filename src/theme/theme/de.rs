@@ -59,9 +59,14 @@ struct ThemeColorsDe {
     code_syntax_property: Option<Hsla>,
     code_syntax_operator: Option<Hsla>,
     code_syntax_punctuation: Option<Hsla>,
-    md_syntax_heading: Option<Hsla>,
+    md_syntax_heading1: Option<Hsla>,
+    md_syntax_heading2: Option<Hsla>,
+    md_syntax_heading3: Option<Hsla>,
+    md_syntax_heading4: Option<Hsla>,
+    md_syntax_heading5: Option<Hsla>,
+    md_syntax_heading6: Option<Hsla>,
     md_syntax_marker: Option<Hsla>,
-    md_syntax_emphasis_marker: Option<Hsla>,
+    md_syntax_strong: Option<Hsla>,
     md_syntax_code: Option<Hsla>,
     md_syntax_link_text: Option<Hsla>,
     md_syntax_link_url: Option<Hsla>,
@@ -250,15 +255,30 @@ impl<'de> Deserialize<'de> for ThemeColors {
             code_syntax_punctuation: raw
                 .code_syntax_punctuation
                 .unwrap_or_else(|| Hsla::from(rgba(0xd4d4d4ff))),
-            md_syntax_heading: raw
-                .md_syntax_heading
+            md_syntax_heading1: raw
+                .md_syntax_heading1
                 .unwrap_or_else(|| Hsla::from(rgba(0x569cd6ff))),
+            md_syntax_heading2: raw
+                .md_syntax_heading2
+                .unwrap_or_else(|| Hsla::from(rgba(0x4ec9b0ff))),
+            md_syntax_heading3: raw
+                .md_syntax_heading3
+                .unwrap_or_else(|| Hsla::from(rgba(0xc586c0ff))),
+            md_syntax_heading4: raw
+                .md_syntax_heading4
+                .unwrap_or_else(|| Hsla::from(rgba(0xdcdcaaff))),
+            md_syntax_heading5: raw
+                .md_syntax_heading5
+                .unwrap_or_else(|| Hsla::from(rgba(0xb5cea8ff))),
+            md_syntax_heading6: raw
+                .md_syntax_heading6
+                .unwrap_or_else(|| Hsla::from(rgba(0x9cdcfeff))),
             md_syntax_marker: raw
                 .md_syntax_marker
                 .unwrap_or_else(|| Hsla::from(rgba(0x8a8a8aff))),
-            md_syntax_emphasis_marker: raw
-                .md_syntax_emphasis_marker
-                .unwrap_or_else(|| Hsla::from(rgba(0xd16969ff))),
+            md_syntax_strong: raw
+                .md_syntax_strong
+                .unwrap_or_else(|| Hsla::from(rgba(0xe5c07bff))),
             md_syntax_code: raw
                 .md_syntax_code
                 .unwrap_or_else(|| Hsla::from(rgba(0xce9178ff))),

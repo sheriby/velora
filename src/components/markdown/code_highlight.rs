@@ -702,15 +702,23 @@ pub(crate) fn code_highlight_color(colors: &ThemeColors, class: CodeHighlightCla
         CodeHighlightClass::Property => colors.code_syntax_property,
         CodeHighlightClass::Operator => colors.code_syntax_operator,
         CodeHighlightClass::Punctuation => colors.code_syntax_punctuation,
-        // markdown 源码的语义色直接取主题的 md_syntax_*（VS Code 语义：
-        // 标题蓝、结构记号灰、链接文字与地址分色、标签紫）。
-        CodeHighlightClass::MarkdownHeading(_) => colors.md_syntax_heading,
+        // markdown 源码的语义色直接取主题的 md_syntax_*（用户要求：标题
+        // 六级各有颜色、加粗内容有颜色、`*` 定界符保持正文色）。
+        CodeHighlightClass::MarkdownHeading(level) => match level {
+            1 => colors.md_syntax_heading1,
+            2 => colors.md_syntax_heading2,
+            3 => colors.md_syntax_heading3,
+            4 => colors.md_syntax_heading4,
+            5 => colors.md_syntax_heading5,
+            _ => colors.md_syntax_heading6,
+        },
         CodeHighlightClass::MarkdownMarker => colors.md_syntax_marker,
-        CodeHighlightClass::MarkdownEmphasisMarker => colors.md_syntax_emphasis_marker,
-        CodeHighlightClass::MarkdownStrong | CodeHighlightClass::MarkdownEmphasis => {
+        // 强调定界符（`*`、`**`、`~~`）不加色：层次交给内容的字重/字形。
+        CodeHighlightClass::MarkdownEmphasisMarker => colors.text_default,
+        CodeHighlightClass::MarkdownStrong => colors.md_syntax_strong,
+        CodeHighlightClass::MarkdownEmphasis | CodeHighlightClass::MarkdownStrikethrough => {
             colors.text_default
         }
-        CodeHighlightClass::MarkdownStrikethrough => colors.text_default,
         CodeHighlightClass::MarkdownCode => colors.md_syntax_code,
         CodeHighlightClass::MarkdownEscape => colors.md_syntax_code,
         CodeHighlightClass::MarkdownLinkText => colors.md_syntax_link_text,
@@ -742,8 +750,14 @@ mod tests {
 
     #[test]
     fn builtin_themes_give_markdown_syntax_distinct_colours() {
-        // 用户报修：源码高亮满屏一个颜色。六套内置主题的 markdown 语义色
-        // 至少要有五种互不相同的取值——谁把字段映射到同一个来源，这条就红。
+        // 用户报修两轮：满屏一个颜色不行，标题六级之间也要有区分度。
+        // 谁把字段映射到同一个来源，这两条断言就红。
+        let key = |color: &gpui::Hsla| {
+            let rgba = gpui::Rgba::from(*color);
+            ((rgba.r * 255.0).round() as u32) << 16
+                | ((rgba.g * 255.0).round() as u32) << 8
+                | ((rgba.b * 255.0).round() as u32)
+        };
         for theme in [
             Theme::default_theme(),
             Theme::light_theme(),
@@ -752,30 +766,53 @@ mod tests {
             Theme::midnight_theme(),
             Theme::ink_theme(),
         ] {
-            let colors = [
-                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownHeading(1)),
-                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownMarker),
-                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownEmphasisMarker),
-                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownCode),
-                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownLinkText),
-                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownLinkUrl),
-                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownLabel),
+            let headings = [
+                CodeHighlightClass::MarkdownHeading(1),
+                CodeHighlightClass::MarkdownHeading(2),
+                CodeHighlightClass::MarkdownHeading(3),
+                CodeHighlightClass::MarkdownHeading(4),
+                CodeHighlightClass::MarkdownHeading(5),
+                CodeHighlightClass::MarkdownHeading(6),
             ];
-            let distinct: std::collections::BTreeSet<u32> = colors
+            let heading_keys: std::collections::BTreeSet<u32> = headings
                 .iter()
-                .map(|color| {
-                    let rgba = gpui::Rgba::from(*color);
-                    ((rgba.r * 255.0).round() as u32) << 16
-                        | ((rgba.g * 255.0).round() as u32) << 8
-                        | ((rgba.b * 255.0).round() as u32)
-                })
+                .map(|class| key(&code_highlight_color(&theme.colors, *class)))
+                .collect();
+            assert_eq!(
+                heading_keys.len(),
+                6,
+                "主题 {} 的六级标题色必须互不相同: {heading_keys:?}",
+                theme.name
+            );
+
+            let others = [
+                CodeHighlightClass::MarkdownMarker,
+                CodeHighlightClass::MarkdownStrong,
+                CodeHighlightClass::MarkdownCode,
+                CodeHighlightClass::MarkdownLinkText,
+                CodeHighlightClass::MarkdownLinkUrl,
+                CodeHighlightClass::MarkdownLabel,
+            ];
+            let other_keys: std::collections::BTreeSet<u32> = others
+                .iter()
+                .map(|class| key(&code_highlight_color(&theme.colors, *class)))
                 .collect();
             assert!(
-                distinct.len() >= 5,
-                "主题 {} 的 markdown 语义色坍缩成 {} 种: {:?}",
+                other_keys.len() >= 5,
+                "主题 {} 的加粗/代码/链接/标签色坍缩成 {} 种: {other_keys:?}",
                 theme.name,
-                distinct.len(),
-                distinct
+                other_keys.len()
+            );
+        }
+    }
+
+    #[test]
+    fn emphasis_markers_render_in_default_text_colour() {
+        // 用户报修：`*`/`**` 定界符不该有自己的颜色。
+        for theme in [Theme::default_theme(), Theme::forest_theme()] {
+            assert_eq!(
+                code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownEmphasisMarker),
+                theme.colors.text_default
             );
         }
     }

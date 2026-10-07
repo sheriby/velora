@@ -169,12 +169,22 @@ pub struct ThemeColors {
     pub code_syntax_operator: Hsla,
     /// Syntax colour for punctuation inside code blocks.
     pub code_syntax_punctuation: Hsla,
-    /// Markdown 源码高亮：标题文字与标题记号。
-    pub md_syntax_heading: Hsla,
+    /// Markdown 源码高亮：一级标题（六级各有自己的颜色，保证区分度）。
+    pub md_syntax_heading1: Hsla,
+    /// Markdown 源码高亮：二级标题。
+    pub md_syntax_heading2: Hsla,
+    /// Markdown 源码高亮：三级标题。
+    pub md_syntax_heading3: Hsla,
+    /// Markdown 源码高亮：四级标题。
+    pub md_syntax_heading4: Hsla,
+    /// Markdown 源码高亮：五级标题。
+    pub md_syntax_heading5: Hsla,
+    /// Markdown 源码高亮：六级标题。
+    pub md_syntax_heading6: Hsla,
     /// Markdown 源码高亮：结构记号（列表、引用、围栏、分隔线、`$$`）。
     pub md_syntax_marker: Hsla,
-    /// Markdown 源码高亮：强调类定界符（`**`、`*`、`~~`、反引号）。
-    pub md_syntax_emphasis_marker: Hsla,
+    /// Markdown 源码高亮：加粗内容（粗体字重 + 主题色）。
+    pub md_syntax_strong: Hsla,
     /// Markdown 源码高亮：行内代码、公式正文与转义。
     pub md_syntax_code: Hsla,
     /// Markdown 源码高亮：链接文字。
