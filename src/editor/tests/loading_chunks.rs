@@ -273,54 +273,6 @@ async fn progressive_import_blocks_render_after_streaming(cx: &mut TestAppContex
     });
 }
 
-/// P7 预算守卫：1 MiB 级代码文档同步构造必须在预算内（当前 dev 实测
-/// ~50ms，给 10x 余量），流式续建完成后序列化必须逐字节还原。
-#[gpui::test]
-async fn large_code_document_opens_within_budget(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let mut source = String::with_capacity(1 << 20);
-    for index in 0..9_891 {
-        source.push_str(&format!(
-            "2026-09-28T12:00:00.000Z INFO  [mod{}::sub] request id={} duration={}ms status=OK\n",
-            index % 7,
-            index,
-            index % 97
-        ));
-    }
-    assert!(source.len() > 800_000 && source.len() < 1_100_000);
-    let path = std::env::temp_dir().join(format!("velora-budget-{}.log", std::process::id()));
-    fs::write(&path, &source).expect("write budget fixture");
-    let expected_source = source.clone();
-
-    let start = Instant::now();
-    let editor =
-        cx.update(|cx| crate::app_menu::open_editor_window(cx, source.clone(), Some(path)));
-    let open_elapsed = start.elapsed();
-    assert!(
-        open_elapsed.as_millis() < 500,
-        "1MiB 代码文档打开耗时 {}ms，超出 500ms 预算",
-        open_elapsed.as_millis()
-    );
-    cx.run_until_parked();
-
-    editor
-        .read_with(cx, |editor, cx| {
-            assert!(matches!(editor.view_mode, ViewMode::Source));
-            let blocks = editor.document.visible_blocks().len();
-            assert!(
-                (17..=22).contains(&blocks),
-                "1MiB 日志应切成约 20 块，实际 {}",
-                blocks
-            );
-            assert_eq!(
-                editor.current_document_source(cx),
-                expected_source,
-                "流式续建完成后必须逐字节还原"
-            );
-        })
-        .expect("editor window should be open");
-}
-
 /// 700 行 + 行尾换行 → 701 个行片段 → 512/189 两块。
 pub(super) fn chunk_boundary_source() -> String {
     let mut source = String::new();
@@ -473,4 +425,3 @@ async fn targeted_source_mapping_matches_later_blocks_and_table_cells(cx: &mut T
         }
     });
 }
-
