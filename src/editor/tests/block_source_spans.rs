@@ -1173,3 +1173,71 @@ async fn typing_at_the_document_head_keeps_every_root_span_tiled(cx: &mut TestAp
     let (spans, buffer_text) = root_block_spans(&editor, cx);
     assert_spans_tile_the_content(&span_ranges(&spans), &buffer_text, "段首打一个字之后");
 }
+
+/// 用户手动切到源码模式（markdown 文档）后回车新建的块，行号必须续上缓冲区里
+/// 的真实行号。`RequestNewline` 只给新块开了源码态，没写 `source_line_start`
+/// 与栏宽基准，而 `refresh_source_line_starts` 又只对代码文档/兜底源码模式开门
+/// ——于是每根新块都沿用默认的 1，连着回车就出现 1/1/1 的行号栏。
+#[gpui::test]
+async fn user_toggled_source_mode_newline_continues_line_numbers(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一行\n\n第二行\n\n第三行".into(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    let last = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .root_blocks()
+            .last()
+            .cloned()
+            .expect("夹具该有根块")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+        last.update(cx, |block, cx| {
+            let tail = block.visible_len();
+            block.move_to(tail, cx);
+            block.on_newline(&Newline, window, cx);
+        });
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        let newest = editor
+            .read_with(cx, |editor, _cx| {
+                editor.document.root_blocks().last().cloned().expect("有根块")
+            });
+        newest.update(cx, |block, cx| {
+            let tail = block.visible_len();
+            block.move_to(tail, cx);
+            block.on_newline(&Newline, window, cx);
+        });
+    });
+    redraw(cx);
+
+    let (starts, bases, buffer_lines) = editor.read_with(cx, |editor, cx| {
+        let blocks = editor.document.root_blocks();
+        (
+            blocks
+                .iter()
+                .map(|block| block.read(cx).source_line_start())
+                .collect::<Vec<_>>(),
+            blocks
+                .iter()
+                .map(|block| block.read(cx).source_line_gutter_basis())
+                .collect::<Vec<_>>(),
+            editor.buffer.line_count(),
+        )
+    });
+    assert!(
+        starts.windows(2).all(|pair| pair[1] > pair[0]),
+        "每根块的行号该递增（新块要续上缓冲区的行），实测 {starts:?}"
+    );
+    assert!(
+        bases.iter().all(|basis| *basis == buffer_lines),
+        "行号栏宽基准该是全文档行数，实测 {bases:?} 对 {buffer_lines}"
+    );
+}

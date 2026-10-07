@@ -1235,9 +1235,12 @@ impl Editor {
         let applied = self.buffer.edit(at..at, &inserted);
         self.record_buffer_edit(applied);
         let delta = inserted.len() as i64;
+        // 先平移别人的、再写自己这一根的区间：区间是零宽的块（回车刚建出来的
+        // 空块）新起点正好等于 span.end，反过来写就会被 `shift` 二次平移，
+        // 之后每个字符都以错一字节的锚点落笔（源码模式打字打成乱码的根因）。
+        self.shift_root_spans_after(span.end, delta);
         self.document
             .set_source_span(root.entity_id(), span.start..span.end + delta as usize);
-        self.shift_root_spans_after(span.end, delta);
         true
     }
 
@@ -1381,6 +1384,11 @@ impl Editor {
             let block_ref = block.read(cx);
             Self::written_line_ledger(block_ref)
         };
+        // 同 `write_back_visible_insertion`：先平移再写自己这一根的区间，否则
+        // 零宽区间（回车新建的空块）会被平移两遍。
+        if delta != 0 {
+            self.shift_root_spans_after(old_span.end, delta);
+        }
         self.document.set_source_span(block.entity_id(), new_span);
         if let Some((prefixes, fence)) = ledger {
             block.update(cx, |block, _cx| {
@@ -1388,9 +1396,6 @@ impl Editor {
                 block.record.source_fence_lines = fence;
                 block.record.source_separator_bytes = 0;
             });
-        }
-        if delta != 0 {
-            self.shift_root_spans_after(old_span.end, delta);
         }
         true
     }

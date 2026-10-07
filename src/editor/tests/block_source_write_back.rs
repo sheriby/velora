@@ -3431,3 +3431,52 @@ async fn reprojecting_a_quote_keeps_the_neighbor_roots_untouched(cx: &mut TestAp
         "重投影动了引用之外的根块"
     );
 }
+
+/// 用户手动切到源码模式（markdown 文档，不是代码文件）后，回车新建的那一根块
+/// 区间是零宽的：写回先把自己的区间写成 `start..start+delta`，紧接着
+/// `shift_source_spans_after(span.end, delta)` 又把「起点 ≥ span.end」的区间整体
+/// 挪一遍——这根块的新起点正好等于 span.end，于是被平移了两遍，区间落到真内容
+/// 右边一字节。之后每个字符都以错位的锚点换算落点，`write_minimal_diff` 拿错位
+/// 区间覆盖相邻字节（连换行都被吃掉），文档变成 `hhehe'lhe'llhell…` 的乱码。
+#[gpui::test]
+async fn typing_after_a_source_mode_newline_writes_each_byte_once(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "# 许可证\n\n[Apache-2.0](LICENSE-APACHE)".into(),
+            None,
+        )
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    let last = editor.read_with(cx, |editor, _cx| {
+        editor
+            .document
+            .root_blocks()
+            .last()
+            .cloned()
+            .expect("夹具该有根块")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+        last.update(cx, |block, cx| {
+            let tail = block.visible_len();
+            block.move_to(tail, cx);
+            block.on_newline(&Newline, window, cx);
+        });
+    });
+    redraw(cx);
+
+    cx.simulate_input("hello world");
+    redraw(cx);
+
+    let file = editor.read_with(cx, |editor, _cx| editor.buffer.text());
+    assert_eq!(
+        file,
+        "# 许可证\n\n[Apache-2.0](LICENSE-APACHE)\nhello world",
+        "源码模式回车后的块里打字，字节没落在光标处"
+    );
+}

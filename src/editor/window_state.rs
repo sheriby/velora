@@ -512,7 +512,12 @@ impl Editor {
     /// O(根块数 × chunk 数) 的平方项（代码文档按 512 行切片，10 MiB 就是百万步级）；
     /// 区间起点天然升序，正是批量接口要的形状。
     fn refresh_source_line_starts(&mut self, cx: &mut Context<Self>) {
-        if !(self.code_document || self.source_mode_fallback_required) {
+        // 用户手动切到源码模式（⌘Tab）也算：这一档的块同样是缓冲区切片，
+        // 回车新建的块若不走这里，就沿用默认的 1，行号栏变成 1/1/1。
+        if !(self.code_document
+            || self.source_mode_fallback_required
+            || self.view_mode == crate::editor::ViewMode::Source)
+        {
             return;
         }
         let total = self.buffer.byte_len();
