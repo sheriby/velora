@@ -34,7 +34,8 @@ const GRID_COLS: u16 = 8;
 const CELL: f32 = 46.0;
 const CELL_GAP: f32 = 3.0;
 const PANEL_VIEWPORT_MARGIN: f32 = 16.0;
-const INPUT_LINE_HEIGHT: f32 = 21.0;
+/// 一视觉行的行框高；草稿字号 `INPUT_FONT_SIZE` 与它一起决定换行后的行位置。
+pub(crate) const INPUT_LINE_HEIGHT: f32 = 21.0;
 /// 面板内边距、条目间距、标题行高、输入框描边与内边距：补全浮层要按这套
 /// 常量把光标位置换算成面板内坐标，任何一处改动都得跟着对。
 const PANEL_PADDING: f32 = 14.0;
@@ -42,7 +43,8 @@ const PANEL_GAP: f32 = 8.0;
 const TITLE_HEIGHT: f32 = 26.0;
 const INPUT_BORDER: f32 = 1.0;
 const INPUT_PADDING_X: f32 = 10.0;
-const INPUT_PADDING_Y: f32 = 8.0;
+/// 内容原点相对输入框外缘的上内缩（描边 + 内边距）：指针命中与光标定位共用。
+pub(crate) const INPUT_PADDING_Y: f32 = 8.0;
 /// 文本起点相对输入框外缘的左内缩（描边 + 内边距）：光标、选区色块、鼠标
 /// 命中三处都要用同一个值。
 pub(crate) const INPUT_CONTENT_INSET_X: f32 = INPUT_BORDER + INPUT_PADDING_X;
@@ -53,6 +55,11 @@ const INPUT_TOP: f32 = PANEL_PADDING + TITLE_HEIGHT + PANEL_GAP + PREVIEW_HEIGHT
 /// 补全浮层：贴着光标的小列表，不铺满面板宽。
 const COMPLETION_WIDTH: f32 = 240.0;
 const COMPLETION_ROW_HEIGHT: f32 = 28.0;
+/// 草稿文本的可用宽度：面板宽扣掉两侧内边距、输入框描边与内边距。软换行按
+/// 这个宽度 shape，行 div 也按这个宽度定宽——两边宽度不一致时 GPUI 的换行点
+/// 与算光标用的换行点就不是同一套。
+const DRAFT_CONTENT_WIDTH: f32 =
+    PANEL_WIDTH - 2.0 * PANEL_PADDING - 2.0 * INPUT_BORDER - 2.0 * INPUT_PADDING_X;
 
 /// 分类页签的固定次序（与符号表的组织一致）。
 const CATEGORIES: [LatexCategory; 6] = [
@@ -66,17 +73,19 @@ const CATEGORIES: [LatexCategory; 6] = [
 
 /// 草稿一行的渲染输入：行文本 + 铺满该行的样式段。
 pub(crate) struct FormulaDraftLine {
-    pub(crate) text: String,
+    pub(crate) text: SharedString,
     pub(crate) runs: Vec<TextRun>,
 }
 
 /// 把草稿按行切成带 LaTeX 语法色的渲染段。配色与数学块编辑态同源（同一套
 /// `highlight_latex_source` + `code_highlight_color`）：弹窗里改的就是那几行
 /// 源码，两处颜色不一样会让人觉得不是同一个公式（用户报修：草稿没颜色）。
+/// `selection` 是草稿坐标下的选区，落在哪段 run 上就给哪段加选中底色。
 pub(crate) fn formula_draft_lines(
     draft: &str,
     colors: &ThemeColors,
     font: Font,
+    selection: Range<usize>,
 ) -> Vec<FormulaDraftLine> {
     let spans = highlight_latex_source(draft);
     let mut lines = Vec::new();
@@ -92,6 +101,7 @@ pub(crate) fn formula_draft_lines(
             &spans,
             colors,
             &font,
+            selection.clone(),
         ));
         if line_end == draft.len() {
             return lines;
@@ -108,6 +118,7 @@ fn formula_draft_line(
     spans: &[CodeHighlightSpan],
     colors: &ThemeColors,
     font: &Font,
+    selection: Range<usize>,
 ) -> FormulaDraftLine {
     let base_run = |len: usize, color: Hsla| TextRun {
         len,
@@ -120,7 +131,7 @@ fn formula_draft_line(
     };
     if line.is_empty() {
         return FormulaDraftLine {
-            text: " ".to_string(),
+            text: SharedString::from(" "),
             runs: vec![base_run(1, colors.text_default)],
         };
     }
@@ -146,10 +157,48 @@ fn formula_draft_line(
             .unwrap_or(colors.text_default);
         runs.push(base_run(end - start, color));
     }
+    let sel_start = selection.start.saturating_sub(line_start).min(line.len());
+    let sel_end = selection.end.saturating_sub(line_start).max(sel_start).min(line.len());
+    apply_draft_selection_background(&mut runs, sel_start..sel_end, colors.selection);
     FormulaDraftLine {
-        text: line.to_string(),
+        text: SharedString::from(line.to_string()),
         runs,
     }
+}
+
+/// 把选区落到该行的 run 上：在选区边界处切开 run，选中段加底色。选区画在
+/// run 上而不是另铺色块，软换行时 GPUI 会按行裁开背景（`paint_line_background`
+/// 在换行边界处断笔），手铺的色块对不上换行后的位置。
+fn apply_draft_selection_background(
+    runs: &mut Vec<TextRun>,
+    selection: Range<usize>,
+    background: Hsla,
+) {
+    if selection.start >= selection.end {
+        return;
+    }
+    let mut offset = 0usize;
+    let mut split: Vec<TextRun> = Vec::with_capacity(runs.len() + 2);
+    for run in runs.drain(..) {
+        let start = offset;
+        let end = start + run.len;
+        offset = end;
+        let head_end = selection.start.clamp(start, end);
+        let tail_start = selection.end.clamp(start, end);
+        let mut slice = |from: usize, to: usize, highlighted: bool| {
+            if to <= from {
+                return;
+            }
+            let mut part = run.clone();
+            part.len = to - from;
+            part.background_color = highlighted.then_some(background);
+            split.push(part);
+        };
+        slice(start, head_end, false);
+        slice(head_end, tail_start, true);
+        slice(tail_start, end, false);
+    }
+    *runs = split;
 }
 
 fn category_label(category: LatexCategory, strings: &I18nStrings) -> String {
@@ -202,22 +251,6 @@ fn draft_caret_visible(epoch: Instant) -> bool {
     elapsed < 0.5 || (elapsed * 2.0) as u32 % 2 == 0
 }
 
-/// 草稿第 `index` 行的字节区间（不含换行符）；越界给末尾的空区间。
-fn draft_line_range(draft: &str, index: usize) -> (usize, usize) {
-    let mut start = 0usize;
-    for _ in 0..index {
-        match draft[start..].find('\n') {
-            Some(offset) => start += offset + 1,
-            None => return (draft.len(), draft.len()),
-        }
-    }
-    let end = draft[start..]
-        .find('\n')
-        .map(|offset| start + offset)
-        .unwrap_or(draft.len());
-    (start, end)
-}
-
 /// 把偏移夹到字符边界（鼠标点的是一串字节，落在多字节字符中间不能直接用）。
 fn draft_clamp_boundary(text: &str, offset: usize) -> usize {
     let mut offset = offset.min(text.len());
@@ -255,31 +288,94 @@ fn draft_selected_text(draft: &str, range: Range<usize>) -> Option<String> {
     draft_selected_range(draft, range).map(|range| draft[range].to_string())
 }
 
-/// 一段草稿前缀的像素宽：光标与选区色块的横向落点都从这里量。
-fn draft_prefix_width(
-    window: &Window,
-    prefix: &str,
-    font: Font,
-    font_size: Pixels,
-    color: Hsla,
-) -> Pixels {
-    window
-        .text_system()
-        .shape_line(
-            SharedString::from(prefix.to_string()),
-            font_size,
-            &[TextRun {
-                len: prefix.len(),
-                font,
-                color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-                font_size: None,
-            }],
-            None,
-        )
-        .width
+/// 一硬行的换行布局：软换行后的行高、光标落点与指针命中都从这里问。
+/// 渲染侧的行框高度必须用同一个 `height`，否则长行软换行后光标会跑到别的行上。
+pub(crate) struct DraftLineLayout {
+    /// 该硬行在草稿里的字节区间（不含换行符）。
+    pub(crate) range: Range<usize>,
+    /// 渲染用的行文本（空行是兜底空格）。
+    pub(crate) text: SharedString,
+    /// 带语法色与选区底色的样式段。
+    pub(crate) runs: Vec<TextRun>,
+    /// shape_text 出来的条目（内含软换行边界）。
+    pub(crate) wrapped: WrappedLine,
+    /// 该硬行占的像素高（软换行数 × line_height）。
+    pub(crate) height: Pixels,
+    /// 该硬行顶部相对内容原点的 y。
+    pub(crate) top: Pixels,
+}
+
+/// 草稿每个硬行的字节区间（不含换行符）；与 `split('\n')` 同序同数。
+fn draft_line_ranges(draft: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    loop {
+        match draft[start..].find('\n') {
+            Some(offset) => {
+                ranges.push(start..start + offset);
+                start += offset + 1;
+            }
+            None => {
+                ranges.push(start..draft.len());
+                return ranges;
+            }
+        }
+    }
+}
+
+/// 把偏移夹进草稿并落到字符边界上，再定位它所在的硬行。
+fn draft_clamp_offset(draft: &str, offset: usize) -> usize {
+    draft_clamp_boundary(draft, offset.min(draft.len()))
+}
+
+/// 内容坐标（输入区文本原点为 0,0）里的光标/选区端点位置。软换行时 y 会落在
+/// 第二、第三行上，这正是以前按「一硬行一行」算错的地方。
+fn draft_point_for_offset(
+    layouts: &[DraftLineLayout],
+    offset: usize,
+    line_height: Pixels,
+) -> Option<Point<Pixels>> {
+    for layout in layouts {
+        if offset > layout.range.end {
+            continue;
+        }
+        let index = offset.saturating_sub(layout.range.start).min(layout.range.len());
+        let position = layout
+            .wrapped
+            .position_for_index(index, line_height)
+            .unwrap_or_default();
+        return Some(point(position.x, layout.top + position.y));
+    }
+    layouts
+        .last()
+        .map(|layout| point(px(0.0), layout.top + layout.height - line_height))
+}
+
+/// 内容坐标里的指针位置 → 草稿偏移（软换行后按视觉行找）。
+fn draft_offset_for_content_point(
+    draft: &str,
+    layouts: &[DraftLineLayout],
+    position: Point<Pixels>,
+    line_height: Pixels,
+) -> usize {
+    let Some(last) = layouts.last() else {
+        return draft.len();
+    };
+    // 指针落在哪一硬行：超出末行就归末行，早于首行归首行（find 天然满足）。
+    let layout = layouts
+        .iter()
+        .find(|layout| position.y < layout.top + layout.height)
+        .unwrap_or(last);
+    let y_in_line = (position.y - layout.top)
+        .clamp(px(0.0), (layout.height - line_height).max(px(0.0)));
+    let index = match layout
+        .wrapped
+        .closest_index_for_position(point(position.x, y_in_line), line_height)
+    {
+        Ok(index) => index,
+        Err(index) => index,
+    };
+    draft_clamp_offset(draft, layout.range.start + index.min(layout.range.len()))
 }
 
 /// 草稿输入区的 `\` 命令补全会话（弹窗内的，与块编辑的 latex_completion
@@ -740,9 +836,69 @@ impl Editor {
         self.replace_formula_draft(range, &text, None, false, cx);
     }
 
-    /// 输入区里的一个点 → 草稿偏移：先按 y 定行，再在该行的 shaped layout 上
-    /// 找最近的字素边界。滚动句柄给的是可视框原点与滚动偏移（向下滚为负），
-    /// 所以内容原点 = bounds.origin + offset。
+    /// 量出草稿当前的分行换行布局（文本、run、软换行后的行高与顶部）。
+    /// 渲染、光标、补全浮层、指针命中四处共用这一份：各算各的就会在长行软换行
+    /// 之后对不上（用户报修：多行光标位置不对）。
+    fn measure_formula_draft(&self, window: &Window, cx: &App) -> Vec<DraftLineLayout> {
+        let Some(state) = self.formula_editor.as_ref() else {
+            return Vec::new();
+        };
+        let draft = state.draft.clone();
+        let theme = cx.global::<crate::theme::ThemeManager>().current_arc();
+        let font = font(crate::config::EditorSettings::fonts(cx).code_family);
+        let selection_start = draft_clamp_boundary(&draft, state.selected_range.start);
+        let selection_end = draft_clamp_boundary(&draft, state.selected_range.end)
+            .max(selection_start)
+            .min(draft.len());
+        let lines = formula_draft_lines(
+            &draft,
+            &theme.colors,
+            font,
+            selection_start..selection_end,
+        );
+        let ranges = draft_line_ranges(&draft);
+        let line_height = px(INPUT_LINE_HEIGHT);
+        let mut layouts = Vec::with_capacity(lines.len());
+        let mut top = px(0.0);
+        for (range, line) in ranges.into_iter().zip(lines.into_iter()) {
+            let wrapped = window
+                .text_system()
+                .shape_text(
+                    line.text.clone(),
+                    px(INPUT_FONT_SIZE),
+                    &line.runs,
+                    Some(px(DRAFT_CONTENT_WIDTH)),
+                    None,
+                )
+                .ok()
+                .and_then(|shaped| shaped.into_iter().next())
+                .unwrap_or_default();
+            let height = wrapped.size(line_height).height.max(line_height);
+            layouts.push(DraftLineLayout {
+                range,
+                text: line.text,
+                runs: line.runs,
+                wrapped,
+                height,
+                top,
+            });
+            top += height;
+        }
+        if layouts.is_empty() {
+            layouts.push(DraftLineLayout {
+                range: 0..0,
+                text: SharedString::from(" "),
+                runs: Vec::new(),
+                wrapped: WrappedLine::default(),
+                height: line_height,
+                top: px(0.0),
+            });
+        }
+        layouts
+    }
+
+    /// 输入区里的一个点 → 草稿偏移。滚动句柄给的是可视框原点与滚动偏移
+    /// （向下滚为负），所以内容原点 = bounds.origin + offset。
     fn draft_offset_for_point(&self, position: Point<Pixels>, window: &Window, cx: &App) -> usize {
         let Some(state) = self.formula_editor.as_ref() else {
             return 0;
@@ -750,32 +906,12 @@ impl Editor {
         let draft = state.draft.clone();
         let bounds = state.input_scroll.bounds();
         let scroll = state.input_scroll.offset();
-        let local_x = position.x - bounds.left() - scroll.x - px(INPUT_CONTENT_INSET_X);
-        let local_y = position.y - bounds.top() - scroll.y - px(INPUT_BORDER + INPUT_PADDING_Y);
-        let line_count = draft.split('\n').count().max(1);
-        let line_index = ((f32::from(local_y) / INPUT_LINE_HEIGHT).floor().max(0.0) as usize)
-            .min(line_count - 1);
-        let (line_start, line_end) = draft_line_range(&draft, line_index);
-        let line = &draft[line_start..line_end];
-        if local_x <= px(0.0) {
-            return line_start;
-        }
-        let layout = window.text_system().shape_line(
-            SharedString::from(line.to_string()),
-            px(INPUT_FONT_SIZE),
-            &[TextRun {
-                len: line.len(),
-                font: font(crate::config::EditorSettings::fonts(cx).code_family),
-                color: black(),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-                font_size: None,
-            }],
-            None,
+        let layouts = self.measure_formula_draft(window, cx);
+        let local = point(
+            position.x - bounds.left() - scroll.x - px(INPUT_CONTENT_INSET_X),
+            position.y - bounds.top() - scroll.y - px(INPUT_BORDER + INPUT_PADDING_Y),
         );
-        let index = layout.closest_index_for_x(local_x).min(line.len());
-        draft_clamp_boundary(&draft, line_start + index)
+        draft_offset_for_content_point(&draft, &layouts, local, px(INPUT_LINE_HEIGHT))
     }
 
     /// 输入区按下：焦点交给草稿，光标落到点上的位置（shift 扩展、双击选词），
@@ -886,11 +1022,14 @@ impl Editor {
         let t = &theme.typography;
         // 闪烁任务跟着焦点走：聚焦草稿时跑，失焦就停（Task drop 即取消）。
         // 与 Block::render 里 start_cursor_blink 的开关口径一致。
+        // 窗口不是 key（macOS 红绿灯变灰）时 gpui 不清 window.focus，光靠
+        // is_focused 判不出「失焦」——光标得连带窗口激活态一起看（用户报修）。
         let draft_focused = self
             .formula_editor
             .as_ref()
             .and_then(|state| state.focus.as_ref())
-            .is_some_and(|focus| focus.is_focused(window));
+            .is_some_and(|focus| focus.is_focused(window))
+            && window.is_window_active();
         if let Some(state) = self.formula_editor.as_mut() {
             if draft_focused && state.caret_blink_task.is_none() {
                 state.caret_blink_task = Some(cx.spawn(
@@ -965,92 +1104,47 @@ impl Editor {
                 .into_any_element()
         };
 
-        // ===== 草稿输入区（多行 + 选区 + 光标） =====
+        // ===== 草稿输入区（多行 + 软换行 + 选区 + 光标） =====
         let draft = state.draft.clone();
-        let selection_start = draft_clamp_boundary(&draft, state.selected_range.start);
-        let selection_end =
-            draft_clamp_boundary(&draft, state.selected_range.end).max(selection_start);
+        let selection_start = draft_clamp_offset(&draft, state.selected_range.start);
+        let selection_end = draft_clamp_offset(&draft, state.selected_range.end).max(selection_start);
         let has_selection = selection_start != selection_end;
         let code_family = crate::config::EditorSettings::fonts(cx).code_family;
-        let input_font = font(code_family.clone());
         let input_font_size = px(INPUT_FONT_SIZE);
         let input_color = c.text_default;
         let line_height = px(INPUT_LINE_HEIGHT);
+        // 行布局一次量好（文本、run、软换行后的行高与顶部），渲染、光标、浮层、
+        // 指针命中四处共用同一份：各算各的就会在长行软换行之后对不上。
+        let layouts = self.measure_formula_draft(window, cx);
 
-        // 光标位置：行下标 + 行内前缀宽（等宽也用 shape 量，稳妥）。
-        let caret_line = draft[..selection_start].matches('\n').count();
-        let line_start = draft[..selection_start]
-            .rfind('\n')
-            .map(|index| index + 1)
-            .unwrap_or(0);
-        let caret_prefix = &draft[line_start..selection_start];
-        let caret_x =
-            draft_prefix_width(window, caret_prefix, input_font.clone(), input_font_size, input_color);
-        // 光标条与文本行框同高同位：字在半行距里居中（GPUI 的 paint_line 用
-        // (line_height - ascent - descent)/2 定基线），条子贴行框顶就会比字高出一截。
+        // 光标条与它所在的视觉行行框同高同位：字在半行距里居中（GPUI 的
+        // paint_line 用 (line_height - ascent - descent)/2 定基线）。
+        let caret_point = draft_point_for_offset(&layouts, selection_start, line_height)
+            .unwrap_or(point(px(0.0), px(0.0)));
         let caret_div = div()
             .debug_selector(|| "formula-editor-caret".to_string())
             .absolute()
-            .left(caret_x + px(INPUT_PADDING_X))
-            .top(px(INPUT_PADDING_Y) + line_height * caret_line as f32)
+            .left(caret_point.x + px(INPUT_PADDING_X))
+            .top(px(INPUT_PADDING_Y) + caret_point.y)
             .w(px(2.0))
             .h(line_height)
             .bg(c.cursor);
 
-        // 选区色块：按行裁一段，排在文字之前画，字才压在色块上面。
-        let selection_bands: Vec<AnyElement> = if !draft_focused || !has_selection {
-            Vec::new()
-        } else {
-            draft
-                .split('\n')
-                .enumerate()
-                .filter_map(|(line_index, _)| {
-                    let (line_begin, line_end) = draft_line_range(&draft, line_index);
-                    let from = selection_start.max(line_begin);
-                    let to = selection_end.min(line_end);
-                    if from >= to {
-                        return None;
-                    }
-                    let x_from = draft_prefix_width(
-                        window,
-                        &draft[line_begin..from],
-                        input_font.clone(),
-                        input_font_size,
-                        input_color,
-                    );
-                    let x_to = draft_prefix_width(
-                        window,
-                        &draft[line_begin..to],
-                        input_font.clone(),
-                        input_font_size,
-                        input_color,
-                    );
-                    Some(
-                        div()
-                            .debug_selector(move || {
-                                format!("formula-editor-selection-{line_index}")
-                            })
-                            .absolute()
-                            .left(px(INPUT_PADDING_X) + x_from)
-                            .top(px(INPUT_PADDING_Y) + line_height * line_index as f32)
-                            .w((x_to - x_from).max(px(1.0)))
-                            .h(line_height)
-                            .bg(c.selection)
-                            .into_any_element(),
-                    )
-                })
-                .collect()
-        };
-
-        let draft_lines: Vec<AnyElement> = formula_draft_lines(&draft, c, input_font.clone())
-            .into_iter()
+        // 选区底色落在 run 上（见 `apply_draft_selection_background`）：软换行时
+        // GPUI 按视觉行断笔，手铺色块对不上换行后的位置。
+        let draft_lines: Vec<AnyElement> = layouts
+            .iter()
             .enumerate()
-            .map(|(line_index, line)| {
+            .map(|(line_index, layout)| {
                 div()
-                    .h(line_height)
+                    .h(layout.height)
+                    .w(px(DRAFT_CONTENT_WIDTH))
                     .whitespace_normal()
                     .debug_selector(move || format!("formula-editor-line-{line_index}"))
-                    .child(StyledText::new(line.text).with_runs(line.runs))
+                    .child(
+                        StyledText::new(layout.text.clone())
+                            .with_runs(layout.runs.clone()),
+                    )
                     .into_any_element()
             })
             .collect();
@@ -1097,7 +1191,6 @@ impl Editor {
                     .py(px(INPUT_PADDING_Y))
                     .relative()
                     .w_full()
-                    .children(selection_bands)
                     .children(draft_lines)
                     // 光标只在草稿聚焦、无选区、且处在闪烁的「亮」相位时画。
                     .when(
@@ -1310,12 +1403,14 @@ impl Editor {
                     8.0 + COMPLETION_ROW_HEIGHT * row_count as f32
                         + 2.0 * (row_count as f32 - 1.0),
                 );
-                // 光标在面板内的落点：与 caret_div 用同一套常量换算，两处才不会各说各话。
-                let caret_left = px(PANEL_PADDING + INPUT_BORDER + INPUT_PADDING_X) + caret_x;
-                let caret_bottom = px(INPUT_TOP
-                    + INPUT_BORDER
-                    + INPUT_PADDING_Y
-                    + (caret_line as f32 + 1.0) * INPUT_LINE_HEIGHT);
+                // 光标在面板内的落点：与 caret_div 同一份行布局算出来，再扣掉
+                // 输入区的滚动偏移，浮层才真的贴着光标（长行软换行后也在下面）。
+                let scroll_y = state.input_scroll.offset().y;
+                let caret_left = px(PANEL_PADDING + INPUT_BORDER + INPUT_PADDING_X) + caret_point.x;
+                let caret_bottom = px(INPUT_TOP + INPUT_BORDER + INPUT_PADDING_Y)
+                    + scroll_y
+                    + caret_point.y
+                    + line_height;
                 let popup_left = caret_left
                     .min(px(PANEL_WIDTH - PANEL_PADDING) - popup_width)
                     .max(px(PANEL_PADDING));

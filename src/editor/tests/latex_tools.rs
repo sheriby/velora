@@ -396,7 +396,8 @@ async fn formula_editor_draft_backspace_deletes(cx: &mut TestAppContext) {
     });
 }
 
-/// 打开弹窗并把焦点交给草稿输入，画一帧让焦点与几何都落地。
+/// 打开弹窗并把焦点交给草稿输入，画一帧让焦点与几何都落地。窗口要先激活：
+/// 光标只在「草稿聚焦 + 窗口是 key」时画（gpui 在窗口 resign key 时不清 focus）。
 fn open_formula_editor(
     editor: &gpui::Entity<Editor>,
     math: &gpui::Entity<Block>,
@@ -405,6 +406,7 @@ fn open_formula_editor(
     editor.update_in(cx, |editor, window, cx| {
         editor.open_formula_editor_for_block(math.entity_id(), window, cx);
     });
+    activate_visual_window(cx);
     redraw(cx);
 }
 
@@ -661,8 +663,8 @@ async fn formula_editor_mouse_click_and_drag_select(cx: &mut TestAppContext) {
         );
     });
     assert!(
-        cx.debug_bounds("formula-editor-selection-0").is_some(),
-        "有选区时该渲染选区色块"
+        cx.debug_bounds("formula-editor-caret").is_none(),
+        "有选区时光标条该收起（选区本身按 run 底色画在文字上）"
     );
     cx.simulate_mouse_up(tail_end, gpui::MouseButton::Left, gpui::Modifiers::none());
     editor.read_with(cx, |editor, _cx| {
@@ -745,7 +747,119 @@ async fn formula_editor_double_click_selects_word(cx: &mut TestAppContext) {
     });
 }
 
-/// 草稿要能全选 / 复制 / 剪切 / 粘贴（以前只有光标，剪贴板四个键全没接）。
+/// 长行软换行后，光标与指针命中都要按「视觉行」算。以前按一硬行一行算：
+/// 单行长公式的末尾光标被放到整行未换行的宽度上（跑到框外右侧看不见），
+/// 点第二行也会算成第一行里的某个偏移。
+#[gpui::test]
+async fn formula_editor_caret_and_hit_test_follow_soft_wrap(cx: &mut TestAppContext) {
+    use crate::editor::formula_editor::{
+        INPUT_CONTENT_INSET_X, INPUT_LINE_HEIGHT, INPUT_PADDING_Y,
+    };
+
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    // 一句会撑满两三个视觉行的长公式（无换行符，纯软换行）。
+    let draft = "F = ma \\frac{a}{b} \\int_{0}^{1} ma \\frac{a}{b} \\prod_{a}^{b} ".repeat(4);
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, &draft, None, false, cx);
+    });
+    redraw(cx);
+
+    let input = cx
+        .debug_bounds("formula-editor-input")
+        .expect("草稿输入区该上屏");
+    // 末尾光标：必须落在框内，且在第二视觉行以下。
+    let caret = cx.debug_bounds("formula-editor-caret").expect("光标条该上屏");
+    assert!(
+        f32::from(caret.right()) <= f32::from(input.right()) + 1.0,
+        "软换行后末尾光标不该跑到输入框右侧外面，实测 x={:?}",
+        f32::from(caret.left())
+    );
+    assert!(
+        f32::from(caret.bottom()) <= f32::from(input.bottom()) + 1.0,
+        "软换行后末尾光标不该高出输入框下沿"
+    );
+    assert!(
+        f32::from(caret.top()) > f32::from(input.top()) + INPUT_LINE_HEIGHT,
+        "末尾在后面的视觉行上，光标 y 该低于第一行"
+    );
+
+    // 逐视觉行点左缘：偏移要随行号单调变大（同一硬行的软换行也能分开）。
+    let mut offsets = Vec::new();
+    for row in 0..3usize {
+        let point = gpui::point(
+            input.left() + gpui::px(INPUT_CONTENT_INSET_X) + gpui::px(1.0),
+            input.top() + gpui::px(1.0 + INPUT_PADDING_Y + (row as f32) * INPUT_LINE_HEIGHT)
+                + gpui::px(4.0),
+        );
+        cx.simulate_mouse_down(point, gpui::MouseButton::Left, gpui::Modifiers::none());
+        cx.simulate_mouse_up(point, gpui::MouseButton::Left, gpui::Modifiers::none());
+        redraw(cx);
+        offsets.push(editor.read_with(cx, |editor, _cx| {
+            editor
+                .formula_editor
+                .as_ref()
+                .expect("弹窗开着")
+                .selected_range
+                .start
+        }));
+    }
+    assert!(
+        offsets[0] < 3,
+        "点第一视觉行左缘该落在行首附近，实测 {offsets:?}"
+    );
+    assert!(
+        offsets[1] > offsets[0] + 20,
+        "点第二视觉行左缘该落到后半段，实测 {offsets:?}"
+    );
+    assert!(
+        offsets[2] > offsets[1] + 20,
+        "点第三视觉行左缘该再往后，实测 {offsets:?}"
+    );
+    assert!(offsets[2] < draft.len(), "第三行不该指到草稿末尾之后");
+}
+
+/// 窗口不是 key（macOS 红绿灯变灰）时光标该消失。gpui 在 resign key 时不清
+/// `window.focus`，所以只看 `is_focused` 判不出失焦。
+#[gpui::test]
+async fn formula_editor_caret_hides_when_window_is_not_key(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx^2\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    assert!(
+        cx.debug_bounds("formula-editor-caret").is_some(),
+        "窗口激活且草稿聚焦时光标该在"
+    );
+
+    // 另开一个窗口并激活它：原窗口不再是 key 窗口。
+    let (_other, mut other_cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 另一个窗口\n".into(), None)
+    });
+    activate_visual_window(&mut other_cx);
+    redraw(cx);
+
+    assert!(
+        editor.read_with(cx, |editor, _cx| editor.formula_editor.is_some()),
+        "切窗口不该顺手关掉弹窗"
+    );
+    assert!(
+        cx.debug_bounds("formula-editor-caret").is_none(),
+        "窗口不是 key 窗口时光标条不该还画着"
+    );
+}
 #[gpui::test]
 async fn formula_editor_draft_select_all_copy_cut_paste(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -866,19 +980,33 @@ fn draft_line<'a>(
     lines.get(index).unwrap_or_else(|| panic!("草稿该有第 {index} 行"))
 }
 
+fn run_covering(
+    line: &crate::editor::formula_editor::FormulaDraftLine,
+    offset: usize,
+) -> &gpui::TextRun {
+    let mut start = 0usize;
+    for run in &line.runs {
+        if offset >= start && offset < start + run.len {
+            return run;
+        }
+        start += run.len;
+    }
+    panic!("没有 run 覆盖偏移 {offset}（行 {:?}）", line.text);
+}
+
 fn run_color_for(line: &crate::editor::formula_editor::FormulaDraftLine, needle: &str) -> gpui::Hsla {
     let start = line
         .text
         .find(needle)
         .unwrap_or_else(|| panic!("{needle:?} 不在这一行 {:?}", line.text));
-    let mut offset = 0usize;
-    for run in &line.runs {
-        if start >= offset && start < offset + run.len {
-            return run.color;
-        }
-        offset += run.len;
-    }
-    panic!("没有 run 覆盖 {needle:?}");
+    run_covering(line, start).color
+}
+
+fn run_background_for(
+    line: &crate::editor::formula_editor::FormulaDraftLine,
+    offset: usize,
+) -> Option<gpui::Hsla> {
+    run_covering(line, offset).background_color
 }
 
 /// 现象：弹窗草稿整片一个颜色，公式块编辑态里 `\命令`、括号、数字都有语法色。
@@ -901,7 +1029,8 @@ fn formula_draft_lines_carry_latex_syntax_colors() {
         style: FontStyle::Normal,
     };
     let draft = "F = ma \\frac{a}{b} \\sqrt[3]{x} % 注释 αβ\n\\alpha + \\beta_{1}";
-    let lines = crate::editor::formula_editor::formula_draft_lines(draft, colors, font.clone());
+    let lines =
+        crate::editor::formula_editor::formula_draft_lines(draft, colors, font.clone(), 0..0);
 
     assert_eq!(lines.len(), 2, "换行该切成两行");
     for line in &lines {
@@ -927,4 +1056,25 @@ fn formula_draft_lines_carry_latex_syntax_colors() {
     assert_eq!(run_color_for(second, "_"), code_highlight_color(colors, CodeHighlightClass::Operator));
     assert_eq!(run_color_for(second, "1"), number);
     assert!(!first.text.contains('\n') && !second.text.contains('\n'), "行内不该有换行符");
+
+    // 选区落在 run 的底色上（软换行时 GPUI 按视觉行断笔，手铺色块对不上）。
+    let selected = crate::editor::formula_editor::formula_draft_lines(
+        draft,
+        colors,
+        font.clone(),
+        7..12, // "\frac" 那五个字节
+    );
+    let selected_first = draft_line(&selected, 0);
+    assert_eq!(
+        run_background_for(selected_first, 8),
+        Some(colors.selection),
+        "选区里的 \\命令 该带选中底色"
+    );
+    assert_eq!(
+        run_background_for(selected_first, 2),
+        None,
+        "选区外的正文不该被染色"
+    );
+    let total: usize = selected_first.runs.iter().map(|run| run.len).sum();
+    assert_eq!(total, selected_first.text.len(), "切开选区后 run 仍要铺满整行");
 }
