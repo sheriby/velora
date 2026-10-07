@@ -77,18 +77,17 @@ impl Editor {
     /// sum places each row against a band from the current scroll offset.
     /// Unmeasured rows use a lower-bound estimate; where that falls short of the
     /// scroll offset the trailing run is mounted instead, so the window never
-    /// lands on a spacer. When heights are still estimates the cold-start cap
-    /// trims only the margin around the viewport: the viewport keeps its mounted
-    /// rows, and when covering it needs more rows than the cap allows,
-    /// `needs_fill` asks the caller for another frame instead of leaving spacer
-    /// on screen. Pure, so it is unit-tested headlessly.
+    /// lands on a spacer. The cold-start cap bounds only the pre-mounted margin
+    /// around the viewport: the viewport span itself is always mounted in full,
+    /// so a viewport wider than the cap's row budget (source mode's 28px lines
+    /// fit 37 to a screen) cannot strand its lower edge on a spacer. Pure, so it
+    /// is unit-tested headlessly.
     pub(super) fn rendered_window(
         strides: &[f32],
         scroll_y: f32,
         viewport_height: f32,
         overdraw: f32,
         focus_row: Option<usize>,
-        estimate: f32,
     ) -> RenderWindow {
         let n = strides.len();
         if n == 0 {
@@ -137,13 +136,13 @@ impl Editor {
 
         // P4b 冷启动保护：绝大多数 stride 还是估计值时，行高被严重低估
         // （一行真实 9000px 估计 16px），带状扫描会一口气挂载几十个巨行。
-        // 上限只约束预挂载：run 起点最多高出视口首行 COLD_RUN_MAX_ROWS 行，
-        // 终点先按估计值铺到视口底部。估计值是行高的下界，铺满估计值即铺满
-        // 视口；行高被低估、预算内铺不满时置 needs_fill，由调用方续帧补齐，
-        // 绝不把视口留在 spacer 上。
-        let known = strides.iter().filter(|&&stride| stride > estimate).count();
+        // 上限只削视口上下的预挂载余量；视口自身这一段必须整段挂上——终点
+        // 一旦剪进视口内部（旧实现钉在视口首行 + 2×COLD_RUN_MAX_ROWS 行），
+        // 比这宽的视口下沿就落在 spacer 上，而续帧量到的只有已挂载的那段，
+        // 没挂上的行永远量不到，needs_fill 从此原地踏步（用户报修：源码
+        // 模式文末连打回车，第 24 行往后没有行号，切换一次模式才恢复）。
         let mut needs_fill = false;
-        if known * 2 < n && viewport_first < n {
+        if viewport_first < n {
             let lead_floor = viewport_first.saturating_sub(COLD_RUN_MAX_ROWS);
             if run_start < lead_floor {
                 run_start = lead_floor;
@@ -152,12 +151,9 @@ impl Editor {
                     .map(|stride| stride.max(0.0))
                     .sum();
             }
-            let cover_end = viewport_first
-                .saturating_add(COLD_RUN_MAX_ROWS * 2)
-                .min(viewport_last);
-            let capped_end = cover_end.max(viewport_first + 1).min(run_end);
-            if capped_end < run_end {
-                run_end = capped_end;
+            let cover_end = (viewport_last + COLD_RUN_MAX_ROWS).min(run_end);
+            if cover_end < run_end {
+                run_end = cover_end;
                 bottom_of_end = strides
                     .iter()
                     .take(run_end)

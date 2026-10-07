@@ -73,7 +73,7 @@ fn uniform_strides(count: usize, height: f32) -> Vec<f32> {
 fn rendered_window_culls_offscreen_rows() {
     // 100 rows of 50px (total 5000). Scroll 2000, viewport 400 -> band [2000, 2400].
     let strides = uniform_strides(100, 50.0);
-    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None, 16.0);
+    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None);
 
     // Row i spans [50i, 50i+50). bottom>=2000 -> i>=39; top<=2400 -> i<=48.
     assert_eq!(window.run_start, 39);
@@ -86,7 +86,7 @@ fn rendered_window_culls_offscreen_rows() {
 fn rendered_window_keeps_focus_row_mounted() {
     let strides = uniform_strides(100, 50.0);
     // Viewport at the top, caret parked far below at row 80.
-    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, Some(80), 16.0);
+    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, Some(80));
 
     // The caret rides its own island; the rows above it stay culled.
     assert_eq!(window.run_start, 0);
@@ -101,7 +101,7 @@ fn rendered_window_focus_above_run_does_not_widen_it() {
     // Reading downward leaves the caret at the top of the document, so the rows
     // between it and the viewport must stay culled.
     let strides = uniform_strides(100, 50.0);
-    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(0), 16.0);
+    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(0));
 
     assert_eq!(window.run_start, 39);
     assert_eq!(window.run_end, 49);
@@ -114,7 +114,7 @@ fn rendered_window_focus_above_run_does_not_widen_it() {
 #[test]
 fn rendered_window_focus_inside_run_needs_no_island() {
     let strides = uniform_strides(100, 50.0);
-    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(42), 16.0);
+    let window = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, Some(42));
 
     assert_eq!(window.run_start, 39);
     assert_eq!(window.run_end, 49);
@@ -126,8 +126,8 @@ fn rendered_window_tracks_current_scroll_offset() {
     // Scrolling by one row's height shifts the mounted run by exactly one row.
     let strides = uniform_strides(100, 50.0);
 
-    let low = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None, 16.0);
-    let high = Editor::rendered_window(&strides, 2050.0, 400.0, 0.0, None, 16.0);
+    let low = Editor::rendered_window(&strides, 2000.0, 400.0, 0.0, None);
+    let high = Editor::rendered_window(&strides, 2050.0, 400.0, 0.0, None);
 
     assert_eq!(low.run_start, 39);
     assert_eq!(low.run_end, 49);
@@ -139,12 +139,12 @@ fn rendered_window_tracks_current_scroll_offset() {
 fn rendered_window_has_no_spacer_at_document_edges() {
     let strides = uniform_strides(50, 40.0); // total 2000
 
-    let at_top = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None, 16.0);
+    let at_top = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None);
     assert_eq!(at_top.run_start, 0);
     assert_eq!(at_top.top_h, 0.0);
     assert!(at_top.bottom_h > 0.0);
 
-    let at_bottom = Editor::rendered_window(&strides, 1600.0, 400.0, 0.0, None, 16.0);
+    let at_bottom = Editor::rendered_window(&strides, 1600.0, 400.0, 0.0, None);
     assert_eq!(at_bottom.run_end, 50);
     assert_eq!(at_bottom.bottom_h, 0.0);
     assert!(at_bottom.top_h > 0.0);
@@ -160,7 +160,7 @@ fn rendered_window_preserves_total_height() {
         (3000.0, 500.0, None),
         (37.0 * 150.0, 37.0 * 5.0, Some(10usize)),
     ] {
-        let window = Editor::rendered_window(&strides, scroll_y, viewport_height, 200.0, focus, 16.0);
+        let window = Editor::rendered_window(&strides, scroll_y, viewport_height, 200.0, focus);
         let rendered: f32 = strides[window.run_start..window.run_end].iter().sum();
         let island: f32 = window
             .focus_island
@@ -178,7 +178,7 @@ fn rendered_window_estimated_row_keeps_culling_active() {
     let mut strides = uniform_strides(100, 50.0);
     strides[60] = 20.0;
 
-    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None, 16.0);
+    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None);
     assert_eq!(window.run_start, 0);
     assert!(
         window.run_end < strides.len(),
@@ -192,7 +192,7 @@ fn rendered_window_all_estimated_windows_near_top() {
     // first rows, so the viewport is never blank while heights are learned.
     let strides = uniform_strides(500, 20.0);
 
-    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None, 16.0);
+    let window = Editor::rendered_window(&strides, 0.0, 400.0, 0.0, None);
     assert_eq!(window.run_start, 0);
     assert!(window.run_end < strides.len());
     // A viewport-plus-band worth of rows, not the whole document.
@@ -213,7 +213,7 @@ fn rendered_window_cold_start_covers_the_viewport() {
     let total: f32 = strides.iter().sum();
 
     for scroll_y in [0.0, 700.0, 2_800.0, 7_000.0, 12_000.0] {
-        let window = Editor::rendered_window(&strides, scroll_y, viewport, overdraw, None, estimate);
+        let window = Editor::rendered_window(&strides, scroll_y, viewport, overdraw, None);
         let mounted_top: f32 = strides[..window.run_start].iter().sum();
         let mounted_bottom: f32 = strides[..window.run_end].iter().sum();
         let viewport_bottom = (scroll_y + viewport).min(total);
@@ -230,17 +230,40 @@ fn rendered_window_cold_start_covers_the_viewport() {
 
 #[test]
 fn rendered_window_cold_start_still_bounds_the_mount() {
-    // 修正不能把冷启动保护整个取消掉：挂载量要随视口高度增长，
-    // 不能随文档长度增长（5 千行文档也只挂视口那一段）。
+    // 修正不能把冷启动保护整个取消掉：挂载量 = 视口整段 + 两侧预挂载
+    // COLD_RUN_MAX_ROWS 行。它随视口高度增长，不随文档长度增长（5 千行
+    // 文档也只挂视口那一段）；视口比行预算宽时视口自身也必须整段在内。
     let estimate = 28.0;
     let strides = uniform_strides(5_000, estimate);
-    let window = Editor::rendered_window(&strides, 70_000.0, 800.0, 800.0, None, estimate);
+    let window = Editor::rendered_window(&strides, 70_000.0, 800.0, 800.0, None);
     let mounted = window.run_end - window.run_start;
     let overdraw_rows = 12; // COLD_RUN_MAX_ROWS
+    let viewport_rows = (800.0 / estimate).ceil() as usize + 2;
     assert!(
-        mounted <= 3 * overdraw_rows,
+        mounted <= 2 * overdraw_rows + viewport_rows,
         "挂载 {mounted} 行，超出视口加两侧预挂载的预算"
     );
+    assert!(
+        mounted * 10 < 5_000,
+        "挂载随文档长度增长了：{mounted} 行 / 5000 行"
+    );
+}
+
+#[test]
+fn rendered_window_cap_never_trims_into_the_viewport() {
+    // 源码模式一行实测恰好等于估算值（15px 字号 × 1.6 行高不足 28，空块被
+    // min_h 撑到 28）。旧上限把终点钉在「视口首行 + 24 行」，一屏 37 行的
+    // 视口下沿永远落在 spacer 上，而续帧量到的只有已挂载的那段——没挂载
+    // 的行永远量不到，永远无法收敛（用户报修：连打回车后第 24 行往后没有
+    // 行号，切换一次模式才恢复）。
+    let strides = uniform_strides(31, 28.0);
+    let window = Editor::rendered_window(&strides, 0.0, 1016.0, 800.0, None);
+    assert_eq!(window.run_start, 0);
+    assert_eq!(
+        window.run_end, 31,
+        "视口比上限的行预算宽时，视口内的行也必须整段挂载"
+    );
+    assert!(!window.needs_fill, "视口已整段挂载，不需要续帧");
 }
 
 #[gpui::test]
@@ -297,7 +320,7 @@ fn rendered_window_scrolled_past_estimates_mounts_trailing_run() {
     // Rows the window has never mounted are lower bounds, so the scroll offset
     // can sit past their running sum. The tail must still fill the viewport.
     let strides = uniform_strides(100, 20.0); // total 2000
-    let window = Editor::rendered_window(&strides, 9000.0, 400.0, 200.0, None, 16.0);
+    let window = Editor::rendered_window(&strides, 9000.0, 400.0, 200.0, None);
 
     assert_eq!(window.run_end, 100);
     assert_eq!(window.bottom_h, 0.0);
@@ -460,3 +483,70 @@ async fn starting_and_ending_scrollbar_drag_updates_editor_state(cx: &mut TestAp
     });
 }
 
+
+/// 源码模式里连打回车，视口下沿的行永远挂不上——那几行没有行号（用户报修：
+/// 文末疯狂打回车，中间十几行行号消失，切一次模式再切回来才恢复）。
+///
+/// 回车新建的是逐行空块，实测行高恰好等于行计划的估算值 `block_min_height`；
+/// 冷启动上限的 known 只数实测值**严格大于**估算值的行，这样的行永远不算
+/// 已知，上限永不解除，挂载被永久钉在 `viewport_first + 2×COLD_RUN_MAX_ROWS`
+/// 行内，`needs_fill` 续帧每帧算出同一个窗口，视口底部就落在 spacer 上。
+#[gpui::test]
+async fn mashing_enter_at_the_end_of_source_mode_keeps_viewport_rows_mounted(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "alpha".to_string(), None));
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    for _ in 0..3 {
+        redraw(cx);
+    }
+
+    // 光标到文末，连打 30 次回车：回车新建逐行空块，快过渲染帧的一批挤在
+    // 同一次更新里，其余逐帧。
+    let mash = |count: usize, editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| {
+            for _ in 0..count {
+                let last = editor.read_with(cx, |editor, _cx| {
+                    editor.document.root_blocks().last().cloned().expect("有根块")
+                });
+                last.update(cx, |block, cx| {
+                    block.move_to(block.visible_len(), cx);
+                    block.on_newline(&Newline, window, cx);
+                });
+            }
+        });
+    };
+    mash(10, &editor, cx);
+    redraw(cx);
+    mash(10, &editor, cx);
+    redraw(cx);
+    mash(10, &editor, cx);
+
+    // 收帧：滚动 settle 与冷启动续帧的 16ms 计时全部放完
+    for _ in 0..12 {
+        cx.executor().advance_clock(Duration::from_millis(16));
+        redraw(cx);
+    }
+
+    editor.read_with(cx, |editor, _cx| {
+        let rows = editor.document.visible_blocks().len();
+        let run = editor.prev_mounted_run.expect("挂载过行");
+        eprintln!(
+            "RED-GREEN rows={rows} run=[{}..{}] child_base={} child_count={}",
+            run.row_start, run.row_end, run.child_base, run.child_count
+        );
+        // 31 行 × 28px 远小于测试视口：每一行都必须挂在窗口里。任何一行落在
+        // spacer 上，用户看到的就是那行没有行号。
+        assert_eq!(
+            run.row_end, rows,
+            "源码模式连打回车后共 {rows} 行，只挂载到第 {} 行，其余行没有行号",
+            run.row_end
+        );
+        assert_eq!(run.row_start, 0, "文档顶部也必须挂载");
+    });
+}

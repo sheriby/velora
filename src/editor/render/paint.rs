@@ -256,9 +256,6 @@ impl Render for Editor {
             }
         }
 
-        // Unmeasured rows use the minimum block height: a lower bound, so the
-        // window over-mounts rather than ever landing on a spacer.
-        let estimate = d.block_min_height.max(1.0);
         let strides = rendered_row_plan.strides.borrow();
 
         // Bound the cache against block churn, only when it outgrows the live rows.
@@ -273,7 +270,6 @@ impl Render for Editor {
             viewport_height,
             RENDER_OVERDRAW_PX,
             focus_row,
-            estimate,
         );
 
         // 冷启动续挂：行高仍被低估时一帧铺不满视口，立刻排下一帧继续补，
