@@ -19,6 +19,7 @@ use crate::components::latex::{
     LatexCategory, LatexSymbol, LATEX_SYMBOLS, latex_command_before_cursor,
     latex_completions_for,
 };
+use crate::components::HoverPreviewTooltip;
 use crate::components::markdown::code_highlight::{CodeHighlightSpan, code_highlight_color};
 use crate::components::markdown::source_highlight::highlight_latex_source;
 use crate::i18n::I18nStrings;
@@ -30,9 +31,6 @@ use super::Editor;
 const PANEL_WIDTH: f32 = 720.0;
 const PREVIEW_HEIGHT: f32 = 150.0;
 const INPUT_HEIGHT: f32 = 132.0;
-const GRID_COLS: u16 = 8;
-const CELL: f32 = 46.0;
-const CELL_GAP: f32 = 3.0;
 const PANEL_VIEWPORT_MARGIN: f32 = 16.0;
 /// 一视觉行的行框高；草稿字号 `INPUT_FONT_SIZE` 与它一起决定换行后的行位置。
 pub(crate) const INPUT_LINE_HEIGHT: f32 = 21.0;
@@ -50,6 +48,24 @@ pub(crate) const INPUT_PADDING_Y: f32 = 8.0;
 pub(crate) const INPUT_CONTENT_INSET_X: f32 = INPUT_BORDER + INPUT_PADDING_X;
 /// 草稿字号，与 `INPUT_LINE_HEIGHT` 一起决定行框；测试按它量字宽。
 pub(crate) const INPUT_FONT_SIZE: f32 = 13.0;
+/// 符号网格：一格 34px 高、12 列，最大的一类（希腊字母 37 个）四行放得下——
+/// 这块一要滚轮就没人翻到底找符号。
+const GRID_COLS: u16 = 12;
+const CELL: f32 = 34.0;
+const CELL_GAP: f32 = 4.0;
+const TAB_HEIGHT: f32 = 24.0;
+/// 按钮行的高度近似值（真值取主题的 `dialog_button_height`，这里只用来估面板
+/// 还能给网格留多少高度，差几个像素不影响判断）。
+const BUTTON_ROW_HEIGHT: f32 = 32.0;
+/// 面板里除符号网格之外的固定开销：内边距 + 标题 + 预览 + 输入 + 页签 + 按钮，
+/// 加上五段间距。
+const PANEL_CHROME_HEIGHT: f32 = 2.0 * PANEL_PADDING
+    + TITLE_HEIGHT
+    + PREVIEW_HEIGHT
+    + INPUT_HEIGHT
+    + TAB_HEIGHT
+    + BUTTON_ROW_HEIGHT
+    + 5.0 * PANEL_GAP;
 /// 草稿输入区在面板内的纵向起点（标题 + 预览 + 两道间距）。
 const INPUT_TOP: f32 = PANEL_PADDING + TITLE_HEIGHT + PANEL_GAP + PREVIEW_HEIGHT + PANEL_GAP;
 /// 补全浮层：贴着光标的小列表，不铺满面板宽。
@@ -1320,7 +1336,20 @@ impl Editor {
         let focus = state.focus.clone()?;
         let viewport = window.viewport_size();
 
-        let panel_height = px(PREVIEW_HEIGHT + INPUT_HEIGHT + 300.0);
+        // 符号网格先按「当前这一类要几行」算自然高度，能全显示就不给滚动；
+        // 只有窗口矮到装不下时才夹一下（这时才出现滚轮）。
+        let entries_count = LATEX_SYMBOLS
+            .iter()
+            .filter(|symbol| symbol.category == state.category)
+            .count();
+        let grid_rows = entries_count.div_ceil(usize::from(GRID_COLS)).max(1);
+        let grid_natural_height =
+            px(grid_rows as f32 * CELL + (grid_rows as f32 - 1.0) * CELL_GAP);
+        let grid_limit = (viewport.height
+            - px(PANEL_CHROME_HEIGHT + 2.0 * PANEL_VIEWPORT_MARGIN))
+            .max(px(120.0));
+        let grid_height = grid_natural_height.min(grid_limit);
+        let panel_height = px(PANEL_CHROME_HEIGHT) + grid_height;
         let left = ((viewport.width - px(PANEL_WIDTH)) / 2.0)
             .max(px(PANEL_VIEWPORT_MARGIN));
         let top = ((viewport.height - panel_height) / 2.0).max(px(PANEL_VIEWPORT_MARGIN));
@@ -1499,7 +1528,7 @@ impl Editor {
                 let tab = div()
                     .id(ElementId::Name(format!("formula-tab-{:?}", tab).into()))
                     .px(px(9.0))
-                    .h(px(24.0))
+                    .h(px(TAB_HEIGHT))
                     .flex()
                     .items_center()
                     .rounded(px(999.0))
@@ -1542,11 +1571,26 @@ impl Editor {
             .collect();
         let preview_color = c.text_default;
         let preview_size = f32::from(t.text_size) * 0.95;
+        let grid_width = px(PANEL_WIDTH - 2.0 * PANEL_PADDING);
+        // 一格的列宽（grid 均分）：预览图按它收着放，宽格子就不会把 ∫ 之类
+        // 拉成一条扁带子。
+        let cell_width = (f32::from(grid_width)
+            - (usize::from(GRID_COLS) as f32 - 1.0) * CELL_GAP)
+            / usize::from(GRID_COLS) as f32;
         let mut cells = Vec::with_capacity(entries.len());
-        for entry in entries {
+        let entries_count = entries.len();
+        for (index, entry) in entries.into_iter().enumerate() {
+            let is_last_cell = index + 1 == entries_count;
             let insert_label: SharedString = format!("\\{}", entry.name).into();
             let cell = div()
                 .id(ElementId::Name(format!("formula-cell-{}", entry.name).into()))
+                .debug_selector(move || {
+                    if is_last_cell {
+                        "formula-cell-last".to_string()
+                    } else {
+                        format!("formula-cell-{index}")
+                    }
+                })
                 // 列宽交给 grid 均分（w_full），行高固定——内容宽度不齐时
                 // 格子也不会七扭八歪（用户报修：函数分类排版乱）。
                 .h(px(CELL))
@@ -1555,14 +1599,15 @@ impl Editor {
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .rounded(px(6.0))
+                .rounded(px(5.0))
                 .cursor_pointer()
                 .bg(c.dialog_secondary_button_bg)
                 .hover(|this| this.bg(c.dialog_secondary_button_hover))
                 .tooltip(move |_, cx| {
-                    cx.new(|_| FormulaSymbolTooltip {
+                    // 用全站共用的主题色 tooltip：以前这里写死黑底 + 正文色，
+                    // 浅色主题下就是黑底黑字，什么都看不见。
+                    cx.new(|_| HoverPreviewTooltip {
                         label: insert_label.clone(),
-                        text_color: preview_color,
                     })
                     .into()
                 })
@@ -1580,12 +1625,12 @@ impl Editor {
             ) {
                 Ok(rendered) => img(rendered.path)
                     .flex_shrink_0()
-                    .max_h(px(CELL * 0.66))
-                    .max_w(px(CELL * 0.92))
+                    .max_h(px(CELL * 0.72))
+                    .max_w(px(cell_width * 0.9))
                     .object_fit(ObjectFit::Contain)
                     .into_any_element(),
                 Err(_) => div()
-                    .text_size(px(t.text_size * 0.72))
+                    .text_size(px(t.text_size * 0.68))
                     .text_color(c.dialog_muted)
                     .truncate()
                     .child(format!("\\{}", entry.name))
@@ -1593,8 +1638,6 @@ impl Editor {
             };
             cells.push(cell.child(content).into_any_element());
         }
-
-        let grid_width = px(PANEL_WIDTH - 2.0 * PANEL_PADDING);
 
         // 草稿的 \ 命令补全浮层：锚在光标正下方，宽度只够放命令名与预览。
         // 光标位置由面板常量 + 输入区排布换算成面板内坐标（与 caret_div 同源）。
@@ -1802,8 +1845,9 @@ impl Editor {
                         .child(
                             div()
                                 .id("formula-editor-grid")
+                                .debug_selector(|| "formula-editor-grid".to_string())
                                 .w(grid_width)
-                                .max_h(px(160.0))
+                                .h(grid_height)
                                 .overflow_y_scroll()
                                 .scrollbar_width(px(4.0))
                                 .grid()
@@ -1880,24 +1924,5 @@ impl Editor {
                 )
                 .into_any_element(),
         )
-    }
-}
-
-/// 悬停说明：一格的 LaTeX 写法。
-struct FormulaSymbolTooltip {
-    label: SharedString,
-    text_color: Hsla,
-}
-
-impl Render for FormulaSymbolTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px(px(6.0))
-            .py(px(3.0))
-            .rounded(px(4.0))
-            .bg(black().opacity(0.85))
-            .text_color(self.text_color)
-            .text_size(px(12.0))
-            .child(self.label.clone())
     }
 }

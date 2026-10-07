@@ -1098,6 +1098,61 @@ async fn formula_editor_drag_stops_outside_the_field(cx: &mut TestAppContext) {
     });
 }
 
+/// 符号网格不该靠滚轮才看得全：最大的一类（希腊字母 37 个）最后一格要完整
+/// 落在网格里，而且整个面板（含「应用到公式」按钮）要在窗口内。
+#[gpui::test]
+async fn formula_editor_symbol_grid_shows_whole_category(cx: &mut TestAppContext) {
+    use crate::components::latex::LatexCategory;
+
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx^2\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        if let Some(state) = editor.formula_editor.as_mut() {
+            state.category = LatexCategory::Greek;
+        }
+        cx.notify();
+    });
+    redraw(cx);
+
+    let grid_rows = LATEX_SYMBOLS
+        .iter()
+        .filter(|symbol| symbol.category == LatexCategory::Greek)
+        .count();
+    assert!(grid_rows > 24, "夹具前提：希腊字母是该面板最大的一类");
+
+    let grid = cx
+        .debug_bounds("formula-editor-grid")
+        .expect("符号网格该上屏");
+    let last = cx.debug_bounds("formula-cell-last").expect("最后一格该上屏");
+    assert!(
+        f32::from(last.bottom()) <= f32::from(grid.bottom()) + 1.0,
+        "最后一格被网格裁掉了，说明还得滚轮才看得全：last.bottom={} grid.bottom={}",
+        f32::from(last.bottom()),
+        f32::from(grid.bottom())
+    );
+    assert!(
+        f32::from(last.top()) >= f32::from(grid.top()) - 1.0,
+        "最后一格不该在网格上沿之外"
+    );
+
+    let viewport_height = f32::from(cx.update(|window, _cx| window.viewport_size().height));
+    let apply = cx
+        .debug_bounds("formula-editor-apply")
+        .expect("应用到公式按钮该上屏");
+    assert!(
+        f32::from(apply.bottom()) <= viewport_height + 1.0,
+        "面板不该高过窗口，按钮该一眼可见：viewport={viewport_height} apply.bottom={}",
+        f32::from(apply.bottom())
+    );
+}
+
 /// 草稿要能全选 / 复制 / 剪切 / 粘贴（以前只有光标，剪贴板四个键全没接）。
 #[gpui::test]
 async fn formula_editor_draft_select_all_copy_cut_paste(cx: &mut TestAppContext) {
