@@ -71,6 +71,32 @@ const CATEGORIES: [LatexCategory; 6] = [
     LatexCategory::Symbols,
 ];
 
+/// 草稿撤销栈的深度上限（一次弹窗生命周期内的编辑次数，再多就丢最早的）。
+const DRAFT_UNDO_LIMIT: usize = 200;
+
+/// 这次编辑算不算「光标处的单字符增删」：连着几次要合成一步撤销，否则打十个
+/// 字要按十次 ⌘Z 才退得掉。
+pub(crate) fn draft_edit_is_single_character(old: &str, range: &Range<usize>, new_text: &str) -> bool {
+    if range.start == range.end {
+        return new_text.chars().count() == 1;
+    }
+    new_text.is_empty() && draft_prev_boundary(old, range.end) == range.start
+}
+
+/// 编辑前把当前状态压进撤销栈。撤销栈存的是「编辑前」的样子，所以每段新编辑
+/// 都要先留一份底；重做栈在编辑时清空（标准文本框口径）。
+pub(crate) fn push_draft_undo(state: &mut FormulaEditorState, coalescible: bool) {
+    if coalescible && state.last_edit_coalesced {
+        return;
+    }
+    state.draft_undo.push((state.draft.clone(), state.selected_range.clone()));
+    while state.draft_undo.len() > DRAFT_UNDO_LIMIT {
+        state.draft_undo.remove(0);
+    }
+    state.draft_redo.clear();
+    state.last_edit_coalesced = coalescible;
+}
+
 /// 草稿一行的渲染输入：行文本 + 铺满该行的样式段。
 pub(crate) struct FormulaDraftLine {
     pub(crate) text: SharedString,
@@ -235,6 +261,12 @@ pub(crate) struct FormulaEditorState {
     /// 上一次「把光标滚进可见区」时的 caret_epoch。光标每动一次才允许自动滚
     /// 一次，否则会把用户手动的滚动一直抢回去。
     pub(crate) last_autoscroll_epoch: Option<Instant>,
+    /// 草稿自己的撤销栈（文本 + 选区）：弹窗是草稿现场，块编辑器的 undo 管不到
+    /// 这里，也没有别的地方能给草稿做撤销。
+    pub(crate) draft_undo: Vec<(String, Range<usize>)>,
+    pub(crate) draft_redo: Vec<(String, Range<usize>)>,
+    /// 上一次编辑是不是「光标处的单字符增删」——连打一串字要合成一步撤销。
+    pub(crate) last_edit_coalesced: bool,
     /// 闪烁重绘任务。挂在 state 上，弹窗关闭（state 被 take 走）时随 Task
     /// drop 一起取消。
     pub(crate) caret_blink_task: Option<Task<()>>,
@@ -460,6 +492,9 @@ impl Editor {
             caret_visible: true,
             caret_preferred: None,
             last_autoscroll_epoch: None,
+            draft_undo: Vec::new(),
+            draft_redo: Vec::new(),
+            last_edit_coalesced: false,
             caret_blink_task: None,
             input_scroll: ScrollHandle::new(),
             focus: Some(focus),
@@ -546,8 +581,12 @@ impl Editor {
         if !old.is_char_boundary(start) || !old.is_char_boundary(end) {
             return;
         }
+        let coalescible = draft_edit_is_single_character(&old, &(start..end), new_text);
         let mut updated = old.clone();
         updated.replace_range(start..end, new_text);
+        if updated != old {
+            push_draft_undo(state, coalescible);
+        }
         let inserted_end = start + new_text.len();
         let selection = selected_in_inserted
             .map(|selection| {
@@ -871,9 +910,70 @@ impl Editor {
             "c" if secondary => self.copy_formula_draft_selection(cx),
             "x" if secondary => self.cut_formula_draft_selection(cx),
             "v" if secondary => self.paste_formula_draft_clipboard(cx),
+            // 撤销 / 重做：草稿的编辑历史在弹窗自己的栈上（块编辑器的 undo 管不到
+            // 没写回块的草稿）。
+            "z" if secondary => {
+                cx.stop_propagation();
+                if modifiers.shift {
+                    self.redo_formula_draft(cx);
+                } else {
+                    self.undo_formula_draft(cx);
+                }
+            }
+            "y" if secondary => {
+                cx.stop_propagation();
+                self.redo_formula_draft(cx);
+            }
             _ => {}
         }
         let _ = plain;
+    }
+
+    /// ⌘Z：撤销草稿的一步编辑。
+    pub(crate) fn undo_formula_draft(&mut self, cx: &mut Context<Self>) {
+        self.restore_formula_draft_step(true, cx);
+    }
+
+    /// ⌘⇧Z / ⌘Y：重做被撤销的编辑。
+    pub(crate) fn redo_formula_draft(&mut self, cx: &mut Context<Self>) {
+        self.restore_formula_draft_step(false, cx);
+    }
+
+    /// 在撤销/重做两个栈之间搬草稿状态。栈里存的是「编辑前」的样子，所以先把
+    /// 当前状态塞进对面那个栈，再取出要恢复的一步。
+    fn restore_formula_draft_step(&mut self, undo: bool, cx: &mut Context<Self>) {
+        let Some(state) = self.formula_editor.as_mut() else {
+            return;
+        };
+        let step = if undo {
+            state.draft_undo.pop()
+        } else {
+            state.draft_redo.pop()
+        };
+        let Some((draft, selection)) = step else {
+            return;
+        };
+        let current = (state.draft.clone(), state.selected_range.clone());
+        if undo {
+            state.draft_redo.push(current);
+        } else {
+            state.draft_undo.push(current);
+            while state.draft_undo.len() > DRAFT_UNDO_LIMIT {
+                state.draft_undo.remove(0);
+            }
+        }
+        let start = draft_clamp_boundary(&draft, selection.start);
+        let end = draft_clamp_boundary(&draft, selection.end).max(start).min(draft.len());
+        state.draft = draft;
+        state.selected_range = start..end;
+        state.selection_anchor = start;
+        state.marked_range = None;
+        state.completion = None;
+        state.caret_preferred = None;
+        state.caret_epoch = Instant::now();
+        state.last_edit_coalesced = false;
+        Self::sync_formula_preview(state, cx);
+        cx.notify();
     }
 
     /// 把光标落到 `offset`：shift 时从锚点长出选区，否则收起选区并把锚点放好。
@@ -1333,8 +1433,20 @@ impl Editor {
                     editor.formula_editor_pointer_up(cx);
                 }),
             )
+            // 抬手发生在输入区外（拖出框外松手）也要结束拖动，否则
+            // selecting_with_mouse 一直挂着，之后鼠标只是划过就会改选区。
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|editor, _event: &MouseUpEvent, _window, cx| {
+                    editor.formula_editor_pointer_up(cx);
+                }),
+            )
             .on_mouse_move(cx.listener(
                 |editor, event: &MouseMoveEvent, window, cx| {
+                    // 只跟左键真的按住的移动：没按键的划过不该动选区。
+                    if event.pressed_button != Some(MouseButton::Left) {
+                        return;
+                    }
                     editor.formula_editor_pointer_move(event.position, window, cx);
                 },
             ))

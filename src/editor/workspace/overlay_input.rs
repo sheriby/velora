@@ -208,6 +208,18 @@ impl Editor {
             }
             OverlayInputKind::FormulaEditor => {
                 if let Some(state) = self.formula_editor.as_mut() {
+                    if updated != old {
+                        // 敲字也要留撤销的底（与 replace_formula_draft 同一套
+                        // 合并规则：连打一串字算一步）。
+                        crate::editor::formula_editor::push_draft_undo(
+                            state,
+                            crate::editor::formula_editor::draft_edit_is_single_character(
+                                &old,
+                                &(start..end),
+                                &inserted,
+                            ),
+                        );
+                    }
                     state.draft = updated;
                     state.selected_range = selection;
                     // 打完字选区收起，锚点跟光标走；光标重新常亮（闪烁后半秒）。

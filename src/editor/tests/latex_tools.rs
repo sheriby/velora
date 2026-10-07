@@ -984,6 +984,120 @@ async fn formula_editor_scrolls_caret_into_view(cx: &mut TestAppContext) {
     );
 }
 
+/// 草稿要能撤销 / 重做：连打一串字算一步，粘贴这类整段编辑各算一步。
+#[gpui::test]
+async fn formula_editor_draft_undo_redo(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    // 真实敲字：一个字一个字进草稿。
+    for character in ["a", "b", "c"] {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.replace_text_in_range(None, character, window, cx);
+        });
+    }
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.formula_editor.as_ref().expect("弹窗开着").draft, "abc");
+    });
+
+    let (_, _) = press_draft_key(&editor, cx, "cmd-z");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "", "连打三个字该合成一步撤销，实测 {:?}", state.draft);
+    });
+
+    press_draft_key(&editor, cx, "cmd-shift-z");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "abc", "⌘⇧Z 该把打字重做回来");
+    });
+
+    // 粘贴是独立一步：撤销只退掉粘贴，不连带把之前的打字也退掉。
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("\\alpha".into()))
+    });
+    press_draft_key(&editor, cx, "cmd-v");
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.formula_editor.as_ref().expect("弹窗开着").draft, "abc\\alpha");
+    });
+    press_draft_key(&editor, cx, "cmd-z");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "abc", "撤销该只退掉粘贴那一步，实测 {:?}", state.draft);
+    });
+}
+
+/// 指针离开输入区之后，选区不该继续跟着鼠标走：抬手发生在框外时拖动状态没清，
+/// 之后鼠标只是划过就会把选区改掉。
+#[gpui::test]
+async fn formula_editor_drag_stops_outside_the_field(cx: &mut TestAppContext) {
+    use crate::editor::formula_editor::INPUT_LINE_HEIGHT;
+
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, "F = ma \\frac{a}{b}", None, false, cx);
+    });
+    redraw(cx);
+
+    let input = cx
+        .debug_bounds("formula-editor-input")
+        .expect("草稿输入区该上屏");
+    let start = gpui::point(input.left() + gpui::px(20.0), input.top() + gpui::px(12.0));
+    let inside = gpui::point(
+        input.left() + gpui::px(120.0),
+        input.top() + gpui::px(1.0 + INPUT_LINE_HEIGHT),
+    );
+    // 抬手点在输入区外（下面的页签/符号区）。
+    let outside = gpui::point(input.left() + gpui::px(120.0), input.bottom() + gpui::px(40.0));
+
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(inside, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(outside, gpui::MouseButton::Left, gpui::Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert!(
+            !state.selecting_with_mouse,
+            "在输入区外抬手就该结束拖动状态"
+        );
+    });
+    let selection_after_up = editor.read_with(cx, |editor, _cx| {
+        editor
+            .formula_editor
+            .as_ref()
+            .expect("弹窗开着")
+            .selected_range
+            .clone()
+    });
+
+    // 没有按下任何键的划过：不该动选区。
+    cx.simulate_mouse_move(start, None::<gpui::MouseButton>, gpui::Modifiers::none());
+    cx.simulate_mouse_move(inside, None::<gpui::MouseButton>, gpui::Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(
+            state.selected_range, selection_after_up,
+            "松手后鼠标划过不该改选区"
+        );
+    });
+}
+
 /// 草稿要能全选 / 复制 / 剪切 / 粘贴（以前只有光标，剪贴板四个键全没接）。
 #[gpui::test]
 async fn formula_editor_draft_select_all_copy_cut_paste(cx: &mut TestAppContext) {
