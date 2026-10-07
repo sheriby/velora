@@ -796,3 +796,117 @@ async fn dragging_from_a_paragraph_into_a_table_includes_the_table(cx: &mut Test
         );
     });
 }
+
+/// 源码模式里新打出来的行（回车新建的块）之间拖选，整段代码块必须能选上。
+/// 实测：按下武装跨块拖拽的那一步被门在渲染态，源码模式里 cross_block_drag
+/// 永远不建立，mouse_move 全程早退——拖过多少行都只有按下那一根块里有块内
+/// 选区（用户看到的是「代码块选不中」）。
+#[gpui::test]
+async fn dragging_across_newly_typed_source_lines_selects_the_code_block(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 标题\n\n正文一段".to_string(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    for _ in 0..3 {
+        redraw(cx);
+    }
+
+    // 光标先挪到文末，再打三行：```python / print('hello') / ```
+    {
+        let last = editor.read_with(cx, |editor, _cx| {
+            editor.document.root_blocks().last().cloned().expect("有根块")
+        });
+        cx.update(|_window, cx| {
+            editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+        });
+        last.update(cx, |block, cx| block.move_to(block.visible_len(), cx));
+        redraw(cx);
+    }
+    let lines = ["```python", "print('hello')", "```"];
+    for line in lines {
+        cx.update(|window, cx| {
+            let last = editor.read_with(cx, |editor, _cx| {
+                editor.document.root_blocks().last().cloned().expect("有根块")
+            });
+            last.update(cx, |block, cx| {
+                block.move_to(block.visible_len(), cx);
+                block.on_newline(&Newline, window, cx);
+            });
+        });
+        cx.simulate_input(line);
+    }
+    for _ in 0..3 {
+        redraw(cx);
+    }
+
+    // 真实拖选：从 ```python 行首拖到最后一行 ``` 行尾
+    let (start, end) = editor.read_with(cx, |editor, cx| {
+        let blocks = editor.document.visible_blocks();
+        let fence = blocks
+            .iter()
+            .find(|visible| visible.entity.read(cx).display_text() == "```python")
+            .expect("找到 ```python 块")
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("有布局边界");
+        let tail = blocks
+            .iter()
+            .filter(|visible| visible.entity.read(cx).display_text() == "```")
+            .next_back()
+            .expect("找到结尾 ``` 块")
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("有布局边界");
+        (
+            gpui::point(fence.left() + px(2.0), fence.center().y),
+            gpui::point(tail.left() + px(30.0), tail.center().y),
+        )
+    });
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_move(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.cross_block_selection.is_some(),
+            "跨块拖拽结束应当有跨块选区"
+        );
+        let markdown = editor
+            .cross_block_selected_markdown(cx)
+            .expect("选区文本该取得到");
+        for line in ["```python", "print('hello')", "```"] {
+            assert!(
+                markdown.contains(line),
+                "选中文本缺 {line:?}：{markdown:?}"
+            );
+        }
+        let blocks = editor.document.visible_blocks();
+        let states: Vec<Option<std::ops::Range<usize>>> = blocks
+            .iter()
+            .map(|visible| visible.entity.read(cx).editor_selection_range.clone())
+            .collect();
+        assert_eq!(
+            states.len(),
+            4,
+            "前置：源码模式整篇一根块 + 三行代码块"
+        );
+        assert!(
+            states[0].is_none(),
+            "选区外的块不该亮：{:?}",
+            states[0]
+        );
+        assert!(
+            states[1..4].iter().all(|range| range.is_some()),
+            "代码块三行都得亮：{states:?}"
+        );
+    });
+}
