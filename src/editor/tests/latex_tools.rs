@@ -143,7 +143,7 @@ async fn double_click_math_block_opens_formula_editor(cx: &mut TestAppContext) {
     let math = editor
         .read_with(cx, |editor, cx| math_block_entity(editor, cx))
         .expect("夹具应有一个数学块");
-    editor.update(cx, |editor, cx| editor.focus_block(math.entity_id()));
+    editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
     redraw(cx);
 
     // 双击：两次按下同一位点，第二次 click_count = 2（事件直接构造，
@@ -271,5 +271,92 @@ async fn formula_editor_cancel_keeps_block_unchanged(cx: &mut TestAppContext) {
             text, "$$\nF = ma\n$$",
             "取消不得改动块文本，实际 {text:?}"
         );
+    });
+}
+/// 聚焦数学块后，右上角的 ƒx 标记必须真的上屏（走完整渲染路径）——
+/// 点击与双击是公式编辑器的两个入口。
+#[gpui::test]
+async fn focused_math_block_shows_fx_button_on_screen(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx^2\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds("math-fx-button").is_some(),
+        "聚焦数学块应渲染出 ƒx 标记（debug_selector math-fx-button）"
+    );
+}
+
+/// 弹窗草稿里打 `\` 弹命令补全，Enter 确认替换查询串（光标按模板落点）。
+#[gpui::test]
+async fn formula_editor_draft_completion_confirms(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, "\\fra", None, false, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        let completion = state.completion.as_ref().expect("\\fra 应弹补全");
+        assert_eq!(completion.anchor, 0, "锚在反斜杠上");
+        assert!(completion.results.iter().any(|entry| entry.name == "frac"));
+    });
+
+    editor.update(cx, |editor, cx| editor.confirm_formula_draft_completion(0, cx));
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "\\frac{}{}");
+        assert_eq!(state.selected_range.start, "\\frac{".len());
+        assert!(state.completion.is_none(), "确认后补全该收起");
+    });
+}
+
+/// 草稿能删除：退格删光标前一字符（DeleteBack 动作绑定在块编辑器 context，
+/// 焦点在弹窗时不派发——删除由弹窗自管）。
+#[gpui::test]
+async fn formula_editor_draft_backspace_deletes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nabc\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "abc");
+    });
+
+    let backspace = gpui::KeyDownEvent {
+        keystroke: gpui::Keystroke::parse("backspace").expect("backspace"),
+        is_held: false,
+    };
+    editor.update_in(cx, |editor, window, cx| {
+        editor.formula_editor_key_down(&backspace, window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "ab", "退格应删掉 c");
     });
 }

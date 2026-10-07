@@ -13,7 +13,10 @@ use std::path::PathBuf;
 
 use gpui::*;
 
-use crate::components::latex::{LatexCategory, LatexSymbol, LATEX_SYMBOLS};
+use crate::components::latex::{
+    LatexCategory, LatexSymbol, LATEX_SYMBOLS, latex_command_before_cursor,
+    latex_completions_for,
+};
 use crate::i18n::I18nStrings;
 use crate::theme::Theme;
 
@@ -63,6 +66,38 @@ pub(crate) struct FormulaEditorState {
     /// 显示 LaTeX 源码 + 错误），空草稿为 None（显示占位提示）。
     pub(crate) preview_path: Option<PathBuf>,
     pub(crate) preview_error: Option<String>,
+    /// 草稿里打 `\` 弹出的命令补全：锚在反斜杠上，随编辑刷新。
+    pub(crate) completion: Option<FormulaDraftCompletion>,
+}
+
+/// 草稿输入区的 `\` 命令补全会话（弹窗内的，与块编辑的 latex_completion
+/// 互不相干）。
+pub(crate) struct FormulaDraftCompletion {
+    /// 反斜杠在草稿里的偏移。
+    pub(crate) anchor: usize,
+    pub(crate) selected: usize,
+    pub(crate) results: Vec<&'static LatexSymbol>,
+}
+
+/// 补全列表容量。
+const COMPLETION_LIMIT: usize = 8;
+
+/// 光标前移一个字素边界（退格用）。
+fn draft_prev_boundary(text: &str, offset: usize) -> usize {
+    text[..offset]
+        .char_indices()
+        .next_back()
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+/// 光标后移一个字素边界（前向删除用）。
+fn draft_next_boundary(text: &str, offset: usize) -> usize {
+    text[offset..]
+        .char_indices()
+        .nth(1)
+        .map(|(index, _)| offset + index)
+        .unwrap_or(text.len())
 }
 
 impl Editor {
@@ -93,6 +128,7 @@ impl Editor {
             draft,
             preview_path: None,
             preview_error: None,
+            completion: None,
         };
         Self::sync_formula_preview(&mut editor, cx);
         self.formula_editor = Some(editor);
@@ -183,8 +219,47 @@ impl Editor {
         state.draft = updated;
         state.selected_range = selection;
         state.marked_range = (marked && !new_text.is_empty()).then_some(start..inserted_end);
+        Self::refresh_formula_draft_completion(state);
         Self::sync_formula_preview(state, cx);
         cx.notify();
+    }
+
+    /// 草稿光标前是「`\` + 字母」时弹命令补全（弹窗里处处是公式上下文，
+    /// 无需再判行内数学）。
+    fn refresh_formula_draft_completion(state: &mut FormulaEditorState) {
+        let caret = state.selected_range.start.min(state.draft.len());
+        state.completion = match latex_command_before_cursor(&state.draft[..caret]) {
+            Some((backslash, query)) => {
+                let results = latex_completions_for(query, COMPLETION_LIMIT);
+                (!results.is_empty()).then(|| FormulaDraftCompletion {
+                    anchor: backslash,
+                    selected: 0,
+                    results,
+                })
+            }
+            None => None,
+        };
+    }
+
+    /// 确认补全：用选中项替换 `\查询串`，光标按模板落点摆好。
+    pub(crate) fn confirm_formula_draft_completion(
+        &mut self,
+        selected: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.formula_editor.as_ref() else {
+            return;
+        };
+        let Some(completion) = state.completion.as_ref() else {
+            return;
+        };
+        let Some(entry) = completion.results.get(selected) else {
+            return;
+        };
+        let anchor = completion.anchor;
+        let caret = state.selected_range.start.min(state.draft.len());
+        let end = caret.max(anchor);
+        self.replace_formula_draft(anchor..end, entry.insert, Some(entry.caret..entry.caret), false, cx);
     }
 
     /// 符号面板点一格：模板写进草稿光标处，光标按落点摆好，弹窗保持打开。
@@ -245,7 +320,9 @@ impl Editor {
     }
 
     /// 弹窗内的专用按键（输入框元素上注册）：Esc 取消、⌘/Ctrl+Enter 应用、
-    /// 普通 Enter 换行（多行公式环境常用）。其余键交给输入系统。
+    /// 普通 Enter 换行（多行公式环境常用）、退格/前向删除与方向键自管——
+    /// DeleteBack 等动作绑定在块编辑器的 key context 上，焦点在弹窗草稿时
+    /// 根本不派发，删除会静默失效（用户报修：草稿无法删除）。
     pub(crate) fn formula_editor_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -254,15 +331,38 @@ impl Editor {
     ) {
         let key = event.keystroke.key.as_str();
         let modifiers = event.keystroke.modifiers;
+        let plain = !modifiers.control
+            && !modifiers.alt
+            && !modifiers.platform
+            && !modifiers.function
+            && !modifiers.shift;
         match key {
             "escape" => {
                 cx.stop_propagation();
+                // 补全开着先收补全，再按一次才关弹窗。
+                if let Some(state) = self.formula_editor.as_mut()
+                    && state.completion.take().is_some()
+                {
+                    cx.notify();
+                    return;
+                }
                 self.close_formula_editor(cx);
             }
             "enter" => {
                 cx.stop_propagation();
                 if modifiers.platform || modifiers.control {
                     self.apply_formula_editor(window, cx);
+                    return;
+                }
+                // 补全开着时 Enter 确认（shift+enter 才换行）。
+                if plain
+                    && let Some(selected) = self
+                        .formula_editor
+                        .as_ref()
+                        .and_then(|state| state.completion.as_ref())
+                        .map(|completion| completion.selected)
+                {
+                    self.confirm_formula_draft_completion(selected, cx);
                     return;
                 }
                 let Some(state) = self.formula_editor.as_ref() else {
@@ -272,8 +372,82 @@ impl Editor {
                 let end = state.selected_range.end.min(state.draft.len()).max(at);
                 self.replace_formula_draft(at..end, "\n", None, false, cx);
             }
+            "tab" => {
+                if let Some(selected) = self
+                    .formula_editor
+                    .as_ref()
+                    .and_then(|state| state.completion.as_ref())
+                    .map(|completion| completion.selected)
+                {
+                    cx.stop_propagation();
+                    self.confirm_formula_draft_completion(selected, cx);
+                }
+            }
+            "up" | "down" => {
+                let delta = if key == "up" { -1i32 } else { 1 };
+                if let Some(state) = self.formula_editor.as_mut() {
+                    if let Some(completion) = state.completion.as_mut()
+                        && !completion.results.is_empty()
+                    {
+                        let len = completion.results.len() as i32;
+                        completion.selected =
+                            ((completion.selected as i32 + delta).rem_euclid(len)) as usize;
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
+                // 没补全时上下键留给系统（多行滚屏），不消费。
+            }
+            "backspace" => {
+                cx.stop_propagation();
+                self.delete_in_formula_draft(false, cx);
+            }
+            "delete" => {
+                cx.stop_propagation();
+                self.delete_in_formula_draft(true, cx);
+            }
+            "left" | "right" => {
+                if let Some(state) = self.formula_editor.as_mut() {
+                    let len = state.draft.len();
+                    let caret = state.selected_range.start.min(len);
+                    // 补全开着时左右先收掉（或者移动选择——收掉更直观）。
+                    state.completion = None;
+                    let offset = if key == "left" {
+                        draft_prev_boundary(&state.draft, caret)
+                    } else {
+                        draft_next_boundary(&state.draft, caret)
+                    };
+                    state.selected_range = offset..offset;
+                    state.marked_range = None;
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }
             _ => {}
         }
+        let _ = plain;
+    }
+
+    /// 草稿内删除：退格删光标前一个字素，前向删除（Delete 键）删光标后一个。
+    fn delete_in_formula_draft(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some(state) = self.formula_editor.as_ref() else {
+            return;
+        };
+        let len = state.draft.len();
+        let start = state.selected_range.start.min(len);
+        let end = state.selected_range.end.min(len).max(start);
+        let range = if start < end {
+            start..end
+        } else if forward {
+            start..draft_next_boundary(&state.draft, start)
+        } else {
+            draft_prev_boundary(&state.draft, start)..start
+        };
+        if range.start == range.end {
+            return;
+        }
+        self.replace_formula_draft(range, "", None, false, cx);
     }
 
     /// 弹窗浮层：遮罩 + 居中卡片。预览、草稿输入、符号面板三段。
@@ -443,7 +617,7 @@ impl Editor {
             .iter()
             .map(|&tab| {
                 let is_active = tab == category;
-                div()
+                let tab = div()
                     .id(ElementId::Name(format!("formula-tab-{:?}", tab).into()))
                     .px(px(9.0))
                     .h(px(24.0))
@@ -455,14 +629,13 @@ impl Editor {
                     .text_color(if is_active {
                         c.dialog_primary_button_text
                     } else {
-                        c.dialog_muted
+                        c.dialog_body
                     })
                     .bg(if is_active {
                         c.dialog_primary_button_bg
                     } else {
                         hsla(0.0, 0.0, 0.0, 0.0)
                     })
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |editor, _event: &MouseDownEvent, _window, cx| {
@@ -472,8 +645,15 @@ impl Editor {
                             }
                         }),
                     )
-                    .child(category_label(tab, strings))
-                    .into_any_element()
+                    .child(category_label(tab, strings));
+                // 选中的页签不挂 hover 变浅——浮层上 hover 色与选中底色相近
+                // 时，选中态会一晃就没（用户报修）。
+                if is_active {
+                    tab.into_any_element()
+                } else {
+                    tab.hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .into_any_element()
+                }
             })
             .collect();
 
@@ -488,10 +668,14 @@ impl Editor {
             let insert_label: SharedString = format!("\\{}", entry.name).into();
             let cell = div()
                 .id(ElementId::Name(format!("formula-cell-{}", entry.name).into()))
-                .size(px(CELL))
+                // 列宽交给 grid 均分（w_full），行高固定——内容宽度不齐时
+                // 格子也不会七扭八歪（用户报修：函数分类排版乱）。
+                .h(px(CELL))
+                .w_full()
                 .flex()
                 .items_center()
                 .justify_center()
+                .overflow_hidden()
                 .rounded(px(6.0))
                 .cursor_pointer()
                 .bg(c.dialog_secondary_button_bg)
@@ -516,6 +700,7 @@ impl Editor {
                 preview_size,
             ) {
                 Ok(rendered) => img(rendered.path)
+                    .flex_shrink_0()
                     .max_h(px(CELL * 0.66))
                     .max_w(px(CELL * 0.92))
                     .object_fit(ObjectFit::Contain)
@@ -523,13 +708,104 @@ impl Editor {
                 Err(_) => div()
                     .text_size(px(t.text_size * 0.72))
                     .text_color(c.dialog_muted)
+                    .truncate()
                     .child(format!("\\{}", entry.name))
                     .into_any_element(),
             };
             cells.push(cell.child(content).into_any_element());
         }
 
-        let grid_width = px(GRID_COLS as f32 * (CELL + CELL_GAP) - CELL_GAP);
+        let grid_width = px(PANEL_WIDTH - 28.0);
+
+        // 草稿的 \ 命令补全浮层：锚在输入框左下（光标行定位要 shape 每行
+        // 前缀，简化为列表挂在输入框下方左缘——公式输入区就是焦点所在，
+        // 视线不跳）。
+        let completion_element: AnyElement = match state
+            .completion
+            .as_ref()
+            .filter(|completion| !completion.results.is_empty())
+        {
+            Some(completion) => {
+                let selected = completion.selected;
+                let rows: Vec<AnyElement> = completion
+                    .results
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        let is_selected = index == selected;
+                        let confirm = cx.listener(move |editor, _e: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            editor.confirm_formula_draft_completion(index, cx);
+                        });
+                        let preview: AnyElement = match crate::components::latex::render_inline_math_svg(
+                            entry.preview,
+                            preview_color,
+                            preview_size,
+                        ) {
+                            Ok(rendered) => img(rendered.path)
+                                .max_h(px(20.0))
+                                .max_w(px(72.0))
+                                .object_fit(ObjectFit::Contain)
+                                .into_any_element(),
+                            Err(_) => div()
+                                .text_size(px(t.text_size * 0.72))
+                                .text_color(c.dialog_muted)
+                                .child(format!("\\{}", entry.name))
+                                .into_any_element(),
+                        };
+                        div()
+                            .id(ElementId::Name(format!("formula-completion-{index}").into()))
+                            .h(px(28.0))
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .px(px(8.0))
+                            .rounded(px(4.0))
+                            .cursor_pointer()
+                            .bg(if is_selected {
+                                c.selection
+                            } else {
+                                hsla(0.0, 0.0, 0.0, 0.0)
+                            })
+                            .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                            .on_mouse_down(MouseButton::Left, confirm)
+                            .child(
+                                div()
+                                    .min_w(px(96.0))
+                                    .font_family(code_family.clone())
+                                    .text_size(px(t.text_size * 0.8))
+                                    .text_color(c.text_default)
+                                    .child(format!("\\{}", entry.name)),
+                            )
+                            .child(
+                                div().flex().items_center().justify_end().flex_1().child(preview),
+                            )
+                            .into_any_element()
+                    })
+                    .collect();
+                div()
+                    .id("formula-editor-completion")
+                    .debug_selector(|| "formula-editor-completion".to_string())
+                    .absolute()
+                    .left(px(14.0))
+                    .top(px(14.0 + PREVIEW_HEIGHT + INPUT_HEIGHT + 8.0))
+                    .w(px(PANEL_WIDTH - 28.0))
+                    .bg(c.dialog_surface)
+                    .border_1()
+                    .border_color(c.dialog_border)
+                    .rounded(px(6.0))
+                    .shadow_lg()
+                    .p(px(4.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .occlude()
+                    .children(rows)
+                    .into_any_element()
+            }
+            None => div().into_any_element(),
+        };
 
         // ===== 组装 =====
         Some(
@@ -637,6 +913,8 @@ impl Editor {
                                 .gap(px(CELL_GAP))
                                 .children(cells),
                         )
+
+                        .child(completion_element)
                         .child(
                             div()
                                 .flex()

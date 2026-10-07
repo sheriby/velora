@@ -1467,10 +1467,54 @@ impl Render for Block {
                 } else {
                     self.render_math_content(&theme)
                 };
-                // 公式编辑器入口是双击块（双击处理在 interactions/keys.rs，
-                // emit RequestFormulaEditor）：独立弹窗编辑，不在块上挂按钮
-                // ——悬在右上的常驻按钮挤占版面（用户反馈：非常丑）。
-                focused_base.w_full().child(child).into_any_element()
+                if !focused {
+                    return focused_base.w_full().child(child).into_any_element();
+                }
+                // 聚焦编辑：整个块（含 $$ 定界行）铺公式卡片底色——底色只盖
+                // 公式行时，$$ 行像掉在块外（用户报修）。编辑器入口两个：
+                // 右上角 ƒx 小标记（不占行高、低调描边样式，双击也可）。
+                let fx_button = div()
+                    .id(ElementId::Name(
+                        format!("math-fx-button-{}", self.record.id).into(),
+                    ))
+                    .debug_selector(|| "math-fx-button".to_string())
+                    .absolute()
+                    .top(px(0.0))
+                    .right(px(0.0))
+                    .h(px(20.0))
+                    .px(px(6.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(c.dialog_border)
+                    .bg(c.dialog_surface)
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                    .cursor_pointer()
+                    .text_size(px(t.text_size * 0.68))
+                    .text_color(c.dialog_muted)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_block, _event: &MouseDownEvent, _window, cx| {
+                            cx.stop_propagation();
+                            cx.emit(BlockEvent::RequestFormulaEditor);
+                        }),
+                    )
+                    .child("ƒx");
+                focused_base
+                    .w_full()
+                    .relative()
+                    .child(
+                        div()
+                            .w_full()
+                            .rounded(px(8.0))
+                            .bg(c.code_bg)
+                            .px(px(d.block_padding_x.max(8.0)))
+                            .py(px(d.block_padding_y.max(6.0)))
+                            .child(child),
+                    )
+                    .child(fx_button)
+                    .into_any_element()
             }
             BlockKind::MermaidBlock => {
                 if !focused {
