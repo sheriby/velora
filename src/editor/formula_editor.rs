@@ -12,7 +12,6 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use crate::components::latex::{
@@ -1403,8 +1402,18 @@ impl Editor {
         // paint_line 用 (line_height - ascent - descent)/2 定基线）。
         let caret_point = draft_point_for_offset(&layouts, selection_start, line_height)
             .unwrap_or(point(px(0.0), px(0.0)));
+        // 光标条分两档状态：聚焦且无选区 = 可绘制（随闪烁相位显隐），否则 =
+        // 抑制。元素永远挂载，状态进选择器、闪烁进透明度——按相位条件挂载
+        // 会让元素每 0.5s 进出元素树，慢机器上取它 bounds 的测试正好撞上
+        // 「灭」相位（CI 首跑实测的机器相关挂载竞争）。
+        let caret_paintable = draft_focused && !has_selection;
+        let caret_selector = if caret_paintable {
+            "formula-editor-caret"
+        } else {
+            "formula-editor-caret-suppressed"
+        };
         let caret_div = div()
-            .debug_selector(|| "formula-editor-caret".to_string())
+            .debug_selector(move || caret_selector.to_string())
             .absolute()
             .left(caret_point.x + px(INPUT_PADDING_X))
             .top(px(INPUT_PADDING_Y) + caret_point.y)
@@ -1486,11 +1495,13 @@ impl Editor {
                     .relative()
                     .w_full()
                     .children(draft_lines)
-                    // 光标只在草稿聚焦、无选区、且处在闪烁的「亮」相位时画。
-                    .when(
-                        draft_focused && !has_selection && draft_caret_visible(state.caret_epoch),
-                        |this| this.child(caret_div),
-                    ),
+                    .child(caret_div.opacity(
+                        if caret_paintable && draft_caret_visible(state.caret_epoch) {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                    )),
             )
             .child(
                 canvas(|_, _, _| (), {
