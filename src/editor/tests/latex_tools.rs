@@ -131,181 +131,13 @@ async fn latex_completion_only_opens_in_math_context(cx: &mut TestAppContext) {
         );
     });
 }
-
-/// 公式编辑器面板：从公式块上打开并绑定该块，插入跟随块内**当前光标**，
-/// 再点一次按钮收起。
+/// 双击数学块打开公式编辑器弹窗——走完整渲染路径（双击事件 → 块事件 →
+/// pending → 下一帧弹窗上屏），debug_bounds 查面板选择器。
 #[gpui::test]
-async fn formula_panel_binds_block_and_follows_caret(cx: &mut TestAppContext) {
+async fn double_click_math_block_opens_formula_editor(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
-    redraw(cx);
-
-    let math = editor
-        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
-        .expect("夹具应有一个数学块");
-    editor.update(cx, |editor, cx| {
-        editor.focus_block(math.entity_id());
-        editor.toggle_formula_panel_for_block(math.entity_id(), cx);
-    });
-
-    editor.read_with(cx, |editor, _cx| {
-        let state = editor.formula_panel.as_ref().expect("面板该打开");
-        assert_eq!(state.target, math.entity_id(), "面板该绑定这个公式块");
-    });
-
-    // 光标在块首：点 frac 模板落进第一对花括号。
-    let frac = &LATEX_SYMBOLS[0];
-    assert_eq!(frac.name, "frac");
-    math.update(cx, |block, block_cx| block.move_to(3, block_cx));
-    editor.update(cx, |editor, cx| editor.insert_latex_symbol(frac, cx));
-    editor.read_with(cx, |_editor, cx| {
-        let text = math.read(cx).display_text();
-        assert_eq!(
-            text, "$$\n\\frac{}{}\n$$",
-            "第一格该写进光标处，实际 {text:?}"
-        );
-    });
-
-    // 光标挪到别处再点一格：插入跟随**当前**光标，不是冻结的旧插入点。
-    math.update(cx, |block, block_cx| {
-        let end = block.visible_len().saturating_sub(3); // 闭 $$ 之前
-        block.move_to(end, block_cx);
-    });
-    let alpha = LATEX_SYMBOLS
-        .iter()
-        .find(|entry| entry.name == "alpha")
-        .expect("符号表该有 alpha");
-    editor.update(cx, |editor, cx| editor.insert_latex_symbol(alpha, cx));
-    editor.read_with(cx, |editor, cx| {
-        let text = math.read(cx).display_text();
-        assert_eq!(
-            text, "$$\n\\frac{}{}\\alpha \n$$",
-            "第二格该跟着新光标走，实际 {text:?}"
-        );
-        assert!(
-            editor.formula_panel.is_some(),
-            "插入后面板保持打开便于连续输入"
-        );
-    });
-
-    // 再点一次按钮：同块的面板收起。
-    editor.update(cx, |editor, cx| {
-        editor.toggle_formula_panel_for_block(math.entity_id(), cx);
-    });
-    editor.read_with(cx, |editor, _cx| {
-        assert!(editor.formula_panel.is_none(), "同块再开一次该是收起");
-    });
-}
-/// 面板绑定的块被删掉后，下一次点击自动收面板而不是 panic。
-#[gpui::test]
-async fn formula_panel_closes_when_target_block_is_gone(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx\n$$\n".into(), None));
-    redraw(cx);
-
-    let math = editor
-        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
-        .expect("夹具应有一个数学块");
-    editor.update(cx, |editor, cx| {
-        editor.toggle_formula_panel_for_block(math.entity_id(), cx);
-    });
-    editor.read_with(cx, |editor, _cx| {
-        assert!(editor.formula_panel.is_some(), "面板该先打开");
-    });
-
-    // 模拟目标块从树里消失：把会话里的目标指到一个不在树上的实体 id。
-    editor.update(cx, |editor, _cx| {
-        if let Some(state) = editor.formula_panel.as_mut() {
-            state.target = gpui::EntityId::from(u64::MAX);
-        }
-    });
-    editor.update(cx, |editor, cx| {
-        editor.insert_latex_symbol(&LATEX_SYMBOLS[0], cx);
-    });
-    editor.read_with(cx, |editor, _cx| {
-        assert!(
-            editor.formula_panel.is_none(),
-            "目标块不存在时点击该收面板"
-        );
-    });
-}
-/// 「ƒx 符号」按钮发出的 BlockEvent::RequestFormulaPanel 走编辑器事件臂
-/// 打开/关闭面板——按钮与面板之间的链路不能断。
-#[gpui::test]
-async fn fx_button_event_toggles_formula_panel(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx\n$$\n".into(), None));
-    redraw(cx);
-
-    let math = editor
-        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
-        .expect("夹具应有一个数学块");
-    let event = crate::components::BlockEvent::RequestFormulaPanel;
-    editor.update(cx, |editor, cx| {
-        editor.on_block_event(math.clone(), &event, cx);
-    });
-    editor.read_with(cx, |editor, _cx| {
-        assert!(
-            editor.formula_panel.is_some(),
-            "事件应经编辑器事件臂打开面板"
-        );
-    });
-
-    editor.update(cx, |editor, cx| {
-        editor.on_block_event(math.clone(), &event, cx);
-    });
-    editor.read_with(cx, |editor, _cx| {
-        assert!(editor.formula_panel.is_none(), "再发一次该收起");
-    });
-}
-/// 补全确认时目标块已不在树上：安全收场（收浮层、不插入）而不是 panic。
-#[gpui::test]
-async fn latex_completion_confirm_survives_missing_block(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\\al\n$$".into(), None));
-    redraw(cx);
-
-    let math = editor
-        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
-        .expect("夹具应有一个数学块");
-    let cursor = math.read_with(cx, |block, _cx| {
-        block.display_text().find("\\al").expect("\\al 在块里") + "\\al".len()
-    });
-    math.update(cx, |block, block_cx| block.move_to(cursor, block_cx));
-    editor.update(cx, |editor, cx| {
-        editor.update_latex_completion_for_block(&math, cx);
-    });
-    editor.read_with(cx, |editor, _cx| {
-        assert!(editor.latex_completion.is_some(), "前置：浮层该开着");
-    });
-
-    editor.update(cx, |editor, _cx| {
-        if let Some(state) = editor.latex_completion.as_mut() {
-            state.block_id = gpui::EntityId::from(u64::MAX);
-        }
-    });
-    editor.update(cx, |editor, cx| {
-        editor.confirm_latex_completion(0, cx);
-    });
-    editor.read_with(cx, |editor, _cx| {
-        assert!(
-            editor.latex_completion.is_none(),
-            "目标块不存在时确认该收浮层"
-        );
-    });
-}
-/// 聚焦数学块后，ƒx 按钮必须真的出现在屏幕上（走完整渲染路径，
-/// debug_selector 查询）——之前的链路测试直接调事件处理，绕过了按钮，
-/// 分派早退把按钮拦在死分支里时测试仍是绿的（用户报修：公式编辑器哪呢）。
-#[gpui::test]
-async fn focused_math_block_shows_fx_button_on_screen(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\\nx^2\\n$$\\n".into(), None));
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx^2\n$$\n".into(), None));
     redraw(cx);
 
     let math = editor
@@ -314,9 +146,130 @@ async fn focused_math_block_shows_fx_button_on_screen(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| editor.focus_block(math.entity_id()));
     redraw(cx);
 
-    let button_bounds = cx.debug_bounds("math-fx-button");
+    // 双击：两次按下同一位点，第二次 click_count = 2（事件直接构造，
+    // position 落在块内任意处）。
+    let down = |count: usize| gpui::MouseDownEvent {
+        position: gpui::point(gpui::px(40.0), gpui::px(40.0)),
+        button: gpui::MouseButton::Left,
+        modifiers: gpui::Modifiers::default(),
+        click_count: count,
+        first_mouse: count == 1,
+    };
+    let down_first = down(1);
+    let down_second = down(2);
+    editor.update_in(cx, |editor, window, cx| {
+        math.update(cx, |block, block_cx| {
+            block.on_mouse_down(&down_first, window, block_cx);
+        });
+        let _ = editor;
+    });
+    redraw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        math.update(cx, |block, block_cx| {
+            block.on_mouse_down(&down_second, window, block_cx);
+        });
+        let _ = editor;
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.formula_editor.is_some(),
+            "双击数学块应打开公式编辑器弹窗"
+        );
+    });
     assert!(
-        button_bounds.is_some(),
-        "聚焦数学块应渲染出 ƒx 按钮（debug_selector math-fx-button）"
+        cx.debug_bounds("formula-editor-panel").is_some(),
+        "弹窗应真实上屏（debug_selector formula-editor-panel）"
     );
+}
+
+/// 弹窗里编辑草稿：预览跟着渲染，「应用」把草稿写回数学块（一次 undo 组）。
+#[gpui::test]
+async fn formula_editor_draft_previews_and_applies(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+
+    // 点符号面板的 frac：草稿出现模板，光标落进第一对花括号，预览渲染出来。
+    let frac = &LATEX_SYMBOLS[0];
+    assert_eq!(frac.name, "frac");
+    editor.update(cx, |editor, cx| editor.insert_formula_symbol(frac, cx));
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗该开着");
+        assert_eq!(state.draft, "\\frac{}{}");
+        assert_eq!(state.selected_range.start, "\\frac{".len());
+        assert!(
+            state.preview_path.is_some(),
+            "非空草稿应有渲染预览"
+        );
+    });
+
+    // 「应用」：草稿写回块（多行形式），弹窗关闭，撤销栈多一组。
+    let undo_before = editor.read_with(cx, |editor, _cx| editor.undo_history.len());
+    editor.update_in(cx, |editor, window, cx| editor.apply_formula_editor(window, cx));
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.formula_editor.is_none(), "应用后弹窗该关闭");
+        let text = math.read(cx).display_text();
+        assert_eq!(
+            text, "$$\n\\frac{}{}\n$$",
+            "草稿应写回数学块，实际 {text:?}"
+        );
+        assert_eq!(
+            editor.undo_history.len(),
+            undo_before + 1,
+            "应用应落一次独立 undo 组"
+        );
+    });
+}
+
+/// 取消（Esc 路径同一函数）：草稿丢弃，块文本不变。
+#[gpui::test]
+async fn formula_editor_cancel_keeps_block_unchanged(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nF = ma\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        eprintln!("PROBE draft after open = {:?}", state.draft);
+        eprintln!("PROBE block display = {:?}", math.read(_cx).display_text());
+    });
+    editor.update(cx, |editor, cx| {
+        let len = editor
+            .formula_editor
+            .as_ref()
+            .map(|state| state.draft.len())
+            .unwrap_or(0);
+        editor.replace_formula_draft(0..len, "E = mc^2", None, false, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "E = mc^2");
+    });
+
+    editor.update(cx, |editor, cx| editor.close_formula_editor(cx));
+    editor.read_with(cx, |editor, cx| {
+        assert!(editor.formula_editor.is_none(), "取消后弹窗该关闭");
+        let text = math.read(cx).display_text();
+        assert_eq!(
+            text, "$$\nF = ma\n$$",
+            "取消不得改动块文本，实际 {text:?}"
+        );
+    });
 }

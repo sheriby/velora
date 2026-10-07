@@ -164,8 +164,11 @@ impl Editor {
             BlockEvent::RequestJumpToHeadingLine { line } => {
                 self.jump_to_source_line(*line, cx);
             }
-            BlockEvent::RequestFormulaPanel => {
-                self.toggle_formula_panel_for_block(block.entity_id(), cx);
+            BlockEvent::RequestFormulaEditor => {
+                // 块事件链没有 &mut Window：记下目标，下一帧 apply 时开弹窗
+                // 并把焦点交给草稿输入。
+                self.pending_formula_editor = Some(block.entity_id());
+                cx.notify();
             }
             BlockEvent::RequestNewline {
                 trailing,

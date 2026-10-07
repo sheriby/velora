@@ -246,6 +246,8 @@ pub(crate) enum OverlayInputKind {
     Replace,
     QuickOpen,
     CommandPalette,
+    /// 公式编辑器弹窗的草稿输入（多行，允许换行）。
+    FormulaEditor,
 }
 
 impl From<SearchInputKind> for OverlayInputKind {

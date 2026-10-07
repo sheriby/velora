@@ -1467,67 +1467,10 @@ impl Render for Block {
                 } else {
                     self.render_math_content(&theme)
                 };
-                // 聚焦时块顶给一行「ƒx 符号」按钮：公式编辑器面板从这里
-                // 打开，面板绑定本块、插入走块内光标（用户要求：面板跟着
-                // 公式走）。用真实占高的头部行而不是浮在角落的小块——浮块
-                // 配色近似背景时等于隐形（用户报修：找不到公式编辑器）。
-                let fx_button = focused.then(|| {
-                    div()
-                        .id(ElementId::Name(
-                            format!("math-fx-button-{}", self.record.id).into(),
-                        ))
-                        .debug_selector(|| "math-fx-button".to_string())
-                        .h(px(24.0))
-                        .px(px(9.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(4.0))
-                        .rounded(px(6.0))
-                        .bg(c.dialog_primary_button_bg)
-                        .hover(|this| this.bg(c.dialog_primary_button_hover))
-                        .active(|this| this.opacity(0.92))
-                        .cursor_pointer()
-                        .text_size(px(t.text_size * 0.76))
-                        .text_color(c.dialog_primary_button_text)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|_block, _event: &MouseDownEvent, _window, cx| {
-                                cx.stop_propagation();
-                                cx.emit(BlockEvent::RequestFormulaPanel);
-                            }),
-                        )
-                        .child("ƒx")
-                        .child("公式编辑器")
-                });
-                let body = if focused {
-                    // 头部行右对齐放按钮，正文（彩色 LaTeX + 等宽）垫在卡片
-                    // 色上，公式编辑不再是一整片平文本。
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .justify_end()
-                                .child(fx_button.expect("focused 才有按钮")),
-                        )
-                        .child(
-                            div()
-                                .w_full()
-                                .rounded(px(8.0))
-                                .bg(c.code_bg)
-                                .px(px(d.block_padding_x.max(8.0)))
-                                .py(px(d.block_padding_y.max(6.0)))
-                                .child(child),
-                        )
-                        .into_any_element()
-                } else {
-                    div().w_full().child(child).into_any_element()
-                };
-                focused_base.w_full().child(body).into_any_element()
+                // 公式编辑器入口是双击块（双击处理在 interactions/keys.rs，
+                // emit RequestFormulaEditor）：独立弹窗编辑，不在块上挂按钮
+                // ——悬在右上的常驻按钮挤占版面（用户反馈：非常丑）。
+                focused_base.w_full().child(child).into_any_element()
             }
             BlockKind::MermaidBlock => {
                 if !focused {

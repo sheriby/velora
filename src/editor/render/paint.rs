@@ -45,6 +45,7 @@ impl Render for Editor {
         self.apply_pending_focus(window, cx);
         self.apply_pending_scroll_into_view(window, cx);
         self.apply_pending_workspace_search_focus(window, cx);
+        self.apply_pending_formula_editor(window, cx);
         self.refresh_selection_snapshot_if_changed(cx);
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
@@ -1104,8 +1105,8 @@ impl Render for Editor {
         } else {
             base
         };
-        let base = if self.formula_panel.is_some()
-            && let Some(panel) = self.render_formula_panel_overlay(&theme, &strings, window, cx)
+        let base = if self.formula_editor.is_some()
+            && let Some(panel) = self.render_formula_editor_overlay(&theme, &strings, window, cx)
         {
             base.child(panel)
         } else {

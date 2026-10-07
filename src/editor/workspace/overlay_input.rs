@@ -3,6 +3,14 @@ use super::*;
 impl Editor {
     pub(crate) fn active_overlay_input(&self, window: &Window) -> OverlayInputKind {
         if self
+            .formula_editor
+            .as_ref()
+            .and_then(|state| state.focus.as_ref())
+            .is_some_and(|focus| focus.is_focused(window))
+        {
+            return OverlayInputKind::FormulaEditor;
+        }
+        if self
             .command_palette
             .as_ref()
             .and_then(|state| state.focus.as_ref())
@@ -44,6 +52,11 @@ impl Editor {
                 .as_ref()
                 .map(|state| state.query.as_str())
                 .unwrap_or_default(),
+            OverlayInputKind::FormulaEditor => self
+                .formula_editor
+                .as_ref()
+                .map(|state| state.draft.as_str())
+                .unwrap_or_default(),
         }
     }
 
@@ -61,6 +74,11 @@ impl Editor {
                 .as_ref()
                 .map(|state| state.selected_range.clone())
                 .unwrap_or_default(),
+            OverlayInputKind::FormulaEditor => self
+                .formula_editor
+                .as_ref()
+                .map(|state| state.selected_range.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -74,6 +92,10 @@ impl Editor {
                 .and_then(|state| state.marked_range.clone()),
             OverlayInputKind::CommandPalette => self
                 .command_palette
+                .as_ref()
+                .and_then(|state| state.marked_range.clone()),
+            OverlayInputKind::FormulaEditor => self
+                .formula_editor
                 .as_ref()
                 .and_then(|state| state.marked_range.clone()),
         }
@@ -118,13 +140,26 @@ impl Editor {
                     .as_ref()
                     .is_some_and(|state| state.marked_range.is_some()),
             ),
+            OverlayInputKind::FormulaEditor => (
+                self.formula_editor
+                    .as_ref()
+                    .map(|state| state.draft.clone())
+                    .unwrap_or_default(),
+                self.formula_editor
+                    .as_ref()
+                    .is_some_and(|state| state.marked_range.is_some()),
+            ),
         };
         let start = range.start.min(old.len());
         let end = range.end.min(old.len()).max(start);
         if !old.is_char_boundary(start) || !old.is_char_boundary(end) {
             return;
         }
-        let inserted = new_text.replace(['\r', '\n'], " ");
+        // 公式草稿是多行输入，换行是合法内容；其余 overlay 输入仍是单行。
+        let inserted = match kind {
+            OverlayInputKind::FormulaEditor => new_text.replace('\r', ""),
+            _ => new_text.replace(['\r', '\n'], " "),
+        };
         let updated = {
             let mut updated = old.clone();
             updated.replace_range(start..end, &inserted);
@@ -169,6 +204,14 @@ impl Editor {
                     state.selected_range = selection;
                     state.marked_range = marked_range;
                     state.selected = 0;
+                }
+            }
+            OverlayInputKind::FormulaEditor => {
+                if let Some(state) = self.formula_editor.as_mut() {
+                    state.draft = updated;
+                    state.selected_range = selection;
+                    state.marked_range = marked_range;
+                    crate::editor::Editor::sync_formula_preview(state, cx);
                 }
             }
         }

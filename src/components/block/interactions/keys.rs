@@ -368,6 +368,14 @@ impl Block {
         }
 
         if event.click_count >= 2 && !event.modifiers.shift {
+            // 双击数学块打开公式编辑器弹窗（用户要求：独立编辑窗口）；
+            // 其余块双击选词。
+            if self.kind() == BlockKind::MathBlock {
+                self.is_selecting = false;
+                cx.stop_propagation();
+                cx.emit(BlockEvent::RequestFormulaEditor);
+                return;
+            }
             // 双击选词（用户要求）：选中所点的字词段。聚焦与不聚焦两个
             // 分支都要处理——第一次单击只聚焦，第二次（已聚焦）才成词选。
             self.is_selecting = true;

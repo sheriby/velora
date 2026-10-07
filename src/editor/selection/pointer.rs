@@ -49,15 +49,7 @@ impl Editor {
                 self.close_latex_completion(cx);
             }
         }
-        // 公式编辑器面板：面板内的按下交给格子自己的插入处理，不收面板。
-        if self.formula_panel.is_some() {
-            let inside_panel = self
-                .formula_panel_bounds()
-                .is_some_and(|bounds| bounds.contains(&event.position));
-            if !inside_panel {
-                self.close_formula_panel(cx);
-            }
-        }
+        // 公式编辑器弹窗是全屏遮罩（occlude），正文收不到按下，无需豁免。
 
         // 选中工具栏上的按下不当成正文落点：不然这一次按下先把选区收成光标，
         // 工具栏自己就先消失了（与 [[ 补全浮层同一条口径）。

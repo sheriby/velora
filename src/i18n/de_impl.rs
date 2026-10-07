@@ -764,10 +764,17 @@ impl I18nStringsDe {
                 .unwrap_or(defaults.insert_image_prompt),
             insert_math_block: self.insert_math_block.unwrap_or(defaults.insert_math_block),
             insert_formula: self.insert_formula.unwrap_or(defaults.insert_formula),
-            formula_panel_hint: self.formula_panel_hint.unwrap_or(defaults.formula_panel_hint),
-            formula_panel_preview_empty: self
-                .formula_panel_preview_empty
-                .unwrap_or(defaults.formula_panel_preview_empty),
+            formula_editor_apply: self.formula_editor_apply.unwrap_or(defaults.formula_editor_apply),
+            formula_editor_cancel: self
+                .formula_editor_cancel
+                .unwrap_or(defaults.formula_editor_cancel),
+            formula_editor_hint: self.formula_editor_hint.unwrap_or(defaults.formula_editor_hint),
+            formula_editor_placeholder: self
+                .formula_editor_placeholder
+                .unwrap_or(defaults.formula_editor_placeholder),
+            formula_editor_preview_empty: self
+                .formula_editor_preview_empty
+                .unwrap_or(defaults.formula_editor_preview_empty),
             latex_category_greek: self
                 .latex_category_greek
                 .unwrap_or(defaults.latex_category_greek),

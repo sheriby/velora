@@ -66,6 +66,11 @@ impl EntityInputHandler for Editor {
                     state.marked_range = None;
                 }
             }
+            OverlayInputKind::FormulaEditor => {
+                if let Some(state) = self.formula_editor.as_mut() {
+                    state.marked_range = None;
+                }
+            }
         }
         if was_marked {
             match kind {
@@ -73,6 +78,7 @@ impl EntityInputHandler for Editor {
                 OverlayInputKind::Replace => {}
                 OverlayInputKind::QuickOpen => self.refresh_quick_open_results(cx),
                 OverlayInputKind::CommandPalette => {}
+                OverlayInputKind::FormulaEditor => {}
             }
             cx.notify();
         }
