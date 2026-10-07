@@ -210,6 +210,9 @@ impl Editor {
                 if let Some(state) = self.formula_editor.as_mut() {
                     state.draft = updated;
                     state.selected_range = selection;
+                    // 打完字选区收起，锚点跟光标走；光标重新常亮（闪烁后半秒）。
+                    state.selection_anchor = state.selected_range.start;
+                    state.caret_epoch = std::time::Instant::now();
                     state.marked_range = marked_range;
                     // 敲字这条路径也得刷 \ 补全：只同步预览的话，第一个反斜杠
                     // 永远不弹，要再敲一个字删掉才弹（用户报修）。

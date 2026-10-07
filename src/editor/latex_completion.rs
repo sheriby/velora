@@ -105,6 +105,15 @@ impl Editor {
         self.latex_completion.is_some()
     }
 
+    /// 当前选中候选的下标；浮层没候选时返回 None，按键要留给别的绑定
+    /// （Enter 落进公式、Tab 落进缩进）。
+    fn latex_completion_selected(&self) -> Option<usize> {
+        self.latex_completion
+            .as_ref()
+            .filter(|state| !state.results.is_empty())
+            .map(|state| state.selected)
+    }
+
     /// 补全列表按键处理（intercept_keystrokes 钩子调用，先于 keymap 绑定，
     /// 否则 ↑/↓/Enter 会被焦点块的光标移动与换行绑定消费）。返回是否消费。
     pub(crate) fn latex_completion_key_down(
@@ -138,16 +147,20 @@ impl Editor {
                 true
             }
             "enter" => {
-                let (selected, has_results) = self
-                    .latex_completion
-                    .as_ref()
-                    .map(|state| (state.selected, !state.results.is_empty()))
-                    .unwrap_or((0, false));
-                if !has_results {
+                let Some(selected) = self.latex_completion_selected() else {
                     // 没有候选就不抢换行键：关掉浮层，让回车落进公式里。
                     self.close_latex_completion(cx);
                     return false;
-                }
+                };
+                cx.stop_propagation();
+                self.confirm_latex_completion(selected, cx);
+                true
+            }
+            // Tab 与 Enter 同口径确认；没候选时不抢，留给缩进绑定。
+            "tab" => {
+                let Some(selected) = self.latex_completion_selected() else {
+                    return false;
+                };
                 cx.stop_propagation();
                 self.confirm_latex_completion(selected, cx);
                 true

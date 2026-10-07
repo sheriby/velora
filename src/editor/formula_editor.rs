@@ -10,7 +10,9 @@
 
 use std::ops::Range;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use crate::components::latex::{
@@ -41,6 +43,11 @@ const TITLE_HEIGHT: f32 = 26.0;
 const INPUT_BORDER: f32 = 1.0;
 const INPUT_PADDING_X: f32 = 10.0;
 const INPUT_PADDING_Y: f32 = 8.0;
+/// 文本起点相对输入框外缘的左内缩（描边 + 内边距）：光标、选区色块、鼠标
+/// 命中三处都要用同一个值。
+pub(crate) const INPUT_CONTENT_INSET_X: f32 = INPUT_BORDER + INPUT_PADDING_X;
+/// 草稿字号，与 `INPUT_LINE_HEIGHT` 一起决定行框；测试按它量字宽。
+pub(crate) const INPUT_FONT_SIZE: f32 = 13.0;
 /// 草稿输入区在面板内的纵向起点（标题 + 预览 + 两道间距）。
 const INPUT_TOP: f32 = PANEL_PADDING + TITLE_HEIGHT + PANEL_GAP + PREVIEW_HEIGHT + PANEL_GAP;
 /// 补全浮层：贴着光标的小列表，不铺满面板宽。
@@ -163,6 +170,20 @@ pub(crate) struct FormulaEditorState {
     pub(crate) draft: String,
     pub(crate) selected_range: Range<usize>,
     pub(crate) marked_range: Option<Range<usize>>,
+    /// 选区锚点：拖动与 shift 扩展时固定这一端，另一端跟着指针/光标走。
+    pub(crate) selection_anchor: usize,
+    /// 左键在输入区按下到抬手之间为真：只有这期间 mouse_move 才改选区。
+    pub(crate) selecting_with_mouse: bool,
+    /// 光标闪烁计时起点：每次移动光标都重置，前半秒常亮。
+    pub(crate) caret_epoch: Instant,
+    /// 闪烁的当前相位。任务只在相位真的翻转时才 notify，避免弹窗开着时
+    /// 按 33ms 重排整篇文档。
+    pub(crate) caret_visible: bool,
+    /// 闪烁重绘任务。挂在 state 上，弹窗关闭（state 被 take 走）时随 Task
+    /// drop 一起取消。
+    pub(crate) caret_blink_task: Option<Task<()>>,
+    /// 输入区滚动句柄：鼠标点换算成草稿偏移要用它的原点与滚动偏移。
+    pub(crate) input_scroll: ScrollHandle,
     pub(crate) focus: Option<FocusHandle>,
     pub(crate) category: LatexCategory,
     /// 草稿的实时预览：ratex 渲染好的缓存 SVG。渲染失败时为 Err（界面上
@@ -171,6 +192,94 @@ pub(crate) struct FormulaEditorState {
     pub(crate) preview_error: Option<String>,
     /// 草稿里打 `\` 弹出的命令补全：锚在反斜杠上，随编辑刷新。
     pub(crate) completion: Option<FormulaDraftCompletion>,
+}
+
+/// 光标是否可见：移动后前半秒常亮，之后每半秒开关一次。
+/// 不做块编辑器那种逐帧余弦淡入淡出——弹窗开着时一次 notify 重排的是整篇
+/// 文档，按 33ms 刷不划算，两态闪烁每秒只重绘两次。
+fn draft_caret_visible(epoch: Instant) -> bool {
+    let elapsed = epoch.elapsed().as_secs_f32();
+    elapsed < 0.5 || (elapsed * 2.0) as u32 % 2 == 0
+}
+
+/// 草稿第 `index` 行的字节区间（不含换行符）；越界给末尾的空区间。
+fn draft_line_range(draft: &str, index: usize) -> (usize, usize) {
+    let mut start = 0usize;
+    for _ in 0..index {
+        match draft[start..].find('\n') {
+            Some(offset) => start += offset + 1,
+            None => return (draft.len(), draft.len()),
+        }
+    }
+    let end = draft[start..]
+        .find('\n')
+        .map(|offset| start + offset)
+        .unwrap_or(draft.len());
+    (start, end)
+}
+
+/// 把偏移夹到字符边界（鼠标点的是一串字节，落在多字节字符中间不能直接用）。
+fn draft_clamp_boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+/// 双选取词：偏移所在的那段连续字母/数字（落在非词字符上就是不选）。
+fn draft_word_range(draft: &str, offset: usize) -> Range<usize> {
+    let offset = draft_clamp_boundary(draft, offset);
+    let bytes = draft.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric();
+    let mut start = offset;
+    while start > 0 && is_word(bytes[start - 1]) {
+        start -= 1;
+    }
+    let mut end = offset;
+    while end < bytes.len() && is_word(bytes[end]) {
+        end += 1;
+    }
+    start..end
+}
+
+/// 选区夹到草稿内的字符边界上；空选区返回 None（复制/剪切没内容可给）。
+fn draft_selected_range(draft: &str, range: Range<usize>) -> Option<Range<usize>> {
+    let start = draft_clamp_boundary(draft, range.start);
+    let end = draft_clamp_boundary(draft, range.end).max(start);
+    (start < end).then_some(start..end)
+}
+
+/// 选区里的文本；空选区没有内容。
+fn draft_selected_text(draft: &str, range: Range<usize>) -> Option<String> {
+    draft_selected_range(draft, range).map(|range| draft[range].to_string())
+}
+
+/// 一段草稿前缀的像素宽：光标与选区色块的横向落点都从这里量。
+fn draft_prefix_width(
+    window: &Window,
+    prefix: &str,
+    font: Font,
+    font_size: Pixels,
+    color: Hsla,
+) -> Pixels {
+    window
+        .text_system()
+        .shape_line(
+            SharedString::from(prefix.to_string()),
+            font_size,
+            &[TextRun {
+                len: prefix.len(),
+                font,
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+                font_size: None,
+            }],
+            None,
+        )
+        .width
 }
 
 /// 草稿输入区的 `\` 命令补全会话（弹窗内的，与块编辑的 latex_completion
@@ -226,6 +335,12 @@ impl Editor {
             target,
             selected_range: draft.len()..draft.len(),
             marked_range: None,
+            selection_anchor: draft.len(),
+            selecting_with_mouse: false,
+            caret_epoch: Instant::now(),
+            caret_visible: true,
+            caret_blink_task: None,
+            input_scroll: ScrollHandle::new(),
             focus: Some(focus),
             category: LatexCategory::Structures,
             draft,
@@ -321,6 +436,9 @@ impl Editor {
             .unwrap_or(inserted_end..inserted_end);
         state.draft = updated;
         state.selected_range = selection;
+        // 编辑后选区收起：锚点跟着光标走，下一次 shift 扩展从这里长出去。
+        state.selection_anchor = state.selected_range.start;
+        state.caret_epoch = Instant::now();
         state.marked_range = (marked && !new_text.is_empty()).then_some(start..inserted_end);
         Self::refresh_formula_draft_completion(state);
         Self::sync_formula_preview(state, cx);
@@ -440,6 +558,8 @@ impl Editor {
             && !modifiers.platform
             && !modifiers.function
             && !modifiers.shift;
+        // 平台主修饰键：macOS 是 ⌘，其余是 Ctrl（与搜索框那套自管快捷键同口径）。
+        let secondary = modifiers.platform || modifiers.control;
         match key {
             "escape" => {
                 cx.stop_propagation();
@@ -513,24 +633,223 @@ impl Editor {
             }
             "left" | "right" => {
                 if let Some(state) = self.formula_editor.as_mut() {
-                    let len = state.draft.len();
-                    let caret = state.selected_range.start.min(len);
+                    let move_left = key == "left";
                     // 补全开着时左右先收掉（或者移动选择——收掉更直观）。
                     state.completion = None;
-                    let offset = if key == "left" {
-                        draft_prev_boundary(&state.draft, caret)
+                    let draft_len = state.draft.len();
+                    let anchor = state.selection_anchor.min(draft_len);
+                    let range = state.selected_range.clone();
+                    let has_selection = range.start != range.end;
+                    // 活动端 = 不是锚点的那一端（收起时光标两端相同）。
+                    let active = if !has_selection {
+                        anchor
+                    } else if anchor == range.start {
+                        range.end
                     } else {
-                        draft_next_boundary(&state.draft, caret)
+                        range.start
                     };
-                    state.selected_range = offset..offset;
+                    let moved = if move_left {
+                        draft_prev_boundary(&state.draft, active)
+                    } else {
+                        draft_next_boundary(&state.draft, active)
+                    };
+                    if modifiers.shift {
+                        // shift 扩展：锚点不动，选区拉到移动后的那一端。
+                        state.selected_range = anchor.min(moved)..anchor.max(moved);
+                    } else if has_selection {
+                        // 有选区时方向键先收起：左落到选区头、右落到选区尾。
+                        let caret = if move_left { range.start } else { range.end };
+                        state.selected_range = caret..caret;
+                        state.selection_anchor = caret;
+                    } else {
+                        state.selected_range = moved..moved;
+                        state.selection_anchor = moved;
+                    }
                     state.marked_range = None;
+                    state.caret_epoch = Instant::now();
                     cx.notify();
                 }
                 cx.stop_propagation();
             }
+            // 全选 / 复制 / 剪切 / 粘贴：草稿没有 key context，块编辑器那套
+            // BlockEditor 绑定的动作到不了这里，只能在元素级按键里自管
+            // （与搜索框 render_search.rs 同口径）。
+            "a" if secondary && !modifiers.shift => {
+                if let Some(state) = self.formula_editor.as_mut() {
+                    let draft_len = state.draft.len();
+                    state.selected_range = 0..draft_len;
+                    state.selection_anchor = 0;
+                    state.completion = None;
+                    state.caret_epoch = Instant::now();
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }
+            "c" if secondary => self.copy_formula_draft_selection(cx),
+            "x" if secondary => self.cut_formula_draft_selection(cx),
+            "v" if secondary => self.paste_formula_draft_clipboard(cx),
             _ => {}
         }
         let _ = plain;
+    }
+
+    /// 复制选区：没有选区就不抢键。
+    fn copy_formula_draft_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .formula_editor
+            .as_ref()
+            .and_then(|state| draft_selected_text(&state.draft, state.selected_range.clone()))
+        else {
+            return;
+        };
+        cx.stop_propagation();
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    /// 剪切：先落剪贴板再删选区（删走统一的编辑路径，预览与补全会跟着刷）。
+    fn cut_formula_draft_selection(&mut self, cx: &mut Context<Self>) {
+        let Some((range, text)) = self
+            .formula_editor
+            .as_ref()
+            .and_then(|state| {
+                draft_selected_range(&state.draft, state.selected_range.clone()).map(|range| {
+                    (range.clone(), state.draft[range].to_string())
+                })
+            })
+        else {
+            return;
+        };
+        cx.stop_propagation();
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.replace_formula_draft(range, "", None, false, cx);
+    }
+
+    /// 粘贴：剪贴板文本替换选区；没有选区就插到光标处。
+    fn paste_formula_draft_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let Some(range) = self.formula_editor.as_ref().map(|state| {
+            let start = draft_clamp_boundary(&state.draft, state.selected_range.start);
+            let end = draft_clamp_boundary(&state.draft, state.selected_range.end).max(start);
+            start..end
+        }) else {
+            return;
+        };
+        cx.stop_propagation();
+        self.replace_formula_draft(range, &text, None, false, cx);
+    }
+
+    /// 输入区里的一个点 → 草稿偏移：先按 y 定行，再在该行的 shaped layout 上
+    /// 找最近的字素边界。滚动句柄给的是可视框原点与滚动偏移（向下滚为负），
+    /// 所以内容原点 = bounds.origin + offset。
+    fn draft_offset_for_point(&self, position: Point<Pixels>, window: &Window, cx: &App) -> usize {
+        let Some(state) = self.formula_editor.as_ref() else {
+            return 0;
+        };
+        let draft = state.draft.clone();
+        let bounds = state.input_scroll.bounds();
+        let scroll = state.input_scroll.offset();
+        let local_x = position.x - bounds.left() - scroll.x - px(INPUT_CONTENT_INSET_X);
+        let local_y = position.y - bounds.top() - scroll.y - px(INPUT_BORDER + INPUT_PADDING_Y);
+        let line_count = draft.split('\n').count().max(1);
+        let line_index = ((f32::from(local_y) / INPUT_LINE_HEIGHT).floor().max(0.0) as usize)
+            .min(line_count - 1);
+        let (line_start, line_end) = draft_line_range(&draft, line_index);
+        let line = &draft[line_start..line_end];
+        if local_x <= px(0.0) {
+            return line_start;
+        }
+        let layout = window.text_system().shape_line(
+            SharedString::from(line.to_string()),
+            px(INPUT_FONT_SIZE),
+            &[TextRun {
+                len: line.len(),
+                font: font(crate::config::EditorSettings::fonts(cx).code_family),
+                color: black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+                font_size: None,
+            }],
+            None,
+        );
+        let index = layout.closest_index_for_x(local_x).min(line.len());
+        draft_clamp_boundary(&draft, line_start + index)
+    }
+
+    /// 输入区按下：焦点交给草稿，光标落到点上的位置（shift 扩展、双击选词），
+    /// 并开始一段拖动选择。补全浮层先收起。
+    pub(crate) fn formula_editor_pointer_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        let position = event.position;
+        let shift = event.modifiers.shift;
+        let double_click = event.click_count >= 2;
+        let offset = self.draft_offset_for_point(position, window, cx);
+        let Some(state) = self.formula_editor.as_mut() else {
+            return;
+        };
+        if let Some(focus) = state.focus.as_ref() {
+            window.focus(focus);
+        }
+        state.completion = None;
+        state.selecting_with_mouse = true;
+        state.marked_range = None;
+        if shift {
+            let anchor = state.selection_anchor.min(state.draft.len());
+            state.selected_range = anchor.min(offset)..anchor.max(offset);
+        } else if double_click {
+            let word = draft_word_range(&state.draft, offset);
+            state.selection_anchor = word.start;
+            state.selected_range = word;
+        } else {
+            state.selection_anchor = offset;
+            state.selected_range = offset..offset;
+        }
+        state.caret_epoch = Instant::now();
+        cx.notify();
+    }
+
+    /// 拖动中：选区从锚点拉到指针处。没在拖动就不理这些指针噪声。
+    pub(crate) fn formula_editor_pointer_move(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .formula_editor
+            .as_ref()
+            .is_some_and(|state| state.selecting_with_mouse)
+        {
+            return;
+        }
+        let offset = self.draft_offset_for_point(position, window, cx);
+        let Some(state) = self.formula_editor.as_mut() else {
+            return;
+        };
+        let anchor = state.selection_anchor.min(state.draft.len());
+        let next = anchor.min(offset)..anchor.max(offset);
+        if next == state.selected_range {
+            return;
+        }
+        state.selected_range = next;
+        state.caret_epoch = Instant::now();
+        cx.notify();
+    }
+
+    pub(crate) fn formula_editor_pointer_up(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = self.formula_editor.as_mut()
+            && state.selecting_with_mouse
+        {
+            state.selecting_with_mouse = false;
+            cx.notify();
+        }
     }
 
     /// 草稿内删除：退格删光标前一个字素，前向删除（Delete 键）删光标后一个。
@@ -565,6 +884,43 @@ impl Editor {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
+        // 闪烁任务跟着焦点走：聚焦草稿时跑，失焦就停（Task drop 即取消）。
+        // 与 Block::render 里 start_cursor_blink 的开关口径一致。
+        let draft_focused = self
+            .formula_editor
+            .as_ref()
+            .and_then(|state| state.focus.as_ref())
+            .is_some_and(|focus| focus.is_focused(window));
+        if let Some(state) = self.formula_editor.as_mut() {
+            if draft_focused && state.caret_blink_task.is_none() {
+                state.caret_blink_task = Some(cx.spawn(
+                    async |this: WeakEntity<Editor>, cx: &mut AsyncApp| loop {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(33))
+                            .await;
+                        let modal_open = this
+                            .update(cx, |editor: &mut Editor, cx| {
+                                let Some(state) = editor.formula_editor.as_mut() else {
+                                    return false;
+                                };
+                                // 只在亮/灭翻转的那一帧重绘，其余 tick 什么都不做。
+                                let visible = draft_caret_visible(state.caret_epoch);
+                                if visible != state.caret_visible {
+                                    state.caret_visible = visible;
+                                    cx.notify();
+                                }
+                                true
+                            })
+                            .unwrap_or(false);
+                        if !modal_open {
+                            break;
+                        }
+                    },
+                ));
+            } else if !draft_focused {
+                state.caret_blink_task = None;
+            }
+        }
         let state = self.formula_editor.as_ref()?;
         let focus = state.focus.clone()?;
         let viewport = window.viewport_size();
@@ -609,12 +965,15 @@ impl Editor {
                 .into_any_element()
         };
 
-        // ===== 草稿输入区（多行 + 光标） =====
+        // ===== 草稿输入区（多行 + 选区 + 光标） =====
         let draft = state.draft.clone();
-        let selection_start = state.selected_range.start.min(draft.len());
+        let selection_start = draft_clamp_boundary(&draft, state.selected_range.start);
+        let selection_end =
+            draft_clamp_boundary(&draft, state.selected_range.end).max(selection_start);
+        let has_selection = selection_start != selection_end;
         let code_family = crate::config::EditorSettings::fonts(cx).code_family;
         let input_font = font(code_family.clone());
-        let input_font_size = px(13.0);
+        let input_font_size = px(INPUT_FONT_SIZE);
         let input_color = c.text_default;
         let line_height = px(INPUT_LINE_HEIGHT);
 
@@ -625,23 +984,8 @@ impl Editor {
             .map(|index| index + 1)
             .unwrap_or(0);
         let caret_prefix = &draft[line_start..selection_start];
-        let caret_x = window
-            .text_system()
-            .shape_line(
-                SharedString::from(caret_prefix.to_string()),
-                input_font_size,
-                &[TextRun {
-                    len: caret_prefix.len(),
-                    font: input_font.clone(),
-                    color: input_color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                    font_size: None,
-                }],
-                None,
-            )
-            .width;
+        let caret_x =
+            draft_prefix_width(window, caret_prefix, input_font.clone(), input_font_size, input_color);
         // 光标条与文本行框同高同位：字在半行距里居中（GPUI 的 paint_line 用
         // (line_height - ascent - descent)/2 定基线），条子贴行框顶就会比字高出一截。
         let caret_div = div()
@@ -652,6 +996,51 @@ impl Editor {
             .w(px(2.0))
             .h(line_height)
             .bg(c.cursor);
+
+        // 选区色块：按行裁一段，排在文字之前画，字才压在色块上面。
+        let selection_bands: Vec<AnyElement> = if !draft_focused || !has_selection {
+            Vec::new()
+        } else {
+            draft
+                .split('\n')
+                .enumerate()
+                .filter_map(|(line_index, _)| {
+                    let (line_begin, line_end) = draft_line_range(&draft, line_index);
+                    let from = selection_start.max(line_begin);
+                    let to = selection_end.min(line_end);
+                    if from >= to {
+                        return None;
+                    }
+                    let x_from = draft_prefix_width(
+                        window,
+                        &draft[line_begin..from],
+                        input_font.clone(),
+                        input_font_size,
+                        input_color,
+                    );
+                    let x_to = draft_prefix_width(
+                        window,
+                        &draft[line_begin..to],
+                        input_font.clone(),
+                        input_font_size,
+                        input_color,
+                    );
+                    Some(
+                        div()
+                            .debug_selector(move || {
+                                format!("formula-editor-selection-{line_index}")
+                            })
+                            .absolute()
+                            .left(px(INPUT_PADDING_X) + x_from)
+                            .top(px(INPUT_PADDING_Y) + line_height * line_index as f32)
+                            .w((x_to - x_from).max(px(1.0)))
+                            .h(line_height)
+                            .bg(c.selection)
+                            .into_any_element(),
+                    )
+                })
+                .collect()
+        };
 
         let draft_lines: Vec<AnyElement> = formula_draft_lines(&draft, c, input_font.clone())
             .into_iter()
@@ -683,15 +1072,38 @@ impl Editor {
             .text_color(input_color)
             .overflow_y_scroll()
             .scrollbar_width(px(0.0))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .track_scroll(&state.input_scroll)
+            .cursor(CursorStyle::IBeam)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|editor, event: &MouseDownEvent, window, cx| {
+                    editor.formula_editor_pointer_down(event, window, cx);
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|editor, _event: &MouseUpEvent, _window, cx| {
+                    editor.formula_editor_pointer_up(cx);
+                }),
+            )
+            .on_mouse_move(cx.listener(
+                |editor, event: &MouseMoveEvent, window, cx| {
+                    editor.formula_editor_pointer_move(event.position, window, cx);
+                },
+            ))
             .child(
                 div()
                     .px(px(INPUT_PADDING_X))
                     .py(px(INPUT_PADDING_Y))
                     .relative()
                     .w_full()
+                    .children(selection_bands)
                     .children(draft_lines)
-                    .child(caret_div),
+                    // 光标只在草稿聚焦、无选区、且处在闪烁的「亮」相位时画。
+                    .when(
+                        draft_focused && !has_selection && draft_caret_visible(state.caret_epoch),
+                        |this| this.child(caret_div),
+                    ),
             )
             .child(
                 canvas(|_, _, _| (), {

@@ -86,6 +86,41 @@ async fn latex_completion_confirms_template_in_math_block(cx: &mut TestAppContex
     });
 }
 
+/// 数学块里补全开着时 Tab 该确认补全，而不是插一个制表符（Tab 平时是缩进
+/// 绑定；补全的按键走 intercept_keystrokes，先于绑定解析，能抢下来）。
+#[gpui::test]
+async fn latex_completion_tab_confirms_in_math_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\\al\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    let cursor = math.read_with(cx, |block, _cx| {
+        block.display_text().find("\\al").expect("\\al 在块里") + "\\al".len()
+    });
+    math.update(cx, |block, block_cx| block.move_to(cursor, block_cx));
+    editor.update(cx, |editor, cx| {
+        editor.update_latex_completion_for_block(&math, cx);
+    });
+
+    let consumed = editor.update(cx, |editor, cx| {
+        let tab = gpui::Keystroke::parse("tab").expect("tab keystroke");
+        editor.latex_completion_key_down(&tab, cx)
+    });
+    assert!(consumed, "补全开着时 Tab 该被补全消费掉");
+    editor.read_with(cx, |editor, cx| {
+        assert!(!editor.latex_completion_is_open(), "确认后浮层该收起");
+        assert_eq!(
+            math.read(cx).display_text(),
+            "$$\n\\alpha \n$$",
+            "Tab 该插入模板而不是制表符"
+        );
+    });
+}
+
 /// 普通段落里的反斜杠不弹补全；进了行内 `$...$` 才弹。
 #[gpui::test]
 async fn latex_completion_only_opens_in_math_context(cx: &mut TestAppContext) {
@@ -508,6 +543,288 @@ async fn formula_editor_completion_follows_the_caret(cx: &mut TestAppContext) {
     );
 }
 
+/// 焦点不在草稿上时，光标条不该还挂在屏上（以前无条件画，窗口失焦后尤其
+/// 显眼）；聚焦时闪烁任务在跑，失焦就停。
+#[gpui::test]
+async fn formula_editor_caret_only_while_draft_is_focused(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "$$\nF = ma\n$$\n".into(), None)
+    });
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    assert!(
+        cx.debug_bounds("formula-editor-caret").is_some(),
+        "聚焦草稿时光标条该上屏"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert!(
+            state.caret_blink_task.is_some(),
+            "聚焦时光标闪烁任务该在跑"
+        );
+    });
+
+    // 窗口失焦（截图里的状态：红绿灯是灰的，光标却还亮着）。
+    editor.update_in(cx, |_editor, window, _cx| window.blur());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("formula-editor-caret").is_none(),
+        "失焦后光标条不该还画着"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert!(
+            state.caret_blink_task.is_none(),
+            "失焦后闪烁任务该停掉（Task drop 即取消）"
+        );
+    });
+}
+
+/// 草稿输入区要能用鼠标点光标、拖出选区（以前按下只吞事件，光标永远停在
+/// 末尾，也没有任何选区渲染）。
+#[gpui::test]
+async fn formula_editor_mouse_click_and_drag_select(cx: &mut TestAppContext) {
+    use crate::editor::formula_editor::{INPUT_CONTENT_INSET_X, INPUT_FONT_SIZE};
+
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    let draft = "F = ma \\frac{a}{b}";
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, draft, None, false, cx);
+    });
+    redraw(cx);
+
+    // 「F = ma」这 6 个字节的宽度用同一套字体量出来，点击点落在它右边一点。
+    let prefix_width = editor.update_in(cx, |_editor, window, _cx| {
+        let fonts = crate::config::EditorSettings::fonts(_cx).code_family;
+        let run = gpui::TextRun {
+            len: 6,
+            font: gpui::font(fonts.clone()),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            font_size: None,
+        };
+        window
+            .text_system()
+            .shape_line("F = ma".into(), gpui::px(INPUT_FONT_SIZE), &[run], None)
+            .width
+    });
+    let input = cx
+        .debug_bounds("formula-editor-input")
+        .expect("草稿输入区该上屏");
+    let click = gpui::point(
+        input.left() + gpui::px(INPUT_CONTENT_INSET_X) + prefix_width + gpui::px(1.0),
+        input.top() + gpui::px(12.0),
+    );
+    cx.simulate_mouse_down(click, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(click, gpui::MouseButton::Left, gpui::Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(
+            state.selected_range,
+            6..6,
+            "点在「F = ma」之后该把光标放在偏移 6"
+        );
+        assert!(
+            !state.selecting_with_mouse,
+            "抬手之后拖动状态该结束"
+        );
+    });
+
+    // 从 6 拖到行尾之后：选区 6..草稿长度，并且真的画出选区色块。
+    let tail_end = gpui::point(input.right() - gpui::px(2.0), input.top() + gpui::px(12.0));
+    cx.simulate_mouse_down(click, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(tail_end, gpui::MouseButton::Left, gpui::Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(
+            state.selected_range,
+            6..draft.len(),
+            "拖动该把选区从锚点拉到指针处"
+        );
+    });
+    assert!(
+        cx.debug_bounds("formula-editor-selection-0").is_some(),
+        "有选区时该渲染选区色块"
+    );
+    cx.simulate_mouse_up(tail_end, gpui::MouseButton::Left, gpui::Modifiers::none());
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert!(!state.selecting_with_mouse, "抬手后不再跟随指针");
+        assert_eq!(state.selected_range, 6..draft.len(), "抬手不该改变选区");
+    });
+
+    // 选区里的退格删掉整段（删除路径本来就吃选区，这里是守住新选区接得上）。
+    editor.update_in(cx, |editor, window, cx| {
+        let backspace = gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse("backspace").expect("backspace"),
+            is_held: false,
+        };
+        editor.formula_editor_key_down(&backspace, window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "F = ma", "退格该删掉整段选区");
+    });
+}
+
+/// 双击选词：落在「frac」这串字母里，选中的就是这 4 个字母。
+#[gpui::test]
+async fn formula_editor_double_click_selects_word(cx: &mut TestAppContext) {
+    use crate::editor::formula_editor::{INPUT_CONTENT_INSET_X, INPUT_FONT_SIZE};
+
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, "F = ma \\frac{a}{b}", None, false, cx);
+    });
+    redraw(cx);
+
+    let input = cx
+        .debug_bounds("formula-editor-input")
+        .expect("草稿输入区该上屏");
+    let word_x = editor.update_in(cx, |_editor, window, _cx| {
+        let fonts = crate::config::EditorSettings::fonts(_cx).code_family;
+        let run = gpui::TextRun {
+            len: 9,
+            font: gpui::font(fonts.clone()),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            font_size: None,
+        };
+        window
+            .text_system()
+            .shape_line("F = ma \\f".into(), gpui::px(INPUT_FONT_SIZE), &[run], None)
+            .width
+    });
+    let word_point = gpui::point(
+        input.left() + gpui::px(INPUT_CONTENT_INSET_X) + word_x,
+        input.top() + gpui::px(12.0),
+    );
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: word_point,
+        button: gpui::MouseButton::Left,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+    cx.simulate_mouse_up(word_point, gpui::MouseButton::Left, gpui::Modifiers::none());
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(
+            &state.draft[state.selected_range.clone()],
+            "frac",
+            "双击该选中指针所在的那个词"
+        );
+    });
+}
+
+/// 草稿要能全选 / 复制 / 剪切 / 粘贴（以前只有光标，剪贴板四个键全没接）。
+#[gpui::test]
+async fn formula_editor_draft_select_all_copy_cut_paste(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, "E = mc^2", None, false, cx);
+    });
+
+    let press = |editor: &gpui::Entity<Editor>, cx: &mut gpui::VisualTestContext, keys: &str| {
+        editor.update_in(cx, |editor, window, cx| {
+            let keystroke = gpui::Keystroke::parse(keys).expect(keys);
+            let event = gpui::KeyDownEvent {
+                keystroke,
+                is_held: false,
+            };
+            editor.formula_editor_key_down(&event, window, cx);
+        });
+    };
+
+    press(&editor, cx, "cmd-a");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.selected_range, 0.."E = mc^2".len(), "⌘A 该全选草稿");
+    });
+
+    press(&editor, cx, "cmd-c");
+    let clipboard = cx.update(|_window, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(
+        clipboard.as_deref(),
+        Some("E = mc^2"),
+        "⌘C 该把选区写进剪贴板"
+    );
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "E = mc^2", "复制不该改动草稿");
+    });
+
+    press(&editor, cx, "cmd-x");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "", "⌘X 该删掉选区");
+    });
+    let clipboard = cx.update(|_window, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(clipboard.as_deref(), Some("E = mc^2"), "剪切后剪贴板该留着内容");
+
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("\\frac{a}{b}".into()))
+    });
+    press(&editor, cx, "cmd-v");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "\\frac{a}{b}", "⌘V 该把剪贴板插进光标处");
+        let len = state.draft.len();
+        assert_eq!(state.selected_range, len..len, "粘贴后光标该落在插入文本之后");
+        assert!(state.completion.is_none(), "光标停在闭合括号之后不该弹补全");
+    });
+
+    // 粘贴以 `\命令` 前缀收尾的内容：补全会话该跟着起来（与敲字同口径）。
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(" \\fr".into()))
+    });
+    press(&editor, cx, "cmd-v");
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        assert_eq!(state.draft, "\\frac{a}{b} \\fr");
+        let completion = state
+            .completion
+            .as_ref()
+            .expect("粘贴进来的 \\fr 也该弹补全");
+        assert!(completion.results.iter().any(|entry| entry.name == "frac"));
+    });
+}
 /// 现象：聚焦数学块的 ƒx 入口浮在卡片右上角外面（贴着块外壳的边）。
 /// 断言：入口落在公式卡片内、与首行 `$$` 同一水平带。
 #[gpui::test]
