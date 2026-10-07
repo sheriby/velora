@@ -99,6 +99,13 @@ impl Block {
             // 拿不到跨 512 行接缝的围栏状态，捕获名也与主题色映射对不上
             // （用户报修：源码模式没有高亮）——改走手写扫描器，接缝状态由
             // 编辑器逐块串联。
+            // 数学块聚焦编辑走 build_code_text_runs（代码 run 管线），着色
+            // 数据由 LaTeX 扫描器产出：\命令关键字色、数字、括号标点、$$ 定
+            // 界符灰——公式编辑不再是一坨黑字（用户报修）。
+            BlockKind::MathBlock => Some(CodeHighlightResult {
+                language: CodeLanguageKey::PlainText,
+                spans: highlight_latex_source(self.render_cache.visible_text()),
+            }),
             _ => self.source_language.as_deref().and_then(|language| {
                 if &**language == "markdown" {
                     let highlight = highlight_markdown_source(

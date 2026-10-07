@@ -115,12 +115,15 @@ impl Element for BlockTextElement {
             // 代码块与带高亮语言的源码分块（markdown 源码）走高亮管线；
             // 其余按 markdown 行内样式上色。
             if input.kind().is_code_block() || input.code_highlight_result().is_some() {
+                let code_family =
+                    crate::config::EditorSettings::scaled_fonts(cx).code_family;
                 build_code_text_runs(
                     input,
                     &display_text,
                     &run,
                     px(theme.dimensions.underline_thickness),
                     &theme.colors,
+                    &code_family,
                 )
             } else {
                 let fonts = crate::config::EditorSettings::scaled_fonts(cx);

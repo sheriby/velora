@@ -22,7 +22,9 @@ use super::{
     UndoCaptureKind,
 };
 use super::{CodeHighlightResult, CodeLanguageKey, highlight_code_block};
-use crate::components::markdown::source_highlight::{MarkdownSourceState, highlight_markdown_source};
+use crate::components::markdown::source_highlight::{
+    MarkdownSourceState, highlight_latex_source, highlight_markdown_source,
+};
 use super::{
     ImageReferenceDefinitions, ImageResolvedSource, ImageSyntax, LinkReferenceDefinitions,
     parse_standalone_image, resolve_image_source, standalone_image_width_percent,

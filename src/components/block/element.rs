@@ -177,9 +177,6 @@ pub(crate) fn build_text_runs(
     highlight_bg: Hsla,
 ) -> Vec<TextRun> {
     let spans = input.inline_spans();
-    // 数学块聚焦编辑的是 LaTeX 源码：整块换等宽字体（用户报修），行内样式
-    // 里的代码段之外也生效。
-    let force_code_font = input.kind() == BlockKind::MathBlock;
     let mut boundaries = vec![0, display_text.len()];
     for span in spans {
         boundaries.push(span.range.start);
@@ -220,11 +217,9 @@ pub(crate) fn build_text_runs(
             .unwrap_or(false);
 
         let mut font = base_run.font.clone();
-        if inline_style.code || force_code_font {
+        if inline_style.code {
             font.family = SharedString::from(code_font_family.to_string());
-            // 字重微调只属于行内代码段；数学块整块换字体但不加字重。
-            if inline_style.code && show_inline_code_backgrounds && font.weight < FontWeight::MEDIUM
-            {
+            if show_inline_code_backgrounds && font.weight < FontWeight::MEDIUM {
                 font.weight = FontWeight::MEDIUM;
             }
         }
@@ -308,11 +303,15 @@ fn build_code_text_runs(
     base_run: &TextRun,
     underline_thickness: Pixels,
     colors: &ThemeColors,
+    code_font_family: &str,
 ) -> Vec<TextRun> {
     let highlight_spans = input
         .code_highlight_result()
         .map(|r| r.spans.as_slice())
         .unwrap_or(&[]);
+    // 数学块聚焦编辑的是 LaTeX 源码：整块等宽（用户报修）。代码块与源码
+    // 分块的 base run 已由调用方换成代码字体，只有数学块还需要这里补。
+    let force_code_font = input.kind() == BlockKind::MathBlock;
     let mut boundaries = vec![0, display_text.len()];
     for span in highlight_spans {
         boundaries.push(span.range.start);
@@ -349,6 +348,9 @@ fn build_code_text_runs(
             .unwrap_or(base_run.color);
 
         let mut font = base_run.font.clone();
+        if force_code_font {
+            font.family = SharedString::from(code_font_family.to_string());
+        }
         let mut highlighted_strikethrough = false;
         let mut highlighted_underline = false;
         if let Some(span) = active_highlight {

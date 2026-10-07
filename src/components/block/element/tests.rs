@@ -2,7 +2,10 @@
         link_at_position, source_line_number_gutter_width, source_line_number_tops,
         source_text_bounds, wrapped_line_height,
     };
-    use crate::components::{Block, BlockKind, BlockRecord, InlineTextTree, TableCellPosition};
+    use crate::components::{
+        Block, BlockKind, BlockRecord, CodeHighlightClass, InlineTextTree, TableCellPosition,
+        code_highlight_color,
+    };
     use gpui::{
         AppContext, Bounds, Hsla, Modifiers, MouseButton, MouseDownEvent, SharedString,
         TestAppContext, TextAlign, TextRun, VisualTestContext, font, point, px, rgba, size,
@@ -631,7 +634,7 @@
     #[gpui::test]
     async fn math_block_edits_run_in_the_code_font(cx: &mut TestAppContext) {
         // 用户报修：数学块聚焦编辑的是 LaTeX 源码，等宽才对得清命令与下标；
-        // 普通段落不受影响。
+        // 普通段落不受影响。数学块走 build_code_text_runs（它有高亮结果）。
         let cx = cx.add_empty_window();
         let math_block = cx.new(|cx| {
             Block::with_record(
@@ -662,19 +665,19 @@
                 strikethrough: None,
                 font_size: None,
             };
+            // 数学块应有高亮结果（sync_code_highlight 产出），从而走代码 run 管线。
+            assert!(math_block.read(app).code_highlight_result().is_some());
+            let theme = crate::theme::Theme::default_theme();
+
             let math_text: SharedString = math_block.read(app).display_text().to_string().into();
             let math_runs = math_block.read_with(app, |block, _| {
-                super::build_text_runs(
+                super::build_code_text_runs(
                     block,
                     &math_text,
                     &make_base_run(math_text.len()),
                     px(1.0),
-                    Hsla::from(rgba(0x0066ccff)),
-                    Hsla::from(rgba(0x111111ff)),
-                    false,
+                    &theme.colors,
                     "Menlo",
-                    px(13.0),
-                    Hsla::from(rgba(0xfff4ce99)),
                 )
             });
             assert!(
@@ -682,7 +685,18 @@
                     .iter()
                     .all(|run| run.font.family.as_ref() == "Menlo"),
                 "数学块的编辑 run 应全部等宽: {:?}",
-                math_runs.iter().map(|run| run.font.family.as_ref().to_owned()).collect::<Vec<_>>()
+                math_runs
+                    .iter()
+                    .map(|run| run.font.family.as_ref().to_owned())
+                    .collect::<Vec<_>>()
+            );
+            // LaTeX 命令应有关键字色。
+            assert!(
+                math_runs
+                    .iter()
+                    .any(|run| run.color == code_highlight_color(&theme.colors, CodeHighlightClass::Keyword)),
+                "\\frac 应着关键字色: {:?}",
+                math_runs
             );
 
             let body_text: SharedString =
@@ -706,7 +720,10 @@
                     .iter()
                     .all(|run| run.font.family.as_ref() != "Menlo"),
                 "普通段落不该被换成等宽: {:?}",
-                body_runs.iter().map(|run| run.font.family.as_ref().to_owned()).collect::<Vec<_>>()
+                body_runs
+                    .iter()
+                    .map(|run| run.font.family.as_ref().to_owned())
+                    .collect::<Vec<_>>()
             );
         });
     }

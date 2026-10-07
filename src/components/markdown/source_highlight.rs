@@ -810,6 +810,83 @@ fn autolink_end(line: &str, open: usize) -> Option<usize> {
     (is_uri || is_email).then_some(close + 1)
 }
 
+/// 数学块编辑态的 LaTeX 源码着色（公式块聚焦时整个文本走
+/// `build_code_text_runs`，着色数据从这里来）。
+///
+/// 逐字符线性扫描：`$$` 定界符结构灰、`\命令` 用关键字色、数字用数字色、
+/// 花括号/方括号标点、`^ _ &` 运算符、`%` 到行尾注释；字母与汉字保持
+/// 正文色不出 span——公式主体本来就以默认色最可读。
+pub(crate) fn highlight_latex_source(text: &str) -> Vec<CodeHighlightSpan> {
+    let bytes = text.as_bytes();
+    let mut spans = Vec::new();
+    let mut push = |start: usize, end: usize, class: CodeHighlightClass| {
+        if start < end {
+            spans.push(CodeHighlightSpan {
+                range: start..end,
+                class,
+            });
+        }
+    };
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                if i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphabetic() {
+                    let mut end = i + 1;
+                    while end < bytes.len() && bytes[end].is_ascii_alphabetic() {
+                        end += 1;
+                    }
+                    push(i, end, CodeHighlightClass::Keyword);
+                    i = end;
+                } else if i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                    // `\\` 换行命令。
+                    push(i, i + 2, CodeHighlightClass::Punctuation);
+                    i += 2;
+                } else {
+                    push(i, i + 1, CodeHighlightClass::Punctuation);
+                    i += 1;
+                }
+            }
+            b'0'..=b'9' => {
+                let mut end = i + 1;
+                while end < bytes.len() && bytes[end].is_ascii_digit() {
+                    end += 1;
+                }
+                // 小数：数字后跟 `.` 再跟数字一并收进。
+                if end + 1 < bytes.len() && bytes[end] == b'.' && bytes[end + 1].is_ascii_digit() {
+                    end += 2;
+                    while end < bytes.len() && bytes[end].is_ascii_digit() {
+                        end += 1;
+                    }
+                }
+                push(i, end, CodeHighlightClass::Number);
+                i = end;
+            }
+            b'{' | b'}' | b'[' | b']' => {
+                push(i, i + 1, CodeHighlightClass::Punctuation);
+                i += 1;
+            }
+            b'^' | b'_' | b'&' => {
+                push(i, i + 1, CodeHighlightClass::Operator);
+                i += 1;
+            }
+            b'$' if text[i..].starts_with("$$") => {
+                push(i, i + 2, CodeHighlightClass::MarkdownMarker);
+                i += 2;
+            }
+            b'%' => {
+                let end = text[i..].find('\n').map(|offset| i + offset).unwrap_or(text.len());
+                push(i, end, CodeHighlightClass::Comment);
+                i = end;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    spans
+}
+
 fn language_key_name(key: CodeLanguageKey) -> &'static str {
     match key {
         CodeLanguageKey::Rust => "rust",
@@ -1411,6 +1488,48 @@ mod tests {
         let (spans, state) = highlight_with(text, false, None);
         assert!(state.is_none(), "信息串含反引号不该开栏");
         assert!(spans.is_empty(), "不该有围栏记号: {spans:?}");
+    }
+
+    #[test]
+    fn latex_source_colors_commands_numbers_and_fences() {
+        let text = "$$\nF = \\int_{0}^{1} ma\\\\\n$$";
+        let spans: Vec<(Range<usize>, CodeHighlightClass)> = highlight_latex_source(text)
+            .into_iter()
+            .map(|span| (span.range, span.class))
+            .collect();
+        let class_of = |needle: &str| {
+            let start = text.find(needle).expect("needle");
+            spans
+                .iter()
+                .find(|(range, _)| range.start <= start && start < range.end)
+                .map(|(_, class)| *class)
+        };
+        assert_eq!(class_of("$"), Some(CodeHighlightClass::MarkdownMarker));
+        assert_eq!(class_of("\\int"), Some(CodeHighlightClass::Keyword));
+        assert_eq!(class_of("0"), Some(CodeHighlightClass::Number));
+        assert_eq!(class_of("}"), Some(CodeHighlightClass::Punctuation));
+        assert_eq!(class_of("^"), Some(CodeHighlightClass::Operator));
+        // `\\` 换行命令是标点；正文 ma 不着色。
+        assert_eq!(class_of("\\\\"), Some(CodeHighlightClass::Punctuation));
+        assert!(spans.iter().all(|(range, _)| &text[range.clone()] != "ma"));
+        // 区间升序不重叠。
+        for pair in spans.windows(2) {
+            assert!(pair[0].0.end <= pair[1].0.start, "{pair:?}");
+        }
+    }
+
+    #[test]
+    fn latex_source_comments_run_to_end_of_line_and_multibyte_is_safe() {
+        let text = "x^2 % 注释 αβ\n\\frac{1}{2}";
+        let spans = highlight_latex_source(text);
+        assert!(
+            spans.iter().any(|span| span.class == CodeHighlightClass::Comment
+                && text[span.range.clone()].contains("αβ")),
+            "注释应吃到行尾且多字节安全"
+        );
+        for span in &spans {
+            assert!(text.is_char_boundary(span.range.start) && text.is_char_boundary(span.range.end));
+        }
     }
 
     #[test]
