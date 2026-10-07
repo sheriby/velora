@@ -228,6 +228,13 @@ pub(crate) struct FormulaEditorState {
     /// 闪烁的当前相位。任务只在相位真的翻转时才 notify，避免弹窗开着时
     /// 按 33ms 重排整篇文档。
     pub(crate) caret_visible: bool,
+    /// 上下键要保住的落点（x 列 + y 行）。横向移动、编辑、点击清掉它，纵向
+    /// 移动时用它当基准——换行边界那个偏移在 gpui 的两套换算里分属相邻两行，
+    /// 只按当前位置算会在行界上原地打转。
+    pub(crate) caret_preferred: Option<Point<Pixels>>,
+    /// 上一次「把光标滚进可见区」时的 caret_epoch。光标每动一次才允许自动滚
+    /// 一次，否则会把用户手动的滚动一直抢回去。
+    pub(crate) last_autoscroll_epoch: Option<Instant>,
     /// 闪烁重绘任务。挂在 state 上，弹窗关闭（state 被 take 走）时随 Task
     /// drop 一起取消。
     pub(crate) caret_blink_task: Option<Task<()>>,
@@ -323,6 +330,20 @@ fn draft_line_ranges(draft: &str) -> Vec<Range<usize>> {
     }
 }
 
+/// 当前活动端：有选区时是「不是锚点的那一端」，收起时就是光标。
+fn draft_active_end(state: &FormulaEditorState) -> usize {
+    let start = state.selected_range.start;
+    let end = state.selected_range.end;
+    if start == end {
+        return end;
+    }
+    if state.selection_anchor == start {
+        end
+    } else {
+        start
+    }
+}
+
 /// 把偏移夹进草稿并落到字符边界上，再定位它所在的硬行。
 fn draft_clamp_offset(draft: &str, offset: usize) -> usize {
     draft_clamp_boundary(draft, offset.min(draft.len()))
@@ -340,6 +361,8 @@ fn draft_point_for_offset(
             continue;
         }
         let index = offset.saturating_sub(layout.range.start).min(layout.range.len());
+        // 换行边界那个偏移按 gpui 的口径算给上一行行尾：End 之后光标停在行尾
+        // 才是直觉里的位置。上下键不依赖这里的 y，用的是 `caret_preferred`。
         let position = layout
             .wrapped
             .position_for_index(index, line_height)
@@ -435,6 +458,8 @@ impl Editor {
             selecting_with_mouse: false,
             caret_epoch: Instant::now(),
             caret_visible: true,
+            caret_preferred: None,
+            last_autoscroll_epoch: None,
             caret_blink_task: None,
             input_scroll: ScrollHandle::new(),
             focus: Some(focus),
@@ -535,6 +560,8 @@ impl Editor {
         // 编辑后选区收起：锚点跟着光标走，下一次 shift 扩展从这里长出去。
         state.selection_anchor = state.selected_range.start;
         state.caret_epoch = Instant::now();
+        // 文本变了，之前记住的列不再有意义。
+        state.caret_preferred = None;
         state.marked_range = (marked && !new_text.is_empty()).then_some(start..inserted_end);
         Self::refresh_formula_draft_completion(state);
         Self::sync_formula_preview(state, cx);
@@ -705,19 +732,51 @@ impl Editor {
             }
             "up" | "down" => {
                 let delta = if key == "up" { -1i32 } else { 1 };
-                if let Some(state) = self.formula_editor.as_mut() {
-                    if let Some(completion) = state.completion.as_mut()
-                        && !completion.results.is_empty()
+                let completion_open = self
+                    .formula_editor
+                    .as_ref()
+                    .and_then(|state| state.completion.as_ref())
+                    .is_some_and(|completion| !completion.results.is_empty());
+                if completion_open {
+                    if let Some(state) = self.formula_editor.as_mut()
+                        && let Some(completion) = state.completion.as_mut()
                     {
                         let len = completion.results.len() as i32;
                         completion.selected =
                             ((completion.selected as i32 + delta).rem_euclid(len)) as usize;
-                        cx.notify();
-                        cx.stop_propagation();
-                        return;
                     }
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
                 }
-                // 没补全时上下键留给系统（多行滚屏），不消费。
+                // 没补全时上下键走视觉行（软换行的长行也算两行）：列与行都以
+                // 记住的落点为基准，换行边界那个偏移才不会原地打转。
+                let layouts = self.measure_formula_draft(window, cx);
+                let line_height = px(INPUT_LINE_HEIGHT);
+                let moved = self.formula_editor.as_ref().map(|state| {
+                    let active = draft_active_end(state);
+                    let current = draft_point_for_offset(&layouts, active, line_height)
+                        .unwrap_or(point(px(0.0), px(0.0)));
+                    let preferred = state.caret_preferred.unwrap_or(current);
+                    let content_height = layouts
+                        .last()
+                        .map(|layout| layout.top + layout.height)
+                        .unwrap_or(line_height);
+                    let target_y = (preferred.y + px(delta as f32 * INPUT_LINE_HEIGHT))
+                        .clamp(px(0.0), (content_height - line_height).max(px(0.0)));
+                    let offset = draft_offset_for_content_point(
+                        &state.draft,
+                        &layouts,
+                        point(preferred.x, target_y),
+                        line_height,
+                    );
+                    (offset, point(preferred.x, target_y))
+                });
+                let Some((offset, preferred_point)) = moved else {
+                    return;
+                };
+                self.move_formula_caret(offset, modifiers.shift, Some(preferred_point), cx);
+                cx.stop_propagation();
             }
             "backspace" => {
                 cx.stop_propagation();
@@ -727,44 +786,72 @@ impl Editor {
                 cx.stop_propagation();
                 self.delete_in_formula_draft(true, cx);
             }
-            "left" | "right" => {
+            "home" | "end" | "left" | "right" => {
+                let to_start = matches!(key, "home" | "left");
+                // 补全开着时先收掉（左右改成移动光标，比移动候选更直观）。
                 if let Some(state) = self.formula_editor.as_mut() {
-                    let move_left = key == "left";
-                    // 补全开着时左右先收掉（或者移动选择——收掉更直观）。
                     state.completion = None;
-                    let draft_len = state.draft.len();
-                    let anchor = state.selection_anchor.min(draft_len);
-                    let range = state.selected_range.clone();
-                    let has_selection = range.start != range.end;
-                    // 活动端 = 不是锚点的那一端（收起时光标两端相同）。
-                    let active = if !has_selection {
-                        anchor
-                    } else if anchor == range.start {
-                        range.end
-                    } else {
-                        range.start
+                }
+                if secondary {
+                    // ⌘←/⌘→ 与 ⌘Home/⌘End 同义：跳到草稿首/尾。
+                    let draft_len = self
+                        .formula_editor
+                        .as_ref()
+                        .map(|state| state.draft.len())
+                        .unwrap_or_default();
+                    self.move_formula_caret(
+                        if to_start { 0 } else { draft_len },
+                        modifiers.shift,
+                        None,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                    return;
+                }
+                if key == "home" || key == "end" {
+                    // 行首/行尾按视觉行算，软换行的长行才不会一下跳到整条硬行末尾。
+                    let layouts = self.measure_formula_draft(window, cx);
+                    let line_height = px(INPUT_LINE_HEIGHT);
+                    let target = self.formula_editor.as_ref().map(|state| {
+                        let active = draft_active_end(state);
+                        let current = draft_point_for_offset(&layouts, active, line_height)
+                            .unwrap_or(point(px(0.0), px(0.0)));
+                        let x = if key == "home" {
+                            px(0.0)
+                        } else {
+                            px(DRAFT_CONTENT_WIDTH)
+                        };
+                        draft_offset_for_content_point(
+                            &state.draft,
+                            &layouts,
+                            point(x, current.y),
+                            line_height,
+                        )
+                    });
+                    let Some(offset) = target else {
+                        return;
                     };
-                    let moved = if move_left {
+                    self.move_formula_caret(offset, modifiers.shift, None, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                // 左右走一个字素；有选区且没按 shift 时先收起（左落头、右落尾）。
+                let stepped = self.formula_editor.as_ref().map(|state| {
+                    let range = state.selected_range.clone();
+                    if range.start != range.end && !modifiers.shift {
+                        return if to_start { range.start } else { range.end };
+                    }
+                    let active = draft_active_end(state);
+                    if to_start {
                         draft_prev_boundary(&state.draft, active)
                     } else {
                         draft_next_boundary(&state.draft, active)
-                    };
-                    if modifiers.shift {
-                        // shift 扩展：锚点不动，选区拉到移动后的那一端。
-                        state.selected_range = anchor.min(moved)..anchor.max(moved);
-                    } else if has_selection {
-                        // 有选区时方向键先收起：左落到选区头、右落到选区尾。
-                        let caret = if move_left { range.start } else { range.end };
-                        state.selected_range = caret..caret;
-                        state.selection_anchor = caret;
-                    } else {
-                        state.selected_range = moved..moved;
-                        state.selection_anchor = moved;
                     }
-                    state.marked_range = None;
-                    state.caret_epoch = Instant::now();
-                    cx.notify();
-                }
+                });
+                let Some(offset) = stepped else {
+                    return;
+                };
+                self.move_formula_caret(offset, modifiers.shift, None, cx);
                 cx.stop_propagation();
             }
             // 全选 / 复制 / 剪切 / 粘贴：草稿没有 key context，块编辑器那套
@@ -787,6 +874,32 @@ impl Editor {
             _ => {}
         }
         let _ = plain;
+    }
+
+    /// 把光标落到 `offset`：shift 时从锚点长出选区，否则收起选区并把锚点放好。
+    /// `preferred` 是上下键要保住的落点（列 + 行），横向移动与编辑传 None。
+    fn move_formula_caret(
+        &mut self,
+        offset: usize,
+        shift: bool,
+        preferred: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.formula_editor.as_mut() else {
+            return;
+        };
+        let offset = draft_clamp_offset(&state.draft, offset);
+        if shift {
+            let anchor = state.selection_anchor.min(state.draft.len());
+            state.selected_range = anchor.min(offset)..anchor.max(offset);
+        } else {
+            state.selected_range = offset..offset;
+            state.selection_anchor = offset;
+        }
+        state.marked_range = None;
+        state.caret_epoch = Instant::now();
+        state.caret_preferred = preferred;
+        cx.notify();
     }
 
     /// 复制选区：没有选区就不抢键。
@@ -936,6 +1049,8 @@ impl Editor {
         state.completion = None;
         state.selecting_with_mouse = true;
         state.marked_range = None;
+        // 指针定位后，上下键的「想待的那一列」以点击位置为准。
+        state.caret_preferred = None;
         if shift {
             let anchor = state.selection_anchor.min(state.draft.len());
             state.selected_range = anchor.min(offset)..anchor.max(offset);
@@ -1060,6 +1175,47 @@ impl Editor {
                 state.caret_blink_task = None;
             }
         }
+        // 行布局一次量好（文本、run、软换行后的行高与顶部），渲染、光标、浮层、
+        // 命中四处共用同一份：各算各的就会在长行软换行之后对不上。
+        let line_height = px(INPUT_LINE_HEIGHT);
+        let layouts = self.measure_formula_draft(window, cx);
+        // 光标被挤出可见高度时滚回来。只在光标动过的那一帧滚，否则会把用户
+        // 手动的滚动一直抢回去。
+        if let Some(state) = self.formula_editor.as_mut()
+            && state.last_autoscroll_epoch != Some(state.caret_epoch)
+        {
+            let caret_y = px(INPUT_PADDING_Y)
+                + draft_point_for_offset(
+                    &layouts,
+                    draft_clamp_offset(&state.draft, state.selected_range.start),
+                    line_height,
+                )
+                .map(|position| position.y)
+                .unwrap_or(px(0.0));
+            let viewport = px(INPUT_HEIGHT) - px(2.0 * INPUT_BORDER);
+            let current = state.input_scroll.offset();
+            let visible_top = -current.y;
+            let mut desired = current.y;
+            if caret_y + line_height > visible_top + viewport {
+                desired = -(caret_y + line_height - viewport);
+            } else if caret_y < visible_top {
+                desired = -caret_y;
+            }
+            // max_offset 要等滚动容器画过一帧才有（首帧是 0），这时先不记完成，
+            // 补一帧再滚；不然光标永远进不了可见区。
+            let max_offset_y = state.input_scroll.max_offset().height;
+            let needs_scroll = desired != current.y;
+            if needs_scroll && max_offset_y <= px(0.0) {
+                state.last_autoscroll_epoch = None;
+                cx.notify();
+            } else {
+                state.last_autoscroll_epoch = Some(state.caret_epoch);
+                if needs_scroll {
+                    let clamped = desired.clamp(-max_offset_y, px(0.0));
+                    state.input_scroll.set_offset(point(current.x, clamped));
+                }
+            }
+        }
         let state = self.formula_editor.as_ref()?;
         let focus = state.focus.clone()?;
         let viewport = window.viewport_size();
@@ -1107,15 +1263,12 @@ impl Editor {
         // ===== 草稿输入区（多行 + 软换行 + 选区 + 光标） =====
         let draft = state.draft.clone();
         let selection_start = draft_clamp_offset(&draft, state.selected_range.start);
-        let selection_end = draft_clamp_offset(&draft, state.selected_range.end).max(selection_start);
+        let selection_end =
+            draft_clamp_offset(&draft, state.selected_range.end).max(selection_start);
         let has_selection = selection_start != selection_end;
         let code_family = crate::config::EditorSettings::fonts(cx).code_family;
         let input_font_size = px(INPUT_FONT_SIZE);
         let input_color = c.text_default;
-        let line_height = px(INPUT_LINE_HEIGHT);
-        // 行布局一次量好（文本、run、软换行后的行高与顶部），渲染、光标、浮层、
-        // 指针命中四处共用同一份：各算各的就会在长行软换行之后对不上。
-        let layouts = self.measure_formula_draft(window, cx);
 
         // 光标条与它所在的视觉行行框同高同位：字在半行距里居中（GPUI 的
         // paint_line 用 (line_height - ascent - descent)/2 定基线）。

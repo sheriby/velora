@@ -860,6 +860,131 @@ async fn formula_editor_caret_hides_when_window_is_not_key(cx: &mut TestAppConte
         "窗口不是 key 窗口时光标条不该还画着"
     );
 }
+/// 按一个键并返回之后的选区两端。
+fn press_draft_key(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut gpui::VisualTestContext,
+    keys: &str,
+) -> (usize, usize) {
+    editor.update_in(cx, |editor, window, cx| {
+        let keystroke = gpui::Keystroke::parse(keys).expect(keys);
+        let event = gpui::KeyDownEvent {
+            keystroke,
+            is_held: false,
+        };
+        editor.formula_editor_key_down(&event, window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗开着");
+        (state.selected_range.start, state.selected_range.end)
+    })
+}
+
+/// 上下 / Home / End / ⌘←→ 在软换行的长行上按视觉行走：以前上下键与
+/// Home/End 都没接，长公式里光标只能在原地左右挪。
+#[gpui::test]
+async fn formula_editor_arrow_keys_navigate_visual_rows(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    let draft = "F = ma \\frac{a}{b} \\int_{0}^{1} ma \\frac{a}{b} \\prod_{a}^{b} ".repeat(4);
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, &draft, None, false, cx);
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let (head, _) = press_draft_key(&editor, cx, "cmd-left");
+    assert_eq!(head, 0, "⌘← 该回到草稿开头");
+
+    let (end_row0, _) = press_draft_key(&editor, cx, "end");
+    assert!(
+        end_row0 > 10 && end_row0 < draft.len(),
+        "End 该落在第一视觉行行尾，而不是整条硬行末尾，实测 {end_row0}/{}",
+        draft.len()
+    );
+    let (home_row0, _) = press_draft_key(&editor, cx, "home");
+    assert_eq!(home_row0, 0, "Home 在该行行首");
+
+    let (down1, _) = press_draft_key(&editor, cx, "down");
+    assert!(
+        down1 > 10,
+        "从行首按 Down 该落到第二视觉行，实测 {down1}"
+    );
+    let (down2, _) = press_draft_key(&editor, cx, "down");
+    assert!(down2 > down1, "再按 Down 该继续往下，实测 {down1} → {down2}");
+    let (up1, _) = press_draft_key(&editor, cx, "up");
+    assert!(
+        (up1 as isize - down1 as isize).abs() <= 1,
+        "Up 该回到上一行的同一列，实测 {up1} vs {down1}"
+    );
+
+    let (sel_start, sel_end) = press_draft_key(&editor, cx, "shift-down");
+    assert_eq!(sel_start, up1, "shift 扩展不该动锚点");
+    assert!(sel_end > sel_start, "shift+Down 该把选区拉到下一行");
+
+    let (_, tail) = press_draft_key(&editor, cx, "cmd-right");
+    assert_eq!(tail, draft.len(), "⌘→ 该跳到草稿末尾");
+}
+
+/// 草稿长到超出输入框高度时，光标要自动滚进可见区（否则打字看不见落点）。
+#[gpui::test]
+async fn formula_editor_scrolls_caret_into_view(cx: &mut TestAppContext) {
+    use crate::editor::formula_editor::INPUT_LINE_HEIGHT;
+
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+    // 20 遍 ≈ 十来个视觉行，远超输入框的 132px。
+    let draft = "F = ma \\frac{a}{b} \\int_{0}^{1} \\prod_{a}^{b} ".repeat(20);
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, &draft, None, false, cx);
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let input = cx
+        .debug_bounds("formula-editor-input")
+        .expect("草稿输入区该上屏");
+    let caret = cx.debug_bounds("formula-editor-caret").expect("光标该上屏");
+    assert!(
+        f32::from(caret.bottom()) <= f32::from(input.bottom()) + 1.0,
+        "末尾光标该被滚进可见区，实测 caret.bottom={:?} input.bottom={:?}",
+        f32::from(caret.bottom()),
+        f32::from(input.bottom())
+    );
+    assert!(
+        f32::from(caret.top()) >= f32::from(input.top()) - 1.0,
+        "光标不该滚到可见区上沿之外"
+    );
+
+    // 回到开头：可见区要跟着滚回顶部，光标重新出现在第一行。
+    press_draft_key(&editor, cx, "cmd-left");
+    redraw(cx);
+    let caret = cx.debug_bounds("formula-editor-caret").expect("光标该上屏");
+    assert!(
+        f32::from(caret.top()) >= f32::from(input.top()) - 1.0
+            && f32::from(caret.bottom())
+                <= f32::from(input.top()) + INPUT_LINE_HEIGHT + 12.0,
+        "回到开头时光标该重新出现在可见区顶部，实测 caret.top={:?} input.top={:?}",
+        f32::from(caret.top()),
+        f32::from(input.top())
+    );
+}
+
+/// 草稿要能全选 / 复制 / 剪切 / 粘贴（以前只有光标，剪贴板四个键全没接）。
 #[gpui::test]
 async fn formula_editor_draft_select_all_copy_cut_paste(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
