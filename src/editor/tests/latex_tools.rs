@@ -298,3 +298,25 @@ async fn latex_completion_confirm_survives_missing_block(cx: &mut TestAppContext
         );
     });
 }
+/// 聚焦数学块后，ƒx 按钮必须真的出现在屏幕上（走完整渲染路径，
+/// debug_selector 查询）——之前的链路测试直接调事件处理，绕过了按钮，
+/// 分派早退把按钮拦在死分支里时测试仍是绿的（用户报修：公式编辑器哪呢）。
+#[gpui::test]
+async fn focused_math_block_shows_fx_button_on_screen(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\\nx^2\\n$$\\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, cx| editor.focus_block(math.entity_id()));
+    redraw(cx);
+
+    let button_bounds = cx.debug_bounds("math-fx-button");
+    assert!(
+        button_bounds.is_some(),
+        "聚焦数学块应渲染出 ƒx 按钮（debug_selector math-fx-button）"
+    );
+}

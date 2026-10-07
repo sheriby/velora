@@ -156,12 +156,16 @@ impl Render for Block {
         }
 
         // Source-mode rendering: raw text with no formatting.
+        // 聚焦的数学块要放行到下面的 kind 分支：ƒx 按钮、公式编辑卡片与
+        // SVG↔文本切换都挂在那里——这里早退会把它们全拦成死代码
+        // （用户报修：公式编辑器找不到，按钮从未上屏）。
         if self.is_source_raw_mode()
-            && (focused
-                || !matches!(
-                    self.kind(),
-                    BlockKind::HtmlBlock | BlockKind::MathBlock | BlockKind::MermaidBlock
-                ))
+            && (focused && self.kind() != BlockKind::MathBlock
+                || !focused
+                    && !matches!(
+                        self.kind(),
+                        BlockKind::HtmlBlock | BlockKind::MathBlock | BlockKind::MermaidBlock
+                    ))
         {
             if focused && self.cursor_blink_task.is_none() {
                 self.start_cursor_blink(cx);
