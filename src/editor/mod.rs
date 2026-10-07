@@ -1142,6 +1142,29 @@ impl Editor {
         }
     }
 
+    /// 源码模式下回车新建的块：高亮语言与接缝状态要从被拆开的那一块继承，
+    /// 否则 `sync_code_highlight` 因为没有 `source_language` 直接产出 None，
+    /// 新敲出来的行完全没有语法着色（中间插入的 `**hello**` 有颜色、新增行的
+    /// 没有，就是这一处）。
+    pub(crate) fn wire_source_block_after_newline(
+        &mut self,
+        new_block: &Entity<Block>,
+        previous: &Entity<Block>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = previous.read(cx).source_language().map(str::to_owned);
+        let entry = previous.read(cx).source_fence_exit();
+        new_block.update(cx, |block, _cx| {
+            block.set_source_fence_entry(entry);
+            match language.as_deref() {
+                Some(language) => block.set_source_language(language),
+                None => block.refresh_source_highlight(),
+            }
+        });
+        // 新块插在中间时，后面各块的 entry 要跟着重串。
+        self.cascade_source_fence_states_after(new_block.entity_id(), cx);
+    }
+
     /// 编辑后的增量级联：编辑块自己的 exit 已随它的 `sync_code_highlight`
     /// 更新。下一块的 entry 与之不一致（这次改动开/关了围栏、公式、frontmatter）
     /// 才从下一块起重串；一致就立刻停——打字热路径为此只多一次实体读。

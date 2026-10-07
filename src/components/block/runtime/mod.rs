@@ -460,6 +460,11 @@ impl Block {
         self.sync_code_highlight();
     }
 
+    /// 本块现在按哪种语言做源码高亮；没设过就是纯文本（高亮为空）。
+    pub(crate) fn source_language(&self) -> Option<&str> {
+        self.source_language.as_ref().map(|value| &value[..])
+    }
+
     pub(crate) fn take_quote_reparse_requested(&mut self) -> bool {
         let requested = self.quote_reparse_requested;
         self.quote_reparse_requested = false;

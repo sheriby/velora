@@ -1388,3 +1388,63 @@ async fn toggling_back_from_source_mode_renders_again(cx: &mut TestAppContext) {
         "切回渲染态后找不到刚打的内容：{states:?}"
     );
 }
+
+/// 源码模式下回车新增的行完全没有语法着色。`RequestNewline` 给新块只开了
+/// 源码态（`set_source_document_mode`），没给高亮语言也没串接缝状态，
+/// `sync_code_highlight` 因为没有 `source_language` 直接产出 None——于是中间
+/// 插入的 `**hello**` 有粗体配色，新增行里敲的 `**hello**` 是黑字。
+#[gpui::test]
+async fn source_mode_newline_block_gets_markdown_highlight(cx: &mut TestAppContext) {
+    use crate::components::markdown::code_highlight::CodeHighlightClass;
+
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 标题\n\n正文一段".into(), None)
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+
+    let last = editor.read_with(cx, |editor, _cx| {
+        editor.document.root_blocks().last().cloned().expect("有根块")
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+        last.update(cx, |block, cx| {
+            let tail = block.visible_len();
+            block.move_to(tail, cx);
+            block.on_newline(&Newline, window, cx);
+        });
+    });
+    redraw(cx);
+    cx.simulate_input("**hello**");
+    redraw(cx);
+
+    let (text, classes) = editor.read_with(cx, |editor, cx| {
+        let block = editor
+            .document
+            .root_blocks()
+            .last()
+            .cloned()
+            .expect("有根块");
+        let block = block.read(cx);
+        (
+            block.display_text().to_string(),
+            block
+                .code_highlight_result()
+                .map(|result| {
+                    result
+                        .spans
+                        .iter()
+                        .map(|span| span.class)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )
+    });
+    assert_eq!(text, "**hello**", "打的字该在新增的那根块里");
+    assert!(
+        classes.contains(&CodeHighlightClass::MarkdownStrong),
+        "源码模式回车新增的块没有 markdown 语法着色，classes={classes:?}"
+    );
+}

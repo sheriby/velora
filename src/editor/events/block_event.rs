@@ -225,6 +225,9 @@ impl Editor {
                     vec![new_block.clone()],
                     cx,
                 );
+                if self.view_mode == crate::editor::ViewMode::Source {
+                    self.wire_source_block_after_newline(&new_block, &block, cx);
+                }
                 self.focus_block(new_block.entity_id());
                 let quote_normalized = current_kind.is_quote_container();
                 if quote_normalized {
