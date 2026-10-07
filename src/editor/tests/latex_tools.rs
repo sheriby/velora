@@ -360,3 +360,254 @@ async fn formula_editor_draft_backspace_deletes(cx: &mut TestAppContext) {
         assert_eq!(state.draft, "ab", "退格应删掉 c");
     });
 }
+
+/// 打开弹窗并把焦点交给草稿输入，画一帧让焦点与几何都落地。
+fn open_formula_editor(
+    editor: &gpui::Entity<Editor>,
+    math: &gpui::Entity<Block>,
+    cx: &mut gpui::VisualTestContext,
+) {
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+    });
+    redraw(cx);
+}
+
+/// 现象：草稿里只打一个 `\` 不弹补全，得再敲一个字母再删掉才弹。
+/// 根因：敲字走 GPUI 的 `EntityInputHandler` → overlay 输入路径，那条路径
+/// 只同步预览、不刷新 `\` 补全会话（补全只在 `replace_formula_draft` 里刷）。
+#[gpui::test]
+async fn formula_editor_completion_opens_on_first_backslash(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    // 真实敲字：字符由焦点元素的输入处理器写进草稿。
+    editor.update_in(cx, |editor, window, cx| {
+        editor.replace_text_in_range(None, "\\", window, cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        let state = editor.formula_editor.as_ref().expect("弹窗该开着");
+        assert_eq!(state.draft, "\\", "敲进去的该是反斜杠");
+        let completion = state
+            .completion
+            .as_ref()
+            .expect("只打一个 \\ 也该弹命令补全");
+        assert_eq!(completion.anchor, 0, "补全该锚在这个反斜杠上");
+        assert_eq!(
+            completion.results.first().map(|entry| entry.name),
+            Some("frac")
+        );
+    });
+}
+
+/// 现象：光标条比字高出一截（贴在行框顶上，而字在半行距里居中）。
+/// 断言：光标条与它所在行的行框上下边对齐，换行后跟着下一行走。
+#[gpui::test]
+async fn formula_editor_caret_sits_in_its_line_box(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "$$\nF = ma \\frac{a}{b}\n$$\n".into(), None)
+    });
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    editor.update(cx, |editor, cx| {
+        let len = editor
+            .formula_editor
+            .as_ref()
+            .map(|state| state.draft.len())
+            .unwrap_or(0);
+        editor.replace_formula_draft(len..len, " \\\\", None, false, cx);
+    });
+    redraw(cx);
+
+    let vertical_drift = |cx: &mut gpui::VisualTestContext, line: &'static str| -> f32 {
+        let caret = cx.debug_bounds("formula-editor-caret").expect("光标条该上屏");
+        let row = cx.debug_bounds(line).expect("草稿行该上屏");
+        let center = |bounds: gpui::Bounds<gpui::Pixels>| {
+            (f32::from(bounds.top()) + f32::from(bounds.bottom())) / 2.0
+        };
+        center(caret) - center(row)
+    };
+    let drift = vertical_drift(&mut *cx, "formula-editor-line-0");
+    assert!(
+        drift.abs() <= 0.6,
+        "光标条该与所在行行框上下对齐，实测偏 {drift}px"
+    );
+
+    // 换行后光标落到第二行：跟着第二行的行框，不是留在第一行的高度上。
+    editor.update(cx, |editor, cx| {
+        let end = editor
+            .formula_editor
+            .as_ref()
+            .map(|state| state.draft.len())
+            .unwrap_or(0);
+        editor.replace_formula_draft(end..end, "\nF = ma", None, false, cx);
+    });
+    redraw(cx);
+    let drift = vertical_drift(&mut *cx, "formula-editor-line-1");
+    assert!(
+        drift.abs() <= 0.6,
+        "换行后光标条该与第二行行框对齐，实测偏 {drift}px"
+    );
+}
+
+/// 现象：补全列表钉在面板左缘、横贯整个面板宽，离光标很远。
+/// 断言：列表左缘贴着光标、在光标下方，宽度收窄且留在面板内。
+#[gpui::test]
+async fn formula_editor_completion_follows_the_caret(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    open_formula_editor(&editor, &math, cx);
+
+    let draft = "F = ma \\frac{a}{b} \\sqrt{x} \\int_{0}^{1} \\fr";
+    editor.update(cx, |editor, cx| {
+        editor.replace_formula_draft(0..0, draft, None, false, cx);
+    });
+    redraw(cx);
+
+    let caret = cx.debug_bounds("formula-editor-caret").expect("光标条该上屏");
+    let list = cx
+        .debug_bounds("formula-editor-completion")
+        .expect("补全列表该上屏");
+    let panel = cx.debug_bounds("formula-editor-panel").expect("面板该上屏");
+    let gap = f32::from(list.left()) - f32::from(caret.left());
+    assert!(
+        gap.abs() <= 8.0,
+        "补全列表该贴着光标，实测左缘差 {gap}px"
+    );
+    assert!(
+        f32::from(list.top()) >= f32::from(caret.bottom()) - 1.0,
+        "补全列表该落在光标下方"
+    );
+    assert!(
+        f32::from(list.size.width) <= 320.0,
+        "补全列表不该铺满面板宽，实测 {}",
+        f32::from(list.size.width)
+    );
+    assert!(
+        f32::from(list.right()) <= f32::from(panel.right()) + 1.0,
+        "补全列表该留在面板里"
+    );
+}
+
+/// 现象：聚焦数学块的 ƒx 入口浮在卡片右上角外面（贴着块外壳的边）。
+/// 断言：入口落在公式卡片内、与首行 `$$` 同一水平带。
+#[gpui::test]
+async fn focused_math_block_fx_button_sits_inside_the_card(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\nx^2\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    redraw(cx);
+
+    let fx = cx.debug_bounds("math-fx-button").expect("ƒx 入口该上屏");
+    let card = cx.debug_bounds("math-block-card").expect("公式卡片该上屏");
+    assert!(
+        f32::from(fx.right()) <= f32::from(card.right()) + 1.0,
+        "ƒx 不该探出卡片右缘，实测超出 {}px",
+        f32::from(fx.right()) - f32::from(card.right())
+    );
+    assert!(
+        f32::from(fx.top()) >= f32::from(card.top()) - 1.0,
+        "ƒx 不该压在卡片上缘之外，实测超出 {}px",
+        f32::from(card.top()) - f32::from(fx.top())
+    );
+    assert!(
+        f32::from(fx.bottom()) - f32::from(card.top()) <= 30.0,
+        "ƒx 该与首行 `$$` 同一水平带"
+    );
+}
+
+fn draft_line<'a>(
+    lines: &'a [crate::editor::formula_editor::FormulaDraftLine],
+    index: usize,
+) -> &'a crate::editor::formula_editor::FormulaDraftLine {
+    lines.get(index).unwrap_or_else(|| panic!("草稿该有第 {index} 行"))
+}
+
+fn run_color_for(line: &crate::editor::formula_editor::FormulaDraftLine, needle: &str) -> gpui::Hsla {
+    let start = line
+        .text
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} 不在这一行 {:?}", line.text));
+    let mut offset = 0usize;
+    for run in &line.runs {
+        if start >= offset && start < offset + run.len {
+            return run.color;
+        }
+        offset += run.len;
+    }
+    panic!("没有 run 覆盖 {needle:?}");
+}
+
+/// 现象：弹窗草稿整片一个颜色，公式块编辑态里 `\命令`、括号、数字都有语法色。
+/// 断言：草稿按行切成铺满整行的 run，`\命令` 取关键字色、括号取标点色、
+/// 数字取数字色、`%` 到行尾取注释色，正文仍是默认色；多字节安全。
+#[test]
+fn formula_draft_lines_carry_latex_syntax_colors() {
+    use crate::components::markdown::code_highlight::{
+        CodeHighlightClass, code_highlight_color,
+    };
+    use gpui::{Font, FontStyle, FontWeight, TextRun};
+
+    let theme = Theme::default_theme();
+    let colors = &theme.colors;
+    let font = Font {
+        family: "Monaco".into(),
+        features: gpui::FontFeatures::default(),
+        fallbacks: None,
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
+    };
+    let draft = "F = ma \\frac{a}{b} \\sqrt[3]{x} % 注释 αβ\n\\alpha + \\beta_{1}";
+    let lines = crate::editor::formula_editor::formula_draft_lines(draft, colors, font.clone());
+
+    assert_eq!(lines.len(), 2, "换行该切成两行");
+    for line in &lines {
+        let total: usize = line.runs.iter().map(|run: &TextRun| run.len).sum();
+        assert_eq!(total, line.text.len(), "run 必须铺满整行，实测 {:?}", line.text);
+    }
+
+    let keyword = code_highlight_color(colors, CodeHighlightClass::Keyword);
+    let punctuation = code_highlight_color(colors, CodeHighlightClass::Punctuation);
+    let number = code_highlight_color(colors, CodeHighlightClass::Number);
+    let comment = code_highlight_color(colors, CodeHighlightClass::Comment);
+
+    let first = draft_line(&lines, 0);
+    assert_eq!(run_color_for(first, "F"), colors.text_default, "正文保持默认色");
+    assert_eq!(run_color_for(first, "\\frac"), keyword, "\\命令 该是关键字色");
+    assert_eq!(run_color_for(first, "{a}"), punctuation, "花括号该是标点色");
+    assert_eq!(run_color_for(first, "3"), number, "数字该是数字色");
+    assert_eq!(run_color_for(first, "%"), comment, "注释该是注释色");
+    assert_eq!(run_color_for(first, "注释 αβ"), comment, "注释吃到行尾且多字节安全");
+
+    let second = draft_line(&lines, 1);
+    assert_eq!(run_color_for(second, "\\alpha"), keyword);
+    assert_eq!(run_color_for(second, "_"), code_highlight_color(colors, CodeHighlightClass::Operator));
+    assert_eq!(run_color_for(second, "1"), number);
+    assert!(!first.text.contains('\n') && !second.text.contains('\n'), "行内不该有换行符");
+}

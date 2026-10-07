@@ -17,8 +17,10 @@ use crate::components::latex::{
     LatexCategory, LatexSymbol, LATEX_SYMBOLS, latex_command_before_cursor,
     latex_completions_for,
 };
+use crate::components::markdown::code_highlight::{CodeHighlightSpan, code_highlight_color};
+use crate::components::markdown::source_highlight::highlight_latex_source;
 use crate::i18n::I18nStrings;
-use crate::theme::Theme;
+use crate::theme::{Theme, ThemeColors};
 
 use super::Editor;
 
@@ -31,6 +33,19 @@ const CELL: f32 = 46.0;
 const CELL_GAP: f32 = 3.0;
 const PANEL_VIEWPORT_MARGIN: f32 = 16.0;
 const INPUT_LINE_HEIGHT: f32 = 21.0;
+/// 面板内边距、条目间距、标题行高、输入框描边与内边距：补全浮层要按这套
+/// 常量把光标位置换算成面板内坐标，任何一处改动都得跟着对。
+const PANEL_PADDING: f32 = 14.0;
+const PANEL_GAP: f32 = 8.0;
+const TITLE_HEIGHT: f32 = 26.0;
+const INPUT_BORDER: f32 = 1.0;
+const INPUT_PADDING_X: f32 = 10.0;
+const INPUT_PADDING_Y: f32 = 8.0;
+/// 草稿输入区在面板内的纵向起点（标题 + 预览 + 两道间距）。
+const INPUT_TOP: f32 = PANEL_PADDING + TITLE_HEIGHT + PANEL_GAP + PREVIEW_HEIGHT + PANEL_GAP;
+/// 补全浮层：贴着光标的小列表，不铺满面板宽。
+const COMPLETION_WIDTH: f32 = 240.0;
+const COMPLETION_ROW_HEIGHT: f32 = 28.0;
 
 /// 分类页签的固定次序（与符号表的组织一致）。
 const CATEGORIES: [LatexCategory; 6] = [
@@ -41,6 +56,94 @@ const CATEGORIES: [LatexCategory; 6] = [
     LatexCategory::Functions,
     LatexCategory::Symbols,
 ];
+
+/// 草稿一行的渲染输入：行文本 + 铺满该行的样式段。
+pub(crate) struct FormulaDraftLine {
+    pub(crate) text: String,
+    pub(crate) runs: Vec<TextRun>,
+}
+
+/// 把草稿按行切成带 LaTeX 语法色的渲染段。配色与数学块编辑态同源（同一套
+/// `highlight_latex_source` + `code_highlight_color`）：弹窗里改的就是那几行
+/// 源码，两处颜色不一样会让人觉得不是同一个公式（用户报修：草稿没颜色）。
+pub(crate) fn formula_draft_lines(
+    draft: &str,
+    colors: &ThemeColors,
+    font: Font,
+) -> Vec<FormulaDraftLine> {
+    let spans = highlight_latex_source(draft);
+    let mut lines = Vec::new();
+    let mut line_start = 0usize;
+    loop {
+        let line_end = match draft[line_start..].find('\n') {
+            Some(offset) => line_start + offset,
+            None => draft.len(),
+        };
+        lines.push(formula_draft_line(
+            &draft[line_start..line_end],
+            line_start,
+            &spans,
+            colors,
+            &font,
+        ));
+        if line_end == draft.len() {
+            return lines;
+        }
+        line_start = line_end + 1;
+    }
+}
+
+/// 单行：把落在本行的高亮区间裁成边界，逐段取色。空行给一个空格占位，
+/// 行高与光标落点才有依托。
+fn formula_draft_line(
+    line: &str,
+    line_start: usize,
+    spans: &[CodeHighlightSpan],
+    colors: &ThemeColors,
+    font: &Font,
+) -> FormulaDraftLine {
+    let base_run = |len: usize, color: Hsla| TextRun {
+        len,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        font_size: None,
+    };
+    if line.is_empty() {
+        return FormulaDraftLine {
+            text: " ".to_string(),
+            runs: vec![base_run(1, colors.text_default)],
+        };
+    }
+    let mut boundaries: Vec<usize> = vec![0, line.len()];
+    for span in spans {
+        boundaries.push(span.range.start.saturating_sub(line_start).min(line.len()));
+        boundaries.push(span.range.end.saturating_sub(line_start).min(line.len()));
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    let mut runs = Vec::new();
+    for pair in boundaries.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        if start >= end {
+            continue;
+        }
+        let absolute = line_start + start;
+        let color = spans
+            .iter()
+            .find(|span| span.range.start <= absolute && absolute < span.range.end)
+            .map(|span| code_highlight_color(colors, span.class))
+            .unwrap_or(colors.text_default);
+        runs.push(base_run(end - start, color));
+    }
+    FormulaDraftLine {
+        text: line.to_string(),
+        runs,
+    }
+}
 
 fn category_label(category: LatexCategory, strings: &I18nStrings) -> String {
     match category {
@@ -225,8 +328,9 @@ impl Editor {
     }
 
     /// 草稿光标前是「`\` + 字母」时弹命令补全（弹窗里处处是公式上下文，
-    /// 无需再判行内数学）。
-    fn refresh_formula_draft_completion(state: &mut FormulaEditorState) {
+    /// 无需再判行内数学）。敲字（overlay 输入）与自管编辑两条路径都要调，
+    /// 漏一条就是「只打 `\` 不弹，再敲一个字删掉才弹」。
+    pub(crate) fn refresh_formula_draft_completion(state: &mut FormulaEditorState) {
         let caret = state.selected_range.start.min(state.draft.len());
         state.completion = match latex_command_before_cursor(&state.draft[..caret]) {
             Some((backslash, query)) => {
@@ -538,23 +642,26 @@ impl Editor {
                 None,
             )
             .width;
+        // 光标条与文本行框同高同位：字在半行距里居中（GPUI 的 paint_line 用
+        // (line_height - ascent - descent)/2 定基线），条子贴行框顶就会比字高出一截。
         let caret_div = div()
+            .debug_selector(|| "formula-editor-caret".to_string())
             .absolute()
-            .left(caret_x + px(10.0))
-            .top(px(8.0) + line_height * caret_line as f32)
+            .left(caret_x + px(INPUT_PADDING_X))
+            .top(px(INPUT_PADDING_Y) + line_height * caret_line as f32)
             .w(px(2.0))
-            .h(px(INPUT_LINE_HEIGHT - 6.0))
+            .h(line_height)
             .bg(c.cursor);
 
-        let draft_lines: Vec<AnyElement> = draft
-            .split('\n')
-            .map(|line| {
-                let text: SharedString = if line.is_empty() { SharedString::from(" ") } else { SharedString::from(line.to_string()) };
+        let draft_lines: Vec<AnyElement> = formula_draft_lines(&draft, c, input_font.clone())
+            .into_iter()
+            .enumerate()
+            .map(|(line_index, line)| {
                 div()
                     .h(line_height)
                     .whitespace_normal()
-                    .text_color(input_color)
-                    .child(text)
+                    .debug_selector(move || format!("formula-editor-line-{line_index}"))
+                    .child(StyledText::new(line.text).with_runs(line.runs))
                     .into_any_element()
             })
             .collect();
@@ -572,13 +679,15 @@ impl Editor {
             .bg(c.editor_background)
             .font_family(code_family.clone())
             .text_size(input_font_size)
+            .line_height(line_height)
+            .text_color(input_color)
             .overflow_y_scroll()
             .scrollbar_width(px(0.0))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .px(px(10.0))
-                    .py(px(8.0))
+                    .px(px(INPUT_PADDING_X))
+                    .py(px(INPUT_PADDING_Y))
                     .relative()
                     .w_full()
                     .children(draft_lines)
@@ -715,11 +824,10 @@ impl Editor {
             cells.push(cell.child(content).into_any_element());
         }
 
-        let grid_width = px(PANEL_WIDTH - 28.0);
+        let grid_width = px(PANEL_WIDTH - 2.0 * PANEL_PADDING);
 
-        // 草稿的 \ 命令补全浮层：锚在输入框左下（光标行定位要 shape 每行
-        // 前缀，简化为列表挂在输入框下方左缘——公式输入区就是焦点所在，
-        // 视线不跳）。
+        // 草稿的 \ 命令补全浮层：锚在光标正下方，宽度只够放命令名与预览。
+        // 光标位置由面板常量 + 输入区排布换算成面板内坐标（与 caret_div 同源）。
         let completion_element: AnyElement = match state
             .completion
             .as_ref()
@@ -755,7 +863,7 @@ impl Editor {
                         };
                         div()
                             .id(ElementId::Name(format!("formula-completion-{index}").into()))
-                            .h(px(28.0))
+                            .h(px(COMPLETION_ROW_HEIGHT))
                             .w_full()
                             .flex()
                             .items_center()
@@ -784,13 +892,31 @@ impl Editor {
                             .into_any_element()
                     })
                     .collect();
+                let row_count = completion.results.len().max(1);
+                let popup_width = px(COMPLETION_WIDTH);
+                let popup_height = px(
+                    8.0 + COMPLETION_ROW_HEIGHT * row_count as f32
+                        + 2.0 * (row_count as f32 - 1.0),
+                );
+                // 光标在面板内的落点：与 caret_div 用同一套常量换算，两处才不会各说各话。
+                let caret_left = px(PANEL_PADDING + INPUT_BORDER + INPUT_PADDING_X) + caret_x;
+                let caret_bottom = px(INPUT_TOP
+                    + INPUT_BORDER
+                    + INPUT_PADDING_Y
+                    + (caret_line as f32 + 1.0) * INPUT_LINE_HEIGHT);
+                let popup_left = caret_left
+                    .min(px(PANEL_WIDTH - PANEL_PADDING) - popup_width)
+                    .max(px(PANEL_PADDING));
+                let popup_top = (caret_bottom + px(2.0))
+                    .min(panel_height - popup_height - px(PANEL_PADDING))
+                    .max(px(PANEL_PADDING));
                 div()
                     .id("formula-editor-completion")
                     .debug_selector(|| "formula-editor-completion".to_string())
                     .absolute()
-                    .left(px(14.0))
-                    .top(px(14.0 + PREVIEW_HEIGHT + INPUT_HEIGHT + 8.0))
-                    .w(px(PANEL_WIDTH - 28.0))
+                    .left(popup_left)
+                    .top(popup_top)
+                    .w(popup_width)
                     .bg(c.dialog_surface)
                     .border_1()
                     .border_color(c.dialog_border)
@@ -835,8 +961,8 @@ impl Editor {
                         .w(px(PANEL_WIDTH))
                         .flex()
                         .flex_col()
-                        .gap(px(8.0))
-                        .p(px(14.0))
+                        .gap(px(PANEL_GAP))
+                        .p(px(PANEL_PADDING))
                         .bg(c.dialog_surface)
                         .border(px(d.dialog_border_width))
                         .border_color(c.dialog_border)
@@ -845,7 +971,7 @@ impl Editor {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             div()
-                                .h(px(26.0))
+                                .h(px(TITLE_HEIGHT))
                                 .flex()
                                 .items_center()
                                 .child(

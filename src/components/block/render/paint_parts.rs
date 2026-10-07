@@ -1472,16 +1472,21 @@ impl Render for Block {
                 }
                 // 聚焦编辑：整个块（含 $$ 定界行）铺公式卡片底色——底色只盖
                 // 公式行时，$$ 行像掉在块外（用户报修）。编辑器入口两个：
-                // 右上角 ƒx 小标记（不占行高、低调描边样式，双击也可）。
+                // 卡片右上角的 ƒx 小标记（与首行 `$$` 同一水平带），双击也可。
+                let card_padding_x = d.block_padding_x.max(8.0);
+                let card_padding_y = d.block_padding_y.max(6.0);
+                let fx_height = px(20.0);
+                // 块内文本的行高口径与 BlockTextElement 一致（数学块没有逐段
+                // 字号覆盖），标记要跟首行居中对齐就得用同一个值。
+                let first_line_height = f32::from(window.line_height()).max(f32::from(fx_height));
+                let fx_top = card_padding_y + (first_line_height - f32::from(fx_height)) / 2.0;
                 let fx_button = div()
                     .id(ElementId::Name(
                         format!("math-fx-button-{}", self.record.id).into(),
                     ))
                     .debug_selector(|| "math-fx-button".to_string())
                     .absolute()
-                    .top(px(0.0))
-                    .right(px(0.0))
-                    .h(px(20.0))
+                    .h(fx_height)
                     .px(px(6.0))
                     .flex()
                     .items_center()
@@ -1503,17 +1508,18 @@ impl Render for Block {
                     .child("ƒx");
                 focused_base
                     .w_full()
-                    .relative()
                     .child(
                         div()
                             .w_full()
+                            .debug_selector(|| "math-block-card".to_string())
+                            .relative()
                             .rounded(px(8.0))
                             .bg(c.code_bg)
-                            .px(px(d.block_padding_x.max(8.0)))
-                            .py(px(d.block_padding_y.max(6.0)))
-                            .child(child),
+                            .px(px(card_padding_x))
+                            .py(px(card_padding_y))
+                            .child(child)
+                            .child(fx_button.top(px(fx_top)).right(px(card_padding_x))),
                     )
-                    .child(fx_button)
                     .into_any_element()
             }
             BlockKind::MermaidBlock => {
