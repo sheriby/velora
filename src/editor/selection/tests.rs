@@ -619,4 +619,63 @@ mod tests {
         });
         cx.quit();
     }
+
+    /// 源码模式下回车新建的块：跨块选区必须铺到中间每一根块。空块没有字形，
+    /// 指针换算与逐块铺展都容易把它们当成"不存在"，用户实测从 138 行拖到
+    /// 148 行只有最后一块亮着。
+    #[gpui::test]
+    async fn source_mode_selection_covers_every_block(cx: &mut TestAppContext) {
+        use crate::components::Newline;
+
+        init_editor_test_app(cx);
+        let (editor, cx) = cx.add_window_view(|_window, cx| {
+            Editor::from_markdown(cx, "第一段文字\n\n第二段文字".into(), None)
+        });
+        redraw(cx);
+        editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+        redraw(cx);
+
+        for label in ["AAA", "BBB", "CCC"] {
+            cx.update(|window, cx| {
+                let last = editor.read_with(cx, |editor, _cx| {
+                    editor.document.root_blocks().last().cloned().expect("有根块")
+                });
+                editor.update(cx, |editor, _cx| editor.focus_block(last.entity_id()));
+                last.update(cx, |block, cx| {
+                    let tail = block.visible_len();
+                    block.move_to(tail, cx);
+                    block.on_newline(&Newline, window, cx);
+                });
+            });
+            redraw(cx);
+            cx.simulate_input(label);
+            redraw(cx);
+        }
+
+        let roots = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().len());
+        assert_eq!(roots, 4, "夹具该有 4 根块（1 块原文 + 回车 3 块）");
+
+        editor.update(cx, |editor, cx| {
+            set_selection(editor, 0, 0, 3, 3, cx);
+        });
+        let selected = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .map(|block| {
+                    block
+                        .read(cx)
+                        .editor_selection_range
+                        .clone()
+                        .filter(|range| range.start != range.end)
+                        .map(|range| range.len())
+                })
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            selected.iter().all(|length| matches!(length, Some(n) if *n > 0)),
+            "跨块选区没铺到每一根块上，选中长度={selected:?}"
+        );
+    }
 }
