@@ -299,15 +299,11 @@ fn visible_quote_guides(block: &Block) -> usize {
     block.visible_quote_depth
 }
 
-/// 与编辑器正文列同一条公式的内容列宽度。编辑器渲染正文列时是
-/// `centered_column_width` 再 `.min(写作列宽上限)`（editor/render.rs），表格量宽、
-/// 图片与 mermaid 估宽必须用同一个宽度：宽窗口下 centered 宽度远超写作列上限，
-/// 拿超宽容器算出的列宽比例套到真实窄容器上，钉住列会被压到内容宽以下折行
-/// （用户报修：水位法列宽完全不对）。
+/// 与编辑器正文列同一条公式的内容列宽度（`Editor::writing_column_width`），表格量宽、
+/// 图片与 mermaid 估宽必须用同一个宽度：两处各算各的，拿超宽容器算出的列宽比例套到
+/// 真实窄容器上，钉住列会被压到内容宽以下折行（用户报修：水位法列宽完全不对）。
 fn content_column_width(viewport_width: f32, d: &ThemeDimensions, cx: &App) -> f32 {
-    let writing_cap =
-        crate::config::EditorSettings::writing_width(cx).max_width(d.writing_max_width);
-    Editor::centered_column_width(viewport_width, d).min(writing_cap)
+    Editor::writing_column_width(viewport_width, d, cx)
 }
 
 

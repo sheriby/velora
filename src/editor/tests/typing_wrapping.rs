@@ -463,3 +463,42 @@ async fn typing_a_plus_bullet_shortcut_keeps_the_plus_marker(cx: &mut TestAppCon
         );
     });
 }
+
+/// 4K 屏（逻辑 3840 宽）上正文列不再卡在定值那一小截：宽度按窗口比例算，
+/// 换行宽度跟着窗口长；窄窗口仍是标准档的 760px（比例算出来比下限小就取下限）。
+#[gpui::test]
+async fn the_writing_column_follows_a_4k_window(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "alpha beta gamma delta epsilon zeta eta theta iota kappa\n".to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+
+    let wrap_width = |cx: &mut VisualTestContext| -> f32 {
+        editor.read_with(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[0].entity.read(cx);
+            let lines = block.last_layout.as_ref().expect("正文应完成排版");
+            f32::from(lines[0].wrap_width.expect("正文应有换行宽度"))
+        })
+    };
+
+    cx.simulate_resize(gpui::size(px(3840.0), px(2160.0)));
+    redraw(cx);
+    let four_k = wrap_width(cx);
+    assert!(
+        four_k > 3840.0 * 0.5,
+        "4K 窗口下正文列只有 {four_k}px，不到半屏：写作宽度还是定值那一套"
+    );
+
+    cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
+    redraw(cx);
+    let narrow = wrap_width(cx);
+    assert!(
+        (730.0..=761.0).contains(&narrow),
+        "1200px 窗口的正文列该还是标准档的 760px（少说掉两侧块的 24px 内边距），实得 {narrow}"
+    );
+}

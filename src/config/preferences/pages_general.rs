@@ -322,13 +322,13 @@ impl PreferencesWindow {
         let chinese = cx.global::<I18nManager>().current_language_id() == "zh-CN";
         let width_label = |width| match (chinese, width) {
             (true, WritingWidthPreference::Theme) => "跟随主题",
-            (true, WritingWidthPreference::Compact) => "紧凑 · 640 px",
-            (true, WritingWidthPreference::Standard) => "标准 · 760 px",
-            (true, WritingWidthPreference::Wide) => "宽敞 · 900 px",
+            (true, WritingWidthPreference::Compact) => "紧凑 · 50%",
+            (true, WritingWidthPreference::Standard) => "标准 · 62%",
+            (true, WritingWidthPreference::Wide) => "宽敞 · 75%",
             (false, WritingWidthPreference::Theme) => "Follow Theme",
-            (false, WritingWidthPreference::Compact) => "Compact · 640 px",
-            (false, WritingWidthPreference::Standard) => "Standard · 760 px",
-            (false, WritingWidthPreference::Wide) => "Wide · 900 px",
+            (false, WritingWidthPreference::Compact) => "Compact · 50%",
+            (false, WritingWidthPreference::Standard) => "Standard · 62%",
+            (false, WritingWidthPreference::Wide) => "Wide · 75%",
         };
         let mut writing_width = div()
             .flex()

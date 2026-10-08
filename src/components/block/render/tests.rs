@@ -16,8 +16,7 @@ mod tests {
             let theme = cx.global::<super::ThemeManager>().current_arc();
             let d = &theme.dimensions;
             let viewport_width = 1600.0;
-            let cap =
-                crate::config::EditorSettings::writing_width(cx).max_width(d.writing_max_width);
+            let cap = crate::editor::Editor::writing_column_width(viewport_width, d, cx);
             assert!(
                 crate::editor::Editor::centered_column_width(viewport_width, d) > cap,
                 "前提失效：1600px 视口应宽到触发写作列上限（{cap}px）"

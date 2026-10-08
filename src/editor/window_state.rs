@@ -245,6 +245,21 @@ impl Editor {
             .min(available_content_width)
     }
 
+    /// 正文列宽：可用宽度按偏好取比例（「跟随主题」走主题那一套居中宽度）。
+    /// 渲染正文列、表格量宽、图片与 mermaid 估宽必须用同一个数。
+    pub(crate) fn writing_column_width(
+        viewport_width: f32,
+        dimensions: &crate::theme::ThemeDimensions,
+        cx: &App,
+    ) -> f32 {
+        let available_width = (viewport_width - dimensions.editor_padding * 2.0).max(1.0);
+        crate::config::EditorSettings::writing_width(cx).column_width(
+            available_width,
+            Self::centered_column_width(viewport_width, dimensions),
+            dimensions.writing_max_width,
+        )
+    }
+
     /// Builds the OS window title, including the dirty marker when the
     /// document has unsaved changes.
     pub(super) fn window_title(

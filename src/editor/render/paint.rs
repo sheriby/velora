@@ -62,7 +62,6 @@ impl Render for Editor {
 
         let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
         let fonts = crate::config::EditorSettings::fonts(cx);
-        let writing_width = crate::config::EditorSettings::writing_width(cx);
         // 字号设置 + 界面缩放（⌘+/⌘-/⌘0）由这一个派生负责，文档块共用。
         crate::config::EditorSettings::apply_scaled_typography(cx, &mut theme);
         let strings = cx.global::<I18nManager>().strings_arc();
@@ -170,8 +169,7 @@ impl Render for Editor {
         let centered_width = if source_view {
             (viewport_width - d.editor_padding * 1.5).max(1.0)
         } else {
-            Self::centered_column_width(viewport_width, &theme.dimensions)
-                .min(writing_width.max_width(theme.dimensions.writing_max_width))
+            Self::writing_column_width(viewport_width, &theme.dimensions, cx)
         };
         let current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).clamp(0.0, max_scroll_y);
         let scrollbar_geometry =

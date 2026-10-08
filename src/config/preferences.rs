@@ -48,10 +48,12 @@ impl Default for FontPreferences {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WritingWidthPreference {
-    #[default]
+    /// 主题自己那条上限说了算。
     Theme,
-    Compact,
+    /// 默认档：按窗口比例，窄窗用 px 兜底。
+    #[default]
     Standard,
+    Compact,
     Wide,
 }
 
@@ -67,20 +69,34 @@ impl WritingWidthPreference {
 
     fn from_str(value: &str) -> Self {
         match value {
+            "theme" => Self::Theme,
             "compact" => Self::Compact,
-            "standard" => Self::Standard,
             "wide" => Self::Wide,
-            _ => Self::Theme,
+            // 认不出来的值（存量文件被手改、以后删档）落到默认档。
+            _ => Self::default(),
         }
     }
 
-    pub(crate) fn max_width(self, theme_width: f32) -> f32 {
-        match self {
-            Self::Theme => theme_width,
-            Self::Compact => 640.0,
-            Self::Standard => 760.0,
-            Self::Wide => 900.0,
-        }
+    /// 正文列宽。`available_width` 是视口减掉两侧编辑器内边距的可用宽，
+    /// `theme_centered_width` 是主题那套居中宽度（`Editor::centered_column_width`）。
+    ///
+    /// 定值在高分屏上只占窗口一小截：3840 宽的屏幕上 760px 不到两成（用户报修）。
+    /// 除「跟随主题」外都改成占可用宽度的比例，px 退成下限——窗口窄到比例算出来
+    /// 比下限还小时取下限，与定值时代的表现一致；窗口再宽就按比例长。
+    pub(crate) fn column_width(
+        self,
+        available_width: f32,
+        theme_centered_width: f32,
+        theme_max_width: f32,
+    ) -> f32 {
+        let available = available_width.max(1.0);
+        let (ratio, floor) = match self {
+            Self::Theme => return theme_centered_width.min(theme_max_width).max(1.0),
+            Self::Compact => (0.50, 640.0),
+            Self::Standard => (0.62, 760.0),
+            Self::Wide => (0.75, 900.0),
+        };
+        (available * ratio).max(floor).min(available)
     }
 }
 
@@ -369,7 +385,7 @@ impl Default for AppPreferences {
             delete_policy: DeletePolicy::Trash,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences::default(),
-            writing_width: WritingWidthPreference::Theme,
+            writing_width: WritingWidthPreference::default(),
             workspace_sidebar_width: 258,
             keybindings: BTreeMap::new(),
             status_bar: StatusBarPreferences::default(),

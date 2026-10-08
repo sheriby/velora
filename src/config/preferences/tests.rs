@@ -248,7 +248,7 @@
         assert!(preferences.autosave);
         assert_eq!(preferences.external_change_policy, ExternalChangePolicy::Auto);
         assert_eq!(preferences.delete_policy, DeletePolicy::Trash);
-        assert_eq!(preferences.writing_width, WritingWidthPreference::Theme);
+        assert_eq!(preferences.writing_width, WritingWidthPreference::Standard);
         assert_eq!(
             preferences.image_paste_behavior,
             ImagePasteBehavior::CopyToAssetsFolder
@@ -256,14 +256,67 @@
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// 写作宽度：窄窗与定值时代一致（640/760/900 是下限），宽窗按窗口比例长。
+    /// 3840 宽的 4K 屏上 760px 不到两成，正文列得跟着窗口走。
     #[test]
-    fn writing_width_presets_keep_theme_default_and_explicit_sizes() {
-        assert_eq!(WritingWidthPreference::Theme.max_width(700.0), 700.0);
-        assert_eq!(WritingWidthPreference::Compact.max_width(700.0), 640.0);
-        assert_eq!(WritingWidthPreference::Standard.max_width(700.0), 760.0);
-        assert_eq!(WritingWidthPreference::Wide.max_width(700.0), 900.0);
+    fn writing_width_follows_the_window_and_keeps_narrow_windows_as_before() {
+        let theme_centered = 1108.0;
+        let theme_cap = 700.0;
+        let narrow = 1200.0 - 48.0;
+        let four_k = 3840.0 - 48.0;
+
+        // 窄窗：比例算出来比下限小，取下限——与三档定值一模一样。
+        assert_eq!(
+            WritingWidthPreference::Compact.column_width(narrow, theme_centered, theme_cap),
+            640.0
+        );
+        assert_eq!(
+            WritingWidthPreference::Standard.column_width(narrow, theme_centered, theme_cap),
+            760.0
+        );
+        assert_eq!(
+            WritingWidthPreference::Wide.column_width(narrow, theme_centered, theme_cap),
+            900.0
+        );
+
+        // 4K：按比例，不再是 640/760/900 那一小截。
+        for (width, ratio) in [
+            (WritingWidthPreference::Compact, 0.50),
+            (WritingWidthPreference::Standard, 0.62),
+            (WritingWidthPreference::Wide, 0.75),
+        ] {
+            let column = width.column_width(four_k, theme_centered, theme_cap);
+            assert!(
+                (column - four_k * ratio).abs() < 0.01,
+                "4K 上 {width:?} 该是可用宽度的 {ratio}，实得 {column}"
+            );
+        }
+        let standard = WritingWidthPreference::Standard.column_width(four_k, theme_centered, theme_cap);
+        assert!(
+            standard > 2000.0,
+            "4K 上默认档的正文列只有 {standard}px，还是一小截"
+        );
+
+        // 「跟随主题」不管窗口多宽都是主题写的那条上限。
+        assert_eq!(
+            WritingWidthPreference::Theme.column_width(four_k, 2199.0, theme_cap),
+            700.0
+        );
+
+        // 极窄窗口：下限比可用宽度还大时按可用宽度走。
+        assert_eq!(
+            WritingWidthPreference::Wide.column_width(400.0, 300.0, theme_cap),
+            400.0
+        );
+
+        // 默认档跟着窗口走，不是「跟随主题」。
+        assert_eq!(WritingWidthPreference::default(), WritingWidthPreference::Standard);
         assert_eq!(
             WritingWidthPreference::from_str("unknown"),
+            WritingWidthPreference::Standard
+        );
+        assert_eq!(
+            WritingWidthPreference::from_str("theme"),
             WritingWidthPreference::Theme
         );
     }
