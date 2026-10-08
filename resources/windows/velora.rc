@@ -1,8 +1,8 @@
 1 ICON "assets/icon/velora.ico"
 
 /* Common-Controls v6：TaskDialogIndirect 等 v6 专有入口点要求 exe 声明该依赖。
-   gpui 的 build.rs 按 host cfg 判断平台，从 macOS 交叉编译 Windows 时不会嵌入
-   它自带的 manifest（vendor/gpui/resources/windows/gpui.manifest.xml），
-   所以 velora.rc 是交叉编译产物获得 manifest 的唯一来源，勿删。 */
+   应用统一负责嵌入 manifest；Cargo.toml 同时关闭生产和测试的 GPUI
+   windows-manifest 特性，避免原生 MSVC 收到两个 RT_MANIFEST / name 1。
+   原生与交叉编译都依赖这份资源，勿删。 */
 #define RT_MANIFEST 24
 1 RT_MANIFEST "resources/windows/velora.manifest.xml"

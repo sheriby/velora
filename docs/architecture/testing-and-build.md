@@ -53,7 +53,7 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 
 ## 5. 构建与 profile
 
-- **build.rs**：仅 Windows——embed-resource 内嵌 Common-Controls v6 manifest（`TaskDialogIndirect` 运行时硬依赖）。
+- **build.rs**：仅 Windows——由应用通过 embed-resource 唯一嵌入图标与 Common-Controls v6 manifest（`TaskDialogIndirect` 运行时硬依赖）。生产和测试依赖都关闭 GPUI 的 `windows-manifest` 特性，其余默认特性保持启用；否则原生 MSVC 会因两个 `RT_MANIFEST / name 1` 报 CVT1100。
 - **.cargo/config.toml**：`rustc-wrapper = "sccache"`。
 - **profiles**（Cargo.toml）：
   - `release`：codegen-units=1 + lto + opt-level=3 + panic=abort + strip（macOS 与 Windows 发布共用，默认关闭 debug-assertions）；Windows 在原生 MSVC 环境中用 Windows SDK 的 `fxc.exe` 预编译 DirectX 着色器。

@@ -16,6 +16,67 @@ mod tests {
     use std::any::TypeId;
     use std::path::PathBuf;
 
+    #[test]
+    fn windows_manifest_is_embedded_only_by_velora_in_builds_and_tests() {
+        let manifest: toml::Value =
+            toml::from_str(include_str!("../../Cargo.toml")).expect("应用 Cargo 配置");
+        let gpui_manifest: toml::Value =
+            toml::from_str(include_str!("../../vendor/gpui/Cargo.toml")).expect("GPUI Cargo 配置");
+        let feature_definitions = gpui_manifest["features"].as_table().expect("GPUI 特性表");
+        assert!(include_str!("../../resources/windows/velora.rc").contains("1 RT_MANIFEST"));
+        assert!(
+            include_str!("../../resources/windows/velora.manifest.xml")
+                .contains("Microsoft.Windows.Common-Controls")
+        );
+
+        for section in ["dependencies", "dev-dependencies"] {
+            let dependency = &manifest[section]["gpui"];
+            let mut pending: Vec<String> = dependency["features"]
+                .as_array()
+                .expect("GPUI 特性列表")
+                .iter()
+                .map(|feature| feature.as_str().expect("特性名称").to_string())
+                .collect();
+            if dependency
+                .get("default-features")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(true)
+            {
+                pending.push("default".into());
+            }
+            let mut enabled = std::collections::BTreeSet::new();
+            while let Some(feature) = pending.pop() {
+                if !enabled.insert(feature.clone()) {
+                    continue;
+                }
+                if let Some(children) = feature_definitions
+                    .get(&feature)
+                    .and_then(toml::Value::as_array)
+                {
+                    pending.extend(
+                        children
+                            .iter()
+                            .filter_map(toml::Value::as_str)
+                            .map(str::to_string),
+                    );
+                }
+            }
+            // Cargo 会合并生产与测试的 GPUI 特性，任一入口启用框架 manifest 都会重复嵌入。
+            assert!(
+                !enabled.contains("windows-manifest"),
+                "{section} 又启用了 GPUI manifest：原生 MSVC 会收到两个 RT_MANIFEST / name 1"
+            );
+            if section == "dependencies" {
+                for feature in feature_definitions["default"].as_array().expect("GPUI 默认特性") {
+                    let feature = feature.as_str().expect("特性名称");
+                    if feature != "windows-manifest" {
+                        assert!(enabled.contains(feature), "不应丢失 GPUI 默认特性 {feature}");
+                    }
+                }
+            }
+        }
+    }
+
     fn action_name(item: &MenuItem) -> &str {
         match item {
             MenuItem::Action { name, .. } => name.as_ref(),

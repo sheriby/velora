@@ -73,7 +73,8 @@ grep-matcher = "0.1.9"
 ignore = "0.4"
 notify = "6"
 uuid = "1.23"
-gpui = { version = "0.2", features = ["runtime_shaders"] }
+# manifest 由应用 build.rs 唯一嵌入，框架默认 manifest 会让原生 MSVC 链接重复资源。
+gpui = { version = "0.2", default-features = false, features = ["font-kit", "wayland", "x11", "runtime_shaders"] }
 unicode-segmentation = "1.13"
 icu_segmenter = { version = "2.3", default-features = false, features = ["compiled_data"] }
 serde = { version = "1", features = ["derive"] }
@@ -125,7 +126,8 @@ tree-sitter-yaml = { version = "0.7", optional = true }
 tree-sitter-toml = { package = "adot-tree-sitter-toml", version = "0.1", optional = true }
 
 [dev-dependencies]
-gpui = { version = "0.2", features = ["test-support"] }
+# Cargo 会合并生产与测试的特性，测试入口也必须关闭框架默认 manifest。
+gpui = { version = "0.2", default-features = false, features = ["test-support"] }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support", "html_reports"] }
 unicode-segmentation = "1.13"
 

@@ -1,7 +1,5 @@
 use super::*;
 use super::command_menus::{command_menu_items, file_menu_items};
-#[cfg(not(target_os = "macos"))]
-use super::command_menus::command_spec;
 
 pub(crate) fn build_menus(
     theme_manager: &ThemeManager,

@@ -40,6 +40,7 @@ impl Editor {
 
     /// 是否仍是空白欢迎态（未打开文件、未编辑、无标签）；用于启动窗口让位
     /// 给 Finder/`open` 的文件事件（roadmap G5）。
+    #[cfg(target_os = "macos")]
     pub(crate) fn is_pristine_startup_window(&self) -> bool {
         self.show_welcome
             && self.file_path.is_none()
