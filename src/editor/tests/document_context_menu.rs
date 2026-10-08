@@ -1078,7 +1078,7 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
     }
     // 「全选」那一行已经不在菜单上（FP14），⌘A 这条键位不该再出现在菜单里。
     assert!(
-        cx.debug_bounds(shortcut_selector("⌘A")).is_none(),
+        cx.debug_bounds(shortcut_selector(if cfg!(target_os = "macos") { "⌘A" } else { "Super+A" })).is_none(),
         "菜单上没有走 ⌘A 的那一行了，键位列里不该还挂着它"
     );
     // 图标条那六颗：这一行不给文字，标签与生效键位就都写在悬停说明里，
@@ -1099,8 +1099,9 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
     assert_eq!(
         cx.update(|_window, app| quick_action_tooltip(DocumentMenuCommand::Undo, &strings, app)),
         format!(
-            "{}  ⌘Z",
-            document_menu_label(DocumentMenuCommand::Undo, &strings)
+            "{}  {}",
+            document_menu_label(DocumentMenuCommand::Undo, &strings),
+            if cfg!(target_os = "macos") { "⌘Z" } else { "Super+Z" }
         ),
         "撤销那颗带上的是键位表里那一份撤销键"
     );
