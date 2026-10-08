@@ -84,6 +84,7 @@ actions!(
         AddLanguageConfig,
         AddThemeConfig,
         QuitApplication,
+        CloseTab,
         CloseWindow,
         CheckForUpdates,
         ShowAbout,
@@ -214,6 +215,7 @@ pub(crate) enum ShortcutCommand {
     NewWindow,
     OpenFile,
     QuitApplication,
+    CloseTab,
     CloseWindow,
     DismissTransientUi,
     ToggleViewMode,
@@ -246,11 +248,18 @@ const QUIT_APPLICATION_DEFAULT_KEYS: &[&str] = &["cmd-q"];
 #[cfg(not(target_os = "macos"))]
 const QUIT_APPLICATION_DEFAULT_KEYS: &[&str] = &[];
 
-// On macOS cmd-w closes the current window; no app-level binding needed on other platforms.
+// cmd-w 让给「关闭标签页」；macOS 关窗退到 cmd-shift-w（与 VS Code 一致），
+// 非 macOS 关窗照旧吃 OS 的 Ctrl+Q。
 #[cfg(target_os = "macos")]
-const CLOSE_WINDOW_DEFAULT_KEYS: &[&str] = &["cmd-w"];
+const CLOSE_WINDOW_DEFAULT_KEYS: &[&str] = &["cmd-shift-w"];
 #[cfg(not(target_os = "macos"))]
 const CLOSE_WINDOW_DEFAULT_KEYS: &[&str] = &["ctrl-q"];
+
+/// 关闭当前标签页。浏览器/编辑器里 Ctrl+W 的肌肉记忆，各平台一致。
+#[cfg(target_os = "macos")]
+const CLOSE_TAB_DEFAULT_KEYS: &[&str] = &["cmd-w"];
+#[cfg(not(target_os = "macos"))]
+const CLOSE_TAB_DEFAULT_KEYS: &[&str] = &["ctrl-w"];
 
 const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
     ShortcutDefinition {
@@ -643,6 +652,13 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         context: None,
     },
     ShortcutDefinition {
+        command: ShortcutCommand::CloseTab,
+        id: "close_tab",
+        category: ShortcutCategory::File,
+        default_keys: CLOSE_TAB_DEFAULT_KEYS,
+        context: None,
+    },
+    ShortcutDefinition {
         command: ShortcutCommand::CloseWindow,
         id: "close_window",
         category: ShortcutCategory::File,
@@ -688,7 +704,10 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         command: ShortcutCommand::ToggleSidebar,
         id: "toggle_sidebar",
         category: ShortcutCategory::Navigation,
-        default_keys: &["ctrl-w"],
+        // 不设默认键位：`ctrl-w` 在 Unix/Emacs 里是「删除前一个词」、在浏览器里是
+        // 「关标签」，误按就把侧边栏收起来（用户报修「经常错误触发」）。现在的入口是
+        // 「视图 → 切换侧边栏」与空选区时的 cmd/ctrl-b（见 `Editor::on_bold_capture`）。
+        default_keys: &[],
         context: None,
     },
     ShortcutDefinition {
@@ -921,6 +940,7 @@ fn key_binding_for(
         ShortcutCommand::NewWindow => KeyBinding::new(key, NewWindow, context),
         ShortcutCommand::OpenFile => KeyBinding::new(key, OpenFile, context),
         ShortcutCommand::QuitApplication => KeyBinding::new(key, QuitApplication, context),
+        ShortcutCommand::CloseTab => KeyBinding::new(key, CloseTab, context),
         ShortcutCommand::CloseWindow => KeyBinding::new(key, CloseWindow, context),
         ShortcutCommand::DismissTransientUi => KeyBinding::new(key, DismissTransientUi, context),
         ShortcutCommand::ToggleViewMode => KeyBinding::new(key, ToggleViewMode, context),

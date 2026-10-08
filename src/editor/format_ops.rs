@@ -171,6 +171,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 没选中文字时加粗本来就是空操作（`Block::toggle_inline_format` 在空选区上
+        // 直接返回 false），这一段留给「切换侧边栏」：用户要求 cmd/ctrl-b 兼作侧
+        // 边栏开关，空选区才当开关用。有选区时还是加粗；工具栏与右键菜单那两条
+        // 入口在空选区时本来就把加粗置灰，不受影响。
+        if !self.has_text_selection(cx) {
+            self.toggle_workspace_drawer(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         self.handle_inline_format_capture(InlineFormat::Bold, window, cx);
     }
 

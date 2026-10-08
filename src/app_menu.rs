@@ -13,7 +13,8 @@ pub(super) use gpui::*;
 
 pub(super) use crate::commands::{CommandMenu, CommandSpec};
 pub(super) use crate::components::{
-    AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, ExportHtml, ExportPdf,
+    AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseTab, CloseWindow, ExportHtml,
+    ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
     FormatDocument, QuitApplication, SaveDocument,
@@ -708,6 +709,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
         || action.as_any().is::<ExportPng>()
         || action.as_any().is::<PrintDocument>()
         || action.as_any().is::<QuitApplication>()
+        || action.as_any().is::<CloseTab>()
         || action.as_any().is::<CloseWindow>()
         || action.as_any().is::<CheckForUpdates>()
         || action.as_any().is::<ShowAbout>()

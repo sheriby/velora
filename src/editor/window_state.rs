@@ -303,6 +303,16 @@ impl Editor {
         self.toggle_view_mode_from_ui(cx);
     }
 
+    /// 「关闭标签页」（cmd/ctrl-w）：键位与文件菜单共用这一条。
+    pub(crate) fn on_close_tab_action(
+        &mut self,
+        _: &crate::components::CloseTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_active_tab(window, cx);
+    }
+
     pub(crate) fn toggle_view_mode_from_ui(&mut self, cx: &mut Context<Self>) {
         if self.code_tab_active() {
             return;

@@ -90,6 +90,8 @@ pub(crate) fn dispatch_menu_action_for_editor(
         install_cli_tool(cx);
     } else if action.as_any().is::<UninstallCliTool>() {
         uninstall_cli_tool(cx);
+    } else if action.as_any().is::<CloseTab>() {
+        let _ = target.update(cx, |editor, cx| editor.close_active_tab(window, cx));
     } else if action.as_any().is::<ToggleSidebar>() {
         let _ = target.update(cx, |editor, cx| {
             editor.toggle_workspace_drawer(window, cx);

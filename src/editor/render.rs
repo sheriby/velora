@@ -2,7 +2,7 @@
 //! unsaved-changes overlay dialog, custom scrollbar, and deferred
 //! operations (focus, scroll, save, window title).
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub(super) use gpui::*;
 
@@ -22,15 +22,6 @@ pub(crate) const ABOUT_GITHUB_URL: &str = "https://github.com/sheriby/velora";
 /// Rows within this many pixels of the viewport stay mounted, so a fast flick
 /// paints them before they scroll in instead of showing a blank edge.
 const RENDER_OVERDRAW_PX: f32 = 800.0;
-/// 侧边栏收起后，贴住窗口左边缘多宽就算「想唤出侧边栏」。
-const SIDEBAR_AUTO_HIDE_EDGE_PX: f32 = 30.0;
-/// 活动栏（窄条）宽度，和 `render_activity_rail` 里的容器一致。
-const SIDEBAR_RAIL_WIDTH_PX: f32 = 50.0;
-/// 唤出滑入 + 收回滑出共用的动画时长；workspace.rs 的收回定时器用同一值
-/// 收尾卸载。
-pub(super) const SIDEBAR_SLIDE_DURATION: Duration = Duration::from_millis(350);
-/// 贴边后必须停留满这段时长才唤出浮层：扫过左缘不停留不弹，防误触。
-pub(super) const SIDEBAR_PEEK_DWELL: Duration = Duration::from_millis(300);
 
 /// 冷启动续挂的帧数上限：行高被低估时一帧挂不满视口，最多再排这么多帧，
 /// 避免估不准时每帧重排。8 帧 ≈ 130ms。

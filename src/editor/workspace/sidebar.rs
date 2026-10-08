@@ -2,11 +2,6 @@ use super::*;
 
 impl Editor {
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 手动切换后不再保留「贴边滑出」的浮层状态，避免收起时它立刻又冒出来。
-        // 收回动画同理：浮层要么被展开的抽屉取代、要么随收起直接消失，都不该
-        // 再挂着一个正在滑出的浮层。
-        self.sidebar_peek = false;
-        self.sidebar_overlay_closing = false;
         if self.workspace.is_open {
             self.workspace.is_open = false;
             // 面板关了就不该再显示正文搜索高亮（用户报修：残留高亮没有面板
@@ -19,51 +14,6 @@ impl Editor {
             self.sync_workspace_models(cx);
             window.activate_window();
         }
-        cx.notify();
-    }
-
-    /// 收起状态下指针贴到窗口左边缘时的浮层开关。
-    ///
-    /// 收起后整条侧边栏（窄条 + 面板）都不占布局，正文用满整宽；指针在左边缘
-    /// 停留满 dwell（见 `SIDEBAR_PEEK_DWELL`）后整条侧边栏作为浮层带滑入动画
-    /// 盖在正文上，指针移开再带滑出动画收回。展开状态下这个开关不生效（那时
-    /// 侧边栏本来就常驻）。停留判定在贴边感应区的 hover 处理里。
-    ///
-    /// 收回动画期间浮层仍挂载，动画播完由定时器卸载；动画中途再次贴边会作废
-    /// 那枚定时器、重新播放滑入。
-    pub(crate) fn set_sidebar_peek(&mut self, peek: bool, cx: &mut Context<Self>) {
-        if self.workspace.is_open {
-            return;
-        }
-        if peek {
-            // 已经完全滑出时无需重播；正在收回则取消收回、立即重新滑入。
-            if !self.sidebar_peek {
-                self.sidebar_peek = true;
-                // 浮层里展示的还是那几棵树，进入时同步一次，和展开抽屉走同一条路径。
-                self.sync_workspace_models(cx);
-                cx.notify();
-            }
-            self.sidebar_overlay_closing = false;
-            return;
-        }
-        if !self.sidebar_peek {
-            return;
-        }
-        self.sidebar_peek = false;
-        self.sidebar_collapse_generation = self.sidebar_collapse_generation.wrapping_add(1);
-        let generation = self.sidebar_collapse_generation;
-        self.sidebar_overlay_closing = true;
-        let duration = crate::editor::render::SIDEBAR_SLIDE_DURATION;
-        cx.spawn(async move |editor, cx| {
-            cx.background_executor().timer(duration).await;
-            _ = editor.update(cx, |editor, cx| {
-                if editor.sidebar_collapse_generation == generation && !editor.sidebar_peek {
-                    editor.sidebar_overlay_closing = false;
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
         cx.notify();
     }
 
@@ -215,10 +165,6 @@ impl Editor {
                     let _ = editor.update(cx, |editor, cx| {
                         // 三个按钮一致：已经开在这一页时再点一次就收起侧边栏
                         // （之前只有文件和搜索会收，大纲那个参数写的是 false）。
-                        // 手动切换后不要留下「贴边滑出」的状态：收起时它会让浮层
-                        // 立刻又冒出来，展开时也不需要它；收回动画同理一并清掉。
-                        editor.sidebar_peek = false;
-                        editor.sidebar_overlay_closing = false;
                         if editor.workspace.is_open && editor.workspace.active_tab == tab {
                             editor.workspace.is_open = false;
                             cx.notify();

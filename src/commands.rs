@@ -12,7 +12,7 @@ use gpui::Action;
 
 use crate::components::{
     BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
-    ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
+    CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
     PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout,
@@ -84,6 +84,7 @@ static COMMANDS: &[CommandSpec] = &[
     command!(sep "quit", App, menu_quit, QuitApplication),
     // 文件
     command!("new_window", File, menu_new_window, NewWindow),
+    command!("close_tab", File, menu_close_tab, CloseTab),
     command!("close_window", File, menu_close_window, CloseWindow),
     command!("open_file", File, menu_open_file, OpenFile),
     command!("open_folder", File, menu_open_folder, OpenFolder),

@@ -766,3 +766,68 @@ async fn the_dirty_dot_marks_the_active_tab(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn the_close_tab_command_closes_the_active_tab(cx: &mut TestAppContext) {
+    // 用户要求：cmd/ctrl-w 关当前标签页（浏览器肌肉记忆）。此前 ctrl-w 挂在
+    // 「切换侧边栏」上，误按就把侧边栏收起来（用户报修「经常错误触发」）。
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-close-tab-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let alpha = root.join("alpha.md");
+    let beta = root.join("beta.md");
+    fs::write(&alpha, "# alpha\n").unwrap();
+    fs::write(&beta, "# beta\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(alpha.clone(), window, cx);
+            editor.open_workspace_file(beta.clone(), window, cx);
+        });
+    });
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.workspace.open_documents.len(), 2, "前置：应有两个标签");
+        assert_eq!(editor.file_path.as_deref(), Some(beta.as_path()), "前置：活动页是 beta");
+    });
+
+    // 命令派发（键位与菜单都走这一条）：活动页 beta 关掉，alpha 留着。
+    cx.dispatch_action(crate::components::CloseTab);
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        let open = editor.workspace.open_documents.clone();
+        assert_eq!(open.len(), 1, "应只剩一个标签，实测 {open:?}");
+        assert_eq!(
+            editor.file_path.as_deref(),
+            Some(alpha.as_path()),
+            "关掉的应是活动页 beta，留下的是 alpha"
+        );
+    });
+
+    // 最后一个标签也照样关（和浏览器一致），回到欢迎页；窗口不关。
+    cx.dispatch_action(crate::components::CloseTab);
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.open_documents.is_empty(), "最后一个标签也该关掉");
+        assert!(editor.show_welcome, "没有标签页时应回到欢迎页");
+    });
+
+    // 已经没页可关时是空操作，不该报错也不该关窗口。
+    cx.dispatch_action(crate::components::CloseTab);
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.open_documents.is_empty());
+        assert!(editor.file_path.is_none());
+    });
+}

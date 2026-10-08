@@ -559,6 +559,9 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &CloseWindow, cx| {
         dispatch_menu_action(&CloseWindow, cx);
     });
+    cx.on_action(|_: &CloseTab, cx| {
+        dispatch_menu_action(&CloseTab, cx);
+    });
 
     install_menus(cx);
     cx.activate(true);

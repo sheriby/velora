@@ -94,6 +94,7 @@ impl I18nStringsDe {
                 .menu_add_theme_config
                 .unwrap_or(defaults.menu_add_theme_config),
             menu_new_window: self.menu_new_window.unwrap_or(defaults.menu_new_window),
+            menu_close_tab: self.menu_close_tab.unwrap_or(defaults.menu_close_tab),
             menu_close_window: self.menu_close_window.unwrap_or(defaults.menu_close_window),
             menu_open_file: self.menu_open_file.unwrap_or(defaults.menu_open_file),
             menu_open_folder: self.menu_open_folder.unwrap_or(defaults.menu_open_folder),
@@ -413,6 +414,9 @@ impl I18nStringsDe {
             preferences_shortcut_quit_application: self
                 .preferences_shortcut_quit_application
                 .unwrap_or(defaults.preferences_shortcut_quit_application),
+            preferences_shortcut_close_tab: self
+                .preferences_shortcut_close_tab
+                .unwrap_or(defaults.preferences_shortcut_close_tab),
             preferences_shortcut_close_window: self
                 .preferences_shortcut_close_window
                 .unwrap_or(defaults.preferences_shortcut_close_window),

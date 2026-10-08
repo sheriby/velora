@@ -99,6 +99,7 @@ impl PreferencesWindow {
             ShortcutCommand::QuitApplication => {
                 strings.preferences_shortcut_quit_application.clone()
             }
+            ShortcutCommand::CloseTab => strings.preferences_shortcut_close_tab.clone(),
             ShortcutCommand::CloseWindow => strings.preferences_shortcut_close_window.clone(),
             ShortcutCommand::DismissTransientUi => {
                 strings.preferences_shortcut_dismiss_transient_ui.clone()

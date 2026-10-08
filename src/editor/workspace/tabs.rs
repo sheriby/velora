@@ -544,6 +544,15 @@ impl Editor {
         self.close_workspace_tabs(std::slice::from_ref(&path.to_path_buf()), window, cx);
     }
 
+    /// 「关闭标签页」命令：关掉当前这一页。当前文档没有对应标签页（未保存的新文档、
+    /// 恢复中的快照）时什么也不做——不顺手关窗口（误按一次不该把整窗口带走）。
+    pub(crate) fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.file_path.clone() else {
+            return;
+        };
+        self.close_workspace_document(&path, window, cx);
+    }
+
     pub(crate) fn close_workspace_tabs_for_action(
         &mut self,
         target: &Path,

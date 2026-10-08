@@ -76,6 +76,7 @@ pub struct I18nStrings {
     /// File menu item for opening a new window.
     pub menu_new_window: String,
     /// File menu item for closing the current window.
+    pub menu_close_tab: String,
     pub menu_close_window: String,
     /// File menu item for opening Markdown files.
     pub menu_open_file: String,
@@ -258,6 +259,7 @@ pub struct I18nStrings {
     pub preferences_shortcut_new_window: String,
     pub preferences_shortcut_open_file: String,
     pub preferences_shortcut_quit_application: String,
+    pub preferences_shortcut_close_tab: String,
     pub preferences_shortcut_close_window: String,
     pub preferences_shortcut_dismiss_transient_ui: String,
     pub preferences_shortcut_toggle_view_mode: String,

@@ -115,26 +115,30 @@ mod tests {
         // Open Recent File submenu location differs by platform.
         #[cfg(target_os = "macos")]
         assert_eq!(
-            submenu(&menus[1].items[3]).name.to_string(),
+            submenu(&menus[1].items[4]).name.to_string(),
             "Open Recent"
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
-            submenu(&menus[0].items[3]).name.to_string(),
+            submenu(&menus[0].items[4]).name.to_string(),
             "Open Recent"
         );
 
-        // Close Window is colocated with New Window in the File menu.
+        // Close Tab sits next to Close Window, both colocated with New Window.
         #[cfg(target_os = "macos")]
-        assert_eq!(action_name(&menus[1].items[1]), "Close Window");
+        assert_eq!(action_name(&menus[1].items[1]), "Close Tab");
+        #[cfg(target_os = "macos")]
+        assert_eq!(action_name(&menus[1].items[2]), "Close Window");
         #[cfg(not(target_os = "macos"))]
-        assert_eq!(action_name(&menus[0].items[1]), "Close Window");
+        assert_eq!(action_name(&menus[0].items[1]), "Close Tab");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(action_name(&menus[0].items[2]), "Close Window");
 
         // Preferences location differs by platform.
         #[cfg(target_os = "macos")]
         assert_eq!(action_name(&menus[0].items[0]), "Preferences");
         #[cfg(not(target_os = "macos"))]
-        assert_eq!(action_name(&menus[0].items[4]), "Preferences");
+        assert_eq!(action_name(&menus[0].items[5]), "Preferences");
 
         assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
@@ -185,12 +189,12 @@ mod tests {
 
         #[cfg(target_os = "macos")]
         assert_eq!(
-            submenu(&menus[1].items[3]).name.to_string(),
+            submenu(&menus[1].items[4]).name.to_string(),
             i18n_manager.strings().menu_open_recent_file.as_str()
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
-            submenu(&menus[0].items[3]).name.to_string(),
+            submenu(&menus[0].items[4]).name.to_string(),
             i18n_manager.strings().menu_open_recent_file.as_str()
         );
 
@@ -222,6 +226,8 @@ mod tests {
         assert_eq!(action_name(&menus[1].items[0]), "新建窗口");
         #[cfg(not(target_os = "macos"))]
         assert_eq!(action_name(&menus[0].items[0]), "新建窗口");
+        assert_eq!(action_name(&menus[0].items[1]), "关闭标签页");
+        assert_eq!(action_name(&menus[0].items[2]), "关闭窗口");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
         assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "图片（PNG 长图）");
@@ -349,9 +355,9 @@ mod tests {
         // On macOS: File menu is index 1, Open Recent is item 3 within it.
         // On other platforms: File menu is index 0, Open Recent is item 3.
         #[cfg(target_os = "macos")]
-        let recent_menu = submenu(&menus[1].items[3]);
+        let recent_menu = submenu(&menus[1].items[4]);
         #[cfg(not(target_os = "macos"))]
-        let recent_menu = submenu(&menus[0].items[3]);
+        let recent_menu = submenu(&menus[0].items[4]);
 
         assert_eq!(recent_menu.name.to_string(), "Open Recent");
         assert_eq!(recent_menu.items.len(), 1);
@@ -404,9 +410,9 @@ mod tests {
         let menus = build_menus(&theme_manager, &i18n_manager, &recent_files);
 
         #[cfg(target_os = "macos")]
-        let recent_menu = submenu(&menus[1].items[3]);
+        let recent_menu = submenu(&menus[1].items[4]);
         #[cfg(not(target_os = "macos"))]
-        let recent_menu = submenu(&menus[0].items[3]);
+        let recent_menu = submenu(&menus[0].items[4]);
 
         assert_eq!(recent_menu.items.len(), 2);
         assert_eq!(action_name(&recent_menu.items[0]), r"C:\docs\one.md");

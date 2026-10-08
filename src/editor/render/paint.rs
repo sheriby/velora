@@ -840,6 +840,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_export_png))
             .on_action(cx.listener(Self::on_quit_application))
             .on_action(cx.listener(Self::on_close_window))
+            .on_action(cx.listener(Self::on_close_tab_action))
             .on_action(cx.listener(Self::on_toggle_view_mode_action))
             .on_action(cx.listener(Self::on_find_in_document))
             .on_action(cx.listener(Self::on_find_next_match))
@@ -911,110 +912,23 @@ impl Render for Editor {
             self.current_workspace_panel_width(f32::from(window.viewport_size().width), cx);
         let workspace_panel =
             self.render_workspace_panel(&theme, &strings, workspace_width, window, cx);
+        // 收起 = 整条侧边栏（图标列 + 面板）都不占布局，正文满宽。没有贴边浮层：
+        // 唤出只有「视图 → 切换侧边栏」与 cmd/ctrl-b 两条，误触不会再把它甩出来。
         let mut main_content = div()
             .w_full()
             .flex_1()
             .min_h(px(0.0))
             .pt(px(titlebar_height + menu_bar_height))
             .flex()
-            .min_w(px(0.0))
-            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
-                // 指针跑到浮层右边的正文里就收回（浮层宽度 = 窄条 + 面板）。
-                if event.position.x > px(SIDEBAR_RAIL_WIDTH_PX + workspace_width) {
-                    this.set_sidebar_peek(false, cx);
-                }
-            }));
+            .min_w(px(0.0));
         if self.workspace.is_open {
-            // 展开：窄条与面板占位，正文被挤到右边。
+            // 展开：图标列与面板占位，正文被挤到右边。
             main_content = main_content.child(self.render_activity_rail(&theme, cx));
             if let Some(workspace_panel) = workspace_panel {
                 main_content = main_content.child(workspace_panel);
             }
-            main_content = main_content.child(content_area);
-        } else {
-            // 收起：整条侧边栏不占布局，正文占满整宽。指针贴到左边缘时整条侧边栏作为
-            // 浮层滑出、盖在正文上（不挤压排版），移开带动画收回。顶边和展开时对齐
-            // （标题栏 + 菜单栏之下），否则浮层会从窗口最顶上冒出来，盖住红绿灯和
-            // 标签栏。
-            let sidebar_top = px(titlebar_height + menu_bar_height);
-            main_content = main_content.child(content_area);
-            main_content = main_content.child(
-                div()
-                    .id("sidebar-auto-hide-edge")
-                    .debug_selector(|| "sidebar-auto-hide-edge".to_string())
-                    .absolute()
-                    .left_0()
-                    .top(sidebar_top)
-                    .bottom_0()
-                    .w(px(SIDEBAR_AUTO_HIDE_EDGE_PX))
-                    .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                        // 进出贴边区都先递增 generation 作废挂着的停留定时器：
-                        // 进入时换发新定时器，停留满才唤出；离开/再进入则让旧
-                        // 定时器到点也不生效（防误触，见 SIDEBAR_PEEK_DWELL）。
-                        this.sidebar_edge_dwell_generation =
-                            this.sidebar_edge_dwell_generation.wrapping_add(1);
-                        if *hovered {
-                            let generation = this.sidebar_edge_dwell_generation;
-                            let dwell = crate::editor::render::SIDEBAR_PEEK_DWELL;
-                            cx.spawn(async move |editor, cx| {
-                                cx.background_executor().timer(dwell).await;
-                                _ = editor.update(cx, |editor, cx| {
-                                    if editor.sidebar_edge_dwell_generation == generation {
-                                        editor.set_sidebar_peek(true, cx);
-                                    }
-                                });
-                            })
-                            .detach();
-                        }
-                    })),
-            );
-            if let Some(workspace_panel) = workspace_panel {
-                let overlay_width = px(SIDEBAR_RAIL_WIDTH_PX + workspace_width);
-                let overlay = div()
-                    .id("sidebar-auto-hide-overlay")
-                    .debug_selector(|| "sidebar-auto-hide-overlay".to_string())
-                    .absolute()
-                    .left_0()
-                    .top(sidebar_top)
-                    .bottom_0()
-                    // 显式宽度：绝对定位下不给宽度会按父级拉伸，鼠标移到正文时仍算
-                    // 「在浮层内」，退出事件永远不触发。宽度 = 窄条 + 面板。
-                    .w(overlay_width)
-                    // 遮挡命中：浮层盖着正文，不挡住的话滚轮会同时命中浮层里的文件
-                    // 树和后面的编辑器滚动区（用户报修：收起侧栏贴边唤出后，在浮层
-                    // 里滚树把正文也带着滚了），点击也会穿透到正文。
-                    .occlude()
-                    .flex()
-                    .border_r(px(1.0))
-                    .border_color(theme.colors.dialog_border)
-                    .child(self.render_activity_rail(&theme, cx))
-                    .child(workspace_panel);
-                // 唤出滑入 / 收回滑出都用负 left 把浮层整体推到左边界外：
-                // `with_animation` 在元素每次挂载时从头播放（滑入/滑出是两个
-                // 不同 id 的包装，切换状态即重播），动画结束后每帧按 delta=1
-                // 收敛在终态。收回动画期间（sidebar_overlay_closing）浮层仍
-                // 挂载，播完由 workspace.rs 的定时器卸载。
-                let layer = if self.sidebar_peek {
-                    overlay
-                        .with_animation(
-                            "sidebar-overlay-slide-in",
-                            Animation::new(SIDEBAR_SLIDE_DURATION).with_easing(ease_out_quint()),
-                            move |slide, delta| slide.left(overlay_width * (delta - 1.0)),
-                        )
-                        .into_any_element()
-                } else {
-                    debug_assert!(self.sidebar_overlay_closing, "面板此时只应随动画挂载");
-                    overlay
-                        .with_animation(
-                            "sidebar-overlay-slide-out",
-                            Animation::new(SIDEBAR_SLIDE_DURATION).with_easing(quadratic),
-                            move |slide, delta| slide.left(-overlay_width * delta),
-                        )
-                        .into_any_element()
-                };
-                main_content = main_content.child(layer);
-            }
         }
+        main_content = main_content.child(content_area);
         let base = base.child(main_content);
         let base = if let Some(status_bar) = self.render_status_bar(&theme, &strings, window, cx) {
             base.child(status_bar)

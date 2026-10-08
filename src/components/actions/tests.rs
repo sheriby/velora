@@ -40,10 +40,13 @@
     }
 
     #[test]
-    fn toggle_sidebar_has_default_shortcuts() {
-        assert_eq!(
-            resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::ToggleSidebar),
-            vec!["ctrl-w".to_string()]
+    fn toggle_sidebar_ships_without_a_default_shortcut() {
+        // `ctrl-w` 在这个位置是个坑（Unix/Emacs 删前一个词、浏览器关标签），
+        // 误按就收起侧边栏（用户报修「经常错误触发」）。默认不再绑任何键；
+        // 空选区下的 cmd/ctrl-b 走加粗那条捕获路径，见
+        // `Editor::on_bold_capture`。
+        assert!(
+            resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::ToggleSidebar).is_empty()
         );
     }
 
@@ -127,8 +130,13 @@
     fn close_and_quit_defaults_are_platform_specific() {
         #[cfg(target_os = "macos")]
         {
+            // cmd-w 归「关闭标签页」；关窗退到 cmd-shift-w（与 VS Code 一致）。
             assert_eq!(
                 resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::CloseWindow),
+                vec!["cmd-shift-w".to_string()]
+            );
+            assert_eq!(
+                resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::CloseTab),
                 vec!["cmd-w".to_string()]
             );
             assert_eq!(
@@ -142,6 +150,11 @@
             assert_eq!(
                 resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::CloseWindow),
                 vec!["ctrl-q".to_string()]
+            );
+            // 浏览器肌肉记忆：Ctrl+W 关当前标签页，不是关窗口。
+            assert_eq!(
+                resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::CloseTab),
+                vec!["ctrl-w".to_string()]
             );
             assert!(
                 resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::QuitApplication)

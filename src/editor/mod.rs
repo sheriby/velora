@@ -312,17 +312,6 @@ pub struct Editor {
     menu_bar_open: Option<usize>,
     /// Windows：标题栏左侧汉堡按钮展开的一级菜单列表是否打开。
     hamburger_menu_open: bool,
-    /// 侧边栏收起时，指针贴到窗口左边缘临时滑出的浮层是否可见。
-    /// 收起状态下的「自动隐藏」：不占布局，滑出时盖在正文上。
-    sidebar_peek: bool,
-    /// 浮层正在播放「收回」动画：动画期间浮层仍挂载，播完才真正卸载。
-    sidebar_overlay_closing: bool,
-    /// 每次收回递增，用于作废旧收回定时器：快速「贴边→移开→再贴边」时，
-    /// 上一轮的定时器不能把新一轮滑入砍掉。
-    sidebar_collapse_generation: u32,
-    /// 每次进出贴边感应区递增：贴边必须停留满 dwell 才唤出，扫过不停留时，
-    /// 挂着的停留定时器靠它作废。
-    sidebar_edge_dwell_generation: u32,
     /// Open child submenu inside the in-window fallback menu panel.
     menu_submenu_open: Option<usize>,
     menu_bar_hovered: bool,
@@ -775,10 +764,6 @@ impl Editor {
             rendered_select_all_cycle: None,
             menu_bar_open: None,
             hamburger_menu_open: false,
-            sidebar_peek: false,
-            sidebar_overlay_closing: false,
-            sidebar_collapse_generation: 0,
-            sidebar_edge_dwell_generation: 0,
             menu_submenu_open: None,
             menu_bar_hovered: false,
             menu_panel_hovered: false,
