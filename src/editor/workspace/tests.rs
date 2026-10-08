@@ -13,4 +13,5 @@ mod search_random_consistency;
 mod sidebar;
 mod tabs_sessions;
 mod tree_files;
+mod tree_edit;
 mod workspace_scan;

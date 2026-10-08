@@ -27,6 +27,8 @@
 - `scan_workspace_dir`：递归 `fs::read_dir`，跳过 `.git/target/node_modules/.worktrees/dist`；分类 Markdown/Code/Other；排序（名称/时间/类型，`TreeSortPreference`）。
 - **异步扫描**：`sync_workspace_file_tree_inner` 用 `cx.background_spawn` + 代数计数器（`tree_scan_generation`），过期结果丢弃；过滤模式渲染扁平命中列表（≤50）。
 - **监听**（src/editor/watcher.rs）：notify 递归 watcher，Modify/Create/Remove 事件经 mpsc 泵到 `on_watched_path_changed` → `reload_externally_changed_document`（只重载干净标签，重载走 `ImportKind::Restore`：模式、视口、光标都不动，见 editor-core.md §6）。
+- **树内名称编辑**（workspace/tree_edit.rs）：新建普通文件、Markdown 文件、文件夹与重命名共用单行输入，复用 Editor 的 IME 路由；Markdown 默认 `untitled.md` 并选中文件名部分，后缀可改。Enter 确认、Esc 取消，名称不可包含路径分隔符；I/O 在后台执行，重名在输入行提示，其它错误送应用内模态。重命名同步更新打开标签、活动路径与图片基目录，并保留未保存内容。
+- **树的选择与正文焦点独立**：右键直接选中并聚焦文件树，菜单保存点击时的目标，重绘和其它文档激活不能把菜单操作转移到活动文档。文件树菜单提供在文件管理器中打开、复制绝对路径、相对路径和文件名，F2 在树焦点下重命名。
 
 ## 4. 命令/动作系统
 

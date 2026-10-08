@@ -349,27 +349,6 @@ impl Editor {
         self.workspace.root.clone()
     }
 
-    pub(crate) fn markdown_state_for_path(
-        &self,
-        path: &Path,
-        _cx: &App,
-    ) -> Option<(String, bool, u64)> {
-        if self.file_path.as_deref() == Some(path) {
-            let markdown = self.document_text_for_save();
-            return Some((
-                markdown.clone(),
-                self.document_dirty,
-                self.file_version
-                    .unwrap_or_else(|| crate::editor::persistence::file_content_version(&markdown)),
-            ));
-        }
-        self.workspace
-            .open_documents
-            .iter()
-            .find(|tab| tab.path == path)
-            .map(|tab| (tab.markdown.clone(), tab.dirty, tab.file_version))
-    }
-
     /// F2 复制为 HTML：把选区（无选区时全文）渲染为 HTML 并写入剪贴板。
     pub(crate) fn copy_as_html(&mut self, cx: &mut Context<Self>) {
         let theme = cx.global::<ThemeManager>().current_arc();

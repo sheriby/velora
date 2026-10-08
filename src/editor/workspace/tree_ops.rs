@@ -1,6 +1,39 @@
 use super::*;
 
 impl Editor {
+    pub(crate) fn reveal_selected_workspace_path(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.selected_workspace_path() else { return; };
+        let path = PathBuf::from(workspace_path_text(&path));
+        let (program, arguments) = crate::editor::context_menu::reveal_command_spec(&path);
+        if let Err(error) = std::process::Command::new(program).args(arguments).spawn() {
+            let title = cx.global::<I18nManager>().strings().workspace_reveal_in_file_manager.clone();
+            self.show_message_modal(title, error.to_string(), cx);
+        }
+    }
+
+    pub(super) fn copy_workspace_path_text(&mut self, action: WorkspaceMenuAction, cx: &mut Context<Self>) {
+        let Some(path) = self.selected_workspace_path() else { return; };
+        let value = match action {
+            WorkspaceMenuAction::CopyAbsolutePath => workspace_path_text(&path),
+            WorkspaceMenuAction::CopyRelativePath => {
+                let Some(root) = self.workspace.root.as_ref() else { return; };
+                match path.strip_prefix(root) {
+                    Ok(relative) if relative.as_os_str().is_empty() => ".".to_string(),
+                    Ok(relative) => relative.to_string_lossy().into_owned(),
+                    Err(error) => {
+                        let title = cx.global::<I18nManager>().strings().workspace_copy_relative_path.clone();
+                        self.show_message_modal(title, error.to_string(), cx);
+                        return;
+                    }
+                }
+            }
+            WorkspaceMenuAction::CopyFileName => path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+            _ => return,
+        };
+        self.tree_clipboard = None;
+        cx.write_to_clipboard(ClipboardItem::new_string(value));
+    }
+
     pub(crate) fn toggle_workspace_node(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.workspace.expanded.remove(id) {
             self.workspace.expanded.insert(id.to_string());
@@ -292,4 +325,14 @@ impl Editor {
             }
         }
     }
+}
+
+fn workspace_path_text(path: &Path) -> String {
+    let text = path.to_string_lossy().into_owned();
+    #[cfg(windows)]
+    {
+        if let Some(unc) = text.strip_prefix(r"\\?\UNC\") { return format!(r"\\{unc}"); }
+        if let Some(local) = text.strip_prefix(r"\\?\") { return local.to_string(); }
+    }
+    text
 }

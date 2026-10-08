@@ -3,7 +3,7 @@ use super::super::{
     WorkspaceState,
     WorkspaceTreeKind, WorkspaceTreeNode, build_outline_tree, clamp_workspace_panel_width,
     create_workspace_file, create_workspace_folder, is_code_file, tree_node_path,
-    path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
+    path_is_affected, prune_outline_state, remap_moved_path,
     file_node_id, find_workspace_node, scan_workspace_dir_recursive,
 };
 use crate::components::{Block, UndoCaptureKind};
@@ -306,7 +306,7 @@ async fn right_click_menu_renders_for_a_workspace_file(cx: &mut TestAppContext) 
     });
     cx.update(|window, cx| window.draw(cx).clear());
     editor.read_with(cx, |editor, _| {
-        assert!(editor.workspace.context_menu.unwrap().has_target);
+        assert!(editor.workspace.context_menu.as_ref().expect("右键菜单").has_target);
     });
 }
 
@@ -365,32 +365,6 @@ fn moving_a_folder_remaps_open_document_descendants() {
             false,
         ),
         Some(PathBuf::from("/workspace/new.md"))
-    );
-}
-
-#[test]
-fn moving_a_markdown_file_rewrites_relative_inline_image_paths() {
-    let markdown = "![diagram](./assets/diagram.png \"Diagram\")\n\n![online](https://example.com/image.png)";
-    assert_eq!(
-        rewrite_relative_image_targets(
-            markdown,
-            Path::new("/workspace/docs"),
-            Path::new("/workspace/notes"),
-        ),
-        "![diagram](../docs/assets/diagram.png \"Diagram\")\n\n![online](https://example.com/image.png)"
-    );
-}
-
-#[test]
-fn moving_a_markdown_file_rewrites_reference_image_definitions() {
-    let markdown = "![cover][hero]\n\n[hero]: ./assets/cover.png \"Cover\"";
-    assert_eq!(
-        rewrite_relative_image_targets(
-            markdown,
-            Path::new("/workspace/docs"),
-            Path::new("/workspace/notes"),
-        ),
-        "![cover][hero]\n\n[hero]: ../docs/assets/cover.png \"Cover\""
     );
 }
 

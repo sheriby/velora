@@ -1,4 +1,5 @@
 use super::*;
+use gpui::prelude::FluentBuilder;
 
 impl Editor {
     pub(crate) fn render_workspace_panel(
@@ -19,6 +20,7 @@ impl Editor {
 
         self.sync_workspace_models(cx);
         let editor = cx.entity().downgrade();
+        let tree_focus = self.workspace.tree_focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let resize_editor = editor.clone();
         let c = &theme.colors;
         let d = &theme.dimensions;
@@ -59,6 +61,8 @@ impl Editor {
                 .child(
                     div()
                         .id("workspace-panel-scroll")
+                        .track_focus(&tree_focus)
+                        .on_key_down(cx.listener(Self::on_workspace_tree_key_down))
                         .flex_1()
                         .min_h(px(0.0))
                         .overflow_y_scroll()
@@ -243,6 +247,12 @@ impl Editor {
         for node in nodes {
             elements.push(self.render_workspace_node(node, depth, theme, editor));
             let is_expanded = self.workspace.expanded.contains(&node.id);
+            if is_expanded && self.workspace.name_edit.as_ref().is_some_and(|edit| {
+                !matches!(edit.kind, WorkspaceEditKind::Rename { .. })
+                    && tree_node_path(node) == edit.directory.as_path()
+            }) {
+                elements.push(self.render_workspace_name_row(depth + 1, theme, editor));
+            }
             if is_expanded && node.kind_dir() && !node.children_loaded {
                 // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
                 elements.push(
@@ -288,10 +298,18 @@ impl Editor {
             (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::CodeFile(path)) => {
                 selected == path
             }
+            (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::OtherFile(path)) => selected == path,
             (Some(WorkspaceSelection::Outline(selected)), _) => selected == &node.id,
             _ => false,
         };
         let node_id = node.id.clone();
+        let node_selector = format!("workspace-node-{}", stable_node_hash(&node.id));
+        if self.workspace.name_edit.as_ref().is_some_and(|edit| {
+            matches!(&edit.kind, WorkspaceEditKind::Rename { source, .. }
+                if tree_node_path(node) == source.as_path())
+        }) {
+            return self.render_workspace_name_row(depth, theme, editor);
+        }
         let click_editor = editor.clone();
         let click_kind = node.kind.clone();
         let context_editor = editor.clone();
@@ -344,6 +362,7 @@ impl Editor {
         let tooltip_text = tree_node_tooltip(&node);
         div()
             .id(("workspace-node", stable_node_hash(&node.id)))
+            .debug_selector(move || node_selector.clone())
             .h(px(WORKSPACE_NODE_HEIGHT))
             .w_full()
             .overflow_hidden()
@@ -353,10 +372,10 @@ impl Editor {
             .pl(px(6.0 + depth as f32 * WORKSPACE_NODE_INDENT))
             .pr(px(6.0))
             .rounded(px(4.0))
-            .tooltip(move |_, cx| {
+            .when(self.workspace.context_menu.is_none() && self.workspace.name_edit.is_none(), |this| this.tooltip(move |_, cx| {
                 let tooltip_text = tooltip_text.clone();
                 cx.new(|_| WorkspaceTooltip { label: tooltip_text }).into()
-            })
+            }))
             .bg(if selected {
                 c.selection
             } else {
@@ -384,7 +403,7 @@ impl Editor {
                     .text_color(label_color)
                     .child(node.label.clone()),
             )
-            .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                 let selection = match &context_kind {
                     WorkspaceTreeKind::Directory(path) => {
                         Some(WorkspaceSelection::Directory(path.clone()))
@@ -398,6 +417,7 @@ impl Editor {
                 };
                 let _ = context_editor.update(cx, |editor, cx| {
                     editor.open_workspace_context_menu(event.position, selection, cx);
+                    editor.focus_workspace_tree(window, cx);
                 });
                 cx.stop_propagation();
             })
@@ -407,7 +427,9 @@ impl Editor {
                 }
                 let node_id = node_id.clone();
                 let click_kind = click_kind.clone();
-                let _ = click_editor.update(cx, |editor, cx| match click_kind {
+                let _ = click_editor.update(cx, |editor, cx| {
+                    let is_file_tree = !matches!(click_kind, WorkspaceTreeKind::Heading { .. });
+                    match click_kind {
                     WorkspaceTreeKind::Directory(path) => {
                         editor.workspace.selected = Some(WorkspaceSelection::Directory(path));
                         editor.toggle_workspace_node(&node_id, cx);
@@ -431,6 +453,8 @@ impl Editor {
                             editor.open_outline_node(node_id, line, cx);
                         }
                     }
+                    }
+                    if is_file_tree && event.click_count() < 2 { editor.focus_workspace_tree(window, cx); }
                 });
             })
             .into_any_element()
@@ -509,7 +533,7 @@ pub(crate) fn is_markdown_document(path: &Path) -> bool {
 pub(crate) fn create_workspace_file(path: &Path) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
     let template = crate::config::EditorSettings::new_file_template();
-    if !template.is_empty() {
+    if is_markdown_document(path) && !template.is_empty() {
         let date = crate::config::today_local_date();
         use std::io::Write;
         file.write_all(template.replace("{date}", &date).as_bytes())?;
@@ -535,291 +559,6 @@ pub(crate) fn remap_moved_path(
         return None;
     };
     Some(destination.join(suffix))
-}
-
-pub(crate) fn inline_image_destination_range(source: &str, range: Range<usize>) -> Option<Range<usize>> {
-    let image = source.get(range.clone())?;
-    let bytes = image.as_bytes();
-    if !image.starts_with("![") {
-        return None;
-    }
-
-    let mut cursor = 2;
-    let mut bracket_depth = 1;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'\\' => cursor = cursor.checked_add(2)?,
-            b'[' => {
-                bracket_depth += 1;
-                cursor += 1;
-            }
-            b']' => {
-                bracket_depth -= 1;
-                cursor += 1;
-                if bracket_depth == 0 {
-                    break;
-                }
-            }
-            _ => cursor += 1,
-        }
-    }
-    if bracket_depth != 0 {
-        return None;
-    }
-    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-        cursor += 1;
-    }
-    if bytes.get(cursor) != Some(&b'(') {
-        return None;
-    }
-    cursor += 1;
-    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-        cursor += 1;
-    }
-
-    let (start, end) = if bytes.get(cursor) == Some(&b'<') {
-        let start = cursor + 1;
-        cursor = start;
-        while cursor < bytes.len() {
-            if bytes[cursor] == b'\\' {
-                cursor = cursor.checked_add(2)?;
-            } else if bytes[cursor] == b'>' {
-                break;
-            } else {
-                cursor += 1;
-            }
-        }
-        (start, cursor)
-    } else {
-        let start = cursor;
-        let mut parentheses = 0usize;
-        while cursor < bytes.len() {
-            match bytes[cursor] {
-                b'\\' => cursor = cursor.checked_add(2)?,
-                b'(' => {
-                    parentheses += 1;
-                    cursor += 1;
-                }
-                b')' if parentheses == 0 => break,
-                b')' => {
-                    parentheses -= 1;
-                    cursor += 1;
-                }
-                byte if byte.is_ascii_whitespace() && parentheses == 0 => break,
-                _ => cursor += 1,
-            }
-        }
-        (start, cursor)
-    };
-    (start < end).then_some((range.start + start)..(range.start + end))
-}
-
-pub(crate) fn rewrite_relative_image_destination(
-    destination: &str,
-    source_directory: &Path,
-    destination_directory: &Path,
-) -> Option<String> {
-    if destination.starts_with("//")
-        || destination.starts_with('/')
-        || destination.starts_with('#')
-        || url::Url::parse(destination).is_ok()
-    {
-        return None;
-    }
-
-    let suffix_start = destination
-        .char_indices()
-        .find(|(_, character)| matches!(character, '?' | '#'))
-        .map_or(destination.len(), |(index, _)| index);
-    let (relative_target, suffix) = destination.split_at(suffix_start);
-    if relative_target.is_empty() {
-        return None;
-    }
-    let target_path = Path::new(relative_target);
-    if target_path.is_absolute() {
-        return None;
-    }
-    let resolved_target = normalize_path(&source_directory.join(target_path));
-    let relative_path = relative_path_between(destination_directory, &resolved_target)?;
-    let mut relative = relative_path.to_string_lossy().replace('\\', "/");
-    if !relative.starts_with("./") && !relative.starts_with("../") {
-        relative = format!("./{relative}");
-    }
-    relative = relative
-        .replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('(', "%28")
-        .replace(')', "%29")
-        .replace('"', "%22");
-    Some(format!("{relative}{suffix}"))
-}
-
-pub(crate) fn rewrite_relative_image_targets(
-    markdown: &str,
-    source_directory: &Path,
-    destination_directory: &Path,
-) -> String {
-    let mut replacements = Vec::new();
-    let mut reference_destinations = HashMap::new();
-    for (event, range) in Parser::new_ext(markdown, Options::all()).into_offset_iter() {
-        let Event::Start(Tag::Image {
-            link_type,
-            dest_url,
-            id,
-            ..
-        }) = event
-        else {
-            continue;
-        };
-        let Some(destination) =
-            rewrite_relative_image_destination(&dest_url, source_directory, destination_directory)
-        else {
-            continue;
-        };
-        if link_type == LinkType::Inline {
-            if let Some(range) = inline_image_destination_range(markdown, range) {
-                replacements.push((range, destination));
-            }
-        } else {
-            reference_destinations.insert(normalize_reference_id(&id), destination);
-        }
-    }
-
-    if !reference_destinations.is_empty() {
-        let mut line_offset = 0;
-        for line in markdown.split_inclusive('\n') {
-            if let Some((id, range)) = reference_definition_target_range(line, line_offset)
-                && let Some(destination) = reference_destinations.get(&id)
-            {
-                replacements.push((range, destination.clone()));
-            }
-            line_offset += line.len();
-        }
-    }
-
-    replacements.sort_by(|left, right| right.0.start.cmp(&left.0.start));
-    let mut rewritten = markdown.to_string();
-    for (range, destination) in replacements {
-        rewritten.replace_range(range, &destination);
-    }
-    rewritten
-}
-
-pub(crate) fn normalize_reference_id(id: &str) -> String {
-    id.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-pub(crate) fn reference_definition_target_range(
-    line: &str,
-    line_offset: usize,
-) -> Option<(String, Range<usize>)> {
-    let bytes = line.as_bytes();
-    let mut cursor = 0;
-    while bytes.get(cursor) == Some(&b' ') && cursor < 4 {
-        cursor += 1;
-    }
-    if bytes.get(cursor) != Some(&b'[') {
-        return None;
-    }
-    let id_start = cursor + 1;
-    cursor = id_start;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'\\' => cursor = cursor.checked_add(2)?,
-            b']' => break,
-            _ => cursor += 1,
-        }
-    }
-    if bytes.get(cursor) != Some(&b']') || bytes.get(cursor + 1) != Some(&b':') {
-        return None;
-    }
-    let id = normalize_reference_id(line.get(id_start..cursor)?);
-    cursor += 2;
-    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-        cursor += 1;
-    }
-
-    let (start, end) = if bytes.get(cursor) == Some(&b'<') {
-        let start = cursor + 1;
-        cursor = start;
-        while cursor < bytes.len() {
-            if bytes[cursor] == b'\\' {
-                cursor = cursor.checked_add(2)?;
-            } else if bytes[cursor] == b'>' {
-                break;
-            } else {
-                cursor += 1;
-            }
-        }
-        (start, cursor)
-    } else {
-        let start = cursor;
-        while cursor < bytes.len() && !bytes[cursor].is_ascii_whitespace() && bytes[cursor] != b')'
-        {
-            if bytes[cursor] == b'\\' {
-                cursor = cursor.checked_add(2)?;
-            } else {
-                cursor += 1;
-            }
-        }
-        (start, cursor)
-    };
-    (start < end).then_some((id, (line_offset + start)..(line_offset + end)))
-}
-
-pub(crate) fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push(component.as_os_str());
-                }
-            }
-            _ => normalized.push(component.as_os_str()),
-        }
-    }
-    normalized
-}
-
-pub(crate) fn relative_path_between(from: &Path, to: &Path) -> Option<PathBuf> {
-    let from = normalize_path(from);
-    let to = normalize_path(to);
-    if !from.is_absolute() || !to.is_absolute() {
-        return None;
-    }
-    let from_components = from.components().collect::<Vec<_>>();
-    let to_components = to.components().collect::<Vec<_>>();
-    let mut common = 0;
-    while common < from_components.len()
-        && common < to_components.len()
-        && from_components[common] == to_components[common]
-    {
-        common += 1;
-    }
-    if common == 0 {
-        return None;
-    }
-
-    let mut relative = PathBuf::new();
-    for component in &from_components[common..] {
-        if matches!(component, std::path::Component::Normal(_)) {
-            relative.push("..");
-        }
-    }
-    for component in &to_components[common..] {
-        if matches!(
-            component,
-            std::path::Component::Normal(_) | std::path::Component::ParentDir
-        ) {
-            relative.push(component.as_os_str());
-        }
-    }
-    Some(relative)
 }
 
 pub(crate) fn path_is_affected(path: &Path, target: &Path, target_is_directory: bool) -> bool {

@@ -8,7 +8,6 @@ pub(super) use std::time::Duration;
 
 pub(super) use anyhow::{Context as _, Result};
 pub(super) use gpui::*;
-pub(super) use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 pub(super) use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) use super::{
@@ -129,10 +128,11 @@ pub(crate) enum WorkspaceOpenMode {
     Pinned,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct WorkspaceContextMenu {
     position: Point<Pixels>,
     has_target: bool,
+    target: Option<WorkspaceSelection>,
 }
 
 #[derive(Clone, Copy)]
@@ -183,12 +183,41 @@ enum WorkspaceSearchScope {
 #[derive(Clone, Copy)]
 enum WorkspaceMenuAction {
     NewFile,
+    NewMarkdown,
     NewFolder,
     Duplicate,
     Copy,
     Paste,
     Rename,
     Delete,
+    Reveal,
+    CopyAbsolutePath,
+    CopyRelativePath,
+    CopyFileName,
+}
+
+#[derive(Clone)]
+enum WorkspaceEditKind {
+    File,
+    Folder,
+    Rename { source: PathBuf, is_directory: bool },
+}
+
+struct WorkspaceNameEdit {
+    kind: WorkspaceEditKind,
+    directory: PathBuf,
+    draft: String,
+    selected_range: Range<usize>,
+    marked_range: Option<Range<usize>>,
+    focus: FocusHandle,
+    error: Option<String>,
+    pending: bool,
+    last_line: Option<ShapedLine>,
+    last_bounds: Option<Bounds<Pixels>>,
+    scroll_x: Pixels,
+    caret: usize,
+    selection_anchor: usize,
+    _blur_subscription: Subscription,
 }
 
 /// Drag payload for reordering document tabs (roadmap E3).
@@ -251,6 +280,7 @@ pub(crate) enum OverlayInputKind {
     CommandPalette,
     /// 公式编辑器弹窗的草稿输入（多行，允许换行）。
     FormulaEditor,
+    TreeName,
 }
 
 impl From<SearchInputKind> for OverlayInputKind {
@@ -361,6 +391,8 @@ pub(super) struct WorkspaceState {
     files_on_disk_walk_root: Option<PathBuf>,
     files_on_disk_task: Option<Task<()>>,
     context_menu: Option<WorkspaceContextMenu>,
+    name_edit: Option<WorkspaceNameEdit>,
+    tree_focus: Option<FocusHandle>,
     tab_context_menu: Option<TabContextMenu>,
     /// 文件树过滤框（roadmap D8）：非空时树显示扁平匹配列表。
     pub(super) tree_filter: String,
@@ -425,6 +457,8 @@ impl Default for WorkspaceState {
             files_on_disk_walk_root: None,
             files_on_disk_task: None,
             context_menu: None,
+            name_edit: None,
+            tree_focus: None,
             tab_context_menu: None,
             tree_filter: String::new(),
             tree_filter_focus: None,
@@ -534,6 +568,7 @@ pub(super) use search_engine::*;
 pub(super) use document_matches::*;
 
 mod context_menus;
+mod tree_edit;
 mod document_matches;
 mod documents;
 mod file_tree;

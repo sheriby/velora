@@ -480,6 +480,13 @@ impl I18nStringsDe {
             workspace_new_file: self
                 .workspace_new_file
                 .unwrap_or(defaults.workspace_new_file),
+            workspace_new_generic_file: self.workspace_new_generic_file.unwrap_or(defaults.workspace_new_generic_file),
+            workspace_reveal_in_file_manager: self.workspace_reveal_in_file_manager.unwrap_or(defaults.workspace_reveal_in_file_manager),
+            workspace_copy_absolute_path: self.workspace_copy_absolute_path.unwrap_or(defaults.workspace_copy_absolute_path),
+            workspace_copy_relative_path: self.workspace_copy_relative_path.unwrap_or(defaults.workspace_copy_relative_path),
+            workspace_copy_file_name: self.workspace_copy_file_name.unwrap_or(defaults.workspace_copy_file_name),
+            workspace_invalid_name: self.workspace_invalid_name.unwrap_or(defaults.workspace_invalid_name),
+            workspace_name_exists: self.workspace_name_exists.unwrap_or(defaults.workspace_name_exists),
             workspace_new_folder: self
                 .workspace_new_folder
                 .unwrap_or(defaults.workspace_new_folder),

@@ -642,15 +642,10 @@ impl Editor {
         }
     }
 
-    /// 侧栏树选中项跟随活动文件——但只在用户没在树上做出别的选择时。
-    /// 右键目录/工作区根之后，菜单动作（新建、粘贴、重命名、删除…）都按
-    /// 点击时的选择取目标，所以每帧的「跟随活动文件」不能把目录选中顶掉
-    /// （用户报修：右键 drafts 新建文件落到了活动文件旁边）。
+    /// 树选择与正文焦点独立；已有选择不能被重绘改回活动文档，否则右键文件
+    /// 的菜单会作用到另一篇文档。没有树选择时才用活动路径初始化。
     pub(crate) fn follow_active_document_in_workspace_tree(&mut self) {
-        if !matches!(
-            self.workspace.selected,
-            None | Some(WorkspaceSelection::File(_))
-        ) {
+        if self.workspace.selected.is_some() {
             return;
         }
         self.workspace.selected = self

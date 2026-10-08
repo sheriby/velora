@@ -182,6 +182,8 @@ async fn workspace_context_menu_keeps_the_right_clicked_directory(cx: &mut TestA
     fs::create_dir_all(&drafts).unwrap();
     let note = root.join("a.md");
     fs::write(&note, "# a\n").unwrap();
+    let other = root.join("b.md");
+    fs::write(&other, "# b\n").unwrap();
     cx.on_quit({
         let root = root.clone();
         move || {
@@ -230,6 +232,21 @@ async fn workspace_context_menu_keeps_the_right_clicked_directory(cx: &mut TestA
             Some(drafts.clone()),
             "新建/粘贴的目标目录应是右键的那个目录"
         );
+    });
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_context_menu(
+                point(px(40.0), px(120.0)),
+                Some(WorkspaceSelection::File(other.clone())),
+                cx,
+            );
+        });
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.selected_workspace_path(), Some(other), "右键文件不能被活动文件顶掉");
+        assert_eq!(editor.file_path.as_ref(), Some(&note), "右键选择不应打开另一篇文档");
     });
 }
 

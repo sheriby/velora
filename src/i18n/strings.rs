@@ -291,9 +291,16 @@ pub struct I18nStrings {
     pub workspace_no_document_find_results: String,
     /// Workspace action for creating a Markdown file.
     pub workspace_new_file: String,
+    pub workspace_new_generic_file: String,
+    pub workspace_reveal_in_file_manager: String,
+    pub workspace_copy_absolute_path: String,
+    pub workspace_copy_relative_path: String,
+    pub workspace_copy_file_name: String,
+    pub workspace_invalid_name: String,
+    pub workspace_name_exists: String,
     /// Workspace action for creating a folder.
     pub workspace_new_folder: String,
-    /// Workspace action for renaming or moving the selected item.
+    /// 文件树中重命名选中项。
     pub workspace_rename: String,
     /// Workspace action for deleting the selected item.
     pub workspace_delete: String,

@@ -315,6 +315,11 @@ impl Editor {
             self.close_menu_bar(cx);
             return;
         }
+        if self.cancel_workspace_name_edit(window, cx) {
+            cx.stop_propagation();
+            self.dismiss_contextual_overlays(cx);
+            return;
+        }
         self.dismiss_contextual_overlays(cx);
         // escape 由全局快捷键路由到这里，浮层面板自己的 key_down 收不到。
         self.close_quick_open(cx);

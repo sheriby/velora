@@ -1,4 +1,5 @@
 use super::*;
+use gpui::prelude::FluentBuilder;
 
 impl Editor {
 
@@ -193,6 +194,9 @@ impl Editor {
                     .unwrap_or_default();
                 let row_editor = editor.clone();
                 let row_path = path.clone();
+                let context_path = path.clone();
+                let context_editor = editor.clone();
+                let selected = self.workspace.selected == Some(WorkspaceSelection::File(path.clone()));
                 rows.push(
                     div()
                         .id(("tree-filter-hit", shown))
@@ -203,6 +207,7 @@ impl Editor {
                         .items_center()
                         .gap(px(8.0))
                         .rounded(px(5.0))
+                        .when(selected, |this| this.bg(theme.colors.selection))
                         .cursor_pointer()
                         .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
                         .child(
@@ -223,7 +228,15 @@ impl Editor {
                                 .text_color(theme.colors.dialog_muted)
                                 .child(directory),
                         )
+                        .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            if let Err(error) = context_editor.update(cx, |editor, cx| {
+                                editor.open_workspace_context_menu(event.position, Some(WorkspaceSelection::File(context_path.clone())), cx);
+                                editor.focus_workspace_tree(window, cx);
+                            }) { eprintln!("打开文件树右键菜单失败：{error}"); }
+                            cx.stop_propagation();
+                        })
                         .on_click(move |event, window, cx| {
+                            if !event.standard_click() { return; }
                             let _ = row_editor.update(cx, |editor, cx| {
                                 let mode = Self::tree_click_open_mode(&event);
                                 editor.open_workspace_file_in_mode(
@@ -232,6 +245,7 @@ impl Editor {
                                     window,
                                     cx,
                                 );
+                                if event.click_count() < 2 { editor.focus_workspace_tree(window, cx); }
                             });
                             let _ = event;
                         })
