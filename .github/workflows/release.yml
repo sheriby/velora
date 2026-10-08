@@ -6,29 +6,40 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing version tag to build and release
+      action:
+        description: 操作（package 验证出包，update-notes 更新已发布版本的说明）
         required: true
+        type: choice
+        default: package
+        options:
+          - package
+          - update-notes
+      tag:
+        description: 出包时可留空使用 Cargo.toml 版本；更新说明时填写现有版本标签
+        required: false
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ github.event_name }}-${{ inputs.action || 'publish' }}-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-  # The local Cargo config uses sccache; CI can build without that wrapper.
+  RELEASE_TAG: ${{ inputs.tag || (github.event_name == 'push' && github.ref_name) || '' }}
+  # 本地 Cargo 配置挂了 sccache；CI 不用那个包装器。
   RUSTC_WRAPPER: ''
 
 jobs:
   build:
     name: Build ${{ matrix.platform }}
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.action == 'package')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -40,12 +51,13 @@ jobs:
             runner: macos-15-intel
             target: x86_64-apple-darwin
           - platform: windows-x64
-            runner: macos-15
-            target: x86_64-pc-windows-gnu
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v7
 
       - name: Set application version from tag
+        if: env.RELEASE_TAG != ''
         run: |
           python3 - <<'PY'
           import os
@@ -56,11 +68,11 @@ jobs:
           if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?', tag):
               raise SystemExit(f'Invalid version tag: {tag}')
           version = tag[1:]
-          # Only the CI checkout is changed; dependencies stay locked.
+          # 仅修改 CI 检出副本的应用版本，依赖保持锁定。
           manifest = Path('Cargo.toml')
-          manifest.write_text(re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', manifest.read_text(), count=1))
+          manifest.write_text(re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', manifest.read_text(encoding='utf-8'), count=1), encoding='utf-8')
           lockfile = Path('Cargo.lock')
-          lockfile.write_text(re.sub(r'(\[\[package\]\]\nname = "velora"\nversion = ")[^"]+', lambda match: match[1] + version, lockfile.read_text(), count=1))
+          lockfile.write_text(re.sub(r'(\[\[package\]\]\nname = "velora"\nversion = ")[^"]+', lambda match: match[1] + version, lockfile.read_text(encoding='utf-8'), count=1), encoding='utf-8')
           PY
 
       - name: Install Rust
@@ -70,7 +82,11 @@ jobs:
 
       - name: Install Windows packaging tools
         if: matrix.platform == 'windows-x64'
-        run: brew install mingw-w64 nsis ripgrep
+        shell: pwsh
+        run: |
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "${env:ProgramFiles(x86)}\NSIS" >> $env:GITHUB_PATH
 
       - name: Package macOS
         if: startsWith(matrix.platform, 'macos-')
@@ -78,14 +94,13 @@ jobs:
           PACKAGE_PLATFORM: ${{ matrix.platform }}
         run: |
           bash scripts/package-macos.sh
-          version="${RELEASE_TAG#v}"
+          version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
           mv "dist/velora-$version.pkg" "dist/velora-$version-$PACKAGE_PLATFORM.pkg"
 
       - name: Package Windows
         if: matrix.platform == 'windows-x64'
-        env:
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
-        run: bash scripts/package-windows.sh
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
 
       - name: Upload packages
         uses: actions/upload-artifact@v7
@@ -138,7 +153,7 @@ jobs:
 
   update_notes:
     name: Update release notes
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'update-notes'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -150,6 +165,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          if [[ -z "$RELEASE_TAG" ]]; then
+            echo "::error::更新发布说明时必须填写现有版本标签"
+            exit 1
+          fi
           notes_file="docs/releases/$RELEASE_TAG.md"
           if [[ ! -f "$notes_file" ]] || ! grep -q '[^[:space:]]' "$notes_file"; then
             echo "::error::Add $notes_file with release notes before running this workflow"

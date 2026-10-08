@@ -16,9 +16,22 @@ env:
 
 jobs:
   test:
-    name: Build & test (macOS)
-    runs-on: macos-15
+    name: Build & test (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            runner: macos-15
+          - platform: macos-x64
+            runner: macos-15-intel
+          - platform: windows-x64
+            runner: windows-2025
     steps:
       - uses: actions/checkout@v7
 
@@ -55,28 +68,3 @@ jobs:
             --skip "loading_chunks::manual" \
             --skip an_edit_on_an_eight_mib_buffer_costs_nothing_proportional_to_the_text \
             --skip searching_a_ten_mib_document_stays_within_budget
-
-  windows-build:
-    name: Build (Windows target)
-    # Windows 用交叉编译检查能编过（与 release 工作流同一套工具链）；原生
-    # Windows 测试基线还没有，先不上测试。
-    runs-on: macos-15
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-gnu
-
-      - name: Install MinGW toolchain
-        run: brew install mingw-w64
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build Windows binary
-        env:
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
-        run: cargo build --locked --target x86_64-pc-windows-gnu

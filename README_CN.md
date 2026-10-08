@@ -106,7 +106,7 @@ cargo test
 ## 📦 发布包
 
 - **macOS**——执行 `scripts/package-macos.sh`，生成 `dist/velora.app` 与 `dist/velora-0.1.0.pkg`。安装包未签名、未公证，仅用于本机与小范围内部试用。
-- **Windows**——`scripts/package-windows.sh` 在 macOS 上交叉构建 x64 安装器（需要 MinGW-w64 与 NSIS），生成 `dist/velora-0.1.0-windows-x64-setup.exe`。Windows 实机验收安排在下一版。
+- **Windows**——在 Windows x64 上用 PowerShell 7 执行 `./scripts/package-windows.ps1`，通过 MSVC 原生构建 release 安装包，生成 `dist/velora-<版本>-windows-x64-setup.exe`。需要 Rust MSVC 工具链、Visual Studio C++ 构建工具、Windows SDK 与 NSIS；CI 在原生 Windows 上运行构建与测试。
 
 ## ⚙️ 配置
 
