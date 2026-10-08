@@ -159,7 +159,7 @@ async fn code_source_chunks_round_trip_and_continue_line_numbers(cx: &mut TestAp
     for index in 0..1_200 {
         source.push_str(&format!("line-{index}\n"));
     }
-    let path = std::env::temp_dir().join(format!("velora-chunk-roundtrip-{}.log", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-roundtrip-{}.log", std::process::id()));
     fs::write(&path, &source).expect("write chunk fixture");
     let expected_source = source.clone();
 
@@ -196,7 +196,7 @@ async fn code_source_with_crlf_round_trips_through_chunks(cx: &mut TestAppContex
         crlf_source.push_str(&format!("alpha {index}\r\n"));
     }
     let expected_bytes = crlf_source.clone().into_bytes();
-    let path = std::env::temp_dir().join(format!("velora-chunk-crlf-{}.txt", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-crlf-{}.txt", std::process::id()));
     std::fs::write(&path, &crlf_source).expect("seed CRLF source");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -228,7 +228,7 @@ async fn code_source_with_crlf_round_trips_through_chunks(cx: &mut TestAppContex
 async fn small_code_files_stay_single_chunk(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = "one\ntwo\nthree\n".to_string();
-    let path = std::env::temp_dir().join(format!("velora-chunk-small-{}.toml", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-small-{}.toml", std::process::id()));
     let (editor, cx) =
         cx.add_window_view(move |_window, cx| Editor::from_file_source(cx, source, Some(path)));
     editor.read_with(cx, |editor, _cx| {
@@ -286,7 +286,7 @@ pub(super) fn chunk_boundary_source() -> String {
 async fn backspace_at_chunk_start_merges_previous_chunk(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = chunk_boundary_source();
-    let path = std::env::temp_dir().join(format!("velora-chunk-bs-{}.log", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-bs-{}.log", std::process::id()));
     fs::write(&path, &source).expect("write chunk fixture");
     let expected_source = source.clone();
     let expected_merged = source.replace("line-511\nline-512", "line-511line-512");
@@ -334,7 +334,7 @@ async fn backspace_at_chunk_start_merges_previous_chunk(cx: &mut TestAppContext)
 async fn enter_at_chunk_end_inserts_boundary_chunk(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = chunk_boundary_source();
-    let path = std::env::temp_dir().join(format!("velora-chunk-enter-{}.log", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-enter-{}.log", std::process::id()));
     fs::write(&path, &source).expect("write chunk fixture");
     let expected_source = source.replace("line-511\nline-512", "line-511\n\nline-512");
 
@@ -373,7 +373,7 @@ async fn enter_at_chunk_end_inserts_boundary_chunk(cx: &mut TestAppContext) {
 async fn delete_at_chunk_end_merges_next_chunk(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = chunk_boundary_source();
-    let path = std::env::temp_dir().join(format!("velora-chunk-del-{}.log", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-del-{}.log", std::process::id()));
     fs::write(&path, &source).expect("write chunk fixture");
     let expected_merged = source.replace("line-511\nline-512", "line-511line-512");
 

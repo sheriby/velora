@@ -8,7 +8,7 @@ async fn wikilink_creates_missing_file_at_workspace_root(cx: &mut TestAppContext
         crate::theme::ThemeManager::init(cx);
         crate::components::init(cx);
     });
-    let root = std::env::temp_dir().join(format!("velora-wikilink-{}", uuid::Uuid::new_v4()));
+    let root = temp_fixture_dir().join(format!("velora-wikilink-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("create root");
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
@@ -41,7 +41,7 @@ async fn wikilink_opens_existing_workspace_file(cx: &mut TestAppContext) {
         crate::theme::ThemeManager::init(cx);
         crate::components::init(cx);
     });
-    let root = std::env::temp_dir().join(format!("velora-wikilink-open-{}", uuid::Uuid::new_v4()));
+    let root = temp_fixture_dir().join(format!("velora-wikilink-open-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("create root");
     let existing = root.join("target.md");
     std::fs::write(&existing, "# target\n").expect("write");
@@ -152,7 +152,7 @@ async fn crash_recovery_drill_snapshot_restore_save(cx: &mut TestAppContext) {
 async fn tmp_debug_merge_state(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = chunk_boundary_source();
-    let path = std::env::temp_dir().join(format!("velora-chunk-dbg-{}.log", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-dbg-{}.log", std::process::id()));
     fs::write(&path, &source).expect("write chunk fixture");
 
     let editor =

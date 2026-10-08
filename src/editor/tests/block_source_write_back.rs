@@ -2299,7 +2299,7 @@ async fn pasting_an_image_keeps_the_other_blocks_bytes_untouched(cx: &mut TestAp
         .duration_since(UNIX_EPOCH)
         .expect("system clock before unix epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
+    let dir = temp_fixture_dir().join(format!(
         "velora-paste-image-{}-{nanos}",
         std::process::id()
     ));
@@ -2968,7 +2968,7 @@ async fn typing_in_a_code_document_with_chinese_lands_on_the_caret_bytes(
 ) {
     init_editor_test_app(cx);
     let source = "def 甲():\n    return 甲\n";
-    let path = std::env::temp_dir().join(format!("velora-code-cjk-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-cjk-{}.py", std::process::id()));
     fs::write(&path, source).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -3011,7 +3011,7 @@ async fn typing_in_a_code_document_with_chinese_lands_on_the_caret_bytes(
 async fn newline_in_a_code_document_inserts_only_a_line_break(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = "print(1)\nprint(2)\n";
-    let path = std::env::temp_dir().join(format!("velora-code-nl-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-nl-{}.py", std::process::id()));
     fs::write(&path, source).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -3053,7 +3053,7 @@ async fn newline_in_a_code_document_inserts_only_a_line_break(cx: &mut TestAppCo
 async fn entering_a_line_in_a_code_document_lands_on_that_line(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = "print(1)\nprint(2)\nprint(3)\n";
-    let path = std::env::temp_dir().join(format!("velora-code-enter-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-enter-{}.py", std::process::id()));
     fs::write(&path, source).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {

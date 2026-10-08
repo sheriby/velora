@@ -27,12 +27,22 @@ pub(super) fn init_editor_test_app(cx: &mut TestAppContext) {
     });
 }
 
+/// 测试夹具目录。编辑器把「当前文件所在目录」当作隐含工作区根，面板展开时会递归
+/// 扫这个根；夹具直接落在系统临时根目录，就会被扫整台机器的 T 目录（本机实测 24k
+/// 条目 / 24 万个目录，单条用例十几秒）。统一放这个扁平目录：一次扫描只剩一份目录
+/// 项列表，兄弟资源（同名 .assets、导出的 html 等）也仍然落在同一个根下。
+pub(super) fn temp_fixture_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("velora-tests-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("create test fixture dir");
+    dir
+}
+
 pub(super) fn temp_markdown_path(test_name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock before unix epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!(
+    temp_fixture_dir().join(format!(
         "velora-{test_name}-{}-{nanos}.md",
         std::process::id()
     ))
