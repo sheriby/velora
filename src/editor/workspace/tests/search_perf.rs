@@ -111,6 +111,7 @@ async fn searching_a_ten_mib_document_stays_within_budget(cx: &mut TestAppContex
 
 /// 跳转路径一次都不许重扫整篇文档。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn document_jump_does_not_rescan_the_buffer(cx: &mut TestAppContext) {
     let Some((editor, _bytes)) = open_document(cx, "ten-mib.md", "段落") else {
         return;
@@ -151,6 +152,7 @@ async fn document_jump_does_not_rescan_the_buffer(cx: &mut TestAppContext) {
 /// 每根沾到命中的块重筛整张表并重算它自己的 source mapping（5 322 次映射重建，
 /// 实测 317 ms 一次按键）；现在一次按键只碰活动命中盖住的那一两根块（18.8 ms）。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn jumping_between_matches_leaves_the_other_blocks_alone(cx: &mut TestAppContext) {
     let Some((editor, _bytes)) = open_document(cx, "one-mib.md", "English") else {
         return;

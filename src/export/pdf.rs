@@ -162,6 +162,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
     fn render_pdf_reports_actionable_error_without_chromium() {
         match render_pdf("# Title\n\nBody", &Theme::default_theme(), "Doc", None) {
             Ok(pdf) => assert!(pdf.starts_with(b"%PDF")),
@@ -178,6 +179,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
     fn render_pdf_from_print_html_uses_chromium_print_pipeline() {
         // roadmap F4：打印路径复用的 HTML→PDF 入口，Chrome 缺失时报同样的可行动错误。
         let html = prepare_print_html(&render_html("# Title\n\nBody", &Theme::default_theme(), "Doc"));

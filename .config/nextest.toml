@@ -1,0 +1,23 @@
+# cargo-nextest 仓库配置。运行方式：`cargo nextest run --bin velora`
+#
+# 覆盖面与门禁命令 `cargo test --bin velora` 一致：本仓库没有顶层 tests/ 目标，
+# 所有测试都在 bin crate 的 #[cfg(test)] 模块里。
+#
+# 仓库里的两族 #[ignore] 语义不同，别混：
+#   慢用例（理由串以“慢用例”开头）：>1s 但断言是确定性的，本地默认跳过、CI 跑。
+#   墙钟预算闸门（perf_budgets 全族、search_bench、buffer 与 search_perf 各一条、
+#   loading_chunks 的两条手动探针）：量真实耗时，CI 机器慢会假红，只有本地手动跑。
+#
+# 本地只跑慢用例族（20 条）：
+#   cargo nextest run --bin velora --run-ignored ignored-only -E \
+#     'not test(/perf_budgets|search_bench|loading_chunks::manual|costs_nothing_proportional|searching_a_ten_mib_document_stays_within_budget/)'
+# 本地只跑墙钟闸门：把上面的 not test(...) 换成 test(/perf_budgets|search_bench/)。
+
+[profile.default]
+# 单个用例跑过 1 秒即标 SLOW，并在输出里周期性报「still running」。只标记、
+# 不打断：不设 terminate-after，慢用例照常跑完。若要超时硬终止，改成
+# { period = "1s", terminate-after = 2 }（第 2 个周期后杀进程）。
+slow-timeout = { period = "1s" }
+
+# 默认的收尾汇总只列失败与 flaky，慢用例名单看不到；提到 slow 才会列出。
+final-status-level = "slow"

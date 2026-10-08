@@ -222,6 +222,7 @@ fn agreeing_modes() -> Vec<(&'static str, SearchOptions)> {
 }
 
 #[test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 fn engine_agrees_with_the_hand_written_matcher_on_every_shape() {
     let queries = [
         "needle", "NEEDLE", "针", "数据内容", "标题", "a.b", "a*b", "(x)", "[abc]",

@@ -237,6 +237,7 @@ async fn small_code_files_stay_single_chunk(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn progressive_import_blocks_render_after_streaming(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     // 12000 块 > FIRST_CHUNK_ROOTS(2000)：首帧只建 2000，其余流式续建。

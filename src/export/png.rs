@@ -226,6 +226,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
     fn render_png_reports_actionable_error_without_chromium() {
         match render_png("# Title\n\nBody", &Theme::default_theme(), "Doc", None) {
             Ok(png) => assert!(is_png(&png)),
@@ -234,6 +235,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
     fn render_png_from_browser_html_uses_chromium_screenshot_pipeline() {
         let html =
             render_html_with_base_dir("# Title\n\nBody", &Theme::default_theme(), "Doc", None);
@@ -245,6 +247,7 @@ mod tests {
 
     /// roadmap F5 验收：长图覆盖首屏之外的全部内容，且高度随文档增长。
     #[test]
+    #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
     fn long_image_height_covers_content_beyond_the_viewport() {
         let short = long_document(200);
         let tall = long_document(400);

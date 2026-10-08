@@ -32,9 +32,29 @@ jobs:
         run: cargo build --locked
 
       - name: Test
-        # 墙钟预算类性能闸门整族 #[ignore]（perf_budgets.rs），CI 机器慢不看护
-        # 性能；确定性计数闸门照常跑。
+        # 默认这一条只跑"快且不过 1s"的那批：慢用例与墙钟预算闸门都 #[ignore]，
+        # 前者下面单独跑，后者 CI 永不跑。
         run: cargo test --locked --bin velora
+
+      - name: Generate perf fixtures
+        # 夹具不进版本库（见 .gitignore），CI 检出后现场生成：不生成的话 10 MiB /
+        # 1 MiB 那两条慢用例会自跳（`open_document` 找不到夹具就 return）。CI 不看护
+        # 性能，生成与跑完都只看结果，不看耗时。
+        run: node scripts/generate-fixtures.mjs tests/fixtures/perf
+
+      - name: Test (慢用例)
+        # 慢用例（>1s，断言全部是确定性的）本地默认 #[ignore]，CI 跑：CI 机器
+        # 不看护速度，但看护正确性。这里必须继续排除墙钟族——CI 机器慢、并发
+        # 抢 CPU，量时间的断言会假红。按 AGENTS.md §3 的约定，墙钟族只有四处
+        # （perf_budgets 全族、search_bench、buffer 与 search_perf 各一条、
+        # loading_chunks 的两条手动探针）；别处新增墙钟闸门时要在这里补 --skip。
+        run: |
+          cargo test --locked --bin velora -- --ignored \
+            --skip perf_budgets \
+            --skip search_bench \
+            --skip "loading_chunks::manual" \
+            --skip an_edit_on_an_eight_mib_buffer_costs_nothing_proportional_to_the_text \
+            --skip searching_a_ten_mib_document_stays_within_budget
 
   windows-build:
     name: Build (Windows target)

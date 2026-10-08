@@ -72,6 +72,7 @@ async fn exporting_a_document_does_not_rereserialize_the_projection(cx: &mut Tes
 }
 
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn export_png_writes_long_image_without_changing_editor_state(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 

@@ -139,6 +139,7 @@ const FIDELITY_CASES: &[Case] = &[
 ];
 
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn opening_then_saving_without_edit_preserves_every_byte(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
@@ -169,6 +170,7 @@ async fn opening_then_saving_without_edit_preserves_every_byte(cx: &mut TestAppC
 /// 插入点不假设在文件开头——块前缀（`# `、`- `、`> `）不属于可见文本，光标
 /// 落在前缀之后是正常行为，所以断言的是「差异恰好是一个插入的 `X`」。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn saving_after_an_edit_at_the_start_preserves_every_other_byte(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
@@ -225,6 +227,7 @@ async fn saving_after_an_edit_at_the_start_preserves_every_other_byte(cx: &mut T
 /// 「差异恰好是一个插入字符」不够——插错位置也是差一个字符，所以再对一次插入点。
 /// 只有一个可见行的形状跳过，但可量的形状少到 6 个以下就是夹具变了。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn saving_after_an_edit_on_the_second_line_preserves_every_other_byte(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
@@ -360,6 +363,7 @@ fn escape_bytes(bytes: &[u8]) -> String {
 const WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED: &[&str] = &[];
 
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn splitting_the_first_block_only_touches_that_blocks_bytes(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
@@ -1699,6 +1703,7 @@ async fn mixed_line_endings_survive_a_save_and_normalize_to_lf_only_after_an_edi
 /// 块的可见文本被顺手重新解释。字节层面的表盯着磁盘，这条盯着渲染：两边都过才算「打字
 /// 没有重新解释用户没碰的那段」。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn typing_one_char_only_changes_the_text_at_the_caret(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 

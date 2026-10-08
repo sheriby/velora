@@ -324,6 +324,7 @@ async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut Test
 }
 
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn undo_scroll_after_document_replace_stays_single_shot(cx: &mut TestAppContext) {
     // 用户报修：编辑中按 Ctrl+Z，窗口来回滚动。撤销会替换整篇块，这一帧的
     // 块边界/行高都是旧布局或估计值，最容易出现「先按旧几何滚一次、下一帧

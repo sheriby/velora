@@ -107,6 +107,7 @@ fn table_ranges(editor: &gpui::Entity<Editor>, cx: &mut TestAppContext) -> Vec<s
 }
 
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn random_documents_keep_all_four_search_paths_on_one_hit_set(
     cx: &mut TestAppContext,
 ) {

@@ -24,6 +24,7 @@ const LOSSY_DOC: &str = concat!(
 );
 
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn undo_history_stores_deltas_not_document_copies(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
@@ -104,6 +105,7 @@ async fn undoing_a_split_puts_the_exact_bytes_back(cx: &mut TestAppContext) {
 /// 撤销一次粘贴 = 把插进去的那段字节拿掉。粘贴在缓冲区里只是一次插入，所以
 /// 撤销组里连被替换的字节都没有，未编辑的块更不会被动到。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn undoing_a_multiline_paste_puts_the_exact_bytes_back(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
@@ -828,6 +830,7 @@ async fn undoing_a_dropped_table_header_puts_the_lines_back_byte_for_byte(
 /// `NonCoalescible`（打字那组会在 1 秒合并窗口里并起来，真实时钟下测试没法拉开），
 /// 而且每步只改 `[ ]`↔`[x]` 那几个字节。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn two_hundred_undo_steps_stay_within_the_memory_budget(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
