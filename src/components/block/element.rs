@@ -234,6 +234,10 @@ pub(crate) fn build_text_runs(
             link_color
         } else if inline_style.code && show_inline_code_backgrounds {
             code_text
+        } else if inline_style.bold && !input.is_source_raw_mode()
+            && !matches!(input.kind(), BlockKind::Heading { .. })
+        {
+            link_color
         } else {
             base_run.color
         };
@@ -617,6 +621,26 @@ fn wrapped_row_origin_x(
     }
 }
 
+pub(crate) fn aligned_row_left(
+    line: &WrappedLine,
+    bounds: Bounds<Pixels>,
+    align: TextAlign,
+    line_height: Pixels,
+    relative_y: Pixels,
+) -> Pixels {
+    // 每个软换行都有独立的居中留白，光标与命中必须与逐行绘制取同一个起点。
+    if align == TextAlign::Left || line.wrap_boundaries().is_empty() {
+        return aligned_line_left(line, bounds, align);
+    }
+    let offsets = wrapped_row_offsets(line);
+    let row_index = ((relative_y.max(px(0.0)) / line_height.max(px(1.0))) as usize)
+        .min(offsets.len().saturating_sub(2));
+    match offsets.get(row_index).zip(offsets.get(row_index + 1)) {
+        Some((&start, &end)) => wrapped_row_origin_x(line, bounds, align, start, end),
+        None => aligned_line_left(line, bounds, align),
+    }
+}
+
 pub(super) fn position_for_offset(
     line: &WrappedLine,
     offset: usize,
@@ -650,8 +674,8 @@ pub(super) fn cursor_bounds_for_offset(
     let ranges = hard_line_ranges(text);
     let (line_idx, offset_in_line) = line_index_for_offset(&ranges, offset);
     let layout = lines.get(line_idx)?;
-    let origin_x = aligned_line_left(layout, bounds, align);
     let cursor_pos = position_for_offset(layout, offset_in_line, line_height, true)?;
+    let origin_x = aligned_row_left(layout, bounds, align, line_height, cursor_pos.y);
     let y_offset = bounds.top() + wrapped_line_top(lines, line_height, line_idx);
     Some(Bounds::new(
         point(origin_x + cursor_pos.x, y_offset + cursor_pos.y),

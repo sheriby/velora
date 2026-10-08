@@ -1,6 +1,22 @@
 use super::*;
 
 impl Block {
+    pub(crate) fn list_marker_column(&self, theme: &Theme) -> Div {
+        let dimensions = &theme.dimensions;
+        div()
+            .w(px(dimensions
+                .list_marker_width
+                .max(dimensions.ordered_list_marker_width)
+                .max(dimensions.task_checkbox_size)))
+            .flex_shrink_0()
+            .h(px(
+                theme.typography.text_size * theme.typography.text_line_height
+            ))
+            .flex()
+            .items_center()
+            .justify_center()
+    }
+
     /// 表格列宽备忘（性能）：`measure` 会对每格做 no-wrap `shape_text`，此前
     /// 每帧全量重测——文档打开后每次悬停/点击触发的重绘都拖着 O(单元格) 的
     /// 文字排版，Windows DirectWrite 上尤其明显（用户报修：打开文件后第二次

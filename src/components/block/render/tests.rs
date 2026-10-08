@@ -2,7 +2,7 @@ use super::*;
 
 mod tests {
     use super::{
-        bulleted_list_marker, effective_table_width, inline_display_font_size,
+        effective_table_width, inline_display_font_size,
         numbered_list_marker, promotes_inline_images, tag_query, wikilink_target,
     };
     use crate::components::{BlockRecord, InlineScript, InlineSpan, InlineStyle};
@@ -85,16 +85,6 @@ mod tests {
                 assert_eq!(memo.table, changed, "表内容变化后备忘必须失效重测");
             });
         });
-    }
-
-    #[test]
-    fn bulleted_list_marker_matches_browser_disc_circle_square() {
-        // 一级实心圆、二级空心圆、三级及更深入全是实心方块（用户报修：三级显示了
-        // 白色空心方块 U+25A1）。
-        assert_eq!(bulleted_list_marker(0), "\u{2022}");
-        assert_eq!(bulleted_list_marker(1), "\u{25E6}");
-        assert_eq!(bulleted_list_marker(2), "\u{25AA}");
-        assert_eq!(bulleted_list_marker(9), "\u{25AA}");
     }
 
     #[test]

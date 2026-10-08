@@ -4,6 +4,40 @@ mod tests {
     use gpui::{Hsla, Rgba, WindowAppearance, rgba};
 
     #[test]
+    fn typography_builtin_headings_have_the_same_readable_hierarchy() {
+        for theme in [
+            Theme::default_theme(),
+            Theme::light_theme(),
+            Theme::paper_theme(),
+            Theme::forest_theme(),
+            Theme::midnight_theme(),
+            Theme::ink_theme(),
+        ] {
+            let typography = &theme.typography;
+            assert!(
+                typography.h1_size >= typography.text_size * 2.0,
+                "{} 的 H1 层级太弱",
+                theme.name
+            );
+            assert!(
+                typography.h2_size >= typography.text_size * 1.65,
+                "{} 的 H2 层级太弱",
+                theme.name
+            );
+            assert!(
+                typography.h3_size >= typography.text_size * 1.35,
+                "{} 的 H3 层级太弱",
+                theme.name
+            );
+            assert!(typography.h1_size > typography.h2_size && typography.h2_size > typography.h3_size);
+            assert_eq!(
+                theme.dimensions.h1_border_width, 0.0,
+                "标题用留白和字号区分，不画下划线"
+            );
+        }
+    }
+
+    #[test]
     fn current_line_highlight_stays_transparent_and_theme_tinted() {
         // 用户报修：深色默认主题的当前行高亮曾是 94% 不透明白，直接盖住正文。
         // 高亮必须低透明度，且内置色板主题取自 selection 淡色（跟主题走）。

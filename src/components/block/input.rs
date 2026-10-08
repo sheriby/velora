@@ -290,7 +290,9 @@ impl EntityInputHandler for Block {
         let (line_idx, y_in_line) =
             element::wrapped_line_for_y(lines, self.last_line_height, relative.y)?;
         let layout = &lines[line_idx];
-        let origin_x = element::aligned_line_left(layout, bounds, self.text_align());
+        let origin_x = element::aligned_row_left(
+            layout, bounds, self.text_align(), self.last_line_height, y_in_line,
+        );
         let utf8_offset_in_line = match layout
             .closest_index_for_position(point(pt.x - origin_x, y_in_line), self.last_line_height)
         {

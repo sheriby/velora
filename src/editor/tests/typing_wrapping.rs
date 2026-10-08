@@ -1,5 +1,176 @@
 use super::common::*;
 
+#[gpui::test]
+async fn typography_lists_share_a_hanging_indent_and_compact_spacing(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "- **图片**——粘贴或拖入即自动复制到文档资源目录。\n- **编辑顺手事**——列表回车自动续写。\n1. **工作区**——打开文件夹。\n2. **知识链接**——打开同名笔记。\n- [ ] **任务**——待完成。\n- [x] **任务**——已完成。";
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source.to_string(), None));
+    cx.simulate_resize(gpui::size(px(1100.0), px(1000.0)));
+
+    for theme in [
+        Theme::default_theme(),
+        Theme::light_theme(),
+        Theme::paper_theme(),
+        Theme::forest_theme(),
+        Theme::midnight_theme(),
+        Theme::ink_theme(),
+    ] {
+        let theme_name = theme.name.clone();
+        cx.update(|_window, cx| cx.global_mut::<ThemeManager>().set_theme(theme));
+        editor.update(cx, |_editor, cx| cx.notify());
+        redraw(cx);
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let items: Vec<_> = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .filter(|visible| visible.entity.read(cx).kind().is_list_item())
+                .map(|visible| visible.entity.read(cx))
+                .collect();
+            assert_eq!(items.len(), 6);
+            let first = items[0].last_bounds.expect("列表正文完成排版");
+            for item in &items {
+                let bounds = item.last_bounds.expect("列表正文完成排版");
+                assert!(
+                    (bounds.left() - first.left()).abs() <= px(1.0),
+                    "{theme_name} 的无序、有序、任务列表正文应从同一列开始：{first:?} / {bounds:?}"
+                );
+            }
+            // 紧列表原先叠加了每项上下内边距与行计划间距，项间空白超过半行。
+            for pair in items.windows(2) {
+                let previous = pair[0].last_bounds.expect("上一项排版");
+                let current = pair[1].last_bounds.expect("当前项排版");
+                let gap = current.top() - previous.bottom();
+                assert!(
+                    gap >= px(0.0) && gap <= pair[1].last_line_height * 0.25,
+                    "{theme_name} 的列表项间距应小于四分之一行高，实际 {gap:?}"
+                );
+            }
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+    drop(editor);
+}
+
+#[gpui::test]
+async fn typography_h1_h2_center_text_and_hit_testing_in_every_theme(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "# 一级标题\n\n## ✨ 功能\n\n### 写作与编辑\n\n正文".into(),
+            None,
+        )
+    });
+    for theme in [
+        Theme::default_theme(),
+        Theme::light_theme(),
+        Theme::paper_theme(),
+        Theme::forest_theme(),
+        Theme::midnight_theme(),
+        Theme::ink_theme(),
+    ] {
+        cx.update(|_window, cx| cx.global_mut::<ThemeManager>().set_theme(theme));
+        editor.update(cx, |_editor, cx| cx.notify());
+        redraw(cx);
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            for visible in editor.document.visible_blocks() {
+                let block = visible.entity.read(cx);
+                let expected = match block.kind() {
+                    BlockKind::Heading { level: 1 | 2 } => gpui::TextAlign::Center,
+                    _ => gpui::TextAlign::Left,
+                };
+                // 标题原先始终沿用表格以外的左对齐，绘制与点击必须共用新对齐口径。
+                assert_eq!(block.text_align(), expected);
+                if !matches!(block.kind(), BlockKind::Heading { .. }) {
+                    continue;
+                }
+                let bounds = block.last_bounds.expect("标题排版");
+                let line = &block.last_layout.as_ref().expect("标题行")[0];
+                let left = crate::components::element::aligned_line_left(line, bounds, expected);
+                if expected == gpui::TextAlign::Center {
+                    assert!(
+                        ((left + line.width() / 2.0) - (bounds.left() + bounds.size.width / 2.0))
+                            .abs()
+                            <= px(1.0)
+                    );
+                }
+                for (index, _) in block.display_text().char_indices() {
+                    let position = line
+                        .position_for_index(index, block.last_line_height)
+                        .expect("字形位置");
+                    let hit = block.index_for_mouse_position(gpui::point(
+                        left + position.x - px(0.1),
+                        bounds.top() + block.last_line_height / 2.0,
+                    ));
+                    assert_eq!(hit, index, "居中标题点击必须仍命中原文字节");
+                }
+            }
+        });
+    }
+    drop(editor);
+}
+
+#[gpui::test]
+async fn typography_wrapped_heading_keeps_caret_selection_and_clicks_aligned(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = format!(
+        "## {}",
+        "标题居中以后换行时光标和选区必须跟随文字的位置".repeat(3)
+    );
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+    cx.simulate_resize(gpui::size(px(480.0), px(800.0)));
+    redraw(cx);
+    redraw(cx);
+    let heading = editor.read_with(cx, |editor, _cx| {
+        editor.document.first_root().expect("标题").clone()
+    });
+    heading.update(cx, |block, _cx| {
+        let lines = block.last_layout.as_ref().expect("标题排版");
+        let line = &lines[0];
+        let boundary = line.wrap_boundaries().last().expect("标题应实际软换行");
+        let start = line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+        let character_len = block.display_text()[start..]
+            .chars()
+            .next()
+            .expect("换行后的字符")
+            .len_utf8();
+        let selected = block
+            .visible_range_bounds(start..start + character_len)
+            .expect("文字选区");
+        block.selected_range = start..start;
+        let caret = block.active_range_or_cursor_bounds().expect("光标位置");
+        // 逐行居中后，最后一行的留白不同于第一行，不能继续复用整块的左边界。
+        assert!(
+            (caret.left() - selected.left()).abs() <= px(1.0),
+            "换行标题的光标和选区应从同一个字开始：{caret:?} / {selected:?}"
+        );
+        assert_eq!(
+            block.index_for_mouse_position(gpui::point(
+                selected.left(),
+                selected.top() + block.last_line_height / 2.0
+            )),
+            start
+        );
+        let bounds = block.last_bounds.expect("标题范围");
+        assert!(
+            (block.vertical_anchor_x() - (caret.left() - bounds.left())).abs() <= px(1.0),
+            "上下键的水平锚点必须包含标题每行的居中留白"
+        );
+        assert_eq!(
+            block.entry_offset_for_vertical_focus(
+                true,
+                Some(caret.left() - bounds.left() - px(0.1))
+            ),
+            start
+        );
+    });
+}
 
 #[gpui::test]
 async fn typing_consecutive_backslashes_keeps_every_one(cx: &mut TestAppContext) {

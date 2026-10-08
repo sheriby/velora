@@ -28,6 +28,73 @@
         }
     }
 
+    #[gpui::test]
+    async fn typography_strong_text_uses_each_themes_accent_without_recoloring_headings(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        for theme in [
+            crate::theme::Theme::default_theme(),
+            crate::theme::Theme::light_theme(),
+            crate::theme::Theme::paper_theme(),
+            crate::theme::Theme::forest_theme(),
+            crate::theme::Theme::midnight_theme(),
+            crate::theme::Theme::ink_theme(),
+        ] {
+            for kind in [BlockKind::Paragraph, BlockKind::Heading { level: 2 }] {
+                let block = cx.new(|cx| {
+                    Block::with_record(
+                        cx,
+                        BlockRecord::new(
+                            kind,
+                            InlineTextTree::from_markdown("**所见即所得** 正文 `代码`"),
+                        ),
+                    )
+                });
+                block.read_with(cx, |block, _cx| {
+                    let text: SharedString = block.display_text().to_string().into();
+                    let base = TextRun {
+                        len: text.len(),
+                        font: font(".SystemUIFont"),
+                        color: theme.colors.text_default,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                        font_size: None,
+                    };
+                    let runs = super::build_text_runs(
+                        block,
+                        &text,
+                        &base,
+                        px(1.0),
+                        theme.colors.text_link,
+                        theme.colors.code_text,
+                        true,
+                        "Menlo",
+                        px(13.0),
+                        theme.colors.comment_bg,
+                    );
+                    let strong = runs.first().expect("粗体文本段");
+                    let expected = if matches!(block.kind(), BlockKind::Heading { .. }) {
+                        base.color
+                    } else {
+                        theme.colors.text_link
+                    };
+                    assert_eq!(
+                        strong.color, expected,
+                        "{} 的正文粗体应使用强调色，标题保持正文色",
+                        theme.name
+                    );
+                    assert!(strong.font.weight >= gpui::FontWeight::BOLD);
+                    assert!(
+                        runs.iter().any(|run| run.color == base.color
+                            && run.font.weight == gpui::FontWeight::NORMAL)
+                    );
+                });
+            }
+        }
+    }
+
     #[test]
     fn wrapped_inline_code_backgrounds_leave_space_between_rows() {
         let row = Bounds::new(point(px(0.0), px(0.0)), size(px(160.0), px(28.0)));

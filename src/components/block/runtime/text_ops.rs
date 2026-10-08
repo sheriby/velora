@@ -290,6 +290,15 @@ impl Block {
         Some((lines.get(line_idx)?, offset_in_line))
     }
 
+    fn row_alignment_offset(&self, line: &WrappedLine, relative_y: Pixels) -> Pixels {
+        let Some(bounds) = self.last_bounds else {
+            return px(0.0);
+        };
+        crate::components::block::element::aligned_row_left(
+            line, bounds, self.text_align(), self.last_line_height, relative_y,
+        ) - bounds.left()
+    }
+
     pub(crate) fn vertical_anchor_x(&self) -> Pixels {
         self.vertical_motion_x
             .or_else(|| {
@@ -301,7 +310,7 @@ impl Block {
                             self.last_line_height,
                             true,
                         )
-                        .map(|position| position.x)
+                        .map(|position| position.x + self.row_alignment_offset(layout, position.y))
                     })
             })
             .unwrap_or(px(0.0))
@@ -371,7 +380,10 @@ impl Block {
             return false;
         };
         let target_layout = &lines[target_line_idx];
-        let target_point = point(preferred_x, target_y_in_line);
+        let target_point = point(
+            preferred_x - self.row_alignment_offset(target_layout, target_y_in_line),
+            target_y_in_line,
+        );
         let target_offset_in_line =
             match target_layout.closest_index_for_position(target_point, self.last_line_height) {
                 Ok(idx) | Err(idx) => idx,
@@ -413,6 +425,7 @@ impl Block {
             self.last_line_height / 2.0
         };
 
+        let target_x = target_x - self.row_alignment_offset(target_layout, target_y);
         let offset_in_line = match target_layout
             .closest_index_for_position(point(target_x, target_y), self.last_line_height)
         {
@@ -642,10 +655,12 @@ impl Block {
             return 0;
         };
         let layout = &lines[line_idx];
-        let origin_x = crate::components::block::element::aligned_line_left(
+        let origin_x = crate::components::block::element::aligned_row_left(
             layout,
             *bounds,
             self.text_align(),
+            self.last_line_height,
+            y_in_line,
         );
 
         let offset_in_line = match layout.closest_index_for_position(

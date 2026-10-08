@@ -808,12 +808,11 @@ impl Element for BlockTextElement {
 
         let mut y_offset = Pixels::default();
         for line in lines.iter() {
-            let origin_x = aligned_line_left(line, text_bounds, text_align);
             line.paint(
-                point(origin_x, text_bounds.origin.y + y_offset),
+                point(text_bounds.left(), text_bounds.origin.y + y_offset),
                 line_height,
-                TextAlign::Left,
-                None,
+                text_align,
+                Some(text_bounds),
                 window,
                 cx,
             )

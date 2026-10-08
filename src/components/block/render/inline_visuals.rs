@@ -279,6 +279,7 @@ impl Block {
                 .min_w(px(0.0))
                 .text_size(px(font_size))
                 .line_height(relative(theme.typography.text_line_height))
+                .text_align(self.text_align())
                 .text_color(text_color)
                 .child(SharedString::from(self.display_text().to_string()))
                 .into_any_element();
@@ -336,6 +337,7 @@ impl Block {
             .flex()
             .flex_wrap()
             .items_center()
+            .when(self.text_align() == TextAlign::Center, |this| this.justify_center())
             .gap(px(0.0))
             .text_size(px(font_size))
             .line_height(relative(theme.typography.text_line_height))
@@ -554,7 +556,9 @@ impl Block {
 
         let mut color = if span.link.is_some() || span.footnote.is_some() {
             theme.colors.text_link
-        } else if span.style.code {
+        } else if span.style.code
+            || (span.style.bold && !matches!(self.kind(), BlockKind::Heading { .. }))
+        {
             theme.colors.text_link
         } else {
             base_color

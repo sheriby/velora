@@ -16,6 +16,12 @@ impl Block {
     }
 
     pub(crate) fn text_align(&self) -> TextAlign {
+        if !self.is_source_raw_mode()
+            && !self.is_table_cell()
+            && matches!(self.kind(), BlockKind::Heading { level: 1 | 2 })
+        {
+            return TextAlign::Center;
+        }
         match self
             .table_cell_alignment()
             .unwrap_or(TableColumnAlignment::Default)

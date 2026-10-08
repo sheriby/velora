@@ -21,6 +21,7 @@
 
 - `impl Render for Block`：同步图片焦点态与行内投影（`sync_inline_projection_for_focus`）→ 光标闪烁启停 → 按 kind 分派：表格单元格 / source-raw（纯 `BlockTextElement` + 可选行号槽）/ 独立图片 / 标题(带折叠 chevron) / 列表(标记符+复选框) / CodeBlock(面板+复制按钮+`CodeLanguageInputElement`) / Table / HtmlBlock / Math+Mermaid(未聚焦渲染 SVG，聚焦退回文本) / TOC / 默认文本 → `wrap_with_quote_guides`。
 - 公共壳 `render_shell`：`Stateful<Div>` + `key_context("BlockEditor")` + track_focus + 全部动作 + 鼠标处理。
+- 公共排版：H1/H2 居中、H3 左对齐，普通文本与混合公式/图片路径共用对齐规则；无序、有序、任务列表共用标记列宽与首行对齐，列表项不再叠加上下内边距。正文粗体沿用主题的 `text_link` 强调色，标题保留自身文字色。软换行的绘制、光标、选区、点击与上下键定位共用 `element.rs:aligned_row_left`，每个视觉行单独计算居中留白。
 - **`BlockTextElement`**（src/components/block/element/text_element.rs，自定义 `Element`；类型定义在 element.rs）：
   - `request_layout`：读块 → `shared_display_text()`（Arc SharedString）→ `build_text_runs` / `build_code_text_runs` → `window.text_system().shape_text(...)`（`request_measured_layout` 内）→ `Vec<WrappedLine>` 存 `Rc<RefCell>`。
   - `prepaint`：光标 quad、选区 quad、行内代码圆角背景、搜索高亮、行号 ShapedLine、hitbox。

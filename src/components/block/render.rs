@@ -23,12 +23,6 @@ pub(super) use crate::components::{
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeColors, ThemeDimensions, ThemeManager};
 
-// Unicode bullet glyphs for nested list depths.
-// 一级实心圆、二级空心圆、三级及以上实心方块（对齐浏览器 `ul` 的
-// disc / circle / square）。三级曾用 U+25A1（白色空心方块），与浏览器不一致。
-const BULLET_FILLED: &str = "\u{2022}";
-const BULLET_HOLLOW: &str = "\u{25E6}";
-const BULLET_SQUARE: &str = "\u{25AA}";
 const TASK_CHECKMARK: &str = "\u{2713}";
 
 // 标题折叠 chevron（roadmap C7）：位于标题行左侧留白内的按钮。
@@ -36,14 +30,6 @@ const HEADING_FOLD_CHEVRON_RIGHT: &str = "icon/workspace/chevron-right.svg";
 const HEADING_FOLD_CHEVRON_DOWN: &str = "icon/workspace/chevron-down.svg";
 const HEADING_FOLD_CHEVRON_GUTTER: f32 = 18.0;
 const HEADING_FOLD_CHEVRON_ICON_SIZE: f32 = 12.0;
-
-fn bulleted_list_marker(depth: usize) -> &'static str {
-    match depth {
-        0 => BULLET_FILLED,
-        1 => BULLET_HOLLOW,
-        _ => BULLET_SQUARE,
-    }
-}
 
 /// Makes a row-axis highlight color more opaque (more solid, still translucent)
 /// for the header row, keeping the theme's hue so the header handle reads as a

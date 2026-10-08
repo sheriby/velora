@@ -12,7 +12,7 @@ impl Block {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let row = row.line_height(relative(1.25));
+        let row = row.line_height(relative(1.25)).text_align(self.text_align());
         if !self.foldable && !self.folded {
             return row.child(text);
         }
@@ -87,7 +87,8 @@ impl Block {
         } else {
             dimensions.block_min_height
         };
-        let padding_y = if source_mode || collapsed_blank_line {
+        // 列表的项间留白由行计划统一控制，逐项叠加内边距会把紧列表撑成松列表。
+        let padding_y = if source_mode || collapsed_blank_line || self.kind().is_list_item() {
             0.0
         } else {
             dimensions.block_padding_y

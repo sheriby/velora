@@ -225,17 +225,17 @@ impl Theme {
                 block_padding_x: 12.0,
                 nested_block_indent: 20.0,
                 list_marker_gap: 8.0,
-                list_marker_width: 12.0,
-                ordered_list_marker_width: 20.0,
+                list_marker_width: 24.0,
+                ordered_list_marker_width: 24.0,
                 task_checkbox_size: 14.0,
-                task_checkbox_radius: 4.0,
+                task_checkbox_radius: 2.0,
                 task_checkbox_border_width: 1.0,
                 task_checkbox_check_size: 10.0,
-                h1_padding_bottom: 4.0,
+                h1_padding_bottom: 0.0,
                 h1_margin_bottom: 4.0,
                 cursor_width: 2.0,
                 underline_thickness: 1.0,
-                h1_border_width: 1.0,
+                h1_border_width: 0.0,
                 quote_border_width: 3.0,
                 quote_padding_left: 12.0,
                 callout_padding_x: 14.0,
@@ -340,12 +340,12 @@ impl Theme {
                 text_size: 17.0,
                 text_line_height: 1.6,
                 text_letter_spacing: 0.0125,
-                h1_size: 32.0,
+                h1_size: 36.0,
                 h1_weight: FontWeightDef::Bold,
-                h2_size: 24.0,
+                h2_size: 30.0,
                 h2_weight: FontWeightDef::Bold,
-                h3_size: 20.0,
-                h3_weight: FontWeightDef::Semibold,
+                h3_size: 24.0,
+                h3_weight: FontWeightDef::Bold,
                 h4_size: 18.0,
                 h4_weight: FontWeightDef::Semibold,
                 h5_size: 16.0,
@@ -511,9 +511,7 @@ impl Theme {
         };
         theme.typography.body_font_family = serif.into();
         theme.typography.heading_font_family = serif.into();
-        theme.typography.h1_size = 31.0;
         theme.typography.h1_weight = FontWeightDef::Semibold;
-        theme.typography.h2_size = 23.0;
         theme.typography.h2_weight = FontWeightDef::Semibold;
         theme.dimensions.block_gap = 8.0;
         theme.dimensions.writing_max_width = 700.0;
@@ -559,22 +557,17 @@ impl Theme {
         );
         theme.typography.text_line_height = 1.78;
         theme.typography.text_letter_spacing = 0.02;
-        theme.colors.text_h1 = Hsla::from(rgba(0x245c35ff));
         theme.colors.code_text = Hsla::from(rgba(0x4a6352ff));
-        theme.colors.text_h2 = Hsla::from(rgba(0x28663aff));
-        theme.colors.text_h3 = Hsla::from(rgba(0x2c7040ff));
-        theme.colors.text_h4 = theme.colors.text_h3;
-        theme.colors.text_h5 = theme.colors.text_h3;
-        theme.colors.text_h6 = theme.colors.text_h3;
-        theme.typography.h1_size = 30.0;
-        theme.typography.h2_size = 22.0;
+        theme.colors.text_h4 = Hsla::from(rgba(0x2c7040ff));
+        theme.colors.text_h5 = theme.colors.text_h4;
+        theme.colors.text_h6 = theme.colors.text_h4;
         theme.dimensions.block_gap = 10.0;
         theme.dimensions.centered_min_ratio = 0.76;
         theme.dimensions.code_bg_pad_x = 2.0;
         theme.dimensions.code_block_padding_x = 14.0;
         theme.dimensions.code_block_padding_y = 12.0;
         theme.dimensions.table_cell_padding_y = 7.0;
-        // 源码高亮刻意跳出绿色单色系（渲染视图的标题仍是绿色）；蓝色标题、
+        // 源码高亮刻意跳出绿色单色系；蓝色标题、
         // 青绿代码、紫标签，参照 VS Code 语义（用户报修：源码模式满屏绿）。
         {
             let c = &mut theme.colors;
@@ -612,8 +605,6 @@ impl Theme {
             },
         );
         theme.typography.text_line_height = 1.68;
-        theme.typography.h1_size = 31.0;
-        theme.typography.h2_size = 23.0;
         theme.dimensions.block_gap = 7.0;
         {
             let c = &mut theme.colors;
@@ -658,9 +649,7 @@ impl Theme {
         };
         theme.typography.body_font_family = serif.into();
         theme.typography.heading_font_family = serif.into();
-        theme.typography.h1_size = 31.0;
         theme.typography.h1_weight = FontWeightDef::Semibold;
-        theme.typography.h2_size = 23.0;
         theme.typography.h2_weight = FontWeightDef::Semibold;
         theme.dimensions.block_gap = 8.0;
         theme.dimensions.writing_max_width = 720.0;

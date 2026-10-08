@@ -469,10 +469,15 @@ impl Render for Block {
                 .items_start()
                 .gap(px(d.list_marker_gap))
                 .children([
-                    div()
-                        .min_w(px(d.list_marker_width))
-                        .text_color(c.text_link)
-                        .child(SharedString::new(bulleted_list_marker(self.render_depth))),
+                    self.list_marker_column(&theme)
+                        .child(
+                            div()
+                                .size(px(t.text_size * if self.render_depth >= 2 { 0.30 } else { 0.36 }))
+                                .flex_shrink_0()
+                                .when(self.render_depth <= 1, |this| this.rounded_full())
+                                .when(self.render_depth != 1, |this| this.bg(c.text_link))
+                                .when(self.render_depth == 1, |this| this.border(px(1.25)).border_color(c.text_link)),
+                        ),
                     if showing_rendered_image {
                         // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：
                         // 按视口估算量不到 callout/嵌套的真实容器，图片与占位框会
@@ -522,8 +527,6 @@ impl Render for Block {
                 ])
                 .into_any_element(),
             BlockKind::TaskListItem { checked } => {
-                let marker_width = d.list_marker_width.max(d.task_checkbox_size);
-                let first_line_height = t.text_size * t.text_line_height;
                 focused_base
                     .text_size(px(t.text_size))
                     .text_color(c.text_default)
@@ -534,11 +537,7 @@ impl Render for Block {
                     .items_start()
                     .gap(px(d.list_marker_gap))
                     .children([
-                        div()
-                            .min_w(px(marker_width))
-                            .h(px(first_line_height))
-                            .flex()
-                            .items_center()
+                        self.list_marker_column(&theme)
                             .child(
                                 div()
                                     .size(px(d.task_checkbox_size))
@@ -626,13 +625,16 @@ impl Render for Block {
                 .items_start()
                 .gap(px(d.list_marker_gap))
                 .children([
-                    div()
-                        .min_w(px(d.ordered_list_marker_width))
-                        .child(SharedString::from(numbered_list_marker(
-                            self.render_depth,
-                            self.list_ordinal.unwrap_or(1),
-                            self.record.list_marker.delimiter_or_default(),
-                        ))),
+                    self.list_marker_column(&theme)
+                        .justify_end()
+                        .text_color(c.text_link)
+                        .child(div().flex_shrink_0().whitespace_nowrap()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(SharedString::from(numbered_list_marker(
+                                self.render_depth,
+                                self.list_ordinal.unwrap_or(1),
+                                self.record.list_marker.delimiter_or_default(),
+                            )))),
                     if showing_rendered_image {
                         // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：
                         // 按视口估算量不到 callout/嵌套的真实容器，图片与占位框会
