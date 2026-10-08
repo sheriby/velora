@@ -86,7 +86,7 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 
 ## 🚀 从源码构建
 
-需要 **Rust 1.88 或更新版本**。
+需要 **Rust stable 工具链**。
 
 仓库的 `.cargo/config.toml` 已把 `sccache` 配置为编译缓存 wrapper，请先确保已安装：
 

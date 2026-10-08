@@ -89,7 +89,7 @@
 
 ## 4 工具链
 
-- 本机是 `stable` 1.88：不要用比它更新的标准库接口（踩过的例子：`str::floor_char_boundary` 未稳定，`cargo test` 直接编不过）。
+- Rust 工具链使用当前 `stable`，标准库 API 以该工具链支持范围为准。
 - `.cargo/config.toml` 挂了 `sccache`；`tests/fixtures/perf/` 与 `target/` 不进版本库。
 - 门禁是构建与测试两条；clippy 不作门禁，但 `Cargo.toml` 里 `[lints.clippy]` 放开过哪些要心里有数。
 - CI（`.github/workflows/ci.yml`）在每次 push 与 PR 上跑同样的两条 + Windows 目标交叉编译；测试 job 在 macOS（项目不支持 Linux，Windows 原生测试基线未立）。

@@ -86,7 +86,7 @@ macOS keys shown; Ctrl-based equivalents work on other platforms. Shortcuts are 
 
 ## 🚀 Building from source
 
-Requires **Rust 1.88 or newer**.
+需要 **Rust stable 工具链**。
 
 The repository's `.cargo/config.toml` wires `sccache` in as the compiler cache wrapper, so make sure it is installed first:
 

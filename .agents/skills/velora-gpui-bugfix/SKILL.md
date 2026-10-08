@@ -87,7 +87,7 @@ app_cx.quit();                    // 别拿 VisualTestContext 收尾，会 SIGSE
 - 测试：`src/editor/tests/common.rs`（`init_editor_test_app`、`redraw`、`perf_passes`、`perf_delta`）、`src/editor/selection/tests.rs`（`set_selection`、`assign_visible_block_bounds`）、`src/editor/tests/selection_mouse.rs`（真实按下—拖动—抬手的选区报修都在这里）、`src/components/block/runtime/tests/`（块级）。
 - 交互模拟：`cx.simulate_mouse_down/move/up(point(px(x), px(y)), MouseButton::Left, Modifiers::none())`、`cx.dispatch_action(Action)`、`cx.simulate_input("x")`（敲字）。
 - 选区代码：`src/editor/selection.rs`（跨块）、`src/editor/selection/table.rs`（表格跨格）、`src/editor/selection/pointer.rs`（指针与「点 → 端点」换算）；两套坐标与表格两层的坑见 §6。
-- 环境：stable 1.88，别用更新的 std API；`cargo test --bin velora`（无 lib target）。全量只在收尾跑。
+- 环境：当前 Rust stable 工具链；`cargo test --bin velora`（无 lib target）。全量只在收尾跑。
 
 ## 6 表格与选区（本仓库专属的坑）
 
