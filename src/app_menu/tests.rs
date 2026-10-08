@@ -5,10 +5,9 @@ mod tests {
         recent_menu_entries,
     };
     use crate::components::{
-        AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, CopyAsHtml, ExportHtml,
-        ExportPdf, ExportPng, NewWindow, NoRecentFiles, OpenFile, OpenPreferences, OpenRecentFile,
-        PrintDocument, QuitApplication,
-        SaveDocument, SelectLanguage, SelectTheme, ShowAbout,
+        AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, NewWindow, NoRecentFiles,
+        OpenFile, OpenPreferences, OpenRecentFile, QuitApplication, SaveDocument, SelectLanguage,
+        SelectTheme, ShowAbout,
     };
     use crate::commands::{CommandMenu, CommandSpec, commands, commands_for};
     use crate::i18n::I18nManager;
