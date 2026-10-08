@@ -745,11 +745,18 @@ async fn a_fence_crossing_a_source_chunk_seam_still_scans_per_block(cx: &mut Tes
     let source = format!("{}\n", lines.join("\n"));
     // 按行切片是**代码/纯文本文件**那条路（`build_source_document_roots`），
     // 所以要真走文件加载，`from_markdown` 的源码退回是整篇一块。
-    let path = std::env::temp_dir().join(format!("velora-outline-seam-{}.py", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "velora-outline-seam-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("create fixture dir");
+    let path = dir.join("seam.py");
     fs::write(&path, &source).expect("write fixture");
-    let cleanup = path.clone();
+    let cleanup = dir.clone();
     cx.on_quit(move || {
-        let _ = fs::remove_file(&cleanup);
+        if let Err(error) = fs::remove_dir_all(&cleanup) {
+            eprintln!("夹具目录清理失败 {}: {error}", cleanup.display());
+        }
     });
     let document = crate::editor::encoding::load_document(&path).expect("load fixture");
     let (editor, cx) = cx.add_window_view(move |_window, cx| {
@@ -851,14 +858,18 @@ async fn a_longer_fence_above_pulls_the_following_chunks_inside_it(cx: &mut Test
     lines[chunk * 3 + 1] = "# 围栏外才算标题".to_string();
     lines[chunk * 4] = "# 也算标题".to_string();
     let source = format!("{}\n", lines.join("\n"));
-    let path = std::env::temp_dir().join(format!(
-        "velora-outline-fence-width-{}.py",
+    let dir = std::env::temp_dir().join(format!(
+        "velora-outline-fence-width-{}",
         std::process::id()
     ));
+    fs::create_dir_all(&dir).expect("create fixture dir");
+    let path = dir.join("fence-width.py");
     fs::write(&path, &source).expect("write fixture");
-    let cleanup = path.clone();
+    let cleanup = dir.clone();
     cx.on_quit(move || {
-        let _ = fs::remove_file(&cleanup);
+        if let Err(error) = fs::remove_dir_all(&cleanup) {
+            eprintln!("夹具目录清理失败 {}: {error}", cleanup.display());
+        }
     });
     let document = crate::editor::encoding::load_document(&path).expect("load fixture");
     let (editor, cx) =
