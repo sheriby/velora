@@ -359,8 +359,8 @@ pub(super) struct WorkspaceState {
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
-            // 应用启动不展开侧边栏（用户需求）：需要时点状态栏按钮/快捷键打开。
-            is_open: false,
+            // 应用启动默认展开侧边栏（用户需求）：收起后可用状态栏按钮/快捷键唤出。
+            is_open: true,
             active_tab: WorkspaceTab::Files,
             root: None,
             file_tree: None,

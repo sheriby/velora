@@ -82,7 +82,7 @@ async fn workspace_search_accepts_unicode_platform_input(cx: &mut TestAppContext
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
-            // 侧栏默认关闭（用户需求）：搜索输入框在抽屉里，先展开再聚焦。
+            // 搜索输入框在抽屉里：先确保展开再聚焦。
             editor.workspace.is_open = true;
             editor.workspace.active_tab = super::super::WorkspaceTab::Search;
             let focus = editor
@@ -1266,6 +1266,8 @@ async fn source_chunk_gutters_share_one_width_basis(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| {
             editor.set_workspace_root(root.clone(), cx);
             editor.open_workspace_file(path, window, cx);
+            // 这条用例量的是行号栏与内容列的 inset（左缘 24px），侧栏占位就量不到左缘。
+            editor.workspace.is_open = false;
         });
     });
     cx.run_until_parked();

@@ -27,17 +27,35 @@ async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut Test
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
     cx.update(|window, cx| window.draw(cx).clear());
 
+    // 启动默认展开（用户需求）：图标列与面板都占位。
+    assert_eq!(
+        sidebar_is_visible(cx),
+        (true, true),
+        "默认展开状态应有图标列与面板"
+    );
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.is_open, "启动默认展开");
+    });
+
+    // 图标列上点当前页签：收起整条（含图标列），不留半个入口在布局里。
+    let rail_button = cx.debug_bounds("activity-files").expect("展开时图标列应可点");
+    cx.simulate_click(rail_button.center(), Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(
+        sidebar_is_visible(cx),
+        (false, false),
+        "收起后图标列与面板都不该留下"
+    );
+
     for (id, tab) in [
         ("activity-files", WorkspaceTab::Files),
         ("activity-search", WorkspaceTab::Search),
         ("activity-outline", WorkspaceTab::Outline),
     ] {
-        // 默认收起：图标列与面板都不占位。
-        assert_eq!(
-            sidebar_is_visible(cx),
-            (false, false),
-            "默认收起状态不该有图标列或面板"
-        );
+        // 前置：收起状态，下面逐页做「命令唤出 → 点页签收起」。
+        editor.read_with(cx, |editor, _| {
+            assert!(!editor.workspace.is_open, "前置：侧栏已收起");
+        });
 
         // 命令唤出：图标列 + 面板一起出现，并切到这一页。
         editor.update(cx, |editor, cx| {
@@ -76,6 +94,8 @@ async fn hovering_the_left_edge_does_not_open_the_sidebar(cx: &mut TestAppContex
     init_sidebar_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    // 前置：默认展开，先收起，贴边才谈得上「不该唤出」。
+    editor.update(cx, |editor, _| editor.workspace.is_open = false);
     cx.update(|window, cx| window.draw(cx).clear());
 
     cx.simulate_mouse_move(
@@ -127,6 +147,8 @@ async fn ctrl_b_toggles_the_sidebar_only_when_nothing_is_selected(cx: &mut TestA
     let (editor, cx) = cx.add_window_view(|_, cx| {
         Editor::from_markdown(cx, "alpha one\n\nbeta two\n".to_string(), None)
     });
+    // 从收起状态测开关本身（启动默认展开由上一组用例覆盖）。
+    editor.update(cx, |editor, _| editor.workspace.is_open = false);
     cx.update(|window, cx| window.draw(cx).clear());
 
     let first_block = editor.read_with(cx, |editor, _| {
