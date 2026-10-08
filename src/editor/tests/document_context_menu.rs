@@ -791,6 +791,220 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
     );
 }
 
+/// 把鼠标真实地移到某一行的中心上：走的是屏幕命中那条路，悬停展开靠的就是它。
+fn hover_row(name: &'static str, cx: &mut VisualTestContext) {
+    let bounds = row_bounds(name, cx);
+    let center = point(
+        bounds.left() + bounds.size.width * 0.5,
+        bounds.top() + bounds.size.height * 0.5,
+    );
+    cx.simulate_mouse_move(center, None, Modifiers::none());
+    redraw(cx);
+}
+
+/// 此刻展开的是哪一块二级菜单。
+fn open_submenu(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Option<DocumentSubmenu> {
+    editor.read_with(cx, |editor, _| {
+        match editor.context_menu.as_ref() {
+            Some(crate::editor::context_menu::ContextMenuState::Document {
+                open_submenu,
+                ..
+            }) => *open_submenu,
+            _ => panic!("应当正开着正文右键菜单"),
+        }
+    })
+}
+
+/// 报修：二级菜单太容易自己收掉。鼠标从父行横到二级面板上（一次移动事件里就跨过去了），
+/// 面板得一直开着：父行的 mouse-out 与面板的 mouse-in 是同一次移动里的两件事，
+/// 谁先谁后不应该决定面板的生死。
+#[gpui::test]
+async fn the_open_submenu_survives_the_pointer_moving_onto_its_panel(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    hover_row("insert", cx);
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "悬停「插入」父行该展开二级面板"
+    );
+
+    hover_row("insert-toc", cx);
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "刚移进二级面板就不该收"
+    );
+
+    // 停在面板上不动，越过那 120ms 的延时收起窗口。
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "鼠标停在二级面板上，面板却自己收了"
+    );
+    assert!(
+        cx.debug_bounds(item_selector("insert-toc")).is_some(),
+        "二级面板从屏幕上消失了"
+    );
+}
+
+/// 同一条根因的另一面：在两条二级父行之间往上移（父行紧邻，一次移动就到），
+/// 展开的那块要跟着换成新悬停的那一块，不能被离开的旧行顺手收掉。
+#[gpui::test]
+async fn hovering_another_submenu_row_keeps_the_new_panel_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    hover_row("format", cx);
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Format),
+        "悬停「格式」父行该展开格式那一档"
+    );
+
+    hover_row("insert", cx);
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "悬停换了父行，展开的那块该跟着换"
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "鼠标停在「插入」行上，面板却自己收了"
+    );
+    assert!(
+        cx.debug_bounds(item_selector("insert-toc")).is_some(),
+        "二级面板从屏幕上消失了"
+    );
+}
+
+/// 菜单外面正文上的一个点：手滑路线用它，断言过「确实不在任何一块面板里」。
+fn outside_menu_point(cx: &mut VisualTestContext) -> gpui::Point<gpui::Pixels> {
+    let viewport = cx.update(|window, _cx| window.viewport_size());
+    let point = point(viewport.width * 0.5, viewport.height - px(60.0));
+    let main = cx
+        .debug_bounds("editor-context-menu-panel")
+        .expect("主面板该有边界");
+    assert!(!main.contains(&point), "测试前提：落脚点该在菜单外面");
+    point
+}
+
+/// 主面板与二级面板中间那条缝上的一个点：两块面板都不含它。
+fn seam_point(submenu_selector: &'static str, cx: &mut VisualTestContext) -> gpui::Point<gpui::Pixels> {
+    let main = cx
+        .debug_bounds("editor-context-menu-panel")
+        .expect("主面板该有边界");
+    let submenu = cx
+        .debug_bounds(submenu_selector)
+        .expect("二级面板该有边界");
+    assert!(
+        main.right() < submenu.left(),
+        "测试前提：两块面板之间该有一条缝：{} vs {}",
+        f32::from(main.right()),
+        f32::from(submenu.left())
+    );
+    let seam = point(
+        (main.right() + submenu.left()) * 0.5,
+        row_bounds("insert", cx).top() + px(4.0),
+    );
+    assert!(
+        !main.contains(&seam) && !submenu.contains(&seam),
+        "测试前提：落脚点该在缝里"
+    );
+    seam
+}
+
+/// 报修：手快滑出二级面板一眼，面板就没了。滑出去再滑回来要还来得及：
+/// 时限之内回到面板上，那块面板还在；真离开了才收。
+#[gpui::test]
+async fn the_submenu_waits_out_a_brief_slip_outside_the_menu(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    hover_row("insert", cx);
+    hover_row("insert-toc", cx);
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "悬停「插入」那一档该展开"
+    );
+
+    // 手滑，一下滑到菜单外面的正文上（这一段路原本会被当成「离开」，
+    // 定时器一响面板就没了，手根本来不及滑回来）。
+    let outside = outside_menu_point(cx);
+    cx.simulate_mouse_move(outside, None, Modifiers::none());
+    redraw(cx);
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "滑出去 150ms 面板就收了"
+    );
+
+    // 滑回面板上：这一次收起该被撤销，之后停多久都在。
+    hover_row("insert-toc", cx);
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "回到面板上还是被收掉了"
+    );
+
+    // 真走了就别赖着：离开菜单满时限之后该收掉，一直不收会挡住正文。
+    cx.simulate_mouse_move(outside, None, Modifiers::none());
+    redraw(cx);
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(open_submenu(&editor, cx), None, "离开菜单之后该收起来");
+}
+
+/// 报修：两块面板中间那条缝里停一下，二级面板立马就没了。缝也要算「还在菜单上」——
+/// 鼠标从父行横到面板上时正好会经过它。
+#[gpui::test]
+async fn resting_in_the_seam_between_the_panels_keeps_the_submenu_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+
+    right_click(&editor, 0, cx);
+    hover_row("insert", cx);
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "悬停「插入」那一档该展开"
+    );
+
+    let seam = seam_point("editor-context-menu-insert", cx);
+    cx.simulate_mouse_move(seam, None, Modifiers::none());
+    redraw(cx);
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(
+        open_submenu(&editor, cx),
+        Some(DocumentSubmenu::Insert),
+        "停在两块面板中间那条缝里，面板却自己收了"
+    );
+}
+
 /// 「格式」那一档十行的快捷键那一列都要显示出来，其中标记文本与清除格式这两行是
 /// FP9b 才补上键位的；段落与插入那一档还没有键位，留空但不换行宽。
 #[gpui::test]

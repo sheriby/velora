@@ -31,8 +31,14 @@ pub(super) enum ContextMenuState {
         target: TableInsertTarget,
         /// 当前展开的二级菜单；None 表示只有主菜单。
         open_submenu: Option<DocumentSubmenu>,
-        /// 鼠标正停在哪个二级菜单的父行或子面板上（两处都算命中，不藏起来）。
-        hovered_submenu: Option<DocumentSubmenu>,
+        /// 鼠标正停在哪个二级菜单的父行上；None 表示没停在任何一条上。
+        parent_row_hovered: Option<DocumentSubmenu>,
+        /// 鼠标正停在二级面板上吗。与父行那一份分开记：同一次移动里父行的
+        /// mouse-out 与面板的 mouse-in 会前后脚到，谁后到都不能把另一处的悬停抹掉。
+        submenu_panel_hovered: bool,
+        /// 鼠标正停在一级面板与二级面板中间那条缝里吗（缝只有几个像素宽，
+        /// 从父行横到面板上时正好会经过它，停在那儿不该算离开）。
+        submenu_bridge_hovered: bool,
     },
     /// Table row or column context menu for an existing native table.
     TableAxis {
@@ -47,6 +53,28 @@ pub(super) enum ContextMenuState {
         /// 原始地址（相对路径或 URL），「复制图片地址」用。
         address: String,
     },
+}
+
+impl ContextMenuState {
+    /// 二级面板的悬停区状态：`(还有没有哪儿停着指针, 展开的那一档还在不在)`。
+    /// 三个区（父行、两块面板中间那条缝、二级面板）各记一份，这里合起来看一眼；
+    /// 不是正文菜单（表格轴菜单、图片菜单）返回 None。
+    fn submenu_hover_regions(&self) -> Option<(bool, bool)> {
+        let ContextMenuState::Document {
+            open_submenu,
+            parent_row_hovered,
+            submenu_panel_hovered,
+            submenu_bridge_hovered,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        Some((
+            parent_row_hovered.is_some() || *submenu_panel_hovered || *submenu_bridge_hovered,
+            open_submenu.is_some(),
+        ))
+    }
 }
 
 /// State for the table insertion dialog opened from the context menu.
@@ -84,7 +112,9 @@ impl Editor {
             position,
             target,
             open_submenu: None,
-            hovered_submenu: None,
+            parent_row_hovered: None,
+            submenu_panel_hovered: false,
+            submenu_bridge_hovered: false,
         });
         cx.notify();
     }

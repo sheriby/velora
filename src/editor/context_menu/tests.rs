@@ -27,6 +27,7 @@ mod tests {
 
     /// 悬停展开二级菜单：从父行移向二级面板要穿过一段空隙，这期间两处都不悬停，
     /// 但面板得等到定时器到点才收；期间换悬停另一行，展开的那块跟着换。
+    /// 父行、缝、二级面板三个悬停区各记一份，任一处还停着指针就不收。
     #[gpui::test]
     async fn context_submenu_stays_open_while_crossing_hover_gap(cx: &mut TestAppContext) {
         let editor = cx.new(|cx| Editor::from_markdown(cx, "alpha".to_string(), None));
@@ -81,9 +82,27 @@ mod tests {
         );
 
         hover(false, DocumentSubmenu::Insert, cx);
-        cx.executor().advance_clock(std::time::Duration::from_millis(150));
+        cx.executor().advance_clock(std::time::Duration::from_millis(500));
         cx.run_until_parked();
-        assert_eq!(opened(cx), None, "两处都离开满 120ms 之后二级面板该收掉");
+        assert_eq!(opened(cx), None, "两处都离开满时限之后二级面板该收掉");
+
+        // 缝与二级面板各记一份：两边都报过「离开」之后，任一处重新悬停都能撤掉收起。
+        hover(true, DocumentSubmenu::Insert, cx);
+        editor.update(cx, |editor, cx| {
+            editor.set_document_submenu_panel_hover(false, cx)
+        });
+        hover(false, DocumentSubmenu::Insert, cx);
+        assert!(
+            editor.read_with(cx, |editor, _| editor.context_menu_submenu_close_task.is_some()),
+            "三个区都离开了该挂上延时收起"
+        );
+        editor.update(cx, |editor, cx| {
+            editor.set_document_submenu_bridge_hover(true, cx)
+        });
+        assert!(
+            editor.read_with(cx, |editor, _| editor.context_menu_submenu_close_task.is_none()),
+            "指针停回两块面板中间那条缝里，该撤掉这次收起"
+        );
 
         // 换一行悬停：展开的那块跟着换，不会两块同时开着。
         hover(true, DocumentSubmenu::Format, cx);

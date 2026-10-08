@@ -19,6 +19,11 @@ use crate::editor::insert_ops::InsertBlockTarget;
 use crate::editor::paragraph_ops::BlockKindTarget;
 use crate::theme::ThemeDimensions;
 
+/// 指针离开菜单之后，二级面板还留着的时限。手快时滑出去一眼再滑回来，
+/// 靠这一段兜住（任一个悬停区重新收到 hover 就撤销这次收起）。
+/// 240ms：120ms 时手滑出去一眼面板就没了（用户报修），400ms 又嫌走得慢。
+const SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(240);
+
 /// 标题那一档的行 id，按下标取用（`level` 已经在 1..=6 内）。
 const HEADING_ROW_NAMES: [&str; 6] = [
     "heading-1",
@@ -533,7 +538,7 @@ impl Editor {
         }
     }
 
-    /// 悬停展开：`submenu` 为 `Some` 表示鼠标正停在某个二级菜单的父行或子面板上。
+    /// 悬停展开：`submenu` 为 `Some` 表示鼠标正停在某个二级菜单的父行上。
     pub(crate) fn set_document_menu_hover(
         &mut self,
         hovered: bool,
@@ -542,30 +547,93 @@ impl Editor {
     ) {
         let Some(ContextMenuState::Document {
             open_submenu,
-            hovered_submenu,
+            parent_row_hovered,
+            submenu_panel_hovered,
             ..
         }) = self.context_menu.as_mut()
         else {
             return;
         };
 
+        let hovered_row = submenu.filter(|_| hovered);
         let mut changed = false;
-        if *hovered_submenu != submenu.filter(|_| hovered) {
-            *hovered_submenu = submenu.filter(|_| hovered);
-            changed = true;
-        }
-        if hovered {
-            self.context_menu_submenu_close_task = None;
-            if submenu.is_some() && open_submenu != &submenu {
-                *open_submenu = submenu;
+        if let Some(row) = hovered_row {
+            if *parent_row_hovered != Some(row) {
+                *parent_row_hovered = Some(row);
                 changed = true;
             }
-        } else if hovered_submenu.is_none() && open_submenu.is_some() {
-            self.schedule_document_menu_submenu_close(cx);
-            changed = true;
+            if open_submenu != &Some(row) {
+                *open_submenu = Some(row);
+                // 换了一档就是换了一块面板：旧面板那一次的悬停不该留给新的那一块。
+                *submenu_panel_hovered = false;
+                changed = true;
+            }
+        } else if let Some(row) = submenu {
+            // 鼠标离开了某一条父行：只清掉「就是这一条」的那份记录。
+            // 三条父行挨着，一次移动会同时送来「进了新的」与「离开了旧的」，
+            // 后到的这一份不能把前一份抹掉（后者的监听注册在后，先跑）。
+            if *parent_row_hovered == Some(row) {
+                *parent_row_hovered = None;
+                changed = true;
+            }
         }
+        self.settle_document_submenu_hover(cx);
         if changed {
             cx.notify();
+        }
+    }
+
+    /// 二级面板自己的悬停。与父行各记一份：从父行横到面板上时两边的事件在
+    /// 同一次移动里先后到达，共用一份状态就会让后到的那个把先到的抹掉，
+    /// 鼠标还停在面板上，延时一到它自己就收掉了。
+    pub(crate) fn set_document_submenu_panel_hover(
+        &mut self,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ContextMenuState::Document {
+            submenu_panel_hovered,
+            ..
+        }) = self.context_menu.as_mut()
+        {
+            *submenu_panel_hovered = hovered;
+        }
+        self.settle_document_submenu_hover(cx);
+    }
+
+    /// 主面板与二级面板中间那条缝的悬停：停在这条缝里也算「还在菜单上」。
+    /// 缝只有几个像素宽，从父行横到面板上时正好会经过它（用户报修：停在缝里
+    /// 面板立马就收）。
+    pub(crate) fn set_document_submenu_bridge_hover(
+        &mut self,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ContextMenuState::Document {
+            submenu_bridge_hovered,
+            ..
+        }) = self.context_menu.as_mut()
+        {
+            *submenu_bridge_hovered = hovered;
+        }
+        self.settle_document_submenu_hover(cx);
+    }
+
+    /// 三个悬停区（父行、两块面板中间那条缝、二级面板）任一处还停着指针，
+    /// 展开的那一档就留着；全离开了才挂上延时收起。各区各记一份状态：同一次
+    /// 移动里「进了新的」与「离开了旧的」前后脚到达，谁后到都不能把另一处抹掉。
+    fn settle_document_submenu_hover(&mut self, cx: &mut Context<Self>) {
+        let Some((hovered, open)) = self
+            .context_menu
+            .as_ref()
+            .and_then(ContextMenuState::submenu_hover_regions)
+        else {
+            return;
+        };
+        if hovered {
+            self.context_menu_submenu_close_task = None;
+        } else if open {
+            self.schedule_document_menu_submenu_close(cx);
         }
     }
 
@@ -573,20 +641,19 @@ impl Editor {
         let weak_editor = cx.entity().downgrade();
         self.context_menu_submenu_close_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(120))
-                    .await;
+                cx.background_executor().timer(SUBMENU_CLOSE_DELAY).await;
                 let _ = weak_editor.update(cx, |editor, cx| {
                     editor.context_menu_submenu_close_task = None;
-                    let Some(ContextMenuState::Document {
-                        open_submenu,
-                        hovered_submenu,
-                        ..
-                    }) = editor.context_menu.as_mut()
+                    let Some((false, true)) = editor
+                        .context_menu
+                        .as_ref()
+                        .and_then(ContextMenuState::submenu_hover_regions)
                     else {
                         return;
                     };
-                    if hovered_submenu.is_none() && open_submenu.is_some() {
+                    if let Some(ContextMenuState::Document { open_submenu, .. }) =
+                        editor.context_menu.as_mut()
+                    {
                         *open_submenu = None;
                         cx.notify();
                     }
@@ -878,6 +945,24 @@ impl DocumentMenuGeometry {
     }
 }
 
+/// 两块面板中间那条缝的感应带横向范围：从主面板边缘一直盖到二级面板外沿。
+/// 二级面板在右侧时是「主面板右沿 → 二级面板右沿」，放不下翻到左侧时镜像
+/// （「二级面板左沿 → 主面板左沿」）。缝只有几个像素宽，鼠标从父行横过去时
+/// 正好会经过它，停在那儿不该被当成离开菜单。
+pub(crate) fn submenu_bridge_span(
+    main_left: Pixels,
+    main_width: Pixels,
+    submenu_left: Pixels,
+    submenu_width: Pixels,
+) -> (Pixels, Pixels) {
+    let main_right = main_left + main_width;
+    if submenu_left >= main_right {
+        (main_right, submenu_left + submenu_width)
+    } else {
+        (submenu_left, main_left)
+    }
+}
+
 /// 主面板与二级面板的落点：面板贴着光标，右边或下边放不下就往窗口内收；
 /// 二级面板在右侧放不下时改贴主面板左侧，顶部仍与父行对齐（对齐后放不下则向上收）。
 pub(crate) fn document_menu_origins(
@@ -928,8 +1013,8 @@ pub(crate) fn document_menu_origins(
 mod tests {
     // 不用 `use super::*`：那样会把 gpui 的 `test` 宏带进来，`#[test]` 就地自我展开。
     use super::{
-        document_menu_label, document_menu_origins, DocumentMenuCommand, DocumentMenuGeometry,
-        DocumentMenuRow,
+        document_menu_label, document_menu_origins, submenu_bridge_span, DocumentMenuCommand,
+        DocumentMenuGeometry, DocumentMenuRow,
     };
     use crate::i18n::I18nStrings;
     use crate::theme::Theme;
@@ -1005,6 +1090,25 @@ mod tests {
         assert!(
             flipped.y + submenu.size.height <= viewport.height - margin,
             "与父行对齐后仍然越界，该向上收"
+        );
+    }
+
+    /// 缝的感应带：二级面板在右时盖住「缝 + 整块二级面板」，翻到左侧时镜像——
+    /// 两边的缝都要有带子，否刚窄视口里翻过去的那一侧又会“停一下就没”。
+    #[test]
+    fn submenu_bridge_spans_the_seam_on_either_side() {
+        let (left, right) = submenu_bridge_span(px(100.0), px(275.0), px(377.0), px(200.0));
+        assert_eq!(
+            (f32::from(left), f32::from(right)),
+            (375.0, 577.0),
+            "二级面板在右侧时带子该从主面板右沿盖到二级面板右沿"
+        );
+
+        let (left, right) = submenu_bridge_span(px(326.0), px(275.0), px(94.0), px(230.0));
+        assert_eq!(
+            (f32::from(left), f32::from(right)),
+            (94.0, 326.0),
+            "翻到左侧时带子该镜像成「二级面板左沿 → 主面板左沿」"
         );
     }
 

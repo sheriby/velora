@@ -2,7 +2,7 @@ use super::*;
 
 use super::document_menu::{
     QUICK_ACTION_BUTTON_SIZE, QUICK_ACTION_DIVIDER_WIDTH, QUICK_ACTION_GAP,
-    QUICK_ACTION_GROUP_BREAK,
+    QUICK_ACTION_GROUP_BREAK, submenu_bridge_span,
 };
 
 impl Editor {
@@ -130,6 +130,37 @@ impl Editor {
                     ),
                     _ => None,
                 };
+                // 两块面板中间那条缝的感应带：从主面板边缘一直盖到二级面板外沿，
+                // 高度跟着二级面板走。缝只有几个像素宽，鼠标从父行横过去时就会
+                // 经过它，停在那儿不该被当成离开菜单（用户报修）。
+                // 与二级面板有重叠：两块各记一份悬停，同一次移动里谁后到都不影响判定。
+                let submenu_bridge = match (submenu_origin, submenu_panels.as_ref()) {
+                    (Some(submenu_origin), Some((geometry, _))) => {
+                        let (left, right) = submenu_bridge_span(
+                            origin.x,
+                            panel.size.width,
+                            submenu_origin.x,
+                            geometry.size.width,
+                        );
+                        Some(
+                            div()
+                                .id("editor-context-menu-submenu-bridge")
+                                .debug_selector(|| "editor-context-menu-submenu-bridge".to_string())
+                                .absolute()
+                                .left(left)
+                                .top(submenu_origin.y)
+                                .w(right - left)
+                                .h(geometry.size.height)
+                                .on_hover(cx.listener(
+                                    |editor, hovered: &bool, _window, cx| {
+                                        editor.set_document_submenu_bridge_hover(*hovered, cx);
+                                    },
+                                ))
+                                .into_any_element(),
+                        )
+                    }
+                    _ => None,
+                };
 
                 let overlay = div()
                     .id("editor-context-menu-overlay")
@@ -172,9 +203,13 @@ impl Editor {
                             ),
                     );
 
-                Some(match submenu_panel {
-                    Some(panel) => overlay.child(panel).into_any_element(),
-                    None => overlay.into_any_element(),
+                Some(match (submenu_panel, submenu_bridge) {
+                    (Some(panel), Some(bridge)) => {
+                        overlay.child(bridge).child(panel).into_any_element()
+                    }
+                    (Some(panel), None) => overlay.child(panel).into_any_element(),
+                    (None, Some(bridge)) => overlay.child(bridge).into_any_element(),
+                    (None, None) => overlay.into_any_element(),
                 })
             }
             ContextMenuState::TableAxis {
@@ -807,6 +842,8 @@ impl Editor {
         };
         div()
             .id(panel_id)
+            // 测试按这个名字量二级面板的边界（缝上的落点靠它算出来）。
+            .debug_selector(move || panel_id.to_string())
             .absolute()
             .left(origin.x)
             .top(origin.y)
@@ -825,7 +862,7 @@ impl Editor {
                 cx.stop_propagation()
             })
             .on_hover(cx.listener(move |editor, hovered: &bool, _window, cx| {
-                editor.set_document_menu_hover(*hovered, Some(submenu), cx);
+                editor.set_document_submenu_panel_hover(*hovered, cx);
             }))
             .children(
                 rows.into_iter()
