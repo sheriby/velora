@@ -81,8 +81,10 @@
 - 无窗口测试的文本系统是等宽模拟（`NoopTextSystem`）：那里只断言结构与偏移，别断言像素宽度与字形。要真实宽度就在窗口里用 `window.text_system().shape_text` 量。
 - 断言几何之前先 `redraw`（`window.draw(cx).clear()` 加 `run_until_parked`）：命中测试读的是上一帧写下的 `last_bounds` / `last_layout`，没画过就是 0。
 - 要计时用 GPUI 自己的 `cx.background_executor().timer(..)`，不要用 `smol::Timer::after(..)`——后者不被 GPUI 的调度器跟踪，`run_until_parked` 会以为没事可做。
-- 夹具：`tests/fixtures/perf/*.md` 在忽略列表里，用 `node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成。
-- 墙钟预算类性能闸门（断言里量真实耗时的）整族 `#[ignore]`，集中在 `src/editor/tests/perf_budgets.rs`（另两条在 `workspace/tests/search_perf.rs` 与 `buffer/tests.rs` 原地标 ignore），默认 `cargo test` 与 CI 都不跑；要跑用 `cargo test --bin velora -- --ignored`，夹具见下一条。确定性计数闸门（数操作遍数、不量时间）不在忽略之列，照常跑。这些闸门即便手动跑，并发抢 CPU 下仍会假红（单跑能过、整跑重跑也过就按假红处理，不要放宽预算）；`autosave_does_not_overwrite_external_file_changes` 历史上有偶发失败。
+- 夹具：`tests/fixtures/perf/*.md` 在忽略列表里，用 `node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成。CI 在慢用例步骤前跑同一条命令现场生成——不生成的活，用夹具的那两条用例会静默自跳（`open_document` 找不到夹具就 return），CI 上就只剩个绿色的空跑。
+- 两族 `#[ignore]` 别混。**慢用例**（>1s、断言全是确定性的）理由串写 `慢用例（>1s）：本地默认跳过，CI 跑`：本地默认跳过，CI 的 `Test (慢用例)` 步骤跑。**墙钟预算闸门**（断言里量真实耗时）理由串写 `墙钟预算闸门…`：本地手动跑，CI 永不跑（弱机器会假红）。
+- 墙钟族集中在 `src/editor/tests/perf_budgets.rs`，另有四处原地标：`workspace/tests/search_perf.rs`、`buffer/tests.rs`、`loading_chunks.rs` 的两条手动探针。新增墙钟闸门若落在这些路径之外，要同步补 CI 里的 `--skip`。
+- 两族的跑法各只有一处：CI 看 `.github/workflows/ci.yml` 的两个 `cargo test` 步骤，本地看 `.config/nextest.toml` 里那两条命令。墙钟闸门即便手动跑，并发抢 CPU 下仍会假红（单跑能过、整跑重跑也过就按假红处理，不要放宽预算）；`autosave_does_not_overwrite_external_file_changes` 历史上有偶发失败。
 - 修 bug 一律先写会红的测试再动实现，流程见技能 `velora-gpui-bugfix`。
 
 ## 4 工具链
@@ -91,7 +93,7 @@
 - `.cargo/config.toml` 挂了 `sccache`；`tests/fixtures/perf/` 与 `target/` 不进版本库。
 - 门禁是构建与测试两条；clippy 不作门禁，但 `Cargo.toml` 里 `[lints.clippy]` 放开过哪些要心里有数。
 - CI（`.github/workflows/ci.yml`）在每次 push 与 PR 上跑同样的两条 + Windows 目标交叉编译；测试 job 在 macOS（项目不支持 Linux，Windows 原生测试基线未立）。
-- **门禁只在收尾跑，不在改一版跑一版**：中途改动用 `cargo test --bin velora <关键词>`（单条/单组，秒级）；`cargo build` 与全量 `cargo test --bin velora` 各只在收尾跑一次（全量实测 100–130 秒，反复跑纯磨时间，也把调试迭代拖成分钟级）。
+- **门禁只在收尾跑，不在改一版跑一版**：中途改动用 `cargo test --bin velora <关键词>`（单条/单组，秒级）；`cargo build` 与 `cargo test --bin velora` 各只在收尾跑一次（默认全量实测 5 秒上下——22 条慢用例已按 §3 挪出默认跑法；`cargo build` 本身仍是分钟级，反复跑纯磨时间）。
 - 只看某个测试的打印时，若 `--nocapture` 的输出被工具链包装吃掉，就直接跑 `target/debug/deps/velora-*`（编译产物里的测试二进制）加测试名，比重新链接一遍 cargo 命令快。
 - 不动代码的改动（文档、注释、AGENTS.md、CHANGELOG）不跑构建与测试：只有代码路径才可能连带影响。
 
