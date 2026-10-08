@@ -1,7 +1,6 @@
 use super::super::{
-    Editor, SearchMatcher, SearchOptions, TreeSortPreference, WorkspaceTab, has_utf16_bom,
-    is_likely_text_file,
-    scan_workspace_dir, search_utf8_to_utf16, search_utf16_to_utf8,
+    Editor, SearchMatcher, SearchOptions, WorkspaceTab, collect_workspace_files_on_disk,
+    has_utf16_bom, is_likely_text_file, search_utf8_to_utf16, search_utf16_to_utf8,
     search_workspace_files,
 };
 use crate::components::UndoCaptureKind;
@@ -229,24 +228,24 @@ async fn workspace_search_matches_file_names_and_contents(cx: &mut TestAppContex
     )
     .expect("write md");
     fs::write(root.join("src").join("main.rs"), "fn main() {}").expect("write code");
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
 
-    let matches = search_workspace_files(&tree, &SearchMatcher::new("MAIN", SearchOptions::default()), 200, &background).await;
+    let matches = search_workspace_files(&root, &files, &SearchMatcher::new("MAIN", SearchOptions::default()), 200, &background).await;
     assert_eq!(matches.len(), 2);
     assert_eq!(matches[0].label, "src/main.rs");
     assert_eq!(matches[0].line, None);
     assert_eq!(matches[1].line, Some(1));
 
-    let matches = search_workspace_files(&tree, &SearchMatcher::new("readme", SearchOptions::default()), 200, &background).await;
+    let matches = search_workspace_files(&root, &files, &SearchMatcher::new("readme", SearchOptions::default()), 200, &background).await;
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].label, "README.md");
 
-    let matches = search_workspace_files(&tree, &SearchMatcher::new("content", SearchOptions::default()), 200, &background).await;
+    let matches = search_workspace_files(&root, &files, &SearchMatcher::new("content", SearchOptions::default()), 200, &background).await;
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].label, "README.md");
     assert_eq!(matches[0].line, Some(1));
     assert!(matches[0].preview.contains("content"));
-    assert!(search_workspace_files(&tree, &SearchMatcher::new("absent", SearchOptions::default()), 200, &background).await.is_empty());
+    assert!(search_workspace_files(&root, &files, &SearchMatcher::new("absent", SearchOptions::default()), 200, &background).await.is_empty());
 
     let _ = fs::remove_dir_all(root);
 }
@@ -343,11 +342,11 @@ async fn workspace_search_cache_picks_up_modified_content(cx: &mut TestAppContex
     let note = root.join("note.md");
     fs::write(&note, "alpha only").expect("write");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let matcher = SearchMatcher::new("alpha", SearchOptions::default());
-    assert_eq!(search_workspace_files(&tree, &matcher, 200, &background).await.len(), 1);
+    assert_eq!(search_workspace_files(&root, &files, &matcher, 200, &background).await.len(), 1);
     // 第二轮：命中缓存仍能找到。
-    assert_eq!(search_workspace_files(&tree, &matcher, 200, &background).await.len(), 1);
+    assert_eq!(search_workspace_files(&root, &files, &matcher, 200, &background).await.len(), 1);
 
     // 改写文件后缓存必须失效。
     fs::write(&note, "beta instead").expect("rewrite");
@@ -359,16 +358,16 @@ async fn workspace_search_cache_picks_up_modified_content(cx: &mut TestAppContex
             std::time::SystemTime::now() + std::time::Duration::from_secs(2),
         );
     }
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("rescan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let fresh = SearchMatcher::new("beta", SearchOptions::default());
     assert_eq!(
-        search_workspace_files(&tree, &fresh, 200, &background).await.len(),
+        search_workspace_files(&root, &files, &fresh, 200, &background).await.len(),
         1,
         "改写后应搜到新内容"
     );
     let stale = SearchMatcher::new("alpha", SearchOptions::default());
     assert!(
-        search_workspace_files(&tree, &stale, 200, &background).await.is_empty(),
+        search_workspace_files(&root, &files, &stale, 200, &background).await.is_empty(),
         "改写后不应再搜到旧内容"
     );
 

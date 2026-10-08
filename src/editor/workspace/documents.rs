@@ -96,6 +96,7 @@ impl Editor {
         self.sync_workspace_file_tree(cx);
         self.sync_workspace_outline(cx);
         self.ensure_current_document_tab(cx);
+        self.load_expanded_workspace_dirs(cx);
     }
 
     pub(crate) fn ensure_current_document_tab(&mut self, _cx: &mut Context<Self>) {

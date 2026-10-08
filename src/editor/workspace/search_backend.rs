@@ -139,39 +139,19 @@ pub(crate) struct WorkspaceSearchFile {
     pub(super) searchable: bool,
 }
 
-/// 按树序收集待搜索文件，供并行分片使用。
-pub(crate) fn collect_workspace_search_files(root: &WorkspaceTreeNode) -> Vec<WorkspaceSearchFile> {
-    let root_path = match &root.kind {
-        WorkspaceTreeKind::Directory(path) => path.as_path(),
-        _ => return Vec::new(),
-    };
-    let mut files = Vec::new();
-    pub(crate) fn visit(node: &WorkspaceTreeNode, root: &Path, files: &mut Vec<WorkspaceSearchFile>) {
-        match &node.kind {
-            WorkspaceTreeKind::Directory(_) => {
-                for child in &node.children {
-                    visit(child, root, files);
-                }
-            }
-            WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
-                files.push(WorkspaceSearchFile {
-                    path: path.clone(),
-                    label: search_file_label(path, root),
-                    searchable: true,
-                });
-            }
-            WorkspaceTreeKind::OtherFile(path) => {
-                files.push(WorkspaceSearchFile {
-                    path: path.clone(),
-                    label: search_file_label(path, root),
-                    searchable: false,
-                });
-            }
-            WorkspaceTreeKind::Heading { .. } => {}
-        }
-    }
-    visit(root, root_path, &mut files);
+/// 把走盘名单转成待扫文件，供并行分片使用。非文本文件（图片、二进制等）沿用侧栏
+/// 树时代的语义：只匹配文件名，不读内容。
+// 名单来自 `collect_workspace_files_on_disk`（与侧栏同一套过滤规则），不再从树上
+// 收集：树只加载到默认层数，更深一层展开前不在里面。
+pub(crate) fn workspace_search_files(root: &Path, files: &[PathBuf]) -> Vec<WorkspaceSearchFile> {
     files
+        .iter()
+        .map(|path| WorkspaceSearchFile {
+            path: path.clone(),
+            label: search_file_label(path, root),
+            searchable: is_markdown_file(path) || is_code_file(path),
+        })
+        .collect()
 }
 
 pub(crate) fn search_file_label(path: &Path, root: &Path) -> String {
@@ -359,22 +339,21 @@ pub(crate) fn search_single_file(
     }
 }
 
-/// 工作区搜索：文件列表按 CPU 核数分片，在后台线程池并行扫描；结果按分片
-/// 顺序合并保持树序稳定。上一轮读过且未变更的文件内容直接命中缓存，不再
+/// 工作区搜索：文件名单由调用方给（换根后走盘那份，见
+/// `collect_workspace_files_on_disk`），按 CPU 核数分片在后台线程池并行扫描；结果
+/// 按分片顺序合并保持顺序稳定。上一轮读过且未变更的文件内容直接命中缓存，不再
 /// 逐个重读磁盘（用户报修：大工作区搜索远慢于 VS Code）。
 pub(crate) async fn search_workspace_files(
-    root: &WorkspaceTreeNode,
+    root: &Path,
+    paths: &[PathBuf],
     matcher: &SearchMatcher,
     limit: usize,
     background: &gpui::BackgroundExecutor,
 ) -> Vec<WorkspaceSearchHit> {
-    if matcher.is_empty() || limit == 0 {
+    if matcher.is_empty() || limit == 0 || paths.is_empty() {
         return Vec::new();
     }
-    let files = collect_workspace_search_files(root);
-    if files.is_empty() {
-        return Vec::new();
-    }
+    let files = workspace_search_files(root, paths);
     let workers = std::thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(4)

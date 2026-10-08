@@ -6,7 +6,10 @@
 use std::fs;
 use std::time::Instant;
 
-use super::{SearchMatcher, SearchOptions, collect_workspace_search_files, search_single_file, scan_workspace_dir, TreeSortPreference};
+use super::{
+    SearchMatcher, SearchOptions, collect_workspace_files_on_disk, search_single_file,
+    workspace_search_files,
+};
 
 /// 2000 个文件、约 70KB/个。冷启动 = 全量读盘；热启动 = 内容缓存全命中。
 /// 生产路径（并行分片）由 workspace_search_matches_file_names_and_contents
@@ -28,9 +31,8 @@ fn workspace_search_cache_bench() {
         let dir = if index % 3 == 0 { root.join("sub") } else { root.clone() };
         fs::write(dir.join(format!("file-{index}.md")), content).unwrap();
     }
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).unwrap();
     let matcher = std::sync::Arc::new(SearchMatcher::new("needle", SearchOptions::default()));
-    let files = collect_workspace_search_files(&tree);
+    let files = workspace_search_files(&root, &collect_workspace_files_on_disk(&root));
     assert_eq!(files.len(), 2000);
     let workers = std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4);
     let chunk_size = files.len().div_ceil(workers);

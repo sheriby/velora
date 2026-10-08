@@ -4,7 +4,7 @@ use super::super::{
     WorkspaceTreeKind, WorkspaceTreeNode, build_outline_tree, clamp_workspace_panel_width,
     create_workspace_file, create_workspace_folder, is_code_file, tree_node_path,
     path_is_affected, prune_outline_state, remap_moved_path, rewrite_relative_image_targets,
-    scan_workspace_dir,
+    file_node_id, find_workspace_node, scan_workspace_dir_recursive,
 };
 use crate::components::{Block, UndoCaptureKind};
 use gpui::{
@@ -53,7 +53,7 @@ fn workspace_scan_includes_markdown_and_code_files() {
     fs::write(root.join("main.rs"), "fn main() {}").expect("write code");
     fs::write(root.join("nested").join("b.md"), "b").expect("write nested md");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let tree = scan_workspace_dir_recursive(&root, TreeSortPreference::Name).expect("scan tree");
     let labels = tree
         .children
         .iter()
@@ -78,7 +78,7 @@ fn workspace_scan_includes_markdown_and_code_files() {
     ));
 
     // Type sort groups files by extension before name (roadmap D2).
-    let typed = scan_workspace_dir(&root, TreeSortPreference::Type).expect("scan typed");
+    let typed = scan_workspace_dir_recursive(&root, TreeSortPreference::Type).expect("scan typed");
     let extension_at = |index: usize| {
         tree_node_path(&typed.children[index])
             .extension()
@@ -112,7 +112,7 @@ fn workspace_tree_includes_plain_viewer_code_extensions() {
         fs::write(root.join(name), source).expect("write code sample");
     }
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan code workspace");
+    let tree = scan_workspace_dir_recursive(&root, TreeSortPreference::Name).expect("scan code workspace");
     assert_eq!(tree.children.len(), 4);
     assert!(
         tree.children
@@ -1248,4 +1248,75 @@ fn collect_menu_separator_offenders(dir: &std::path::Path, offenders: &mut Vec<S
             offenders.push(path.display().to_string());
         }
     }
+}
+
+#[gpui::test]
+async fn dirs_below_the_default_depth_load_when_expanded(cx: &mut TestAppContext) {
+    // 换根默认只扫三层（WORKSPACE_SCAN_DEPTH）：更深的目录先留占位（`children_loaded`
+    // 为 false），展开时才扫它下一层。这是「打开文件不再把整个目录树走穿」的守卫——
+    // 谁把扫描改回递归，这条用例就会红（深层文件在展开前就出现在树里）。
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-lazy-depth-{}", uuid::Uuid::new_v4()));
+    let deep_dir = root.join("a").join("b").join("c").join("d");
+    fs::create_dir_all(&deep_dir).expect("create deep dirs");
+    fs::write(deep_dir.join("note.md"), "# note\n").expect("write deep note");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    cx.run_until_parked();
+
+    // 根会被 canonicalize（macOS 的 /var 是 /private/var 的软链），节点 id 按
+    // 规范路径算。
+    let dir_path = std::fs::canonicalize(root.join("a").join("b").join("c"))
+        .expect("canonicalize deep dir");
+    let dir_id = file_node_id(&dir_path);
+    editor.read_with(cx, |editor, _| {
+        let tree = editor.workspace.file_tree.as_ref().expect("换根后应有树");
+        let dir = find_workspace_node(std::slice::from_ref(tree), &dir_id)
+            .expect("第三层的 c 目录应已列出");
+        assert!(
+            !dir.children_loaded,
+            "三层以下的目录应留占位，等展开再扫：{:?}",
+            dir.label
+        );
+        assert!(dir.children.is_empty(), "占位目录不该带着子项");
+        assert!(
+            editor
+                .workspace
+                .files_on_disk
+                .iter()
+                .any(|path| path.ends_with("note.md")),
+            "深层文件仍应出现在走盘名单里（搜索/替换不受树的加载状态影响）"
+        );
+    });
+
+    // 展开：扫它下一层，深层的 d 目录出现（且它自己仍是占位）。
+    editor.update(cx, |editor, cx| editor.toggle_workspace_node(&dir_id, cx));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let tree = editor.workspace.file_tree.as_ref().expect("树还在");
+        let dir = find_workspace_node(std::slice::from_ref(tree), &dir_id).expect("c 目录");
+        assert!(dir.children_loaded, "展开后应标记这一层已扫");
+        assert_eq!(
+            dir.children
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["d"],
+            "展开后应出现下一层"
+        );
+        let next = &dir.children[0];
+        assert!(!next.children_loaded, "更深的目录继续留占位");
+    });
 }

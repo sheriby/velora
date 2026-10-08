@@ -31,8 +31,25 @@ impl Editor {
             return;
         }
         let scope = self.workspace.search_scope;
-        let tree = self.workspace.file_tree.clone();
-        if matcher.is_empty() || (scope == WorkspaceSearchScope::Workspace && tree.is_none()) {
+        let files = self.workspace.files_on_disk.clone();
+        // 名单还在走盘（换根 / watcher 刷新之后）：这不是「没有文件」，是「还没到」。
+        // 保持「进行中」并让旧结果继续显示，名单落地时会重新调度搜索；拿空名单跑
+        // 一轮会把面板先清空，正是要避免的那次闪烁。
+        let list_pending =
+            self.workspace.files_on_disk_root.is_none() && self.workspace.root.is_some();
+        if matcher.is_empty() {
+            self.workspace.search_results.clear();
+            self.workspace.search_pending = false;
+            self.sync_document_search_highlights(cx);
+            cx.notify();
+            return;
+        }
+        if scope == WorkspaceSearchScope::Workspace && files.is_empty() {
+            if list_pending {
+                self.workspace.search_pending = true;
+                cx.notify();
+                return;
+            }
             self.workspace.search_results.clear();
             self.workspace.search_pending = false;
             self.sync_document_search_highlights(cx);
@@ -56,8 +73,14 @@ impl Editor {
             }
             let results = match scope {
                 WorkspaceSearchScope::Workspace => {
-                    let Some(tree) = tree else { return };
-                    search_workspace_files(&tree, &matcher, 200, &background).await
+                    let Some(root) = editor
+                        .read_with(cx, |editor, _| editor.workspace.root.clone())
+                        .ok()
+                        .flatten()
+                    else {
+                        return;
+                    };
+                    search_workspace_files(&root, &files, &matcher, 200, &background).await
                 }
                 WorkspaceSearchScope::Document => {
                     // 文档范围的扫描不再绕后台线程：实测引擎扫 10 MiB 只要 2 毫秒，
@@ -530,14 +553,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        let Some(tree) = self.workspace.file_tree.clone() else {
-            return 0;
-        };
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let replacement = self.workspace.replace_query.clone();
         let active_path = self.file_path.clone();
 
-        let files = collect_workspace_files(&tree);
+        let files = self.text_files_on_disk();
         let mut total = 0usize;
         for path in files {
             if Some(&path) == active_path.as_ref() {

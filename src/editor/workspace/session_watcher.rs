@@ -63,6 +63,11 @@ impl Editor {
         self.workspace.file_tree = None;
         // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
         self.workspace.tree_scan_root = None;
+        // 文件名单（⌘P / 搜索 / 全部替换 / 反链索引共用）同理：换根重走一次。
+        self.workspace.files_on_disk.clear();
+        self.workspace.files_on_disk_root = None;
+        // 旧根上在飞的按需扫层结果全部作废（drop 即取消）。
+        self.workspace.dir_scan_tasks.clear();
         self.clear_workspace_file_error();
         self.workspace.expanded.clear();
         self.workspace.active_tab = WorkspaceTab::Files;
@@ -219,6 +224,12 @@ impl Editor {
     }
 
     pub(crate) fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
+        // 外部新建 / 删除 / 改名也要刷新文件名单：⌘P、工作区搜索、全部替换与反链
+        // 索引都读这一份，只重扫树会让它们继续拿旧名单。
+        self.workspace.files_on_disk_root = None;
+        if let Some(root) = self.workspace.root.clone() {
+            self.spawn_workspace_files_walk(root, cx);
+        }
         // 保留旧树直到新扫描落地，避免侧栏在扫描期间闪空。
         self.sync_workspace_file_tree_inner(true, cx);
         if self.workspace.active_tab == WorkspaceTab::Search

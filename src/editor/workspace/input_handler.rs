@@ -145,29 +145,6 @@ impl EntityInputHandler for Editor {
     }
 }
 
-/// Flattens the markdown/code files of a workspace tree in display order.
-pub(crate) fn collect_workspace_files(root: &WorkspaceTreeNode) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    fn visit(node: &WorkspaceTreeNode, files: &mut Vec<PathBuf>) {
-        match &node.kind {
-            WorkspaceTreeKind::Directory(_) => {
-                for child in &node.children {
-                    visit(child, files);
-                }
-            }
-            WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) => {
-                files.push(path.clone());
-            }
-            // Other files can't be opened, so they are never replacement
-            // targets for bulk replace.
-            WorkspaceTreeKind::OtherFile(_) => {}
-            WorkspaceTreeKind::Heading { .. } => {}
-        }
-    }
-    visit(root, &mut files);
-    files
-}
-
 /// Number of matches in a whole source string.
 pub(crate) fn count_matches_in_source(source: &str, matcher: &SearchMatcher) -> usize {
     let mut count = 0;
@@ -542,6 +519,7 @@ pub(crate) fn nest_outline_headings(headings: &[OutlineHeading]) -> Vec<Workspac
                 level,
             },
             children: Vec::new(),
+            children_loaded: true,
         };
 
         let siblings = if let Some((_, parent_path)) = stack.last() {

@@ -186,13 +186,22 @@ impl Editor {
             .or_else(|| self.workspace_root_for_current_file())
     }
 
-    /// All markdown/code files of the workspace tree, for the quick switcher.
+    /// All markdown/code files of the workspace, for the quick switcher.
+    ///
+    /// 读的是换根后后台走盘填的名单（`spawn_workspace_files_walk`），不再从侧栏那棵
+    /// 树收集：树只加载展开过的层，拿它当名单会让范围随展开状态漂移。
     pub(crate) fn workspace_text_files(&self) -> Vec<PathBuf> {
+        self.text_files_on_disk()
+    }
+
+    /// 工作区里可作替换目标 / 反链索引目标的文本文件（Markdown + 代码）。
+    pub(crate) fn text_files_on_disk(&self) -> Vec<PathBuf> {
         self.workspace
-            .file_tree
-            .as_ref()
-            .map(|tree| collect_workspace_files(tree))
-            .unwrap_or_default()
+            .files_on_disk
+            .iter()
+            .filter(|path| is_markdown_file(path) || is_code_file(path))
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {

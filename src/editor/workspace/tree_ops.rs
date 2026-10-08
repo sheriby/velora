@@ -4,6 +4,8 @@ impl Editor {
     pub(crate) fn toggle_workspace_node(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.workspace.expanded.remove(id) {
             self.workspace.expanded.insert(id.to_string());
+            // 展开时才扫这一层（懒加载）。
+            self.load_workspace_dir_level(id, cx);
         }
         cx.notify();
     }

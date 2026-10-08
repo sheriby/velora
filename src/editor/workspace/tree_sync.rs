@@ -452,6 +452,8 @@ impl Editor {
             self.workspace.file_tree = None;
             self.workspace.selected = None;
             self.workspace.tree_scan_root = None;
+            self.workspace.files_on_disk.clear();
+            self.workspace.files_on_disk_root = None;
             return;
         };
 
@@ -471,6 +473,9 @@ impl Editor {
         let editor = cx.entity().downgrade();
         let scan_root = root.clone();
         let scan = cx.background_spawn(async move { scan_workspace_dir(&scan_root, tree_sort) });
+        // 文件名单（搜索 / 全部替换 / 快速切换 / 反链索引）与树分开：换根后并行走
+        // 一次盘就够了，不必递归建树（树只加载展开过的层）。
+        self.spawn_workspace_files_walk(root.clone(), cx);
         // Dropping the previous task cancels a scan that is no longer relevant.
         self.workspace.tree_scan_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -485,20 +490,6 @@ impl Editor {
                                 editor.workspace.expanded.insert(tree.id.clone());
                                 editor.workspace.file_tree = Some(tree);
                                 editor.follow_active_document_in_workspace_tree();
-                                // 扫描期间发起的工作区搜索此时才有文件列表可用。
-                                if editor.workspace.active_tab == WorkspaceTab::Search
-                                    && !editor.workspace.search_query.is_empty()
-                                {
-                                    editor.schedule_workspace_search(cx);
-                                }
-                                // 反链/标签索引：换根后第一次树落地时全量重建，
-                                // 之后由 watcher 单文件增量维持。
-                                if let Some(root) = editor.workspace.root.clone() {
-                                    let files = editor.workspace_text_files();
-                                    editor
-                                        .workspace_link_index
-                                        .ensure_built_for_root(&root, files, cx);
-                                }
                             }
                             Err(err) => {
                                 editor.workspace.file_error = Some(err.to_string());
@@ -509,6 +500,146 @@ impl Editor {
                     .ok();
             },
         ));
+    }
+
+    /// 换根后走一次盘，把「工作区里可打开的文件」名单填进缓存，并重建反链/标签
+    /// 索引、重跑挂着的工作区搜索（两者都以这份名单为输入）。
+    ///
+    /// 走盘用 ripgrep 的并行 walker（`collect_workspace_files_on_disk`），
+    /// 关掉 gitignore 与隐藏文件规则，过滤规则与侧栏扫描逐条一致。
+    pub(crate) fn spawn_workspace_files_walk(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        if self.workspace.files_on_disk_root.as_ref() == Some(&root)
+            || self.workspace.files_on_disk_walk_root.as_ref() == Some(&root)
+        {
+            return;
+        }
+        // 名单作废但还没落地：`files_on_disk_root` 保持 `None`，搜索面板据此知道
+        // 「名单在路上」，不会把旧结果当成「没有文件」清掉。
+        self.workspace.files_on_disk_root = None;
+        self.workspace.files_on_disk.clear();
+        self.workspace.files_on_disk_walk_root = Some(root.clone());
+        let editor = cx.entity().downgrade();
+        let walk_root = root.clone();
+        let walk =
+            cx.background_spawn(async move { collect_workspace_files_on_disk(&walk_root) });
+        self.workspace.files_on_disk_task = Some(cx.spawn(
+            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let files = walk.await;
+                editor
+                    .update(cx, |editor, cx| {
+                        if editor.workspace.files_on_disk_walk_root.as_ref() != Some(&root) {
+                            return;
+                        }
+                        editor.workspace.files_on_disk_walk_root = None;
+                        editor.workspace.files_on_disk_root = Some(root.clone());
+                        editor.workspace.files_on_disk = files;
+                        // 反链/标签索引：名单落地时全量重建，之后由 watcher 单文件增量维持。
+                        let files = editor.workspace.files_on_disk.clone();
+                        editor
+                            .workspace_link_index
+                            .ensure_built_for_root(&root, files, cx);
+                        // 名单落地前发起的工作区搜索此时才有文件列表可用。
+                        if editor.workspace.active_tab == WorkspaceTab::Search
+                            && !editor.workspace.search_query.is_empty()
+                        {
+                            editor.schedule_workspace_search(cx);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            },
+        ));
+    }
+
+    /// 展开目录时才扫它下一层：`scan_workspace_dir_level` 建的是占位目录，子项在
+    /// 这里补齐。同一个目录的重复请求由 `dir_scan_tasks` 挡掉（渲染帧每帧都会问）。
+    pub(crate) fn load_workspace_dir_level(&mut self, node_id: &str, cx: &mut Context<Self>) {
+        if self.workspace.dir_scan_tasks.contains_key(node_id) {
+            return;
+        }
+        let Some(node) = self
+            .workspace
+            .file_tree
+            .as_ref()
+            .and_then(|tree| find_workspace_node(std::slice::from_ref(tree), node_id))
+        else {
+            return;
+        };
+        if node.children_loaded {
+            return;
+        }
+        let WorkspaceTreeKind::Directory(path) = node.kind.clone() else {
+            return;
+        };
+        let tree_sort = crate::config::EditorSettings::tree_sort(cx);
+        let editor = cx.entity().downgrade();
+        let scan = cx.background_spawn(async move { scan_workspace_dir_level(&path, tree_sort) });
+        let id = node_id.to_string();
+        let task = cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = scan.await;
+            editor
+                .update(cx, |editor, cx| {
+                    match result {
+                        Ok(scanned) => editor.install_workspace_dir_children(&id, scanned),
+                        Err(error) => editor.workspace.file_error = Some(error.to_string()),
+                    }
+                    cx.notify();
+                })
+                .ok();
+            // 收尾时把自己的句柄移出表：放在更新之后，让 drop 只取消已经没活干的
+            // 调度（同一个目录下次展开才会重新扫）。
+            editor
+                .update(cx, |editor, _| {
+                    editor.workspace.dir_scan_tasks.remove(&id);
+                })
+                .ok();
+        });
+        self.workspace.dir_scan_tasks.insert(node_id.to_string(), task);
+    }
+
+    /// 把一层的扫描结果挂到树上：按节点 id 定位，树的其余部分（展开态、选中态、
+    /// 已扫过的其它层）原样不动。
+    fn install_workspace_dir_children(&mut self, node_id: &str, scanned: WorkspaceTreeNode) {
+        let Some(tree) = self.workspace.file_tree.as_mut() else {
+            return;
+        };
+        let Some(node) = find_workspace_node_mut(std::slice::from_mut(tree), node_id) else {
+            return;
+        };
+        node.children = scanned.children;
+        node.children_loaded = true;
+    }
+
+    /// 展开过但还没扫的目录（会话恢复、树刷新、切回标签之后）在这里补齐：渲染期
+    /// 每帧都会问一次，`dir_scan_tasks` 去重，重复请求不会重复扫。
+    pub(crate) fn load_expanded_workspace_dirs(&mut self, cx: &mut Context<Self>) {
+        let pending = {
+            let Some(tree) = self.workspace.file_tree.as_ref() else {
+                return;
+            };
+            fn collect(
+                nodes: &[WorkspaceTreeNode],
+                expanded: &HashSet<String>,
+                pending: &mut Vec<String>,
+            ) {
+                for node in nodes {
+                    if node.kind_dir() && expanded.contains(&node.id) && !node.children_loaded {
+                        pending.push(node.id.clone());
+                    }
+                    collect(&node.children, expanded, pending);
+                }
+            }
+            let mut pending = Vec::new();
+            collect(
+                std::slice::from_ref(tree),
+                &self.workspace.expanded,
+                &mut pending,
+            );
+            pending
+        };
+        for id in pending {
+            self.load_workspace_dir_level(&id, cx);
+        }
     }
 
     /// 侧栏树选中项跟随活动文件——但只在用户没在树上做出别的选择时。

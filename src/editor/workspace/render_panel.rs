@@ -242,7 +242,20 @@ impl Editor {
         let mut elements = Vec::new();
         for node in nodes {
             elements.push(self.render_workspace_node(node, depth, theme, editor));
-            if !node.children.is_empty() && self.workspace.expanded.contains(&node.id) {
+            let is_expanded = self.workspace.expanded.contains(&node.id);
+            if is_expanded && node.kind_dir() && !node.children_loaded {
+                // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
+                elements.push(
+                    div()
+                        .w_full()
+                        .pl(px(6.0 + (depth + 1) as f32 * WORKSPACE_NODE_INDENT))
+                        .text_size(px(14.0))
+                        .text_color(theme.colors.dialog_muted)
+                        .child("…")
+                        .into_any_element(),
+                );
+            }
+            if !node.children.is_empty() && is_expanded {
                 elements.extend(self.render_workspace_nodes(
                     &node.children,
                     depth + 1,
@@ -263,7 +276,8 @@ impl Editor {
     ) -> AnyElement {
         let c = &theme.colors;
         let is_expanded = self.workspace.expanded.contains(&node.id);
-        let has_children = !node.children.is_empty();
+        // 目录永远带展开箭头（子项还没扫时也得能展开）；已扫过的空目录不带。
+        let has_children = node.kind_dir() && (!node.children_loaded || !node.children.is_empty());
         let selected = match (&self.workspace.selected, &node.kind) {
             (Some(WorkspaceSelection::Directory(selected)), WorkspaceTreeKind::Directory(path)) => {
                 selected == path

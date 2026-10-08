@@ -76,6 +76,9 @@ pub(crate) struct WorkspaceTreeNode {
     kind: WorkspaceTreeKind,
     /// 归因探针（`perf_budgets.rs`）拿它数侧栏总节点数，故对 editor 树可见。
     pub(super) children: Vec<WorkspaceTreeNode>,
+    /// 子目录是否已经扫过：文件恒为 `true`，扫到的目录先置 `false`，展开时才扫它
+    /// 下一层（懒加载，见 `scan_workspace_dir_level`）。空目录与未扫目录靠它区分。
+    pub(crate) children_loaded: bool,
 }
 
 struct WorkspaceTooltip {
@@ -345,6 +348,18 @@ pub(super) struct WorkspaceState {
     tree_scan_generation: u64,
     /// 当前已持有（或正在等待）扫描结果的根：避免每帧重复发起扫描。
     tree_scan_root: Option<PathBuf>,
+    /// 展开时按需扫层的在途任务，按键是目录节点 id：任务存这里才不会一丢就取消，
+    /// 同一个目录也不会重复发起（渲染帧、点击都可能请求）。
+    dir_scan_tasks: HashMap<String, Task<()>>,
+    /// 工作区里可打开文件的名单：搜索 / 全部替换 / 快速切换 / 反链索引共用。换根后
+    /// 在后台走一次盘填好（`spawn_workspace_files_walk`），不再从侧栏那棵树
+    /// 收集——树只加载展开过的层，拿它当名单会让范围随展开状态漂移。
+    files_on_disk: Vec<PathBuf>,
+    /// 名单已经填好的根（走盘落地才置上）：`None` + 已有根 = 名单正在走盘。
+    files_on_disk_root: Option<PathBuf>,
+    /// 正在走盘的根：同一个根不重复发起。
+    files_on_disk_walk_root: Option<PathBuf>,
+    files_on_disk_task: Option<Task<()>>,
     context_menu: Option<WorkspaceContextMenu>,
     tab_context_menu: Option<TabContextMenu>,
     /// 文件树过滤框（roadmap D8）：非空时树显示扁平匹配列表。
@@ -404,6 +419,11 @@ impl Default for WorkspaceState {
             tree_scan_task: None,
             tree_scan_generation: 0,
             tree_scan_root: None,
+            dir_scan_tasks: HashMap::new(),
+            files_on_disk: Vec::new(),
+            files_on_disk_root: None,
+            files_on_disk_walk_root: None,
+            files_on_disk_task: None,
             context_menu: None,
             tab_context_menu: None,
             tree_filter: String::new(),

@@ -6,8 +6,8 @@
 //! 否则「搜到了但跳过去位置不对」就回来了。
 
 use super::super::{
-    Editor, SearchMatcher, SearchOptions, TreeSortPreference, WorkspaceSearchScope, WorkspaceTab,
-    is_likely_text_file, scan_workspace_dir, search_workspace_files,
+    Editor, SearchMatcher, SearchOptions, WorkspaceSearchScope, WorkspaceTab,
+    collect_workspace_files_on_disk, is_likely_text_file, search_workspace_files,
 };
 use crate::editor::encoding::decode_document_bytes;
 use gpui::TestAppContext;
@@ -53,9 +53,10 @@ async fn workspace_search_finds_content_in_a_gb18030_file(cx: &mut TestAppContex
     fs::create_dir_all(&root).expect("create dir");
     fs::write(root.join("会议.md"), gb18030("# 会议记录\n\n中文正文与 English\n")).expect("write");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let matches = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("中文", SearchOptions::default()),
         200,
         &background,
@@ -88,9 +89,10 @@ async fn the_same_text_searches_identically_whether_it_is_utf8_or_gb18030(
     fs::write(root.join("utf8.md"), text).expect("write utf8");
     fs::write(root.join("gb.md"), gb18030(text)).expect("write gb");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let hits = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("needle", SearchOptions::default()),
         200,
         &background,
@@ -136,9 +138,10 @@ async fn a_crlf_file_keeps_the_same_lines_and_ranges_as_its_lf_twin(cx: &mut Tes
     .expect("write crlf");
     fs::write(root.join("lf.md"), "first needle line\nsecond\nneedle again\n").expect("write lf");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let hits = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("needle", SearchOptions::default()),
         200,
         &background,
@@ -167,9 +170,10 @@ async fn a_file_without_a_trailing_newline_still_reports_its_last_line(cx: &mut 
     fs::create_dir_all(&root).expect("create dir");
     fs::write(root.join("note.md"), "needle 在第一行\n中间\nneedle 在末行").expect("write");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let hits = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("needle", SearchOptions::default()),
         200,
         &background,
@@ -201,9 +205,10 @@ async fn one_file_contributes_every_matching_line_up_to_the_global_limit(
     }
     fs::write(root.join("many.md"), &text).expect("write");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let all = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("needle", SearchOptions::default()),
         200,
         &background,
@@ -216,7 +221,8 @@ async fn one_file_contributes_every_matching_line_up_to_the_global_limit(
     );
 
     let capped = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("needle", SearchOptions::default()),
         5,
         &background,
@@ -249,9 +255,10 @@ async fn the_two_scopes_report_the_same_line_and_range_for_the_same_file(
     let text = "# 标题\n\nneedle 在这一行\n中间一行\n行首 needle 又一次\n";
     fs::write(&path, text).expect("write");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let workspace_hits = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("needle", SearchOptions::default()),
         200,
         &background,
@@ -312,9 +319,10 @@ async fn workspace_scope_lists_one_row_per_line_and_document_scope_lists_every_h
     let text = "needle 和 needle 在同一行\n另一行 needle\n";
     fs::write(&path, text).expect("write");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let workspace_hits = search_workspace_files(
-        &tree,
+        &root,
+        &files,
         &SearchMatcher::new("needle", SearchOptions::default()),
         200,
         &background,
@@ -462,7 +470,7 @@ async fn a_workspace_row_for_a_cross_line_hit_stays_inside_its_first_line(
     fs::create_dir_all(&root).expect("create dir");
     fs::write(root.join("note.md"), "alpha\n\nmid\n").expect("write");
 
-    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("scan tree");
+    let files = collect_workspace_files_on_disk(&root);
     let matcher = SearchMatcher::new(
         r"alpha\n\n\w+",
         SearchOptions {
@@ -470,7 +478,7 @@ async fn a_workspace_row_for_a_cross_line_hit_stays_inside_its_first_line(
             ..SearchOptions::default()
         },
     );
-    let hits = search_workspace_files(&tree, &matcher, 200, &background).await;
+    let hits = search_workspace_files(&root, &files, &matcher, 200, &background).await;
     assert_eq!(hits.len(), 1, "跨行模式在工作区里也要搜得到：{hits:?}");
     let row = &hits[0];
     assert_eq!(row.line, Some(1), "行号报命中起始行");

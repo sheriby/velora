@@ -65,6 +65,12 @@ regex = "1"
 grep-searcher = "0.1.17"
 grep-regex = "0.1.14"
 grep-matcher = "0.1.9"
+# 文件枚举：rg 的 walker。搜索 / 替换 / 反链索引要「工作区里有哪些可打开文件」的
+# 完整名单，以前借侧栏那棵树（于是打开文件就要把整棵目录树扫完）。改成按需走盘，
+# 并行 walker 比手写串行递归快 4-6 倍；gitignore / 隐藏文件规则关掉，与侧栏扫描
+# 的过滤规则逐条一致。传递依赖（globset / walkdir / same-file / crossbeam-deque /
+# bstr / log / memchr / regex-automata）已全部在 Cargo.lock 里。
+ignore = "0.4"
 notify = "6"
 uuid = "1.23"
 gpui = { version = "0.2", features = ["runtime_shaders"] }
