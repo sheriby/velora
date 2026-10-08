@@ -788,6 +788,10 @@ fn key_label(key: &str) -> String {
     let mut held = Vec::new();
     let mut main = String::new();
     for part in key.split('-') {
+        let part = match part {
+            "win" | "super" => "cmd",
+            _ => part,
+        };
         match MODIFIERS.iter().position(|(name, _, _)| *name == part) {
             Some(index) => held.push(index),
             None => main = readable_key(part),
@@ -838,8 +842,9 @@ const MENU_VIEWPORT_MARGIN: f32 = 6.0;
 const SUBMENU_ARROW: &str = "\u{203a}";
 /// 一行宽度的余量：`estimated_menu_label_width` 是按字符类别估的，实测英文最宽那一行
 /// （`Numbered List`，12 号字）估出来只比真实宽度多 0.4px——换个字体回落或缩放就截字
-/// （用户报修：「一级标题」只剩「一级标」）。留 3px 让估算与度量之间有个缓冲。
-const MENU_ROW_WIDTH_ALLOWANCE: f32 = 3.0;
+/// （用户报修：「一级标题」只剩「一级标」）。Windows 原生测试又量到面板被内容
+/// 撑宽 1px，留 4px 覆盖字形回落和像素取整差异，面板尺寸仍由同一份几何决定。
+const MENU_ROW_WIDTH_ALLOWANCE: f32 = 4.0;
 
 /// 一列行的几何：面板尺寸与每一行的顶部偏移。渲染摆放与落点计算共用同一份，
 /// 免得两处对行高的理解不一致。
@@ -1011,6 +1016,17 @@ pub(crate) fn document_menu_origins(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn platform_modifier_aliases_are_not_lost_in_shortcut_labels() {
+        for platform_key in ["win", "super", "cmd"] {
+            assert_eq!(
+                super::key_label(&format!("alt-{platform_key}-b")),
+                super::key_label("alt-cmd-b"),
+                "平台键 {platform_key} 不应被当成主键而丢失"
+            );
+        }
+    }
+
     // 不用 `use super::*`：那样会把 gpui 的 `test` 宏带进来，`#[test]` 就地自我展开。
     use super::{
         document_menu_label, document_menu_origins, submenu_bridge_span, DocumentMenuCommand,

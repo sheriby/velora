@@ -164,7 +164,7 @@ async fn quick_open_accepts_ime_text_for_non_ascii_file_names(cx: &mut TestAppCo
     });
 
     // 纯 ASCII 也必须只插入一次（输入处理器接管后不再走手动按键插入）。
-    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-a" } else { "ctrl-a" });
     cx.simulate_input("alpha");
     editor.read_with(cx, |editor, _cx| {
         let state = editor.quick_open.as_ref().expect("quick open stays open");

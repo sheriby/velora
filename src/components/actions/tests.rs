@@ -252,7 +252,7 @@
         let shortcuts = super::EffectiveShortcuts::build(&config);
         assert_eq!(
             shortcuts.key(ShortcutCommand::BoldSelection),
-            Some("alt-cmd-b"),
+            Some(if cfg!(target_os = "macos") { "alt-cmd-b" } else if cfg!(target_os = "windows") { "alt-win-b" } else { "alt-super-b" }),
             "改过绑定的命令，显示的那颗键要改成用户定的（写进表里的是规范化后的键序）"
         );
         assert_eq!(

@@ -61,7 +61,7 @@ async fn the_select_all_cycle_from_the_key_selects_the_block_then_the_document(
     cx.simulate_click(first_center, Modifiers::none());
     redraw(cx);
 
-    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-a" } else { "ctrl-a" });
     redraw(cx);
     let block = visible_block(&editor, 0, cx);
     assert_eq!(
@@ -74,7 +74,7 @@ async fn the_select_all_cycle_from_the_key_selects_the_block_then_the_document(
         "第一次不该直接跳到整篇"
     );
 
-    cx.simulate_keystrokes("cmd-a");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-a" } else { "ctrl-a" });
     redraw(cx);
     assert!(
         editor.read_with(cx, |editor, _| editor.cross_block_selection.is_some()),
@@ -1039,12 +1039,12 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
     }
     assert_eq!(
         shortcut_of(DocumentMenuCommand::Format(InlineFormat::Highlight), cx).as_deref(),
-        Some("⌘⇧H"),
+        Some(if cfg!(target_os = "macos") { "⌘⇧H" } else { "Super+Shift+H" }),
         "标记文本的键位要与方案里写的那一条一致"
     );
     assert_eq!(
         shortcut_of(DocumentMenuCommand::ClearFormat, cx).as_deref(),
-        Some("⌘\\"),
+        Some(if cfg!(target_os = "macos") { "⌘\\" } else { "Super+\\" }),
         "清除格式的键位要与方案里写的那一条一致"
     );
 
@@ -1186,13 +1186,14 @@ async fn the_shortcut_column_shows_the_users_own_binding(cx: &mut TestAppContext
 
     let label = shortcut_of(DocumentMenuCommand::Format(InlineFormat::Bold), cx)
         .expect("加粗这一行总有键位可显示");
-    assert_eq!(label, "⌥⌘B", "菜单那一列要写用户自己定的那颗键");
+    let expected = if cfg!(target_os = "macos") { "⌥⌘B" } else { "Alt+Super+B" };
+    assert_eq!(label, expected, "菜单那一列要写用户自己定的那颗键");
     assert!(
-        cx.debug_bounds(shortcut_selector("⌥⌘B")).is_some(),
+        cx.debug_bounds(shortcut_selector(expected)).is_some(),
         "改过的键位没渲染进菜单那一列"
     );
     assert!(
-        cx.debug_bounds(shortcut_selector("⌘B")).is_none(),
+        cx.debug_bounds(shortcut_selector(if cfg!(target_os = "macos") { "⌘B" } else { "Super+B" })).is_none(),
         "默认键 ⌘B 不该还挂在屏幕上"
     );
 }

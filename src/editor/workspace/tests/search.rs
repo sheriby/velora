@@ -9,6 +9,7 @@ use gpui::{
     TestAppContext, px,
 };
 use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 
 
@@ -107,7 +108,7 @@ async fn workspace_search_accepts_unicode_platform_input(cx: &mut TestAppContext
         assert_eq!(editor.workspace.search_query, "你");
     });
     cx.update(|_window, cx| cx.write_to_clipboard(ClipboardItem::new_string("世界".into())));
-    cx.simulate_keystrokes("cmd-v");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-v" } else { "ctrl-v" });
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace.search_query, "你世界");
     });
@@ -232,7 +233,7 @@ async fn workspace_search_matches_file_names_and_contents(cx: &mut TestAppContex
 
     let matches = search_workspace_files(&root, &files, &SearchMatcher::new("MAIN", SearchOptions::default()), 200, &background).await;
     assert_eq!(matches.len(), 2);
-    assert_eq!(matches[0].label, "src/main.rs");
+    assert_eq!(matches[0].label, PathBuf::from("src").join("main.rs").to_string_lossy());
     assert_eq!(matches[0].line, None);
     assert_eq!(matches[1].line, Some(1));
 
@@ -458,7 +459,7 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
     assert_eq!(
         hits,
         vec![
-            ("assets/velora-banner.png".to_string(), None),
+            (PathBuf::from("assets").join("velora-banner.png").to_string_lossy().into_owned(), None),
             ("velora-notes.md".to_string(), None),
             ("velora-notes.md".to_string(), Some(2)),
         ],

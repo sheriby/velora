@@ -403,7 +403,7 @@ async fn cmd_f_opens_current_document_find_in_sidebar(cx: &mut TestAppContext) {
         window.activate_window();
         window.draw(cx).clear();
     });
-    cx.simulate_keystrokes("cmd-f");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-f" } else { "ctrl-f" });
     cx.update(|window, cx| window.draw(cx).clear());
     editor.read_with(cx, |editor, _cx| {
         assert!(editor.workspace.is_open);
@@ -425,11 +425,11 @@ async fn cmd_f_opens_current_document_find_in_sidebar(cx: &mut TestAppContext) {
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace.search_active_index, Some(0));
     });
-    cx.simulate_keystrokes("cmd-g");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-g" } else { "ctrl-g" });
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace.search_active_index, Some(1));
     });
-    cx.simulate_keystrokes("cmd-shift-g");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-shift-g" } else { "ctrl-shift-g" });
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace.search_active_index, Some(0));
     });

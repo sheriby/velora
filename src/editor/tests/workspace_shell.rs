@@ -143,6 +143,7 @@ async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext
         "加满标签后第一个标签不该左移（{first_with_one_tab} → {:?}）",
         first_with_many.origin.x
     );
+    #[cfg(target_os = "macos")]
     assert!(
         first_with_many.origin.x >= px(84.0),
         "第一个标签不该进入 macOS 红绿灯预留区（84px），实测 {:?}",
@@ -200,4 +201,3 @@ async fn heading_fold_chevron_renders_and_click_toggles_fold(cx: &mut TestAppCon
         assert_eq!(filtered, vec!["Section".to_string(), "Empty".to_string()]);
     });
 }
-

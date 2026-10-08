@@ -244,7 +244,7 @@ async fn cmd_shift_h_marks_the_selection(cx: &mut TestAppContext) {
 
     focus_block_at(&editor, 0, cx);
     select(&editor, 0, 0..5, cx);
-    cx.simulate_keystrokes("cmd-shift-h");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-shift-h" } else { "ctrl-shift-h" });
     redraw(cx);
 
     assert_eq!(
@@ -265,7 +265,7 @@ async fn cmd_backslash_clears_the_styles_in_the_selection(cx: &mut TestAppContex
 
     focus_block_at(&editor, 0, cx);
     select(&editor, 0, 6..9, cx);
-    cx.simulate_keystrokes("cmd-\\");
+    cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-\\" } else { "ctrl-\\" });
     redraw(cx);
 
     assert_eq!(
