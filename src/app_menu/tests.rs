@@ -10,9 +10,11 @@ mod tests {
         PrintDocument, QuitApplication,
         SaveDocument, SelectLanguage, SelectTheme, ShowAbout,
     };
+    use crate::commands::{CommandMenu, CommandSpec, commands, commands_for};
     use crate::i18n::I18nManager;
     use crate::theme::ThemeManager;
-    use gpui::MenuItem;
+    use gpui::{Menu, MenuItem};
+    use std::any::TypeId;
     use std::path::PathBuf;
 
     fn action_name(item: &MenuItem) -> &str {
@@ -22,11 +24,80 @@ mod tests {
         }
     }
 
-    fn submenu(item: &MenuItem) -> &gpui::Menu {
+    fn submenu(item: &MenuItem) -> &Menu {
         match item {
             MenuItem::Submenu(menu) => menu,
             _ => panic!("expected submenu item"),
         }
+    }
+
+    /// 注册表里的命令。
+    fn command_spec(command_id: &str) -> &'static CommandSpec {
+        commands()
+            .iter()
+            .find(|spec| spec.id == command_id)
+            .unwrap_or_else(|| panic!("命令注册表里没有 {command_id}"))
+    }
+
+    /// 菜单条目的身份就是它的动作类型：按 id 找条目、判断命令落在哪个菜单都靠它。
+    /// 注册表是「id → 动作」的唯一出处，`registry_action_types_are_unique` 守着
+    /// 一条命令一个动作类型。
+    fn action_type_of(command_id: &str) -> TypeId {
+        command_spec(command_id).boxed_action().as_any().type_id()
+    }
+
+    fn item_action_type(item: &MenuItem) -> Option<TypeId> {
+        match item {
+            MenuItem::Action { action, .. } => Some(action.as_any().type_id()),
+            _ => None,
+        }
+    }
+
+    /// 命令在菜单里的序号。写死下标会在注册表增删条目时悄悄错位（中文菜单用例
+    /// 漏了平台分支，CI 红过一次），所以一律按 id 找。
+    fn command_slot(menu: &Menu, command_id: &str) -> usize {
+        let wanted = action_type_of(command_id);
+        menu.items
+            .iter()
+            .position(|item| item_action_type(item) == Some(wanted))
+            .unwrap_or_else(|| panic!("菜单「{}」里没有命令 {command_id}", menu.name.to_string()))
+    }
+
+    /// 命令在菜单里的文案。
+    fn command_label(menu: &Menu, command_id: &str) -> String {
+        action_name(&menu.items[command_slot(menu, command_id)]).to_string()
+    }
+
+    /// 命令所在的菜单。平台与语言都影响菜单名和菜单数量，所以按内容认，不按下标。
+    fn command_menu<'a>(menus: &'a [Menu], command_id: &str) -> &'a Menu {
+        let wanted = action_type_of(command_id);
+        menus
+            .iter()
+            .find(|menu| {
+                menu.items
+                    .iter()
+                    .any(|item| item_action_type(item) == Some(wanted))
+            })
+            .unwrap_or_else(|| panic!("没有菜单包含命令 {command_id}"))
+    }
+
+    /// 按名字取菜单：语言与主题菜单不是注册表命令生成的，只能认名字。
+    fn named_menu<'a>(menus: &'a [Menu], name: &str) -> &'a Menu {
+        menus
+            .iter()
+            .find(|menu| menu.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("没有名为「{name}」的菜单"))
+    }
+
+    /// 「打开最近」子菜单所在的序号：文件菜单里紧跟「打开文件」。
+    fn recent_submenu_slot(file_menu: &Menu) -> usize {
+        command_slot(file_menu, "open_file") + 1
+    }
+
+    /// 「打开最近」子菜单本身。两个平台同位置，不再分平台写下标。
+    fn recent_submenu(menus: &[Menu]) -> &Menu {
+        let file_menu = command_menu(menus, "open_file");
+        submenu(&file_menu.items[recent_submenu_slot(file_menu)])
     }
 
     #[test]
@@ -40,33 +111,6 @@ mod tests {
             r#""/Applications/O'Brien\\velora.app""#
         );
     }
-
-    // On macOS the menu bar is: [velora app menu, File, Export, Language, Theme, View, Help]
-    // On other platforms:       [File, Export, Language, Theme, View, Help]
-    #[cfg(target_os = "macos")]
-    const EXPORT_IDX: usize = 2;
-    #[cfg(not(target_os = "macos"))]
-    const EXPORT_IDX: usize = 1;
-
-    #[cfg(target_os = "macos")]
-    const LANGUAGE_IDX: usize = 3;
-    #[cfg(not(target_os = "macos"))]
-    const LANGUAGE_IDX: usize = 2;
-
-    #[cfg(target_os = "macos")]
-    const THEME_IDX: usize = 4;
-    #[cfg(not(target_os = "macos"))]
-    const THEME_IDX: usize = 3;
-
-    #[cfg(target_os = "macos")]
-    const VIEW_IDX: usize = 5;
-    #[cfg(not(target_os = "macos"))]
-    const VIEW_IDX: usize = 4;
-
-    #[cfg(target_os = "macos")]
-    const HELP_IDX: usize = 6;
-    #[cfg(not(target_os = "macos"))]
-    const HELP_IDX: usize = 5;
 
     #[test]
     fn build_menus_uses_english_fallback_by_default() {
@@ -105,66 +149,78 @@ mod tests {
             ]
         );
 
-        // New Window belongs with file operations on macOS and remains the
-        // first File menu item on other platforms.
-        #[cfg(target_os = "macos")]
-        assert_eq!(action_name(&menus[1].items[0]), "New Window");
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(action_name(&menus[0].items[0]), "New Window");
+        // 菜单项一律按命令 id 找：平台差异只体现在「命令落在哪个菜单」，
+        // 不再写成 menus[1] / menus[0] 这种下标算术（下标会随注册表增删漂移）。
+        let file_menu = command_menu(&menus, "new_window");
+        assert_eq!(file_menu.name.to_string(), "File");
 
-        // Open Recent File submenu location differs by platform.
+        // New Window 领文件菜单，关闭标签页与关闭窗口紧跟其后。
+        assert_eq!(command_slot(file_menu, "new_window"), 0);
+        assert_eq!(command_slot(file_menu, "close_tab"), 1);
+        assert_eq!(command_slot(file_menu, "close_window"), 2);
+        assert_eq!(command_label(file_menu, "new_window"), "New Window");
+        assert_eq!(command_label(file_menu, "close_tab"), "Close Tab");
+        assert_eq!(command_label(file_menu, "close_window"), "Close Window");
+
+        // 「打开最近」紧跟在「打开文件」之后。
+        assert_eq!(recent_submenu(&menus).name.to_string(), "Open Recent");
+
+        // 偏好设置：macOS 在应用菜单首项，其他平台跟在「打开最近」之后。
+        let preferences_menu = command_menu(&menus, "preferences");
+        assert_eq!(command_label(preferences_menu, "preferences"), "Preferences");
         #[cfg(target_os = "macos")]
+        assert_eq!(preferences_menu.name.to_string(), "Velora");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(preferences_menu.name.to_string(), "File");
+        #[cfg(target_os = "macos")]
+        assert_eq!(command_slot(preferences_menu, "preferences"), 0);
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
-            submenu(&menus[1].items[4]).name.to_string(),
-            "Open Recent"
+            command_slot(preferences_menu, "preferences"),
+            recent_submenu_slot(file_menu) + 1
         );
-        #[cfg(not(target_os = "macos"))]
+
+        let export_menu = command_menu(&menus, "export_html");
+        assert_eq!(command_slot(export_menu, "export_html"), 0);
+        assert_eq!(command_label(export_menu, "export_html"), "HTML");
+        assert_eq!(command_label(export_menu, "export_pdf"), "PDF");
+        assert_eq!(command_label(export_menu, "export_png"), "Image (PNG)");
+        assert_eq!(command_label(export_menu, "print"), "Print…");
+        assert_eq!(command_label(export_menu, "copy_as_html"), "Copy as HTML");
+
+        let language_menu = named_menu(&menus, "Language");
+        assert_eq!(action_name(&language_menu.items[0]), "简体中文");
+        assert_eq!(action_name(&language_menu.items[1]), "\u{2713} English");
+
+        let view_menu = command_menu(&menus, "toggle_sidebar");
+        assert_eq!(view_menu.name.to_string(), "View");
+        assert_eq!(command_label(view_menu, "toggle_sidebar"), "Toggle Sidebar");
         assert_eq!(
-            submenu(&menus[0].items[4]).name.to_string(),
-            "Open Recent"
+            command_label(view_menu, "toggle_fullscreen"),
+            "Toggle Full Screen"
         );
-
-        // Close Tab sits next to Close Window, both colocated with New Window.
-        #[cfg(target_os = "macos")]
-        assert_eq!(action_name(&menus[1].items[1]), "Close Tab");
-        #[cfg(target_os = "macos")]
-        assert_eq!(action_name(&menus[1].items[2]), "Close Window");
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(action_name(&menus[0].items[1]), "Close Tab");
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(action_name(&menus[0].items[2]), "Close Window");
-
-        // Preferences location differs by platform.
-        #[cfg(target_os = "macos")]
-        assert_eq!(action_name(&menus[0].items[0]), "Preferences");
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(action_name(&menus[0].items[5]), "Preferences");
-
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "Image (PNG)");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "Print…");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[4]), "Copy as HTML");
-        assert_eq!(action_name(&menus[LANGUAGE_IDX].items[0]), "简体中文");
         assert_eq!(
-            action_name(&menus[LANGUAGE_IDX].items[1]),
-            "\u{2713} English"
+            command_label(view_menu, "toggle_view_mode"),
+            "Toggle View Mode"
         );
-        assert_eq!(action_name(&menus[VIEW_IDX].items[0]), "Toggle Sidebar");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "Toggle Full Screen");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[3]), "Toggle View Mode");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "Toggle Focus Mode");
         assert_eq!(
-            action_name(&menus[VIEW_IDX].items[5]),
+            command_label(view_menu, "toggle_focus_mode"),
+            "Toggle Focus Mode"
+        );
+        assert_eq!(
+            command_label(view_menu, "toggle_typewriter_mode"),
             "Toggle Typewriter Mode"
         );
         assert_eq!(
-            action_name(&menus[VIEW_IDX].items[7]),
+            command_label(view_menu, "open_command_palette"),
             "Command Palette…"
         );
-        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "Find in Document…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "Find Next");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[10]), "Find Previous");
+        assert_eq!(
+            command_label(view_menu, "find_in_document"),
+            "Find in Document…"
+        );
+        assert_eq!(command_label(view_menu, "find_next"), "Find Next");
+        assert_eq!(command_label(view_menu, "find_previous"), "Find Previous");
     }
 
     #[test]
@@ -187,14 +243,13 @@ mod tests {
         let i18n_manager = I18nManager::new_with_language_id("zh-CN");
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
 
-        #[cfg(target_os = "macos")]
+        // 菜单项一律按命令 id 找：平台差异只体现在「命令落在哪个菜单」，
+        // 不再写成 menus[1] / menus[0] 这种下标算术（下标会随注册表增删漂移）。
+        let file_menu = command_menu(&menus, "new_window");
+        assert_eq!(file_menu.name.to_string(), "文件");
+
         assert_eq!(
-            submenu(&menus[1].items[4]).name.to_string(),
-            i18n_manager.strings().menu_open_recent_file.as_str()
-        );
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(
-            submenu(&menus[0].items[4]).name.to_string(),
+            recent_submenu(&menus).name.to_string(),
             i18n_manager.strings().menu_open_recent_file.as_str()
         );
 
@@ -222,31 +277,45 @@ mod tests {
             vec!["文件", "导出", "语言", "主题", "视图", "帮助"]
         );
 
-        #[cfg(target_os = "macos")]
-        assert_eq!(action_name(&menus[1].items[0]), "新建窗口");
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(action_name(&menus[0].items[0]), "新建窗口");
-        assert_eq!(action_name(&menus[0].items[1]), "关闭标签页");
-        assert_eq!(action_name(&menus[0].items[2]), "关闭窗口");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[0]), "HTML");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[1]), "PDF");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[2]), "图片（PNG 长图）");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[3]), "打印…");
-        assert_eq!(action_name(&menus[EXPORT_IDX].items[4]), "复制为 HTML");
+        assert_eq!(command_slot(file_menu, "new_window"), 0);
+        assert_eq!(command_slot(file_menu, "close_tab"), 1);
+        assert_eq!(command_slot(file_menu, "close_window"), 2);
+        assert_eq!(command_label(file_menu, "new_window"), "新建窗口");
+        assert_eq!(command_label(file_menu, "close_tab"), "关闭标签页");
+        assert_eq!(command_label(file_menu, "close_window"), "关闭窗口");
+
+        let export_menu = command_menu(&menus, "export_html");
+        assert_eq!(command_slot(export_menu, "export_html"), 0);
+        assert_eq!(command_label(export_menu, "export_html"), "HTML");
+        assert_eq!(command_label(export_menu, "export_pdf"), "PDF");
+        assert_eq!(command_label(export_menu, "export_png"), "图片（PNG 长图）");
+        assert_eq!(command_label(export_menu, "print"), "打印…");
+        assert_eq!(command_label(export_menu, "copy_as_html"), "复制为 HTML");
+
+        let language_menu = named_menu(&menus, "语言");
+        assert_eq!(action_name(&language_menu.items[0]), "\u{2713} 简体中文");
+        assert_eq!(action_name(&language_menu.items[1]), "English");
+
+        let view_menu = command_menu(&menus, "toggle_sidebar");
+        assert_eq!(view_menu.name.to_string(), "视图");
+        assert_eq!(command_label(view_menu, "toggle_sidebar"), "切换侧边栏");
+        assert_eq!(command_label(view_menu, "toggle_fullscreen"), "切换全屏");
+        assert_eq!(command_label(view_menu, "toggle_view_mode"), "切换视图模式");
+        assert_eq!(command_label(view_menu, "toggle_focus_mode"), "切换专注模式");
         assert_eq!(
-            action_name(&menus[LANGUAGE_IDX].items[0]),
-            "\u{2713} 简体中文"
+            command_label(view_menu, "toggle_typewriter_mode"),
+            "切换打字机模式"
         );
-        assert_eq!(action_name(&menus[LANGUAGE_IDX].items[1]), "English");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[0]), "切换侧边栏");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[1]), "切换全屏");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[3]), "切换视图模式");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[4]), "切换专注模式");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[5]), "切换打字机模式");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[7]), "命令面板…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[8]), "查找当前文档…");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[9]), "查找下一个");
-        assert_eq!(action_name(&menus[VIEW_IDX].items[10]), "查找上一个");
+        assert_eq!(
+            command_label(view_menu, "open_command_palette"),
+            "命令面板…"
+        );
+        assert_eq!(
+            command_label(view_menu, "find_in_document"),
+            "查找当前文档…"
+        );
+        assert_eq!(command_label(view_menu, "find_next"), "查找下一个");
+        assert_eq!(command_label(view_menu, "find_previous"), "查找上一个");
     }
 
     #[test]
@@ -255,40 +324,30 @@ mod tests {
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
 
-        match &menus[EXPORT_IDX].items[0] {
-            MenuItem::Action { action, .. } => {
-                assert!(action.as_any().is::<ExportHtml>());
+        // 导出菜单就是注册表 Export 分组那五条，顺序与注册表一致（roadmap F4/F5：
+        // 打印排在 PNG 之后，复制为 HTML 顺延到最后）。逐条对照文案与动作，
+        // 多一条少一条都会失败。
+        let export_menu = command_menu(&menus, "export_html");
+        let expected = [
+            ("export_html", "HTML"),
+            ("export_pdf", "PDF"),
+            ("export_png", "Image (PNG)"),
+            ("print", "Print…"),
+            ("copy_as_html", "Copy as HTML"),
+        ];
+        assert_eq!(export_menu.items.len(), expected.len());
+        for (slot, (command_id, label)) in expected.into_iter().enumerate() {
+            match export_menu.items.get(slot) {
+                Some(MenuItem::Action { name, action, .. }) => {
+                    assert_eq!(name.as_ref(), label, "{command_id} 的文案");
+                    let registered = command_spec(command_id).boxed_action();
+                    assert!(
+                        action.as_ref().partial_eq(registered.as_ref()),
+                        "{command_id} 的动作类型不一致"
+                    );
+                }
+                _ => panic!("导出菜单第 {slot} 项应是 {command_id}"),
             }
-            _ => panic!("expected export html action item"),
-        }
-
-        match &menus[EXPORT_IDX].items[1] {
-            MenuItem::Action { action, .. } => {
-                assert!(action.as_any().is::<ExportPdf>());
-            }
-            _ => panic!("expected export pdf action item"),
-        }
-
-        // roadmap F5：PNG 长图菜单项排在 PDF 之后。
-        match &menus[EXPORT_IDX].items[2] {
-            MenuItem::Action { action, .. } => {
-                assert!(action.as_any().is::<ExportPng>());
-            }
-            _ => panic!("expected export png action item"),
-        }
-
-        // roadmap F4：打印菜单项存在且分发 PrintDocument，复制为 HTML 顺延到第 5 项。
-        match &menus[EXPORT_IDX].items[3] {
-            MenuItem::Action { action, .. } => {
-                assert!(action.as_any().is::<PrintDocument>());
-            }
-            _ => panic!("expected print action item"),
-        }
-        match &menus[EXPORT_IDX].items[4] {
-            MenuItem::Action { action, .. } => {
-                assert!(action.as_any().is::<CopyAsHtml>());
-            }
-            _ => panic!("expected copy as html action item"),
         }
     }
 
@@ -300,10 +359,10 @@ mod tests {
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
         let strings = i18n_manager.strings();
-        let items = &menus[VIEW_IDX].items;
+        let items = &command_menu(&menus, "toggle_sidebar").items;
 
         let mut index = 0;
-        for spec in crate::commands::commands_for(crate::commands::CommandMenu::View) {
+        for spec in commands_for(CommandMenu::View) {
             if spec.separator_before && index > 0 {
                 assert!(
                     matches!(items[index], MenuItem::Separator),
@@ -334,7 +393,7 @@ mod tests {
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
 
-        match &menus[LANGUAGE_IDX].items[0] {
+        match &named_menu(&menus, "Language").items[0] {
             MenuItem::Action { action, .. } => {
                 let action = action
                     .as_any()
@@ -352,12 +411,7 @@ mod tests {
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
 
-        // On macOS: File menu is index 1, Open Recent is item 3 within it.
-        // On other platforms: File menu is index 0, Open Recent is item 3.
-        #[cfg(target_os = "macos")]
-        let recent_menu = submenu(&menus[1].items[4]);
-        #[cfg(not(target_os = "macos"))]
-        let recent_menu = submenu(&menus[0].items[4]);
+        let recent_menu = recent_submenu(&menus);
 
         assert_eq!(recent_menu.name.to_string(), "Open Recent");
         assert_eq!(recent_menu.items.len(), 1);
@@ -409,10 +463,7 @@ mod tests {
         ];
         let menus = build_menus(&theme_manager, &i18n_manager, &recent_files);
 
-        #[cfg(target_os = "macos")]
-        let recent_menu = submenu(&menus[1].items[4]);
-        #[cfg(not(target_os = "macos"))]
-        let recent_menu = submenu(&menus[0].items[4]);
+        let recent_menu = recent_submenu(&menus);
 
         assert_eq!(recent_menu.items.len(), 2);
         assert_eq!(action_name(&recent_menu.items[0]), r"C:\docs\one.md");
@@ -456,7 +507,7 @@ mod tests {
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
 
-        let language_items = &menus[LANGUAGE_IDX].items;
+        let language_items = &named_menu(&menus, "Language").items;
         assert!(matches!(
             language_items[language_items.len() - 2],
             MenuItem::Separator
@@ -472,7 +523,7 @@ mod tests {
             _ => panic!("expected add language config action item"),
         }
 
-        let theme_items = &menus[THEME_IDX].items;
+        let theme_items = &named_menu(&menus, "Theme").items;
         assert_eq!(action_name(&theme_items[0]), "Follow System");
         assert_eq!(action_name(&theme_items[1]), "\u{2713} Dark");
         assert_eq!(action_name(&theme_items[2]), "Light");
@@ -504,7 +555,7 @@ mod tests {
         assert!(theme_manager.set_theme_by_id("velora-light"));
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
-        let theme_items = &menus[THEME_IDX].items;
+        let theme_items = &named_menu(&menus, "Theme").items;
 
         assert_eq!(action_name(&theme_items[0]), "Follow System");
         assert_eq!(action_name(&theme_items[1]), "Dark");
@@ -526,7 +577,7 @@ mod tests {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
-        let help_items = &menus[HELP_IDX].items;
+        let help_items = &command_menu(&menus, "show_about").items;
 
         assert!(help_items.iter().all(|item| match item {
             MenuItem::Action { action, .. } => !action.as_any().is::<CheckForUpdates>(),
@@ -540,7 +591,7 @@ mod tests {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
-        let help_items = &menus[HELP_IDX].items;
+        let help_items = &command_menu(&menus, "show_about").items;
 
         assert_eq!(help_items.len(), 1);
         match &help_items[0] {
@@ -557,7 +608,7 @@ mod tests {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
-        let help_items = &menus[HELP_IDX].items;
+        let help_items = &command_menu(&menus, "show_about").items;
 
         // 安装或卸载命令、分隔线、关于
         assert_eq!(help_items.len(), 3);

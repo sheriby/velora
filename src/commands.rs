@@ -242,6 +242,21 @@ mod tests {
     }
 
     #[test]
+    fn registry_action_types_are_unique() {
+        // 菜单条目按动作类型认领（app_menu 测试的 `action_type_of`）：两条命令
+        // 共用同一个动作类型，会让「按命令 id 找条目」指到别人的条目上。
+        let mut types = HashSet::new();
+        for spec in commands() {
+            let action = spec.boxed_action();
+            assert!(
+                types.insert(action.as_any().type_id()),
+                "命令 {} 与前面的命令共用同一个动作类型",
+                spec.id
+            );
+        }
+    }
+
+    #[test]
     fn registry_covers_every_menu_section_in_order() {
         let view_ids = super::commands_for(CommandMenu::View)
             .map(|spec| spec.id)
