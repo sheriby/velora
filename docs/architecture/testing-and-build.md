@@ -56,11 +56,12 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 - **build.rs**：仅 Windows——embed-resource 内嵌 Common-Controls v6 manifest（`TaskDialogIndirect` 运行时硬依赖）。
 - **.cargo/config.toml**：`rustc-wrapper = "sccache"`。
 - **profiles**（Cargo.toml）：
-  - `release`：codegen-units=1 + lto + opt-level=3 + panic=abort + strip（macOS 发布用）
-  - `releasewin`：release + debug-assertions（交叉编译无法跑 fxc.exe，打开 debug 断言让 DirectX 走运行时着色器路径）
+  - `release`：codegen-units=1 + lto + opt-level=3 + panic=abort + strip（macOS 与 Windows 发布共用，默认关闭 debug-assertions）；Windows 在原生 MSVC 环境中用 Windows SDK 的 `fxc.exe` 预编译 DirectX 着色器。
   - `dev`：opt-level=0、256 codegen-units；**`[profile.dev.package]` 对 ~40 个热 crate（gpui/taffy/cosmic-text/rustybuzz/lyon/tree-sitter/ratex/pulldown-cmark…）单独 opt-level=3**——本地代码保持 O0 可调试，框架热路径保持性能。新增重依赖若在每帧路径上，记得加进这张表。
 - **vendoring**：`[patch.crates-io] gpui = { path = "vendor/gpui" }`（gpui 0.2.2 + `runtime_shaders`；dev 依赖带 `test-support`）。
 - **features**：`code-highlight-core/official/config`（tree-sitter 16 语言语法树高亮）。
+- **CI**：macOS ARM64（`macos-15`）、macOS Intel（`macos-15-intel`）、Windows x64（`windows-2025`，MSVC）各自原生构建并运行默认测试与确定性慢用例；墙钟预算闸门继续排除。Release 在相同三个原生 runner 上出包，保留默认 CPU 指令集兼容性。
+- **验证出包**：在 GitHub Actions 的 Release 工作流中点 `Run workflow`，选择待验证分支与 `action=package`。`tag` 留空使用该分支的 `Cargo.toml` 版本，也可填写 `vX.Y.Z` 覆盖安装包版本（无需创建标签）。完成后下载 `release-macos-arm64`、`release-macos-x64`、`release-windows-x64` 三份 artifact，分别实机安装并启动验证。手动出包仅上传 artifact；推送 `v*` 标签才创建 GitHub Release。手动 `action=update-notes` 保留更新既有发布说明的功能，必须填写现有标签。
 
 ## 6. vendor/gpui 本地补丁清单（重要！升级 gpui 必须重放）
 
@@ -80,7 +81,7 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 
 - scripts/generate-fixtures.mjs（perf 夹具生成，1MiB/10MiB 重复中文段落单元）+ .test.mjs 自测。
 - scripts/package-macos.sh：release 构建 → .app（Info.plist/图标）→ pkgbuild/productbuild → dist/。
-- scripts/package-windows.sh + .nsi：x86_64-pc-windows-gnu 交叉编译 `--profile releasewin`，断言 PE32+ 且内嵌 manifest 字符串（回归守卫），NSIS 安装包。
+- scripts/package-windows.ps1 + .nsi：PowerShell 7 在 Windows x64 MSVC 环境中原生 `--release` 构建，自动定位 Windows SDK 的 `fxc.exe`，断言 PE32+ 且内嵌 manifest 字符串（回归守卫），生成 NSIS 安装包。
 - resources/：macOS Info.plist/pkg Distribution、windows .rc/.manifest（build.rs 内嵌）、linux desktop 文件。
 - assets/icon/：应用图标 + 标题栏 chrome SVG（main.rs 内嵌）+ 侧栏 SVG 图标集。
 - **i18n 是代码不是数据文件**：src/i18n/mod.rs 内置 zh-CN/en-US 两套；外部 JSON(C) 语言包经 `from_json` 加载（用户 languages 目录直放即用）。新增 UI 字符串要同时登记两处内置表。

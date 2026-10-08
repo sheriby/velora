@@ -92,7 +92,7 @@
 - 本机是 `stable` 1.88：不要用比它更新的标准库接口（踩过的例子：`str::floor_char_boundary` 未稳定，`cargo test` 直接编不过）。
 - `.cargo/config.toml` 挂了 `sccache`；`tests/fixtures/perf/` 与 `target/` 不进版本库。
 - 门禁是构建与测试两条；clippy 不作门禁，但 `Cargo.toml` 里 `[lints.clippy]` 放开过哪些要心里有数。
-- CI（`.github/workflows/ci.yml`）在每次 push 与 PR 上跑同样的两条 + Windows 目标交叉编译；测试 job 在 macOS（项目不支持 Linux，Windows 原生测试基线未立）。
+- CI（`.github/workflows/ci.yml`）在每次 push 与 PR 上分别用 macOS ARM64、macOS Intel、Windows x64 原生 runner 跑同样的两条与确定性慢用例（项目不支持 Linux，Windows 使用 MSVC）。
 - **门禁只在收尾跑，不在改一版跑一版**：中途改动用 `cargo test --bin velora <关键词>`（单条/单组，秒级）；`cargo build` 与 `cargo test --bin velora` 各只在收尾跑一次（默认全量实测 5 秒上下——22 条慢用例已按 §3 挪出默认跑法；`cargo build` 本身仍是分钟级，反复跑纯磨时间）。
 - 只看某个测试的打印时，若 `--nocapture` 的输出被工具链包装吃掉，就直接跑 `target/debug/deps/velora-*`（编译产物里的测试二进制）加测试名，比重新链接一遍 cargo 命令快。
 - 不动代码的改动（文档、注释、AGENTS.md、CHANGELOG）不跑构建与测试：只有代码路径才可能连带影响。
