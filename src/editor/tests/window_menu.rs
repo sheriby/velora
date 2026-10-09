@@ -28,11 +28,7 @@ async fn about_github_link_uses_gpui_url_opening(cx: &mut TestAppContext) {
 /// 窗口 frame 用例需要独占配置目录：关闭/退出窗口的用例都会往 config.toml
 /// 写 frame，共用进程级目录时并行执行会互相覆盖（实测会让断言读到别的用例的 frame）。
 fn isolated_window_frame_config(test_name: &str) -> (PathBuf, crate::config::TestConfigRootGuard) {
-    let root = std::env::temp_dir().join(format!(
-        "velora-{test_name}-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
+    let root = std::env::temp_dir().join(format!("velora-{test_name}-{}", temp_fixture_token()));
     let guard = crate::config::override_test_config_root(&root);
     (root, guard)
 }

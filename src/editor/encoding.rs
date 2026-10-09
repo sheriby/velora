@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn read_document_string_round_trips_utf8_file() {
-        let path = std::env::temp_dir().join(format!("velora-enc-{}.md", std::process::id()));
+        let path = std::env::temp_dir().join(format!("velora-enc-{}.md", uuid::Uuid::new_v4()));
         std::fs::write(&path, "# hello\n").expect("write");
         let text = read_document_string(&path).expect("read");
         assert_eq!(text, "# hello\n");

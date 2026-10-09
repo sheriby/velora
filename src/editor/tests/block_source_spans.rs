@@ -325,7 +325,7 @@ async fn a_code_document_tiles_the_buffer_with_block_spans(cx: &mut TestAppConte
     for index in 0..1200 {
         source.push_str(&format!("print({index})\n"));
     }
-    let path = temp_fixture_dir().join(format!("velora-code-tiles-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-tiles-{}.py", temp_fixture_token()));
     fs::write(&path, &source).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -388,7 +388,7 @@ async fn source_document_line_numbers_follow_the_buffer(cx: &mut TestAppContext)
     for index in 0..1200 {
         source.push_str(&format!("print({index})\n"));
     }
-    let path = temp_fixture_dir().join(format!("velora-code-lines-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-lines-{}.py", temp_fixture_token()));
     fs::write(&path, source).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {

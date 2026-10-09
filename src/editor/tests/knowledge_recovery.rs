@@ -152,7 +152,7 @@ async fn crash_recovery_drill_snapshot_restore_save(cx: &mut TestAppContext) {
 async fn tmp_debug_merge_state(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = chunk_boundary_source();
-    let path = temp_fixture_dir().join(format!("velora-chunk-dbg-{}.log", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-chunk-dbg-{}.log", temp_fixture_token()));
     fs::write(&path, &source).expect("write chunk fixture");
 
     let editor =

@@ -16,7 +16,6 @@ use crate::editor::encoding;
 use gpui::{Entity, Modifiers, MouseButton, point};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 图片插在中间那一段，前后各留一段文字，最后一行留着核对波及之外的字节。
 const DOC: &str = "段落文字\n\n强调 __下划线__ 结尾\n\n尾巴\n";
@@ -26,12 +25,7 @@ const IMAGE_LINE: &str = "![pic](./assets/pic.png)";
 const UNDERLINED: &str = "强调 下划线 结尾";
 
 fn scratch_dir(cx: &mut TestAppContext, tag: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("系统时钟早于 unix 纪元")
-        .as_nanos();
-    let candidate =
-        std::env::temp_dir().join(format!("velora-{tag}-{}-{nanos}", std::process::id()));
+    let candidate = std::env::temp_dir().join(format!("velora-{tag}-{}", temp_fixture_token()));
     fs::create_dir_all(&candidate).expect("建临时目录");
     // macOS 的临时目录是软链接（/var → /private/var）：不收敛一遍，算出来的相对路径
     // 与文件真正的目录不同，图片行会写成 `../../var/...`。

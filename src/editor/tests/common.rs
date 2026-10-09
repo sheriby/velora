@@ -1,7 +1,7 @@
 pub(super) use std::fs;
 pub(super) use std::path::PathBuf;
 pub(super) use std::sync::Arc;
-pub(super) use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+pub(super) use std::time::{Duration, Instant};
 
 pub(super) use gpui::{
     AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, Font, FontStyle, FontWeight,
@@ -37,15 +37,26 @@ pub(super) fn temp_fixture_dir() -> PathBuf {
     dir
 }
 
+/// 并发用例共用的唯一后缀：pid 区分进程，uuid 区分同一进程里的每次调用。
+///
+/// 不许换成墙上时钟。Windows 的钟粒度粗（~15ms），两次 `SystemTime::now()` 会读到同一个
+/// 值：同名夹具于是算出同一条路径，两个用例在同一份字节上来回保存——CI 上「无末行换行」
+/// 那条就是这样被隔壁用例插进去一个 `X`。pid 单独也不够，同进程的用例共用一个值。
+pub(super) fn temp_fixture_token() -> String {
+    format!("{}-{}", std::process::id(), uuid::Uuid::new_v4())
+}
+
+/// 同名夹具每次都要落到新文件：并发用例各写各的文件，撞上就是互相覆盖。
 pub(super) fn temp_markdown_path(test_name: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before unix epoch")
-        .as_nanos();
-    temp_fixture_dir().join(format!(
-        "velora-{test_name}-{}-{nanos}.md",
-        std::process::id()
-    ))
+    temp_fixture_dir().join(format!("velora-{test_name}-{}.md", temp_fixture_token()))
+}
+
+/// 夹具路径的唯一性只看这条：整块表里的用例都靠它把并发隔开。
+#[test]
+fn same_name_fixtures_never_share_a_path() {
+    let paths: std::collections::HashSet<PathBuf> =
+        (0..1000).map(|_| temp_markdown_path("同名夹具")).collect();
+    assert_eq!(paths.len(), 1000, "同名夹具算出了重复路径：并发用例会互相覆盖");
 }
 
 pub(super) fn temp_export_path(test_name: &str, extension: &str) -> PathBuf {

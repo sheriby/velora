@@ -797,11 +797,7 @@ async fn window_title_tracks_file_and_edited_state(cx: &mut TestAppContext) {
 /// 自动保存开关的落点：文档放在用例独占的目录里，这样「有没有留下 .velora-*.tmp」
 /// 才只反映本篇的行为（`temp_markdown_path` 共用系统临时目录，并列用例会互相看到残留）。
 fn isolated_doc_dir(cx: &mut TestAppContext, test_name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "velora-{test_name}-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
+    let root = std::env::temp_dir().join(format!("velora-{test_name}-{}", temp_fixture_token()));
     fs::create_dir_all(&root).expect("create document dir");
     // macOS 上 /var ↔ /private/var 是两个名字：不 canonicalize，编辑器算出的路径与
     // 断言里的对不上，临时残留也就扫不准。

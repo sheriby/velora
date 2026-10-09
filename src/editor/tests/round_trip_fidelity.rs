@@ -803,7 +803,7 @@ async fn editing_a_code_document_without_a_final_newline_keeps_it_absent(
     cx: &mut TestAppContext,
 ) {
     init_editor_test_app(cx);
-    let path = temp_fixture_dir().join(format!("velora-code-no-eol-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-no-eol-{}.py", temp_fixture_token()));
     fs::write(&path, "print(1)\nprint(2)").expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -852,7 +852,7 @@ async fn editing_a_crlf_code_document_saves_crlf_bytes_and_clears_dirty(
     cx: &mut TestAppContext,
 ) {
     init_editor_test_app(cx);
-    let path = temp_fixture_dir().join(format!("velora-code-crlf-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-crlf-{}.py", temp_fixture_token()));
     fs::write(&path, b"print(1)\r\nprint(2)\r\n").expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {

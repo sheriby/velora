@@ -366,7 +366,7 @@ async fn one_mib_code_document_with_a_fence_on_the_seam_scans_one_chunk(
     lines[chunk + 1] = "# 掉在围栏里，不算标题";
     lines[chunk * 2] = "```";
     let source = format!("{}\n", lines.join("\n"));
-    let path = temp_fixture_dir().join(format!("velora-seam-gate-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-seam-gate-{}.py", temp_fixture_token()));
     fs::write(&path, &source).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -909,7 +909,7 @@ async fn typing_in_a_code_document_writes_through_the_buffer(cx: &mut TestAppCon
     for index in 0..600 {
         source.push_str(&format!("# 第 {index} 行注释\n"));
     }
-    let path = temp_fixture_dir().join(format!("velora-code-gate-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-code-gate-{}.py", temp_fixture_token()));
     fs::write(&path, &source).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -1083,7 +1083,7 @@ async fn one_mib_code_document_typing_stays_within_budget(cx: &mut TestAppContex
     }
     init_editor_test_app(cx);
     let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
-    let path = temp_fixture_dir().join(format!("velora-budget-code-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-budget-code-{}.py", temp_fixture_token()));
     fs::write(&path, &markdown).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -1193,7 +1193,7 @@ async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
         return;
     }
     let markdown = std::fs::read_to_string(&fixture).expect("read fixture");
-    let path = temp_fixture_dir().join(format!("velora-probe-attr-{}.py", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-probe-attr-{}.py", temp_fixture_token()));
     fs::write(&path, &markdown).expect("write fixture");
     let cleanup = path.clone();
     cx.on_quit(move || {
@@ -1911,7 +1911,7 @@ async fn large_code_document_opens_within_budget(cx: &mut TestAppContext) {
         ));
     }
     assert!(source.len() > 800_000 && source.len() < 1_100_000);
-    let path = temp_fixture_dir().join(format!("velora-budget-{}.log", std::process::id()));
+    let path = temp_fixture_dir().join(format!("velora-budget-{}.log", temp_fixture_token()));
     fs::write(&path, &source).expect("write budget fixture");
     let expected_source = source.clone();
 

@@ -336,7 +336,7 @@ async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut Test
 #[test]
 fn file_history_records_dedupes_and_prunes() {
     // 存储约定：时间戳命名、同内容去重、每文件保留最近 20 条。
-    let root = std::env::temp_dir().join(format!("velora-fhist-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("velora-fhist-{}", temp_fixture_token()));
     let _ = std::fs::remove_dir_all(&root);
     let file = root.join("doc.md");
     std::fs::create_dir_all(&root).expect("create root");

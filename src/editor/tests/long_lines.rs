@@ -18,7 +18,7 @@ fn open_code_document_window<'a>(
     name: &str,
 ) -> (gpui::Entity<crate::editor::Editor>, &'a mut gpui::VisualTestContext) {
     let path =
-        temp_fixture_dir().join(format!("velora-long-line-{name}-{}.log", std::process::id()));
+        temp_fixture_dir().join(format!("velora-long-line-{name}-{}.log", temp_fixture_token()));
     std::fs::write(&path, source).expect("write fixture");
     let source = source.to_string();
     let (editor, cx) = cx.add_window_view(|_window, cx| {
@@ -227,10 +227,10 @@ async fn drop_open_mode_matches_workspace_open_mode(cx: &mut TestAppContext) {
         crate::editor::Editor::from_markdown(cx, String::new(), None)
     });
 
-    let jsonl = temp_fixture_dir().join(format!("velora-drop-{}.jsonl", std::process::id()));
+    let jsonl = temp_fixture_dir().join(format!("velora-drop-{}.jsonl", temp_fixture_token()));
     std::fs::write(&jsonl, "{\"a\":1}\n{\"a\":2}\n").expect("write jsonl");
     let markdown_ext =
-        temp_fixture_dir().join(format!("velora-drop-{}.markdown", std::process::id()));
+        temp_fixture_dir().join(format!("velora-drop-{}.markdown", temp_fixture_token()));
     std::fs::write(&markdown_ext, "# 标题\n\n正文\n").expect("write markdown");
 
     editor.update(cx, |editor, cx| {

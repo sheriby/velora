@@ -721,7 +721,7 @@ async fn a_fence_crossing_a_source_chunk_seam_still_scans_per_block(cx: &mut Tes
     // 所以要真走文件加载，`from_markdown` 的源码退回是整篇一块。
     let dir = std::env::temp_dir().join(format!(
         "velora-outline-seam-{}",
-        std::process::id()
+        uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&dir).expect("create fixture dir");
     let path = dir.join("seam.py");
@@ -834,7 +834,7 @@ async fn a_longer_fence_above_pulls_the_following_chunks_inside_it(cx: &mut Test
     let source = format!("{}\n", lines.join("\n"));
     let dir = std::env::temp_dir().join(format!(
         "velora-outline-fence-width-{}",
-        std::process::id()
+        uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&dir).expect("create fixture dir");
     let path = dir.join("fence-width.py");
