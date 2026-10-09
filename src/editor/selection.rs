@@ -243,6 +243,7 @@ impl Editor {
         block: Entity<Block>,
         cx: &mut Context<Self>,
     ) {
+        self.workspace.search_navigation_selection = None;
         if self.view_mode != ViewMode::Rendered {
             self.rendered_select_all_cycle = None;
             return;

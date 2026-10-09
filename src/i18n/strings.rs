@@ -346,6 +346,8 @@ pub struct I18nStrings {
     pub search_replace_current: String,
     /// Replace button: replace every match.
     pub search_replace_all: String,
+    pub search_replace_all_confirm: String,
+    pub search_replace_confirm_action: String,
     /// Result count template; `{n}` is replaced.
     pub search_result_count: String,
     /// Generic OK button label.
@@ -376,8 +378,6 @@ pub struct I18nStrings {
     pub quick_open_placeholder: String,
     /// Quick switcher empty-state row.
     pub quick_open_no_results: String,
-    /// File tree sort control prefix.
-    pub tree_sort_prefix: String,
     /// File tree sort option: by name.
     pub tree_sort_name: String,
     /// File tree sort option: by modification time.
@@ -435,8 +435,6 @@ pub struct I18nStrings {
     pub hover_target_exists: String,
     /// Hover tooltip marker: local target missing.
     pub hover_target_missing: String,
-    /// 文件树过滤输入占位。
-    pub tree_filter_placeholder: String,
     /// Message shown when picking or clicking a file type Velora can't open.
     pub workspace_open_unsupported_message: String,
     /// Tab context menu item for closing the tab.

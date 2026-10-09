@@ -15,15 +15,30 @@ impl Editor {
     pub(crate) fn schedule_workspace_search(&mut self, cx: &mut Context<Self>) {
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
         let generation = self.workspace.search_generation;
-        self.workspace.search_active_index = None;
-        self.workspace.document_active_range = None;
-        self.workspace.document_active_index = None;
-        self.workspace.document_matches = None;
+        let same_query = self
+            .workspace
+            .document_matches
+            .as_ref()
+            .is_some_and(|table| {
+                table.identity == self.buffer.identity()
+                    && table.query == self.workspace.search_query.trim()
+                    && table.options == self.search_options()
+            });
+        let previous_range = same_query
+            .then(|| self.workspace.document_active_range.clone())
+            .flatten();
+        if !same_query {
+            self.workspace.search_active_index = None;
+            self.workspace.document_active_range = None;
+            self.workspace.document_active_index = None;
+        }
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         // 模式编译失败：把引擎交回的原始诊断显示在搜索框下方，并**停止搜索**。
         // 旧行为是静默退化成字面量继续搜——用户以为在跑正则，实际搜的是另一回事。
         self.workspace.search_error = matcher.error_message().map(str::to_string);
         if self.workspace.search_error.is_some() {
+            self.workspace.document_active_range = None;
+            self.workspace.document_active_index = None;
             self.workspace.search_results.clear();
             self.workspace.search_pending = false;
             self.sync_document_search_highlights(cx);
@@ -38,6 +53,8 @@ impl Editor {
         let list_pending =
             self.workspace.files_on_disk_root.is_none() && self.workspace.root.is_some();
         if matcher.is_empty() {
+            self.workspace.document_active_range = None;
+            self.workspace.document_active_index = None;
             self.workspace.search_results.clear();
             self.workspace.search_pending = false;
             self.sync_document_search_highlights(cx);
@@ -55,6 +72,29 @@ impl Editor {
             self.sync_document_search_highlights(cx);
             cx.notify();
             return;
+        }
+        if scope == WorkspaceSearchScope::Document {
+            let hits = self.document_matches(cx);
+            let selected = hits.as_ref().and_then(|hits| {
+                let index = previous_range
+                    .as_ref()
+                    .and_then(|range| {
+                        hits.iter()
+                            .position(|hit| &hit.range == range)
+                            .or_else(|| hits.iter().position(|hit| hit.range.start >= range.start))
+                    })
+                    .unwrap_or(0);
+                hits.get(index).map(|hit| (index, hit.range.clone()))
+            });
+            self.workspace.document_active_range =
+                selected.as_ref().map(|(_, range)| range.clone());
+            self.workspace.document_active_index = selected.map(|(index, _)| index);
+            if previous_range.is_none() {
+                // 默认高亮不算导航；首次回车仍应跳到这处并展开它所在的章节。
+                self.workspace.document_match_jump_pending =
+                    self.workspace.document_active_range.is_some();
+            }
+            self.sync_document_search_highlights(cx);
         }
         // 去抖窗口里保留上一次的结果，新结果落地后再整体替换：清空会让侧栏
         // 先闪成空白再恢复（用户报修，watcher 刷新文件树等任何重新调度都会触发）。
@@ -101,6 +141,12 @@ impl Editor {
             let _ = editor.update(cx, |editor, cx| {
                 if editor.workspace.search_generation == generation {
                     editor.workspace.search_results = results;
+                    if scope == WorkspaceSearchScope::Document {
+                        editor.workspace.search_active_index =
+                            editor.workspace.search_results.iter().position(|hit| {
+                                hit.source_range == editor.workspace.document_active_range
+                            });
+                    }
                     editor.workspace.search_pending = false;
                     editor.sync_document_search_highlights(cx);
                     cx.notify();
@@ -155,6 +201,7 @@ impl Editor {
             },
             cx,
         );
+        self.workspace.search_navigation_selection = Some(self.capture_source_selection_snapshot(cx).range);
         // 跳转目标的滚动锚点不能是表格单元格：cell 不注册进文档块树，且随
         // 表格重建而亡——锚它则滚动系统永远查不到坐标（用户报修：表格里的
         // 搜索命中点了没反应）。apply 落在 cell 上时这里校正为宿主表格块；
@@ -373,7 +420,13 @@ impl Editor {
         // 导航是取索引：O(1)，且与文档大小无关。旧实现每次按键都要重扫整篇文档
         // 并把所有区间收集进一个 Vec 再线性找下一个（10 MiB 中文查询实测 61 毫秒
         // 一次按键，无后续命中要回绕时等于扫两遍）。
-        let Some(index) = self.advance_document_match_index(reverse) else {
+        let next = if self.workspace.document_match_jump_pending {
+            self.workspace.document_active_index
+        } else {
+            self.advance_document_match_index(reverse)
+        };
+        self.workspace.document_match_jump_pending = false;
+        let Some(index) = next else {
             return;
         };
         let Some(range) = self.document_match_at(index) else {
@@ -389,6 +442,25 @@ impl Editor {
             .position(|hit| hit.source_range.as_ref() == Some(&range));
         self.workspace.document_active_range = Some(range.clone());
         self.jump_to_document_search_range(range, cx);
+    }
+
+    pub(crate) fn replace_current_search_match(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.workspace.search_scope != WorkspaceSearchScope::Document {
+            return false;
+        }
+        if self.workspace.document_active_range.is_none() {
+            self.find_next_document_match(false, cx);
+        }
+        self.workspace.document_match_jump_pending = false;
+        if !self.replace_active_document_match(window, cx) {
+            return false;
+        }
+        self.schedule_workspace_search(cx);
+        true
     }
 
     /// Replaces the currently active document match (selected via a jump).
@@ -544,6 +616,95 @@ impl Editor {
             block.replace_text_in_range(None, replacement, window, cx);
         });
         true
+    }
+
+    pub(crate) fn request_replace_all_matches(&mut self, cx: &mut Context<Self>) {
+        let query = self.workspace.search_query.clone();
+        let replacement = self.workspace.replace_query.clone();
+        let options = self.search_options();
+        let matcher = SearchMatcher::new(query.trim(), options);
+        if matcher.is_empty() || matcher.error_message().is_some() {
+            return;
+        }
+        let scope = self.workspace.search_scope;
+        let root = self.workspace.root.clone();
+        let file_path = self.file_path.clone();
+        let match_count = match scope {
+            WorkspaceSearchScope::Document => {
+                self.document_matches(cx).map_or(0, |hits| hits.len())
+            }
+            WorkspaceSearchScope::Workspace => {
+                let mut total = 0;
+                for path in self.text_files_on_disk() {
+                    if self.file_path.as_ref() == Some(&path) {
+                        total += self.document_matches(cx).map_or(0, |hits| hits.len());
+                        continue;
+                    }
+                    let source = if let Some(tab) = self
+                        .workspace
+                        .open_documents
+                        .iter()
+                        .find(|tab| tab.path == path && tab.dirty)
+                    {
+                        tab.markdown.clone()
+                    } else {
+                        match crate::editor::encoding::read_document_string(&path) {
+                            Ok(source) => source,
+                            Err(error) => {
+                                eprintln!("统计替换匹配失败（{}）：{error}", path.display());
+                                continue;
+                            }
+                        }
+                    };
+                    total += count_matches_in_source(&source, &matcher);
+                }
+                total
+            }
+        };
+        let strings = cx.global::<I18nManager>().strings();
+        let detail = strings
+            .search_replace_all_confirm
+            .replace("{n}", &match_count.to_string())
+            .replace("{replacement}", &replacement)
+            .replace("{query}", &query);
+        self.show_modal(
+            ModalSpec {
+                title: strings.search_replace_all.clone().into(),
+                detail: Some(detail.into()),
+                buttons: vec![
+                    strings.preferences_cancel.clone().into(),
+                    strings.search_replace_confirm_action.clone().into(),
+                ],
+                default_index: 0,
+                cancel_index: 0,
+            },
+            move |choice, editor, window, cx| {
+                if choice != 1 {
+                    return;
+                }
+                // 确认只授权弹窗中展示的操作，切换文档或搜索条件后不能沿用旧授权。
+                if editor.workspace.search_scope != scope
+                    || editor.workspace.search_query != query
+                    || editor.workspace.replace_query != replacement
+                    || editor.search_options() != options
+                    || editor.workspace.root != root
+                    || editor.file_path != file_path
+                {
+                    return;
+                }
+                match scope {
+                    WorkspaceSearchScope::Document => {
+                        editor.replace_all_document_matches(window, cx);
+                    }
+                    WorkspaceSearchScope::Workspace => {
+                        editor.replace_all_workspace_matches(window, cx);
+                    }
+                }
+                editor.schedule_workspace_search(cx);
+                cx.notify();
+            },
+            cx,
+        );
     }
 
     /// Replaces matches across every file in the workspace tree. Open tabs get

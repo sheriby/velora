@@ -545,6 +545,12 @@ impl I18nStringsDe {
             search_replace_all: self
                 .search_replace_all
                 .unwrap_or(defaults.search_replace_all),
+            search_replace_all_confirm: self
+                .search_replace_all_confirm
+                .unwrap_or(defaults.search_replace_all_confirm),
+            search_replace_confirm_action: self
+                .search_replace_confirm_action
+                .unwrap_or(defaults.search_replace_confirm_action),
             search_result_count: self
                 .search_result_count
                 .unwrap_or(defaults.search_result_count),
@@ -582,7 +588,6 @@ impl I18nStringsDe {
             quick_open_no_results: self
                 .quick_open_no_results
                 .unwrap_or(defaults.quick_open_no_results),
-            tree_sort_prefix: self.tree_sort_prefix.unwrap_or(defaults.tree_sort_prefix),
             tree_sort_name: self.tree_sort_name.unwrap_or(defaults.tree_sort_name),
             tree_sort_mtime: self.tree_sort_mtime.unwrap_or(defaults.tree_sort_mtime),
             tree_sort_type: self.tree_sort_type.unwrap_or(defaults.tree_sort_type),
@@ -667,9 +672,6 @@ impl I18nStringsDe {
             hover_target_missing: self
                 .hover_target_missing
                 .unwrap_or(defaults.hover_target_missing),
-            tree_filter_placeholder: self
-                .tree_filter_placeholder
-                .unwrap_or(defaults.tree_filter_placeholder),
             workspace_open_unsupported_message: self
                 .workspace_open_unsupported_message
                 .unwrap_or(defaults.workspace_open_unsupported_message),

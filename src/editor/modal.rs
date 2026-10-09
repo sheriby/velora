@@ -70,6 +70,11 @@ impl Editor {
         );
     }
 
+    #[cfg(test)]
+    pub(crate) fn modal_spec(&self) -> Option<&ModalSpec> {
+        self.modal.as_ref().map(|modal| &modal.spec)
+    }
+
     pub(crate) fn modal_is_open(&self) -> bool {
         self.modal.is_some()
     }

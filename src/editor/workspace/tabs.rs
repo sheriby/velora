@@ -205,20 +205,20 @@ impl Editor {
     }
 
     pub(crate) fn set_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
-        let changed = self.workspace.active_tab != tab;
+        if self.workspace.active_tab == tab {
+            return;
+        }
         self.workspace.search_focus_pending = false;
-        self.workspace.search_query.clear();
-        self.workspace.search_selected_range = 0..0;
         self.workspace.search_marked_range = None;
-        self.workspace.search_results.clear();
-        self.workspace.document_active_range = None;
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
-        if changed {
-            self.workspace.active_tab = tab;
-            self.sync_workspace_models(cx);
-            cx.notify();
+        self.workspace.active_tab = tab;
+        if tab == WorkspaceTab::Search {
+            self.schedule_workspace_search(cx);
         }
+        self.sync_workspace_models(cx);
+        self.sync_document_search_highlights(cx);
+        cx.notify();
     }
 
     /// Records the current caret location before a programmatic jump

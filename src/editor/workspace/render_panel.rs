@@ -35,8 +35,6 @@ impl Editor {
 
         let search_header = (self.workspace.active_tab == WorkspaceTab::Search)
             .then(|| self.render_search_header(theme, strings, window, cx));
-        let tree_sort_header = (self.workspace.active_tab == WorkspaceTab::Files)
-            .then(|| self.render_tree_filter_and_sort_header(theme, strings, window, cx));
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor, cx),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor, cx),
@@ -65,7 +63,6 @@ impl Editor {
                 .border_r(px(d.dialog_border_width))
                 .border_color(c.dialog_border)
                 .children(search_header)
-                .children(tree_sort_header)
                 .child(
                     div()
                         .id("workspace-panel-scroll")
@@ -400,7 +397,7 @@ impl Editor {
             .pl(px(6.0 + depth as f32 * WORKSPACE_NODE_INDENT))
             .pr(px(6.0))
             .rounded(px(4.0))
-            .when(self.workspace.context_menu.is_none() && self.workspace.name_edit.is_none(), |this| this.tooltip(move |_, cx| {
+            .when(!node.kind_dir() && self.workspace.context_menu.is_none() && self.workspace.name_edit.is_none(), |this| this.tooltip(move |_, cx| {
                 let tooltip_text = tooltip_text.clone();
                 cx.new(|_| WorkspaceTooltip { label: tooltip_text }).into()
             }))

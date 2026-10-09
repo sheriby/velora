@@ -253,22 +253,6 @@ impl Editor {
         (!converted.is_empty()).then_some(converted)
     }
 
-    /// Cycles the file tree sort order (roadmap D2) and rescans.
-    pub(crate) fn on_cycle_tree_sort(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let next = match crate::config::EditorSettings::tree_sort(cx) {
-            TreeSortPreference::Name => TreeSortPreference::ModifiedTime,
-            TreeSortPreference::ModifiedTime => TreeSortPreference::Type,
-            TreeSortPreference::Type => TreeSortPreference::Name,
-        };
-        crate::config::EditorSettings::set_tree_sort(cx, next);
-        self.refresh_workspace_tree(cx);
-    }
-
     /// 标题折叠（roadmap C7）：折叠标题之后的块隐藏，直到同级或更高
     /// 级标题出现。顺带刷新每个标题的 `foldable`（其后方是否有章节内容），
     /// 供标题行内的折叠 chevron 决定是否显示。

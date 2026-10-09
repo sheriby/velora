@@ -88,6 +88,7 @@ impl Render for WorkspaceTooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<ThemeManager>().current_arc();
         div()
+            .debug_selector(|| "workspace-tooltip".to_string())
             .px(px(8.0))
             .py(px(5.0))
             .rounded(px(6.0))
@@ -264,6 +265,16 @@ struct TabContextMenu {
     target_index: usize,
 }
 
+#[derive(Default)]
+pub(super) struct SearchInputState {
+    last_line: Option<ShapedLine>,
+    last_bounds: Option<Bounds<Pixels>>,
+    scroll_x: Pixels,
+    reversed: bool,
+    drag_anchor: Option<usize>,
+    caret_bounds: Option<Bounds<Pixels>>,
+}
+
 /// Which search-panel input a key/IME event targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SearchInputKind {
@@ -348,11 +359,13 @@ pub(super) struct WorkspaceState {
     search_scope: WorkspaceSearchScope,
     search_active_index: Option<usize>,
     search_selected_range: Range<usize>,
+    search_input_state: SearchInputState,
     search_marked_range: Option<Range<usize>>,
     replace_query: String,
     replace_visible: bool,
     replace_focus: Option<FocusHandle>,
     replace_selected_range: Range<usize>,
+    replace_input_state: SearchInputState,
     replace_marked_range: Option<Range<usize>>,
     search_match_case: bool,
     search_whole_word: bool,
@@ -362,6 +375,7 @@ pub(super) struct WorkspaceState {
     search_focus_pending: bool,
     search_results: Vec<WorkspaceSearchHit>,
     document_active_range: Option<Range<usize>>,
+    pub(super) search_navigation_selection: Option<Range<usize>>,
     search_pending: bool,
     /// 模式编译失败时引擎交回的诊断，显示在搜索框下方。
     search_error: Option<String>,
@@ -370,6 +384,7 @@ pub(super) struct WorkspaceState {
     document_matches: Option<DocumentMatchTable>,
     /// 文档范围当前停在第几个命中（全表索引，不是侧栏那 200 行的索引）。
     document_active_index: Option<usize>,
+    document_match_jump_pending: bool,
     search_generation: u64,
     /// 顶栏标签条横向滚动（诊断/断言用）。
     pub(crate) tabs_scroll_handle: ScrollHandle,
@@ -394,9 +409,6 @@ pub(super) struct WorkspaceState {
     name_edit: Option<WorkspaceNameEdit>,
     tree_focus: Option<FocusHandle>,
     tab_context_menu: Option<TabContextMenu>,
-    /// 文件树过滤框（roadmap D8）：非空时树显示扁平匹配列表。
-    pub(super) tree_filter: String,
-    tree_filter_focus: Option<FocusHandle>,
     panel_width: Option<f32>,
     resize_drag: Option<WorkspaceResizeDrag>,
     /// 侧栏文件树滚动位置：让「点文件后重扫不跳回顶部」可断言（用户报修）。
@@ -428,11 +440,13 @@ impl Default for WorkspaceState {
             search_scope: WorkspaceSearchScope::Workspace,
             search_active_index: None,
             search_selected_range: 0..0,
+            search_input_state: SearchInputState::default(),
             search_marked_range: None,
             replace_query: String::new(),
             replace_visible: false,
             replace_focus: None,
             replace_selected_range: 0..0,
+            replace_input_state: SearchInputState::default(),
             replace_marked_range: None,
             search_match_case: false,
             search_whole_word: false,
@@ -442,10 +456,12 @@ impl Default for WorkspaceState {
             search_focus_pending: false,
             search_results: Vec::new(),
             document_active_range: None,
+            search_navigation_selection: None,
             search_pending: false,
             search_error: None,
             document_matches: None,
             document_active_index: None,
+            document_match_jump_pending: false,
             search_generation: 0,
             tabs_scroll_handle: ScrollHandle::new(),
             tree_scan_task: None,
@@ -460,8 +476,6 @@ impl Default for WorkspaceState {
             name_edit: None,
             tree_focus: None,
             tab_context_menu: None,
-            tree_filter: String::new(),
-            tree_filter_focus: None,
             panel_width: None,
             resize_drag: None,
             tree_scroll_handle: ScrollHandle::new(),

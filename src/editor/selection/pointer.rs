@@ -63,6 +63,9 @@ impl Editor {
             return;
         }
 
+        if self.scroll_handle.bounds().contains(&event.position) {
+            self.workspace.search_navigation_selection = None;
+        }
         // 源码模式的块也要武装跨块拖拽：回车新建的是逐行块，跨块拖选是刚需。
         // 同一根块里的拖动由 mouse_move 的同块早退交还给块内选区，这里武装
         // 只记锚点，不影响块内行为。
