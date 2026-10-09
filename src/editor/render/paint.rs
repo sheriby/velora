@@ -287,9 +287,12 @@ impl Render for Editor {
         let strides = rendered_row_plan.strides.borrow();
 
         // Bound the cache against block churn, only when it outgrows the live rows.
-        if self.row_stride_cache.len() > row_first_ids.len().saturating_mul(2) {
+        if self.row_stride_cache.len() > row_first_ids.len().saturating_mul(2)
+            || self.row_scrollbar_stride_cache.len() > row_first_ids.len().saturating_mul(2)
+        {
             let live: std::collections::HashSet<EntityId> = row_first_ids.iter().copied().collect();
             self.row_stride_cache.retain(|id, _| live.contains(id));
+            self.row_scrollbar_stride_cache.retain(|id, _| live.contains(id));
         }
 
         let render_window = Self::rendered_window(

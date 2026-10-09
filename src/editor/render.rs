@@ -608,7 +608,7 @@ impl Editor {
     /// `kept` 是过滤后的可见下标（升序）。行元数据全部取自同步可见列表那一趟
     /// 记下的快照，所以这里不读任何块实体；`rows` 只在真正需要挂元素时才克隆实体。
     fn build_rendered_row_plan(
-        &self,
+        &mut self,
         kept: &[u32],
         row_meta_version: u64,
         fold_version: u64,
@@ -731,7 +731,9 @@ impl Editor {
                 .collect::<Vec<f32>>(),
         ));
 
-        let scrollbar_strides = strides.borrow().clone();
+        let scrollbar_strides = first_ids.iter().zip(strides.borrow().iter()).map(|(id, stride)| {
+            *self.row_scrollbar_stride_cache.entry(*id).or_insert(*stride)
+        }).collect();
         RenderedRowPlan {
             row_meta_version,
             fold_version,
