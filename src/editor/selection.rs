@@ -74,6 +74,18 @@ impl Editor {
             cx.stop_propagation();
             return;
         }
+        // 代码正文的边界映射会包含不可见的围栏；普通复制应和代码块复制按钮一致。
+        if self.view_mode == ViewMode::Rendered
+            && let Some(selection) = self.normalized_cross_block_selection(cx)
+            && selection.start.entity_id == selection.end.entity_id
+            && let Some(block) = self.focusable_entity_by_id(selection.start.entity_id)
+            && block.read(cx).kind().is_code_block()
+            && let Some(text) = self.selected_visible_text(cx)
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            cx.stop_propagation();
+            return;
+        }
         let Some(markdown) = self.cross_block_selected_markdown(cx) else {
             cx.propagate();
             return;

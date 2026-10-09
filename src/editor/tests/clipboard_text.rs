@@ -5,12 +5,98 @@
 //! 菜单里的两行与键位走的是同一个动作。
 
 use super::common::*;
-use crate::components::{Block, CopyAsMarkdown, Paste, PasteAsPlainText};
+use crate::components::{Block, Copy, CopyAsMarkdown, Paste, PasteAsPlainText};
 use gpui::{ClipboardItem, Entity, Modifiers, MouseButton, point};
 
 const URL_DOC: &str = "选中文字\n\n别段\n";
 const MARKDOWN_DOC: &str = "前 **加粗** 后\n\n另一段\n";
 const URL: &str = "https://example.test";
+
+#[gpui::test]
+async fn copying_selected_code_uses_only_the_body_and_keeps_literal_backticks(
+    cx: &mut TestAppContext,
+) {
+    // 代码正文全选走编辑器选区后，普通复制错误地把源码围栏和语言名也交给剪贴板。
+    // 必须复制可见代码正文；显式复制为 Markdown 则继续取原始源码选区。
+    init_editor_test_app(cx);
+    for (fence, language, body) in [
+        (
+            "```",
+            "bash",
+            "cargo build\ncargo run                       # 空窗口启动\ncargo run /路径/到/工作区        # 以指定文件夹为工作区打开\ncargo test",
+        ),
+        (
+            "````",
+            "text",
+            "    keep indentation\nliteral ``` stays\n中文 🦀",
+        ),
+    ] {
+        let markdown = format!("前文\n\n{fence}{language}\n{body}\n{fence}\n\n后文");
+        let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+        redraw(cx);
+        focus_block_at(&editor, 1, cx);
+        cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        });
+        cx.dispatch_action(Copy);
+        assert_eq!(
+            clipboard_text(cx).as_deref(),
+            Some(body),
+            "代码全选复制不应加入围栏或语言名"
+        );
+        editor.update(cx, |editor, cx| {
+            let code = editor.document.visible_blocks()[1].entity.entity_id();
+            editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+                anchor: crate::editor::CrossBlockSelectionEndpoint {
+                    entity_id: code,
+                    offset: 0,
+                },
+                focus: crate::editor::CrossBlockSelectionEndpoint {
+                    entity_id: code,
+                    offset: body.len(),
+                },
+            });
+            cx.notify();
+        });
+        cx.dispatch_action(Copy);
+        assert_eq!(
+            clipboard_text(cx).as_deref(),
+            Some(body),
+            "鼠标式选区复制代码也不应加入围栏"
+        );
+        if language == "bash" {
+            cx.dispatch_action(CopyAsMarkdown);
+            assert_eq!(
+                clipboard_text(cx),
+                Some(format!("{fence}{language}\n{body}")),
+                "显式复制为 Markdown 仍应保留选区中的源码记号"
+            );
+        }
+        let start = body.find("\n").expect("代码有多行") + 1;
+        editor.update(cx, |editor, cx| {
+            let code = editor.document.visible_blocks()[1].entity.entity_id();
+            editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+                anchor: crate::editor::CrossBlockSelectionEndpoint {
+                    entity_id: code,
+                    offset: body.len(),
+                },
+                focus: crate::editor::CrossBlockSelectionEndpoint {
+                    entity_id: code,
+                    offset: start,
+                },
+            });
+            cx.notify();
+        });
+        cx.dispatch_action(Copy);
+        assert_eq!(
+            clipboard_text(cx).as_deref(),
+            body.get(start..),
+            "反向选中部分代码也应原样复制"
+        );
+    }
+}
 
 fn visible_block(
     editor: &Entity<Editor>,

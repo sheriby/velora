@@ -255,8 +255,8 @@ impl Theme {
                 separator_margin_y: 10.0,
                 code_block_padding_y: 8.0,
                 code_block_padding_x: 12.0,
-                code_bg_pad_x: 3.0,
-                code_bg_pad_y: 1.0,
+                code_bg_pad_x: 4.0,
+                code_bg_pad_y: 2.0,
                 code_bg_radius: 4.0,
                 code_language_input_width: 156.0,
                 code_language_input_height: 18.0,
@@ -563,7 +563,7 @@ impl Theme {
         theme.colors.text_h6 = theme.colors.text_h4;
         theme.dimensions.block_gap = 10.0;
         theme.dimensions.centered_min_ratio = 0.76;
-        theme.dimensions.code_bg_pad_x = 2.0;
+        theme.dimensions.code_bg_pad_x = 3.0;
         theme.dimensions.code_block_padding_x = 14.0;
         theme.dimensions.code_block_padding_y = 12.0;
         theme.dimensions.table_cell_padding_y = 7.0;
