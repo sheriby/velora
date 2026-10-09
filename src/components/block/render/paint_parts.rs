@@ -273,12 +273,9 @@ impl Render for Block {
 
         if showing_rendered_image && self.kind() == BlockKind::Paragraph {
             let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-            // Root images stay within a readable default width; wider artwork
-            // is downscaled instead of filling the entire text column. The
-            // session drag factor scales it further (roadmap C10).
+            // 宽图先适应正文空间，再统一缩放固有尺寸与宽高上限。
             let max_width = px(
-                (effective_image_width(self, viewport_width, d, cx).min(d.image_root_max_width))
-                    * self.image_width_factor,
+                effective_image_width(self, viewport_width, d, cx).min(d.image_root_max_width),
             );
             if let Some(runtime) = self.image_runtime() {
                 return focused_base

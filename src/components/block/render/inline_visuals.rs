@@ -24,6 +24,23 @@ impl Block {
         strings: &I18nStrings,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let scale = if self.image_runtime().is_some() {
+            self.image_width_factor
+        } else {
+            1.0
+        };
+        let max_width = match max_width {
+            Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(width))) => {
+                (width * scale).into()
+            }
+            Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Rems(width))) => {
+                rems(width.0 * scale).into()
+            }
+            Length::Definite(DefiniteLength::Fraction(width)) => relative(width * scale).into(),
+            Length::Auto => Length::Auto,
+        };
+        let max_height = max_height * scale;
+        let placeholder_height = placeholder_height * scale;
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
@@ -39,6 +56,8 @@ impl Block {
             ImageResolvedSource::Local(path) => img(path),
             ImageResolvedSource::Remote(uri) => img(uri),
         }
+        .image_scale(scale)
+        .debug_selector(|| "image-content".to_string())
         .max_w(max_width)
         .max_h(max_height)
         .object_fit(ObjectFit::Contain)
@@ -68,6 +87,7 @@ impl Block {
                 .child(
                     div()
                         .id("image-resize-handle")
+                        .debug_selector(|| "image-resize-handle".to_string())
                         .absolute()
                         .right(px(-3.0))
                         .bottom(px(-3.0))

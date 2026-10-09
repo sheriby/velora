@@ -191,6 +191,7 @@ pub struct Img {
     source: ImageSource,
     style: ImageStyle,
     image_cache: Option<AnyImageCache>,
+    image_scale: f32,
 }
 
 /// Create a new image element.
@@ -201,10 +202,17 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         source: source.into(),
         style: ImageStyle::default(),
         image_cache: None,
+        image_scale: 1.0,
     }
 }
 
 impl Img {
+    /// 同步缩放固有宽高，避免小图片只调整上限而保持原尺寸。
+    pub fn image_scale(mut self, scale: f32) -> Self {
+        self.image_scale = scale;
+        self
+    }
+
     /// A list of all format extensions currently supported by this img element
     pub fn extensions() -> &'static [&'static str] {
         // This is the list in [image::ImageFormat::from_extension] + `svg`
@@ -332,7 +340,9 @@ impl Element for Img {
                                 state.started_loading = None;
                             }
 
-                            let image_size = data.render_size(frame_index);
+                            let image_size = data
+                                .render_size(frame_index)
+                                .map(|length| length * self.image_scale);
                             style.aspect_ratio = Some(image_size.width / image_size.height);
 
                             if let Length::Auto = style.size.width {

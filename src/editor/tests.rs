@@ -14,6 +14,7 @@ mod export_drop;
 mod footnotes;
 mod format_command;
 mod image_runtime;
+mod image_scale;
 mod import_perf;
 mod inline_format;
 mod insert_blocks;

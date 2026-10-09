@@ -281,6 +281,7 @@ pub(crate) enum OverlayInputKind {
     /// 公式编辑器弹窗的草稿输入（多行，允许换行）。
     FormulaEditor,
     TreeName,
+    ImageScale,
 }
 
 impl From<SearchInputKind> for OverlayInputKind {
