@@ -329,9 +329,10 @@ impl Editor {
             let meta = self.document.row_spacing_at(index);
             match meta.heading_level {
                 Some(level) => {
-                    if let Some(hide) = hide_below_level
-                        && level <= hide
-                    {
+                    if let Some(hide) = hide_below_level {
+                        if level > hide {
+                            continue;
+                        }
                         hide_below_level = None;
                     }
                     self.count_row_plan_block_read();
