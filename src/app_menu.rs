@@ -1,5 +1,5 @@
 //! Native application menu, app-level actions, and window close routing.
-//! 应用名称与命令路径为 velora，更新入口默认隐藏。
+//! 应用名称与命令路径为 velora，更新检查与偏好设置共用应用菜单。
 //!
 //! This module owns menu construction and the actions that operate on the
 //! active editor window. The Quit action is routed to the current window so the
