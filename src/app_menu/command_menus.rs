@@ -31,7 +31,7 @@ pub(crate) fn command_spec(id: &str) -> &'static CommandSpec {
 
 /// 文件菜单：注册表 File 分组，并把「打开最近」子菜单接在「打开文件」之后。
 ///
-/// 非 macOS 没有应用菜单，App 分组的偏好设置与退出并入文件菜单
+/// 非 macOS 没有应用菜单，偏好设置、更新检查与退出并入文件菜单
 /// （顺序沿用既有版本：偏好设置紧跟最近打开，退出在最后）。
 pub(super) fn file_menu_items(strings: &I18nStrings, recent_items: Vec<MenuItem>) -> Vec<MenuItem> {
     let mut items = Vec::new();
@@ -49,7 +49,10 @@ pub(super) fn file_menu_items(strings: &I18nStrings, recent_items: Vec<MenuItem>
                 }));
             }
             #[cfg(not(target_os = "macos"))]
-            items.push(command_menu_item(strings, command_spec("preferences")));
+            {
+                items.push(command_menu_item(strings, command_spec("preferences")));
+                items.push(command_menu_item(strings, command_spec("check_updates")));
+            }
         }
     }
     #[cfg(not(target_os = "macos"))]
