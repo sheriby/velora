@@ -162,6 +162,9 @@ impl Editor {
                 .left_0()
                 .right_0()
                 .bottom_0()
+                // 遮罩要挡住底下的命中：没有 occlude，菜单底下的树行在鼠标压在
+                // 菜单上时仍然算悬停（亮起来），点击也会穿到底下的行。
+                .occlude()
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = close_editor
                         .update(cx, |editor, cx| editor.close_workspace_context_menu(cx));
@@ -169,6 +172,7 @@ impl Editor {
                 .child(
                     div()
                         .id("workspace-context-panel")
+                        .debug_selector(|| "workspace-context-panel".to_string())
                         .absolute()
                         .left(px(left))
                         .top(px(top))
@@ -179,6 +183,7 @@ impl Editor {
                         .border_color(theme.colors.dialog_border)
                         .bg(theme.colors.dialog_surface)
                         .shadow_md()
+                        .occlude()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .children(rows),
                 )
@@ -278,6 +283,8 @@ impl Editor {
                 .left_0()
                 .right_0()
                 .bottom_0()
+                // 同工作区菜单：遮罩不 occlude，菜单底下那一行的悬停与点击都会漏过去。
+                .occlude()
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = close_editor_left
                         .update(cx, |editor, cx| editor.close_tab_context_menu(cx));
@@ -289,6 +296,7 @@ impl Editor {
                 .child(
                     div()
                         .id("tab-context-panel")
+                        .debug_selector(|| "tab-context-panel".to_string())
                         .absolute()
                         .left(px(left))
                         .top(px(top))
@@ -299,6 +307,7 @@ impl Editor {
                         .border_color(theme.colors.dialog_border)
                         .bg(theme.colors.dialog_surface)
                         .shadow_md()
+                        .occlude()
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .children(rows),
                 )

@@ -810,6 +810,11 @@ impl VisualTestContext {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
+    /// 本地补丁：上一帧这个选择器的元素算不算悬停（鼠标压在浮层上时，底下那一层不该算）。
+    pub fn debug_hovered(&mut self, selector: &'static str) -> Option<bool> {
+        self.update(|window, _| window.rendered_frame.debug_hovered.get(selector).copied())
+    }
+
     /// Draw an element to the window. Useful for simulating events or actions
     pub fn draw<E>(
         &mut self,

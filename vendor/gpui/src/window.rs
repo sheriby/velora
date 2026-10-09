@@ -703,6 +703,10 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    /// 本地补丁：与 debug_bounds 同一手法，记下带名字的元素这一帧算不算「鼠标悬停在
+    /// 它上面」。遮罩类缺陷（鼠标压在浮层上、底下那一层还亮着）只能靠这对事实断言。
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) debug_hovered: FxHashMap<String, bool>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -751,6 +755,9 @@ impl Frame {
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
 
+            #[cfg(any(test, feature = "test-support"))]
+            debug_hovered: FxHashMap::default(),
+
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
 
@@ -778,6 +785,9 @@ impl Frame {
         // 门禁于是变成空心（绿了但没测到东西）。
         #[cfg(any(test, feature = "test-support"))]
         self.debug_bounds.clear();
+
+        #[cfg(any(test, feature = "test-support"))]
+        self.debug_hovered.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
