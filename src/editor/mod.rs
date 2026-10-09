@@ -513,13 +513,6 @@ pub(super) struct SourceTargetMapping {
     source_to_content: Vec<usize>,
 }
 
-/// Active image corner-resize drag session state (roadmap C10).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ImageResizeDrag {
-    pub(crate) start_x: f32,
-    pub(crate) base_factor: f32,
-}
-
 /// The two editing views the editor can present.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewMode {

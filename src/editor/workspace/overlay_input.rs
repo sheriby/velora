@@ -2,12 +2,6 @@ use super::*;
 
 impl Editor {
     pub(crate) fn active_overlay_input(&self, window: &Window) -> OverlayInputKind {
-        if self
-            .image_scale_input()
-            .is_some_and(|input| input.focus.is_focused(window))
-        {
-            return OverlayInputKind::ImageScale;
-        }
         if self.workspace.name_edit.as_ref().is_some_and(|edit| edit.focus.is_focused(window)) {
             return OverlayInputKind::TreeName;
         }
@@ -49,7 +43,6 @@ impl Editor {
 
     pub(crate) fn input_text(&self, kind: OverlayInputKind) -> &str {
         match kind {
-            OverlayInputKind::ImageScale => self.image_scale_input().map(|input| input.draft.as_str()).unwrap_or_default(),
             OverlayInputKind::TreeName => self.workspace.name_edit.as_ref().map(|edit| edit.draft.as_str()).unwrap_or_default(),
             OverlayInputKind::Query => &self.workspace.search_query,
             OverlayInputKind::Replace => &self.workspace.replace_query,
@@ -73,7 +66,6 @@ impl Editor {
 
     pub(crate) fn input_selection(&self, kind: OverlayInputKind) -> Range<usize> {
         match kind {
-            OverlayInputKind::ImageScale => self.image_scale_input().map(|input| input.selected_range.clone()).unwrap_or_default(),
             OverlayInputKind::TreeName => self.workspace.name_edit.as_ref().map(|edit| edit.selected_range.clone()).unwrap_or_default(),
             OverlayInputKind::Query => self.workspace.search_selected_range.clone(),
             OverlayInputKind::Replace => self.workspace.replace_selected_range.clone(),
@@ -97,7 +89,6 @@ impl Editor {
 
     pub(crate) fn input_marked(&self, kind: OverlayInputKind) -> Option<Range<usize>> {
         match kind {
-            OverlayInputKind::ImageScale => self.image_scale_input().and_then(|input| input.marked_range.clone()),
             OverlayInputKind::TreeName => self.workspace.name_edit.as_ref().and_then(|edit| edit.marked_range.clone()),
             OverlayInputKind::Query => self.workspace.search_marked_range.clone(),
             OverlayInputKind::Replace => self.workspace.replace_marked_range.clone(),
@@ -129,12 +120,6 @@ impl Editor {
     ) {
         let kind = kind.into();
         let (old, was_marked) = match kind {
-            OverlayInputKind::ImageScale => {
-                let Some(input) = self.image_scale_input() else {
-                    return;
-                };
-                (input.draft.clone(), input.marked_range.is_some())
-            }
             OverlayInputKind::TreeName => {
                 let Some(edit) = self.workspace.name_edit.as_ref().filter(|edit| !edit.pending) else { return; };
                 (edit.draft.clone(), edit.marked_range.is_some())
@@ -199,14 +184,6 @@ impl Editor {
             .unwrap_or(inserted_end..inserted_end);
         let marked_range = (marked && !inserted.is_empty()).then_some(start..inserted_end);
         match kind {
-            OverlayInputKind::ImageScale => {
-                if let Some(input) = self.image_scale_input_mut() {
-                    input.draft = updated;
-                    input.selected_range = selection;
-                    input.marked_range = marked_range;
-                    input.error = false;
-                }
-            }
             OverlayInputKind::TreeName => {
                 if let Some(edit) = self.workspace.name_edit.as_mut() {
                     edit.draft = updated;

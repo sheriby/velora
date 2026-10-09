@@ -18,8 +18,6 @@ impl Render for Editor {
                     // 时这里只有三次布尔检查，打字热路径无感。
                     let _ = editor.update(cx, |editor, cx| {
                         let mut consumed = editor.modal_handle_keystroke(keystroke, window, cx);
-                        consumed =
-                            consumed || editor.image_scale_handle_keystroke(keystroke, window, cx);
                         consumed = consumed || editor.file_history_key_down(keystroke, cx);
                         if !consumed {
                             consumed = editor.wikilink_completion_key_down(keystroke, cx);
@@ -979,7 +977,7 @@ impl Render for Editor {
             base
         };
         let base = if let Some(context_menu) =
-            self.render_context_menu_overlay(&theme, window.viewport_size(), window, cx)
+            self.render_context_menu_overlay(&theme, window.viewport_size(), cx)
         {
             base.child(context_menu)
         } else {

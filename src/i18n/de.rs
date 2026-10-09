@@ -53,8 +53,6 @@ pub(crate) struct I18nStringsDe {
     pub(crate) image_reveal_in_file_manager: Option<String>,
     pub(crate) image_copy_address: Option<String>,
     pub(crate) image_scale: Option<String>,
-    pub(crate) image_scale_apply: Option<String>,
-    pub(crate) image_scale_invalid: Option<String>,
     pub(crate) file_history_empty: Option<String>,
     pub(crate) menu_quit: Option<String>,
     pub(crate) menu_export_html: Option<String>,

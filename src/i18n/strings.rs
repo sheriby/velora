@@ -102,8 +102,6 @@ pub struct I18nStrings {
     pub image_copy_address: String,
     /// 图片右键菜单的缩放设置。
     pub image_scale: String,
-    pub image_scale_apply: String,
-    pub image_scale_invalid: String,
     /// 历史浮层空态（该文件还没有保存版本）。
     pub file_history_empty: String,
     /// File menu item for quitting the app.

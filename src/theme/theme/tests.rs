@@ -4,6 +4,24 @@ mod tests {
     use gpui::{Hsla, Rgba, WindowAppearance, rgba};
 
     #[test]
+    fn image_scale_baseline_falls_back_for_legacy_themes_and_keeps_custom_limits() {
+        // 旧主题未填写图片上限时，也应采用新的缩放基准；显式配置的尺寸继续保留。
+        let mut value = serde_json::to_value(Theme::default_theme()).expect("序列化主题");
+        let dimensions = value["dimensions"].as_object_mut().expect("主题尺寸");
+        dimensions.remove("image_root_max_width");
+        dimensions.remove("image_root_max_height");
+        let theme: Theme = serde_json::from_value(value.clone()).expect("读取旧主题");
+        assert_eq!(theme.dimensions.image_root_max_width, 0.0);
+        assert_eq!(theme.dimensions.image_root_max_height, 0.0);
+
+        value["dimensions"]["image_root_max_width"] = serde_json::json!(640.0);
+        value["dimensions"]["image_root_max_height"] = serde_json::json!(560.0);
+        let theme: Theme = serde_json::from_value(value).expect("读取自定义图片上限");
+        assert_eq!(theme.dimensions.image_root_max_width, 640.0);
+        assert_eq!(theme.dimensions.image_root_max_height, 560.0);
+    }
+
+    #[test]
     fn typography_builtin_headings_have_the_same_readable_hierarchy() {
         for theme in [
             Theme::default_theme(),

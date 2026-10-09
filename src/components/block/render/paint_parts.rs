@@ -113,10 +113,8 @@ impl Render for Block {
                         Length::Definite(relative(1.0)),
                         px(d.image_cell_max_height),
                         px(d.image_cell_placeholder_height),
-                        false,
                         &theme,
                         &strings,
-                        cx,
                     ))
                     .into_any_element();
             }
@@ -272,22 +270,20 @@ impl Render for Block {
         };
 
         if showing_rendered_image && self.kind() == BlockKind::Paragraph {
-            let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
-            // 宽图先适应正文空间，再统一缩放固有尺寸与宽高上限。
-            let max_width = px(
-                effective_image_width(self, viewport_width, d, cx).min(d.image_root_max_width),
-            );
+            let max_width: Length = if d.image_root_max_width > 0.0 {
+                px(d.image_root_max_width).into()
+            } else {
+                relative(1.0).into()
+            };
             if let Some(runtime) = self.image_runtime() {
                 return focused_base
                     .child(self.render_image_content(
                         runtime,
-                        max_width.into(),
+                        max_width,
                         px(d.image_root_max_height),
                         px(d.image_root_placeholder_height),
-                        true,
                         &theme,
                         &strings,
-                        cx,
                     ))
                     .into_any_element();
             }
@@ -486,10 +482,8 @@ impl Render for Block {
                                 max_width.into(),
                                 px(d.image_root_max_height),
                                 px(d.image_root_placeholder_height),
-                                false,
                                 &theme,
                                 &strings,
-                                cx,
                             ))
                         } else {
                             div().min_w(px(0.0)).flex_grow().child(
@@ -574,10 +568,8 @@ impl Render for Block {
                                     max_width.into(),
                                     px(d.image_root_max_height),
                                     px(d.image_root_placeholder_height),
-                                    false,
                                     &theme,
                                     &strings,
-                                    cx,
                                 ))
                             } else {
                                 div().min_w(px(0.0)).flex_grow().child(
@@ -643,10 +635,8 @@ impl Render for Block {
                                 max_width.into(),
                                 px(d.image_root_max_height),
                                 px(d.image_root_placeholder_height),
-                                false,
                                 &theme,
                                 &strings,
-                                cx,
                             ))
                         } else {
                             div().min_w(px(0.0)).flex_grow().child(

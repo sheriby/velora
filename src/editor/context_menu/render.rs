@@ -1,5 +1,4 @@
 use super::*;
-use gpui::prelude::FluentBuilder;
 
 use super::document_menu::{
     QUICK_ACTION_BUTTON_SIZE, QUICK_ACTION_DIVIDER_WIDTH, QUICK_ACTION_GAP,
@@ -87,7 +86,6 @@ impl Editor {
         &self,
         theme: &Theme,
         viewport: Size<Pixels>,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let menu = self.context_menu.as_ref()?;
@@ -394,7 +392,6 @@ impl Editor {
                 local_path,
                 address: _,
                 entity_id,
-                scale_input,
             } => {
                 let strings = cx.global::<I18nManager>().strings().clone();
                 let mut items = vec![
@@ -450,121 +447,11 @@ impl Editor {
                         .into_any_element(),
                     );
                 }
-                let selected = scale_input.selected_range.clone();
-                let focused = scale_input.focus.is_focused(window);
-                let draft = &scale_input.draft;
-                let input = div()
-                    .id("image-scale-input")
-                    .debug_selector(|| "image-scale-input".to_string())
-                    .track_focus(&scale_input.focus)
-                    .key_context("ImageScaleInput")
-                    .relative()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .h(px(d.menu_item_height))
-                    .px(px(8.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(d.menu_item_radius))
-                    .border_1()
-                    .border_color(c.dialog_border)
-                    .bg(c.editor_background)
-                    .text_size(px(d.menu_text_size))
-                    .text_color(c.dialog_body)
-                    .child(div().child(draft.get(..selected.start).unwrap_or_default().to_string()))
-                    .child(
-                        div()
-                            .when(focused && !selected.is_empty(), |this| this.bg(c.selection))
-                            .child(draft.get(selected.clone()).unwrap_or_default().to_string()),
-                    )
-                    .children(
-                        (focused && selected.is_empty())
-                            .then(|| div().w(px(1.0)).h(px(16.0)).bg(c.dialog_body)),
-                    )
-                    .child(div().child(draft.get(selected.end..).unwrap_or_default().to_string()))
-                    .children(
-                        draft
-                            .is_empty()
-                            .then(|| div().text_color(c.dialog_muted).child("20–100")),
-                    )
-                    .child(
-                        canvas(|_, _, _| (), {
-                            let focus = scale_input.focus.clone();
-                            let input_editor = cx.entity();
-                            move |bounds, _, window, cx| {
-                                window.handle_input(
-                                    &focus,
-                                    ElementInputHandler::new(bounds, input_editor.clone()),
-                                    cx,
-                                );
-                            }
-                        })
-                        .absolute()
-                        .top_0()
-                        .right_0()
-                        .bottom_0()
-                        .left_0(),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|editor, _, window, cx| {
-                            if let Some(input) = editor.image_scale_input_mut() {
-                                input.focus.focus(window);
-                                input.selected_range = 0..input.draft.len();
-                            }
-                            cx.notify();
-                            cx.stop_propagation();
-                        }),
-                    );
-                items.push(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(input)
-                        .children((!draft.trim_end().ends_with('%')).then(|| {
-                            div()
-                                .text_size(px(d.menu_text_size))
-                                .text_color(c.dialog_muted)
-                                .child("%")
-                        }))
-                        .child(
-                            crate::components::menu::menu_item(
-                                theme,
-                                "image-scale-apply",
-                                strings.image_scale_apply.clone(),
-                                None,
-                                true,
-                                false,
-                                false,
-                                false,
-                                None,
-                            )
-                            .on_click(cx.listener(
-                                |editor, _, _, cx| {
-                                    editor.confirm_image_scale_input(cx);
-                                    cx.stop_propagation();
-                                },
-                            )),
-                        )
-                        .into_any_element(),
-                );
-                if scale_input.error {
-                    items.push(
-                        div()
-                            .px(px(6.0))
-                            .text_size(px(12.0))
-                            .text_color(c.dialog_danger_button_bg)
-                            .child(strings.image_scale_invalid.clone())
-                            .into_any_element(),
-                    );
-                }
                 let panel_width = d.context_menu_axis_panel_width.max(220.0);
-                let estimated_height = d.menu_item_height * 7.0
-                    + d.menu_panel_gap * 9.0
+                let estimated_height = d.menu_item_height * 6.0
+                    + d.menu_panel_gap * 7.0
                     + d.menu_panel_padding * 2.0
-                    + 32.0
-                    + if scale_input.error { 50.0 } else { 0.0 };
+                    + 32.0;
                 let left = position
                     .x
                     .min((viewport.width - px(panel_width + 8.0)).max(px(8.0)))

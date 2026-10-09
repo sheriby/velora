@@ -50,11 +50,6 @@ impl EntityInputHandler for Editor {
         let kind = self.active_overlay_input(window);
         let was_marked = self.input_marked(kind).is_some();
         match kind {
-            OverlayInputKind::ImageScale => {
-                if let Some(input) = self.image_scale_input_mut() {
-                    input.marked_range = None;
-                }
-            }
             OverlayInputKind::TreeName => {
                 if let Some(edit) = self.workspace.name_edit.as_mut() { edit.marked_range = None; }
             }
@@ -87,8 +82,7 @@ impl EntityInputHandler for Editor {
                 OverlayInputKind::QuickOpen => self.refresh_quick_open_results(cx),
                 OverlayInputKind::CommandPalette => {}
                 OverlayInputKind::FormulaEditor
-                | OverlayInputKind::TreeName
-                | OverlayInputKind::ImageScale => {}
+                | OverlayInputKind::TreeName => {}
             }
             cx.notify();
         }
