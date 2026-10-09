@@ -356,9 +356,8 @@ impl Editor {
     }
     /// Outline-follows-scroll (roadmap C5): while the Outline tab is visible,
     /// select the deepest heading at or above the topmost visible block.
-    /// Cheap per frame: block bounds are cached by the previous layout, a block's
-    /// source position is its own `source_span`, and the line number is the
-    /// buffer's—no document-wide work left on this path.
+    /// 只读当前挂载行的布局与 `source_span`，避免未挂载块的旧坐标干扰，
+    /// 也不为滚动跟随重建整篇源映射。
     pub(crate) fn sync_outline_follow_scroll(
         &mut self,
         viewport_top: Pixels,
@@ -368,31 +367,60 @@ impl Editor {
             return;
         }
         let offset = f32::from(self.scroll_handle.offset().y);
+        if let Some(identity) = self.outline_clicked_document_identity {
+            if identity == self.buffer.identity()
+                && matches!(self.workspace.selected, Some(WorkspaceSelection::Outline(_)))
+            {
+                self.last_outline_follow_offset = offset;
+                return;
+            }
+            self.outline_clicked_document_identity = None;
+            self.last_outline_follow_offset = f32::NAN;
+        }
         if !self.last_outline_follow_offset.is_nan()
             && (offset - self.last_outline_follow_offset).abs() < 2.0
         {
             return;
         }
-        self.last_outline_follow_offset = offset;
-
-        // First block whose body extends below the viewport top band.
+        let Some(plan) = self.rendered_row_plan.as_ref() else {
+            return;
+        };
+        let Some(run) = self
+            .prev_mounted_run
+            .filter(|run| self.mounted_run_is_addressable(*run))
+        else {
+            return;
+        };
         let cutoff = viewport_top + px(48.0);
-        let mut target_source_start: Option<usize> = None;
-        for visible in self.document.visible_blocks().to_vec() {
-            let Some(bounds) = visible.entity.read(cx).last_bounds else {
+        let viewport_bottom = self.scroll_handle.bounds().bottom();
+        let mut target_source_start = None;
+        // 未挂载块仍保留旧屏幕坐标；只读滚动容器当前挂载行的内容坐标，
+        // 加上当前偏移后才是这次滚动对应的屏幕位置。
+        for index in run.row_start..run.row_end {
+            let Some(row) = plan.rows.get(index) else {
                 continue;
             };
-            if bounds.bottom() > cutoff {
-                // 这一块在缓冲区里从哪个字节开始，问它自己的区间；行号问缓冲区。
+            let child = run.child_base + index - run.row_start;
+            let Some(bounds) = self.scroll_handle.bounds_for_item(child) else {
+                continue;
+            };
+            if bounds.bottom() + px(offset) > cutoff && bounds.top() + px(offset) < viewport_bottom {
                 target_source_start = self
-                    .block_source_range(visible.entity.entity_id(), cx)
+                    .block_source_range(row.first_id, cx)
                     .map(|range| range.start);
-                break;
+                if target_source_start.is_some() {
+                    break;
+                }
             }
         }
         let Some(source_start) = target_source_start else {
+            // 跨屏滚动可能先落在占位区，等新行挂载后再同步，不能提前缓存偏移。
+            if !plan.rows.is_empty() {
+                cx.notify();
+            }
             return;
         };
+        self.last_outline_follow_offset = offset;
         let line = self.buffer.line_of(source_start);
 
         // Preorder walk visits headings in ascending source line order, so the

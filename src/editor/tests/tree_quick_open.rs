@@ -387,6 +387,123 @@ async fn source_mappings_align_with_the_real_document_text(cx: &mut TestAppConte
 /// 都会指错块。整篇 source mapping 重建是 O(文档)（1 MiB 实测一次 227ms），大纲跟随
 /// 滚动每帧都在调用链上，所以这条同时是个成本闸门。
 #[gpui::test]
+async fn clicking_an_outline_heading_keeps_that_heading_highlighted_after_scrolling(
+    cx: &mut TestAppContext,
+) {
+    // README 中点 Look & feel 后正文已跳转，大纲高亮却被滚动跟随改回 Velora。
+    // 跳转会把标题居中，点击选中必须在后续绘制中保留，不能按视口顶部覆盖。
+    init_editor_test_app(cx);
+    let source = include_str!("../../../README.md");
+    let target_line = source
+        .lines()
+        .position(|line| line == "### Look & feel")
+        .expect("README 中的目标标题");
+    let target_id = format!("outline:{target_line}");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.to_string(), None));
+    cx.simulate_resize(gpui::size(px(1400.0), px(1000.0)));
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+        editor.sync_workspace_outline(cx);
+        cx.notify();
+    });
+    redraw(cx);
+    redraw(cx);
+    let selector = format!(
+        "workspace-node-{}",
+        crate::editor::workspace::stable_node_hash(&target_id)
+    );
+    let row = cx
+        .debug_bounds(Box::leak(selector.into_boxed_str()))
+        .expect("Look & feel 大纲行");
+    cx.simulate_click(row.center(), Modifiers::none());
+    for _ in 0..6 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(crate::editor::workspace::WorkspaceSelection::Outline(
+                target_id.clone()
+            )),
+            "点击大纲并完成滚动后应保持目标行高亮"
+        );
+        let active = editor
+            .active_entity_id
+            .and_then(|id| editor.focusable_entity_by_id(id))
+            .expect("跳转目标块");
+        assert_eq!(active.read(cx).display_text(), "Look & feel");
+        let bounds = active.read(cx).last_bounds.expect("目标标题的布局边界");
+        let viewport = editor.scroll_handle.bounds();
+        assert!(bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom());
+    });
+    editor.update(cx, |editor, cx| {
+        let heading = editor
+            .heading_block_at_source_line(target_line, cx)
+            .expect("目标标题");
+        let bounds = heading.read(cx).last_bounds.expect("目标标题边界");
+        let viewport = editor.scroll_handle.bounds();
+        let target = editor.scroll_handle.offset().y + viewport.top() + px(48.0) - bounds.top();
+        editor.set_vertical_scroll_offset(target, cx);
+    });
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(crate::editor::workspace::WorkspaceSelection::Outline(target_id.clone())),
+            "手动把 Look & feel 滚到顶部后，不能读到未挂载的 Velora 旧边界"
+        );
+    });
+    editor.update(cx, |editor, cx| editor.set_vertical_scroll_offset(px(0.0), cx));
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(crate::editor::workspace::WorkspaceSelection::Outline(
+                "outline:0".to_string()
+            )),
+            "手动滚回顶部后应恢复大纲跟随，选中 Velora"
+        );
+    });
+    cx.simulate_click(row.center(), Modifiers::none());
+    for _ in 0..6 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(crate::editor::workspace::WorkspaceSelection::Outline(target_id)),
+            "手动滚动后再次点击仍应保持目标行高亮"
+        );
+    });
+    let position = editor.read_with(cx, |editor, _| editor.scroll_handle.bounds().center());
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(10000.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.scroll_handle.offset().y, px(0.0));
+        assert_eq!(
+            editor.workspace.selected,
+            Some(crate::editor::workspace::WorkspaceSelection::Outline(
+                "outline:0".to_string()
+            )),
+            "滚轮回到顶部也应恢复大纲跟随"
+        );
+    });
+}
+
+#[gpui::test]
 async fn clicking_an_outline_heading_unfolds_it_without_a_document_wide_mapping(
     cx: &mut TestAppContext,
 ) {
@@ -479,16 +596,24 @@ async fn scrolling_with_the_outline_open_follows_the_heading_above_the_viewport(
         editor.workspace.is_open = true;
         editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
         editor.sync_workspace_outline(cx);
-        // 伪造一次布局：第一节的三块在视口上方，最上面的可见块是 `正文乙`（文件里第 6 行）。
-        let mut y = -300.0;
-        for visible in editor.document.visible_blocks() {
-            let bounds = gpui::Bounds {
-                origin: gpui::point(gpui::px(0.0), gpui::px(y)),
-                size: gpui::size(gpui::px(600.0), gpui::px(60.0)),
-            };
-            visible.entity.update(cx, |block, _cx| block.last_bounds = Some(bounds));
-            y += 100.0;
-        }
+        let target = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|entry| entry.entity.read(cx).display_text() == "正文乙")
+            .expect("第二节正文")
+            .entity
+            .entity_id();
+        let plan = editor.rendered_row_plan.as_ref().expect("已绘制的行计划");
+        let row = plan.rows.iter().position(|row| row.first_id == target)
+            .expect("正文对应的行");
+        let run = editor.prev_mounted_run.expect("已挂载的行");
+        let bounds = editor
+            .scroll_handle
+            .bounds_for_item(run.child_base + row - run.row_start)
+            .expect("正文行的容器边界");
+        // 把第二节正文移到跟随取样线，以真实行布局验证 source_span 行号。
+        editor.scroll_handle.set_offset(gpui::point(px(0.0), px(48.0) - bounds.top()));
     });
 
     let builds_before = editor.read_with(cx, |editor, _| editor.source_mapping_full_builds.get());

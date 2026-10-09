@@ -136,6 +136,7 @@ impl Editor {
     }
 
     pub(crate) fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        self.outline_clicked_document_identity = None;
         // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建。落点在
         // 未物化的部分时，选区找不到归属的投影块，会被钳进首块末尾——用户
         // 报修：第一次点击命中停在 512 行，再点才对。跳转前先把续建落地；

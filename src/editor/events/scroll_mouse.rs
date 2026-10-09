@@ -104,6 +104,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.outline_clicked_document_identity = None;
         if self.typewriter_mode {
             self.pending_scroll_active_block_into_view = false;
             self.pending_scroll_recheck_after_layout = false;
@@ -161,6 +162,7 @@ impl Editor {
     /// Applies an absolute vertical scroll offset, clamped to the scrollable
     /// range. Offsets run from 0 at the top to `-max_offset` at the bottom.
     pub(crate) fn set_vertical_scroll_offset(&mut self, target_y: Pixels, cx: &mut Context<Self>) {
+        self.outline_clicked_document_identity = None;
         let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
         let mut offset = self.scroll_handle.offset();
         offset.y = target_y.min(px(0.0)).max(-max_offset_y);
@@ -201,6 +203,7 @@ impl Editor {
         let Some(drag) = self.scrollbar_drag else {
             return;
         };
+        self.outline_clicked_document_identity = None;
 
         let travel = (drag.track_height - drag.thumb_height).max(0.0);
         let thumb_top = (pointer_y_in_track - drag.pointer_offset_y).clamp(0.0, travel);
