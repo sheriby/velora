@@ -3,6 +3,15 @@
 use super::source_mapping::clip_hit_to_span;
 use super::*;
 
+#[derive(Clone)]
+struct HistoryRowLayout {
+    signature: String,
+    kind: BlockKind,
+    height: Option<f32>,
+    scrollbar_height: Option<f32>,
+    folded: bool,
+}
+
 impl Editor {
     pub(super) fn empty_selection_snapshot() -> UndoSelectionSnapshot {
         UndoSelectionSnapshot {
@@ -526,6 +535,98 @@ impl Editor {
         }
     }
 
+    fn history_row_signature(&self, id: EntityId, block: &Block) -> String {
+        let source = self
+            .document
+            .source_span_of(id)
+            .filter(|span| span.end <= self.buffer.byte_len())
+            .map(|span| self.buffer.slice(span))
+            .unwrap_or_else(|| block.record.markdown_line(0, None));
+        format!(
+            "{:?}:{}:{}:{:?}:{source}",
+            block.kind(),
+            block.render_depth,
+            block.visible_quote_depth,
+            block.callout_variant
+        )
+    }
+
+    fn capture_history_row_layouts(&self, cx: &App) -> Vec<HistoryRowLayout> {
+        self.document
+            .visible_blocks()
+            .iter()
+            .map(|entry| {
+                let block = entry.entity.read(cx);
+                HistoryRowLayout {
+                    signature: self.history_row_signature(entry.entity.entity_id(), block),
+                    kind: block.kind(),
+                    height: self
+                        .row_stride_cache
+                        .get(&entry.entity.entity_id())
+                        .copied(),
+                    scrollbar_height: self
+                        .row_scrollbar_stride_cache
+                        .get(&entry.entity.entity_id())
+                        .copied(),
+                    folded: block.folded,
+                }
+            })
+            .collect()
+    }
+
+    fn restore_history_row_layouts(
+        &mut self,
+        layouts: &[HistoryRowLayout],
+        cx: &mut Context<Self>,
+    ) {
+        let mut by_signature: HashMap<&str, std::collections::VecDeque<&HistoryRowLayout>> =
+            HashMap::new();
+        for layout in layouts {
+            by_signature
+                .entry(&layout.signature)
+                .or_default()
+                .push_back(layout);
+        }
+        let visible = self.document.visible_blocks().to_vec();
+        let same_length = visible.len() == layouts.len();
+        for (index, entry) in visible.iter().enumerate() {
+            let (signature, kind) = {
+                let block = entry.entity.read(cx);
+                (
+                    self.history_row_signature(entry.entity.entity_id(), block),
+                    block.kind(),
+                )
+            };
+            let layout = by_signature
+                .get_mut(signature.as_str())
+                .and_then(|candidates| candidates.pop_front())
+                .or_else(|| {
+                    same_length
+                        .then(|| layouts.get(index))
+                        .flatten()
+                        .filter(|layout| layout.kind == kind)
+                });
+            let Some(layout) = layout else {
+                continue;
+            };
+            let id = entry.entity.entity_id();
+            // 原文相同的块仍使用原来的量高；发生变化的同类块先沿用高度估计，
+            // 下一帧会按真实布局修正，避免撤销首帧把全文缩成最低行高。
+            if let Some(height) = layout.height {
+                self.row_stride_cache.insert(id, height);
+            }
+            if let Some(height) = layout.scrollbar_height {
+                self.row_scrollbar_stride_cache.insert(id, height);
+            }
+            if layout.folded {
+                entry.entity.update(cx, |block, cx| {
+                    block.folded = true;
+                    cx.notify();
+                });
+            }
+        }
+    }
+
     /// 撤销/重做一步的收尾：把选区放回那一步之前的现场。
     fn apply_restored_selection(&mut self, entry: &HistoryEntry, cx: &mut Context<Self>) {
         self.apply_selection_snapshot_in_current_mode(&entry.selection, cx);
@@ -604,8 +705,10 @@ impl Editor {
         self.pending_undo_capture = None;
         self.history_restore_in_progress = true;
         self.clear_cross_block_selection(cx);
+        let layouts = self.capture_history_row_layouts(cx);
         let forward = self.replay_history_group(&entry);
         self.rebuild_document_from_buffer(cx);
+        self.restore_history_row_layouts(&layouts, cx);
         self.history_restore_in_progress = false;
         self.apply_restored_selection(&entry, cx);
         // 重放留下的区间就是这一步的正向操作，交给重做用。
@@ -634,8 +737,10 @@ impl Editor {
         self.pending_undo_capture = None;
         self.history_restore_in_progress = true;
         self.clear_cross_block_selection(cx);
+        let layouts = self.capture_history_row_layouts(cx);
         let forward = self.replay_history_group(&entry);
         self.rebuild_document_from_buffer(cx);
+        self.restore_history_row_layouts(&layouts, cx);
         self.history_restore_in_progress = false;
         self.apply_restored_selection(&entry, cx);
         self.undo_history.push(HistoryEntry {

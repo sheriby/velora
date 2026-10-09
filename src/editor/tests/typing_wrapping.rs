@@ -674,3 +674,78 @@ async fn the_writing_column_follows_a_4k_window(cx: &mut TestAppContext) {
         "1200px 窗口的正文列该还是标准档的 760px（少说掉两侧块的 24px 内边距），实得 {narrow}"
     );
 }
+
+// 撤销前的偏移也必须纳入断言；只比较撤销后的帧会漏掉先跳走再回来的闪烁。
+#[gpui::test]
+async fn undo_and_redo_a_visible_character_keep_the_viewport_still(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..80)
+        .map(|index| {
+            format!(
+                "## 第 {index} 节\n\n第 {index} 段。\n\n```rust\n{}```\n\n",
+                "let value = 1;\n".repeat(20)
+            )
+        })
+        .collect::<String>();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    let target = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|entry| entry.entity.read(cx).record.title.visible_text() == "第 60 段。")
+            .expect("编辑目标")
+            .entity
+            .entity_id()
+    });
+    editor.update(cx, |editor, cx| {
+        editor.focus_block(target);
+        editor.pending_scroll_active_block_into_view = true;
+        editor.pending_scroll_center_into_view = true;
+        editor.pending_scroll_recheck_after_layout = true;
+        cx.notify();
+    });
+    for _ in 0..20 {
+        cx.executor().advance_clock(Duration::from_millis(32));
+        redraw(cx);
+    }
+    cx.simulate_input("x");
+    for _ in 0..8 {
+        cx.executor().advance_clock(Duration::from_millis(32));
+        redraw(cx);
+    }
+    let edited = editor.read_with(cx, |editor, _| editor.buffer.text());
+    for redo in [false, true] {
+        let before = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+        editor.update(cx, |editor, cx| {
+            if redo {
+                editor.redo_document(cx);
+            } else {
+                editor.undo_document(cx);
+            }
+        });
+        for frame in 0..8 {
+            redraw(cx);
+            let offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+            assert!(
+                (offset - before).abs() <= px(1.0),
+                "{}第 {frame} 帧改变可见位置：{before:?} → {offset:?}",
+                if redo { "重做" } else { "撤销" }
+            );
+            cx.executor().advance_clock(Duration::from_millis(32));
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.buffer.text()),
+            if redo {
+                edited.clone()
+            } else {
+                markdown.clone()
+            }
+        );
+    }
+}
