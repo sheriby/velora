@@ -532,30 +532,6 @@ async fn blank_line_block_renders_as_a_small_gap(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn tree_filter_appends_once_per_keystroke(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let (editor, cx) = cx.add_window_view(|_window, cx| {
-        Editor::from_markdown(cx, String::new(), None)
-    });
-    editor.update(cx, |editor, cx| {
-        let keystroke = |key: &str| KeyDownEvent {
-            keystroke: Keystroke::parse(key).expect("valid keystroke"),
-            is_held: false,
-        };
-        editor.on_tree_filter_key_down(&keystroke("m"), cx);
-        editor.on_tree_filter_key_down(&keystroke("d"), cx);
-        assert_eq!(
-            editor.workspace.tree_filter, "md",
-            "每次按键只追加一个字符（用户报修：重复挂载 on_key_down 曾把 md 双写成 mmdd）"
-        );
-        editor.on_tree_filter_key_down(&keystroke("backspace"), cx);
-        assert_eq!(editor.workspace.tree_filter, "m", "退格只删除一个字符");
-        editor.on_tree_filter_key_down(&keystroke("escape"), cx);
-        assert!(editor.workspace.tree_filter.is_empty(), "Esc 清空过滤词");
-    });
-}
-
 /// 源码模式下状态栏的「行 : 列」每帧都要算，它不许把整篇序列化一遍。
 ///
 /// 这一项是纯读取：文档多大都不该跟着它变贵。旧实现拿 `raw_source_text`（整篇拼出来

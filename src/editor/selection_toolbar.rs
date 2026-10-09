@@ -144,6 +144,14 @@ impl Editor {
         {
             return None;
         }
+        if self
+            .workspace
+            .search_navigation_selection
+            .as_ref()
+            .is_some_and(|range| *range == self.capture_source_selection_snapshot(cx).range)
+        {
+            return None;
+        }
         if !self.has_text_selection(cx) {
             return None;
         }

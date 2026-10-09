@@ -108,7 +108,6 @@ impl Editor {
         self.dismiss_contextual_overlays(cx);
         self.workspace.active_tab = WorkspaceTab::Files;
         self.workspace.is_open = true;
-        self.workspace.tree_filter.clear();
         for ancestor in directory.ancestors() {
             self.workspace.expanded.insert(file_node_id(ancestor));
             if self.workspace.root.as_deref() == Some(ancestor) {

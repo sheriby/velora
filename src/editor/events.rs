@@ -80,6 +80,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.workspace.search_navigation_selection.is_some()
+            && event.keystroke.modifiers.shift
+            && matches!(event.keystroke.key.as_str(), "left" | "right" | "up" | "down" | "home" | "end")
+            && self.focused_block_for_tab_key(window, cx).is_some()
+        {
+            self.workspace.search_navigation_selection = None;
+        }
         if event.keystroke.key != "tab" {
             return;
         }

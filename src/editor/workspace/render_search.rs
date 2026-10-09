@@ -147,8 +147,6 @@ impl Editor {
         )
     }
 
-    /// Option toggles (case / whole word / regex / fuzzy), the scope switch,
-    /// and — for the document scope — the replace action buttons.
     pub(crate) fn render_search_options_row(
         &mut self,
         theme: &Theme,
@@ -166,7 +164,9 @@ impl Editor {
             let chip_editor = editor.clone();
             div()
                 .id(id)
-                .px(px(6.0))
+                .debug_selector(move || id.to_string())
+                .px(px(4.0))
+                .flex_shrink_0()
                 .h(px(22.0))
                 .flex()
                 .items_center()
@@ -221,12 +221,11 @@ impl Editor {
                 })
         };
 
-        let mut options = div()
+        let mut controls = div()
             .id("workspace-search-options")
             .w_full()
             .flex()
             .items_center()
-            .flex_wrap()
             .gap(px(4.0))
             .child(toggle_chip(
                 &editor,
@@ -257,9 +256,106 @@ impl Editor {
                 strings.search_fuzzy.clone(),
             ));
 
+        let scope = self.workspace.search_scope;
+        if self.workspace.replace_visible {
+            let replace_editor = editor.clone();
+            let replace_all_editor = editor.clone();
+            let replace_row = div()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap(px(2.0))
+                .children((scope == WorkspaceSearchScope::Document).then(|| {
+                    div()
+                        .id("workspace-search-replace-current")
+                        .debug_selector(|| "workspace-search-replace-current".to_string())
+                        .w(px(22.0))
+                        .h(px(22.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.0))
+                        .border_1()
+                        .border_color(c.dialog_border)
+                        .text_size(px(11.0))
+                        .text_color(c.text_default)
+                        .cursor_pointer()
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .tooltip({
+                            let label = strings.search_replace_current.clone();
+                            move |_, cx| {
+                                cx.new(|_| WorkspaceTooltip {
+                                    label: label.clone(),
+                                })
+                                .into()
+                            }
+                        })
+                        .child(
+                            svg()
+                                .path("icon/workspace/replace.svg")
+                                .size(px(14.0))
+                                .text_color(c.text_default),
+                        )
+                        .on_click(move |_, window, cx| {
+                            let _ = replace_editor.update(cx, |editor, cx| {
+                                editor.replace_current_search_match(window, cx);
+                                cx.notify();
+                            });
+                            cx.stop_propagation();
+                        })
+                }))
+                .child(
+                    div()
+                        .id("workspace-search-replace-all")
+                        .debug_selector(|| "workspace-search-replace-all".to_string())
+                        .w(px(22.0))
+                        .h(px(22.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.0))
+                        .border_1()
+                        .border_color(c.dialog_border)
+                        .text_size(px(11.0))
+                        .text_color(c.text_default)
+                        .cursor_pointer()
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .tooltip({
+                            let label = strings.search_replace_all.clone();
+                            move |_, cx| {
+                                cx.new(|_| WorkspaceTooltip {
+                                    label: label.clone(),
+                                })
+                                .into()
+                            }
+                        })
+                        .child(
+                            svg()
+                                .path("icon/workspace/replace-all.svg")
+                                .size(px(14.0))
+                                .text_color(c.text_default),
+                        )
+                        .on_click(move |_, _window, cx| {
+                            let _ = replace_all_editor.update(cx, |editor, cx| {
+                                editor.request_replace_all_matches(cx);
+                                cx.notify();
+                            });
+                            cx.stop_propagation();
+                        }),
+                );
+            controls = controls.child(div().flex_1()).child(replace_row);
+        }
+
+        let mut options = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(controls);
+
         // Scope switch: current document vs. whole workspace (the latter needs
         // a scanned tree).
-        let scope = self.workspace.search_scope;
         let scope_button =
             |editor: &WeakEntity<Self>, id: &'static str, label: String, selected: bool| {
                 let scope_editor = editor.clone();
@@ -327,281 +423,19 @@ impl Editor {
                     strings.search_scope_workspace.clone(),
                     scope == WorkspaceSearchScope::Workspace,
                 ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex()
-                        .justify_end()
-                        .children(count_label.map(|label| {
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(c.dialog_muted)
-                                .child(label)
-                        })),
-                ),
+                .child(div().flex_1().min_w(px(0.0)).flex().justify_end().children(
+                    count_label.map(|label| {
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(c.dialog_muted)
+                            .child(label)
+                    }),
+                )),
         );
-
-        // Replace actions (document scope only for now; workspace replace
-        // lives behind the same buttons when the workspace scope is active).
-        if self.workspace.replace_visible && !self.workspace.replace_query.is_empty() {
-            let replace_editor = editor.clone();
-            let replace_all_editor = editor.clone();
-            let is_document_scope = scope == WorkspaceSearchScope::Document;
-            let replace_row = div()
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_end()
-                .gap(px(6.0))
-                .child(
-                    div()
-                        .id("workspace-search-replace-current")
-                        .px(px(8.0))
-                        .h(px(24.0))
-                        .flex()
-                        .items_center()
-                        .rounded(px(5.0))
-                        .border_1()
-                        .border_color(c.dialog_border)
-                        .text_size(px(11.0))
-                        .text_color(c.text_default)
-                        .cursor_pointer()
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .child(strings.search_replace_current.clone())
-                        .on_click(move |_, window, cx| {
-                            let _ = replace_editor.update(cx, |editor, cx| {
-                                if is_document_scope {
-                                    editor.replace_active_document_match(window, cx);
-                                }
-                                cx.notify();
-                            });
-                            cx.stop_propagation();
-                        }),
-                )
-                .child(
-                    div()
-                        .id("workspace-search-replace-all")
-                        .px(px(8.0))
-                        .h(px(24.0))
-                        .flex()
-                        .items_center()
-                        .rounded(px(5.0))
-                        .border_1()
-                        .border_color(c.dialog_border)
-                        .text_size(px(11.0))
-                        .text_color(c.text_default)
-                        .cursor_pointer()
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .child(strings.search_replace_all.clone())
-                        .on_click(move |_, window, cx| {
-                            let _ = replace_all_editor.update(cx, |editor, cx| {
-                                if is_document_scope {
-                                    editor.replace_all_document_matches(window, cx);
-                                } else {
-                                    let replaced =
-                                        editor.replace_all_workspace_matches(window, cx);
-                                    if replaced > 0 {
-                                        editor.schedule_workspace_search(cx);
-                                    }
-                                }
-                                cx.notify();
-                            });
-                            cx.stop_propagation();
-                        }),
-                );
-            options = options.child(replace_row);
-        }
 
         options.into_any_element()
     }
 
-    /// Shared single-line input used by the query and replace fields. Clicks
-    /// focus the field; key handling and IME route through `SearchInputKind`.
-    pub(crate) fn render_search_input(
-        &mut self,
-        id: &'static str,
-        value: String,
-        placeholder: String,
-        kind: SearchInputKind,
-        focused: bool,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let c = &theme.colors;
-        let focus = match kind {
-            SearchInputKind::Query => self
-                .workspace
-                .search_focus
-                .get_or_insert_with(|| cx.focus_handle())
-                .clone(),
-            SearchInputKind::Replace => self
-                .workspace
-                .replace_focus
-                .get_or_insert_with(|| cx.focus_handle())
-                .clone(),
-        };
-        let focus_for_click = focus.clone();
-        let focus_for_input = focus.clone();
-        let input_editor = cx.entity();
-        let editor = cx.entity().downgrade();
-
-        // The placeholder disappears as soon as the field is focused, not
-        // just once text is typed.
-        let (label, muted) = if !value.is_empty() {
-            (value, false)
-        } else if focused {
-            (String::new(), true)
-        } else {
-            (placeholder, true)
-        };
-
-        div()
-            .id(id)
-            .relative()
-            .track_focus(&focus)
-            .flex_1()
-            .min_w(px(0.0))
-            .h(px(28.0))
-            .px(px(8.0))
-            .flex()
-            .items_center()
-            .rounded(px(6.0))
-            .border_1()
-            .border_color(if focused {
-                c.dialog_primary_button_bg
-            } else {
-                c.dialog_border
-            })
-            .bg(c.editor_background)
-            .text_size(px(12.0))
-            .text_color(if muted {
-                c.dialog_muted
-            } else {
-                c.text_default
-            })
-            .child(label)
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, cx| {
-                        window.handle_input(
-                            &focus_for_input,
-                            ElementInputHandler::new(bounds, input_editor.clone()),
-                            cx,
-                        );
-                    },
-                )
-                .absolute()
-                .top_0()
-                .right_0()
-                .bottom_0()
-                .left_0(),
-            )
-            .on_click(move |_event, window, _cx| window.focus(&focus_for_click))
-            .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                let key = event.keystroke.key.to_ascii_lowercase();
-                let secondary = event.keystroke.modifiers.secondary();
-                match key.as_str() {
-                    "escape" => {
-                        let _ = editor.update(cx, |editor, cx| match kind {
-                            SearchInputKind::Query => {
-                                editor.workspace.search_query.clear();
-                                editor.workspace.search_selected_range = 0..0;
-                                editor.workspace.search_marked_range = None;
-                                editor.workspace.active_tab = WorkspaceTab::Files;
-                                editor.workspace.search_focus_pending = false;
-                                editor.schedule_workspace_search(cx);
-                            }
-                            SearchInputKind::Replace => {
-                                editor.workspace.replace_visible = false;
-                            }
-                        });
-                    }
-                    "a" if secondary => {
-                        let _ = editor.update(cx, |editor, cx| {
-                            match kind {
-                                SearchInputKind::Query => {
-                                    editor.workspace.search_selected_range =
-                                        0..editor.workspace.search_query.len();
-                                }
-                                SearchInputKind::Replace => {
-                                    editor.workspace.replace_selected_range =
-                                        0..editor.workspace.replace_query.len();
-                                }
-                            }
-                            cx.notify();
-                        });
-                    }
-                    "backspace" => {
-                        let handled = editor.update(cx, |editor, cx| {
-                            let (text, selected, marked) = match kind {
-                                SearchInputKind::Query => (
-                                    editor.workspace.search_query.clone(),
-                                    editor.workspace.search_selected_range.clone(),
-                                    editor.workspace.search_marked_range.clone(),
-                                ),
-                                SearchInputKind::Replace => (
-                                    editor.workspace.replace_query.clone(),
-                                    editor.workspace.replace_selected_range.clone(),
-                                    editor.workspace.replace_marked_range.clone(),
-                                ),
-                            };
-                            if marked.is_some() {
-                                return false;
-                            }
-                            let range = if selected.start == selected.end {
-                                let before = &text[..selected.start];
-                                let start = before
-                                    .grapheme_indices(true)
-                                    .last()
-                                    .map(|(start, _)| start)
-                                    .unwrap_or(selected.start);
-                                start..selected.start
-                            } else {
-                                selected
-                            };
-                            editor.replace_overlay_input_text(kind, range, "", None, false, cx);
-                            true
-                        });
-                        if !matches!(handled, Ok(true)) {
-                            return;
-                        }
-                    }
-                    "v" if secondary => {
-                        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                            let _ = editor.update(cx, |editor, cx| {
-                                let selected = match kind {
-                                    SearchInputKind::Query => {
-                                        editor.workspace.search_selected_range.clone()
-                                    }
-                                    SearchInputKind::Replace => {
-                                        editor.workspace.replace_selected_range.clone()
-                                    }
-                                };
-                                editor.replace_overlay_input_text(
-                                    kind, selected, &text, None, false, cx,
-                                );
-                            });
-                        }
-                    }
-                    "enter" => {
-                        let reverse = event.keystroke.modifiers.shift;
-                        let _ = editor.update(cx, |editor, cx| match kind {
-                            SearchInputKind::Query => {
-                                editor.advance_search_match(reverse, window, cx);
-                            }
-                            SearchInputKind::Replace => {
-                                editor.replace_active_document_match(window, cx);
-                            }
-                        });
-                    }
-                    _ => return,
-                }
-                cx.stop_propagation();
-            })
-            .into_any_element()
-    }
     pub(crate) fn render_search_results(
         &mut self,
         theme: &Theme,
@@ -828,6 +662,7 @@ impl Editor {
         let Some(hit) = self.workspace.search_results.get(index) else {
             return;
         };
+        self.workspace.document_match_jump_pending = false;
         self.workspace.search_active_index = Some(index);
         if let Some(range) = hit.source_range.clone() {
             self.workspace.document_active_range = Some(range.clone());

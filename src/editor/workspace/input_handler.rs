@@ -30,7 +30,12 @@ impl EntityInputHandler for Editor {
         let range = self.input_selection(kind);
         Some(UTF16Selection {
             range: search_utf8_to_utf16(&text, range.start)..search_utf8_to_utf16(&text, range.end),
-            reversed: kind == OverlayInputKind::TreeName && self.workspace.name_edit.as_ref().is_some_and(|edit| edit.caret < edit.selection_anchor),
+            reversed: match kind {
+                OverlayInputKind::TreeName => self.workspace.name_edit.as_ref().is_some_and(|edit| edit.caret < edit.selection_anchor),
+                OverlayInputKind::Query => self.workspace.search_input_state.reversed,
+                OverlayInputKind::Replace => self.workspace.replace_input_state.reversed,
+                _ => false,
+            },
         })
     }
 
@@ -140,10 +145,36 @@ impl EntityInputHandler for Editor {
                 if let Some((line, bounds)) = edit.last_line.as_ref().zip(edit.last_bounds) {
                     let start = search_utf16_to_utf8(&edit.draft, range.start);
                     let end = search_utf16_to_utf8(&edit.draft, range.end).max(start);
-                    let left = (bounds.left() + line.x_for_index(start) - edit.scroll_x).clamp(bounds.left(), bounds.right());
-                    let right = (bounds.left() + line.x_for_index(end) - edit.scroll_x).clamp(left, bounds.right());
-                    return Some(Bounds::new(point(left, bounds.top()), size((right - left).max(px(1.0)), bounds.size.height)));
+                    let left = (bounds.left() + line.x_for_index(start) - edit.scroll_x)
+                        .clamp(bounds.left(), bounds.right());
+                    let right = (bounds.left() + line.x_for_index(end) - edit.scroll_x)
+                        .clamp(left, bounds.right());
+                    return Some(Bounds::new(
+                        point(left, bounds.top()),
+                        size((right - left).max(px(1.0)), bounds.size.height),
+                    ));
                 }
+            }
+        }
+        let search_kind = match self.active_overlay_input(window) {
+            OverlayInputKind::Query => Some(SearchInputKind::Query),
+            OverlayInputKind::Replace => Some(SearchInputKind::Replace),
+            _ => None,
+        };
+        if let Some(kind) = search_kind {
+            let state = self.search_input_state(kind);
+            if let Some((line, bounds)) = state.last_line.as_ref().zip(state.last_bounds) {
+                let text = self.input_text(kind.into());
+                let start = search_utf16_to_utf8(text, range.start);
+                let end = search_utf16_to_utf8(text, range.end).max(start);
+                let left = (bounds.left() + line.x_for_index(start) - state.scroll_x)
+                    .clamp(bounds.left(), bounds.right());
+                let right = (bounds.left() + line.x_for_index(end) - state.scroll_x)
+                    .clamp(left, bounds.right());
+                return Some(Bounds::new(
+                    point(left, bounds.top()),
+                    size((right - left).max(px(1.0)), bounds.size.height),
+                ));
             }
         }
         Some(bounds)
@@ -159,9 +190,24 @@ impl EntityInputHandler for Editor {
         if kind == OverlayInputKind::TreeName {
             if let Some(edit) = self.workspace.name_edit.as_ref() {
                 if let Some((line, bounds)) = edit.last_line.as_ref().zip(edit.last_bounds) {
-                    let index = line.closest_index_for_x(position.x - bounds.left() + edit.scroll_x);
+                    let index =
+                        line.closest_index_for_x(position.x - bounds.left() + edit.scroll_x);
                     return Some(search_utf8_to_utf16(&edit.draft, index));
                 }
+            }
+        }
+        let search_kind = match kind {
+            OverlayInputKind::Query => Some(SearchInputKind::Query),
+            OverlayInputKind::Replace => Some(SearchInputKind::Replace),
+            _ => None,
+        };
+        if let Some(search_kind) = search_kind {
+            let state = self.search_input_state(search_kind);
+            if let Some((line, bounds)) = state.last_line.as_ref().zip(state.last_bounds) {
+                return Some(search_utf8_to_utf16(
+                    self.input_text(kind),
+                    line.closest_index_for_x(position.x - bounds.left() + state.scroll_x),
+                ));
             }
         }
         Some(self.input_text(kind).encode_utf16().count())

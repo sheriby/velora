@@ -635,3 +635,35 @@ async fn the_paragraph_panel_fits_its_labels_measured_with_the_real_font(cx: &mu
         "屏上的面板宽与按当前语言算出来的对不上"
     );
 }
+
+#[gpui::test]
+async fn search_match_selection_does_not_show_toolbar_but_manual_drag_does(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        editor.open_document_find(cx);
+        editor.workspace.search_query = "alpha".into();
+        editor.find_next_document_match(false, cx);
+    });
+    redraw(cx);
+    redraw(cx);
+    assert!(
+        toolbar_is_hidden(cx),
+        "搜索跳转产生的匹配选区不能弹出格式工具栏"
+    );
+    let first = block_bounds(&editor, 0, cx);
+    let second = block_bounds(&editor, 1, cx);
+    let start = gpui::point(first.left() + px(10.0), first.center().y);
+    let end = gpui::point(second.left() + px(40.0), second.center().y);
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    assert!(toolbar_bounds(cx).is_some(), "手动拖选仍应弹出工具栏");
+}

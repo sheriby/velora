@@ -1305,3 +1305,61 @@ async fn dirs_below_the_default_depth_load_when_expanded(cx: &mut TestAppContext
         assert!(!next.children_loaded, "更深的目录继续留占位");
     });
 }
+
+#[gpui::test]
+async fn folder_hover_has_no_name_tooltip_and_file_metadata_tooltip_remains(
+    cx: &mut TestAppContext,
+) {
+    let root = std::env::temp_dir().join(format!("velora-folder-tooltip-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("创建目录");
+    let path = root.join("note.md");
+    fs::write(&path, "正文").expect("写入文件");
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update(cx, |editor, cx| {
+        editor.workspace.root = Some(root.clone());
+        editor.workspace.file_tree =
+            Some(scan_workspace_dir_recursive(&root, TreeSortPreference::Name).expect("扫描夹具"));
+        editor.workspace.expanded.insert(file_node_id(&root));
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let selector = |path: &Path| -> &'static str {
+        Box::leak(
+            format!(
+                "workspace-node-{}",
+                super::super::stable_node_hash(&file_node_id(path))
+            )
+            .into_boxed_str(),
+        )
+    };
+    let folder = cx.debug_bounds(selector(&root)).expect("目录行");
+    cx.simulate_mouse_move(folder.center(), None, gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("workspace-tooltip").is_none(),
+        "文件夹不应弹出只有名称的提示"
+    );
+    let file = cx.debug_bounds(selector(&path)).expect("文件行");
+    cx.simulate_mouse_move(file.center(), None, gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        cx.debug_bounds("workspace-tooltip").is_some(),
+        "文件的大小、修改时间提示应保留"
+    );
+    fs::remove_dir_all(&root).expect("清理夹具");
+}
