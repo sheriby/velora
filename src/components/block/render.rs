@@ -24,6 +24,8 @@ use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::{Theme, ThemeColors, ThemeDimensions, ThemeManager};
 
 const TASK_CHECKMARK: &str = "\u{2713}";
+const VISUAL_BLOCK_WIDTH_RATIO: f32 = 0.95;
+const TABLE_CORNER_RADIUS: f32 = 10.0;
 
 // 标题折叠 chevron（roadmap C7）：位于标题行左侧留白内的按钮。
 const HEADING_FOLD_CHEVRON_RIGHT: &str = "icon/workspace/chevron-right.svg";

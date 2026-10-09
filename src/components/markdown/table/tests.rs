@@ -32,7 +32,7 @@ mod tests {
                 let lines: Vec<String> = source.lines().map(str::to_string).collect();
                 let table = parse_table_region(&lines).expect("用户报修表格应能解析");
                 let layout = TableColumnLayout::measure(&table, table_width, window, &theme, cx);
-                let preferred = measure_preferred_column_widths(&table, window, &theme, &fonts);
+                let preferred = measure_preferred_column_widths(&table, window, &theme, &fonts, true);
                 let chrome = cell_chrome_width(&theme);
 
                 for (column, &preferred) in preferred.iter().enumerate() {

@@ -62,8 +62,6 @@ impl Render for Block {
                 .table_cell_position()
                 .map(|position| position.is_header())
                 .unwrap_or(false);
-            // The header row is only styled distinctly (shaded background, medium
-            // weight) when the show-table-headers preference is enabled.
             let style_as_header =
                 is_header && crate::config::EditorSettings::show_table_headers(cx);
             let highlight = self.table_axis_highlight;
@@ -73,6 +71,16 @@ impl Render for Block {
                 c.table_cell_bg
             };
             let (bg, border_color) = table_cell_colors(base_bg, highlight, focused, c);
+            let bg = if self.table_cell_hovered && highlight == TableAxisHighlight::None {
+                bg.blend(Hsla { a: 0.04, ..c.text_link })
+            } else {
+                bg
+            };
+            let text_color = if style_as_header {
+                c.text_link
+            } else {
+                c.text_default
+            };
             let cell_base = self
                 .render_shell(
                     block_id,
@@ -95,13 +103,22 @@ impl Render for Block {
                 .py(px(d.table_cell_padding_y))
                 .border(px(1.0))
                 .border_color(border_color)
+                .rounded_tl(self.table_cell_corner_radii.top_left)
+                .rounded_tr(self.table_cell_corner_radii.top_right)
+                .rounded_bl(self.table_cell_corner_radii.bottom_left)
+                .rounded_br(self.table_cell_corner_radii.bottom_right)
+                .overflow_hidden()
+                .on_hover(cx.listener(|block, hovered, _, cx| {
+                    block.table_cell_hovered = *hovered;
+                    cx.notify();
+                }))
                 .bg(bg)
                 .text_size(px(t.text_size))
-                .text_color(c.text_default)
+                .text_color(text_color)
                 .line_height(relative(t.text_line_height));
 
             let cell_base = if style_as_header {
-                cell_base.font_weight(FontWeight::MEDIUM)
+                cell_base.font_weight(FontWeight::BOLD)
             } else {
                 cell_base
             };
@@ -124,7 +141,7 @@ impl Render for Block {
                     &theme,
                     &strings,
                     if style_as_header {
-                        FontWeight::MEDIUM
+                        FontWeight::BOLD
                     } else {
                         FontWeight::NORMAL
                     },
@@ -141,10 +158,10 @@ impl Render for Block {
                     is_placeholder,
                     None,
                     None,
-                    c.text_default,
+                    text_color,
                     t.text_size,
                     if style_as_header {
-                        FontWeight::MEDIUM
+                        FontWeight::BOLD
                     } else {
                         FontWeight::NORMAL
                     },
@@ -837,8 +854,9 @@ impl Render for Block {
                         "icon/workspace/copy.svg"
                     };
                     let copy_tooltip: SharedString = strings.code_copy_button.clone().into();
-                    div()
-                        .w_full()
+                    let code_host = div()
+                        .w(relative(VISUAL_BLOCK_WIDTH_RATIO))
+                        .min_w(px(0.0))
                         .relative()
                         .child(code_panel)
                         .child(
@@ -941,6 +959,16 @@ impl Render for Block {
                                     language_placeholder,
                                 )),
                         ))
+                        .into_any_element();
+                    div()
+                        .w_full()
+                        .min_w(px(0.0))
+                        .pl(px(depth_padding))
+                        .pr(px(d.block_padding_x))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .child(code_host)
                         .into_any_element()
                 }
             }
@@ -1049,15 +1077,20 @@ impl Render for Block {
                 } else {
                     px(0.0)
                 };
-                let table_width = (effective_table_width(self, viewport_width, d, cx)
-                    - f32::from(right_gutter))
-                    .max(1.0);
+                let container_width = self
+                    .table_container_width
+                    .map(f32::from)
+                    .unwrap_or_else(|| {
+                        effective_image_width(self, viewport_width, d, cx) * VISUAL_BLOCK_WIDTH_RATIO
+                    });
+                let table_width = (container_width - f32::from(right_gutter)).max(1.0);
                 let column_layout = self
                     .cached_table_column_layout(table_width, &theme, window, cx)
                     .unwrap_or_else(|| TableColumnLayout::equal(runtime.header.len()));
                 let preview_marker = self.table_axis_preview;
                 let selected_marker = self.table_axis_selection;
                 let body_row_count = runtime.rows.len();
+                let column_count = runtime.header.len();
                 let column_append_top = activation_band;
                 let weak_table_block = cx.entity().downgrade();
 
@@ -1130,6 +1163,15 @@ impl Render for Block {
                             .block_mouse_except_scroll(),
                     )
                     .children(header_cells.into_iter().enumerate().map(|(column, cell)| {
+                        let corners = table_cell_corner_radii(
+                            0, column, body_row_count + 1, column_count,
+                        );
+                        cell.update(cx, |block, cx| {
+                            if block.table_cell_corner_radii != corners {
+                                block.table_cell_corner_radii = corners;
+                                cx.notify();
+                            }
+                        });
                         let hover_block = weak_table_block.clone();
                         let select_block = weak_table_block.clone();
                         let menu_block = weak_table_block.clone();
@@ -1283,6 +1325,15 @@ impl Render for Block {
                                         .block_mouse_except_scroll(),
                                 )
                                 .children(row.into_iter().enumerate().map(|(column, cell)| {
+                                    let corners = table_cell_corner_radii(
+                                        visual_row, column, body_row_count + 1, column_count,
+                                    );
+                                    cell.update(cx, |block, cx| {
+                                        if block.table_cell_corner_radii != corners {
+                                            block.table_cell_corner_radii = corners;
+                                            cx.notify();
+                                        }
+                                    });
                                     div()
                                         .flex_none()
                                         .flex_basis(relative(column_layout.fraction(column)))
@@ -1408,9 +1459,10 @@ impl Render for Block {
                         }
                     };
 
-                    div()
-                        .id(block_id)
-                        .w_full()
+                    let measure_block = cx.entity().downgrade();
+                    let table_host = div()
+                        .w(relative(VISUAL_BLOCK_WIDTH_RATIO))
+                        .min_w(px(0.0))
                         .relative()
                         .flex()
                         .flex_col()
@@ -1420,6 +1472,7 @@ impl Render for Block {
                         .child(
                             div().w_full().flex().flex_col()
                                 .shadow_sm()
+                                .rounded(px(TABLE_CORNER_RADIUS))
                                 .bg(c.table_cell_bg)
                                 .children(rows),
                         )
@@ -1427,6 +1480,34 @@ impl Render for Block {
                         .child(row_edge_band)
                         .child(column_control)
                         .child(row_control)
+                        .child(
+                            canvas(move |bounds, _, cx| {
+                                let width = bounds.size.width;
+                                if let Err(error) = measure_block.update(cx, |block, cx| {
+                                    if width > px(0.0) && block.table_container_width != Some(width) {
+                                        block.table_container_width = Some(width);
+                                        cx.notify();
+                                    }
+                                }) {
+                                    eprintln!("更新表格容器宽度失败：{error}");
+                                }
+                            }, |_, _, _, _| {})
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom_0(),
+                        );
+                    div()
+                        .id(block_id)
+                        .w_full()
+                        .min_w(px(0.0))
+                        .pl(px(depth_padding))
+                        .pr(px(d.block_padding_x))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .child(table_host)
                         .into_any_element()
                 }
             }

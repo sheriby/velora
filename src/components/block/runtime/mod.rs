@@ -241,6 +241,10 @@ pub struct Block {
     /// 更新（块文本没变）后新配色上不了屏。
     highlight_generation: u64,
     pub(crate) table_runtime: Option<TableRuntime>,
+    pub(crate) table_container_width: Option<Pixels>,
+    /// 父元素圆角不会裁切子背景，四个外角需要落到对应单元格上。
+    pub(crate) table_cell_corner_radii: Corners<Pixels>,
+    pub(crate) table_cell_hovered: bool,
     pub(crate) table_cell_position: Option<TableCellPosition>,
     pub(crate) table_cell_alignment: Option<TableColumnAlignment>,
     pub(crate) table_axis_preview: Option<TableAxisMarker>,
@@ -375,6 +379,9 @@ impl Block {
             source_fence_exit: None,
             highlight_generation: 0,
             table_runtime: None,
+            table_container_width: None,
+            table_cell_corner_radii: Corners::default(),
+            table_cell_hovered: false,
             table_cell_position: None,
             table_cell_alignment: None,
             table_axis_preview: None,

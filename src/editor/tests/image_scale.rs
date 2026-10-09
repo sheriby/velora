@@ -42,7 +42,7 @@ async fn image_scale_is_available_from_the_menu_without_a_resize_handle(cx: &mut
 async fn image_scale_baseline_follows_the_text_column_and_keeps_the_aspect_ratio(
     cx: &mut TestAppContext,
 ) {
-    // 用户要求：100% 对应正文容器宽度的 90%，图片左右边界绝不越过正文。
+    // 用户要求：100% 对应正文容器宽度的 95%，图片左右边界绝不越过正文。
     // 侧栏会挤窄正文；必须核对实际块边界与滚动视口，不能拿整窗宽度当正文宽度。
     init_editor_test_app(cx);
     let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -90,7 +90,7 @@ async fn image_scale_baseline_follows_the_text_column_and_keeps_the_aspect_ratio
                 "窗口 {width}、侧栏 {sidebar_open}、{percent}% 的图片必须完整落在正文内：图片 {image_bounds:?}，正文 {block_bounds:?}，视口 {viewport_bounds:?}"
             );
             let scaled = image_bounds.size;
-            let expected_width = available_width * 0.90 * percent as f32 / 100.0;
+            let expected_width = available_width * 0.95 * percent as f32 / 100.0;
             assert!(
                 (f32::from(scaled.width) - expected_width).abs() < 1.0,
                 "窗口 {width} 的 {percent}% 应按正文宽度计算：期望 {expected_width}，实际 {scaled:?}"
@@ -204,10 +204,10 @@ async fn scaling_a_small_image_changes_both_dimensions_proportionally(cx: &mut T
     let padding = cx.update(|_, cx| {
         cx.global::<ThemeManager>().current().dimensions.block_padding_x
     });
-    let expected_width = (f32::from(block_bounds.size.width) - padding * 2.0) * 0.90;
+    let expected_width = (f32::from(block_bounds.size.width) - padding * 2.0) * 0.95;
     assert!(
         (f32::from(before.size.width) - expected_width).abs() < 1.0,
-        "100% 的小图片也应采用正文容器 90% 的宽度，实际 {before:?}"
+        "100% 的小图片也应采用正文容器 95% 的宽度，实际 {before:?}"
     );
     assert!((f32::from(before.size.height) - expected_width * 80.0 / 120.0).abs() < 1.0);
     editor.update(cx, |editor, cx| {
