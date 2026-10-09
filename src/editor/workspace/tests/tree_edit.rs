@@ -490,3 +490,58 @@ async fn markdown_creation_opens_an_input_inside_the_tree(cx: &mut TestAppContex
         "确认名称之前不创建磁盘文件"
     );
 }
+
+/// 文件树每帧只该建视口那一窗行。
+///
+/// 现象：树大一点（1500 个文件的面板，本机实测一帧建满整棵树 ≈ 200 ms）点一下文件要等
+/// 两三帧才出结果，看起来就是「点的特别顿、有时候像完全没反应」「鼠标一悬停就卡」。
+/// 根因：`render_workspace_nodes` 每帧把整棵树都走成元素；大纲面板早有按视口开窗
+/// （`workspace_list_window`），文件树没接上。
+#[gpui::test]
+async fn the_file_tree_renders_only_the_rows_in_the_viewport(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    for index in 0..1500 {
+        fs::write(root.join(format!("file-{index:04}.md")), "# 标题\n").expect("写夹具");
+    }
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    redraw(cx);
+    redraw(cx);
+
+    let (rows, total) = editor.read_with(cx, |editor, _| {
+        (
+            editor.panel_rows_rendered.get(),
+            editor
+                .workspace
+                .file_tree
+                .as_ref()
+                .map_or(0, |tree| tree.children.len())
+                + 1,
+        )
+    });
+    assert_eq!(total, 1501, "前置：树里该有 1500 个文件加根那一行");
+    assert!(rows > 0, "文件树一帧都没渲染，闸门测不到东西");
+    assert!(
+        rows <= 200,
+        "一帧建了 {rows} 行文件树元素（共 {total} 行）：侧栏没有按视口裁剪"
+    );
+
+    // 滚动之后窗口要跟着走：滚到第 1000 行附近，那一行得落在窗口里。
+    editor.update(cx, |editor, _| {
+        editor
+            .workspace
+            .tree_scroll_handle
+            .set_offset(gpui::point(gpui::px(0.0), gpui::px(6.0 + 1000.0 * 24.0)));
+    });
+    redraw(cx);
+    let (first, rows) = editor.read_with(cx, |editor, _| {
+        (
+            editor.panel_first_row_rendered.get(),
+            editor.panel_rows_rendered.get(),
+        )
+    });
+    assert!(
+        (first as usize) <= 1000 && 1000 < first as usize + rows as usize,
+        "滚到第 1000 行后窗口是 {first}..{}：窗口没跟着滚动走",
+        first as usize + rows as usize
+    );
+}

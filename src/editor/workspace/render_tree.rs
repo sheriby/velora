@@ -152,10 +152,11 @@ impl Editor {
             .into_any_element()
     }
     pub(crate) fn render_workspace_files_tree(
-        &self,
+        &mut self,
         theme: &Theme,
         strings: &I18nStrings,
         editor: &WeakEntity<Editor>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.workspace.root.is_none() {
             return self.render_workspace_empty_state(
@@ -276,7 +277,7 @@ impl Editor {
             );
         }
 
-        let Some(root) = self.workspace.file_tree.as_ref() else {
+        if self.workspace.file_tree.is_none() {
             // 后台扫描进行中（roadmap D9）：与搜索面板一致显示处理中占位，
             // 而不是误报「空文件夹」。
             if self.workspace.tree_scan_root.is_some()
@@ -290,13 +291,52 @@ impl Editor {
                     .into_any_element();
             }
             return self.render_workspace_empty_state("", &strings.workspace_empty_files, theme);
-        };
+        }
 
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .children(self.render_workspace_nodes(std::slice::from_ref(root), 0, theme, editor))
-            .into_any_element()
+        let rows = self.workspace_files_rows();
+        let window = self.workspace_list_window(rows.len());
+        self.panel_rows_rendered.set(window.len() as u64);
+        self.panel_first_row_rendered.set(window.start as u64);
+        let needs_fill = rows.len() > PANEL_WINDOW_THRESHOLD_ROWS
+            && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
+        let element = {
+            let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
+            // 上下各垫一段等高空白：滚动条的长度与位置仍按整棵树算，
+            // 中间只挂视口里那一窗真行（与大纲面板同一手法）。
+            if window.start > 0 {
+                elements.push(
+                    div()
+                        .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
+                        .flex_shrink_0()
+                        .into_any_element(),
+                );
+            }
+            for row in &rows[window.clone()] {
+                elements.push(self.render_workspace_tree_row(row, theme, editor));
+            }
+            let below = rows.len() - window.end;
+            if below > 0 {
+                elements.push(
+                    div()
+                        .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
+                        .flex_shrink_0()
+                        .into_any_element(),
+                );
+            }
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .children(elements)
+                .into_any_element()
+        };
+        // 首帧还没量过滚动视口：先铺一小段，立刻排下一帧补齐（帧数封顶，量到尺寸即停）。
+        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
+            self.panel_fill_frames += 1;
+            self.schedule_followup_frame(cx);
+        } else if !needs_fill {
+            self.panel_fill_frames = 0;
+        }
+        element
     }
 }
