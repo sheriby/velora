@@ -39,7 +39,7 @@ impl Editor {
             .then(|| self.render_tree_filter_and_sort_header(theme, strings, window, cx));
         let body = match self.workspace.active_tab {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor, cx),
-            WorkspaceTab::Search => self.render_search_results(theme, strings, &editor),
+            WorkspaceTab::Search => self.render_search_results(theme, strings, &editor, cx),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor, cx),
             WorkspaceTab::Backlinks => {
                 self.render_workspace_backlinks_panel(theme, strings, window, cx)

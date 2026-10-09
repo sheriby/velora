@@ -31,17 +31,17 @@ const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
 const CHEVRON_DOWN_ICON: &str = "icon/workspace/chevron-down.svg";
 const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
 const GENERIC_FILE_ICON: &str = "icon/workspace/generic-file.svg";
-const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
+pub(crate) const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
 const WORKSPACE_NODE_INDENT: f32 = 16.0;
 /// 列表行数超过这个数就按视口开窗渲染：元素树一帧只建视口那几十行。
 /// 大纲与文件树共用这一套；小树（几百行以内）照旧整棵走一遍，行为与既有交互完全相同。
-const PANEL_WINDOW_THRESHOLD_ROWS: usize = 200;
+pub(crate) const PANEL_WINDOW_THRESHOLD_ROWS: usize = 200;
 /// 窗口上下各多铺几行：滚动时先看到内容、再补精确边界，不是先看到空档。
 const PANEL_WINDOW_OVERDRAW_ROWS: usize = 8;
 /// 首帧还没有滚动视口尺寸时先铺的行数（随后排一帧补上）。
 const PANEL_WINDOW_FALLBACK_ROWS: usize = 120;
 /// 补帧上限：量到尺寸就停，避免每帧重排（与正文冷启动同数）。
-const PANEL_FILL_MAX_FRAMES: u8 = 8;
+pub(crate) const PANEL_FILL_MAX_FRAMES: u8 = 8;
 /// 面板滚动容器的上下内边距（`#workspace-panel-scroll` 的 `py(6)`）。
 /// 行在内容坐标系里的起点要减掉它才是「第几行」。
 const WORKSPACE_PANEL_PADDING_Y: f32 = 6.0;
