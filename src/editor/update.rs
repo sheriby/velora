@@ -263,14 +263,16 @@ impl Editor {
     }
 
     fn dismiss_update_notice(&mut self, cx: &mut Context<Self>) {
-        if let Some(cancelled) = self.update_download_cancel.take() {
+        let cancelled = self.update_download_cancel.take();
+        if let Some(cancelled) = cancelled.as_ref() {
             cancelled.store(true, Ordering::Relaxed);
+            cancel_pending_install(cx);
         }
         self.update_task = None;
-        cancel_pending_install(cx);
         self.update_download_progress = None;
         self.update_notification = None;
-        if cx.try_global::<UpdateSession>().is_some() {
+        // 其它窗口也能检查更新并关闭通知，只有下载所属窗口能解除全局互斥。
+        if cancelled.is_some() && cx.try_global::<UpdateSession>().is_some() {
             cx.update_global::<UpdateSession, _>(|session, _| {
                 session.download_active = false;
                 session.download_cancel = None;
@@ -503,6 +505,36 @@ mod tests {
     };
     use crate::net::update::UpdateSource;
     use gpui::{BorrowAppContext, TestAppContext};
+    #[gpui::test]
+    async fn dismissing_another_windows_notice_keeps_the_download_active(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+            super::init_update_session(cx);
+        });
+        let (owner, _) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+        let (other, visual) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "另一个窗口".into(), None));
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        owner.update(visual, |editor, cx| {
+            editor.update_download_cancel = Some(cancelled.clone());
+            cx.update_global::<UpdateSession, _>(|session, _| {
+                session.download_active = true;
+                session.download_cancel = Some(cancelled.clone());
+            });
+        });
+        other.update(visual, |editor, cx| editor.dismiss_update_notice(cx));
+        visual.update(|_, cx| {
+            assert!(cx.global::<UpdateSession>().download_active,
+                "另一窗口取消通知不能解除进行中的下载保护");
+        });
+        assert!(!cancelled.load(std::sync::atomic::Ordering::Relaxed));
+        owner.update(visual, |editor, cx| editor.dismiss_update_notice(cx));
+        assert!(cancelled.load(std::sync::atomic::Ordering::Relaxed));
+        visual.update(|_, cx| assert!(!cx.global::<UpdateSession>().download_active));
+    }
     #[test]
     fn update_message_templates_replace_versions() {
         assert_eq!(
