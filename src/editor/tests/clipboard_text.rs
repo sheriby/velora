@@ -13,6 +13,48 @@ const MARKDOWN_DOC: &str = "前 **加粗** 后\n\n另一段\n";
 const URL: &str = "https://example.test";
 
 #[gpui::test]
+async fn code_source_selection_keeps_literal_markers_and_multibyte_endpoints(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let body = "第一行 ```字面反引号``` 🦀 尾\n第二行";
+    let markdown = format!("前文\n\n````text\n{body}\n````\n\n后文");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    focus_block_at(&editor, 1, cx);
+    let start = body.find('`').expect("字面反引号");
+    let end = body.find('\n').expect("第一行末尾");
+    for reversed in [false, true] {
+        editor.update(cx, |editor, cx| {
+            let code = editor.document.visible_blocks()[1].entity.entity_id();
+            let endpoint = |offset| crate::editor::CrossBlockSelectionEndpoint {
+                entity_id: code,
+                offset,
+            };
+            editor.cross_block_selection = Some(crate::editor::CrossBlockSelection {
+                anchor: endpoint(if reversed { end } else { start }),
+                focus: endpoint(if reversed { start } else { end }),
+            });
+            cx.notify();
+        });
+        cx.dispatch_action(CopyAsMarkdown);
+        assert_eq!(clipboard_text(cx).as_deref(), body.get(start..end),
+            "围栏写法不应改变代码正文的源码偏移");
+    }
+    let source_start = "前文\n\n````text\n".len() + start;
+    let source_end = "前文\n\n````text\n".len() + end;
+    editor.update(cx, |editor, cx| {
+        editor.apply_selection_snapshot_in_current_mode(&crate::editor::UndoSelectionSnapshot {
+            range: source_start..source_end,
+            reversed: false,
+        }, cx);
+    });
+    cx.dispatch_action(Copy);
+    assert_eq!(clipboard_text(cx).as_deref(), body.get(start..end),
+        "从源码恢复到代码选区也应保持原来的字符边界");
+}
+
+#[gpui::test]
 async fn copying_selected_code_uses_only_the_body_and_keeps_literal_backticks(
     cx: &mut TestAppContext,
 ) {
@@ -66,7 +108,7 @@ async fn copying_selected_code_uses_only_the_body_and_keeps_literal_backticks(
             Some(body),
             "鼠标式选区复制代码也不应加入围栏"
         );
-        if language == "bash" {
+        {
             cx.dispatch_action(CopyAsMarkdown);
             assert_eq!(
                 clipboard_text(cx),
