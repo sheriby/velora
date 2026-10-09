@@ -183,7 +183,15 @@ impl Editor {
         max_scroll_y: f32,
         cx: &mut Context<Self>,
     ) {
+        let position =
+            self.scrollbar_document_position(-f32::from(self.scroll_handle.offset().y), false);
+        let progress = if max_scroll_y > 0.0 {
+            (position / max_scroll_y).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         self.scrollbar_drag = Some(crate::editor::ScrollbarDragSession {
+            thumb_top: (track_height - thumb_height).max(0.0) * progress,
             pointer_offset_y: pointer_offset_y.clamp(0.0, thumb_height.max(0.0)),
             track_height,
             thumb_height,
@@ -214,6 +222,10 @@ impl Editor {
             drag.max_scroll_y,
         );
 
+        let scroll_y = self.scrollbar_document_position(scroll_y, true);
+        if let Some(drag) = self.scrollbar_drag.as_mut() {
+            drag.thumb_top = thumb_top;
+        }
         let mut offset = self.scroll_handle.offset();
         offset.y = -px(scroll_y);
         self.scroll_handle.set_offset(offset);

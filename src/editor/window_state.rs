@@ -35,6 +35,42 @@ impl Editor {
         }
     }
 
+    pub(super) fn map_scroll_offset(position: f32, from: &[f32], to: &[f32]) -> f32 {
+        let position = position.max(0.0);
+        let mut from_start = 0.0;
+        let mut to_start = 0.0;
+        for (&from_height, &to_height) in from.iter().zip(to) {
+            let from_height = from_height.max(1.0);
+            let to_height = to_height.max(1.0);
+            if position <= from_start + from_height {
+                return to_start + (position - from_start) / from_height * to_height;
+            }
+            from_start += from_height;
+            to_start += to_height;
+        }
+        to_start + position - from_start
+    }
+
+    pub(super) fn scrollbar_document_position(&self, scroll_y: f32, inverse: bool) -> f32 {
+        let Some(plan) = self.rendered_row_plan.as_ref() else {
+            return scroll_y;
+        };
+        let strides = plan.strides.borrow();
+        // 文末预留半屏：以视口中心定位，滚动终点就是文档末尾，
+        // 不会因最后几行首次量高而改变进度分母。
+        let half_viewport = f32::from(self.scroll_handle.bounds().size.height) * 0.5;
+        let origin = Self::map_scroll_offset(half_viewport, &strides, &plan.scrollbar_strides);
+        if inverse {
+            (Self::map_scroll_offset(scroll_y + origin, &plan.scrollbar_strides, &strides)
+                - half_viewport)
+                .max(0.0)
+        } else {
+            (Self::map_scroll_offset(scroll_y + half_viewport, &strides, &plan.scrollbar_strides)
+                - origin)
+                .max(0.0)
+        }
+    }
+
     pub(super) fn scroll_offset_for_thumb_top(
         thumb_top: f32,
         track_height: f32,
