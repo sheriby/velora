@@ -84,6 +84,79 @@ async fn heading_fold_hides_section_content(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn heading_fold_hides_descendant_headings_and_preserves_child_fold_state(
+    cx: &mut TestAppContext,
+) {
+    // 折叠 H1/H2 时子标题仍保留，已折叠的子标题还会覆盖父级的隐藏范围。
+    // 子标题和正文必须一起隐藏，直到遇到同级或更高标题；子级状态仍需保留。
+    init_editor_test_app(cx);
+    for (parent_level, boundary_level) in [(1, 1), (2, 2), (2, 1)] {
+        for child_folded in [false, true] {
+            let source = format!(
+                "前文\n\n{} 父节\n\n父节正文\n\n{} 子节\n\n子节正文\n\n{} 孙节\n\n孙节正文\n\n{} 另一个子节\n\n另一子正文\n\n{} 下一节\n\n后文",
+                "#".repeat(parent_level),
+                "#".repeat(parent_level + 1),
+                "#".repeat(parent_level + 2),
+                "#".repeat(parent_level + 1),
+                "#".repeat(boundary_level),
+            );
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source, None));
+            editor.update(cx, |editor, cx| {
+                let parent = editor
+                    .document
+                    .visible_blocks()
+                    .iter()
+                    .find(|entry| entry.entity.read(cx).display_text() == "父节")
+                    .expect("父标题")
+                    .entity
+                    .clone();
+                let child = editor
+                    .document
+                    .visible_blocks()
+                    .iter()
+                    .find(|entry| entry.entity.read(cx).display_text() == "子节")
+                    .expect("子标题")
+                    .entity
+                    .clone();
+                parent.update(cx, |block, _| block.folded = true);
+                child.update(cx, |block, _| block.folded = child_folded);
+                let filtered = editor
+                    .apply_heading_fold_filter(cx)
+                    .iter()
+                    .map(|&index| {
+                        editor.document.visible_blocks()[index as usize]
+                            .entity
+                            .read(cx)
+                            .display_text()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    filtered,
+                    ["前文", "父节", "下一节", "后文"],
+                    "折叠 H{parent_level} 应隐藏全部子标题，子节折叠状态 {child_folded}"
+                );
+                parent.update(cx, |block, _| block.folded = false);
+                let restored = editor
+                    .apply_heading_fold_filter(cx)
+                    .iter()
+                    .map(|&index| {
+                        editor.document.visible_blocks()[index as usize]
+                            .entity
+                            .read(cx)
+                            .display_text()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>();
+                assert!(restored.iter().any(|text| text == "另一个子节"));
+                assert_eq!(restored.iter().any(|text| text == "孙节"), !child_folded);
+                assert_eq!(child.read(cx).folded, child_folded);
+            });
+        }
+    }
+}
+
+#[gpui::test]
 async fn heading_fold_chevron_marks_only_foldable_headings(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = "## Section\n\nalpha\n\n### Child\n\nbeta\n\n## Empty\n\n## Next\n\ngamma";
