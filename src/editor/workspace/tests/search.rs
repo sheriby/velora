@@ -1523,3 +1523,81 @@ async fn workspace_hit_highlight_covers_the_match_text_in_the_block(cx: &mut Tes
         }
     });
 }
+
+/// 搜索结果面板每帧只该建视口那一窗行。
+///
+/// 现象：工作区搜索的命中表封顶 200 条，而「一个文件一条命中」时是 200 个文件头
+/// 加 200 条命中 = 400 行元素（本机实测一帧 62 ms，dev 构建），在搜索框里打字、
+/// 按方向键每帧都要等这一遭。
+#[gpui::test]
+async fn search_results_render_only_the_rows_in_the_viewport(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-search-window-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create root");
+    for index in 0..200 {
+        fs::write(
+            root.join(format!("note-{index:04}.md")),
+            format!("needle 出现在这里 {index}\n"),
+        )
+        .expect("write note");
+    }
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "needle\n".into(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "needle".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    let (rows, hits, files) = editor.read_with(cx, |editor, _| {
+        let hits = editor.workspace.search_results.len();
+        let files = editor
+            .workspace
+            .search_results
+            .iter()
+            .map(|hit| hit.path.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        (editor.panel_rows_rendered.get(), hits, files)
+    });
+    assert_eq!(files, 200, "前置：200 个文件各有一条命中");
+    assert!(rows > 0, "搜索结果面板一帧都没渲染，闸门测不到东西");
+    assert!(
+        rows <= 200,
+        "一帧建了 {rows} 行搜索结果元素（200 条命中 + {files} 个文件头 = 400 行）：面板没有按视口裁剪"
+    );
+
+    // 滚动之后窗口要跟着走：滚到第 300 行附近，那一行得落在窗口里。
+    editor.update(cx, |editor, _| {
+        editor
+            .workspace
+            .tree_scroll_handle
+            .set_offset(gpui::point(gpui::px(0.0), gpui::px(6.0 + 300.0 * 24.0)));
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let (first, rows) = editor.read_with(cx, |editor, _| {
+        (
+            editor.panel_first_row_rendered.get(),
+            editor.panel_rows_rendered.get(),
+        )
+    });
+    assert!(
+        (first as usize) <= 300 && 300 < first as usize + rows as usize,
+        "滚到第 300 行后窗口是 {first}..{}：窗口没跟着滚动走",
+        first as usize + rows as usize
+    );
+
+    let _ = fs::remove_dir_all(root);
+}

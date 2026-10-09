@@ -603,10 +603,11 @@ impl Editor {
             .into_any_element()
     }
     pub(crate) fn render_search_results(
-        &self,
+        &mut self,
         theme: &Theme,
         strings: &I18nStrings,
         editor: &WeakEntity<Editor>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         // 只在还没有任何结果可显示时才用「…」占位：重新搜索期间继续显示上一次
         // 的结果，避免侧栏闪空（用户报修）。
@@ -631,13 +632,45 @@ impl Editor {
         }
         let c = &theme.colors;
         let is_document_scope = self.workspace.search_scope == WorkspaceSearchScope::Document;
-        let mut elements: Vec<AnyElement> = Vec::new();
+        // 行先摊平成描述符（文件头 / 命中行），再按视口取一窗：命中表封顶 200 条，
+        // 但「一个文件一条命中」时就是 400 行元素（dev 构建实测一帧 62 ms），
+        // 与文件树一样要按视口裁。
+        let mut rows: Vec<(usize, bool)> = Vec::new();
         let mut current_file: Option<PathBuf> = None;
         for (index, hit) in self.workspace.search_results.iter().enumerate() {
             // Workspace scope groups hits under a file header row; document
             // scope lists matches flat with the file name on each row.
             if !is_document_scope && current_file.as_ref() != Some(&hit.path) {
                 current_file = Some(hit.path.clone());
+                rows.push((index, true));
+            }
+            // 文件名命中只由文件头代表：再渲染一行没有行号、没有预览的行
+            // 只会得到一条看得见点不着（或看不见）的空条。
+            if !is_document_scope && hit.line.is_none() {
+                continue;
+            }
+            rows.push((index, false));
+        }
+
+        let window = self.workspace_list_window(rows.len());
+        self.panel_rows_rendered.set(window.len() as u64);
+        self.panel_first_row_rendered.set(window.start as u64);
+        let needs_fill = rows.len() > PANEL_WINDOW_THRESHOLD_ROWS
+            && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
+        let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
+        // 上下各垫一段等高空白：滚动条长度与位置仍按整张表算，中间只挂窗口里的行。
+        if window.start > 0 {
+            elements.push(
+                div()
+                    .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
+                    .flex_shrink_0()
+                    .into_any_element(),
+            );
+        }
+        for (index, is_header) in &rows[window.clone()] {
+            let index = *index;
+            let hit = &self.workspace.search_results[index];
+            if *is_header {
                 let file_hit_count = self
                     .workspace
                     .search_results
@@ -653,10 +686,9 @@ impl Editor {
                     div()
                         .id(("workspace-search-file", index))
                         .debug_selector(move || format!("workspace-search-file-{index}"))
+                        .h(px(WORKSPACE_NODE_HEIGHT))
                         .w_full()
                         .px(px(6.0))
-                        .pt(px(6.0))
-                        .pb(px(2.0))
                         .flex()
                         .items_center()
                         .gap(px(4.0))
@@ -704,29 +736,26 @@ impl Editor {
                         })
                         .into_any_element(),
                 );
-            }
-            // 文件名命中只由文件头代表：再渲染一行没有行号、没有预览的行
-            // 只会得到一条看得见点不着（或看不见）的空条。
-            if !is_document_scope && hit.line.is_none() {
                 continue;
             }
             let selected = self.workspace.search_active_index == Some(index);
             let hit_editor = editor.clone();
-            let show_file_label = is_document_scope;
-            let label = hit.label.clone();
             let line_number = hit.line;
             let preview = hit.preview.clone();
+            // 行高必须与 WORKSPACE_NODE_HEIGHT 一致：窗口按它算行号。文档范围
+            // 原先在命中行前多挂一行文件名——同一篇文档里每行都是同一个名字
+            // （标签页已经写着），两行高的列表按视口裁不出来，所以并成一行。
             elements.push(
                 div()
                     .id(("workspace-search-hit", index))
                     .debug_selector(move || format!("workspace-search-hit-{index}"))
+                    .h(px(WORKSPACE_NODE_HEIGHT))
                     .w_full()
                     .pl(px(if is_document_scope { 10.0 } else { 24.0 }))
                     .pr(px(6.0))
-                    .py(px(4.0))
                     .flex()
                     .flex_col()
-                    .gap(px(1.0))
+                    .justify_center()
                     .rounded(px(5.0))
                     .bg(if selected {
                         c.selection
@@ -735,13 +764,6 @@ impl Editor {
                     })
                     .cursor_pointer()
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .children(show_file_label.then(|| {
-                        div()
-                            .truncate()
-                            .text_size(px(11.0))
-                            .text_color(c.text_default)
-                            .child(label)
-                    }))
                     .children(line_number.map(|line| {
                         div()
                             .flex()
@@ -774,13 +796,29 @@ impl Editor {
                     .into_any_element(),
             );
         }
-        div()
+        let below = rows.len() - window.end;
+        if below > 0 {
+            elements.push(
+                div()
+                    .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
+                    .flex_shrink_0()
+                    .into_any_element(),
+            );
+        }
+        let element = div()
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(1.0))
             .children(elements)
-            .into_any_element()
+            .into_any_element();
+        // 首帧还没量过滚动视口：先铺一小段，排下一帧补齐（与文件树/大纲同一手法）。
+        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
+            self.panel_fill_frames += 1;
+            self.schedule_followup_frame(cx);
+        } else if !needs_fill {
+            self.panel_fill_frames = 0;
+        }
+        element
     }
 
     /// Opens the hit's match: document-scope hits select the byte range in the
