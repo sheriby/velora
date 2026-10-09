@@ -1,366 +1,513 @@
-//! Online update checks against the public project manifest.
-//!
-//! The app compares its compiled package version with the version published in
-//! the main branch Cargo manifest. Gitee is used only as a timeout fallback for
-//! GitHub so ordinary HTTP, parsing, or version errors stay visible.
+//! 已发布版本查询和安装包下载。未发布的分支版本不参与升级判断。
 
 use std::fmt;
+use std::fs;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use anyhow::{Context, bail, ensure};
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
 use semver::Version;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
-pub(crate) const GITHUB_CARGO_TOML_URL: &str =
-    "https://raw.githubusercontent.com/sheriby/velora/refs/heads/main/Cargo.toml";
-pub(crate) const GITEE_CARGO_TOML_URL: &str =
-    "https://raw.giteeusercontent.com/sheriby/velora/raw/main/Cargo.toml";
 pub(crate) const RELEASES_URL: &str = "https://github.com/sheriby/velora/releases";
+const RELEASES_API_URL: &str = "https://api.github.com/repos/sheriby/velora/releases?per_page=100";
+const MAX_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const UPDATE_ACCEPT: &str = "text/plain,application/toml,*/*;q=0.8";
-const UPDATE_USER_AGENT: &str = concat!(
-    "Velora/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/sheriby/velora)"
-);
+mod install;
+pub(crate) use install::{InstallPlan, launch_install_helper, prepare_install, take_install_error};
 
-/// Remote endpoint used to retrieve the published release manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UpdateSource {
-    /// GitHub raw content endpoint.
     GitHub,
-    /// Gitee mirror endpoint, used only when GitHub times out.
-    Gitee,
 }
-
-impl UpdateSource {
-    fn url(self) -> &'static str {
-        match self {
-            Self::GitHub => GITHUB_CARGO_TOML_URL,
-            Self::Gitee => GITEE_CARGO_TOML_URL,
-        }
-    }
-}
-
 impl fmt::Display for UpdateSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("GitHub")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub(crate) enum UpdatePlatform {
+    MacOsArm64,
+    MacOsX64,
+    WindowsX64,
+}
+impl UpdatePlatform {
+    pub(crate) fn current() -> Option<Self> {
+        if cfg!(target_os = "macos") {
+            Some(if cfg!(target_arch = "aarch64") {
+                Self::MacOsArm64
+            } else {
+                Self::MacOsX64
+            })
+        } else if cfg!(target_os = "windows") {
+            Some(Self::WindowsX64)
+        } else {
+            None
+        }
+    }
+    pub(crate) fn asset_name(self, version: &Version) -> String {
+        let suffix = match self {
+            Self::MacOsArm64 => "macos-arm64.pkg",
+            Self::MacOsX64 => "macos-x64.pkg",
+            Self::WindowsX64 => "windows-x64-setup.exe",
+        };
+        format!("velora-{version}-{suffix}")
+    }
+    fn magic(self) -> &'static [u8] {
         match self {
-            Self::GitHub => f.write_str("GitHub"),
-            Self::Gitee => f.write_str("Gitee"),
+            Self::WindowsX64 => b"MZ",
+            _ => b"xar!",
         }
     }
 }
 
-/// Coarse failure reason for a manifest fetch attempt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RemoteFetchFailureKind {
-    /// Request exceeded the configured timeout.
-    Timeout,
-    /// The server returned a non-success HTTP status.
-    HttpStatus,
-    /// Request setup or transport failed before a response was usable.
-    Network,
-    /// The response body could not be read as text.
-    Body,
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub(crate) struct UpdatePackage {
+    pub(crate) name: String,
+    pub(crate) url: String,
+    pub(crate) size: u64,
+    pub(crate) digest: Option<String>,
+    pub(crate) platform: UpdatePlatform,
 }
 
-/// Error produced while fetching one remote manifest.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RemoteFetchFailure {
-    pub(crate) source: UpdateSource,
-    pub(crate) kind: RemoteFetchFailureKind,
-    detail: String,
-}
-
-impl RemoteFetchFailure {
-    fn new(source: UpdateSource, kind: RemoteFetchFailureKind, detail: impl Into<String>) -> Self {
-        Self {
-            source,
-            kind,
-            detail: detail.into(),
-        }
-    }
-
-    fn timeout(source: UpdateSource, detail: impl Into<String>) -> Self {
-        Self::new(source, RemoteFetchFailureKind::Timeout, detail)
-    }
-
-    fn is_timeout(&self) -> bool {
-        self.kind == RemoteFetchFailureKind::Timeout
-    }
-}
-
-impl fmt::Display for RemoteFetchFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} update manifest fetch failed: {}",
-            self.source, self.detail
-        )
-    }
-}
-
-impl std::error::Error for RemoteFetchFailure {}
-
-/// Error returned by the full update-check pipeline.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum UpdateCheckError {
-    /// No usable remote manifest could be fetched.
-    Fetch(RemoteFetchFailure),
-    /// The manifest was fetched but could not produce a valid package version.
-    ParseVersion(String),
-}
-
-impl fmt::Display for UpdateCheckError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Fetch(error) => write!(f, "{error}"),
-            Self::ParseVersion(detail) => write!(f, "{detail}"),
-        }
-    }
-}
-
-impl std::error::Error for UpdateCheckError {}
-
-/// Version comparison result used by the editor UI.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum UpdateCheckResult {
-    /// The remote version is newer than the running build.
-    UpdateAvailable(UpdateVersionInfo),
-    /// The running build is at least as new as the remote version.
-    UpToDate(UpdateVersionInfo),
-}
-
-/// Version data shown in localized update prompts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UpdateVersionInfo {
     pub(crate) current_version: String,
     pub(crate) latest_version: String,
     pub(crate) source: UpdateSource,
+    pub(crate) release_url: String,
+    pub(crate) package: Option<UpdatePackage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckResult {
+    UpdateAvailable(UpdateVersionInfo),
+    UpToDate(UpdateVersionInfo),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCheckError {
+    Fetch(String),
+    ParseVersion(String),
+}
+impl fmt::Display for UpdateCheckError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fetch(detail) | Self::ParseVersion(detail) => formatter.write_str(detail),
+        }
+    }
+}
+impl std::error::Error for UpdateCheckError {}
+
+#[derive(Deserialize)]
+struct Release {
+    tag_name: String,
+    html_url: String,
+    draft: bool,
+    prerelease: bool,
+    published_at: Option<String>,
+    #[serde(default)]
+    assets: Vec<ReleaseAsset>,
+}
+#[derive(Deserialize)]
+struct ReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+    state: String,
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 pub(crate) fn check_latest_version(
     current_version: &str,
 ) -> Result<UpdateCheckResult, UpdateCheckError> {
-    check_latest_version_with(current_version, fetch_remote_cargo_toml)
+    check_latest_version_with_options(current_version, false)
+}
+pub(crate) fn check_latest_version_with_options(
+    current_version: &str,
+    include_prereleases: bool,
+) -> Result<UpdateCheckResult, UpdateCheckError> {
+    let platform = UpdatePlatform::current()
+        .ok_or_else(|| UpdateCheckError::Fetch("当前平台没有可用的安装包".into()))?;
+    let client = update_client(Duration::from_secs(15))
+        .map_err(|error| UpdateCheckError::Fetch(error.to_string()))?;
+    let mut body = String::new();
+    client
+        .get(RELEASES_API_URL)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| UpdateCheckError::Fetch(error.to_string()))?
+        .take(8 * 1024 * 1024)
+        .read_to_string(&mut body)
+        .map_err(|error| UpdateCheckError::Fetch(error.to_string()))?;
+    select_release(&body, current_version, include_prereleases, platform)
 }
 
+#[cfg(test)]
 fn check_latest_version_with<F>(
     current_version: &str,
     mut fetch: F,
 ) -> Result<UpdateCheckResult, UpdateCheckError>
 where
-    F: FnMut(UpdateSource) -> Result<String, RemoteFetchFailure>,
+    F: FnMut(UpdateSource) -> Result<String, UpdateCheckError>,
 {
-    match fetch(UpdateSource::GitHub) {
-        Ok(manifest) => compare_manifest_version(current_version, &manifest, UpdateSource::GitHub),
-        Err(error) if error.is_timeout() => {
-            let manifest = fetch(UpdateSource::Gitee).map_err(UpdateCheckError::Fetch)?;
-            compare_manifest_version(current_version, &manifest, UpdateSource::Gitee)
-        }
-        Err(error) => Err(UpdateCheckError::Fetch(error)),
-    }
+    select_release(
+        &fetch(UpdateSource::GitHub)?,
+        current_version,
+        false,
+        UpdatePlatform::MacOsArm64,
+    )
 }
 
-fn compare_manifest_version(
+fn select_release(
+    body: &str,
     current_version: &str,
-    manifest: &str,
-    source: UpdateSource,
+    include_prereleases: bool,
+    platform: UpdatePlatform,
 ) -> Result<UpdateCheckResult, UpdateCheckError> {
-    let current = parse_semver(current_version, "current app version")?;
-    let latest_text = extract_package_version(manifest)?;
-    let latest = parse_semver(&latest_text, "remote Cargo.toml version")?;
-    let info = UpdateVersionInfo {
-        current_version: current_version.to_string(),
-        latest_version: latest_text,
-        source,
-    };
-
-    if latest > current {
-        Ok(UpdateCheckResult::UpdateAvailable(info))
-    } else {
-        Ok(UpdateCheckResult::UpToDate(info))
-    }
-}
-
-fn parse_semver(version: &str, label: &str) -> Result<Version, UpdateCheckError> {
-    Version::parse(version).map_err(|err| {
-        UpdateCheckError::ParseVersion(format!("{label} '{version}' is not valid SemVer: {err}"))
-    })
-}
-
-pub(crate) fn extract_package_version(manifest: &str) -> Result<String, UpdateCheckError> {
-    let parsed: toml::Value = toml::from_str(manifest).map_err(|err| {
-        UpdateCheckError::ParseVersion(format!("failed to parse remote Cargo.toml: {err}"))
-    })?;
-    parsed
-        .get("package")
-        .and_then(|package| package.get("version"))
-        .and_then(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|version| !version.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            UpdateCheckError::ParseVersion(
-                "remote Cargo.toml does not contain [package].version".to_string(),
-            )
+    let current = Version::parse(current_version)
+        .map_err(|error| UpdateCheckError::ParseVersion(error.to_string()))?;
+    let releases: Vec<Release> = serde_json::from_str(body)
+        .map_err(|error| UpdateCheckError::Fetch(format!("无法读取 GitHub Release：{error}")))?;
+    let latest = releases
+        .into_iter()
+        .filter_map(|release| {
+            if release.draft || release.published_at.is_none() {
+                return None;
+            }
+            let version = match Version::parse(
+                release
+                    .tag_name
+                    .strip_prefix('v')
+                    .unwrap_or(&release.tag_name),
+            ) {
+                Ok(version) => version,
+                Err(error) => {
+                    eprintln!("忽略无效发布标签 {}：{error}", release.tag_name);
+                    return None;
+                }
+            };
+            if !include_prereleases && (release.prerelease || !version.pre.is_empty()) {
+                return None;
+            }
+            Some((version, release))
         })
+        .max_by(|left, right| left.0.cmp(&right.0))
+        .ok_or_else(|| UpdateCheckError::Fetch("尚无可用的已发布版本".into()))?;
+    let (version, release) = latest;
+    let mut info = UpdateVersionInfo {
+        current_version: current_version.into(),
+        latest_version: version.to_string(),
+        source: UpdateSource::GitHub,
+        release_url: release.html_url,
+        package: None,
+    };
+    if version <= current {
+        return Ok(UpdateCheckResult::UpToDate(info));
+    }
+    let expected_name = platform.asset_name(&version);
+    let asset = release
+        .assets
+        .into_iter()
+        .find(|asset| asset.name == expected_name && asset.state == "uploaded")
+        .ok_or_else(|| UpdateCheckError::Fetch("新版本暂时没有适用于当前系统的安装包".into()))?;
+    let package = UpdatePackage {
+        name: asset.name,
+        url: asset.browser_download_url,
+        size: asset.size,
+        digest: asset.digest,
+        platform,
+    };
+    validate_package(&package).map_err(|error| UpdateCheckError::Fetch(error.to_string()))?;
+    info.package = Some(package);
+    Ok(UpdateCheckResult::UpdateAvailable(info))
 }
 
-fn fetch_remote_cargo_toml(source: UpdateSource) -> Result<String, RemoteFetchFailure> {
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::limited(10))
+fn update_client(timeout: Duration) -> anyhow::Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.url().scheme() != "https" {
+                attempt.error("更新请求禁止跳转到非 HTTPS 地址")
+            } else if attempt.previous().len() >= 10 {
+                attempt.error("更新请求跳转次数过多")
+            } else {
+                attempt.follow()
+            }
+        }))
         .default_headers(update_request_headers())
         .build()
-        .map_err(|err| {
-            RemoteFetchFailure::new(
-                source,
-                RemoteFetchFailureKind::Network,
-                format!("failed to build HTTP client: {err}"),
-            )
-        })?;
-
-    let response = client.get(source.url()).send().map_err(|err| {
-        if err.is_timeout() {
-            RemoteFetchFailure::timeout(source, "request timed out after 5 seconds".to_string())
-        } else {
-            RemoteFetchFailure::new(source, RemoteFetchFailureKind::Network, err.to_string())
-        }
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(RemoteFetchFailure::new(
-            source,
-            RemoteFetchFailureKind::HttpStatus,
-            format!("server returned HTTP {status}"),
-        ));
-    }
-
-    response.text().map_err(|err| {
-        RemoteFetchFailure::new(source, RemoteFetchFailureKind::Body, err.to_string())
-    })
+        .context("创建更新连接失败")
 }
-
 fn update_request_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_static(UPDATE_USER_AGENT));
-    headers.insert(ACCEPT, HeaderValue::from_static(UPDATE_ACCEPT));
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static(concat!("Velora/", env!("CARGO_PKG_VERSION"))),
+    );
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github+json"),
+    );
+    headers.insert(
+        "X-GitHub-Api-Version",
+        HeaderValue::from_static("2026-03-10"),
+    );
     headers
+}
+fn validate_package(package: &UpdatePackage) -> anyhow::Result<()> {
+    let url = reqwest::Url::parse(&package.url)?;
+    ensure!(
+        url.scheme() == "https"
+            && url.host_str() == Some("github.com")
+            && package.url.starts_with(&format!("{RELEASES_URL}/download/"))
+            && url.username().is_empty()
+            && url.password().is_none(),
+        "安装包地址不属于 Velora 官方发布"
+    );
+    ensure!(
+        package.size > 0 && package.size <= MAX_PACKAGE_BYTES,
+        "安装包大小无效"
+    );
+    ensure!(
+        Path::new(&package.name)
+            .file_name()
+            .is_some_and(|name| name == package.name.as_str()),
+        "安装包名称无效"
+    );
+    if let Some(digest) = &package.digest {
+        let checksum = digest
+            .strip_prefix("sha256:")
+            .context("不支持的安装包校验类型")?;
+        ensure!(
+            checksum.len() == 64 && checksum.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "安装包校验值无效"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn updates_dir() -> anyhow::Result<PathBuf> {
+    Ok(crate::config::VeloraConfigDirs::from_system()?
+        .app_config_file()
+        .with_file_name("updates"))
+}
+pub(crate) fn download_package(
+    package: &UpdatePackage,
+    cancelled: &AtomicBool,
+    mut progress: impl FnMut(u64),
+) -> anyhow::Result<PathBuf> {
+    validate_package(package)?;
+    ensure!(package.digest.is_some(), "发布版本缺少安装包校验信息");
+    let directory = updates_dir()?.join(uuid::Uuid::new_v4().to_string());
+    fs::create_dir_all(&directory)?;
+    let target = directory.join(&package.name);
+    let partial = target.with_extension("part");
+    let result = (|| {
+        let response = update_client(Duration::from_secs(600))?
+            .get(&package.url)
+            .send()?
+            .error_for_status()?;
+        let mut file = fs::File::create(&partial)?;
+        receive_package(response, package, &mut file, cancelled, &mut progress)?;
+        file.sync_all()?;
+        fs::rename(&partial, &target)?;
+        Ok(target)
+    })();
+    if result.is_err() {
+        if let Err(error) = fs::remove_dir_all(&directory) {
+            eprintln!("清理更新下载失败：{error}");
+        }
+    }
+    result
+}
+fn receive_package(
+    mut reader: impl Read,
+    package: &UpdatePackage,
+    writer: &mut impl Write,
+    cancelled: &AtomicBool,
+    progress: &mut impl FnMut(u64),
+) -> anyhow::Result<()> {
+    let mut bytes = [0u8; 65536];
+    let mut total = 0u64;
+    let mut checksum = Sha256::new();
+    let mut magic = Vec::new();
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            bail!("更新下载已取消");
+        }
+        let count = reader.read(&mut bytes)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        ensure!(
+            total <= package.size && total <= MAX_PACKAGE_BYTES,
+            "安装包超过声明的大小"
+        );
+        if magic.len() < 4 {
+            magic.extend(bytes.iter().take(count.min(4 - magic.len())));
+        }
+        checksum.update(&bytes[..count]);
+        writer.write_all(&bytes[..count])?;
+        progress(total);
+    }
+    ensure!(total == package.size, "安装包下载不完整");
+    ensure!(
+        magic.starts_with(package.platform.magic()),
+        "安装包格式无效"
+    );
+    let actual = format!("{:x}", checksum.finalize());
+    let expected = package
+        .digest
+        .as_ref()
+        .and_then(|digest| digest.strip_prefix("sha256:"))
+        .context("发布版本缺少安装包校验信息")?;
+    ensure!(actual.eq_ignore_ascii_case(expected), "安装包校验失败");
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        RemoteFetchFailure, RemoteFetchFailureKind, UpdateCheckError, UpdateCheckResult,
-        UpdateSource, check_latest_version_with, extract_package_version,
-    };
-    use std::cell::RefCell;
-
-    #[test]
-    fn extracts_package_version_from_cargo_toml() {
-        let manifest = r#"
-            [package]
-            name = "velora-dark"
-            version = "0.2.2"
-        "#;
-
-        assert_eq!(extract_package_version(manifest).unwrap(), "0.2.2");
+    use super::*;
+    fn release(
+        version: &str,
+        prerelease: bool,
+        draft: bool,
+        platform: UpdatePlatform,
+    ) -> serde_json::Value {
+        let version = Version::parse(version).unwrap();
+        let name = platform.asset_name(&version);
+        serde_json::json!({"tag_name":format!("v{version}"),"html_url":RELEASES_URL,"draft":draft,"prerelease":prerelease,"published_at":"2026-10-10T00:00:00Z","assets":[{"name":name,"browser_download_url":format!("{RELEASES_URL}/download/v{version}/{name}"),"size":8,"state":"uploaded"}]})
     }
-
     #[test]
-    fn reports_update_when_remote_version_is_newer() {
-        let result =
-            check_latest_version_with(
-                "0.2.1",
-                |_| Ok("[package]\nversion = \"0.2.2\"".to_string()),
-            )
-            .unwrap();
-
-        match result {
-            UpdateCheckResult::UpdateAvailable(info) => {
-                assert_eq!(info.current_version, "0.2.1");
-                assert_eq!(info.latest_version, "0.2.2");
-                assert_eq!(info.source, UpdateSource::GitHub);
-            }
-            _ => panic!("expected an available update"),
-        }
-    }
-
-    #[test]
-    fn reports_up_to_date_when_remote_version_is_same_or_older() {
-        let same =
-            check_latest_version_with(
-                "0.2.1",
-                |_| Ok("[package]\nversion = \"0.2.1\"".to_string()),
-            )
-            .unwrap();
-        assert!(matches!(same, UpdateCheckResult::UpToDate(_)));
-
-        let older =
-            check_latest_version_with(
-                "0.2.1",
-                |_| Ok("[package]\nversion = \"0.2.0\"".to_string()),
-            )
-            .unwrap();
-        assert!(matches!(older, UpdateCheckResult::UpToDate(_)));
-    }
-
-    #[test]
-    fn falls_back_to_gitee_only_after_github_timeout() {
-        let calls = RefCell::new(Vec::new());
-        let result = check_latest_version_with("0.2.1", |source| {
-            calls.borrow_mut().push(source);
-            match source {
-                UpdateSource::GitHub => Err(RemoteFetchFailure::timeout(
-                    UpdateSource::GitHub,
-                    "timed out",
-                )),
-                UpdateSource::Gitee => Ok("[package]\nversion = \"0.2.2\"".to_string()),
-            }
-        })
+    fn checks_a_published_release_instead_of_the_branch_manifest() {
+        let body = serde_json::to_string(&vec![release(
+            "0.2.5",
+            false,
+            false,
+            UpdatePlatform::MacOsArm64,
+        )])
         .unwrap();
-
-        assert_eq!(
-            calls.into_inner(),
-            vec![UpdateSource::GitHub, UpdateSource::Gitee]
+        assert!(
+            matches!(check_latest_version_with("0.2.4", |_| Ok(body.clone())), Ok(UpdateCheckResult::UpdateAvailable(info)) if info.latest_version == "0.2.5")
         );
-        match result {
-            UpdateCheckResult::UpdateAvailable(info) => {
-                assert_eq!(info.source, UpdateSource::Gitee);
-            }
-            _ => panic!("expected an available update from Gitee"),
+    }
+    #[test]
+    fn stable_channel_skips_beta_and_draft_releases() {
+        let body = serde_json::to_string(&vec![
+            release("0.2.6-beta.1", true, false, UpdatePlatform::MacOsArm64),
+            release("0.2.7", false, true, UpdatePlatform::MacOsArm64),
+            release("0.2.5", false, false, UpdatePlatform::MacOsArm64),
+        ])
+        .unwrap();
+        let result = select_release(&body, "0.2.4", false, UpdatePlatform::MacOsArm64).unwrap();
+        assert!(
+            matches!(result,UpdateCheckResult::UpdateAvailable(info) if info.latest_version == "0.2.5")
+        );
+        let result = select_release(&body, "0.2.4", true, UpdatePlatform::MacOsArm64).unwrap();
+        assert!(
+            matches!(result,UpdateCheckResult::UpdateAvailable(info) if info.latest_version == "0.2.6-beta.1")
+        );
+    }
+    #[test]
+    fn installer_selection_matches_each_supported_architecture() {
+        for platform in [
+            UpdatePlatform::MacOsArm64,
+            UpdatePlatform::MacOsX64,
+            UpdatePlatform::WindowsX64,
+        ] {
+            let body =
+                serde_json::to_string(&vec![release("0.2.5", false, false, platform)]).unwrap();
+            let UpdateCheckResult::UpdateAvailable(info) =
+                select_release(&body, "0.2.4", false, platform).unwrap()
+            else {
+                panic!("更新");
+            };
+            assert_eq!(info.package.unwrap().platform, platform);
         }
     }
-
     #[test]
-    fn does_not_fall_back_after_non_timeout_github_error() {
-        let calls = RefCell::new(Vec::new());
-        let error = check_latest_version_with("0.2.1", |source| {
-            calls.borrow_mut().push(source);
-            Err(RemoteFetchFailure::new(
-                source,
-                RemoteFetchFailureKind::HttpStatus,
-                "server returned HTTP 404",
-            ))
-        })
-        .expect_err("non-timeout GitHub errors should stop the check");
-
-        assert_eq!(calls.into_inner(), vec![UpdateSource::GitHub]);
-        assert!(matches!(error, UpdateCheckError::Fetch(_)));
+    fn current_or_newer_build_does_not_require_an_installer() {
+        let body = serde_json::to_string(&vec![release(
+            "0.2.4",
+            false,
+            false,
+            UpdatePlatform::MacOsArm64,
+        )])
+        .unwrap();
+        assert!(matches!(
+            select_release(&body, "0.2.5", false, UpdatePlatform::WindowsX64),
+            Ok(UpdateCheckResult::UpToDate(_))
+        ));
     }
-
     #[test]
-    fn rejects_invalid_or_missing_versions() {
-        assert!(extract_package_version("not toml").is_err());
-        assert!(extract_package_version("[package]\nname = \"velora\"").is_err());
-
-        let error = check_latest_version_with("0.2.1", |_| {
-            Ok("[package]\nversion = \"not-a-version\"".to_string())
-        })
-        .expect_err("invalid SemVer should fail");
-        assert!(matches!(error, UpdateCheckError::ParseVersion(_)));
+    fn verified_download_rejects_corruption_wrong_format_and_truncation() {
+        let bytes = b"xar!test";
+        let package = UpdatePackage {
+            name: "velora.pkg".into(),
+            url: format!("{RELEASES_URL}/download/v0.2.5/velora.pkg"),
+            size: 8,
+            digest: Some(format!("sha256:{:x}", Sha256::digest(bytes))),
+            platform: UpdatePlatform::MacOsArm64,
+        };
+        let cancelled = AtomicBool::new(false);
+        assert!(
+            receive_package(
+                std::io::Cursor::new(bytes),
+                &package,
+                &mut Vec::new(),
+                &cancelled,
+                &mut |_| {}
+            )
+            .is_ok()
+        );
+        for source in [
+            b"xar!bad!".as_slice(),
+            b"notapkg!".as_slice(),
+            b"xar!".as_slice(),
+        ] {
+            assert!(
+                receive_package(
+                    std::io::Cursor::new(source),
+                    &package,
+                    &mut Vec::new(),
+                    &cancelled,
+                    &mut |_| {}
+                )
+                .is_err()
+            );
+        }
+        cancelled.store(true, Ordering::Relaxed);
+        assert!(
+            receive_package(
+                std::io::Cursor::new(bytes),
+                &package,
+                &mut Vec::new(),
+                &cancelled,
+                &mut |_| {}
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn installer_download_refuses_unofficial_hosts() {
+        let mut package = UpdatePackage {
+            name: "velora.pkg".into(),
+            url: "https://example.com/velora.pkg".into(),
+            size: 8,
+            digest: None,
+            platform: UpdatePlatform::MacOsArm64,
+        };
+        assert!(validate_package(&package).is_err());
+        package.url = "http://github.com/sheriby/velora/releases/download/v0.2.5/velora.pkg".into();
+        assert!(validate_package(&package).is_err());
     }
 }

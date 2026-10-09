@@ -136,6 +136,7 @@ impl Editor {
     }
 
     pub(crate) fn abort_pending_close_after_save(&mut self, cx: &mut Context<Self>) {
+        super::cancel_pending_install(cx);
         let had_pending_close = self.pending_close_after_save;
         self.pending_close_after_save = false;
         self.close_menu_bar(cx);
@@ -177,6 +178,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        super::cancel_pending_install(cx);
         self.pending_close_after_save = false;
         self.close_menu_bar(cx);
         self.hide_unsaved_changes_dialog(cx);

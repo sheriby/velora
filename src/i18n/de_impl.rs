@@ -50,6 +50,13 @@ impl I18nStringsDe {
             help_check_updates_message: self
                 .help_check_updates_message
                 .unwrap_or(defaults.help_check_updates_message),
+            preferences_updates_startup: self.preferences_updates_startup.unwrap_or(defaults.preferences_updates_startup),
+            preferences_updates_beta: self.preferences_updates_beta.unwrap_or(defaults.preferences_updates_beta),
+            update_install: self.update_install.unwrap_or(defaults.update_install),
+            update_skip_version: self.update_skip_version.unwrap_or(defaults.update_skip_version),
+            update_downloading: self.update_downloading.unwrap_or(defaults.update_downloading),
+            update_preparing: self.update_preparing.unwrap_or(defaults.update_preparing),
+            update_restart_notice: self.update_restart_notice.unwrap_or(defaults.update_restart_notice),
             update_available_title: self
                 .update_available_title
                 .unwrap_or(defaults.update_available_title),

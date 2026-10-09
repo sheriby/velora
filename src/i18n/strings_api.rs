@@ -34,12 +34,19 @@ impl I18nStrings {
             info_dialog_ok: "确定".into(),
             help_check_updates_title: "检查更新".into(),
             help_check_updates_message: "正在检查 Velora 的最新版本...".into(),
+            preferences_updates_startup: "启动时检查更新".into(),
+            preferences_updates_beta: "包含预发布版本（beta）".into(),
+            update_install: "确认".into(),
+            update_skip_version: "不再提醒此版本".into(),
+            update_downloading: "正在下载更新 {percent}%".into(),
+            update_preparing: "正在准备安装并重启…".into(),
+            update_restart_notice: "安装更新后将重新启动。".into(),
             update_available_title: "发现新版本".into(),
             update_available_message_template:
-                "当前版本：{current}\n最新版本：{latest}\n是否前往 GitHub Releases 下载？".into(),
+                "当前版本：{current}\n新版本：{latest}".into(),
             update_up_to_date_title: "已是最新版本".into(),
             update_up_to_date_message_template: "当前版本：{current}\n远程版本：{latest}".into(),
-            update_failed_title: "检查更新失败".into(),
+            update_failed_title: "更新失败".into(),
             update_failed_message_template: "无法完成在线更新检查：{error}".into(),
             update_open_release: "前往下载".into(),
             update_later: "稍后".into(),
@@ -420,15 +427,22 @@ impl I18nStrings {
             info_dialog_ok: "OK".into(),
             help_check_updates_title: "Check for Updates".into(),
             help_check_updates_message: "Checking the latest Velora version...".into(),
+            preferences_updates_startup: "Check for updates on startup".into(),
+            preferences_updates_beta: "Include prerelease versions (beta)".into(),
+            update_install: "Confirm".into(),
+            update_skip_version: "Skip this version".into(),
+            update_downloading: "Downloading update {percent}%".into(),
+            update_preparing: "Preparing to install and restart…".into(),
+            update_restart_notice: "The application will restart after installation.".into(),
             update_available_title: "Update Available".into(),
             update_available_message_template:
-                "Current version: {current}\nLatest version: {latest}\nOpen GitHub Releases to download it?"
+                "Current version: {current}\nNew version: {latest}"
                     .into(),
             update_up_to_date_title: "You're Up to Date".into(),
             update_up_to_date_message_template:
                 "Current version: {current}\nRemote version: {latest}".into(),
-            update_failed_title: "Update Check Failed".into(),
-            update_failed_message_template: "Unable to complete the online update check: {error}"
+            update_failed_title: "Update Failed".into(),
+            update_failed_message_template: "Unable to complete the update: {error}"
                 .into(),
             update_open_release: "Open Releases".into(),
             update_later: "Later".into(),

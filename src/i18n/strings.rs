@@ -36,6 +36,13 @@ pub struct I18nStrings {
     /// Body text shown while an update check is running.
     pub help_check_updates_message: String,
     /// Title shown when a newer version is available.
+    pub preferences_updates_startup: String,
+    pub preferences_updates_beta: String,
+    pub update_install: String,
+    pub update_skip_version: String,
+    pub update_downloading: String,
+    pub update_preparing: String,
+    pub update_restart_notice: String,
     pub update_available_title: String,
     /// Message template for newer-version prompts. Supports `{current}` and `{latest}`.
     pub update_available_message_template: String,

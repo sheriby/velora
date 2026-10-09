@@ -13,6 +13,10 @@ pub(crate) enum PreferencesNav {
 pub(crate) struct PreferencesWindow {
     pub(super) nav: PreferencesNav,
     pub(super) startup_open: StartupOpenPreference,
+    pub(super) check_updates_on_startup: bool,
+    pub(super) include_prereleases: bool,
+    saved_check_updates_on_startup: bool,
+    saved_include_prereleases: bool,
     pub(super) selected_theme_id: String,
     pub(super) image_paste_behavior: ImagePasteBehavior,
     pub(super) fonts: FontPreferences,
@@ -113,6 +117,10 @@ impl PreferencesWindow {
         let delete_policy = preferences.delete_policy;
         Self {
             nav: PreferencesNav::File,
+            check_updates_on_startup: preferences.updates.check_on_startup,
+            include_prereleases: preferences.updates.include_prereleases,
+            saved_check_updates_on_startup: preferences.updates.check_on_startup,
+            saved_include_prereleases: preferences.updates.include_prereleases,
             startup_open,
             selected_theme_id: selected_theme_id.clone(),
             image_paste_behavior,
@@ -202,7 +210,9 @@ impl PreferencesWindow {
     }
 
     pub(crate) fn has_unsaved_changes(&self) -> bool {
-        self.startup_open != self.saved_startup_open
+        self.check_updates_on_startup != self.saved_check_updates_on_startup
+            || self.include_prereleases != self.saved_include_prereleases
+            || self.startup_open != self.saved_startup_open
             || self.selected_theme_id != self.saved_theme_id
             || self.image_paste_behavior != self.saved_image_paste_behavior
             || self.fonts != self.saved_fonts
@@ -448,6 +458,8 @@ impl PreferencesWindow {
             self.default_window_height,
             self.external_change_policy,
             self.delete_policy,
+            self.check_updates_on_startup,
+            self.include_prereleases,
         ) {
             Ok(preferences) => preferences,
             Err(err) => {
@@ -475,6 +487,7 @@ impl PreferencesWindow {
             settings.default_window_width = self.default_window_width;
             settings.default_window_height = self.default_window_height;
         });
+        EditorSettings::set_updates_in_memory(cx, preferences.updates.clone());
         self.apply_saved_preferences(preferences, window, cx);
     }
 
@@ -526,6 +539,8 @@ impl PreferencesWindow {
         self.saved_tree_sort = self.tree_sort;
         self.saved_autosave_debounce_ms = self.autosave_debounce_ms;
         self.saved_autosave = self.autosave;
+        self.saved_check_updates_on_startup = self.check_updates_on_startup;
+        self.saved_include_prereleases = self.include_prereleases;
         self.saved_remember_window_bounds = self.remember_window_bounds;
         self.saved_window_open_position = self.window_open_position;
         self.saved_smart_punctuation = self.smart_punctuation;

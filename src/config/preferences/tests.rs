@@ -368,7 +368,7 @@
         ));
         let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = AppPreferences {
-            startup_open: StartupOpenPreference::LastOpenedFile,
+            updates: super::UpdatePreferences::default(),            startup_open: StartupOpenPreference::LastOpenedFile,
             default_language_id: "zh-CN".into(),
             default_theme_id: "velora-light".into(),
             export_theme: ExportThemePreference::Dark,
@@ -495,7 +495,7 @@
         ));
         let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = AppPreferences {
-            startup_open: StartupOpenPreference::NewFile,
+            updates: super::UpdatePreferences::default(),            startup_open: StartupOpenPreference::NewFile,
             smart_punctuation: false,
             external_change_policy: ExternalChangePolicy::Auto,
             delete_policy: DeletePolicy::Trash,
@@ -543,6 +543,8 @@
             800,
             ExternalChangePolicy::Manual,
             DeletePolicy::Permanent,
+            true,
+            false,
             &dirs,
         )
         .expect("window preferences should save");
@@ -857,3 +859,14 @@
                 .expect("preferences window should remain updateable")
         );
     }
+
+#[test]
+fn update_preferences_default_to_startup_checks_and_preserve_beta_and_skip_settings() {
+    let defaults = toml::Value::try_from(super::PreferencesFile::from(&AppPreferences::default())).expect("默认配置");
+    assert_eq!(defaults.get("updates").and_then(|updates| updates.get("check_on_startup")).and_then(toml::Value::as_bool), Some(true), "默认应启动检查更新");
+    let value: toml::Value = toml::from_str("[updates]\ncheck_on_startup = false\ninclude_prereleases = true\nignored_version = '0.2.5'").expect("更新设置");
+    let (preferences, _) = super::load_preferences_from_toml_value(&value, "en-US");
+    let saved = toml::Value::try_from(super::PreferencesFile::from(&preferences)).expect("持久化");
+    assert_eq!(saved.get("updates").and_then(|updates| updates.get("include_prereleases")).and_then(toml::Value::as_bool), Some(true));
+    assert_eq!(saved.get("updates").and_then(|updates| updates.get("ignored_version")).and_then(toml::Value::as_str), Some("0.2.5"));
+}

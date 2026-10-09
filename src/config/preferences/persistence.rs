@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Serialize)]
 pub(crate) struct PreferencesFile {
+    updates: UpdatePreferences,
     preferences_version: i64,
     startup: StartupPreferencesFile,
     language: LanguagePreferencesFile,
@@ -122,6 +123,7 @@ impl From<&AppPreferences> for PreferencesFile {
     fn from(value: &AppPreferences) -> Self {
         Self {
             preferences_version: PREFERENCES_VERSION,
+            updates: value.updates.clone(),
             startup: StartupPreferencesFile {
                 open: value.startup_open.as_str().into(),
             },
@@ -493,7 +495,13 @@ pub(crate) fn app_preferences_from_toml_value(
         })
         .filter(|frame| frame.width > 200 && frame.height > 200);
 
+    let updates = UpdatePreferences {
+        check_on_startup: value.get("updates").and_then(|updates| updates.get("check_on_startup")).and_then(toml::Value::as_bool).unwrap_or(true),
+        include_prereleases: value.get("updates").and_then(|updates| updates.get("include_prereleases")).and_then(toml::Value::as_bool).unwrap_or(false),
+        ignored_version: value.get("updates").and_then(|updates| updates.get("ignored_version")).and_then(toml::Value::as_str).unwrap_or_default().into(),
+    };
     AppPreferences {
+        updates,
         startup_open,
         default_language_id,
         default_theme_id,
@@ -665,6 +673,8 @@ pub(crate) fn save_preferences_from_window(
     default_window_height: i64,
     external_change_policy: ExternalChangePolicy,
     delete_policy: DeletePolicy,
+    check_updates_on_startup: bool,
+    include_prereleases: bool,
 ) -> anyhow::Result<AppPreferences> {
     let dirs = VeloraConfigDirs::from_system()?;
     save_preferences_from_window_with_dirs(
@@ -686,6 +696,8 @@ pub(crate) fn save_preferences_from_window(
         default_window_height,
         external_change_policy,
         delete_policy,
+        check_updates_on_startup,
+        include_prereleases,
         &dirs,
     )
 }
@@ -710,10 +722,14 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     default_window_height: i64,
     external_change_policy: ExternalChangePolicy,
     delete_policy: DeletePolicy,
+    check_updates_on_startup: bool,
+    include_prereleases: bool,
     dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
     let mut preferences =
         load_or_create_app_preferences_with_dirs_and_locales(dirs, sys_locale::get_locales())?;
+    preferences.updates.check_on_startup = check_updates_on_startup;
+    preferences.updates.include_prereleases = include_prereleases;
     preferences.startup_open = startup_open;
     preferences.default_theme_id = default_theme_id.into();
     preferences.image_paste_behavior = image_paste_behavior;

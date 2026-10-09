@@ -232,10 +232,18 @@ impl PreferencesWindow {
                 cx.notify();
             }));
 
+        let update_startup = crate::components::switch::Switch::new("preferences-update-startup")
+            .checked(self.check_updates_on_startup)
+            .on_click(cx.listener(|this, _, _, cx| { this.check_updates_on_startup = !this.check_updates_on_startup; cx.notify(); }));
+        let update_beta = crate::components::switch::Switch::new("preferences-update-beta")
+            .checked(self.include_prereleases)
+            .on_click(cx.listener(|this, _, _, cx| { this.include_prereleases = !this.include_prereleases; cx.notify(); }));
         self.settings_card(
             theme,
             vec![
                 self.settings_row(theme, strings.preferences_startup_option.clone(), dropdown),
+                self.settings_row(theme, strings.preferences_updates_startup.clone(), update_startup),
+                self.settings_row(theme, strings.preferences_updates_beta.clone(), update_beta),
                 self.settings_row(
                     theme,
                     strings.preferences_file_tree_sort.clone(),
