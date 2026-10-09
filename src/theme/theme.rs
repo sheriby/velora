@@ -382,10 +382,9 @@ pub struct ThemeDimensions {
     pub table_append_activation_band: f32,
     /// Corner radius of rendered images and image placeholders.
     pub image_radius: f32,
-    /// Maximum height of rendered root-paragraph images.
+    /// 图片最大高度；0 表示按原图比例排版，不设固定高度上限。
     pub image_root_max_height: f32,
-    /// Maximum width of rendered root-paragraph images; wider images are
-    /// downscaled instead of filling the whole text column.
+    /// 图片最大宽度；0 表示以正文容器宽度的 90% 作为缩放 100% 的基准。
     pub image_root_max_width: f32,
     /// Maximum height of rendered table-cell images.
     pub image_cell_max_height: f32,

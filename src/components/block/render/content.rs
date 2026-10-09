@@ -515,10 +515,8 @@ impl Block {
             Length::Definite(relative(zoom)),
             px(theme.dimensions.image_root_max_height * zoom),
             px(theme.dimensions.image_root_placeholder_height * zoom),
-            false,
             theme,
             &strings,
-            cx,
         );
         if let Some(bg) = node_style.background {
             div().w_full().bg(bg).child(content).into_any_element()

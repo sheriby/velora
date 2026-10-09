@@ -50,8 +50,6 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "image_reveal_in_file_manager",
     "image_copy_address",
     "image_scale",
-    "image_scale_apply",
-    "image_scale_invalid",
     "file_history_empty",
     "menu_quit",
     "menu_export_html",

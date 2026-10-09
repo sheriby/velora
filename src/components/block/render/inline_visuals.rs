@@ -12,31 +12,30 @@ impl Block {
         cx.notify();
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_image_content(
         &self,
         runtime: &ImageRuntime,
         max_width: Length,
         max_height: Pixels,
         placeholder_height: Pixels,
-        resizable: bool,
         theme: &Theme,
         strings: &I18nStrings,
-        cx: &mut Context<Self>,
     ) -> AnyElement {
+        let fit_container_width = self.image_runtime().is_some() && !self.is_table_cell();
         let scale = if self.image_runtime().is_some() {
             self.image_width_factor
         } else {
             1.0
         };
+        let width_scale = scale * if fit_container_width { 0.90 } else { 1.0 };
         let max_width = match max_width {
             Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(width))) => {
-                (width * scale).into()
+                (width * width_scale).into()
             }
             Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Rems(width))) => {
-                rems(width.0 * scale).into()
+                rems(width.0 * width_scale).into()
             }
-            Length::Definite(DefiniteLength::Fraction(width)) => relative(width * scale).into(),
+            Length::Definite(DefiniteLength::Fraction(width)) => relative(width * width_scale).into(),
             Length::Auto => Length::Auto,
         };
         let max_height = max_height * scale;
@@ -58,68 +57,53 @@ impl Block {
         }
         .image_scale(scale)
         .debug_selector(|| "image-content".to_string())
-        .max_w(max_width)
-        .max_h(max_height)
+        .when(fit_container_width, |this| this.w_full())
+        .max_w(relative(1.0))
+        .when(max_height > px(0.0), |this| this.max_h(max_height))
         .object_fit(ObjectFit::Contain)
         .with_fallback(move || {
-            render_image_placeholder(
-                &runtime_for_fallback,
-                max_width,
-                placeholder_height,
-                &placeholder_theme,
-                &placeholder_strings,
-            )
+            // 失败提示按内容收紧，不能继承正常图片铺满容器的宽度。
+            div()
+                .min_w(px(0.0))
+                .flex()
+                .justify_center()
+                .child(render_image_placeholder(
+                    &runtime_for_fallback,
+                    relative(1.0).into(),
+                    placeholder_height,
+                    &placeholder_theme,
+                    &placeholder_strings,
+                ))
+                .into_any_element()
         })
         .with_loading(move || {
             render_loading_placeholder(
                 &runtime_for_loading,
-                max_width,
+                relative(1.0).into(),
                 placeholder_height,
                 &loading_theme,
                 &loading_strings,
             )
         });
 
-        let image_host = if resizable {
-            div()
-                .relative()
-                .child(image)
-                .child(
-                    div()
-                        .id("image-resize-handle")
-                        .debug_selector(|| "image-resize-handle".to_string())
-                        .absolute()
-                        .right(px(-3.0))
-                        .bottom(px(-3.0))
-                        .size(px(14.0))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(c.dialog_border)
-                        .bg(c.dialog_secondary_button_bg)
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .cursor(CursorStyle::ResizeLeftRight)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|block, event: &MouseDownEvent, _window, _cx| {
-                                block.image_resize_drag = Some(crate::editor::ImageResizeDrag {
-                                    start_x: f32::from(event.position.x),
-                                    base_factor: block.image_width_factor,
-                                });
-                            }),
-                        ),
-                )
-        } else {
-            div().child(image)
-        };
-
         let mut container = div()
             .w_full()
+            .min_w(px(0.0))
             .flex()
             .flex_col()
             .items_center()
             .justify_center()
             .gap(px(d.image_caption_gap))
-            .child(image_host);
+            .child(
+                div()
+                    .w(relative(width_scale))
+                    .min_w(px(0.0))
+                    .max_w(max_width)
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(image),
+            );
 
         if let Some(title) = runtime
             .title
@@ -169,7 +153,11 @@ impl Block {
                 .child(
                     img(rendered.path)
                         .max_w(Length::Definite(relative(1.0)))
-                        .max_h(px(d.image_root_max_height))
+                        .max_h(px(if d.image_root_max_height > 0.0 {
+                            d.image_root_max_height
+                        } else {
+                            420.0
+                        }))
                         .object_fit(ObjectFit::Contain),
                 )
                 .into_any_element(),

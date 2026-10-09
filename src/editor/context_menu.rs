@@ -8,7 +8,6 @@ pub(super) use super::{Editor, TableAxisSelection, ViewMode};
 pub(super) use crate::components::{DismissTransientUi, TableAxisKind, TableColumnAlignment, TableData};
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
-use unicode_segmentation::UnicodeSegmentation;
 pub(super) use document_menu::{
     DOCUMENT_MENU_QUICK_ACTIONS, DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow,
     DocumentSubmenu, document_menu_command_icon, document_menu_label, document_menu_origins,
@@ -50,20 +49,11 @@ pub(super) enum ContextMenuState {
     Image {
         position: Point<Pixels>,
         entity_id: EntityId,
-        scale_input: ImageScaleInput,
         /// 本地图片绝对路径（远程图 None，「在文件管理器中显示」禁用）。
         local_path: Option<PathBuf>,
         /// 原始地址（相对路径或 URL），「复制图片地址」用。
         address: String,
     },
-}
-
-pub(super) struct ImageScaleInput {
-    pub(super) draft: String,
-    pub(super) selected_range: std::ops::Range<usize>,
-    pub(super) marked_range: Option<std::ops::Range<usize>>,
-    pub(super) focus: FocusHandle,
-    pub(super) error: bool,
 }
 
 impl ContextMenuState {
@@ -141,39 +131,13 @@ impl Editor {
     ) {
         self.close_menu_bar(cx);
         self.context_menu_submenu_close_task = None;
-        let percent = self
-            .focusable_entity_by_id(entity_id)
-            .map(|block| (block.read(cx).image_width_factor * 100.0).round() as u8)
-            .unwrap_or(100);
-        let draft = percent.to_string();
         self.context_menu = Some(ContextMenuState::Image {
             position,
             entity_id,
-            scale_input: ImageScaleInput {
-                selected_range: 0..draft.len(),
-                draft,
-                marked_range: None,
-                focus: cx.focus_handle(),
-                error: false,
-            },
             local_path,
             address,
         });
         cx.notify();
-    }
-
-    pub(super) fn image_scale_input(&self) -> Option<&ImageScaleInput> {
-        match self.context_menu.as_ref()? {
-            ContextMenuState::Image { scale_input, .. } => Some(scale_input),
-            _ => None,
-        }
-    }
-
-    pub(super) fn image_scale_input_mut(&mut self) -> Option<&mut ImageScaleInput> {
-        match self.context_menu.as_mut()? {
-            ContextMenuState::Image { scale_input, .. } => Some(scale_input),
-            _ => None,
-        }
     }
 
     fn set_image_scale_from_menu(&mut self, percent: u8, cx: &mut Context<Self>) {
@@ -198,139 +162,6 @@ impl Editor {
             block.write_image_width_back_to_source(cx);
             cx.notify();
         });
-    }
-
-    fn confirm_image_scale_input(&mut self, cx: &mut Context<Self>) {
-        let Some(input) = self.image_scale_input() else {
-            return;
-        };
-        if input.marked_range.is_some() {
-            return;
-        }
-        let draft = input.draft.trim();
-        let percent = draft
-            .strip_suffix('%')
-            .unwrap_or(draft)
-            .trim()
-            .parse::<u8>()
-            .ok()
-            .filter(|percent| (20..=100).contains(percent));
-        if let Some(percent) = percent {
-            self.set_image_scale_from_menu(percent, cx);
-        } else if let Some(input) = self.image_scale_input_mut() {
-            input.error = true;
-            cx.notify();
-        }
-    }
-
-    pub(super) fn image_scale_handle_keystroke(
-        &mut self,
-        keystroke: &Keystroke,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(input) = self
-            .image_scale_input()
-            .filter(|input| input.focus.is_focused(window))
-        else {
-            return false;
-        };
-        if input.marked_range.is_some() {
-            return false;
-        }
-        let text = input.draft.clone();
-        let selected = input.selected_range.clone();
-        let key = keystroke.key.as_str();
-        let secondary = keystroke.modifiers.secondary();
-        use super::workspace::OverlayInputKind;
-        match key {
-            "enter" => self.confirm_image_scale_input(cx),
-            "escape" => self.close_context_menu(cx),
-            "a" if secondary => {
-                if let Some(input) = self.image_scale_input_mut() {
-                    input.selected_range = 0..text.len();
-                }
-            }
-            "c" | "x" if secondary => {
-                if let Some(value) = text.get(selected.clone()) {
-                    cx.write_to_clipboard(ClipboardItem::new_string(value.to_string()));
-                }
-                if key == "x" {
-                    self.replace_overlay_input_text(
-                        OverlayInputKind::ImageScale,
-                        selected,
-                        "",
-                        None,
-                        false,
-                        cx,
-                    );
-                }
-            }
-            "v" if secondary => {
-                if let Some(value) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    self.replace_overlay_input_text(
-                        OverlayInputKind::ImageScale,
-                        selected,
-                        &value,
-                        None,
-                        false,
-                        cx,
-                    );
-                }
-            }
-            "backspace" | "delete" => {
-                let range = if !selected.is_empty() {
-                    selected
-                } else if key == "backspace" {
-                    let start = text
-                        .get(..selected.start)
-                        .and_then(|before| before.grapheme_indices(true).last())
-                        .map(|(index, _)| index)
-                        .unwrap_or(selected.start);
-                    start..selected.start
-                } else {
-                    let end = text
-                        .get(selected.end..)
-                        .and_then(|after| after.graphemes(true).next())
-                        .map(|value| selected.end + value.len())
-                        .unwrap_or(selected.end);
-                    selected.end..end
-                };
-                self.replace_overlay_input_text(
-                    OverlayInputKind::ImageScale,
-                    range,
-                    "",
-                    None,
-                    false,
-                    cx,
-                );
-            }
-            "left" | "right" | "home" | "end" => {
-                let position = match key {
-                    "home" => 0,
-                    "end" => text.len(),
-                    "left" if !selected.is_empty() => selected.start,
-                    "right" if !selected.is_empty() => selected.end,
-                    "left" => text
-                        .get(..selected.start)
-                        .and_then(|before| before.grapheme_indices(true).last())
-                        .map(|(index, _)| index)
-                        .unwrap_or(0),
-                    _ => text
-                        .get(selected.end..)
-                        .and_then(|after| after.graphemes(true).next())
-                        .map(|value| selected.end + value.len())
-                        .unwrap_or(text.len()),
-                };
-                if let Some(input) = self.image_scale_input_mut() {
-                    input.selected_range = position..position;
-                }
-            }
-            _ => return false,
-        }
-        cx.notify();
-        cx.stop_propagation();
-        true
     }
 
     /// 「在文件管理器中显示」：macOS open -R / Windows explorer /select /

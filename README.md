@@ -19,7 +19,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 - **WYSIWYG + source modes** — Markdown renders as you type; switch to raw source at any time, and undo history survives mode switches.
 - **A full block set** — headings, ordered/bulleted/task lists, tables, code blocks, quotes, footnotes, callouts, horizontal rules and images; inline bold/italic, inline code, links and strikethrough.
 - **Math & diagrams in place** — LaTeX formulas and Mermaid diagrams render directly inside the document.
-- **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link; drag the resize handle and the width is written back as `{width=NN%}`.
+- **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link.
 - **Editing conveniences** — lists continue on `Enter`; typing a paired character wraps the selection; pasting a URL over a selection creates a link; HTML copied from a browser or Word is converted to Markdown on paste.
 - **Smart punctuation** (off by default, one switch in Settings) — context-aware curly quotes and `--` → em dash.
 - **VS Code–style find & replace** — powered by ripgrep's engine, in-process: case, whole-word, regex (multi-line patterns included) and fuzzy matching; every match is highlighted while the panel is open, and the result list, highlighting, jumping and replace-all read the same match table.

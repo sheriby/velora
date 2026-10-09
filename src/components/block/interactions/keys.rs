@@ -482,11 +482,6 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(drag) = self.image_resize_drag.take()
-            && (self.image_width_factor - drag.base_factor).abs() > 0.005
-        {
-            self.write_image_width_back_to_source(cx);
-        }
         self.is_selecting = false;
 
         // Cmd/Ctrl+click follows a rendered link, using the same open-link
@@ -556,14 +551,6 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // 图片拖拽缩放进行中（roadmap C10）：水平位移换算为宽度因子。
-        if let Some(drag) = self.image_resize_drag.as_mut() {
-            let delta = f32::from(event.position.x) - drag.start_x;
-            self.image_width_factor =
-                (drag.base_factor + delta / 400.0).clamp(0.2, 1.0);
-            cx.notify();
-            return;
-        }
         if self.is_selecting {
             // A stale selecting flag can survive a missed mouse-up. Only extend
             // the selection while the platform still reports an active drag.
@@ -576,7 +563,7 @@ impl Block {
         }
     }
 
-    /// 缩放结束后把宽度因子写回源码 `{width=NN%}`（roadmap C10 v2）；
+    /// 图片缩放比例写回源码 `{width=NN%}`；
     /// 100% 时移除属性以保持源码干净。
     pub(crate) fn write_image_width_back_to_source(&mut self, cx: &mut Context<Self>) {
         if self.image_runtime().is_none() {

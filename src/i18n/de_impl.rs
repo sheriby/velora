@@ -118,10 +118,6 @@ impl I18nStringsDe {
                 .image_copy_address
                 .unwrap_or(defaults.image_copy_address),
             image_scale: self.image_scale.unwrap_or(defaults.image_scale),
-            image_scale_apply: self.image_scale_apply.unwrap_or(defaults.image_scale_apply),
-            image_scale_invalid: self
-                .image_scale_invalid
-                .unwrap_or(defaults.image_scale_invalid),
             file_history_empty: self
                 .file_history_empty
                 .unwrap_or(defaults.file_history_empty),

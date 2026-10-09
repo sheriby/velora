@@ -369,6 +369,8 @@ impl Element for Img {
                                             .into(),
                                         )
                                     }
+                                    // 百分比宽度要等容器布局后才能确定，高度由宽高比求出。
+                                    Length::Definite(DefiniteLength::Fraction(_)) => Length::Auto,
                                     _ => Length::Definite(image_size.height.into()),
                                 };
                             }
