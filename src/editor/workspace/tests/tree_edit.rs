@@ -545,3 +545,52 @@ async fn the_file_tree_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
         first as usize + rows as usize
     );
 }
+
+/// 菜单开着时，鼠标压在菜单面板上，面板底下那一行文件不该还算悬停。
+///
+/// 现象（用户报修）：右键菜单弹出来以后，鼠标在菜单上面移动，菜单下面的文件跟着亮
+/// 悬停底色。根因：工作区菜单的遮罩与面板都没 `occlude`，GPUI 的命中测试
+/// （`Window::hit_test`）只在遇到 `HitboxBehavior::BlockMouse` 时才停，于是菜单底下那一
+/// 层的行也进了命中集合，`is_hovered` 跟着为真（点击也会一起漏过去）。
+#[gpui::test]
+async fn the_workspace_context_menu_stops_hover_at_its_own_surface(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    for name in ["a.md", "b.md", "c.md"] {
+        fs::write(root.join(name), "# 标题\n\n正文\n").expect("写夹具");
+    }
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    redraw(cx);
+
+    let row_selector = |path: &PathBuf| -> &'static str {
+        let selector = format!(
+            "workspace-node-{}",
+            super::super::stable_node_hash(&super::super::file_node_id(path))
+        );
+        Box::leak(selector.into_boxed_str())
+    };
+    let anchor = cx
+        .debug_bounds(row_selector(&root.join("a.md")))
+        .expect("锚点行");
+    cx.simulate_mouse_down(anchor.center(), MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(anchor.center(), MouseButton::Right, Modifiers::none());
+    redraw(cx);
+
+    let panel = cx.debug_bounds("workspace-context-panel").expect("菜单面板");
+    // 落点：既压在菜单面板里，也压在某一行文件上（菜单从右键位置往下铺，会盖住下面几行）。
+    let under = ["b.md", "c.md"]
+        .into_iter()
+        .find_map(|name| {
+            let selector = row_selector(&root.join(name));
+            let bounds = cx.debug_bounds(selector)?;
+            let probe = gpui::point(panel.left() + panel.size.width * 0.5, bounds.center().y);
+            (panel.contains(&probe) && bounds.contains(&probe)).then_some((selector, probe))
+        })
+        .expect("前提：菜单该盖住下面某一行");
+    cx.simulate_mouse_move(under.1, None, Modifiers::none());
+    redraw(cx);
+    assert_eq!(
+        cx.debug_hovered(under.0),
+        Some(false),
+        "鼠标压在菜单面板上时，菜单底下那一行还算是悬停"
+    );
+}

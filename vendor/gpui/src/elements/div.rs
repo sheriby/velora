@@ -1802,6 +1802,12 @@ impl Interactivity {
                         .next_frame
                         .debug_bounds
                         .insert(debug_selector.clone(), bounds);
+                    // 本地补丁：同一处记下悬停判定，测试才问得出「谁算悬停」。
+                    let hovered = hitbox.is_some_and(|hitbox| hitbox.is_hovered(window));
+                    window
+                        .next_frame
+                        .debug_hovered
+                        .insert(debug_selector.clone(), hovered);
                 }
 
                 self.paint_hover_group_handler(window, cx);
