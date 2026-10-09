@@ -288,6 +288,8 @@ pub struct Editor {
     watched_workspace_root: Option<PathBuf>,
     /// Scroll offset at the last outline-follow update.
     pub(super) last_outline_follow_offset: f32,
+    /// 点击大纲的居中跳转不能被视口顶部的跟随覆盖；只在当前文档内保持点击项。
+    pub(super) outline_clicked_document_identity: Option<u64>,
     /// Cursor position history (roadmap E6): jump points to return to.
     pub(super) cursor_history_back: Vec<CursorLocation>,
     pub(super) cursor_history_forward: Vec<CursorLocation>,
@@ -739,6 +741,7 @@ impl Editor {
             external_watcher: None,
             watched_workspace_root: None,
             last_outline_follow_offset: f32::NAN,
+            outline_clicked_document_identity: None,
             cursor_history_back: Vec::new(),
             cursor_history_forward: Vec::new(),
             update_check_in_progress: false,

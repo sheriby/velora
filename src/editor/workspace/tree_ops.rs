@@ -289,6 +289,7 @@ impl Editor {
         } else {
             cx.notify();
         }
+        self.outline_clicked_document_identity = Some(self.buffer.identity());
     }
 
     /// Finds the heading block whose source line equals `line`.
