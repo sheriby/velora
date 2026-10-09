@@ -260,10 +260,16 @@ impl TableColumnLayout {
     ) -> Self {
         // 列宽/换行按字号估算，必须用与绘制一致的字号（含界面缩放）。
         let fonts = crate::config::EditorSettings::scaled_fonts(cx);
-        let preferred_widths = measure_preferred_column_widths(table, window, theme, &fonts)
-            .into_iter()
-            .map(f32::from)
-            .collect::<Vec<_>>();
+        let preferred_widths = measure_preferred_column_widths(
+            table,
+            window,
+            theme,
+            &fonts,
+            crate::config::EditorSettings::show_table_headers(cx),
+        )
+        .into_iter()
+        .map(f32::from)
+        .collect::<Vec<_>>();
         Self::from_preferred_widths(&preferred_widths, table_width, minimum_column_width(theme))
     }
 
@@ -388,13 +394,14 @@ fn measure_preferred_column_widths(
     window: &mut Window,
     theme: &Theme,
     fonts: &FontPreferences,
+    style_headers: bool,
 ) -> Vec<Pixels> {
     let column_count = table.header.len().max(1);
     let mut preferred_widths = vec![Pixels::ZERO; column_count];
 
     for (column, cell) in table.header.iter().enumerate() {
         preferred_widths[column] = preferred_widths[column]
-            .max(measure_cell_preferred_width(cell, true, window, theme, fonts));
+            .max(measure_cell_preferred_width(cell, style_headers, window, theme, fonts));
     }
 
     for row in &table.rows {
@@ -423,8 +430,8 @@ fn measure_cell_preferred_width(
 
     let display_text = SharedString::from(text.to_string());
     let mut font = window.text_style().font();
-    if is_header && font.weight < FontWeight::MEDIUM {
-        font.weight = FontWeight::MEDIUM;
+    if is_header && font.weight < FontWeight::BOLD {
+        font.weight = FontWeight::BOLD;
     }
     let base_run = TextRun {
         len: display_text.len(),

@@ -57,6 +57,7 @@ impl Block {
 
     pub(crate) fn clear_table_runtime(&mut self) {
         self.table_runtime = None;
+        self.table_container_width = None;
         self.table_axis_preview = None;
         self.table_axis_selection = None;
         self.table_axis_highlight = TableAxisHighlight::None;

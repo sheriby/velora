@@ -27,7 +27,11 @@ impl Block {
         } else {
             1.0
         };
-        let width_scale = scale * if fit_container_width { 0.90 } else { 1.0 };
+        let width_scale = scale * if fit_container_width {
+            VISUAL_BLOCK_WIDTH_RATIO
+        } else {
+            1.0
+        };
         let max_width = match max_width {
             Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(width))) => {
                 (width * width_scale).into()

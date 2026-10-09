@@ -384,7 +384,7 @@ pub struct ThemeDimensions {
     pub image_radius: f32,
     /// 图片最大高度；0 表示按原图比例排版，不设固定高度上限。
     pub image_root_max_height: f32,
-    /// 图片最大宽度；0 表示以正文容器宽度的 90% 作为缩放 100% 的基准。
+    /// 图片最大宽度；0 表示以正文容器宽度的 95% 作为缩放 100% 的基准。
     pub image_root_max_width: f32,
     /// Maximum height of rendered table-cell images.
     pub image_cell_max_height: f32,

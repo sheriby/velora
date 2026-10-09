@@ -2,43 +2,11 @@ use super::*;
 
 mod tests {
     use super::{
-        effective_table_width, inline_display_font_size,
+        inline_display_font_size,
         numbered_list_marker, promotes_inline_images, tag_query, wikilink_target,
     };
     use crate::components::{BlockRecord, InlineScript, InlineSpan, InlineStyle};
     use gpui::AppContext;
-
-    #[gpui::test]
-    async fn table_measure_width_stays_within_the_writing_column_cap(cx: &mut TestAppContext) {
-        let cx = cx.add_empty_window();
-        cx.update(|_window, cx| {
-            crate::theme::ThemeManager::init(cx);
-            let theme = cx.global::<super::ThemeManager>().current_arc();
-            let d = &theme.dimensions;
-            let viewport_width = 1600.0;
-            let cap = crate::editor::Editor::writing_column_width(viewport_width, d, cx);
-            assert!(
-                crate::editor::Editor::centered_column_width(viewport_width, d) > cap,
-                "前提失效：1600px 视口应宽到触发写作列上限（{cap}px）"
-            );
-
-            let block = cx.new(|cx| {
-                Block::with_record(
-                    cx,
-                    BlockRecord::new(BlockKind::Paragraph, InlineTextTree::from_markdown("x")),
-                )
-            });
-            let table_width =
-                block.read_with(cx, |block, cx| {
-                    effective_table_width(block, viewport_width, d, cx)
-                });
-            assert!(
-                table_width <= cap,
-                "表格测量宽 {table_width}px 超过写作列上限 {cap}px：宽窗口下水位法按超宽容器\
-                 算比例，套回真实窄容器后钉住列会被压到内容宽以下折行（用户报修）"
-            );
-        });
-    }
 
     #[gpui::test]
     async fn table_column_layout_memo_skips_remeasure(cx: &mut TestAppContext) {

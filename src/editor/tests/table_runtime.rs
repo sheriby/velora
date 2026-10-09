@@ -1,4 +1,175 @@
 use super::common::*;
+use gpui::{Div, IntoElement, Render, Stateful, Styled};
+
+#[gpui::test]
+async fn code_and_table_panels_use_95_percent_of_the_visible_content_width(
+    cx: &mut TestAppContext,
+) {
+    // 代码块和表格原来铺满整列，比正文文字更宽；95% 必须按实际正文容器计算。
+    init_editor_test_app(cx);
+    for (markdown, is_table) in [
+        ("```rust\nlet value = 1;\n```", false),
+        (
+            "| 标题甲 | 标题乙 |\n| --- | --- |\n| 内容甲 | 内容乙 |",
+            true,
+        ),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.into(), None));
+        for (width, sidebar_open) in [(1400.0, true), (2400.0, false), (600.0, true)] {
+            editor.update(cx, |editor, cx| {
+                editor.workspace.is_open = sidebar_open;
+                cx.notify();
+            });
+            cx.simulate_resize(gpui::size(px(width), px(1000.0)));
+            redraw(cx);
+            redraw(cx);
+            redraw(cx);
+            let (viewport, expected_width) = editor.read_with(cx, |editor, cx| {
+                let viewport = editor.scroll_handle.bounds();
+                let dimensions = &cx.global::<ThemeManager>().current().dimensions;
+                let column =
+                    Editor::writing_column_width(f32::from(viewport.size.width), dimensions, cx);
+                (viewport, (column - dimensions.block_padding_x * 2.0) * 0.95)
+            });
+            let (left, right) = if is_table {
+                let first = cx
+                    .debug_bounds("table-column-indicator-0")
+                    .expect("首列表头边界");
+                let last = cx
+                    .debug_bounds("table-column-indicator-1")
+                    .expect("末列表头边界");
+                (first.left(), last.right())
+            } else {
+                let panel = cx.debug_bounds("block-shell").expect("代码块面板");
+                (panel.left(), panel.right())
+            };
+            assert!(
+                (f32::from(right - left) - expected_width).abs() < 1.0,
+                "窗口 {width}、侧栏 {sidebar_open}、表格 {is_table}：面板应宽 {expected_width}，实际 {:?}",
+                right - left
+            );
+            assert!(left >= viewport.left() && right <= viewport.right());
+            assert!(((left + right) * 0.5 - viewport.center().x).abs() < px(1.0));
+        }
+    }
+}
+
+#[gpui::test]
+async fn table_cells_have_rounded_corners_accent_headers_and_a_subtle_hover(
+    cx: &mut TestAppContext,
+) {
+    // 表格四个外角要随行列位置圆滑收边，表头用主题强调色加粗，悬停正文格只轻微染色。
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "| 甲 | 乙 |\n| --- | --- |\n| 丙 | 丁 |".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let (header, last_header, body, last_body) = editor.read_with(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("表格").read(cx);
+        let runtime = table.table_runtime.as_ref().expect("表格运行时");
+        (
+            runtime.header[0].clone(),
+            runtime.header[1].clone(),
+            runtime.rows[0][0].clone(),
+            runtime.rows[0][1].clone(),
+        )
+    });
+    let style_for = |cell: &gpui::Entity<Block>, cx: &mut VisualTestContext| {
+        cell.update_in(cx, |block, window, cx| {
+            let mut element = block.render(window, cx).into_any_element();
+            element
+                .downcast_mut::<Stateful<Div>>()
+                .expect("单元格渲染根元素")
+                .style()
+                .clone()
+        })
+    };
+    let header_style = style_for(&header, cx);
+    let accent = cx.update(|_, cx| cx.global::<ThemeManager>().current().colors.text_link);
+    let header_text = header_style.text.as_ref().expect("表头文字样式");
+    assert_eq!(header_text.color, Some(accent), "表头应使用主题强调色");
+    assert_eq!(header_text.font_weight, Some(gpui::FontWeight::BOLD));
+    assert_eq!(header_style.corner_radii.top_left, Some(px(10.0).into()));
+    assert_eq!(header_style.corner_radii.bottom_left, Some(px(0.0).into()));
+    let last_header_style = style_for(&last_header, cx);
+    assert_eq!(
+        last_header_style.corner_radii.top_right,
+        Some(px(10.0).into())
+    );
+    assert_eq!(
+        last_header_style.corner_radii.bottom_right,
+        Some(px(0.0).into())
+    );
+    let before = style_for(&body, cx);
+    assert_eq!(before.corner_radii.bottom_left, Some(px(10.0).into()));
+    assert_eq!(before.corner_radii.top_left, Some(px(0.0).into()));
+    let last_body_style = style_for(&last_body, cx);
+    assert_eq!(
+        last_body_style.corner_radii.bottom_right,
+        Some(px(10.0).into())
+    );
+    let bounds = body.read_with(cx, |block, _| block.last_bounds.expect("正文格文字边界"));
+    cx.simulate_mouse_move(bounds.center(), gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let after = style_for(&body, cx);
+    assert_ne!(
+        after.background, before.background,
+        "悬停单元格应有淡淡的背景变化"
+    );
+    assert_eq!(
+        after.text.as_ref().map(|text| text.color),
+        before.text.as_ref().map(|text| text.color)
+    );
+    cx.simulate_mouse_move(
+        gpui::point(px(2.0), px(2.0)),
+        gpui::MouseButton::Left,
+        Modifiers::none(),
+    );
+    redraw(cx);
+    assert_eq!(
+        style_for(&body, cx).background,
+        before.background,
+        "离开单元格后应恢复背景"
+    );
+}
+
+#[gpui::test]
+async fn header_only_single_cell_table_keeps_all_four_corners_round(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "| 唯一表头 |\n| --- |".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let cell = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .first_root()
+            .expect("仅表头的表格")
+            .read(cx)
+            .table_runtime
+            .as_ref()
+            .expect("表格运行时")
+            .header[0]
+            .clone()
+    });
+    cell.update_in(cx, |block, window, cx| {
+        let mut element = block.render(window, cx).into_any_element();
+        let style = element
+            .downcast_mut::<Stateful<Div>>()
+            .expect("单元格根元素")
+            .style();
+        for corner in [
+            style.corner_radii.top_left,
+            style.corner_radii.top_right,
+            style.corner_radii.bottom_left,
+            style.corner_radii.bottom_right,
+        ] {
+            assert_eq!(corner, Some(px(10.0).into()), "单格表格应保留四个外圆角");
+        }
+    });
+}
 
 #[gpui::test]
 async fn parsed_table_runtime_installs_column_alignment_on_cells(cx: &mut TestAppContext) {

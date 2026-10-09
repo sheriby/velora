@@ -39,6 +39,7 @@ impl Block {
                 ^ (t.text_letter_spacing.to_bits() as u64).rotate_left(2)
                 ^ (d.table_cell_padding_x.to_bits() as u64).rotate_left(3)
                 ^ (d.code_bg_pad_x.to_bits() as u64).rotate_left(4)
+                ^ (crate::config::EditorSettings::show_table_headers(cx) as u64).rotate_left(5)
         };
         let width_bits = table_width.to_bits();
         let code_size_bits = theme.typography.code_size.to_bits();
@@ -67,20 +68,6 @@ impl Block {
     }
 }
 
-pub(crate) fn effective_table_width(block: &Block, viewport_width: f32, d: &ThemeDimensions, cx: &App) -> f32 {
-    let centered_width = content_column_width(viewport_width, d, cx);
-    let visible_quote_guides = visible_quote_guides(block);
-    let quote_inset = d.quote_padding_left * visible_quote_guides as f32;
-    let callout_inset = if block.callout_depth > 0 {
-        d.callout_padding_x * 2.0 + d.callout_border_width
-    } else {
-        0.0
-    };
-
-    (centered_width - quote_inset - callout_inset)
-        .max((d.table_cell_padding_x * 2.0 + 80.0).max(120.0))
-}
-
 pub(crate) fn container_image_width_budget(
     block: &Block,
     viewport_width: f32,
@@ -97,6 +84,21 @@ pub(crate) fn container_image_width_budget(
     };
 
     centered_width - quote_inset - callout_inset
+}
+
+pub(crate) fn table_cell_corner_radii(
+    row: usize,
+    column: usize,
+    row_count: usize,
+    column_count: usize,
+) -> Corners<Pixels> {
+    let radius = |corner: bool| px(if corner { TABLE_CORNER_RADIUS } else { 0.0 });
+    Corners {
+        top_left: radius(row == 0 && column == 0),
+        top_right: radius(row == 0 && column + 1 == column_count),
+        bottom_left: radius(row + 1 == row_count && column == 0),
+        bottom_right: radius(row + 1 == row_count && column + 1 == column_count),
+    }
 }
 
 pub(crate) fn effective_image_width(
