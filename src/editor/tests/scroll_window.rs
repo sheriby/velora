@@ -465,6 +465,7 @@ async fn starting_and_ending_scrollbar_drag_updates_editor_state(cx: &mut TestAp
         assert_eq!(
             editor.scrollbar_drag,
             Some(crate::editor::ScrollbarDragSession {
+                thumb_top: 0.0,
                 pointer_offset_y: 12.0,
                 track_height: 320.0,
                 thumb_height: 64.0,
@@ -548,5 +549,137 @@ async fn mashing_enter_at_the_end_of_source_mode_keeps_viewport_rows_mounted(
             run.row_end
         );
         assert_eq!(run.row_start, 0, "文档顶部也必须挂载");
+    });
+}
+
+// 首次读到高代码块时，实测高度替换最低行高，旧的像素比例会让滑块倒退。
+#[gpui::test]
+async fn first_pass_down_a_long_document_never_moves_the_scrollbar_backwards(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let mut markdown = String::new();
+    for index in 0..160 {
+        markdown.push_str(&format!(
+            "段落 {index}：这是一段长文档中的正文，用于验证首次滚动的稳定性。\n\n"
+        ));
+        if index % 20 == 19 {
+            markdown.push_str("```rust\n");
+            for line in 0..80 {
+                markdown.push_str(&format!("let value_{line} = {line};\n"));
+            }
+            markdown.push_str("```\n\n");
+        }
+    }
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    let mut previous_thumb_top = 0.0;
+    let mut previous_scroll = 0.0;
+    for step in 0..100 {
+        let position = editor.read_with(cx, |editor, _| editor.scroll_handle.bounds().center());
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-240.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: gpui::TouchPhase::default(),
+        });
+        for frame in 0..3 {
+            redraw(cx);
+            let thumb = cx.debug_bounds("editor-scrollbar-thumb").expect("滚动条");
+            let (scroll, top) = editor.read_with(cx, |editor, _| {
+                (
+                    f32::from(-editor.scroll_handle.offset().y),
+                    f32::from(thumb.top() - editor.scroll_handle.bounds().top()),
+                )
+            });
+            assert!(
+                scroll + 0.5 >= previous_scroll,
+                "往下读时正文滚动位置不能倒退：{previous_scroll} → {scroll}"
+            );
+            assert!(
+                top + 0.5 >= previous_thumb_top,
+                "首次向下滚动第 {step} 步第 {frame} 帧滑块倒退：{previous_thumb_top} → {top}，正文位置 {scroll}"
+            );
+            previous_scroll = scroll;
+            previous_thumb_top = top;
+        }
+    }
+}
+
+#[gpui::test]
+async fn measuring_rows_while_dragging_does_not_move_the_thumb_away_from_the_pointer(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = (0..160)
+        .map(|index| {
+            format!(
+                "## 标题 {index}\n\n{}\n\n",
+                "较长正文需要换行显示。".repeat(20)
+            )
+        })
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    editor.update(cx, |editor, cx| editor.bump_scrollbar_visibility(cx));
+    redraw(cx);
+    let thumb = cx.debug_bounds("editor-scrollbar-thumb").expect("滑块");
+    let viewport = editor.read_with(cx, |editor, _| editor.scroll_handle.bounds());
+    let desired_top = f32::from(viewport.size.height) * 0.5;
+    let press = gpui::point(thumb.center().x, thumb.top() + gpui::px(1.0));
+    cx.simulate_mouse_down(press, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(
+        gpui::point(press.x, viewport.top() + gpui::px(desired_top + 1.0)),
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::none(),
+    );
+    for _ in 0..4 {
+        redraw(cx);
+        let thumb = cx.debug_bounds("editor-scrollbar-thumb").expect("滑块");
+        let top = editor.read_with(cx, |editor, _| {
+            f32::from(thumb.top() - editor.scroll_handle.bounds().top())
+        });
+        assert!(
+            (top - desired_top).abs() <= 1.0,
+            "鼠标不动时，渲染更新不能把滑块移走：目标 {desired_top}，实际 {top}"
+        );
+        editor.read_with(cx, |editor, _| {
+            let drag = editor.scrollbar_drag.expect("拖动中");
+            let expected = Editor::scroll_offset_for_thumb_top(
+                drag.thumb_top,
+                drag.track_height,
+                drag.thumb_height,
+                drag.max_scroll_y,
+            );
+            let actual = editor
+                .scrollbar_document_position(-f32::from(editor.scroll_handle.offset().y), false);
+            assert!(
+                (actual - expected).abs() < 1.0,
+                "正文位置必须跟随滑块，不能只固定滑块外观：{actual} / {expected}"
+            );
+        });
+    }
+}
+
+#[gpui::test]
+async fn the_last_mounted_row_also_caches_its_real_height(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = format!("```rust\n{}\n```", "let value = 1;\n".repeat(80));
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _| {
+        let plan = editor.rendered_row_plan.as_ref().expect("行计划");
+        let run = editor.prev_mounted_run.expect("挂载区");
+        let id = plan.first_ids.get(run.row_end - 1).expect("最后一行");
+        assert!(
+            editor.row_stride_cache.contains_key(id),
+            "最后一行不能因为没有后继行就一直使用最低高度估计"
+        );
     });
 }

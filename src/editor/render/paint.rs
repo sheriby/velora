@@ -171,12 +171,7 @@ impl Render for Editor {
         } else {
             Self::writing_column_width(viewport_width, &theme.dimensions, cx)
         };
-        let current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).clamp(0.0, max_scroll_y);
-        let scrollbar_geometry =
-            Self::scrollbar_geometry(viewport_height, max_scroll_y, current_scroll_y);
-        let track_height = scrollbar_geometry.track_height;
-        let thumb_height = scrollbar_geometry.thumb_height;
-        let thumb_top = scrollbar_geometry.thumb_top;
+        let mut current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).clamp(0.0, max_scroll_y);
 
         let show_custom_scrollbar = has_overflow
             && (self.scrollbar_drag.is_some()
@@ -222,26 +217,22 @@ impl Render for Editor {
         let width_changed = self.row_stride_width != Some(centered_width);
         if width_changed {
             self.row_stride_cache.clear();
+            rendered_row_plan.strides.borrow_mut().fill(d.block_min_height.max(1.0));
             self.row_stride_width = Some(centered_width);
         }
 
-        // The scroll container records every mounted child's layout bounds, so
-        // adjacent tops differ by exactly one row's footprint whatever the row
-        // holds. Caching those differences, not raw positions, keeps the window
-        // stable while scrolling.
+        // 每行直接量高并计入下一行的上间距；只读相邻行顶点会漏掉挂载区最后一行。
         if !structural_change && !width_changed {
             if let Some(prev) = self
                 .prev_mounted_run
                 .filter(|prev| self.mounted_run_is_addressable(*prev))
             {
                 let prev_end = prev.row_end.min(row_first_ids.len());
-                for row in prev.row_start..prev_end.saturating_sub(1) {
+                for row in prev.row_start..prev_end {
                     let child = prev.child_base + row - prev.row_start;
-                    if let (Some(bounds), Some(next_bounds)) = (
-                        self.scroll_handle.bounds_for_item(child),
-                        self.scroll_handle.bounds_for_item(child + 1),
-                    ) {
-                        let stride = f32::from(next_bounds.top() - bounds.top());
+                    if let Some(bounds) = self.scroll_handle.bounds_for_item(child) {
+                        let stride = f32::from(bounds.size.height)
+                            + row_top_gaps.get(row + 1).copied().unwrap_or(0.0);
                         if stride > 0.0 && stride.is_finite() {
                             self.row_stride_cache.insert(row_first_ids[row], stride);
                             if let Some(slot) = rendered_row_plan.strides.borrow_mut().get_mut(row)
@@ -253,6 +244,45 @@ impl Render for Editor {
                 }
             }
         }
+
+        if let Some(drag) = self.scrollbar_drag {
+            let position = Self::scroll_offset_for_thumb_top(
+                drag.thumb_top,
+                drag.track_height,
+                drag.thumb_height,
+                drag.max_scroll_y,
+            );
+            current_scroll_y = self.scrollbar_document_position(position, true);
+            let mut offset = self.scroll_handle.offset();
+            offset.y = -px(current_scroll_y);
+            self.scroll_handle.set_offset(offset);
+        }
+        let scrollbar_geometry = if let Some(drag) = self.scrollbar_drag {
+            crate::editor::ScrollbarGeometry {
+                track_height: drag.track_height,
+                thumb_height: drag.thumb_height,
+                thumb_top: drag.thumb_top,
+                max_scroll_y: drag.max_scroll_y,
+            }
+        } else {
+            let mut geometry =
+                Self::scrollbar_geometry(viewport_height, max_scroll_y, current_scroll_y);
+            let max_position = self.scrollbar_document_position(max_scroll_y, false);
+            let position = self.scrollbar_document_position(current_scroll_y, false);
+            let progress = if max_position > 0.0 {
+                (position / max_position).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            geometry.thumb_top =
+                (geometry.track_height - geometry.thumb_height).max(0.0) * progress;
+            geometry.max_scroll_y = max_position;
+            geometry
+        };
+        let track_height = scrollbar_geometry.track_height;
+        let thumb_height = scrollbar_geometry.thumb_height;
+        let thumb_top = scrollbar_geometry.thumb_top;
+        let scrollbar_max_position = scrollbar_geometry.max_scroll_y;
 
         let strides = rendered_row_plan.strides.borrow();
 
@@ -281,13 +311,12 @@ impl Render for Editor {
 
         let island = render_window.focus_island;
         let island_before_run = island.is_some_and(|island| island.row < render_window.run_start);
-        // A mounted row re-applies its own `mt`, which the preceding stride
-        // already covered, so every spacer sheds the gap of the row it precedes.
-        let spacer_before = |row: usize, height: f32| -> f32 {
-            match row_top_gaps.get(row) {
-                Some(gap) => (height - gap).max(0.0),
-                None => height,
-            }
+        // 行自身会补上 mt，因此占位区需补首个被跳过行的间距、扣除后继行的间距。
+        // 只扣不补会让全文高度随挂载区边界变化，滚动条也会跟着抖动。
+        let spacer_before = |row: usize, height: f32, first_skipped: usize| -> f32 {
+            let leading_gap = row_top_gaps.get(first_skipped).copied().unwrap_or(0.0);
+            let following_gap = row_top_gaps.get(row).copied().unwrap_or(0.0);
+            (height + leading_gap - following_gap).max(0.0)
         };
         let mut block_rows: Vec<AnyElement> =
             Vec::with_capacity(render_window.run_end - render_window.run_start + 4);
@@ -507,22 +536,23 @@ impl Render for Editor {
         };
 
         if let Some(island) = island.filter(|_| island_before_run) {
-            push_spacer(&mut block_rows, spacer_before(island.row, island.lead_h));
+            push_spacer(&mut block_rows, spacer_before(island.row, island.lead_h, 0));
             take_row(&mut block_rows, island.row);
         }
         push_spacer(
             &mut block_rows,
-            spacer_before(render_window.run_start, render_window.top_h),
+            spacer_before(render_window.run_start, render_window.top_h, island.filter(|_| island_before_run).map_or(0, |island| island.row + 1)),
         );
         let run_child_base = block_rows.len();
         for row in render_window.run_start..render_window.run_end {
             take_row(&mut block_rows, row);
         }
         if let Some(island) = island.filter(|_| !island_before_run) {
-            push_spacer(&mut block_rows, spacer_before(island.row, island.lead_h));
+            push_spacer(&mut block_rows, spacer_before(island.row, island.lead_h, render_window.run_end));
             take_row(&mut block_rows, island.row);
         }
-        push_spacer(&mut block_rows, render_window.bottom_h);
+        let first_trailing_row = island.filter(|_| !island_before_run).map_or(render_window.run_end, |island| island.row + 1);
+        push_spacer(&mut block_rows, render_window.bottom_h + row_top_gaps.get(first_trailing_row).copied().unwrap_or(0.0));
         // Next frame reads the run's footprints back at these child indices, and
         // re-checks `child_count` before trusting them.
         self.prev_mounted_run = Some(MountedRun {
@@ -593,6 +623,7 @@ impl Render for Editor {
             content_area.child(
                 div()
                     .id("editor-scrollbar-thumb")
+                    .debug_selector(|| "editor-scrollbar-thumb".to_string())
                     .absolute()
                     .occlude()
                     .top(px(thumb_top))
@@ -612,7 +643,7 @@ impl Render for Editor {
                                 pointer_offset_y,
                                 track_height,
                                 thumb_height,
-                                max_scroll_y,
+                                scrollbar_max_position,
                                 cx,
                             );
                         });

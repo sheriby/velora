@@ -411,6 +411,7 @@ struct FocusIsland {
 /// Active drag session for the custom scrollbar thumb.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ScrollbarDragSession {
+    thumb_top: f32,
     pointer_offset_y: f32,
     track_height: f32,
     thumb_height: f32,

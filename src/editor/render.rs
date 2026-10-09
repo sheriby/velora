@@ -139,6 +139,8 @@ pub(crate) struct RenderedRowPlan {
     pub first_ids: Vec<EntityId>,
     /// 每行 footprint；学习更新原地写回，未变更帧免 160k 次哈希查找。
     pub strides: std::rc::Rc<std::cell::RefCell<Vec<f32>>>,
+    /// 滚动条坐标使用固定的行权重；首次测量行高只改变布局，不改变文档进度。
+    pub scrollbar_strides: Vec<f32>,
 }
 
 pub(crate) struct RenderedRowPlanRow {
@@ -729,6 +731,7 @@ impl Editor {
                 .collect::<Vec<f32>>(),
         ));
 
+        let scrollbar_strides = strides.borrow().clone();
         RenderedRowPlan {
             row_meta_version,
             fold_version,
@@ -741,6 +744,7 @@ impl Editor {
             gaps,
             first_ids,
             strides,
+            scrollbar_strides,
         }
     }
 }
