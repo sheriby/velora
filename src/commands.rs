@@ -15,7 +15,7 @@ use crate::components::{
     CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
-    PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout,
+    PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout, CheckForUpdates,
     StrikethroughSelection, SubscriptSelection, SuperscriptSelection, ToggleFocusMode,
     ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UnderlineSelection,
     ZoomIn, ZoomOut, ZoomReset,
@@ -81,6 +81,7 @@ macro_rules! command {
 static COMMANDS: &[CommandSpec] = &[
     // 应用菜单（macOS）/ 文件菜单末尾（其他平台）
     command!("preferences", App, menu_preferences, OpenPreferences),
+    command!("check_updates", App, menu_check_updates, CheckForUpdates),
     command!(sep "quit", App, menu_quit, QuitApplication),
     // 文件
     command!("new_window", File, menu_new_window, NewWindow),
@@ -346,6 +347,6 @@ mod tests {
             .map(|spec| spec.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(app_ids, vec!["preferences", "quit"]);
+        assert_eq!(app_ids, vec!["preferences", "check_updates", "quit"]);
     }
 }

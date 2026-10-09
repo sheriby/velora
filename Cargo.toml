@@ -53,6 +53,7 @@ code-highlight-config = [
 ]
 
 [dependencies]
+sha2 = "0.10"
 encoding_rs = "0.8"
 anyhow = "1"
 base64 = "0.23"

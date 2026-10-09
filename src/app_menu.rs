@@ -801,7 +801,9 @@ pub(crate) fn request_quit_application(cx: &mut App) {
 fn perform_quit_application(cx: &mut App) {
     let candidates = current_window_candidates(cx);
     if candidates.is_empty() {
-        cx.quit();
+        if crate::editor::install_pending_update(cx) {
+            cx.quit();
+        }
         return;
     }
 
@@ -823,7 +825,9 @@ fn perform_quit_application(cx: &mut App) {
         }
     }
 
-    cx.quit();
+    if crate::editor::install_pending_update(cx) {
+        cx.quit();
+    }
 }
 
 /// Executes one of the app-menu actions against the current application state.

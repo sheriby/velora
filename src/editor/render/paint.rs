@@ -31,6 +31,8 @@ impl Render for Editor {
         }
 
         self.window_handle = Some(window.window_handle());
+        #[cfg(not(test))]
+        self.maybe_check_updates_on_startup(window, cx);
         if self.system_appearance_subscription.is_none() {
             self.system_appearance_subscription =
                 Some(cx.observe_window_appearance(window, |_editor, window, cx| {
@@ -1061,6 +1063,9 @@ impl Render for Editor {
         } else {
             base
         };
+        let base = if let Some(notification) = self.render_update_notification(&theme, &strings, cx) {
+            base.child(notification)
+        } else { base };
         if let Some(kind) = self.info_dialog {
             base.child(self.render_info_dialog_overlay(&theme, kind, cx))
         } else if self.modal_is_open() {

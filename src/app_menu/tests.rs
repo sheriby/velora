@@ -633,16 +633,15 @@ mod tests {
     }
 
     #[test]
-    fn help_menu_omits_upstream_update_action() {
+    fn application_menu_includes_a_manual_release_update_check() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
         let menus = build_menus(&theme_manager, &i18n_manager, &[]);
-        let help_items = &command_menu(&menus, "show_about").items;
-
-        assert!(help_items.iter().all(|item| match item {
-            MenuItem::Action { action, .. } => !action.as_any().is::<CheckForUpdates>(),
-            _ => true,
-        }));
+        let items = &command_menu(&menus, "preferences").items;
+        assert!(items.iter().any(|item| match item {
+            MenuItem::Action { action, .. } => action.as_any().is::<CheckForUpdates>(),
+            _ => false,
+        }), "设置入口附近应提供手动检查更新");
     }
 
     #[test]

@@ -54,6 +54,7 @@ mod table_edit;
 mod tests;
 mod tree;
 mod update;
+pub(crate) use update::{install_pending_update, cancel_pending_install};
 mod window_state;
 mod command_palette;
 mod quick_open;
@@ -296,6 +297,10 @@ pub struct Editor {
     pub(super) cursor_history_forward: Vec<CursorLocation>,
     /// True while an online update check is running in the background.
     update_check_in_progress: bool,
+    update_notification: Option<crate::net::update::UpdateVersionInfo>,
+    update_download_progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    update_download_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    update_task: Option<Task<()>>,
     workspace: WorkspaceState,
     status_bar: StatusBarState,
     context_menu: Option<ContextMenuState>,
@@ -748,6 +753,10 @@ impl Editor {
             cursor_history_back: Vec::new(),
             cursor_history_forward: Vec::new(),
             update_check_in_progress: false,
+            update_notification: None,
+            update_download_progress: None,
+            update_download_cancel: None,
+            update_task: None,
             workspace: WorkspaceState::default(),
             status_bar: StatusBarState::default(),
             context_menu: None,

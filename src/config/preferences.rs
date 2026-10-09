@@ -331,9 +331,22 @@ pub(crate) struct WindowFrame {
     pub(crate) height: i32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct UpdatePreferences {
+    pub(crate) check_on_startup: bool,
+    pub(crate) include_prereleases: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) ignored_version: String,
+}
+impl Default for UpdatePreferences {
+    fn default() -> Self { Self { check_on_startup: true, include_prereleases: false, ignored_version: String::new() } }
+}
+
 /// User preferences persisted under the app config directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AppPreferences {
+    pub(crate) updates: UpdatePreferences,
     pub(crate) startup_open: StartupOpenPreference,
     pub(crate) default_language_id: String,
     pub(crate) default_theme_id: String,
@@ -375,6 +388,7 @@ pub(crate) struct AppPreferences {
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
+            updates: UpdatePreferences::default(),
             startup_open: StartupOpenPreference::NewFile,
             default_language_id: DEFAULT_LANGUAGE_ID.into(),
             default_theme_id: DEFAULT_THEME_ID.into(),
@@ -416,6 +430,7 @@ struct StatusBarSettings {
 /// render path can read them without touching disk. Toggling persists the new
 /// value back to the preferences file.
 pub struct EditorSettings {
+    updates: UpdatePreferences,
     show_table_headers: bool,
     smart_punctuation: bool,
     external_change_policy: ExternalChangePolicy,
@@ -566,7 +581,10 @@ impl EditorSettings {
                     .map(|preferences| preferences.delete_policy)
             })
             .unwrap_or_default();
+        let updates = cx.try_global::<Self>().map(|settings| settings.updates.clone())
+            .or_else(|| read_app_preferences().ok().map(|preferences| preferences.updates)).unwrap_or_default();
         cx.set_global(Self {
+            updates,
             show_table_headers,
             smart_punctuation,
             external_change_policy,
@@ -590,6 +608,18 @@ impl EditorSettings {
                 status_bar_show_mode_switch: status_bar.show_mode_switch,
             },
         });
+    }
+
+    pub(crate) fn updates(cx: &App) -> UpdatePreferences {
+        cx.try_global::<Self>()
+            .map(|settings| settings.updates.clone())
+            .unwrap_or_default()
+    }
+    pub(crate) fn set_updates_in_memory(cx: &mut App, updates: UpdatePreferences) {
+        if cx.try_global::<Self>().is_none() {
+            Self::init(cx, true);
+        }
+        cx.update_global::<Self, _>(|settings, _| settings.updates = updates);
     }
 
     /// Whether table top rows are styled as headers. Defaults to `true` when
