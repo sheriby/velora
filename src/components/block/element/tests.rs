@@ -96,6 +96,38 @@
     }
 
     #[test]
+    fn builtin_inline_code_backgrounds_add_one_pixel_on_each_side() {
+        // 行内代码背景过于贴近字形，内置主题在原有基础上上下左右各加 1px。
+        let segment = Bounds::new(point(px(0.0), px(0.0)), size(px(120.0), px(32.0)));
+        for (theme, horizontal_padding) in [
+            (crate::theme::Theme::default_theme(), 4.0),
+            (crate::theme::Theme::light_theme(), 4.0),
+            (crate::theme::Theme::paper_theme(), 4.0),
+            (crate::theme::Theme::forest_theme(), 3.0),
+            (crate::theme::Theme::midnight_theme(), 4.0),
+            (crate::theme::Theme::ink_theme(), 4.0),
+        ] {
+            let dimensions = &theme.dimensions;
+            let bounds = super::inline_code_background_bounds(
+                segment,
+                px(22.0),
+                px(13.0),
+                px(4.0),
+                point(px(dimensions.code_bg_pad_x), px(dimensions.code_bg_pad_y)),
+            );
+            assert_eq!(
+                bounds.left(),
+                px(-horizontal_padding),
+                "{} 的左右留白",
+                theme.name
+            );
+            assert_eq!(bounds.right(), px(120.0 + horizontal_padding));
+            assert_eq!(bounds.top(), px(7.0), "{} 的上方留白", theme.name);
+            assert_eq!(bounds.bottom(), px(28.0), "{} 的下方留白", theme.name);
+        }
+    }
+
+    #[test]
     fn wrapped_inline_code_backgrounds_leave_space_between_rows() {
         let row = Bounds::new(point(px(0.0), px(0.0)), size(px(160.0), px(28.0)));
         let next_row = Bounds::new(point(px(0.0), px(28.0)), row.size);
