@@ -1572,6 +1572,7 @@ async fn search_results_render_only_the_rows_in_the_viewport(cx: &mut TestAppCon
             .len();
         (editor.panel_rows_rendered.get(), hits, files)
     });
+    assert_eq!(hits, 200, "前置：搜索返回 200 条命中");
     assert_eq!(files, 200, "前置：200 个文件各有一条命中");
     assert!(rows > 0, "搜索结果面板一帧都没渲染，闸门测不到东西");
     assert!(
