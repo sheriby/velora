@@ -1558,7 +1558,7 @@ async fn outline_panel_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
     redraw(cx);
     let (rows, headings) = editor.read_with(cx, |editor, _cx| {
         (
-            editor.outline_rows_rendered.get(),
+            editor.panel_rows_rendered.get(),
             editor.workspace.outline_tree.len(),
         )
     });
@@ -1579,8 +1579,8 @@ async fn outline_panel_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
     redraw(cx);
     let (first, rows) = editor.read_with(cx, |editor, _cx| {
         (
-            editor.outline_first_row_rendered.get(),
-            editor.outline_rows_rendered.get(),
+            editor.panel_first_row_rendered.get(),
+            editor.panel_rows_rendered.get(),
         )
     });
     assert!(

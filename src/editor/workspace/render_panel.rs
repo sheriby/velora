@@ -1,6 +1,14 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
 
+/// 文件树摊平出来的一行。节点行之外，名称输入行与懒加载占位行也各占一行，
+/// 三者同高才能按固定行高开窗（`Editor::workspace_list_window`）。
+pub(crate) enum WorkspaceTreeRow<'a> {
+    Node(&'a WorkspaceTreeNode, usize),
+    NameEdit(usize),
+    Loading(usize),
+}
+
 impl Editor {
     pub(crate) fn render_workspace_panel(
         &mut self,
@@ -30,7 +38,7 @@ impl Editor {
         let tree_sort_header = (self.workspace.active_tab == WorkspaceTab::Files)
             .then(|| self.render_tree_filter_and_sort_header(theme, strings, window, cx));
         let body = match self.workspace.active_tab {
-            WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor),
+            WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor, cx),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor, cx),
             WorkspaceTab::Backlinks => {
@@ -107,10 +115,10 @@ impl Editor {
         }
         let (element, needs_fill) = {
             let rows = self.workspace_outline_rows();
-            let window = self.workspace_outline_window(rows.len());
-            self.outline_rows_rendered.set(window.len() as u64);
-            self.outline_first_row_rendered.set(window.start as u64);
-            let needs_fill = rows.len() > OUTLINE_WINDOW_THRESHOLD_ROWS
+            let window = self.workspace_list_window(rows.len());
+            self.panel_rows_rendered.set(window.len() as u64);
+            self.panel_first_row_rendered.set(window.start as u64);
+            let needs_fill = rows.len() > PANEL_WINDOW_THRESHOLD_ROWS
                 && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
 
             let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
@@ -146,31 +154,31 @@ impl Editor {
         };
         // 首帧还没量过滚动视口：先铺一小段，立刻排下一帧补齐（与正文冷启动
         // 续挂同一手法，帧数封顶，量到尺寸即停）。
-        if needs_fill && self.outline_fill_frames < OUTLINE_FILL_MAX_FRAMES {
-            self.outline_fill_frames += 1;
+        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
+            self.panel_fill_frames += 1;
             self.schedule_followup_frame(cx);
         } else if !needs_fill {
-            self.outline_fill_frames = 0;
+            self.panel_fill_frames = 0;
         }
         element
     }
 
-    /// 视口内的行区间：行高固定，从滚动偏移直接除得出来。
-    fn workspace_outline_window(&self, total: usize) -> Range<usize> {
-        if total <= OUTLINE_WINDOW_THRESHOLD_ROWS {
+    /// 视口内的行区间：行高固定，从滚动偏移直接除得出来。大纲与文件树共用。
+    pub(crate) fn workspace_list_window(&self, total: usize) -> Range<usize> {
+        if total <= PANEL_WINDOW_THRESHOLD_ROWS {
             return 0..total;
         }
         let viewport_height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
         if viewport_height <= 0.0 {
-            return 0..OUTLINE_WINDOW_FALLBACK_ROWS.min(total);
+            return 0..PANEL_WINDOW_FALLBACK_ROWS.min(total);
         }
         let scrolled =
             (f32::from(self.workspace.tree_scroll_handle.offset().y) - WORKSPACE_PANEL_PADDING_Y)
                 .max(0.0);
         let first = (scrolled / WORKSPACE_NODE_HEIGHT) as usize;
         let visible = (viewport_height / WORKSPACE_NODE_HEIGHT).ceil() as usize + 1;
-        let start = first.saturating_sub(OUTLINE_WINDOW_OVERDRAW_ROWS);
-        let end = (first + visible + OUTLINE_WINDOW_OVERDRAW_ROWS).min(total);
+        let start = first.saturating_sub(PANEL_WINDOW_OVERDRAW_ROWS);
+        let end = (first + visible + PANEL_WINDOW_OVERDRAW_ROWS).min(total);
         start..end
     }
 
@@ -236,45 +244,65 @@ impl Editor {
             .into_any_element()
     }
 
-    pub(crate) fn render_workspace_nodes(
-        &self,
-        nodes: &[WorkspaceTreeNode],
-        depth: usize,
-        theme: &Theme,
-        editor: &WeakEntity<Editor>,
-    ) -> Vec<AnyElement> {
-        let mut elements = Vec::new();
-        for node in nodes {
-            elements.push(self.render_workspace_node(node, depth, theme, editor));
-            let is_expanded = self.workspace.expanded.contains(&node.id);
-            if is_expanded && self.workspace.name_edit.as_ref().is_some_and(|edit| {
-                !matches!(edit.kind, WorkspaceEditKind::Rename { .. })
-                    && tree_node_path(node) == edit.directory.as_path()
-            }) {
-                elements.push(self.render_workspace_name_row(depth + 1, theme, editor));
-            }
-            if is_expanded && node.kind_dir() && !node.children_loaded {
-                // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
-                elements.push(
-                    div()
-                        .w_full()
-                        .pl(px(6.0 + (depth + 1) as f32 * WORKSPACE_NODE_INDENT))
-                        .text_size(px(14.0))
-                        .text_color(theme.colors.dialog_muted)
-                        .child("…")
-                        .into_any_element(),
-                );
-            }
-            if !node.children.is_empty() && is_expanded {
-                elements.extend(self.render_workspace_nodes(
-                    &node.children,
-                    depth + 1,
-                    theme,
-                    editor,
-                ));
+    /// 文件树按行摊平：顺序就是屏幕顺序。名称输入行与懒加载占位行也各占一行，
+    /// 三者同高，窗口才能按固定行高切（见 `workspace_list_window`）。
+    pub(crate) fn workspace_files_rows(&self) -> Vec<WorkspaceTreeRow<'_>> {
+        fn walk<'a>(
+            nodes: &'a [WorkspaceTreeNode],
+            depth: usize,
+            workspace: &WorkspaceState,
+            rows: &mut Vec<WorkspaceTreeRow<'a>>,
+        ) {
+            for node in nodes {
+                rows.push(WorkspaceTreeRow::Node(node, depth));
+                let is_expanded = workspace.expanded.contains(&node.id);
+                if is_expanded
+                    && workspace.name_edit.as_ref().is_some_and(|edit| {
+                        !matches!(edit.kind, WorkspaceEditKind::Rename { .. })
+                            && tree_node_path(node) == edit.directory.as_path()
+                    })
+                {
+                    rows.push(WorkspaceTreeRow::NameEdit(depth + 1));
+                }
+                if is_expanded && node.kind_dir() && !node.children_loaded {
+                    // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
+                    rows.push(WorkspaceTreeRow::Loading(depth + 1));
+                }
+                if !node.children.is_empty() && is_expanded {
+                    walk(&node.children, depth + 1, workspace, rows);
+                }
             }
         }
-        elements
+        let mut rows = Vec::new();
+        if let Some(root) = self.workspace.file_tree.as_ref() {
+            walk(std::slice::from_ref(root), 0, &self.workspace, &mut rows);
+        }
+        rows
+    }
+
+    /// 摊平出来的一行变成元素。
+    pub(crate) fn render_workspace_tree_row(
+        &self,
+        row: &WorkspaceTreeRow<'_>,
+        theme: &Theme,
+        editor: &WeakEntity<Editor>,
+    ) -> AnyElement {
+        match row {
+            WorkspaceTreeRow::Node(node, depth) => {
+                self.render_workspace_node(node, *depth, theme, editor)
+            }
+            WorkspaceTreeRow::NameEdit(depth) => {
+                self.render_workspace_name_row(*depth, theme, editor)
+            }
+            WorkspaceTreeRow::Loading(depth) => div()
+                .w_full()
+                .h(px(WORKSPACE_NODE_HEIGHT))
+                .pl(px(6.0 + *depth as f32 * WORKSPACE_NODE_INDENT))
+                .text_size(px(14.0))
+                .text_color(theme.colors.dialog_muted)
+                .child("…")
+                .into_any_element(),
+        }
     }
 
     pub(crate) fn render_workspace_node(
