@@ -68,30 +68,6 @@ mod tests {
     }
 
     #[test]
-    fn exported_anchor_ids_are_the_anchors_the_app_jumps_to() {
-        // 标题 slug 只有一处判据（`crate::export::html::heading_slug`）：导出 HTML 写的
-        // 标题 `id`，应用内点同一个锚点必须跳到那一行。app 侧曾另抄一份，两份一旦漂开
-        // 就是「分享出去的目录能跳、应用里点同一行跳不动」这类下游报修。
-        for heading in [
-            "Section",
-            "Math style (extension)",
-            "设计与来源",
-            "🚀 Launch",
-            "A -- B, C_D",
-            "100% 完成 / 8",
-            "  中文 与 English 混排  ",
-        ] {
-            let slug = crate::export::html::heading_slug(heading).expect("测试用标题都该有 slug");
-            let source = format!("前言\n\n# {heading}\n\n正文\n");
-            assert_eq!(
-                heading_line_for_anchor(&source, &slug),
-                Some(2),
-                "导出锚点 {slug:?}（标题 {heading:?}）在应用里应跳到标题那一行"
-            );
-        }
-    }
-
-    #[test]
     fn percent_decoding_keeps_invalid_escapes_and_multibyte_paths() {
         // 解码口径只有 `src/file_url.rs:percent_decode_or_raw` 一处，window_state 里那份
         // 抄本已删。非法转义（`%` 后不跟两个十六进制数字）与串尾裸 `%` 按字面留着，
@@ -266,7 +242,10 @@ mod tests {
     /// 而不是让两边各自跟同一个函数比——那种断言同义反复，永远绿。
     #[test]
     fn the_anchor_the_app_jumps_to_is_the_id_the_export_writes() {
-        let source = "# 部署步骤 Guide 🎉\n\nbody\n\n## Setup, fast!\n\nmore\n";
+        // 第三条标题是刻意挑的形状：开头的 emoji 被丢掉（slug 以 `-` 起头）、逗号与
+        // 感叹号被丢掉、连续空白塌成 `-`、`_` 与 `%` 保留。
+        let source =
+            "# 部署步骤 Guide 🎉\n\nbody\n\n## Setup, fast!\n\nmore\n\n## 🚀 Launch, A -- B C_D 100%\n";
         let html = crate::export::html::render_html(
             source,
             &crate::theme::Theme::default_theme(),
@@ -282,8 +261,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             exported_ids.len(),
-            2,
-            "导出应当发两个标题 id：{html}"
+            3,
+            "导出应当发三个标题 id：{html}"
         );
 
         let heading_lines = source
