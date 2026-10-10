@@ -1,7 +1,8 @@
 mod tests {
     use super::super::{
-        contains_tibetan_text, css_color, local_image_data_uri, prepare_print_html,
-        render_chromium_pdf_html_with_base_dir, render_html, render_html_with_base_dir,
+        IMAGE_MIME_BY_EXTENSION, contains_tibetan_text, css_color, local_image_data_uri,
+        prepare_print_html, render_chromium_pdf_html_with_base_dir, render_html,
+        render_html_with_base_dir,
     };
     use crate::config::preferences::{read_app_preferences_with_dirs, save_app_preferences_with_dirs};
     use crate::config::{ExportThemePreference, VeloraConfigDirs};
@@ -937,30 +938,57 @@ mod tests {
 
     #[test]
     fn inlines_every_format_the_app_accepts_as_a_local_image() {
-        // 内联的扩展名表少了 tif/tiff，正文里显示得好好的 TIFF 就会在单文件 HTML
-        // 里留成相对路径（报告 12 同一类：共享出去的文档静默少一张图）。
+        // 应用能显示的本地图片就是 gpui `Img` 自己报的那份清单；导出内联的格式比它窄，
+        // 正文里显示得好好的图就会在共享的单文件 HTML 里留成相对路径（报告 12 同一类：
+        // TIFF、AVIF、ICO 都撞到过）。所以这条用例逐条走那份清单，而不是走一张手抄表。
         let root = std::env::temp_dir().join(format!("velora-html-export-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create temp export dir");
-        for name in [
-            "scan.tif",
-            "scan.tiff",
-            "shot.png",
-            "shot.jpg",
-            "shot.jpeg",
-            "shot.gif",
-            "shot.webp",
-            "shot.bmp",
-            "shot.svg",
-        ] {
-            fs::write(root.join(name), b"placeholder bytes").expect("write fixture image");
-            let data_uri = local_image_data_uri(name, Some(&root));
-            assert!(
-                data_uri.is_some(),
-                "{name} 应内联成 data URI，实际 {data_uri:?}"
-            );
+        for extension in gpui::Img::extensions() {
+            let name = format!("shot.{extension}");
+            fs::write(root.join(&name), b"placeholder bytes").expect("write fixture image");
+            match local_image_data_uri(&name, Some(&root)) {
+                Some(data_uri) => assert!(
+                    data_uri.starts_with("data:image/") && data_uri.contains(";base64,"),
+                    "{name} 的 data URI 要带 image MIME，实际 {data_uri}"
+                ),
+                None => panic!("{name} 是应用能显示的本地图片，导出必须内联成 data URI"),
+            }
         }
 
+        // 应用画不出的扩展名不内联，保持原始写法。
+        fs::write(root.join("notes.txt"), b"placeholder bytes").expect("write fixture text");
+        assert!(
+            local_image_data_uri("notes.txt", Some(&root)).is_none(),
+            "非图片扩展名不该被内联"
+        );
+
         fs::remove_dir_all(&root).expect("clean up export fixture dir");
+    }
+
+    #[test]
+    fn image_mime_table_covers_exactly_the_formats_the_app_accepts() {
+        // 导出侧只剩一张 MIME 表（gpui 不提供 MIME，data URI 又必须带一个），它的键集
+        // 逐条钉在 `gpui::Img::extensions()` 上：任何一边加了扩展名而另一边没跟上，这里
+        // 就红，不用等下游报修。MIME 值统一要 `image/` 前缀，否则浏览器不认这张 data URI。
+        let app_extensions = gpui::Img::extensions();
+        for extension in app_extensions {
+            assert!(
+                IMAGE_MIME_BY_EXTENSION
+                    .iter()
+                    .any(|(candidate, _)| candidate == extension),
+                "导出 MIME 表缺应用支持的扩展名 {extension:?}"
+            );
+        }
+        for (extension, mime) in IMAGE_MIME_BY_EXTENSION {
+            assert!(
+                app_extensions.contains(&extension),
+                "导出 MIME 表里的 {extension:?} 不是应用支持的图片格式"
+            );
+            assert!(
+                mime.starts_with("image/"),
+                "{extension} 的 MIME {mime} 不是 image 类型"
+            );
+        }
     }
 
     #[test]

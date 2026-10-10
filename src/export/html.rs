@@ -166,9 +166,13 @@ fn render_browser_html_body(markdown: &str, theme: &Theme, base_dir: Option<&Pat
     output
 }
 
-/// GitHub 风格标题 slug；与 src/editor/window_state.rs 的私有 `heading_slug`
-/// 逐字一致——锚点 id 必须应用内外同一套规则，导出里的 `#anchor` 才跳得对。
-/// 改一处必须同步另一处（app 侧那份将来应改为委托到这里）。
+/// GitHub 风格标题 slug 的**唯一**判据：小写、空白转 `-`、丢掉其它标点，`-`/`_` 与
+/// CJK/emoji 原样保留，结果为空则没有锚点。
+///
+/// 导出 HTML 的标题 `id`（本文件）与应用内 Ctrl+点击 `#锚点` 的落点
+/// （`src/editor/window_state.rs:heading_line_for_anchor`）都调这一处：两边各抄一份时
+/// 迟早漂移，漂了就是「分享出去的目录能跳、应用里点同一行跳不动」（AGENTS.md §1
+/// 「一条语法只准有一处判据」）。
 pub(crate) fn heading_slug(text: &str) -> Option<String> {
     let slug: String = text
         .trim()
@@ -1508,6 +1512,36 @@ fn trim_end_recon(text: &str, from: usize, to: usize) -> usize {
     from + slice.trim_end().len()
 }
 
+/// 导出能内联的本地图片格式 = `gpui::Img::extensions()`（真正把这张图解码画出来的
+/// 那个组件报出的能力清单）。这里只剩一列 MIME：data URI 必须自带 MIME，而 gpui 不
+/// 提供，所以这张表躲不掉——但**内联资格不在表里判**，问的是 `Img`。键集与清单逐条
+/// 对齐由 `html/tests.rs` 的两条用例钉住：过去这里手抄过一份更窄的扩展名表，应用显示
+/// 正常的 TIFF/AVIF/ICO 在共享的单文件 HTML 里静默留成相对路径（报告 12 的下游症状）。
+const IMAGE_MIME_BY_EXTENSION: &[(&str, &str)] = &[
+    ("avif", "image/avif"),
+    ("bmp", "image/bmp"),
+    ("dds", "image/x-dds"),
+    ("exr", "image/aces"),
+    ("ff", "image/x-farbfeld"),
+    ("farbfeld", "image/x-farbfeld"),
+    ("gif", "image/gif"),
+    ("hdr", "image/vnd.radiance"),
+    ("ico", "image/vnd.microsoft.icon"),
+    ("jpeg", "image/jpeg"),
+    ("jpg", "image/jpeg"),
+    ("pam", "image/x-portable-anymap"),
+    ("pbm", "image/x-portable-bitmap"),
+    ("pgm", "image/x-portable-graymap"),
+    ("png", "image/png"),
+    ("ppm", "image/x-portable-pixmap"),
+    ("qoi", "image/qoi"),
+    ("svg", "image/svg+xml"),
+    ("tga", "image/x-tga"),
+    ("tif", "image/tiff"),
+    ("tiff", "image/tiff"),
+    ("webp", "image/webp"),
+];
+
 pub(crate) fn local_image_data_uri(source: &str, base_dir: Option<&Path>) -> Option<String> {
     // 路径解析只有 `resolve_image_source` 一处口径：阅读视图能显示的图，导出必须
     // 也能内联，同一个写法不允许两边解出两个结果。
@@ -1523,21 +1557,17 @@ pub(crate) fn local_image_data_uri(source: &str, base_dir: Option<&Path>) -> Opt
     Some(data_uri_for_bytes(mime, &bytes))
 }
 
-/// 能内联的格式必须覆盖应用自己认的本地图片（粘贴用的
-/// `src/components/block/interactions.rs:is_supported_local_image_path`）：表里少一个
-/// 扩展名，导出的单文件 HTML 就静默少一张图——和报告 12 是同一种症状。
+/// 本地图片路径 → data URI 的 MIME。应用画不出的扩展名给 `None`（导出保持原始写法），
+/// 判据就是渲染这张图的那个组件 `gpui::Img::extensions()`，不再手抄第二份格式表。
 fn image_mime_from_path(path: &Path) -> Option<&'static str> {
     let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
-    match extension.as_str() {
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "svg" => Some("image/svg+xml"),
-        "bmp" => Some("image/bmp"),
-        "tif" | "tiff" => Some("image/tiff"),
-        _ => None,
+    if !gpui::Img::extensions().contains(&extension.as_str()) {
+        return None;
     }
+    IMAGE_MIME_BY_EXTENSION
+        .iter()
+        .find(|(candidate, _)| *candidate == extension)
+        .map(|(_, mime)| *mime)
 }
 
 fn data_uri_for_bytes(mime: &str, bytes: &[u8]) -> String {
