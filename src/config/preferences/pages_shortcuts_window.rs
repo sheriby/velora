@@ -227,59 +227,96 @@ impl PreferencesWindow {
         cx.notify();
     }
 
-    pub(crate) fn shortcut_chip(label: &str, theme: &Theme) -> impl IntoElement {
+    pub(super) fn preferred_shortcut(keys: &[String], macos: bool) -> Option<&String> {
+        keys.iter()
+            .find(|key| {
+                Keystroke::parse(key).is_ok_and(|keystroke| {
+                    if macos {
+                        keystroke.modifiers.platform
+                    } else {
+                        keystroke.modifiers.control && !keystroke.modifiers.platform
+                    }
+                })
+            })
+            .or_else(|| {
+                keys.iter().find(|key| {
+                    Keystroke::parse(key).is_ok_and(|keystroke| {
+                        !keystroke.modifiers.platform
+                            && (!macos || (keystroke.modifiers.alt && !keystroke.modifiers.control))
+                    })
+                })
+            })
+            .or_else(|| keys.first())
+    }
+
+    pub(crate) fn shortcut_chip(label: &str, recording: bool, theme: &Theme) -> impl IntoElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
         div()
-            .min_w(px(58.0))
-            .h(px(24.0))
-            .px(px(8.0))
+            .min_w(px(42.0))
+            .min_h(px(t.ui_text_size(26.0).max(26.0)))
+            .px(px(9.0))
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px((d.menu_item_radius - 1.0).max(0.0)))
+            .rounded(px(d.menu_item_radius.min(5.0)))
             .border(px(d.dialog_border_width))
-            .border_color(c.dialog_border)
-            .bg(c.code_bg)
-            .text_size(px((t.dialog_body_size - 1.0).max(10.0)))
-            .text_color(c.code_text)
+            .border_color(if recording {
+                c.dialog_primary_button_bg
+            } else {
+                c.dialog_border
+            })
+            .bg(if recording {
+                c.selection
+            } else {
+                c.dialog_secondary_button_bg
+            })
+            .text_size(px(t.ui_text_size(12.0)))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(c.dialog_body)
             .child(SharedString::from(label.to_string()))
     }
 
     pub(crate) fn shortcut_action_button(
         id: impl Into<ElementId>,
         label: String,
+        enabled: bool,
         theme: &Theme,
         on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let c = &theme.colors;
-        let d = &theme.dimensions;
         let t = &theme.typography;
+        let id = id.into();
         div()
-            .id(id)
-            .h(px(28.0))
-            .px(px(10.0))
+            .id(id.clone())
+            .debug_selector(move || id.to_string())
+            .min_h(px(t.ui_text_size(28.0).max(28.0)))
+            .px(px(6.0))
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px((d.dialog_radius - 5.0).max(0.0)))
-            .border(px(d.dialog_border_width))
-            .border_color(c.dialog_border)
-            .bg(c.dialog_secondary_button_bg)
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .text_size(px((t.dialog_button_size - 1.0).max(10.0)))
-            .font_weight(t.dialog_button_weight.to_font_weight())
-            .text_color(c.dialog_secondary_button_text)
+            .rounded(px(5.0))
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
+            })
+            .when(!enabled, |this| this.opacity(0.35))
+            .text_size(px(t.ui_text_size(12.0)))
+            .text_color(c.dialog_muted)
             .child(label)
-            .on_click(cx.listener(on_click))
+            .on_click(cx.listener(move |this, event, window, cx| {
+                if enabled {
+                    on_click(this, event, window, cx);
+                }
+            }))
     }
 
     pub(crate) fn render_shortcut_row(
         &self,
         definition: ShortcutDefinition,
+        keybindings: &BTreeMap<String, Vec<String>>,
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         cx: &mut Context<Self>,
@@ -287,48 +324,79 @@ impl PreferencesWindow {
         let c = &theme.colors;
         let t = &theme.typography;
         let is_recording = self.recording_shortcut == Some(definition.command);
-        let keys = resolved_shortcut_keys(&self.keybindings, definition.command);
+        let keys = resolved_shortcut_keys(keybindings, definition.command);
+        let is_custom = keybindings.contains_key(definition.id);
         let label = Self::shortcut_command_label(definition.command, strings);
         let command = definition.command;
 
-        let mut chips = div().flex().flex_wrap().gap(px(6.0));
+        let mut chips = div().flex().flex_wrap().justify_end().gap(px(5.0));
         if is_recording {
             chips = chips.child(Self::shortcut_chip(
                 &strings.preferences_shortcut_recording,
+                true,
                 theme,
             ));
         } else {
-            for key in keys {
-                chips = chips.child(Self::shortcut_chip(&key, theme));
+            let displayed = if is_custom {
+                keys
+            } else {
+                Self::preferred_shortcut(&keys, cfg!(target_os = "macos"))
+                    .into_iter()
+                    .cloned()
+                    .collect()
+            };
+            if displayed.is_empty() {
+                chips = chips.child(div().text_color(c.dialog_muted).child("—"));
+            }
+            for key in displayed {
+                let label = match Keystroke::parse(&key) {
+                    Ok(keystroke) => keystroke
+                        .to_string()
+                        .replace("ctrl-", "Ctrl+")
+                        .replace("alt-", "Alt+")
+                        .replace("shift-", "Shift+"),
+                    Err(error) => {
+                        eprintln!("显示快捷键失败：{error}");
+                        key
+                    }
+                };
+                chips = chips.child(Self::shortcut_chip(&label, false, theme));
             }
         }
 
         div()
+            .id(SharedString::from(format!(
+                "preferences-shortcut-row-{}",
+                definition.id
+            )))
+            .debug_selector(move || format!("preferences-shortcut-row-{}", definition.id))
             .w_full()
-            .min_h(px(48.0))
-            .px(px(14.0))
-            .py(px(6.0))
+            .min_h(px(t.ui_text_size(42.0).max(42.0)))
+            .px(px(8.0))
+            .py(px(5.0))
             .flex()
             .items_center()
             .gap(px(12.0))
             .hover(|this| this.bg(c.dialog_secondary_button_hover))
             .child(
                 div()
-                    .w(px(150.0))
-                    .flex_shrink_0()
-                    .text_size(px(t.dialog_body_size))
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .truncate()
+                    .text_size(px(t.ui_text_size(13.0)))
                     .text_color(c.dialog_body)
                     .child(label),
             )
-            .child(div().flex_1().min_w(px(0.0)).child(chips))
+            .child(div().max_w(px(240.0)).min_w(px(0.0)).child(chips))
             .child(
                 div()
                     .flex_shrink_0()
                     .flex()
-                    .gap(px(6.0))
+                    .gap(px(3.0))
                     .child(Self::shortcut_action_button(
                         ("preferences-shortcut-record", definition.command as u32),
                         strings.preferences_shortcut_record.clone(),
+                        true,
                         theme,
                         move |this, event, window, cx| {
                             this.begin_recording_shortcut(command, event, window, cx)
@@ -338,6 +406,7 @@ impl PreferencesWindow {
                     .child(Self::shortcut_action_button(
                         ("preferences-shortcut-reset", definition.command as u32),
                         strings.preferences_shortcut_reset.clone(),
+                        is_custom || is_recording,
                         theme,
                         move |this, event, window, cx| {
                             this.reset_shortcut(command, event, window, cx)
@@ -355,6 +424,7 @@ impl PreferencesWindow {
     ) -> AnyElement {
         let c = &theme.colors;
         let t = &theme.typography;
+        let keybindings = normalize_shortcut_config(&self.keybindings);
 
         let categories = [
             ShortcutCategory::File,
@@ -365,20 +435,41 @@ impl PreferencesWindow {
             ShortcutCategory::Other,
         ];
 
-        // 每个分类一张卡片，分类名用弱化的小字放在卡片上方；整页滚动交给外层容器。
-        let mut page = div().w_full().flex_shrink_0().flex().flex_col().gap(px(14.0));
+        let mut page = div()
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap(px(20.0))
+            .child(
+                div()
+                    .px(px(8.0))
+                    .text_size(px(t.ui_text_size(12.0)))
+                    .text_color(c.dialog_muted)
+                    .child(strings.preferences_shortcuts_hint.clone()),
+            );
         for category in categories {
             let rows = shortcut_definitions()
                 .iter()
                 .copied()
                 .filter(|definition| definition.category == category)
                 .map(|definition| {
-                    self.render_shortcut_row(definition, theme, strings, cx)
+                    self.render_shortcut_row(definition, &keybindings, theme, strings, cx)
                         .into_any_element()
                 })
                 .collect::<Vec<_>>();
             if rows.is_empty() {
                 continue;
+            }
+            let count = rows.len();
+            let mut separator = c.dialog_border;
+            separator.a *= 0.45;
+            let mut list = div().w_full().flex().flex_col();
+            for (index, row) in rows.into_iter().enumerate() {
+                if index > 0 {
+                    list = list.child(div().h(px(1.0)).mx(px(8.0)).bg(separator));
+                }
+                list = list.child(row);
             }
             page = page.child(
                 div()
@@ -386,16 +477,25 @@ impl PreferencesWindow {
                     .flex_shrink_0()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
+                    .gap(px(8.0))
                     .child(
                         div()
-                            .px(px(2.0))
-                            .text_size(px((t.dialog_body_size - 1.0).max(10.0)))
-                            .font_weight(t.dialog_button_weight.to_font_weight())
+                            .px(px(8.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .text_size(px(t.ui_text_size(12.0)))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(c.dialog_muted)
-                            .child(Self::shortcut_category_label(category, strings)),
+                            .child(Self::shortcut_category_label(category, strings))
+                            .child(
+                                div()
+                                    .text_size(px(t.ui_text_size(11.0)))
+                                    .opacity(0.65)
+                                    .child(count.to_string()),
+                            ),
                     )
-                    .child(self.settings_card(theme, rows)),
+                    .child(list),
             );
         }
         page.into_any_element()

@@ -126,6 +126,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_shortcuts_group_block: Option<String>,
     pub(crate) preferences_shortcuts_group_other: Option<String>,
     pub(crate) preferences_shortcut_record: Option<String>,
+    pub(crate) preferences_shortcuts_hint: Option<String>,
     pub(crate) preferences_shortcut_reset: Option<String>,
     pub(crate) preferences_shortcut_recording: Option<String>,
     pub(crate) preferences_shortcut_conflict_template: Option<String>,

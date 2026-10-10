@@ -217,6 +217,7 @@ pub struct I18nStrings {
     pub preferences_shortcuts_group_block: String,
     pub preferences_shortcuts_group_other: String,
     pub preferences_shortcut_record: String,
+    pub preferences_shortcuts_hint: String,
     pub preferences_shortcut_reset: String,
     pub preferences_shortcut_recording: String,
     pub preferences_shortcut_conflict_template: String,

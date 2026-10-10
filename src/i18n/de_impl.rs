@@ -295,6 +295,9 @@ impl I18nStringsDe {
             preferences_shortcut_record: self
                 .preferences_shortcut_record
                 .unwrap_or(defaults.preferences_shortcut_record),
+            preferences_shortcuts_hint: self
+                .preferences_shortcuts_hint
+                .unwrap_or(defaults.preferences_shortcuts_hint),
             preferences_shortcut_reset: self
                 .preferences_shortcut_reset
                 .unwrap_or(defaults.preferences_shortcut_reset),

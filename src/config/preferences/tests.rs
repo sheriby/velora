@@ -403,6 +403,102 @@
             .expect("偏好窗口应可更新");
     }
 
+    #[test]
+    fn shortcut_page_prefers_platform_keys_without_changing_bindings() {
+        let keys = vec!["cmd-s".to_string(), "ctrl-s".to_string()];
+        assert_eq!(
+            super::PreferencesWindow::preferred_shortcut(&keys, true),
+            keys.first()
+        );
+        assert_eq!(
+            super::PreferencesWindow::preferred_shortcut(&keys, false),
+            keys.get(1)
+        );
+        let neutral = vec!["enter".to_string()];
+        assert_eq!(
+            super::PreferencesWindow::preferred_shortcut(&neutral, true),
+            neutral.first()
+        );
+        assert_eq!(
+            super::PreferencesWindow::preferred_shortcut(&[], false),
+            None
+        );
+        let fullscreen = vec!["ctrl-cmd-f".to_string(), "f11".to_string()];
+        assert_eq!(
+            super::PreferencesWindow::preferred_shortcut(&fullscreen, false),
+            fullscreen.get(1)
+        );
+        let word_motion = vec!["ctrl-left".to_string(), "alt-left".to_string()];
+        assert_eq!(
+            super::PreferencesWindow::preferred_shortcut(&word_motion, true),
+            word_motion.get(1)
+        );
+        assert_eq!(keys, vec!["cmd-s", "ctrl-s"]);
+    }
+
+    #[gpui::test]
+    async fn shortcut_page_edit_cancel_and_reset_remain_usable(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "偏好设置".into(),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(cx, |preferences, _window, cx| {
+                preferences.nav = PreferencesNav::Shortcuts;
+                cx.notify();
+            })
+            .expect("偏好窗口应可更新");
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        let command = crate::components::ShortcutCommand::SaveDocument;
+        let edit_id =
+            Box::leak(format!("preferences-shortcut-record-{}", command as u32).into_boxed_str());
+        let reset_id =
+            Box::leak(format!("preferences-shortcut-reset-{}", command as u32).into_boxed_str());
+        let edit = preferences_cx
+            .debug_bounds(edit_id)
+            .expect("修改按钮应可见");
+        preferences_cx.simulate_click(edit.center(), gpui::Modifiers::none());
+        preferences_cx.simulate_keystrokes("escape");
+        handle
+            .update(cx, |preferences, _window, _cx| {
+                assert!(preferences.recording_shortcut.is_none());
+                assert!(preferences.keybindings.is_empty());
+            })
+            .expect("偏好窗口应可更新");
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        preferences_cx.simulate_click(edit.center(), gpui::Modifiers::none());
+        preferences_cx.simulate_keystrokes("ctrl-alt-s");
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        handle
+            .update(cx, |preferences, _window, _cx| {
+                assert_eq!(
+                    preferences.keybindings.get("save_document"),
+                    Some(&vec!["ctrl-alt-s".into()])
+                );
+                assert!(preferences.has_unsaved_changes());
+            })
+            .expect("快捷键应已修改");
+        let reset = preferences_cx
+            .debug_bounds(reset_id)
+            .expect("重置按钮应可见");
+        preferences_cx.simulate_click(reset.center(), gpui::Modifiers::none());
+        handle
+            .update(cx, |preferences, _window, _cx| {
+                assert!(preferences.keybindings.is_empty());
+                assert!(!preferences.has_unsaved_changes());
+            })
+            .expect("重置后应恢复默认绑定");
+    }
+
     fn init_preferences_test_app(cx: &mut TestAppContext) {
         cx.update(|cx| {
             I18nManager::init_with_language_id(cx, "en-US");

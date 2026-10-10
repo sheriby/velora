@@ -123,6 +123,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_shortcuts_group_block",
     "preferences_shortcuts_group_other",
     "preferences_shortcut_record",
+    "preferences_shortcuts_hint",
     "preferences_shortcut_reset",
     "preferences_shortcut_recording",
     "preferences_shortcut_conflict_template",
