@@ -1,5 +1,15 @@
 use super::*;
 
+/// 「这一篇的外部改动读不出来」那条提示的开头。侧栏那条红字是全工作区共用的，
+/// 只有以它开头的那一条由重载流程自己收回——别人写的（保存失败、打不开文件）
+/// 不能被一次成功的重载顺手清掉。
+const UNREADABLE_EXTERNAL_CHANGE: &str = "读不出外部改动";
+
+/// 读不出来时补复查的间隔：写入方往往还在写（半截的 UTF-16、临时文件还没改名），
+/// 太急第二次照样读坏；而很多平台这一次事件就是最后一次（notify 合并、FSEvents
+/// 去抖），不补这一次界面就永远停在旧内容上。
+const EXTERNAL_CHANGE_RECHECK_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
+
 impl Editor {
     /// ⌘1-⌘9: focus the Nth document tab (roadmap E5).
     pub(crate) fn on_select_tab_index(
@@ -37,6 +47,19 @@ impl Editor {
         path: &Path,
         cx: &mut Context<Self>,
     ) {
+        self.reload_externally_changed_document_with_recheck(path, true, cx);
+    }
+
+    /// 重载这一篇；`may_recheck` 说这次要不要在读不出来时补一次复查。
+    ///
+    /// 复查只补一次（第二趟再失败就只留那条提示，不再排第三个计时），否则会跟着
+    /// 监听事件滚成一串定时器。
+    fn reload_externally_changed_document_with_recheck(
+        &mut self,
+        path: &Path,
+        may_recheck: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some((cached_markdown, dirty)) = self.cached_tab_content_for_path(path, cx) else {
             return;
         };
@@ -50,18 +73,75 @@ impl Editor {
         {
             return;
         }
-        let Ok(document) = crate::editor::encoding::load_document(path) else {
-            return;
+        let document = match crate::editor::encoding::load_document(path) {
+            Ok(document) => document,
+            Err(error) => {
+                // 以前这里是 `let Ok(..) else { return }`：静默吞掉一次读盘失败。
+                // 那是「文档在外部修改后没有刷新」的一条真路径——写入方还没写完
+                // （半截的 UTF-16、读到 NUL 的字节流）、文件被同步盘换成占位符、
+                // 句柄还被上一个写者独占，而很多平台这一次事件就是最后一次，
+                // 于是界面永远停在旧内容上，用户连一句为什么都拿不到。
+                // 现在：先说清这一趟为什么没刷，再补一次短延时的复查。
+                self.note_unreadable_external_change(path, &error, cx);
+                if may_recheck {
+                    self.schedule_external_change_recheck(path.to_path_buf(), cx);
+                }
+                return;
+            }
         };
         let disk = &document.text;
         // 标签缓存与缓冲区一样存 LF 文本，磁盘上的 CRLF 不是「外部改动」：按规范化
         // 后的版本号比，否则每次监听事件都会把干净文件当成被改了，重新导入一遍。
         let disk_version = crate::editor::persistence::file_content_version(disk);
         if disk_version == crate::editor::persistence::file_content_version(&cached_markdown) {
+            self.clear_unreadable_external_change();
             return;
         }
         self.apply_disk_reload(path, document, disk_version, cx);
+        self.clear_unreadable_external_change();
         cx.notify();
+    }
+
+    /// 读不出外部改动的那条提示（应用内侧栏红字，不用系统原生弹窗）。
+    fn note_unreadable_external_change(
+        &mut self,
+        path: &Path,
+        error: &std::io::Error,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.file_error = Some(format!(
+            "{UNREADABLE_EXTERNAL_CHANGE}「{}」：{error}，界面仍是上一版内容。",
+            path.display()
+        ));
+        cx.notify();
+    }
+
+    /// 内容终于读出来了：收回那条提示。只认它自己写的那一句——别处失败
+    /// （保存不了、打不开文件）的红字不该被一次成功的重载顺手清掉。
+    fn clear_unreadable_external_change(&mut self) {
+        if self
+            .workspace
+            .file_error
+            .as_deref()
+            .is_some_and(|error| error.starts_with(UNREADABLE_EXTERNAL_CHANGE))
+        {
+            self.workspace.file_error = None;
+        }
+    }
+
+    /// 补一次复查：写入方往往还在写，那一瞬间的读失败多半是自己会好的；不补就只能
+    /// 停在旧内容上（很多平台的监听事件会合并，之后不再有第二次机会）。
+    fn schedule_external_change_recheck(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let editor = cx.entity().downgrade();
+        cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            cx.background_executor()
+                .timer(EXTERNAL_CHANGE_RECHECK_DELAY)
+                .await;
+            let _ = editor.update(cx, |editor, cx| {
+                editor.reload_externally_changed_document_with_recheck(&path, false, cx);
+            });
+        })
+        .detach();
     }
 
     /// 冲突框里按「重载」：放弃本地编辑、读回磁盘那一版。放弃之前先把当前内容
@@ -703,10 +783,14 @@ impl Editor {
                 if !tab.dirty {
                     continue;
                 }
-                // 已知限制：后台标签没有缓冲区，`tab.markdown` 是切换时存下的
-                // LF 文本——这里写出去会把 CRLF/GB18030 洗成 LF/UTF-8。修法是让
-                // tab 快照携带字节与 FileShape（独立工作项，见 FIXPLAN B2）。
-                match std::fs::write(&tab.path, tab.markdown.as_str()) {
+                // 后台标签没有缓冲区，手里只有切换时存下的 LF 文本：直接写出去会把
+                // UTF-16/GB18030 的编码与 CRLF 的行尾洗成 UTF-8/LF。落盘字节按磁盘上
+                // 还在的那份文件的形状重新编码（`persistence::tab_write_bytes`），
+                // 标签快照里因此不必再存一份整篇字节。
+                match std::fs::write(
+                    &tab.path,
+                    crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown),
+                ) {
                     Ok(()) => {
                         let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);
                     }

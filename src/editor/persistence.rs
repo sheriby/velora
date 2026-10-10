@@ -448,12 +448,13 @@ impl Editor {
                             source_path: Some(document.path.clone()),
                             markdown: document.markdown.clone(),
                         })?;
-                        verify_file_version(&document.path, document.file_version)?;
-                        // 同 autosave：活动文档优先写缓冲区字节，后台标签退写文本。
-                        let payload = document
-                            .bytes
-                            .as_deref()
-                            .unwrap_or(document.markdown.as_bytes());
+                        let disk_raw = verify_file_version(&document.path, document.file_version)?;
+                        // 同 autosave：活动文档优先写缓冲区字节，后台那一页按磁盘上的
+                        // 形状重新编码（形状只在盘上那份文件里，标签快照没有它）。
+                        let payload = match document.bytes.as_deref() {
+                            Some(bytes) => bytes.to_vec(),
+                            None => encoded_with_disk_shape(&document.markdown, &disk_raw),
+                        };
                         std::fs::write(&temp_path, payload).with_context(|| {
                             format!("failed to stage '{}'", document.path.display())
                         })?;

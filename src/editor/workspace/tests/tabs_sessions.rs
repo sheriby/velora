@@ -831,3 +831,325 @@ async fn the_close_tab_command_closes_the_active_tab(cx: &mut TestAppContext) {
         assert!(editor.file_path.is_none());
     });
 }
+
+/// UTF-16LE + BOM 的夹具字节。编码表只有一份（`buffer::file_shape`），这里只是
+/// 把夹具拼出来，不参与判定。
+fn utf16_le_with_bom(text: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
+}
+
+/// 这一篇现在盘上的文本（按它自己的编码解出来）。
+fn disk_text(path: &std::path::Path) -> String {
+    crate::editor::encoding::decode_document_bytes(fs::read(path).expect("read the document"))
+}
+
+/// 标签快照丢了文件形状（`WorkspaceDocumentTab` 只存 LF 文本，不存字节与
+/// `FileShape`——就是 tabs.rs / session_watcher.rs 里那两行「独立工作项，见 FIXPLAN B2」），
+/// 自动保存于是把后台那一页的 UTF-16 洗成 UTF-8：BOM 没了、正文按错的编码重解一遍，
+/// 用户的原文在磁盘上被换掉。这正是编码修复要堵的那类数据丢失，只是换了个入口。
+///
+/// 修法不需要给每个标签再存一份整篇字节：盘上的形状还在原文件里，落盘前按它重新
+/// 编码就行，编码器仍然只有 `FileShape::encode` 一个。
+#[gpui::test]
+async fn autosaving_a_background_dirty_tab_keeps_its_encoding_shape(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-tab-shape-utf16-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, utf16_le_with_bom("第一段\n")).unwrap();
+    fs::write(&second, "第二段\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(first.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("first block").clone();
+        block.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(crate::components::InlineTextTree::plain(
+                    "编辑后的第一段".to_string(),
+                ));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    // 切走：这一页从此只有标签快照，没有缓冲区。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second.clone(), window, cx);
+        })
+    });
+    let recovery_ids = editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .open_documents
+            .iter()
+            .map(|tab| tab.recovery_id)
+            .collect::<Vec<_>>()
+    });
+    cx.on_quit(move || {
+        for recovery_id in recovery_ids {
+            let _ = crate::config::remove_recovery_snapshot(recovery_id);
+        }
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+
+    let bytes = fs::read(&first).expect("read the autosaved file");
+    assert!(
+        bytes.starts_with(&[0xFF, 0xFE]),
+        "自动保存把 UTF-16 的 BOM 洗掉了，盘上前四字节 {bytes:?}"
+    );
+    let text = disk_text(&first);
+    assert!(
+        text.starts_with("编辑后的第一段"),
+        "形状要保住，内容也要是改过的那一版，实测 {text:?}"
+    );
+    assert!(
+        !text.contains('\u{FFFD}'),
+        "写出去的是按 UTF-8 编的正文，再解一遍就带替换符了：{text:?}"
+    );
+}
+
+/// 同一处洞的行尾那一半：后台标签存的是 LF 文本，直接写出去就把 CRLF 拍平。
+#[gpui::test]
+async fn autosaving_a_background_dirty_tab_keeps_crlf_line_endings(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-tab-shape-crlf-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, "第一段\r\n第二段\r\n").unwrap();
+    fs::write(&second, "另一篇\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(first.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("first block").clone();
+        block.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(crate::components::InlineTextTree::plain(
+                    "编辑后的第一段".to_string(),
+                ));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second.clone(), window, cx);
+        })
+    });
+    let recovery_ids = editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .open_documents
+            .iter()
+            .map(|tab| tab.recovery_id)
+            .collect::<Vec<_>>()
+    });
+    cx.on_quit(move || {
+        for recovery_id in recovery_ids {
+            let _ = crate::config::remove_recovery_snapshot(recovery_id);
+        }
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+
+    let raw = fs::read_to_string(&first).expect("read the autosaved file");
+    assert!(
+        raw.contains("\r\n"),
+        "自动保存把 CRLF 拍平成 LF 了，实测 {raw:?}"
+    );
+    assert!(
+        !raw.replace("\r\n", "").contains('\r') && !raw.replace("\r\n", "").contains('\n'),
+        "行尾该是清一色的 CRLF，实测 {raw:?}"
+    );
+}
+
+/// 「关闭标签页 → 保存并关闭」写的是后台那一页的标签快照，同样不能丢形状。
+#[gpui::test]
+async fn saving_a_closed_tab_keeps_its_encoding_shape(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-tab-close-shape-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, utf16_le_with_bom("第一段\n")).unwrap();
+    fs::write(&second, "第二段\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(first.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().expect("first block").clone();
+        block.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(crate::components::InlineTextTree::plain(
+                    "编辑后的第一段".to_string(),
+                ));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.close_workspace_document(&first, window, cx);
+        })
+    });
+    // 「保存并关闭」那一位。
+    editor.update_in(cx, |editor, window, cx| {
+        editor.dismiss_modal(0, window, cx);
+    });
+    cx.run_until_parked();
+
+    let bytes = fs::read(&first).expect("read the saved file");
+    assert!(
+        bytes.starts_with(&[0xFF, 0xFE]),
+        "关闭时保存后台标签把 UTF-16 洗掉了，实测 {bytes:?}"
+    );
+    assert!(
+        disk_text(&first).starts_with("编辑后的第一段"),
+        "关闭时保存的内容要是改过的那一版，实测 {:?}",
+        disk_text(&first)
+    );
+}
+
+/// 换工作区时收起脏标签那一条：同一处 `std::fs::write(tab.markdown)`，同一个形状洞。
+#[gpui::test]
+async fn switching_workspace_keeps_the_shape_of_dirty_tabs(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root_a = std::env::temp_dir().join(format!(
+        "velora-switch-shape-a-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let root_b = std::env::temp_dir().join(format!(
+        "velora-switch-shape-b-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root_a).unwrap();
+    fs::create_dir_all(&root_b).unwrap();
+    let doc = root_a.join("notes.md");
+    fs::write(&doc, utf16_le_with_bom("# 原文\n")).unwrap();
+    cx.on_quit({
+        let (root_a, root_b) = (root_a.clone(), root_b.clone());
+        move || {
+            let _ = fs::remove_dir_all(root_a);
+            let _ = fs::remove_dir_all(root_b);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root_a.clone(), cx);
+            editor.open_workspace_file(doc.clone(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    // 与既有的「切换工作区不能吞掉未保存的内容」同一口径造脏标签：标签里存的是
+    // 缓冲区文本（LF），形状只在盘上那份文件里。
+    editor.update(cx, |editor, _cx| {
+        editor.workspace.open_documents[0].dirty = true;
+        editor.workspace.open_documents[0].markdown = "# 未保存的修改\n".into();
+    });
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root_b.clone(), cx);
+        })
+    });
+
+    let bytes = fs::read(&doc).expect("read the pruned file");
+    assert!(
+        bytes.starts_with(&[0xFF, 0xFE]),
+        "收起脏标签时把 UTF-16 洗成了 UTF-8，实测前四字节 {bytes:?}"
+    );
+    assert_eq!(
+        disk_text(&doc),
+        "# 未保存的修改\n",
+        "内容要一字不改地落回那篇文件"
+    );
+}
