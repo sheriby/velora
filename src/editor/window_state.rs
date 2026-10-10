@@ -2,6 +2,8 @@
 //! 窗口标题显示 velora。
 
 use super::*;
+use crate::export::html::heading_slug;
+use crate::file_url::percent_decode_or_raw;
 
 /// P4b：stride 大多未知时的单帧最大预挂载行数。上限只削视口上下的余量，
 /// 视口自身必须始终有挂载行覆盖。
@@ -955,7 +957,7 @@ const EXTERNAL_LINK_SCHEMES: [&str; 5] = ["http:", "https:", "mailto:", "tel:", 
 pub(crate) fn classify_link_target(target: &str) -> LinkTarget {
     let trimmed = target.trim();
     if let Some(anchor) = trimmed.strip_prefix('#') {
-        return LinkTarget::Anchor(percent_decode(anchor));
+        return LinkTarget::Anchor(percent_decode_or_raw(anchor).into_owned());
     }
     let lowered = trimmed.to_ascii_lowercase();
     if EXTERNAL_LINK_SCHEMES
@@ -964,21 +966,33 @@ pub(crate) fn classify_link_target(target: &str) -> LinkTarget {
     {
         return LinkTarget::External(trimmed.to_string());
     }
-    let raw = lowered
-        .strip_prefix("file:")
-        .map(|_| trimmed[5..].trim_start_matches('/').to_string())
-        .unwrap_or_else(|| trimmed.to_string());
+    let file_url_target = strip_file_url_prefix(trimmed, &lowered);
+    let raw = match file_url_target {
+        Some(rest) => rest.trim_start_matches('/').to_string(),
+        None => trimmed.to_string(),
+    };
     let (path_part, anchor) = split_link_anchor(&raw);
     // Windows 的 `C:/x.md` 被 strip 掉斜杠后会丢掉盘符冒号后的分隔，这里补回。
-    let path = percent_decode(path_part);
-    let path = match lowered.strip_prefix("file:") {
-        Some(_) if path.len() > 2 && path.as_bytes()[1] == b':' => format!("/{path}"),
+    let path = percent_decode_or_raw(path_part).into_owned();
+    let path = match file_url_target {
+        Some(_) if path.len() > 2 && path.as_bytes().get(1) == Some(&b':') => format!("/{path}"),
         _ => path,
     };
     LinkTarget::Local {
         path,
-        anchor: anchor.map(percent_decode),
+        anchor: anchor.map(|anchor| percent_decode_or_raw(anchor).into_owned()),
     }
+}
+
+/// 大小写不敏感地剥掉 `file:` scheme（判据看的是 `lowered`），返回原文里剩下的目标。
+/// `to_ascii_lowercase` 只改 ASCII 字母、不改字节长度，所以 `lowered` 以这段纯 ASCII
+/// 前缀开头时，原文在同一个偏移上必是字符边界——旧的 `trimmed[5..]` 正是靠这件事才不
+/// panic。现在改用 `get`：越界只会得到 `None`（按「没写 scheme」处理），边界写进类型，
+/// 不再靠运气。
+fn strip_file_url_prefix<'a>(target: &'a str, lowered: &str) -> Option<&'a str> {
+    lowered
+        .strip_prefix("file:")
+        .and_then(|_| target.get("file:".len()..))
 }
 
 fn split_link_anchor(target: &str) -> (&str, Option<&str>) {
@@ -986,33 +1000,6 @@ fn split_link_anchor(target: &str) -> (&str, Option<&str>) {
         Some(index) => (&target[..index], Some(&target[index + 1..])),
         None => (target, None),
     }
-}
-
-/// 只做链接里常见的百分号转义（`My%20File.md` → `My File.md`）。按**字节**还原，
-/// 再整体按 UTF-8 解码，否则中文锚点（`%E6%A0%87%E9%A2%98`）会被拆成半个字符。
-fn percent_decode(text: &str) -> String {
-    if !text.contains('%') {
-        return text.to_string();
-    }
-    let bytes = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && index + 2 < bytes.len()
-            && let (Some(hi), Some(lo)) = (
-                (bytes[index + 1] as char).to_digit(16),
-                (bytes[index + 2] as char).to_digit(16),
-            )
-        {
-            out.push((hi * 16 + lo) as u8);
-            index += 3;
-            continue;
-        }
-        out.push(bytes[index]);
-        index += 1;
-    }
-    String::from_utf8(out).unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
 }
 
 /// 本地链接的落点：绝对路径直接用，相对路径按当前文档目录（无文档时按工作区根）解析。
@@ -1030,37 +1017,23 @@ pub(crate) fn resolve_local_link_path(document_path: Option<&Path>, path: &str) 
 
 /// 按标题文本找它在源文本里的行号（GitHub 风格锚点的宽松匹配：忽略大小写、
 /// 空白与标点，保留 `-`/`_` 与 CJK）。
+///
+/// slug 用的是导出那一份 [`heading_slug`]：应用内跳转算的锚点与写进 HTML 的 `id`
+/// 必须是同一个字符串，两处各写一份时，改一处就会让「界面里点得动、导出的 HTML
+/// 里点不动」（或反过来）。
 pub(crate) fn heading_line_for_anchor(source: &str, anchor: &str) -> Option<usize> {
     let needle = heading_slug(anchor)?;
     source.lines().enumerate().find_map(|(index, line)| {
         let text = line.trim_start();
-        let hashes = text.len() - text.trim_start_matches('#').len();
-        if hashes == 0 || hashes > 6 {
+        let title = text.trim_start_matches('#');
+        // `#` 是 1 字节，差值就是井号个数；不写 `text[hashes..]` 那种切片下标。
+        let marker_len = text.len() - title.len();
+        if marker_len == 0 || marker_len > 6 {
             return None;
         }
-        (heading_slug(text[hashes..].trim())? == needle).then_some(index)
+        (heading_slug(title.trim())? == needle).then_some(index)
     })
 }
-
-fn heading_slug(text: &str) -> Option<String> {
-    // GitHub 风格：小写、空白转 `-`、丢掉其它标点（CJK 直接保留）。
-    let slug: String = text
-        .trim()
-        .to_lowercase()
-        .chars()
-        .filter_map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                Some(c)
-            } else if c.is_whitespace() {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect();
-    (!slug.is_empty()).then_some(slug)
-}
-
 
 #[cfg(test)]
 mod tests;
