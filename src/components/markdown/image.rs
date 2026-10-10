@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
-use gpui::{SharedUri, http_client::Uri};
+use gpui::SharedUri;
 
+use crate::file_url::percent_decode_or_raw;
 use crate::net;
 
 /// Active fenced code block while scanning for image reference definitions.
@@ -99,18 +99,38 @@ impl ImageSyntax {
     }
 }
 
+/// Markdown 图片目标 → 本地路径 / 远程 URI 的唯一口径。
+///
+/// 阅读视图（`src/components/block/runtime/image.rs`、`render/content.rs`）与导出
+/// （`src/export/html.rs:local_image_data_uri`）都走这里：以前两边各有一份 percent
+/// 解码和 `file:` 处理，同一个写法在正文里能显示、在导出里漏内联（报告 12）。
 pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> ImageResolvedSource {
-    if net::is_remote_image_source(source) {
-        return ImageResolvedSource::Remote(SharedUri::from(source.to_string()));
+    // 解析期已经剥过一次尖括号（`normalize_image_source`），这里再剥一次，让拿到
+    // 裸目标的调用方（HTML `<img>`、引用表、导出）共用同一条规则。
+    let destination = angle_bracket_destination(source);
+
+    // 远程写法不做 percent 解码：`%20` 属于 URL 本身，请求时必须原样送出去。
+    if net::is_remote_image_source(destination) {
+        return ImageResolvedSource::Remote(SharedUri::from(destination.to_string()));
     }
 
-    // Markdown sources are frequently percent-encoded (`My%20pic.png`) or
-    // written as `file:///...` URLs; strip both before touching the filesystem.
-    let cleaned = source.strip_prefix("file://").unwrap_or(source);
-    let cleaned = cleaned.strip_prefix("localhost/").unwrap_or(cleaned);
-    let cleaned = percent_decode_path(cleaned).unwrap_or_else(|| cleaned.to_string());
+    // `file:` 后紧跟 `/` 才是绝对文件 URL；`file:relative.png` 是相对文档的写法，
+    // 按 RFC 3986 剥掉 scheme 再走相对解析——直接丢给 `url` 会被解成根目录下的文件。
+    let absolute_file_url = destination.starts_with("file:/");
+    let destination = if absolute_file_url {
+        destination
+    } else {
+        destination.strip_prefix("file:").unwrap_or(destination)
+    };
 
-    let path = Path::new(&cleaned);
+    if absolute_file_url
+        && let Some(path) = local_path_from_file_url(destination)
+    {
+        return ImageResolvedSource::Local(path);
+    }
+
+    let decoded = percent_decode_or_raw(destination);
+    let path = Path::new(decoded.as_ref());
     if path.is_absolute() {
         return ImageResolvedSource::Local(path.to_path_buf());
     }
@@ -121,38 +141,14 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
     ImageResolvedSource::Local(resolved)
 }
 
-/// Decodes `%XX` escapes; returns `None` when the source has no valid escapes
-/// or the result is not valid UTF-8, in which case the raw source is used.
-fn percent_decode_path(value: &str) -> Option<String> {
-    if !value.contains('%') {
-        return None;
-    }
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && let Some(&hi) = bytes.get(i + 1)
-            && let Some(&lo) = bytes.get(i + 2)
-            && let (Some(hi), Some(lo)) = (hex_value(hi), hex_value(lo))
-        {
-            decoded.push((hi << 4) | lo);
-            i += 3;
-        } else {
-            decoded.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(decoded).ok()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+/// 绝对 `file:` URL → 本地绝对路径。scheme、authority 与 Windows 盘符是 URL 语法，
+/// 交给 `url` crate（与粘贴图片 `src/components/block/interactions.rs` 同一套）；它
+/// 同时负责 percent 解码，所以这条分支不能再解第二遍（`%25` 解两次会变味）。
+/// 畸形 URL 与远程 `file:` authority 返回 `None`，退回普通路径口径。
+fn local_path_from_file_url(destination: &str) -> Option<PathBuf> {
+    let file_url = url::Url::parse(destination).ok()?;
+    let path = file_url.to_file_path().ok()?;
+    path.is_absolute().then_some(path)
 }
 
 /// Splits a trailing `{width=NN%}` attribute off a standalone image, as written
@@ -758,15 +754,35 @@ fn find_open_title_quote(input: &str, close_quote: usize) -> Option<usize> {
 }
 
 fn normalize_image_source(source: &str) -> String {
-    let source = unescape_ascii_punctuation(source);
-    if source.starts_with('<')
-        && source.ends_with('>')
-        && Uri::from_str(&source[1..source.len() - 1]).is_ok()
-    {
-        source[1..source.len() - 1].to_string()
-    } else {
-        source
+    // 先剥尖括号再解转义：`<assets/blue\>card.png>` 里的 `\>` 在尖括号内部是合法的
+    // 转义，反过来先解转义会把定界符本身解没。
+    unescape_ascii_punctuation(angle_bracket_destination(source))
+}
+
+/// CommonMark 的 `<…>` 目标：内部允许空格，只不许出现未转义的 `<`、`>` 和换行。
+///
+/// 这里以前用「`Uri::from_str` 能不能解析」当判据，于是 `<assets/blue card.png>`
+/// 因为空格不是合法 URI 字符而保留尖括号，整个字符串被当成文件名去找——带空格的本地
+/// 路径在 `<…>` 写法下永远加载失败（报告 12）。尖括号是 Markdown 的语法，不是 URI
+/// 的一部分，判定也只能按 Markdown 的规则来。
+fn angle_bracket_destination(source: &str) -> &str {
+    let Some(inner) = source
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+    else {
+        return source;
+    };
+    // `<>` 是空目标，CommonMark 不认，原样留给调用方判空。
+    if inner.is_empty() || inner.contains(['\n', '\r']) {
+        return source;
     }
+    let bytes = inner.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if matches!(byte, b'<' | b'>') && !is_escaped(inner, index) {
+            return source;
+        }
+    }
+    inner
 }
 
 fn unescape_ascii_punctuation(input: &str) -> String {

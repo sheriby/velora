@@ -4,7 +4,30 @@ mod tests {
         TableCellInlineImageSegment, normalize_reference_label, parse_image_reference_definitions,
         parse_standalone_image, parse_table_cell_inline_images, resolve_image_source,
     };
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use uuid::Uuid;
+
+    /// 只用来占位：阅读视图的解析断言只看路径，不看像素。
+    const PNG_FIXTURE: [u8; 8] = [0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+
+    /// 造一个 `assets/` 目录，里面放三种真实文件名（含空格、含字面 `%`、含中文）。
+    fn fixture_dir() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("velora-image-resolve-{}", Uuid::new_v4()));
+        let assets = root.join("assets");
+        fs::create_dir_all(&assets).expect("create assets dir");
+        for name in ["blue card.png", "100% done.png", "封面.png"] {
+            fs::write(assets.join(name), PNG_FIXTURE).expect("write fixture image");
+        }
+        root
+    }
+
+    fn local_path_of(source: &str, base_dir: Option<&Path>) -> PathBuf {
+        match resolve_image_source(source, base_dir) {
+            ImageResolvedSource::Local(path) => path,
+            other => panic!("应解析成本地路径，实际 {other:?}（写法 {source:?}）"),
+        }
+    }
 
     #[test]
     fn parses_standalone_image_without_title() {
@@ -367,6 +390,141 @@ mod tests {
             }
             other => panic!("expected remote source, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolves_every_local_destination_spelling_to_the_same_file() {
+        // cases/12-images.md：同一个文件的三种写法必须解析到同一个路径。阅读视图
+        // 原先只认 `%20`，`<assets/blue card.png>` 因为「空格不是合法 URI 字符」
+        // 没剥尖括号，落在一个不存在的文件上——图片在正文里显示成加载失败。
+        let root = fixture_dir();
+        let assets = root.join("assets");
+        let blue = assets.join("blue card.png");
+        let file_url = url::Url::from_file_path(&blue)
+            .expect("temp image path should form file URL")
+            .to_string();
+
+        let cases: Vec<(&str, &str, PathBuf)> = vec![
+            ("直接路径含空格", "assets/blue card.png", blue.clone()),
+            ("percent 空格", "assets/blue%20card.png", blue.clone()),
+            ("尖括号含空格", "<assets/blue card.png>", blue.clone()),
+            ("尖括号加 percent", "<assets/blue%20card.png>", blue.clone()),
+            ("file URL", file_url.as_str(), blue.clone()),
+            ("字面 percent 写 %25", "assets/100%25 done.png", assets.join("100% done.png")),
+            ("中文文件名", "assets/封面.png", assets.join("封面.png")),
+            (
+                "中文 percent 转义",
+                "assets/%E5%B0%81%E9%9D%A2.png",
+                assets.join("封面.png"),
+            ),
+        ];
+        for (label, spelling, expected) in cases {
+            let resolved = local_path_of(spelling, Some(&root));
+            assert!(
+                resolved.is_file(),
+                "{label}：{spelling:?} 解析成 {resolved:?}，不是存在的文件（期望 {expected:?}）"
+            );
+            assert_eq!(resolved, expected, "{label}：{spelling:?}");
+        }
+
+        fs::remove_dir_all(&root).expect("clean up fixture dir");
+    }
+
+    #[test]
+    fn resolves_angle_bracket_destination_that_is_not_a_valid_uri() {
+        // 尖括号是 Markdown 语法不是 URI 语法：内部允许空格，只不许出现未转义的
+        // `<`/`>` 和换行。原先用 `Uri::from_str` 判定，带空格的路径判不过。
+        let spaced = parse_standalone_image("![blue angle](<assets/blue card.png>)")
+            .expect("angle bracketed image");
+        assert_eq!(
+            spaced.target,
+            ImageTarget::Direct {
+                src: "assets/blue card.png".to_string(),
+                title: None,
+            }
+        );
+
+        let with_title = parse_standalone_image("![blue angle](<assets/blue card.png> \"Blue\")")
+            .expect("angle bracketed image with title");
+        assert_eq!(
+            with_title.target,
+            ImageTarget::Direct {
+                src: "assets/blue card.png".to_string(),
+                title: Some("Blue".to_string()),
+            }
+        );
+
+        let escaped =
+            parse_standalone_image("![blue angle](<assets/blue\\>card.png>)").expect("escaped");
+        assert_eq!(
+            escaped.target,
+            ImageTarget::Direct {
+                src: "assets/blue>card.png".to_string(),
+                title: None,
+            }
+        );
+
+        // 未转义的 `>` 结束不了尖括号目标：原样留下，交给文件系统判定存在与否。
+        let unescaped = parse_standalone_image("![blue angle](<assets/blue>card.png>)")
+            .expect("broken angle bracketed image");
+        assert_eq!(
+            unescaped.target,
+            ImageTarget::Direct {
+                src: "<assets/blue>card.png>".to_string(),
+                title: None,
+            }
+        );
+    }
+
+    #[test]
+    fn resolves_relative_file_url_inside_the_document_directory() {
+        // `file:` 后面跟相对写法不是绝对 URL：不能交给 URL 语法解成根目录下的文件，
+        // 要按文档目录解析（报告 12 的根因就是每种写法各有各的解析处）。
+        let root = fixture_dir();
+        assert_eq!(
+            local_path_of("file:relative.png", Some(&root)),
+            root.join("relative.png")
+        );
+        fs::remove_dir_all(&root).expect("clean up fixture dir");
+    }
+
+    #[test]
+    fn keeps_remote_sources_remote_and_out_of_the_filesystem() {
+        // 远程写法不能被 percent 解码后当本地文件读：`%20` 是 URL 的一部分，
+        // 请求时要原样送出。
+        for uri in [
+            "https://example.com/blue%20card.png",
+            "http://example.com/assets/封面.png",
+        ] {
+            match resolve_image_source(uri, Some(Path::new("/tmp/does-not-matter"))) {
+                ImageResolvedSource::Remote(resolved) => {
+                    assert_eq!(resolved.to_string(), uri, "远程写法被改写了：{uri}");
+                }
+                other => panic!("远程写法不应落到本地路径：{uri} -> {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn resolves_reference_definition_destinations_with_the_same_rule() {
+        // 引用式定义与内联写法共用同一口径，否则 `[ref]: <assets/blue card.png>`
+        // 在正文里能显示、在引用表里就 404。
+        let definitions = parse_image_reference_definitions("[blue]: <assets/blue card.png>");
+        let syntax = ImageSyntax {
+            alt: "blue".to_string(),
+            target: ImageTarget::Reference {
+                label: "blue".to_string(),
+            },
+        };
+        let target = syntax
+            .resolve_target(&definitions)
+            .expect("reference target");
+        let root = fixture_dir();
+        assert_eq!(
+            local_path_of(&target.src, Some(&root)),
+            root.join("assets").join("blue card.png")
+        );
+        fs::remove_dir_all(&root).expect("clean up fixture dir");
     }
 
     #[test]
