@@ -123,6 +123,15 @@ mark {{
   background-color: var(--vlt-code-bg);
   color: var(--vlt-code-text);
 }}
+/* [TOC] 展开与告警标题；样式与阅读视图的对应块保持同一 class 命名。 */
+.vlt-toc ul {{ list-style: none; padding-left: 0; margin: 0; }}
+.vlt-toc li {{ margin: 0.3rem 0; }}
+.vlt-toc li.vlt-toc-2 {{ padding-left: 1.2em; }}
+.vlt-toc li.vlt-toc-3 {{ padding-left: 2.4em; }}
+.vlt-toc li.vlt-toc-4 {{ padding-left: 3.6em; }}
+.vlt-toc li.vlt-toc-5 {{ padding-left: 4.8em; }}
+.vlt-toc li.vlt-toc-6 {{ padding-left: 6em; }}
+.markdown-alert-title {{ margin: 0 0 0.35rem; font-weight: 600; }}
 .vlt-math {{
   display: flex;
   justify-content: center;

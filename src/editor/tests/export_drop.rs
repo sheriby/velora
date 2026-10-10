@@ -28,7 +28,8 @@ async fn export_html_writes_rendered_document_without_changing_editor_state(
     });
 
     let html = fs::read_to_string(&export_path).expect("read exported html");
-    assert!(html.contains("<h1>Title</h1>"));
+    // 标题带 id：正文里的 `#锚点` 链接要在浏览器里跳得动（报修第 14 条）。
+    assert!(html.contains("<h1 id=\"title\">Title</h1>"), "导出内容缺失：{html}");
     assert!(html.contains("<p>body</p>"));
 }
 
@@ -64,7 +65,10 @@ async fn exporting_a_document_does_not_rereserialize_the_projection(cx: &mut Tes
     );
 
     let html = fs::read_to_string(&export_path).expect("read exported html");
-    assert!(html.contains("<h1>Title</h1>"), "导出内容缺失：{html}");
+    assert!(
+        html.contains("<h1 id=\"title\">Title</h1>"),
+        "导出内容缺失：{html}"
+    );
     assert!(
         html.contains("<em>下划线</em>"),
         "导出的正文不是文档本身：{html}"
@@ -146,7 +150,10 @@ async fn export_html_uses_source_mode_raw_text(cx: &mut TestAppContext) {
     });
 
     let html = fs::read_to_string(&export_path).expect("read exported html");
-    assert!(html.contains("<h1>Source</h1>"));
+    assert!(
+        html.contains("<h1 id=\"source\">Source</h1>"),
+        "源码模式的标题缺失：{html}"
+    );
     assert!(html.contains("class=\"vlt-comment\""));
     assert!(html.contains("&lt;strong&gt;visible&lt;/strong&gt;"));
 }
