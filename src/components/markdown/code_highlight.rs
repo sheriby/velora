@@ -105,7 +105,7 @@ pub(crate) enum CodeHighlightClass {
     MarkdownLinkText,
     /// Markdown 源码：链接地址。
     MarkdownLinkUrl,
-    /// Markdown 源码：标注标签（`[!NOTE]`）、标签（`#tag`）、脚注引用（`[^1]`）。
+    /// Markdown 源码：标注标签（`[!NOTE]`）、脚注引用（`[^1]`）。
     MarkdownLabel,
 }
 

@@ -153,8 +153,6 @@ pub struct Block {
     pub(crate) search_highlight_ranges: Vec<Range<usize>>,
     /// 当前活动命中的块内区间（循环跳转/点击结果时由高亮同步写入）。
     pub(crate) search_active_range: Option<Range<usize>>,
-    /// Pending `#tag` click forwarded to the editor (roadmap C4).
-    pub(crate) tag_query: Option<String>,
     /// Heading fold state (roadmap C7): when true, the section content below
     /// this heading is hidden.
     pub(crate) folded: bool,
@@ -333,7 +331,6 @@ impl Block {
             selected_range: 0..0,
             search_highlight_ranges: Vec::new(),
             search_active_range: None,
-            tag_query: None,
             folded: false,
             foldable: false,
             image_width_factor: 1.0,

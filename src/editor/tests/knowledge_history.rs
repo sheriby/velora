@@ -153,8 +153,8 @@ async fn modal_enter_triggers_default_and_escape_cancels(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-async fn knowledge_panels_list_backlinks_and_tags_end_to_end(cx: &mut TestAppContext) {
-    // 反链 + 标签面板端到端：树落地后索引重建，面板列条目，点击生效。
+async fn backlinks_panel_lists_notes_and_opens_them_end_to_end(cx: &mut TestAppContext) {
+    // 反链面板端到端：树落地后索引重建，面板列条目，点击生效。
     init_editor_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-km-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("create root");
@@ -209,58 +209,6 @@ async fn knowledge_panels_list_backlinks_and_tags_end_to_end(cx: &mut TestAppCon
         );
     });
 
-    editor.update(cx, |editor, cx| {
-        editor.set_workspace_tab(crate::editor::workspace::WorkspaceTab::Tags, cx);
-    });
-    redraw(cx);
-    let first = cx.debug_bounds("tag-entry-0").expect("tag row 0");
-    let second = cx.debug_bounds("tag-entry-1").expect("tag row 1");
-    assert!(first.origin.y <= second.origin.y, "#rust 应排在 #gpui 前");
-    cx.simulate_click(first.center(), gpui::Modifiers::none());
-    editor.read_with(cx, |editor, _| {
-        assert_eq!(
-            editor.workspace.active_tab,
-            crate::editor::workspace::WorkspaceTab::Search
-        );
-        assert_eq!(editor.workspace.search_query, "#rust");
-    });
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[gpui::test]
-async fn tags_panel_lists_workspace_tags_and_click_starts_search(cx: &mut TestAppContext) {
-    init_editor_test_app(cx);
-    let root = std::env::temp_dir().join(format!("velora-tags-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).expect("create root");
-    std::fs::write(root.join("a.md"), "#rust 笔记\n").expect("write a");
-    std::fs::write(root.join("b.md"), "也是 #rust 和 #gpui\n").expect("write b");
-
-    let (editor, cx) =
-        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
-    editor.update(cx, |editor, cx| {
-        editor.set_workspace_root(root.clone(), cx);
-    });
-    cx.run_until_parked();
-    cx.run_until_parked();
-
-    editor.update(cx, |editor, cx| {
-        editor.workspace.is_open = true;
-        editor.set_workspace_tab(crate::editor::workspace::WorkspaceTab::Tags, cx);
-    });
-    redraw(cx);
-
-    // #rust 两个文件引用排第一，#gpui 一个排第二。
-    let first = cx.debug_bounds("tag-entry-0").expect("tag row 0");
-    let second = cx.debug_bounds("tag-entry-1").expect("tag row 1");
-    assert!(first.origin.y <= second.origin.y, "#rust 应排在 #gpui 前");
-
-    // 点击标签 → 进入搜索 tab，query 已填 #rust。
-    cx.simulate_click(first.center(), gpui::Modifiers::none());
-    redraw(cx);
-    editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.workspace.active_tab, crate::editor::workspace::WorkspaceTab::Search);
-        assert_eq!(editor.workspace.search_query, "#rust");
-    });
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -667,9 +615,9 @@ async fn file_history_overlay_restores_version_as_unsaved_edit(cx: &mut TestAppC
     let _ = std::fs::remove_file(&path);
 }
 
-/// 反链与标签面板每帧只该建视口那一窗行。
+/// 反链面板每帧只该建视口那一窗行。
 ///
-/// 现象：热门笔记的反链、大仓库的标签都能上千条，面板原先每帧把整张表建成元素树
+/// 现象：热门笔记的反链能上千条，面板原先每帧把整张表建成元素树
 /// （dev 构建约 130 µs/行）：同一份代码 20 条时一帧 3.5 ms，1000 条就是 130 ms，
 /// 滚动与上下键每帧都要等这一遭。
 #[gpui::test]
@@ -681,7 +629,7 @@ async fn link_panels_render_only_the_rows_in_the_viewport(cx: &mut TestAppContex
     for index in 0..500 {
         std::fs::write(
             root.join(format!("note-{index:04}.md")),
-            format!("见 [[target]] #tag{index:04}\n"),
+            "见 [[target]]\n",
         )
         .expect("write note");
     }
@@ -737,24 +685,6 @@ async fn link_panels_render_only_the_rows_in_the_viewport(cx: &mut TestAppContex
         (first as usize) <= 300 && 300 < first as usize + rows as usize,
         "滚到第 300 条后窗口是 {first}..{}：窗口没跟着滚动走",
         first as usize + rows as usize
-    );
-
-    editor.update(cx, |editor, cx| {
-        editor.set_workspace_tab(crate::editor::workspace::WorkspaceTab::Tags, cx);
-    });
-    redraw(cx);
-    redraw(cx);
-    let (rows, total) = editor.read_with(cx, |editor, _| {
-        (
-            editor.panel_rows_rendered.get(),
-            editor.link_panels.tags.len(),
-        )
-    });
-    assert_eq!(total, 500, "前置：500 个标签");
-    assert!(rows > 0, "标签面板一帧都没渲染，闸门测不到东西");
-    assert!(
-        rows <= 200,
-        "一帧建了 {rows} 行标签元素（共 {total} 行）：面板没有按视口裁剪"
     );
 
     let _ = std::fs::remove_dir_all(root);

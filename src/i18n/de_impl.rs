@@ -493,9 +493,6 @@ impl I18nStringsDe {
             workspace_backlinks_empty: self
                 .workspace_backlinks_empty
                 .unwrap_or(defaults.workspace_backlinks_empty),
-            workspace_tags_empty: self
-                .workspace_tags_empty
-                .unwrap_or(defaults.workspace_tags_empty),
             workspace_tab_outline: self
                 .workspace_tab_outline
                 .unwrap_or(defaults.workspace_tab_outline),

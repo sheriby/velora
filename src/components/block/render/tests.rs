@@ -3,7 +3,7 @@ use super::*;
 mod tests {
     use super::{
         inline_display_font_size,
-        numbered_list_marker, promotes_inline_images, tag_query, wikilink_target,
+        numbered_list_marker, promotes_inline_images, wikilink_target,
     };
     use crate::components::{BlockRecord, InlineScript, InlineSpan, InlineStyle};
     use gpui::AppContext;
@@ -113,21 +113,6 @@ mod tests {
         );
         assert_eq!(wikilink_target("[[ ]]"), None);
         assert_eq!(wikilink_target("no brackets"), None);
-    }
-
-    #[test]
-    fn tag_query_accepts_words_and_rejects_empty_or_spaced() {
-        assert_eq!(
-            tag_query("#writing"),
-            Some("#writing".to_string())
-        );
-        assert_eq!(
-            tag_query("#中文标签"),
-            Some("#中文标签".to_string())
-        );
-        assert_eq!(tag_query("#"), None);
-        assert_eq!(tag_query("#has space"), None);
-        assert_eq!(tag_query("plain"), None);
     }
 
     use super::{

@@ -270,10 +270,6 @@ impl Editor {
                     });
                 }
             }
-            BlockEvent::RequestSearchTag { query } => {
-                // `#tag` 点击：打开搜索面板并列出工作区同类（roadmap C4）。
-                self.open_tag_search(query.to_string(), cx);
-            }
             BlockEvent::RequestEnterCalloutBody => {
                 let needs_body = block.read(cx).children.is_empty();
                 if needs_body {

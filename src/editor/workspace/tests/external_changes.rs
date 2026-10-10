@@ -404,7 +404,7 @@ async fn opening_a_single_file_starts_the_workspace_watcher(cx: &mut TestAppCont
 async fn backlinks_panel_picks_up_an_external_link_to_the_active_document(
     cx: &mut TestAppContext,
 ) {
-    // 审查发现：反链/标签面板只按 document_revision 失效，别的文件在外部
+    // 审查发现：反链面板只按 document_revision 失效，别的文件在外部
     // 新增 [[链接]] 时面板一直显示旧结果。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);

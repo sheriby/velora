@@ -24,7 +24,6 @@ const ACTIVITY_FILES_ICON: &str = "icon/workspace/activity-files.svg";
 const ACTIVITY_SEARCH_ICON: &str = "icon/workspace/activity-search.svg";
 const ACTIVITY_OUTLINE_ICON: &str = "icon/workspace/activity-outline.svg";
 const ACTIVITY_BACKLINKS_ICON: &str = "icon/workspace/activity-backlinks.svg";
-const ACTIVITY_TAGS_ICON: &str = "icon/workspace/activity-tags.svg";
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
@@ -53,7 +52,6 @@ pub(crate) enum WorkspaceTab {
     Search,
     Outline,
     Backlinks,
-    Tags,
 }
 
 impl WorkspaceTab {
@@ -65,7 +63,6 @@ impl WorkspaceTab {
             Self::Search => "search",
             Self::Outline => "outline",
             Self::Backlinks => "backlinks",
-            Self::Tags => "tags",
         }
     }
 
@@ -76,7 +73,6 @@ impl WorkspaceTab {
             "search" => Some(Self::Search),
             "outline" => Some(Self::Outline),
             "backlinks" => Some(Self::Backlinks),
-            "tags" => Some(Self::Tags),
             _ => None,
         }
     }

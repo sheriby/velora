@@ -30,7 +30,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 - **Folder = workspace** — the file tree supports new / rename / duplicate / copy-paste / delete (to the system Trash), sorting by name, modification time or type, a filter box for quick lookup, and hover tooltips with size and mtime.
 - **Global search** matches file names *and* contents, with workspace-wide replace; file bodies are decoded the same way documents are (UTF-8 first, GB18030 fallback).
 - **Outline pane** — click to jump, follows scrolling to highlight the current section, double-click or `F2` renames the heading in the body.
-- **Knowledge links** — `[[wikilinks]]` open or create the note; `#tags` jump into a workspace search; `[TOC]` renders as a clickable table of contents.
+- **Knowledge links** — `[[wikilinks]]` open or create the note; `[TOC]` renders as a clickable table of contents.
 - **Frontmatter & structure** — YAML frontmatter is preserved verbatim; headings fold; links and footnote references show hover previews.
 - **Links that behave** — `Cmd/Ctrl+click` goes straight to the target: external URLs to the browser, local files in-app, `#anchors` within the document.
 - **External changes** — a clean tab reloads automatically when its file changes on disk; edited tabs get a conflict prompt instead of a silent overwrite.

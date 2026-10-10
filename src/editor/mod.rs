@@ -241,9 +241,9 @@ pub struct Editor {
     /// 元素监听，只有这个钩子能在回车进入焦点块的 Newline 绑定之前
     /// 截住它。构造为 None，render 首帧注册后保持订阅存活。
     modal_key_interceptor: Option<gpui::Subscription>,
-    /// 反链/标签面板与 [[ 补全共享的工作区链接索引（后台增量维护）。
+    /// 反链面板的工作区链接索引（后台增量维护）。
     workspace_link_index: workspace_index::WorkspaceLinkIndex,
-    /// 反链/标签面板的快照（防抖缓存，见 workspace_index::LinkPanelState）。
+    /// 反链面板的快照（防抖缓存，见 workspace_index::LinkPanelState）。
     link_panels: workspace_index::LinkPanelState,
     /// [[ 补全会话（编辑锚定块，键经 intercept_keystrokes 拦截）。
     wikilink_completion: Option<workspace_index::WikilinkCompletion>,

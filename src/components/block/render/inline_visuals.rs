@@ -739,37 +739,6 @@ impl Block {
             return wikilink_element;
         }
 
-        // `#tag` words render with link styling and open the workspace search
-        // panel for that tag when clicked (roadmap C4).
-        if span.link.is_none()
-            && !span.style.code
-            && let Some(query) = tag_query(text)
-        {
-            let tag_color = theme.colors.text_link;
-            element = element.text_color(tag_color).cursor_pointer();
-            return element
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |block, _event, _window, _cx| {
-                        block.tag_query = Some(query.clone());
-                    }),
-                )
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(
-                        move |block, event: &gpui::MouseUpEvent, _window, cx| {
-                        if event.click_count >= 1 {
-                            let query = block.tag_query.take();
-                            if let Some(query) = query {
-                                cx.emit(BlockEvent::RequestSearchTag { query });
-                            }
-                        }
-                        },
-                    ),
-                )
-                .into_any_element();
-        }
-
         if let Some(link) = span.link.clone() {
             let element = element
                 .on_mouse_down(

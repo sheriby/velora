@@ -33,6 +33,7 @@ async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut Test
         (true, true),
         "默认展开状态应有图标列与面板"
     );
+    assert!(cx.debug_bounds("activity-tags").is_none(), "标签入口已移除");
     editor.read_with(cx, |editor, _| {
         assert!(editor.workspace.is_open, "启动默认展开");
     });
@@ -85,6 +86,15 @@ async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut Test
             "收起后图标列与面板都不该留下"
         );
     }
+}
+
+#[test]
+fn removed_tags_panel_in_old_sessions_falls_back_to_files() {
+    assert_eq!(
+        WorkspaceTab::from_session_key("tags").unwrap_or_default(),
+        WorkspaceTab::Files,
+        "旧会话的标签面板应回到文件面板"
+    );
 }
 
 #[gpui::test]

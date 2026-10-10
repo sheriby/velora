@@ -53,8 +53,6 @@ fn table_cell_colors(base: Hsla, highlight: TableAxisHighlight, focused: bool, c
     (base.blend(tint), border)
 }
 
-/// Detects a `#tag` word: `#` followed by at least one alphanumeric
-/// (including CJK), `_` or `-` character, with no whitespace.
 /// 悬停预览 tooltip（roadmap C8/C9）：脚注与链接目标预览。
 pub(crate) struct HoverPreviewTooltip {
     pub(crate) label: SharedString,
@@ -143,15 +141,6 @@ fn wikilink_target(word: &str) -> Option<String> {
     let end = inner.find("]]")?;
     let target = inner[..end].trim();
     (!target.is_empty()).then(|| target.to_string())
-}
-
-fn tag_query(word: &str) -> Option<String> {
-    let rest = word.strip_prefix('#')?;
-    let valid = !rest.is_empty()
-        && rest
-            .chars()
-            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-');
-    valid.then(|| format!("#{rest}"))
 }
 
 fn fallback_image_label(alt: &str, strings: &I18nStrings) -> SharedString {

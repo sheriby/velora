@@ -292,20 +292,6 @@ impl Editor {
         self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
     }
 
-    /// `#tag` 点击：打开搜索面板并以工作区范围列出同类（roadmap C4）。
-    pub(crate) fn open_tag_search(&mut self, query: String, cx: &mut Context<Self>) {
-        self.workspace.is_open = true;
-        self.workspace.active_tab = WorkspaceTab::Search;
-        self.workspace.search_scope = WorkspaceSearchScope::Workspace;
-        self.workspace.search_query = query;
-        self.workspace.search_selected_range = 0..self.workspace.search_query.len();
-        self.workspace.search_marked_range = None;
-        self.workspace.search_active_index = None;
-        self.workspace.document_active_range = None;
-        self.schedule_workspace_search(cx);
-        cx.notify();
-    }
-
     pub(crate) fn on_find_in_document(
         &mut self,
         _: &crate::components::FindInDocument,

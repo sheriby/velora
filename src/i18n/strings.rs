@@ -301,8 +301,6 @@ pub struct I18nStrings {
     pub workspace_backlinks_no_document: String,
     /// Backlinks panel empty state: nothing links here.
     pub workspace_backlinks_empty: String,
-    /// Tags panel empty state.
-    pub workspace_tags_empty: String,
     /// Workspace drawer recent roots tab.
     pub workspace_tab_recent: String,
     /// Placeholder for filtering workspace files by name.

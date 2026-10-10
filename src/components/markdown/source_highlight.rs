@@ -484,7 +484,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// 行内构造扫描：代码 span 优先（里面的 `*`、`[` 都不是记号），然后转义、
-    /// 强调、删除线、链接、图片、自动链接、脚注引用、双链与标签。
+    /// 强调、删除线、链接、图片、自动链接、脚注引用与双链。
     fn scan_inline(&mut self, range_start: usize, line: &str) {
         let base = range_start;
         let bytes = line.as_bytes();
@@ -608,18 +608,6 @@ impl<'a> Scanner<'a> {
                         }
                         None => i + 1,
                     };
-                }
-                b'#' if i == 0 || bytes[i - 1].is_ascii_whitespace() => {
-                    let mut end = i + 1;
-                    while end < line.len() && !bytes[end].is_ascii_whitespace() {
-                        end += 1;
-                    }
-                    if end > i + 1 {
-                        self.push(base + i..base + end, CodeHighlightClass::MarkdownLabel);
-                        i = end;
-                    } else {
-                        i += 1;
-                    }
                 }
                 _ => {
                     i += 1;
@@ -1095,8 +1083,14 @@ mod tests {
             classes_covering(text, "界面预览"),
             vec![CodeHighlightClass::MarkdownHeading(2)]
         );
-        // 没跟空格的 `#tag` 不是标题，是标签。
-        assert_eq!(class_at("#tag 字", "#tag"), Some(CodeHighlightClass::MarkdownLabel));
+        // 没跟空格的 `#tag` 保持普通文本。
+        assert_eq!(class_at("#tag 字", "#tag"), None);
+    }
+
+    #[test]
+    fn hash_words_remain_plain_text() {
+        let text = "#工作 #fff #target-section #2";
+        assert!(highlight(text).is_empty(), "井号词不应再作为标签高亮");
     }
 
     #[test]

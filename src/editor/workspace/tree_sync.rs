@@ -515,7 +515,7 @@ impl Editor {
         ));
     }
 
-    /// 换根后走一次盘，把「工作区里可打开的文件」名单填进缓存，并重建反链/标签
+    /// 换根后走一次盘，把「工作区里可打开的文件」名单填进缓存，并重建反链
     /// 索引、重跑挂着的工作区搜索（两者都以这份名单为输入）。
     ///
     /// 走盘用 ripgrep 的并行 walker（`collect_workspace_files_on_disk`），
@@ -546,7 +546,7 @@ impl Editor {
                         editor.workspace.files_on_disk_walk_root = None;
                         editor.workspace.files_on_disk_root = Some(root.clone());
                         editor.workspace.files_on_disk = files;
-                        // 反链/标签索引：名单落地时全量重建，之后由 watcher 单文件增量维持。
+                        // 反链索引：名单落地时全量重建，之后由 watcher 单文件增量维持。
                         let files = editor.workspace.files_on_disk.clone();
                         editor
                             .workspace_link_index

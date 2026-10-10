@@ -1,5 +1,4 @@
-//! 工作区链接/标签索引：反向链接面板、`[[` 自动补全、标签聚合面板共用的
-//! 数据源。
+//! 工作区链接索引：反向链接面板的数据源。
 //!
 //! 性能约定（用户要求：热路径零新增开销）：
 //! - 提取是纯函数、跑在后台执行器；全量扫描只在工作区根切换时发生，
@@ -21,16 +20,14 @@ use super::workspace::{is_markdown_document, WorkspaceOpenMode};
 use super::Editor;
 use crate::theme::Theme;
 
-/// 单个 Markdown 文件提取出的外链与标签。
+/// 单个 Markdown 文件提取出的双链。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct FileLinkEntry {
     /// `[[目标]]` 的目标名（与 C3 的 `wikilink_target` 同语义：trim，不拆别名）。
     pub(crate) wikilinks: Vec<String>,
-    /// `#tag`（含 `#` 前缀，与 C4 的 `tag_query` 同格式）。
-    pub(crate) tags: Vec<String>,
 }
 
-/// 按工作区维护的链接/标签索引。查询一律与「文件树的存活文件列表」求
+/// 按工作区维护的链接索引。查询一律与「文件树的存活文件列表」求
 /// 交集，被删除文件的陈旧条目在查询侧自然消失，不需要监听 Remove 事件。
 #[derive(Default)]
 pub(crate) struct WorkspaceLinkIndex {
@@ -38,7 +35,7 @@ pub(crate) struct WorkspaceLinkIndex {
     indexed_root: Option<PathBuf>,
     entries: HashMap<PathBuf, Arc<FileLinkEntry>>,
     scan_generation: u64,
-    /// 索引内容版本：条目增/删/全量重建时递增，反链与标签面板据此失效
+    /// 索引内容版本：条目增/删/全量重建时递增，反链面板据此失效
     /// （别的文件在外部改了链接时，document_revision 不会变）。
     entries_revision: u64,
     /// 全量扫描任务：新任务覆盖旧字段即取消旧扫描（树扫描同模式）。
@@ -49,11 +46,10 @@ pub(crate) struct WorkspaceLinkIndex {
     active_overlay: Option<(u64, Arc<FileLinkEntry>)>,
 }
 
-/// 从 Markdown 源码提取 wikilink 与标签。跳过围栏代码块与行内代码段，
-/// 避免把示例代码里的 `[[...]]`/`#tag` 当真。
-pub(crate) fn extract_links_and_tags(source: &str) -> FileLinkEntry {
+/// 从 Markdown 源码提取 wikilink。跳过围栏代码块与行内代码段，
+/// 避免把示例代码里的 `[[...]]` 当真。
+pub(crate) fn extract_wikilinks(source: &str) -> FileLinkEntry {
     let mut wikilinks = Vec::new();
-    let mut tags = Vec::new();
     let mut in_fence = false;
     let mut fence_marker = b'`';
 
@@ -88,7 +84,7 @@ pub(crate) fn extract_links_and_tags(source: &str) -> FileLinkEntry {
             let slice = &rest[scan_from.min(rest.len())..];
             let Some(backtick) = slice.find('`') else {
                 if code_delimiter.is_none() {
-                    scan_line_segment(slice, &mut wikilinks, &mut tags);
+                    scan_line_segment(slice, &mut wikilinks);
                 }
                 break;
             };
@@ -96,11 +92,7 @@ pub(crate) fn extract_links_and_tags(source: &str) -> FileLinkEntry {
             match code_delimiter {
                 None => {
                     if absolute > scan_from {
-                        scan_line_segment(
-                            &rest[scan_from..absolute],
-                            &mut wikilinks,
-                            &mut tags,
-                        );
+                        scan_line_segment(&rest[scan_from..absolute], &mut wikilinks);
                     }
                     code_delimiter = Some(absolute);
                 }
@@ -118,28 +110,15 @@ pub(crate) fn extract_links_and_tags(source: &str) -> FileLinkEntry {
         }
     }
 
-    FileLinkEntry { wikilinks, tags }
+    FileLinkEntry { wikilinks }
 }
 
-/// 在一段非代码文本里找 `[[目标]]` 与 `#tag`。
-fn scan_line_segment(segment: &str, wikilinks: &mut Vec<String>, tags: &mut Vec<String>) {
+/// 在一段非代码文本里找 `[[目标]]`。
+fn scan_line_segment(segment: &str, wikilinks: &mut Vec<String>) {
     let bytes = segment.as_bytes();
     let mut index = 0usize;
     while index < bytes.len() {
         match bytes[index] {
-            b'#' => {
-                let rest = &segment[index + 1..];
-                let end = rest
-                    .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '-'))
-                    .map(|offset| index + 1 + offset)
-                    .unwrap_or(segment.len());
-                if end > index + 1 {
-                    tags.push(segment[index..end].to_string());
-                    index = end;
-                } else {
-                    index += 1;
-                }
-            }
             b'[' if index + 1 < bytes.len() && bytes[index + 1] == b'[' => {
                 match segment[index + 2..].find("]]") {
                     Some(close) => {
@@ -258,36 +237,6 @@ impl WorkspaceLinkIndex {
         results
     }
 
-    /// 标签聚合计数：(标签, 引用文件数)，按计数降序、同名按标签升序。
-    /// 活动文档覆盖层与反链同规则。
-    pub(crate) fn tag_counts(
-        &mut self,
-        live_files: &[PathBuf],
-        active_document: Option<(PathBuf, u64, FileLinkEntry)>,
-    ) -> Vec<(String, usize)> {
-        let active = self.sync_active_overlay(active_document);
-        let live: HashSet<&PathBuf> = live_files.iter().collect();
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        {
-            let mut bump = |entry: &FileLinkEntry| {
-                for tag in entry.tags.iter().cloned().collect::<HashSet<_>>() {
-                    *counts.entry(tag).or_insert(0) += 1;
-                }
-            };
-            for (path, entry) in &self.entries {
-                if live.contains(path) {
-                    bump(entry);
-                }
-            }
-            if let Some((_, entry)) = &active {
-                bump(entry);
-            }
-        }
-        let mut results: Vec<(String, usize)> = counts.into_iter().collect();
-        results.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        results
-    }
-
     /// 同步活动文档覆盖层：按 document_revision 缓存提取结果，文档不变
     /// 时零重算。返回 (活动文档路径, 覆盖层条目)。
     fn sync_active_overlay(
@@ -353,10 +302,10 @@ fn entry_has_link_to(entry: &FileLinkEntry, needles: &HashSet<String>) -> bool {
 
 fn read_file_entry(path: &Path) -> Option<FileLinkEntry> {
     let source = super::encoding::read_document_string(path).ok()?;
-    Some(extract_links_and_tags(&source))
+    Some(extract_wikilinks(&source))
 }
 
-/// 侧栏反链/标签面板的快照：按 document_revision 失效，重算间隔不短于
+/// 侧栏反链面板的快照：按 document_revision 失效，重算间隔不短于
 /// `PANEL_RECOMPUTE_INTERVAL`（打字路径不做全量序列化，面板内容最多
 /// 滞后半秒）。
 #[derive(Default)]
@@ -366,7 +315,6 @@ pub(crate) struct LinkPanelState {
     index_revision: u64,
     computed_at: Option<std::time::Instant>,
     pub(crate) backlinks: Vec<PathBuf>,
-    pub(crate) tags: Vec<(String, usize)>,
 }
 
 const PANEL_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
@@ -395,7 +343,7 @@ impl Editor {
         }
         let active_document = self.file_path.clone().map(|path| {
             let entry =
-                super::workspace_index::extract_links_and_tags(&self.current_document_source(cx));
+                super::workspace_index::extract_wikilinks(&self.current_document_source(cx));
             (path, revision, entry)
         });
         let live = self.workspace_text_files();
@@ -407,13 +355,11 @@ impl Editor {
             ),
             None => Vec::new(),
         };
-        let tags = self.workspace_link_index.tag_counts(&live, active_document);
         self.link_panels = LinkPanelState {
             revision,
             index_revision,
             computed_at: Some(std::time::Instant::now()),
             backlinks,
-            tags,
         };
         cx.notify();
     }
@@ -482,7 +428,7 @@ impl Editor {
                     .cursor_pointer()
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
                     .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                        // 反链/标签面板是「点开看看」：单击开预览标签，双击转固定
+                        // 反链面板是「点开看看」：单击开预览标签，双击转固定
                         // （与文件树同一判定；这里挂的是 mouse down，直接看 click_count）。
                         let mode = if event.click_count >= 2 {
                             WorkspaceOpenMode::Pinned
@@ -511,67 +457,6 @@ impl Editor {
                             .text_color(c.dialog_muted)
                             .child(dir)
                     }))
-                    .into_any_element(),
-            );
-        }
-        self.workspace_windowed_body(total, window, visible, theme, cx)
-    }
-
-    /// 标签面板：工作区 #标签 聚合计数，点击进入工作区标签搜索（C4）。
-    pub(crate) fn render_workspace_tags_panel(
-        &mut self,
-        theme: &Theme,
-        strings: &crate::i18n::I18nStrings,
-        cx: &mut gpui::Context<Self>,
-    ) -> AnyElement {
-        use gpui::*;
-        self.refresh_link_panels(cx);
-        let c = &theme.colors;
-        let t = &theme.typography;
-
-        if self.link_panels.tags.is_empty() {
-            return self.render_workspace_empty_state("", &strings.workspace_tags_empty, theme);
-        }
-
-        // 同上：标签可以上千个，行也是等高 24px。
-        let total = self.link_panels.tags.len();
-        let window = self.workspace_list_window(total, theme);
-        let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
-        for (offset, (tag, count)) in self.link_panels.tags[window.clone()].iter().enumerate() {
-            let index = window.start + offset;
-            let click_tag = tag.clone();
-            let click_editor = cx.entity().downgrade();
-            visible.push(
-                div()
-                    .id(gpui::ElementId::Name(format!("tag-entry-{index}").into()))
-                    .debug_selector(move || format!("tag-entry-{index}"))
-                    .h(px(Self::workspace_node_height(theme)))
-                    .w_full()
-                    .overflow_hidden()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .px(px(6.0))
-                    .rounded(px(4.0))
-                    .cursor_pointer()
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                        let _ = click_editor.update(cx, |editor, cx| {
-                            editor.open_tag_search(click_tag.clone(), cx);
-                        });
-                    })
-                    .child(
-                        div()
-                            .text_size(px(t.dialog_body_size * 0.92))
-                            .text_color(c.text_link)
-                            .child(tag.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(t.dialog_body_size * 0.78))
-                            .text_color(c.dialog_muted)
-                            .child(format!("{count}")),
-                    )
                     .into_any_element(),
             );
         }

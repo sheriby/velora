@@ -210,9 +210,6 @@ impl AssetSource for VeloraAssets {
             "icon/workspace/activity-backlinks.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/activity-backlinks.svg"
             )))),
-            "icon/workspace/activity-tags.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icon/workspace/activity-tags.svg"
-            )))),
             "icon/workspace/chevron-right.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/chevron-right.svg"
             )))),

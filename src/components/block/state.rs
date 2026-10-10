@@ -1017,11 +1017,6 @@ pub enum BlockEvent {
     RequestDowngradeNestedListItemToChildParagraph,
     /// Toggle the checked state of a task-list item.
     ToggleTaskChecked,
-    /// A `#tag` word was clicked in rendered text; the editor should open the
-    /// search panel scoped to the workspace with this query (roadmap C4).
-    RequestSearchTag {
-        query: String,
-    },
     /// 双击数学块（或其它入口）：编辑器应为本块打开公式编辑器弹窗
     /// （独立编辑窗口：草稿输入 + 实时预览 + 符号面板，应用时写回本块）。
     RequestFormulaEditor,

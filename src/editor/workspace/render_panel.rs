@@ -42,7 +42,6 @@ impl Editor {
             WorkspaceTab::Backlinks => {
                 self.render_workspace_backlinks_panel(theme, strings, window, cx)
             }
-            WorkspaceTab::Tags => self.render_workspace_tags_panel(theme, strings, cx),
         };
 
         Some(

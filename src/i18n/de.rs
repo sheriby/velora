@@ -197,7 +197,6 @@ pub(crate) struct I18nStringsDe {
     pub(crate) workspace_tab_outline: Option<String>,
     pub(crate) workspace_backlinks_no_document: Option<String>,
     pub(crate) workspace_backlinks_empty: Option<String>,
-    pub(crate) workspace_tags_empty: Option<String>,
     pub(crate) workspace_tab_recent: Option<String>,
     pub(crate) workspace_search_placeholder: Option<String>,
     pub(crate) workspace_document_find_placeholder: Option<String>,

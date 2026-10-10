@@ -224,14 +224,6 @@ impl Editor {
                 "反链",
                 self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Backlinks,
                 WorkspaceTab::Backlinks,
-                editor.clone(),
-            ))
-            .child(button(
-                "activity-tags",
-                ACTIVITY_TAGS_ICON,
-                "标签",
-                self.workspace.is_open && self.workspace.active_tab == WorkspaceTab::Tags,
-                WorkspaceTab::Tags,
                 editor,
             ))
             .into_any_element()
