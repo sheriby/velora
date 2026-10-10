@@ -284,6 +284,40 @@
     }
 
     #[test]
+    fn paren_math_never_falls_to_the_currency_heuristic() {
+        // 用户报修（cases/07-numeric-math.md）：`value \(42\).` 被 `$42$` 的货币启发
+        // 误判成钱数、原样显示。`\(...\)` 是无歧义的 TeX 定界符，货币启发只许作用在
+        // `$…$` 这种本身就与钱写法冲突的定界符上（规则见 looks_like_obvious_currency）。
+        for (markdown, start) in [
+            (r"value \(42\).", "value ".len()),
+            (r"total \(0.5\) us", "total ".len()),
+            (r"\(42\)", 0),
+            (r"a \(42\) b \(43\)", 2),
+        ] {
+            let tree = InlineTextTree::from_markdown(markdown);
+            let cache = tree.render_cache();
+            let math = cache
+                .inline_math_at(start)
+                .unwrap_or_else(|| panic!("{markdown:?} 应渲染为公式"));
+            assert_eq!(math.delimiter, InlineMathDelimiter::Paren);
+            assert_eq!(tree.visible_text(), markdown);
+            assert_eq!(tree.serialize_markdown(), markdown);
+        }
+
+        // `$…$` 侧的货币启发原样保留：体内全是数字、或紧贴数字，都按钱读。
+        for plain in ["cost $42$", "$42 dollars", "total $0.50$"] {
+            let tree = InlineTextTree::from_markdown(plain);
+            assert!(
+                tree.render_cache()
+                    .spans()
+                    .iter()
+                    .all(|span| span.math.is_none()),
+                "{plain:?} 是货币写法，不该渲染为公式"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_conservative_inline_math_cases() {
         for markdown in ["\\$x$", "$ x $", "$", "$x\ny$", "cost $12$"] {
             let tree = InlineTextTree::from_markdown(markdown);

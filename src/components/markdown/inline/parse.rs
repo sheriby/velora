@@ -621,7 +621,13 @@ pub(crate) fn parse_inline_math(
 
     let source = tokens_to_string(&tokens[index..=close_end]);
     let body = tokens_to_string(&tokens[body_start..close_start]);
-    if looks_like_obvious_currency(tokens, index, close_end, &body) {
+    // 货币启发只针对 `$…$` 这种**本身就有歧义**的定界符（`$42$` 更像钱）；
+    // `\(...\)` 是无歧义的 TeX 写法，任何内容都按公式读（用户报修 cases/07-numeric-math.md：
+    // `\(42\)` 被当成钱数）。这条规则是全应用唯一的货币判据，导出侧应当调用
+    // `looks_like_obvious_currency`，不要再抄一份。
+    if matches!(delimiter, InlineMathDelimiter::Dollar)
+        && looks_like_obvious_currency(tokens, index, close_end, &body)
+    {
         return None;
     }
 
@@ -686,6 +692,10 @@ pub(crate) fn token_is_backslash_escaped(tokens: &[CharToken], index: usize) -> 
     slash_count % 2 == 1
 }
 
+/// 「这串 `$…$` 是钱不是公式」的唯一判据：紧贴定界符外侧的是数字，或体内除
+/// `.` `,` `_` 外全是数字且超过一位。调用方必须只在歧义定界符（`$…$`）上引用它，
+/// `\(...\)` 一类无歧义 TeX 定界符不适用。UI 与导出共用这一条规则（导出侧应调用
+/// 本函数而不是抄一份近似实现）。
 pub(crate) fn looks_like_obvious_currency(
     tokens: &[CharToken],
     open_index: usize,
