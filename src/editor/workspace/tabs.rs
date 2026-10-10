@@ -320,6 +320,11 @@ impl Editor {
         }
         self.sync_workspace_models(cx);
         self.sync_document_search_highlights(cx);
+        // 搜索不参与记忆（用户要求）：只在真的换了别的面板时更新记忆值并落盘。
+        if tab != WorkspaceTab::Search {
+            self.workspace.sidebar_memory_tab = tab;
+            self.persist_session(cx);
+        }
         cx.notify();
     }
 

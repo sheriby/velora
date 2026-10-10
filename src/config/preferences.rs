@@ -155,6 +155,61 @@ impl StartupOpenPreference {
     }
 }
 
+/// 启动时侧边栏开关（用户要求：默认跟随上次，可选钉死）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SidebarOpenPreference {
+    /// 上次关着就关着。
+    #[default]
+    FollowLast,
+    Always,
+    Never,
+}
+
+impl SidebarOpenPreference {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::FollowLast => "follow_last",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "always" => Self::Always,
+            "never" => Self::Never,
+            _ => Self::FollowLast,
+        }
+    }
+}
+
+/// 启动时侧边栏显示哪个面板（默认跟随上次）。搜索不参与记忆，所以不在选项里。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SidebarPanelPreference {
+    #[default]
+    FollowLast,
+    Files,
+    Outline,
+}
+
+impl SidebarPanelPreference {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::FollowLast => "follow_last",
+            Self::Files => "files",
+            Self::Outline => "outline",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "files" => Self::Files,
+            "outline" => Self::Outline,
+            _ => Self::FollowLast,
+        }
+    }
+}
+
 /// File tree ordering (roadmap D2).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum TreeSortPreference {
@@ -372,6 +427,9 @@ pub(crate) struct AppPreferences {
     pub(crate) autosave: bool,
     /// File tree ordering: "name" | "mtime" | "type".
     pub(crate) tree_sort: TreeSortPreference,
+    /// 启动时侧边栏开关与面板：默认都跟随上次（见会话里的记忆）。
+    pub(crate) sidebar_open: SidebarOpenPreference,
+    pub(crate) sidebar_panel: SidebarPanelPreference,
     pub(crate) new_file_template: String,
     pub(crate) remember_window_bounds: bool,
     pub(crate) window_frame: Option<WindowFrame>,
@@ -406,6 +464,8 @@ impl Default for AppPreferences {
             autosave_debounce_ms: 800,
             autosave: true,
             tree_sort: TreeSortPreference::default(),
+            sidebar_open: SidebarOpenPreference::default(),
+            sidebar_panel: SidebarPanelPreference::default(),
             new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
@@ -443,6 +503,8 @@ pub struct EditorSettings {
     autosave_debounce_ms: u64,
     autosave: bool,
     tree_sort: TreeSortPreference,
+    sidebar_open: SidebarOpenPreference,
+    sidebar_panel: SidebarPanelPreference,
     new_file_template: String,
     default_window_width: i64,
     default_window_height: i64,
@@ -534,6 +596,24 @@ impl EditorSettings {
                     .map(|preferences| preferences.tree_sort)
             })
             .unwrap_or_default();
+        let sidebar_open = cx
+            .try_global::<Self>()
+            .map(|settings| settings.sidebar_open)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.sidebar_open)
+            })
+            .unwrap_or_default();
+        let sidebar_panel = cx
+            .try_global::<Self>()
+            .map(|settings| settings.sidebar_panel)
+            .or_else(|| {
+                read_app_preferences()
+                    .ok()
+                    .map(|preferences| preferences.sidebar_panel)
+            })
+            .unwrap_or_default();
         let new_file_template = cx
             .try_global::<Self>()
             .map(|settings| settings.new_file_template.clone())
@@ -596,6 +676,8 @@ impl EditorSettings {
             autosave_debounce_ms,
             autosave,
             tree_sort,
+            sidebar_open,
+            sidebar_panel,
             new_file_template,
             default_window_width,
             default_window_height,
@@ -811,6 +893,58 @@ impl EditorSettings {
             update_app_preferences(|preferences| preferences.tree_sort = sort)
         {
             eprintln!("failed to save tree sort: {error}");
+        }
+    }
+
+    /// 启动时侧边栏开关（默认跟随上次）。
+    pub(crate) fn sidebar_open_on_startup(cx: &App) -> SidebarOpenPreference {
+        cx.try_global::<Self>()
+            .map(|settings| settings.sidebar_open)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_sidebar_open_on_startup(cx: &mut App, value: SidebarOpenPreference) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.sidebar_open = value);
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.sidebar_open = value)
+        {
+            eprintln!("failed to save sidebar open preference: {error}");
+        }
+    }
+
+    /// 测试用：在内存里钉死两个侧栏启动设置，不碰磁盘。
+    #[cfg(test)]
+    pub(crate) fn set_sidebar_startup_in_memory(
+        cx: &mut App,
+        open: SidebarOpenPreference,
+        panel: SidebarPanelPreference,
+    ) {
+        if cx.try_global::<Self>().is_none() {
+            Self::init(cx, true);
+        }
+        cx.update_global::<Self, _>(|settings, _| {
+            settings.sidebar_open = open;
+            settings.sidebar_panel = panel;
+        });
+    }
+
+    /// 启动时侧边栏显示哪个面板（默认跟随上次）。
+    pub(crate) fn sidebar_panel_on_startup(cx: &App) -> SidebarPanelPreference {
+        cx.try_global::<Self>()
+            .map(|settings| settings.sidebar_panel)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_sidebar_panel_on_startup(cx: &mut App, value: SidebarPanelPreference) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _cx| settings.sidebar_panel = value);
+        }
+        if let Err(error) =
+            update_app_preferences(|preferences| preferences.sidebar_panel = value)
+        {
+            eprintln!("failed to save sidebar panel preference: {error}");
         }
     }
 

@@ -14,6 +14,8 @@ impl Editor {
             self.sync_workspace_models(cx);
             window.activate_window();
         }
+        // 开关进记忆：下次启动按设置（跟随上次时）恢复（用户要求）。
+        self.persist_session(cx);
         cx.notify();
     }
 
@@ -167,11 +169,14 @@ impl Editor {
                         // （之前只有文件和搜索会收，大纲那个参数写的是 false）。
                         if editor.workspace.is_open && editor.workspace.active_tab == tab {
                             editor.workspace.is_open = false;
+                            editor.persist_session(cx);
                             cx.notify();
                             return;
                         }
                         editor.workspace.is_open = true;
                         editor.set_workspace_tab(tab, cx);
+                        // set_workspace_tab 在面板没变时早退，这里的开也要落一次。
+                        editor.persist_session(cx);
                         cx.notify();
                     });
                 })

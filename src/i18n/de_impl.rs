@@ -211,6 +211,11 @@ impl I18nStringsDe {
             preferences_startup_last_opened_file: self
                 .preferences_startup_last_opened_file
                 .unwrap_or(defaults.preferences_startup_last_opened_file),
+            preferences_sidebar_open: self.preferences_sidebar_open.unwrap_or(defaults.preferences_sidebar_open),
+            preferences_sidebar_follow_last: self.preferences_sidebar_follow_last.unwrap_or(defaults.preferences_sidebar_follow_last),
+            preferences_sidebar_open_always: self.preferences_sidebar_open_always.unwrap_or(defaults.preferences_sidebar_open_always),
+            preferences_sidebar_open_never: self.preferences_sidebar_open_never.unwrap_or(defaults.preferences_sidebar_open_never),
+            preferences_sidebar_panel: self.preferences_sidebar_panel.unwrap_or(defaults.preferences_sidebar_panel),
             preferences_local_theme: self
                 .preferences_local_theme
                 .unwrap_or(defaults.preferences_local_theme),

@@ -43,6 +43,10 @@ pub(crate) struct PreferencesWindow {
     /// 右侧内容区的滚动位置（单测用它验「真的能滚」）。
     pub(super) page_scroll: ScrollHandle,
     pub(super) tree_sort: TreeSortPreference,
+    pub(super) sidebar_open: SidebarOpenPreference,
+    pub(super) sidebar_open_dropdown_open: bool,
+    pub(super) sidebar_panel: SidebarPanelPreference,
+    pub(super) sidebar_panel_dropdown_open: bool,
     pub(super) autosave_debounce_ms: u64,
     pub(super) autosave: bool,
     pub(super) remember_window_bounds: bool,
@@ -59,6 +63,8 @@ pub(crate) struct PreferencesWindow {
     pub(super) external_change_dropdown_open: bool,
     pub(super) delete_policy_dropdown_open: bool,
     pub(super) saved_tree_sort: TreeSortPreference,
+    pub(super) saved_sidebar_open: SidebarOpenPreference,
+    pub(super) saved_sidebar_panel: SidebarPanelPreference,
     pub(super) saved_autosave_debounce_ms: u64,
     pub(super) saved_autosave: bool,
     pub(super) saved_remember_window_bounds: bool,
@@ -105,6 +111,8 @@ impl PreferencesWindow {
         let writing_width = preferences.writing_width;
         let keybindings = preferences.keybindings;
         let tree_sort = preferences.tree_sort;
+        let sidebar_open = preferences.sidebar_open;
+        let sidebar_panel = preferences.sidebar_panel;
         let autosave_debounce_ms = preferences.autosave_debounce_ms;
         let autosave = preferences.autosave;
         let remember_window_bounds = preferences.remember_window_bounds;
@@ -134,6 +142,10 @@ impl PreferencesWindow {
             saved_writing_width: writing_width,
             saved_keybindings: keybindings,
             tree_sort,
+            sidebar_open,
+            sidebar_open_dropdown_open: false,
+            sidebar_panel,
+            sidebar_panel_dropdown_open: false,
             autosave_debounce_ms,
             autosave,
             remember_window_bounds,
@@ -161,6 +173,8 @@ impl PreferencesWindow {
             saved_external_change_policy: external_change_policy,
             saved_delete_policy: delete_policy,
             tree_sort_dropdown_open: false,
+            saved_sidebar_open: sidebar_open,
+            saved_sidebar_panel: sidebar_panel,
             autosave_dropdown_open: false,
             theme_options,
             focus_handle: cx.focus_handle(),
@@ -225,6 +239,8 @@ impl PreferencesWindow {
             || self.status_bar_show_sidebar_toggle != self.saved_status_bar_show_sidebar_toggle
             || self.status_bar_show_mode_switch != self.saved_status_bar_show_mode_switch
             || self.tree_sort != self.saved_tree_sort
+            || self.sidebar_open != self.saved_sidebar_open
+            || self.sidebar_panel != self.saved_sidebar_panel
             || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
             || self.autosave != self.saved_autosave
             || self.remember_window_bounds != self.saved_remember_window_bounds
@@ -235,6 +251,26 @@ impl PreferencesWindow {
             || self.default_window_height != self.saved_default_window_height
             || self.external_change_policy != self.saved_external_change_policy
             || self.delete_policy != self.saved_delete_policy
+    }
+
+    pub(crate) fn toggle_sidebar_open_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_open_dropdown_open = !self.sidebar_open_dropdown_open;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_sidebar_panel_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_panel_dropdown_open = !self.sidebar_panel_dropdown_open;
+        cx.notify();
     }
 
     pub(crate) fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -448,6 +484,8 @@ impl PreferencesWindow {
                 custom_buttons: Vec::new(),
             },
             self.tree_sort,
+            self.sidebar_open,
+            self.sidebar_panel,
             self.autosave_debounce_ms,
             self.remember_window_bounds,
             self.window_open_position,
@@ -476,6 +514,8 @@ impl PreferencesWindow {
 
         // 同步新设置到全局缓存并刷新（roadmap H1）。
         EditorSettings::set_tree_sort(cx, self.tree_sort);
+        EditorSettings::set_sidebar_open_on_startup(cx, self.sidebar_open);
+        EditorSettings::set_sidebar_panel_on_startup(cx, self.sidebar_panel);
         EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
         EditorSettings::set_smart_punctuation(cx, self.smart_punctuation);
         EditorSettings::set_autosave(cx, self.autosave);

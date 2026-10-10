@@ -53,6 +53,106 @@ impl PreferencesWindow {
                     cx,
                 ));
         }
+        let sidebar_open_selected = match self.sidebar_open {
+            SidebarOpenPreference::FollowLast => strings.preferences_sidebar_follow_last.clone(),
+            SidebarOpenPreference::Always => strings.preferences_sidebar_open_always.clone(),
+            SidebarOpenPreference::Never => strings.preferences_sidebar_open_never.clone(),
+        };
+        let mut sidebar_open_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-sidebar-open-dropdown",
+                sidebar_open_selected,
+                theme,
+                Self::toggle_sidebar_open_dropdown,
+                cx,
+            ));
+        if self.sidebar_open_dropdown_open {
+            let options = [
+                (
+                    SidebarOpenPreference::FollowLast,
+                    strings.preferences_sidebar_follow_last.clone(),
+                ),
+                (
+                    SidebarOpenPreference::Always,
+                    strings.preferences_sidebar_open_always.clone(),
+                ),
+                (
+                    SidebarOpenPreference::Never,
+                    strings.preferences_sidebar_open_never.clone(),
+                ),
+            ];
+            for (value, label) in options {
+                sidebar_open_dropdown = sidebar_open_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!(
+                        "preferences-sidebar-open-{}",
+                        value.as_str()
+                    )),
+                    label,
+                    self.sidebar_open == value,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.sidebar_open = value;
+                        this.sidebar_open_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        let sidebar_panel_selected = match self.sidebar_panel {
+            SidebarPanelPreference::FollowLast => strings.preferences_sidebar_follow_last.clone(),
+            SidebarPanelPreference::Files => strings.workspace_tab_files.clone(),
+            SidebarPanelPreference::Outline => strings.workspace_tab_outline.clone(),
+        };
+        let mut sidebar_panel_dropdown = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                "preferences-sidebar-panel-dropdown",
+                sidebar_panel_selected,
+                theme,
+                Self::toggle_sidebar_panel_dropdown,
+                cx,
+            ));
+        if self.sidebar_panel_dropdown_open {
+            let options = [
+                (
+                    SidebarPanelPreference::FollowLast,
+                    strings.preferences_sidebar_follow_last.clone(),
+                ),
+                (
+                    SidebarPanelPreference::Files,
+                    strings.workspace_tab_files.clone(),
+                ),
+                (
+                    SidebarPanelPreference::Outline,
+                    strings.workspace_tab_outline.clone(),
+                ),
+            ];
+            for (value, label) in options {
+                sidebar_panel_dropdown = sidebar_panel_dropdown.child(Self::dropdown_item(
+                    gpui::SharedString::from(format!(
+                        "preferences-sidebar-panel-{}",
+                        value.as_str()
+                    )),
+                    label,
+                    self.sidebar_panel == value,
+                    theme,
+                    move |this, _, _, cx| {
+                        this.sidebar_panel = value;
+                        this.sidebar_panel_dropdown_open = false;
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
         let tree_sort_selected = match self.tree_sort {
             TreeSortPreference::Name => strings.tree_sort_name.clone(),
             TreeSortPreference::ModifiedTime => strings.tree_sort_mtime.clone(),
@@ -242,6 +342,16 @@ impl PreferencesWindow {
             theme,
             vec![
                 self.settings_row(theme, strings.preferences_startup_option.clone(), dropdown),
+                self.settings_row(
+                    theme,
+                    strings.preferences_sidebar_open.clone(),
+                    sidebar_open_dropdown,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_sidebar_panel.clone(),
+                    sidebar_panel_dropdown,
+                ),
                 self.settings_row(theme, strings.preferences_updates_startup.clone(), update_startup),
                 self.settings_row(theme, strings.preferences_updates_beta.clone(), update_beta),
                 self.settings_row(

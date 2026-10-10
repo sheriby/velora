@@ -1,7 +1,8 @@
     use super::{
         AppPreferences, DeletePolicy, EditorSettings, ExportThemePreference,
         ExternalChangePolicy, FontPreferences, ImagePasteBehavior, PreferencesNav,
-        StartupOpenPreference, StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
+        SidebarOpenPreference, SidebarPanelPreference, StartupOpenPreference,
+        StatusBarPreferences, TreeSortPreference, WindowOpenPosition,
         WritingWidthPreference,
         load_or_create_app_preferences_with_dirs_and_locales, open_preferences_window_with_size,
         open_preferences_window_with_state,
@@ -390,6 +391,8 @@
             autosave_debounce_ms: 800,
             autosave: true,
             tree_sort: TreeSortPreference::default(),
+            sidebar_open: SidebarOpenPreference::Always,
+            sidebar_panel: SidebarPanelPreference::Outline,
             new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
@@ -423,6 +426,8 @@
         assert!(text.contains("code_font_size = 13"));
         assert!(text.contains("writing_width = \"wide\""));
         assert!(text.contains("workspace_sidebar_width = 320"));
+        assert!(text.contains("sidebar_open = \"always\""));
+        assert!(text.contains("sidebar_panel = \"outline\""));
         assert!(text.contains("image_paste_behavior = \"copy_to_assets_folder\""));
         // roadmap F3：[export] theme 随其他偏好一起持久化。
         assert!(text.contains("[export]"));
@@ -512,6 +517,8 @@
             autosave_debounce_ms: 800,
             autosave: true,
             tree_sort: TreeSortPreference::default(),
+            sidebar_open: SidebarOpenPreference::default(),
+            sidebar_panel: SidebarPanelPreference::default(),
             new_file_template: String::new(),
             remember_window_bounds: true,
             window_frame: None,
@@ -532,6 +539,8 @@
             BTreeMap::from([("save_document".to_string(), vec!["ctrl-alt-s".to_string()])]),
             &StatusBarPreferences::default(),
             TreeSortPreference::Name,
+            SidebarOpenPreference::Never,
+            SidebarPanelPreference::Files,
             800,
             true,
             WindowOpenPosition::Center,
@@ -549,6 +558,8 @@
         )
         .expect("window preferences should save");
         assert_eq!(saved.tree_sort, TreeSortPreference::Name);
+        assert_eq!(saved.sidebar_open, SidebarOpenPreference::Never);
+        assert_eq!(saved.sidebar_panel, SidebarPanelPreference::Files);
         assert_eq!(saved.autosave_debounce_ms, 800);
         assert!(!saved.autosave);
         assert!(saved.smart_punctuation);

@@ -56,6 +56,32 @@ pub(crate) enum WorkspaceTab {
     Tags,
 }
 
+impl WorkspaceTab {
+    /// 会话里记的键（`session.json` 的 `sidebar_tab`）。这是稳定契约：改名字等于
+    /// 让老会话退回默认面板，所以不要跟着界面文案改。
+    pub(crate) fn session_key(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Search => "search",
+            Self::Outline => "outline",
+            Self::Backlinks => "backlinks",
+            Self::Tags => "tags",
+        }
+    }
+
+    /// 认不出来的键（老版本写的、手改过的）一律当作没记：回到默认面板。
+    pub(crate) fn from_session_key(key: &str) -> Option<Self> {
+        match key {
+            "files" => Some(Self::Files),
+            "search" => Some(Self::Search),
+            "outline" => Some(Self::Outline),
+            "backlinks" => Some(Self::Backlinks),
+            "tags" => Some(Self::Tags),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum WorkspaceTreeKind {
     Directory(PathBuf),
@@ -325,6 +351,9 @@ pub(crate) enum WorkspaceSelection {
 pub(super) struct WorkspaceState {
     pub(super) is_open: bool,
     pub(super) active_tab: WorkspaceTab,
+    /// 侧栏面板的记忆值：搜索不参与记忆（用户要求），所以它是「最后一个不是搜索
+    /// 的面板」。落盘见 `persist_session`，恢复见 `set_workspace_root`。
+    pub(super) sidebar_memory_tab: WorkspaceTab,
     pub(super) root: Option<PathBuf>,
     file_tree: Option<WorkspaceTreeNode>,
     file_error: Option<String>,
@@ -419,8 +448,10 @@ impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
             // 应用启动默认展开侧边栏（用户需求）：收起后可用状态栏按钮/快捷键唤出。
+            // 有记忆时 `set_workspace_root` 会按记忆/设置改写这两个字段。
             is_open: true,
             active_tab: WorkspaceTab::Files,
+            sidebar_memory_tab: WorkspaceTab::Files,
             root: None,
             file_tree: None,
             file_error: None,

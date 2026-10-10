@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::config::{SidebarOpenPreference, SidebarPanelPreference};
+
 impl Editor {
     /// write runs on the background executor: on Windows a synchronous small
     /// write in a click handler stalls the interaction (Defender 实时扫描放大
@@ -25,6 +27,8 @@ impl Editor {
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             sidebar_width: self.workspace.panel_width.map(|width| width.round() as u16),
+            sidebar_tab: Some(self.workspace.sidebar_memory_tab.session_key().to_string()),
+            sidebar_open: Some(self.workspace.is_open),
         };
         let background = cx.background_executor().clone();
         background
@@ -42,8 +46,12 @@ impl Editor {
         // Canonicalize so recent-folder entries read as real absolute paths
         // (a CLI "." would otherwise be recorded as "<cwd>/.").
         let root = std::fs::canonicalize(&root).unwrap_or(root);
-        // 恢复该工作区记忆的侧栏宽度（roadmap E7）。
-        if let Ok(session) = crate::config::read_session()
+        // 恢复该工作区记忆的侧栏宽度（roadmap E7）。宽度按工作区记，侧栏开关与
+        // 面板是全局记忆（见下面），两者口径不同。
+        let session = crate::config::read_session()
+            .map_err(|error| eprintln!("读取上次的会话失败：{error}"))
+            .ok();
+        if let Some(session) = session.as_ref()
             && session.root.as_deref() == Some(root.to_string_lossy().as_ref())
             && let Some(width) = session.sidebar_width
         {
@@ -70,7 +78,29 @@ impl Editor {
         self.workspace.dir_scan_tasks.clear();
         self.clear_workspace_file_error();
         self.workspace.expanded.clear();
-        self.workspace.active_tab = WorkspaceTab::Files;
+        // 侧栏开关与面板是**全局**记忆（用户要求：不按工作区记）：上次关着就关着，
+        // 上次挑的是哪个面板就还是它——搜索不参与记忆，所以记忆里只会是非搜索面板。
+        // 设置里选「跟随上次」（默认）时听记忆，钉死了（总是打开/总是关闭、文件数/
+        // 大纲）就听设置。
+        let remembered_tab = session
+            .as_ref()
+            .and_then(|session| session.sidebar_tab.as_deref())
+            .and_then(WorkspaceTab::from_session_key);
+        let startup_tab = match crate::config::EditorSettings::sidebar_panel_on_startup(cx) {
+            SidebarPanelPreference::FollowLast => remembered_tab.unwrap_or(WorkspaceTab::Files),
+            SidebarPanelPreference::Files => WorkspaceTab::Files,
+            SidebarPanelPreference::Outline => WorkspaceTab::Outline,
+        };
+        self.workspace.sidebar_memory_tab = startup_tab;
+        self.workspace.active_tab = startup_tab;
+        self.workspace.is_open = match crate::config::EditorSettings::sidebar_open_on_startup(cx) {
+            SidebarOpenPreference::FollowLast => session
+                .as_ref()
+                .and_then(|session| session.sidebar_open)
+                .unwrap_or(true),
+            SidebarOpenPreference::Always => true,
+            SidebarOpenPreference::Never => false,
+        };
         self.workspace.search_scope = WorkspaceSearchScope::Workspace;
         self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();

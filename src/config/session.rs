@@ -18,6 +18,13 @@ pub(crate) struct SessionState {
     /// Sidebar width remembered for this workspace root (roadmap E7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sidebar_width: Option<u16>,
+    /// 侧栏记忆（全局，不按工作区）：上次挑的面板（搜索不参与，所以只会是
+    /// `files` / `outline` / `backlinks` / `tags`）与上次是开着还是关着。
+    /// 用户要求：想一直用大纲，不要每次启动都回到文件数。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sidebar_tab: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sidebar_open: Option<bool>,
 }
 
 pub(crate) fn read_session() -> anyhow::Result<SessionState> {
@@ -77,6 +84,8 @@ mod tests {
             tabs: vec!["/tmp/workspace/a.md".into()],
             active: Some("/tmp/workspace/a.md".into()),
             sidebar_width: Some(280),
+            sidebar_tab: Some("files".into()),
+            sidebar_open: Some(false),
         };
         save_session_with_dirs(&session, &dirs).expect("save session");
         let leftovers: Vec<String> = std::fs::read_dir(&dirs.root)
@@ -91,6 +100,14 @@ mod tests {
             Some(280),
             "原子写不能丢内容"
         );
+        assert_eq!(
+            read_session_with_dirs(&dirs)
+                .expect("read session")
+                .sidebar_tab
+                .as_deref(),
+            Some("files"),
+            "侧栏面板也要跟着会话走盘"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -104,6 +121,8 @@ mod tests {
             tabs: vec!["/tmp/workspace/a.md".into(), "/tmp/workspace/b.md".into()],
             active: Some("/tmp/workspace/b.md".into()),
             sidebar_width: Some(300),
+            sidebar_tab: Some("outline".into()),
+            sidebar_open: Some(true),
         };
         save_session_with_dirs(&session, &dirs).expect("save session");
         let loaded = read_session_with_dirs(&dirs).expect("read session");

@@ -177,6 +177,11 @@ pub struct I18nStrings {
     pub preferences_startup_new_file: String,
     /// Startup option for opening the last opened Markdown document.
     pub preferences_startup_last_opened_file: String,
+    pub preferences_sidebar_open: String,
+    pub preferences_sidebar_follow_last: String,
+    pub preferences_sidebar_open_always: String,
+    pub preferences_sidebar_open_never: String,
+    pub preferences_sidebar_panel: String,
     /// Theme preference field label.
     pub preferences_local_theme: String,
     /// System theme selection label.

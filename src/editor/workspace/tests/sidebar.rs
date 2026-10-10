@@ -264,3 +264,81 @@ async fn scrolling_inside_the_sidebar_tree_does_not_scroll_the_document(cx: &mut
     );
     assert_eq!(body_after, body_offset, "侧栏里滚动不该带动正文");
 }
+
+/// 侧栏记忆是**全局**的（不按工作区）：开关与上次的面板都记，搜索不参与；设置里
+/// 可以钉死，默认「跟随上次」。
+///
+/// 用户要求：想一直用大纲，不要每次启动侧边栏都回到文件数。
+#[gpui::test]
+async fn the_sidebar_remembers_its_last_state_globally(cx: &mut TestAppContext) {
+    let config_root =
+        std::env::temp_dir().join(format!("velora-sidebar-tab-config-{}", uuid::Uuid::new_v4()));
+    let _config_root = crate::config::override_test_config_root(config_root.clone());
+    let root = std::env::temp_dir().join(format!("velora-sidebar-tab-{}", uuid::Uuid::new_v4()));
+    let other_root =
+        std::env::temp_dir().join(format!("velora-sidebar-tab-other-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("建夹具目录");
+    fs::create_dir_all(&other_root).expect("建另一个工作区");
+    init_sidebar_test_app(cx);
+
+    // 一：用大纲、再点面板上的搜索（搜索不参与记忆）、最后收起侧边栏。
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.set_workspace_tab(WorkspaceTab::Outline, cx);
+        editor.set_workspace_tab(WorkspaceTab::Search, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        crate::config::read_session()
+            .expect("读会话")
+            .sidebar_tab
+            .as_deref(),
+        Some("outline"),
+        "搜索不参与记忆：点过搜索，记住的仍是大纲"
+    );
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.toggle_workspace_drawer(window, cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        crate::config::read_session().expect("读会话").sidebar_open,
+        Some(false),
+        "开关也要进记忆"
+    );
+
+    // 二：重启（新窗口），而且是**另一个**工作区：记忆是全局的，照样恢复。
+    let (restarted, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    restarted.update(cx, |editor, cx| editor.set_workspace_root(other_root.clone(), cx));
+    assert_eq!(
+        restarted.read_with(cx, |editor, _| (
+            editor.workspace.active_tab,
+            editor.workspace.is_open
+        )),
+        (WorkspaceTab::Outline, false),
+        "面板与开关都是全局记忆：换个工作区也照着上次来"
+    );
+
+    // 三：设置里钉死后不再跟随记忆（设置默认是「跟随上次」）。
+    cx.update(|_, cx| {
+        crate::config::EditorSettings::set_sidebar_startup_in_memory(
+            cx,
+            crate::config::SidebarOpenPreference::Always,
+            crate::config::SidebarPanelPreference::Files,
+        );
+    });
+    let (pinned, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    pinned.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    assert_eq!(
+        pinned.read_with(cx, |editor, _| (
+            editor.workspace.active_tab,
+            editor.workspace.is_open
+        )),
+        (WorkspaceTab::Files, true),
+        "设置钉死了就听设置：总是打开 + 文件数"
+    );
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(other_root);
+    let _ = fs::remove_dir_all(config_root);
+}

@@ -35,6 +35,8 @@ struct EditorPreferencesFile {
     autosave_debounce_ms: u64,
     autosave: bool,
     tree_sort: String,
+    sidebar_open: String,
+    sidebar_panel: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     new_file_template: String,
 }
@@ -151,6 +153,8 @@ impl From<&AppPreferences> for PreferencesFile {
                 autosave_debounce_ms: value.autosave_debounce_ms,
                 autosave: value.autosave,
                 tree_sort: value.tree_sort.as_str().into(),
+                sidebar_open: value.sidebar_open.as_str().into(),
+                sidebar_panel: value.sidebar_panel.as_str().into(),
                 new_file_template: value.new_file_template.clone(),
             },
             status_bar: StatusBarPreferencesFile::from(&value.status_bar),
@@ -386,6 +390,16 @@ pub(crate) fn app_preferences_from_toml_value(
         .and_then(toml::Value::as_str)
         .map(TreeSortPreference::from_str)
         .unwrap_or_default();
+    let sidebar_open = editor
+        .and_then(|editor| editor.get("sidebar_open"))
+        .and_then(toml::Value::as_str)
+        .map(SidebarOpenPreference::from_str)
+        .unwrap_or_default();
+    let sidebar_panel = editor
+        .and_then(|editor| editor.get("sidebar_panel"))
+        .and_then(toml::Value::as_str)
+        .map(SidebarPanelPreference::from_str)
+        .unwrap_or_default();
     let new_file_template = editor
         .and_then(|editor| editor.get("new_file_template"))
         .and_then(toml::Value::as_str)
@@ -517,6 +531,8 @@ pub(crate) fn app_preferences_from_toml_value(
         autosave_debounce_ms,
         autosave,
         tree_sort,
+        sidebar_open,
+        sidebar_panel,
         new_file_template,
         keybindings,
         status_bar,
@@ -663,6 +679,8 @@ pub(crate) fn save_preferences_from_window(
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
     tree_sort: TreeSortPreference,
+    sidebar_open: SidebarOpenPreference,
+    sidebar_panel: SidebarPanelPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
@@ -686,6 +704,8 @@ pub(crate) fn save_preferences_from_window(
         keybindings,
         status_bar,
         tree_sort,
+        sidebar_open,
+        sidebar_panel,
         autosave_debounce_ms,
         remember_window_bounds,
         window_open_position,
@@ -712,6 +732,8 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     keybindings: BTreeMap<String, Vec<String>>,
     status_bar: &StatusBarPreferences,
     tree_sort: TreeSortPreference,
+    sidebar_open: SidebarOpenPreference,
+    sidebar_panel: SidebarPanelPreference,
     autosave_debounce_ms: u64,
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
@@ -736,6 +758,8 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     preferences.fonts = fonts.clone();
     preferences.writing_width = writing_width;
     preferences.tree_sort = tree_sort;
+    preferences.sidebar_open = sidebar_open;
+    preferences.sidebar_panel = sidebar_panel;
     preferences.autosave_debounce_ms = autosave_debounce_ms;
     preferences.remember_window_bounds = remember_window_bounds;
     preferences.window_open_position = window_open_position;
