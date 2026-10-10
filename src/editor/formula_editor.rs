@@ -495,6 +495,7 @@ impl Editor {
             .map(|source| source.body)
             .unwrap_or(raw);
         self.dismiss_contextual_overlays(cx);
+        self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
         window.focus(&focus);
         let mut editor = FormulaEditorState {
@@ -682,8 +683,8 @@ impl Editor {
         );
     }
 
-    /// 「应用」：把草稿写回目标数学块。写法保真——原块是单行 `$$…$$` 且
-    /// 草稿不含换行时保持单行，否则用多行形式；一次不可合并的 undo 组。
+    /// 「应用」：草稿只写回第一段公式，保留同块中的尾文与其他公式；
+    /// 单行公式且草稿不含换行时保持单行，否则用多行形式。
     pub(crate) fn apply_formula_editor(
         &mut self,
         _window: &mut Window,
@@ -700,12 +701,34 @@ impl Editor {
             return;
         };
         let raw = block.read(cx).display_text().to_string();
-        let single_line = !raw.contains('\n');
-        let new_text = if single_line && !draft.contains('\n') {
+        let segments = crate::components::latex::parse_display_math_segments(&raw);
+        let formula = segments.as_ref().and_then(|segments| segments.first());
+        let formula_raw = match formula {
+            Some(crate::components::latex::DisplayMathSegment::Formula { raw, body }) => {
+                if body == &draft {
+                    self.restore_focus_after_overlay(cx);
+                    cx.notify();
+                    return;
+                }
+                raw.as_str()
+            }
+            _ => raw.as_str(),
+        };
+        let Some(start) = raw.find(formula_raw) else {
+            eprintln!("公式编辑写回失败：原始块中找不到目标公式跨度");
+            self.restore_focus_after_overlay(cx);
+            cx.notify();
+            return;
+        };
+        let end = start + formula_raw.len();
+        let replacement = if !formula_raw.contains('\n') && !draft.contains('\n') {
             format!("$${draft}$$")
         } else {
             format!("$$\n{}\n$$", draft.trim())
         };
+        // 分段解析已确定目标跨度，不能用单公式草稿覆盖整个块（尾文与相邻公式会丢）。
+        let mut new_text = raw;
+        new_text.replace_range(start..end, &replacement);
         block.update(cx, |block, block_cx| {
             block.prepare_undo_capture(
                 crate::components::UndoCaptureKind::NonCoalescible,

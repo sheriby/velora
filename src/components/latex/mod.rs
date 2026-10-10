@@ -43,6 +43,12 @@ pub(crate) enum DisplayMathSegment {
     Text { markdown: String },
 }
 
+/// 首个 `$$` 关闭当前公式，后面仍可有文字或另一段公式；收集块区域与分段解析
+/// 共用这一判据，避免一边要求关闭符在行尾、另一边又把最后一对当作关闭符。
+pub(crate) fn split_display_math_closing_line(line: &str) -> Option<(&str, &str)> {
+    line.split_once("$$")
+}
+
 /// 把块级源码完整切成公式/文字分段；一个公式都识别不出来才返回 `None`。
 pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSegment>> {
     let trimmed = raw.trim_matches('\n');
@@ -52,7 +58,8 @@ pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSe
     }
 
     if lines.len() == 1 {
-        return keep_segments_with_formula(single_line_segments(lines[0]));
+        let line = strip_display_indent(lines.first()?)?.trim_end();
+        return keep_segments_with_formula(single_line_segments(line));
     }
 
     // 多行块：开头的 `$$` 后面可以直接跟内容，结尾的 `$$` 前面也可以有内容。
@@ -67,16 +74,14 @@ pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSe
     let opener = strip_display_indent(lines[0])?.trim_end();
     let opener_body = opener.strip_prefix("$$")?;
     // 首行的 `$$` 之后又出现 `$$`，说明公式在同一行就闭合了，不是多行块。
-    if opener_body.contains("$$") {
+    if split_display_math_closing_line(opener_body).is_some() {
         return None;
     }
 
     let closer = lines.last()?.trim_end();
     // 结尾 `$$` 不必顶到行尾：`$$ = 5` 这类尾部文字按文字段交出去（旧实现直接判
     // 整块失败，公式都不渲染了）。
-    let close_at = closer.rfind("$$")?;
-    let closer_body = &closer[..close_at];
-    let trailing = &closer[close_at + 2..];
+    let (closer_body, trailing) = split_display_math_closing_line(closer)?;
 
     let mut body_lines = Vec::with_capacity(lines.len());
     body_lines.push(opener_body);
@@ -92,29 +97,25 @@ pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSe
         body: body_lines.join("\n").trim().to_string(),
     }];
     if !trailing.trim().is_empty() {
-        segments.push(DisplayMathSegment::Text {
-            markdown: trailing.to_string(),
-        });
+        segments.extend(single_line_segments(trailing));
     }
-    Some(segments)
+    keep_segments_with_formula(segments)
 }
 
 /// 单行源码沿 `$$…$$` 扫描：`$$a$$ tail $$b$$` → 公式、文字、公式、文字……
 fn single_line_segments(line: &str) -> Vec<DisplayMathSegment> {
-    let Some(line) = strip_display_indent(line).map(str::trim_end) else {
-        return vec![DisplayMathSegment::Text {
-            markdown: line.to_string(),
-        }];
-    };
     let mut segments = Vec::new();
     let mut cursor = 0usize;
     while let Some(open_rel) = line[cursor..].find("$$") {
         let open = cursor + open_rel;
         let body_start = open + 2;
-        let Some(close_rel) = line[body_start..].find("$$") else {
+        let Some((body, _)) = line
+            .get(body_start..)
+            .and_then(split_display_math_closing_line)
+        else {
             break;
         };
-        let close = body_start + close_rel;
+        let close = body_start + body.len();
         if open > cursor {
             segments.push(DisplayMathSegment::Text {
                 markdown: line[cursor..open].to_string(),

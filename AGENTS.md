@@ -87,7 +87,7 @@
 - 墙钟族集中在 `src/editor/tests/perf_budgets.rs`，另有四处原地标：`workspace/tests/search_perf.rs`、`buffer/tests.rs`、`loading_chunks.rs` 的两条手动探针。新增墙钟闸门若落在这些路径之外，要同步补 CI 里的 `--skip`。
 - 两族的跑法各只有一处：CI 看 `.github/workflows/ci.yml` 的两个 `cargo test` 步骤，本地看 `.config/nextest.toml` 里那两条命令。墙钟闸门即便手动跑，并发抢 CPU 下仍会假红（单跑能过、整跑重跑也过就按假红处理，不要放宽预算）；`autosave_does_not_overwrite_external_file_changes` 历史上有偶发失败。
 - 断言导出 HTML 只看 `<body>` 之后：单文件导出把整张主题 CSS 内嵌在 `<head>` 里，样式表连它的注释中就有 `.vlt-inline-math`、`[TOC]` 这类字面量，拿整份文件做「这里不该出现」的断言会把样式表读成缺陷（撞到过一次，作者语料回归里的四条假红）。
-- 报修带来的原文用例落在 `fixtures/author-report-2026-10/`，整篇验收在 `src/editor/tests/author_report.rs`，测试名按报告条目编号（`item09_…`）：片段单测全绿不等于作者那种写法没坏，收尾要跑那一份。
+- 报修带来的原文用例落在 `fixtures/regressions/`，整篇验收在 `src/editor/tests/author_report.rs`，测试名按报告条目编号（`item09_…`）：片段单测全绿不等于作者那种写法没坏，收尾要跑那一份。
 - 修 bug 一律先写会红的测试再动实现，流程见技能 `velora-gpui-bugfix`。
 
 ## 4 工具链

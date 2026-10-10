@@ -565,14 +565,17 @@ pub(crate) fn collect_display_math_region(lines: &[String], start: usize) -> usi
     // 两端都 trim：调用方可能带着任意缩进过来（`  $$` / `    $$`），
     // 只去掉尾部空白会把缩进当成「同一行里有第二个 `$$`」。
     let opener = lines[start].trim();
-    if opener != "$$" && opener.get(2..).is_some_and(|rest| rest.contains("$$")) {
+    if opener != "$$"
+        && opener.get(2..).is_some_and(|rest| {
+            crate::components::latex::split_display_math_closing_line(rest).is_some()
+        })
+    {
         return start + 1;
     }
 
     let mut index = start + 1;
     while index < lines.len() {
-        // 结束行不要求独占一行：`\end{aligned}$$` 也算收尾。
-        if lines[index].trim_end().ends_with("$$") {
+        if crate::components::latex::split_display_math_closing_line(&lines[index]).is_some() {
             return index + 1;
         }
 
@@ -582,10 +585,11 @@ pub(crate) fn collect_display_math_region(lines: &[String], start: usize) -> usi
                 lookahead += 1;
             }
 
-            // 空行后面那行以 `$$` 收尾时，它是本块的结束行而不是下一块的开头
+            // 空行后面那行有关闭符时（关闭后还可跟文字），它结束当前区域
             // （`$$\n\n$$`、以及在公式里空一行都是这种形状），继续往后扫。
-            let closes_this_region =
-                lookahead < lines.len() && lines[lookahead].trim_end().ends_with("$$");
+            let closes_this_region = lines.get(lookahead).is_some_and(|line| {
+                crate::components::latex::split_display_math_closing_line(line).is_some()
+            });
             let region_ends = lookahead >= lines.len()
                 || (!closes_this_region && looks_like_root_block_start(lines, lookahead));
             if region_ends {

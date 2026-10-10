@@ -1,9 +1,5 @@
-//! 作者反馈语料的整篇验收：`fixtures/author-report-2026-10/` 是报修方
-//! 随报告提供的原始用例（cases/），这里按报告编号逐条锁住「阅读效果 + HTML 输出」
-//! 两端。报告末尾要求的验收方式就是「用对应示例复查阅读效果和 HTML 输出」，
-//! 片段级单测各自守着实现细节，但没人把作者的原文整篇跑一遍。
-//!
-//! 每条断言都对着报修里那句现象写：报修说什么，这里就断什么。
+//! 原始复现素材的整篇回归：覆盖阅读、复制为 HTML 与编辑保存，避免片段单测
+//! 通过时遗漏真实文档的入口和上下文。素材统一放在 `fixtures/regressions/`。
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +10,7 @@ use crate::theme::Theme;
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures")
-        .join("author-report-2026-10")
+        .join("regressions")
 }
 
 /// 读作者的原文。行尾统一成 LF：报修里一半用例是 CRLF 文件，
@@ -365,4 +361,467 @@ fn item15_named_callout_keeps_its_type_and_title() {
         html.contains("markdown-alert-warning"),
         "无标题的 WARNING 也要保住：{html}"
     );
+}
+
+#[gpui::test]
+async fn reported_documents_copy_html_through_the_actual_shortcut(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for name in [
+        "01-utf16",
+        "02-table-code",
+        "02-table-math",
+        "03-formula-tail",
+        "04-math-blank-line",
+        "04-math-closing",
+        "05-quote-math",
+        "06-indented-code",
+        "06-link-url",
+        "07-numeric-math",
+        "08-utf8-bom",
+        "09-code-inner-fence",
+        "09-code-long-close",
+        "10-escape",
+        "10-line-break",
+        "11-table-br",
+        "12-images",
+        "13-setext-heading",
+        "14-heading-link",
+        "14-toc",
+        "15-callout",
+    ] {
+        let path = fixture_dir().join(format!("{name}.md"));
+        let document = crate::editor::encoding::load_document(&path).expect("读取复现素材");
+        let original = document.text.replace("\r\n", "\n");
+        let (editor, cx) =
+            cx.add_window_view(move |_, cx| Editor::from_loaded_document(cx, document, Some(path)));
+        redraw(cx);
+        redraw(cx);
+        cx.simulate_keystrokes("ctrl-shift-c");
+        let html = cx
+            .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .expect("实际复制命令应写入 HTML");
+        let body = html.split_once("<body").expect("应有 HTML 正文").1;
+        let expected = cx.update(|_, cx| {
+            crate::export::html::render_html_with_base_dir(
+                &original,
+                cx.global::<ThemeManager>().current(),
+                name,
+                Some(&fixture_dir()),
+            )
+        });
+        assert_eq!(
+            body,
+            expected.split_once("<body").expect("应有 HTML 正文").1,
+            "{name} 从实际复制入口输出的内容应与原始文档一致"
+        );
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), original, "复制不应修改 {name}");
+        });
+    }
+}
+
+#[gpui::test]
+async fn item02_and_item11_table_reading_uses_the_preserved_cell_content(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for name in ["02-table-code", "02-table-math", "11-table-br"] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, case_text(name), None));
+        redraw(cx);
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let tables = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .filter_map(|visible| visible.entity.read(cx).table_runtime.clone())
+                .collect::<Vec<_>>();
+            assert!(!tables.is_empty(), "{name} 应有表格运行时");
+            match name {
+                "02-table-code" => {
+                    let table = &tables[0];
+                    for (row, column, expected) in [
+                        (0, 0, r"a\\b"),
+                        (0, 1, r"a\|b"),
+                        (1, 0, r"C:\tmp"),
+                        (1, 1, r"x\|y"),
+                    ] {
+                        let cell = table.rows[row][column].read(cx);
+                        assert_eq!(cell.display_text(), expected);
+                        assert!(cell.inline_spans().iter().all(|span| span.style.code));
+                    }
+                }
+                "02-table-math" => {
+                    for (table, column, body) in [
+                        (0, 0, r"\begin{matrix}1&2\\3&4\end{matrix}"),
+                        (1, 0, r"a\|b"),
+                        (1, 1, r"a\Vert b"),
+                    ] {
+                        let cell = tables[table].rows[0][column].read(cx);
+                        let math = cell
+                            .inline_spans()
+                            .iter()
+                            .find_map(|span| span.math.as_ref())
+                            .expect("表内公式应进入公式渲染分支");
+                        assert_eq!(math.body, body, "表内公式反斜杠必须完整");
+                        assert!(
+                            crate::components::latex::render_inline_math_svg(
+                                &math.body,
+                                gpui::black(),
+                                20.0,
+                            )
+                            .is_ok(),
+                            "{body} 应生成 SVG，不能退回源码"
+                        );
+                    }
+                }
+                "11-table-br" => {
+                    let cell = tables[0].rows[0][1].read(cx);
+                    assert_eq!(cell.display_text(), "first\nsecond");
+                    assert_eq!(
+                        cell.last_layout.as_ref().expect("单元格应完成布局").len(),
+                        2
+                    );
+                    assert!(
+                        cell.inline_spans()
+                            .iter()
+                            .all(|span| { span.link.is_none() && !span.style.underline })
+                    );
+                }
+                _ => unreachable!(),
+            }
+        });
+    }
+}
+
+#[gpui::test]
+async fn item07_numeric_math_has_a_renderable_formula_span(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, case_text("07-numeric-math"), None));
+    redraw(cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let math = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find_map(|visible| {
+                visible
+                    .entity
+                    .read(cx)
+                    .inline_spans()
+                    .iter()
+                    .find_map(|span| span.math.clone())
+            })
+            .expect("明确的数字公式必须有公式跨度");
+        assert_eq!(math.body, "42");
+        assert!(
+            crate::components::latex::render_inline_math_svg(&math.body, gpui::black(), 20.0,)
+                .is_ok()
+        );
+    });
+}
+
+#[gpui::test]
+async fn item12_all_image_spellings_load_the_actual_local_files(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let path = fixture_dir().join("12-images.md");
+    let document = crate::editor::encoding::load_document(&path).expect("读取图片用例");
+    let (editor, cx) =
+        cx.add_window_view(move |_, cx| Editor::from_loaded_document(cx, document, Some(path)));
+    redraw(cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let sources = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .filter_map(|visible| {
+                visible
+                    .entity
+                    .read(cx)
+                    .image_runtime()
+                    .map(|runtime| runtime.resolved_source.clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(sources.len(), 3, "三种写法都应安装图片运行时");
+        for (source, name) in sources
+            .iter()
+            .zip(["orange.png", "blue card.png", "blue card.png"])
+        {
+            let expected = fixture_dir().join("assets").join(name);
+            assert_eq!(source, &ImageResolvedSource::Local(expected.clone()));
+            assert!(expected.is_file(), "图片路径必须落到真实文件");
+        }
+    });
+    assert!(cx.debug_bounds("image-content").is_some(), "应挂载图片元素");
+    assert!(
+        cx.debug_bounds("image-placeholder").is_none(),
+        "不能落入图片加载失败占位"
+    );
+}
+
+#[gpui::test]
+async fn item01_and_item08_original_encoded_files_survive_an_edit_and_save(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for name in ["01-utf16", "08-utf8-bom"] {
+        let original = fs::read(fixture_dir().join(format!("{name}.md"))).expect("读取原始字节");
+        let path = temp_markdown_path(name);
+        fs::write(&path, &original).expect("写入素材副本");
+        let document = crate::editor::encoding::load_document(&path).expect("解码原始素材");
+        let source = document.text.clone();
+        let cleanup = path.clone();
+        cx.on_quit(move || fs::remove_file(&cleanup).expect("清理素材副本"));
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+        redraw(cx);
+        editor.update(cx, |editor, cx| {
+            let last = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .rev()
+                .find(|visible| {
+                    let block = visible.entity.read(cx);
+                    block.kind() == BlockKind::Paragraph && !block.display_text().is_empty()
+                })
+                .expect("应有正文末段")
+                .entity
+                .clone();
+            let end = last.read(cx).visible_len();
+            editor.focus_block(last.entity_id());
+            last.update(cx, |block, cx| block.move_to(end, cx));
+            cx.notify();
+        });
+        redraw(cx);
+        let caret = editor.read_with(cx, |editor, cx| {
+            let active = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| Some(visible.entity.entity_id()) == editor.active_entity_id)
+                .expect("应有焦点块");
+            let block = active.entity.read(cx);
+            editor
+                .caret_source_offset(active.entity.entity_id(), block.selected_range.end, cx)
+                .expect("光标应有源码偏移")
+        });
+        assert!(
+            caret >= source.trim_end_matches('\n').len(),
+            "应在正文末尾输入"
+        );
+        let (byte_offset, inserted) = if name == "01-utf16" {
+            (
+                2 + source[..caret].encode_utf16().count() * 2,
+                vec![b'Z', 0],
+            )
+        } else {
+            (3 + caret, vec![b'Z'])
+        };
+        let mut expected = original.clone();
+        expected.splice(byte_offset..byte_offset, inserted);
+        cx.simulate_input("Z");
+        redraw(cx);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+        assert_eq!(
+            fs::read(&path).expect("读取保存结果"),
+            expected,
+            "{name} 插入 Z 后不能改掉 BOM、编码或其他字节"
+        );
+    }
+}
+
+#[gpui::test]
+async fn item03_applying_formula_edits_preserves_tail_text_and_neighboring_formulas(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for source in [
+        fs::read_to_string(fixture_dir().join("03-formula-tail.md")).expect("读取原始用例"),
+        "# 相邻公式\n\n$$x^2$$ $$y^2$$ 中文尾文🌿\n".to_string(),
+        "# 多行公式\n\n$$\nx^2\n$$ 中文尾文🌿\n".to_string(),
+        "# 多行相邻公式\n\n$$\nx^2\n$$ $$y^2$$ 中文尾文🌿\n".to_string(),
+    ] {
+        for edited in [false, true] {
+            let path = temp_markdown_path("formula-tail-apply");
+            fs::write(&path, &source).expect("写入素材副本");
+            let document = crate::editor::encoding::load_document(&path).expect("读取副本");
+            let cleanup = path.clone();
+            cx.on_quit(move || fs::remove_file(&cleanup).expect("清理素材副本"));
+            let (editor, cx) = cx.add_window_view({
+                let path = path.clone();
+                move |_, cx| Editor::from_loaded_document(cx, document, Some(path))
+            });
+            redraw(cx);
+            let math = editor.read_with(cx, |editor, cx| {
+                editor
+                    .document
+                    .visible_blocks()
+                    .iter()
+                    .find(|visible| visible.entity.read(cx).kind() == BlockKind::MathBlock)
+                    .expect("应有数学块")
+                    .entity
+                    .clone()
+            });
+            let undo_before = editor.read_with(cx, |editor, _| editor.undo_history.len());
+            editor.update_in(cx, |editor, window, cx| {
+                editor.open_formula_editor_for_block(math.entity_id(), window, cx);
+                assert_eq!(
+                    editor.formula_editor.as_ref().expect("应打开弹窗").draft,
+                    "x^2"
+                );
+            });
+            redraw(cx);
+            editor.update_in(cx, |editor, window, cx| {
+                if edited {
+                    editor.replace_formula_draft(0..3, "z^2", None, false, cx);
+                }
+                editor.apply_formula_editor(window, cx);
+            });
+            redraw(cx);
+            let expected = if edited {
+                source.replacen("x^2", "z^2", 1)
+            } else {
+                source.clone()
+            };
+            editor.read_with(cx, |editor, _| {
+                assert_eq!(
+                    editor.buffer.text(),
+                    expected.replace("\r\n", "\n"),
+                    "公式弹窗只能修改目标公式，不能丢掉尾文和其他公式；edited={edited}"
+                );
+                assert_eq!(editor.undo_history.len(), undo_before + usize::from(edited));
+            });
+            cx.simulate_keystrokes("ctrl-shift-c");
+            let html = cx
+                .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+                .expect("复制应得到 HTML");
+            let body = html.split_once("<body").expect("应有正文").1;
+            let tail = if source.contains("LOST_SENTINEL") {
+                "LOST_SENTINEL"
+            } else {
+                "中文尾文🌿"
+            };
+            assert!(body.contains(tail), "编辑后的 HTML 不能丢尾文");
+            assert_eq!(
+                body.matches("<svg").count(),
+                if source.contains("y^2") { 2 } else { 1 }
+            );
+            if edited {
+                cx.simulate_keystrokes("ctrl-z");
+                redraw(cx);
+                editor.read_with(cx, |editor, _| {
+                    assert_eq!(editor.buffer.text(), source.replace("\r\n", "\n"))
+                });
+                cx.simulate_keystrokes("ctrl-y");
+                redraw(cx);
+                editor.read_with(cx, |editor, _| {
+                    assert_eq!(editor.buffer.text(), expected.replace("\r\n", "\n"))
+                });
+            }
+            cx.simulate_keystrokes("ctrl-s");
+            redraw(cx);
+            assert_eq!(fs::read_to_string(&path).expect("读取保存结果"), expected);
+        }
+    }
+}
+
+#[gpui::test]
+async fn formula_dialog_restores_document_keyboard_focus_after_apply_or_cancel(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    for apply in [true, false] {
+        let (editor, cx) = cx
+            .add_window_view(|_, cx| Editor::from_markdown(cx, case_text("03-formula-tail"), None));
+        redraw(cx);
+        let (original_focus, math) = editor.update_in(cx, |editor, window, cx| {
+            let original_focus = editor.focused_edit_target_entity_id(window, cx);
+            let math = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind() == BlockKind::MathBlock)
+                .expect("应有公式")
+                .entity
+                .entity_id();
+            (original_focus, math)
+        });
+        assert!(original_focus.is_some(), "正文初始应有键盘焦点");
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_formula_editor_for_block(math, window, cx);
+        });
+        redraw(cx);
+        cx.simulate_keystrokes(if apply { "ctrl-enter" } else { "escape" });
+        redraw(cx);
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.formula_editor.is_none(), "应关闭弹窗");
+            assert_eq!(
+                editor.focused_edit_target_entity_id(window, cx),
+                original_focus,
+                "应用或取消公式弹窗后，正文快捷键必须继续收到事件；apply={apply}"
+            );
+        });
+        cx.simulate_keystrokes("ctrl-shift-c");
+        let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        assert!(copied.is_some_and(|html| html.contains("LOST_SENTINEL")));
+    }
+}
+
+#[test]
+fn item03_multiline_closing_line_keeps_the_next_formula_separate() {
+    let segments =
+        crate::components::latex::parse_display_math_segments("$$\nx^2\n$$ $$y^2$$ 中文尾文🌿")
+            .expect("应识别多行公式");
+    let formulas = segments
+        .iter()
+        .filter_map(|segment| {
+            if let crate::components::latex::DisplayMathSegment::Formula { body, .. } = segment {
+                Some(body.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        formulas,
+        vec!["x^2", "y^2"],
+        "第一处关闭符之后不是首公式的正文"
+    );
+}
+
+#[gpui::test]
+fn item03_multiline_tail_does_not_absorb_the_following_paragraph(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "# 标题\n\n$$\nx^2\n$$ 中文尾文🌿\n\n后续段落\n";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+    editor.read_with(cx, |editor, cx| {
+        let kinds = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| {
+                let block = visible.entity.read(cx);
+                (block.kind(), block.display_text().to_string())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            kinds.iter().any(|(kind, text)| {
+                *kind == BlockKind::MathBlock && text.ends_with("$$ 中文尾文🌿")
+            }),
+            "关闭行有尾文仍必须结束公式区域：{kinds:?}"
+        );
+        assert!(
+            kinds
+                .iter()
+                .any(|(kind, text)| { *kind == BlockKind::Paragraph && text == "后续段落" }),
+            "后续段落不能被吞入公式区域：{kinds:?}"
+        );
+    });
 }
