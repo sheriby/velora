@@ -225,6 +225,40 @@
         });
     }
 
+    /// 单行块公式后面还有字：整行都得留在块里，块只交出「第一个公式」的话，
+    /// 尾文在数据层就已经没了（报修第 3 条，界面渲染那半边见 latex 分段）。
+    #[gpui::test]
+    async fn single_line_display_math_keeps_everything_after_the_closing_marker(
+        cx: &mut TestAppContext,
+    ) {
+        let source = "$$x^2$$ LOST_SENTINEL";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 1);
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::MathBlock);
+            assert_eq!(visible[0].entity.read(cx).display_text(), source);
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    /// 同一行写两个 `$$…$$`：区域不能只算到第一个闭合符为止，否则第二个公式
+    /// 连同中间的空白在块层就丢了（同一条报修的第二种写法）。
+    #[gpui::test]
+    async fn two_display_math_on_one_line_stay_in_one_region(cx: &mut TestAppContext) {
+        let source = "$$x^2$$ $$y^2$$";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible.len(), 1);
+            assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::MathBlock);
+            assert_eq!(visible[0].entity.read(cx).display_text(), source);
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
     #[gpui::test]
     async fn unclosed_display_math_stays_raw(cx: &mut TestAppContext) {
         let markdown = "$$\n\\int_0^1 x^2 dx".to_string();
