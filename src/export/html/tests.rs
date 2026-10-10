@@ -1056,6 +1056,69 @@ mod tests {
     }
 
     #[test]
+    fn exports_paren_math_whose_body_looks_like_money() {
+        // 报告 7 的导出侧断言：`\(...\)` 是无歧义 TeX 定界符，钱/公式判据一次都不许过问
+        // 它。下面这些体内全是数字、`0.50` 与 `1,000` 这串在 `$…$` 写法里会被当钱读。
+        // UI 侧同一断言在 `src/components/markdown/inline/tests/edit_ops.rs`。
+        for raw in [r"42", r"0.50", r"1,000", r"12_345"] {
+            let markdown = format!("value \\({raw}\\) here");
+            let html = render_html(&markdown, &Theme::default_theme(), "Doc");
+            let body = body_only(&html);
+
+            assert!(body.contains("<svg"), "{markdown:?} 应导出为公式：{html}");
+            assert!(
+                !body.contains(&format!("\\({raw}\\)")),
+                "{markdown:?} 不该被当钱数原样写出：{html}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_and_export_make_the_same_money_versus_math_call() {
+        // 「这串 `$…$` 是钱还是公式」现在只有一处判据
+        // （`src/components/markdown/inline/parse.rs:looks_like_currency_between`）：阅读视图
+        // 与导出各自只喂它自己那份上下文（token 序列 / 重建原文加字节偏移）。
+        // 这条用例把两个界面逐条对齐——谁再抄一份近似实现、把同一串判成不同的东西，这里就红。
+        for markdown in [
+            "cost $42$",
+            "$42 dollars",
+            "total $0.50$ here",
+            "price $1,000$ today",
+            "$12$",
+            "买 3$x^2$ 个",
+            "看了$x^2$一眼",
+            "value $2x$ here",
+            "公式 $x^2$ 结束",
+            "$a$ 与 $b$ 两个变量",
+            "$x$ = 5",
+            "10$ and $20",
+            "| Value |\n| --- |\n| $x^2$ |",
+            "| Money |\n| --- |\n| $42$ |",
+        ] {
+            let app_is_math = app_reads_inline_math(markdown);
+            let export_is_math = export_reads_inline_math(markdown);
+            assert_eq!(
+                app_is_math, export_is_math,
+                "{markdown:?} 在阅读视图里是公式 {app_is_math}，在导出里是公式 {export_is_math}"
+            );
+        }
+    }
+
+    /// 阅读视图：这串写法里有没有内联公式片段。
+    fn app_reads_inline_math(markdown: &str) -> bool {
+        crate::components::markdown::inline::InlineTextTree::from_markdown(markdown)
+            .render_cache()
+            .spans()
+            .iter()
+            .any(|span| span.math.is_some())
+    }
+
+    /// 导出：正文里有没有公式 svg（只看 `<body>` 之后，主题样式表里也有 `svg` 字样）。
+    fn export_reads_inline_math(markdown: &str) -> bool {
+        body_only(&render_html(markdown, &Theme::default_theme(), "Doc")).contains("<svg")
+    }
+
+    #[test]
     fn exports_math_inside_table_cells() {
         // cases/02-table-math.md：表格是内联上下文，没有段落可缓冲，
         // 事件流设计必须在单元格内继续处理行内公式。
