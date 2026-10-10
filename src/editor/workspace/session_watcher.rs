@@ -162,10 +162,11 @@ impl Editor {
             }
                 // 后台标签没有缓冲区，`tab.markdown` 是切换时存下的 LF 文本：直接
                 // 写出去会把 UTF-16/GB18030 的编码与 CRLF 的行尾洗成 UTF-8/LF。写之前
-                // 按磁盘上那份文件的形状重新编码（见 `persistence::tab_write_bytes`）。
-            match std::fs::write(
+                // 按磁盘上那份文件的形状重新编码，并且与 autosave 同一口径原子写
+                // （见 `persistence::tab_write_bytes` / `write_atomic`）。
+            match crate::editor::persistence::write_atomic(
                 &tab.path,
-                crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown),
+                &crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown),
             ) {
                 Ok(()) => {
                     let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);

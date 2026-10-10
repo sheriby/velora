@@ -137,9 +137,12 @@ impl Editor {
             cx.background_executor()
                 .timer(EXTERNAL_CHANGE_RECHECK_DELAY)
                 .await;
-            let _ = editor.update(cx, |editor, cx| {
+            // 更新失败只剩一种可能：这个 Editor 实体已随窗口销毁，没有界面要刷新了。
+            if let Err(error) = editor.update(cx, |editor, cx| {
                 editor.reload_externally_changed_document_with_recheck(&path, false, cx);
-            });
+            }) {
+                eprintln!("failed to recheck the external change: {error}");
+            }
         })
         .detach();
     }
@@ -786,10 +789,11 @@ impl Editor {
                 // 后台标签没有缓冲区，手里只有切换时存下的 LF 文本：直接写出去会把
                 // UTF-16/GB18030 的编码与 CRLF 的行尾洗成 UTF-8/LF。落盘字节按磁盘上
                 // 还在的那份文件的形状重新编码（`persistence::tab_write_bytes`），
-                // 标签快照里因此不必再存一份整篇字节。
-                match std::fs::write(
+                // 标签快照里因此不必再存一份整篇字节。写本身也要原子：这是用户唯一
+                // 的那份文件，崩在半路不能留下半截正文（与 autosave 同一口径）。
+                match crate::editor::persistence::write_atomic(
                     &tab.path,
-                    crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown),
+                    &crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown),
                 ) {
                     Ok(()) => {
                         let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);

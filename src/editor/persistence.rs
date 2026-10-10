@@ -86,7 +86,7 @@ pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> 
 /// 「保存失败」（报修原文）。文案改一个字就会再漏一次，所以钉在类型上。
 #[derive(Debug)]
 pub(super) struct ExternalChange {
-    pub(super) path: PathBuf,
+    path: PathBuf,
     /// 盘上的内容读不出来了（文件被移走、被别的程序独占、同步盘的占位符还没落地、
     /// 半截的 UTF-16）：与「内容变了」同样不能写，但理由要分开说。
     reason: Option<String>,
@@ -143,8 +143,14 @@ pub(super) fn tab_write_bytes(path: &Path, text: &str) -> Vec<u8> {
     match super::encoding::load_document(path) {
         Ok(document) => encoded_with_disk_shape(text, &document.raw),
         // 原文件读不出来（已被移走，或它的字节本来就不能无损写回）：退回文本字节，
-        // 与修之前的行为一致，不新增失败面。
-        Err(_) => text.as_bytes().to_vec(),
+        // 与修之前的行为一致，不新增失败面。理由要打出来，否则这一趟就是静默吞错。
+        Err(error) => {
+            eprintln!(
+                "failed to read the file shape of '{}', writing it as plain text: {error}",
+                path.display()
+            );
+            text.as_bytes().to_vec()
+        }
     }
 }
 

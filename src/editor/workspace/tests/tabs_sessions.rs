@@ -832,6 +832,16 @@ async fn the_close_tab_command_closes_the_active_tab(cx: &mut TestAppContext) {
     });
 }
 
+/// 目录里留下的写盘临时文件（`.velora-*.tmp` 这类）。原子写成功就该一个都不留。
+fn leftover_write_temps(dir: &std::path::Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .expect("list the document directory")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".tmp"))
+        .collect()
+}
+
 /// UTF-16LE + BOM 的夹具字节。编码表只有一份（`buffer::file_shape`），这里只是
 /// 把夹具拼出来，不参与判定。
 fn utf16_le_with_bom(text: &str) -> Vec<u8> {
@@ -1091,6 +1101,11 @@ async fn saving_a_closed_tab_keeps_its_encoding_shape(cx: &mut TestAppContext) {
         "关闭时保存的内容要是改过的那一版，实测 {:?}",
         disk_text(&first)
     );
+    let leftovers = leftover_write_temps(&root);
+    assert!(
+        leftovers.is_empty(),
+        "关闭标签的那一趟写盘要走原子写，不该留下临时文件，实测 {leftovers:?}"
+    );
 }
 
 /// 换工作区时收起脏标签那一条：同一处 `std::fs::write(tab.markdown)`，同一个形状洞。
@@ -1151,5 +1166,10 @@ async fn switching_workspace_keeps_the_shape_of_dirty_tabs(cx: &mut TestAppConte
         disk_text(&doc),
         "# 未保存的修改\n",
         "内容要一字不改地落回那篇文件"
+    );
+    let leftovers = leftover_write_temps(&root_a);
+    assert!(
+        leftovers.is_empty(),
+        "收起脏标签的写盘也要是原子写，不该留下临时文件，实测 {leftovers:?}"
     );
 }
