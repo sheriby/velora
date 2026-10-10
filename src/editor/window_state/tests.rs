@@ -67,6 +67,97 @@ mod tests {
         assert_eq!(heading_line_for_anchor(source, "不存在的标题"), None);
     }
 
+    #[test]
+    fn exported_anchor_ids_are_the_anchors_the_app_jumps_to() {
+        // 标题 slug 只有一处判据（`crate::export::html::heading_slug`）：导出 HTML 写的
+        // 标题 `id`，应用内点同一个锚点必须跳到那一行。app 侧曾另抄一份，两份一旦漂开
+        // 就是「分享出去的目录能跳、应用里点同一行跳不动」这类下游报修。
+        for heading in [
+            "Section",
+            "Math style (extension)",
+            "设计与来源",
+            "🚀 Launch",
+            "A -- B, C_D",
+            "100% 完成 / 8",
+            "  中文 与 English 混排  ",
+        ] {
+            let slug = crate::export::html::heading_slug(heading).expect("测试用标题都该有 slug");
+            let source = format!("前言\n\n# {heading}\n\n正文\n");
+            assert_eq!(
+                heading_line_for_anchor(&source, &slug),
+                Some(2),
+                "导出锚点 {slug:?}（标题 {heading:?}）在应用里应跳到标题那一行"
+            );
+        }
+    }
+
+    #[test]
+    fn percent_decoding_keeps_invalid_escapes_and_multibyte_paths() {
+        // 解码口径只有 `src/file_url.rs:percent_decode_or_raw` 一处，window_state 里那份
+        // 抄本已删。非法转义（`%` 后不跟两个十六进制数字）与串尾裸 `%` 按字面留着，
+        // 否则 `assets/100% done.png` 这类真实文件名会被改坏；多字节路径按字节还原后
+        // 整体解 UTF-8，不会拆出半个字符。
+        for (target, expected_path) in [
+            ("notes/100% done.md", "notes/100% done.md"),
+            ("notes/100%zz.md", "notes/100%zz.md"),
+            ("notes/100%.md", "notes/100%.md"),
+            ("notes/100%20done.md", "notes/100 done.md"),
+            ("封面/🚀 图.md", "封面/🚀 图.md"),
+            ("assets/%E5%B0%81%E9%9D%A2/%F0%9F%9A%80.png", "assets/封面/🚀.png"),
+        ] {
+            let LinkTarget::Local { path, .. } = classify_link_target(target) else {
+                panic!("{target:?} 应判成本地路径");
+            };
+            assert_eq!(path, expected_path, "{target:?} 的转义还原不对");
+        }
+
+        for (target, expected_anchor) in [
+            ("#100% done", "100% done"),
+            ("#%E6%A0%87%E9%A2%98", "标题"),
+            ("#🚀 发射", "🚀 发射"),
+        ] {
+            assert_eq!(
+                classify_link_target(target),
+                LinkTarget::Anchor(expected_anchor.to_string()),
+                "{target:?} 的锚点解码不对"
+            );
+        }
+
+        // 解出来的字节不是合法 UTF-8 时退回原文（抄本这里是替换字符 `\u{FFFD}`）：
+        // 宁可跳不动，也不把锚点名改坏——与图片路径、file URL 同一个口径。
+        assert_eq!(
+            classify_link_target("#%FF%FE"),
+            LinkTarget::Anchor("%FF%FE".to_string())
+        );
+    }
+
+    #[test]
+    fn file_url_scheme_is_stripped_without_byte_indexing() {
+        // `file:` 前缀大小写不敏感，剥前缀的字符边界由 `strip_file_url_prefix` 自己保证
+        // （旧的 `trimmed[5..]` 只是运气好）；Windows 盘符补回 `/` 的写法一并钉住。
+        assert_eq!(
+            classify_link_target("file:C:/Notes/x.md"),
+            LinkTarget::Local {
+                path: "/C:/Notes/x.md".to_string(),
+                anchor: None,
+            }
+        );
+        assert_eq!(
+            classify_link_target("FILE:C:/Notes/x.md"),
+            LinkTarget::Local {
+                path: "/C:/Notes/x.md".to_string(),
+                anchor: None,
+            }
+        );
+        assert_eq!(
+            classify_link_target("file:docs/My%20Note.md"),
+            LinkTarget::Local {
+                path: "docs/My Note.md".to_string(),
+                anchor: None,
+            }
+        );
+    }
+
     #[gpui::test]
     async fn external_links_go_to_the_default_browser(cx: &mut TestAppContext) {
         init_app(cx);
