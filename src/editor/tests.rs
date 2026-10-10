@@ -4,6 +4,7 @@
 
 mod author_report;
 mod block_source_spans;
+mod caret;
 mod block_source_write_back;
 mod clipboard_text;
 mod clear_format;

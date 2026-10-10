@@ -178,7 +178,7 @@ impl Editor {
         }
     }
 
-    fn reset_block_cursor(block: &Entity<super::Block>, cursor: usize, cx: &mut Context<Self>) {
+    pub(crate) fn reset_block_cursor(block: &Entity<super::Block>, cursor: usize, cx: &mut Context<Self>) {
         block.update(cx, move |block, cx| {
             block.selected_range = cursor..cursor;
             block.selection_reversed = false;

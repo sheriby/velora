@@ -574,6 +574,10 @@ impl Render for Editor {
             .flex_grow()
             .h_full()
             .items_center()
+            // 正文区域（含最后一块下方那片空白）默认就是文字光标：块自己的命中区
+            // 只覆盖块内，末尾以下没人设光标，鼠标在那儿变成箭头（用户报修）。
+            // 块级请求在后，链接上的手型仍由块覆盖。
+            .cursor(CursorStyle::IBeam)
             .bg(theme.colors.editor_background)
             .overflow_y_scroll()
             .scrollbar_width(px(0.0))

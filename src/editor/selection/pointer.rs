@@ -19,6 +19,33 @@ impl Editor {
         }
     }
 
+    /// 落在正文最后一块下方的按下：把光标送到文末。
+    ///
+    /// 正文块自己的命中测试只看块内，块底以下那片空白（用户报修：最后一行往下大约
+    /// 半个屏幕）没有块接得住，点下去光标不动。末块量不出几何（表格、分隔线、未聚焦
+    /// 的公式与图表）时不接手：那一段空间的归属由各自的格子处理，与
+    /// [`Self::cross_block_endpoint_for_point`] 同一口径。
+    fn place_caret_below_document_end(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(last) = self
+            .document
+            .visible_blocks()
+            .last()
+            .map(|visible| visible.entity.clone())
+        else {
+            return;
+        };
+        let Some(bounds) = last.read(cx).last_bounds else {
+            return;
+        };
+        if position.y <= bounds.bottom() {
+            return;
+        }
+        let end = last.read(cx).display_text().len();
+        Self::reset_block_cursor(&last, end, cx);
+        self.focus_block(last.entity_id());
+        cx.notify();
+    }
+
     pub(crate) fn on_editor_capture_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -70,6 +97,7 @@ impl Editor {
         // 同一根块里的拖动由 mouse_move 的同块早退交还给块内选区，这里武装
         // 只记锚点，不影响块内行为。
         self.rendered_select_all_cycle = None;
+        self.place_caret_below_document_end(event.position, cx);
         self.begin_cross_block_drag_at_point(event.position, cx);
         cx.propagate();
     }
