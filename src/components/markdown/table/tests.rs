@@ -321,6 +321,72 @@ mod tests {
     }
 
     #[test]
+    fn cell_splitting_keeps_code_span_and_math_backslashes_literal() {
+        // 用户报修（cases/02-table-code.md、cases/02-table-math.md）：切分单元格时
+        // 对 `\\`/`\|` 做了一次无条件反转义——那是发生在「还不知道这段文字是不是
+        // 代码段/公式」之前的预处理，把 `a\\b` 显示成 `a\b`、把 `$a\|b$` 的转义竖线
+        // 洗成裸竖线，改了文档的意思。切分必须尊重 markdown 上下文，反转义留给
+        // 单元格自己的行内解析。
+        let lines = vec![
+            "| Code | Escaped bar |".to_string(),
+            "| --- | --- |".to_string(),
+            "| `a\\\\b` | `a\\|b` |".to_string(),
+            "| `C:\\tmp` | `x\\|y` |".to_string(),
+        ];
+        let table = parse_table_region(&lines).expect("代码段反斜杠表应能解析");
+        assert_eq!(table.rows[0][0].visible_text(), "a\\\\b");
+        assert_eq!(table.rows[0][1].visible_text(), "a\\|b");
+        assert_eq!(table.rows[1][0].visible_text(), "C:\\tmp");
+        assert_eq!(table.rows[1][1].visible_text(), "x\\|y");
+
+        // 显示层不许动源码：保存按逐字节还原（这几行源文本已是规范写法）。
+        assert_eq!(serialize_table_markdown_lines(&table), lines);
+
+        let math_lines = vec![
+            "| Escaped double bar | Word command |".to_string(),
+            "| --- | --- |".to_string(),
+            "| $a\\|b$ | $a\\Vert b$ |".to_string(),
+        ];
+        let table = parse_table_region(&math_lines).expect("公式转义竖线表应能解析");
+        let norm = &table.rows[0][0];
+        assert_eq!(norm.visible_text(), "$a\\|b$");
+        let norm_cache = norm.render_cache();
+        let math_span = norm_cache
+            .inline_math_at(0)
+            .expect("单元格公式应识别为公式");
+        assert_eq!(math_span.body, "a\\|b", "公式体的转义竖线不许被洗掉");
+        assert_eq!(table.rows[0][1].visible_text(), "$a\\Vert b$");
+        assert_eq!(serialize_table_markdown_lines(&table), math_lines);
+
+        let matrix_lines = vec![
+            "| Value |".to_string(),
+            "| --- |".to_string(),
+            "| $\\begin{matrix}1&2\\\\3&4\\end{matrix}$ |".to_string(),
+        ];
+        let table = parse_table_region(&matrix_lines).expect("矩阵单元格应能解析");
+        assert_eq!(
+            table.rows[0][0].visible_text(),
+            "$\\begin{matrix}1&2\\\\3&4\\end{matrix}$"
+        );
+        assert_eq!(serialize_table_markdown_lines(&table), matrix_lines);
+    }
+
+    #[test]
+    fn escaped_pipe_outside_code_stays_one_cell_and_round_trips() {
+        // 上下文规则的正面：代码段之外的 `\|` 是转义竖线，不作为分隔符切分；
+        // 单元格内保存逐字节还原。
+        let lines = vec![
+            "| A | B |".to_string(),
+            "| --- | --- |".to_string(),
+            "| a\\|b | c |".to_string(),
+        ];
+        let table = parse_table_region(&lines).expect("转义竖线表应能解析");
+        assert_eq!(table.rows[0].len(), 2);
+        assert_eq!(table.rows[0][0].visible_text(), "a|b");
+        assert_eq!(serialize_table_markdown_lines(&table), lines);
+    }
+
+    #[test]
     fn detects_root_table_candidate_runs() {
         let lines = vec![
             "| A | B |".to_string(),

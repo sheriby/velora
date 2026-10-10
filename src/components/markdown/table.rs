@@ -551,6 +551,115 @@ fn strip_table_indent(line: &str) -> Option<&str> {
     (indent <= 3).then_some(&line[indent..])
 }
 
+/// 一行里会**把单元格切开**的 `|` 的字节位置（相对 `text`）。
+///
+/// 切分尊重 markdown 上下文，两种情况不是分隔符：
+/// - 代码段之内（反引号串成对定界；配对不成的串按字面处理）。代码段里的反斜杠
+///   是字面字符，不参与转义判断；
+/// - 代码段之外、前面是奇数个反斜杠（`\|` 是转义竖线，属于格内容）。
+///
+/// 只做**位置**判断，不做任何反转义——未转义是行内解析器在切完格之后的事，
+/// 那时才知道每段是不是代码/公式。切分与序列化共用这一份扫描（
+/// `escape_cell_separator_pipes`），两端才不会对「哪个竖线会切开」各说各话
+/// （用户报修 cases/02-table-code.md：预处理反转义把 `` `a\\b` `` 显示成 `a\b`、
+/// 把 `$a\|b$` 的转义竖线洗成裸竖线，改了文档的意思）。
+fn cell_separator_positions(text: &str) -> Vec<usize> {
+    let chars = text.chars().collect::<Vec<_>>();
+    let byte_offsets = chars
+        .iter()
+        .scan(0usize, |offset, ch| {
+            let current = *offset;
+            *offset += ch.len_utf8();
+            Some(current)
+        })
+        .collect::<Vec<_>>();
+    let is_punctuation = |index: usize| -> bool {
+        chars
+            .get(index)
+            .is_some_and(|ch| crate::components::markdown::inline::is_commonmark_escapable(*ch))
+    };
+
+    let mut separators = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' if is_punctuation(index + 1) => {
+                index += 2;
+            }
+            '`' => {
+                let mut run_end = index;
+                while run_end < chars.len() && chars[run_end] == '`' {
+                    run_end += 1;
+                }
+                let run_len = run_end - index;
+                match find_closing_backtick_run(&chars, run_end, run_len) {
+                    Some(close_start) => {
+                        // 代码段整体跳过：段内不认转义、竖线不是分隔符。
+                        index = close_start + run_len;
+                    }
+                    None => {
+                        index = run_end;
+                    }
+                }
+            }
+            '|' => {
+                separators.push(byte_offsets[index]);
+                index += 1;
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+    separators
+}
+
+/// 从 `start` 起找**恰好** `run_len` 个连续反引号的闭合串（CommonMark：长度不等
+/// 不算闭合），返回闭合串起点。找到闭合之前反斜杠按「尚未确认在代码段内」处理：
+/// `\` + 可转义字符吃掉下一位，与外层扫描同一判据。
+fn find_closing_backtick_run(chars: &[char], mut start: usize, run_len: usize) -> Option<usize> {
+    let is_punctuation = |index: usize| -> bool {
+        chars
+            .get(index)
+            .is_some_and(|ch| crate::components::markdown::inline::is_commonmark_escapable(*ch))
+    };
+    while start < chars.len() {
+        if chars[start] == '\\' && is_punctuation(start + 1) {
+            start += 2;
+            continue;
+        }
+        if chars[start] == '`' {
+            let mut end = start;
+            while end < chars.len() && chars[end] == '`' {
+                end += 1;
+            }
+            if end - start == run_len {
+                return Some(start);
+            }
+            start = end;
+            continue;
+        }
+        start += 1;
+    }
+    None
+}
+
+/// 把序列化出来的格内容里**会被切开**的裸 `|` 补成 `\|`；代码段内的竖线不动
+/// （切分本来就不在那里下刀）。已带奇数反斜杠的竖线原样保留。
+fn escape_cell_separator_pipes(markdown: &str) -> String {
+    let separators = cell_separator_positions(markdown);
+    let mut output = String::with_capacity(markdown.len() + separators.len());
+    let mut cursor = 0usize;
+    for position in separators {
+        output.push_str(&markdown[cursor..position]);
+        output.push('\\');
+        output.push('|');
+        cursor = position + 1;
+    }
+    output.push_str(&markdown[cursor..]);
+    output
+}
+
 fn split_table_cells(line: &str) -> Option<Vec<String>> {
     let rest = strip_table_indent(line)?.trim_end();
     if rest.is_empty() {
@@ -560,37 +669,14 @@ fn split_table_cells(line: &str) -> Option<Vec<String>> {
     // like `Name | Score` split the same way as `| Name | Score |`.
     let inner = rest.strip_prefix('|').unwrap_or(rest);
     let inner = inner.strip_suffix('|').unwrap_or(inner);
+
     let mut cells = Vec::new();
-    let mut current = String::new();
-    let mut escaping = false;
-
-    for ch in inner.chars() {
-        if escaping {
-            match ch {
-                '|' | '\\' => current.push(ch),
-                _ => {
-                    current.push('\\');
-                    current.push(ch);
-                }
-            }
-            escaping = false;
-            continue;
-        }
-
-        match ch {
-            '\\' => escaping = true,
-            '|' => {
-                cells.push(current.trim().to_string());
-                current.clear();
-            }
-            _ => current.push(ch),
-        }
+    let mut cursor = 0usize;
+    for position in cell_separator_positions(inner) {
+        cells.push(inner[cursor..position].trim().to_string());
+        cursor = position + 1;
     }
-
-    if escaping {
-        current.push('\\');
-    }
-    cells.push(current.trim().to_string());
+    cells.push(inner[cursor..].trim().to_string());
     Some(cells)
 }
 
@@ -631,10 +717,14 @@ fn serialize_alignment(alignment: TableColumnAlignment) -> &'static str {
 }
 
 pub(crate) fn serialize_table_cell_markdown(tree: &InlineTextTree) -> String {
-    tree.serialize_markdown()
-        .replace('\\', "\\\\")
-        .replace('|', "\\|")
-        .replace('\n', " ")
+    // 行内序列化器负责反斜杠与转义写法（`is_commonmark_escapable` 同源）；格层面
+    // 只补「会被切开」的裸竖线，不盲目加倍反斜杠——`replace('\\', "\\\\")` 那种
+    // 全局预处理会把行内已经写好的 `\|` 洗成 `\\|`（切开格），改了文档的意思。
+    escape_cell_separator_pipes(&tree.serialize_markdown())
+        // 硬换行的行内写法（`\`+换行）在单行格里没有意义，统一成 `<br>`；
+        // 裸换行同理，否则会把表格行拆成两行。
+        .replace("\\\n", "<br>")
+        .replace('\n', "<br>")
 }
 
 fn serialize_row<'a>(cells: impl IntoIterator<Item = &'a InlineTextTree>) -> String {
