@@ -294,6 +294,10 @@ pub(crate) fn open_file_in_new_window(cx: &mut App, path: &Path) -> anyhow::Resu
 /// 菜单「打开文件」与最近文件那条路各自已经有 `show_window_prompt`；Finder 的
 /// open 事件与 Deep-link 以前只往 stderr 写一行，用户点了没反应又不知道为什么——
 /// 现在「编码不能无损写回」是一类**会**发生的拒绝，必须有地方说给用户。
+///
+/// 只给 macOS：唯一调用方是 Finder open 事件那条路（`main.rs` 的
+/// `open_file_rx` 消费循环），Windows 与 Linux 上会变成死代码警告。
+#[cfg(target_os = "macos")]
 pub(crate) fn report_open_failure(cx: &mut App, error: &anyhow::Error) {
     let title = cx
         .global::<I18nManager>()
