@@ -5,8 +5,10 @@
 //! 「菜单里有、面板里没有」或反向的漂移；新增命令改这一处即可。
 //!
 //! 派发仍由 `crate::app_menu::dispatch_menu_action` 按动作类型负责，
-//! `every_registered_command_has_a_dispatch_branch` 用例扫描该函数的源码，
-//! 保证注册表里的每条命令都有对应分支（否则面板/菜单点了没反应）。
+//! `every_menu_bar_command_has_a_handler` 用例扫描该函数的源码，
+//! 保证进系统菜单栏那五档里每条命令都有对应分支（否则菜单点了没反应）；
+//! 面板专有的 `Edit`/`Format` 两档由 `editor::tests::palette_commands`
+//! 逐条从面板执行来验，不走那一处扫描。
 
 use gpui::Action;
 
