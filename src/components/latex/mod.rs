@@ -28,29 +28,31 @@ pub(crate) struct DisplayMathSource {
     pub(crate) body: String,
 }
 
-/// Result of rendering display math into an SVG cache file.
+/// 块源码沿 `$$…$$` 切出来的一个分段：公式，或公式**以外**的文字。
+///
+/// 用户报修（cases/03-formula-tail.md）：单行 `$$x^2$$ LOST_SENTINEL` 里旧实现只
+/// 取第一段公式体，闭合 `$$` 之后的文字被解析器整个丢掉，界面上什么都看不见。
+/// 解析必须交代**整个源码跨度**——渲染端要用分段表（`parse_display_math_segments`），
+/// `DisplayMathSource` 只是「第一个公式」的视图，供分类器与草稿提取使用。
+/// 导出侧同样应当消费分段表，否则导出也会丢尾部文字。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LatexSvgRender {
-    /// Path to the SVG file consumed by GPUI's image element.
-    pub(crate) path: PathBuf,
-    /// SVG document content, used by export paths.
-    pub(crate) svg: String,
+pub(crate) enum DisplayMathSegment {
+    /// 一个 `$$…$$` 公式段：`raw` 含定界符，`body` 是中间的 LaTeX 体。
+    Formula { raw: String, body: String },
+    /// 公式前后的文字：按行内 markdown 原样保留（`markdown` 即源码切片）。
+    Text { markdown: String },
 }
 
-/// Parse a raw `$$...$$` Markdown block into the LaTeX body it contains.
-pub(crate) fn parse_display_math_source(raw: &str) -> Option<DisplayMathSource> {
-    let raw = raw.trim_matches('\n').to_string();
-    let lines = raw.split('\n').collect::<Vec<_>>();
+/// 把块级源码完整切成公式/文字分段；一个公式都识别不出来才返回 `None`。
+pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSegment>> {
+    let trimmed = raw.trim_matches('\n');
+    let lines = trimmed.split('\n').collect::<Vec<_>>();
     if lines.is_empty() {
         return None;
     }
 
     if lines.len() == 1 {
-        let line = strip_display_indent(lines[0])?.trim_end();
-        let body_and_close = line.strip_prefix("$$")?;
-        let close = body_and_close.find("$$")?;
-        let body = body_and_close[..close].trim().to_string();
-        return Some(DisplayMathSource { raw, body });
+        return keep_segments_with_formula(single_line_segments(lines[0]));
     }
 
     // 多行块：开头的 `$$` 后面可以直接跟内容，结尾的 `$$` 前面也可以有内容。
@@ -70,14 +72,113 @@ pub(crate) fn parse_display_math_source(raw: &str) -> Option<DisplayMathSource> 
     }
 
     let closer = lines.last()?.trim_end();
-    let closer_body = closer.strip_suffix("$$")?;
+    // 结尾 `$$` 不必顶到行尾：`$$ = 5` 这类尾部文字按文字段交出去（旧实现直接判
+    // 整块失败，公式都不渲染了）。
+    let close_at = closer.rfind("$$")?;
+    let closer_body = &closer[..close_at];
+    let trailing = &closer[close_at + 2..];
 
     let mut body_lines = Vec::with_capacity(lines.len());
     body_lines.push(opener_body);
     body_lines.extend_from_slice(&lines[1..lines.len() - 1]);
     body_lines.push(closer_body);
-    let body = body_lines.join("\n").trim().to_string();
-    Some(DisplayMathSource { raw, body })
+    let formula_raw = if trailing.is_empty() {
+        trimmed.to_string()
+    } else {
+        trimmed[..trimmed.len() - trailing.len()].to_string()
+    };
+    let mut segments = vec![DisplayMathSegment::Formula {
+        raw: formula_raw,
+        body: body_lines.join("\n").trim().to_string(),
+    }];
+    if !trailing.trim().is_empty() {
+        segments.push(DisplayMathSegment::Text {
+            markdown: trailing.to_string(),
+        });
+    }
+    Some(segments)
+}
+
+/// 单行源码沿 `$$…$$` 扫描：`$$a$$ tail $$b$$` → 公式、文字、公式、文字……
+fn single_line_segments(line: &str) -> Vec<DisplayMathSegment> {
+    let Some(line) = strip_display_indent(line).map(str::trim_end) else {
+        return vec![DisplayMathSegment::Text {
+            markdown: line.to_string(),
+        }];
+    };
+    let mut segments = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(open_rel) = line[cursor..].find("$$") {
+        let open = cursor + open_rel;
+        let body_start = open + 2;
+        let Some(close_rel) = line[body_start..].find("$$") else {
+            break;
+        };
+        let close = body_start + close_rel;
+        if open > cursor {
+            segments.push(DisplayMathSegment::Text {
+                markdown: line[cursor..open].to_string(),
+            });
+        }
+        segments.push(DisplayMathSegment::Formula {
+            raw: line[open..close + 2].to_string(),
+            body: line[body_start..close].trim().to_string(),
+        });
+        cursor = close + 2;
+    }
+    if cursor < line.len() {
+        segments.push(DisplayMathSegment::Text {
+            markdown: line[cursor..].to_string(),
+        });
+    }
+    segments
+}
+
+/// 至少要识别出一个公式才算数（否则整段是文字，调用方按普通文本处理）；
+/// 纯空白的文字段没有可见内容，扔掉。
+fn keep_segments_with_formula(segments: Vec<DisplayMathSegment>) -> Option<Vec<DisplayMathSegment>> {
+    let has_formula = segments
+        .iter()
+        .any(|segment| matches!(segment, DisplayMathSegment::Formula { .. }));
+    if !has_formula {
+        return None;
+    }
+    Some(
+        segments
+            .into_iter()
+            .filter(|segment| match segment {
+                DisplayMathSegment::Text { markdown } => !markdown.trim().is_empty(),
+                DisplayMathSegment::Formula { .. } => true,
+            })
+            .collect(),
+    )
+}
+
+/// Result of rendering display math into an SVG cache file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LatexSvgRender {
+    /// Path to the SVG file consumed by GPUI's image element.
+    pub(crate) path: PathBuf,
+    /// SVG document content, used by export paths.
+    pub(crate) svg: String,
+}
+
+/// 把原始 `$$...$$` Markdown 块解析成它包含的 LaTeX 体——「第一个公式」的视图，
+/// 供块分类器与公式编辑器草稿提取使用。
+///
+/// **渲染与导出不要走这个视图**：整个源码跨度（公式前后的文字）归
+/// [`parse_display_math_segments`]；只取本函数会把 `$$x^2$$ LOST_SENTINEL` 的
+/// 尾部文字丢掉（用户报修 cases/03-formula-tail.md 的根因）。本函数保持旧的严格
+/// 口径：首段必须就是公式，`text $$x$$` 这种「文字开头」的形状仍按普通文本处理。
+pub(crate) fn parse_display_math_source(raw: &str) -> Option<DisplayMathSource> {
+    let segments = parse_display_math_segments(raw)?;
+    let Some(DisplayMathSegment::Formula { body, .. }) = segments.first() else {
+        return None;
+    };
+    Some(DisplayMathSource {
+        raw: raw.trim_matches('\n').to_string(),
+        body: body.clone(),
+    })
 }
 
 /// TeX 排版样式：行间公式用 Display，行内公式必须用 Text。
@@ -357,6 +458,64 @@ mod tests {
         let parsed = parse_display_math_source("$$x^2$$").expect("display math");
         assert_eq!(parsed.body, "x^2");
         assert_eq!(parsed.raw, "$$x^2$$");
+    }
+
+    #[test]
+    fn display_math_segments_account_for_the_whole_source_span() {
+        // 用户报修（cases/03-formula-tail.md）：`$$x^2$$ LOST_SENTINEL` 里闭合 `$$`
+        // 之后的文字被单行解析分支整个丢掉，界面上看不见。解析必须交代整个跨度，
+        // 尾部文字作为行内内容交给渲染端。
+        let segments = parse_display_math_segments("$$x^2$$ LOST_SENTINEL").expect("segments");
+        assert_eq!(
+            segments,
+            vec![
+                DisplayMathSegment::Formula {
+                    raw: "$$x^2$$".to_string(),
+                    body: "x^2".to_string(),
+                },
+                DisplayMathSegment::Text {
+                    markdown: " LOST_SENTINEL".to_string(),
+                },
+            ]
+        );
+        // 「第一个公式」视图保持旧口径（分类器与草稿提取都靠它）。
+        assert_eq!(
+            parse_display_math_source("$$x^2$$ LOST_SENTINEL").expect("view").body,
+            "x^2"
+        );
+
+        // 同一行两个 `$$…$$` 都要渲染：公式、空白、公式。
+        let segments = parse_display_math_segments("$$a^2$$ $$b^2$$").expect("segments");
+        assert_eq!(
+            segments,
+            vec![
+                DisplayMathSegment::Formula {
+                    raw: "$$a^2$$".to_string(),
+                    body: "a^2".to_string(),
+                },
+                DisplayMathSegment::Formula {
+                    raw: "$$b^2$$".to_string(),
+                    body: "b^2".to_string(),
+                },
+            ]
+        );
+
+        // 多行块尾随文字：闭合 `$$` 之后的按文字段交出，不再整块判失败。
+        let segments = parse_display_math_segments("$$\nx^2\n$$ = 5").expect("segments");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(
+            segments[0],
+            DisplayMathSegment::Formula {
+                raw: "$$\nx^2\n$$".to_string(),
+                body: "x^2".to_string(),
+            }
+        );
+
+        // 没有公式的源码不是数学块；文字开头的 `text $$x$$` 也不走块级渲染
+        // （`parse_display_math_source` 保持旧严格口径：首段必须是公式）。
+        assert!(parse_display_math_segments("plain text").is_none());
+        assert!(parse_display_math_source("text $$x$$").is_none());
+        assert!(parse_display_math_source("$$x^2$$ LOST_SENTINEL").is_some());
     }
 
     #[test]

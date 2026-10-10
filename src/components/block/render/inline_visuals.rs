@@ -137,7 +137,7 @@ impl Block {
             .as_deref()
             .unwrap_or_else(|| self.display_text());
 
-        let Some(source) = parse_display_math_source(raw) else {
+        let Some(segments) = crate::components::latex::parse_display_math_segments(raw) else {
             return div()
                 .w_full()
                 .text_size(px(t.text_size))
@@ -147,45 +147,72 @@ impl Block {
                 .into_any_element();
         };
 
-        match render_display_math_svg(&source, c.text_default, display_math_font_size(t.text_size))
-        {
-            Ok(rendered) => div()
+        // 分段渲染整个源码跨度：公式归公式，`$$` 前后的文字照常显示（旧实现只取
+        // 第一个公式体，闭合 `$$` 之后的内容被解析器丢掉，cases/03-formula-tail.md）。
+        let content = segments.into_iter().map(|segment| match segment {
+            crate::components::latex::DisplayMathSegment::Formula { raw, body } => {
+                let source = crate::components::latex::DisplayMathSource { raw, body };
+                match render_display_math_svg(
+                    &source,
+                    c.text_default,
+                    display_math_font_size(t.text_size),
+                ) {
+                    Ok(rendered) => div()
+                        .w_full()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            img(rendered.path)
+                                .max_w(Length::Definite(relative(1.0)))
+                                .max_h(px(if d.image_root_max_height > 0.0 {
+                                    d.image_root_max_height
+                                } else {
+                                    420.0
+                                }))
+                                .object_fit(ObjectFit::Contain),
+                        )
+                        .into_any_element(),
+                    Err(err) => div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .rounded_sm()
+                        .bg(c.source_mode_block_bg)
+                        .px(px(d.block_padding_x))
+                        .py(px(d.block_padding_y))
+                        .text_size(px(t.text_size))
+                        .line_height(relative(t.text_line_height))
+                        .text_color(c.text_default)
+                        .child(SharedString::from(source.raw.clone()))
+                        .child(
+                            div()
+                                .text_size(px(t.code_size))
+                                .text_color(c.dialog_muted)
+                                .child(SharedString::from(format!("LaTeX render error: {err}"))),
+                        )
+                        .into_any_element(),
+                }
+            }
+            crate::components::latex::DisplayMathSegment::Text { markdown } => div()
                 .w_full()
-                .flex()
-                .justify_center()
-                .py(px(d.block_padding_y.max(6.0)))
-                .child(
-                    img(rendered.path)
-                        .max_w(Length::Definite(relative(1.0)))
-                        .max_h(px(if d.image_root_max_height > 0.0 {
-                            d.image_root_max_height
-                        } else {
-                            420.0
-                        }))
-                        .object_fit(ObjectFit::Contain),
-                )
-                .into_any_element(),
-            Err(err) => div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .gap(px(4.0))
-                .rounded_sm()
-                .bg(c.source_mode_block_bg)
-                .px(px(d.block_padding_x))
-                .py(px(d.block_padding_y))
                 .text_size(px(t.text_size))
                 .line_height(relative(t.text_line_height))
                 .text_color(c.text_default)
-                .child(SharedString::from(raw.to_string()))
-                .child(
-                    div()
-                        .text_size(px(t.code_size))
-                        .text_color(c.dialog_muted)
-                        .child(SharedString::from(format!("LaTeX render error: {err}"))),
-                )
+                .child(SharedString::from(
+                    crate::components::InlineTextTree::from_markdown(&markdown).visible_text(),
+                ))
                 .into_any_element(),
-        }
+        });
+
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(d.block_padding_y.max(4.0)))
+            .py(px(d.block_padding_y.max(6.0)))
+            .children(content)
+            .into_any_element()
     }
 
     pub(crate) fn render_mermaid_content(&self, theme: &Theme, window: &Window, cx: &App) -> AnyElement {
