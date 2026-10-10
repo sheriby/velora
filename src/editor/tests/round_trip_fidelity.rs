@@ -2225,15 +2225,6 @@ async fn opening_a_utf16_file_from_a_workspace_tab_keeps_its_encoding(cx: &mut T
     });
     redraw(cx);
 
-    let first = editor
-        .read_with(cx, |editor, _cx| {
-            editor
-                .document
-                .visible_blocks()
-                .first()
-                .map(|visible| visible.entity.clone())
-        })
-        .expect("UTF-16 标签打开后应有可见块");
     // 落笔口径与 `editing_a_utf8_bom_file_restores_the_bom_on_save` 一致：把光标放到
     // 首块可见文本第 0 位（在块记号 `# ` 之后），用真实键盘输入插一个字，再 Ctrl+S。
     // 编码、BOM、其余字节一概不许动。
