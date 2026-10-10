@@ -42,7 +42,7 @@ impl Editor {
             {
                 return div()
                     .p(px(12.0))
-                    .text_size(px(14.0))
+                    .text_size(px(theme.typography.ui_text_size(14.0)))
                     .text_color(theme.colors.dialog_muted)
                     .child("…")
                     .into_any_element();
@@ -52,11 +52,11 @@ impl Editor {
 
         let rows = self.workspace_files_rows();
         let total = rows.len();
-        let window = self.workspace_list_window(total);
+        let window = self.workspace_list_window(total, theme);
         let visible = rows[window.clone()]
             .iter()
             .map(|row| self.render_workspace_tree_row(row, theme, editor))
             .collect();
-        self.workspace_windowed_body(total, window, visible, cx)
+        self.workspace_windowed_body(total, window, visible, theme, cx)
     }
 }

@@ -616,7 +616,7 @@ impl Editor {
                         .absolute()
                         .top(px(-1.0))
                         .right(px(-6.5))
-                        .text_size(px(9.5))
+                        .text_size(px(theme.typography.ui_text_size(9.5)))
                         .text_color(c.dialog_muted)
                         .child("\u{d7}"),
                 ),

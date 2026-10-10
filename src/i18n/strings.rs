@@ -167,6 +167,14 @@ pub struct I18nStrings {
     pub preferences_nav_file: String,
     /// Theme preferences navigation label.
     pub preferences_nav_theme: String,
+    pub preferences_ui_font: String,
+    pub preferences_ui_font_size: String,
+    pub preferences_body_font: String,
+    pub preferences_body_font_size: String,
+    pub preferences_code_font: String,
+    pub preferences_code_font_size: String,
+    pub preferences_theme_font: String,
+    pub preferences_system_font: String,
     /// Image preferences navigation label.
     pub preferences_nav_image: String,
     /// Shortcut preferences navigation label.

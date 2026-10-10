@@ -26,6 +26,8 @@ struct EditorPreferencesFile {
     external_change_policy: String,
     delete_policy: String,
     image_paste_behavior: String,
+    ui_font_family: String,
+    ui_font_size: u16,
     markdown_font_family: String,
     markdown_font_size: u16,
     code_font_family: String,
@@ -145,6 +147,8 @@ impl From<&AppPreferences> for PreferencesFile {
                 delete_policy: value.delete_policy.as_str().into(),
                 image_paste_behavior: value.image_paste_behavior.as_str().into(),
                 markdown_font_family: value.fonts.markdown_family.clone(),
+                ui_font_family: value.fonts.ui_family.clone(),
+                ui_font_size: value.fonts.ui_size,
                 markdown_font_size: value.fonts.markdown_size,
                 code_font_family: value.fonts.code_family.clone(),
                 code_font_size: value.fonts.code_size,
@@ -369,6 +373,8 @@ pub(crate) fn app_preferences_from_toml_value(
             .unwrap_or(default)
     };
     let fonts = FontPreferences {
+        ui_family: font_family("ui_font_family", &font_defaults.ui_family),
+        ui_size: font_size("ui_font_size", font_defaults.ui_size),
         markdown_family: font_family("markdown_font_family", &font_defaults.markdown_family),
         markdown_size: font_size("markdown_font_size", font_defaults.markdown_size),
         code_family: font_family("code_font_family", &font_defaults.code_family),

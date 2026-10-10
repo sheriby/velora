@@ -500,7 +500,7 @@ impl Editor {
             .track_focus(&focus)
             .flex_1()
             .min_w(px(0.0))
-            .h(px(WORKSPACE_NODE_HEIGHT))
+            .h(px(Self::workspace_node_height(theme)))
             .px(px(3.0))
             .overflow_hidden()
             .border_1()
@@ -510,7 +510,7 @@ impl Editor {
                 colors.dialog_primary_button_bg
             })
             .bg(colors.editor_background)
-            .text_size(px(12.0))
+            .text_size(px(theme.typography.ui_text_size(12.0)))
             .text_color(colors.text_default)
             .cursor(CursorStyle::IBeam)
             .child(
@@ -633,7 +633,7 @@ impl Editor {
             .flex_col()
             .child(
                 div()
-                    .h(px(WORKSPACE_NODE_HEIGHT))
+                    .h(px(Self::workspace_node_height(theme)))
                     .w_full()
                     .pl(px(6.0 + depth as f32 * WORKSPACE_NODE_INDENT))
                     .flex()
@@ -646,7 +646,7 @@ impl Editor {
             .children(edit.error.as_ref().map(|error| {
                 div()
                     .pl(px(42.0 + depth as f32 * WORKSPACE_NODE_INDENT))
-                    .text_size(px(10.0))
+                    .text_size(px(theme.typography.ui_text_size(10.0)))
                     .text_color(theme.colors.dialog_danger_button_bg)
                     .child(error.clone())
             }))

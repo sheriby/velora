@@ -65,14 +65,14 @@ impl Editor {
             )
             .child(
                 div()
-                    .text_size(px(24.0))
+                    .text_size(px(theme.typography.ui_text_size(24.0)))
                     .font_weight(FontWeight::BOLD)
                     .text_color(c.text_default)
                     .child("Velora"),
             )
             .child(
                 div()
-                    .text_size(px(t.text_size * 0.95))
+                    .text_size(px(t.ui_text_size(16.0 * 0.95)))
                     .text_color(c.dialog_muted)
                     .child(strings.welcome_tagline.clone()),
             )
@@ -95,7 +95,7 @@ impl Editor {
                 .mt(px(10.0))
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(theme.typography.ui_text_size(11.0)))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(c.dialog_muted)
                         .child(strings.welcome_recent.clone()),
@@ -119,7 +119,7 @@ impl Editor {
                         .rounded(px(5.0))
                         .cursor_pointer()
                         .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .text_size(px(12.0))
+                        .text_size(px(theme.typography.ui_text_size(12.0)))
                         .text_color(c.dialog_body)
                         .child(
                             div()
@@ -133,7 +133,7 @@ impl Editor {
                                 .flex_1()
                                 .min_w(px(0.0))
                                 .truncate()
-                                .text_size(px(10.5))
+                                .text_size(px(theme.typography.ui_text_size(10.5)))
                                 .text_color(c.dialog_muted)
                                 .child(if folder_marker {
                                     strings.workspace_folder_entry_label.clone()
@@ -162,7 +162,7 @@ impl Editor {
             .child(
                 div()
                     .mt(px(18.0))
-                    .text_size(px(11.0))
+                    .text_size(px(theme.typography.ui_text_size(11.0)))
                     .text_color(c.dialog_muted)
                     .child(strings.welcome_shortcut_hint.clone()),
             )

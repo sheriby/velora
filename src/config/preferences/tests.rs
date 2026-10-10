@@ -34,8 +34,8 @@
         cx.update(|cx| EditorSettings::apply_scaled_typography(cx, &mut scaled));
         assert_eq!(scaled.typography.text_size, 30.0, "正文 20px × 150%");
         assert_eq!(scaled.typography.code_size, 18.0, "代码 12px × 150%");
-        assert_eq!(scaled.typography.h1_size, theme.typography.h1_size * 1.5);
-        assert_eq!(scaled.typography.h6_size, theme.typography.h6_size * 1.5);
+        assert_eq!(scaled.typography.h1_size, theme.typography.h1_size * 1.875);
+        assert_eq!(scaled.typography.h6_size, theme.typography.h6_size * 1.875);
 
         let (text_size, code_size) = cx.update(|cx| EditorSettings::scaled_font_sizes(cx));
         assert_eq!((text_size, code_size), (30.0, 18.0));
@@ -51,6 +51,356 @@
         assert_eq!(plain.typography.text_size, 16.0);
         assert_eq!(plain.typography.code_size, 14.0);
         assert_eq!(plain.typography.h1_size, theme.typography.h1_size);
+    }
+
+    #[gpui::test]
+    async fn ui_font_size_does_not_change_body_or_code_sizes(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let theme = cx.read_global::<ThemeManager, _>(|manager, _cx| manager.current().clone());
+        cx.update_global::<EditorSettings, _>(|settings, _cx| {
+            settings.fonts = FontPreferences {
+                ui_size: 28,
+                markdown_size: 20,
+                code_size: 12,
+                ..FontPreferences::default()
+            };
+        });
+        let mut scaled = theme.clone();
+        cx.update(|cx| {
+            EditorSettings::apply_ui_typography(cx, &mut scaled);
+            EditorSettings::apply_scaled_typography(cx, &mut scaled);
+        });
+        assert_eq!(
+            scaled.typography.dialog_body_size,
+            theme.typography.dialog_body_size * 2.0
+        );
+        assert_eq!(
+            scaled.dimensions.status_bar_text_size,
+            theme.dimensions.status_bar_text_size * 2.0
+        );
+        assert_eq!(scaled.typography.text_size, 20.0);
+        assert_eq!(scaled.typography.code_size, 12.0);
+        assert_eq!(scaled.typography.h1_size, theme.typography.h1_size * 1.25);
+    }
+
+    #[gpui::test]
+    async fn system_font_dropdowns_select_each_category_and_apply_saved_settings(
+        cx: &mut TestAppContext,
+    ) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_size(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+                gpui::size(px(880.0), px(1100.0)),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(cx, |preferences, window, cx| {
+                assert_eq!(
+                    preferences.system_font_families,
+                    window.text_system().all_font_names()
+                );
+                preferences.system_font_families = vec!["报告专用字体".into()];
+                preferences.nav = PreferencesNav::Theme;
+                cx.notify();
+            })
+            .expect("偏好窗口应可更新");
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        for (button, option, larger) in [
+            (
+                "preferences-ui-font",
+                "preferences-ui-font-option-0",
+                "ui-font-larger",
+            ),
+            (
+                "preferences-markdown-font",
+                "preferences-markdown-font-option-1",
+                "markdown-font-larger",
+            ),
+            (
+                "preferences-code-font",
+                "preferences-code-font-option-0",
+                "code-font-larger",
+            ),
+        ] {
+            let bounds = preferences_cx.debug_bounds(button).expect("字体按钮应可见");
+            preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+            preferences_cx.update(|window, cx| window.draw(cx).clear());
+            preferences_cx.run_until_parked();
+            let bounds = preferences_cx
+                .debug_bounds(option)
+                .expect("系统提供的字体应出现在列表中");
+            preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+            preferences_cx.update(|window, cx| window.draw(cx).clear());
+            preferences_cx.run_until_parked();
+            let bounds = preferences_cx.debug_bounds(larger).expect("字号按钮应可见");
+            preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+            preferences_cx.update(|window, cx| window.draw(cx).clear());
+            preferences_cx.run_until_parked();
+        }
+        let saved_fonts = handle
+            .update(cx, |preferences, window, cx| {
+                assert!(preferences.has_unsaved_changes());
+                let fonts = preferences.fonts.clone();
+                assert_eq!(fonts.ui_family, "报告专用字体");
+                assert_eq!(fonts.markdown_family, "报告专用字体");
+                assert_eq!(fonts.code_family, "报告专用字体");
+                assert_eq!(
+                    (fonts.ui_size, fonts.markdown_size, fonts.code_size),
+                    (15, 17, 15)
+                );
+                preferences.apply_saved_preferences(
+                    AppPreferences {
+                        fonts: fonts.clone(),
+                        ..AppPreferences::default()
+                    },
+                    window,
+                    cx,
+                );
+                assert!(!preferences.has_unsaved_changes());
+                fonts
+            })
+            .expect("偏好窗口应可更新");
+        assert_eq!(cx.update(|cx| EditorSettings::fonts(cx)), saved_fonts);
+    }
+
+    /// 下拉列表被当成设置行的普通子元素，展开会挤走后面的字号控件。
+    #[gpui::test]
+    async fn dropdown_menus_do_not_change_settings_page_layout(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "偏好设置".into(),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(cx, |preferences, _window, cx| {
+                preferences.nav = PreferencesNav::Theme;
+                preferences.system_font_families = (0..120)
+                    .map(|index| format!("BIZ UDGothic {index:03}"))
+                    .collect();
+                cx.notify();
+            })
+            .expect("偏好窗口应可更新");
+        for button in [
+            "preferences-theme-dropdown",
+            "preferences-writing-width",
+            "preferences-ui-font",
+            "preferences-markdown-font",
+            "preferences-code-font",
+        ] {
+            handle
+                .update(cx, |preferences, _window, cx| {
+                    preferences.theme_dropdown_open = false;
+                    preferences.writing_width_dropdown_open = false;
+                    preferences.ui_font_dropdown_open = false;
+                    preferences.markdown_font_dropdown_open = false;
+                    preferences.code_font_dropdown_open = false;
+                    cx.notify();
+                })
+                .expect("偏好窗口应可更新");
+            preferences_cx.update(|window, cx| window.draw(cx).clear());
+            preferences_cx.run_until_parked();
+            let before = preferences_cx
+                .debug_bounds("code-font-larger")
+                .expect("代码字号控件应绘制");
+            handle
+                .update(cx, |preferences, window, cx| match button {
+                    "preferences-theme-dropdown" => {
+                        preferences.toggle_theme_dropdown(&gpui::ClickEvent::default(), window, cx)
+                    }
+                    "preferences-writing-width" => preferences.toggle_writing_width_dropdown(
+                        &gpui::ClickEvent::default(),
+                        window,
+                        cx,
+                    ),
+                    "preferences-ui-font" => preferences.toggle_ui_font_dropdown(
+                        &gpui::ClickEvent::default(),
+                        window,
+                        cx,
+                    ),
+                    "preferences-markdown-font" => preferences.toggle_markdown_font_dropdown(
+                        &gpui::ClickEvent::default(),
+                        window,
+                        cx,
+                    ),
+                    _ => preferences.toggle_code_font_dropdown(
+                        &gpui::ClickEvent::default(),
+                        window,
+                        cx,
+                    ),
+                })
+                .expect("下拉应能展开");
+            preferences_cx.update(|window, cx| window.draw(cx).clear());
+            preferences_cx.run_until_parked();
+            assert_eq!(
+                preferences_cx.debug_bounds("code-font-larger"),
+                Some(before),
+                "展开 {button} 不应撑高设置行或挤走后续控件"
+            );
+        }
+    }
+
+    /// 嵌套滚动时，字体列表未接管滚轮，外层设置页面也跟着移动。
+    #[gpui::test]
+    async fn dropdown_scroll_does_not_move_the_settings_page(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_size(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "偏好设置".into(),
+                gpui::size(px(880.0), px(560.0)),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(cx, |preferences, _window, cx| {
+                preferences.nav = PreferencesNav::Theme;
+                preferences.system_font_families = (0..120)
+                    .map(|index| format!("BIZ UDGothic {index:03}"))
+                    .collect();
+                preferences.ui_font_dropdown_open = true;
+                cx.notify();
+            })
+            .expect("偏好窗口应可更新");
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        let first = preferences_cx
+            .debug_bounds("preferences-ui-font-option-0")
+            .expect("字体列表应绘制");
+        let before = handle
+            .update(cx, |preferences, _window, _cx| {
+                preferences.page_scroll.offset()
+            })
+            .expect("页面应有滚动句柄");
+        let position = first.center();
+        preferences_cx.simulate_mouse_move(position, None, gpui::Modifiers::none());
+        preferences_cx.simulate_event(gpui::ScrollWheelEvent {
+            position,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-70.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: gpui::TouchPhase::default(),
+        });
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        let after = handle
+            .update(cx, |preferences, _window, _cx| {
+                preferences.page_scroll.offset()
+            })
+            .expect("页面应有滚动句柄");
+        assert_eq!(after, before, "字体菜单里的滚轮不应带动设置页面");
+        assert!(
+            preferences_cx
+                .debug_bounds("preferences-ui-font-option-0")
+                .expect("字体列表仍应绘制")
+                .top()
+                < first.top(),
+            "字体列表本身应随滚轮滚动"
+        );
+        for delta in [-100_000.0, -70.0, 100_000.0, 70.0] {
+            preferences_cx.simulate_event(gpui::ScrollWheelEvent {
+                position,
+                delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(delta))),
+                modifiers: gpui::Modifiers::none(),
+                touch_phase: gpui::TouchPhase::default(),
+            });
+            preferences_cx.update(|window, cx| window.draw(cx).clear());
+            preferences_cx.run_until_parked();
+            let offset = handle
+                .update(cx, |preferences, _window, _cx| {
+                    preferences.page_scroll.offset()
+                })
+                .expect("页面应有滚动句柄");
+            assert_eq!(offset, before, "菜单滚到顶部或底部后也不应把滚轮传给页面");
+        }
+        let page = preferences_cx
+            .debug_bounds("preferences-page-scroll")
+            .expect("页面应可滚动");
+        preferences_cx.simulate_mouse_move(page.center(), None, gpui::Modifiers::none());
+        preferences_cx.simulate_event(gpui::ScrollWheelEvent {
+            position: page.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-70.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: gpui::TouchPhase::default(),
+        });
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        handle
+            .update(cx, |preferences, _window, _cx| {
+                assert!(
+                    !preferences.ui_font_dropdown_open,
+                    "菜单外滚动页面时应收起菜单"
+                );
+                assert_ne!(
+                    preferences.page_scroll.offset(),
+                    before,
+                    "菜单外滚轮仍应滚动设置页面"
+                );
+            })
+            .expect("偏好窗口应可更新");
+    }
+
+    /// 页面末尾的菜单要浮出滚动区并回到窗口内，点选不能落到被覆盖的控件上。
+    #[gpui::test]
+    async fn dropdown_menu_at_the_bottom_remains_visible_and_selectable(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "偏好设置".into(),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        handle
+            .update(cx, |preferences, window, cx| {
+                preferences.nav = PreferencesNav::Theme;
+                preferences.system_font_families = (0..120)
+                    .map(|index| format!("BIZ UDGothic {index:03}"))
+                    .collect();
+                preferences.toggle_code_font_dropdown(&gpui::ClickEvent::default(), window, cx);
+            })
+            .expect("偏好窗口应可更新");
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        let menu = preferences_cx
+            .debug_bounds("preferences-code-font-list")
+            .expect("代码字体菜单应绘制");
+        let height = preferences_cx.update(|window, _cx| window.viewport_size().height);
+        assert!(
+            menu.top() >= px(0.0) && menu.bottom() <= height,
+            "菜单应完全落在窗口内"
+        );
+        assert!(menu.size.height <= px(240.0), "长列表应有高度上限");
+        let first = preferences_cx
+            .debug_bounds("preferences-code-font-option-0")
+            .expect("首个字体应绘制");
+        assert!(menu.contains(&first.center()), "首个选项应在菜单中可点击");
+        preferences_cx.simulate_click(first.center(), gpui::Modifiers::none());
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        handle
+            .update(cx, |preferences, _window, _cx| {
+                assert_eq!(preferences.fonts.code_family, "BIZ UDGothic 000");
+                assert_eq!(
+                    preferences.fonts.ui_family, ".SystemUIFont",
+                    "点击浮层不应点到其下的 UI 字体控件"
+                );
+                assert!(!preferences.code_font_dropdown_open);
+            })
+            .expect("偏好窗口应可更新");
     }
 
     fn init_preferences_test_app(cx: &mut TestAppContext) {
@@ -379,6 +729,8 @@
             delete_policy: DeletePolicy::Permanent,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
             fonts: FontPreferences {
+                ui_family: "Arial".into(),
+                ui_size: 18,
                 markdown_family: "PingFang SC".into(),
                 markdown_size: 18,
                 code_family: "Menlo".into(),
@@ -423,6 +775,8 @@
         assert!(text.contains("default_theme_id = \"velora-light\""));
         assert!(text.contains("show_table_headers = false"));
         assert!(text.contains("markdown_font_family = \"PingFang SC\""));
+        assert!(text.contains("ui_font_family = \"Arial\""));
+        assert!(text.contains("ui_font_size = 18"));
         assert!(text.contains("code_font_size = 13"));
         assert!(text.contains("writing_width = \"wide\""));
         assert!(text.contains("workspace_sidebar_width = 320"));

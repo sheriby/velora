@@ -112,16 +112,21 @@ impl Editor {
         }
         let rows = self.workspace_outline_rows();
         let total = rows.len();
-        let window = self.workspace_list_window(total);
+        let window = self.workspace_list_window(total, theme);
         let visible = rows[window.clone()]
             .iter()
             .map(|(node, depth)| self.render_workspace_node(node, *depth, theme, editor))
             .collect();
-        self.workspace_windowed_body(total, window, visible, cx)
+        self.workspace_windowed_body(total, window, visible, theme, cx)
     }
 
     /// 视口内的行区间：行高固定，从滚动偏移直接除得出来。大纲与文件树共用。
-    pub(crate) fn workspace_list_window(&self, total: usize) -> Range<usize> {
+    pub(crate) fn workspace_node_height(theme: &Theme) -> f32 {
+        theme.typography.ui_text_size(WORKSPACE_NODE_HEIGHT)
+            .max(WORKSPACE_NODE_HEIGHT)
+    }
+
+    pub(crate) fn workspace_list_window(&self, total: usize, theme: &Theme) -> Range<usize> {
         if total <= PANEL_WINDOW_THRESHOLD_ROWS {
             return 0..total;
         }
@@ -132,8 +137,9 @@ impl Editor {
         let scrolled =
             (f32::from(self.workspace.tree_scroll_handle.offset().y) - WORKSPACE_PANEL_PADDING_Y)
                 .max(0.0);
-        let first = (scrolled / WORKSPACE_NODE_HEIGHT) as usize;
-        let visible = (viewport_height / WORKSPACE_NODE_HEIGHT).ceil() as usize + 1;
+        let row_height = Self::workspace_node_height(theme);
+        let first = (scrolled / row_height) as usize;
+        let visible = (viewport_height / row_height).ceil() as usize + 1;
         let start = first.saturating_sub(PANEL_WINDOW_OVERDRAW_ROWS);
         let end = (first + visible + PANEL_WINDOW_OVERDRAW_ROWS).min(total);
         start..end
@@ -141,12 +147,13 @@ impl Editor {
 
     /// 面板列表的通用外壳：上下垫等高空白（滚动条长度与位置仍按整张表算）、记两个
     /// 计数器、首帧量不到视口尺寸时排一帧补齐。调用方只管取窗口并只建窗口里的行，
-    /// 行高必须都是 `WORKSPACE_NODE_HEIGHT`，否则窗口切不出准确边界。
+    /// 行高必须与 `workspace_node_height` 一致，否则窗口切不出准确边界。
     pub(crate) fn workspace_windowed_body(
         &mut self,
         total: usize,
         window: Range<usize>,
         rows: Vec<AnyElement>,
+        theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.panel_rows_rendered.set(rows.len() as u64);
@@ -158,7 +165,7 @@ impl Editor {
         if window.start > 0 {
             elements.push(
                 div()
-                    .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
+                    .h(px(window.start as f32 * Self::workspace_node_height(theme)))
                     .flex_shrink_0()
                     .into_any_element(),
             );
@@ -168,7 +175,7 @@ impl Editor {
         if below > 0 {
             elements.push(
                 div()
-                    .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
+                    .h(px(below as f32 * Self::workspace_node_height(theme)))
                     .flex_shrink_0()
                     .into_any_element(),
             );
@@ -224,7 +231,7 @@ impl Editor {
         let t = &theme.typography;
         let title = (!title.is_empty()).then(|| {
             div()
-                .text_size(px(t.text_size))
+                .text_size(px(t.dialog_body_size))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(c.text_default)
                 .child(title.to_string())
@@ -243,8 +250,8 @@ impl Editor {
             .children(title)
             .child(
                 div()
-                    .text_size(px(t.text_size * 0.9))
-                    .line_height(px(t.text_size * t.text_line_height))
+                    .text_size(px(t.dialog_body_size * 0.9))
+                    .line_height(px(t.dialog_body_size * t.text_line_height))
                     .text_color(c.dialog_muted)
                     .child(message.to_string()),
             )
@@ -303,9 +310,9 @@ impl Editor {
             }
             WorkspaceTreeRow::Loading(depth) => div()
                 .w_full()
-                .h(px(WORKSPACE_NODE_HEIGHT))
+                .h(px(Self::workspace_node_height(theme)))
                 .pl(px(6.0 + *depth as f32 * WORKSPACE_NODE_INDENT))
-                .text_size(px(14.0))
+                .text_size(px(theme.typography.ui_text_size(14.0)))
                 .text_color(theme.colors.dialog_muted)
                 .child("…")
                 .into_any_element(),
@@ -398,7 +405,7 @@ impl Editor {
         div()
             .id(("workspace-node", stable_node_hash(&node.id)))
             .debug_selector(move || node_selector.clone())
-            .h(px(WORKSPACE_NODE_HEIGHT))
+            .h(px(Self::workspace_node_height(theme)))
             .w_full()
             .overflow_hidden()
             .flex()
@@ -433,8 +440,8 @@ impl Editor {
                     .min_w(px(0.0))
                     .overflow_hidden()
                     .truncate()
-                    .text_size(px(12.0))
-                    .line_height(px(18.0))
+                    .text_size(px(theme.typography.ui_text_size(12.0)))
+                    .line_height(px(theme.typography.ui_text_size(18.0)))
                     .text_color(label_color)
                     .child(node.label.clone()),
             )

@@ -20,6 +20,8 @@ pub(crate) struct PreferencesWindow {
     pub(super) selected_theme_id: String,
     pub(super) image_paste_behavior: ImagePasteBehavior,
     pub(super) fonts: FontPreferences,
+    pub(super) system_font_families: Vec<String>,
+    pub(super) ui_font_dropdown_open: bool,
     pub(super) keybindings: BTreeMap<String, Vec<String>>,
     pub(super) saved_startup_open: StartupOpenPreference,
     pub(super) saved_theme_id: String,
@@ -42,6 +44,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) save_error: Option<String>,
     /// 右侧内容区的滚动位置（单测用它验「真的能滚」）。
     pub(super) page_scroll: ScrollHandle,
+    pub(super) dropdown_scroll: ScrollHandle,
     pub(super) tree_sort: TreeSortPreference,
     pub(super) sidebar_open: SidebarOpenPreference,
     pub(super) sidebar_open_dropdown_open: bool,
@@ -133,6 +136,8 @@ impl PreferencesWindow {
             selected_theme_id: selected_theme_id.clone(),
             image_paste_behavior,
             fonts: fonts.clone(),
+            system_font_families: Vec::new(),
+            ui_font_dropdown_open: false,
             writing_width,
             keybindings: keybindings.clone(),
             saved_startup_open: startup_open,
@@ -188,6 +193,7 @@ impl PreferencesWindow {
             shortcut_error: None,
             save_error: None,
             page_scroll: ScrollHandle::new(),
+            dropdown_scroll: ScrollHandle::new(),
             status_bar_enabled: preferences.status_bar.enabled,
             status_bar_show_word_count: preferences.status_bar.show_word_count,
             status_bar_show_cursor_position: preferences.status_bar.show_cursor_position,
@@ -253,13 +259,42 @@ impl PreferencesWindow {
             || self.delete_policy != self.saved_delete_policy
     }
 
+    pub(crate) fn close_dropdowns(&mut self) -> bool {
+        let mut changed = false;
+        for open in [
+            &mut self.startup_dropdown_open,
+            &mut self.theme_dropdown_open,
+            &mut self.image_dropdown_open,
+            &mut self.markdown_font_dropdown_open,
+            &mut self.code_font_dropdown_open,
+            &mut self.ui_font_dropdown_open,
+            &mut self.writing_width_dropdown_open,
+            &mut self.sidebar_open_dropdown_open,
+            &mut self.sidebar_panel_dropdown_open,
+            &mut self.tree_sort_dropdown_open,
+            &mut self.autosave_dropdown_open,
+            &mut self.external_change_dropdown_open,
+            &mut self.delete_policy_dropdown_open,
+            &mut self.zoom_dropdown_open,
+            &mut self.window_size_dropdown_open,
+            &mut self.window_open_position_dropdown_open,
+        ] {
+            changed |= *open;
+            *open = false;
+        }
+        self.dropdown_scroll.set_offset(Point::default());
+        changed
+    }
+
     pub(crate) fn toggle_sidebar_open_dropdown(
         &mut self,
         _: &ClickEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sidebar_open_dropdown_open = !self.sidebar_open_dropdown_open;
+        let open = !self.sidebar_open_dropdown_open;
+        self.close_dropdowns();
+        self.sidebar_open_dropdown_open = open;
         cx.notify();
     }
 
@@ -269,17 +304,23 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sidebar_panel_dropdown_open = !self.sidebar_panel_dropdown_open;
+        let open = !self.sidebar_panel_dropdown_open;
+        self.close_dropdowns();
+        self.sidebar_panel_dropdown_open = open;
         cx.notify();
     }
 
     pub(crate) fn toggle_tree_sort_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.tree_sort_dropdown_open = !self.tree_sort_dropdown_open;
+        let open = !self.tree_sort_dropdown_open;
+        self.close_dropdowns();
+        self.tree_sort_dropdown_open = open;
         cx.notify();
     }
 
     pub(crate) fn toggle_autosave_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.autosave_dropdown_open = !self.autosave_dropdown_open;
+        let open = !self.autosave_dropdown_open;
+        self.close_dropdowns();
+        self.autosave_dropdown_open = open;
         cx.notify();
     }
 
@@ -289,7 +330,9 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.external_change_dropdown_open = !self.external_change_dropdown_open;
+        let open = !self.external_change_dropdown_open;
+        self.close_dropdowns();
+        self.external_change_dropdown_open = open;
         cx.notify();
     }
 
@@ -299,13 +342,16 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_policy_dropdown_open = !self.delete_policy_dropdown_open;
+        let open = !self.delete_policy_dropdown_open;
+        self.close_dropdowns();
+        self.delete_policy_dropdown_open = open;
         cx.notify();
     }
 
     pub(crate) fn toggle_zoom_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.zoom_dropdown_open = !self.zoom_dropdown_open;
-        self.window_size_dropdown_open = false;
+        let open = !self.zoom_dropdown_open;
+        self.close_dropdowns();
+        self.zoom_dropdown_open = open;
         cx.notify();
     }
 
@@ -315,9 +361,9 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.window_size_dropdown_open = !self.window_size_dropdown_open;
-        self.zoom_dropdown_open = false;
-        self.window_open_position_dropdown_open = false;
+        let open = !self.window_size_dropdown_open;
+        self.close_dropdowns();
+        self.window_size_dropdown_open = open;
         cx.notify();
     }
 
@@ -327,79 +373,64 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.window_open_position_dropdown_open = !self.window_open_position_dropdown_open;
-        self.zoom_dropdown_open = false;
-        self.window_size_dropdown_open = false;
+        let open = !self.window_open_position_dropdown_open;
+        self.close_dropdowns();
+        self.window_open_position_dropdown_open = open;
         cx.notify();
     }
 
     pub(crate) fn set_nav_file(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::File;
-        self.startup_dropdown_open = false;
-        self.theme_dropdown_open = false;
-        self.writing_width_dropdown_open = false;
-        self.image_dropdown_open = false;
+        self.close_dropdowns();
         self.recording_shortcut = None;
         cx.notify();
     }
 
     pub(crate) fn set_nav_theme(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Theme;
-        self.startup_dropdown_open = false;
-        self.theme_dropdown_open = false;
-        self.writing_width_dropdown_open = false;
-        self.image_dropdown_open = false;
+        self.close_dropdowns();
         self.recording_shortcut = None;
         cx.notify();
     }
 
     pub(crate) fn set_nav_image(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Image;
-        self.startup_dropdown_open = false;
-        self.theme_dropdown_open = false;
-        self.writing_width_dropdown_open = false;
-        self.image_dropdown_open = false;
+        self.close_dropdowns();
         self.recording_shortcut = None;
         cx.notify();
     }
 
     pub(crate) fn set_nav_shortcuts(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Shortcuts;
-        self.startup_dropdown_open = false;
-        self.theme_dropdown_open = false;
-        self.writing_width_dropdown_open = false;
-        self.image_dropdown_open = false;
+        self.close_dropdowns();
         self.shortcut_error = None;
         cx.notify();
     }
 
     pub(crate) fn set_nav_window(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Window;
+        self.close_dropdowns();
         cx.notify();
     }
 
     pub(crate) fn set_nav_status_bar(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::StatusBar;
-        self.startup_dropdown_open = false;
-        self.theme_dropdown_open = false;
-        self.writing_width_dropdown_open = false;
-        self.image_dropdown_open = false;
+        self.close_dropdowns();
         self.recording_shortcut = None;
         cx.notify();
     }
 
     pub(crate) fn toggle_startup_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.startup_dropdown_open = !self.startup_dropdown_open;
-        self.theme_dropdown_open = false;
-        self.image_dropdown_open = false;
+        let open = !self.startup_dropdown_open;
+        self.close_dropdowns();
+        self.startup_dropdown_open = open;
         cx.notify();
     }
 
     pub(crate) fn toggle_theme_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.theme_dropdown_open = !self.theme_dropdown_open;
-        self.writing_width_dropdown_open = false;
-        self.startup_dropdown_open = false;
-        self.image_dropdown_open = false;
+        let open = !self.theme_dropdown_open;
+        self.close_dropdowns();
+        self.theme_dropdown_open = open;
         cx.notify();
     }
 
@@ -409,10 +440,9 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.writing_width_dropdown_open = !self.writing_width_dropdown_open;
-        self.theme_dropdown_open = false;
-        self.markdown_font_dropdown_open = false;
-        self.code_font_dropdown_open = false;
+        let open = !self.writing_width_dropdown_open;
+        self.close_dropdowns();
+        self.writing_width_dropdown_open = open;
         cx.notify();
     }
 
@@ -422,9 +452,9 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.markdown_font_dropdown_open = !self.markdown_font_dropdown_open;
-        self.writing_width_dropdown_open = false;
-        self.code_font_dropdown_open = false;
+        let open = !self.markdown_font_dropdown_open;
+        self.close_dropdowns();
+        self.markdown_font_dropdown_open = open;
         cx.notify();
     }
 
@@ -434,16 +464,28 @@ impl PreferencesWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.code_font_dropdown_open = !self.code_font_dropdown_open;
-        self.writing_width_dropdown_open = false;
-        self.markdown_font_dropdown_open = false;
+        let open = !self.code_font_dropdown_open;
+        self.close_dropdowns();
+        self.code_font_dropdown_open = open;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_ui_font_dropdown(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = !self.ui_font_dropdown_open;
+        self.close_dropdowns();
+        self.ui_font_dropdown_open = open;
         cx.notify();
     }
 
     pub(crate) fn toggle_image_dropdown(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.image_dropdown_open = !self.image_dropdown_open;
-        self.startup_dropdown_open = false;
-        self.theme_dropdown_open = false;
+        let open = !self.image_dropdown_open;
+        self.close_dropdowns();
+        self.image_dropdown_open = open;
         cx.notify();
     }
 

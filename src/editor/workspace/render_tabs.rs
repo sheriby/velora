@@ -117,7 +117,7 @@ impl Editor {
                         })
                     })
                     .cursor_pointer()
-                    .text_size(px(12.0))
+                    .text_size(px(theme.typography.ui_text_size(12.0)))
                     .text_color(if active {
                         c.text_default
                     } else {
@@ -136,7 +136,7 @@ impl Editor {
                         div()
                             .w(px(11.0))
                             .text_center()
-                            .text_size(px(9.0))
+                            .text_size(px(theme.typography.ui_text_size(9.0)))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(if tab_shows_code_icon {
                                 c.dialog_muted

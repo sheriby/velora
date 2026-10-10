@@ -52,10 +52,10 @@ impl Editor {
             rows.push(
                 div()
                     .px(px(10.0))
-                    .h(px(28.0))
+                    .h(px(theme.typography.ui_text_size(28.0).max(28.0)))
                     .flex()
                     .items_center()
-                    .text_size(px(12.0))
+                    .text_size(px(theme.typography.ui_text_size(12.0)))
                     .text_color(c.dialog_muted)
                     .child(strings.quick_open_no_results.clone())
                     .into_any_element(),
@@ -79,7 +79,7 @@ impl Editor {
                         .id(("quick-open-row", index))
                         .w_full()
                         .px(px(10.0))
-                        .h(px(30.0))
+                        .h(px(theme.typography.ui_text_size(30.0).max(30.0)))
                         .flex()
                         .items_center()
                         .gap(px(8.0))
@@ -96,7 +96,7 @@ impl Editor {
                                 .max_w(px(260.0))
                                 .min_w(px(0.0))
                                 .truncate()
-                                .text_size(px(12.5))
+                                .text_size(px(theme.typography.ui_text_size(12.5)))
                                 .text_color(if selected {
                                     c.text_default
                                 } else {
@@ -109,7 +109,7 @@ impl Editor {
                                 .flex_1()
                                 .min_w(px(0.0))
                                 .truncate()
-                                .text_size(px(10.5))
+                                .text_size(px(theme.typography.ui_text_size(10.5)))
                                 .text_color(c.dialog_muted)
                                 .child(directory),
                         )
@@ -170,7 +170,7 @@ impl Editor {
                             .relative()
                             .track_focus(&focus)
                             .w_full()
-                            .h(px(34.0))
+                            .h(px(theme.typography.ui_text_size(34.0).max(34.0)))
                             .px(px(10.0))
                             .flex()
                             .items_center()
@@ -178,7 +178,7 @@ impl Editor {
                             .border_1()
                             .border_color(c.dialog_border)
                             .bg(c.editor_background)
-                            .text_size(px(13.0))
+                            .text_size(px(theme.typography.ui_text_size(13.0)))
                             .text_color(if state.query.is_empty() {
                                 c.dialog_muted
                             } else {

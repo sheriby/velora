@@ -22,9 +22,8 @@ impl Editor {
     /// 落在正文最后一块下方的按下：把光标送到文末。
     ///
     /// 正文块自己的命中测试只看块内，块底以下那片空白（用户报修：最后一行往下大约
-    /// 半个屏幕）没有块接得住，点下去光标不动。末块量不出几何（表格、分隔线、未聚焦
-    /// 的公式与图表）时不接手：那一段空间的归属由各自的格子处理，与
-    /// [`Self::cross_block_endpoint_for_point`] 同一口径。
+    /// 半个屏幕）没有块接得住，点下去光标不动。未聚焦的空段落不绘制文本，需要借用
+    /// 已挂载行的边界；其他无文本几何的末块仍由各自的交互处理。
     fn place_caret_below_document_end(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(last) = self
             .document
@@ -34,7 +33,30 @@ impl Editor {
         else {
             return;
         };
-        let Some(bounds) = last.read(cx).last_bounds else {
+        let bounds = last.read(cx).last_bounds.or_else(|| {
+            if !last
+                .read(cx)
+                .collapses_to_blank_gap(false, self.view_mode == ViewMode::Source)
+            {
+                return None;
+            }
+            let plan = self.rendered_row_plan.as_ref()?;
+            let row = plan.rows.len().checked_sub(1)?;
+            if plan.rows.get(row)?.first_id != last.entity_id() {
+                return None;
+            }
+            let run = self.prev_mounted_run.filter(|run| {
+                self.mounted_run_is_addressable(*run)
+                    && run.row_start <= row
+                    && row < run.row_end
+            })?;
+            let mut bounds = self
+                .scroll_handle
+                .bounds_for_item(run.child_base + row - run.row_start)?;
+            bounds.origin += self.scroll_handle.offset();
+            Some(bounds)
+        });
+        let Some(bounds) = bounds else {
             return;
         };
         if position.y <= bounds.bottom() {

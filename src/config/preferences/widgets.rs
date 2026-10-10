@@ -19,7 +19,7 @@ impl PreferencesWindow {
             .id(id)
             .debug_selector(move || id.to_string())
             .w_full()
-            .h(px(34.0))
+            .min_h(px((t.dialog_body_size * 1.5 + 8.0).max(34.0)))
             .px(px(10.0))
             .flex()
             .items_center()
@@ -158,6 +158,46 @@ impl PreferencesWindow {
             .into_any_element()
     }
 
+    fn dropdown_button_height(theme: &Theme) -> f32 {
+        (theme.typography.dialog_body_size * 1.5 + 8.0).max(32.0)
+    }
+
+    pub(crate) fn dropdown_menu(
+        &self,
+        id: &'static str,
+        content: impl IntoElement,
+        theme: &Theme,
+    ) -> impl IntoElement {
+        let menu_id = SharedString::from(format!("{id}-list"));
+        // 延后绘制让菜单越过设置卡片与页面的裁剪区；绝对定位不参与设置行的高度计算。
+        deferred(
+            anchored()
+                .offset(point(
+                    px(0.0),
+                    px(Self::dropdown_button_height(theme) + 4.0),
+                ))
+                .child(
+                    div()
+                        .id(menu_id.clone())
+                        .debug_selector(move || menu_id.to_string())
+                        .w(px(200.0))
+                        .max_h(px(240.0))
+                        .p(px(4.0))
+                        .rounded(px(theme.dimensions.menu_item_radius))
+                        .border_1()
+                        .border_color(theme.colors.dialog_border)
+                        .bg(theme.colors.dialog_surface)
+                        .shadow_md()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.dropdown_scroll)
+                        .occlude()
+                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                        .child(div().w_full().flex_shrink_0().child(content)),
+                ),
+        )
+        .with_priority(1)
+    }
+
     pub(crate) fn dropdown_button(
         id: &'static str,
         label: String,
@@ -170,8 +210,9 @@ impl PreferencesWindow {
         let t = &theme.typography;
         div()
             .id(id)
+            .debug_selector(move || id.to_string())
             .w(px(200.0))
-            .h(px(32.0))
+            .min_h(px(Self::dropdown_button_height(theme)))
             .px(px(10.0))
             .flex()
             .items_center()
@@ -218,7 +259,7 @@ impl PreferencesWindow {
             // 测试里按 id 查边界（release 构建为空操作）：下拉能不能点中
             // 只有真的点一下才验得出来。
             .debug_selector(move || debug_id.to_string())
-            .w(px(200.0))
+            .w_full()
             .min_h(px(30.0))
             .px(px(10.0))
             .flex()
@@ -239,7 +280,9 @@ impl PreferencesWindow {
             } else {
                 c.dialog_body
             })
-            .child(SharedString::from(label))
+            .child(
+                div().flex_1().min_w(px(0.0)).truncate().child(SharedString::from(label)),
+            )
             .when(selected, |this| {
                 this.child(
                     svg()
@@ -266,7 +309,7 @@ impl PreferencesWindow {
         let (surface, text, accent) = preview;
         div()
             .id(("preferences-theme-option", index))
-            .w(px(200.0))
+            .w_full()
             .min_h(px(38.0))
             .px(px(10.0))
             .flex()

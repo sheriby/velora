@@ -1369,20 +1369,20 @@ impl Editor {
                 .child(
                     div()
                         .font_family(crate::config::EditorSettings::fonts(cx).code_family)
-                        .text_size(px(t.text_size * 0.8))
+                        .text_size(px(t.code_size))
                         .text_color(c.text_default)
                         .child(state.draft.clone()),
                 )
                 .child(
                     div()
-                        .text_size(px(t.text_size * 0.72))
+                        .text_size(px(t.ui_text_size(16.0 * 0.72)))
                         .text_color(c.callout_caution_border)
                         .child(error.clone()),
                 )
                 .into_any_element()
         } else {
             div()
-                .text_size(px(t.text_size * 0.85))
+                .text_size(px(t.ui_text_size(16.0 * 0.85)))
                 .text_color(c.text_placeholder)
                 .child(strings.formula_editor_preview_empty.clone())
                 .into_any_element()
@@ -1544,7 +1544,7 @@ impl Editor {
                     .items_center()
                     .rounded(px(999.0))
                     .cursor_pointer()
-                    .text_size(px(t.text_size * 0.78))
+                    .text_size(px(t.ui_text_size(16.0 * 0.78)))
                     .text_color(if is_active {
                         c.dialog_primary_button_text
                     } else {
@@ -1641,7 +1641,7 @@ impl Editor {
                     .object_fit(ObjectFit::Contain)
                     .into_any_element(),
                 Err(_) => div()
-                    .text_size(px(t.text_size * 0.68))
+                    .text_size(px(t.ui_text_size(16.0 * 0.68)))
                     .text_color(c.dialog_muted)
                     .truncate()
                     .child(format!("\\{}", entry.name))
@@ -1680,7 +1680,7 @@ impl Editor {
                                 .object_fit(ObjectFit::Contain)
                                 .into_any_element(),
                             Err(_) => div()
-                                .text_size(px(t.text_size * 0.72))
+                                .text_size(px(t.ui_text_size(16.0 * 0.72)))
                                 .text_color(c.dialog_muted)
                                 .child(format!("\\{}", entry.name))
                                 .into_any_element(),
@@ -1706,7 +1706,7 @@ impl Editor {
                                 div()
                                     .min_w(px(96.0))
                                     .font_family(code_family.clone())
-                                    .text_size(px(t.text_size * 0.8))
+                                    .text_size(px(t.ui_text_size(16.0 * 0.8)))
                                     .text_color(c.text_default)
                                     .child(format!("\\{}", entry.name)),
                             )
@@ -1817,7 +1817,7 @@ impl Editor {
                                         .justify_center()
                                         .rounded(px(5.0))
                                         .cursor_pointer()
-                                        .text_size(px(t.text_size * 0.9))
+                                        .text_size(px(t.ui_text_size(16.0 * 0.9)))
                                         .text_color(c.dialog_muted)
                                         .hover(|this| this.bg(c.dialog_secondary_button_hover))
                                         .on_mouse_down(
@@ -1876,7 +1876,7 @@ impl Editor {
                                 .child(
                                     div()
                                         .flex_1()
-                                        .text_size(px(t.text_size * 0.72))
+                                        .text_size(px(t.ui_text_size(16.0 * 0.72)))
                                         .text_color(c.dialog_muted)
                                         .child(strings.formula_editor_hint.clone()),
                                 )

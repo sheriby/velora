@@ -183,10 +183,10 @@ pub(super) fn render_command_palette_overlay(
         rows.push(
             div()
                 .px(px(10.0))
-                .h(px(28.0))
+                .h(px(theme.typography.ui_text_size(28.0).max(28.0)))
                 .flex()
                 .items_center()
-                .text_size(px(12.0))
+                .text_size(px(theme.typography.ui_text_size(12.0)))
                 .text_color(c.dialog_muted)
                 .child(strings.quick_open_no_results.clone())
                 .into_any_element(),
@@ -203,7 +203,7 @@ pub(super) fn render_command_palette_overlay(
                     .id(("command-palette-row", index))
                     .w_full()
                     .px(px(10.0))
-                    .h(px(30.0))
+                    .h(px(theme.typography.ui_text_size(30.0).max(30.0)))
                     .flex()
                     .items_center()
                     .rounded(px(5.0))
@@ -214,7 +214,7 @@ pub(super) fn render_command_palette_overlay(
                         gpui::hsla(0.0, 0.0, 0.0, 0.0)
                     })
                     .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .text_size(px(12.5))
+                    .text_size(px(theme.typography.ui_text_size(12.5)))
                     .text_color(if is_selected {
                         c.text_default
                     } else {
@@ -272,7 +272,7 @@ pub(super) fn render_command_palette_overlay(
                         .id("command-palette-input")
                         .track_focus(&focus)
                         .w_full()
-                        .h(px(34.0))
+                        .h(px(theme.typography.ui_text_size(34.0).max(34.0)))
                         .px(px(10.0))
                         .flex()
                         .items_center()
@@ -280,7 +280,7 @@ pub(super) fn render_command_palette_overlay(
                         .border_1()
                         .border_color(c.dialog_border)
                         .bg(c.editor_background)
-                        .text_size(px(13.0))
+                        .text_size(px(theme.typography.ui_text_size(13.0)))
                         .text_color(if state.query.is_empty() {
                             c.dialog_muted
                         } else {

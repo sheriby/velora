@@ -1,6 +1,135 @@
 use super::common::*;
 
 #[gpui::test]
+async fn changing_font_categories_relayouts_body_and_code_independently(cx: &mut TestAppContext) {
+    use crate::config::preferences::{
+        AppPreferences, FontPreferences, open_preferences_window_with_state,
+    };
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let preferences = cx.update(|cx| {
+        open_preferences_window_with_state(cx, AppPreferences::default(), Vec::new(), "字体".into())
+    });
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "# Heading\n\nBody `inline`.\n\n```rust\nlet answer = 42;\n```\n".into(),
+            None,
+        )
+    });
+    redraw(cx);
+    redraw(cx);
+    let snapshot = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .filter_map(|visible| {
+                    let block = visible.entity.read(cx);
+                    if block.display_text().is_empty() {
+                        return None;
+                    }
+                    let memo = block.shape_memo_entry().expect("文本块应完成排版");
+                    let line = block
+                        .last_layout
+                        .as_ref()
+                        .and_then(|lines| lines.first())
+                        .expect("文本应有绘制布局");
+                    Some((
+                        line.unwrapped_layout.font_size,
+                        memo.key.font_fingerprint,
+                        line.runs()
+                            .iter()
+                            .filter_map(|run| run.font_size)
+                            .collect::<Vec<_>>(),
+                    ))
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = snapshot(cx);
+    assert_eq!(before.len(), 3);
+    let mut fonts = FontPreferences::default();
+    fonts.ui_family = "Courier New".into();
+    fonts.ui_size = 28;
+    preferences
+        .update(cx, |preferences, window, cx| {
+            preferences.apply_saved_preferences(
+                AppPreferences {
+                    fonts: fonts.clone(),
+                    ..AppPreferences::default()
+                },
+                window,
+                cx,
+            );
+        })
+        .expect("偏好窗口应可更新");
+    redraw(cx);
+    assert_eq!(
+        snapshot(cx),
+        before,
+        "更换 UI 字体和字号不应改变正文与代码的排版输入"
+    );
+
+    fonts.markdown_family = "Arial".into();
+    fonts.markdown_size = 20;
+    preferences
+        .update(cx, |preferences, window, cx| {
+            preferences.apply_saved_preferences(
+                AppPreferences {
+                    fonts: fonts.clone(),
+                    ..AppPreferences::default()
+                },
+                window,
+                cx,
+            );
+        })
+        .expect("偏好窗口应可更新");
+    redraw(cx);
+    let body_changed = snapshot(cx);
+    assert_eq!(
+        body_changed[0].0,
+        before[0].0 * 1.25,
+        "标题随正文字号按比例变化"
+    );
+    assert_eq!(body_changed[1].0, px(20.0));
+    assert_ne!(body_changed[1].1, before[1].1, "正文应使用新字体重新排版");
+    assert_eq!(body_changed[2].0, before[2].0, "正文字号设置不应影响代码");
+    assert_eq!(
+        body_changed[1].2,
+        vec![px(14.0)],
+        "正文中的行内代码仍用代码字号"
+    );
+
+    fonts.code_family = "Consolas".into();
+    fonts.code_size = 18;
+    preferences
+        .update(cx, |preferences, window, cx| {
+            preferences.apply_saved_preferences(
+                AppPreferences {
+                    fonts: fonts.clone(),
+                    ..AppPreferences::default()
+                },
+                window,
+                cx,
+            );
+        })
+        .expect("偏好窗口应可更新");
+    redraw(cx);
+    let code_changed = snapshot(cx);
+    assert_eq!(code_changed[0].0, body_changed[0].0);
+    assert_eq!(code_changed[1].0, body_changed[1].0);
+    assert_eq!(
+        code_changed[1].2,
+        vec![px(18.0)],
+        "行内代码也随代码字号调整"
+    );
+    assert_eq!(code_changed[2].0, px(18.0));
+    assert_ne!(code_changed[2].1, before[2].1, "代码应使用新字体重新排版");
+}
+
+#[gpui::test]
 async fn render_structure_snapshot_for_key_blocks(cx: &mut TestAppContext) {
     // roadmap G7：关键块渲染结构的黄金快照。任何解析/渲染回归改动若
     // 改变块序列或文本，需同步更新此快照并在 PR 中说明。

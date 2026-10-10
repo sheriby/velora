@@ -135,7 +135,7 @@ impl Editor {
                 .id("workspace-search-pattern-error")
                 .w_full()
                 .px(px(2.0))
-                .text_size(px(11.0))
+                .text_size(px(theme.typography.ui_text_size(11.0)))
                 .text_color(c.dialog_danger_button_text)
                 .truncate()
                 .child(format!("{}{summary}", strings.search_invalid_pattern))
@@ -182,7 +182,7 @@ impl Editor {
                 } else {
                     hsla(0.0, 0.0, 0.0, 0.0)
                 })
-                .text_size(px(11.0))
+                .text_size(px(theme.typography.ui_text_size(11.0)))
                 .text_color(if selected {
                     c.dialog_primary_button_bg
                 } else {
@@ -278,7 +278,7 @@ impl Editor {
                         .rounded(px(5.0))
                         .border_1()
                         .border_color(c.dialog_border)
-                        .text_size(px(11.0))
+                        .text_size(px(theme.typography.ui_text_size(11.0)))
                         .text_color(c.text_default)
                         .cursor_pointer()
                         .hover(|this| this.bg(c.dialog_secondary_button_hover))
@@ -317,7 +317,7 @@ impl Editor {
                         .rounded(px(5.0))
                         .border_1()
                         .border_color(c.dialog_border)
-                        .text_size(px(11.0))
+                        .text_size(px(theme.typography.ui_text_size(11.0)))
                         .text_color(c.text_default)
                         .cursor_pointer()
                         .hover(|this| this.bg(c.dialog_secondary_button_hover))
@@ -371,7 +371,7 @@ impl Editor {
                     } else {
                         hsla(0.0, 0.0, 0.0, 0.0)
                     })
-                    .text_size(px(11.0))
+                    .text_size(px(theme.typography.ui_text_size(11.0)))
                     .text_color(if selected {
                         c.dialog_primary_button_bg
                     } else {
@@ -426,7 +426,7 @@ impl Editor {
                 .child(div().flex_1().min_w(px(0.0)).flex().justify_end().children(
                     count_label.map(|label| {
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(theme.typography.ui_text_size(11.0)))
                             .text_color(c.dialog_muted)
                             .child(label)
                     }),
@@ -448,7 +448,7 @@ impl Editor {
         if self.workspace.search_pending && self.workspace.search_results.is_empty() {
             return div()
                 .p(px(12.0))
-                .text_size(px(14.0))
+                .text_size(px(theme.typography.ui_text_size(14.0)))
                 .text_color(theme.colors.dialog_muted)
                 .child("…")
                 .into_any_element();
@@ -487,7 +487,7 @@ impl Editor {
         }
 
         let total = rows.len();
-        let window = self.workspace_list_window(total);
+        let window = self.workspace_list_window(total, theme);
         let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
         for (index, is_header) in &rows[window.clone()] {
             let index = *index;
@@ -508,7 +508,7 @@ impl Editor {
                     div()
                         .id(("workspace-search-file", index))
                         .debug_selector(move || format!("workspace-search-file-{index}"))
-                        .h(px(WORKSPACE_NODE_HEIGHT))
+                        .h(px(Self::workspace_node_height(theme)))
                         .w_full()
                         .px(px(6.0))
                         .flex()
@@ -537,14 +537,14 @@ impl Editor {
                                 .flex_1()
                                 .min_w(px(0.0))
                                 .truncate()
-                                .text_size(px(11.0))
+                                .text_size(px(theme.typography.ui_text_size(11.0)))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(c.text_default)
                                 .child(hit.label.clone()),
                         )
                         .child(
                             div()
-                                .text_size(px(10.0))
+                                .text_size(px(theme.typography.ui_text_size(10.0)))
                                 .text_color(c.dialog_muted)
                                 .child(file_hit_count.to_string()),
                         )
@@ -564,14 +564,14 @@ impl Editor {
             let hit_editor = editor.clone();
             let line_number = hit.line;
             let preview = hit.preview.clone();
-            // 行高必须与 WORKSPACE_NODE_HEIGHT 一致：窗口按它算行号。文档范围
+            // 行高必须与 workspace_node_height 一致：窗口按它算行号。文档范围
             // 原先在命中行前多挂一行文件名——同一篇文档里每行都是同一个名字
             // （标签页已经写着），两行高的列表按视口裁不出来，所以并成一行。
             visible.push(
                 div()
                     .id(("workspace-search-hit", index))
                     .debug_selector(move || format!("workspace-search-hit-{index}"))
-                    .h(px(WORKSPACE_NODE_HEIGHT))
+                    .h(px(Self::workspace_node_height(theme)))
                     .w_full()
                     .pl(px(if is_document_scope { 10.0 } else { 24.0 }))
                     .pr(px(6.0))
@@ -593,7 +593,7 @@ impl Editor {
                             .min_w(px(0.0))
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(px(theme.typography.ui_text_size(11.0)))
                                     .text_color(c.dialog_muted)
                                     .child(format!("{line}")),
                             )
@@ -602,7 +602,7 @@ impl Editor {
                                     .flex_1()
                                     .min_w(px(0.0))
                                     .truncate()
-                                    .text_size(px(11.0))
+                                    .text_size(px(theme.typography.ui_text_size(11.0)))
                                     .text_color(c.text_default)
                                     .child(preview),
                             )
@@ -618,7 +618,7 @@ impl Editor {
                     .into_any_element(),
             );
         }
-        self.workspace_windowed_body(total, window, visible, cx)
+        self.workspace_windowed_body(total, window, visible, theme, cx)
     }
 
     /// Opens the hit's match: document-scope hits select the byte range in the

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use gpui::{AnyElement, AppContext, Task, Window};
 
-use super::workspace::{is_markdown_document, WorkspaceOpenMode, WORKSPACE_NODE_HEIGHT};
+use super::workspace::{is_markdown_document, WorkspaceOpenMode};
 use super::Editor;
 use crate::theme::Theme;
 
@@ -451,7 +451,7 @@ impl Editor {
         // 反链可以上千条（热门笔记），每帧整表建成元素就是每帧几百毫秒；条目行都是
         // 等高 24px，直接接面板共用那套视口窗口（与大纲/文件树同一手法）。
         let total = self.link_panels.backlinks.len();
-        let window = self.workspace_list_window(total);
+        let window = self.workspace_list_window(total, theme);
         let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
         for (offset, path) in self.link_panels.backlinks[window.clone()].iter().enumerate() {
             let index = window.start + offset;
@@ -471,7 +471,7 @@ impl Editor {
                         format!("backlink-entry-{index}").into(),
                     ))
                     .debug_selector(move || format!("backlink-entry-{index}"))
-                    .h(px(WORKSPACE_NODE_HEIGHT))
+                    .h(px(Self::workspace_node_height(theme)))
                     .w_full()
                     .overflow_hidden()
                     .flex()
@@ -501,20 +501,20 @@ impl Editor {
                     )
                     .child(
                         div()
-                            .text_size(px(t.text_size * 0.92))
+                            .text_size(px(t.dialog_body_size * 0.92))
                             .text_color(c.text_default)
                             .child(name),
                     )
                     .children(dir.map(|dir| {
                         div()
-                            .text_size(px(t.text_size * 0.78))
+                            .text_size(px(t.dialog_body_size * 0.78))
                             .text_color(c.dialog_muted)
                             .child(dir)
                     }))
                     .into_any_element(),
             );
         }
-        self.workspace_windowed_body(total, window, visible, cx)
+        self.workspace_windowed_body(total, window, visible, theme, cx)
     }
 
     /// 标签面板：工作区 #标签 聚合计数，点击进入工作区标签搜索（C4）。
@@ -535,7 +535,7 @@ impl Editor {
 
         // 同上：标签可以上千个，行也是等高 24px。
         let total = self.link_panels.tags.len();
-        let window = self.workspace_list_window(total);
+        let window = self.workspace_list_window(total, theme);
         let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
         for (offset, (tag, count)) in self.link_panels.tags[window.clone()].iter().enumerate() {
             let index = window.start + offset;
@@ -545,7 +545,7 @@ impl Editor {
                 div()
                     .id(gpui::ElementId::Name(format!("tag-entry-{index}").into()))
                     .debug_selector(move || format!("tag-entry-{index}"))
-                    .h(px(WORKSPACE_NODE_HEIGHT))
+                    .h(px(Self::workspace_node_height(theme)))
                     .w_full()
                     .overflow_hidden()
                     .flex()
@@ -562,20 +562,20 @@ impl Editor {
                     })
                     .child(
                         div()
-                            .text_size(px(t.text_size * 0.92))
+                            .text_size(px(t.dialog_body_size * 0.92))
                             .text_color(c.text_link)
                             .child(tag.clone()),
                     )
                     .child(
                         div()
-                            .text_size(px(t.text_size * 0.78))
+                            .text_size(px(t.dialog_body_size * 0.78))
                             .text_color(c.dialog_muted)
                             .child(format!("{count}")),
                     )
                     .into_any_element(),
             );
         }
-        self.workspace_windowed_body(total, window, visible, cx)
+        self.workspace_windowed_body(total, window, visible, theme, cx)
     }
 }
 
@@ -854,13 +854,13 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, confirm)
                     .child(
                         div()
-                            .text_size(px(t.text_size * 0.9))
+                            .text_size(px(t.dialog_body_size * 0.9))
                             .text_color(c.text_default)
                             .child(name),
                     )
                     .children(dir.map(|dir| {
                         div()
-                            .text_size(px(t.text_size * 0.75))
+                            .text_size(px(t.dialog_body_size * 0.75))
                             .text_color(c.dialog_muted)
                             .child(dir)
                     })),

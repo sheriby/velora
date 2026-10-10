@@ -562,6 +562,12 @@ pub struct ThemeTypography {
     pub dialog_button_weight: FontWeightDef,
 }
 
+impl ThemeTypography {
+    pub(crate) fn ui_text_size(&self, base_size: f32) -> f32 {
+        base_size * self.dialog_body_size / 14.0
+    }
+}
+
 fn default_body_font_family() -> String {
     ".SystemUIFont".into()
 }

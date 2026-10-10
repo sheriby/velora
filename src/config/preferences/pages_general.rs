@@ -14,6 +14,7 @@ impl PreferencesWindow {
             }
         };
         let mut dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -25,9 +26,10 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.startup_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             let new_file_label = strings.preferences_startup_new_file.clone();
             let last_file_label = strings.preferences_startup_last_opened_file.clone();
-            dropdown = dropdown
+            list = list
                 .child(Self::dropdown_item(
                     "preferences-startup-new-file",
                     new_file_label,
@@ -52,6 +54,7 @@ impl PreferencesWindow {
                     },
                     cx,
                 ));
+            dropdown = dropdown.child(self.dropdown_menu("preferences-startup-dropdown", list, theme));
         }
         let sidebar_open_selected = match self.sidebar_open {
             SidebarOpenPreference::FollowLast => strings.preferences_sidebar_follow_last.clone(),
@@ -59,6 +62,7 @@ impl PreferencesWindow {
             SidebarOpenPreference::Never => strings.preferences_sidebar_open_never.clone(),
         };
         let mut sidebar_open_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -70,6 +74,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.sidebar_open_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             let options = [
                 (
                     SidebarOpenPreference::FollowLast,
@@ -85,7 +90,7 @@ impl PreferencesWindow {
                 ),
             ];
             for (value, label) in options {
-                sidebar_open_dropdown = sidebar_open_dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     gpui::SharedString::from(format!(
                         "preferences-sidebar-open-{}",
                         value.as_str()
@@ -101,6 +106,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            sidebar_open_dropdown = sidebar_open_dropdown.child(self.dropdown_menu("preferences-sidebar-open-dropdown", list, theme));
         }
 
         let sidebar_panel_selected = match self.sidebar_panel {
@@ -109,6 +115,7 @@ impl PreferencesWindow {
             SidebarPanelPreference::Outline => strings.workspace_tab_outline.clone(),
         };
         let mut sidebar_panel_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -120,6 +127,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.sidebar_panel_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             let options = [
                 (
                     SidebarPanelPreference::FollowLast,
@@ -135,7 +143,7 @@ impl PreferencesWindow {
                 ),
             ];
             for (value, label) in options {
-                sidebar_panel_dropdown = sidebar_panel_dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     gpui::SharedString::from(format!(
                         "preferences-sidebar-panel-{}",
                         value.as_str()
@@ -151,6 +159,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            sidebar_panel_dropdown = sidebar_panel_dropdown.child(self.dropdown_menu("preferences-sidebar-panel-dropdown", list, theme));
         }
 
         let tree_sort_selected = match self.tree_sort {
@@ -159,6 +168,7 @@ impl PreferencesWindow {
             TreeSortPreference::Type => strings.tree_sort_type.clone(),
         };
         let mut tree_sort_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -170,6 +180,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.tree_sort_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             let options = [
                 (TreeSortPreference::Name, strings.tree_sort_name.clone()),
                 (TreeSortPreference::ModifiedTime, strings.tree_sort_mtime.clone()),
@@ -178,7 +189,7 @@ impl PreferencesWindow {
             for (index, (sort, label)) in options.into_iter().enumerate() {
                 let is_selected = self.tree_sort == sort;
                 let sort_value = sort;
-                tree_sort_dropdown = tree_sort_dropdown.child(
+                list = list.child(
                     Self::dropdown_item(
                         gpui::SharedString::from(format!("preferences-tree-sort-{index}")),
                         label,
@@ -193,10 +204,12 @@ impl PreferencesWindow {
                     ),
                 );
             }
+            tree_sort_dropdown = tree_sort_dropdown.child(self.dropdown_menu("preferences-tree-sort-dropdown", list, theme));
         }
 
         let debounce_selected = format!("{} ms", self.autosave_debounce_ms);
         let mut debounce_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -208,9 +221,10 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.autosave_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for ms in [800u64, 2000u64, 5000u64] {
                 let is_selected = self.autosave_debounce_ms == ms;
-                debounce_dropdown = debounce_dropdown.child(
+                list = list.child(
                     Self::dropdown_item(
                         gpui::SharedString::from(format!("preferences-autosave-{ms}")),
                         format!("{ms} ms"),
@@ -225,6 +239,7 @@ impl PreferencesWindow {
                     ),
                 );
             }
+            debounce_dropdown = debounce_dropdown.child(self.dropdown_menu("preferences-autosave-dropdown", list, theme));
         }
 
         let external_change_selected = match self.external_change_policy {
@@ -232,6 +247,7 @@ impl PreferencesWindow {
             ExternalChangePolicy::Manual => strings.preferences_external_change_manual.clone(),
         };
         let mut external_change_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -243,6 +259,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.external_change_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for (policy, label) in [
                 (
                     ExternalChangePolicy::Auto,
@@ -254,7 +271,7 @@ impl PreferencesWindow {
                 ),
             ] {
                 let is_selected = self.external_change_policy == policy;
-                external_change_dropdown = external_change_dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     gpui::SharedString::from(format!(
                         "preferences-external-change-{}",
                         policy.as_str()
@@ -270,6 +287,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            external_change_dropdown = external_change_dropdown.child(self.dropdown_menu("preferences-external-change-dropdown", list, theme));
         }
 
         let delete_policy_selected = match self.delete_policy {
@@ -277,6 +295,7 @@ impl PreferencesWindow {
             DeletePolicy::Permanent => strings.preferences_delete_policy_permanent.clone(),
         };
         let mut delete_policy_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -288,6 +307,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.delete_policy_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for (policy, label) in [
                 (
                     DeletePolicy::Trash,
@@ -299,7 +319,7 @@ impl PreferencesWindow {
                 ),
             ] {
                 let is_selected = self.delete_policy == policy;
-                delete_policy_dropdown = delete_policy_dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     gpui::SharedString::from(format!(
                         "preferences-delete-policy-{}",
                         policy.as_str()
@@ -315,6 +335,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            delete_policy_dropdown = delete_policy_dropdown.child(self.dropdown_menu("preferences-delete-policy-dropdown", list, theme));
         }
 
         let smart_punctuation_toggle =
@@ -391,6 +412,7 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -402,13 +424,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.theme_dropdown_open {
-            let mut list = div()
-                .id("preferences-theme-dropdown-list")
-                .flex()
-                .flex_col()
-                .gap(px(4.0))
-                .max_h(px(240.0))
-                .overflow_y_scroll();
+            let mut list = div().flex().flex_col().gap(px(4.0));
 
             for (index, entry) in self.theme_options.clone().into_iter().enumerate() {
                 let selected = entry.id == self.selected_theme_id;
@@ -435,7 +451,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
-            dropdown = dropdown.child(list);
+            dropdown = dropdown.child(self.dropdown_menu("preferences-theme-dropdown", list, theme));
         }
         let chinese = cx.global::<I18nManager>().current_language_id() == "zh-CN";
         let width_label = |width| match (chinese, width) {
@@ -449,6 +465,7 @@ impl PreferencesWindow {
             (false, WritingWidthPreference::Wide) => "Wide · 75%",
         };
         let mut writing_width = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -460,6 +477,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.writing_width_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for (index, width) in [
                 WritingWidthPreference::Theme,
                 WritingWidthPreference::Compact,
@@ -469,7 +487,7 @@ impl PreferencesWindow {
             .into_iter()
             .enumerate()
             {
-                writing_width = writing_width.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     ("preferences-writing-width-option", index),
                     width_label(width).into(),
                     self.writing_width == width,
@@ -482,82 +500,11 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            writing_width = writing_width.child(self.dropdown_menu("preferences-writing-width", list, theme));
         }
-        let markdown_font_options = [
-            "theme",
-            ".SystemUIFont",
-            "PingFang SC",
-            "Noto Sans CJK SC",
-            "Georgia",
-        ];
-        let code_font_options = if cfg!(target_os = "windows") {
-            ["Consolas", "Courier New", "Cascadia Code"]
-        } else {
-            ["Menlo", "Monaco", "SF Mono"]
-        };
-        let markdown_font_label = match self.fonts.markdown_family.as_str() {
-            "theme" => "跟随主题".to_string(),
-            ".SystemUIFont" => "系统字体".to_string(),
-            _ => self.fonts.markdown_family.clone(),
-        };
-        let mut markdown_font = div()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .child(Self::dropdown_button(
-                "preferences-markdown-font",
-                markdown_font_label,
-                theme,
-                Self::toggle_markdown_font_dropdown,
-                cx,
-            ));
-        if self.markdown_font_dropdown_open {
-            for (index, family) in markdown_font_options.into_iter().enumerate() {
-                markdown_font = markdown_font.child(Self::dropdown_item(
-                    ("preferences-markdown-font-option", index),
-                    match family {
-                        "theme" => "跟随主题".into(),
-                        ".SystemUIFont" => "系统字体".into(),
-                        _ => family.into(),
-                    },
-                    self.fonts.markdown_family == family,
-                    theme,
-                    move |this, _, _, cx| {
-                        this.fonts.markdown_family = family.into();
-                        this.markdown_font_dropdown_open = false;
-                        cx.notify();
-                    },
-                    cx,
-                ));
-            }
-        }
-        let mut code_font = div()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .child(Self::dropdown_button(
-                "preferences-code-font",
-                self.fonts.code_family.clone(),
-                theme,
-                Self::toggle_code_font_dropdown,
-                cx,
-            ));
-        if self.code_font_dropdown_open {
-            for (index, family) in code_font_options.into_iter().enumerate() {
-                code_font = code_font.child(Self::dropdown_item(
-                    ("preferences-code-font-option", index),
-                    family.into(),
-                    self.fonts.code_family == family,
-                    theme,
-                    move |this, _, _, cx| {
-                        this.fonts.code_family = family.into();
-                        this.code_font_dropdown_open = false;
-                        cx.notify();
-                    },
-                    cx,
-                ));
-            }
-        }
+        let ui_font = self.font_family_row(FontRole::Ui, theme, strings, cx);
+        let body_font = self.font_family_row(FontRole::Body, theme, strings, cx);
+        let code_font = self.font_family_row(FontRole::Code, theme, strings, cx);
         // 两张卡片：主题一张，字体与排版一张。页面滚动交给外层容器，
         // 这里不再自己开一个 max_h + overflow 的滚动区（嵌套滚动会互抢滚轮）。
         let theme_rows = vec![self.settings_row(
@@ -575,10 +522,18 @@ impl PreferencesWindow {
                 },
                 writing_width,
             ),
-            self.settings_row(theme, "Markdown 字体".to_string(), markdown_font),
-            self.font_size_row("Markdown 字号", self.fonts.markdown_size, true, theme, cx),
-            self.settings_row(theme, "代码等宽字体".to_string(), code_font),
-            self.font_size_row("代码字号", self.fonts.code_size, false, theme, cx),
+            self.settings_row(theme, strings.preferences_ui_font.clone(), ui_font),
+            self.font_size_row(
+                &strings.preferences_ui_font_size, self.fonts.ui_size, FontRole::Ui, theme, cx,
+            ),
+            self.settings_row(theme, strings.preferences_body_font.clone(), body_font),
+            self.font_size_row(
+                &strings.preferences_body_font_size, self.fonts.markdown_size, FontRole::Body, theme, cx,
+            ),
+            self.settings_row(theme, strings.preferences_code_font.clone(), code_font),
+            self.font_size_row(
+                &strings.preferences_code_font_size, self.fonts.code_size, FontRole::Code, theme, cx,
+            ),
         ];
         div()
             .w_full()
@@ -591,11 +546,101 @@ impl PreferencesWindow {
             .into_any_element()
     }
 
-    pub(crate) fn font_size_row(
+    fn font_family_row(
+        &self,
+        role: FontRole,
+        theme: &Theme,
+        strings: &crate::i18n::I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (id, option_id, selected, open, toggle): (
+            _,
+            _,
+            _,
+            _,
+            fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>),
+        ) = match role {
+            FontRole::Ui => (
+                "preferences-ui-font",
+                "preferences-ui-font-option",
+                &self.fonts.ui_family,
+                self.ui_font_dropdown_open,
+                Self::toggle_ui_font_dropdown,
+            ),
+            FontRole::Body => (
+                "preferences-markdown-font",
+                "preferences-markdown-font-option",
+                &self.fonts.markdown_family,
+                self.markdown_font_dropdown_open,
+                Self::toggle_markdown_font_dropdown,
+            ),
+            FontRole::Code => (
+                "preferences-code-font",
+                "preferences-code-font-option",
+                &self.fonts.code_family,
+                self.code_font_dropdown_open,
+                Self::toggle_code_font_dropdown,
+            ),
+        };
+        let family_label = |family: &str| match family {
+            "theme" => strings.preferences_theme_font.clone(),
+            ".SystemUIFont" => strings.preferences_system_font.clone(),
+            _ => family.to_string(),
+        };
+        let mut dropdown = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(Self::dropdown_button(
+                id,
+                family_label(selected),
+                theme,
+                toggle,
+                cx,
+            ));
+        if open {
+            let mut families = self.system_font_families.clone();
+            if role == FontRole::Body {
+                families.insert(0, "theme".into());
+            }
+            let mut list = div().flex().flex_col();
+            for (index, family) in families.into_iter().enumerate() {
+                list = list.child(Self::dropdown_item(
+                    (option_id, index),
+                    family_label(&family),
+                    selected == &family,
+                    theme,
+                    move |this, _, _, cx| {
+                        match role {
+                            FontRole::Ui => {
+                                this.fonts.ui_family = family.clone();
+                                this.ui_font_dropdown_open = false;
+                            }
+                            FontRole::Body => {
+                                this.fonts.markdown_family = family.clone();
+                                this.markdown_font_dropdown_open = false;
+                            }
+                            FontRole::Code => {
+                                this.fonts.code_family = family.clone();
+                                this.code_font_dropdown_open = false;
+                            }
+                        }
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+            dropdown = dropdown.child(self.dropdown_menu(id, list, theme));
+        }
+        dropdown.into_any_element()
+    }
+
+    fn font_size_row(
         &self,
         label: &str,
         size: u16,
-        markdown: bool,
+        role: FontRole,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -603,8 +648,9 @@ impl PreferencesWindow {
         let button = |id: &'static str, sign: &'static str, delta: i16, cx: &mut Context<Self>| {
             div()
                 .id(id)
+                .debug_selector(move || id.to_string())
                 .w(px(36.0))
-                .h(px(32.0))
+                .min_h(px((theme.typography.dialog_body_size * 1.5 + 8.0).max(32.0)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -616,10 +662,10 @@ impl PreferencesWindow {
                 .cursor_pointer()
                 .child(sign)
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    let current = if markdown {
-                        &mut this.fonts.markdown_size
-                    } else {
-                        &mut this.fonts.code_size
+                    let current = match role {
+                        FontRole::Ui => &mut this.fonts.ui_size,
+                        FontRole::Body => &mut this.fonts.markdown_size,
+                        FontRole::Code => &mut this.fonts.code_size,
                     };
                     *current = ((*current as i16 + delta).clamp(10, 36)) as u16;
                     cx.notify();
@@ -633,10 +679,10 @@ impl PreferencesWindow {
                 .items_center()
                 .gap(px(8.0))
                 .child(button(
-                    if markdown {
-                        "markdown-font-smaller"
-                    } else {
-                        "code-font-smaller"
+                    match role {
+                        FontRole::Ui => "ui-font-smaller",
+                        FontRole::Body => "markdown-font-smaller",
+                        FontRole::Code => "code-font-smaller",
                     },
                     "−",
                     -1,
@@ -644,10 +690,10 @@ impl PreferencesWindow {
                 ))
                 .child(div().w(px(52.0)).text_center().child(format!("{size} px")))
                 .child(button(
-                    if markdown {
-                        "markdown-font-larger"
-                    } else {
-                        "code-font-larger"
+                    match role {
+                        FontRole::Ui => "ui-font-larger",
+                        FontRole::Body => "markdown-font-larger",
+                        FontRole::Code => "code-font-larger",
                     },
                     "+",
                     1,
@@ -687,6 +733,7 @@ impl PreferencesWindow {
             ImagePasteBehavior::CopyToNamedAssetsFolder,
         ];
         let mut dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -698,10 +745,11 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.image_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for (index, behavior) in options.into_iter().enumerate() {
                 let selected = behavior == self.image_paste_behavior;
                 let label = Self::image_paste_behavior_label(behavior, strings);
-                dropdown = dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     ("preferences-image-option", index),
                     label,
                     selected,
@@ -714,6 +762,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            dropdown = dropdown.child(self.dropdown_menu("preferences-image-dropdown", list, theme));
         }
         self.settings_card(
             theme,

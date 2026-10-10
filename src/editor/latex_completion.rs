@@ -259,7 +259,7 @@ impl Editor {
                         .object_fit(ObjectFit::Contain)
                         .into_any_element(),
                     Err(_) => div()
-                        .text_size(px(t.text_size * 0.85))
+                        .text_size(px(t.ui_text_size(16.0 * 0.85)))
                         .text_color(c.text_placeholder)
                         .child(entry.preview.to_string())
                         .into_any_element(),
@@ -288,7 +288,7 @@ impl Editor {
                         div()
                             .min_w(px(96.0))
                             .font_family(code_family.clone())
-                            .text_size(px(t.text_size * 0.85))
+                            .text_size(px(t.ui_text_size(16.0 * 0.85)))
                             .text_color(c.text_default)
                             .child(format!("\\{}", entry.name)),
                     )

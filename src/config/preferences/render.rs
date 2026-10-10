@@ -1,6 +1,9 @@
 use super::*;
 impl Render for PreferencesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.system_font_families.is_empty() {
+            self.system_font_families = window.text_system().all_font_names();
+        }
         if self.system_appearance_subscription.is_none() {
             self.system_appearance_subscription = Some(cx.observe_window_appearance(
                 window,
@@ -13,7 +16,8 @@ impl Render for PreferencesWindow {
                 },
             ));
         }
-        let theme = cx.global::<ThemeManager>().current().clone();
+        let mut theme = cx.global::<ThemeManager>().current().clone();
+        EditorSettings::apply_ui_typography(cx, &mut theme);
         let strings = cx.global::<I18nManager>().strings().clone();
         let c = &theme.colors;
         let d = &theme.dimensions;
@@ -207,6 +211,11 @@ impl Render for PreferencesWindow {
                                         .flex_1()
                                         .min_h(px(0.0))
                                         .overflow_y_scroll()
+                                        .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                                            if this.close_dropdowns() {
+                                                cx.notify();
+                                            }
+                                        }))
                                         .flex()
                                         .flex_col()
                                         .child(page_column),
@@ -218,6 +227,8 @@ impl Render for PreferencesWindow {
 
         let root = div()
             .size_full()
+            .font(font(EditorSettings::fonts(cx).ui_family))
+            .text_size(px(t.dialog_body_size))
             .relative()
             .bg(c.editor_background)
             .child(content);

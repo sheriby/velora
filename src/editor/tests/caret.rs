@@ -2,6 +2,51 @@
 
 use super::common::*;
 
+/// 空文档未聚焦的段落没有文本布局，点击下方空白也必须能开始输入。
+#[gpui::test]
+async fn clicking_below_an_empty_document_starts_editing(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        let mut editor = Editor::from_markdown(cx, String::new(), None);
+        // 初始聚焦会留下文本边界，掩盖从未进入编辑的空段落无法响应点击的问题。
+        editor.pending_focus = None;
+        editor
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let click = editor.read_with(cx, |editor, _cx| {
+        let bounds = editor.scroll_handle.bounds();
+        gpui::point(bounds.center().x, bounds.top() + px(300.0))
+    });
+    cx.simulate_mouse_down(click, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(click, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        let block = &editor.document.visible_blocks()[0].entity;
+        assert!(
+            block.read(cx).focus_handle.is_focused(window),
+            "点击后空段落应取得焦点"
+        );
+        assert!(
+            block.read(cx).active_range_or_cursor_bounds().is_some(),
+            "点击后应绘制编辑光标"
+        );
+    });
+    cx.simulate_input("开始编辑🌟");
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let block = &editor.document.visible_blocks()[0].entity;
+        assert_eq!(
+            block.read(cx).display_text(),
+            "开始编辑🌟",
+            "点击空白后应能直接输入"
+        );
+    });
+}
+
 /// 报修 1：最后一行下方的空白里按下，光标要落到文末，接着就能打字。
 ///
 /// 现象：点下去什么都没发生。根因：正文块自己的命中测试只看块内，块底以下的空间

@@ -409,6 +409,7 @@ impl PreferencesWindow {
     ) -> AnyElement {
         let zoom_selected = format!("{}%", self.zoom_percent);
         let mut zoom_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -420,9 +421,10 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.zoom_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for percent in [80i64, 90, 100, 110, 125, 150] {
                 let is_selected = self.zoom_percent == percent;
-                zoom_dropdown = zoom_dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     gpui::SharedString::from(format!("preferences-zoom-{percent}")),
                     format!("{percent}%"),
                     is_selected,
@@ -435,6 +437,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            zoom_dropdown = zoom_dropdown.child(self.dropdown_menu("preferences-zoom-dropdown", list, theme));
         }
 
         let size_selected = format!(
@@ -442,6 +445,7 @@ impl PreferencesWindow {
             self.default_window_width, self.default_window_height
         );
         let mut size_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -453,10 +457,11 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.window_size_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for (width, height) in [(900i64, 600i64), (1080, 720), (1280, 800), (1440, 900)] {
                 let is_selected =
                     self.default_window_width == width && self.default_window_height == height;
-                size_dropdown = size_dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     gpui::SharedString::from(format!("preferences-window-size-{width}x{height}")),
                     format!("{width} × {height}"),
                     is_selected,
@@ -470,6 +475,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            size_dropdown = size_dropdown.child(self.dropdown_menu("preferences-window-size-dropdown", list, theme));
         }
 
         let open_position_selected = match self.window_open_position {
@@ -479,6 +485,7 @@ impl PreferencesWindow {
             WindowOpenPosition::Center => strings.preferences_window_open_position_center.clone(),
         };
         let mut open_position_dropdown = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -490,6 +497,7 @@ impl PreferencesWindow {
                 cx,
             ));
         if self.window_open_position_dropdown_open {
+            let mut list = div().w_full().flex().flex_col().gap(px(4.0));
             for (position, label) in [
                 (
                     WindowOpenPosition::Remember,
@@ -501,7 +509,7 @@ impl PreferencesWindow {
                 ),
             ] {
                 let is_selected = self.window_open_position == position;
-                open_position_dropdown = open_position_dropdown.child(Self::dropdown_item(
+                list = list.child(Self::dropdown_item(
                     gpui::SharedString::from(format!(
                         "preferences-window-open-position-{}",
                         position.as_str()
@@ -517,6 +525,7 @@ impl PreferencesWindow {
                     cx,
                 ));
             }
+            open_position_dropdown = open_position_dropdown.child(self.dropdown_menu("preferences-window-open-position-dropdown", list, theme));
         }
 
         let remember_toggle = crate::components::switch::Switch::new("preferences-remember-window")

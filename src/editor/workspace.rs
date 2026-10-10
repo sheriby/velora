@@ -112,7 +112,8 @@ struct WorkspaceTooltip {
 
 impl Render for WorkspaceTooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<ThemeManager>().current_arc();
+        let mut theme = cx.global::<ThemeManager>().current().clone();
+        crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
         div()
             .debug_selector(|| "workspace-tooltip".to_string())
             .px(px(8.0))
@@ -122,7 +123,8 @@ impl Render for WorkspaceTooltip {
             .border_1()
             .border_color(theme.colors.dialog_border)
             .shadow_md()
-            .text_size(px(12.0))
+            .font(font(crate::config::EditorSettings::fonts(cx).ui_family))
+            .text_size(px(theme.typography.ui_text_size(12.0)))
             .text_color(theme.colors.dialog_title)
             .child(self.label.clone())
     }
@@ -260,7 +262,8 @@ pub(super) struct DraggedTabPreview {
 
 impl Render for DraggedTabPreview {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.global::<ThemeManager>().current_arc();
+        let mut theme = cx.global::<ThemeManager>().current().clone();
+        crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
         let c = &theme.colors;
         div()
             .px(px(10.0))
@@ -270,7 +273,8 @@ impl Render for DraggedTabPreview {
             .border_1()
             .border_color(c.dialog_border)
             .shadow_md()
-            .text_size(px(12.0))
+            .font(font(crate::config::EditorSettings::fonts(cx).ui_family))
+            .text_size(px(theme.typography.ui_text_size(12.0)))
             .text_color(c.text_default)
             .child(self.label.clone())
     }

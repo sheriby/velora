@@ -196,6 +196,30 @@ impl I18nStringsDe {
             preferences_nav_theme: self
                 .preferences_nav_theme
                 .unwrap_or(defaults.preferences_nav_theme),
+            preferences_ui_font: self
+                .preferences_ui_font
+                .unwrap_or(defaults.preferences_ui_font),
+            preferences_ui_font_size: self
+                .preferences_ui_font_size
+                .unwrap_or(defaults.preferences_ui_font_size),
+            preferences_body_font: self
+                .preferences_body_font
+                .unwrap_or(defaults.preferences_body_font),
+            preferences_body_font_size: self
+                .preferences_body_font_size
+                .unwrap_or(defaults.preferences_body_font_size),
+            preferences_code_font: self
+                .preferences_code_font
+                .unwrap_or(defaults.preferences_code_font),
+            preferences_code_font_size: self
+                .preferences_code_font_size
+                .unwrap_or(defaults.preferences_code_font_size),
+            preferences_theme_font: self
+                .preferences_theme_font
+                .unwrap_or(defaults.preferences_theme_font),
+            preferences_system_font: self
+                .preferences_system_font
+                .unwrap_or(defaults.preferences_system_font),
             preferences_nav_image: self
                 .preferences_nav_image
                 .unwrap_or(defaults.preferences_nav_image),

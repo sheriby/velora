@@ -376,7 +376,7 @@ impl Editor {
             .track_focus(&focus)
             .flex_1()
             .min_w(px(0.0))
-            .h(px(28.0))
+            .h(px(theme.typography.ui_text_size(28.0).max(28.0)))
             .px(px(8.0))
             .flex()
             .items_center()
@@ -388,7 +388,7 @@ impl Editor {
                 c.dialog_border
             })
             .bg(c.editor_background)
-            .text_size(px(12.0))
+            .text_size(px(theme.typography.ui_text_size(12.0)))
             .child(
                 canvas(
                     move |_, window, _| {

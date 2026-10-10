@@ -216,13 +216,13 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, restore)
                     .child(
                         div()
-                            .text_size(px(t.text_size * 0.92))
+                            .text_size(px(t.ui_text_size(16.0 * 0.92)))
                             .text_color(c.text_default)
                             .child(label),
                     )
                     .child(
                         div()
-                            .text_size(px(t.text_size * 0.78))
+                            .text_size(px(t.ui_text_size(16.0 * 0.78)))
                             .text_color(c.dialog_muted)
                             .child(format!("#{}", index + 1)),
                     ),

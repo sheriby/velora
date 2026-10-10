@@ -24,6 +24,8 @@ const PREFERENCES_VERSION: i64 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FontPreferences {
+    pub(crate) ui_family: String,
+    pub(crate) ui_size: u16,
     pub(crate) markdown_family: String,
     pub(crate) markdown_size: u16,
     pub(crate) code_family: String,
@@ -33,6 +35,8 @@ pub(crate) struct FontPreferences {
 impl Default for FontPreferences {
     fn default() -> Self {
         Self {
+            ui_family: ".SystemUIFont".into(),
+            ui_size: 14,
             markdown_family: "theme".into(),
             markdown_size: 16,
             code_family: if cfg!(target_os = "windows") {
@@ -44,6 +48,13 @@ impl Default for FontPreferences {
             code_size: 14,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FontRole {
+    Ui,
+    Body,
+    Code,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -777,14 +788,32 @@ impl EditorSettings {
         let t = &mut theme.typography;
         t.text_size = (fonts.markdown_size as f32 * zoom).max(1.0);
         t.code_size = (fonts.code_size as f32 * zoom).max(1.0);
-        if (zoom - 1.0).abs() > f32::EPSILON {
-            t.h1_size *= zoom;
-            t.h2_size *= zoom;
-            t.h3_size *= zoom;
-            t.h4_size *= zoom;
-            t.h5_size *= zoom;
-            t.h6_size *= zoom;
-        }
+        let heading_scale =
+            fonts.markdown_size as f32 / FontPreferences::default().markdown_size as f32 * zoom;
+        t.h1_size *= heading_scale;
+        t.h2_size *= heading_scale;
+        t.h3_size *= heading_scale;
+        t.h4_size *= heading_scale;
+        t.h5_size *= heading_scale;
+        t.h6_size *= heading_scale;
+    }
+
+    pub(crate) fn apply_ui_typography(cx: &App, theme: &mut crate::theme::Theme) {
+        let ui_size = Self::fonts(cx).ui_size as f32;
+        let scale = ui_size / theme.typography.dialog_body_size.max(1.0);
+        let typography = &mut theme.typography;
+        typography.dialog_body_size = ui_size;
+        typography.dialog_title_size *= scale;
+        typography.dialog_button_size *= scale;
+        let dimensions = &mut theme.dimensions;
+        dimensions.menu_text_size *= scale;
+        dimensions.menu_bar_height *= scale.max(1.0);
+        dimensions.menu_bar_button_height *= scale.max(1.0);
+        dimensions.menu_item_height *= scale.max(1.0);
+        dimensions.view_mode_toggle_text_size *= scale;
+        dimensions.status_bar_text_size *= scale;
+        dimensions.status_bar_height *= scale.max(1.0);
+        dimensions.dialog_button_height *= scale.max(1.0);
     }
 
     pub(crate) fn writing_width(cx: &App) -> WritingWidthPreference {

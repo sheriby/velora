@@ -442,7 +442,7 @@ impl Editor {
             .border_color(c.dialog_border)
             .shadow_lg()
             .occlude()
-            .text_size(px(13.0))
+            .text_size(px(theme.typography.ui_text_size(13.0)))
             .text_color(c.dialog_body)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().font_weight(FontWeight::BOLD).child(format!(
@@ -486,7 +486,7 @@ impl Editor {
                 div()
                     .id("update-skip")
                     .debug_selector(|| "update-skip".into())
-                    .text_size(px(11.0))
+                    .text_size(px(theme.typography.ui_text_size(11.0)))
                     .text_color(c.dialog_muted)
                     .cursor_pointer()
                     .child(strings.update_skip_version.clone())

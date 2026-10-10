@@ -66,6 +66,12 @@ impl Render for Editor {
         let fonts = crate::config::EditorSettings::fonts(cx);
         // 字号设置 + 界面缩放（⌘+/⌘-/⌘0）由这一个派生负责，文档块共用。
         crate::config::EditorSettings::apply_scaled_typography(cx, &mut theme);
+        crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
+        let body_font_family = if fonts.markdown_family == "theme" {
+            &theme.typography.body_font_family
+        } else {
+            &fonts.markdown_family
+        };
         let strings = cx.global::<I18nManager>().strings_arc();
         self.sync_window_title(window, &strings);
 
@@ -569,6 +575,7 @@ impl Render for Editor {
 
         let scroll_content = div()
             .id("editor-scroll-inner")
+            .font(editor_text_font(body_font_family))
             .flex()
             .flex_col()
             .flex_grow()
@@ -734,26 +741,26 @@ impl Render for Editor {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_size(px(26.0))
+                        .text_size(px(theme.typography.ui_text_size(26.0)))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.colors.dialog_muted)
                         .child("!"),
                 )
                 .child(
                     div()
-                        .text_size(px(theme.typography.text_size))
+                        .text_size(px(theme.typography.ui_text_size(16.0)))
                         .text_color(theme.colors.text_default)
                         .child(file_name),
                 )
                 .child(
                     div()
-                        .text_size(px(theme.typography.text_size * 0.9))
+                        .text_size(px(theme.typography.ui_text_size(16.0 * 0.9)))
                         .child(strings.workspace_preview_unavailable_message.clone()),
                 )
                 .children(self.unsupported_preview_detail.as_ref().map(|detail| {
                     div()
                         .px(px(12.0))
-                        .text_size(px(theme.typography.text_size * 0.8))
+                        .text_size(px(theme.typography.ui_text_size(16.0 * 0.8)))
                         .text_color(theme.colors.dialog_muted)
                         .text_align(TextAlign::Center)
                         .child(detail.clone())
@@ -812,7 +819,7 @@ impl Render for Editor {
                         .border_b(px(1.0))
                         .border_color(theme.colors.callout_warning_border)
                         .bg(theme.colors.callout_warning_bg)
-                        .text_size(px(theme.typography.text_size * 0.82))
+                        .text_size(px(theme.typography.ui_text_size(16.0 * 0.82)))
                         .text_color(theme.colors.text_default)
                         .child(strings.source_mode_fallback_message.clone()),
                 )
@@ -822,11 +829,6 @@ impl Render for Editor {
             content_area
         };
 
-        let body_font_family = if fonts.markdown_family == "theme" {
-            &theme.typography.body_font_family
-        } else {
-            &fonts.markdown_family
-        };
         let base = div()
             .w_full()
             .h_full()
@@ -834,7 +836,8 @@ impl Render for Editor {
             .flex_col()
             .relative()
             .bg(theme.colors.editor_background)
-            .font(editor_text_font(body_font_family))
+            .font(editor_text_font(&fonts.ui_family))
+            .text_size(px(theme.typography.dialog_body_size))
             .on_mouse_move(cx.listener(Self::on_workspace_resize_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
