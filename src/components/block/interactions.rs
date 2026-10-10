@@ -75,10 +75,10 @@ impl Block {
         let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
             return false;
         };
-        matches!(
-            ext.to_ascii_lowercase().as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "tif" | "tiff"
-        )
+        // 判据问的是真正把这张图解码画出来的组件，不在这里手抄扩展名表：
+        // 抄过一份 9 项的窄表，同一张 .avif 写进 markdown 显示得出、导出内嵌得了，
+        // 拖进窗口却被当成非图片忽略（与报修第 12 条同一族）。
+        gpui::Img::extensions().contains(&ext.to_ascii_lowercase().as_str())
     }
 
     pub(crate) fn paste_image_split(&self) -> (InlineTextTree, InlineTextTree) {

@@ -89,6 +89,31 @@ mod tests {
         remove_temp_image(&path);
     }
 
+    /// 粘贴/拖入/文件选择器认的图片格式，必须等于真正把这张图画出来的组件
+    /// (`gpui::Img`) 支持的格式。
+    ///
+    /// 这里曾手抄一份 9 项的扩展名表，比渲染能力窄：同一张 `.avif`，写进
+    /// markdown 能显示、导出能内嵌，但拖进窗口或从文件选择器里选会被当成
+    /// 非图片直接忽略——三处口径三种答案，正是报修第 12 条那一族的形态。
+    #[test]
+    fn every_format_the_renderer_accepts_can_be_pasted_as_a_local_image() {
+        for extension in gpui::Img::extensions() {
+            let name = format!("shot.{extension}");
+            let path = temp_image_path(&name);
+            let text = path.to_string_lossy().to_string();
+
+            assert!(
+                Block::is_supported_local_image_path(&path),
+                "渲染器支持 .{extension}，粘贴这一路却不认：{name}"
+            );
+            assert!(
+                Block::pasted_image_source_from_text(&text).is_some(),
+                "拖入/粘贴一条路漏掉了 .{extension}"
+            );
+            remove_temp_image(&path);
+        }
+    }
+
     #[gpui::test]
     async fn append_row_button_stays_visible_while_crossing_hover_gap(cx: &mut TestAppContext) {
         let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
