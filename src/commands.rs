@@ -15,10 +15,10 @@ use crate::components::{
     CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
-    PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, ShowAbout, CheckForUpdates,
-    StrikethroughSelection, SubscriptSelection, SuperscriptSelection, ToggleFocusMode,
-    ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, UnderlineSelection,
-    ZoomIn, ZoomOut, ZoomReset,
+    PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, SelectDocument, ShowAbout,
+    CheckForUpdates, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,
+    ToggleFocusMode, ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode,
+    UnderlineSelection, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::i18n::I18nStrings;
 
@@ -95,6 +95,10 @@ static COMMANDS: &[CommandSpec] = &[
     command!(sep "format_document", File, menu_format_document, FormatDocument),
     // 下面两组只进命令面板、不进系统菜单栏：动作在右键菜单与选中工具栏里点得到，
     // 面板补的是「搜得到」这一条。id 与键位表里同一条命令的 id 一致。
+    // 「选择全文」是这一族里唯一没有菜单行的那一条：正文右键菜单的「全选」行已在
+    // 第二期 FP14 去掉（守卫见 `editor::tests::document_context_menu`），它只剩键位
+    // 与这条面板入口，报修「全文选择不直观」补的就是这一处。
+    command!("select_document", Edit, command_select_document, SelectDocument),
     command!(
         "paste_as_plain_text",
         Edit,
@@ -299,7 +303,10 @@ mod tests {
         let edit_ids = super::commands_for(CommandMenu::Edit)
             .map(|spec| spec.id)
             .collect::<Vec<_>>();
-        assert_eq!(edit_ids, vec!["paste_as_plain_text", "copy_as_markdown"]);
+        assert_eq!(
+            edit_ids,
+            vec!["select_document", "paste_as_plain_text", "copy_as_markdown"]
+        );
 
         let format_ids = super::commands_for(CommandMenu::Format)
             .map(|spec| spec.id)

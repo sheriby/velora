@@ -1,7 +1,8 @@
     use super::super::{
         ShortcutCommand, normalize_shortcut_config, resolved_shortcut_keys, shortcut_conflict_for,
+        shortcut_definitions,
     };
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
     fn custom_shortcut_replaces_command_defaults() {
@@ -83,6 +84,42 @@
             resolved_shortcut_keys(&config, ShortcutCommand::SelectAll),
             vec!["ctrl-shift-a".to_string()]
         );
+    }
+
+    /// 「选择全文」是明面上的一条命令，不吃 ⌘A 那条 750ms 循环（报修「全文选择不直观」）。
+    /// 键位取 ⌘⇧A / Ctrl+Shift+A，与「全选」同一档位、邻近一颗。
+    #[test]
+    fn select_document_has_default_shortcuts() {
+        assert_eq!(
+            resolved_shortcut_keys(&BTreeMap::new(), ShortcutCommand::SelectDocument),
+            vec!["cmd-shift-a".to_string(), "ctrl-shift-a".to_string()]
+        );
+        assert!(
+            shortcut_conflict_for(
+                ShortcutCommand::SelectDocument,
+                &["cmd-shift-a".to_string(), "ctrl-shift-a".to_string()],
+                &BTreeMap::new()
+            )
+            .is_none(),
+            "「选择全文」的默认键位不能与键位表里任何一条撞车"
+        );
+    }
+
+    /// 整张默认键位表逐颗查重：同一档位里一颗键只能归一条命令，撞了就是「按下去执行
+    /// 了别的」那类 bug。新增一条绑定先跑这条，把全部默认键位过一遍，而不是只查自己那颗。
+    #[test]
+    fn every_default_shortcut_key_is_bound_only_once() {
+        let mut bound: BTreeSet<(Option<&'static str>, &'static str)> = BTreeSet::new();
+        for definition in shortcut_definitions() {
+            for key in definition.default_keys {
+                assert!(
+                    bound.insert((definition.context, *key)),
+                    "{key} 在档位 {:?} 下被 `{}` 重复绑定",
+                    definition.context,
+                    definition.id
+                );
+            }
+        }
     }
 
     #[test]

@@ -878,6 +878,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_close_window))
             .on_action(cx.listener(Self::on_close_tab_action))
             .on_action(cx.listener(Self::on_toggle_view_mode_action))
+            .on_action(cx.listener(Self::on_select_document_action))
             .on_action(cx.listener(Self::on_find_in_document))
             .on_action(cx.listener(Self::on_find_next_match))
             .on_action(cx.listener(Self::on_find_previous_match))

@@ -54,6 +54,8 @@ impl PreferencesWindow {
             ShortcutCommand::SelectHome => strings.preferences_shortcut_select_home.clone(),
             ShortcutCommand::SelectEnd => strings.preferences_shortcut_select_end.clone(),
             ShortcutCommand::SelectAll => strings.preferences_shortcut_select_all.clone(),
+            // 借命令在面板里的那条文案：偏好页与命令面板认的是同一个名字。
+            ShortcutCommand::SelectDocument => strings.command_select_document.clone(),
             ShortcutCommand::Copy => strings.preferences_shortcut_copy.clone(),
             ShortcutCommand::Cut => strings.preferences_shortcut_cut.clone(),
             ShortcutCommand::Paste => strings.preferences_shortcut_paste.clone(),

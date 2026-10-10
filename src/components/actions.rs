@@ -40,6 +40,7 @@ actions!(
         SelectHome,
         SelectEnd,
         SelectAll,
+        SelectDocument,
         Copy,
         Cut,
         Paste,
@@ -186,6 +187,7 @@ pub(crate) enum ShortcutCommand {
     SelectHome,
     SelectEnd,
     SelectAll,
+    SelectDocument,
     Copy,
     Cut,
     Paste,
@@ -237,6 +239,7 @@ pub(crate) struct ShortcutDefinition {
 
 const BLOCK_CONTEXT: Option<&str> = Some("BlockEditor");
 const SELECT_ALL_ID: &str = "select_all";
+const SELECT_DOCUMENT_ID: &str = "select_document";
 const LEGACY_SELECT_ALL_IDS: &[&str] = &[
     "select_all_source_text",
     "select_focused_block_text_rendered",
@@ -446,6 +449,20 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         category: ShortcutCategory::Edit,
         default_keys: &["cmd-a", "ctrl-a"],
         context: BLOCK_CONTEXT,
+    },
+    ShortcutDefinition {
+        // 「选择全文」一步就选整篇，不吃 `SelectAll` 那条 750ms 的按压计时（报修「全文
+        // 选择不直观：要连按两次才选到全文」）。
+        //
+        // 档位留空（全局）而不是 `BlockEditor`：用户把「全选」那颗 ⌘A 改到 `ctrl-shift-a`
+        // 是受支持的写法（见 `select_all_shortcut_can_be_customized`），两条命令挤在同一
+        // 档位里就会撞车，撞车的结果是**用户的自定义被退回默认键**。留全局档位：块焦点
+        // 上那颗键仍归「全选」的改法，焦点不在块上（刚切完标签、焦点在侧栏）也按得动。
+        command: ShortcutCommand::SelectDocument,
+        id: SELECT_DOCUMENT_ID,
+        category: ShortcutCategory::Edit,
+        default_keys: &["cmd-shift-a", "ctrl-shift-a"],
+        context: None,
     },
     ShortcutDefinition {
         command: ShortcutCommand::Copy,
@@ -905,6 +922,7 @@ fn key_binding_for(
         ShortcutCommand::SelectHome => KeyBinding::new(key, SelectHome, context),
         ShortcutCommand::SelectEnd => KeyBinding::new(key, SelectEnd, context),
         ShortcutCommand::SelectAll => KeyBinding::new(key, SelectAll, context),
+        ShortcutCommand::SelectDocument => KeyBinding::new(key, SelectDocument, context),
         ShortcutCommand::Copy => KeyBinding::new(key, Copy, context),
         ShortcutCommand::Cut => KeyBinding::new(key, Cut, context),
         ShortcutCommand::Paste => KeyBinding::new(key, Paste, context),

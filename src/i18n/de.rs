@@ -245,6 +245,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) command_toggle_focus_mode: Option<String>,
     pub(crate) command_toggle_typewriter_mode: Option<String>,
     pub(crate) command_toggle_sidebar: Option<String>,
+    pub(crate) command_select_document: Option<String>,
     pub(crate) command_find_in_document: Option<String>,
     pub(crate) command_find_next: Option<String>,
     pub(crate) command_find_previous: Option<String>,

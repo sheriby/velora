@@ -397,6 +397,20 @@ impl Editor {
         self.request_save_document(cx);
     }
 
+    /// 「选择全文」（⌘⇧A / Ctrl+Shift+A）：键位与命令面板都汇到这一条。
+    ///
+    /// 与 ⌘A 那条「先当前段落、再按一次选整篇」的循环共用同一个选区模型，只是不看
+    /// 那台计时器（`Editor::select_document`）；报修「全文选择不直观」要的就是这条
+    /// 明面上的入口，不是让人去猜双击。
+    pub(crate) fn on_select_document_action(
+        &mut self,
+        _: &crate::components::SelectDocument,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_document(cx);
+    }
+
     pub(crate) fn on_save_document_as(
         &mut self,
         _: &crate::components::SaveDocumentAs,

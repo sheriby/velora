@@ -242,6 +242,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "command_toggle_focus_mode",
     "command_toggle_typewriter_mode",
     "command_toggle_sidebar",
+    "command_select_document",
     "command_find_in_document",
     "command_find_next",
     "command_find_previous",

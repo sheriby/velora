@@ -811,3 +811,167 @@ async fn toggle_view_mode_preserves_callout_table_cell_position(cx: &mut TestApp
     });
 }
 
+/// 「选择全文」那组用例的夹具：标题 + 中文段落 + 中文列表，三块以上而且正文全是多字节字符。
+/// 报修是「全文选择不直观：Ctrl+A 第一次只选当前段落，750ms 内再按一次才选全文」，
+/// 所以这里既要多块（一次按下要跨过块边界）也要 CJK（偏移按字符算，按字节会漂）。
+const SELECT_DOCUMENT_DOC: &str = "# 标题\n\n第一段中文正文\n\n- 列表甲\n- 列表乙\n";
+
+fn open_select_document_editor<'a>(
+    cx: &'a mut TestAppContext,
+) -> (gpui::Entity<Editor>, &'a mut VisualTestContext) {
+    init_editor_test_app(cx);
+    cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, SELECT_DOCUMENT_DOC.to_string(), None)
+    })
+}
+
+/// 整篇选上的判据：跨块选区从第一块块首选到最后一块块尾，每一块的高亮铺满。
+/// 断言的是选区端点与区间，不是像素——无窗口那套文本系统是等宽模拟。
+fn assert_whole_document_selected(
+    editor: &gpui::Entity<Editor>,
+    cx: &mut VisualTestContext,
+    pressed: &str,
+) {
+    editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks();
+        assert!(
+            visible.len() >= 3,
+            "{pressed}：夹具该有三块以上，实测 {}",
+            visible.len()
+        );
+        let Some(selection) = editor.cross_block_selection else {
+            panic!("{pressed}：整篇没被选上，跨块选区是空的");
+        };
+        let last = visible.last().expect("夹具至少有最后一块");
+        assert_eq!(
+            selection.anchor.entity_id,
+            visible[0].entity.entity_id(),
+            "{pressed}：锚点该落在第一块"
+        );
+        assert_eq!(selection.anchor.offset, 0, "{pressed}：锚点该在第一块块首");
+        assert_eq!(
+            selection.focus.entity_id,
+            last.entity.entity_id(),
+            "{pressed}：落点该落在最后一块"
+        );
+        assert_eq!(
+            selection.focus.offset,
+            last.entity.read(cx).clean_visible_len(),
+            "{pressed}：落点该在最后一块的块尾"
+        );
+        for visible in editor.document.visible_blocks() {
+            let block = visible.entity.read(cx);
+            let len = block.visible_len();
+            if len > 0 {
+                assert_eq!(
+                    block.editor_selection_range,
+                    Some(0..len),
+                    "{pressed}：这一块的高亮该铺满（{}）",
+                    block.display_text()
+                );
+            }
+        }
+    });
+}
+
+/// 一次按下就把整篇选上，不看 ⌘A 那条 750ms 循环的计时；也不去动那台计数器。
+#[gpui::test]
+async fn select_document_command_selects_the_whole_rendered_document_in_one_press(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = open_select_document_editor(cx);
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[1].entity.clone();
+        editor.focus_block(block.entity_id());
+        block.update(cx, |block, block_cx| {
+            block.move_to(3, block_cx);
+        });
+    });
+    redraw(cx);
+
+    cx.simulate_keystrokes("ctrl-shift-a");
+    redraw(cx);
+
+    assert_whole_document_selected(&editor, cx, "按下「选择全文」那一条");
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.rendered_select_all_cycle.is_none(),
+            "「选择全文」是一条独立命令，不该去写 ⌘A 那条循环的计数"
+        );
+    });
+}
+
+/// 命令注册表是菜单与命令面板共用的那一份（src/commands.rs）：这条命令要在表里，
+/// 标签在本机语言下取得到，并从面板里真的执行得出整篇选择。
+#[gpui::test]
+async fn select_document_command_runs_from_the_command_palette(cx: &mut TestAppContext) {
+    let (editor, cx) = open_select_document_editor(cx);
+    redraw(cx);
+
+    assert!(
+        crate::commands::commands()
+            .iter()
+            .any(|spec| spec.id == "select_document"),
+        "命令注册表里没有 `select_document`：命令面板与菜单都吃这一份，缺了就搜不到"
+    );
+    let label = cx.update(|_window, cx| {
+        let strings = cx.global::<I18nManager>().strings();
+        crate::commands::commands()
+            .iter()
+            .find(|spec| spec.id == "select_document")
+            .map(|spec| spec.label(strings))
+            .unwrap_or_default()
+    });
+    assert!(
+        !label.trim().is_empty(),
+        "「选择全文」在本机语言下没有标签，面板与菜单上会是一条空行"
+    );
+
+    cx.update(|window, cx| {
+        window.activate_window();
+        editor.update(cx, |editor, cx| editor.toggle_command_palette(window, cx));
+    });
+    redraw(cx);
+    cx.simulate_input(&label);
+    cx.simulate_keystrokes("return");
+    redraw(cx);
+
+    assert_whole_document_selected(&editor, cx, "从命令面板执行「选择全文」");
+    assert!(
+        editor.read_with(cx, |editor, _cx| editor.command_palette.is_none()),
+        "执行完面板该收起"
+    );
+}
+
+/// 源码模式只有那一条根块：同一条命令在那儿把整篇源文本选上，不要按了没反应。
+#[gpui::test]
+async fn select_document_command_selects_the_whole_source_buffer(cx: &mut TestAppContext) {
+    let (editor, cx) = open_select_document_editor(cx);
+    redraw(cx);
+
+    editor.update(cx, |editor, cx| {
+        editor.toggle_view_mode(cx);
+        assert!(matches!(editor.view_mode, ViewMode::Source));
+        let source = editor.document.visible_blocks()[0].entity.clone();
+        editor.focus_block(source.entity_id());
+        source.update(cx, |block, block_cx| {
+            block.move_to(2, block_cx);
+        });
+    });
+    redraw(cx);
+
+    cx.simulate_keystrokes("ctrl-shift-a");
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let source = editor.document.visible_blocks()[0].entity.read(cx);
+        assert_eq!(
+            source.selected_range,
+            0..source.visible_len(),
+            "源码模式下「选择全文」该把整篇源文本一次选上"
+        );
+    });
+}
+

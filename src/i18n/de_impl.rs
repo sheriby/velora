@@ -610,6 +610,9 @@ impl I18nStringsDe {
             command_toggle_sidebar: self
                 .command_toggle_sidebar
                 .unwrap_or(defaults.command_toggle_sidebar),
+            command_select_document: self
+                .command_select_document
+                .unwrap_or(defaults.command_select_document),
             command_find_in_document: self
                 .command_find_in_document
                 .unwrap_or(defaults.command_find_in_document),

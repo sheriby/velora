@@ -401,6 +401,8 @@ pub struct I18nStrings {
     pub command_toggle_sidebar: String,
     /// Command label: find in document.
     pub command_find_in_document: String,
+    /// Command label: select the whole document in one step.
+    pub command_select_document: String,
     /// Command label: find next match.
     pub command_find_next: String,
     /// Command label: find previous match.

@@ -161,7 +161,9 @@ impl I18nStrings {
             preferences_shortcut_word_select_right: "向右选择单词".into(),
             preferences_shortcut_select_home: "选择到行首".into(),
             preferences_shortcut_select_end: "选择到行尾".into(),
-            preferences_shortcut_select_all: "全选".into(),
+            // ⌘A 那条循环第一次只选当前这一块，偏好页原来只写「全选」，与下面那条
+            // 「选择全文」读起来像同一件事的两遍（报修「全文选择不直观」）。
+            preferences_shortcut_select_all: "全选（当前段落）".into(),
             preferences_shortcut_copy: "复制".into(),
             preferences_shortcut_cut: "剪切".into(),
             preferences_shortcut_paste: "粘贴".into(),
@@ -266,6 +268,8 @@ impl I18nStrings {
             command_toggle_focus_mode: "切换专注模式".into(),
             command_toggle_typewriter_mode: "切换打字机模式".into(),
             command_toggle_sidebar: "切换侧边栏".into(),
+            // 「选择全文」：一次按下就选整篇，与上面那条「全选」的两段循环是两回事。
+            command_select_document: "选择全文".into(),
             command_find_in_document: "查找当前文档…".into(),
             command_find_next: "查找下一个".into(),
             command_find_previous: "查找上一个".into(),
@@ -565,7 +569,7 @@ impl I18nStrings {
             preferences_shortcut_word_select_right: "Word Select Right".into(),
             preferences_shortcut_select_home: "Select to Line Start".into(),
             preferences_shortcut_select_end: "Select to Line End".into(),
-            preferences_shortcut_select_all: "Select All".into(),
+            preferences_shortcut_select_all: "Select All (Block)".into(),
             preferences_shortcut_copy: "Copy".into(),
             preferences_shortcut_cut: "Cut".into(),
             preferences_shortcut_paste: "Paste".into(),
@@ -673,6 +677,7 @@ impl I18nStrings {
             command_toggle_focus_mode: "Toggle Focus Mode".into(),
             command_toggle_typewriter_mode: "Toggle Typewriter Mode".into(),
             command_toggle_sidebar: "Toggle Sidebar".into(),
+            command_select_document: "Select All Text".into(),
             command_find_in_document: "Find in Document…".into(),
             command_find_next: "Find Next".into(),
             command_find_previous: "Find Previous".into(),

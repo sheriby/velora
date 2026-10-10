@@ -170,11 +170,7 @@ impl Editor {
                 }
     }
 
-    fn select_focused_block_text_for_rendered_select_all(
-        &mut self,
-        block: Entity<Block>,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_whole_block_text(&mut self, block: Entity<Block>, cx: &mut Context<Self>) {
         self.clear_cross_block_selection(cx);
         self.end_block_pointer_selection_sessions(cx);
         self.clear_table_axis_preview(cx);
@@ -190,6 +186,29 @@ impl Editor {
         });
         self.active_entity_id = Some(block.entity_id());
         cx.notify();
+    }
+
+    /// 「选择全文」那条命令的落点：一次按下就把整篇选上，不看 ⌘A 那台 750ms 计数器。
+    ///
+    /// 整文档的选择只有 [`Self::select_all_rendered_document`] 这一份实现，块里那条
+    /// 循环与命令面板/键位这一条入口都汇到它——一个选区模型、两个入口。源码模式整篇
+    /// 就是那一根源文本块，选满它即选满全文。
+    pub(super) fn select_document(&mut self, cx: &mut Context<Self>) {
+        self.workspace.search_navigation_selection = None;
+        match self.view_mode {
+            ViewMode::Rendered => self.select_all_rendered_document(cx),
+            ViewMode::Source => {
+                let Some(source) = self
+                    .document
+                    .visible_blocks()
+                    .first()
+                    .map(|visible| visible.entity.clone())
+                else {
+                    return;
+                };
+                self.select_whole_block_text(source, cx);
+            }
+        }
     }
 
     fn select_all_rendered_document(&mut self, cx: &mut Context<Self>) {
@@ -270,7 +289,7 @@ impl Editor {
         });
 
         if count == 1 {
-            self.select_focused_block_text_for_rendered_select_all(block, cx);
+            self.select_whole_block_text(block, cx);
         } else {
             self.select_all_rendered_document(cx);
         }
