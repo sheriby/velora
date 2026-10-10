@@ -426,8 +426,10 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(root.join("assets")).unwrap();
-    // 含 NUL 才能稳定判成不可预览文件（用户截图里的 png 场景）。
-    fs::write(root.join("assets").join("velora-banner.png"), [0u8, 1, 2, 3]).unwrap();
+    fs::write(
+        root.join("assets").join("velora-banner.png"),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/images/preview.png")),
+    ).unwrap();
     fs::write(root.join("velora-notes.md"), "开头\nvelora 命中行\n").unwrap();
     cx.on_quit({
         let root = root.clone();
@@ -496,11 +498,11 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             editor
-                .unsupported_preview_path
+                .image_preview
                 .as_ref()
-                .and_then(|path| fs::canonicalize(path).ok()),
+                .and_then(|preview| fs::canonicalize(&preview.path).ok()),
             Some(banner.clone()),
-            "点文件名应打开该文件（png 走不可预览占位）"
+            "点图片文件名应打开图片预览"
         );
     });
 

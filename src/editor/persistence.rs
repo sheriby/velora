@@ -792,6 +792,9 @@ impl Editor {
             self.save_dirty_workspace_documents_and_close(window, cx);
             return;
         }
+        if self.image_preview.is_some() {
+            return;
+        }
         if let Some(path) = self.file_path.clone() {
             let should_close_after_save = self.pending_close_after_save;
             if self.save_to_existing_path(&path, window, cx) {
@@ -808,6 +811,9 @@ impl Editor {
     }
 
     pub(crate) fn save_document_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.image_preview.is_some() {
+            return;
+        }
         if self.has_marked_document_text(cx) {
             self.pending_save_as = true;
             cx.notify();

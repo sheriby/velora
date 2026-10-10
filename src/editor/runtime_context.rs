@@ -41,6 +41,9 @@ impl Editor {
     }
 
     pub(super) fn current_edit_target_entity_id_from_state(&self, cx: &App) -> Option<EntityId> {
+        if self.image_preview.is_some() {
+            return None;
+        }
         self.active_entity_id
             .filter(|entity_id| self.focusable_entity_by_id(*entity_id).is_some())
             .or_else(|| {
@@ -314,6 +317,9 @@ impl Editor {
         window: &Window,
         cx: &App,
     ) -> Option<EntityId> {
+        if self.image_preview.is_some() {
+            return None;
+        }
         self.document
             .focused_block_entity_id(window, cx)
             .or_else(|| {

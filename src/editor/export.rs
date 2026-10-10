@@ -86,6 +86,9 @@ impl Editor {
         path: &Path,
         cx: &App,
     ) -> anyhow::Result<()> {
+        if self.image_preview.is_some() {
+            anyhow::bail!("图片预览不能作为文本导出");
+        }
         let markdown = self.current_document_source(cx);
         let theme = cx.global::<ThemeManager>().current().clone();
         let title = self.export_title();
@@ -99,6 +102,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.image_preview.is_some() {
+            return;
+        }
         let markdown = self.current_document_source(cx);
         let theme = cx.global::<ThemeManager>().current().clone();
         let title = self.export_title();

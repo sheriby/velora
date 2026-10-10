@@ -85,9 +85,8 @@ fn open_startup_window(cx: &mut App, startup_open: config::StartupOpenPreference
     if startup_open == config::StartupOpenPreference::LastOpenedFile
         && let Some(path) = config::first_existing_recent_markdown_file()
     {
-        match crate::editor::encoding::load_document(&path) {
-            Ok(document) => {
-                open_editor_window_from_document(cx, document, Some(path));
+        match app_menu::open_file_in_new_window(cx, &path) {
+            Ok(()) => {
                 return;
             }
             Err(err) => {
@@ -254,6 +253,9 @@ impl AssetSource for VeloraAssets {
             )))),
             "icon/workspace/generic-file.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/workspace/generic-file.svg"
+            )))),
+            "icon/workspace/image.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icon/workspace/image.svg"
             )))),
             "icon/editor/paragraph.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/editor/paragraph.svg"
@@ -513,6 +515,13 @@ fn main() {
             if absolute_path.is_dir() {
                 if let Err(err) = open_workspace_window(cx, absolute_path) {
                     eprintln!("failed to open workspace: {err}");
+                }
+                continue;
+            }
+
+            if crate::components::Block::is_supported_local_image_path(&absolute_path) {
+                if let Err(error) = app_menu::open_file_in_new_window(cx, &absolute_path) {
+                    eprintln!("打开图片失败：{error}");
                 }
                 continue;
             }

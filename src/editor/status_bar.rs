@@ -110,7 +110,18 @@ impl Editor {
             ));
         }
 
-        if let Some(lines) = self.active_code_line_count(cx) {
+        if let Some(preview) = &self.image_preview {
+            if let Some(image) = &preview.image {
+                let size = image.size(0);
+                right_items.push(
+                    div()
+                        .text_size(px(d.status_bar_text_size))
+                        .text_color(c.status_bar_text_dim)
+                        .child(format!("{} × {}", size.width.0, size.height.0))
+                        .into_any_element(),
+                );
+            }
+        } else if let Some(lines) = self.active_code_line_count(cx) {
             right_items.push(
                 div()
                     .text_size(px(d.status_bar_text_size))
@@ -133,7 +144,10 @@ impl Editor {
         // 右下角的模式切换按钮（用户需求：阅读时长信息换成源码切换）。
         // 普通文本/代码文件与无法渲染的 markdown 没有渲染视图可切，不显示
         // （用户报修：纯文本文件右下角不该有源码图标）。
-        if !(self.code_document || self.source_mode_fallback_required) {
+        if !(self.code_document
+            || self.source_mode_fallback_required
+            || self.image_preview.is_some())
+        {
             right_items.push(self.render_view_mode_toggle(theme, cx));
         }
 

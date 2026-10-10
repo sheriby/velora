@@ -69,9 +69,10 @@ impl Block {
     }
 
     pub(crate) fn is_supported_local_image_path(path: &std::path::Path) -> bool {
-        if !path.is_file() {
-            return false;
-        }
+        path.is_file() && Self::has_supported_image_extension(path)
+    }
+
+    pub(crate) fn has_supported_image_extension(path: &std::path::Path) -> bool {
         let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
             return false;
         };

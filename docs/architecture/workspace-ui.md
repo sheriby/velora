@@ -18,6 +18,7 @@
 - `active_tab: {Files, Search, Outline}`、`root`、`file_tree: Option<WorkspaceTreeNode>`（递归 children）、`outline_tree`/`toc_entries`、`expanded: HashSet<String>`、`open_documents: Vec<WorkspaceDocumentTab>`、搜索/替换全套状态、`panel_width` 等。
 - **标签是快照不是 Editor 实体**：`WorkspaceDocumentTab { path, recovery_id, file_version, markdown, dirty, preview, view }`。单个 Editor 在切换激活标签时换入换出 `DocumentTree` 内容（`snapshot_current_document` 把**缓冲区文本**存回标签——自动保存与恢复快照的内容来源就是它，取块树序列化的话一份没编辑过的文件进快照就已经被洗过一遍）。
 - 打开文件流：树节点点击 → `open_workspace_file`：UTF-16 BOM/文本嗅探（`has_utf16_bom`/`is_likely_text_file`）→ 推标签 → `reveal_path_in_tree` 展开祖先 → `restore_document_from_markdown` 或 `restore_document_from_code_source`（分流见 editor-core.md §2）——标签上存着这篇的阅读现场就按它交还，本次会话没读过才按新文档从顶部与渲染态起步（见 editor-core.md §6）→ 调度 autosave + `persist_session`。现场只活在这一进程里，不写进会话文件。
+- 图片文件在文本嗅探前分流：格式判据复用 `gpui::Img::extensions()`，`image_preview` 用 `ImageAssetLoader` 后台解码。标签只缓存路径，二进制不进文本缓冲区；编辑、保存和文本导出入口跳过图片。外部修改使图片缓存失效后重新加载，解码失败显示应用内模态。
 - `set_workspace_root`：canonicalize、按根恢复侧栏宽、剪枝根外标签、启动 watcher、持久化会话。
 - **预览（临时）标签**：`WorkspaceDocumentTab.preview` 为 true 时斜体显示，且同一时刻只留一个——`open_workspace_file_in_mode(…, Preview)` 在开新篇后销毁其它**干净**的预览标签。入口分两类：浏览型（工作区搜索结果行、文档内查找、⌘P 快速打开、正文本地链接）走 Preview，文件树用 `tree_click_open_mode`（单击 Preview、双击/键盘 Pinned）。转正点只有一个：`finish_dirty` 里 `document_dirty` 由 false 变 true 的那次调用 `pin_active_preview_tab`，编辑过的预览不再被替换掉，切走也留着。因此 `stale_previews` 必须在 `snapshot_current_document` **之后**算——活动标签的 `dirty` 只在那一步写回，早算刚编辑过的预览仍记为干净，会被当场销毁。
 - **未保存标记**：`dirty` 的标签（含活动那一篇）在标题前渲染 7px 实心圆点（`document-tab-dirty-{index}`）；判定与自动保存开关无关，只看有没有落盘。
@@ -62,7 +63,7 @@
 - **状态栏**（status_bar.rs）：字数/阅读时长读缓冲区（= 文件内容）；长块提示按 `(document_revision, bool)` 缓存；行列号仅 Source 模式算。
 - **大纲**：`sync_workspace_outline` 仅当缓冲区内容与 `outline_source` 不同才重建（比较零拷贝，`build_outline_tree` 用 pulldown-cmark，围栏代码安全）；滚动跟随高亮按字节偏移分区 + `outline_follow_cache`（按 revision 键）。
 - **搜索**：`schedule_workspace_search` 代数计数 + 120ms 去抖；工作区域走缓存的树、文档域走源码，均在 background executor + catch_unwind；结果上限 200；**重搜期间保留旧结果**（防闪空白）；文档内命中经 `sync_document_search_highlights` 画进块。
-- ⌘P 快速切换（quick_open.rs）：过滤 `workspace_text_files()`，上限 12，IME 输入路由经 Editor 的 input handler。
+- ⌘P 快速切换（quick_open.rs）：过滤 `workspace_openable_files()`（文本与图片），上限 12，IME 输入路由经 Editor 的 input handler。
 - ⇧⌘P 命令面板（command_palette.rs）：条目来自 `commands::commands()`（`Edit`/`Format` 两档只进面板、不进系统菜单栏）；按回车与点一行同一条收尾 `run_palette_command`（:100）→ `window.dispatch_action`。面板输入框持有窗口焦点，块那一层不在派发路径上（派发读的是上一帧的派发树），所以块级命令在编辑器层收口，见 editor-core.md §8。
 
 ## 9. 窗口 chrome 与覆盖层

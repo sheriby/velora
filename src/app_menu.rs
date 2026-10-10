@@ -282,6 +282,14 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
 }
 
 pub(crate) fn open_file_in_new_window(cx: &mut App, path: &Path) -> anyhow::Result<()> {
+    if crate::components::Block::is_supported_local_image_path(path) {
+        let handle = open_editor_window(cx, String::new(), None);
+        handle.update(cx, |editor, window, cx| {
+            editor.open_workspace_file(path.to_path_buf(), window, cx);
+        })?;
+        record_recent_file_and_refresh(path, cx);
+        return Ok(());
+    }
     let document = crate::editor::encoding::load_document(path)
         .with_context(|| format!("failed to read '{}'", path.display()))?;
     open_editor_window_from_document(cx, document, Some(path.to_path_buf()));

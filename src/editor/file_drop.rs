@@ -146,6 +146,10 @@ impl Editor {
         }
 
         if let Some(path) = Self::first_dropped_image_path(paths.paths()) {
+            if self.image_preview.is_some() {
+                self.open_workspace_file(path, window, cx);
+                return;
+            }
             if self.insert_image_at_caret(path, cx) {
                 return;
             }
@@ -193,8 +197,13 @@ impl Editor {
         path: &Path,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let document = super::encoding::load_document(path)
-            .with_context(|| format!("failed to read '{}'", path.display()))?;
+        let image_file = Block::is_supported_local_image_path(path);
+        let document = if image_file {
+            super::encoding::LoadedDocument::from_text(String::new())
+        } else {
+            super::encoding::load_document(path)
+                .with_context(|| format!("failed to read '{}'", path.display()))?
+        };
         let super::encoding::LoadedDocument { raw, text: markdown } = document;
         self.document_revision = self.document_revision.wrapping_add(1);
         self.autosave_task = None;
@@ -206,7 +215,10 @@ impl Editor {
         // 与工作区树打开共用同一判定：只有 .md/.markdown 按 Markdown 解析，
         // 其余（.jsonl/.log/无扩展名等）一律代码文档。此前拖拽用 is_code_file
         // 白名单，.jsonl 被误当 Markdown 解析，两条入口行为不一致。
-        if super::workspace::is_markdown_document(path) {
+        if image_file {
+            self.replace_document_from_markdown(String::new(), Some(path.to_path_buf()), cx);
+            self.load_image_file_preview(path.to_path_buf(), cx);
+        } else if super::workspace::is_markdown_document(path) {
             self.replace_document_from_markdown(markdown, Some(path.to_path_buf()), cx);
         } else {
             self.replace_document_from_code_source(markdown, path.to_path_buf(), cx);
@@ -284,6 +296,7 @@ impl Editor {
         kind: ImportKind,
         cx: &mut Context<Self>,
     ) {
+        self.image_preview = None;
         // `Restore` 那份现场由调用方在换内容之前记好，这里只负责在块树重建之后交还。
         let restored_view = match kind {
             ImportKind::Open => None,

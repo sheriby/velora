@@ -715,6 +715,11 @@ impl Render for Editor {
         // content area with a centered notice, VS Code style.
         let content_area = if self.show_welcome {
             self.render_welcome_page(&theme, &strings, cx)
+        } else if self.image_preview.is_some()
+            && self.quick_open.is_none()
+            && self.command_palette.is_none()
+        {
+            self.render_image_file_preview(&theme, &strings)
         } else if let Some(path) = self.unsupported_preview_path.as_ref() {
             let file_name = path
                 .file_name()

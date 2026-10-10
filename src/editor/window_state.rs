@@ -504,6 +504,9 @@ impl Editor {
     }
 
     pub(crate) fn toggle_view_mode(&mut self, cx: &mut Context<Self>) {
+        if self.image_preview.is_some() {
+            return;
+        }
         self.end_block_pointer_selection_sessions(cx);
         let selection_snapshot = self.capture_source_selection_snapshot(cx);
         self.clear_cross_block_selection(cx);
@@ -823,7 +826,7 @@ impl Editor {
     /// 不留空撤销组。
     pub(crate) fn format_document(&mut self, cx: &mut Context<Self>) {
         // 源码/代码视图没有「模型的写法」可言：那里的块就是文件本身。
-        if self.view_mode != ViewMode::Rendered {
+        if self.view_mode != ViewMode::Rendered || self.image_preview.is_some() {
             return;
         }
         self.flush_pending_materialization(cx);

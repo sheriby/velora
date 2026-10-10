@@ -29,6 +29,7 @@ const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
 const CHEVRON_DOWN_ICON: &str = "icon/workspace/chevron-down.svg";
 const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
 const GENERIC_FILE_ICON: &str = "icon/workspace/generic-file.svg";
+const IMAGE_ICON: &str = "icon/workspace/image.svg";
 pub(crate) const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
 const WORKSPACE_NODE_INDENT: f32 = 16.0;
 /// 列表行数超过这个数就按视口开窗渲染：元素树一帧只建视口那几十行。
@@ -79,8 +80,7 @@ pub(super) enum WorkspaceTreeKind {
     Directory(PathBuf),
     MarkdownFile(PathBuf),
     CodeFile(PathBuf),
-    /// Any non-Markdown, non-code file. Shown in the tree for completeness;
-    /// clicking it reports that the type can't be opened yet.
+    /// 非 Markdown、非代码文件：图片可预览，其余显示无法预览提示。
     OtherFile(PathBuf),
     Heading { line: usize, level: u8 },
 }

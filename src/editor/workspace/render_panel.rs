@@ -363,6 +363,11 @@ impl Editor {
         let icon = match &node.kind {
             WorkspaceTreeKind::Directory(_) => Some((FOLDER_ICON, Hsla::from(rgba(0x4a93d8ff)))),
             WorkspaceTreeKind::MarkdownFile(_) => Some((MARKDOWN_ICON, c.dialog_primary_button_bg)),
+            WorkspaceTreeKind::CodeFile(path) | WorkspaceTreeKind::OtherFile(path)
+                if crate::components::Block::has_supported_image_extension(path) =>
+            {
+                Some((IMAGE_ICON, c.dialog_muted))
+            }
             WorkspaceTreeKind::CodeFile(_) => Some((CODE_ICON, c.dialog_muted)),
             WorkspaceTreeKind::OtherFile(_) => Some((GENERIC_FILE_ICON, c.dialog_muted)),
             WorkspaceTreeKind::Heading { .. } => None,

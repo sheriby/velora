@@ -47,6 +47,17 @@ impl Editor {
         path: &Path,
         cx: &mut Context<Self>,
     ) {
+        if crate::components::Block::has_supported_image_extension(path) {
+            cx.remove_asset::<ImageAssetLoader>(&Resource::Path(path.to_path_buf().into()));
+            if self
+                .image_preview
+                .as_ref()
+                .is_some_and(|preview| preview.path == path)
+            {
+                self.load_image_file_preview(path.to_path_buf(), cx);
+            }
+            return;
+        }
         self.reload_externally_changed_document_with_recheck(path, true, cx);
     }
 
@@ -296,6 +307,19 @@ impl Editor {
         self.text_files_on_disk()
     }
 
+    pub(crate) fn workspace_openable_files(&self) -> Vec<PathBuf> {
+        self.workspace
+            .files_on_disk
+            .iter()
+            .filter(|path| {
+                is_markdown_file(path)
+                    || is_code_file(path)
+                    || crate::components::Block::has_supported_image_extension(path)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// 工作区里可作替换目标 / 双链候选的文本文件（Markdown + 代码）。
     pub(crate) fn text_files_on_disk(&self) -> Vec<PathBuf> {
         self.workspace
@@ -455,7 +479,8 @@ impl Editor {
         // 只能声明「编码不支持」。解码/编码现在是对称的（`FileShape` 带 BOM 与
         // 行尾一起走），能不能读交给唯一的读盘漏斗 `encoding::load_document` 判定，
         // 入口不再各自猜编码——否则支持的编码越加越多，这里的白名单越漏。
-        if !is_likely_text_file(&path) {
+        let image_file = crate::components::Block::is_supported_local_image_path(&path);
+        if !image_file && !is_likely_text_file(&path) {
             self.show_welcome = false;
             self.show_preview_unavailable(path.clone(), window, cx);
             return;
@@ -500,7 +525,14 @@ impl Editor {
         let cached_view = cached.as_ref().and_then(|tab| tab.view.clone());
         // `raw` 是本次读盘拿到的原始字节；脏标签的内容来自内存而不是磁盘，
         // 那种情况没有「原样写回」的依据，留空。
-        let (markdown, raw, dirty, recovery_id, file_version) = if let Some(tab) = cached {
+        let (markdown, raw, dirty, recovery_id, file_version) = if image_file {
+            // 图片标签只存路径，二进制内容不能进入文本缓冲区或自动保存快照。
+            let recovery_id = cached
+                .as_ref()
+                .map(|tab| tab.recovery_id)
+                .unwrap_or_else(uuid::Uuid::new_v4);
+            (String::new(), Vec::new(), false, recovery_id, 0)
+        } else if let Some(tab) = cached {
             if tab.dirty {
                 (tab.markdown, Vec::new(), true, tab.recovery_id, tab.file_version)
             } else {
@@ -573,7 +605,10 @@ impl Editor {
         self.reveal_path_in_tree(&path);
         // Markdown rendering is for .md/.markdown only; every other text file
         // (code, dotfiles, plain text) opens as monospace source text.
-        if is_markdown_document(&path) {
+        if image_file {
+            self.replace_document_from_markdown(String::new(), Some(path.clone()), cx);
+            self.load_image_file_preview(path.clone(), cx);
+        } else if is_markdown_document(&path) {
             self.restore_document_from_markdown(markdown, path.clone(), cached_view, cx);
         } else {
             self.restore_document_from_code_source(markdown, path.clone(), cached_view, cx);
@@ -614,6 +649,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.image_preview = None;
         self.show_welcome = false;
         if let Some(existing) = self
             .workspace

@@ -44,6 +44,7 @@ impl Editor {
                 let tab_shows_code_icon = is_code_file(&path)
                     || path.extension().is_none()
                     || self.unsupported_preview_path.as_ref() == Some(&path);
+                let tab_is_image = crate::components::Block::has_supported_image_extension(&path);
                 // The close button carries its own hover state: highlighting
                 // the whole tab was indistinguishable from the tab's own
                 // hover background, so the X lights up only under the pointer.
@@ -132,7 +133,13 @@ impl Editor {
                             .h(px(2.0))
                             .bg(c.dialog_primary_button_bg)
                     }))
-                    .child(
+                    .child(if tab_is_image {
+                        svg()
+                            .path(GENERIC_FILE_ICON)
+                            .size(px(12.0))
+                            .text_color(c.dialog_muted)
+                            .into_any_element()
+                    } else {
                         div()
                             .w(px(11.0))
                             .text_center()
@@ -143,8 +150,9 @@ impl Editor {
                             } else {
                                 c.dialog_primary_button_bg
                             })
-                            .child(if tab_shows_code_icon { "⌘" } else { "M" }),
-                    )
+                            .child(if tab_shows_code_icon { "⌘" } else { "M" })
+                            .into_any_element()
+                    })
                     .child({
                         // 预览标签用斜体区分（用户需求：单击预览/双击固定）。
                         let mut title_el = div().flex_1().min_w(px(0.0)).truncate();

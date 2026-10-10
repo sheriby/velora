@@ -131,6 +131,7 @@ impl Editor {
 
         div()
             .id("quick-open-overlay")
+            .debug_selector(|| "quick-open-overlay".into())
             .absolute()
             .top_0()
             .left_0()
@@ -247,7 +248,7 @@ impl Editor {
             .as_ref()
             .map(|state| state.query.trim().to_lowercase())
             .unwrap_or_default();
-        let mut files = self.workspace_text_files();
+        let mut files = self.workspace_openable_files();
         if !query.is_empty() {
             files.retain(|path| {
                 let name = path

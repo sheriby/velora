@@ -901,3 +901,375 @@ async fn toggling_source_mode_preserves_list_child_image_runtime(cx: &mut TestAp
     });
 }
 
+const PNG_PREVIEW_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fixtures/images/preview.png"
+));
+const JPEG_PREVIEW_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fixtures/images/preview.jpg"
+));
+const WEBP_PREVIEW_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fixtures/images/preview.webp"
+));
+const ICO_PREVIEW_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fixtures/images/preview.ico"
+));
+
+fn image_preview_fixture_root(cx: &mut TestAppContext) -> PathBuf {
+    let root = temp_fixture_dir().join(format!("image-preview-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("创建图片预览夹具目录");
+    let root = fs::canonicalize(root).expect("规范化夹具目录");
+    cx.on_quit({
+        let root = root.clone();
+        move || fs::remove_dir_all(root).expect("清理图片预览夹具")
+    });
+    root
+}
+
+#[gpui::test]
+async fn image_file_preview_first_frame_does_not_flash_placeholder_text(cx: &mut TestAppContext) {
+    use crate::editor::workspace::WorkspaceOpenMode;
+
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let cases: &[(&str, &[u8])] = &[
+        ("PNG", PNG_PREVIEW_BYTES),
+        ("jpg", JPEG_PREVIEW_BYTES),
+        ("webp", WEBP_PREVIEW_BYTES),
+        ("ico", ICO_PREVIEW_BYTES),
+    ];
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    for (extension, bytes) in cases {
+        let path = root.join(format!("首次打开 [图片].{extension}"));
+        fs::write(&path, bytes).expect("写入图片");
+        // 文件树单击走预览模式；在调度解码任务之前画首帧，才能捕获冷缓存的闪字。
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
+                editor.focus_workspace_tree(window, cx);
+            });
+            window.draw(cx).clear();
+        });
+        assert!(cx.debug_bounds("image-file-preview").is_some());
+        assert!(
+            cx.debug_bounds("image-file-preview-message").is_none(),
+            "{extension} 首次解码前不应闪出一行占位文字"
+        );
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor
+                    .image_preview
+                    .as_ref()
+                    .is_some_and(|preview| preview.image.is_none()),
+                "应覆盖第一次解码还未完成的帧"
+            );
+            assert!(editor.unsupported_preview_path.is_none());
+        });
+        redraw(cx);
+        redraw(cx);
+        assert!(cx.debug_bounds("image-file-preview-image").is_some());
+    }
+}
+
+#[gpui::test]
+async fn image_file_preview_decodes_formats_and_never_saves_text_over_images(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let cases: &[(&str, &[u8])] = &[
+        ("PNG", PNG_PREVIEW_BYTES),
+        ("jpg", JPEG_PREVIEW_BYTES),
+        ("jpeg", JPEG_PREVIEW_BYTES),
+        ("webp", WEBP_PREVIEW_BYTES),
+        ("ico", ICO_PREVIEW_BYTES),
+    ];
+    for (extension, bytes) in cases {
+        let path = root.join(format!("图片 [1].{extension}"));
+        fs::write(&path, bytes).expect("写入图片夹具");
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file(path.clone(), window, cx)
+            })
+        });
+        cx.run_until_parked();
+        redraw(cx);
+        editor.read_with(cx, |editor, cx| {
+            let preview = editor.image_preview.as_ref().expect("进入图片预览");
+            let image = preview.image.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "{extension} 未完成实际解码，模态状态：{}",
+                    editor.modal_is_open()
+                )
+            });
+            assert_eq!(
+                image.size(0),
+                gpui::size(gpui::DevicePixels(16), gpui::DevicePixels(16)),
+                "{extension} 的图片尺寸"
+            );
+            assert_eq!(editor.file_path.as_ref(), Some(&path));
+            assert!(
+                editor.buffer.text().is_empty(),
+                "图片字节不能进入文本缓冲区"
+            );
+            assert!(!editor.document_dirty);
+            assert!(
+                editor.current_edit_target_from_state(cx).is_none(),
+                "图片没有文本编辑目标"
+            );
+            assert!(!editor.modal_is_open());
+        });
+        let bounds = cx
+            .debug_bounds("image-file-preview-image")
+            .expect("图片元素应渲染");
+        assert!(bounds.size.width > px(0.0) && bounds.size.height > px(0.0));
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.replace_text_in_range(None, "不应写入", window, cx);
+                editor.toggle_view_mode(cx);
+                editor.format_document(cx);
+                editor.save_document(window, cx);
+                editor.save_document_as(window, cx);
+                assert!(
+                    editor
+                        .export_document_to_path(ExportFormat::Png, &path, cx)
+                        .is_err()
+                );
+            })
+        });
+        assert_eq!(
+            fs::read(&path).expect("读取预览后的原文件"),
+            *bytes,
+            "预览及文本命令不能覆盖图片"
+        );
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.image_preview.is_some());
+            assert!(!editor.document_dirty);
+            assert!(editor.buffer.text().is_empty());
+        });
+    }
+}
+
+#[gpui::test]
+async fn image_file_preview_preserves_dirty_text_tabs_and_closes_normally(cx: &mut TestAppContext) {
+    use crate::editor::workspace::WorkspaceOpenMode;
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let note = root.join("note.md");
+    let picture = root.join("picture.png");
+    let another = root.join("another.webp");
+    fs::write(&another, WEBP_PREVIEW_BYTES).expect("写入另一张图片");
+    fs::write(&note, "original").expect("写入文档");
+    fs::write(&picture, PNG_PREVIEW_BYTES).expect("写入图片");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(note.clone(), window, cx)
+        })
+    });
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| {
+        editor.document.first_root().expect("文档块").clone()
+    });
+    block.update(cx, |block, cx| {
+        block.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        let end = block.visible_len();
+        block.replace_text_in_visible_range(end..end, " draft", None, false, cx);
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file_in_mode(
+                picture.clone(),
+                WorkspaceOpenMode::Preview,
+                window,
+                cx,
+            );
+        })
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.cached_tab_content_for_path(&note, cx),
+            Some(("original draft".into(), true)),
+            "图片预览必须保留文档的未保存内容"
+        );
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file_in_mode(
+                picture.clone(),
+                WorkspaceOpenMode::Pinned,
+                window,
+                cx,
+            );
+            editor.open_workspace_file_in_mode(another, WorkspaceOpenMode::Preview, window, cx);
+            editor.close_active_tab(window, cx);
+            assert_eq!(
+                editor.file_path.as_ref(),
+                Some(&picture),
+                "固定图片标签不能被新的临时预览替换"
+            );
+            editor.close_active_tab(window, cx);
+        })
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.image_preview.is_none());
+        assert_eq!(editor.file_path.as_ref(), Some(&note));
+        assert_eq!(editor.buffer.text(), "original draft");
+        assert!(editor.document_dirty);
+    });
+}
+
+#[gpui::test]
+async fn image_file_preview_reports_decode_errors_in_an_app_modal(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let path = root.join("broken.png");
+    fs::write(&path, [0, 1, 2, 3]).expect("写入损坏图片");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path, window, cx)
+        })
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.image_preview.is_some());
+        assert!(editor.modal_is_open(), "异步解码失败必须显示应用内模态");
+    });
+}
+
+#[gpui::test]
+async fn image_file_preview_refreshes_after_external_changes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let path = root.join("picture.png");
+    fs::write(&path, PNG_PREVIEW_BYTES).expect("写入图片");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        })
+    });
+    cx.run_until_parked();
+    let before = editor.read_with(cx, |editor, _| {
+        editor
+            .image_preview
+            .as_ref()
+            .and_then(|preview| preview.image.as_ref())
+            .expect("首次解码")
+            .id
+    });
+    fs::write(&path, JPEG_PREVIEW_BYTES).expect("外部替换图片内容");
+    editor.update(cx, |editor, cx| editor.on_watched_path_changed(&path, cx));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        let image = editor
+            .image_preview
+            .as_ref()
+            .and_then(|preview| preview.image.as_ref())
+            .expect("更新后的解码");
+        assert_ne!(image.id, before, "外部更新必须使已解码图片失效");
+        assert!(!editor.modal_is_open());
+    });
+}
+
+#[gpui::test]
+async fn image_file_preview_prompts_before_discarding_an_untitled_draft(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let path = root.join("picture.png");
+    fs::write(&path, PNG_PREVIEW_BYTES).expect("写入图片");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "draft".into(), None));
+    editor.update(cx, |editor, _| editor.document_dirty = true);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        })
+    });
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.show_drop_replace_dialog);
+        assert!(editor.image_preview.is_none());
+        assert_eq!(editor.buffer.text(), "draft");
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.discard_pending_drop_replace(window, cx)
+        })
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.file_path.as_ref(), Some(&path));
+        assert!(
+            editor
+                .image_preview
+                .as_ref()
+                .is_some_and(|preview| preview.image.is_some())
+        );
+        assert!(!editor.document_dirty);
+    });
+}
+
+#[gpui::test]
+async fn image_file_preview_is_available_from_new_window_open(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let path = root.join("picture.ico");
+    fs::write(&path, ICO_PREVIEW_BYTES).expect("写入图标");
+    let handle = cx.update(|cx| {
+        crate::app_menu::open_file_in_new_window(cx, &path).expect("二进制图片应正常打开");
+        cx.windows()
+            .into_iter()
+            .find_map(|handle| handle.downcast::<Editor>())
+            .expect("图片窗口")
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let editor = handle.read(cx).expect("读取图片窗口");
+        assert_eq!(editor.file_path.as_ref(), Some(&path));
+        assert!(
+            editor
+                .image_preview
+                .as_ref()
+                .is_some_and(|preview| preview.image.is_some())
+        );
+        assert!(editor.buffer.text().is_empty());
+    });
+}
+
+#[gpui::test]
+async fn image_file_preview_keeps_quick_open_visible_and_lists_images(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let picture = root.join("picture.png");
+    let another = root.join("another.webp");
+    fs::write(&picture, PNG_PREVIEW_BYTES).expect("写入图片");
+    fs::write(&another, WEBP_PREVIEW_BYTES).expect("写入图片");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root, cx));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(picture.clone(), window, cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.toggle_quick_open(window, cx)));
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("quick-open-overlay").is_some(),
+        "图片预览不能遮住快速打开"
+    );
+    editor.read_with(cx, |editor, _| {
+        let entries = &editor.quick_open.as_ref().expect("快速打开").results;
+        assert!(
+            entries.contains(&picture) && entries.contains(&another),
+            "快速打开应列出可预览图片"
+        );
+    });
+}
