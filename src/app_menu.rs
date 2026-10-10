@@ -289,6 +289,20 @@ pub(crate) fn open_file_in_new_window(cx: &mut App, path: &Path) -> anyhow::Resu
     Ok(())
 }
 
+/// 把打开失败的理由送到界面层：应用内模态（禁系统原生弹窗）。
+///
+/// 菜单「打开文件」与最近文件那条路各自已经有 `show_window_prompt`；Finder 的
+/// open 事件与 Deep-link 以前只往 stderr 写一行，用户点了没反应又不知道为什么——
+/// 现在「编码不能无损写回」是一类**会**发生的拒绝，必须有地方说给用户。
+pub(crate) fn report_open_failure(cx: &mut App, error: &anyhow::Error) {
+    let title = cx
+        .global::<I18nManager>()
+        .strings()
+        .open_failed_title
+        .clone();
+    show_message_on_active_editor(cx, &title, &error.to_string());
+}
+
 fn record_recent_file_and_refresh(path: &Path, cx: &mut App) {
     if let Err(err) = record_recent_file(path) {
         eprintln!("failed to update recent file history: {err}");

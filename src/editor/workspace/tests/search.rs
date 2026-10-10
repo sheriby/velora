@@ -1,7 +1,6 @@
 use super::super::{
     Editor, SearchMatcher, SearchOptions, WorkspaceTab, collect_workspace_files_on_disk,
-    has_utf16_bom, is_likely_text_file, search_utf8_to_utf16, search_utf16_to_utf8,
-    search_workspace_files,
+    is_likely_text_file, search_utf8_to_utf16, search_utf16_to_utf8, search_workspace_files,
 };
 use crate::components::UndoCaptureKind;
 use gpui::{
@@ -47,24 +46,26 @@ fn search_offsets_keep_cjk_and_emoji_boundaries() {
     assert_eq!(search_utf8_to_utf16(text, "中😀".len()), 3);
 }
 
+/// 「这段字节开头是不是 UTF-16」只有一份判据（`file_shape::starts_with_utf16_bom`），
+/// 形状判定与「值不值得预览」的嗅探共用它；这里锁住三种字节的取舍。
 #[test]
 fn utf16_bom_detection() {
-    let root = std::env::temp_dir().join(format!("velora-bom-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).expect("create root");
-
-    let le = root.join("le.txt");
-    std::fs::write(&le, [0xFF, 0xFE, b'a', 0x00]).expect("write LE");
-    assert!(has_utf16_bom(&le));
-
-    let be = root.join("be.txt");
-    std::fs::write(&be, [0xFE, 0xFF, 0x00, b'a']).expect("write BE");
-    assert!(has_utf16_bom(&be));
-
-    let utf8 = root.join("utf8.txt");
-    std::fs::write(&utf8, "plain utf-8 text").expect("write utf8");
-    assert!(!has_utf16_bom(&utf8));
-
-    let _ = std::fs::remove_dir_all(root);
+    assert!(crate::editor::buffer::starts_with_utf16_bom(
+        &[0xFF, 0xFE, b'a', 0x00]
+    ));
+    assert!(crate::editor::buffer::starts_with_utf16_bom(
+        &[0xFE, 0xFF, 0x00, b'a']
+    ));
+    assert!(!crate::editor::buffer::starts_with_utf16_bom(
+        b"plain utf-8 text"
+    ));
+    // 单字节读窗口不够判，不能误认成 UTF-16。
+    assert!(!crate::editor::buffer::starts_with_utf16_bom(
+        &[0xFF]
+    ));
+    assert!(crate::editor::buffer::starts_with_utf16_bom(
+        &[0xFF, 0xFE]
+    ));
 }
 
 pub(super) fn plain_matcher(query: &str) -> SearchMatcher {

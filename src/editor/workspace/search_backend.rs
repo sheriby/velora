@@ -458,22 +458,6 @@ pub(crate) fn find_document_match_from(
     }
 }
 
-/// Detects a UTF-16 BOM (LE or BE). Such files are text, but the editor only
-/// renders UTF-8 — they get a specific placeholder instead of a parse error
-/// (roadmap G2).
-pub(crate) fn has_utf16_bom(path: &Path) -> bool {
-    use std::io::Read;
-    let mut file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return false,
-    };
-    let mut head = [0u8; 2];
-    match file.read_exact(&mut head) {
-        Ok(()) => head == [0xFF, 0xFE] || head == [0xFE, 0xFF],
-        Err(_) => false,
-    }
-}
-
 /// Heuristic text detection (same shape as Git's `is_text`): read up to the
 /// first 8 KiB and treat the file as text when it decodes as UTF-8 (lossy
 /// covers Latin-1-ish legacy files) and contains no NUL byte — the signature
@@ -499,9 +483,8 @@ pub(crate) fn is_likely_text_file(path: &Path) -> bool {
         }
     }
     let head = &head[..read];
-    // UTF-16 BOMs are text but not UTF-8; treat them as previewable anyway
-    // since the editor renders UTF-8 only.
-    if read >= 2 && (head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF])) {
+    // UTF-16 是真编码，不是二进制：判定形状那张表在这里也只准用一次。
+    if crate::editor::buffer::starts_with_utf16_bom(head) {
         return true;
     }
     if head.contains(&0) {

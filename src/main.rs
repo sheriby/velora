@@ -467,6 +467,7 @@ fn main() {
                     close_pristine_startup_windows(cx);
                     if let Err(err) = app_menu::open_file_in_new_window(cx, &path) {
                         eprintln!("failed to open '{}': {err}", path.display());
+                        app_menu::report_open_failure(cx, &err);
                     }
                     restore_recovery_windows(cx, &recovery_windows_restored);
                 });
@@ -517,22 +518,37 @@ fn main() {
                 continue;
             }
 
-            let document = match crate::editor::encoding::load_document(&absolute_path) {
-                Ok(document) => {
-                    if let Err(err) = config::record_recent_file(&absolute_path) {
-                        eprintln!("failed to update recent file history: {err}");
+            // 读盘失败（含「编码不能无损写回」这一类拒绝）时**不能**把这个路径交给
+            // 一份空文档：按那个路径保存就是把用户的文件覆盖成空白，和报修第 1 条
+            // 是同一类破坏。于是开一份未命名空文档，理由走应用内模态（禁系统原生弹窗）。
+            let (document, open_path, failure) =
+                match crate::editor::encoding::load_document(&absolute_path) {
+                    Ok(document) => {
+                        if let Err(err) = config::record_recent_file(&absolute_path) {
+                            eprintln!("failed to update recent file history: {err}");
+                        }
+                        (document, Some(absolute_path), None)
                     }
-                    document
-                }
-                Err(err) => {
-                    eprintln!(
-                        "failed to read '{}': {err}. opened as empty document.",
-                        absolute_path.display()
-                    );
-                    crate::editor::encoding::LoadedDocument::from_text(String::new())
-                }
-            };
-            open_editor_window_from_document(cx, document, Some(absolute_path));
+                    Err(err) => {
+                        eprintln!("failed to open '{}': {err}", absolute_path.display());
+                        (
+                            crate::editor::encoding::LoadedDocument::from_text(String::new()),
+                            None,
+                            Some(err.to_string()),
+                        )
+                    }
+                };
+            let handle = open_editor_window_from_document(cx, document, open_path);
+            if let Some(detail) = failure {
+                let title = cx
+                    .global::<I18nManager>()
+                    .strings()
+                    .open_failed_title
+                    .clone();
+                let _ = handle.update(cx, |editor, _window, cx| {
+                    editor.show_message_modal(title, detail, cx);
+                });
+            }
         }
         restore_recovery_windows(cx, &recovery_windows_restored);
         app_menu::install_menus(cx);

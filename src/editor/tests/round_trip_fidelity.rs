@@ -1927,3 +1927,464 @@ async fn typing_between_two_footnote_references_keeps_both_ordinals(cx: &mut Tes
         "字节层面被改写了：那已经不是这条测试的范围"
     );
 }
+
+/// UTF-16 夹具：BOM + 逐 code unit 的 LE/BE 字节。
+fn utf16_bytes(text: &str, little_endian: bool, bom: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if bom {
+        bytes.extend_from_slice(if little_endian {
+            &[0xFF, 0xFE]
+        } else {
+            &[0xFE, 0xFF]
+        });
+    }
+    for unit in text.encode_utf16() {
+        bytes.extend_from_slice(&if little_endian {
+            unit.to_le_bytes()
+        } else {
+            unit.to_be_bytes()
+        });
+    }
+    bytes
+}
+
+/// 把「块里可见文本第 0 位」换算成缓冲区偏移——块记号（`# `）不属于可见文本，
+/// 光标落点是记号**之后**，所以插字符的落点必须按光标算，不是按 0 算。
+/// （`saving_after_an_edit_at_the_start_preserves_every_other_byte` 同一口径。）
+fn first_block_caret_offset(
+    editor: &gpui::Entity<Editor>,
+    first: &gpui::Entity<crate::editor::Block>,
+    cx: &mut gpui::VisualTestContext,
+) -> usize {
+    editor
+        .read_with(cx, |editor, cx| {
+            editor.caret_source_offset(first.entity_id(), 0, cx)
+        })
+        .expect("首块第 0 位可见文本该能换算成缓冲区偏移")
+}
+
+/// 打开 → 插一个字符 → 保存：UTF-16 文件的中文原文一个字都不许多、也不许少。
+///
+/// 这是那批报修里最严重的一条（数据丢失）：UTF-16 从没被真解码过（`from_utf8_lossy`
+/// 把整个文件换成替换符），而保存又按 UTF-8 写回去——用户按一个键、按一下保存，
+/// 整篇中文就没了。修法是两头对称：解码真做 UTF-16，编码也真做 UTF-16，形状
+/// （编码 + BOM + 行尾）记在 `FileShape` 里跟着缓冲区走。
+#[gpui::test]
+async fn editing_a_utf16_file_then_saving_keeps_the_users_text(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let source = "# 会议纪要\r\n\r\n中文正文 🎉\r\n第二行\r\n";
+    for little_endian in [true, false] {
+        let original = utf16_bytes(source, little_endian, true);
+        let label = if little_endian { "utf16-le-edit" } else { "utf16-be-edit" };
+        let path = temp_markdown_path(label);
+        fs::write(&path, &original).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+
+        // 打开就必须是可读文本：报修的另一半「没有编码提示」其实是同一处——
+        // 解码根本没做，屏幕上本来就是一串替换符。
+        let document = encoding::load_document(&path).expect("read fixture");
+        assert_eq!(document.text, source, "UTF-16 没有被解码");
+
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        redraw(cx);
+        let first = editor
+            .read_with(cx, |editor, _cx| {
+                editor
+                    .document
+                    .visible_blocks()
+                    .first()
+                    .map(|visible| visible.entity.clone())
+            })
+            .expect("UTF-16 文档应有可见块");
+        cx.update(|_window, cx| {
+            first.update(cx, |block, _cx| block.selected_range = 0..0);
+        });
+        let caret = first_block_caret_offset(&editor, &first, cx);
+        cx.simulate_input("Z");
+        redraw(cx);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+
+        // 缓冲区是 LF 空间：期望字节 = 「原文在光标处插一个 Z」再按文件的形状
+        // （UTF-16 + BOM + CRLF）编回去。
+        let source_lf = source.replace("\r\n", "\n");
+        let edited = format!(
+            "{}Z{}",
+            &source_lf[..caret],
+            &source_lf[caret..]
+        );
+        let expected = utf16_bytes(&edited.replace('\n', "\r\n"), little_endian, true);
+        let saved = fs::read(&path).expect("read saved file");
+        assert_eq!(
+            saved,
+            expected,
+            "UTF-16 文件插一个字符后保存改写了别的字节（{}\u{2192}{} 字节）",
+            original.len(),
+            saved.len()
+        );
+        // 存出去的文件必须能按同一份文本重开——只有形状与文本对称才做得到。
+        // 重开拿到的是**磁盘形状**的那份文本（行尾还是 CRLF，BOM 已剥）。
+        let reopened = encoding::load_document(&path).expect("reopen saved file");
+        assert_eq!(
+            reopened.text,
+            edited.replace('\n', "\r\n"),
+            "保存后再解码不是那份文本"
+        );
+    }
+}
+
+/// 打开 → 不编辑 → 保存：UTF-16（LE/BE、CRLF、emoji 代理对、无末行换行、只有
+/// BOM 的空正文）都要原样回磁盘。无 BOM 的 UTF-16 不在这张表里——它归
+/// `unrepresentable_bytes_are_refused_at_the_load_choke_point` 那一类。
+fn utf16_matrix_cases() -> Vec<(&'static str, Vec<u8>)> {
+    let le = |text: &str| utf16_bytes(text, true, true);
+    let be = |text: &str| utf16_bytes(text, false, true);
+    vec![
+        ("UTF-16LE BOM", le("# 标题\n\n正文\n")),
+        ("UTF-16BE BOM", be("# 标题\n\n正文\n")),
+        ("UTF-16LE BOM 与 CRLF", le("# 标题\r\n\r\n正文\r\n第二行\r\n")),
+        ("UTF-16BE BOM 与 CRLF", be("# 标题\r\n\r\n正文\r\n第二行\r\n")),
+        ("UTF-16LE emoji 与代理对", le("表情 🎉🚀 混排 中文\n")),
+        ("UTF-16LE 无末行换行", le("# 标题\n\n正文没有末行换行")),
+        ("UTF-16BE 无末行换行", be("正文")),
+    ]
+}
+
+#[gpui::test]
+async fn opening_then_saving_a_utf16_file_preserves_every_byte(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let cases = utf16_matrix_cases();
+    let total = cases.len();
+    let mut failures: Vec<String> = Vec::new();
+    for (name, bytes) in &cases {
+        let path = temp_markdown_path(name);
+        fs::write(&path, bytes).expect("write fixture");
+        let cleanup = path.clone();
+        cx.on_quit(move || {
+            let _ = fs::remove_file(&cleanup);
+        });
+        let document = encoding::load_document(&path).expect("read fixture");
+        let (editor, cx) = cx.add_window_view({
+            let path = path.clone();
+            move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+        });
+        let dirty_on_open = editor.read_with(cx, |editor, _cx| editor.document_dirty);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+
+        let saved = fs::read(&path).expect("read saved file");
+        let report = describe_case(name, bytes, &saved, dirty_on_open);
+        if !report.is_empty() {
+            failures.push(report);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "UTF-16 文件打开→保存改写了字节，{} / {} 个用例失败：\n{}",
+        failures.len(),
+        total,
+        failures.join("\n")
+    );
+}
+
+/// 报修 8：UTF-8 BOM 开头的文件，首行 `# Title` 必须还是标题。
+///
+/// BOM 是零宽字符，留在文本里首行就成了 `\u{feff}# Title`：解析器看不到行首的
+/// `#`，整行按段落渲染（用户看到的「# 没变成标题」）。BOM 该在解码层剥掉、
+/// 在保存层按形状贴回去——与 UTF-16 同一条对称规则。
+#[gpui::test]
+async fn a_utf8_bom_file_parses_its_first_line_as_a_heading_and_keeps_the_bom(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let mut original = vec![0xEF, 0xBB, 0xBF];
+    original.extend_from_slice("# Title\n\n正文\n".as_bytes());
+    let path = temp_markdown_path("utf8-bom-heading");
+    fs::write(&path, &original).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    assert_eq!(document.text, "# Title\n\n正文\n", "BOM 没在解码层剥掉");
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+    });
+    redraw(cx);
+
+    let (kind, visible) = editor.read_with(cx, |editor, cx| {
+        let block = editor
+            .document
+            .visible_blocks()
+            .first()
+            .map(|visible| visible.entity.clone())
+            .expect("夹具应有第一个可见块");
+        let block = block.read(cx);
+        (block.kind(), block.record.title.visible_text())
+    });
+    assert_eq!(
+        kind,
+        BlockKind::Heading { level: 1 },
+        "带 BOM 的首行没被解析成标题：{kind:?}"
+    );
+    assert_eq!(visible, "Title", "标题的可见文本里还带着 BOM");
+
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+    assert_eq!(
+        fs::read(&path).expect("read saved file"),
+        original,
+        "剥了 BOM 之后保存没贴回去"
+    );
+}
+
+/// 带 BOM 的文件编辑之后，BOM 仍在字节最前面，插进去的字在正文里。
+#[gpui::test]
+async fn editing_a_utf8_bom_file_restores_the_bom_on_save(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let mut original = vec![0xEF, 0xBB, 0xBF];
+    original.extend_from_slice("# 标题\r\n\r\n正文\r\n".as_bytes());
+    let path = temp_markdown_path("utf8-bom-edit");
+    fs::write(&path, &original).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let document = encoding::load_document(&path).expect("read fixture");
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_loaded_document(cx, document, Some(path))
+    });
+    redraw(cx);
+    let first = editor
+        .read_with(cx, |editor, _cx| {
+            editor
+                .document
+                .visible_blocks()
+                .first()
+                .map(|visible| visible.entity.clone())
+        })
+        .expect("夹具应有第一个可见块");
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    let caret = first_block_caret_offset(&editor, &first, cx);
+    cx.simulate_input("X");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let source_lf = "# 标题\n\n正文\n";
+    let edited = format!("{}X{}", &source_lf[..caret], &source_lf[caret..]);
+    let expected = {
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(edited.replace('\n', "\r\n").as_bytes());
+        bytes
+    };
+    let saved = fs::read(&path).expect("read saved file");
+    assert_eq!(saved, expected, "BOM 或 CRLF 形状在编辑后丢了");
+}
+
+/// 工作区标签打开这一趟入口也必须带形状：UTF-16 文件在标签里改一个字，
+/// 保存出去还得是 UTF-16。
+#[gpui::test]
+async fn opening_a_utf16_file_from_a_workspace_tab_keeps_its_encoding(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let source = "# 会议纪要\n\n中文正文\n";
+    let original = utf16_bytes(source, true, true);
+    let root = temp_markdown_path("utf16-workspace-tab");
+    fs::create_dir_all(&root).expect("create workspace root");
+    let path = root.join("笔记.md");
+    fs::write(&path, &original).expect("write fixture");
+    let cleanup = root.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_dir_all(cleanup);
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx);
+        });
+    });
+    redraw(cx);
+
+    let first = editor
+        .read_with(cx, |editor, _cx| {
+            editor
+                .document
+                .visible_blocks()
+                .first()
+                .map(|visible| visible.entity.clone())
+        })
+        .expect("UTF-16 标签打开后应有可见块");
+    // 落笔口径与 `editing_a_utf8_bom_file_restores_the_bom_on_save` 一致：把光标放到
+    // 首块可见文本第 0 位（在块记号 `# ` 之后），用真实键盘输入插一个字，再 Ctrl+S。
+    // 编码、BOM、其余字节一概不许动。
+    let first = editor
+        .read_with(cx, |editor, _cx| {
+            editor
+                .document
+                .visible_blocks()
+                .first()
+                .map(|visible| visible.entity.clone())
+        })
+        .expect("UTF-16 标签打开后应有可见块");
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    let caret = first_block_caret_offset(&editor, &first, cx);
+    cx.simulate_input("Z");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let edited = format!("{}Z{}", &source[..caret], &source[caret..]);
+    let saved = fs::read(&path).expect("read saved");
+    assert_eq!(
+        saved,
+        utf16_bytes(&edited, true, true),
+        "标签入口打开的 UTF-16 文件保存后不是 UTF-16 字节：{saved:?}"
+    );
+}
+
+/// 拖拽替换这一趟入口同样必须带形状。
+#[gpui::test]
+async fn replacing_the_document_with_a_utf16_file_keeps_its_encoding(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let source = "# 换进来的 UTF-16 文档\n\n中文正文\n";
+    let original = utf16_bytes(source, false, true);
+    let path = temp_markdown_path("utf16-replace");
+    fs::write(&path, &original).expect("write fixture");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup);
+    });
+
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "旧文档的内容，绝不能再出现在保存结果里".to_string(), None)
+    });
+    editor.update(cx, |editor, cx| {
+        editor
+            .replace_document_from_path(&path, cx)
+            .expect("open by path");
+    });
+    redraw(cx);
+
+    let first = editor
+        .read_with(cx, |editor, _cx| {
+            editor
+                .document
+                .visible_blocks()
+                .first()
+                .map(|visible| visible.entity.clone())
+        })
+        .expect("UTF-16 文档应有可见块");
+    cx.update(|_window, cx| {
+        first.update(cx, |block, _cx| block.selected_range = 0..0);
+    });
+    let caret = first_block_caret_offset(&editor, &first, cx);
+    cx.simulate_input("Z");
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-s");
+    redraw(cx);
+
+    let edited = format!("{}Z{}", &source[..caret], &source[caret..]);
+    assert_eq!(
+        fs::read(&path).expect("read saved"),
+        utf16_bytes(&edited, false, true),
+        "拖拽入口的 UTF-16 文件保存后被改写成别的编码"
+    );
+}
+
+/// 真正无法无损表示的字节：在唯一的读盘漏斗处拒绝打开，磁盘字节一动不动。
+///
+/// 报修第 3 条要的「拒绝破坏性覆盖」不在保存那一处补：所有入口（工作区标签、
+/// 拖拽替换、菜单/CLI 开窗、外部改动重载）都走 `encoding::load_document`，
+/// 门开在这一个点上，将来新增入口就不可能忘了它。带孤立代理项的 UTF-16、
+/// 以及含 NUL 的字节流（无 BOM 的 UTF-16 会被误判成 GB18030）都归这类。
+#[test]
+fn unrepresentable_bytes_are_refused_at_the_load_choke_point() {
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        (
+            "孤立代理项",
+            vec![0xFF, 0xFE, 0x00, 0xD8, 0x00, 0x00],
+        ),
+        ("截断的奇数长度 UTF-16", vec![0xFF, 0xFE, 0x68]),
+        (
+            "无 BOM 的 UTF-16（NUL 字节）",
+            vec![0x41, 0x00, 0x42, 0x00, 0x43, 0x00],
+        ),
+        ("既不是 UTF-8 也不是 GB18030", vec![0xFF, 0x00, 0xFF, 0xFF]),
+    ];
+
+    for (name, bytes) in cases {
+        let path = std::env::temp_dir().join(format!(
+            "velora-unrepresentable-{}-{}.md",
+            name,
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(&path, &bytes).expect("write fixture");
+        let Err(error) = encoding::load_document(&path) else {
+            panic!("「{name}」不该被当成可编辑文档打开");
+        };
+        assert!(
+            !error.to_string().is_empty(),
+            "{name} 的拒绝理由要能给用户看"
+        );
+        assert_eq!(
+            fs::read(&path).expect("read back"),
+            bytes,
+            "{name}：拒绝打开之后磁盘字节必须一字不动"
+        );
+        let _ = fs::remove_file(&path);
+    }
+}
+
+/// 能无损表示的编码一律不许被拒：UTF-8（含 BOM）、UTF-16（含无 BOM 的合法
+/// 空文件）、GB18030 都要照常打开。
+#[test]
+fn representable_encodings_still_open_at_the_choke_point() {
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("UTF-8", "# 标题\n".as_bytes().to_vec()),
+        ("UTF-8 BOM", "\u{feff}# 标题\n".as_bytes().to_vec()),
+        (
+            "UTF-16LE",
+            utf16_bytes("# 标题\r\n\r\n正文\r\n", true, true),
+        ),
+        ("UTF-16BE 无末行换行", utf16_bytes("正文", false, true)),
+        ("GB18030", encoding_rs::GB18030.encode("中文笔记\n").0.into_owned()),
+        ("空文件", Vec::new()),
+    ];
+
+    for (name, bytes) in cases {
+        let path = std::env::temp_dir().join(format!(
+            "velora-representable-{}-{}.md",
+            name,
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(&path, &bytes).expect("write fixture");
+        let document = encoding::load_document(&path)
+            .unwrap_or_else(|error| panic!("{name} 该能打开：{error}"));
+        assert!(!document.text.contains('\u{FFFD}'), "{name} 解码出替换符");
+        assert!(!document.text.contains('\u{feff}'), "{name} 的 BOM 没剥干净");
+        let _ = fs::remove_file(&path);
+    }
+}

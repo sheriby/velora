@@ -12,7 +12,7 @@ mod tests;
 
 mod file_shape;
 
-pub(crate) use file_shape::FileShape;
+pub(crate) use file_shape::{starts_with_utf16_bom, FileShape};
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -109,6 +109,10 @@ pub(crate) struct TextBuffer {
     /// 打开时的原始字节。只在整个缓冲区一次编辑都没落过的时候有效——
     /// 那时「保存」可以是把这份字节原样写回去，一个字节都不必重新生成。
     pristine: Option<Arc<[u8]>>,
+    /// 形状不能无损写回时的原始字节，**编辑之后仍然扣着**（见
+    /// [`set_file_origin`](Self::set_file_origin) 的最后一道闸）。正常路径恒为
+    /// `None`：不可无损表示的编码在读盘漏斗就被拒绝打开了。
+    unrepresentable: Option<Arc<[u8]>>,
     /// 自上次取走以来被改过的字节范围（保守：历次编辑的最小起点到最大终点）。
     /// 读侧的增量视图（文档大纲）用它判断「哪些块的字节真的动过」：没动过的块照用
     /// 自己上次的摘要，不必每按一个键就把整篇重扫一遍。
@@ -146,6 +150,7 @@ impl TextBuffer {
             total_bytes: text.len(),
             shape: None,
             pristine: None,
+            unrepresentable: None,
             dirty: (!text.is_empty()).then_some(0..text.len()),
             line_probe_bytes: std::cell::Cell::new(probed),
             revision: 0,
@@ -156,7 +161,16 @@ impl TextBuffer {
     /// 记下这个缓冲区的文件来源：打开时读到的原始字节 + 由它判定的形状。
     pub(crate) fn set_file_origin(&mut self, raw: Vec<u8>, shape: FileShape) {
         self.shape = Some(shape);
-        self.pristine = Some(raw.into());
+        let shared: Arc<[u8]> = raw.into();
+        self.pristine = Some(shared.clone());
+        // 最后一道闸：形状不能无损写回时，把原字节扣住不放。编辑之后
+        // [`file_bytes`](Self::file_bytes) 仍交回这份字节，于是「保存」这个文档
+        // 是一次什么都不写的操作——宁可这次编辑不落盘，也不把 lossy 文本重编码
+        // 出来的垃圾盖上用户的文件（报修第 1 条的破坏形状）。
+        // 正常入口走不到这里：`encoding::load_document` 在这种编码上直接拒绝打开。
+        if !shape.is_lossless() {
+            self.unrepresentable = Some(shared);
+        }
     }
 
     /// 一次编辑都没落过时为真；此时 [`file_bytes`](Self::file_bytes) 就是原字节。
@@ -167,11 +181,18 @@ impl TextBuffer {
     }
 
     /// 保存要写的字节：未编辑过就是打开时的原始字节，否则按形状重新编码。
+    /// 形状不可无损表示时（见 [`set_file_origin`](Self::set_file_origin)）永远
+    /// 是原字节——这种文档根本打不开，走到这一步说明有入口绕过了读盘漏斗。
     pub(crate) fn file_bytes(&self) -> Vec<u8> {
-        match (self.pristine.as_ref(), self.shape) {
-            (Some(raw), _) => raw.to_vec(),
-            (None, Some(shape)) => shape.encode(&self.text()),
-            (None, None) => self.text().into_bytes(),
+        if let Some(raw) = self.pristine.as_ref() {
+            return raw.to_vec();
+        }
+        if let Some(raw) = self.unrepresentable.as_ref() {
+            return raw.to_vec();
+        }
+        match self.shape {
+            Some(shape) => shape.encode(&self.text()),
+            None => self.text().into_bytes(),
         }
     }
 

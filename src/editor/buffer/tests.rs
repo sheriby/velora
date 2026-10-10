@@ -176,6 +176,19 @@ fn an_unedited_buffer_saves_back_the_exact_bytes_it_was_opened_with() {
     );
 }
 
+#[test]
+fn an_unrepresentable_shape_refuses_to_write_new_bytes_over_the_file() {
+    // 最后一道闸：形状不能无损写回时，编辑之后 `file_bytes` 还是那份原字节——
+    // 保存这种文档就是一次什么都不写。正常入口在 `encoding::load_document` 就把
+    // 它们拒在门外；这条守的是「万一有路径绕过去，用户的文件也不会被覆盖」。
+    let raw = vec![0xFF, 0x00, 0xFF, 0xFF];
+    let mut buffer = TextBuffer::from_text(&String::from_utf8_lossy(&raw));
+    buffer.set_file_origin(raw.clone(), FileShape::detect(&raw));
+
+    buffer.edit(0..0, "用户打的字");
+    assert_eq!(buffer.file_bytes(), raw, "不可无损表示的形状重编码写回了磁盘");
+}
+
 
 // 墙钟预算闸门，依赖机器速度，随整族性能测试默认 #[ignore]；单独跑
 // `cargo test --bin velora -- --ignored`。

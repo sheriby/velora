@@ -68,10 +68,12 @@ impl Editor {
     /// 写成恢复快照——按下这个按钮不该丢字。
     pub(crate) fn reload_conflicted_document(&mut self, path: &Path, cx: &mut Context<Self>) {
         self.stash_local_content_for_recovery(path);
-        let Ok(document) = crate::editor::encoding::load_document(path) else {
-            self.workspace.file_error = Some(format!("无法读取：{}", path.display()));
-            cx.notify();
-            return;
+        let document = match crate::editor::encoding::load_document(path) {
+            Ok(document) => document,
+            Err(err) => {
+                self.report_document_load_failure(&err, cx);
+                return;
+            }
         };
         let disk_version = crate::editor::persistence::file_content_version(&document.text);
         self.apply_disk_reload(path, document, disk_version, cx);
@@ -93,6 +95,23 @@ impl Editor {
             self.pending_window_title_refresh = true;
         }
         self.clear_external_change_conflict_for(path);
+        cx.notify();
+    }
+
+    /// 打开失败要让用户看得见：侧栏那条红字只在有工作区时才会出现，而拒绝打开
+    /// 一个文件是「用户会问为什么」的事，所以编码类拒绝额外给一个应用内模态
+    /// （禁系统原生弹窗）。普通 IO 错误照旧只记侧栏。
+    fn report_document_load_failure(&mut self, error: &std::io::Error, cx: &mut Context<Self>) {
+        let detail = error.to_string();
+        self.workspace.file_error = Some(detail.clone());
+        if error.kind() == std::io::ErrorKind::InvalidData {
+            let title = cx
+                .global::<crate::i18n::I18nManager>()
+                .strings()
+                .open_failed_title
+                .clone();
+            self.show_message_modal(title, detail, cx);
+        }
         cx.notify();
     }
 
@@ -343,17 +362,11 @@ impl Editor {
         // no extension but are text, while a .md full of NUL bytes is not
         // renderable. Non-text files still become the active tab; the content
         // area shows a centered placeholder.
-        if has_utf16_bom(&path) {
-            let strings = cx.global::<I18nManager>().strings().clone();
-            self.show_welcome = false;
-            self.show_preview_unavailable_with_detail(
-                path.clone(),
-                Some(strings.encoding_not_supported.clone()),
-                window,
-                cx,
-            );
-            return;
-        }
+        //
+        // 这里以前有一趟 `has_utf16_bom` 直接拒开：那时代码没有 UTF-16 解码器，
+        // 只能声明「编码不支持」。解码/编码现在是对称的（`FileShape` 带 BOM 与
+        // 行尾一起走），能不能读交给唯一的读盘漏斗 `encoding::load_document` 判定，
+        // 入口不再各自猜编码——否则支持的编码越加越多，这里的白名单越漏。
         if !is_likely_text_file(&path) {
             self.show_welcome = false;
             self.show_preview_unavailable(path.clone(), window, cx);
@@ -410,8 +423,7 @@ impl Editor {
                         (text, raw, false, tab.recovery_id, file_version)
                     }
                     Err(err) => {
-                        self.workspace.file_error = Some(err.to_string());
-                        cx.notify();
+                        self.report_document_load_failure(&err, cx);
                         return;
                     }
                 }
@@ -425,8 +437,7 @@ impl Editor {
                     (text, raw, false, uuid::Uuid::new_v4(), file_version)
                 }
                 Err(err) => {
-                    self.workspace.file_error = Some(err.to_string());
-                    cx.notify();
+                    self.report_document_load_failure(&err, cx);
                     return;
                 }
             }
