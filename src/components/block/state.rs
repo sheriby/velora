@@ -433,21 +433,29 @@ impl BlockKind {
     ///
     /// 记号（含它后面的那个空格与本行前导缩进）占几位是文件里的事实，按模型拼
     /// `# ` 会算错：缩进过的 `  # 标题` 内容在第 3 个字节。读侧的块内偏移靠它。
+    ///
+    /// 行首允许一个 U+FEFF（BOM）：解码层本该剥掉它，但「隐形的前导字符」不该让
+    /// 首行标题认不出来。这里把它并进记号宽度（`marker_len` 含这 3 字节），字节账
+    /// 与文件仍然对齐；把 BOM 贴回磁盘是解码/保存那一层的职责（`FileShape`）。
     pub fn parse_atx_heading_line_with_marker(line: &str) -> Option<(u8, String, usize)> {
         let trimmed_end = line.trim_end();
-        let leading_spaces = trimmed_end.bytes().take_while(|b| *b == b' ').count();
+        let (bom_len, body) = match trimmed_end.strip_prefix('\u{feff}') {
+            Some(rest) => ('\u{feff}'.len_utf8(), rest),
+            None => (0, trimmed_end),
+        };
+        let leading_spaces = body.bytes().take_while(|b| *b == b' ').count();
         if leading_spaces > 3 {
             return None;
         }
 
-        let rest = &trimmed_end[leading_spaces..];
+        let rest = &body[leading_spaces..];
         let level = rest.bytes().take_while(|b| *b == b'#').count();
         if !(1..=6).contains(&level) {
             return None;
         }
 
         let content = rest[level..].strip_prefix(' ')?;
-        let marker_len = leading_spaces + level + 1;
+        let marker_len = bom_len + leading_spaces + level + 1;
         let mut content = content.trim_end().to_string();
         if let Some(closing_hash_start) = content.rfind(' ')
             && content[closing_hash_start + 1..]
