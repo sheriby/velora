@@ -242,6 +242,7 @@ impl DocumentTree {
         let is_paragraph = block.kind() == BlockKind::Paragraph;
         let is_toc = is_paragraph && block.display_text().trim().eq_ignore_ascii_case("[toc]");
         let had_toc = is_paragraph && !block.toc_entries.is_empty();
+        let source_document_lines = block.source_document_line_count();
         // kind 可推导的字段也要跟上：段首打 `# `/`- `/`> ` 是**同一个实体**就地
         // 换 kind（可见列表不变，不走重建那趟），行计划缓存键里这些字段若停在
         // 旧值，行距就一直是段落档直到下一次结构变化。
@@ -259,6 +260,10 @@ impl DocumentTree {
         let is_footnote_header = kind.is_footnote_definition();
         let spacing = &mut self.snapshot.row_spacing[index];
         let mut changed = false;
+        if spacing.source_document_lines != source_document_lines {
+            spacing.source_document_lines = source_document_lines;
+            changed = true;
+        }
         if spacing.heading_level != heading_level
             || spacing.is_list_item != is_list_item
             || spacing.callout_variant != callout_variant
@@ -903,7 +908,16 @@ impl DocumentTree {
         let mut previous_was_list_item = seeds.previous_was_list_item;
         for (index, block) in blocks.iter().enumerate() {
             let entity_id = block.entity_id();
-            let (block_id, kind, children, is_empty_paragraph, had_toc, is_toc, list_start) = {
+            let (
+                block_id,
+                kind,
+                children,
+                is_empty_paragraph,
+                had_toc,
+                is_toc,
+                list_start,
+                source_document_lines,
+            ) = {
                 let block_ref = block.read(cx);
                 let kind = block_ref.kind();
                 let children = block_ref.children.clone();
@@ -925,6 +939,7 @@ impl DocumentTree {
                         .as_deref()
                         .is_some_and(|text| text.trim().eq_ignore_ascii_case("[toc]")),
                     block_ref.record.list_start,
+                    block_ref.source_document_line_count(),
                 )
             };
             let parent_is_list_item = parent_entity
@@ -1002,6 +1017,7 @@ impl DocumentTree {
                     },
                     is_toc,
                     had_toc,
+                    source_document_lines,
                 ),
             );
             if is_toc {

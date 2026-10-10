@@ -1,5 +1,191 @@
 use super::common::*;
 
+/// 1046 行源码已读到末行，滑块仍在半屏附近，后续拖动几乎全落在文末留白。
+#[gpui::test]
+async fn scrollbar_reaches_the_end_when_the_last_source_line_is_visible(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = include_str!("../../../vendor/gpui/src/platform/linux/platform.rs");
+    let path = temp_markdown_path("scrollbar-source-platform").with_extension("rs");
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_file_source(cx, source.into(), Some(path)));
+    cx.update(|window, _cx| window.resize(gpui::size(px(935.0), px(650.0))));
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    editor.update(cx, |editor, cx| {
+        editor.pending_scroll_active_block_into_view = false;
+        editor.pending_scroll_recheck_after_layout = false;
+        let last = editor
+            .document
+            .visible_blocks()
+            .last()
+            .expect("代码文档应有末块")
+            .entity
+            .clone();
+        let bounds = last.read(cx).last_bounds.expect("末块应完成布局");
+        let viewport = editor.scroll_handle.bounds();
+        let target = editor.scroll_handle.offset().y - (bounds.bottom() - viewport.bottom());
+        editor
+            .scroll_handle
+            .set_offset(gpui::point(px(0.0), target));
+        editor.bump_scrollbar_visibility(cx);
+    });
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, _cx| {
+        let position = -f32::from(editor.scroll_handle.offset().y);
+        let max = f32::from(editor.scroll_handle.max_offset().height);
+        let progress = editor.scrollbar_document_position(position, false)
+            / editor.scrollbar_document_position(max, false);
+        println!("源码文末：位置 {position} / {max}，滑块进度 {progress}");
+        assert!(
+            progress > 0.95,
+            "最后一行已在视口内时，滑块应接近底部，实际进度 {progress}"
+        );
+    });
+    let thumb = cx
+        .debug_bounds("editor-scrollbar-thumb")
+        .expect("滑块应绘制");
+    let viewport = editor.read_with(cx, |editor, _cx| editor.scroll_handle.bounds());
+    assert!(
+        viewport.bottom() - thumb.bottom() < viewport.size.height * 0.05,
+        "末行可见时滑块也应在轨道底部附近"
+    );
+    editor.update(cx, |editor, cx| {
+        editor.scroll_handle.set_offset(gpui::Point::default());
+        editor.bump_scrollbar_visibility(cx);
+    });
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    let thumb = cx
+        .debug_bounds("editor-scrollbar-thumb")
+        .expect("滑块应绘制");
+    let press = gpui::point(thumb.center().x, thumb.top() + px(1.0));
+    let travel = viewport.size.height - thumb.size.height;
+    cx.simulate_mouse_down(press, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        gpui::point(press.x, viewport.top() + travel * 0.5 + px(1.0)),
+        Some(gpui::MouseButton::Left),
+        Modifiers::none(),
+    );
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    editor.read_with(cx, |editor, cx| {
+        let center = editor.scroll_handle.bounds().center();
+        let line = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find_map(|visible| {
+                let block = visible.entity.read(cx);
+                let bounds = block.last_bounds?;
+                if center.y < bounds.top() || center.y > bounds.bottom() {
+                    return None;
+                }
+                let offset = block.index_for_mouse_position(center);
+                let prefix = block
+                    .display_text()
+                    .get(..offset)
+                    .expect("命中偏移应是 UTF-8 边界");
+                Some(
+                    block.source_line_start()
+                        + crate::components::element::source_line_count(prefix)
+                        - 1,
+                )
+            })
+            .expect("视口中心应有源码");
+        let progress = line as f32 / editor.buffer.line_count() as f32;
+        assert!(
+            (0.4..0.6).contains(&progress),
+            "滑块中点应显示源码中段，实际行 {line}，进度 {progress}"
+        );
+    });
+    cx.simulate_mouse_move(
+        gpui::point(press.x, viewport.top() + travel + px(1.0)),
+        Some(gpui::MouseButton::Left),
+        Modifiers::none(),
+    );
+    for _ in 0..4 {
+        redraw(cx);
+    }
+    cx.simulate_mouse_up(
+        gpui::point(press.x, viewport.top() + travel + px(1.0)),
+        gpui::MouseButton::Left,
+        Modifiers::none(),
+    );
+    editor.read_with(cx, |editor, cx| {
+        let viewport = editor.scroll_handle.bounds();
+        let last = editor
+            .document
+            .visible_blocks()
+            .last()
+            .expect("应有末块")
+            .entity
+            .read(cx);
+        let bottom = last.last_bounds.expect("末块应绘制").bottom();
+        assert!(
+            bottom > viewport.top() && bottom <= viewport.bottom(),
+            "拖到底时末行仍应可见"
+        );
+        assert!(
+            (editor.scroll_handle.max_offset().height + editor.scroll_handle.offset().y).abs()
+                < px(1.0),
+            "滑块底端应对应实际滚动终点"
+        );
+    });
+}
+
+#[gpui::test]
+async fn source_scrollbar_weights_refresh_after_inserting_a_line(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("scrollbar-source-edit").with_extension("rs");
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_file_source(
+            cx,
+            "let greeting = \"你好🌿\";\nlet tail = 1;".into(),
+            Some(path),
+        )
+    });
+    redraw(cx);
+    redraw(cx);
+    let before = editor.read_with(cx, |editor, _cx| {
+        let plan = editor.rendered_row_plan.as_ref().expect("应有行计划");
+        (plan.row_meta_version, plan.scrollbar_strides[0])
+    });
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let plan = editor.rendered_row_plan.as_ref().expect("应有行计划");
+        assert!(plan.row_meta_version > before.0, "源码增删行应使行计划失效");
+        assert_eq!(
+            plan.scrollbar_strides[0],
+            before.1 * 1.5,
+            "两行变三行后滑块权重应按行数更新"
+        );
+        let block = editor.document.visible_blocks()[0].entity.read(cx);
+        assert_eq!(block.last_layout.as_ref().expect("源码应绘制").len(), 3);
+        assert!(block.display_text().contains("你好🌿"));
+    });
+}
+
+#[test]
+fn scroll_offset_mapping_scales_bottom_padding_and_preserves_inverse() {
+    assert_eq!(Editor::map_scroll_offset(110.0, &[100.0], &[10.0]), 11.0);
+    assert_eq!(Editor::map_scroll_offset(11.0, &[10.0], &[100.0]), 110.0);
+    assert_eq!(
+        Editor::map_scroll_offset(132.0, &[100.0, 20.0], &[10.0, 10.0]),
+        22.0
+    );
+    assert_eq!(
+        Editor::map_scroll_offset(22.0, &[10.0, 10.0], &[100.0, 20.0]),
+        132.0
+    );
+}
+
 #[test]
 fn centered_column_ratio_stays_full_before_shrink_start() {
     let theme = Theme::default_theme();

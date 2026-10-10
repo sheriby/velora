@@ -440,6 +440,14 @@ impl Block {
         self.show_source_line_numbers
     }
 
+    pub(crate) fn source_document_line_count(&self) -> usize {
+        if self.show_source_line_numbers {
+            crate::components::block::element::source_line_count(self.display_text())
+        } else {
+            0
+        }
+    }
+
     /// 本块第一行在整篇源码文档中的 1-based 行号（分块导入后行号槽续号）。
     pub(crate) fn source_line_start(&self) -> usize {
         self.source_line_start

@@ -124,7 +124,7 @@ fn inline_code_background_bounds(
     )
 }
 
-fn source_line_count(text: &str) -> usize {
+pub(crate) fn source_line_count(text: &str) -> usize {
     text.split('\n').count().max(1)
 }
 

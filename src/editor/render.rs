@@ -89,6 +89,7 @@ pub(crate) struct RenderedRowSpacingInfo {
     pub(crate) is_toc: bool,
     /// 这一块手上是不是挂着目录条目（上一趟 `[TOC]` 留下的，需要清掉）。
     pub(crate) had_toc: bool,
+    pub(crate) source_document_lines: usize,
 }
 
 impl RenderedRowSpacingInfo {
@@ -99,6 +100,7 @@ impl RenderedRowSpacingInfo {
         anchors: VisibleTreeAnchors,
         is_toc: bool,
         had_toc: bool,
+        source_document_lines: usize,
     ) -> Self {
         Self {
             quote_group_anchor: anchors.quote_group_anchor,
@@ -115,6 +117,7 @@ impl RenderedRowSpacingInfo {
             is_list_item: kind.is_list_item(),
             is_toc,
             had_toc,
+            source_document_lines,
         }
     }
 }
@@ -731,9 +734,25 @@ impl Editor {
                 .collect::<Vec<f32>>(),
         ));
 
-        let scrollbar_strides = first_ids.iter().zip(strides.borrow().iter()).map(|(id, stride)| {
-            *self.row_scrollbar_stride_cache.entry(*id).or_insert(*stride)
-        }).collect();
+        let scrollbar_strides = rows
+            .iter()
+            .zip(strides.borrow().iter())
+            .map(|(row, stride)| {
+                let source_lines = row.first_spacing().source_document_lines;
+                if source_lines > 0 {
+                    // 源码按 512 行分块，短末块不能与整块占相同进度；行数由快照维护，
+                    // 首次量高只改变像素位置，增删行才改变这份固定权重。
+                    let weight = estimate * source_lines as f32;
+                    self.row_scrollbar_stride_cache.insert(row.first_id, weight);
+                    weight
+                } else {
+                    *self
+                        .row_scrollbar_stride_cache
+                        .entry(row.first_id)
+                        .or_insert(*stride)
+                }
+            })
+            .collect();
         RenderedRowPlan {
             row_meta_version,
             fold_version,

@@ -50,7 +50,13 @@ impl Editor {
             from_start += from_height;
             to_start += to_height;
         }
-        to_start + position - from_start
+        // 留白不属于最后一块，沿用整篇的平均比例，避免短末块首次量高时改变进度分母。
+        let trailing_scale = if from_start > 0.0 {
+            to_start / from_start
+        } else {
+            1.0
+        };
+        to_start + (position - from_start) * trailing_scale
     }
 
     pub(super) fn scrollbar_document_position(&self, scroll_y: f32, inverse: bool) -> f32 {
