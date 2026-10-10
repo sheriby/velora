@@ -188,6 +188,15 @@ pub(crate) fn matches_sequence(tokens: &[CharToken], index: usize, sequence: &st
         .all(|(offset, ch)| tokens.get(index + offset).is_some_and(|t| t.ch == ch))
 }
 
+/// CommonMark 可转义集的**唯一判据**：全部 ASCII 标点
+/// （``!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~``），外加换行——`\` + 行尾是硬换行。
+/// 解析（`escaped_sequence_token_len`）与序列化（`backslash_needs_escape`、表格单元格
+/// 切分）都从这里取答案；曾各自维护一份窄白名单，才有「`\#` 显示多余反斜杠」「序列化
+/// 与解析对同一处写法判断相反」这类报修。
+pub(crate) const fn is_commonmark_escapable(ch: char) -> bool {
+    ch.is_ascii_punctuation() || matches!(ch, '\n' | '\r')
+}
+
 pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> Option<usize> {
     let next_index = index + 1;
     if next_index >= tokens.len() {
@@ -210,15 +219,7 @@ pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> 
         Some(4)
     } else if matches_sequence(tokens, next_index, "<u>") {
         Some(3)
-    } else if matches_sequence(tokens, next_index, "\\")
-        || matches_sequence(tokens, next_index, "*")
-        || matches_sequence(tokens, next_index, "_")
-        || matches_sequence(tokens, next_index, "~")
-        || matches_sequence(tokens, next_index, "[")
-        || matches_sequence(tokens, next_index, "]")
-        || matches_sequence(tokens, next_index, "`")
-        || matches_sequence(tokens, next_index, "^")
-    {
+    } else if is_commonmark_escapable(tokens[next_index].ch) {
         Some(1)
     } else {
         None
@@ -233,20 +234,16 @@ pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> 
 /// 的对齐整体漂移（搜索高亮、选区落点全部错位，用户报修）。重新解析同一段
 /// 原文得到的仍是同一棵树：当时的定界符读法就是原文的读法。用户新敲的字面
 /// 记号同理保持原样（仍是语法候选，补齐配对才成强调）。
-/// 裸反斜杠写回时是否要转义成 `\\`：只有当后面跟着的字符能开启一次转义
+/// 裸反斜杠写回时是否要转义成 `\\`：只有当后面跟着的字符会开启一次转义
 /// （重新解析会把这个反斜杠吃掉，用户的 `\\` 缩成 `\`、`\*` 丢星号）才需要。
+/// 判据与 `escaped_sequence_token_len` 同源（`is_commonmark_escapable`），两端不许各写一份。
 /// `C:\Users`、`a\b` 这类后面跟普通字符的反斜杠保持原样，字节不动。
 /// 片段末尾的反斜杠看不见下一个片段的首字符（链接的 `[`、别的片段的 `*`），
 /// 保守起见转义。
 fn backslash_needs_escape(text: &str, index: usize) -> bool {
-    let rest = &text[index + 1..];
-    match rest.chars().next() {
+    match text[index + 1..].chars().next() {
         None => true,
-        Some('\\' | '*' | '_' | '~' | '[' | ']' | '`' | '^') => true,
-        Some('<') => ["<u>", "</u>", "<em>", "</em>", "<strong>", "</strong>"]
-            .iter()
-            .any(|marker| rest.starts_with(marker)),
-        _ => false,
+        Some(next) => is_commonmark_escapable(next),
     }
 }
 

@@ -211,6 +211,9 @@ impl InlineTextTree {
             && fragment.link.is_none()
             && fragment.footnote.is_none()
             && fragment.math.is_none()
+            // 转义写法记在 `escaped_offsets` 里，不在可见文本的字面上：有账就必须
+            // 走慢路径，否则 `\!x` 序列化会吞掉用户写的那个反斜杠（逐字节还原被破坏）。
+            && self.escaped_offsets.is_empty()
             && !fragment
                 .text
                 .bytes()

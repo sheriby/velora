@@ -43,6 +43,7 @@
                 code: false,
                 script: InlineScript::Normal,
                 emphasis_marker: Some('*'),
+                line_break: false,
             }
         );
     }
@@ -305,6 +306,65 @@
         assert!(cache.inline_math_at(0).is_none());
         assert!(cache.inline_math_at("$x$ and ".len()).is_some());
         assert_eq!(tree.serialize_markdown(), "`$x$` and $y$");
+    }
+
+    #[test]
+    fn escapes_all_ascii_punctuation_not_just_the_old_whitelist() {
+        // 用户报修（cases/10-escape.md）：转义白名单只认 `\ * _ ~ [ ] ` ^ 与三个标签，
+        // CommonMark 转义的是**全部 ASCII 标点**——`\#` 该显示裸 `#`，不该多一个反斜杠。
+        let markdown = "\\*literal stars\\* \\# literal hash \\\\backslash and \\<u>literal tag\\</u>";
+        let tree = InlineTextTree::from_markdown(markdown);
+        assert_eq!(
+            tree.visible_text(),
+            "*literal stars* # literal hash \\backslash and <u>literal tag</u>"
+        );
+        // 逐字节还原用户写法（cases/10-escape.md 的原文行）。
+        assert_eq!(tree.serialize_markdown(), markdown);
+    }
+
+    #[test]
+    fn every_commonmark_punctuation_escape_loses_its_backslash() {
+        // 共享规则的覆盖面：ASCII 标点表全集（CommonMark 的转义集 = is_ascii_punctuation）。
+        for punctuation_char in [
+            '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/',
+            ':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|',
+            '}', '~',
+        ] {
+            let markdown = format!("\\{punctuation_char}x");
+            let tree = InlineTextTree::from_markdown(&markdown);
+            assert_eq!(
+                tree.visible_text(),
+                format!("{punctuation_char}x"),
+                "{markdown:?} 的转义没有生效"
+            );
+            assert_eq!(tree.serialize_markdown(), markdown, "{markdown:?} 写法被改写");
+        }
+    }
+
+    #[test]
+    fn backslash_end_of_line_is_a_hard_break_without_the_backslash() {
+        // 用户报修（cases/10-line-break.md）：`Slash one\` + 换行是 CommonMark 硬换行，
+        // 可见文本不该留着反斜杠；序列化必须把用户的反斜杠写法逐字节写回。
+        let markdown = "Slash one\\\nSlash two";
+        let tree = InlineTextTree::from_markdown(markdown);
+        assert_eq!(tree.visible_text(), "Slash one\nSlash two");
+        assert_eq!(tree.serialize_markdown(), markdown);
+
+        // CRLF 行尾同理：换行整体保留，反斜杠消失。
+        let crlf = "Slash one\\\r\nSlash two";
+        let tree = InlineTextTree::from_markdown(crlf);
+        assert_eq!(tree.visible_text(), "Slash one\r\nSlash two");
+        assert_eq!(tree.serialize_markdown(), crlf);
+    }
+
+    #[test]
+    fn two_trailing_spaces_before_newline_round_trip() {
+        // cases/10-line-break.md 的兄弟规则：行尾两个空格 + 换行是硬换行，
+        // 换行符本身就是可见断点；空格与写法都要原样保留。
+        let markdown = "Hard one  \nHard two";
+        let tree = InlineTextTree::from_markdown(markdown);
+        assert_eq!(tree.visible_text(), markdown);
+        assert_eq!(tree.serialize_markdown(), markdown);
     }
 
     #[test]
