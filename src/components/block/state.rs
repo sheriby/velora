@@ -608,6 +608,9 @@ pub struct BlockRecord {
     pub raw_fallback: Option<String>,
     /// 列表项自己写的记号（`+`/`*`/`-`、`.`/`)`）。见 [`ListMarkerStyle`]。
     pub list_marker: ListMarkerStyle,
+    /// 有序项在原文里写下的起始号（`5. 一` 的 5）。`None` 是「没记」（新建/拆出来的项，
+    /// 或无序项），序号按所在族往上数。带着它，界面才不至于把「从 5 起跳」的一族数回 1。
+    pub list_start: Option<usize>,
     pub separator_marker: SeparatorMarker,
     /// 这一块的内容每一行，在自己那一行里**让开了几个字节**（本块的记号，如
     /// `# `、`- `、`> `；键在解析期由剥记号的那段代码顺手记下，不是事后拿文件行
@@ -651,6 +654,7 @@ impl BlockRecord {
             content: Vec::new(),
             raw_fallback: None,
             list_marker: ListMarkerStyle::default(),
+            list_start: None,
             separator_marker: SeparatorMarker::default(),
             source_line_prefixes: Vec::new(),
             source_separator_bytes: 0,
@@ -736,6 +740,7 @@ impl BlockRecord {
     /// 版本号不动就会把旧写法继续交出去。
     pub fn canonicalize_writing_style(&mut self) {
         self.list_marker = ListMarkerStyle::default();
+        self.list_start = None;
         self.callout_marker = None;
         let mut title = self.title.clone();
         title.reset_emphasis_markers();

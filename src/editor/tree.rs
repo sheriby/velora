@@ -903,7 +903,7 @@ impl DocumentTree {
         let mut previous_was_list_item = seeds.previous_was_list_item;
         for (index, block) in blocks.iter().enumerate() {
             let entity_id = block.entity_id();
-            let (block_id, kind, children, is_empty_paragraph, had_toc, is_toc) = {
+            let (block_id, kind, children, is_empty_paragraph, had_toc, is_toc, list_start) = {
                 let block_ref = block.read(cx);
                 let kind = block_ref.kind();
                 let children = block_ref.children.clone();
@@ -924,6 +924,7 @@ impl DocumentTree {
                     title_visible
                         .as_deref()
                         .is_some_and(|text| text.trim().eq_ignore_ascii_case("[toc]")),
+                    block_ref.record.list_start,
                 )
             };
             let parent_is_list_item = parent_entity
@@ -935,7 +936,13 @@ impl DocumentTree {
                 .map(|child| child.read(cx).record.id)
                 .collect::<Vec<_>>();
             let list_ordinal = if kind.is_numbered_list_item() {
-                numbered_list_ordinal += 1;
+                // 作者写下号码的那一项照它落（`5. 一` 就是 5，不再被从头数成 1）；
+                // 新建/拆出来的那一项没有写过的号，接着上一项往上数。空行断开的那一族
+                // 头一项自己写着起始号，于是按那个号起跳（写着 `1.` 才从 1）。
+                numbered_list_ordinal = match list_start {
+                    Some(start) => start.max(1),
+                    None => numbered_list_ordinal + 1,
+                };
                 Some(numbered_list_ordinal)
             } else {
                 numbered_list_ordinal = 0;

@@ -587,8 +587,10 @@ impl Editor {
             };
             let block = native_block(cx, marker.kind.clone(), item_text);
             // 记号的写法是原文的一部分：块带着它，显示与序列化才不改用户写的 `+`、`1)`。
+            // 有序项写下的那个号也一起带上（`5. 一` 的 5），界面才不至于把它数回 1。
             block.update(cx, |block, _cx| {
                 block.record.list_marker = marker.style;
+                block.record.list_start = marker.numbered_start;
             });
             // 项自己内容的每一行让开几字节，一行一行跟着 `append_markdown_to_block` 记。
             // 空行段超过一行时模型里的空行比文件里的少，行号对不上，整块的账作废。

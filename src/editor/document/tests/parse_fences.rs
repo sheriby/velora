@@ -259,11 +259,16 @@
         assert_eq!(dot.kind, BlockKind::NumberedListItem);
         assert_eq!(dot.text, "item");
         assert_eq!(dot.content_indent_columns, 3);
+        assert_eq!(dot.numbered_start, Some(1));
+
+        let start = parse_list_marker("5. item").expect("authored start marker");
+        assert_eq!(start.numbered_start, Some(5));
 
         let paren = parse_list_marker("12) item").expect("paren marker");
         assert_eq!(paren.kind, BlockKind::NumberedListItem);
         assert_eq!(paren.text, "item");
         assert_eq!(paren.content_indent_columns, 4);
+        assert_eq!(paren.numbered_start, Some(12));
 
         let tab = parse_list_marker("1)\titem").expect("tab separator");
         assert_eq!(tab.kind, BlockKind::NumberedListItem);
@@ -272,6 +277,9 @@
 
         assert!(parse_list_marker("1)item").is_none());
         assert!(parse_list_marker("1234567890) item").is_none());
+
+        // 无序项没有起始号。
+        assert_eq!(parse_list_marker("- item").unwrap().numbered_start, None);
     }
 
     #[test]

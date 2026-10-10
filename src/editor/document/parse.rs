@@ -6,6 +6,9 @@ pub(crate) struct ListMarker {
     pub(crate) content_indent_columns: usize,
     /// 记号的写法（`+`/`*`/`-`、`.`/`)`），块记录带着它才能显示与序列化都不改用户的原文。
     pub(crate) style: ListMarkerStyle,
+    /// 有序项在原文里写下的那个数（`5. 一` 的 5）。无序项为 `None`。
+    /// 带着它，界面才不至于把「从 5 起跳」的一族数回 1；序列化也照它落笔。
+    pub(crate) numbered_start: Option<usize>,
     pub(crate) text: String,
 }
 
@@ -323,6 +326,7 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
                 bullet: Some(marker),
                 delimiter: None,
             },
+            numbered_start: None,
             text,
         });
     }
@@ -341,6 +345,7 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
             bullet: None,
             delimiter: Some(delimiter),
         },
+        numbered_start: rest[..digit_len].parse::<usize>().ok(),
         text: text.to_string(),
     })
 }

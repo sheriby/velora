@@ -336,3 +336,81 @@
         });
     }
 
+    #[gpui::test]
+    async fn ordered_list_keeps_its_authored_start_number(cx: &mut TestAppContext) {
+        // UX(c)：从 5 起跳的有序列表，界面从前面的 1 开始数把作者写的起始号洗掉了。
+        let source = "5. one\n6. two\n7. three";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible[0].entity.read(cx).list_ordinal, Some(5));
+            assert_eq!(visible[1].entity.read(cx).list_ordinal, Some(6));
+            assert_eq!(visible[2].entity.read(cx).list_ordinal, Some(7));
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn ordered_list_restart_after_blank_line_restarts_at_its_authored_number(
+        cx: &mut TestAppContext,
+    ) {
+        // 空行断开的新那一族从作者写的那个数起跳（这里就是 1）。
+        let source = "5. one\n6. two\n\n3. restart";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(visible[0].entity.read(cx).list_ordinal, Some(5));
+            assert_eq!(visible[1].entity.read(cx).list_ordinal, Some(6));
+            let restart = visible
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "restart")
+                .expect("restart item");
+            assert_eq!(restart.entity.read(cx).list_ordinal, Some(3));
+            assert_eq!(editor.document.markdown_text(cx), source);
+        });
+    }
+
+    #[gpui::test]
+    async fn nested_ordered_list_children_keep_their_authored_start(cx: &mut TestAppContext) {
+        let source = "1) parent\n   4) child\n   5) child two";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            let parent = visible
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "parent")
+                .expect("parent item");
+            assert_eq!(parent.entity.read(cx).list_ordinal, Some(1));
+            let child = visible
+                .iter()
+                .find(|visible| visible.entity.read(cx).display_text() == "child")
+                .expect("nested child");
+            assert_eq!(child.entity.read(cx).list_ordinal, Some(4));
+            // 子项缩进按规范洗成两个空格（既有嵌套用例同口径），序号仍带作者写的 4、5。
+            assert_eq!(
+                editor.document.markdown_text(cx),
+                "1) parent\n  4) child\n  5) child two"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn first_line_heading_is_detected_after_a_leading_bom(cx: &mut TestAppContext) {
+        // BUG 8（块解析这一半）：文件首行的 U+FEFF（解码层忘记剥时）不该挡住标记识别。
+        // 块解析器对这一位「隐形的首字符」要容错，标题照样是标题。字节层面的
+        // BOM 保真由解码层负责（strip on decode / re-add on save），见 raw_fidelity_cases。
+        let source = "\u{feff}# 标题\n\n正文";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(
+                visible[0].entity.read(cx).kind(),
+                BlockKind::Heading { level: 1 }
+            );
+            assert_eq!(visible[0].entity.read(cx).display_text(), "标题");
+        });
+    }
