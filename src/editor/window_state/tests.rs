@@ -225,6 +225,37 @@ mod tests {
         assert!(cx.opened_url().is_none(), "缺失的本地路径不该丢给浏览器");
     }
 
+    /// 重复标题的锚点：导出按 GitHub 口径发 `foo` / `foo-1` / `foo-2`，
+    /// 应用内必须能跳到**那一个**，而不是永远回到第一次出现。
+    ///
+    /// 目录（`[TOC]`）与正文里的 `#foo-1` 链接在导出里是好的，应用里点却跳到
+    /// 第一条或干脆没反应，就是「分享出去的文档能跳、应用里同一行跳不动」的
+    /// 反向版本；重复标题很常见（ changelog 里每个版本都叫「修复」）。
+    #[test]
+    fn duplicate_headings_are_reachable_by_their_deduplicated_ids() {
+        let source = "# 修复\n\nfirst\n\n# 修复\n\nsecond\n\n# 修复\n\nthird\n";
+        let html = crate::export::html::render_html(
+            source,
+            &crate::theme::Theme::default_theme(),
+            "重复标题",
+        );
+        let ids = ["修复", "修复-1", "修复-2"];
+        for (position, id) in ids.iter().enumerate() {
+            assert!(
+                html.contains(&format!("id=\"{id}\"")),
+                "导出应当发 id {id:?}：{html}"
+            );
+            let index = heading_line_for_anchor(source, id)
+                .unwrap_or_else(|| panic!("应用内跳不到导出的锚点 {id:?}"));
+            // 三个 `# 修复` 分别在第 0、4、8 行。
+            assert_eq!(
+                index,
+                position * 4,
+                "锚点 {id:?} 应当跳到第 {position} 个重复标题"
+            );
+        }
+    }
+
     fn init_app(cx: &mut TestAppContext) {
         cx.update(|cx| {
             crate::i18n::I18nManager::init(cx);

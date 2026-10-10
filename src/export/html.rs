@@ -192,7 +192,7 @@ pub(crate) fn heading_slug(text: &str) -> Option<String> {
 }
 
 /// slug 去重规则与 GitHub 相同：第二次出现追加 `-1`、`-2`……
-fn unique_heading_slug(slug: Option<String>, seen: &mut HashMap<String, usize>) -> Option<String> {
+pub(crate) fn unique_heading_slug(slug: Option<String>, seen: &mut HashMap<String, usize>) -> Option<String> {
     let base = slug?;
     let count = seen.entry(base.clone()).or_insert(0usize);
     let result = if *count == 0 {

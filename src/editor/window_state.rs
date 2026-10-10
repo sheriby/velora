@@ -1018,21 +1018,37 @@ pub(crate) fn resolve_local_link_path(document_path: Option<&Path>, path: &str) 
 /// 按标题文本找它在源文本里的行号（GitHub 风格锚点的宽松匹配：忽略大小写、
 /// 空白与标点，保留 `-`/`_` 与 CJK）。
 ///
-/// slug 用的是导出那一份 [`heading_slug`]：应用内跳转算的锚点与写进 HTML 的 `id`
-/// 必须是同一个字符串，两处各写一份时，改一处就会让「界面里点得动、导出的 HTML
+/// slug 与去重两条口径都吃导出那一份（[`heading_slug`] 与
+/// `export::html::unique_heading_slug`）：应用内跳转算的锚点与写进 HTML 的 `id`
+/// 必须是同一个字符串。两处各写一份时，改一处就会让「界面里点得动、导出的 HTML
 /// 里点不动」（或反过来）。
+///
+/// 去重必须按文档顺序一起数：重复标题在 HTML 里是 `foo` / `foo-1` / `foo-2`，
+/// 只比 slug 的话，点第二个「修复」要么跳回第一个、要么根本没有落点，
+/// 而目录里那两条链接在浏览器里是好的——同一个动作两种结果。
 pub(crate) fn heading_line_for_anchor(source: &str, anchor: &str) -> Option<usize> {
     let needle = heading_slug(anchor)?;
-    source.lines().enumerate().find_map(|(index, line)| {
+    let mut seen = std::collections::HashMap::new();
+    for (index, line) in source.lines().enumerate() {
         let text = line.trim_start();
         let title = text.trim_start_matches('#');
         // `#` 是 1 字节，差值就是井号个数；不写 `text[hashes..]` 那种切片下标。
         let marker_len = text.len() - title.len();
         if marker_len == 0 || marker_len > 6 {
-            return None;
+            continue;
         }
-        (heading_slug(title.trim())? == needle).then_some(index)
-    })
+        // 作不出 slug 的标题（整行都是标点）不参与计数，与导出同一口径。
+        let Some(id) = crate::export::html::unique_heading_slug(
+            heading_slug(title.trim()),
+            &mut seen,
+        ) else {
+            continue;
+        };
+        if id == needle {
+            return Some(index);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
