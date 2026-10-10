@@ -318,7 +318,7 @@ pub(crate) fn parse_link_target(inner: &str) -> Option<(String, Option<String>)>
 
     if inner.ends_with('"') {
         let close_quote = inner.len() - 1;
-        if !is_escaped(inner, close_quote)
+        if !super::image::is_escaped(inner, close_quote)
             && let Some(open_quote) = find_open_title_quote(inner, close_quote)
         {
             let destination = inner[..open_quote.saturating_sub(1)].trim_end();
@@ -375,7 +375,7 @@ fn find_open_title_quote(input: &str, close_quote: usize) -> Option<usize> {
     let bytes = input.as_bytes();
     (0..close_quote).rev().find(|&index| {
         bytes[index] == b'"'
-            && !is_escaped(input, index)
+            && !super::image::is_escaped(input, index)
             && index > 0
             && bytes[index - 1].is_ascii_whitespace()
     })
@@ -383,27 +383,9 @@ fn find_open_title_quote(input: &str, close_quote: usize) -> Option<usize> {
 
 fn find_unescaped_char(input: &str, start: usize, target: u8) -> Option<usize> {
     let bytes = input.as_bytes();
-    (start..bytes.len()).find(|&index| bytes[index] == target && !is_escaped(input, index))
+    (start..bytes.len()).find(|&index| bytes[index] == target && !super::image::is_escaped(input, index))
 }
 
-fn is_escaped(input: &str, index: usize) -> bool {
-    if index == 0 {
-        return false;
-    }
-
-    let bytes = input.as_bytes();
-    let mut backslashes = 0usize;
-    let mut cursor = index;
-    while cursor > 0 {
-        cursor -= 1;
-        if bytes[cursor] == b'\\' {
-            backslashes += 1;
-        } else {
-            break;
-        }
-    }
-    backslashes % 2 == 1
-}
 
 #[cfg(test)]
 mod tests {

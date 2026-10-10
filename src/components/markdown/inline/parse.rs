@@ -732,7 +732,7 @@ pub(crate) fn token_is_backslash_escaped(tokens: &[CharToken], index: usize) -> 
         slash_count += 1;
         cursor -= 1;
     }
-    slash_count % 2 == 1
+    backslash_run_escapes(slash_count)
 }
 
 /// 「这串 `$…$` 是钱不是公式」的唯一判据（文本层）：紧贴两侧定界符的是数字，或体内除

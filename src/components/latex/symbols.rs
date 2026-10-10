@@ -268,7 +268,7 @@ pub(crate) fn inside_inline_math(prefix: &str) -> bool {
             }
         }
     }
-    count % 2 == 1
+    crate::components::markdown::inline::backslash_run_escapes(count)
 }
 
 #[cfg(test)]

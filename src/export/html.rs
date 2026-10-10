@@ -624,7 +624,7 @@ fn is_escaped_ascii(line: &str, index: usize) -> bool {
         slash_count += 1;
         cursor -= 1;
     }
-    slash_count % 2 == 1
+    crate::components::markdown::inline::backslash_run_escapes(slash_count)
 }
 
 /// 事件流分发描述：先按不可变借用取出需要的信息，再调用会改 self 的方法，

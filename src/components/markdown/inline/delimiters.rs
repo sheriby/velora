@@ -197,6 +197,17 @@ pub(crate) const fn is_commonmark_escapable(ch: char) -> bool {
     ch.is_ascii_punctuation() || matches!(ch, '\n' | '\r')
 }
 
+/// 目标字符前面数到奇数个 `\` 时，它才是被转义的—— CommonMark 的「反斜杠自身
+/// 也要转义」就靠这条奇偶规则（`\\*` 里那个 `*` 没被转义）。
+///
+/// 数法两边不一样：行内解析拿的是 `CharToken` 序列，HTML 导出那侧拿的是原始字节串，
+/// 但**判断本身只有一句**，所以留在这里一处。曾出现过「一侧改成连续反斜杠按对消
+/// 处理、另一侧还是数总数」这种漂移的苗头，同一个写法就会在界面里算转义、
+/// 在导出里不算。
+pub(crate) const fn backslash_run_escapes(slashes_before: usize) -> bool {
+    slashes_before % 2 == 1
+}
+
 pub(crate) fn escaped_sequence_token_len(tokens: &[CharToken], index: usize) -> Option<usize> {
     let next_index = index + 1;
     if next_index >= tokens.len() {

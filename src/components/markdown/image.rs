@@ -803,7 +803,11 @@ fn find_unescaped_char(input: &str, start: usize, target: u8) -> Option<usize> {
     (start..bytes.len()).find(|&index| bytes[index] == target && !is_escaped(input, index))
 }
 
-fn is_escaped(input: &str, index: usize) -> bool {
+/// Markdown 文本里这个字符前的反斜杠是不是转义前缀（奇数个才算）。
+///
+/// 链接目标与图片目标共用这一份：两边曾各写一遍同样的扫描循环，
+/// 判据则同走 `inline::backslash_run_escapes`。
+pub(crate) fn is_escaped(input: &str, index: usize) -> bool {
     if index == 0 {
         return false;
     }
@@ -819,7 +823,7 @@ fn is_escaped(input: &str, index: usize) -> bool {
             break;
         }
     }
-    backslashes % 2 == 1
+    crate::components::markdown::inline::backslash_run_escapes(backslashes)
 }
 
 
