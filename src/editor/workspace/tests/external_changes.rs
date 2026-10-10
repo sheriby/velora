@@ -12,6 +12,288 @@ pub(super) fn long_markdown(paragraphs: usize) -> String {
         + "\n"
 }
 
+/// 外部改动判定看的是**内容版本**，不是时间戳：同长度、同 mtime 的一次改写
+/// 也必须刷进界面。
+///
+/// 「文档在外部修改后没有刷新」这条报修（Windows 验收）最像时间戳判据的失效形状：
+/// 快速保存只落在一个 mtime 刻度里，或者同步盘把时间戳原样贴回去。这里的夹具把两种
+/// 情况一起造出来——替换文本与原文**逐字节等长**、写完再把 mtime 设回原来那一纳秒——
+/// 只有按内容比对的实现才认得出这是一次改动。
+#[gpui::test]
+async fn an_external_edit_lands_in_the_view_with_the_same_size_and_mtime(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-external-same-size-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let path = root.join("note.md");
+    // 9 字节；替换文本 `# 改文\n` 同样 9 字节（每个汉字 3 字节）。
+    fs::write(&path, "# 原文\n").unwrap();
+    let stamp = fs::metadata(&path).expect("metadata").modified().expect("mtime");
+    let size_before = fs::metadata(&path).expect("metadata").len();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.document.markdown_text(cx), "# 原文");
+    });
+
+    fs::write(&path, "# 改文\n").unwrap();
+    let handle = fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("open to stamp the mtime");
+    handle.set_modified(stamp).expect("set_modified");
+    let after = fs::metadata(&path).expect("metadata after");
+    assert_eq!(after.len(), size_before, "夹具前提：替换必须等字节数");
+    assert_eq!(
+        after.modified().expect("mtime after"),
+        stamp,
+        "夹具前提：mtime 与改前同一刻度"
+    );
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reload_externally_changed_document(&path, cx)
+        })
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "# 改文",
+            "等长、同 mtime 的外部改动没刷进界面"
+        );
+    });
+}
+
+/// 文件被删掉又重建（换了一个 inode，尺寸可能一模一样）也要认出来。
+///
+/// 同步盘、`git checkout`、编辑器的「写临时文件再改名」都是这个形状：旧的那个文件
+/// 没了，新文件的时间戳还可能被贴回旧的。删除那一次事件读不到内容，必须让后面的
+/// 重建事件把新内容接上。
+#[gpui::test]
+async fn a_deleted_then_recreated_file_refreshes_the_view(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-external-recreate-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let path = root.join("note.md");
+    fs::write(&path, "# 原文\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+
+    fs::remove_file(&path).unwrap();
+    // 删除事件：这一趟读不到内容，界面保持最后一版（不能把正文清空）。
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reload_externally_changed_document(&path, cx)
+        })
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.document.markdown_text(cx), "# 原文");
+    });
+
+    fs::write(&path, "# 重建后的内容\n").unwrap();
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reload_externally_changed_document(&path, cx)
+        })
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "# 重建后的内容",
+            "重建后的内容没刷进界面"
+        );
+    });
+}
+
+/// 有未保存编辑时，外部改动**不能**被静默写进界面（那是丢用户的字），也**不能**
+/// 被反向盖回磁盘：本地内容留在屏幕上，盘上那一版保持不动，冲突由保存路径处理。
+#[gpui::test]
+async fn an_external_edit_does_not_clobber_unsaved_local_edits(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-external-dirty-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let path = root.join("note.md");
+    fs::write(&path, "# 原文\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        let first = editor.document.first_root().expect("first block").clone();
+        first.update(cx, |block, _cx| {
+            block
+                .record
+                .set_title(crate::components::InlineTextTree::plain(
+                    "本地未保存的改动".to_string(),
+                ));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    fs::write(&path, "# 外部改动\n").unwrap();
+
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reload_externally_changed_document(&path, cx)
+        })
+    });
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.document.markdown_text(cx).contains("本地未保存的改动"),
+            "脏文档被外部内容顶掉了"
+        );
+    });
+    assert_eq!(
+        fs::read_to_string(&path).expect("read file"),
+        "# 外部改动\n",
+        "重载判定也不许顺手写盘"
+    );
+}
+
+/// 外部改动读不出来时不能什么都不做（静默失效），要让用户看见并补一次复查。
+///
+/// 「文档在外部修改后没有刷新」的另一条可复现形状：监听事件到得很及时，但那一瞬间
+/// 盘上的内容读不出来——别的程序正在写（半截的 UTF-16、读到 NUL 的字节流）、文件被
+/// 同步盘换成了占位符、或者句柄还被上一个写者独占。`reload_externally_changed_document`
+/// 以前把 `load_document` 的错误直接 `let Ok(..) else { return }` 吞掉：界面停在旧内容、
+/// 没有任何提示，而且**再也不会有第二次机会**（很多平台这一次事件就是最后一次）。
+/// 现在：这一趟先给一条侧栏错误说明为什么没刷，再补一次短延时的复查，写完了就接上。
+#[gpui::test]
+async fn an_unreadable_external_change_is_reported_and_rechecked(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-external-unreadable-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let path = root.join("note.md");
+    fs::write(&path, "# 原文\n").unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+        })
+    });
+    cx.run_until_parked();
+
+    // 半截/不可无损表示的字节：读盘漏斗会拒绝（UTF-16 BOM + NUL + 孤立单元）。
+    fs::write(&path, [0xFF, 0xFE, 0x00, 0x00, 0xFF, 0xD8]).expect("write junk");
+    cx.update(|_window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reload_externally_changed_document(&path, cx)
+        })
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.workspace.file_error.is_some(),
+            "读不出外部改动也要说得出为什么，不能安静地留着旧正文"
+        );
+        assert!(
+            !editor.document_dirty,
+            "读不出来不是用户的编辑，不该把文档置脏"
+        );
+    });
+
+    // 写完了：补的那一次复查要把新内容接上。
+    fs::write(&path, "# 外部改完的内容\n").expect("write the finished file");
+    cx.executor().advance_clock(Duration::from_millis(1_000));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "# 外部改完的内容",
+            "补一次复查之后仍要能刷进界面"
+        );
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.workspace.file_error.is_none(),
+            "接上新内容之后那条提示该收回去"
+        );
+    });
+}
+
 #[gpui::test]
 async fn external_file_events_refresh_the_workspace_tree(cx: &mut TestAppContext) {
     // 审查发现：watcher 只转发 Modify/Create 且从不刷新文件树，外部新建/

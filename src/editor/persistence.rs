@@ -215,7 +215,6 @@ impl Editor {
         }
 
         let editor = cx.entity().downgrade();
-        let window_handle = self.window_handle;
         self.autosave_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let debounce = cx
@@ -285,20 +284,20 @@ impl Editor {
                             let failing_path = document.path.clone();
                             crate::config::save_recovery_snapshot(&document.recovery)
                                 .map_err(|error| (failing_path.clone(), error))?;
-                            if let (Some(path), Some(expected_version)) =
-                                (document.path.as_deref(), document.file_version)
+                            let disk_raw = match (document.path.as_deref(), document.file_version)
                             {
-                                verify_file_version(path, expected_version)
-                                    .map_err(|error| (failing_path.clone(), error))?;
-                            }
-                            if let Some(temp_path) = document.temp_path {
-                                // 优先写缓冲区字节：CRLF/GB18030 文档经 autosave
-                                // 不能被洗成 LF/UTF-8（那是「打开没动的字节被改写」
-                                // 的旁门版本）。
-                                let payload = document
-                                    .bytes
-                                    .as_deref()
-                                    .unwrap_or(document.recovery.markdown.as_bytes());
+                                (Some(path), Some(expected_version)) => verify_file_version(
+                                    path,
+                                    expected_version,
+                                )
+                                .map_err(|error| (failing_path.clone(), error))?,
+                                _ => Vec::new(),
+                            };
+                            if let Some(temp_path) = document.temp_path.as_ref() {
+                                // 优先写缓冲区字节；后台那一页按磁盘上的形状重新编码
+                                // （见 `autosave_payload`），CRLF/UTF-16/GB18030 文档
+                                // 经 autosave 不能被洗成 LF/UTF-8。
+                                let payload = autosave_payload(&document, &disk_raw);
                                 std::fs::write(temp_path, payload)
                                     .map_err(|error| {
                                         (failing_path.clone(), anyhow::Error::from(error))
@@ -314,7 +313,7 @@ impl Editor {
                         Ok::<_, (Option<PathBuf>, anyhow::Error)>(())
                     })
                     .await;
-                let conflict_detail = editor
+                editor
                     .update(cx, move |editor, cx| {
                         editor.autosave_task = None;
                         match write_result {
@@ -347,8 +346,14 @@ impl Editor {
                                     }
                                 } else {
                                     editor.report_workspace_file_error(detail.clone(), cx);
+                                    // 一趟失败只出**一个**框：冲突那一类由
+                                    // `report_external_change_conflict` 出（带「重载 /
+                                    // 另存为」的解除入口），这一支补的是纯写盘失败。
+                                    let title =
+                                        cx.global::<I18nManager>().strings().save_failed_title.clone();
+                                    editor.show_message_modal(title, detail.clone(), cx);
                                 }
-                                return Some(detail);
+                                return;
                             }
                         }
 
@@ -359,7 +364,7 @@ impl Editor {
                                 }
                             }
                             editor.schedule_autosave(cx);
-                            return None;
+                            return;
                         }
 
                         let mut saved_documents = Vec::new();
@@ -656,7 +661,7 @@ impl Editor {
             let detail = error.to_string();
             let strings = cx.global::<I18nManager>().strings().clone();
             // 应用内模态，不用系统原生弹窗（用户要求）。
-            if detail.starts_with("检测到外部修改") {
+            if is_external_change(&error) {
                 self.report_workspace_file_error(detail.clone(), cx);
                 // 手动保存撞上的冲突与自动保存撞上的同一个问题，给同一个解除入口
                 // （重载 / 另存为），不再只有一块「好」按钮。
