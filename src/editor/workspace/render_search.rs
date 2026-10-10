@@ -486,21 +486,9 @@ impl Editor {
             rows.push((index, false));
         }
 
-        let window = self.workspace_list_window(rows.len());
-        self.panel_rows_rendered.set(window.len() as u64);
-        self.panel_first_row_rendered.set(window.start as u64);
-        let needs_fill = rows.len() > PANEL_WINDOW_THRESHOLD_ROWS
-            && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
-        let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
-        // 上下各垫一段等高空白：滚动条长度与位置仍按整张表算，中间只挂窗口里的行。
-        if window.start > 0 {
-            elements.push(
-                div()
-                    .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
-        }
+        let total = rows.len();
+        let window = self.workspace_list_window(total);
+        let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
         for (index, is_header) in &rows[window.clone()] {
             let index = *index;
             let hit = &self.workspace.search_results[index];
@@ -516,7 +504,7 @@ impl Editor {
                 // 没有行号，点击就只是打开这个文件；内容命中则跳到该处匹配。
                 let header_selected = self.workspace.search_active_index == Some(index);
                 let header_editor = editor.clone();
-                elements.push(
+                visible.push(
                     div()
                         .id(("workspace-search-file", index))
                         .debug_selector(move || format!("workspace-search-file-{index}"))
@@ -579,7 +567,7 @@ impl Editor {
             // 行高必须与 WORKSPACE_NODE_HEIGHT 一致：窗口按它算行号。文档范围
             // 原先在命中行前多挂一行文件名——同一篇文档里每行都是同一个名字
             // （标签页已经写着），两行高的列表按视口裁不出来，所以并成一行。
-            elements.push(
+            visible.push(
                 div()
                     .id(("workspace-search-hit", index))
                     .debug_selector(move || format!("workspace-search-hit-{index}"))
@@ -630,29 +618,7 @@ impl Editor {
                     .into_any_element(),
             );
         }
-        let below = rows.len() - window.end;
-        if below > 0 {
-            elements.push(
-                div()
-                    .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
-        }
-        let element = div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .children(elements)
-            .into_any_element();
-        // 首帧还没量过滚动视口：先铺一小段，排下一帧补齐（与文件树/大纲同一手法）。
-        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
-            self.panel_fill_frames += 1;
-            self.schedule_followup_frame(cx);
-        } else if !needs_fill {
-            self.panel_fill_frames = 0;
-        }
-        element
+        self.workspace_windowed_body(total, window, visible, cx)
     }
 
     /// Opens the hit's match: document-scope hits select the byte range in the

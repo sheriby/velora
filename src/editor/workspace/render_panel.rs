@@ -110,54 +110,14 @@ impl Editor {
         if self.workspace.outline_tree.is_empty() {
             return self.render_workspace_empty_state("", &strings.workspace_empty_outline, theme);
         }
-        let (element, needs_fill) = {
-            let rows = self.workspace_outline_rows();
-            let window = self.workspace_list_window(rows.len());
-            self.panel_rows_rendered.set(window.len() as u64);
-            self.panel_first_row_rendered.set(window.start as u64);
-            let needs_fill = rows.len() > PANEL_WINDOW_THRESHOLD_ROWS
-                && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
-
-            let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
-            // 上下各垫一段等高空白：滚动条的长度与位置仍按整棵树算，
-            // 中间只挂视口里那一窗真节点。
-            if window.start > 0 {
-                elements.push(
-                    div()
-                        .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
-                        .flex_shrink_0()
-                        .into_any_element(),
-                );
-            }
-            for (node, depth) in &rows[window.clone()] {
-                elements.push(self.render_workspace_node(node, *depth, theme, editor));
-            }
-            let below = rows.len() - window.end;
-            if below > 0 {
-                elements.push(
-                    div()
-                        .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
-                        .flex_shrink_0()
-                        .into_any_element(),
-                );
-            }
-            let element = div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .children(elements)
-                .into_any_element();
-            (element, needs_fill)
-        };
-        // 首帧还没量过滚动视口：先铺一小段，立刻排下一帧补齐（与正文冷启动
-        // 续挂同一手法，帧数封顶，量到尺寸即停）。
-        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
-            self.panel_fill_frames += 1;
-            self.schedule_followup_frame(cx);
-        } else if !needs_fill {
-            self.panel_fill_frames = 0;
-        }
-        element
+        let rows = self.workspace_outline_rows();
+        let total = rows.len();
+        let window = self.workspace_list_window(total);
+        let visible = rows[window.clone()]
+            .iter()
+            .map(|(node, depth)| self.render_workspace_node(node, *depth, theme, editor))
+            .collect();
+        self.workspace_windowed_body(total, window, visible, cx)
     }
 
     /// 视口内的行区间：行高固定，从滚动偏移直接除得出来。大纲与文件树共用。
@@ -177,6 +137,56 @@ impl Editor {
         let start = first.saturating_sub(PANEL_WINDOW_OVERDRAW_ROWS);
         let end = (first + visible + PANEL_WINDOW_OVERDRAW_ROWS).min(total);
         start..end
+    }
+
+    /// 面板列表的通用外壳：上下垫等高空白（滚动条长度与位置仍按整张表算）、记两个
+    /// 计数器、首帧量不到视口尺寸时排一帧补齐。调用方只管取窗口并只建窗口里的行，
+    /// 行高必须都是 `WORKSPACE_NODE_HEIGHT`，否则窗口切不出准确边界。
+    pub(crate) fn workspace_windowed_body(
+        &mut self,
+        total: usize,
+        window: Range<usize>,
+        rows: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.panel_rows_rendered.set(rows.len() as u64);
+        self.panel_first_row_rendered.set(window.start as u64);
+        let needs_fill = total > PANEL_WINDOW_THRESHOLD_ROWS
+            && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
+        let mut elements: Vec<AnyElement> = Vec::with_capacity(rows.len() + 2);
+        // 上下各垫一段等高空白：滚动条长度与位置仍按整张表算，中间只挂窗口里的行。
+        if window.start > 0 {
+            elements.push(
+                div()
+                    .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
+                    .flex_shrink_0()
+                    .into_any_element(),
+            );
+        }
+        elements.extend(rows);
+        let below = total.saturating_sub(window.end);
+        if below > 0 {
+            elements.push(
+                div()
+                    .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
+                    .flex_shrink_0()
+                    .into_any_element(),
+            );
+        }
+        let element = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .children(elements)
+            .into_any_element();
+        // 首帧还没量过滚动视口：先铺一小段，立刻排下一帧补齐（帧数封顶，量到尺寸即停）。
+        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
+            self.panel_fill_frames += 1;
+            self.schedule_followup_frame(cx);
+        } else if !needs_fill {
+            self.panel_fill_frames = 0;
+        }
+        element
     }
 
     /// 展开状态下的标题树按行摊平：`(节点, 深度)` 的顺序就是屏幕顺序。

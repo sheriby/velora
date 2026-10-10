@@ -17,10 +17,7 @@ use std::time::Duration;
 
 use gpui::{AnyElement, AppContext, Task, Window};
 
-use super::workspace::{
-    is_markdown_document, WorkspaceOpenMode, PANEL_FILL_MAX_FRAMES, PANEL_WINDOW_THRESHOLD_ROWS,
-    WORKSPACE_NODE_HEIGHT,
-};
+use super::workspace::{is_markdown_document, WorkspaceOpenMode, WORKSPACE_NODE_HEIGHT};
 use super::Editor;
 use crate::theme::Theme;
 
@@ -455,20 +452,7 @@ impl Editor {
         // 等高 24px，直接接面板共用那套视口窗口（与大纲/文件树同一手法）。
         let total = self.link_panels.backlinks.len();
         let window = self.workspace_list_window(total);
-        self.panel_rows_rendered.set(window.len() as u64);
-        self.panel_first_row_rendered.set(window.start as u64);
-        let needs_fill = total > PANEL_WINDOW_THRESHOLD_ROWS
-            && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
-        let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
-        // 上下各垫一段等高空白：滚动条长度与位置仍按整张表算，中间只挂窗口里的行。
-        if window.start > 0 {
-            elements.push(
-                div()
-                    .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
-        }
+        let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
         for (offset, path) in self.link_panels.backlinks[window.clone()].iter().enumerate() {
             let index = window.start + offset;
             let name = path
@@ -481,7 +465,7 @@ impl Editor {
                 .map(|parent| parent.to_string_lossy().to_string());
             let click_path = path.clone();
             let click_editor = cx.entity().downgrade();
-            elements.push(
+            visible.push(
                 div()
                     .id(gpui::ElementId::Name(
                         format!("backlink-entry-{index}").into(),
@@ -530,30 +514,7 @@ impl Editor {
                     .into_any_element(),
             );
         }
-        let below = total - window.end;
-        if below > 0 {
-            elements.push(
-                div()
-                    .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
-        }
-        let element = div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .py(px(4.0))
-            .children(elements)
-            .into_any_element();
-        // 首帧还没量过滚动视口：先铺一小段，排下一帧补齐（帧数封顶，量到尺寸即停）。
-        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
-            self.panel_fill_frames += 1;
-            self.schedule_followup_frame(cx);
-        } else if !needs_fill {
-            self.panel_fill_frames = 0;
-        }
-        element
+        self.workspace_windowed_body(total, window, visible, cx)
     }
 
     /// 标签面板：工作区 #标签 聚合计数，点击进入工作区标签搜索（C4）。
@@ -575,24 +536,12 @@ impl Editor {
         // 同上：标签可以上千个，行也是等高 24px。
         let total = self.link_panels.tags.len();
         let window = self.workspace_list_window(total);
-        self.panel_rows_rendered.set(window.len() as u64);
-        self.panel_first_row_rendered.set(window.start as u64);
-        let needs_fill = total > PANEL_WINDOW_THRESHOLD_ROWS
-            && f32::from(self.workspace.tree_scroll_handle.bounds().size.height) <= 0.0;
-        let mut elements: Vec<AnyElement> = Vec::with_capacity(window.len() + 2);
-        if window.start > 0 {
-            elements.push(
-                div()
-                    .h(px(window.start as f32 * WORKSPACE_NODE_HEIGHT))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
-        }
+        let mut visible: Vec<AnyElement> = Vec::with_capacity(window.len());
         for (offset, (tag, count)) in self.link_panels.tags[window.clone()].iter().enumerate() {
             let index = window.start + offset;
             let click_tag = tag.clone();
             let click_editor = cx.entity().downgrade();
-            elements.push(
+            visible.push(
                 div()
                     .id(gpui::ElementId::Name(format!("tag-entry-{index}").into()))
                     .debug_selector(move || format!("tag-entry-{index}"))
@@ -626,30 +575,7 @@ impl Editor {
                     .into_any_element(),
             );
         }
-        let below = total - window.end;
-        if below > 0 {
-            elements.push(
-                div()
-                    .h(px(below as f32 * WORKSPACE_NODE_HEIGHT))
-                    .flex_shrink_0()
-                    .into_any_element(),
-            );
-        }
-        let element = div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .py(px(4.0))
-            .children(elements)
-            .into_any_element();
-        // 首帧还没量过滚动视口：先铺一小段，排下一帧补齐（与反链面板同一手法）。
-        if needs_fill && self.panel_fill_frames < PANEL_FILL_MAX_FRAMES {
-            self.panel_fill_frames += 1;
-            self.schedule_followup_frame(cx);
-        } else if !needs_fill {
-            self.panel_fill_frames = 0;
-        }
-        element
+        self.workspace_windowed_body(total, window, visible, cx)
     }
 }
 
