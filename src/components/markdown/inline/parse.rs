@@ -867,6 +867,11 @@ pub(crate) fn parse_inline_link(
     let label_markdown = tokens_to_string(label_tokens);
     let mut label_result = InlineTextTree::plain(label_markdown)
         .normalize_inline_syntax_with_link_references(reference_definitions);
+    let label_len = label_result.tree.visible_len();
+    // 空标题没有片段承载链接外壳，保留原文才能继续填写 `[]()` 而不丢字符。
+    if label_len == 0 {
+        return None;
+    }
     apply_extra_style_to_fragments(
         &mut label_result.tree.fragments,
         extra_style,
@@ -875,7 +880,6 @@ pub(crate) fn parse_inline_link(
     let link = located.link;
 
     let normalized_start = builder.normalized_len;
-    let label_len = label_result.tree.visible_len();
 
     for boundary in tokens[index].source_range.start..=tokens[index].source_range.end {
         builder.visible_to_normalized[boundary] = normalized_start;

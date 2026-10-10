@@ -133,7 +133,7 @@ async fn paragraph_shortcut_creates_task_item_directly(cx: &mut TestAppContext) 
             None,
             None,
             None,
-            false,
+            None,
             cx,
         );
     });
@@ -155,7 +155,7 @@ async fn paragraph_shortcut_creates_parenthesized_numbered_list_directly(cx: &mu
             None,
             None,
             None,
-            false,
+            None,
             cx,
         );
     });
@@ -171,7 +171,7 @@ async fn bullet_shortcut_upgrades_to_task_item_after_box_prefix(cx: &mut TestApp
     let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
 
     block.update(cx, |block, cx| {
-        block.apply_title_edit(InlineTextTree::plain("- "), 2, None, None, None, false, cx);
+        block.apply_title_edit(InlineTextTree::plain("- "), 2, None, None, None, None, cx);
     });
     let kind = block.read_with(cx, |block, _cx| block.kind());
     assert_eq!(kind, BlockKind::BulletedListItem);
@@ -183,7 +183,7 @@ async fn bullet_shortcut_upgrades_to_task_item_after_box_prefix(cx: &mut TestApp
             None,
             None,
             None,
-            false,
+            None,
             cx,
         );
     });

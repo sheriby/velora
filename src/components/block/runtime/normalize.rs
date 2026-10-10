@@ -254,7 +254,7 @@ impl Block {
             selected_clean
                 .as_ref()
                 .and_then(|range| (!range.is_empty()).then_some(false)),
-            false,
+            None,
             cx,
         );
     }
@@ -438,7 +438,7 @@ impl Block {
         marked_range_clean: Option<Range<usize>>,
         selected_range_clean: Option<Range<usize>>,
         selected_range_reversed: Option<bool>,
-        caret_may_have_closed_span: bool,
+        new_span_caret_affinity: Option<CollapsedCaretAffinity>,
         cx: &mut Context<Self>,
     ) {
         let old_kind = self.record.kind.clone();
@@ -475,23 +475,20 @@ impl Block {
         self.numbered_list_restart_requested = should_restart_numbered_list;
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();
-        // Rebuild when a projection already existed, or when this edit may have
-        // closed a delimiter, creating a span whose markers now need projecting.
+        // 新解析出样式时也要展开记号，光标仍需区分填入正文与刚输入结束记号。
         if self.edit_mode.supports_inline_projection()
-            && (keep_projection || caret_may_have_closed_span)
+            && (keep_projection || new_span_caret_affinity.is_some())
         {
             self.rebuild_inline_projection(next_selected_clean.clone(), next_marked_clean.clone());
         }
 
-        // If the edit closed a span (its delimiters were absorbed), place the
-        // caret after the new closing marker so typing continues as plain text.
-        if caret_may_have_closed_span
+        if let Some(affinity) = new_span_caret_affinity
             && next_selected_clean.is_empty()
             && self.projection.as_ref().is_some_and(|projection| {
                 projection.caret_closes_span_at_clean(next_selected_clean.start)
             })
         {
-            collapsed_affinity = CollapsedCaretAffinity::OuterEnd;
+            collapsed_affinity = affinity;
         }
 
         self.marked_range = next_marked_clean
@@ -618,11 +615,10 @@ impl Block {
             )
         };
 
-        // A span was closed when re-parsing absorbed delimiters into a style,
-        // leaving the clean text shorter than expected. Skip IME and deletions.
+        // 记号被吸收时需要重建显示投影；填入成对记号的第一个字也会触发这一条件。
         let expected_visible_len =
             base_visible_len.saturating_sub(clean_range.len()) + new_text.len();
-        let caret_may_have_closed_span = !self.uses_raw_text_editing()
+        let span_markers_absorbed = !self.uses_raw_text_editing()
             && !new_text.is_empty()
             && !mark_inserted_text
             && result.tree.visible_text().len() < expected_visible_len;
@@ -650,12 +646,26 @@ impl Block {
             .map(|range| range.end)
             .unwrap_or_else(|| result.map_offset(clean_range.start + new_text.len()));
 
+        let source_cursor = clean_range.start
+            + selected_range_relative
+                .as_ref()
+                .map(|range| range.end)
+                .unwrap_or(new_text.len());
+        let new_span_caret_affinity = span_markers_absorbed.then(|| {
+            // 光标之后还有被吸收的记号，说明是在既有括号内填字，而非刚敲完闭合记号。
+            if result.visible_to_normalized.get(source_cursor + 1) == Some(&cursor) {
+                CollapsedCaretAffinity::Default
+            } else {
+                CollapsedCaretAffinity::OuterEnd
+            }
+        });
+
         // 「在光标处插入一段文字」这种形状才交给编辑器做点写回：删除会挪动后面的
         // 文本、换行会改结构、拆掉样式或写进引用里都得由整块重新序列化来说明。
         self.pending_visible_insertion = if visible_range.is_empty()
             && !new_text.is_empty()
             && !new_text.contains('\n')
-            && !caret_may_have_closed_span
+            && !span_markers_absorbed
             && !styles_unwrapped
             && !quote_structure_edit
         {
@@ -672,7 +682,7 @@ impl Block {
             selected_range
                 .as_ref()
                 .and_then(|range| (!range.is_empty()).then_some(false)),
-            caret_may_have_closed_span,
+            new_span_caret_affinity,
             cx,
         );
     }

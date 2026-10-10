@@ -1,7 +1,7 @@
 //! 「格式 → 链接」那一条入口：⌘K、右键菜单、选中工具栏三个入口写的字节必须一样。
 //!
 //! 这一笔只补链接的外壳 `[文字]()`，地址留给用户当场写，所以用例盯四件事：缓冲区只在
-//! 选区那一处动、光标落在 `](` 之后（只有光标时落在 `[]` 中间）、块树不被拆开、一步撤销回到原样。
+//! 选区那一处动、光标落在 `](` 之后、块树不被拆开、一步撤销回到原样。
 
 use super::common::*;
 use crate::components::{Block, LinkSelection};
@@ -154,6 +154,137 @@ fn open_format_submenu(editor: &Entity<Editor>, index: usize, cx: &mut VisualTes
     redraw(cx);
 }
 #[gpui::test]
+async fn typing_an_empty_link_keeps_its_shell_visible_and_editable(cx: &mut TestAppContext) {
+    // 敲下末尾的 `)` 后，空链接归一化没有留下文本片段，屏幕和缓冲区都丢了外壳。
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor("前文🙂", cx);
+    focus_block_at(&editor, 0, cx);
+    visible_block(&editor, 0, cx).update(cx, |block, cx| block.move_to("前文🙂".len(), cx));
+
+    for character in " []()".chars() {
+        cx.simulate_input(&character.to_string());
+        redraw(cx);
+    }
+    let block = visible_block(&editor, 0, cx);
+    let expected = "前文🙂 []()";
+    assert_eq!(
+        block.read_with(cx, |block, _| block.display_text().to_string()),
+        expected,
+        "完成空链接后屏幕上的四个字符不应消失"
+    );
+    assert_eq!(buffer_text(&editor, cx), expected, "空链接应写回缓冲区");
+    assert_eq!(caret_of(&editor, 0, cx), expected.len()..expected.len());
+
+    // 先填写地址，再填写标题；形成完整链接后仍保留全部源文本。
+    block.update(cx, |block, cx| block.move_to(expected.len() - 1, cx));
+    cx.simulate_input("notes.md");
+    redraw(cx);
+    assert_eq!(buffer_text(&editor, cx), "前文🙂 [](notes.md)");
+    block.update(cx, |block, cx| block.move_to("前文🙂 [".len(), cx));
+    cx.simulate_input("笔记");
+    redraw(cx);
+    assert_eq!(buffer_text(&editor, cx), "前文🙂 [笔记](notes.md)");
+    block.read_with(cx, |block, _| {
+        let offset = block.display_text().find("笔记").expect("标题可见");
+        assert_eq!(
+            block.inline_link_at(offset),
+            Some("notes.md"),
+            "填写后应成为正常链接"
+        );
+    });
+
+    undo(&editor, cx);
+    assert_eq!(buffer_text(&editor, cx), "前文🙂", "连续输入应整组撤销");
+    editor.update(cx, |editor, cx| editor.redo_document(cx));
+    redraw(cx);
+    assert_eq!(buffer_text(&editor, cx), "前文🙂 [笔记](notes.md)");
+}
+
+#[gpui::test]
+async fn typing_inside_empty_inline_markers_keeps_the_entire_word_inside(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for initial in ["", "前文🙂", "$x$ 尾部🙂"] {
+        for marker in ["*", "**", "_", "__", "~~", "==", "`"] {
+            let (editor, cx) = open_editor(initial, cx);
+            focus_block_at(&editor, 0, cx);
+            let block = visible_block(&editor, 0, cx);
+            block.update(cx, |block, cx| block.move_to(initial.len(), cx));
+            let separator = if initial.is_empty() { "" } else { " " };
+            cx.simulate_input(&format!("{separator}{marker}{marker}"));
+            redraw(cx);
+            let prefix = format!("{initial}{separator}{marker}");
+            block.update(cx, |block, cx| block.move_to(prefix.len(), cx));
+            let mut word = String::new();
+            for character in "test".chars() {
+                cx.simulate_input(&character.to_string());
+                redraw(cx);
+                word.push(character);
+                assert_eq!(
+                    buffer_text(&editor, cx),
+                    format!("{prefix}{word}{marker}"),
+                    "在 {marker:?} 中填写正文时，光标不应跳出结束标记"
+                );
+                assert_eq!(
+                    caret_of(&editor, 0, cx),
+                    prefix.len() + word.len()..prefix.len() + word.len()
+                );
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn typing_incomplete_inline_syntax_never_loses_source_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for syntax in [
+        "*",
+        "**",
+        "***",
+        "****",
+        "_",
+        "__",
+        "~~",
+        "~~~~",
+        "==",
+        "====",
+        "`",
+        "``",
+        "[]",
+        "[](",
+        "[]()",
+        "![",
+        "![](",
+        "![]()",
+        "$",
+        "$$",
+        "*内容*",
+        "**内容**",
+        "~~内容~~",
+        "==内容==",
+        "`内容`",
+        "$x$",
+        "[内容]()",
+        "[内容](notes.md)",
+        "![图](notes.png)",
+    ] {
+        let (editor, cx) = open_editor("检查🙂", cx);
+        focus_block_at(&editor, 0, cx);
+        visible_block(&editor, 0, cx).update(cx, |block, cx| block.move_to("检查🙂".len(), cx));
+        let mut expected = "检查🙂".to_string();
+        for character in format!(" {syntax}").chars() {
+            cx.simulate_input(&character.to_string());
+            redraw(cx);
+            expected.push(character);
+            assert_eq!(
+                buffer_text(&editor, cx),
+                expected,
+                "输入 {syntax:?} 的中间状态不应被重解析吞掉"
+            );
+        }
+    }
+}
+
+#[gpui::test]
 async fn wrapping_a_selection_writes_the_link_shell_and_parks_the_caret_in_the_url_slot(
     cx: &mut TestAppContext,
 ) {
@@ -200,7 +331,7 @@ async fn a_bare_caret_leaves_the_link_row_pointless(cx: &mut TestAppContext) {
     select(&editor, 0, 0..0, cx);
     assert!(
         !available(&editor, cx),
-        "只有光标时这一行该置灰：空的 `[]()` 在行内树里存不住"
+        "只有光标时没有可包成链接的选中文字，这一行该置灰"
     );
     assert!(!wrap(&editor, cx), "点不动就不该动字节");
     assert_eq!(buffer_text(&editor, cx), TWO_PARAGRAPHS);

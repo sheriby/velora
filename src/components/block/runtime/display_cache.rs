@@ -24,11 +24,11 @@ impl Block {
         if keep_projection {
             self.rebuild_inline_projection(clean_selected.clone(), clean_marked.clone());
             if clean_selected.is_empty() {
-                let affinity =
-                    self.caret_affinity_for_clean_offset(clean_selected.start, collapsed_affinity);
-                let offset = self
-                    .clean_to_current_cursor_offset_with_affinity(clean_selected.start, affinity);
-                self.assign_collapsed_selection_offset(offset, affinity, None);
+                let offset = self.clean_to_current_cursor_offset_with_affinity(
+                    clean_selected.start,
+                    collapsed_affinity,
+                );
+                self.assign_collapsed_selection_offset(offset, collapsed_affinity, None);
             } else {
                 self.set_selection_from_clean_anchor_focus(
                     clean_anchor,
@@ -241,13 +241,20 @@ impl Block {
             self.quote_reparse_requested = true;
         }
 
-        // Typing a closing marker (for example the `)` that completes a link)
-        // absorbs that markup into a span, so the clean text grows by less than
-        // the inserted text. Flag it so the caret is placed just past the new
-        // closing delimiter instead of landing inside the span.
-        let caret_may_have_closed_span = !new_text.is_empty()
+        // 吸收记号只代表形成了样式，是否跨过结束记号要按输入后的源码落点判断。
+        let span_markers_absorbed = !new_text.is_empty()
             && !mark_inserted_text
             && next_title.visible_text().len() < old_visible_len + new_text.len();
+
+        let new_span_caret_affinity = span_markers_absorbed.then(|| {
+            if cursor_markdown < map.markdown().len()
+                && map.markdown_to_visible_offset(cursor_markdown + 1) == cursor_clean
+            {
+                CollapsedCaretAffinity::Default
+            } else {
+                CollapsedCaretAffinity::OuterEnd
+            }
+        });
 
         self.apply_title_edit(
             next_title,
@@ -257,7 +264,7 @@ impl Block {
             selected_clean
                 .as_ref()
                 .and_then(|range| (!range.is_empty()).then_some(false)),
-            caret_may_have_closed_span,
+            new_span_caret_affinity,
             cx,
         );
     }
@@ -276,6 +283,7 @@ impl Block {
             return;
         }
 
+        let had_projection = self.projection.is_some();
         let projected_link_selection = self.projection.as_ref().and_then(|projection| {
             projection
                 .link_run_fully_covering_range(&self.selected_range)
@@ -330,8 +338,12 @@ impl Block {
             self.selection_reversed = snapshot.selection_reversed;
             self.collapsed_caret_affinity = CollapsedCaretAffinity::Default;
         } else if clean_selected.is_empty() {
-            let collapsed_affinity =
-                self.caret_affinity_for_clean_offset(clean_selected.start, collapsed_affinity);
+            // 已显形的记号内外位置来自上一帧，不能按块尾重新猜成记号外侧。
+            let collapsed_affinity = if had_projection {
+                collapsed_affinity
+            } else {
+                self.caret_affinity_for_clean_offset(clean_selected.start, collapsed_affinity)
+            };
             let offset = self.clean_to_current_cursor_offset_with_affinity(
                 clean_selected.start,
                 collapsed_affinity,

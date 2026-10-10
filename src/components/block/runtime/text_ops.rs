@@ -148,8 +148,7 @@ impl Block {
     }
 
     /// 把这一段**可见文本**包成 `[文字]()`：包完光标停在括号中间，等用户写地址。
-    /// 没有选中文字时不做任何事——空的 `[]()` 在行内树里存不住（重读时那四个字符被
-    /// 当成空链接丢掉），所以「只有光标」这一档留给选区。
+    /// 没有选中文字时不做任何事，链接命令只包装已有的选区。
     /// 区间用屏幕上的坐标，与 [`Self::toggle_inline_format_in_range`] 同一个口径。
     pub(crate) fn wrap_visible_range_in_link(
         &mut self,
@@ -214,7 +213,7 @@ impl Block {
             None,
             Some(selection),
             reversed,
-            false,
+            None,
             cx,
         );
         true
@@ -256,7 +255,7 @@ impl Block {
             None,
             Some(selection),
             reversed,
-            false,
+            None,
             cx,
         );
         true

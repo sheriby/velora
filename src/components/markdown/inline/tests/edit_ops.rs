@@ -232,6 +232,22 @@
     }
 
     #[test]
+    fn empty_link_labels_remain_visible_and_round_trip() {
+        // 空标题没有文本片段承载链接属性，归一化曾连同链接外壳一起吞掉。
+        for markdown in [
+            "[]()",
+            "[]() tail",
+            "before []() after",
+            "末尾🙂[]()",
+            "[](/文档.md)",
+        ] {
+            let tree = InlineTextTree::from_markdown(markdown);
+            assert_eq!(tree.visible_text(), markdown, "空链接应保留可编辑原文");
+            assert_eq!(tree.serialize_markdown(), markdown, "空链接往返不应丢字节");
+        }
+    }
+
+    #[test]
     fn parses_inline_links_autolinks_and_preserves_other_unsupported_inline_syntax() {
         let markdown =
             "[link](http://example.com) ![alt](/img.png) <http://example.com/> <span>x</span>";
