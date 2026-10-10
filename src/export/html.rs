@@ -21,6 +21,7 @@ pub(super) use pulldown_cmark::{
 };
 
 use crate::components::markdown::image::{ImageResolvedSource, resolve_image_source};
+use crate::components::markdown::inline::looks_like_currency_between;
 pub(super) use crate::components::{
     inline_math_font_size, is_mermaid_info_string, parse_display_math_source,
     parse_html_image_block, render_latex_to_svg, render_mermaid_to_svg, sanitize_html_for_export,
@@ -486,8 +487,15 @@ fn locate_inline_dollar_math_source(line: &str, index: usize) -> Option<(usize, 
             && !is_escaped_ascii(line, cursor)
         {
             let body = &line[index + 1..cursor];
+            // 钱/公式的判据只有一处（`inline::parse::looks_like_currency_between`），
+            // 这里只负责从重建原文上取出定界符两侧的字符。闭合 `$` 是 1 字节，所以
+            // `cursor + 1` 必是字符边界；仍用 `get` 取值，边界由类型保证而不是靠运气。
             if valid_inline_math_body(body)
-                && !looks_like_export_currency(line, index, cursor, body)
+                && !looks_like_currency_between(
+                    line.get(..index).and_then(|head| head.chars().next_back()),
+                    line.get(cursor + 1..).and_then(|tail| tail.chars().next()),
+                    body,
+                )
             {
                 return Some((cursor + 1, body.to_string()));
             }
@@ -499,6 +507,9 @@ fn locate_inline_dollar_math_source(line: &str, index: usize) -> Option<(usize, 
 }
 
 fn locate_inline_paren_math_source(line: &str, index: usize) -> Option<(usize, String)> {
+    // `\(...\)` 是无歧义的 TeX 定界符：这里**不许**过问钱/公式判据
+    // （`inline::parse::looks_like_currency_between` 只服务 `$…$`），否则 `\(42\)`
+    // 会被当成钱数原样导出（cases/07-numeric-math.md，与阅读视图同一口径）。
     if !line[index..].starts_with("\\(") {
         return None;
     }
@@ -610,17 +621,6 @@ fn is_escaped_ascii(line: &str, index: usize) -> bool {
         cursor -= 1;
     }
     slash_count % 2 == 1
-}
-
-fn looks_like_export_currency(line: &str, open: usize, close: usize, body: &str) -> bool {
-    let prev_is_digit = open > 0 && line.as_bytes()[open - 1].is_ascii_digit();
-    let next_is_digit = close + 1 < line.len() && line.as_bytes()[close + 1].is_ascii_digit();
-    (prev_is_digit || next_is_digit)
-        || (body
-            .chars()
-            .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | ',' | '_'))
-            && body.chars().any(|ch| ch.is_ascii_digit())
-            && body.len() > 1)
 }
 
 /// 事件流分发描述：先按不可变借用取出需要的信息，再调用会改 self 的方法，

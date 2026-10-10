@@ -667,8 +667,7 @@ pub(crate) fn parse_inline_math(
     let body = tokens_to_string(&tokens[body_start..close_start]);
     // 货币启发只针对 `$…$` 这种**本身就有歧义**的定界符（`$42$` 更像钱）；
     // `\(...\)` 是无歧义的 TeX 写法，任何内容都按公式读（用户报修 cases/07-numeric-math.md：
-    // `\(42\)` 被当成钱数）。这条规则是全应用唯一的货币判据，导出侧应当调用
-    // `looks_like_obvious_currency`，不要再抄一份。
+    // `\(42\)` 被当成钱数）。判据见 `looks_like_currency_between`，导出侧调的是同一个函数。
     if matches!(delimiter, InlineMathDelimiter::Dollar)
         && looks_like_obvious_currency(tokens, index, close_end, &body)
     {
@@ -736,31 +735,48 @@ pub(crate) fn token_is_backslash_escaped(tokens: &[CharToken], index: usize) -> 
     slash_count % 2 == 1
 }
 
-/// 「这串 `$…$` 是钱不是公式」的唯一判据：紧贴定界符外侧的是数字，或体内除
-/// `.` `,` `_` 外全是数字且超过一位。调用方必须只在歧义定界符（`$…$`）上引用它，
-/// `\(...\)` 一类无歧义 TeX 定界符不适用。UI 与导出共用这一条规则（导出侧应调用
-/// 本函数而不是抄一份近似实现）。
+/// 「这串 `$…$` 是钱不是公式」的唯一判据（文本层）：紧贴两侧定界符的是数字，或体内除
+/// `.` `,` `_` 外全是数字且数字超过一位。
+///
+/// 定界符两侧的字符由调用方按**自己的表示**取好再递过来——阅读视图是 `CharToken` 序列
+/// （[`looks_like_obvious_currency`]），导出是重建原文加字节偏移
+/// （`src/export/html.rs:locate_inline_dollar_math_source`）——判据本身只有一份。导出侧
+/// 曾抄过一份近似实现，两份一旦漂移就是「界面里是公式、HTML 里是钱」那类下游报修。
+///
+/// 只作用于歧义定界符 `$…$`：`\(...\)` 是无歧义的 TeX 写法，任何内容都按公式读，
+/// 调用方不得在它身上引用本判据（用户报修 cases/07-numeric-math.md：`\(42\)` 被当钱数）。
+pub(crate) fn looks_like_currency_between(
+    before: Option<char>,
+    after: Option<char>,
+    body: &str,
+) -> bool {
+    if before.is_some_and(|character| character.is_ascii_digit())
+        || after.is_some_and(|character| character.is_ascii_digit())
+    {
+        return true;
+    }
+
+    body.chars()
+        .all(|character| character.is_ascii_digit() || matches!(character, '.' | ',' | '_'))
+        && body.chars().any(|character| character.is_ascii_digit())
+        && body.len() > 1
+}
+
+/// 阅读视图侧的取值适配器：从 `CharToken` 序列里取出两个定界符紧邻的字符，交给唯一
+/// 判据 [`looks_like_currency_between`]。规则不在这份函数里，它只负责「怎么从 token
+/// 里取值」。`open_index`/`close_index` 是 `$` 自身的位置。
 pub(crate) fn looks_like_obvious_currency(
     tokens: &[CharToken],
     open_index: usize,
     close_index: usize,
     body: &str,
 ) -> bool {
-    let prev_is_digit = open_index
+    let before = open_index
         .checked_sub(1)
-        .and_then(|idx| tokens.get(idx))
-        .is_some_and(|token| token.ch.is_ascii_digit());
-    let next_is_digit = tokens
-        .get(close_index + 1)
-        .is_some_and(|token| token.ch.is_ascii_digit());
-    if prev_is_digit || next_is_digit {
-        return true;
-    }
-
-    body.chars()
-        .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | ',' | '_'))
-        && body.chars().any(|ch| ch.is_ascii_digit())
-        && body.len() > 1
+        .and_then(|index| tokens.get(index))
+        .map(|token| token.ch);
+    let after = tokens.get(close_index + 1).map(|token| token.ch);
+    looks_like_currency_between(before, after, body)
 }
 
 pub(crate) fn parse_footnote_reference(
