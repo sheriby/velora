@@ -105,10 +105,14 @@ pub(crate) fn is_closing_fence(line: &str, opener: &FenceInfo) -> bool {
         return false;
     }
     let run_len = trimmed.chars().take_while(|&c| c == opener.ch).count();
-    if run_len != opener.len {
+    // CommonMark: a closing fence is the *same* fence char, *at least* as long as
+    // the opener, and followed by nothing but whitespace. Anything shorter, of a
+    // different char, or still carrying an info string is ordinary content — so a
+    // ```` ``` inside code ```` line inside a ```` ```` ```` block is never a closer.
+    if run_len < opener.len {
         return false;
     }
-    trimmed[opener.ch.len_utf8() * run_len..].trim().is_empty()
+    trimmed[run_len * opener.ch.len_utf8()..].is_empty()
 }
 
 pub(crate) fn find_matching_closing_fence(
@@ -117,25 +121,20 @@ pub(crate) fn find_matching_closing_fence(
     opener: &FenceInfo,
 ) -> Option<usize> {
     for index in (start_index + 1)..lines.len() {
-        let line = &lines[index];
-        // A fenced block closes at its first matching fence, as in CommonMark.
+        // A fenced block closes at its first valid closing fence, as in CommonMark.
         // Scanning for a later fence (the previous behavior) let any opener
         // swallow the following blocks whose closing fences are bare, merging
         // them and corrupting them on round-trip (issue #58). A bare closing
         // fence is indistinguishable from an empty opener, so first-match is
         // the only unambiguous rule.
-        if is_closing_fence(line, opener) {
+        //
+        // There is deliberately no second test for "looks like another opener":
+        // an info-tagged line (```` ``` inside code ````) is not a closer, so by
+        // the same predicate it is just code content and the scan continues. It
+        // used to abort here, which abandoned well-formed blocks whose body
+        // legitimately contains a shorter or text-bearing fence run.
+        if is_closing_fence(&lines[index], opener) {
             return Some(index);
-        }
-
-        // An info-tagged opener can never be a closing fence, so reaching one
-        // first means this block was never closed and stays unmatched.
-        if parse_opening_fence(line)
-            .as_ref()
-            .and_then(|fence| fence.language.as_ref())
-            .is_some()
-        {
-            break;
         }
     }
 

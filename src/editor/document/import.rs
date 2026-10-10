@@ -10,7 +10,11 @@ impl Editor {
                     index = closing_index + 1;
                     continue;
                 }
-                break;
+                // 没有配平的闭合围栏：这一行按普通行走下去，继续扫后面的行。
+                // 直接 `break` 会把后文里真正需要源码模式的形状（`!!!` 标注、
+                // 未闭合的 `:::` div）一起放过，界面就在渲染态画出一团认不出的语法。
+                index += 1;
+                continue;
             }
             if is_unsupported_admonition_opening(&lines[index]) {
                 return true;
