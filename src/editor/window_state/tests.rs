@@ -43,6 +43,46 @@ mod tests {
         );
     }
 
+    /// `file:` URL 的目标必须还原成绝对路径。
+    ///
+    /// 这一串以前被 `trim_start_matches('/')` 把头一道斜杠削掉，
+    /// `file:///Users/me/a.md` 变成相对的 `Users/me/a.md`——链接点了开不到文件，
+    /// 而同一个文件写成 `/Users/me/a.md` 却是好的。绝对 URL 与相对写法不该走
+    /// 同一条剥前缀的路径。
+    #[test]
+    fn file_urls_classify_as_absolute_local_paths() {
+        assert_eq!(
+            classify_link_target("file:///Users/me/a.md"),
+            LinkTarget::Local {
+                path: "/Users/me/a.md".to_string(),
+                anchor: None,
+            }
+        );
+        assert_eq!(
+            classify_link_target("file://localhost/Users/me/a.md"),
+            LinkTarget::Local {
+                path: "/Users/me/a.md".to_string(),
+                anchor: None,
+            }
+        );
+        // 带锚点与百分号转义：路径与锚点分别还原。
+        assert_eq!(
+            classify_link_target("file:///Users/me/%E6%8A%A5%E5%91%8A.md#%E7%BB%93%E8%AE%BA"),
+            LinkTarget::Local {
+                path: "/Users/me/报告.md".to_string(),
+                anchor: Some("结论".to_string()),
+            }
+        );
+        // `file:` 后不跟 `/` 是相对当前文档的写法，仍然是相对路径（图片那侧同口径）。
+        assert_eq!(
+            classify_link_target("file:relative.png"),
+            LinkTarget::Local {
+                path: "relative.png".to_string(),
+                anchor: None,
+            }
+        );
+    }
+
     #[test]
     fn relative_links_resolve_against_the_current_document() {
         let document = PathBuf::from("/work/notes/index.md");

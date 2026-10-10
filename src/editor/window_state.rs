@@ -967,20 +967,48 @@ pub(crate) fn classify_link_target(target: &str) -> LinkTarget {
         return LinkTarget::External(trimmed.to_string());
     }
     let file_url_target = strip_file_url_prefix(trimmed, &lowered);
-    let raw = match file_url_target {
-        Some(rest) => rest.trim_start_matches('/').to_string(),
-        None => trimmed.to_string(),
-    };
-    let (path_part, anchor) = split_link_anchor(&raw);
-    // Windows 的 `C:/x.md` 被 strip 掉斜杠后会丢掉盘符冒号后的分隔，这里补回。
-    let path = percent_decode_or_raw(path_part).into_owned();
-    let path = match file_url_target {
-        Some(_) if path.len() > 2 && path.as_bytes().get(1) == Some(&b':') => format!("/{path}"),
-        _ => path,
+    let (path, anchor) = match file_url_target {
+        Some(rest) => {
+            let (path, anchor) = split_link_anchor(rest);
+            (
+                local_path_from_file_url(path),
+                anchor.map(|anchor| percent_decode_or_raw(anchor).into_owned()),
+            )
+        }
+        None => {
+            let (path, anchor) = split_link_anchor(trimmed);
+            let path = percent_decode_or_raw(path).into_owned();
+            (path, anchor.map(|anchor| percent_decode_or_raw(anchor).into_owned()))
+        }
     };
     LinkTarget::Local {
         path,
-        anchor: anchor.map(|anchor| percent_decode_or_raw(anchor).into_owned()),
+        anchor,
+    }
+}
+
+/// `file:` 目标还原成本地路径。
+///
+/// 绝对写法（`file:///Users/me/a.md`、`file://localhost/Users/me/a.md`）交给
+/// `file_url::parse_file_url`——那是全仓唯一的文件 URL 解析，认 authority 也认
+/// 百分号转义。这里以前对整串 `trim_start_matches('/')`，把
+/// `file:///Users/me/a.md` 削成相对的 `Users/me/a.md`，同一个文件写成
+/// `/Users/me/a.md` 却点得开：绝对 URL 与相对写法不该走同一条剥前缀的路。
+/// `file:docs/a.md` 这种不带斜杠的仍是相对当前文档的写法，只剥 scheme。
+fn local_path_from_file_url(rest: &str) -> String {
+    let decoded = if rest.starts_with('/') || rest.starts_with("//") {
+        crate::file_url::parse_file_url(&format!("file:{rest}"))
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| percent_decode_or_raw(rest).into_owned())
+    } else {
+        percent_decode_or_raw(rest).into_owned()
+    };
+    // Windows 盘符：`file:C:/Notes/x.md` 与 `file:///C:/…` 解出来都缺开头那道斜杠，
+    // 补回来才是这一层一直交给打开动作的那个形状。
+    if decoded.len() > 2 && decoded.as_bytes().get(1) == Some(&b':') {
+        format!("/{decoded}")
+    } else {
+        decoded
     }
 }
 
