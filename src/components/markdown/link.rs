@@ -1,9 +1,6 @@
 //! Reference-style links and autolink helpers.
 
 use std::collections::HashMap;
-use std::str::FromStr;
-
-use gpui::http_client::Uri;
 
 use super::image::normalize_reference_label;
 
@@ -122,20 +119,6 @@ pub(crate) fn parse_link_reference_definitions(markdown: &str) -> LinkReferenceD
     }
 
     definitions
-}
-
-pub(crate) fn is_supported_autolink_target(target: &str) -> bool {
-    if target
-        .strip_prefix("mailto:")
-        .is_some_and(|address| !address.is_empty() && address.contains('@'))
-    {
-        return true;
-    }
-
-    Uri::from_str(target)
-        .ok()
-        .and_then(|uri| uri.scheme_str().map(str::to_owned))
-        .is_some_and(|scheme| matches!(scheme.as_str(), "http" | "https"))
 }
 
 fn parse_link_reference_definition(
@@ -425,8 +408,7 @@ fn is_escaped(input: &str, index: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LinkReferenceDefinition, is_supported_autolink_target, parse_link_reference_definitions,
-        parse_link_target,
+        LinkReferenceDefinition, parse_link_reference_definitions, parse_link_target,
     };
 
     /// 尖括号目标里的空格是合法的：`[a](<报告 2026.pdf>)` 的目标就是
@@ -511,12 +493,4 @@ mod tests {
         assert!(!definitions.contains_key("html ref"));
     }
 
-    #[test]
-    fn supports_http_https_and_mailto_autolinks() {
-        assert!(is_supported_autolink_target("https://example.com"));
-        assert!(is_supported_autolink_target("http://example.com"));
-        assert!(is_supported_autolink_target("mailto:test@example.com"));
-        assert!(!is_supported_autolink_target("./relative/path"));
-        assert!(!is_supported_autolink_target("span>x</span"));
-    }
 }
