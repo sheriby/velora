@@ -14,7 +14,8 @@ mod session;
 
 pub(crate) use preferences::{
     DeletePolicy, EditorSettings, ExportThemePreference, ExternalChangePolicy, ImagePasteBehavior,
-    StartupOpenPreference, TreeSortPreference, WindowFrame, WindowOpenPosition,
+    SidebarOpenPreference, SidebarPanelPreference, StartupOpenPreference, TreeSortPreference,
+    WindowFrame, WindowOpenPosition,
     apply_configured_language, apply_configured_theme, export_theme_preference,
     first_existing_recent_markdown_file,
     import_language_config_and_select, import_theme_config_and_select,
@@ -78,9 +79,20 @@ pub(crate) struct VeloraConfigDirs {
     root: PathBuf,
 }
 
-/// 测试构建的配置目录覆盖（进程级，首次解析时确定）。
+/// 每个测试线程的配置目录序号：线程 id 会被复用，序号不会。
 #[cfg(test)]
-static TEST_CONFIG_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static TEST_CONFIG_ROOT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+thread_local! {
+    /// 测试构建的配置目录（线程级，首次解析时确定）。
+    ///
+    /// 线程级而不是进程级：测试并行跑在同一进程里，共用一份 session.json /
+    /// config.toml 时，一个用例写下的状态（最近文件夹、侧栏记忆、窗口 frame）会被
+    /// 另一个用例读走，断言就跟着调度顺序时红时绿。测试跑在各线程上，一线程一目录
+    /// 就没有这层串扰；需要独占目录的用例仍可用 `override_test_config_root`。
+    static TEST_CONFIG_ROOT: std::cell::OnceCell<PathBuf> = const { std::cell::OnceCell::new() };
+}
 
 #[cfg(test)]
 thread_local! {
@@ -127,10 +139,17 @@ impl VeloraConfigDirs {
             if let Some(root) = TEST_CONFIG_ROOT_OVERRIDE.with(|slot| slot.borrow().clone()) {
                 return Ok(Self { root });
             }
-            let root = TEST_CONFIG_ROOT.get_or_init(|| {
-                std::env::temp_dir().join(format!("velora-test-config-{}", std::process::id()))
+            let root = TEST_CONFIG_ROOT.with(|cell| {
+                cell.get_or_init(|| {
+                    std::env::temp_dir().join(format!(
+                        "velora-test-config-{}-{}",
+                        std::process::id(),
+                        TEST_CONFIG_ROOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    ))
+                })
+                .clone()
             });
-            return Ok(Self { root: root.clone() });
+            return Ok(Self { root });
         }
         #[cfg(not(test))]
         {
