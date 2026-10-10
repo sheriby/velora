@@ -751,6 +751,30 @@ pub(crate) fn is_inline_tag(name: &str) -> bool {
     )
 }
 
+/// 行内 void / 自闭 HTML 标签的分类：**行内解析器识别 void 标签的唯一表**。
+/// 没有这张表时 `<br>` 会被 autolink 规则吃掉尖括号（用户报修 cases/11-table-br.md：
+/// 单元格里渲染成带下划线的 "br"）。下一个要支持的 void 标签（`<hr>`、`<wbr>`、
+/// 行内 `<img>`……）进表即被识别，不需要再补一处特例。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VoidInlineHtmlKind {
+    /// 渲染为断点（序列化统一写回 `<br>`）。
+    LineBreak,
+    /// 行内暂不特殊渲染（`<wbr>` 要真正的软断点、`<img>` 要行内图片部件，都不在这一档）：
+    /// 整体保持字面源码，但**绝不**按 autolink 解析。
+    Literal,
+}
+
+pub(crate) fn void_inline_html_tag(name: &str) -> Option<VoidInlineHtmlKind> {
+    match name {
+        "br" => Some(VoidInlineHtmlKind::LineBreak),
+        "area" | "base" | "basefont" | "col" | "embed" | "frame" | "hr" | "img" | "input"
+        | "link" | "meta" | "param" | "source" | "track" | "wbr" => {
+            Some(VoidInlineHtmlKind::Literal)
+        }
+        _ => None,
+    }
+}
+
 fn is_block_tag(name: &str) -> bool {
     matches!(
         name,

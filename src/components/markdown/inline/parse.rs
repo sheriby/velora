@@ -300,6 +300,37 @@ impl NormalizeBuilder {
         });
     }
 
+    /// 输出一个断点片段：整个 void 标签（`<br>` 一族）在可见文本里塌缩成一个
+    /// `'\n'`，写法本身由 `InlineStyle::line_break` 记着，序列化写回 `<br>`。
+    pub(crate) fn emit_line_break(
+        &mut self,
+        tokens: &[CharToken],
+        extra_style: InlineStyle,
+        extra_html_style: Option<HtmlInlineStyle>,
+    ) {
+        let normalized_start = self.normalized_len;
+        for (token_position, token) in tokens.iter().enumerate() {
+            let token_len = token.source_range.len();
+            let is_last_boundary = token_position + 1 == tokens.len();
+            for delta in 0..=token_len {
+                self.visible_to_normalized[token.source_range.start + delta] =
+                    normalized_start + usize::from(is_last_boundary && delta == token_len);
+            }
+        }
+        self.normalized_len += 1;
+        self.fragments.push(InlineFragment {
+            text: "\n".to_string(),
+            style: InlineStyle {
+                line_break: true,
+                ..extra_style
+            },
+            html_style: extra_html_style,
+            link: None,
+            footnote: None,
+            math: None,
+        });
+    }
+
     pub(crate) fn emit_inline_math(
         &mut self,
         tokens: &[CharToken],
@@ -504,6 +535,19 @@ pub(crate) fn parse_until(
                 builder,
                 reference_definitions,
             ) {
+                index = next_index;
+                continue;
+            }
+
+            if tokens[index].ch == '<'
+                && let Some(next_index) = parse_inline_html_void_break(
+                    tokens,
+                    index,
+                    extra_style,
+                    extra_html_style,
+                    builder,
+                )
+            {
                 index = next_index;
                 continue;
             }
@@ -970,6 +1014,28 @@ pub(crate) fn parse_inline_html_container(
     }
 
     Some(close_end + 1)
+}
+
+pub(crate) fn parse_inline_html_void_break(
+    tokens: &[CharToken],
+    index: usize,
+    extra_style: InlineStyle,
+    extra_html_style: Option<HtmlInlineStyle>,
+    builder: &mut NormalizeBuilder,
+) -> Option<usize> {
+    let tag = locate_inline_html_open_tag(tokens, index)?;
+    if void_inline_html_tag(&tag.name)? != VoidInlineHtmlKind::LineBreak {
+        return None;
+    }
+    if has_dangerous_attrs(&tag.attrs) {
+        return None;
+    }
+    builder.emit_line_break(
+        &tokens[index..=tag.end_index],
+        extra_style,
+        extra_html_style,
+    );
+    Some(tag.end_index + 1)
 }
 
 pub(crate) fn inline_html_semantic_style(name: &str, style: InlineStyle) -> InlineStyle {

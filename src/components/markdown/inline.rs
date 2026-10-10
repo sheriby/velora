@@ -13,8 +13,8 @@ pub(super) use super::footnote::{
     superscript_ordinal,
 };
 pub(super) use super::html::{
-    HtmlAttr, HtmlInlineStyle, HtmlNode, HtmlNodeKind, has_dangerous_attrs, is_inline_tag,
-    parse_html_attrs, style_for_node,
+    HtmlAttr, HtmlInlineStyle, HtmlNode, HtmlNodeKind, VoidInlineHtmlKind, has_dangerous_attrs,
+    is_inline_tag, parse_html_attrs, style_for_node, void_inline_html_tag,
 };
 pub(super) use super::link::{LinkReferenceDefinition, LinkReferenceDefinitions, parse_link_target};
 
@@ -34,6 +34,11 @@ pub struct InlineStyle {
     /// 写法是原文的一部分：不记它的话，序列化只能一律写 `*`，于是任何一次整块落笔
     /// 都把用户的 `__粗__` 改成 `**粗**`。`None` 表示按规范写 `*`。
     pub emphasis_marker: Option<char>,
+    /// 这个片段里的 `'\n'` 在源码里写成 void 换行标签（`<br>`，见
+    /// `void_inline_html_tag`）：可见文本是断点，序列化统一写回 `<br>`。
+    /// 其他写法产生的换行（行尾两空格、行尾反斜杠）不置这个位——前者的空格本来就在
+    /// 可见文本里，后者由 `escaped_offsets` 记写法，逐字节还原都不靠这个位。
+    pub line_break: bool,
 }
 
 /// Vertical script style for simple Markdown extension syntax.

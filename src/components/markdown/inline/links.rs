@@ -293,6 +293,14 @@ pub(crate) fn looks_like_non_autolink_html_tag(tokens: &[CharToken], end_index: 
         return true;
     }
 
+    // void 标签表里认识的名字一律不是 autolink（`<br>` 曾被吃掉尖括号、渲染成
+    // 带下划线的 "br" 链接，cases/11-table-br.md）；新 void 标签进表即被挡住。
+    if let Some((tag_name, _)) = html_tag_name_with_attrs(target)
+        && void_inline_html_tag(&tag_name.to_ascii_lowercase()).is_some()
+    {
+        return true;
+    }
+
     let Some((tag_name, _)) = html_tag_name_with_attrs(target) else {
         return false;
     };

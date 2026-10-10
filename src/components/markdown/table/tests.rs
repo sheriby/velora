@@ -387,6 +387,32 @@ mod tests {
     }
 
     #[test]
+    fn table_cell_br_renders_line_break_not_an_underlined_tag_name() {
+        // 用户报修（cases/11-table-br.md，见 screenshots/11-table-br.png）：
+        // 单元格里的 `first<br>second` 渲染成带下划线的 "br"。期望：真正断行、
+        // 无下划线、无字面标签名，保存仍是 `<br>` 写法。
+        let lines = vec![
+            "| Item | Lines |".to_string(),
+            "| --- | --- |".to_string(),
+            "| A | first<br>second |".to_string(),
+            "| B | **bold** and *italic* |".to_string(),
+        ];
+        let table = parse_table_region(&lines).expect("含 <br> 的表应能解析");
+        let cell = &table.rows[0][1];
+        assert_eq!(cell.visible_text(), "first\nsecond");
+        assert!(
+            cell.render_cache()
+                .spans()
+                .iter()
+                .all(|span| span.link.is_none() && !span.style.underline),
+            "`<br>` 单元格不许出现链接/下划线"
+        );
+        // 强调行不受影响。
+        assert_eq!(table.rows[1][1].visible_text(), "bold and italic");
+        assert_eq!(serialize_table_markdown_lines(&table), lines);
+    }
+
+    #[test]
     fn detects_root_table_candidate_runs() {
         let lines = vec![
             "| A | B |".to_string(),

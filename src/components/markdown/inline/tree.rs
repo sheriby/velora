@@ -483,6 +483,10 @@ fn serialize_fragment_run_markdown(fragments: &[InlineFragment], escaped: &[u32]
 
         if let Some(math) = fragment.math.as_ref() {
             output.push_str(&math.source);
+        } else if fragment.style.line_break {
+            for _ in fragment.text.chars() {
+                output.push_str("<br>");
+            }
         } else if fragment.style.code {
             output.push_str(&escape_code_span_text(&fragment.text));
         } else {
@@ -581,6 +585,8 @@ fn serialize_fragment_run_markdown_with_offset_map(
 
         let escaped = if let Some(math) = fragment.math.as_ref() {
             identity_text_with_offset_map(&math.source)
+        } else if fragment.style.line_break {
+            html_line_break_offset_map(fragment.text.chars().count())
         } else if fragment.style.code {
             escape_code_span_text_with_offset_map(&fragment.text)
         } else {
@@ -647,6 +653,20 @@ fn identity_text_with_offset_map(text: &str) -> InlineMarkdownOffsetMap {
         markdown: text.to_string(),
         visible_to_markdown: (0..=text.len()).collect(),
         markdown_to_visible: (0..=text.len()).collect(),
+    }
+}
+
+/// `break_count` 个断点各序列化成一个 `<br>`：可见 1 字节 ↔ markdown 4 字节，
+/// 与 [`serialize_fragment_run_markdown`] 里 `line_break` 分支的写法保持一致
+/// （两条序列化路径不许漂移，见 `serialize_markdown_matches_offset_map`）。
+fn html_line_break_offset_map(break_count: usize) -> InlineMarkdownOffsetMap {
+    let markdown = "<br>".repeat(break_count);
+    InlineMarkdownOffsetMap {
+        markdown,
+        visible_to_markdown: (0..=break_count).map(|index| index * 4).collect(),
+        markdown_to_visible: (0..=(break_count * 4))
+            .map(|offset| (offset / 4).min(break_count))
+            .collect(),
     }
 }
 
@@ -885,7 +905,11 @@ impl InlineTextTree {
         }
 
         for fragment in &mut middle.fragments {
-            fragment.style = InlineStyle::default();
+            // 断点标记不是「格式」：清样式只清粗体/斜体那一族，`<br>` 的写法要保住。
+            fragment.style = InlineStyle {
+                line_break: fragment.style.line_break,
+                ..InlineStyle::default()
+            };
         }
         middle.normalize_fragments();
 
