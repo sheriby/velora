@@ -566,12 +566,21 @@ async fn item01_and_item08_original_encoded_files_survive_an_edit_and_save(
     cx: &mut TestAppContext,
 ) {
     init_editor_test_app(cx);
-    for name in ["01-utf16", "08-utf8-bom"] {
+    for (name, use_crlf) in [
+        ("01-utf16", false),
+        ("08-utf8-bom", false),
+        ("01-utf16", true),
+        ("08-utf8-bom", true),
+    ] {
         let original = fs::read(fixture_dir().join(format!("{name}.md"))).expect("读取原始字节");
+        let (mut shape, text) = crate::editor::buffer::FileShape::detect_and_decode(&original);
+        let line_ending: &[u8] = if use_crlf { b"\r\n" } else { b"\n" };
+        shape.line_ending = crate::editor::buffer::FileShape::detect(line_ending).line_ending;
+        let original = shape.encode(&text);
         let path = temp_markdown_path(name);
         fs::write(&path, &original).expect("写入素材副本");
         let document = crate::editor::encoding::load_document(&path).expect("解码原始素材");
-        let source = document.text.clone();
+        let disk_source = document.text.clone();
         let cleanup = path.clone();
         cx.on_quit(move || fs::remove_file(&cleanup).expect("清理素材副本"));
         let (editor, cx) = cx.add_window_view({
@@ -599,7 +608,7 @@ async fn item01_and_item08_original_encoded_files_survive_an_edit_and_save(
             cx.notify();
         });
         redraw(cx);
-        let caret = editor.read_with(cx, |editor, cx| {
+        let (caret, source) = editor.read_with(cx, |editor, cx| {
             let active = editor
                 .document
                 .visible_blocks()
@@ -607,21 +616,22 @@ async fn item01_and_item08_original_encoded_files_survive_an_edit_and_save(
                 .find(|visible| Some(visible.entity.entity_id()) == editor.active_entity_id)
                 .expect("应有焦点块");
             let block = active.entity.read(cx);
-            editor
+            let caret = editor
                 .caret_source_offset(active.entity.entity_id(), block.selected_range.end, cx)
-                .expect("光标应有源码偏移")
+                .expect("光标应有源码偏移");
+            (caret, editor.buffer.text())
         });
-        assert!(
-            caret >= source.trim_end_matches('\n').len(),
-            "应在正文末尾输入"
+        // 光标属于 LF 缓冲区；磁盘字节仍保留 CRLF，两套长度不能直接比较。
+        assert_eq!(
+            caret,
+            source.trim_end_matches('\n').len(),
+            "应在正文末尾输入：{name}, CRLF={use_crlf}"
         );
+        let disk_prefix = disk_source.trim_end_matches(['\r', '\n']);
         let (byte_offset, inserted) = if name == "01-utf16" {
-            (
-                2 + source[..caret].encode_utf16().count() * 2,
-                vec![b'Z', 0],
-            )
+            (2 + disk_prefix.encode_utf16().count() * 2, vec![b'Z', 0])
         } else {
-            (3 + caret, vec![b'Z'])
+            (3 + disk_prefix.len(), vec![b'Z'])
         };
         let mut expected = original.clone();
         expected.splice(byte_offset..byte_offset, inserted);
