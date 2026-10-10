@@ -143,14 +143,16 @@ impl Editor {
             return;
         }
         cx.update_global::<UpdateSession, _>(|session, _| session.startup_checked = true);
+        // 开机路径一律不打扰用户：上次安装留下的失败原因只进日志（用户报修：连不上
+        // GitHub 的机器每次启动都被「更新失败」拦一下）。用户自己点的路径另说。
         match update_check::take_install_error() {
             Ok(Some(detail)) => {
-                self.show_update_failure(&detail, cx);
+                eprintln!("上次更新安装失败：{detail}");
                 return;
             }
             Ok(None) => {}
             Err(error) => {
-                self.show_update_failure(&error.to_string(), cx);
+                eprintln!("读取更新安装结果失败：{error}");
                 return;
             }
         }
@@ -246,7 +248,10 @@ impl Editor {
                 self.show_message_modal(strings.update_up_to_date_title, detail, cx);
             }
             Ok(UpdateCheckResult::UpToDate(_)) => {}
-            Err(error) => self.show_update_failure(&error.to_string(), cx),
+            // 自动检查失败静默，只记日志（用户报修：连不上 GitHub 的机器每次启动都弹
+            // 一次「更新失败」）；手动检查是用户自己问的，要回话。
+            Err(error) if manual => self.show_update_failure(&error.to_string(), cx),
+            Err(error) => eprintln!("检查更新失败（自动检查，不打扰用户）：{error}"),
         }
         cx.notify();
     }
@@ -664,5 +669,74 @@ mod tests {
         );
         cx.update(|cx| assert!(!cx.global::<UpdateSession>().download_active));
         drop(editor);
+    }
+
+    /// 自动检查更新失败必须静默：用户报修——连不上 GitHub 的机器每次启动都弹一次
+    /// 「更新失败」，关掉下次启动还来，很打扰人。手动点「检查更新」失败仍然要说一声：
+    /// 那是用户自己问的，静默等于点了没反应。
+    #[gpui::test]
+    async fn automatic_update_check_failures_are_silent_while_manual_ones_speak(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+            super::init_update_session(cx);
+            let mut settings = crate::config::preferences::UpdatePreferences::default();
+            settings.check_on_startup = false;
+            crate::config::EditorSettings::set_updates_in_memory(cx, settings);
+        });
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+        let failure = || crate::net::update::UpdateCheckError::Fetch("连不上 GitHub".into());
+        editor.update(cx, |editor, cx| {
+            editor.apply_update_result(Err(failure()), false, cx);
+            assert!(
+                !editor.modal_is_open(),
+                "开机自动检查失败不该弹窗：连不上 GitHub 的机器每次启动都会被拦一下"
+            );
+            editor.apply_update_result(Err(failure()), true, cx);
+            assert!(
+                editor.modal_is_open(),
+                "手动点「检查更新」失败要告诉用户，静默等于点了没反应"
+            );
+        });
+    }
+
+    /// 上次安装/自检留在磁盘上的失败原因，也不能在开机路径上变成弹窗。
+    #[gpui::test]
+    async fn a_leftover_install_failure_does_not_greet_the_user_on_startup(
+        cx: &mut TestAppContext,
+    ) {
+        let root = std::env::temp_dir().join(format!("velora-update-silent-{}", uuid::Uuid::new_v4()));
+        let _config_root = crate::config::override_test_config_root(root.clone());
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+            super::init_update_session(cx);
+            let mut settings = crate::config::preferences::UpdatePreferences::default();
+            settings.check_on_startup = false;
+            crate::config::EditorSettings::set_updates_in_memory(cx, settings);
+        });
+        let updates = crate::net::update::updates_dir().expect("更新目录");
+        std::fs::create_dir_all(&updates).expect("建更新目录");
+        std::fs::write(updates.join("install-error.txt"), "安装包校验失败").expect("写安装失败记录");
+
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.maybe_check_updates_on_startup(window, cx);
+            assert!(
+                !editor.modal_is_open(),
+                "上次安装失败的原因只在日志里说，不该在开机路径上弹窗"
+            );
+            assert!(
+                !editor.update_check_in_progress,
+                "前置：有安装失败记录时开机路径不该同时去发网络请求"
+            );
+        });
+        let _ = std::fs::remove_dir_all(root);
     }
 }
