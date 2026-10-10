@@ -77,13 +77,99 @@ pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> 
     }
 }
 
-fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<()> {
-    let markdown = super::encoding::read_document_string(path)
-        .with_context(|| format!("无法读取文件以检查外部修改：{}", path.display()))?;
-    if file_content_version(&markdown) != expected_version {
-        anyhow::bail!("检测到外部修改：{}", path.display());
+/// 「这一篇不能写」的那一类失败：盘上的内容变了，或者已经读不出来了。
+///
+/// 用类型判别，不用错误文案前缀匹配。这里以前靠 `detail.starts_with("检测到外部修改")`
+/// 分流，而失败上报那一支认两个前缀、决定要不要**再**弹一个框的那一支只认一个——
+/// 「读不到盘上内容」于是同时在冲突框（带「重载 / 另存为」）和「保存失败」框上冒头。
+/// `show_modal` 是替换语义，后弹的那个把唯一的解除入口顶掉了，用户只看见
+/// 「保存失败」（报修原文）。文案改一个字就会再漏一次，所以钉在类型上。
+#[derive(Debug)]
+pub(super) struct ExternalChange {
+    pub(super) path: PathBuf,
+    /// 盘上的内容读不出来了（文件被移走、被别的程序独占、同步盘的占位符还没落地、
+    /// 半截的 UTF-16）：与「内容变了」同样不能写，但理由要分开说。
+    reason: Option<String>,
+}
+
+impl std::fmt::Display for ExternalChange {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.reason.as_deref() {
+            Some(reason) => write!(
+                formatter,
+                "无法读取文件以检查外部修改：{}：{reason}",
+                self.path.display()
+            ),
+            None => write!(formatter, "检测到外部修改：{}", self.path.display()),
+        }
     }
-    Ok(())
+}
+
+impl std::error::Error for ExternalChange {}
+
+/// 这个失败是不是「盘上的内容变了 / 读不到」那一类——它走冲突入口，不走「保存失败」。
+fn is_external_change(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<ExternalChange>().is_some()
+}
+
+/// 读盘比对版本，并**把盘上的原始字节一起交回去**：落盘要按这份文件自己的形状重新
+/// 编码（见 [`autosave_payload`]），而校验读的正是同一个文件，不必再读第二遍。
+fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<Vec<u8>> {
+    let document = super::encoding::load_document(path).map_err(|error| ExternalChange {
+        path: path.to_path_buf(),
+        reason: Some(error.to_string()),
+    })?;
+    if file_content_version(&document.text) != expected_version {
+        return Err(anyhow::Error::new(ExternalChange {
+            path: path.to_path_buf(),
+            reason: None,
+        }));
+    }
+    Ok(document.raw)
+}
+
+/// 后台标签落盘的字节：形状取自磁盘上还在的那份文件。
+///
+/// `WorkspaceDocumentTab` 只存缓冲区文本（LF、解码后的），不存字节与 `FileShape`——
+/// tabs.rs / session_watcher.rs 里那两行「tab 快照携带字节与 FileShape（独立工作项，
+/// 见 FIXPLAN B2）」就是这个洞：切走的页面没有缓冲区，落盘只剩 `text.as_bytes()`，
+/// 于是 UTF-16 的 BOM 与编码、GB18030 的编码、CRLF 的行尾一起被洗成 UTF-8/LF。
+/// 那正是「编码修复」要堵的那一类数据丢失，只是换了个入口。
+///
+/// 不在每个标签上再存一份整篇字节：盘上的形状还在原文件里，写之前按它重新编码就行，
+/// 编码器仍然只有 `FileShape::encode` 一个，读盘的漏斗也只有 `encoding::load_document`
+/// 一个——两处都是既有事实源，不新增第三份要同步的账。
+pub(super) fn tab_write_bytes(path: &Path, text: &str) -> Vec<u8> {
+    match super::encoding::load_document(path) {
+        Ok(document) => encoded_with_disk_shape(text, &document.raw),
+        // 原文件读不出来（已被移走，或它的字节本来就不能无损写回）：退回文本字节，
+        // 与修之前的行为一致，不新增失败面。
+        Err(_) => text.as_bytes().to_vec(),
+    }
+}
+
+/// 按磁盘上那份文件的形状把文本重新编码；认不出形状就照原文本字节走。
+fn encoded_with_disk_shape(text: &str, disk_raw: &[u8]) -> Vec<u8> {
+    if disk_raw.is_empty() {
+        return text.as_bytes().to_vec();
+    }
+    let shape = super::buffer::FileShape::detect(disk_raw);
+    if !shape.is_lossless() {
+        return text.as_bytes().to_vec();
+    }
+    shape.encode(text)
+}
+
+/// 这一篇要写出去的字节。
+///
+/// 活动文档用缓冲区的（`bytes` 有值：未编辑就是打开时那份原字节，编辑过就按形状
+/// 重编码）。后台标签只能用切换时存下的文本，按盘上的形状重新编码（见
+/// [`tab_write_bytes`]）。
+fn autosave_payload(document: &PendingAutosaveDocument, disk_raw: &[u8]) -> Vec<u8> {
+    match document.bytes.as_deref() {
+        Some(bytes) => bytes.to_vec(),
+        None => encoded_with_disk_shape(&document.recovery.markdown, disk_raw),
+    }
 }
 
 pub(super) fn file_content_version(markdown: &str) -> u64 {
@@ -241,13 +327,12 @@ impl Editor {
                                 }
                                 if editor.document_revision != revision {
                                     editor.schedule_autosave(cx);
-                                    return None;
+                                    return;
                                 }
+                                let external_change = is_external_change(&error);
                                 let detail = error.to_string();
                                 eprintln!("failed to save recovery snapshot: {detail}");
-                                if detail.starts_with("检测到外部修改")
-                                    || detail.starts_with("无法读取文件以检查外部修改")
-                                {
+                                if external_change {
                                     // 优先用真正失败的文件路径；只有旧路径拿不到时才
                                     // 退回第一个有路径的标签。
                                     let conflict_path = failing_path.or_else(|| {
@@ -312,17 +397,8 @@ impl Editor {
                         if !saved_documents.is_empty() {
                             cx.notify();
                         }
-                        None
                     })
-                    .ok()
-                    .flatten();
-                // 外部改动冲突的框由 `report_external_change_conflict` 那侧出（带
-                // 「重载 / 另存为」的解除入口），这里只补其它写盘失败的提示。
-                if let (Some(window_handle), Some(detail)) = (window_handle, conflict_detail) {
-                    if !detail.starts_with("检测到外部修改") {
-                        Self::show_workspace_save_error(window_handle, detail, cx);
-                    }
-                }
+                    .ok();
             },
         ));
     }
@@ -394,13 +470,14 @@ impl Editor {
                     let prepared = match write_result {
                         Ok(prepared) => prepared,
                         Err(error) => {
+                            let external_change = is_external_change(&error);
                             let detail = error.to_string();
                             editor.pending_close_after_save = false;
                             editor.show_unsaved_changes_dialog = true;
                             editor.report_workspace_file_error(detail.clone(), cx);
                             eprintln!("failed to save workspace documents: {detail}");
                             cx.notify();
-                            return (false, Some(detail));
+                            return (false, Some((external_change, detail)));
                         }
                     };
                     if editor.document_revision != revision {
@@ -451,9 +528,9 @@ impl Editor {
                     (true, None)
                 })
                 .unwrap_or((false, None));
-            if let Some(detail) = error_detail {
+            if let Some((external_change, detail)) = error_detail {
                 if let Some(error_window) = editor_window_for_error {
-                    if detail.starts_with("检测到外部修改") {
+                    if external_change {
                         Self::show_external_change_error(error_window, detail, cx);
                     } else {
                         Self::show_workspace_save_error(error_window, detail, cx);

@@ -357,6 +357,129 @@ async fn autosave_does_not_overwrite_external_file_changes(cx: &mut TestAppConte
     );
 }
 
+/// 自动保存读不到盘上内容时，只能有一个框，而且必须是那个能解除冲突的框。
+///
+/// 用户报修（Windows 验收）：「自动保存提示 Save Failed」。能在 HEAD 复现的触发条件是
+/// 「这一篇的文件此刻读不出来」——被别的程序独占、被同步盘移走、被改名、被删掉。
+/// 这类失败在 `verify_file_version` 里长成「无法读取文件以检查外部修改：…」，与
+/// 「检测到外部修改」是同一件事的两面（都不能写，都要靠重载解除），失败上报那一支
+/// 两个前缀都认；可最后决定要不要再弹一个框的那道判断只认后一个前缀，于是冲突框之上
+/// 又叠了一个「保存失败」框。`show_modal` 是**替换**语义：用户丢掉的是「重载 / 另存为」
+/// 这个唯一的解除入口，只剩一块「好」，而自动保存仍然停着——看上去就像「自动保存
+/// 自己失败了」，正是要报修的那句话。
+#[gpui::test]
+async fn an_unreadable_file_at_autosave_shows_the_conflict_modal_only(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+
+    let path = temp_markdown_path("autosave-unreadable-file");
+    fs::write(&path, "alpha\n").expect("write initial markdown");
+    let cleanup_path = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(&cleanup_path);
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha\n".to_string(), Some(path))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _cx| editor.recovery_id);
+    cx.on_quit(move || {
+        let _ = crate::config::remove_recovery_snapshot(recovery_id);
+    });
+    edit_first_block(&editor, cx, "our edits");
+
+    // 文件读不出来了（这里用最省事的一种：它已经不在原地）。
+    fs::remove_file(&path).expect("remove the document file");
+
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+
+    let strings = cx.update(|_window, cx| cx.global::<I18nManager>().strings().clone());
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.has_external_autosave_conflict(),
+            "读不到盘上内容时不能继续写，冲突要记下来"
+        );
+        let spec = editor.modal_spec().expect("冲突要有能解除它的框");
+        assert_eq!(
+            spec.title, strings.external_change_title,
+            "只能有一个框，而且是「外部修改」那个（带重载 / 另存为），实测 {:?}",
+            spec.title
+        );
+        assert_eq!(
+            spec.buttons.len(),
+            3,
+            "「重载 / 另存为 / 继续编辑」三个入口不能被「保存失败」框顶掉，实测 {:?}",
+            spec.buttons
+        );
+    });
+}
+
+/// 反过来：真写不进去的时候，「保存失败」框还得照旧出——修上面的误叠不能把提示一起修没。
+///
+/// 这里手动把 `file_version` 清掉跳过盘上比对（冲突判定就不参与了），再把文档所在目录
+/// 整个挪走：临时文件创建不了，失败纯属写盘。三个平台都成立（不靠 chmod，也不靠 Windows
+/// 的独占句柄）。
+#[gpui::test]
+async fn a_real_write_failure_still_reports_save_failed(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let root = std::env::temp_dir().join(format!("velora-write-fail-{}", temp_fixture_token()));
+    fs::create_dir_all(&root).expect("create document dir");
+    let path = root.join("note.md");
+    fs::write(&path, "alpha\n").expect("write initial markdown");
+    cx.on_quit({
+        let root = root.clone();
+        let path = path.clone();
+        move || {
+            // 目录被用例挪到 `moved` 去了，两个名字都要试一次。
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(moved_document_dir(&root));
+            let _ = fs::remove_file(&path);
+        }
+    });
+
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha\n".to_string(), Some(path))
+    });
+    edit_first_block(&editor, cx, "our edits");
+
+    editor.update(cx, |editor, _cx| editor.file_version = None);
+    fs::rename(&root, moved_document_dir(&root)).expect("move the directory away");
+
+    let saved = editor.update_in(cx, |editor, window, cx| {
+        editor.save_to_existing_path(&path, window, cx)
+    });
+    assert!(!saved, "写不进去就是没保存成功");
+
+    let strings = cx.update(|_window, cx| cx.global::<I18nManager>().strings().clone());
+    editor.read_with(cx, |editor, _cx| {
+        let spec = editor.modal_spec().expect("写盘失败要有提示");
+        assert_eq!(
+            spec.title, strings.save_failed_title,
+            "真的写不进去就该报「保存失败」，实测 {:?}",
+            spec.title
+        );
+        assert!(
+            !editor.has_external_autosave_conflict(),
+            "写盘失败不是外部修改，不该把自动保存整体会话停掉"
+        );
+    });
+    assert!(
+        fs::read_to_string(&path).is_err(),
+        "失败的保存不能在原地留下半个文件"
+    );
+}
+
+fn moved_document_dir(root: &std::path::Path) -> PathBuf {
+    let mut moved = root.to_path_buf();
+    moved.set_file_name("moved-document-dir");
+    moved
+}
+
 #[gpui::test]
 async fn autosave_flushes_a_dirty_tab_after_switching_away(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
