@@ -2,7 +2,7 @@ mod tests {
     use gpui::{AppContext, Bounds, Context, Modifiers, MouseButton, TestAppContext, point, px, size};
 
     use super::super::{CrossBlockSelection, CrossBlockSelectionEndpoint, Editor};
-    use crate::components::{Cut, Undo, UndoCaptureKind};
+    use crate::components::{BlockKind, Cut, Undo, UndoCaptureKind};
     use crate::i18n::I18nManager;
     use crate::theme::ThemeManager;
 
@@ -117,6 +117,41 @@ mod tests {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
             assert_eq!(block.selected_range, 3..3);
             assert!(block.marked_range.is_none());
+        });
+        cx.quit();
+    }
+
+    /// 全选后粘纯文本：新首行不该继承旧标题的记号。
+    ///
+    /// 报修「使用体验」第 4 条：原文首段是 `# 标题` 时，选中全文再用纯文本替换，
+    /// 结果第一行仍按标题保存——替换走的是「就地把字符换掉」，块记号没人重算。
+    /// 口径：整篇重解析（`rebuild_document_from_buffer`），粘贴的内容里没有 `#`
+    /// 就应当是段落。
+    #[test]
+    fn pasting_plain_text_over_the_whole_document_does_not_keep_the_heading() {
+        let mut cx = TestAppContext::single();
+        init_editor_test_app(&mut cx);
+        let editor =
+            cx.new(|cx| Editor::from_markdown(cx, "# 标题\n\n正文".to_string(), None));
+
+        editor.update(&mut cx, |editor, cx| {
+            set_selection(editor, 0, 0, 1, 2, cx);
+            assert!(editor.replace_cross_block_selection_with_text(
+                "第一行\n第二行",
+                None,
+                false,
+                UndoCaptureKind::CoalescibleText,
+                cx
+            ));
+
+            let markdown = editor.document.markdown_text(cx);
+            assert!(!markdown.contains('#'), "旧标题记号留下来了：{markdown}");
+            let visible = editor.document.visible_blocks();
+            assert_eq!(
+                visible[0].entity.read(cx).kind(),
+                BlockKind::Paragraph,
+                "粘贴的第一行仍按标题排版"
+            );
         });
         cx.quit();
     }
