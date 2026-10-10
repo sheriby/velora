@@ -535,7 +535,7 @@
 
     #[test]
     fn resolves_reference_link_examples_from_test_markdown() {
-        let markdown = include_str!("../../../../../tests/fixtures/markdown-baseline.md");
+        let markdown = include_str!("../../../../../fixtures/markdown-baseline.md");
         let definitions = crate::components::markdown::link::parse_link_reference_definitions(markdown);
         let tree = InlineTextTree::from_markdown_with_link_references(
             "[reference link][ref-link] [collapsed reference][] [shortcut reference]",

@@ -1,7 +1,7 @@
 //! 墙钟预算类性能闸门集中在这里：断言里量真实耗时（`typed < 1200ms` 这类），
 //! 慢机器或并发抢 CPU 下会假红，因此整族 `#[ignore]`，默认 `cargo test` 与 CI
 //! 都不跑。单独跑：`cargo test --bin velora -- --ignored --nocapture`；夹具由
-//! `node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成，缺失即自跳。
+//! `node scripts/generate-fixtures.mjs fixtures/perf` 生成，缺失即自跳。
 //! 确定性计数闸门（数操作遍数、不量时间）不在此列，照常随默认测试跑。
 //! 两条跨子系统的墙钟闸门留在各自测试模块里原地 `#[ignore]`（字段私有，
 //! 搬过来要放宽生产可见性）：`workspace/tests/search_perf.rs` 的
@@ -68,9 +68,9 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     // scripts/generate-fixtures.mjs 生成且被 gitignore，缺失就跳过。
     // （10 MiB 夹具单键实测 13s，迭代太慢，先用 1 MiB 收敛行为。）
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/one-mib.md");
+        .join("fixtures/perf/one-mib.md");
     if !fixture.is_file() {
-        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs fixtures/perf`");
         return;
     }
     init_editor_test_app(cx);
@@ -262,9 +262,9 @@ async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
 #[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn ten_mib_typing_does_not_scan_the_whole_document(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/ten-mib.md");
+        .join("fixtures/perf/ten-mib.md");
     if !fixture.is_file() {
-        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs fixtures/perf`");
         return;
     }
     init_editor_test_app(cx);
@@ -352,9 +352,9 @@ async fn one_mib_code_document_with_a_fence_on_the_seam_scans_one_chunk(
     cx: &mut TestAppContext,
 ) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/one-mib.md");
+        .join("fixtures/perf/one-mib.md");
     if !fixture.is_file() {
-        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs fixtures/perf`");
         return;
     }
     init_editor_test_app(cx);
@@ -931,9 +931,9 @@ async fn typing_in_a_code_document_writes_through_the_buffer(cx: &mut TestAppCon
 #[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn one_mib_source_mode_typing_stays_within_budget(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/one-mib.md");
+        .join("fixtures/perf/one-mib.md");
     if !fixture.is_file() {
-        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs fixtures/perf`");
         return;
     }
     init_editor_test_app(cx);
@@ -1052,9 +1052,9 @@ async fn entering_a_quote_reprojects_only_that_quote(cx: &mut TestAppContext) {
 #[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn one_mib_code_document_typing_stays_within_budget(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/one-mib.md");
+        .join("fixtures/perf/one-mib.md");
     if !fixture.is_file() {
-        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs fixtures/perf`");
         return;
     }
     init_editor_test_app(cx);
@@ -1163,7 +1163,7 @@ fn whole_document_passes(
 async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/ten-mib.md");
+        .join("fixtures/perf/ten-mib.md");
     if !fixture.is_file() {
         eprintln!("skipping");
         return;
@@ -1221,7 +1221,7 @@ async fn probe_attribute_ten_mib_keystroke(cx: &mut TestAppContext) {
 async fn probe_attribute_ten_mib_markdown_keystroke(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/ten-mib.md");
+        .join("fixtures/perf/ten-mib.md");
     if !fixture.is_file() {
         eprintln!("skipping");
         return;
@@ -1439,7 +1439,7 @@ async fn row_plan_rebuild_reads_only_the_headings_not_every_block(cx: &mut TestA
 async fn probe_attribute_ten_mib_markdown_with_outline_open(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/ten-mib.md");
+        .join("fixtures/perf/ten-mib.md");
     if !fixture.is_file() {
         eprintln!("skipping");
         return;
@@ -1726,9 +1726,9 @@ async fn typing_a_heading_prefix_updates_the_row_metadata(cx: &mut TestAppContex
 #[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn large_document_opens_within_budget(cx: &mut TestAppContext) {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf/ten-mib.md");
+        .join("fixtures/perf/ten-mib.md");
     if !fixture.is_file() {
-        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs tests/fixtures/perf`");
+        eprintln!("skipping: generate fixtures with `node scripts/generate-fixtures.mjs fixtures/perf`");
         return;
     }
     cx.update(|cx| {

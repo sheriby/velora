@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const outputDir = process.argv[2] ?? 'tests/fixtures/perf';
+const outputDir = process.argv[2] ?? 'fixtures/perf';
 const unit = [
   '# 长篇写作性能样本',
   '一段中文与 English text，用于段落和输入测试。',

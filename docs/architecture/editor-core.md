@@ -248,8 +248,8 @@ Workspace (src/editor/workspace.rs)
 
 ## 7. 已知性能事实（dev 构建，闸门测试实测）
 
-性能夹具不进仓库：`node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成
-`tests/fixtures/perf/{one,ten}-mib.md`；缺文件时相关测试打印 `skipping:` 直接通过。
+性能夹具不进仓库：`node scripts/generate-fixtures.mjs fixtures/perf` 生成
+`fixtures/perf/{one,ten}-mib.md`；缺文件时相关测试打印 `skipping:` 直接通过。
 
 | 场景 | 数据（2026-10-03，`--nocapture` 实测） |
 |---|---|

@@ -1,4 +1,4 @@
-//! 作者反馈语料的整篇验收：`tests/fixtures/author-report-2026-10/` 是报修方
+//! 作者反馈语料的整篇验收：`fixtures/author-report-2026-10/` 是报修方
 //! 随报告提供的原始用例（cases/），这里按报告编号逐条锁住「阅读效果 + HTML 输出」
 //! 两端。报告末尾要求的验收方式就是「用对应示例复查阅读效果和 HTML 输出」，
 //! 片段级单测各自守着实现细节，但没人把作者的原文整篇跑一遍。
@@ -13,7 +13,6 @@ use crate::theme::Theme;
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
         .join("fixtures")
         .join("author-report-2026-10")
 }

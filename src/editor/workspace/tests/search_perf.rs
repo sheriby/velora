@@ -29,12 +29,12 @@ fn open_document(
     query: &str,
 ) -> Option<(gpui::Entity<Editor>, usize)> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/perf")
+        .join("fixtures/perf")
         .join(fixture);
     if !path.is_file() {
         eprintln!(
             "skipping: generate fixtures with \
-             `node scripts/generate-fixtures.mjs tests/fixtures/perf`"
+             `node scripts/generate-fixtures.mjs fixtures/perf`"
         );
         return None;
     }

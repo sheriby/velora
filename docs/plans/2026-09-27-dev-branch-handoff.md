@@ -168,7 +168,7 @@ UI 视觉验证注意：机器锁屏（约 1 小时无操作）后截图全黑�
 ```bash
 cargo build                      # 零警告零错误
 cargo test                       # 838 通过 0 失败（基线偶发项偶有失败，见陷阱 7）
-cargo test large_document        # G4 基准（需 node scripts/generate-fixtures.mjs tests/fixtures/perf 生成 10MiB fixture，gitignored）
+cargo test large_document        # G4 基准（需 node scripts/generate-fixtures.mjs fixtures/perf 生成 10MiB fixture，gitignored）
 cargo run .                      # 以仓库为工作区打开（可验证欢迎页/树过滤/排序/拖拽/搜索/大纲）
 ```
 

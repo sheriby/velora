@@ -7,7 +7,7 @@
     async fn test_md_fixture_keeps_mixed_supported_and_raw_sections_visible(
         cx: &mut TestAppContext,
     ) {
-        let markdown = include_str!("../../../../tests/fixtures/markdown-baseline.md").to_string();
+        let markdown = include_str!("../../../../fixtures/markdown-baseline.md").to_string();
         let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
 
         editor.update(cx, |editor, cx| {

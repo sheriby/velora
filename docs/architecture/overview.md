@@ -47,7 +47,7 @@ src/
 ├── net/                    HTTP 客户端与更新检查
 └── export/                 html.rs+html/{css,tests}.rs / pdf / png / 打印（Chromium 无头）
 vendor/gpui/                vendored 框架 + 本地补丁
-benches/ scripts/ tests/fixtures/
+scripts/ fixtures/
 ```
 
 ## 五条主干流

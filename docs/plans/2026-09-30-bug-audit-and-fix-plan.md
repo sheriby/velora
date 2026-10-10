@@ -114,7 +114,7 @@
 
 ## 4.2 F8 后续批次（2026-09-30 晚，用户要求继续做性能）
 
-基准：`tests/fixtures/perf/one-mib.md`（1 MiB，`node scripts/generate-fixtures.mjs tests/fixtures/perf` 生成，gitignore）
+基准：`fixtures/perf/one-mib.md`（1 MiB，`node scripts/generate-fixtures.mjs fixtures/perf` 生成，gitignore）
 + 用例 `one_mib_typing_stays_within_budget`（计数器 + 预算断言），10 MiB 夹具同机实测单键 13s 太慢，仅作导入预算用例。
 
 | 项 | 状态 | 实测（1 MiB 一次按键） |

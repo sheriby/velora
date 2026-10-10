@@ -55,9 +55,9 @@ jobs:
         # 夹具不进版本库（见 .gitignore），CI 检出后现场生成：不生成的话 10 MiB /
         # 1 MiB 那两条慢用例会自跳（`open_document` 找不到夹具就 return）。CI 不看护
         # 性能，生成与跑完都只看结果，不看耗时。
-        run: node scripts/generate-fixtures.mjs tests/fixtures/perf
+        run: node scripts/generate-fixtures.mjs fixtures/perf
 
-      - name: Test (慢用例)
+      - name: Test (Slow Cases)
         # 慢用例（>1s，断言全部是确定性的）本地默认 #[ignore]，CI 跑：CI 机器
         # 不看护速度，但看护正确性。这里必须继续排除墙钟族——CI 机器慢、并发
         # 抢 CPU，量时间的断言会假红。按 AGENTS.md §3 的约定，墙钟族只有四处

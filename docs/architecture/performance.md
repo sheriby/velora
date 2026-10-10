@@ -13,7 +13,7 @@
 
 ```bash
 # 夹具（markdown 两个，gitignored）
-node scripts/generate-fixtures.mjs tests/fixtures/perf
+node scripts/generate-fixtures.mjs fixtures/perf
 
 # 加载探针（构造/首绘/稳态 p95/编辑/序列化）
 VELORA_PERF_FILE=<file> cargo test manual_markdown_load_probe -- --ignored --nocapture
@@ -22,7 +22,7 @@ VELORA_PERF_FILE=<file> cargo test manual_code_load_probe   -- --ignored --nocap
 
 | 夹具 | 说明 |
 |---|---|
-| `tests/fixtures/perf/one-mib.md` / `ten-mib.md` | 重复中文段落单元，15,968 / 159,683 块 |
+| `fixtures/perf/one-mib.md` / `ten-mib.md` | 重复中文段落单元，15,968 / 159,683 块 |
 | `/tmp/velora-perf-fixtures/log-1mib.log` | 9,891 行无空行日志（自建，勿入库） |
 | `/tmp/velora-perf-fixtures/log-10mib.log` | 98,909 行无空行日志 |
 | `/tmp/velora-perf-fixtures/cargo-lock-real` | 仓库 Cargo.lock 拷贝，8,536 行 / 205KB |

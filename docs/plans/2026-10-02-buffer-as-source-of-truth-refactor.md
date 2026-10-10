@@ -260,7 +260,7 @@ fn scan(tv: &dyn TextView, query: &str, scope: Range<usize>) -> Vec<Hit>;  // Hi
 每阶段结束都必须：`cargo test` 全绿 + 该阶段闸门达标。阶段之间不留双轨——阶段 1 完成时，buffer 已经是事实源。
 
 ### 阶段 0：把验收标准变成红测试（不碰架构，约半天）
-- 建 `tests/fixtures/round_trip/`：无尾换行、CRLF、紧凑相邻块（围栏后紧跟 `---`）、表格对齐填充、Setext 标题、`1)` 列表、中文/emoji 混排、front matter、真实长文。
+- 建 `fixtures/round_trip/`：无尾换行、CRLF、紧凑相邻块（围栏后紧跟 `---`）、表格对齐填充、Setext 标题、`1)` 列表、中文/emoji 混排、front matter、真实长文。
 - 写 `open → 不编辑 → save → 字节必须相同` 的表驱动测试（当前仓库**没有任何**真正的字节保真回环测试：`import_perf.rs`、`knowledge_recovery.rs`、`save_autosave_ime.rs` 那几处都是「与 `markdown_text` 比」的同义反复）。
 - 闸门：这批测试现在是红的，失败清单 = 重构范围确认单。
 

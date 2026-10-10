@@ -1,5 +1,5 @@
 //! Markdown-to-editor-tree deserialization.
-//! 测试夹具放在 velora 的 tests/fixtures 目录。
+//! 测试夹具放在 velora 的 fixtures 目录。
 //!
 //! Raw Markdown is parsed into the subset of native block structures Velora
 //! can edit safely. Syntax that exceeds the current runtime model is preserved
