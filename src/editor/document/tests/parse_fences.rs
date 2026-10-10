@@ -8,13 +8,28 @@
     use crate::components::{BlockKind, Editor};
 
     #[test]
-    fn closing_fence_must_match_exact_opening_run_length() {
+    fn closing_fence_follows_the_commonmark_run_rule() {
         let opener = parse_opening_fence("````rust").expect("opening fence");
 
         assert!(is_closing_fence("````", &opener));
+        // 长一点的闭合围栏照样收尾（以前这里 `!is_closing_fence("`````")` 把
+        // CommonMark 合法的长闭合判成不合法，```` ```text ```` 用 ````` 收尾的块永不闭合）。
+        assert!(is_closing_fence("`````", &opener));
         assert!(is_closing_fence("  ````   ", &opener));
+        // 短一档、带信息串、换一种围栏符都只是内容，不是闭合。
         assert!(!is_closing_fence("```", &opener));
-        assert!(!is_closing_fence("`````", &opener));
+        assert!(!is_closing_fence("```` ``", &opener));
+        assert!(!is_closing_fence("~~~~", &opener));
+    }
+
+    #[test]
+    fn tilde_fence_closes_at_an_equal_or_longer_run() {
+        let opener = parse_opening_fence("~~~js").expect("opening fence");
+
+        assert!(is_closing_fence("~~~~", &opener));
+        assert!(is_closing_fence("~~~", &opener));
+        assert!(!is_closing_fence("~~", &opener));
+        assert!(!is_closing_fence("~~~ tail", &opener));
     }
 
     #[test]
@@ -148,7 +163,10 @@
     }
 
     #[test]
-    fn matching_closing_fence_can_skip_inner_non_closing_backtick_runs() {
+    fn a_longer_run_is_a_valid_closing_fence() {
+        // CommonMark: the first fence whose run is >= the opener and carries no
+        // info string closes the block, so a ```` line closes a ``` opener right
+        // there (the old exact-length rule skipped it and kept scanning).
         let lines = vec![
             "```rust".to_string(),
             "````".to_string(),
@@ -156,7 +174,7 @@
             "```".to_string(),
         ];
         let opener = parse_opening_fence(&lines[0]).expect("opening fence");
-        assert_eq!(find_matching_closing_fence(&lines, 0, &opener), Some(3));
+        assert_eq!(find_matching_closing_fence(&lines, 0, &opener), Some(1));
     }
 
     #[test]
@@ -207,7 +225,10 @@
     }
 
     #[test]
-    fn next_opening_without_prior_closing_leaves_fence_unmatched() {
+    fn an_inner_info_string_run_is_content_and_closes_at_the_next_bare_fence() {
+        // CommonMark: inside a block a fence carrying an info string is not a
+        // closing fence, it is code content; the block still closes at the next
+        // bare fence. The old code abandoned the block at the inner opener.
         let lines = vec![
             "```rust".to_string(),
             "body".to_string(),
@@ -215,7 +236,21 @@
             "```".to_string(),
         ];
         let opener = parse_opening_fence(&lines[0]).expect("opening fence");
-        assert_eq!(find_matching_closing_fence(&lines, 0, &opener), None);
+        assert_eq!(find_matching_closing_fence(&lines, 0, &opener), Some(3));
+    }
+
+    #[test]
+    fn a_shorter_inner_fence_run_is_content_and_closes_at_the_equal_opener_run() {
+        // `````python 块里那行 `` ``` inside code ``：三个反引号比开栏（四个）短，
+        // 又不是裸围栏——它是代码内容，块要在四个反引号的裸闭合处才收尾。
+        let lines = vec![
+            "````python".to_string(),
+            "``` inside code".to_string(),
+            "value = 1".to_string(),
+            "````".to_string(),
+        ];
+        let opener = parse_opening_fence(&lines[0]).expect("opening fence");
+        assert_eq!(find_matching_closing_fence(&lines, 0, &opener), Some(3));
     }
 
     #[test]
@@ -303,6 +338,91 @@
         ));
         assert!(!is_reference_definition_start("[id] http://example.com"));
     }
+
+    #[gpui::test]
+    async fn long_closing_fence_renders_as_code_and_closes_the_block(cx: &mut TestAppContext) {
+        // cases/09-code-long-close.md：```text 用 ```` 收尾。以前永不闭合，
+        // 界面把围栏行与语言标记当正文显示；现在认出是代码块。
+        let source = "```text\nhello\nworld\n````\n\n尾部段落";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            let code = visible[0].entity.read(cx);
+            assert_eq!(
+                code.kind(),
+                BlockKind::CodeBlock {
+                    language: Some("text".into())
+                }
+            );
+            assert_eq!(code.display_text(), "hello\nworld");
+            assert_eq!(
+                visible[1].entity.read(cx).kind(),
+                BlockKind::Paragraph
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn tilde_fence_with_long_close_renders_as_code(cx: &mut TestAppContext) {
+        let source = "~~~sh\necho hi\n~~~~\n\n尾部段落";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            let code = visible[0].entity.read(cx);
+            assert_eq!(
+                code.kind(),
+                BlockKind::CodeBlock {
+                    language: Some("sh".into())
+                }
+            );
+            assert_eq!(code.display_text(), "echo hi");
+            assert_eq!(
+                visible[1].entity.read(cx).kind(),
+                BlockKind::Paragraph
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn inner_backtick_run_stays_code_content(cx: &mut TestAppContext) {
+        // cases/09-code-inner-fence.md：```` 块里那行 ``` inside code 是代码内容。
+        // 旧版把带信息串的内层行当成开栏，整块被放弃（认不出块尾）。
+        let source = "````python\n``` inside code\nvalue = 1\n````\n\n尾部段落";
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            let code = visible[0].entity.read(cx);
+            assert_eq!(
+                code.kind(),
+                BlockKind::CodeBlock {
+                    language: Some("python".into())
+                }
+            );
+            assert_eq!(code.display_text(), "``` inside code\nvalue = 1");
+            assert_eq!(
+                visible[1].entity.read(cx).kind(),
+                BlockKind::Paragraph
+            );
+            // 落笔会挑一档比正文里最长围栏还长的记号（正文含 ```，故选 `~~~`/`````），
+            // 形状是等价的：再解析一次仍是同一个代码块。
+            let round = editor.document.markdown_text(cx);
+            let reparsed = cx.new(|cx| Editor::from_markdown(cx, round.clone(), None));
+            reparsed.update(cx, |reparsed, cx| {
+                let code = reparsed.document.visible_blocks()[0].entity.read(cx);
+                assert_eq!(
+                    code.kind(),
+                    BlockKind::CodeBlock {
+                        language: Some("python".into())
+                    }
+                );
+                assert_eq!(code.display_text(), "``` inside code\nvalue = 1");
+            });
+        });
+    }
+
 
     #[test]
     fn block_html_region_runs_until_blank_line() {
