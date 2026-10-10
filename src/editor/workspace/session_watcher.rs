@@ -71,7 +71,7 @@ impl Editor {
         self.workspace.file_tree = None;
         // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
         self.workspace.tree_scan_root = None;
-        // 文件名单（⌘P / 搜索 / 全部替换 / 反链索引共用）同理：换根重走一次。
+        // 文件名单（⌘P / 搜索 / 全部替换 / 双链共用）同理：换根重走一次。
         self.workspace.files_on_disk.clear();
         self.workspace.files_on_disk_root = None;
         // 旧根上在飞的按需扫层结果全部作废（drop 即取消）。
@@ -139,8 +139,6 @@ impl Editor {
     /// watcher 事件统一入口：外部文件的增/删/改都走这里。
     pub(crate) fn on_watched_path_changed(&mut self, path: &Path, cx: &mut Context<Self>) {
         self.reload_externally_changed_document(path, cx);
-        self.workspace_link_index
-            .schedule_rescan(path.to_path_buf(), cx);
         self.schedule_workspace_tree_refresh(cx);
     }
 
@@ -258,8 +256,8 @@ impl Editor {
     }
 
     pub(crate) fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
-        // 外部新建 / 删除 / 改名也要刷新文件名单：⌘P、工作区搜索、全部替换与反链
-        // 索引都读这一份，只重扫树会让它们继续拿旧名单。
+        // 外部新建 / 删除 / 改名也要刷新文件名单：⌘P、工作区搜索、全部替换与双链
+        // 都读这一份，只重扫树会让它们继续拿旧名单。
         self.workspace.files_on_disk_root = None;
         if let Some(root) = self.workspace.root.clone() {
             self.spawn_workspace_files_walk(root, cx);

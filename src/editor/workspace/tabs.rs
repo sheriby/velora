@@ -296,7 +296,7 @@ impl Editor {
         self.text_files_on_disk()
     }
 
-    /// 工作区里可作替换目标 / 反链索引目标的文本文件（Markdown + 代码）。
+    /// 工作区里可作替换目标 / 双链候选的文本文件（Markdown + 代码）。
     pub(crate) fn text_files_on_disk(&self) -> Vec<PathBuf> {
         self.workspace
             .files_on_disk

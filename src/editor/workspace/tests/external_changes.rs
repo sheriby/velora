@@ -400,69 +400,6 @@ async fn opening_a_single_file_starts_the_workspace_watcher(cx: &mut TestAppCont
     });
 }
 
-#[gpui::test]
-async fn backlinks_panel_picks_up_an_external_link_to_the_active_document(
-    cx: &mut TestAppContext,
-) {
-    // 审查发现：反链面板只按 document_revision 失效，别的文件在外部
-    // 新增 [[链接]] 时面板一直显示旧结果。
-    cx.update(|cx| {
-        crate::i18n::I18nManager::init(cx);
-        crate::theme::ThemeManager::init(cx);
-        crate::components::init(cx);
-    });
-    let root = std::env::temp_dir().join(format!(
-        "velora-backlinks-external-{}",
-        uuid::Uuid::new_v4()
-    ));
-    fs::create_dir_all(&root).unwrap();
-    // 与索引/树产出的 canonical 路径对齐（macOS /var → /private/var）。
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
-    let active = root.join("a.md");
-    let other = root.join("b.md");
-    fs::write(&active, "# A\n").unwrap();
-    fs::write(&other, "# B\n").unwrap();
-    cx.on_quit({
-        let root = root.clone();
-        move || {
-            let _ = fs::remove_dir_all(root);
-        }
-    });
-
-    let (editor, cx) =
-        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
-    cx.update(|window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.set_workspace_root(root.clone(), cx);
-            editor.workspace.is_open = true;
-            editor.open_workspace_file(active.clone(), window, cx);
-        });
-    });
-    cx.run_until_parked();
-    editor.update(cx, |editor, cx| editor.refresh_link_panels(cx));
-    editor.read_with(cx, |editor, _| {
-        assert!(editor.link_panels.backlinks.is_empty(), "前置：还没有反链");
-    });
-
-    fs::write(&other, "# B\n\n[[a]]\n").unwrap();
-    cx.update(|_window, cx| {
-        editor.update(cx, |editor, cx| editor.on_watched_path_changed(&other, cx));
-    });
-    cx.executor().advance_clock(Duration::from_millis(400));
-    cx.run_until_parked();
-    editor.update(cx, |editor, cx| editor.refresh_link_panels(cx));
-    editor.read_with(cx, |editor, _| {
-        assert!(
-            editor
-                .link_panels
-                .backlinks
-                .iter()
-                .any(|path| path == &other),
-            "外部新增的 [[a]] 必须出现在反链面板"
-        );
-    });
-}
-
 /// 外部改动重载只换内容，不换阅读现场：视图模式与视口位置都不许被重置
 /// （用户报修：重载之后源码模式自动跳回所见即所得，且页面弹回文档顶部）。
 #[gpui::test]

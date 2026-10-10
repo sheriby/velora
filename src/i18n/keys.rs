@@ -192,8 +192,6 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "workspace_panel_title",
     "workspace_tab_files",
     "workspace_tab_outline",
-    "workspace_backlinks_no_document",
-    "workspace_backlinks_empty",
     "workspace_tab_recent",
     "workspace_search_placeholder",
     "workspace_document_find_placeholder",

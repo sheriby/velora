@@ -19,7 +19,7 @@
 - **标签是快照不是 Editor 实体**：`WorkspaceDocumentTab { path, recovery_id, file_version, markdown, dirty, preview, view }`。单个 Editor 在切换激活标签时换入换出 `DocumentTree` 内容（`snapshot_current_document` 把**缓冲区文本**存回标签——自动保存与恢复快照的内容来源就是它，取块树序列化的话一份没编辑过的文件进快照就已经被洗过一遍）。
 - 打开文件流：树节点点击 → `open_workspace_file`：UTF-16 BOM/文本嗅探（`has_utf16_bom`/`is_likely_text_file`）→ 推标签 → `reveal_path_in_tree` 展开祖先 → `restore_document_from_markdown` 或 `restore_document_from_code_source`（分流见 editor-core.md §2）——标签上存着这篇的阅读现场就按它交还，本次会话没读过才按新文档从顶部与渲染态起步（见 editor-core.md §6）→ 调度 autosave + `persist_session`。现场只活在这一进程里，不写进会话文件。
 - `set_workspace_root`：canonicalize、按根恢复侧栏宽、剪枝根外标签、启动 watcher、持久化会话。
-- **预览（临时）标签**：`WorkspaceDocumentTab.preview` 为 true 时斜体显示，且同一时刻只留一个——`open_workspace_file_in_mode(…, Preview)` 在开新篇后销毁其它**干净**的预览标签。入口分两类：浏览型（工作区搜索结果行、文档内查找/反链面板、⌘P 快速打开、正文本地链接）走 Preview，文件树用 `tree_click_open_mode`（单击 Preview、双击/键盘 Pinned）。转正点只有一个：`finish_dirty` 里 `document_dirty` 由 false 变 true 的那次调用 `pin_active_preview_tab`，编辑过的预览不再被替换掉，切走也留着。因此 `stale_previews` 必须在 `snapshot_current_document` **之后**算——活动标签的 `dirty` 只在那一步写回，早算刚编辑过的预览仍记为干净，会被当场销毁。
+- **预览（临时）标签**：`WorkspaceDocumentTab.preview` 为 true 时斜体显示，且同一时刻只留一个——`open_workspace_file_in_mode(…, Preview)` 在开新篇后销毁其它**干净**的预览标签。入口分两类：浏览型（工作区搜索结果行、文档内查找、⌘P 快速打开、正文本地链接）走 Preview，文件树用 `tree_click_open_mode`（单击 Preview、双击/键盘 Pinned）。转正点只有一个：`finish_dirty` 里 `document_dirty` 由 false 变 true 的那次调用 `pin_active_preview_tab`，编辑过的预览不再被替换掉，切走也留着。因此 `stale_previews` 必须在 `snapshot_current_document` **之后**算——活动标签的 `dirty` 只在那一步写回，早算刚编辑过的预览仍记为干净，会被当场销毁。
 - **未保存标记**：`dirty` 的标签（含活动那一篇）在标题前渲染 7px 实心圆点（`document-tab-dirty-{index}`）；判定与自动保存开关无关，只看有没有落盘。
 
 ## 3. 文件树与监听

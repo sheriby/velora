@@ -1926,20 +1926,6 @@ async fn sidebar_search_mouse_places_the_caret_and_drags_unicode_text(cx: &mut T
 }
 
 #[test]
-fn sidebar_knowledge_icons_are_embedded_in_the_application() {
-    // 侧栏已使用反链图标，但资源表漏注册会让按钮只剩空白。
-    use gpui::AssetSource;
-    for path in [
-        super::super::ACTIVITY_BACKLINKS_ICON,
-    ] {
-        let asset = crate::VeloraAssets.load(path).expect("加载资源");
-        assert!(asset.is_some(), "反链图标必须注册到应用资源表：{path}");
-        let bytes = asset.expect("已注册资源");
-        assert!(bytes.starts_with(b"<svg"), "资源应为 SVG 图标：{path}");
-    }
-}
-
-#[test]
 fn sidebar_replace_icons_are_embedded_in_the_application() {
     use gpui::AssetSource;
     for path in [

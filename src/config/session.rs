@@ -19,7 +19,7 @@ pub(crate) struct SessionState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sidebar_width: Option<u16>,
     /// 侧栏记忆（全局，不按工作区）：上次挑的面板（搜索不参与，所以只会是
-    /// `files` / `outline` / `backlinks` / `tags`）与上次是开着还是关着。
+    /// `files` / `outline`）与上次是开着还是关着。
     /// 用户要求：想一直用大纲，不要每次启动都回到文件数。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sidebar_tab: Option<String>,

@@ -23,7 +23,6 @@ const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 const ACTIVITY_FILES_ICON: &str = "icon/workspace/activity-files.svg";
 const ACTIVITY_SEARCH_ICON: &str = "icon/workspace/activity-search.svg";
 const ACTIVITY_OUTLINE_ICON: &str = "icon/workspace/activity-outline.svg";
-const ACTIVITY_BACKLINKS_ICON: &str = "icon/workspace/activity-backlinks.svg";
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
 const CODE_ICON: &str = "icon/workspace/code.svg";
 const CHEVRON_RIGHT_ICON: &str = "icon/workspace/chevron-right.svg";
@@ -51,7 +50,6 @@ pub(crate) enum WorkspaceTab {
     Files,
     Search,
     Outline,
-    Backlinks,
 }
 
 impl WorkspaceTab {
@@ -62,7 +60,6 @@ impl WorkspaceTab {
             Self::Files => "files",
             Self::Search => "search",
             Self::Outline => "outline",
-            Self::Backlinks => "backlinks",
         }
     }
 
@@ -72,7 +69,6 @@ impl WorkspaceTab {
             "files" => Some(Self::Files),
             "search" => Some(Self::Search),
             "outline" => Some(Self::Outline),
-            "backlinks" => Some(Self::Backlinks),
             _ => None,
         }
     }
@@ -425,7 +421,7 @@ pub(super) struct WorkspaceState {
     /// 展开时按需扫层的在途任务，按键是目录节点 id：任务存这里才不会一丢就取消，
     /// 同一个目录也不会重复发起（渲染帧、点击都可能请求）。
     dir_scan_tasks: HashMap<String, Task<()>>,
-    /// 工作区里可打开文件的名单：搜索 / 全部替换 / 快速切换 / 反链索引共用。换根后
+    /// 工作区里可打开文件的名单：搜索 / 全部替换 / 快速切换 / 双链共用。换根后
     /// 在后台走一次盘填好（`spawn_workspace_files_walk`），不再从侧栏那棵树
     /// 收集——树只加载展开过的层，拿它当名单会让范围随展开状态漂移。
     files_on_disk: Vec<PathBuf>,

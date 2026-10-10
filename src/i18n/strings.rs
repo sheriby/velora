@@ -297,10 +297,6 @@ pub struct I18nStrings {
     pub workspace_tab_files: String,
     /// Workspace drawer Outline tab.
     pub workspace_tab_outline: String,
-    /// Backlinks panel empty state: no document open.
-    pub workspace_backlinks_no_document: String,
-    /// Backlinks panel empty state: nothing links here.
-    pub workspace_backlinks_empty: String,
     /// Workspace drawer recent roots tab.
     pub workspace_tab_recent: String,
     /// Placeholder for filtering workspace files by name.

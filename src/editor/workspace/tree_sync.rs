@@ -486,7 +486,7 @@ impl Editor {
         let editor = cx.entity().downgrade();
         let scan_root = root.clone();
         let scan = cx.background_spawn(async move { scan_workspace_dir(&scan_root, tree_sort) });
-        // 文件名单（搜索 / 全部替换 / 快速切换 / 反链索引）与树分开：换根后并行走
+        // 文件名单（搜索 / 全部替换 / 快速切换 / 双链）与树分开：换根后并行走
         // 一次盘就够了，不必递归建树（树只加载展开过的层）。
         self.spawn_workspace_files_walk(root.clone(), cx);
         // Dropping the previous task cancels a scan that is no longer relevant.
@@ -515,8 +515,8 @@ impl Editor {
         ));
     }
 
-    /// 换根后走一次盘，把「工作区里可打开的文件」名单填进缓存，并重建反链
-    /// 索引、重跑挂着的工作区搜索（两者都以这份名单为输入）。
+    /// 换根后走一次盘，把「工作区里可打开的文件」名单填进缓存，
+    /// 重跑以这份名单为输入的工作区搜索。
     ///
     /// 走盘用 ripgrep 的并行 walker（`collect_workspace_files_on_disk`），
     /// 关掉 gitignore 与隐藏文件规则，过滤规则与侧栏扫描逐条一致。
@@ -546,11 +546,6 @@ impl Editor {
                         editor.workspace.files_on_disk_walk_root = None;
                         editor.workspace.files_on_disk_root = Some(root.clone());
                         editor.workspace.files_on_disk = files;
-                        // 反链索引：名单落地时全量重建，之后由 watcher 单文件增量维持。
-                        let files = editor.workspace.files_on_disk.clone();
-                        editor
-                            .workspace_link_index
-                            .ensure_built_for_root(&root, files, cx);
                         // 名单落地前发起的工作区搜索此时才有文件列表可用。
                         if editor.workspace.active_tab == WorkspaceTab::Search
                             && !editor.workspace.search_query.is_empty()

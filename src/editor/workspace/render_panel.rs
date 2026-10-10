@@ -39,9 +39,6 @@ impl Editor {
             WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor, cx),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor, cx),
             WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, &editor, cx),
-            WorkspaceTab::Backlinks => {
-                self.render_workspace_backlinks_panel(theme, strings, window, cx)
-            }
         };
 
         Some(

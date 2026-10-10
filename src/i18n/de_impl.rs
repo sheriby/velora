@@ -487,12 +487,6 @@ impl I18nStringsDe {
             workspace_tab_files: self
                 .workspace_tab_files
                 .unwrap_or(defaults.workspace_tab_files),
-            workspace_backlinks_no_document: self
-                .workspace_backlinks_no_document
-                .unwrap_or(defaults.workspace_backlinks_no_document),
-            workspace_backlinks_empty: self
-                .workspace_backlinks_empty
-                .unwrap_or(defaults.workspace_backlinks_empty),
             workspace_tab_outline: self
                 .workspace_tab_outline
                 .unwrap_or(defaults.workspace_tab_outline),
