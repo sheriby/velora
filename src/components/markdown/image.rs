@@ -764,8 +764,8 @@ fn normalize_image_source(source: &str) -> String {
 /// 这里以前用「`Uri::from_str` 能不能解析」当判据，于是 `<assets/blue card.png>`
 /// 因为空格不是合法 URI 字符而保留尖括号，整个字符串被当成文件名去找——带空格的本地
 /// 路径在 `<…>` 写法下永远加载失败（报告 12）。尖括号是 Markdown 的语法，不是 URI
-/// 的一部分，判定也只能按 Markdown 的规则来。
-fn angle_bracket_destination(source: &str) -> &str {
+/// 的一部分，判定也只能按 Markdown 的规则来。n
+pub(crate) fn angle_bracket_destination(source: &str) -> &str {
     let Some(inner) = source
         .strip_prefix('<')
         .and_then(|rest| rest.strip_suffix('>'))

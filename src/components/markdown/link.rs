@@ -351,15 +351,12 @@ pub(crate) fn parse_link_target(inner: &str) -> Option<(String, Option<String>)>
 }
 
 fn normalize_link_destination(destination: &str) -> String {
-    let destination = unescape_ascii_punctuation(destination);
-    if destination.starts_with('<')
-        && destination.ends_with('>')
-        && is_supported_autolink_target(&destination[1..destination.len() - 1])
-    {
-        destination[1..destination.len() - 1].to_string()
-    } else {
-        destination
-    }
+    // 与图片同一处判据（`image::angle_bracket_destination`）：Markdown 的 `<…>`
+    // 目标内部允许空格，只不许出现未转义的 `<`、`>` 和换行。这里原先拿
+    // 「是不是受支持的自动链接目标」当剥尖括号的门槛，于是带空格的路径、
+    // 或门外的 scheme，尖括号被留在目标里 —— 同一个写法在图片那侧已经错过一次。
+    // 顺序也同图片一致：先剥尖括号再解反斜杠转义，反过来会把定界符自己解没。
+    unescape_ascii_punctuation(super::image::angle_bracket_destination(destination))
 }
 
 fn unescape_ascii_punctuation(input: &str) -> String {
@@ -429,7 +426,32 @@ fn is_escaped(input: &str, index: usize) -> bool {
 mod tests {
     use super::{
         LinkReferenceDefinition, is_supported_autolink_target, parse_link_reference_definitions,
+        parse_link_target,
     };
+
+    /// 尖括号目标里的空格是合法的：`[a](<报告 2026.pdf>)` 的目标就是
+    /// `报告 2026.pdf`。图片那侧同一个坑已经修过（报修第 12 条），链接这侧
+    /// 还拿「是不是受支持的目标」当剥尖括号的门槛，于是带空格或被门外的
+    /// scheme 挡住时，尖括号被留在目标里，链接既点不动也存不回原样。
+    #[test]
+    fn angle_bracket_destination_strips_brackets_even_with_a_space() {
+        assert_eq!(
+            parse_link_target("<报告 2026.pdf>"),
+            Some(("报告 2026.pdf".to_string(), None))
+        );
+        assert_eq!(
+            parse_link_target("<https://example.com/a b>"),
+            Some(("https://example.com/a b".to_string(), None))
+        );
+        // 带标题那一支同样要先剥尖括号再解转义。
+        assert_eq!(
+            parse_link_target("<assets/a b.png> \"t\""),
+            Some(("assets/a b.png".to_string(), Some("t".to_string())))
+        );
+        // 未转义的 `<`/`>` 与换行仍然不算尖括号目标：那本来就是没写完的写法。
+        assert_eq!(parse_link_target("<a<b>"), Some(("<a<b>".to_string(), None)));
+        assert_eq!(parse_link_target("<>"), Some(("<>".to_string(), None)));
+    }
 
     #[test]
     fn parses_link_reference_definitions_with_title_and_first_wins() {
