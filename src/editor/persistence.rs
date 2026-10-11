@@ -63,6 +63,10 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
 /// 文档），那不必是合法 UTF-8。
 pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
+    // 目标是符号链接时穿透到真正目标：临时文件与 rename 都落在真实路径上，
+    // 链接本身不被顶掉（同步盘软链工作流不断）。目标还不存在（首次保存）
+    // 时 canonicalize 失败，按原路径落盘。
+    let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let temp_path = autosave_temp_path(path);
     let mut file = std::fs::File::create(&temp_path)?;
     file.write_all(contents)?;
@@ -841,6 +845,37 @@ mod tests {
             .filter(|name| name.contains(".tmp"))
             .collect();
         assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 保存穿过符号链接写到真正目标：rename 直接顶在链接路径上会把链接
+    /// 本身换成常规文件——原目标从此不再被写、同步盘的软链工作流静默断掉
+    /// （评审报告维度二建议 17）。
+    #[test]
+    #[cfg(unix)]
+    fn atomic_write_follows_symlinks_instead_of_replacing_them() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("velora-atomic-link-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+        let real = root.join("real.md");
+        std::fs::write(&real, "real content").expect("seed real");
+        let link = root.join("link.md");
+        symlink(&real, &link).expect("create symlink");
+
+        write_atomic(&link, b"through the link").expect("atomic write");
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .is_symlink(),
+            "符号链接必须还是符号链接（rename 不得顶掉它）"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&real).expect("read real"),
+            "through the link",
+            "内容要落到链接指向的真实文件"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
