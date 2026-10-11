@@ -908,7 +908,8 @@ impl Editor {
             LinkTarget::External(url) => cx.open_url(&url),
             LinkTarget::Anchor(anchor) => self.jump_to_heading_anchor(&anchor, cx),
             LinkTarget::Local { path, anchor } => {
-                let resolved = resolve_local_link_path(self.file_path.as_deref(), &path);
+                let resolved =
+                    resolve_local_link_path(self.local_link_base_dir().as_deref(), &path);
                 if !resolved.exists() {
                     // 目标不存在：什么都不做。既不弹系统确认框，也不把当前文档
                     // 换成「无法预览」占位（那会改掉用户正在看的东西）。
@@ -1051,17 +1052,15 @@ fn split_link_anchor(target: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// 本地链接的落点：绝对路径直接用，相对路径按当前文档目录（无文档时按工作区根）解析。
-pub(crate) fn resolve_local_link_path(document_path: Option<&Path>, path: &str) -> PathBuf {
+/// 本地链接的落点：绝对路径直接用，相对路径按基准目录解析。基准由
+/// `Editor::local_link_base_dir` 一处决定（文档父目录 → 工作区根），与图片
+/// base_dir 同源；两边都没有基准时退相对路径（按进程 CWD 判存在性）。
+pub(crate) fn resolve_local_link_path(base_dir: Option<&Path>, path: &str) -> PathBuf {
     let candidate = PathBuf::from(path);
     if candidate.is_absolute() {
         return candidate;
     }
-    let base = document_path
-        .and_then(|path| path.parent())
-        .map(|dir| dir.to_path_buf());
-    base.unwrap_or_else(|| PathBuf::from("."))
-        .join(candidate)
+    base_dir.unwrap_or(Path::new(".")).join(candidate)
 }
 
 #[cfg(test)]

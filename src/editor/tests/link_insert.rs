@@ -486,3 +486,57 @@ async fn the_toolbar_link_button_reaches_the_same_entry(cx: &mut TestAppContext)
         "工具栏那颗按钮写的字节要与菜单、⌘K 同一条"
     );
 }
+
+/// 未落盘文档里的相对链接按工作区根解析（评审报告未验证 11/12）。旧实现链接那路
+/// 的基准是 `PathBuf::from(".")`（进程 CWD）、图片那路是 `std::env::current_dir()`：
+/// `assets/a.md` 解到 CWD 下、exists() 为假，点了没反应。基准目录收进
+/// `Editor::local_link_base_dir` 一处，链接点击与图片 base_dir 两条路径共调。
+#[gpui::test]
+async fn unsaved_document_resolves_relative_links_against_workspace_root(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let root = temp_fixture_dir().join(format!("link-base-{}", temp_fixture_token()));
+    fs::create_dir_all(root.join("assets")).expect("create assets dir");
+    let linked = root.join("assets").join("a.md");
+    fs::write(&linked, "# linked\n").expect("write linked doc");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+    });
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(editor.file_path, None, "前置：这是未落盘的新文档");
+    });
+
+    // 图片 base_dir 那条消费路径：块上拿到的基准应是工作区根，不是进程 CWD。
+    let first_block = editor.read_with(cx, |editor, _cx| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
+    first_block.read_with(cx, |block, _cx| {
+        assert_eq!(
+            block.image_base_dir(),
+            Some(canonical_root.as_path()),
+            "图片基准目录应按工作区根解析"
+        );
+    });
+
+    // 链接点击那条消费路径：目标存在时应按工作区根找到并打开。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_link_target("assets/a.md".to_string(), window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.file_path.as_deref(),
+            Some(fs::canonicalize(&linked).expect("canonicalize linked").as_path()),
+            "相对链接应按工作区根解析并打开目标文件"
+        );
+    });
+    let _ = fs::remove_dir_all(&root);
+}

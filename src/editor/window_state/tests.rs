@@ -96,14 +96,19 @@ mod tests {
 
     #[test]
     fn relative_links_resolve_against_the_current_document() {
-        let document = PathBuf::from("/work/notes/index.md");
+        let document_dir = PathBuf::from("/work/notes");
         assert_eq!(
-            resolve_local_link_path(Some(&document), "docs/plans/x.md"),
+            resolve_local_link_path(Some(&document_dir), "docs/plans/x.md"),
             PathBuf::from("/work/notes/docs/plans/x.md")
         );
         assert_eq!(
-            resolve_local_link_path(Some(&document), "/abs/x.md"),
+            resolve_local_link_path(Some(&document_dir), "/abs/x.md"),
             PathBuf::from("/abs/x.md")
+        );
+        // 无基准（既无文档也无工作区根）：退相对路径，消费方按进程 CWD 判存在性。
+        assert_eq!(
+            resolve_local_link_path(None, "docs/plans/x.md"),
+            PathBuf::from("./docs/plans/x.md")
         );
     }
 

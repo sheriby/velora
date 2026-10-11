@@ -152,6 +152,9 @@ impl Editor {
         self.workspace.document_active_range = None;
         self.workspace.search_pending = false;
         self.workspace.search_generation = self.workspace.search_generation.wrapping_add(1);
+        // 基准目录变了（未落盘文档的相对图片目标从「无基准」变「按工作区根」），
+        // 块上的图片 runtime 要按新基准重算一次；与每键重建走同一入口。
+        self.rebuild_image_runtimes(cx);
         self.sync_workspace_file_tree(cx);
         self.sync_workspace_outline(cx);
         self.ensure_workspace_watcher(cx);

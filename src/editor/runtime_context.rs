@@ -125,11 +125,15 @@ impl Editor {
         block
     }
 
-    pub(super) fn image_base_dir(&self) -> Option<PathBuf> {
+    /// 相对链接与图片目标的解析基准，只有这一处：已落盘文档按其父目录，未落盘按
+    /// 工作区根，两者都没有才返回 `None`（交各消费方自己的回退）。以前图片那路落
+    /// 进程 CWD（`image_base_dir`）、链接那路落 `PathBuf::from(".")`，未落盘文档里
+    /// 的相对引用解析到与工作区无关的位置，点链接静默无反应、图加载不出。
+    pub(super) fn local_link_base_dir(&self) -> Option<PathBuf> {
         self.file_path
             .as_ref()
             .and_then(|path| path.parent().map(Path::to_path_buf))
-            .or_else(|| std::env::current_dir().ok())
+            .or_else(|| self.workspace.root.clone())
     }
 
     pub(super) fn sync_runtime_context_for_block(
@@ -254,7 +258,7 @@ impl Editor {
     }
 
     pub(super) fn rebuild_image_runtimes(&mut self, cx: &mut Context<Self>) {
-        let base_dir = self.image_base_dir();
+        let base_dir = self.local_link_base_dir();
         // 引用定义按**文件**算：保存出去的是缓冲区，重新打开时解析器读到的就是这几
         // 个字节，渲染时必须用同一份文本。块树的序列化不保证这一点——列表项里的定义
         // `- [logo]: /a.png` 会被写成 `- [logo][logo]: /a.png`。顺带这也把一整篇
