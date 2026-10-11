@@ -277,3 +277,61 @@ mod tests {
         );
     }
 }
+
+/// 文案 key 有三张平行表：`keys.rs:I18N_STRING_KEYS`（自定义语言包的白名单
+/// 过滤）、`strings.rs:I18nStrings`（运行时结构）、`de.rs:I18nStringsDe`
+/// （包解析结构）。三表靠人肉保持全等；白名单漏一条，自定义语言包的该键在
+/// `custom_language_pack_from_value` 里被静默剔除；De 结构漏一个字段，serde
+/// 静默丢弃后落回内置文案。此测试双向钉住（评审 v0.2.6 维度一建议 11）。
+#[test]
+fn string_key_whitelist_matches_string_structs_both_ways() {
+    use std::collections::BTreeSet;
+    use super::{I18nLanguagePack, I18nStrings};
+
+    // 1) I18nStrings 的字段集与白名单互为子集（序列化读出全部字段名）。
+    let value = serde_json::to_value(I18nStrings::zh_cn()).expect("I18nStrings 可序列化");
+    let fields: BTreeSet<&str> = value
+        .as_object()
+        .expect("strings 序列化为对象")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let whitelist: BTreeSet<&str> = super::keys::I18N_STRING_KEYS
+        .iter()
+        .copied()
+        .collect();
+    let struct_only: Vec<_> = fields.difference(&whitelist).collect();
+    let whitelist_only: Vec<_> = whitelist.difference(&fields).collect();
+    assert!(
+        struct_only.is_empty(),
+        "I18nStrings 有字段不在白名单（自定义包会静默剔除该键）: {struct_only:?}"
+    );
+    assert!(
+        whitelist_only.is_empty(),
+        "白名单有键不是 I18nStrings 字段: {whitelist_only:?}"
+    );
+
+    // 2) 白名单里的每个键都能从自定义语言包解出：全部塞进哨兵值解析再回读，
+    //    De 结构（或白名单）漏掉的键会落回内置文案、读不到哨兵。
+    let sentinel = "__velora_sentinel__";
+    let strings_object: serde_json::Map<String, serde_json::Value> = super::keys::I18N_STRING_KEYS
+        .iter()
+        .map(|key| (key.to_string(), serde_json::Value::String(sentinel.to_string())))
+        .collect();
+    let pack_json = serde_json::json!({
+        "id": "xx-TEST",
+        "name": "Test",
+        "strings": strings_object,
+    });
+    let pack =
+        I18nLanguagePack::from_json(&pack_json.to_string()).expect("语言包应能整体解析");
+    let read_back =
+        serde_json::to_value(&pack.strings).expect("回读 I18nStrings 应可序列化");
+    for (key, value) in read_back.as_object().expect("回读对象") {
+        assert_eq!(
+            value.as_str(),
+            Some(sentinel),
+            "键 {key} 没有从自定义语言包落到运行时字符串（De 结构或白名单漏了它）"
+        );
+    }
+}
