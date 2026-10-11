@@ -22,7 +22,7 @@ const DEFAULT_THEME_ID: &str = "forest";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";
 const PREFERENCES_VERSION: i64 = 3;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct FontPreferences {
     pub(crate) ui_family: String,
     pub(crate) ui_size: u16,
@@ -739,6 +739,8 @@ impl EditorSettings {
     /// 把「字号设置 + 界面缩放」套到一份渲染用主题排版：正文、代码与各级标题
     /// 同比例缩放，标题层级不变。文档块与编辑器外壳共用这一个派生。
     pub(crate) fn apply_scaled_typography(cx: &App, theme: &mut crate::theme::Theme) {
+        #[cfg(test)]
+        probe::note_scaled_derive();
         let fonts = Self::fonts(cx);
         let zoom = Self::zoom_percent(cx) as f32 / 100.0;
         let t = &mut theme.typography;
@@ -1071,3 +1073,18 @@ mod window;
 
 #[cfg(test)]
 mod tests;
+
+/// 形状探针：字号派生（整份主题克隆 + 排版改写）的执行次数。thread-local。
+#[cfg(test)]
+pub(crate) mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static SCALED_DERIVES: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn note_scaled_derive() {
+        SCALED_DERIVES.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(crate) fn scaled_derives() -> u64 {
+        SCALED_DERIVES.with(|counter| counter.get())
+    }
+}

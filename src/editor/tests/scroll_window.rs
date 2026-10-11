@@ -903,3 +903,25 @@ async fn zooming_clears_the_row_stride_cache(cx: &mut TestAppContext) {
         "生效字号变化必须像列宽变化一样清逐行量高缓存（before={before}, after={after}）"
     );
 }
+
+/// 每块每帧不许做整份主题的字号派生（评审报告维度四建议 5）：块渲染以前
+/// 各自 clone 整份 Theme（约 4KB）再 apply_scaled_typography——六块文档三帧
+/// 就是二十来次整份克隆。派生收进 ThemeManager 缓存成 Arc 后，稳定帧只剩
+/// 编辑器外壳那一次。
+#[gpui::test]
+async fn stable_frames_derive_theme_once(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "一\n\n二\n\n三\n\n四\n\n五\n".to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let before = crate::config::preferences::probe::scaled_derives();
+    redraw(cx);
+    let derives = crate::config::preferences::probe::scaled_derives() - before;
+    assert_eq!(
+        derives, 1,
+        "稳定帧只许外壳派生一次（实际 {derives} 次：块还在各自克隆整份主题）"
+    );
+}

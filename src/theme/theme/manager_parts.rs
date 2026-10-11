@@ -71,6 +71,11 @@ pub(crate) struct CustomThemeEntry {
 /// `cx.global::<ThemeManager>().current()` without passing props.
 pub struct ThemeManager {
     current: Arc<Theme>,
+    /// 字号派生缓存（基础主题 + 字体偏好 + 界面缩放 → 派生主题）。键含基础
+    /// Arc 指针：换主题必换指针。块渲染借用这一份，不再每块每帧克隆整份
+    /// Theme 自己派生（评审报告维度四建议 5）。
+    derived_cache:
+        std::cell::RefCell<Option<(u64, std::sync::Arc<Theme>)>>,
     current_theme_id: String,
     system_appearance: WindowAppearance,
     custom_themes: Vec<CustomThemeEntry>,
@@ -83,6 +88,7 @@ impl Default for ThemeManager {
     fn default() -> Self {
         Self {
             current: Arc::new(Theme::default_theme()),
+            derived_cache: std::cell::RefCell::new(None),
             current_theme_id: BUILTIN_THEME_DARK_ID.into(),
             system_appearance: WindowAppearance::Light,
             custom_themes: Vec::new(),
@@ -126,6 +132,31 @@ impl ThemeManager {
     /// whole `Theme` struct (which has ~200 fields and a `String` name).
     pub fn current_arc(&self) -> Arc<Theme> {
         self.current.clone()
+    }
+
+    /// 派生主题（基础主题 + 字号/界面缩放已套好）。输入不变时只 bump 引用
+    /// 计数；变化才重新克隆派生一次。
+    pub fn derived_theme(&self, cx: &App) -> Arc<Theme> {
+        use std::hash::{Hash, Hasher};
+        let base = self.current_arc();
+        let fonts = crate::config::EditorSettings::fonts(cx);
+        let zoom = crate::config::EditorSettings::zoom_percent(cx);
+        let mut hasher = std::hash::DefaultHasher::new();
+        (std::sync::Arc::as_ptr(&base) as usize).hash(&mut hasher);
+        fonts.hash(&mut hasher);
+        zoom.hash(&mut hasher);
+        let key = hasher.finish();
+
+        if let Some((cached_key, derived)) = self.derived_cache.borrow().as_ref()
+            && *cached_key == key
+        {
+            return derived.clone();
+        }
+        let mut derived = base.as_ref().clone();
+        crate::config::EditorSettings::apply_scaled_typography(cx, &mut derived);
+        let derived = Arc::new(derived);
+        *self.derived_cache.borrow_mut() = Some((key, derived.clone()));
+        derived
     }
 
     /// Returns the identifier of the currently active theme.

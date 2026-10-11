@@ -50,10 +50,10 @@ impl Render for Block {
         let is_placeholder =
             focused && self.display_text().is_empty() && self.marked_range.is_none();
 
-        let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
         // 文档块必须和编辑器外壳共用字号派生：块以前只套字号、漏掉界面缩放，
-        // 导致缩放设置对正文完全没反应（用户报修）。
-        crate::config::EditorSettings::apply_scaled_typography(cx, &mut theme);
+        // 导致缩放设置对正文完全没反应（用户报修）。派生收进 ThemeManager
+        // 缓存成 Arc：块只借用，不再每块每帧克隆整份 Theme 自己派生。
+        let theme = cx.global::<ThemeManager>().derived_theme(cx);
         let fonts = crate::config::EditorSettings::fonts(cx);
         let strings = cx.global::<I18nManager>().strings_arc();
         let c = &theme.colors;
