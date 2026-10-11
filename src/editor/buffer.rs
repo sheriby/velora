@@ -173,6 +173,13 @@ impl TextBuffer {
         }
     }
 
+    pub(crate) fn inherit_file_shape_from(&mut self, previous: &Self) {
+        // 全文替换仍按当前文件形状写回，旧原始字节已不代表替换后的文本。
+        self.shape = previous.shape;
+        self.pristine = None;
+        self.unrepresentable = previous.unrepresentable.clone();
+    }
+
     /// 一次编辑都没落过时为真；此时 [`file_bytes`](Self::file_bytes) 就是原字节。
     /// 只有测试闸门读它——生产侧一律直接要 [`file_bytes`](Self::file_bytes)。
     #[cfg(test)]

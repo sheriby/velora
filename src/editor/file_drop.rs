@@ -307,7 +307,8 @@ impl Editor {
         };
         // 内容整体换掉了，事实源必须跟着换：缓冲区留着上一个文档的内容，
         // 保存就会写出别的文件的字节。
-        self.reset_buffer_for_text(&normalized);
+        let preserve_file_shape = file_path.is_some() && file_path == self.file_path;
+        self.reset_buffer_for_text(&normalized, preserve_file_shape);
         let is_code = code_language.is_some();
         self.code_document = is_code;
         let source_mode_fallback_required =
@@ -629,7 +630,7 @@ impl Editor {
 
             let saved_path = save_path.clone();
             let replace_result = weak_editor.update(cx, move |this, cx| {
-                this.apply_successful_save(saved_path, saved_text, cx);
+                this.apply_successful_save(saved_path, saved_text, markdown, cx);
                 this.pending_drop_replace_path = Some(drop_path);
                 this.replace_after_successful_save_async(cx)
             });

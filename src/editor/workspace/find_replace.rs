@@ -719,29 +719,50 @@ impl Editor {
                 .open_documents
                 .iter()
                 .position(|tab| tab.path == path);
-            let source = match open_tab_index {
+            let (source, expected_version) = match open_tab_index {
                 Some(index) if self.workspace.open_documents[index].dirty => {
-                    self.workspace.open_documents[index].markdown.clone()
+                    let tab = &self.workspace.open_documents[index];
+                    (tab.markdown.clone(), tab.file_version)
                 }
-                _ => match crate::editor::encoding::read_document_string(&path) {
-                    Ok(source) => source,
-                    Err(_) => continue,
+                _ => match crate::editor::encoding::load_document(&path) {
+                    Ok(document) => {
+                        let version = crate::editor::persistence::file_content_version(&document.text);
+                        (document.text, version)
+                    }
+                    Err(error) => {
+                        let detail = format!("无法读取「{}」：{error}", path.display());
+                        self.report_workspace_file_error(detail.clone(), cx);
+                        self.show_message_modal("替换失败", detail, cx);
+                        continue;
+                    }
                 },
             };
             let updated = replace_in_source(&source, &matcher, &replacement);
             if updated == source {
                 continue;
             }
-            total += count_matches_in_source(&source, &matcher);
-            if fs::write(&path, &updated).is_ok() {
-                if let Some(index) = open_tab_index {
-                    let tab = &mut self.workspace.open_documents[index];
-                    tab.markdown = updated;
-                    tab.dirty = true;
-                    tab.file_version = crate::editor::persistence::file_content_version(&tab.markdown);
+            let bytes = match crate::editor::persistence::tab_write_bytes(&path, &updated, expected_version) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    self.report_external_change_conflict(path.clone(), error.to_string(), cx);
+                    continue;
                 }
-            } else {
-                self.workspace.file_error = Some(format!("无法写入 {}", path.display()));
+            };
+            match crate::editor::persistence::write_atomic(&path, &bytes) {
+                Ok(()) => {
+                    total += count_matches_in_source(&source, &matcher);
+                    if let Some(index) = open_tab_index {
+                        let tab = &mut self.workspace.open_documents[index];
+                        tab.markdown = updated;
+                        tab.dirty = false;
+                        tab.file_version = crate::editor::persistence::file_content_version(&tab.markdown);
+                    }
+                }
+                Err(error) => {
+                    let detail = format!("无法写入「{}」：{error}", path.display());
+                    self.report_workspace_file_error(detail.clone(), cx);
+                    self.show_message_modal("替换失败", detail, cx);
+                }
             }
         }
         if total > 0 {

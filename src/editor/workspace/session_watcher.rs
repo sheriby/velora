@@ -46,6 +46,49 @@ impl Editor {
         // Canonicalize so recent-folder entries read as real absolute paths
         // (a CLI "." would otherwise be recorded as "<cwd>/.").
         let root = std::fs::canonicalize(&root).unwrap_or(root);
+        self.snapshot_current_document(cx);
+        if self.document_dirty && self.file_path.as_ref().is_some_and(|path| !path_is_within_root(&root, path)) {
+            let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+            self.show_modal(
+                ModalSpec {
+                    title: strings.unsaved_changes_title.into(),
+                    detail: Some(strings.unsaved_changes_message.into()),
+                    buttons: vec![
+                        strings.unsaved_changes_save_and_close.into(),
+                        strings.unsaved_changes_discard_and_close.into(),
+                        strings.unsaved_changes_cancel.into(),
+                    ],
+                    default_index: 0, cancel_index: 2,
+                },
+                move |choice, editor, window, cx| match choice {
+                    0 => {
+                        if let Some(path) = editor.file_path.clone()
+                            && editor.save_to_existing_path(&path, window, cx) {
+                            editor.apply_workspace_root(root, cx);
+                        }
+                    }
+                    1 => {
+                        editor.autosave_task = None;
+                        editor.document_dirty = false;
+                        if let Some(path) = &editor.file_path
+                            && let Some(tab) = editor.workspace.open_documents.iter_mut().find(|tab| &tab.path == path) {
+                            tab.dirty = false;
+                        }
+                        editor.apply_workspace_root(root, cx);
+                    }
+                    _ => {}
+                },
+                cx,
+            );
+            return;
+        }
+        self.apply_workspace_root(root, cx);
+    }
+
+    fn apply_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        if !self.prune_workspace_tabs_outside_root(&root, cx) {
+            return;
+        }
         // 恢复该工作区记忆的侧栏宽度（roadmap E7）。宽度按工作区记，侧栏开关与
         // 面板是全局记忆（见下面），两者口径不同。
         let session = crate::config::read_session()
@@ -66,7 +109,6 @@ impl Editor {
         self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
         // 切换工作区 = 换一套工作集：不属于新根目录的标签必须收起（用户报修：
         // 换了工作区之后顶栏还留着上一个工作区的标签）。
-        self.prune_workspace_tabs_outside_root(&root);
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
         // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
@@ -169,7 +211,7 @@ impl Editor {
     /// 收起落在新工作区之外的标签；脏标签先写回自己的文件，内容不丢。
     /// 若当前文档被收起：还有标签就延后打开最近的那个（需要 `&mut Window`），
     /// 没有标签就清空文档并回到欢迎页。
-    pub(crate) fn prune_workspace_tabs_outside_root(&mut self, root: &Path) {
+    pub(crate) fn prune_workspace_tabs_outside_root(&mut self, root: &Path, cx: &mut Context<Self>) -> bool {
         let stale = self
             .workspace
             .open_documents
@@ -178,7 +220,7 @@ impl Editor {
             .cloned()
             .collect::<Vec<_>>();
         if stale.is_empty() {
-            return;
+            return true;
         }
         let stale_paths = stale
             .iter()
@@ -188,22 +230,32 @@ impl Editor {
             if !tab.dirty {
                 continue;
             }
-                // 后台标签没有缓冲区，`tab.markdown` 是切换时存下的 LF 文本：直接
-                // 写出去会把 UTF-16/GB18030 的编码与 CRLF 的行尾洗成 UTF-8/LF。写之前
-                // 按磁盘上那份文件的形状重新编码，并且与 autosave 同一口径原子写
-                // （见 `persistence::tab_write_bytes` / `write_atomic`）。
+            let bytes = match crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown, tab.file_version) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    self.report_external_change_conflict(tab.path.clone(), error.to_string(), cx);
+                    return false;
+                }
+            };
             match crate::editor::persistence::write_atomic(
                 &tab.path,
-                &crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown),
+                &bytes,
             ) {
                 Ok(()) => {
-                    let _ = crate::config::remove_recovery_snapshot(tab.recovery_id);
+                    let version = crate::editor::persistence::file_content_version(&tab.markdown);
+                    self.mark_workspace_document_saved(&tab.path, version, &tab.markdown);
+                    if let Err(error) = crate::config::remove_recovery_snapshot(tab.recovery_id) {
+                        eprintln!("无法移除已保存标签的恢复快照：{error}");
+                    }
                 }
                 Err(err) => {
                     self.workspace.file_error = Some(format!(
                         "无法保存「{}」：{err}",
                         tab.path.display()
                     ));
+                    let title = cx.global::<crate::i18n::I18nManager>().strings().save_failed_title.clone();
+                    self.show_message_modal(title, err.to_string(), cx);
+                    return false;
                 }
             }
         }
@@ -219,7 +271,7 @@ impl Editor {
             .or_else(|| self.workspace.active_document.clone())
             .is_some_and(|current| stale_paths.iter().any(|path| *path == current));
         if !current_was_stale {
-            return;
+            return true;
         }
         match self
             .workspace
@@ -244,6 +296,7 @@ impl Editor {
                 self.pending_window_unedited = true;
             }
         }
+        true
     }
 
     pub(crate) fn selected_workspace_directory(&self) -> Option<PathBuf> {

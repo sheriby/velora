@@ -101,14 +101,13 @@ impl Editor {
             cx.notify();
             return;
         };
-        let Ok(content) = std::fs::read_to_string(path) else {
-            let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
-            self.show_message_modal(
-                strings.menu_file_history.clone(),
-                strings.file_history_empty.clone(),
-                cx,
-            );
-            return;
+        let content = match super::encoding::load_document(path) {
+            Ok(document) => document.text,
+            Err(error) => {
+                let title = cx.global::<crate::i18n::I18nManager>().strings().menu_file_history.clone();
+                self.show_message_modal(title, format!("无法读取历史版本：{error}"), cx);
+                return;
+            }
         };
         let file_path = self.file_path.clone();
         // 兑现「可撤销」：恢复前把当前文档压进撤销栈，⌘Z 能回到恢复前的

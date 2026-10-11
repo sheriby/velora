@@ -199,7 +199,12 @@ impl VeloraConfigDirs {
 /// 文件本地历史的存储约定：`<配置根>/history/<路径哈希>/<毫秒时间戳>.md`。
 /// 每文件保留最近 `MAX_VERSIONS_PER_FILE` 条，与最早条目内容相同的保存
 /// 不重复落盘。
+#[cfg(test)]
 pub(crate) fn record_file_history(file: &Path, content: &str) -> std::io::Result<()> {
+    record_file_history_bytes(file, content.as_bytes())
+}
+
+pub(crate) fn record_file_history_bytes(file: &Path, content: &[u8]) -> std::io::Result<()> {
     const MAX_VERSIONS_PER_FILE: usize = 20;
     let Ok(dirs) = VeloraConfigDirs::from_system() else {
         return Ok(());
@@ -208,7 +213,7 @@ pub(crate) fn record_file_history(file: &Path, content: &str) -> std::io::Result
     std::fs::create_dir_all(&dir)?;
     if list_file_history(file)
         .first()
-        .and_then(|newest| std::fs::read_to_string(newest).ok())
+        .and_then(|newest| std::fs::read(newest).ok())
         .is_some_and(|existing| existing == content)
     {
         return Ok(());

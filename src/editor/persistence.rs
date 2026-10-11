@@ -139,19 +139,9 @@ fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<Vec
 /// 不在每个标签上再存一份整篇字节：盘上的形状还在原文件里，写之前按它重新编码就行，
 /// 编码器仍然只有 `FileShape::encode` 一个，读盘的漏斗也只有 `encoding::load_document`
 /// 一个——两处都是既有事实源，不新增第三份要同步的账。
-pub(super) fn tab_write_bytes(path: &Path, text: &str) -> Vec<u8> {
-    match super::encoding::load_document(path) {
-        Ok(document) => encoded_with_disk_shape(text, &document.raw),
-        // 原文件读不出来（已被移走，或它的字节本来就不能无损写回）：退回文本字节，
-        // 与修之前的行为一致，不新增失败面。理由要打出来，否则这一趟就是静默吞错。
-        Err(error) => {
-            eprintln!(
-                "failed to read the file shape of '{}', writing it as plain text: {error}",
-                path.display()
-            );
-            text.as_bytes().to_vec()
-        }
-    }
+pub(super) fn tab_write_bytes(path: &Path, text: &str, expected_version: u64) -> anyhow::Result<Vec<u8>> {
+    let raw = verify_file_version(path, expected_version)?;
+    Ok(encoded_with_disk_shape(text, &raw))
 }
 
 /// 按磁盘上那份文件的形状把文本重新编码；认不出形状就照原文本字节走。
@@ -610,6 +600,7 @@ impl Editor {
         &mut self,
         path: PathBuf,
         saved_text: String,
+        saved_bytes: Vec<u8>,
         cx: &mut Context<Self>,
     ) {
         self.document_revision = self.document_revision.wrapping_add(1);
@@ -626,11 +617,17 @@ impl Editor {
         // 本地历史：每次成功保存后台落一条版本快照（同内容去重、每文件
         // 保留最近 20 条）。写盘不在保存关键路径上。
         let history_path = path.clone();
-        let history_content = saved_markdown.clone();
-        cx.spawn(async move |_this, cx| {
-            let _ = cx.update(|_cx| {
-                let _ = crate::config::record_file_history(&history_path, &history_content);
-            });
+        cx.spawn(async move |editor, cx| {
+            let result = cx.update(|_cx| crate::config::record_file_history_bytes(&history_path, &saved_bytes))
+                .and_then(|result| result.map_err(anyhow::Error::from));
+            if let Err(error) = result {
+                if let Err(update_error) = editor.update(cx, |editor, cx| {
+                    let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+                    editor.show_message_modal(title, format!("无法记录文件历史：{error}"), cx);
+                }) {
+                    eprintln!("无法显示文件历史错误：{update_error}");
+                }
+            }
         })
         .detach();
         self.file_path = Some(path);
@@ -682,7 +679,7 @@ impl Editor {
         let saved_text = self.document_text_for_save();
         match write_atomic(path, &bytes) {
             Ok(_) => {
-                self.apply_successful_save(path.to_path_buf(), saved_text, cx);
+                self.apply_successful_save(path.to_path_buf(), saved_text, bytes, cx);
                 window.set_window_edited(false);
                 true
             }
@@ -760,7 +757,7 @@ impl Editor {
 
             let path_for_state = path.clone();
             let _ = weak_editor.update(cx, move |this, cx| {
-                this.apply_successful_save(path_for_state, saved_text, cx);
+                this.apply_successful_save(path_for_state, saved_text, markdown, cx);
             });
             let _ = cx.update_window(
                 window_handle,

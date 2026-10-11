@@ -1,11 +1,199 @@
 use super::super::{Editor, WorkspaceOpenMode, WorkspaceSearchScope};
 use crate::components::Block;
 use gpui::{
-    EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
+    AppContext, EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
     TestAppContext, TouchPhase, point, px,
 };
 use std::fs;
 use std::time::Duration;
+
+fn init_review_workspace_app(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+}
+
+fn review_workspace_fixture(cx: &mut TestAppContext, label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("velora-review-{label}-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    cx.on_quit({ let root = root.clone(); move || fs::remove_dir_all(root).unwrap() });
+    root
+}
+
+#[gpui::test]
+async fn review_workspace_replace_preserves_all_supported_file_shapes(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "replace-shape");
+    let before = "old\r\n下一行\r\n";
+    let after = "new\r\n下一行\r\n";
+    let utf8_bom = |text: &str| [vec![0xef, 0xbb, 0xbf], text.as_bytes().to_vec()].concat();
+    let utf16_be = |text: &str| {
+        let mut bytes = vec![0xfe, 0xff];
+        for unit in text.encode_utf16() { bytes.extend_from_slice(&unit.to_be_bytes()); }
+        bytes
+    };
+    let cases = [
+        ("crlf", before.as_bytes().to_vec(), after.as_bytes().to_vec()),
+        ("bom", utf8_bom(before), utf8_bom(after)),
+        ("utf16le", utf16_le_with_bom(before), utf16_le_with_bom(after)),
+        ("utf16be", utf16_be(before), utf16_be(after)),
+        ("gb18030", encoding_rs::GB18030.encode(before).0.into_owned(), encoding_rs::GB18030.encode(after).0.into_owned()),
+    ];
+    let files = cases.iter().map(|(name, bytes, _)| {
+        let path = root.join(format!("{name}.md")); fs::write(&path, bytes).unwrap(); path
+    }).collect::<Vec<_>>();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        editor.workspace.files_on_disk = files.clone();
+        editor.workspace.open_documents.push(super::super::WorkspaceDocumentTab {
+            path: files[0].clone(), recovery_id: uuid::Uuid::new_v4(),
+            file_version: crate::editor::persistence::file_content_version(before),
+            markdown: before.replace("\r\n", "\n"), dirty: true, preview: false, view: None,
+        });
+        editor.workspace.search_query = "old".into();
+        editor.workspace.replace_query = "new".into();
+        assert_eq!(editor.replace_all_workspace_matches(window, cx), 5);
+    }));
+    for (path, (_, _, expected)) in files.iter().zip(&cases) {
+        assert_eq!(fs::read(path).unwrap(), *expected, "{}", path.display());
+    }
+}
+
+#[gpui::test]
+async fn review_workspace_replace_does_not_overwrite_external_changes(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "replace-conflict");
+    let path = root.join("notes.md"); fs::write(&path, "external").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        editor.workspace.files_on_disk = vec![path.clone()];
+        editor.workspace.open_documents.push(super::super::WorkspaceDocumentTab {
+            path: path.clone(), recovery_id: uuid::Uuid::new_v4(),
+            file_version: crate::editor::persistence::file_content_version("old"),
+            markdown: "old".into(), dirty: true, preview: false, view: None,
+        });
+        editor.workspace.search_query = "old".into(); editor.workspace.replace_query = "new".into();
+        editor.replace_all_workspace_matches(window, cx);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "external");
+        assert!(editor.modal_is_open());
+        assert_eq!(editor.workspace.open_documents[0].markdown, "old");
+    }));
+}
+
+#[gpui::test]
+async fn review_save_and_close_keeps_tabs_when_a_write_fails(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "close-failure");
+    let good = root.join("good.md"); fs::write(&good, "old").unwrap();
+    let blocked = root.join("blocked.md"); fs::create_dir(&blocked).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        for path in [&good, &blocked] {
+            editor.workspace.open_documents.push(super::super::WorkspaceDocumentTab {
+                path: path.clone(), recovery_id: uuid::Uuid::new_v4(),
+                file_version: crate::editor::persistence::file_content_version("old"),
+                markdown: "edited".into(), dirty: true, preview: false, view: None,
+            });
+        }
+        let closing = editor.workspace.open_documents.clone();
+        editor.finish_close_workspace_tabs(&closing, true, window, cx);
+        assert_eq!(editor.workspace.open_documents.len(), 2);
+        assert_eq!(editor.workspace.open_documents[1].markdown, "edited");
+        assert!(editor.workspace.open_documents[1].dirty);
+        assert!(!editor.workspace.open_documents[0].dirty);
+        assert!(editor.modal_is_open());
+    }));
+}
+
+#[gpui::test]
+async fn review_workspace_switch_confirms_live_unsaved_buffer(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "switch-live");
+    let root_a = root.join("a"); let root_b = root.join("b");
+    fs::create_dir_all(&root_a).unwrap(); fs::create_dir_all(&root_b).unwrap();
+    let path = root_a.join("notes.md"); fs::write(&path, "old").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root_a.clone(), cx);
+        editor.open_workspace_file(path, window, cx);
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| block.focus_handle.focus(window));
+    }));
+    cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+    cx.simulate_input("新");
+    cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+    let live = editor.read_with(cx, |editor, _| { assert!(editor.document_dirty); editor.buffer.text() });
+    assert!(live.contains('新'));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root_b, cx);
+        assert!(editor.modal_is_open());
+        assert_eq!(editor.workspace.root.as_deref(), Some(root_a.canonicalize().unwrap().as_path()));
+        assert_eq!(editor.buffer.text(), live);
+    });
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.cancel_modal(window, cx)));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), live);
+}
+
+#[gpui::test]
+async fn review_workspace_switch_save_and_discard_choices_preserve_disk_intent(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    for choice in [0, 1] {
+        let root = review_workspace_fixture(cx, "switch-choice");
+        let root_a = root.join("a"); let root_b = root.join("b");
+        fs::create_dir_all(&root_a).unwrap(); fs::create_dir_all(&root_b).unwrap();
+        let path = root_a.join("notes.md"); fs::write(&path, "old").unwrap();
+        let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+        cx.update(|window, cx| editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root_a, cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+            let block = editor.document.first_root().unwrap().clone();
+            block.update(cx, |block, _| block.focus_handle.focus(window));
+        }));
+        cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+        cx.simulate_input("新");
+        cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+        let live = editor.read_with(cx, |editor, _| editor.buffer.text());
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root_b.clone(), cx);
+            assert!(editor.modal_is_open());
+        });
+        cx.update(|window, cx| editor.update(cx, |editor, cx| editor.dismiss_modal(choice, window, cx)));
+        assert_eq!(editor.read_with(cx, |editor, _| editor.workspace.root.clone()), Some(root_b.canonicalize().unwrap()));
+        assert_eq!(fs::read_to_string(path).unwrap(), if choice == 0 { live } else { "old".into() });
+    }
+}
+
+#[gpui::test]
+async fn review_recovery_merge_preserves_utf16_file_shape(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "recovery-shape");
+    let path = root.join("notes.md"); fs::write(&path, utf16_le_with_bom("原文\r\n")).unwrap();
+    let path = path.canonicalize().unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        editor.open_workspace_file(path.clone(), window, cx);
+        assert!(editor.merge_recovery_snapshot(&path, "恢复\n", uuid::Uuid::new_v4(), window, cx));
+        assert_eq!(editor.buffer.file_bytes(), utf16_le_with_bom("恢复\r\n"));
+    }));
+}
+
+#[gpui::test]
+async fn review_history_restore_decodes_utf16_snapshots(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "history-utf16");
+    let path = root.join("notes.md"); fs::write(&path, utf16_le_with_bom("新\r\n")).unwrap();
+    let version = root.join("version.md"); fs::write(&version, utf16_le_with_bom("旧\r\n")).unwrap();
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "新\n".into(), Some(path.clone())));
+    editor.update(cx, |editor, cx| {
+        editor.attach_file_origin(fs::read(&path).unwrap());
+        editor.file_history_overlay = Some(crate::editor::file_history::FileHistoryOverlay { versions: vec![version], selected: 0 });
+        editor.restore_file_history_version(0, cx);
+        assert_eq!(editor.buffer.text(), "旧\n");
+        assert_eq!(editor.buffer.file_bytes(), utf16_le_with_bom("旧\r\n"));
+    });
+}
 
 #[test]
 fn review_markdown_extensions_share_all_entry_predicates() {
@@ -276,6 +464,8 @@ async fn switching_workspace_saves_dirty_stale_tabs_instead_of_losing_them(
     fs::create_dir_all(&root_b).unwrap();
     let doc = root_a.join("notes.md");
     fs::write(&doc, "# 原文\n").unwrap();
+    let active = root_a.join("active.md");
+    fs::write(&active, "干净的活动标签").unwrap();
     cx.on_quit({
         let (root_a, root_b) = (root_a.clone(), root_b.clone());
         move || {
@@ -292,6 +482,7 @@ async fn switching_workspace_saves_dirty_stale_tabs_instead_of_losing_them(
         });
         editor.update(cx, |editor, cx| {
             editor.open_workspace_file(doc.clone(), window, cx);
+            editor.open_workspace_file(active.clone(), window, cx);
         });
     });
     // 造一个未保存的脏标签。
@@ -1138,6 +1329,8 @@ async fn switching_workspace_keeps_the_shape_of_dirty_tabs(cx: &mut TestAppConte
     fs::create_dir_all(&root_b).unwrap();
     let doc = root_a.join("notes.md");
     fs::write(&doc, utf16_le_with_bom("# 原文\n")).unwrap();
+    let active = root_a.join("active.md");
+    fs::write(&active, "干净的活动标签").unwrap();
     cx.on_quit({
         let (root_a, root_b) = (root_a.clone(), root_b.clone());
         move || {
@@ -1152,6 +1345,7 @@ async fn switching_workspace_keeps_the_shape_of_dirty_tabs(cx: &mut TestAppConte
         editor.update(cx, |editor, cx| {
             editor.set_workspace_root(root_a.clone(), cx);
             editor.open_workspace_file(doc.clone(), window, cx);
+            editor.open_workspace_file(active.clone(), window, cx);
         });
     });
     cx.run_until_parked();

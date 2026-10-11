@@ -1881,8 +1881,12 @@ impl Editor {
     ///
     /// 缓冲区是唯一事实源，绝不能留着上一个文档的内容——那会让保存写出别的
     /// 文件的字节。传入的必须是已规范成 LF 的文本。
-    pub(crate) fn reset_buffer_for_text(&mut self, normalized_text: &str) {
-        self.buffer = buffer::TextBuffer::from_text(normalized_text);
+    pub(crate) fn reset_buffer_for_text(&mut self, normalized_text: &str, preserve_file_shape: bool) {
+        let mut buffer = buffer::TextBuffer::from_text(normalized_text);
+        if preserve_file_shape {
+            buffer.inherit_file_shape_from(&self.buffer);
+        }
+        self.buffer = buffer;
     }
 
     pub(crate) fn from_recovery(

@@ -1,6 +1,43 @@
 use super::common::*;
 
 #[gpui::test]
+async fn review_history_snapshots_keep_crlf_bytes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-history-shape-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    cx.on_quit({ let root = root.clone(); move || fs::remove_dir_all(root).unwrap() });
+    let _config_guard = crate::config::override_test_config_root(root.join("config"));
+    let path = root.join("notes.md"); fs::write(&path, "当前\r\n正文\r\n").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "当前\n正文\n".into(), Some(path.clone())));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        editor.attach_file_origin(fs::read(&path).unwrap());
+        editor.mark_dirty(cx);
+        assert!(editor.save_to_existing_path(&path, window, cx));
+    }));
+    cx.run_until_parked();
+    let version = crate::config::list_file_history(&path).remove(0);
+    assert_eq!(fs::read(version).unwrap(), fs::read(&path).unwrap());
+}
+
+#[gpui::test]
+async fn review_history_restore_keeps_crlf_shape(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-history-restore-shape-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    cx.on_quit({ let root = root.clone(); move || fs::remove_dir_all(root).unwrap() });
+    let path = root.join("notes.md"); fs::write(&path, "当前\r\n正文\r\n").unwrap();
+    let version = root.join("version.md"); fs::write(&version, "旧\r\n正文\r\n").unwrap();
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "当前\n正文\n".into(), Some(path.clone())));
+    editor.update(cx, |editor, cx| {
+        editor.attach_file_origin(fs::read(&path).unwrap());
+        editor.file_history_overlay = Some(crate::editor::file_history::FileHistoryOverlay { versions: vec![version], selected: 0 });
+        editor.restore_file_history_version(0, cx);
+        assert_eq!(editor.buffer.file_bytes(), "旧\r\n正文\r\n".as_bytes());
+        assert_eq!(editor.buffer.text(), "旧\n正文\n");
+    });
+}
+
+#[gpui::test]
 async fn in_app_modal_buttons_close_it_and_run_the_callback(cx: &mut TestAppContext) {
     // 用户要求：全软件不用系统原生弹窗。模态必须可点、可关、回调拿到正确序号。
     init_editor_test_app(cx);
