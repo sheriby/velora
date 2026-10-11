@@ -16,6 +16,20 @@ mod tests {
     use std::any::TypeId;
     use std::path::PathBuf;
 
+    /// 菜单树代数守卫：install_menus 一次、代数进一——渲染侧的窗内菜单缓存
+    /// 靠它失效（谁把 bump 丢了，Windows 上菜单就永远停在旧树）。
+    #[gpui::test]
+    async fn installing_menus_bumps_the_tree_generation(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+        });
+        let before = crate::app_menu::build_menus::menu_tree_generation();
+        cx.update(|cx| crate::app_menu::build_menus::install_menus(cx));
+        let after = crate::app_menu::build_menus::menu_tree_generation();
+        assert!(after > before, "install_menus 必须推进菜单树代数（{before} → {after}）");
+    }
+
     #[test]
     fn windows_manifest_is_embedded_only_by_velora_in_builds_and_tests() {
         let manifest: toml::Value =

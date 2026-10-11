@@ -164,6 +164,9 @@ pub(crate) fn build_menus(
 }
 
 pub(crate) fn install_menus(cx: &mut App) {
+    // 菜单树代数：树只在 install_menus 时变，渲染侧按它缓存
+    // （get_menus 在两个平台都深拷整棵树，不能每帧取）。
+    MENU_TREE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let recent_entries = recent_menu_entries(&recent_folders_for_menu());
     let menus = build_menus(
         cx.global::<ThemeManager>(),
@@ -563,4 +566,11 @@ pub(crate) fn init(cx: &mut App) {
 
     install_menus(cx);
     cx.activate(true);
+}
+
+/// 菜单树代数：每次 install_menus 递增。渲染侧的窗内菜单缓存按它失效。
+static MENU_TREE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn menu_tree_generation() -> u64 {
+    MENU_TREE_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
 }

@@ -679,6 +679,19 @@ impl Editor {
     }
 
     /// 按百分比步进调整界面缩放（roadmap H5：菜单与命令面板共用）。
+    /// 当前窗内菜单树（Windows/Linux 渲染与行高判定共用这一份）。macOS 走
+    /// 原生菜单栏，直接 None——不碰 get_menus（它在平台层深拷整棵树）。
+    pub(crate) fn window_menus(&mut self, cx: &App) -> Option<std::rc::Rc<Vec<gpui::OwnedMenu>>> {
+        if !supports_in_window_menu() {
+            return None;
+        }
+        refresh_window_menu_cache(
+            &mut self.window_menu_cache,
+            crate::app_menu::menu_tree_generation(),
+            || cx.get_menus(),
+        )
+    }
+
     pub(crate) fn zoom_by(&mut self, delta: i64, cx: &mut Context<Self>) {
         let current = crate::config::EditorSettings::zoom_percent(cx);
         let next = (current + delta).clamp(60, 200);
@@ -694,4 +707,51 @@ impl Editor {
         cx.refresh_windows();
     }
 
+}
+
+/// 菜单树缓存的核心一跳（纯逻辑，供单测注入 fetch）：代数未变复用 Rc，
+/// 变了才重新取。get_menus 在平台层深拷整棵树，未变帧必须跳过。
+fn refresh_window_menu_cache(
+    cache: &mut Option<(u64, Option<std::rc::Rc<Vec<gpui::OwnedMenu>>>)>,
+    generation: u64,
+    fetch: impl FnOnce() -> Option<Vec<gpui::OwnedMenu>>,
+) -> Option<std::rc::Rc<Vec<gpui::OwnedMenu>>> {
+    if let Some((cached_generation, cached)) = cache
+        && *cached_generation == generation
+    {
+        return cached.clone();
+    }
+    let fetched = fetch().map(std::rc::Rc::from);
+    *cache = Some((generation, fetched.clone()));
+    fetched
+}
+
+#[cfg(test)]
+mod tests {
+    // 精准导入：外层 `use super::*` 会把 gpui 的同名 `test` 属性宏带进来。
+    use super::refresh_window_menu_cache;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// 缓存核心一跳的守卫（无红点：每帧深拷在 vendor 平台层、缓存路径只在
+    /// Windows/Linux 渲染期走到，macOS 上构造不出真红）：代数未变复用同一份
+    /// Rc、fetch 只调一次；代数变了重新取。
+    #[test]
+    fn menu_cache_reuses_within_a_generation_and_refetches_across() {
+        let fetches = Cell::new(0u32);
+        let fetch = || {
+            fetches.set(fetches.get() + 1);
+            Some(Vec::new())
+        };
+        let mut cache = None;
+
+        let first = refresh_window_menu_cache(&mut cache, 7, fetch).expect("首取有树");
+        let second = refresh_window_menu_cache(&mut cache, 7, fetch).expect("复用有树");
+        assert_eq!(fetches.get(), 1, "同代数只取一次");
+        assert!(Rc::ptr_eq(&first, &second), "同代数复用同一份 Rc");
+
+        let third = refresh_window_menu_cache(&mut cache, 8, fetch).expect("换代重取有树");
+        assert_eq!(fetches.get(), 2, "代数变了重新取");
+        assert!(!Rc::ptr_eq(&first, &third), "换代必须是新树");
+    }
 }

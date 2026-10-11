@@ -164,10 +164,12 @@ impl Render for Editor {
             && !self.code_tab_active()
             && self.cross_block_selection.is_none();
         let editor = cx.entity().downgrade();
-        let has_menus = cx
-            .get_menus()
-            .map(|menus| !menus.is_empty())
-            .unwrap_or(false);
+        // 菜单树一帧一份缓存（get_menus 在平台层深拷整棵树）；macOS 原生
+        // 菜单栏下 has_menus 本就不参与行高，直接 false，不再每帧取树。
+        let window_menus = self.window_menus(cx);
+        let has_menus = window_menus
+            .as_ref()
+            .is_some_and(|menus| !menus.is_empty());
         let titlebar_height = custom_titlebar_height(window, d);
         let menu_bar_height =
             in_window_menu_bar_height_for_target_os(std::env::consts::OS, has_menus, d);
@@ -947,15 +949,10 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_dismiss_transient_ui))
             .on_action(cx.listener(Self::on_install_cli_tool))
             .on_action(cx.listener(Self::on_uninstall_cli_tool));
-        // Fetch menus + collect labels once for both renderers; previously each
-        // of render_in_window_menu_bar / render_in_window_menu_panel called
-        // cx.get_menus() and walked menus.iter().map(|m| m.name.to_string())
-        // independently — two redundant Vec<OwnedMenu> + two redundant
-        // Vec<String>-of-N-allocations per frame.
-        let menus = supports_in_window_menu()
-            .then(|| cx.get_menus())
-            .flatten()
-            .filter(|m| !m.is_empty());
+        // 菜单树按 install_menus 的代数缓存：get_menus 在平台层深拷整棵树
+        // （Windows 上含「打开最近」的完整路径），树只在 install_menus 时变。
+        // 两个渲染器（菜单栏行 / 汉堡竖列）与行高判定共用同一份 Rc。
+        let menus = window_menus.filter(|menus| !menus.is_empty());
         let menu_labels: Vec<SharedString> = menus
             .as_ref()
             .map(|m| m.iter().map(|menu| menu.name.clone()).collect())
@@ -981,7 +978,7 @@ impl Render for Editor {
             if let Some(menu_bar) = self.render_in_window_menu_bar(
                 &theme,
                 cx,
-                menus.as_deref(),
+                menus.as_deref().map(|menus| menus.as_slice()),
                 &menu_labels,
                 titlebar_height,
             ) {
@@ -1019,7 +1016,7 @@ impl Render for Editor {
         } else {
             base
         };
-        let base = if let Some(hamburger_list) = menus.as_deref().and_then(|menus| {
+        let base = if let Some(hamburger_list) = menus.as_deref().map(|menus| menus.as_slice()).and_then(|menus| {
             self.render_hamburger_menu_panel(&theme, cx, menus, titlebar_height)
         }) {
             base.child(hamburger_list)
@@ -1044,7 +1041,7 @@ impl Render for Editor {
             if let Some(menu_panel) = self.render_in_window_menu_panel(
                 &theme,
                 cx,
-                menus.as_deref(),
+                menus.as_deref().map(|menus| menus.as_slice()),
                 origin,
                 f32::from(window.viewport_size().height.max(px(1.0))),
             ) {
