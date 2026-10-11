@@ -124,25 +124,7 @@ impl Editor {
         // 上次挑的是哪个面板就还是它——搜索不参与记忆，所以记忆里只会是非搜索面板。
         // 设置里选「跟随上次」（默认）时听记忆，钉死了（总是打开/总是关闭、文件数/
         // 大纲）就听设置。
-        let remembered_tab = session
-            .as_ref()
-            .and_then(|session| session.sidebar_tab.as_deref())
-            .and_then(WorkspaceTab::from_session_key);
-        let startup_tab = match crate::config::EditorSettings::sidebar_panel_on_startup(cx) {
-            SidebarPanelPreference::FollowLast => remembered_tab.unwrap_or(WorkspaceTab::Files),
-            SidebarPanelPreference::Files => WorkspaceTab::Files,
-            SidebarPanelPreference::Outline => WorkspaceTab::Outline,
-        };
-        self.workspace.sidebar_memory_tab = startup_tab;
-        self.workspace.active_tab = startup_tab;
-        self.workspace.is_open = match crate::config::EditorSettings::sidebar_open_on_startup(cx) {
-            SidebarOpenPreference::FollowLast => session
-                .as_ref()
-                .and_then(|session| session.sidebar_open)
-                .unwrap_or(true),
-            SidebarOpenPreference::Always => true,
-            SidebarOpenPreference::Never => false,
-        };
+        self.apply_sidebar_startup_state(session.as_ref(), cx);
         self.workspace.search_scope = WorkspaceSearchScope::Workspace;
         self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
@@ -160,6 +142,42 @@ impl Editor {
         self.ensure_workspace_watcher(cx);
         self.persist_session(cx);
         cx.notify();
+    }
+
+    /// 侧栏启动状态（开关与面板）：设置钉死了听设置，否则听会话记忆。
+    /// 开文件夹（`apply_workspace_root`）与开窗（`apply_sidebar_startup_state_from_disk`）
+    /// 两条启动路径共用这一处判据。
+    pub(crate) fn apply_sidebar_startup_state(
+        &mut self,
+        session: Option<&crate::config::SessionState>,
+        cx: &App,
+    ) {
+        let remembered_tab = session
+            .and_then(|session| session.sidebar_tab.as_deref())
+            .and_then(WorkspaceTab::from_session_key);
+        let startup_tab = match crate::config::EditorSettings::sidebar_panel_on_startup(cx) {
+            SidebarPanelPreference::FollowLast => remembered_tab.unwrap_or(WorkspaceTab::Files),
+            SidebarPanelPreference::Files => WorkspaceTab::Files,
+            SidebarPanelPreference::Outline => WorkspaceTab::Outline,
+        };
+        self.workspace.sidebar_memory_tab = startup_tab;
+        self.workspace.active_tab = startup_tab;
+        self.workspace.is_open = match crate::config::EditorSettings::sidebar_open_on_startup(cx) {
+            SidebarOpenPreference::FollowLast => session
+                .and_then(|session| session.sidebar_open)
+                .unwrap_or(true),
+            SidebarOpenPreference::Always => true,
+            SidebarOpenPreference::Never => false,
+        };
+    }
+
+    /// 开窗路径用：直接打开文件启动（Windows 关联双击 / macOS 双击）没有
+    /// `set_workspace_root` 可依赖，这里自己读会话记忆再落位。
+    pub(crate) fn apply_sidebar_startup_state_from_disk(&mut self, cx: &App) {
+        let session = crate::config::read_session()
+            .map_err(|error| eprintln!("读取上次的会话失败：{error}"))
+            .ok();
+        self.apply_sidebar_startup_state(session.as_ref(), cx);
     }
 
     /// 工作区根就绪后启动文件监听；同一根不重复启动（

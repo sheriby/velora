@@ -355,3 +355,122 @@ async fn the_sidebar_remembers_its_last_state_globally(cx: &mut TestAppContext) 
     let _ = fs::remove_dir_all(other_root);
     let _ = fs::remove_dir_all(config_root);
 }
+
+/// 报修：直接打开文件启动 Velora（Windows 关联双击 / macOS 双击某个 md），
+/// 「启动时打开侧边栏」「启动时侧边栏显示」两项不生效，侧栏记忆也不生效。
+/// 根因：这两项判据只在 `apply_workspace_root`（打开文件夹）里跑，直接开文件
+/// 走开窗路径（`open_editor_window_from_document`），从不应用启动状态。
+#[gpui::test]
+async fn opening_a_file_directly_applies_pinned_sidebar_startup_settings(
+    cx: &mut TestAppContext,
+) {
+    let config_root = std::env::temp_dir().join(format!(
+        "velora-sidebar-open-file-config-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _config_root = crate::config::override_test_config_root(config_root.clone());
+    let root = std::env::temp_dir().join(format!(
+        "velora-sidebar-open-file-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("建夹具目录");
+    let file = root.join("note.md");
+    fs::write(&file, "# 标题\n\n正文\n").expect("写夹具文件");
+
+    init_sidebar_test_app(cx);
+    cx.update(|cx| {
+        crate::config::EditorSettings::init(cx, true);
+        crate::config::EditorSettings::set_sidebar_startup_in_memory(
+            cx,
+            crate::config::SidebarOpenPreference::Never,
+            crate::config::SidebarPanelPreference::Outline,
+        );
+    });
+    cx.update(|cx| {
+        crate::app_menu::open_file_in_new_window(cx, &file).expect("直接打开文件应成功");
+    });
+    cx.run_until_parked();
+
+    let editor = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|handle| handle.downcast::<Editor>())
+        })
+        .expect("应开出一个编辑器窗口");
+    editor
+        .read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.workspace.active_tab,
+                WorkspaceTab::Outline,
+                "「总是大纲」应在直接开文件启动时生效"
+            );
+            assert!(
+                !editor.workspace.is_open,
+                "「总是关闭」应在直接开文件启动时生效"
+            );
+        })
+        .expect("应能读到编辑器窗口");
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(config_root);
+}
+
+/// 同上，但走记忆：设置为「跟随上次」时，直接开文件也要读会话里的侧栏记忆。
+#[gpui::test]
+async fn opening_a_file_directly_restores_the_remembered_sidebar_state(
+    cx: &mut TestAppContext,
+) {
+    let config_root = std::env::temp_dir().join(format!(
+        "velora-sidebar-open-file-memory-config-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _config_root = crate::config::override_test_config_root(config_root.clone());
+    let root = std::env::temp_dir().join(format!(
+        "velora-sidebar-open-file-memory-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("建夹具目录");
+    let file = root.join("note.md");
+    fs::write(&file, "# 标题\n\n正文\n").expect("写夹具文件");
+
+    init_sidebar_test_app(cx);
+    crate::config::save_session(&crate::config::SessionState {
+        root: None,
+        tabs: Vec::new(),
+        active: None,
+        sidebar_width: None,
+        sidebar_tab: Some("outline".into()),
+        sidebar_open: Some(false),
+    })
+    .expect("写会话记忆");
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    cx.update(|cx| {
+        crate::app_menu::open_file_in_new_window(cx, &file).expect("直接打开文件应成功");
+    });
+    cx.run_until_parked();
+
+    let editor = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|handle| handle.downcast::<Editor>())
+        })
+        .expect("应开出一个编辑器窗口");
+    editor
+        .read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.workspace.active_tab,
+                WorkspaceTab::Outline,
+                "记忆里的大纲面板应在直接开文件启动时恢复"
+            );
+            assert!(
+                !editor.workspace.is_open,
+                "记忆里的收起状态应在直接开文件启动时恢复"
+            );
+        })
+        .expect("应能读到编辑器窗口");
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(config_root);
+}

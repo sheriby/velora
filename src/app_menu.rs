@@ -178,6 +178,9 @@ pub(crate) fn open_editor_window_from_document(
             window.activate_window();
             editor.force_install_close_guard(cx, window);
             editor.install_window_frame_recorder(window, cx);
+            // 直接打开文件启动（Windows 关联双击 / macOS 双击 / CLI 带路径）不经过
+            // set_workspace_root，侧栏启动状态（设置与记忆）要在开窗这一处落位。
+            editor.apply_sidebar_startup_state_from_disk(cx);
         })
         .expect("newly opened editor window should be updateable");
 
@@ -203,6 +206,7 @@ pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnaps
             window.activate_window();
             editor.force_install_close_guard(cx, window);
             editor.install_window_frame_recorder(window, cx);
+            editor.apply_sidebar_startup_state_from_disk(cx);
         })
         .expect("newly opened recovered document should be updateable");
 }
