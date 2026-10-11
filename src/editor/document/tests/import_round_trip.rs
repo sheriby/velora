@@ -4,6 +4,18 @@
     use crate::components::{BlockKind, Editor};
 
     #[gpui::test]
+    async fn review_image_paragraph_can_be_setext_heading(cx: &mut TestAppContext) {
+        // 图片行仍是段落，不能因原生图片运行时而排除合法 setext 标题。
+        let source = "![图片](pic.png)\n---";
+        let html = crate::export::html::render_html(source, &crate::theme::Theme::default_theme(), "标题");
+        assert!(html.contains("<h2 "));
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.document.first_root().unwrap().read(cx).kind(), BlockKind::Heading { level: 2 });
+        });
+    }
+
+    #[gpui::test]
     async fn review_setext_underline_does_not_promote_block_syntax(cx: &mut TestAppContext) {
         // 非段落行后的划线曾吞并前行，编辑后原块语法与分隔线一同丢失。
         for (caption, expected) in [

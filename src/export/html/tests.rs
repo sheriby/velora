@@ -12,6 +12,14 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn review_export_recognizes_math_next_to_escaped_dollar() {
+        for source in ["$x\\$$", "\\$$x$"] {
+            let html = render_html(source, &Theme::default_theme(), "转义");
+            assert!(body_only(&html).contains("class=\"vlt-inline-math\""), "{source}");
+        }
+    }
+
+    #[test]
     fn review_export_downgrades_unsafe_url_schemes() {
         // Markdown 链接曾绕过 HTML 属性的协议清洗，分享物携带可执行 href。
         for source in [

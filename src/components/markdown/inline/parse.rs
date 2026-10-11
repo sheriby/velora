@@ -638,10 +638,7 @@ pub(crate) fn parse_inline_math(
     builder: &mut NormalizeBuilder,
 ) -> Option<usize> {
     let (body_start, close_start, close_end, delimiter) = if tokens.get(index)?.ch == '$' {
-        if !is_single_inline_dollar(
-            index.checked_sub(1).and_then(|previous| tokens.get(previous)).map(|token| token.ch),
-            tokens.get(index + 1).map(|token| token.ch),
-        ) || token_is_backslash_escaped(tokens, index) {
+        if !single_inline_dollar_at(tokens, index) || token_is_backslash_escaped(tokens, index) {
             return None;
         }
         let close = locate_inline_dollar_math_close(tokens, index + 1)?;
@@ -698,11 +695,9 @@ pub(crate) fn locate_inline_dollar_math_close(tokens: &[CharToken], mut cursor: 
             return None;
         }
         if token.ch == '$'
+            && !token.literal_char
             && !token_is_backslash_escaped(tokens, cursor)
-            && is_single_inline_dollar(
-                cursor.checked_sub(1).and_then(|previous| tokens.get(previous)).map(|token| token.ch),
-                tokens.get(cursor + 1).map(|token| token.ch),
-            )
+            && single_inline_dollar_at(tokens, cursor)
         {
             return Some(cursor);
         }
@@ -711,8 +706,15 @@ pub(crate) fn locate_inline_dollar_math_close(tokens: &[CharToken], mut cursor: 
     None
 }
 
-pub(crate) fn is_single_inline_dollar(previous: Option<char>, next: Option<char>) -> bool {
-    previous != Some('$') && next != Some('$')
+pub(crate) fn is_single_inline_dollar(previous_is_active: bool, next_is_active: bool) -> bool {
+    !previous_is_active && !next_is_active
+}
+
+fn single_inline_dollar_at(tokens: &[CharToken], index: usize) -> bool {
+    let is_active = |position: usize| tokens.get(position).is_some_and(|token| {
+        token.ch == '$' && !token.literal_char && !token_is_backslash_escaped(tokens, position)
+    });
+    is_single_inline_dollar(index.checked_sub(1).is_some_and(is_active), is_active(index + 1))
 }
 
 pub(crate) fn locate_inline_paren_math_close(tokens: &[CharToken], mut cursor: usize) -> Option<usize> {

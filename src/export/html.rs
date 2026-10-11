@@ -515,9 +515,17 @@ fn invalidate_span(spans: &mut [DetectedSpan], index: usize) {
     }
 }
 
+fn single_inline_dollar_source(line: &str, index: usize) -> bool {
+    let previous = line.get(..index).and_then(|prefix| prefix.char_indices().next_back())
+        .is_some_and(|(offset, character)| character == '$' && !is_escaped_ascii(line, offset));
+    let next = line.get(index + 1..).and_then(|suffix| suffix.chars().next())
+        .is_some_and(|character| character == '$' && !is_escaped_ascii(line, index + 1));
+    is_single_inline_dollar(previous, next)
+}
+
 fn locate_inline_dollar_math_source(line: &str, index: usize) -> Option<(usize, String)> {
     if !line[index..].starts_with('$')
-        || !is_single_inline_dollar(previous_char(line, index), line.get(index + 1..)?.chars().next())
+        || !single_inline_dollar_source(line, index)
         || is_escaped_ascii(line, index)
     {
         return None;
@@ -528,7 +536,7 @@ fn locate_inline_dollar_math_source(line: &str, index: usize) -> Option<(usize, 
             return None;
         }
         if line[cursor..].starts_with('$')
-            && is_single_inline_dollar(previous_char(line, cursor), line.get(cursor + 1..)?.chars().next())
+            && single_inline_dollar_source(line, cursor)
             && !is_escaped_ascii(line, cursor)
         {
             let body = &line[index + 1..cursor];

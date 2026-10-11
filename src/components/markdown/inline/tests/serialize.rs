@@ -1,6 +1,16 @@
     use super::super::InlineTextTree;
 
     #[test]
+    fn review_escaped_dollar_neighbor_keeps_inline_math_delimiter() {
+        // 转义美元符不是定界符游程的一部分，不能阻止相邻的行内起点或闭合。
+        for source in ["$x\\$$", "\\$$x$"] {
+            let tree = InlineTextTree::from_markdown(source);
+            assert!(tree.render_cache().spans().iter().any(|span| span.math.is_some()), "{source}");
+            assert_eq!(tree.serialize_markdown(), source);
+        }
+    }
+
+    #[test]
     fn review_double_dollars_do_not_open_inline_math_at_the_second_dollar() {
         // 双美元符的第二位不能另作行内起点，否则会把闭合符的一位吃进公式体。
         let tree = InlineTextTree::from_markdown("其中 $$x>0$$ 成立");

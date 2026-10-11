@@ -29,7 +29,6 @@ pub(crate) fn line_is_setext_heading_content(line: &str) -> bool {
         && parse_list_marker(content).is_none()
         && !is_quote_start(content)
         && parse_opening_fence(content).is_none()
-        && parse_standalone_image(content).is_none()
         && !is_display_math_start(content)
         && !is_block_html_start(content)
         && !is_reference_definition_start(content)
