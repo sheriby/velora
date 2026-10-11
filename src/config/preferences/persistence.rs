@@ -632,6 +632,9 @@ pub(crate) fn first_existing_recent_markdown_file() -> Option<PathBuf> {
 
 pub(crate) fn apply_configured_language(cx: &mut App, language_id: &str) -> anyhow::Result<bool> {
     let mut applied = false;
+    let previous = cx
+        .try_global::<I18nManager>()
+        .map(|manager| manager.current_language_id().to_owned());
     let changed = cx.update_global::<I18nManager, _>(|i18n_manager, _cx| {
         let changed = i18n_manager.set_language_by_id(language_id);
         applied = changed || i18n_manager.current_language_id() == language_id;
@@ -640,14 +643,26 @@ pub(crate) fn apply_configured_language(cx: &mut App, language_id: &str) -> anyh
     if !applied {
         return Ok(false);
     }
-    update_app_preferences(|preferences| {
+    if let Err(error) = update_app_preferences(|preferences| {
         preferences.default_language_id = language_id.into();
-    })?;
+    }) {
+        // 先切了全局才落的盘：落盘失败必须回退，否则界面已切、报了错、
+        // 重启又变回来（呈现错位）。
+        if let Some(previous) = previous {
+            cx.update_global::<I18nManager, _>(|manager, _cx| {
+                manager.set_language_by_id(&previous);
+            });
+        }
+        return Err(error);
+    }
     Ok(changed)
 }
 
 pub(crate) fn apply_configured_theme(cx: &mut App, theme_id: &str) -> anyhow::Result<bool> {
     let mut applied = false;
+    let previous = cx
+        .try_global::<ThemeManager>()
+        .map(|manager| manager.current_theme_id().to_owned());
     let changed = cx.update_global::<ThemeManager, _>(|theme_manager, _cx| {
         let changed = theme_manager.set_theme_by_id(theme_id);
         applied = changed || theme_manager.current_theme_id() == theme_id;
@@ -656,9 +671,17 @@ pub(crate) fn apply_configured_theme(cx: &mut App, theme_id: &str) -> anyhow::Re
     if !applied {
         return Ok(false);
     }
-    update_app_preferences(|preferences| {
+    if let Err(error) = update_app_preferences(|preferences| {
         preferences.default_theme_id = theme_id.into();
-    })?;
+    }) {
+        // 同 apply_configured_language：落盘失败回退全局再把错误交回。
+        if let Some(previous) = previous {
+            cx.update_global::<ThemeManager, _>(|manager, _cx| {
+                manager.set_theme_by_id(&previous);
+            });
+        }
+        return Err(error);
+    }
     Ok(changed)
 }
 

@@ -1450,3 +1450,51 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+    /// 主题/语言应用先切全局、后落盘；落盘失败必须回退全局（评审报告维度二
+    /// 建议 23）：配置目录只读时若不回滚，界面已切、报了错、重启又变回来。
+    #[gpui::test]
+    #[cfg(unix)]
+    async fn apply_configured_theme_rolls_back_when_persist_fails(cx: &mut TestAppContext) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir()
+            .join(format!("velora-apply-rollback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+        // 只读配置根：读与写都必然失败。
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500))
+            .expect("chmod read-only");
+        let _guard = crate::config::override_test_config_root(&root);
+
+        cx.update(|cx| {
+            ThemeManager::init(cx);
+            I18nManager::init(cx);
+        });
+        let before = cx
+            .read(|cx| {
+                cx.try_global::<ThemeManager>()
+                    .map(|manager| manager.current_theme_id().to_owned())
+            })
+            .expect("theme global");
+
+        let result = cx.update(|cx| {
+            super::persistence::apply_configured_theme(cx, "velora-dark")
+        });
+        let after = cx
+            .read(|cx| {
+                cx.try_global::<ThemeManager>()
+                    .map(|manager| manager.current_theme_id().to_owned())
+            })
+            .expect("theme global");
+
+        assert!(result.is_err(), "只读根上落盘必须报错");
+        assert_eq!(
+            after, before,
+            "落盘失败后主题必须回退到原值（实际停在 {after}）"
+        );
+
+        let mut permissions = std::fs::metadata(&root).expect("meta").permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&root, permissions).expect("restore");
+        let _ = std::fs::remove_dir_all(root);
+    }
