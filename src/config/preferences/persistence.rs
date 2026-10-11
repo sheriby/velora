@@ -203,6 +203,8 @@ pub(crate) fn read_app_preferences() -> anyhow::Result<AppPreferences> {
 pub(crate) fn read_app_preferences_with_dirs(
     dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<AppPreferences> {
+    #[cfg(test)]
+    probe::note_config_read();
     let path = dirs.app_config_file();
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -803,3 +805,17 @@ pub(crate) fn update_app_preferences(
     Ok(preferences)
 }
 
+/// 形状探针：config.toml 全文件读取次数（thread-local，并行测试各数各的）。
+#[cfg(test)]
+pub(crate) mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static CONFIG_READS: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn note_config_read() {
+        CONFIG_READS.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(crate) fn config_reads() -> u64 {
+        CONFIG_READS.with(|counter| counter.get())
+    }
+}

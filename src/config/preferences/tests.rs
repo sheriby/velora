@@ -1425,3 +1425,28 @@ fn window_size_bounds_are_shared_by_read_and_save() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// 设置全局安装只读一次配置文件（评审报告维度四建议 9 后半）：set_global
+/// 以前每个字段各调一次 read_app_preferences（全文件读 + TOML 解析），
+/// 全局未安装时（首次启动）15 个字段就是 15 遍。
+#[gpui::test]
+async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppContext) {
+    let root = std::env::temp_dir()
+        .join(format!("velora-settings-reads-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create config root");
+    let _guard = crate::config::override_test_config_root(&root);
+    // 预置一份带版本号的配置，避开「文件不存在」的落盘分支。
+    let dirs = VeloraConfigDirs::from_root(&root);
+    save_app_preferences_with_dirs(&AppPreferences::default(), &dirs).expect("seed config");
+
+    let before = super::persistence::probe::config_reads();
+    cx.update(|cx| {
+        crate::config::EditorSettings::set_global(cx, true, false, &Default::default());
+    });
+    let reads = super::persistence::probe::config_reads() - before;
+    assert_eq!(
+        reads, 1,
+        "全局安装只该读一遍 config.toml（实际 {reads} 遍：还在按字段各读一次）"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

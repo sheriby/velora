@@ -544,95 +544,63 @@ impl EditorSettings {
         smart_punctuation: bool,
         status_bar: &StatusBarPreferences,
     ) {
+        // 全局未安装时（首次启动）只读一遍盘：此前每个字段各调一次
+        // read_app_preferences，15 个字段就是 15 遍全文件读 + TOML 解析
+        //（评审报告维度四建议 9）。
+        let stored = cx
+            .try_global::<Self>()
+            .is_none()
+            .then(read_app_preferences)
+            .and_then(Result::ok);
         let fonts = cx
             .try_global::<Self>()
             .map(|settings| settings.fonts.clone())
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.fonts)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.fonts.clone()))
             .unwrap_or_default();
         let workspace_sidebar_width = cx
             .try_global::<Self>()
             .map(|settings| settings.workspace_sidebar_width)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.workspace_sidebar_width)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.workspace_sidebar_width))
             .unwrap_or(258);
         let writing_width = cx
             .try_global::<Self>()
             .map(|settings| settings.writing_width)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.writing_width)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.writing_width))
             .unwrap_or_default();
         let zoom_percent = cx
             .try_global::<Self>()
             .map(|settings| settings.zoom_percent)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.zoom_percent)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.zoom_percent))
             .unwrap_or(100);
         let autosave_debounce_ms = cx
             .try_global::<Self>()
             .map(|settings| settings.autosave_debounce_ms)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.autosave_debounce_ms)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.autosave_debounce_ms))
             .unwrap_or(800);
         let autosave = cx
             .try_global::<Self>()
             .map(|settings| settings.autosave)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.autosave)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.autosave))
             .unwrap_or(true);
         let tree_sort = cx
             .try_global::<Self>()
             .map(|settings| settings.tree_sort)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.tree_sort)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.tree_sort))
             .unwrap_or_default();
         let sidebar_open = cx
             .try_global::<Self>()
             .map(|settings| settings.sidebar_open)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.sidebar_open)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.sidebar_open))
             .unwrap_or_default();
         let sidebar_panel = cx
             .try_global::<Self>()
             .map(|settings| settings.sidebar_panel)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.sidebar_panel)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.sidebar_panel))
             .unwrap_or_default();
         let new_file_template = cx
             .try_global::<Self>()
             .map(|settings| settings.new_file_template.clone())
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.new_file_template)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.new_file_template.clone()))
             .unwrap_or_default();
         let (default_window_width, default_window_height) = cx
             .try_global::<Self>()
@@ -640,40 +608,28 @@ impl EditorSettings {
                 (settings.default_window_width, settings.default_window_height)
             })
             .or_else(|| {
-                read_app_preferences().ok().map(|preferences| {
-                    (preferences.default_window_width, preferences.default_window_height)
-                })
+                stored
+                    .as_ref()
+                    .map(|preferences| (preferences.default_window_width, preferences.default_window_height))
             })
             .unwrap_or((1080, 720));
         let window_open_position = cx
             .try_global::<Self>()
             .map(|settings| settings.window_open_position)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.window_open_position)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.window_open_position))
             .unwrap_or_default();
         let external_change_policy = cx
             .try_global::<Self>()
             .map(|settings| settings.external_change_policy)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.external_change_policy)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.external_change_policy))
             .unwrap_or_default();
         let delete_policy = cx
             .try_global::<Self>()
             .map(|settings| settings.delete_policy)
-            .or_else(|| {
-                read_app_preferences()
-                    .ok()
-                    .map(|preferences| preferences.delete_policy)
-            })
+            .or_else(|| stored.as_ref().map(|preferences| preferences.delete_policy))
             .unwrap_or_default();
         let updates = cx.try_global::<Self>().map(|settings| settings.updates.clone())
-            .or_else(|| read_app_preferences().ok().map(|preferences| preferences.updates)).unwrap_or_default();
+            .or_else(|| stored.as_ref().map(|preferences| preferences.updates.clone())).unwrap_or_default();
         cx.set_global(Self {
             updates,
             show_table_headers,
