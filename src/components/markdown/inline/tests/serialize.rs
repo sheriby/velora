@@ -1,6 +1,13 @@
     use super::super::InlineTextTree;
 
     #[test]
+    fn review_double_dollars_do_not_open_inline_math_at_the_second_dollar() {
+        // 双美元符的第二位不能另作行内起点，否则会把闭合符的一位吃进公式体。
+        let tree = InlineTextTree::from_markdown("其中 $$x>0$$ 成立");
+        assert!(tree.render_cache().spans().iter().all(|span| span.math.is_none()));
+    }
+
+    #[test]
     fn review_emphasis_punctuation_flanking_stays_literal() {
         // 星号曾只检查空白，在算式中把标点旁的正文误判为强调。
         for source in ["2*(3+4)*5", "a*(b)*c", "~~ x~~", "== x ==", "==x =="] {

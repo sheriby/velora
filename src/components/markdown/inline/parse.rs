@@ -638,7 +638,10 @@ pub(crate) fn parse_inline_math(
     builder: &mut NormalizeBuilder,
 ) -> Option<usize> {
     let (body_start, close_start, close_end, delimiter) = if tokens.get(index)?.ch == '$' {
-        if matches_sequence(tokens, index, "$$") || token_is_backslash_escaped(tokens, index) {
+        if !is_single_inline_dollar(
+            index.checked_sub(1).and_then(|previous| tokens.get(previous)).map(|token| token.ch),
+            tokens.get(index + 1).map(|token| token.ch),
+        ) || token_is_backslash_escaped(tokens, index) {
             return None;
         }
         let close = locate_inline_dollar_math_close(tokens, index + 1)?;
@@ -696,13 +699,20 @@ pub(crate) fn locate_inline_dollar_math_close(tokens: &[CharToken], mut cursor: 
         }
         if token.ch == '$'
             && !token_is_backslash_escaped(tokens, cursor)
-            && !matches_sequence(tokens, cursor, "$$")
+            && is_single_inline_dollar(
+                cursor.checked_sub(1).and_then(|previous| tokens.get(previous)).map(|token| token.ch),
+                tokens.get(cursor + 1).map(|token| token.ch),
+            )
         {
             return Some(cursor);
         }
         cursor += 1;
     }
     None
+}
+
+pub(crate) fn is_single_inline_dollar(previous: Option<char>, next: Option<char>) -> bool {
+    previous != Some('$') && next != Some('$')
 }
 
 pub(crate) fn locate_inline_paren_math_close(tokens: &[CharToken], mut cursor: usize) -> Option<usize> {

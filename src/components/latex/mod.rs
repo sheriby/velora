@@ -4,13 +4,20 @@
 mod symbols;
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context as _, anyhow};
 use directories::ProjectDirs;
 use gpui::{Hsla, Rgba};
+
+#[cfg(test)]
+std::thread_local! {
+    static LATEX_LAYOUT_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 pub(crate) use symbols::{LatexCategory, LatexSymbol, LATEX_SYMBOLS, inside_inline_math, latex_command_before_cursor, latex_completions_for};
 
@@ -78,7 +85,7 @@ pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSe
         return None;
     }
 
-    let closer = lines.last()?.trim_end();
+    let closer = *lines.last()?;
     // 结尾 `$$` 不必顶到行尾：`$$ = 5` 这类尾部文字按文字段交出去（旧实现直接判
     // 整块失败，公式都不渲染了）。
     let (closer_body, trailing) = split_display_math_closing_line(closer)?;
@@ -87,11 +94,8 @@ pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSe
     body_lines.push(opener_body);
     body_lines.extend_from_slice(&lines[1..lines.len() - 1]);
     body_lines.push(closer_body);
-    let formula_raw = if trailing.is_empty() {
-        trimmed.to_string()
-    } else {
-        trimmed[..trimmed.len() - trailing.len()].to_string()
-    };
+    let formula_end = trimmed.len() - closer.len() + closer_body.len() + 2;
+    let formula_raw = trimmed.get(..formula_end)?.to_string();
     let mut segments = vec![DisplayMathSegment::Formula {
         raw: formula_raw,
         body: body_lines.join("\n").trim().to_string(),
@@ -162,6 +166,13 @@ pub(crate) struct LatexSvgRender {
     pub(crate) path: PathBuf,
     /// SVG document content, used by export paths.
     pub(crate) svg: String,
+}
+
+#[derive(Default)]
+struct LatexSvgCache {
+    directory: Option<PathBuf>,
+    renders: HashMap<String, LatexSvgRender>,
+    order: VecDeque<String>,
 }
 
 /// 把原始 `$$...$$` Markdown 块解析成它包含的 LaTeX 体——「第一个公式」的视图，
@@ -238,14 +249,40 @@ fn render_latex_svg_to_cache(
     font_size: f32,
     math_layout: MathLayout,
 ) -> anyhow::Result<LatexSvgRender> {
-    let svg = render_latex_to_svg(latex, text_color, font_size, math_layout)?;
+    static CACHE: OnceLock<Mutex<LatexSvgCache>> = OnceLock::new();
     let key = latex_cache_key(latex, text_color, font_size, math_layout);
-    let path = latex_cache_dir()?.join(format!("{key}.svg"));
-    if !path.exists() {
-        fs::write(&path, &svg)
-            .with_context(|| format!("failed to write LaTeX SVG cache '{}'", path.display()))?;
+    let mut cache = CACHE.get_or_init(|| Mutex::new(LatexSvgCache::default()))
+        .lock().map_err(|error| anyhow!("LaTeX 缓存锁不可用：{error}"))?;
+    if let Some(rendered) = cache.renders.get(&key).cloned() {
+        return Ok(rendered);
     }
-    Ok(LatexSvgRender { path, svg })
+    let directory = match &cache.directory {
+        Some(directory) => directory.clone(),
+        None => {
+            let directory = latex_cache_dir()?;
+            cache.directory = Some(directory.clone());
+            directory
+        }
+    };
+    let path = directory.join(format!("{key}.svg"));
+    let svg = match fs::read_to_string(&path) {
+        Ok(svg) => svg,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let svg = render_latex_to_svg(latex, text_color, font_size, math_layout)?;
+            fs::write(&path, &svg)
+                .with_context(|| format!("failed to write LaTeX SVG cache '{}'", path.display()))?;
+            svg
+        }
+        Err(error) => return Err(error).with_context(|| format!("无法读取公式缓存 '{}'", path.display())),
+    };
+    let rendered = LatexSvgRender { path, svg };
+    // 草稿每次编辑都会产生新键，限制进程内缓存避免长期编辑累积整份 SVG。
+    if cache.renders.len() >= 256 && let Some(oldest) = cache.order.pop_front() {
+        cache.renders.remove(&oldest);
+    }
+    cache.order.push_back(key.clone());
+    cache.renders.insert(key, rendered.clone());
+    Ok(rendered)
 }
 
 /// Render a LaTeX expression into self-contained SVG text.
@@ -255,6 +292,8 @@ pub(crate) fn render_latex_to_svg(
     font_size: f32,
     math_layout: MathLayout,
 ) -> anyhow::Result<String> {
+    #[cfg(test)]
+    LATEX_LAYOUT_COUNT.with(|count| count.set(count.get() + 1));
     let parsed = ratex_parser::parse(latex).map_err(|err| anyhow!("{err}"))?;
     let layout_options = ratex_layout::LayoutOptions {
         style: math_layout.ratex_style(),
@@ -309,6 +348,10 @@ fn strip_display_indent(line: &str) -> Option<&str> {
     (indent <= 3).then_some(&line[indent..])
 }
 
+pub(crate) fn starts_display_math_block(line: &str) -> bool {
+    strip_display_indent(line).is_some_and(|content| content.starts_with("$$"))
+}
+
 fn latex_cache_dir() -> anyhow::Result<PathBuf> {
     let root = ProjectDirs::from("app", "velora", "velora")
         .map(|dirs| dirs.cache_dir().to_path_buf())
@@ -351,6 +394,29 @@ fn recolor_default_black(svg: &str, color: &str) -> String {
 mod tests {
     use super::*;
     use gpui::rgba;
+
+    #[test]
+    fn review_display_math_closing_line_preserves_hard_break_tail() {
+        // 闭合行 trim_end 后按长度反推切点，曾吞掉尾文或切进中文字符。
+        for tail in [" tail  ", " 中文尾文  ", " ✨尾文\t"] {
+            let segments = parse_display_math_segments(&format!("$$\nx\n$${tail}")).unwrap();
+            assert_eq!(segments[0], DisplayMathSegment::Formula {
+                raw: "$$\nx\n$$".into(), body: "x".into(),
+            });
+            assert_eq!(segments[1], DisplayMathSegment::Text { markdown: tail.into() });
+        }
+    }
+
+    #[test]
+    fn review_repeated_formula_renders_layout_only_once() {
+        // 缓存命中曾发生在排版之后，重复调用仍完整执行 RaTeX。
+        let formula = format!("x_{{{}}}", uuid::Uuid::new_v4().as_u128());
+        let before = LATEX_LAYOUT_COUNT.with(std::cell::Cell::get);
+        let first = render_inline_math_svg(&formula, Hsla::default(), 17.0).unwrap();
+        let second = render_inline_math_svg(&formula, Hsla::default(), 17.0).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(LATEX_LAYOUT_COUNT.with(std::cell::Cell::get) - before, 1);
+    }
 
     #[test]
     fn svg_root_uses_pixel_size_units() {

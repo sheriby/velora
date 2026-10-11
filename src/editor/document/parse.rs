@@ -552,9 +552,7 @@ pub(crate) fn collect_footnote_definition_region(lines: &[String], start: usize)
 }
 
 pub(crate) fn is_display_math_start(line: &str) -> bool {
-    strip_fence_indent(line)
-        .map(str::trim_end)
-        .is_some_and(|rest| rest.starts_with("$$"))
+    crate::components::latex::starts_display_math_block(line)
 }
 
 /// `$$` 起始行、允许任意缩进。

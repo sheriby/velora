@@ -21,9 +21,9 @@ pub(super) use pulldown_cmark::{
 };
 
 use crate::components::markdown::image::{ImageResolvedSource, resolve_image_source};
-use crate::components::markdown::inline::looks_like_currency_between;
+use crate::components::markdown::inline::{is_single_inline_dollar, looks_like_currency_between};
 pub(super) use crate::components::{
-    inline_math_font_size, is_mermaid_info_string, parse_display_math_source,
+    display_math_font_size, inline_math_font_size, is_mermaid_info_string, parse_display_math_source,
     parse_html_image_block, render_latex_to_svg, render_mermaid_to_svg, sanitize_html_for_export,
 };
 use crate::file_url::percent_decode_or_raw;
@@ -392,7 +392,8 @@ fn detect_inline_spans(text: &str) -> Vec<DetectedSpan> {
         }
 
         if text[index..].starts_with("$$") && !is_escaped_ascii(text, index) {
-            if let Some(relative) = text[index + 2..].find("$$") {
+            if crate::components::latex::starts_display_math_block(text)
+                && let Some(relative) = text[index + 2..].find("$$") {
                 let end = index + 4 + relative;
                 let span = DetectedSpan {
                     start: index,
@@ -404,6 +405,8 @@ fn detect_inline_spans(text: &str) -> Vec<DetectedSpan> {
                 index = end;
                 continue;
             }
+            index += 2;
+            continue;
         }
 
         if highlight.is_none()
@@ -489,7 +492,7 @@ fn invalidate_span(spans: &mut [DetectedSpan], index: usize) {
 
 fn locate_inline_dollar_math_source(line: &str, index: usize) -> Option<(usize, String)> {
     if !line[index..].starts_with('$')
-        || line[index..].starts_with("$$")
+        || !is_single_inline_dollar(previous_char(line, index), line.get(index + 1..)?.chars().next())
         || is_escaped_ascii(line, index)
     {
         return None;
@@ -500,7 +503,7 @@ fn locate_inline_dollar_math_source(line: &str, index: usize) -> Option<(usize, 
             return None;
         }
         if line[cursor..].starts_with('$')
-            && !line[cursor..].starts_with("$$")
+            && is_single_inline_dollar(previous_char(line, cursor), line.get(cursor + 1..)?.chars().next())
             && !is_escaped_ascii(line, cursor)
         {
             let body = &line[index + 1..cursor];
@@ -1119,7 +1122,7 @@ impl<'a> ExportRewriter<'a> {
                 match render_latex_to_svg(
                     &source.body,
                     self.theme.colors.text_default,
-                    self.theme.typography.text_size,
+                    display_math_font_size(self.theme.typography.text_size),
                     crate::components::latex::MathLayout::Display,
                 ) {
                     Ok(svg) => output.push(Event::Html(CowStr::from(format!(
@@ -1317,7 +1320,7 @@ impl<'a> ExportRewriter<'a> {
                 self.render_math_html(
                     &source.body,
                     crate::components::latex::MathLayout::Display,
-                    self.theme.typography.text_size,
+                    display_math_font_size(self.theme.typography.text_size),
                     raw,
                 )
             }

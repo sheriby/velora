@@ -12,6 +12,31 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn review_double_dollars_inside_prose_stay_literal() {
+        // 段落中的双美元符不打开块公式；导出曾独立接受该定界符。
+        let source = "其中 $$x>0$$ 成立";
+        let html = render_html(source, &Theme::default_theme(), "公式");
+        assert!(!body_only(&html).contains("<svg"));
+        assert!(body_only(&html).contains("$$x&gt;0$$"));
+        let tree = crate::components::InlineTextTree::from_markdown(source);
+        assert_eq!(tree.visible_text(), source);
+        assert!(tree.render_cache().spans().iter().all(|span| span.math.is_none()));
+    }
+
+    #[test]
+    fn review_export_display_math_matches_application_svg_size() {
+        // 导出曾直接使用正文字号，漏掉阅读视图使用的公式比例。
+        let theme = Theme::default_theme();
+        let expected = crate::components::render_latex_to_svg(
+            "x^2", theme.colors.text_default,
+            crate::components::display_math_font_size(theme.typography.text_size),
+            crate::components::latex::MathLayout::Display,
+        ).unwrap();
+        let html = render_html("$$x^2$$", &theme, "字号");
+        assert!(body_only(&html).contains(expected.split('>').next().unwrap()));
+    }
+
+    #[test]
     fn review_highlight_whitespace_delimiters_stay_literal() {
         // 导出曾接受空白旁的闭合符，与阅读视图的高亮判据不同。
         for source in ["== x ==", "==x ==", "== x=="] {
@@ -1026,11 +1051,11 @@ mod tests {
         );
         let body = body_only(&html);
 
-        assert_eq!(body.matches("<svg").count(), 2, "actual: {html}");
+        assert_eq!(body.matches("<svg").count(), 1, "actual: {html}");
         assert!(body.contains(">a "), "actual: {html}");
         assert!(body.contains(" b"), "actual: {html}");
         assert!(body.contains("class=\"vlt-math\""), "actual: {html}");
-        assert!(!body.contains("$$"), "actual: {html}");
+        assert!(body.contains("$$x^2$$"), "actual: {html}");
     }
 
     #[test]
