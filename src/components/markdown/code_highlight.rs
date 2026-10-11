@@ -179,7 +179,8 @@ const LANGUAGE_DESCRIPTORS: &[LanguageDescriptor] = &[
     },
     LanguageDescriptor {
         key: CodeLanguageKey::Cpp,
-        aliases: &["cpp", "cxx", "cc", "hpp", "hxx"],
+        // `c++` 是最常见的围栏写法，缺了它整块无色。
+        aliases: &["cpp", "c++", "cxx", "cc", "hpp", "hxx"],
     },
     LanguageDescriptor {
         key: CodeLanguageKey::CSharp,
@@ -889,6 +890,12 @@ mod tests {
             resolve_code_language_key(Some("mermaid")),
             Some(CodeLanguageKey::Mermaid)
         );
+        assert_eq!(
+            resolve_code_language_key(Some("c++")),
+            Some(CodeLanguageKey::Cpp),
+            "`c++` 是 cpp 最常见的围栏写法，缺别名整块无色"
+        );
+        assert_eq!(resolve_code_language_key(Some("C++")), Some(CodeLanguageKey::Cpp));
         assert_eq!(resolve_code_language_key(Some("unknown")), None);
     }
 
