@@ -363,6 +363,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "image_loading_without_alt",
     "image_loading_with_alt_template",
     "image_load_failed",
+    "image_network_unavailable",
     "code_language_placeholder",
     "code_copy_button",
     "status_bar_files",

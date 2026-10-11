@@ -592,6 +592,8 @@ pub struct I18nStrings {
     pub image_loading_with_alt_template: String,
     /// Label shown when an image fails to load.
     pub image_load_failed: String,
+    /// 远程图占位框：HTTP 客户端装配失败（整篇没有网络能力）时的说明。
+    pub image_network_unavailable: String,
     /// Placeholder shown in the code-block language input when no language is set.
     pub code_language_placeholder: String,
     /// 代码块「复制代码」按钮文案（roadmap B9）。

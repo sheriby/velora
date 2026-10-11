@@ -899,6 +899,9 @@ impl I18nStringsDe {
                 .image_loading_with_alt_template
                 .unwrap_or(defaults.image_loading_with_alt_template),
             image_load_failed: self.image_load_failed.unwrap_or(defaults.image_load_failed),
+            image_network_unavailable: self
+                .image_network_unavailable
+                .unwrap_or(defaults.image_network_unavailable),
             code_language_placeholder: self
                 .code_language_placeholder
                 .unwrap_or(defaults.code_language_placeholder),

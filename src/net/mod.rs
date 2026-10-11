@@ -4,7 +4,7 @@ pub(crate) mod update;
 
 use std::io;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use futures::AsyncReadExt;
 use futures::FutureExt;
@@ -20,12 +20,24 @@ const DEFAULT_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7";
 const DEFAULT_CACHE_CONTROL: &str = "no-cache";
 pub(crate) const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
 
+/// HTTP 客户端装配失败的原因（进程内只装一次，失败即定格）。远程图占位框
+/// 据此把「整篇没有网络能力」与「这一张加载失败」分开说——gpui 的回退闭包
+/// 不带错误参数，界面层只能从这里拿到真实原因（评审报告安全建议 7）。
+static HTTP_CLIENT_INSTALL_ERROR: OnceLock<String> = OnceLock::new();
+
+pub(crate) fn http_client_install_error() -> Option<&'static str> {
+    HTTP_CLIENT_INSTALL_ERROR.get().map(String::as_str)
+}
+
 pub(crate) fn install_http_client(cx: &mut App) {
     match ReqwestTransportHttpClient::new(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     ) {
         Ok(client) => cx.set_http_client(Arc::new(client)),
-        Err(error) => eprintln!("failed to install HTTP client for image loading: {error}"),
+        Err(error) => {
+            let _ = HTTP_CLIENT_INSTALL_ERROR.set(error.to_string());
+            eprintln!("failed to install HTTP client for image loading: {error}");
+        }
     }
 }
 
@@ -319,5 +331,24 @@ mod tests {
         assert!(is_remote_image_source("http://example.com/image.gif"));
         assert!(!is_remote_image_source("./image.png"));
         assert!(!is_remote_image_source("images/photo.jpg"));
+    }
+}
+
+#[cfg(test)]
+mod install_visibility_tests {
+    use super::{HTTP_CLIENT_INSTALL_ERROR, http_client_install_error};
+
+    /// 占位框区分「整篇没有网络能力」依据的就是这条读回契约（评审报告
+    /// 安全建议 7）。失败分支本机构造不出（reqwest 总能装上，install_http_
+    /// client 由 main 持有），注入侧写侧各断一端：写入可见、未写为 None。
+    #[test]
+    fn install_error_is_readable_once_recorded() {
+        assert!(http_client_install_error().is_none(), "进程初装不该有错误记录");
+        assert!(HTTP_CLIENT_INSTALL_ERROR.set("probe: no network".into()).is_ok());
+        assert_eq!(
+            http_client_install_error(),
+            Some("probe: no network"),
+            "装配失败的原因必须能被界面层读到"
+        );
     }
 }

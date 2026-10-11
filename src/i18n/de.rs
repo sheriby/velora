@@ -366,6 +366,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) image_loading_without_alt: Option<String>,
     pub(crate) image_loading_with_alt_template: Option<String>,
     pub(crate) image_load_failed: Option<String>,
+    pub(crate) image_network_unavailable: Option<String>,
     pub(crate) code_language_placeholder: Option<String>,
     pub(crate) code_copy_button: Option<String>,
     pub(crate) status_bar_files: Option<String>,
