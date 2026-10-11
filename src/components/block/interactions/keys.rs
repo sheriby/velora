@@ -154,10 +154,12 @@ impl Block {
         }
         let text = self.display_text();
         let range = clamp_range_to_char_boundaries(text, self.selected_range.clone());
-        let selected = text[range].to_string();
+        let selected = text[range.clone()].to_string();
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        // 夹取与替换用同一份区间：端点落在多字节字符内部时，
+        // 替换路径里按偏移的裸切片会 panic。
         self.replace_text_in_visible_range(
-            self.selected_range.clone(),
+            range,
             &format!("[{selected}]({url})"),
             None,
             false,

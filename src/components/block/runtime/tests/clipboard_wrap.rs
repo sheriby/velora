@@ -643,3 +643,43 @@ async fn wrap_symbol_with_empty_selection_still_replaces(cx: &mut TestAppContext
     );
 }
 
+
+/// 选区端点落在多字节字符内部时（markdown 空间换算、几何反推都可能给出这种
+/// 偏移），`paste_url_as_link` 此前夹取用 clamp 后的 `range`、替换却传原始
+/// `selected_range`：两份区间不一致，`replace_text_in_visible_range` 里的
+/// 裸切片 `display_text()[visible_range]` 直接 panic（release 下 = abort）。
+/// 夹取与替换必须用同一份区间（评审 v0.2.6 未验证 7）。
+#[gpui::test]
+async fn pasting_url_over_mid_char_selection_clamps_once(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("中文段落"),
+            ),
+        )
+    });
+
+    // 1 落在「中」(0..3) 内部、7 落在「落」(6..9) 内部：两端都不是字符边界。
+    block.update(cx, |block, _cx| {
+        block.selected_range = 1..7;
+    });
+
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.paste_url_as_link("https://example.test", window, block_cx);
+        });
+    });
+
+    block.read_with(cx, |block, _cx| {
+        // 两端按 clamp_to_char_boundary 的方向回退（1→0、7→6）：
+        // 替换的是「中文」，「段落」原样保留。
+        assert_eq!(
+            block.display_text().to_string(),
+            "[中文](https://example.test)段落",
+            "两端夹到字符边界后夹取与替换同一份区间"
+        );
+    });
+}
