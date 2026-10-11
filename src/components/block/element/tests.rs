@@ -620,7 +620,7 @@
             &lines,
             bounds,
             px(20.0),
-            text,
+            &super::hard_line_ranges(text),
             0..text.len(),
             TextAlign::Left,
         );
@@ -664,7 +664,7 @@
                 &lines,
                 bounds,
                 px(20.0),
-                &display_text,
+                &super::hard_line_ranges(&display_text),
                 span.range.clone(),
                 block.text_align(),
             );
@@ -825,4 +825,77 @@
                     .collect::<Vec<_>>()
             );
         });
+    }
+
+    /// 行表复用形状：一次链接命中测试（span 循环）只准造一张硬行表——
+    /// 以前每个 span 一次 `hard_line_ranges`（整块行数 Vec 分配 + 全文扫描），
+    /// 悬停期间每帧每个链接 span 都重复付一遍（评审报告维度四建议 3 后半）。
+    #[gpui::test]
+    async fn one_hit_test_dispatch_builds_one_hard_line_table(cx: &mut TestAppContext) {
+        use std::sync::atomic::Ordering;
+
+        let cx = cx.add_empty_window();
+        let block = cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::Paragraph,
+                    InlineTextTree::from_markdown(
+                        "[一](https://a.test) [二](https://b.test) [三](https://c.test)",
+                    ),
+                ),
+            )
+        });
+        let display_text = block.read_with(cx, |block, _cx| block.display_text().to_string());
+        let lines = shaped_lines(&display_text, px(320.0), cx);
+        let before = super::HARD_LINE_RANGE_BUILDS.load(Ordering::Relaxed);
+        // 探针打在块外一个必不命中的位置：span 循环要扫完三个链接才返回 None。
+        block.read_with(cx, |block, _cx| {
+            let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(320.0), px(20.0)));
+            assert_eq!(
+                link_at_position(block, &lines, bounds, px(20.0), point(px(400.0), px(10.0))),
+                None
+            );
+        });
+        let builds = super::HARD_LINE_RANGE_BUILDS.load(Ordering::Relaxed) - before;
+        assert_eq!(
+            builds, 1,
+            "一次派发只准造一张硬行表（实际 {builds} 张：还在按 span 重建）"
+        );
+    }
+
+    /// 二分查找与线性参照逐偏移对齐（区间全集）：换行处、空行、多字节字符、
+    /// 串尾偏移都要与旧线性扫的答案一字不差——旧语义是「第一个 end >= offset
+    /// 的行」，换行边界上的偏移归上一行行尾。
+    #[test]
+    fn line_index_binary_matches_linear_reference_on_every_offset() {
+        fn linear_reference(ranges: &[std::ops::Range<usize>], offset: usize) -> (usize, usize) {
+            let clamped = offset.min(ranges.last().map(|r| r.end).unwrap_or(0));
+            for (index, range) in ranges.iter().enumerate() {
+                if clamped <= range.end {
+                    return (index, clamped.saturating_sub(range.start));
+                }
+            }
+            let last = ranges.len() - 1;
+            (last, ranges[last].len())
+        }
+
+        for text in [
+            "a\nbb\nccc",
+            "中文\n第二行\n\n尾行",
+            "\n\n",
+            "single line",
+            "",
+            "a\n\nb",
+            "行尾紧跟\n下一行",
+        ] {
+            let ranges = super::hard_line_ranges(text);
+            for offset in 0..=text.len() {
+                assert_eq!(
+                    super::line_index_for_offset(&ranges, offset),
+                    linear_reference(&ranges, offset),
+                    "text {text:?} offset {offset}"
+                );
+            }
+        }
     }

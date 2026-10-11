@@ -398,6 +398,8 @@ fn build_code_text_runs(
 /// visible text.  Index `i` in the returned Vec corresponds to the `i`-th
 /// WrappedLine produced by `shape_text`.
 pub(super) fn hard_line_ranges(text: &str) -> Vec<Range<usize>> {
+    #[cfg(test)]
+    HARD_LINE_RANGE_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut ranges = Vec::new();
     let mut start = 0;
     for (idx, _) in text.match_indices('\n') {
@@ -407,6 +409,12 @@ pub(super) fn hard_line_ranges(text: &str) -> Vec<Range<usize>> {
     ranges.push(start..text.len());
     ranges
 }
+
+/// 形状探针：整块行表的构建次数。一次派发（一次命中测试、一帧 prepaint）
+/// 只准造一张表，行内 span 数再多也只造一张。
+#[cfg(test)]
+static HARD_LINE_RANGE_BUILDS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// 光标处的括号匹配：光标前一个字符优先（贴着括号），其次光标处字符；
 /// 返回 (开括号偏移, 闭括号偏移)。扫描限深且带步数上限（`MAX_BRACKET_SCAN`），
@@ -523,15 +531,19 @@ pub(super) fn slice_runs_for_range(runs: &[TextRun], range: Range<usize>) -> Vec
 }
 
 /// Map a flat visible-text offset to `(line_index, offset_within_line)`.
+///
+/// 行表的 end 严格递增（相邻行 `end_i < start_{i+1}`），「第一个 end >= offset
+/// 的行」用二分找；换行边界上的偏移归上一行行尾——与旧线性扫逐偏移等价
+/// （守卫见 element/tests 的对拍用例），长块里每次查找从 O(行数) 降为
+/// O(log 行数)。
 pub(super) fn line_index_for_offset(ranges: &[Range<usize>], offset: usize) -> (usize, usize) {
     let clamped = offset.min(ranges.last().map(|r| r.end).unwrap_or(0));
-    for (i, range) in ranges.iter().enumerate() {
-        if clamped <= range.end {
-            return (i, clamped.saturating_sub(range.start));
-        }
+    let index = ranges.partition_point(|range| range.end < clamped);
+    match ranges.get(index) {
+        Some(range) => (index, clamped.saturating_sub(range.start)),
+        // clamped 已被夹到最后一条行的 end，只有空表才走得到这里。
+        None => (0, 0),
     }
-    let last = ranges.len() - 1;
-    (last, ranges[last].len())
 }
 
 pub(crate) fn aligned_line_left(
@@ -666,13 +678,12 @@ pub(super) fn cursor_bounds_for_offset(
     lines: &[WrappedLine],
     bounds: Bounds<Pixels>,
     line_height: Pixels,
-    text: &str,
+    hard_ranges: &[Range<usize>],
     offset: usize,
     align: TextAlign,
     cursor_width: Pixels,
 ) -> Option<Bounds<Pixels>> {
-    let ranges = hard_line_ranges(text);
-    let (line_idx, offset_in_line) = line_index_for_offset(&ranges, offset);
+    let (line_idx, offset_in_line) = line_index_for_offset(hard_ranges, offset);
     let layout = lines.get(line_idx)?;
     let cursor_pos = position_for_offset(layout, offset_in_line, line_height, true)?;
     let origin_x = aligned_row_left(layout, bounds, align, line_height, cursor_pos.y);
@@ -691,13 +702,21 @@ pub(super) fn range_bounds(
     range: Range<usize>,
     align: TextAlign,
 ) -> Option<Bounds<Pixels>> {
-    let segments = range_segment_bounds(lines, bounds, line_height, text, range.clone(), align);
+    let hard_ranges = hard_line_ranges(text);
+    let segments = range_segment_bounds(
+        lines,
+        bounds,
+        line_height,
+        &hard_ranges,
+        range.clone(),
+        align,
+    );
     if segments.is_empty() {
         return cursor_bounds_for_offset(
             lines,
             bounds,
             line_height,
-            text,
+            &hard_ranges,
             range.start,
             align,
             px(1.0),
@@ -759,11 +778,14 @@ fn range_segment_bounds_for_hard_line(
     segments
 }
 
+/// `hard_ranges` 由调用方造好（`hard_line_ranges(display_text)`）：一次派发
+/// （命中测试、一帧 prepaint 的选区/行内代码/搜索高亮）只造一张表，多个
+/// span 共用，不再每个 span 重建整块行表。
 pub(super) fn range_segment_bounds(
     lines: &[WrappedLine],
     bounds: Bounds<Pixels>,
     line_height: Pixels,
-    text: &str,
+    hard_ranges: &[Range<usize>],
     range: Range<usize>,
     align: TextAlign,
 ) -> Vec<Bounds<Pixels>> {
@@ -771,13 +793,12 @@ pub(super) fn range_segment_bounds(
         return Vec::new();
     }
 
-    let ranges = hard_line_ranges(text);
-    let (start_line, start_offset) = line_index_for_offset(&ranges, range.start);
-    let (end_line, end_offset) = line_index_for_offset(&ranges, range.end);
+    let (start_line, start_offset) = line_index_for_offset(hard_ranges, range.start);
+    let (end_line, end_offset) = line_index_for_offset(hard_ranges, range.end);
     let mut segments = Vec::new();
 
     for line_idx in start_line..=end_line {
-        let hard_range = &ranges[line_idx];
+        let hard_range = &hard_ranges[line_idx];
         let line_start = if line_idx == start_line {
             start_offset
         } else {
@@ -827,6 +848,8 @@ pub(crate) fn link_at_position<'a>(
 
     let text = input.display_text();
     let align = input.text_align();
+    // 行表一次派发一张，span 循环共用（悬停期间这行每帧都跑）。
+    let hard_ranges = hard_line_ranges(text);
 
     for span in input.inline_spans() {
         let Some(link) = span.link.as_ref() else {
@@ -836,9 +859,14 @@ pub(crate) fn link_at_position<'a>(
             continue;
         }
 
-        for link_bounds in
-            range_segment_bounds(lines, bounds, line_height, text, span.range.clone(), align)
-        {
+        for link_bounds in range_segment_bounds(
+            lines,
+            bounds,
+            line_height,
+            &hard_ranges,
+            span.range.clone(),
+            align,
+        ) {
             if point_inside_bounds(link_bounds, position) {
                 return Some(link);
             }
@@ -866,6 +894,7 @@ pub(crate) fn footnote_at_position<'a>(
 
     let text = input.display_text();
     let align = input.text_align();
+    let hard_ranges = hard_line_ranges(text);
 
     for span in input.inline_spans() {
         let Some(footnote) = span.footnote.as_ref() else {
@@ -875,9 +904,14 @@ pub(crate) fn footnote_at_position<'a>(
             continue;
         }
 
-        for footnote_bounds in
-            range_segment_bounds(lines, bounds, line_height, text, span.range.clone(), align)
-        {
+        for footnote_bounds in range_segment_bounds(
+            lines,
+            bounds,
+            line_height,
+            &hard_ranges,
+            span.range.clone(),
+            align,
+        ) {
             if point_inside_bounds(footnote_bounds, position) {
                 return Some(footnote);
             }

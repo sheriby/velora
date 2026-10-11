@@ -686,11 +686,13 @@ impl Block {
         if active_range.is_empty() {
             let bounds = self.last_bounds?;
             let lines = self.last_layout.as_ref()?;
+            let text = self.display_text();
+            let hard_ranges = crate::components::block::element::hard_line_ranges(text);
             return crate::components::block::element::cursor_bounds_for_offset(
                 lines,
                 bounds,
                 self.last_line_height,
-                self.display_text(),
+                &hard_ranges,
                 self.cursor_offset(),
                 self.text_align(),
                 px(1.0),
