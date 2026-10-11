@@ -869,3 +869,37 @@ async fn the_last_mounted_row_also_caches_its_real_height(cx: &mut TestAppContex
         );
     });
 }
+
+/// ⌘± 缩放改变生效字号后，行计划与逐行量高缓存必须按新字号失效：行计划的键
+/// 以前不含字号，`centered_width` 又只随视口宽变——缩放后计划命中、量高缓存
+/// 一行不清，除当前挂载 run 外的 stride 与滚动条权重仍是旧字号高度，要滚过
+/// 一遍才自洽（评审报告维度四建议 10）。断形状（清缓存次数），不断墙钟。
+#[gpui::test]
+async fn zooming_clears_the_row_stride_cache(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    // 缩放走真实入口会落盘 config：指到独立临时目录，不与并发用例互写。
+    let config_root = std::env::temp_dir()
+        .join(format!("velora-zoom-cache-{}", std::process::id()))
+        .join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&config_root).expect("create config root");
+    let _config_root = crate::config::override_test_config_root(config_root.clone());
+    cx.update(|cx| crate::config::EditorSettings::install_test_settings(cx, true));
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 标题\n\n段落一\n\n段落二\n\n段落三\n".to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    let before =
+        editor.read_with(cx, |editor, _| editor.row_stride_cache_clears.get());
+
+    editor.update(cx, |editor, cx| {
+        editor.zoom_by(10, cx); // ⌘+ 的真实入口（set_zoom_percent + refresh_windows）
+    });
+    redraw(cx);
+
+    let after = editor.read_with(cx, |editor, _| editor.row_stride_cache_clears.get());
+    assert!(
+        after > before,
+        "生效字号变化必须像列宽变化一样清逐行量高缓存（before={before}, after={after}）"
+    );
+}

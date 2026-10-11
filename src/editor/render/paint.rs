@@ -85,6 +85,9 @@ impl Render for Editor {
         // 变化后的第一帧）才做一次全文档扫描。键用行元数据的版本而不是文档修订：
         // 打字只改块内文字时行元数据不动，计划就该照用。
         let rendered_mode = self.view_mode == crate::editor::ViewMode::Rendered;
+        // 键含生效字号：⌘±/字号设置只改 theme.typography，行元数据与列宽都不动，
+        // 不带它的话缩放后计划照命中、量高沿用旧字号（评审报告维度四建议 10）。
+        let effective_text_size = theme.typography.text_size;
         let plan_key = (
             self.document.row_meta_version(),
             self.fold_state_version,
@@ -92,6 +95,7 @@ impl Render for Editor {
             rendered_mode,
             d.block_gap,
             self.document.visible_blocks().len(),
+            effective_text_size,
         );
         let cached_plan = self
             .rendered_row_plan
@@ -103,6 +107,7 @@ impl Render for Editor {
                     && plan.rendered_mode == plan_key.3
                     && plan.block_gap == plan_key.4
                     && plan.visible_len == plan_key.5
+                    && plan.text_size == plan_key.6
             });
         let plan_rebuilt = cached_plan.is_none();
         let rendered_row_plan = match cached_plan {
@@ -119,6 +124,7 @@ impl Render for Editor {
                     rendered_mode,
                     plan_key.4,
                     plan_key.5,
+                    plan_key.6,
                     cx,
                 ));
                 self.rendered_row_plan = Some(plan.clone());
@@ -223,19 +229,23 @@ impl Render for Editor {
             self.prev_visible_block_ids = rows.iter().map(|row| row.first_id).collect();
         }
 
-        // A footprint only holds for the column it was measured at. The first
+        // A footprint only holds for the column AND font size it was measured at. The first
         // frame has no scroll bounds yet, so the column collapses to its 1px
         // floor and every block wraps a character per line; keeping those
         // measurements would leave the document permanently mis-sized.
         let width_changed = self.row_stride_width != Some(centered_width);
-        if width_changed {
+        let font_size_changed = self.row_stride_font_size != Some(effective_text_size);
+        if width_changed || font_size_changed {
+            self.row_stride_cache_clears
+                .set(self.row_stride_cache_clears.get() + 1);
             self.row_stride_cache.clear();
             rendered_row_plan.strides.borrow_mut().fill(d.block_min_height.max(1.0));
             self.row_stride_width = Some(centered_width);
+            self.row_stride_font_size = Some(effective_text_size);
         }
 
         // 每行直接量高并计入下一行的上间距；只读相邻行顶点会漏掉挂载区最后一行。
-        if !structural_change && !width_changed {
+        if !structural_change && !width_changed && !font_size_changed {
             if let Some(prev) = self
                 .prev_mounted_run
                 .filter(|prev| self.mounted_run_is_addressable(*prev))

@@ -30,7 +30,7 @@
             heading.update(cx, |block, _| block.folded = true);
             let kept = editor.apply_heading_fold_filter(cx);
             assert_eq!(kept, vec![0, 3, 4]);
-            let plan = editor.build_rendered_row_plan(&kept, 0, 0, 0, true, 4.0, 5, cx);
+            let plan = editor.build_rendered_row_plan(&kept, 0, 0, 0, true, 4.0, 5, 16.0, cx);
             // 焦点与专注模式使用快照坐标，行计划不能换成折叠后的序号。
             assert_eq!(plan.visible_starts, vec![0, 3, 4]);
             let row = plan.rows.last().unwrap();

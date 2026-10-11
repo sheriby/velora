@@ -135,6 +135,9 @@ pub(crate) struct RenderedRowPlan {
     /// 可见块数：渐进导入（G8）每步只 append + notify，不推进
     /// 行元数据版本（append 会推进）——键里必须带块数，续建出的新块才会渲染。
     pub visible_len: usize,
+    /// 生效正文字号（设置 + ⌘± 缩放派生）。量出的行高只对该字号成立，
+    /// 键里必须带它：缩放只改 theme.typography，其它键都不动。
+    pub text_size: f32,
     pub rows: Vec<RenderedRowPlanRow>,
     /// P7：行元数据预计算（普通行距/起始下标/行首 id），未变更帧零重算。
     pub visible_starts: Vec<usize>,
@@ -620,6 +623,7 @@ impl Editor {
         rendered_mode: bool,
         block_gap: f32,
         visible_len: usize,
+        text_size: f32,
         cx: &mut Context<Self>,
     ) -> RenderedRowPlan {
         let estimate = cx
@@ -768,6 +772,7 @@ impl Editor {
             rendered_mode,
             block_gap,
             visible_len,
+            text_size,
             rows,
             visible_starts,
             gaps,
