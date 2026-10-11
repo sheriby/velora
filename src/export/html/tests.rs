@@ -1259,4 +1259,56 @@ mod tests {
         assert!(body.contains("<svg"), "actual: {html}");
         assert!(!body.contains("$$"), "actual: {html}");
     }
+
+    #[test]
+    fn export_does_not_write_absolute_local_image_paths_into_the_shareable_html() {
+        // 内联不成的绝对路径图不能原样写进 <img src>：收件人的机器上这张图
+        // 本来就打不开，留在分享物里只泄露发送者的目录结构与用户名。能相对化
+        // （落在文档目录内）写相对；读不到或越界给不含目录信息的中性占位。
+        // 断言只看 <body> 之后：整份文件的 <head> 里内嵌着主题样式表。
+        let root = std::env::temp_dir().join(format!("velora-image-privacy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+
+        // 1) 目录外的绝对路径（读不到）：正文写法。
+        let outside = "/Users/velora-owner/Desktop/private/leak.png";
+        let html = render_html_with_base_dir(
+            &format!("![外部]({outside})"),
+            &Theme::default_theme(),
+            "隐私",
+            Some(&root),
+        );
+        let body = body_only(&html);
+        assert!(!body.contains("/Users/"), "绝对路径不得写进分享物：{body}");
+        assert!(
+            body.contains("data:image/png;base64,"),
+            "读不到的绝对路径图应给中性占位：{body}"
+        );
+
+        // 2) 目录外的绝对路径：原生 HTML <img> 写法同一条口径。
+        let html = render_html_with_base_dir(
+            &format!("<img src=\"{outside}\" alt=\"外部\">"),
+            &Theme::default_theme(),
+            "隐私",
+            Some(&root),
+        );
+        let body = body_only(&html);
+        assert!(!body.contains("/Users/"), "原生 HTML 图同样不得泄绝对路径：{body}");
+
+        // 3) 目录内但读不到（文件不存在）：相对化成文档目录内的写法。
+        let missing = root.join("missing.png");
+        let html = render_html_with_base_dir(
+            &format!("![缺失]({})", missing.display()),
+            &Theme::default_theme(),
+            "隐私",
+            Some(&root),
+        );
+        let body = body_only(&html);
+        assert!(
+            body.contains("src=\"missing.png\""),
+            "目录内的绝对路径应相对化：{body}"
+        );
+        assert!(!body.contains(root.to_string_lossy().as_ref()), "路径本身也不得出现：{body}");
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

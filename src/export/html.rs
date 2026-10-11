@@ -177,8 +177,14 @@ fn sanitize_url_events(events: &mut Vec<(Event<'_>, Range<usize>)>, base_dir: Op
         }
         Event::Start(Tag::Image { dest_url, .. }) => {
             // 可信本地文件生成的 data URI 与文档自带的 data: 目标必须区分。
+            // 内联不成的绝对路径不进分享物：能相对化写相对，否则中性占位。
             let safe = if let Some(data_uri) = local_image_data_uri(dest_url, base_dir) {
                 *dest_url = CowStr::from(data_uri);
+                true
+            } else if let Some(replacement) =
+                absolute_local_image_export_replacement(dest_url, base_dir)
+            {
+                *dest_url = CowStr::from(replacement);
                 true
             } else {
                 crate::components::markdown::link::is_safe_export_url(dest_url)
@@ -836,11 +842,12 @@ impl<'a> ExportRewriter<'a> {
                 css::escape_html(trimmed)
             );
         }
-        if let Some(image) = parse_html_image_block(trimmed) {
-            let src = local_image_data_uri(&image.src, self.base_dir)
-                .unwrap_or_else(|| image.src.clone());
-            return image.to_sanitized_html_with_src(&src);
-        }
+            if let Some(image) = parse_html_image_block(trimmed) {
+                let src = local_image_data_uri(&image.src, self.base_dir)
+                    .or_else(|| absolute_local_image_export_replacement(&image.src, self.base_dir))
+                    .unwrap_or_else(|| image.src.clone());
+                return image.to_sanitized_html_with_src(&src);
+            }
         sanitize_html_for_export(trimmed)
     }
 
@@ -1602,6 +1609,46 @@ const IMAGE_MIME_BY_EXTENSION: &[(&str, &str)] = &[
     ("tiff", "image/tiff"),
     ("webp", "image/webp"),
 ];
+
+/// 内联不成的绝对路径图在导出件里的中性占位：1×1 透明 PNG。占位是我们自己造的
+/// data URI，与文档自带的 `data:` 目标不同源（后者按导出白名单判）。
+const MISSING_IMAGE_PLACEHOLDER_DATA_URI: &str = "data:image/png;base64,\
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+/// 内联不成的绝对路径图在导出件里的替代写法：能相对化（落在文档目录内）写相对，
+/// 读不到或越界给中性占位。绝对路径在收件人的机器上本来就打不开，留在 `src`
+/// 里只泄露发送者的目录结构与用户名；相对与远程写法返回 `None`（保留原文）。
+/// 解析不带基准目录：判断的是**写法本身**是否绝对，相对写法拼上基准后的落点
+/// 不在本条判据内。
+fn absolute_local_image_export_replacement(
+    source: &str,
+    base_dir: Option<&Path>,
+) -> Option<String> {
+    let ImageResolvedSource::Local(path) = resolve_image_source(source, None) else {
+        return None;
+    };
+    if !path.is_absolute() {
+        return None;
+    }
+    let relativized = base_dir.and_then(|base| {
+        // 先按写法原样剥（文件可能已不存在），剥不动再两边 canonicalize
+        // 对齐（文档目录在符号链接后面时，写法前缀与真实前缀不一致）。
+        path.strip_prefix(base)
+            .ok()
+            .map(|relative| relative.to_string_lossy().into_owned())
+            .or_else(|| {
+                let base = base.canonicalize().ok()?;
+                let canonical = path.canonicalize().ok()?;
+                canonical
+                    .strip_prefix(&base)
+                    .ok()
+                    .map(|relative| relative.to_string_lossy().into_owned())
+            })
+    });
+    Some(
+        relativized.unwrap_or_else(|| MISSING_IMAGE_PLACEHOLDER_DATA_URI.to_string()),
+    )
+}
 
 pub(crate) fn local_image_data_uri(source: &str, base_dir: Option<&Path>) -> Option<String> {
     use std::io::Read;
