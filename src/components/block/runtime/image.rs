@@ -49,10 +49,30 @@ impl Block {
     }
 
     pub(super) fn sync_image_runtime(&mut self) {
-        let markdown = self
-            .can_present_as_image()
-            .then(|| self.standalone_image_markdown_for_runtime())
-            .flatten();
+        // 挡板：fragments 里没有 `![` 且当前也不是图片块，永远解不出独立图片，
+        // 整体跳过——省掉每次结构变更对全文档每块的 visible_text() 拼接与两轮
+        // 解析（评审报告维度四建议 4 前半）。图片片段的文本自带 `![`（与
+        // has_mixed_inline_visuals 同一口径）；runtime 还挂着的块（编辑正把
+        // `!` 删掉的那几键）必须放行，否则旧 runtime 残留。
+        let may_be_image = self.image_runtime.is_some()
+            || self
+                .record
+                .title
+                .fragments
+                .iter()
+                .any(|fragment| fragment.text.contains("!["));
+        let markdown = if may_be_image {
+            self.can_present_as_image()
+                .then(|| self.standalone_image_markdown_for_runtime())
+                .flatten()
+        } else {
+            None
+        };
+        if may_be_image {
+            #[cfg(test)]
+            crate::components::block::runtime::image::IMAGE_SYNC_SCANS
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         let next_runtime = markdown
             .as_deref()
             .and_then(parse_standalone_image)
@@ -138,3 +158,8 @@ impl Block {
         self.image_runtime.is_some() && !self.is_source_raw_mode() && !self.image_edit_expanded
     }
 }
+
+/// 形状探针：进入图片解析路径（visible_text 拼接 + parse）的块数。
+#[cfg(test)]
+pub(crate) static IMAGE_SYNC_SCANS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);

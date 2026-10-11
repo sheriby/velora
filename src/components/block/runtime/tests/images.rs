@@ -3,6 +3,8 @@ use crate::components::markdown::inline::InlineTextTree;
 use crate::components::{
     Block, BlockKind, BlockRecord,
 };
+use std::sync::Arc;
+
 use gpui::{
     AppContext,
     TestAppContext,
@@ -179,3 +181,56 @@ async fn broken_rendered_image_syntax_blurs_back_to_plain_text(cx: &mut TestAppC
     });
 }
 
+
+/// 无 `![` 标记的块不进图片 runtime 的解析路径（评审报告维度四建议 4 前半）：
+/// set_runtime_context 对每个块无条件 visible_text() 拼接 + 两轮解析，而
+/// 每次结构编辑都对全文档每块跑一遍——无图文档白付全文扫描。
+/// 挡板只有一条：fragments 里没有 `![` 且当前也不是图片块，就整体跳过。
+#[gpui::test]
+async fn plain_blocks_skip_the_image_runtime_scan(cx: &mut TestAppContext) {
+    use std::sync::atomic::Ordering;
+
+    let cx = cx.add_empty_window();
+    let plain = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("普通段落，含 [链接](https://a.test) 与 *强调*"),
+            ),
+        )
+    });
+    let before = crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed);
+    plain.update(cx, |block, _cx| {
+        block.set_runtime_context(None, Arc::default(), Arc::default(), Arc::default());
+    });
+    let scanned =
+        crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed) - before;
+    assert_eq!(scanned, 0, "无 ![ 标记的块不该进图片解析路径");
+}
+
+/// 真图块照常进解析路径；曾是的块（runtime 还挂着）也不许被挡板拦住——
+/// 否则删掉 `!` 那一键图片残留。
+#[gpui::test]
+async fn image_blocks_still_enter_the_image_runtime_scan(cx: &mut TestAppContext) {
+    use std::sync::atomic::Ordering;
+
+    let cx = cx.add_empty_window();
+    let image_block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("![图](a.png)"),
+            ),
+        )
+    });
+    let before = crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed);
+    image_block.update(cx, |block, _cx| {
+        block.set_runtime_context(None, Arc::default(), Arc::default(), Arc::default());
+    });
+    assert!(
+        crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed) > before,
+        "带 ![ 的块必须进解析路径"
+    );
+}
