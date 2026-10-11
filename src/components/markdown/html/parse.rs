@@ -382,15 +382,10 @@ pub(crate) fn has_dangerous_attrs(attrs: &[HtmlAttr]) -> bool {
     attrs.iter().any(|attr| {
         attr.name.starts_with("on")
             || attr.value.as_deref().is_some_and(|value| {
-                let normalized = value
-                    .chars()
-                    .filter(|ch| !ch.is_whitespace() && *ch != '\0')
-                    .collect::<String>()
-                    .to_ascii_lowercase();
                 matches!(
                     attr.name.as_str(),
                     "href" | "src" | "action" | "formaction" | "xlink:href"
-                ) && normalized.starts_with("javascript:")
+                ) && !crate::components::markdown::link::is_safe_export_url(value)
             })
     })
 }

@@ -82,7 +82,7 @@ fn render_html_document(
     let body = render_browser_html_body(markdown, theme, base_dir);
 
     format!(
-        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<style>\n{}\n</style>\n</head>\n<body>\n<main class=\"vlt-document\">\n{}</main>\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data: https: http:; font-src data:; base-uri 'none'; form-action 'none'\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{}</title>\n<style>\n{}\n</style>\n</head>\n<body>\n<main class=\"vlt-document\">\n{}</main>\n</body>\n</html>\n",
         document_lang,
         css::escape_html(title),
         css,
@@ -156,14 +156,39 @@ fn render_browser_html_body(markdown: &str, theme: &Theme, base_dir: Option<&Pat
         Some((table, rest)) => (table, rest),
         None => (String::new(), markdown),
     };
-    let events: Vec<(Event<'_>, Range<usize>)> = Parser::new_ext(body, markdown_options())
+    let mut events: Vec<(Event<'_>, Range<usize>)> = Parser::new_ext(body, markdown_options())
         .into_offset_iter()
         .collect();
+    sanitize_url_events(&mut events, base_dir);
     let anchors = collect_heading_anchors(&events);
     let rewritten = ExportRewriter::new(body, &events, anchors, theme, base_dir).rewrite();
     let mut output = front_matter_html;
     html::push_html(&mut output, rewritten.into_iter());
     output
+}
+
+fn sanitize_url_events(events: &mut Vec<(Event<'_>, Range<usize>)>, base_dir: Option<&Path>) {
+    let mut wrappers = Vec::new();
+    events.retain_mut(|(event, _)| match event {
+        Event::Start(Tag::Link { dest_url, .. }) => {
+            let safe = crate::components::markdown::link::is_safe_export_url(dest_url);
+            wrappers.push(safe);
+            safe
+        }
+        Event::Start(Tag::Image { dest_url, .. }) => {
+            // 可信本地文件生成的 data URI 与文档自带的 data: 目标必须区分。
+            let safe = if let Some(data_uri) = local_image_data_uri(dest_url, base_dir) {
+                *dest_url = CowStr::from(data_uri);
+                true
+            } else {
+                crate::components::markdown::link::is_safe_export_url(dest_url)
+            };
+            wrappers.push(safe);
+            safe
+        }
+        Event::End(TagEnd::Link | TagEnd::Image) => wrappers.pop().unwrap_or(false),
+        _ => true,
+    });
 }
 
 /// GitHub 风格标题 slug 的**唯一**判据：小写、空白转 `-`、丢掉其它标点，`-`/`_` 与
@@ -1564,17 +1589,27 @@ const IMAGE_MIME_BY_EXTENSION: &[(&str, &str)] = &[
 ];
 
 pub(crate) fn local_image_data_uri(source: &str, base_dir: Option<&Path>) -> Option<String> {
+    use std::io::Read;
     // 路径解析只有 `resolve_image_source` 一处口径：阅读视图能显示的图，导出必须
     // 也能内联，同一个写法不允许两边解出两个结果。
     let ImageResolvedSource::Local(path) = resolve_image_source(source, base_dir) else {
         return None;
     };
-    // 未落盘的文档没有 base_dir，相对目标不能按进程工作目录去读，导出保持原样。
-    if base_dir.is_none() && !path.is_absolute() {
+    let root = base_dir?.canonicalize().ok()?;
+    let path = path.canonicalize().ok()?;
+    if !path.starts_with(&root) {
         return None;
     }
     let mime = image_mime_from_path(&path)?;
-    let bytes = fs::read(&path).ok()?;
+    let file = fs::File::open(&path).ok()?;
+    if file.metadata().ok()?.len() > crate::net::MAX_IMAGE_BYTES as u64 {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(crate::net::MAX_IMAGE_BYTES as u64 + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > crate::net::MAX_IMAGE_BYTES {
+        return None;
+    }
     Some(data_uri_for_bytes(mime, &bytes))
 }
 

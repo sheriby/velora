@@ -4,6 +4,19 @@ use std::collections::HashMap;
 
 use super::image::normalize_reference_label;
 
+pub(crate) const EXTERNAL_LINK_SCHEMES: [&str; 5] = ["http:", "https:", "mailto:", "tel:", "ftp:"];
+
+pub(crate) fn is_safe_export_url(value: &str) -> bool {
+    let normalized = value.chars().filter(|character| !character.is_whitespace() && *character != '\0')
+        .collect::<String>().to_ascii_lowercase();
+    let Some((scheme, _)) = normalized.split_once(':') else {
+        return true;
+    };
+    let has_scheme = scheme.chars().next().is_some_and(|character| character.is_ascii_alphabetic())
+        && scheme.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'));
+    !has_scheme || EXTERNAL_LINK_SCHEMES.iter().any(|allowed| normalized.starts_with(allowed))
+}
+
 /// Active fenced code block while scanning for link reference definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FenceInfo {

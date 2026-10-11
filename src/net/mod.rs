@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use futures::AsyncReadExt;
 use futures::FutureExt;
-use futures::channel::oneshot;
 use gpui::App;
 use gpui::http_client::{self, AsyncBody, HttpClient};
 use reqwest::header::{
@@ -19,6 +18,7 @@ const DEFAULT_IMAGE_ACCEPT: &str =
     "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
 const DEFAULT_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7";
 const DEFAULT_CACHE_CONTROL: &str = "no-cache";
+pub(crate) const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
 
 pub(crate) fn install_http_client(cx: &mut App) {
     match ReqwestTransportHttpClient::new(
@@ -36,29 +36,45 @@ pub(crate) fn is_remote_image_source(source: &str) -> bool {
         .is_some_and(|scheme| scheme == "http" || scheme == "https")
 }
 
-/// GPUI `HttpClient` bridge backed by reqwest's blocking transport.
-///
-/// GPUI expects an async client interface, while image loading in this app only
-/// needs simple HTTP(S) fetches. Requests are executed on a short-lived thread
-/// and returned as `AsyncBody` values to match GPUI's contract.
 struct ReqwestTransportHttpClient {
     client: reqwest::blocking::Client,
     user_agent: HeaderValue,
     default_headers: HeaderMap,
+    runtime: Arc<tokio::runtime::Runtime>,
+    requests: Arc<tokio::sync::Semaphore>,
+    max_response_bytes: usize,
+}
+
+struct ImageRequestCancellation(tokio::task::AbortHandle);
+
+impl Drop for ImageRequestCancellation {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl ReqwestTransportHttpClient {
     fn new(user_agent: &str) -> anyhow::Result<Self> {
         let default_headers = default_image_request_headers(user_agent)?;
+        let (max_response_bytes, timeout) = (MAX_IMAGE_BYTES, std::time::Duration::from_secs(30));
+        #[cfg(test)]
+        let (max_response_bytes, timeout) = tests::REQUEST_LIMITS.with(|limits| limits.get()).unwrap_or((max_response_bytes, timeout));
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(10))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(timeout)
             .user_agent(user_agent)
             .default_headers(default_headers.clone())
             .build()?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1).max_blocking_threads(8).enable_all().build()?;
         Ok(Self {
             client,
             user_agent: HeaderValue::from_str(user_agent)?,
             default_headers,
+            runtime: Arc::new(runtime),
+            requests: Arc::new(tokio::sync::Semaphore::new(128)),
+            max_response_bytes,
         })
     }
 
@@ -66,6 +82,7 @@ impl ReqwestTransportHttpClient {
         client: reqwest::blocking::Client,
         default_headers: HeaderMap,
         request: http_client::Request<AsyncBody>,
+        max_response_bytes: usize,
     ) -> anyhow::Result<http_client::Response<AsyncBody>> {
         let (parts, mut body) = request.into_parts();
         let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())?;
@@ -89,7 +106,15 @@ impl ReqwestTransportHttpClient {
         let status = response.status();
         let version = response.version();
         let headers = response.headers().clone();
-        let bytes = response.bytes()?;
+        if response.content_length().is_some_and(|length| length > max_response_bytes as u64) {
+            anyhow::bail!("图片响应超过字节上限");
+        }
+        let mut bytes = Vec::new();
+        let mut limited_response = std::io::Read::take(response, max_response_bytes as u64 + 1);
+        std::io::Read::read_to_end(&mut limited_response, &mut bytes)?;
+        if bytes.len() > max_response_bytes {
+            anyhow::bail!("图片响应超过字节上限");
+        }
 
         let mut response_builder = http_client::Response::builder()
             .status(status)
@@ -97,7 +122,7 @@ impl ReqwestTransportHttpClient {
         for (name, value) in &headers {
             response_builder = response_builder.header(name, value);
         }
-        Ok(response_builder.body(AsyncBody::from(bytes.to_vec()))?)
+        Ok(response_builder.body(AsyncBody::from(bytes))?)
     }
 }
 
@@ -146,13 +171,19 @@ impl HttpClient for ReqwestTransportHttpClient {
     ) -> futures::future::BoxFuture<'static, anyhow::Result<http_client::Response<AsyncBody>>> {
         let client = self.client.clone();
         let default_headers = self.default_headers.clone();
-        let (tx, rx) = oneshot::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(Self::execute_request(client, default_headers, request));
+        let max_response_bytes = self.max_response_bytes;
+        let permit = match self.requests.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => return futures::future::ready(Err(anyhow::anyhow!("图片请求队列已满"))).boxed(),
+        };
+        let task = self.runtime.spawn_blocking(move || {
+            let _permit = permit;
+            Self::execute_request(client, default_headers, request, max_response_bytes)
         });
+        let cancellation = ImageRequestCancellation(task.abort_handle());
         async move {
-            rx.await
-                .map_err(|_| anyhow::anyhow!("image HTTP worker dropped before responding"))?
+            let _cancellation = cancellation;
+            task.await.map_err(|error| anyhow::anyhow!("图片请求任务失败：{error}"))?
         }
         .boxed()
     }
@@ -174,6 +205,66 @@ mod tests {
     };
 
     const TEST_USER_AGENT: &str = "VeloraTest/1.0";
+
+    std::thread_local! {
+        pub(super) static REQUEST_LIMITS: std::cell::Cell<Option<(usize, std::time::Duration)>> = const { std::cell::Cell::new(None) };
+    }
+
+    fn test_transport(limit: usize, timeout: std::time::Duration) -> super::ReqwestTransportHttpClient {
+        REQUEST_LIMITS.with(|limits| limits.set(Some((limit, timeout))));
+        let client = super::ReqwestTransportHttpClient::new(TEST_USER_AGENT).unwrap();
+        REQUEST_LIMITS.with(|limits| limits.set(None));
+        client
+    }
+
+    fn image_request(url: &str) -> gpui::http_client::Request<gpui::http_client::AsyncBody> {
+        gpui::http_client::Request::builder().uri(url).body(gpui::http_client::AsyncBody::empty()).unwrap()
+    }
+
+    #[test]
+    fn review_remote_image_body_is_bounded_with_and_without_content_length() {
+        use gpui::http_client::HttpClient;
+        use std::io::{Read, Write};
+        for chunked in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/image.png", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = [0; 4096]; socket.read(&mut request).unwrap();
+                let payload = "x".repeat(1025);
+                let response = if chunked {
+                    format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n401\r\n{payload}\r\n0\r\n\r\n")
+                } else {
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: 1025\r\nConnection: close\r\n\r\n{payload}")
+                };
+                if let Err(error) = socket.write_all(response.as_bytes()) {
+                    assert!(matches!(error.kind(), std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset));
+                }
+            });
+            let client = test_transport(1024, std::time::Duration::from_secs(5));
+            let result = futures::executor::block_on(client.send(image_request(&url)));
+            server.join().unwrap();
+            assert!(result.is_err(), "超限响应应当拒绝：chunked={chunked}");
+        }
+    }
+
+    #[test]
+    fn review_remote_image_stalled_response_returns_timeout_error() {
+        use gpui::http_client::HttpClient;
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/image.png", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0; 4096]; socket.read(&mut request).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        });
+        let client = test_transport(1024, std::time::Duration::from_millis(50));
+        let result = futures::executor::block_on(client.send(image_request(&url)));
+        server.join().unwrap();
+        let error = result.err().expect("停滞响应应失败");
+        assert!(error.downcast_ref::<reqwest::Error>().is_some_and(reqwest::Error::is_timeout), "{error}");
+    }
 
     #[test]
     fn default_image_headers_include_browser_like_fetch_context() {

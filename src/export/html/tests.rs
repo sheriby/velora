@@ -12,6 +12,60 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn review_export_downgrades_unsafe_url_schemes() {
+        // Markdown 链接曾绕过 HTML 属性的协议清洗，分享物携带可执行 href。
+        for source in [
+            "[危险](javascript:alert(1))", "[危险](JaVaScRiPt:alert(1))",
+            "[危险][r]\n\n[r]: javascript:alert(1)", "<javascript:alert(1)>",
+            "[危险](data:text/html,evil)", "[危险](vbscript:msgbox(1))",
+            "[危险](file:///tmp/secret.md)", "[危险](java&#x73;cript:alert(1))",
+            "![危险](javascript:alert(1))", "![危险](data:image/svg+xml,evil)",
+        ] {
+            let html = render_html(source, &Theme::default_theme(), "安全");
+            let body = body_only(&html);
+            assert!(!body.contains("<a href="), "{source}: {body}");
+            assert!(!body.contains("<img "), "{source}: {body}");
+        }
+        for destination in ["https://example.com/?q=javascript:example", "mailto:a@example.com", "tel:123", "ftp://example.com/a", "relative.md#标题", "#标题"] {
+            let html = render_html(&format!("[合法]({destination})"), &Theme::default_theme(), "安全");
+            assert!(body_only(&html).contains("<a href="));
+        }
+    }
+
+    #[test]
+    fn review_export_does_not_embed_images_outside_document_directory() {
+        // 绝对路径、编码后的上级路径及符号链接曾把目录外文件烘进分享物。
+        let root = std::env::temp_dir().join(format!("velora-image-boundary-{}", Uuid::new_v4()));
+        let notes = root.join("notes"); fs::create_dir_all(&notes).unwrap();
+        let secret = root.join("secret.png"); fs::write(&secret, b"PRIVATE_BYTE_PAYLOAD").unwrap();
+        let sources = vec![secret.to_string_lossy().into_owned(), "%2e%2e%2fsecret.png".into()];
+        #[cfg(unix)]
+        let sources = {
+            std::os::unix::fs::symlink(&secret, notes.join("escape.png")).unwrap();
+            let mut sources = sources;
+            sources.push("escape.png".into());
+            sources
+        };
+        for source in sources {
+            assert!(local_image_data_uri(&source, Some(&notes)).is_none(), "{source}");
+        }
+        fs::write(notes.join("allowed.png"), b"ALLOWED").unwrap();
+        assert!(local_image_data_uri("allowed.png", Some(&notes)).is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn review_export_refuses_oversized_local_image_payload() {
+        // 内联前没有字节上限，稀疏大文件同样会被完整读入并编码。
+        let root = std::env::temp_dir().join(format!("velora-image-limit-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("large.png");
+        fs::File::create(&path).unwrap().set_len(50 * 1024 * 1024 + 1).unwrap();
+        assert!(local_image_data_uri("large.png", Some(&root)).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn review_double_dollars_inside_prose_stay_literal() {
         // 段落中的双美元符不打开块公式；导出曾独立接受该定界符。
         let source = "其中 $$x>0$$ 成立";

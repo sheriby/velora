@@ -4,6 +4,7 @@
 use super::*;
 pub(crate) use crate::export::html::heading_line_for_anchor;
 use crate::file_url::percent_decode_or_raw;
+use crate::components::markdown::link::EXTERNAL_LINK_SCHEMES;
 
 /// P4b：stride 大多未知时的单帧最大预挂载行数。上限只削视口上下的余量，
 /// 视口自身必须始终有挂载行覆盖。
@@ -972,8 +973,6 @@ pub(crate) enum LinkTarget {
     /// 本地文档路径（绝对或相对当前文档/工作区），可带 `#锚点`。
     Local { path: String, anchor: Option<String> },
 }
-
-const EXTERNAL_LINK_SCHEMES: [&str; 5] = ["http:", "https:", "mailto:", "tel:", "ftp:"];
 
 /// 把 Markdown 链接目标分成外部链接 / 文内锚点 / 本地路径。
 pub(crate) fn classify_link_target(target: &str) -> LinkTarget {
