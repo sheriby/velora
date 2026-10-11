@@ -111,43 +111,25 @@ impl Element for BlockTextElement {
             font_size: None,
         };
 
-        let runs: Vec<TextRun> = if !is_placeholder {
-            // 代码块与带高亮语言的源码分块（markdown 源码）走高亮管线；
-            // 其余按 markdown 行内样式上色。
-            if input.kind().is_code_block() || input.code_highlight_result().is_some() {
-                let code_family =
-                    crate::config::EditorSettings::scaled_fonts(cx).code_family;
-                build_code_text_runs(
-                    input,
-                    &display_text,
-                    &run,
-                    px(theme.dimensions.underline_thickness),
-                    &theme.colors,
-                    &code_family,
-                )
-            } else {
-                let fonts = crate::config::EditorSettings::scaled_fonts(cx);
-                build_text_runs(
-                    input,
-                    &display_text,
-                    &run,
-                    px(theme.dimensions.underline_thickness),
-                    theme.colors.text_link,
-                    theme.colors.text_link,
-                    show_inline_code_backgrounds,
-                    &fonts.code_family,
-                    px(fonts.code_size as f32),
-                    theme.colors.comment_bg,
-                )
-            }
-        } else {
-            vec![run]
-        };
-
         let font_size = style.font_size.to_pixels(window.rem_size());
         let letter_spacing = font_size * theme.typography.text_letter_spacing;
         let code_gap = px(theme.dimensions.code_bg_pad_x) + font_size * 0.125;
-        let code_size = runs.iter().filter_map(|run| run.font_size).fold(px(0.0), Pixels::max);
+        // `line_height` 里那份代码字号脱离 runs 直接算：run 构建已挪进
+        // shape 备忘未命中的那一趟（闭包内），命中的帧不能为它白建一遍 runs。
+        // 与 runs 上实际盖的值同源——build_text_runs 只给非空行内代码 span 盖
+        // `Some(代码字号)`，代码块管线与占位符都不盖。
+        let font_prefs = crate::config::EditorSettings::scaled_fonts(cx);
+        let uses_inline_code_font = !is_placeholder
+            && !(input.kind().is_code_block() || input.code_highlight_result().is_some())
+            && input
+                .inline_spans()
+                .iter()
+                .any(|span| span.style.code && !span.range.is_empty());
+        let code_size = if uses_inline_code_font {
+            px(font_prefs.code_size as f32)
+        } else {
+            px(0.0)
+        };
         let line_height = window.line_height().max(code_size * 1.35);
         let source_line_start = input.source_line_start();
         // 栏宽按全文档基准算（整篇总行数），分块上下才右对齐；基准没挂上时
@@ -164,7 +146,6 @@ impl Element for BlockTextElement {
         // 换行宽、基准字号、字体（偏好 + 主题排版）、主题（run 颜色烘焙）。
         use std::hash::{Hash, Hasher};
         let mut fingerprint_hasher = std::hash::DefaultHasher::new();
-        let font_prefs = crate::config::EditorSettings::scaled_fonts(cx);
         font_prefs.markdown_family.hash(&mut fingerprint_hasher);
         font_prefs.markdown_size.hash(&mut fingerprint_hasher);
         font_prefs.code_family.hash(&mut fingerprint_hasher);
@@ -189,6 +170,11 @@ impl Element for BlockTextElement {
         };
         let cached_memo = input.shape_memo_entry();
         let input_entity = self.input.clone();
+        // runs 惰性构建要带进闭包的小份输入（theme Arc 与 display_text 已捕获）。
+        let base_run = run;
+        let underline_thickness = px(theme.dimensions.underline_thickness);
+        let show_code_backgrounds = show_inline_code_backgrounds;
+        let is_placeholder_block = is_placeholder;
         // 长行折叠计划（带行号的源码块才有）：决定布局宽度语义与按行 shape。
         let long_line_plan = if !is_placeholder && input.long_line_folding_enabled() {
             Some(input_entity.update(cx, |block, _block_cx| block.long_line_plan()))
@@ -249,6 +235,40 @@ impl Element for BlockTextElement {
                     *shared_lines_clone.borrow_mut() = Some(lines);
                     return total_size;
                 }
+                // P3：runs 只在备忘未命中时构建——命中帧连 build_text_runs
+                // 的产物都不该再付（此前它建在闭包外，每帧每挂载块白做一遍）。
+                let runs: Vec<TextRun> = if is_placeholder_block {
+                    vec![base_run.clone()]
+                } else {
+                    let fonts = crate::config::EditorSettings::scaled_fonts(closure_cx);
+                    input_entity.read_with(closure_cx, |block, _| {
+                        // 代码块与带高亮语言的源码分块（markdown 源码）走高亮管线；
+                        // 其余按 markdown 行内样式上色。
+                        if block.kind().is_code_block() || block.code_highlight_result().is_some() {
+                            build_code_text_runs(
+                                block,
+                                &display_text,
+                                &base_run,
+                                underline_thickness,
+                                &theme.colors,
+                                &fonts.code_family,
+                            )
+                        } else {
+                            build_text_runs(
+                                block,
+                                &display_text,
+                                &base_run,
+                                underline_thickness,
+                                theme.colors.text_link,
+                                theme.colors.text_link,
+                                show_code_backgrounds,
+                                &fonts.code_family,
+                                px(fonts.code_size as f32),
+                                theme.colors.comment_bg,
+                            )
+                        }
+                    })
+                };
                 // 有超长行时按行 shape：折叠的超长行不换行（单行占一个
                 // WrappedLine 条目，块高度不再爆炸，超出部分裁切显示），
                 // 其余行照常按容器宽换行。没有超长行时保持整块一次 shape

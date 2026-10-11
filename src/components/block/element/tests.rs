@@ -897,3 +897,45 @@
             }
         }
     }
+
+/// runs 构建只发生在 shape 备忘未命中那一趟（评审报告维度四建议 3 前半）：
+/// build_text_runs/build_code_text_runs 原来在 request_measured_layout 闭包
+/// 外每帧每挂载块全量构建，备忘命中只省了 shape_text。文本未变的帧一次
+/// 都不该建。
+#[gpui::test]
+async fn shape_memo_hits_skip_run_rebuilds_on_unchanged_frames(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+    });
+    let (block, cx) = cx.add_window_view(|_, cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("正文带 `行内代码` 与 [链接](https://a.test)"),
+            ),
+        )
+    });
+    // 前两帧让 shape 备忘写稳。
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+
+    let before = super::probe::text_runs_builds();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    let builds = super::probe::text_runs_builds() - before;
+    assert_eq!(
+        builds, 0,
+        "文本未变的帧不该重建 runs（实际 {builds} 次：还在闭包外每帧全量构建）"
+    );
+    let _ = block;
+}

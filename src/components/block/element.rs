@@ -176,6 +176,8 @@ pub(crate) fn build_text_runs(
     code_font_size: Pixels,
     highlight_bg: Hsla,
 ) -> Vec<TextRun> {
+    #[cfg(test)]
+    probe::note_text_runs_build();
     let spans = input.inline_spans();
     let mut boundaries = vec![0, display_text.len()];
     for span in spans {
@@ -309,6 +311,8 @@ fn build_code_text_runs(
     colors: &ThemeColors,
     code_font_family: &str,
 ) -> Vec<TextRun> {
+    #[cfg(test)]
+    probe::note_text_runs_build();
     let highlight_spans = input
         .code_highlight_result()
         .map(|r| r.spans.as_slice())
@@ -417,12 +421,19 @@ mod probe {
     use std::cell::Cell;
     thread_local! {
         static HARD_LINE_RANGE_BUILDS: Cell<u64> = const { Cell::new(0) };
+        static TEXT_RUNS_BUILDS: Cell<u64> = const { Cell::new(0) };
     }
     pub(super) fn note_build() {
         HARD_LINE_RANGE_BUILDS.with(|counter| counter.set(counter.get() + 1));
     }
     pub(super) fn builds() -> u64 {
         HARD_LINE_RANGE_BUILDS.with(|counter| counter.get())
+    }
+    pub(crate) fn note_text_runs_build() {
+        TEXT_RUNS_BUILDS.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(crate) fn text_runs_builds() -> u64 {
+        TEXT_RUNS_BUILDS.with(|counter| counter.get())
     }
 }
 
