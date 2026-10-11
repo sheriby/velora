@@ -551,6 +551,19 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ToggleSidebar, cx| {
         dispatch_menu_action(&ToggleSidebar, cx);
     });
+    cx.on_action(|_: &BoldSelection, cx| {
+        // cmd/ctrl-b 除了加粗还兼着侧栏开关（空选区时，判据在 `Editor::on_bold_capture`
+        // 一处）。编辑器根部那条元素监听只覆盖「焦点落在编辑器节点上」的按键：焦点
+        // 不在任何节点上（侧栏刚收起、窗口初开）时派发回退到根节点，谁都收不到，
+        // 这里与侧栏开关命令同档补一条全局监听。派发中的窗口此刻还在更新栈上
+        // （`WindowHandle::update` 取不到窗口），所以延后一拍；窗口那条路处理过的
+        // 情形以 stop_propagation 收尾，全局这条不会再执行到。
+        cx.defer(|cx| {
+            let _ = with_active_editor(cx, |editor, window, cx| {
+                editor.on_bold_capture(&BoldSelection, window, cx);
+            });
+        });
+    });
     cx.on_action(|_: &ToggleFullscreen, cx| {
         dispatch_menu_action(&ToggleFullscreen, cx);
     });

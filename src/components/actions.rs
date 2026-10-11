@@ -518,7 +518,10 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         id: "bold_selection",
         category: ShortcutCategory::Formatting,
         default_keys: &["cmd-b", "ctrl-b"],
-        context: BLOCK_CONTEXT,
+        // 不设上下文（与 cmd-p 这些全局键同档）：这颗键在空选区时兼作侧栏开关
+        // （`Editor::on_bold_capture`），焦点不在任何块上时也得匹配得到。
+        // 有选区时仍是加粗，块有焦点的那条路径不变。
+        context: None,
     },
     ShortcutDefinition {
         command: ShortcutCommand::ItalicSelection,

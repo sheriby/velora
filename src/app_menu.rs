@@ -13,8 +13,8 @@ pub(super) use gpui::*;
 
 pub(super) use crate::commands::{CommandMenu, CommandSpec};
 pub(super) use crate::components::{
-    AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseTab, CloseWindow, ExportHtml,
-    ExportPdf,
+    AddLanguageConfig, AddThemeConfig, BoldSelection, CheckForUpdates, CloseTab, CloseWindow,
+    ExportHtml, ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
     FormatDocument, QuitApplication, SaveDocument,

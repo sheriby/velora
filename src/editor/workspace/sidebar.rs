@@ -7,6 +7,7 @@ impl Editor {
             // 面板关了就不该再显示正文搜索高亮（用户报修：残留高亮没有面板
             // 可以解释，也没有别的路径清它）。inactive 分支会清掉全部范围。
             self.sync_document_search_highlights(cx);
+            self.refocus_document_after_sidebar_collapse(window, cx);
         } else {
             self.close_menu_bar(cx);
             self.dismiss_contextual_overlays(cx);
@@ -17,6 +18,43 @@ impl Editor {
         // 开关进记忆：下次启动按设置（跟随上次时）恢复（用户要求）。
         self.persist_session(cx);
         cx.notify();
+    }
+
+    /// 收起侧栏后，若焦点还留在侧栏自己的控件上（文件树、搜索/替换输入、改名
+    /// 输入），把焦点交还正文：面板一收这些控件就不再渲染，悬空的焦点会让之后
+    /// 的键盘事件静默丢失——再按 cmd/ctrl-b 也唤不出侧栏（派发回退到根节点，
+    /// 挂在编辑器根部的那组监听全收不到）。
+    fn refocus_document_after_sidebar_collapse(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sidebar_owns_focus = self
+            .workspace
+            .tree_focus
+            .as_ref()
+            .is_some_and(|handle| handle.is_focused(window))
+            || self
+                .workspace
+                .search_focus
+                .as_ref()
+                .is_some_and(|handle| handle.is_focused(window))
+            || self
+                .workspace
+                .replace_focus
+                .as_ref()
+                .is_some_and(|handle| handle.is_focused(window))
+            || self
+                .workspace
+                .name_edit
+                .as_ref()
+                .is_some_and(|edit| edit.focus.is_focused(window));
+        if !sidebar_owns_focus {
+            return;
+        }
+        if let Some(entity_id) = self.current_edit_target_entity_id_from_state(cx) {
+            self.focus_block(entity_id);
+        }
     }
 
     pub(crate) fn on_toggle_workspace_action(
@@ -163,12 +201,13 @@ impl Editor {
                     })
                     .into()
                 })
-                .on_click(move |_, _, cx| {
+                .on_click(move |_, window, cx| {
                     let _ = editor.update(cx, |editor, cx| {
                         // 三个按钮一致：已经开在这一页时再点一次就收起侧边栏
                         // （之前只有文件和搜索会收，大纲那个参数写的是 false）。
                         if editor.workspace.is_open && editor.workspace.active_tab == tab {
                             editor.workspace.is_open = false;
+                            editor.refocus_document_after_sidebar_collapse(window, cx);
                             editor.persist_session(cx);
                             cx.notify();
                             return;

@@ -203,6 +203,101 @@ async fn ctrl_b_toggles_the_sidebar_only_when_nothing_is_selected(cx: &mut TestA
     });
 }
 
+/// cmd/ctrl-b 没有块焦点时也要能开关侧栏：焦点在侧栏树上、侧栏已收起、
+/// 甚至窗口里没有任何焦点（blur），按它都得管用；有选区时仍是加粗。
+///
+/// 全链路依赖三处：键位不带上下文（`context: None`）才匹配得到；BoldSelection
+/// 有一条全局监听兜住「派发回退到根节点」的按键（`app_menu::init` 注册，与
+/// 侧栏开关命令同档）；侧栏收起时焦点从侧栏控件交还正文，免得焦点悬空后连
+/// 打字都丢。判据仍然只有 `Editor::on_bold_capture` 一处。
+#[gpui::test]
+async fn ctrl_b_toggles_the_sidebar_without_block_focus(cx: &mut TestAppContext) {
+    init_sidebar_test_app(cx);
+    cx.update(|cx| crate::app_menu::init(cx));
+    let root =
+        std::env::temp_dir().join(format!("velora-ctrl-b-focus-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("建夹具目录");
+    fs::write(root.join("note.md"), "# note\n").expect("写夹具文件");
+
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha one\n\nbeta two\n".to_string(), None)
+    });
+    // 全局监听按平台活跃窗口找编辑器；测试窗口默认不活跃，先激活。
+    cx.update(|window, _cx| window.activate_window());
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.workspace.is_open = true;
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear());
+
+    // 焦点在侧栏文件树上：ctrl-b 收起侧栏，焦点交还正文。
+    editor.update_in(cx, |editor, window, cx| editor.focus_workspace_tree(window, cx));
+    cx.simulate_keystrokes("ctrl-b");
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            !editor.workspace.is_open,
+            "焦点在侧栏树上时 ctrl-b 应能收起侧栏"
+        );
+    });
+    let block_handles: Vec<gpui::FocusHandle> = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.read(cx).focus_handle.clone())
+            .collect()
+    });
+    let focused = cx.update(|window, cx| window.focused(cx));
+    assert!(
+        focused
+            .as_ref()
+            .is_some_and(|handle| block_handles.contains(handle)),
+        "收起侧栏后焦点应回到正文，不留在不再渲染的侧栏控件上（实测 {focused:?}）"
+    );
+
+    // 侧栏已收起：再按 ctrl-b 应把它打开。
+    cx.simulate_keystrokes("ctrl-b");
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.is_open, "侧栏收起时 ctrl-b 应能打开它");
+    });
+
+    // 窗口里没有任何焦点（blur）：ctrl-b 仍该管用。
+    editor.update_in(cx, |_editor, window, _cx| window.blur());
+    cx.simulate_keystrokes("ctrl-b");
+    cx.update(|window, cx| window.draw(cx).clear());
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            !editor.workspace.is_open,
+            "窗口里没有焦点时 ctrl-b 也应能开关侧栏"
+        );
+    });
+
+    // 有选区时照旧是加粗，不碰侧栏。
+    let first_block = editor.read_with(cx, |editor, _| {
+        editor.document.visible_blocks()[0].entity.clone()
+    });
+    editor.update(cx, |editor, _| editor.focus_block(first_block.entity_id()));
+    cx.update(|window, cx| window.draw(cx).clear());
+    first_block.update(cx, |block, _cx| block.selected_range = 0..5);
+    cx.simulate_keystrokes("ctrl-b");
+    cx.update(|window, cx| window.draw(cx).clear());
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text()),
+        "**alpha** one\n\nbeta two\n",
+        "有选区时 ctrl-b 仍是加粗"
+    );
+    editor.read_with(cx, |editor, _| {
+        assert!(!editor.workspace.is_open, "有选区时不该碰侧栏");
+    });
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[gpui::test]
 async fn scrolling_inside_the_sidebar_tree_does_not_scroll_the_document(cx: &mut TestAppContext) {
     // 用户报修过：在侧栏文件树里滚，正文跟着一起滚。滚轮命中必须只落在树那一列上。
