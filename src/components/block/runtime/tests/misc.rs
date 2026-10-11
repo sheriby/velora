@@ -304,3 +304,40 @@ async fn background_window_stops_the_cursor_blink_task(cx: &mut TestAppContext) 
         "后台窗口不应保留光标闪烁任务（每 33ms 一次 notify 重绘）"
     );
 }
+
+/// 帧末布局写回只做引用计数（评审报告维度四建议 3 前半）：paint 里
+/// `(*lines).clone()` 每帧深拷整份 Vec<WrappedLine>（每条含 runs/glyphs），
+/// 被 30Hz 光标闪烁放大。last_layout 存 Arc 后，文本未变的下一帧 shape
+/// 备忘命中、同一份布局只 bump 引用计数——两帧的 Arc 指针必须相等。
+#[gpui::test]
+async fn unchanged_text_reuses_the_same_layout_arc_across_frames(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+    });
+    let (block, cx) = cx.add_window_view(|_, cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("第一行\n第二行")),
+        )
+    });
+
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    let first = block.read_with(cx, |block, _| block.last_layout.clone());
+    let first = first.expect("第一帧后应有布局");
+
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    let second = block.read_with(cx, |block, _| block.last_layout.clone());
+    let second = second.expect("第二帧后应有布局");
+
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &second),
+        "文本未变的两帧应共用同一份布局（只 bump 引用计数，不深拷 Vec）"
+    );
+}

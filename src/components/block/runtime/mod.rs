@@ -167,7 +167,7 @@ pub struct Block {
     pub selection_reversed: bool,
     pub(crate) editor_selection_range: Option<Range<usize>>,
     pub marked_range: Option<Range<usize>>,
-    pub last_layout: Option<Vec<WrappedLine>>,
+    pub last_layout: Option<std::sync::Arc<Vec<WrappedLine>>>,
     pub last_bounds: Option<Bounds<Pixels>>,
     pub last_line_height: Pixels,
     pub render_depth: usize,

@@ -835,7 +835,7 @@ impl Element for BlockTextElement {
         }
 
         self.input.update(cx, |input, _cx| {
-            input.last_layout = Some((*lines).clone());
+            input.last_layout = Some(lines.clone());
             input.last_bounds = Some(text_bounds);
             input.last_line_height = line_height;
             input.last_gutter_width = prepaint.source_line_number_gutter_width;

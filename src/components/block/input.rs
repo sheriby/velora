@@ -261,7 +261,7 @@ impl EntityInputHandler for Block {
             ));
         }
 
-        let lines = self.last_layout.as_ref()?;
+        let lines = self.last_layout.as_deref()?;
         let range = self.range_from_utf16(&range_utf16);
         let line_height = self.last_line_height;
         let text = self.display_text();
@@ -280,7 +280,7 @@ impl EntityInputHandler for Block {
         }
 
         let bounds = self.last_bounds?;
-        let lines = self.last_layout.as_ref()?;
+        let lines = self.last_layout.as_deref()?;
         let text = self.display_text();
         let ranges = element::hard_line_ranges(text);
         let relative = Point {

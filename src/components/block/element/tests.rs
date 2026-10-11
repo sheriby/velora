@@ -313,7 +313,7 @@
         });
 
         block.update(cx, |block, _cx| {
-            block.last_layout = Some(lines.clone());
+            block.last_layout = Some(std::sync::Arc::new(lines.clone()));
             block.last_bounds = Some(bounds);
             block.last_line_height = px(20.0);
             block.selected_range = 0..0;

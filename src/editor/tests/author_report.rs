@@ -478,7 +478,7 @@ async fn item02_and_item11_table_reading_uses_the_preserved_cell_content(cx: &mu
                     let cell = tables[0].rows[0][1].read(cx);
                     assert_eq!(cell.display_text(), "first\nsecond");
                     assert_eq!(
-                        cell.last_layout.as_ref().expect("单元格应完成布局").len(),
+                        cell.last_layout.as_deref().expect("单元格应完成布局").len(),
                         2
                     );
                     assert!(

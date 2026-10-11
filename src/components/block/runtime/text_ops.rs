@@ -281,7 +281,7 @@ impl Block {
     }
 
     fn current_line_layout_and_offset(&self) -> Option<(&WrappedLine, usize)> {
-        let lines = self.last_layout.as_ref()?;
+        let lines = self.last_layout.as_deref()?;
         let text = self.display_text();
         let ranges = crate::components::block::element::hard_line_ranges(text);
         let (line_idx, offset_in_line) =
@@ -324,7 +324,7 @@ impl Block {
         preferred_x: Pixels,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(lines) = self.last_layout.as_ref() else {
+        let Some(lines) = self.last_layout.as_deref() else {
             return false;
         };
 
@@ -404,7 +404,7 @@ impl Block {
         prefer_last_line: bool,
         preferred_x: Option<Pixels>,
     ) -> usize {
-        let Some(lines) = self.last_layout.as_ref() else {
+        let Some(lines) = self.last_layout.as_deref() else {
             return if prefer_last_line {
                 self.visible_len()
             } else {
@@ -635,7 +635,7 @@ impl Block {
             return 0;
         }
 
-        let (Some(bounds), Some(lines)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        let (Some(bounds), Some(lines)) = (self.last_bounds.as_ref(), self.last_layout.as_deref())
         else {
             return 0;
         };
@@ -685,7 +685,7 @@ impl Block {
             .unwrap_or_else(|| self.selected_range.clone());
         if active_range.is_empty() {
             let bounds = self.last_bounds?;
-            let lines = self.last_layout.as_ref()?;
+            let lines = self.last_layout.as_deref()?;
             let text = self.display_text();
             let hard_ranges = crate::components::block::element::hard_line_ranges(text);
             return crate::components::block::element::cursor_bounds_for_offset(
@@ -708,7 +708,7 @@ impl Block {
         range: std::ops::Range<usize>,
     ) -> Option<Bounds<Pixels>> {
         let bounds = self.last_bounds?;
-        let lines = self.last_layout.as_ref()?;
+        let lines = self.last_layout.as_deref()?;
         crate::components::block::element::range_bounds(
             lines,
             bounds,

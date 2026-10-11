@@ -89,7 +89,7 @@ async fn typography_h1_h2_center_text_and_hit_testing_in_every_theme(cx: &mut Te
                     continue;
                 }
                 let bounds = block.last_bounds.expect("标题排版");
-                let line = &block.last_layout.as_ref().expect("标题行")[0];
+                let line = &block.last_layout.as_deref().expect("标题行")[0];
                 let left = crate::components::element::aligned_line_left(line, bounds, expected);
                 if expected == gpui::TextAlign::Center {
                     assert!(
@@ -131,7 +131,7 @@ async fn typography_wrapped_heading_keeps_caret_selection_and_clicks_aligned(
         editor.document.first_root().expect("标题").clone()
     });
     heading.update(cx, |block, _cx| {
-        let lines = block.last_layout.as_ref().expect("标题排版");
+        let lines = block.last_layout.as_deref().expect("标题排版");
         let line = &lines[0];
         let boundary = line.wrap_boundaries().last().expect("标题应实际软换行");
         let start = line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index;
@@ -463,7 +463,7 @@ async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut Test
         redraw(cx);
         editor.read_with(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
-            let lines = block.last_layout.as_ref().expect("正文应完成排版");
+            let lines = block.last_layout.as_deref().expect("正文应完成排版");
             let mut wraps = 0;
             for line in lines {
                 let available = line.wrap_width.expect("正文应有换行宽度");
@@ -653,7 +653,7 @@ async fn the_writing_column_follows_a_4k_window(cx: &mut TestAppContext) {
     let wrap_width = |cx: &mut VisualTestContext| -> f32 {
         editor.read_with(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
-            let lines = block.last_layout.as_ref().expect("正文应完成排版");
+            let lines = block.last_layout.as_deref().expect("正文应完成排版");
             f32::from(lines[0].wrap_width.expect("正文应有换行宽度"))
         })
     };

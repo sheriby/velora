@@ -40,7 +40,7 @@ async fn long_source_lines_collapse_to_single_unwrapped_row(cx: &mut TestAppCont
     editor
         .read_with(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
-            let lines = block.last_layout.as_ref().expect("应完成排版");
+            let lines = block.last_layout.as_deref().expect("应完成排版");
             assert_eq!(
                 lines.len(),
                 4,
@@ -93,7 +93,7 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
         .read_with(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
             assert!(block.expanded_long_lines.contains(&1), "展开状态应记录");
-            let lines = block.last_layout.as_ref().expect("应完成排版");
+            let lines = block.last_layout.as_deref().expect("应完成排版");
             assert_eq!(lines.len(), 4, "展开不改变源行条目数（含空尾行）");
             assert!(
                 !lines[1].wrap_boundaries().is_empty(),
@@ -130,7 +130,7 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
                 !block.expanded_long_lines.contains(&1),
                 "收起后不应留在展开集合里"
             );
-            let lines = block.last_layout.as_ref().expect("应完成排版");
+            let lines = block.last_layout.as_deref().expect("应完成排版");
             assert!(
                 lines[1].wrap_boundaries().is_empty(),
                 "收起后长行恢复单行"
@@ -169,7 +169,7 @@ async fn collapsed_long_line_has_no_horizontal_scrolling(cx: &mut TestAppContext
     // 文本元素宽度被钳在容器宽内（不溢出），行依然单行不换行。
     editor.read_with(cx, |editor, cx| {
         let block = editor.document.visible_blocks()[0].entity.read(cx);
-        let lines = block.last_layout.as_ref().expect("应完成排版");
+        let lines = block.last_layout.as_deref().expect("应完成排版");
         assert!(
             lines[1].wrap_boundaries().is_empty(),
             "折叠行必须保持单行"
@@ -195,7 +195,7 @@ async fn collapsed_long_line_is_truncated_to_display_cap(cx: &mut TestAppContext
     editor
         .read_with(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
-            let lines = block.last_layout.as_ref().expect("应完成排版");
+            let lines = block.last_layout.as_deref().expect("应完成排版");
             assert_eq!(lines.len(), 3, "长行 + short + 空尾行 = 3 条目");
             let shaped_chars = lines[0].text.chars().count();
             assert!(

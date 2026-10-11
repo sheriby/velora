@@ -322,7 +322,7 @@ impl Block {
 
     /// 是超长行时切换展开态。返回是否发生了切换。
     pub(crate) fn toggle_long_line_at_gutter(&mut self, position: Point<Pixels>) -> bool {
-        let (Some(bounds), Some(lines)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        let (Some(bounds), Some(lines)) = (self.last_bounds.as_ref(), self.last_layout.as_deref())
         else {
             return false;
         };
@@ -451,7 +451,7 @@ impl Block {
     /// source or when the pointer is not over a link.
     pub(crate) fn pointer_link_hit(&self, position: Point<Pixels>) -> Option<super::super::super::InlineLinkHit> {
         self.last_layout
-            .as_ref()
+            .as_deref()
             .zip(self.last_bounds)
             .and_then(|(lines, bounds)| {
                 crate::components::block::element::link_at_position(
@@ -513,7 +513,7 @@ impl Block {
         if event.click_count >= 2 {
             let footnote = self
                 .last_layout
-                .as_ref()
+                .as_deref()
                 .zip(self.last_bounds)
                 .and_then(|(lines, bounds)| {
                     crate::components::block::element::footnote_at_position(

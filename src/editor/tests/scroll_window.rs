@@ -167,7 +167,7 @@ async fn source_scrollbar_weights_refresh_after_inserting_a_line(cx: &mut TestAp
             "两行变三行后滑块权重应按行数更新"
         );
         let block = editor.document.visible_blocks()[0].entity.read(cx);
-        assert_eq!(block.last_layout.as_ref().expect("源码应绘制").len(), 3);
+        assert_eq!(block.last_layout.as_deref().expect("源码应绘制").len(), 3);
         assert!(block.display_text().contains("你好🌿"));
     });
 }

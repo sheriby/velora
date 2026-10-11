@@ -27,7 +27,7 @@ async fn review_vertical_entry_clamps_geometry_to_character_boundary(cx: &mut Te
     let block = cx.new(|cx| Block::with_record(cx, BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("中文"))));
     block.update(cx, |block, _| {
         block.last_line_height = px(16.0);
-        block.last_layout = Some(vec![approximate_geometry_line("中文")]);
+        block.last_layout = Some(std::sync::Arc::new(vec![approximate_geometry_line("中文")]));
         assert_eq!(block.entry_offset_for_vertical_focus(false, Some(px(8.0))), 0);
     });
 }
@@ -37,7 +37,7 @@ async fn review_vertical_motion_clamps_geometry_to_character_boundary(cx: &mut T
     let block = cx.new(|cx| Block::with_record(cx, BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("a\n中文"))));
     block.update(cx, |block, cx| {
         block.last_line_height = px(16.0);
-        block.last_layout = Some(vec![approximate_geometry_line("a"), approximate_geometry_line("中文")]);
+        block.last_layout = Some(std::sync::Arc::new(vec![approximate_geometry_line("a"), approximate_geometry_line("中文")]));
         assert!(block.move_cursor_vertically(1, px(8.0), cx));
         assert_eq!(block.cursor_offset(), 2);
     });
@@ -64,7 +64,7 @@ async fn review_input_point_clamps_geometry_before_utf16_conversion(cx: &mut Tes
     cx.update(|window, cx| block.update(cx, |block, cx| {
         block.last_line_height = px(16.0);
         block.last_bounds = Some(gpui::Bounds::new(point(px(0.0), px(0.0)), gpui::size(px(16.0), px(32.0))));
-        block.last_layout = Some(vec![approximate_geometry_line("a"), approximate_geometry_line("中文")]);
+        block.last_layout = Some(std::sync::Arc::new(vec![approximate_geometry_line("a"), approximate_geometry_line("中文")]));
         assert_eq!(gpui::EntityInputHandler::character_index_for_point(block, point(px(8.0), px(24.0)), window, cx), Some(2));
     }));
 }
