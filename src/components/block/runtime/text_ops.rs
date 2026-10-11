@@ -282,8 +282,7 @@ impl Block {
 
     fn current_line_layout_and_offset(&self) -> Option<(&WrappedLine, usize)> {
         let lines = self.last_layout.as_deref()?;
-        let text = self.display_text();
-        let ranges = crate::components::block::element::hard_line_ranges(text);
+        let ranges = self.shared_hard_line_ranges();
         let (line_idx, offset_in_line) =
             crate::components::block::element::line_index_for_offset(&ranges, self.cursor_offset());
         Some((lines.get(line_idx)?, offset_in_line))
@@ -329,7 +328,7 @@ impl Block {
         };
 
         let text = self.display_text();
-        let ranges = crate::components::block::element::hard_line_ranges(text);
+        let ranges = self.shared_hard_line_ranges();
         let (current_line_idx, offset_in_line) =
             crate::components::block::element::line_index_for_offset(&ranges, self.cursor_offset());
         let Some(current_layout) = lines.get(current_line_idx) else {
@@ -413,7 +412,7 @@ impl Block {
         };
 
         let text = self.display_text();
-        let ranges = crate::components::block::element::hard_line_ranges(text);
+        let ranges = self.shared_hard_line_ranges();
         let target_line_idx = if prefer_last_line { lines.len() - 1 } else { 0 };
         let target_layout = &lines[target_line_idx];
         let target_x = preferred_x.unwrap_or(px(0.0));
@@ -648,7 +647,7 @@ impl Block {
         }
 
         let text = self.display_text();
-        let ranges = crate::components::block::element::hard_line_ranges(text);
+        let ranges = self.shared_hard_line_ranges();
         let relative_y = position.y - bounds.top();
         let Some((line_idx, y_in_line)) = crate::components::block::element::wrapped_line_for_y(
             lines,
@@ -686,8 +685,7 @@ impl Block {
         if active_range.is_empty() {
             let bounds = self.last_bounds?;
             let lines = self.last_layout.as_deref()?;
-            let text = self.display_text();
-            let hard_ranges = crate::components::block::element::hard_line_ranges(text);
+            let hard_ranges = self.shared_hard_line_ranges();
             return crate::components::block::element::cursor_bounds_for_offset(
                 lines,
                 bounds,
@@ -709,11 +707,12 @@ impl Block {
     ) -> Option<Bounds<Pixels>> {
         let bounds = self.last_bounds?;
         let lines = self.last_layout.as_deref()?;
+        let hard_ranges = self.shared_hard_line_ranges();
         crate::components::block::element::range_bounds(
             lines,
             bounds,
             self.last_line_height,
-            self.display_text(),
+            hard_ranges.as_slice(),
             range,
             self.text_align(),
         )

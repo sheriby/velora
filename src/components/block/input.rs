@@ -264,8 +264,15 @@ impl EntityInputHandler for Block {
         let lines = self.last_layout.as_deref()?;
         let range = self.range_from_utf16(&range_utf16);
         let line_height = self.last_line_height;
-        let text = self.display_text();
-        element::range_bounds(lines, bounds, line_height, text, range, self.text_align())
+        let hard_ranges = self.shared_hard_line_ranges();
+        element::range_bounds(
+            lines,
+            bounds,
+            line_height,
+            hard_ranges.as_slice(),
+            range,
+            self.text_align(),
+        )
     }
 
     fn character_index_for_point(
@@ -282,7 +289,7 @@ impl EntityInputHandler for Block {
         let bounds = self.last_bounds?;
         let lines = self.last_layout.as_deref()?;
         let text = self.display_text();
-        let ranges = element::hard_line_ranges(text);
+        let ranges = self.shared_hard_line_ranges();
         let relative = Point {
             x: pt.x - bounds.left(),
             y: pt.y - bounds.top(),

@@ -47,6 +47,24 @@ impl Block {
         self.refresh_cached_display_text();
     }
 
+    /// 当前显示文本的硬行表，全编辑器共用这一份。表与 display_generation
+    /// 同步失效：文本一变代数就变（refresh_cached_display_text 原子推进
+    /// 两者），下一趟重建。
+    pub(crate) fn shared_hard_line_ranges(&self) -> std::sync::Arc<Vec<std::ops::Range<usize>>> {
+        let generation = self.display_generation;
+        let mut cache = self.hard_line_ranges_cache.borrow_mut();
+        if let Some((cached_generation, table)) = cache.as_ref()
+            && *cached_generation == generation
+        {
+            return table.clone();
+        }
+        let table = std::sync::Arc::new(crate::components::block::element::hard_line_ranges(
+            self.display_text(),
+        ));
+        *cache = Some((generation, table.clone()));
+        table
+    }
+
     pub(crate) fn sync_link_reference_definitions(
         &mut self,
         link_reference_definitions: Arc<LinkReferenceDefinitions>,

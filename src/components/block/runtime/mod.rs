@@ -199,6 +199,11 @@ pub struct Block {
     cached_display_text: SharedString,
     /// 文本代数：cached_display_text 内容变化时递增（P3 shape 备忘键）。
     display_generation: u64,
+    /// 硬行表按 display_generation 缓存：表是显示文本的纯函数，同一代文本
+    /// 只建一次，命中测试、每帧选区/高亮、几何反推共用一份（B10 把布局收成
+    /// Arc 后，这是行表侧的对应收口）。
+    hard_line_ranges_cache:
+        std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<std::ops::Range<usize>>>)>>,
     /// P3：跨帧 shape 备忘。键命中时布局闭包跳过 build_text_runs 与
     /// shape_text（taffy 一次布局会对同一元素多次 measure）。
     pub(crate) shape_memo: Option<ShapeMemoEntry>,
@@ -360,6 +365,7 @@ impl Block {
             projection_cache_key: None,
             cached_display_text: SharedString::default(),
             display_generation: 0,
+            hard_line_ranges_cache: std::cell::RefCell::new(None),
             shape_memo: None,
             long_line_plan: None,
             expanded_long_lines: std::collections::BTreeSet::new(),

@@ -531,9 +531,6 @@ impl Element for BlockTextElement {
         let cursor_width = theme.dimensions.cursor_width;
         let selection_color = theme.colors.selection;
         let text_align = input.text_align();
-        // 硬行表一帧一张，选区/光标/括号对/行内代码/搜索高亮五处消费共用；
-        // 没有这些消费的帧一张都不造。
-        let mut hard_ranges: Option<Vec<std::ops::Range<usize>>> = None;
 
         let (current_line_quads, selection_quads, bracket_quads, cursor_quad) =
             if (focused || editor_selection_range.is_some()) && !lines.is_empty() {
@@ -559,13 +556,12 @@ impl Element for BlockTextElement {
                 } else if selected_range.is_empty() {
                     // No selection: current-line wash + bracket pair + cursor.
                     let text = input.display_text();
-                    let shared_ranges =
-                        hard_ranges.get_or_insert_with(|| hard_line_ranges(text));
+                    let shared_ranges = input.shared_hard_line_ranges();
                     let cursor_bounds = cursor_bounds_for_offset(
                         &lines,
                         text_bounds,
                         line_height,
-                        shared_ranges,
+                        shared_ranges.as_slice(),
                         cursor,
                         text_align,
                         px(cursor_width),
@@ -592,7 +588,7 @@ impl Element for BlockTextElement {
                                         &lines,
                                         text_bounds,
                                         line_height,
-                                        shared_ranges,
+                                        shared_ranges.as_slice(),
                                         offset,
                                         text_align,
                                         px(cursor_width.max(1.0)),
@@ -609,14 +605,12 @@ impl Element for BlockTextElement {
                         cursor_bounds.map(|bounds| fill(bounds, cursor_color)),
                     )
                 } else {
-                    let text = input.display_text();
-                    let shared_ranges =
-                        hard_ranges.get_or_insert_with(|| hard_line_ranges(text));
+                    let shared_ranges = input.shared_hard_line_ranges();
                     let quads = range_segment_bounds(
                         &lines,
                         text_bounds,
                         line_height,
-                        shared_ranges,
+                        shared_ranges.as_slice(),
                         selected_range,
                         text_align,
                     )
@@ -632,8 +626,7 @@ impl Element for BlockTextElement {
         // Compute code-span background quads with rounded corners and padding.
         let mut code_quads = Vec::new();
         if show_inline_code_backgrounds && !self.is_placeholder {
-            let text = input.display_text();
-            let shared_ranges = hard_ranges.get_or_insert_with(|| hard_line_ranges(text));
+            let shared_ranges = input.shared_hard_line_ranges();
             let code_color = theme.colors.code_bg;
             let pad_x = px(theme.dimensions.code_bg_pad_x);
             let pad_y = px(theme.dimensions.code_bg_pad_y);
@@ -646,7 +639,7 @@ impl Element for BlockTextElement {
                     &lines,
                     text_bounds,
                     line_height,
-                    shared_ranges,
+                    shared_ranges.as_slice(),
                     span.range.clone(),
                     text_align,
                 ) {
@@ -684,8 +677,7 @@ impl Element for BlockTextElement {
             let highlight_color = theme.colors.search_highlight_bg;
             let active_color = theme.colors.search_active_highlight_bg;
             let active_range = input.search_active_range.clone();
-            let text = input.display_text();
-            let shared_ranges = hard_ranges.get_or_insert_with(|| hard_line_ranges(text));
+            let shared_ranges = input.shared_hard_line_ranges();
             for range in &input.search_highlight_ranges {
                 let is_active = active_range.as_ref().is_some_and(|active| active == range);
                 let color = if is_active { active_color } else { highlight_color };
@@ -693,7 +685,7 @@ impl Element for BlockTextElement {
                     &lines,
                     text_bounds,
                     line_height,
-                    shared_ranges,
+                    shared_ranges.as_slice(),
                     range.clone(),
                     text_align,
                 ) {

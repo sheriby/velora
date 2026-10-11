@@ -939,3 +939,48 @@ async fn shape_memo_hits_skip_run_rebuilds_on_unchanged_frames(cx: &mut TestAppC
     );
     let _ = block;
 }
+
+/// 硬行表随文本代数缓存（评审报告维度四建议 3 收尾）：B9 之后每帧 prepaint
+/// 的选区/高亮路径仍要建一张 O(文本长) 的表；表是显示文本的纯函数，同一代
+/// 文本（display_generation）只该建一次，命中测试与几何反推共用。
+#[gpui::test]
+async fn unchanged_text_reuses_the_hard_line_table_across_frames(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+    });
+    let (block, cx) = cx.add_window_view(|_, cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("第一行的内容\n第二行的内容"),
+            ),
+        )
+    });
+    // 聚焦 + 非空选区：选区 quad 路径每帧都要行表。
+    cx.update(|window, cx| {
+        let handle = block.read(cx).focus_handle.clone();
+        window.focus(&handle);
+        block.update(cx, |block, _cx| block.selected_range = 0..6);
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+
+    let before = super::probe::builds();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    let builds = super::probe::builds() - before;
+    assert_eq!(
+        builds, 0,
+        "文本未变的帧不该重建硬行表（实际 {builds} 次）"
+    );
+}

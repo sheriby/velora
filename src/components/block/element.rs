@@ -719,11 +719,10 @@ pub(super) fn range_bounds(
     lines: &[WrappedLine],
     bounds: Bounds<Pixels>,
     line_height: Pixels,
-    text: &str,
+    hard_ranges: &[Range<usize>],
     range: Range<usize>,
     align: TextAlign,
 ) -> Option<Bounds<Pixels>> {
-    let hard_ranges = hard_line_ranges(text);
     let segments = range_segment_bounds(
         lines,
         bounds,
@@ -867,10 +866,9 @@ pub(crate) fn link_at_position<'a>(
         return None;
     }
 
-    let text = input.display_text();
     let align = input.text_align();
-    // 行表一次派发一张，span 循环共用（悬停期间这行每帧都跑）。
-    let hard_ranges = hard_line_ranges(text);
+    // 行表按文本代数共享（悬停期间每帧的派发不再各建一张）。
+    let hard_ranges = input.shared_hard_line_ranges();
 
     for span in input.inline_spans() {
         let Some(link) = span.link.as_ref() else {
@@ -913,9 +911,8 @@ pub(crate) fn footnote_at_position<'a>(
         return None;
     }
 
-    let text = input.display_text();
     let align = input.text_align();
-    let hard_ranges = hard_line_ranges(text);
+    let hard_ranges = input.shared_hard_line_ranges();
 
     for span in input.inline_spans() {
         let Some(footnote) = span.footnote.as_ref() else {
