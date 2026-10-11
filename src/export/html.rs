@@ -160,6 +160,8 @@ fn front_matter_table_html(body: &str) -> String {
 /// `BlockKind::parse_atx_heading_line_with_marker` 把 `##　标题` 认成标题，
 /// 而导出走的 pulldown-cmark 是严格 CommonMark（分隔符只认空格与制表符）：
 /// 不归一，同一行在应用里是标题、分享件里却是「##　标题」原文。
+/// 这是总览「关键不变量」10 放行的字节等价词法归一：块结构仍完全由
+/// pulldown 认定，这里只换记号里的那三个字节。
 ///
 /// 只动顶层标题行记号里的那三个字节。代码块与 HTML 块是字面内容，区间取自
 /// pulldown 自己的事件流；其余位置的 U+3000（正文字符）一律不碰。
