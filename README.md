@@ -19,7 +19,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 - **WYSIWYG + source modes** — Markdown renders as you type; switch to raw source at any time, and undo history survives mode switches.
 - **A full block set** — headings, ordered/bulleted/task lists, tables, code blocks, quotes, footnotes, callouts, horizontal rules and images; inline bold/italic, inline code, links and strikethrough.
 - **Math & diagrams in place** — LaTeX formulas and Mermaid diagrams render directly inside the document.
-- **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link.
+- **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link; 100% maps to 95% of the visible text column by default and images never overflow it; right-click offers 25% / 50% / 75% / 100% scaling that keeps the aspect ratio, and the chosen ratio is written back to the source as `{width=NN%}`.
 - **Editing conveniences** — lists continue on `Enter`; typing a paired character wraps the selection; pasting a URL over a selection creates a link; HTML copied from a browser or Word is converted to Markdown on paste.
 - **Smart punctuation** (off by default, one switch in Settings) — context-aware curly quotes and `--` → em dash.
 - **VS Code–style find & replace** — powered by ripgrep's engine, in-process: case, whole-word, regex (multi-line patterns included) and fuzzy matching; every match is highlighted while the panel is open, and the result list, highlighting, jumping and replace-all read the same match table.
@@ -27,9 +27,10 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 
 ### Workspace & knowledge
 
-- **Folder = workspace** — the file tree supports new / rename / duplicate / copy-paste / delete (to the system Trash), sorting by name, modification time or type, a filter box for quick lookup, and hover tooltips with size and mtime.
+- **Folder = workspace** — the file tree creates and renames files and folders with inline input, duplicates, copies / pastes and deletes (to the system Trash); sort order (name, modification time or type) is set in Settings; right-click reveals a file in the system file manager or copies its absolute / relative path; hover shows its size and modification time.
 - **Global search** matches file names *and* contents, with workspace-wide replace; file bodies are decoded the same way documents are (UTF-8 first, GB18030 fallback).
-- **Outline pane** — click to jump, follows scrolling to highlight the current section, double-click or `F2` renames the heading in the body.
+- **Image preview** — JPG, PNG, WebP, ICO and other images open from the file tree, Open File, quick switcher, recent files or a startup argument as read-only previews that scale to fit the window, with dimensions in the status bar; images never enter the text buffer or save path.
+- **Outline pane** — click to jump, follows scrolling to highlight the current section, double-click a heading to rename it in the body.
 - **Knowledge links** — `[[wikilinks]]` open or create the note; `[TOC]` renders as a clickable table of contents.
 - **Frontmatter & structure** — YAML frontmatter is preserved verbatim; headings fold; links and footnote references show hover previews.
 - **Links that behave** — `Cmd/Ctrl+click` goes straight to the target: external URLs to the browser, local files in-app, `#anchors` within the document.
@@ -40,7 +41,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 - **⌘P quick switcher** with IME-friendly input, **⇧⌘P command palette** covering every command.
 - **Tabs merged into the title bar** — drag to reorder, `⌘1–9` to jump, middle-click to close, right-click for bulk close.
 - **Cursor history** — `⌥⌘←` / `⌥⌘→` walk back and forward across files.
-- **Session & windows** — welcome page for empty workspaces, previous session's tabs restored on launch, window size and position remembered, `⌘+` / `⌘−` / `⌘0` zoom, fullscreen toggle.
+- **Session & windows** — welcome page for empty workspaces; previous session's tabs, window size and position restored on launch; sidebar visibility and the last used panel are remembered (the startup behavior is configurable in Settings); `⌘+` / `⌘−` / `⌘0` zoom; fullscreen toggle.
 - **Status bar** — word and selection counts, estimated reading time, clickable breadcrumb path.
 
 ### Reliability & performance
@@ -48,7 +49,8 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 - **Your text survives** — autosave with a configurable debounce, atomic writes (temp file + rename), and automatic recovery of unsaved content after a crash.
 - **Big documents stay fast** — huge manuscripts build their first screen synchronously while the rest streams in through background chunks; typing and scrolling never stall.
 - **Fast startup** — initialization is spread across frames, so the window appears without delay.
-- **Guarded by tests** — 1000+ automated tests, golden snapshots of rendered block structure, and a per-block import budget that fails CI on regression.
+- **Built-in updates** — checks GitHub releases at startup (can be disabled or set to include prereleases in Settings; manual check from the menu or command palette); update notices download a SHA-256-verified installer; installing restarts the app.
+- **Guarded by tests** — 1,900+ automated tests, golden snapshots of rendered block structure, and a per-block import budget that fails CI on regression.
 
 ### Export
 
@@ -59,7 +61,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 ### Look & feel
 
 - **Six built-in themes** — Velora Light / Dark, Paper, Forest, Midnight and Ink — plus automatic switching with the system appearance; custom theme packs load from the user directory (see the [theme token reference](docs/theme-tokens.md)).
-- **Focus & typewriter modes**, adjustable body/code fonts and sizes, and a configurable writing measure.
+- **Focus & typewriter modes**; interface, body and code fonts and sizes set independently; a configurable writing measure.
 - **Bilingual UI** — Simplified Chinese and English built in; external language packs load by dropping them into the user directory.
 - **In-app preferences** — one window for files, themes, images, shortcuts, window and status-bar options.
 
@@ -74,6 +76,7 @@ macOS keys shown; Ctrl-based equivalents work on other platforms. Shortcuts are 
 | `⌘F` | Find & replace (`⌘G` next match, `⇧⌘G` previous) |
 | `⌃Tab` | Toggle WYSIWYG / source mode |
 | `⌘B` / `⌘I` / `⌘U` / `` ⌘` `` | Bold / italic / underline / inline code |
+| `⇧⌘A` | Select the entire document |
 | `⌘S` / `⇧⌘S` | Save / save as |
 | `⇧⌘C` | Copy selection or document as HTML |
 | `⌥⌘P` | Print |
@@ -105,7 +108,7 @@ cargo test
 
 ## 📦 Release packages
 
-- **macOS** — run `scripts/package-macos.sh` to produce `dist/velora.app` and `dist/velora-0.1.0.pkg`. The package is unsigned and unnotarized, intended for local and small-scale internal use.
+- **macOS** — run `scripts/package-macos.sh` to produce `dist/velora.app` and `dist/velora-<version>.pkg`. The package is unsigned and unnotarized, intended for local and small-scale internal use.
 - **Windows**——在 Windows x64 上用 PowerShell 7 执行 `./scripts/package-windows.ps1`，通过 MSVC 原生构建 release 安装包，生成 `dist/velora-<版本>-windows-x64-setup.exe`。需要 Rust MSVC 工具链、Visual Studio C++ 构建工具、Windows SDK 与 NSIS；CI 在原生 Windows 上运行构建与测试。
 
 ## ⚙️ Configuration
@@ -126,6 +129,11 @@ The main `config.toml` sections:
 | `[window]` | `default_window_width`, `default_window_height`, `open_position`, `remember_bounds`, `zoom_percent` | Default size, centered vs. remembered opening position, window memory, UI zoom |
 | `[editor]` | `tree_sort`, `autosave`, `autosave_debounce_ms`, `new_file_template`, `smart_punctuation`, `external_change_policy`, `delete_policy`, `workspace_sidebar_width` | File-tree sort, autosave on/off, autosave interval, new-file template (`{date}` expands), smart punctuation, external-change handling, Trash vs. permanent delete, sidebar width |
 | `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |
+| `[updates]` | `check_on_startup`, `include_prereleases` | Check for updates at startup; include prerelease versions |
+
+## Acknowledgements
+
+The editor's early implementation was written with reference to [Velotype](https://github.com/manyougz/velotype).
 
 ## 📄 License
 
