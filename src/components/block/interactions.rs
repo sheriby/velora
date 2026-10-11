@@ -794,7 +794,7 @@ impl Block {
     }
 
     pub(crate) fn on_home(&mut self, _: &Home, _window: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(0, cx);
+        self.move_to(self.cursor_line_display_range().start, cx);
     }
 }
 

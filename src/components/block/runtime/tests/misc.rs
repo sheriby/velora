@@ -443,3 +443,65 @@ async fn moving_the_cursor_invalidates_a_stale_ime_marked_range(cx: &mut TestApp
         );
     });
 }
+
+/// Home/End 按光标所在**硬行**落点（评审报告维度二建议 8）：原来只认块首
+/// 块尾——多行块里按 End 直接跳到整块末尾。行界判据与 Up/Down 同源
+/// （shared_hard_line_ranges + line_index_for_offset），收进
+/// cursor_line_display_range 一处。语料 "alpha\nbeta gamma"（行界 0..5 / 6..16）。
+#[gpui::test]
+async fn home_and_end_move_within_the_current_hard_line(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::plain("alpha\nbeta gamma"),
+            ),
+        )
+    });
+
+    // End：光标在第一行中间（2），应落第一行行尾 5。
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.move_to(2, block_cx);
+            block.on_end(&crate::components::End, window, block_cx);
+        });
+    });
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(block.cursor_offset(), 5, "End 应落在第一行行尾而非块尾 16");
+    });
+
+    // Home：光标在第二行中间（8），应回第二行行首 6。
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.move_to(8, block_cx);
+            block.on_home(&crate::components::Home, window, block_cx);
+        });
+    });
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(block.cursor_offset(), 6, "Home 应落在第二行行首而非块首 0");
+    });
+
+    // Shift+Home：从 8 选到第二行行首，得 6..8。
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.move_to(8, block_cx);
+            block.on_select_home(&crate::components::SelectHome, window, block_cx);
+        });
+    });
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(block.selected_range, 6..8, "Shift+Home 应选到行首");
+    });
+
+    // Shift+End：从 2 选到第一行行尾，得 2..5。
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.move_to(2, block_cx);
+            block.on_select_end(&crate::components::SelectEnd, window, block_cx);
+        });
+    });
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(block.selected_range, 2..5, "Shift+End 应选到行尾");
+    });
+}

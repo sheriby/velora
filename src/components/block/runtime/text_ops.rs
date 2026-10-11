@@ -561,6 +561,21 @@ impl Block {
         }
     }
 
+    /// 光标所在**硬行**的显示范围：Home/End 四条入口与 Up/Down 同源判据
+    /// （shared_hard_line_ranges + line_index_for_offset）。行表非空恒成立，
+    /// 越界兜底退整块范围。
+    pub(crate) fn cursor_line_display_range(&self) -> std::ops::Range<usize> {
+        let ranges = self.shared_hard_line_ranges();
+        let (line_idx, _) = crate::components::block::element::line_index_for_offset(
+            &ranges,
+            self.cursor_offset(),
+        );
+        ranges
+            .get(line_idx)
+            .cloned()
+            .unwrap_or(0..self.visible_len())
+    }
+
     pub fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.drop_stale_ime_marked_range(cx);
         self.move_to_with_preferred_x(offset, None, cx);

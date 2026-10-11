@@ -2,7 +2,7 @@ use super::*;
 
 impl Block {
     pub(crate) fn on_end(&mut self, _: &End, _window: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.visible_len(), cx);
+        self.move_to(self.cursor_line_display_range().end, cx);
     }
 
     pub(crate) fn on_select_left(
@@ -109,7 +109,7 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_to(0, cx);
+        self.select_to(self.cursor_line_display_range().start, cx);
     }
 
     pub(crate) fn on_select_end(
@@ -118,7 +118,7 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_to(self.visible_len(), cx);
+        self.select_to(self.cursor_line_display_range().end, cx);
     }
 
     pub(crate) fn on_copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
