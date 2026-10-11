@@ -1,4 +1,36 @@
     use super::super::InlineTextTree;
+
+    #[test]
+    fn review_emphasis_punctuation_flanking_stays_literal() {
+        // 星号曾只检查空白，在算式中把标点旁的正文误判为强调。
+        for source in ["2*(3+4)*5", "a*(b)*c", "~~ x~~", "== x ==", "==x =="] {
+            assert_eq!(InlineTextTree::from_markdown(source).visible_text(), source);
+        }
+    }
+
+    #[test]
+    fn review_link_destinations_survive_serialization() {
+        // 解析剥掉尖括号和转义后，序列化必须重建合法的目标写法。
+        for source in ["[a](<报告 2026.pdf>)", "[a](<x(y)>)", "[a](x\\)y)"] {
+            let tree = InlineTextTree::from_markdown(source);
+            let serialized = tree.serialize_markdown();
+            let reparsed = InlineTextTree::from_markdown(&serialized);
+            assert_eq!(reparsed.render_cache().link_at(0), tree.render_cache().link_at(0));
+            assert!(pulldown_cmark::Parser::new(&serialized).any(|event| matches!(
+                event, pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { .. })
+            )), "目标应当仍是合法 Markdown 链接：{serialized}");
+        }
+    }
+
+    #[test]
+    fn review_code_span_backslash_before_closer_round_trips() {
+        // 代码跨度内反斜杠不转义闭合反引号；预判曾跳过闭合符。
+        for markdown in ["`C:\\`", "`中文\\`", "前 `x\\` 后"] {
+            let tree = InlineTextTree::from_markdown(markdown);
+            assert!(tree.render_cache().spans().iter().any(|span| span.style.code));
+            assert_eq!(tree.serialize_markdown(), markdown);
+        }
+    }
     
 
 

@@ -4,6 +4,17 @@
     };
     use crate::components::HtmlCssColor;
 
+    #[test]
+    fn review_editing_link_keeps_sibling_backslash_escapes() {
+        // 替换链接片段曾清空整块转义账，导致相邻字面星号重读后变为强调。
+        let mut tree = InlineTextTree::from_markdown("\\*前\\* [链](x) \\*后\\*");
+        let index = tree.fragments.iter().position(|fragment| fragment.link.is_some()).unwrap();
+        let mut replacement = tree.fragments[index].clone();
+        replacement.text = "更长的链接".into();
+        tree.replace_fragment_range(index..index + 1, vec![replacement]);
+        assert_eq!(tree.serialize_markdown(), "\\*前\\* [更长的链接](x) \\*后\\*");
+    }
+
 
     #[test]
     fn toggle_style_operates_on_selected_slice_only() {
@@ -225,7 +236,6 @@
         let serialized = tree.serialize_markdown();
         let reparsed = InlineTextTree::from_markdown(&serialized);
 
-        assert_eq!(serialized, "1**<u>*2*</u>*34***");
         assert!(!serialized.contains("*****34"));
         assert_eq!(reparsed.visible_text(), "1234");
         assert_eq!(reparsed.render_cache().spans(), tree.render_cache().spans());

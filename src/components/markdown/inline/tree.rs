@@ -772,10 +772,23 @@ impl InlineTextTree {
         range: Range<usize>,
         replacement: Vec<InlineFragment>,
     ) {
+        let start: usize = self.fragments.iter().take(range.start).map(|fragment| fragment.text.len()).sum();
+        let old_len: usize = self.fragments.iter().skip(range.start).take(range.len()).map(|fragment| fragment.text.len()).sum();
+        let new_len: usize = replacement.iter().map(|fragment| fragment.text.len()).sum();
+        let end = start + old_len;
+        // 未编辑片段仍需保留源码转义，后段只平移可见偏移。
+        self.escaped_offsets.retain_mut(|escaped| {
+            if escaped.end as usize <= start {
+                true
+            } else if escaped.start as usize >= end {
+                escaped.start = (escaped.start as usize - old_len + new_len) as u32;
+                escaped.end = (escaped.end as usize - old_len + new_len) as u32;
+                true
+            } else {
+                false
+            }
+        });
         self.fragments.splice(range, replacement);
-        // 片段整体换了一批，可见偏移全变了，而替换内容（链接的一段）不是从转义解析
-        // 来的——这份记录留着只会指错位置，宁可丢掉转义保护。
-        self.escaped_offsets.clear();
         self.normalize_fragments();
     }
 

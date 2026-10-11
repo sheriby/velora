@@ -32,7 +32,8 @@ pub(crate) fn choose_fragment_stacks(fragments: &[InlineFragment]) -> Vec<Vec<De
 
     // Initial fragment: cost from empty stack to each variant.
     for (choice_index, stack) in variants[0].iter().enumerate() {
-        costs[0][choice_index] = stack_transition_cost(&[], stack) + stack_variant_penalty(stack);
+        costs[0][choice_index] = stack_transition_cost(&[], stack, None, fragments[0].text.chars().next())
+            + stack_variant_penalty(stack);
     }
 
     // Forward pass: compute minimum cost for each fragment's choices.
@@ -45,7 +46,12 @@ pub(crate) fn choose_fragment_stacks(fragments: &[InlineFragment]) -> Vec<Vec<De
                 }
 
                 let cost = prev_cost
-                    + stack_transition_cost(prev_stack, stack)
+                    + stack_transition_cost(
+                        prev_stack,
+                        stack,
+                        fragments[fragment_index - 1].text.chars().next_back(),
+                        fragments[fragment_index].text.chars().next(),
+                    )
                     + stack_variant_penalty(stack);
                 if cost < costs[fragment_index][choice_index] {
                     costs[fragment_index][choice_index] = cost;
@@ -63,7 +69,8 @@ pub(crate) fn choose_fragment_stacks(fragments: &[InlineFragment]) -> Vec<Vec<De
         .map(|(choice_index, stack)| {
             (
                 choice_index,
-                costs[last_fragment_index][choice_index] + stack_transition_cost(stack, &[]),
+                costs[last_fragment_index][choice_index]
+                    + stack_transition_cost(stack, &[], fragments[last_fragment_index].text.chars().next_back(), None),
             )
         })
         .min_by(|(left_index, left_cost), (right_index, right_cost)| {
@@ -237,7 +244,12 @@ pub(crate) fn stack_transition_len(from: &[Delimiter], to: &[Delimiter]) -> usiz
 /// Cost of closing `from` delimiters and opening `to` delimiters in sequence.
 /// Adds a heavy penalty if the resulting string would contain 4+ consecutive
 /// `*` characters, which Markdown parsers may interpret ambiguously.
-pub(crate) fn stack_transition_cost(from: &[Delimiter], to: &[Delimiter]) -> usize {
+pub(crate) fn stack_transition_cost(
+    from: &[Delimiter],
+    to: &[Delimiter],
+    before: Option<char>,
+    after: Option<char>,
+) -> usize {
     let marker_len = stack_transition_len(from, to);
     let marker_string = stack_transition_string(from, to);
     let ambiguity_penalty =
@@ -246,7 +258,31 @@ pub(crate) fn stack_transition_cost(from: &[Delimiter], to: &[Delimiter]) -> usi
         } else {
             0
         };
-    marker_len + ambiguity_penalty
+    let common = common_prefix_len(from, to);
+    let transitions = from[common..].iter().rev().map(|delimiter| (delimiter, false))
+        .chain(to[common..].iter().map(|delimiter| (delimiter, true)));
+    let mut cursor = 0;
+    let mut flanking_penalty = 0;
+    for (delimiter, opening) in transitions {
+        let marker = if opening { delimiter.open() } else { delimiter.close() };
+        if let Delimiter::BoldMarkdown { marker: ch } | Delimiter::ItalicMarkdown { marker: ch } = delimiter {
+            // 判定整个定界符串的侧翼，避免序列化生成解析器不能接受的强调。
+            let start = cursor - marker_string[..cursor].chars().rev().take_while(|other| other == ch).count();
+            let end = cursor + marker_string[cursor..].chars().take_while(|other| other == ch).count();
+            let prev = marker_string[..start].chars().next_back().or(before);
+            let next = marker_string[end..].chars().next().or(after);
+            let valid = if opening {
+                delimiter_can_open(*ch, prev, next)
+            } else {
+                delimiter_can_close(*ch, prev, next)
+            };
+            if !valid {
+                flanking_penalty += 1_000;
+            }
+        }
+        cursor += marker.len();
+    }
+    marker_len + ambiguity_penalty + flanking_penalty
 }
 
 pub(crate) fn stack_variant_penalty(stack: &[Delimiter]) -> usize {
@@ -400,11 +436,40 @@ pub(crate) fn can_open_emphasis(tokens: &[CharToken], index: usize, len: usize) 
     if next.ch.is_whitespace() {
         return false;
     }
-    if tokens[index].ch != '_' {
-        return true;
-    }
     let (prev, run_next) = emphasis_run_bounds(tokens, index);
-    underscore_can_open(prev, run_next)
+    delimiter_can_open(tokens[index].ch, prev, run_next)
+}
+
+pub(crate) fn delimiter_can_open(marker: char, prev: Option<char>, next: Option<char>) -> bool {
+    if next.is_none_or(char::is_whitespace) {
+        return false;
+    }
+    match marker {
+        '_' => underscore_can_open(prev, next),
+        '*' => emphasis_flanking(prev, next).0,
+        _ => true,
+    }
+}
+
+pub(crate) fn delimiter_can_close(marker: char, prev: Option<char>, next: Option<char>) -> bool {
+    if prev.is_none_or(char::is_whitespace) {
+        return false;
+    }
+    match marker {
+        '_' => underscore_can_close(prev, next),
+        '*' => emphasis_flanking(prev, next).1,
+        _ => true,
+    }
+}
+
+fn emphasis_flanking(prev: Option<char>, next: Option<char>) -> (bool, bool) {
+    let left = next.is_some_and(|ch| !ch.is_whitespace())
+        && (next.is_some_and(|ch| !is_emphasis_punctuation(ch))
+            || prev.is_none_or(|ch| ch.is_whitespace() || is_emphasis_punctuation(ch)));
+    let right = prev.is_some_and(|ch| !ch.is_whitespace())
+        && (prev.is_some_and(|ch| !is_emphasis_punctuation(ch))
+            || next.is_none_or(|ch| ch.is_whitespace() || is_emphasis_punctuation(ch)));
+    (left, right)
 }
 
 /// 定界符串是同一字符的极大连续串，侧翼判定看整串前后的字符。按字符逐个判会把
@@ -430,39 +495,14 @@ pub(crate) fn emphasis_run_bounds(tokens: &[CharToken], index: usize) -> (Option
 /// 没有这条限制时 `topic_embedding_attention` 会解析成 文本 + 斜体 + 文本，
 /// 存盘时整段被重写成 `*` 定界符（用户报修）。
 pub(crate) fn underscore_can_open(prev: Option<char>, next: Option<char>) -> bool {
-    let Some(next) = next else {
-        return false;
-    };
-    let left_flanking = !is_emphasis_punctuation(next)
-        || prev.is_none_or(|ch| ch.is_whitespace() || is_emphasis_punctuation(ch));
-    if !left_flanking {
-        return false;
-    }
-    let right_flanking = prev.is_some_and(|ch| !ch.is_whitespace())
-        && (prev.is_some_and(|ch| !is_emphasis_punctuation(ch))
-            || next.is_whitespace()
-            || is_emphasis_punctuation(next));
-    !right_flanking || prev.is_some_and(is_emphasis_punctuation)
+    let (left, right) = emphasis_flanking(prev, next);
+    left && (!right || prev.is_some_and(is_emphasis_punctuation))
 }
 
 /// `_` 的关闭条件，与 `underscore_can_open` 镜像。
 pub(crate) fn underscore_can_close(prev: Option<char>, next: Option<char>) -> bool {
-    let Some(prev) = prev else {
-        return false;
-    };
-    if prev.is_whitespace() {
-        return false;
-    }
-    let right_flanking = !is_emphasis_punctuation(prev)
-        || next.is_none_or(|ch| ch.is_whitespace() || is_emphasis_punctuation(ch));
-    if !right_flanking {
-        return false;
-    }
-    let left_flanking = next.is_some_and(|ch| !ch.is_whitespace())
-        && (next.is_some_and(|ch| !is_emphasis_punctuation(ch))
-            || prev.is_whitespace()
-            || is_emphasis_punctuation(prev));
-    !left_flanking || next.is_some_and(is_emphasis_punctuation)
+    let (left, right) = emphasis_flanking(prev, next);
+    right && (!left || next.is_some_and(is_emphasis_punctuation))
 }
 
 /// 侧翼规则需要的「标点」分类。标准库没有 Unicode 标点分类，这里近似：ASCII 走
@@ -495,9 +535,6 @@ pub(crate) fn can_close_emphasis(tokens: &[CharToken], index: usize) -> bool {
     if index == 0 {
         return false;
     }
-    if tokens[index].ch != '_' {
-        return !tokens[index - 1].ch.is_whitespace();
-    }
     let (prev, next) = emphasis_run_bounds(tokens, index);
-    underscore_can_close(prev, next)
+    delimiter_can_close(tokens[index].ch, prev, next)
 }

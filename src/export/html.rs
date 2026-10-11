@@ -551,6 +551,10 @@ fn locate_inline_script_source(line: &str, index: usize) -> Option<(usize, Strin
 /// 从 `index` 处那对 `==` 往后找收尾，返回收尾那两位的起始下标。中间为空（`====`）
 /// 不算高亮，按字面写法定住；跨行不算配对（与旧的按行扫描行为一致）。
 fn locate_highlight_close(line: &str, index: usize) -> Option<usize> {
+    use crate::components::markdown::inline::{delimiter_can_open, delimiter_can_close};
+    if !delimiter_can_open('=', previous_char(line, index), line.get(index + 2..)?.chars().next()) {
+        return None;
+    }
     let mut cursor = index + 2;
     while cursor < line.len() {
         if line[cursor..].starts_with('\n') {
@@ -559,6 +563,7 @@ fn locate_highlight_close(line: &str, index: usize) -> Option<usize> {
         if cursor > index + 2
             && line[cursor..].starts_with("==")
             && !is_escaped_ascii(line, cursor)
+            && delimiter_can_close('=', previous_char(line, cursor), line.get(cursor + 2..)?.chars().next())
         {
             return Some(cursor);
         }

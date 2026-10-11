@@ -8,9 +8,9 @@ pub(crate) fn match_open_delimiter(tokens: &[CharToken], index: usize) -> Option
         Some(Delimiter::ItalicHtml)
     } else if matches_sequence(tokens, index, "<u>") {
         Some(Delimiter::Underline)
-    } else if matches_sequence(tokens, index, "~~") {
+    } else if matches_sequence(tokens, index, "~~") && can_open_emphasis(tokens, index, 2) {
         Some(Delimiter::StrikethroughMarkdown)
-    } else if matches_sequence(tokens, index, "==") {
+    } else if matches_sequence(tokens, index, "==") && can_open_emphasis(tokens, index, 2) {
         Some(Delimiter::HighlightMarkdown)
     } else if matches_sequence(tokens, index, "^") && can_open_script(tokens, index, '^') {
         Some(Delimiter::SuperscriptMarkdown)
@@ -62,13 +62,6 @@ pub(crate) fn has_closing_delimiter(tokens: &[CharToken], index: usize, delimite
     if let Delimiter::CodeMarkdown { .. } = delimiter {
         let mut cursor = index + skip;
         while cursor < tokens.len() {
-            if tokens[cursor].ch == '\\'
-                && let Some(escaped_len) = escaped_sequence_token_len(tokens, cursor)
-            {
-                cursor += 1 + escaped_len;
-                continue;
-            }
-
             if tokens[cursor].ch == '`' && backtick_run_len(tokens, cursor) == skip {
                 return true;
             }

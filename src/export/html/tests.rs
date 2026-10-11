@@ -12,6 +12,15 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn review_highlight_whitespace_delimiters_stay_literal() {
+        // 导出曾接受空白旁的闭合符，与阅读视图的高亮判据不同。
+        for source in ["== x ==", "==x ==", "== x=="] {
+            let html = render_html(source, &Theme::default_theme(), "高亮");
+            assert!(!html.split("<body>").nth(1).unwrap().contains("<mark>"));
+        }
+    }
+
+    #[test]
     fn export_theme_dark_preference_renders_dark_background_token() {
         // roadmap F3：config.toml 里 `[export] theme = "dark"` 时，导出 HTML
         // 使用内置深色主题的背景色 token，即使当前应用主题是浅色。

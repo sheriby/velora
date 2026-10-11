@@ -249,9 +249,20 @@ impl InlineLink {
 }
 
 fn format_inline_link_target(destination: &str, title: Option<&str>) -> String {
+    let destination = if destination.chars().any(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '<' | '>' | '\\' | '"')) {
+        let escaped = destination
+            .replace('\\', "\\\\")
+            .replace('<', "\\<")
+            .replace('>', "\\>")
+            .replace('(', "\\(")
+            .replace(')', "\\)");
+        format!("<{escaped}>")
+    } else {
+        destination.to_string()
+    };
     match title {
         Some(title) => format!("{destination} \"{}\"", escape_link_title(title)),
-        None => destination.to_string(),
+        None => destination,
     }
 }
 
