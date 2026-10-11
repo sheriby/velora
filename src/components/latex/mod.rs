@@ -50,10 +50,28 @@ pub(crate) enum DisplayMathSegment {
     Text { markdown: String },
 }
 
-/// 首个 `$$` 关闭当前公式，后面仍可有文字或另一段公式；收集块区域与分段解析
-/// 共用这一判据，避免一边要求关闭符在行尾、另一边又把最后一对当作关闭符。
+/// 首个**未转义**的 `$$` 关闭当前公式，后面仍可有文字或另一段公式；收集块
+/// 区域与分段解析共用这一判据，避免一边要求关闭符在行尾、另一边又把最后一对
+/// 当作关闭符。`\$` 按反斜杠游程奇偶认字面美元（与行内 `$…$` 的
+/// `token_is_backslash_escaped` 同一判据，经 `backslash_run_escapes` 一处）：
+/// 被转义吃掉首 `$` 的候选对不作数，续扫从第二个 `$` 起重新配对。
 pub(crate) fn split_display_math_closing_line(line: &str) -> Option<(&str, &str)> {
-    line.split_once("$$")
+    let bytes = line.as_bytes();
+    let mut cursor = 0usize;
+    while cursor + 1 < bytes.len() {
+        if bytes[cursor] == b'$' && bytes[cursor + 1] == b'$' {
+            let slashes = bytes[..cursor]
+                .iter()
+                .rev()
+                .take_while(|byte| **byte == b'\\')
+                .count();
+            if !crate::components::markdown::inline::backslash_run_escapes(slashes) {
+                return Some((&line[..cursor], &line[cursor + 2..]));
+            }
+        }
+        cursor += 1;
+    }
+    None
 }
 
 /// 把块级源码完整切成公式/文字分段；一个公式都识别不出来才返回 `None`。
@@ -394,6 +412,34 @@ fn recolor_default_black(svg: &str, color: &str) -> String {
 mod tests {
     use super::*;
     use gpui::rgba;
+
+    #[test]
+    fn display_math_closer_ignores_backslash_escaped_dollars() {
+        // `\$` 是字面美元，不构成闭合定界符；首个未转义的 `$$` 才闭合。
+        // 旧判据 split_once("$$") 不看反斜杠游程，把 `a\$$ …` 截成公式体
+        // `a\`，ratex 报错、块退化成「源码 + render error」
+        // （评审 v0.2.6 维度二建议 13；行内 `$…$` 走 token_is_backslash_escaped
+        // 按游程奇偶判，此处口径应当一致）。
+        let segments = parse_display_math_segments(r"$$a\$$ 和 b$$").expect("应识别为公式段");
+        assert_eq!(
+            segments,
+            vec![DisplayMathSegment::Formula {
+                raw: r"$$a\$$ 和 b$$".to_string(),
+                body: r"a\$$ 和 b".to_string(),
+            }],
+            "公式体应包含转义美元并延伸到真正的闭合符"
+        );
+
+        // 反斜杠游程为偶数时 `\\` 是字面反斜杠，其后的 `$$` 照常闭合。
+        let (body, trailing) =
+            split_display_math_closing_line(r"a\\$$尾文").expect("偶数游程应闭合");
+        assert_eq!(body, r"a\\");
+        assert_eq!(trailing, "尾文");
+
+        // 转义吃掉首 `$` 后，配对从第二个 `$` 重新起算：`a\$$$` 的闭合在末两位。
+        let (body, _) = split_display_math_closing_line("a\\$$$").expect("续扫应闭合");
+        assert_eq!(body, "a\\$");
+    }
 
     #[test]
     fn review_display_math_closing_line_preserves_hard_break_tail() {
