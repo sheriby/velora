@@ -56,10 +56,17 @@ fn fence_line_width(measured: Option<&MeasuredFencePrefixes>, uniform: usize, in
     }
 }
 
-/// 内容里第几个换行之后（= 第几条内容行，0 基）。
+/// 内容里第几个换行之后（= 第几条内容行，0 基）。生产路径已改循环内增量，
+/// 只留作测试里对拍增量结果与计回扫次数的参照（见 indented_code_mapping_tests）。
+#[cfg(test)]
 fn full_line_index_of(content: &str, offset: usize) -> usize {
+    FULL_LINE_RESCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     content[..offset].bytes().filter(|byte| *byte == b'\n').count()
 }
+
+/// 形状探针：`full_line_index_of` 在生产路径被调一次就是一次整段回扫。
+#[cfg(test)]
+static FULL_LINE_RESCANS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn leading_blank_bytes(line: &str) -> usize {
     line.bytes()
@@ -653,6 +660,10 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
 
         push_prefix(&mut full, &mut source_to_content, 0, 0);
         let mut content_offset = 0usize;
+        // 行号在循环里增量维护（同 build_code_block_content_mapping 的形状）：
+        // 换行分支不再对 content[..offset] 全前缀数 `\n`——缩进块每键重建
+        // 映射，回扫累计是行数平方级。
+        let mut line_index = 0usize;
         while content_offset < content.len() {
             content_to_source[content_offset] = full.len();
             let ch = content[content_offset..]
@@ -667,12 +678,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             }
             content_offset += ch.len_utf8();
             if ch == '\n' && content_offset < content.len() {
-                push_prefix(
-                    &mut full,
-                    &mut source_to_content,
-                    content_offset,
-                    full_line_index_of(content, content_offset),
-                );
+                line_index += 1;
+                push_prefix(&mut full, &mut source_to_content, content_offset, line_index);
             }
         }
         content_to_source[content.len()] = full.len();
@@ -1923,4 +1930,93 @@ pub(super) fn is_table_delimiter_slots(line: &str, columns: usize) -> bool {
             let cell = line[slot.clone()].trim();
             cell.contains('-') && cell.chars().all(|ch| matches!(ch, '-' | ':'))
         })
+}
+
+#[cfg(test)]
+mod indented_code_mapping_tests {
+    // 精准导入：外层 `use super::*` 会把 gpui 的同名 `test` 属性宏带进来，
+    // 宏展开递归（AGENTS.md §1 撞过的坑）。
+    use super::{Editor, FULL_LINE_RESCANS, full_line_index_of};
+    use std::sync::atomic::Ordering;
+
+    /// 生产路径不得回扫前缀：缩进代码块每键重建映射，换行分支里对
+    /// `content[..offset]` 全前缀数 `\n` 是行数平方级（评审报告维度四建议 8）。
+    #[test]
+    fn indented_mapping_never_rescans_the_content_prefix() {
+        let content = "一行\n两行\n三行\n四行\n五行\n六行\n七行";
+        let before = FULL_LINE_RESCANS.load(Ordering::Relaxed);
+        let produced = Editor::build_indented_code_content_mapping(content, &[0, 2, 4, 6, 8, 10, 12, 14]);
+        assert_eq!(
+            FULL_LINE_RESCANS.load(Ordering::Relaxed) - before,
+            0,
+            "生产路径的换行计数必须在循环内增量，不允许整段回扫"
+        );
+        assert!(produced.0.contains("四行"), "前置：映射真的吃进了这份内容");
+    }
+
+    /// 增量行号与回扫参照逐字节对齐（多行、含 CJK 与空行）：新实现只是把
+    /// 数换行的位置从「每次回头数」改成「循环里 +1」，产出必须一字不差。
+    #[test]
+    fn incremental_mapping_matches_the_rescan_reference_byte_for_byte() {
+        let content = "第一行\nsecond line\n第三行带 emoji 🎉\n\n最后一行";
+        let prefixes = [0usize, 2, 4, 6, 8];
+        let produced = Editor::build_indented_code_content_mapping(content, &prefixes);
+        let reference = rescan_reference_mapping(content, &prefixes);
+        assert_eq!(produced.0, reference.0, "重建的源码文本");
+        assert_eq!(produced.1, reference.1, "content_to_source 表");
+        assert_eq!(produced.2, reference.2, "source_to_content 表");
+    }
+
+    /// 旧实现的原样拷贝：换行分支调 `full_line_index_of`（整段回扫），
+    /// 只作为对拍参照存在。
+    fn rescan_reference_mapping(
+        content: &str,
+        line_prefixes: &[usize],
+    ) -> (String, Vec<usize>, Vec<usize>) {
+        let mut full = String::new();
+        let mut content_to_source = vec![0; content.len() + 1];
+        let mut source_to_content = vec![0usize];
+
+        let push_prefix = |full: &mut String,
+                           source_to_content: &mut Vec<usize>,
+                           mark: usize,
+                           index: usize| {
+            let width = line_prefixes.get(index).copied().unwrap_or(0);
+            let start = full.len();
+            if width > 0 {
+                full.push_str(&" ".repeat(width));
+            }
+            source_to_content.resize(full.len() + 1, mark);
+            for position in start..=full.len() {
+                source_to_content[position] = mark;
+            }
+        };
+
+        push_prefix(&mut full, &mut source_to_content, 0, 0);
+        let mut content_offset = 0usize;
+        while content_offset < content.len() {
+            content_to_source[content_offset] = full.len();
+            let ch = content[content_offset..].chars().next().expect("char boundary");
+            let start = full.len();
+            full.push(ch);
+            source_to_content.resize(full.len() + 1, content_offset);
+            for position in start..=full.len() {
+                source_to_content[position] = content_offset;
+            }
+            content_offset += ch.len_utf8();
+            if ch == '\n' && content_offset < content.len() {
+                push_prefix(
+                    &mut full,
+                    &mut source_to_content,
+                    content_offset,
+                    full_line_index_of(content, content_offset),
+                );
+            }
+        }
+        content_to_source[content.len()] = full.len();
+        source_to_content.resize(full.len() + 1, content.len());
+        source_to_content[full.len()] = content.len();
+
+        (full, content_to_source, source_to_content)
+    }
 }
