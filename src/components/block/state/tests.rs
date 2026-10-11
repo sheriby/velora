@@ -216,6 +216,31 @@
     }
 
     #[test]
+    fn heading_separator_accepts_ideographic_space() {
+        // 中文输入法会在「# 后的空格」位置打出全角空格（U+3000）：它与 ASCII
+        // 空格同待遇，这种写法在正文与导出里都该是标题。
+        assert_eq!(
+            BlockKind::parse_atx_heading_line("##\u{3000}标题"),
+            Some((2, "标题".to_string()))
+        );
+        let (level, content, marker_len) =
+            BlockKind::parse_atx_heading_line_with_marker("##\u{3000}标题")
+                .expect("全角分隔符应认标题");
+        assert_eq!(level, 2);
+        assert_eq!(content, "标题");
+        assert_eq!(
+            marker_len,
+            "##\u{3000}".len(),
+            "记号宽度含分隔符的三个字节，块内偏移才不漂"
+        );
+        assert_eq!(
+            BlockKind::detect_markdown_shortcut("##\u{3000}标题"),
+            Some((BlockKind::Heading { level: 2 }, "##\u{3000}".len())),
+            "打字/粘贴同样触发快捷转换"
+        );
+    }
+
+    #[test]
     fn code_block_kind_stores_language() {
         let kind = BlockKind::CodeBlock {
             language: Some(SharedString::from("rust")),

@@ -872,6 +872,34 @@ mod tests {
     }
 
     #[test]
+    fn exports_ideographic_space_heading_separator_as_heading() {
+        // `##` 后的分隔符是全角空格（U+3000，中文输入法常见）时导出同样是标题：
+        // 导出侧是严格 CommonMark（只认 ASCII 空格与制表符），不归一的话应用里
+        // 是标题、分享件里却是「##　标题」原文。
+        let markdown = "##\u{3000}中文标题\n\n正文。";
+        let html = render_html(markdown, &Theme::default_theme(), "Doc");
+        let body = body_only(&html);
+
+        assert!(
+            body.contains("<h2 id=\"中文标题\">中文标题</h2>"),
+            "全角分隔符标题应导出为标题且带锚点：{body}"
+        );
+        assert!(!body.contains("##"), "标记不得残留：{body}");
+    }
+
+    #[test]
+    fn ideographic_space_normalization_only_touches_heading_markers() {
+        // 归一化只动标题记号里的三个字节：代码块是字面内容，正文里的 U+3000
+        // 是正文字符，都必须原样进导出件。
+        let markdown = "```md\n##\u{3000}例子\n```\n\n前言：\u{3000}说明。";
+        let html = render_html(markdown, &Theme::default_theme(), "Doc");
+        let body = body_only(&html);
+
+        assert!(body.contains("##\u{3000}例子"), "代码块内容不得被改：{body}");
+        assert!(body.contains("前言：\u{3000}说明。"), "正文字符不得被改：{body}");
+    }
+
+    #[test]
     fn expands_toc_into_linked_heading_list() {
         // cases/14-toc.md：`[TOC]` 曾被原样导出成字面文本。
         let markdown = "# D23_toc\n\n[TOC]\n\n## First section\n\nFirst body.\n\n## Second section\n\nSecond body.";

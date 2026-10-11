@@ -18,6 +18,14 @@ mod tests {
     }
 
     #[test]
+    fn anchor_lines_follow_headings_with_ideographic_space_separator() {
+        // `##　锚点`（全角分隔符）在应用里是标题：Ctrl+点击 `#锚点` 的落点
+        // 要与导出锚点表一致。
+        let source = "##\u{3000}锚点\n\n正文\n";
+        assert_eq!(heading_line_for_anchor(source, "锚点"), Some(0));
+    }
+
+    #[test]
     fn link_targets_are_classified_without_asking_the_user() {
         assert_eq!(
             classify_link_target("https://example.com/a?b=1"),

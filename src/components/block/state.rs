@@ -379,21 +379,11 @@ impl BlockKind {
     }
 
     /// Live-detects a Markdown prefix from user input and returns the
-    /// corresponding [`BlockKind`] together with the character count of
+    /// corresponding [`BlockKind`] together with the byte count of
     /// the prefix that should be stripped.
     pub fn detect_markdown_shortcut(value: &str) -> Option<(Self, usize)> {
-        if value.starts_with("###### ") {
-            Some((Self::Heading { level: 6 }, 7))
-        } else if value.starts_with("##### ") {
-            Some((Self::Heading { level: 5 }, 6))
-        } else if value.starts_with("#### ") {
-            Some((Self::Heading { level: 4 }, 5))
-        } else if value.starts_with("### ") {
-            Some((Self::Heading { level: 3 }, 4))
-        } else if value.starts_with("## ") {
-            Some((Self::Heading { level: 2 }, 3))
-        } else if value.starts_with("# ") {
-            Some((Self::Heading { level: 1 }, 2))
+        if let Some(heading) = Self::heading_markdown_shortcut(value) {
+            Some(heading)
         } else if let Some((checked, prefix_len)) = Self::parse_task_list_shortcut(value) {
             Some((Self::TaskListItem { checked }, prefix_len))
         } else if value.starts_with("* ") || value.starts_with("+ ") {
@@ -407,6 +397,24 @@ impl BlockKind {
         } else {
             None
         }
+    }
+
+    /// `#`…`###### ` 加分隔符的标题快捷写法：级数 + 要剥掉的字节数。
+    /// 分隔符与 `parse_atx_heading_line_with_marker` 同一套（ASCII 空格或
+    /// 全角空格 U+3000）：输入法打出全角空格时打字转换也要认。
+    fn heading_markdown_shortcut(value: &str) -> Option<(Self, usize)> {
+        let level = value.bytes().take_while(|byte| *byte == b'#').count();
+        if !(1..=6).contains(&level) {
+            return None;
+        }
+        let separator = value.get(level..)?.chars().next()?;
+        if !matches!(separator, ' ' | '\u{3000}') {
+            return None;
+        }
+        Some((
+            Self::Heading { level: level as u8 },
+            level + separator.len_utf8(),
+        ))
     }
 
     /// 从用户刚敲下的一行文本里读出列表记号的**写法**：`+ ` 的加号、`1)` 的括号。
@@ -469,8 +477,14 @@ impl BlockKind {
             return None;
         }
 
-        let content = rest[level..].strip_prefix(' ')?;
-        let marker_len = bom_len + leading_spaces + level + 1;
+        // 分隔符 = ASCII 空格或全角空格（U+3000，输入法把「# 后的空格」打成
+        // 全角）。宽度按字节并进 marker_len：块内偏移与文件字节账才对得上。
+        let separator = rest[level..]
+            .chars()
+            .next()
+            .filter(|ch| matches!(ch, ' ' | '\u{3000}'))?;
+        let content = &rest[level + separator.len_utf8()..];
+        let marker_len = bom_len + leading_spaces + level + separator.len_utf8();
         let mut content = content.trim_end().to_string();
         if let Some(closing_hash_start) = content.rfind(' ')
             && content[closing_hash_start + 1..]

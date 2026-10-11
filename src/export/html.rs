@@ -11,6 +11,7 @@
 pub(super) use std::fs;
 pub(super) use std::path::Path;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -24,6 +25,7 @@ use crate::components::markdown::image::{
     ImageResolvedSource, path_writing_is_absolute, resolve_image_source,
 };
 use crate::components::markdown::inline::{is_single_inline_dollar, looks_like_currency_between};
+use crate::components::BlockKind;
 pub(super) use crate::components::{
     display_math_font_size, inline_math_font_size, is_mermaid_info_string, parse_display_math_source,
     parse_html_image_block, render_latex_to_svg, render_mermaid_to_svg, sanitize_html_for_export,
@@ -153,12 +155,64 @@ fn front_matter_table_html(body: &str) -> String {
     html
 }
 
+/// 解析用副本：ATX 标题记号里的全角空格（U+3000）原位换成三个 ASCII 空格
+/// （同为 3 字节，全文偏移一个不动）。编辑器按
+/// `BlockKind::parse_atx_heading_line_with_marker` 把 `##　标题` 认成标题，
+/// 而导出走的 pulldown-cmark 是严格 CommonMark（分隔符只认空格与制表符）：
+/// 不归一，同一行在应用里是标题、分享件里却是「##　标题」原文。
+///
+/// 只动顶层标题行记号里的那三个字节。代码块与 HTML 块是字面内容，区间取自
+/// pulldown 自己的事件流；其余位置的 U+3000（正文字符）一律不碰。
+fn heading_separators_for_parse(body: &str) -> Cow<'_, str> {
+    if !body.contains('\u{3000}') {
+        return Cow::Borrowed(body);
+    }
+    let mut literal_regions: Vec<(usize, usize)> = Vec::new();
+    let mut open: Option<usize> = None;
+    for (event, range) in Parser::new_ext(body, markdown_options()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock) => open = Some(range.start),
+            Event::End(TagEnd::CodeBlock | TagEnd::HtmlBlock) => {
+                if let Some(start) = open.take() {
+                    literal_regions.push((start, range.end));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut normalized: Option<String> = None;
+    let mut offset = 0usize;
+    for line in body.split_inclusive('\n') {
+        let inside_literal = literal_regions
+            .iter()
+            .any(|(start, end)| offset >= *start && offset < *end);
+        if !inside_literal
+            && let Some((_level, _content, marker_len)) =
+                BlockKind::parse_atx_heading_line_with_marker(line)
+            && let Some(separator_start) = (offset + marker_len)
+                .checked_sub('\u{3000}'.len_utf8())
+            && body.get(separator_start..offset + marker_len) == Some("\u{3000}")
+        {
+            normalized
+                .get_or_insert_with(|| body.to_string())
+                .replace_range(separator_start..offset + marker_len, "   ");
+        }
+        offset += line.len();
+    }
+    match normalized {
+        Some(owned) => Cow::Owned(owned),
+        None => Cow::Borrowed(body),
+    }
+}
+
 fn render_browser_html_body(markdown: &str, theme: &Theme, base_dir: Option<&Path>) -> String {
     let (front_matter_html, body) = match split_front_matter(markdown) {
         Some((table, rest)) => (table, rest),
         None => (String::new(), markdown),
     };
-    let mut events: Vec<(Event<'_>, Range<usize>)> = Parser::new_ext(body, markdown_options())
+    let parse_body = heading_separators_for_parse(body);
+    let mut events: Vec<(Event<'_>, Range<usize>)> = Parser::new_ext(parse_body.as_ref(), markdown_options())
         .into_offset_iter()
         .collect();
     sanitize_url_events(&mut events, base_dir);
@@ -249,7 +303,8 @@ struct HeadingAnchor {
 pub(crate) fn heading_line_for_anchor(source: &str, anchor: &str) -> Option<usize> {
     let needle = heading_slug(anchor)?;
     let body = split_front_matter(source).map(|(_, body)| body).unwrap_or(source);
-    let events = Parser::new_ext(body, markdown_options()).into_offset_iter().collect::<Vec<_>>();
+    let parse_body = heading_separators_for_parse(body);
+    let events = Parser::new_ext(parse_body.as_ref(), markdown_options()).into_offset_iter().collect::<Vec<_>>();
     let heading = collect_heading_anchors(&events).into_iter()
         .find(|heading| heading.slug.as_deref() == Some(needle.as_str()))?;
     let offset = source.len() - body.len() + heading.source_start;

@@ -65,6 +65,24 @@
     }
 
     #[gpui::test]
+    async fn imports_atx_heading_with_ideographic_space_separator(cx: &mut TestAppContext) {
+        // 输入法在 `##` 后打的是全角空格（U+3000）时同样是标题：判据只认
+        // ASCII 空格的话，这种写法在阅读视图里退成「##　标题」原文段落。
+        let editor = cx.new(|cx| {
+            Editor::from_markdown(cx, "##\u{3000}标题\n\n正文".to_string(), None)
+        });
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(
+                visible[0].entity.read(cx).kind(),
+                BlockKind::Heading { level: 2 }
+            );
+            assert_eq!(visible[0].entity.read(cx).display_text(), "标题");
+            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
+        });
+    }
+
+    #[gpui::test]
     async fn imports_indented_code_blocks_and_keeps_them_indented(cx: &mut TestAppContext) {
         let editor = cx.new(|cx| {
             Editor::from_markdown(
