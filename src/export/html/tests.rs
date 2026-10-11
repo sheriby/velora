@@ -1294,7 +1294,41 @@ mod tests {
         let body = body_only(&html);
         assert!(!body.contains("/Users/"), "原生 HTML 图同样不得泄绝对路径：{body}");
 
-        // 3) 目录内但读不到（文件不存在）：相对化成文档目录内的写法。
+        // 3) 跨平台写法的绝对路径：`C:\…` 在 macOS 上也必须认出是绝对路径
+        // （反过来 Windows 上 `/Users/…` 也一样）。判据只看当前平台的
+        // `Path::is_absolute` 就会判成相对、原样写进分享物。
+        let windows_outside = "C:\\Users\\someone\\Desktop\\private\\leak.png";
+        let html = render_html_with_base_dir(
+            &format!("![外部]({windows_outside})"),
+            &Theme::default_theme(),
+            "隐私",
+            Some(&root),
+        );
+        let body = body_only(&html);
+        assert!(
+            !body.contains("someone") && !body.contains("Users"),
+            "跨平台写法的绝对路径不得写进分享物：{body}"
+        );
+        assert!(
+            body.contains("data:image/png;base64,"),
+            "跨平台写法的绝对路径图应给中性占位：{body}"
+        );
+        let html = render_html_with_base_dir(
+            &format!("<img src=\"{windows_outside}\" alt=\"外部\">"),
+            &Theme::default_theme(),
+            "隐私",
+            Some(&root),
+        );
+        let body = body_only(&html);
+        // 盘符 src 的 <img> 走不到图片替代分支：`is_safe_export_url` 把 `C:` 读成
+        // 未知 scheme，分类阶段（预览与导出同一道门）就落成原文文本块，导出按转义
+        // 源码展示。与预览保持一致，因此不占位；也没有 live src 可泄漏。
+        assert!(
+            body.contains("vlt-raw-html") && body.contains("C:\\Users\\someone"),
+            "跨平台绝对路径的原生 HTML 图应保持原文文本块的既有分类：{body}"
+        );
+
+        // 4) 目录内但读不到（文件不存在）：相对化成文档目录内的写法。
         let missing = root.join("missing.png");
         let html = render_html_with_base_dir(
             &format!("![缺失]({})", missing.display()),

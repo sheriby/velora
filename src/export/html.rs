@@ -20,7 +20,9 @@ pub(super) use pulldown_cmark::{
     BlockQuoteKind, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, html,
 };
 
-use crate::components::markdown::image::{ImageResolvedSource, resolve_image_source};
+use crate::components::markdown::image::{
+    ImageResolvedSource, path_writing_is_absolute, resolve_image_source,
+};
 use crate::components::markdown::inline::{is_single_inline_dollar, looks_like_currency_between};
 pub(super) use crate::components::{
     display_math_font_size, inline_math_font_size, is_mermaid_info_string, parse_display_math_source,
@@ -1748,7 +1750,8 @@ iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAA
 /// 读不到或越界给中性占位。绝对路径在收件人的机器上本来就打不开，留在 `src`
 /// 里只泄露发送者的目录结构与用户名；相对与远程写法返回 `None`（保留原文）。
 /// 解析不带基准目录：判断的是**写法本身**是否绝对，相对写法拼上基准后的落点
-/// 不在本条判据内。
+/// 不在本条判据内。写法的绝对性按两个平台的语法一起认，见
+/// `path_writing_is_absolute`。
 fn absolute_local_image_export_replacement(
     source: &str,
     base_dir: Option<&Path>,
@@ -1756,7 +1759,7 @@ fn absolute_local_image_export_replacement(
     let ImageResolvedSource::Local(path) = resolve_image_source(source, None) else {
         return None;
     };
-    if !path.is_absolute() {
+    if !path_writing_is_absolute(&path) {
         return None;
     }
     let relativized = base_dir.and_then(|base| {

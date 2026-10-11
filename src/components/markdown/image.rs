@@ -145,6 +145,25 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
     ImageResolvedSource::Local(resolved)
 }
 
+/// 写法按任一平台语法像机器本地绝对路径。
+///
+/// 不能换用 `Path::is_absolute`：那是运行平台的语义——Windows 上 `/Users/…`
+/// 有根无前缀会被判相对，macOS 上 `C:\…` 同理。导出侧的隐私判据（内联不成的
+/// 绝对路径图不得把作者目录写进分享物）识别的是文档带的写法，判成相对就会
+/// 换个平台原样泄漏。`C:note.png` 这种盘符相对写法也按绝对收进：内联成立时
+/// 根本走不到这条判据，只有内联不成才从「原样留」变成中性占位。
+pub(crate) fn path_writing_is_absolute(path: &Path) -> bool {
+    if path.is_absolute() {
+        return true;
+    }
+    let text = path.to_string_lossy();
+    if text.starts_with('/') || text.starts_with('\\') {
+        return true;
+    }
+    let bytes = text.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
 /// Splits a trailing `{width=NN%}` attribute off a standalone image, as written
 /// back by the resize handle (roadmap C10 v2). Returns the remaining markdown
 /// plus the parsed percent when the attribute is well-formed.
