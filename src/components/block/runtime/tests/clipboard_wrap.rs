@@ -548,6 +548,43 @@ async fn pasting_url_over_selection_makes_link(cx: &mut TestAppContext) {
     });
 }
 
+/// URL 的 scheme 大小写不敏感（RFC 3986）：剪贴板里是 `HTTPS://…` 时，
+/// 「选中文字后粘网址成链接」与小写写法同一条路径。判据只认小写字面量时，
+/// 大写写法落到普通文本粘贴，选中的字被裸网址顶掉。
+#[gpui::test]
+async fn pasting_uppercase_url_over_selection_makes_link(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("alpha beta"),
+            ),
+        )
+    });
+
+    block.update(cx, |block, _cx| {
+        block.selected_range = 0..5; // "alpha"
+    });
+
+    cx.update(|window, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            "HTTPS://EXAMPLE.TEST/x".into(),
+        ));
+        block.update(cx, |block, block_cx| {
+            block.on_paste(&crate::components::Paste, window, block_cx);
+        });
+    });
+
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(
+            block.display_text().to_string(),
+            "[alpha](HTTPS://EXAMPLE.TEST/x) beta"
+        );
+    });
+}
+
 #[gpui::test]
 async fn typed_wrap_symbol_wraps_selection(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();

@@ -173,7 +173,22 @@ impl Block {
     fn is_bare_url(value: &str) -> bool {
         !value.is_empty()
             && !value.chars().any(char::is_whitespace)
-            && (value.starts_with("http://") || value.starts_with("https://"))
+            && (Self::starts_with_ignore_ascii_case(value, "http://")
+                || Self::starts_with_ignore_ascii_case(value, "https://"))
+    }
+
+    /// scheme 按 RFC 3986 大小写不敏感（`HTTPS://` 与 `https://` 同一个 URL）。
+    /// 逐字节比较不分配，也不切多字节字符的边界。
+    fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
+        let value_bytes = value.as_bytes();
+        let prefix_bytes = prefix.as_bytes();
+        value_bytes.len() >= prefix_bytes.len()
+            && value_bytes
+                .iter()
+                .zip(prefix_bytes)
+                .all(|(value_byte, prefix_byte)| {
+                    value_byte.to_ascii_lowercase() == *prefix_byte
+                })
     }
 
     pub(crate) fn on_paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
