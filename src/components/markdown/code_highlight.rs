@@ -11,6 +11,16 @@ use tree_sitter_highlight::{Highlight, HighlightConfiguration, HighlightEvent, H
 
 use crate::theme::ThemeColors;
 
+#[cfg(feature = "code-highlight-core")]
+std::thread_local! {
+    static CODE_HIGHLIGHTER: std::cell::RefCell<Highlighter> = std::cell::RefCell::new(Highlighter::new());
+}
+
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static CODE_HIGHLIGHT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Canonical language key used by the syntax-highlighting registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CodeLanguageKey {
@@ -594,51 +604,55 @@ pub(crate) fn highlight_code_block(
     language: Option<&str>,
     source: &str,
 ) -> Option<CodeHighlightResult> {
+    #[cfg(test)]
+    CODE_HIGHLIGHT_CALLS.with(|count| count.set(count.get() + 1));
     let key = resolve_code_language_key(language)?;
 
     #[cfg(feature = "code-highlight-core")]
     if let Some(config) = CODE_HIGHLIGHT_REGISTRY.config_for(key) {
-        let mut highlighter = Highlighter::new();
-        let events = match highlighter.highlight(config, source.as_bytes(), None, |_| None) {
-            Ok(events) => events,
-            Err(_) => {
-                return Some(CodeHighlightResult {
-                    language: key,
-                    spans: Vec::new(),
-                });
-            }
-        };
-
-        let mut spans = Vec::new();
-        let mut active = Vec::new();
-        for event in events {
-            let Ok(event) = event else {
-                return Some(CodeHighlightResult {
-                    language: key,
-                    spans: Vec::new(),
-                });
+        return CODE_HIGHLIGHTER.with(|highlighter| {
+            let mut highlighter = highlighter.borrow_mut();
+            let events = match highlighter.highlight(config, source.as_bytes(), None, |_| None) {
+                Ok(events) => events,
+                Err(_) => {
+                    return Some(CodeHighlightResult {
+                        language: key,
+                        spans: Vec::new(),
+                    });
+                }
             };
 
-            match event {
-                HighlightEvent::Source { start, end } => {
-                    if let Some(class) = active.last().copied() {
-                        push_highlight_span(&mut spans, start..end, class);
+            let mut spans = Vec::new();
+            let mut active = Vec::new();
+            for event in events {
+                let Ok(event) = event else {
+                    return Some(CodeHighlightResult {
+                        language: key,
+                        spans: Vec::new(),
+                    });
+                };
+
+                match event {
+                    HighlightEvent::Source { start, end } => {
+                        if let Some(class) = active.last().copied() {
+                            push_highlight_span(&mut spans, start..end, class);
+                        }
                     }
-                }
-                HighlightEvent::HighlightStart(highlight) => {
-                    if let Some(class) = class_for_highlight(highlight) {
-                        active.push(class);
+                    HighlightEvent::HighlightStart(highlight) => {
+                        if let Some(class) = class_for_highlight(highlight) {
+                            active.push(class);
+                        }
                     }
-                }
-                HighlightEvent::HighlightEnd => {
-                    active.pop();
+                    HighlightEvent::HighlightEnd => {
+                        active.pop();
+                    }
                 }
             }
-        }
 
-        return Some(CodeHighlightResult {
-            language: key,
-            spans,
+            Some(CodeHighlightResult {
+                language: key,
+                spans,
+            })
         });
     }
 

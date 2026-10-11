@@ -133,13 +133,13 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_line(&mut self, line_start: usize, line: &str, is_first_line: bool) {
-        if line.trim().is_empty() {
-            self.flush_pending_paragraph();
+        if let Some(state) = self.state.clone() {
+            self.scan_inside_state(line_start, line, &state);
             return;
         }
 
-        if let Some(state) = self.state.clone() {
-            self.scan_inside_state(line_start, line, &state);
+        if line.trim().is_empty() {
+            self.flush_pending_paragraph();
             return;
         }
 
@@ -381,7 +381,7 @@ impl<'a> Scanner<'a> {
 
     fn append_nested_region(&mut self, language: CodeLanguageKey, range: Range<usize>) {
         match self.nested_regions.last_mut() {
-            Some((existing, region)) if *existing == language && region.end == range.start => {
+            Some((existing, region)) if *existing == language && region.end.saturating_add(1) == range.start => {
                 region.end = range.end;
             }
             _ => self.nested_regions.push((language, range)),
@@ -1032,6 +1032,30 @@ fn quote_prefix_len(content: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_multiline_fence_with_blank_line_parses_once() {
+        // 连续正文没有包含换行，空行又在状态分支之前被跳过，曾逐行解析。
+        let source = "```rust\n/* 注释\n\n结束 */\nlet value = 1;\n```";
+        let before = super::super::code_highlight::CODE_HIGHLIGHT_CALLS.with(std::cell::Cell::get);
+        highlight_markdown_source(source, false, None);
+        assert_eq!(super::super::code_highlight::CODE_HIGHLIGHT_CALLS.with(std::cell::Cell::get) - before, 1);
+    }
+
+    #[test]
+    fn review_multiline_comment_keeps_highlighting_after_blank_line() {
+        let source = "```rust\n/* 注释\n\n结束 */\nlet value = 1;\n```";
+        assert_eq!(class_at(source, "结束"), Some(CodeHighlightClass::Comment));
+        assert_eq!(class_at(source, "let"), Some(CodeHighlightClass::Keyword));
+    }
+
+    #[test]
+    fn review_frontmatter_with_blank_line_parses_once() {
+        let source = "---\nkey: |\n  first\n\n  second\n---\n正文";
+        let before = super::super::code_highlight::CODE_HIGHLIGHT_CALLS.with(std::cell::Cell::get);
+        highlight_markdown_source(source, true, None);
+        assert_eq!(super::super::code_highlight::CODE_HIGHLIGHT_CALLS.with(std::cell::Cell::get) - before, 1);
+    }
 
     fn highlight(text: &str) -> Vec<(Range<usize>, CodeHighlightClass)> {
         highlight_with(text, false, None).0
