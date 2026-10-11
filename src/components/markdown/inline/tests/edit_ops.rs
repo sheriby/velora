@@ -165,6 +165,43 @@
         assert_eq!(tree.serialize_markdown(), "==text==");
     }
 
+    /// 评审维度一 4：`~~`/`==` 的开合此前只有空白判据（`delimiter_can_*` 的
+    /// `_ => true` 分支），不判标点侧翼——`2~~(3+4)~~5` 在 UI 里被整段划掉，
+    /// 而 GFM/pulldown 按字面处理，同一份文档界面与导出两个答案。
+    /// 收敛为与 `*` 家族同一套星号侧翼规则（词内允许、标点侧不成翼）。
+    #[test]
+    fn tilde_and_equal_delimiters_require_punctuation_flanking() {
+        for markdown in ["2~~(3+4)~~5", "2==(3+4)==5", "a~~[b]~~c", "a==[b]==c"] {
+            let tree = InlineTextTree::from_markdown(markdown);
+            assert_eq!(
+                tree.visible_text(),
+                markdown,
+                "{markdown}：前接字母数字且后接标点的不成翼，应保持字面"
+            );
+            assert_eq!(tree.serialize_markdown(), markdown);
+            assert!(
+                tree.render_cache()
+                    .spans()
+                    .iter()
+                    .all(|span| !span.style.strikethrough && !span.style.highlight),
+                "{markdown}：不得产出删除线或高亮样式"
+            );
+        }
+    }
+
+    /// 星号规则允许词内配对（与下划线规则不同），收紧侧翼时不许收紧过头：
+    /// `a~~b~~c`、`a==b==c` 仍是删除线/高亮。
+    #[test]
+    fn intraword_strikethrough_and_highlight_still_parse() {
+        let tree = InlineTextTree::from_markdown("a~~b~~c");
+        assert!(tree.render_cache().style_at(1).strikethrough);
+        assert_eq!(tree.serialize_markdown(), "a~~b~~c");
+
+        let tree = InlineTextTree::from_markdown("a==b==c");
+        assert!(tree.render_cache().style_at(1).highlight);
+        assert_eq!(tree.serialize_markdown(), "a==b==c");
+    }
+
     /// 高亮能与强调套在一起；同一句里后面那个没配对的 `==` 必须还是字面记号
     /// （`1 == 2` 这种写法在数学与代码说明里很常见，是本仓库引入新语法的代价边界）。
     /// 套叠的先后按样式栈序写回（强调在外、高亮在内），与 `~~` 已有的口径一致。

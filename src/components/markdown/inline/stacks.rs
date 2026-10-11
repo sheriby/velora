@@ -265,16 +265,29 @@ pub(crate) fn stack_transition_cost(
     let mut flanking_penalty = 0;
     for (delimiter, opening) in transitions {
         let marker = if opening { delimiter.open() } else { delimiter.close() };
-        if let Delimiter::BoldMarkdown { marker: ch } | Delimiter::ItalicMarkdown { marker: ch } = delimiter {
+        if let Delimiter::BoldMarkdown { .. }
+        | Delimiter::ItalicMarkdown { .. }
+        | Delimiter::StrikethroughMarkdown
+        | Delimiter::HighlightMarkdown = delimiter
+        {
             // 判定整个定界符串的侧翼，避免序列化生成解析器不能接受的强调。
-            let start = cursor - marker_string[..cursor].chars().rev().take_while(|other| other == ch).count();
-            let end = cursor + marker_string[cursor..].chars().take_while(|other| other == ch).count();
+            // 删除线与高亮走同一个 `delimiter_can_*` 谓词，写出去的记号同样
+            // 必须能被自己重新解析。
+            let ch = match delimiter {
+                Delimiter::StrikethroughMarkdown => '~',
+                Delimiter::HighlightMarkdown => '=',
+                Delimiter::BoldMarkdown { marker: ch }
+                | Delimiter::ItalicMarkdown { marker: ch } => *ch,
+                _ => unreachable!(),
+            };
+            let start = cursor - marker_string[..cursor].chars().rev().take_while(|other| *other == ch).count();
+            let end = cursor + marker_string[cursor..].chars().take_while(|other| *other == ch).count();
             let prev = marker_string[..start].chars().next_back().or(before);
             let next = marker_string[end..].chars().next().or(after);
             let valid = if opening {
-                delimiter_can_open(*ch, prev, next)
+                delimiter_can_open(ch, prev, next)
             } else {
-                delimiter_can_close(*ch, prev, next)
+                delimiter_can_close(ch, prev, next)
             };
             if !valid {
                 flanking_penalty += 1_000;
@@ -446,7 +459,9 @@ pub(crate) fn delimiter_can_open(marker: char, prev: Option<char>, next: Option<
     }
     match marker {
         '_' => underscore_can_open(prev, next),
-        '*' => emphasis_flanking(prev, next).0,
+        // `*` 家族按星号规则（左翼即可开，词内允许）；`~~`/`==` 与 GFM/Typora 同口径
+        // 走同一套标点侧翼——没有它时 `2~~(3+4)~~5` 会被整段划掉而导出按字面。
+        '*' | '~' | '=' => emphasis_flanking(prev, next).0,
         _ => true,
     }
 }
@@ -457,7 +472,7 @@ pub(crate) fn delimiter_can_close(marker: char, prev: Option<char>, next: Option
     }
     match marker {
         '_' => underscore_can_close(prev, next),
-        '*' => emphasis_flanking(prev, next).1,
+        '*' | '~' | '=' => emphasis_flanking(prev, next).1,
         _ => true,
     }
 }
