@@ -169,6 +169,29 @@ async fn paragraph_shortcut_creates_heading_with_ideographic_space(cx: &mut Test
 }
 
 #[gpui::test]
+async fn paragraph_shortcut_creates_heading_with_tab_separator(cx: &mut TestAppContext) {
+    // 粘贴的 `##` + 真 tab + 文本同样触发标题转换（真 tab 一字节）。
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
+
+    block.update(cx, |block, cx| {
+        block.apply_title_edit(
+            InlineTextTree::plain("##\t标题"),
+            "##\t标题".len(),
+            None,
+            None,
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let kind = block.read_with(cx, |block, _cx| block.kind());
+    let text = block.read_with(cx, |block, _cx| block.display_text().to_string());
+    assert_eq!(kind, BlockKind::Heading { level: 2 });
+    assert_eq!(text, "标题");
+}
+
+#[gpui::test]
 async fn paragraph_shortcut_creates_parenthesized_numbered_list_directly(cx: &mut TestAppContext) {
     let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
 

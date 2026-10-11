@@ -888,6 +888,29 @@ mod tests {
     }
 
     #[test]
+    fn exports_tab_separated_heading_as_heading() {
+        // 制表符分隔：pulldown-cmark 原生认开放分隔符的 tab，不需要字节归一；
+        // 这里钉住与应用侧同判。闭合井号前是 tab 时这版 pulldown **不剥**
+        // （实测内容 `收尾\t##`），应用侧同判保留——两侧一致优先于按 spec 剥。
+        let markdown = "##\t中文标题\n\n## 收尾\t##\n\n## 剥掉 ##\n\n正文。";
+        let html = render_html(markdown, &Theme::default_theme(), "Doc");
+        let body = body_only(&html);
+
+        assert!(
+            body.contains("<h2 id=\"中文标题\">中文标题</h2>"),
+            "tab 分隔符标题应导出为标题：{body}"
+        );
+        assert!(
+            body.contains(">收尾\t##</h2>"),
+            "tab 前的闭合井号与 comrak 同判（保留）：{body}"
+        );
+        assert!(
+            body.contains(">剥掉</h2>"),
+            "ASCII 空格前的闭合井号照旧剥掉：{body}"
+        );
+    }
+
+    #[test]
     fn ideographic_space_normalization_only_touches_heading_markers() {
         // 归一化只动标题记号里的三个字节：代码块是字面内容，正文里的 U+3000
         // 是正文字符，都必须原样进导出件。

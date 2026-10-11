@@ -241,6 +241,42 @@
     }
 
     #[test]
+    fn heading_separator_accepts_tab() {
+        // 制表符是 CommonMark 认可的分隔符（外部文件与粘贴里会有真 tab）：
+        // 开放分隔符按 {空格, tab, 全角空格} 判；闭合井号的判据保持 ASCII
+        // 空格——实测这版 pulldown-cmark 对「tab + 闭合井号」同样不剥，
+        // 应用侧剥了反而与导出断成两半。
+        assert_eq!(
+            BlockKind::parse_atx_heading_line("##\t标题"),
+            Some((2, "标题".to_string()))
+        );
+        let (level, content, marker_len) =
+            BlockKind::parse_atx_heading_line_with_marker("##\t标题").expect("tab 分隔符应认标题");
+        assert_eq!(level, 2);
+        assert_eq!(content, "标题");
+        assert_eq!(marker_len, "##\t".len(), "tab 一字节并进记号宽度");
+        assert_eq!(
+            BlockKind::detect_markdown_shortcut("##\t标题"),
+            Some((BlockKind::Heading { level: 2 }, "##\t".len())),
+            "粘贴同样触发快捷转换"
+        );
+        // 闭合井号前是 tab：与导出侧同判，保留为标题文字。
+        assert_eq!(
+            BlockKind::parse_atx_heading_line("## 标题\t##"),
+            Some((2, "标题\t##".to_string()))
+        );
+        assert_eq!(
+            BlockKind::parse_atx_heading_line("##\t标题\t##"),
+            Some((2, "标题\t##".to_string()))
+        );
+        // 全角空格在闭合井号前同样不算分隔符（导出侧也不剥），两边保留原文。
+        assert_eq!(
+            BlockKind::parse_atx_heading_line("##　标题　##"),
+            Some((2, "标题　##".to_string()))
+        );
+    }
+
+    #[test]
     fn code_block_kind_stores_language() {
         let kind = BlockKind::CodeBlock {
             language: Some(SharedString::from("rust")),

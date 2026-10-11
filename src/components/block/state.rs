@@ -400,15 +400,15 @@ impl BlockKind {
     }
 
     /// `#`…`###### ` 加分隔符的标题快捷写法：级数 + 要剥掉的字节数。
-    /// 分隔符与 `parse_atx_heading_line_with_marker` 同一套（ASCII 空格或
-    /// 全角空格 U+3000）：输入法打出全角空格时打字转换也要认。
+    /// 分隔符与 `parse_atx_heading_line_with_marker` 同一套（ASCII 空格、
+    /// 制表符或全角空格 U+3000）：输入法打全角、粘贴带 tab 时转换都要认。
     fn heading_markdown_shortcut(value: &str) -> Option<(Self, usize)> {
         let level = value.bytes().take_while(|byte| *byte == b'#').count();
         if !(1..=6).contains(&level) {
             return None;
         }
         let separator = value.get(level..)?.chars().next()?;
-        if !matches!(separator, ' ' | '\u{3000}') {
+        if !matches!(separator, ' ' | '\t' | '\u{3000}') {
             return None;
         }
         Some((
@@ -477,15 +477,18 @@ impl BlockKind {
             return None;
         }
 
-        // 分隔符 = ASCII 空格或全角空格（U+3000，输入法把「# 后的空格」打成
-        // 全角）。宽度按字节并进 marker_len：块内偏移与文件字节账才对得上。
+        // 分隔符 = ASCII 空格 / 制表符 / 全角空格（U+3000，输入法把「# 后的
+        // 空格」打成全角）。宽度按字节并进 marker_len：块内偏移与文件字节账
+        // 才对得上。
         let separator = rest[level..]
             .chars()
             .next()
-            .filter(|ch| matches!(ch, ' ' | '\u{3000}'))?;
+            .filter(|ch| matches!(ch, ' ' | '\t' | '\u{3000}'))?;
         let content = &rest[level + separator.len_utf8()..];
         let marker_len = bom_len + leading_spaces + level + separator.len_utf8();
         let mut content = content.trim_end().to_string();
+        // 闭合井号只认 ASCII 空格前缀：导出侧这版 pulldown 对「tab 或全角 +
+        // 闭合井号」同样不剥（实测），应用侧剥了反而与导出断成两半。
         if let Some(closing_hash_start) = content.rfind(' ')
             && content[closing_hash_start + 1..]
                 .chars()

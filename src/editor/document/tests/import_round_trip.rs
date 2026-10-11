@@ -83,6 +83,23 @@
     }
 
     #[gpui::test]
+    async fn imports_atx_heading_with_tab_separator(cx: &mut TestAppContext) {
+        // 制表符分隔（外部文件与粘贴里会有真 tab）：阅读视图同样按标题渲染。
+        let editor = cx.new(|cx| {
+            Editor::from_markdown(cx, "##\t标题\n\n正文".to_string(), None)
+        });
+        editor.update(cx, |editor, cx| {
+            let visible = editor.document.visible_blocks();
+            assert_eq!(
+                visible[0].entity.read(cx).kind(),
+                BlockKind::Heading { level: 2 }
+            );
+            assert_eq!(visible[0].entity.read(cx).display_text(), "标题");
+            assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
+        });
+    }
+
+    #[gpui::test]
     async fn imports_indented_code_blocks_and_keeps_them_indented(cx: &mut TestAppContext) {
         let editor = cx.new(|cx| {
             Editor::from_markdown(
