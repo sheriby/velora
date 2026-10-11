@@ -150,13 +150,7 @@ fn render_mermaid_svg_for_display_with(
 
     let display_key = mermaid_display_cache_key(&source.body, scale);
     let display_path = mermaid_display_cache_path(&display_key)?;
-    if display_path.exists() {
-        let svg = fs::read_to_string(&display_path).with_context(|| {
-            format!(
-                "failed to read Mermaid display SVG cache '{}'",
-                display_path.display()
-            )
-        })?;
+    if let Some(svg) = read_svg_cache(&display_path) {
         let size = mermaid_svg_intrinsic_size(&svg)?;
         return Ok(MermaidSvgRender {
             path: display_path,
@@ -168,12 +162,7 @@ fn render_mermaid_svg_for_display_with(
     }
 
     let (svg, size) = scale_mermaid_svg_for_display(&base_svg, scale)?;
-    fs::write(&display_path, &svg).with_context(|| {
-        format!(
-            "failed to write Mermaid display SVG cache '{}'",
-            display_path.display()
-        )
-    })?;
+    write_svg_cache(&display_path, &svg)?;
     Ok(MermaidSvgRender {
         path: display_path,
         svg,
@@ -197,19 +186,12 @@ fn render_mermaid_to_svg_cached_with(
     path: &Path,
     renderer: MermaidRenderer,
 ) -> anyhow::Result<String> {
-    if path.exists() {
-        return fs::read_to_string(path).with_context(|| {
-            format!("failed to read Mermaid base SVG cache '{}'", path.display())
-        });
+    if let Some(svg) = read_svg_cache(path) {
+        return Ok(svg);
     }
 
     let svg = renderer(source)?;
-    fs::write(path, &svg).with_context(|| {
-        format!(
-            "failed to write Mermaid base SVG cache '{}'",
-            path.display()
-        )
-    })?;
+    write_svg_cache(path, &svg)?;
     Ok(svg)
 }
 
@@ -224,19 +206,48 @@ fn render_mermaid_raw(source: &str) -> anyhow::Result<String> {
     Ok(svg)
 }
 
+/// SVG 缓存键的格式版本串：渲染器/键口径升级后旧档自然失效。
+const MERMAID_SVG_CACHE_VERSION: &str = "mermaid-svg-v1";
+
 /// Stable cache key for Mermaid content.
 pub(crate) fn mermaid_cache_key(source: &str) -> String {
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    format!("{MERMAID_SVG_CACHE_VERSION}-{:016x}", hasher.finish())
 }
 
 /// Stable cache key for editor display SVG content and scale.
+///
+/// scale 是随窗口宽度连续变化的量：按 0.001 分档后进键，拖宽度不再一个
+/// 像素一个新键（缓存目录按「每张图 × 每种宽度」膨胀）。
 pub(crate) fn mermaid_display_cache_key(source: &str, scale: f32) -> String {
+    let bucketed = ((scale.max(0.1) * 1000.0).round() as i64).to_string();
     let mut hasher = DefaultHasher::new();
     mermaid_cache_key(source).hash(&mut hasher);
-    scale.max(0.1).to_bits().hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    bucketed.hash(&mut hasher);
+    format!("{MERMAID_SVG_CACHE_VERSION}-{:016x}", hasher.finish())
+}
+
+/// 读 SVG 缓存：缺失或读不出按未命中；半截文件（无闭合 `</svg>`，断电/
+/// 并发写的产物）同样算未命中，下一次重渲染自愈。base 与 display 共用。
+fn read_svg_cache(path: &Path) -> Option<String> {
+    let svg = fs::read_to_string(path).ok()?;
+    svg.contains("</svg>").then_some(svg)
+}
+
+/// 写 SVG 缓存：同目录 `<name>.<pid>.tmp` + rename，半截文件不会顶掉
+/// 好档。base 与 display 共用。
+fn write_svg_cache(path: &Path, svg: &str) -> anyhow::Result<()> {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()));
+    fs::write(&temp, svg).with_context(|| {
+        format!("failed to write Mermaid SVG cache temp '{}'", temp.display())
+    })?;
+    fs::rename(&temp, path)
+        .with_context(|| format!("failed to install Mermaid SVG cache '{}'", path.display()))
 }
 
 /// Counts diagram lines that materially contribute to rendered complexity.
@@ -848,3 +859,61 @@ mod tests {
         remove_cache_file(&base_path);
     }
 }
+
+    /// display 键的 scale 是连续量（column_fit_scale 随窗口宽度连续变化）：
+    /// 不分档的话拖一下宽度一个新键、一次写盘，缓存目录按「每张图 × 每种
+    /// 宽度」无限膨胀（评审报告维度二建议 16）。0.001 分档后进键。
+    #[test]
+    fn display_cache_key_buckets_subpixel_scale_changes() {
+        let source = "flowchart LR\nA --> B";
+        assert_eq!(
+            mermaid_display_cache_key(source, 1.0),
+            mermaid_display_cache_key(source, 1.0005),
+            "亚像素 scale 差必须落在同一档"
+        );
+        assert_ne!(
+            mermaid_display_cache_key(source, 1.0),
+            mermaid_display_cache_key(source, 1.01),
+            "跨档的 scale 仍要换键"
+        );
+    }
+
+    /// 键带格式版本串：渲染器升级后旧档自然失效，而不是永远命中旧 SVG。
+    #[test]
+    fn cache_keys_carry_a_format_version() {
+        assert!(
+            mermaid_cache_key("flowchart LR").starts_with("mermaid-svg-v1-"),
+            "base 键缺版本前缀"
+        );
+        assert!(
+            mermaid_display_cache_key("flowchart LR", 1.0).starts_with("mermaid-svg-v1-"),
+            "display 键缺版本前缀"
+        );
+    }
+
+    /// 半截缓存（无闭合 `</svg>`，断电/并发写的产物）按未命中重渲染；
+    /// 写盘走同目录临时文件 + rename，成功路径不留 .tmp。
+    #[test]
+    fn half_written_cache_reads_as_a_miss_and_writes_are_atomic() {
+        let root = std::env::temp_dir().join(format!("velora-mermaid-cache-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create root");
+        let path = root.join("base.svg");
+        std::fs::write(&path, "<svg xmlns=\"http://www.w3.org/2000/svg\"><g>").expect("seed half file");
+
+        fn probe_renderer(_: &str) -> anyhow::Result<String> {
+            Ok("<svg>…renderer output…</svg>".into())
+        }
+        let svg = render_mermaid_to_svg_cached_with("flowchart LR", &path, probe_renderer)
+            .expect("re-render on half cache");
+        assert_eq!(svg, "<svg>…renderer output…</svg>", "半截缓存必须重渲染");
+        assert!(std::fs::read_to_string(&path).expect("read").contains("</svg>"));
+
+        let leftovers: Vec<_> = std::fs::read_dir(&root)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "成功路径不得留临时文件：{leftovers:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
