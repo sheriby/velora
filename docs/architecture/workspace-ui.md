@@ -34,9 +34,19 @@
 ## 4. 命令/动作系统
 
 - 动作声明：`actions!(velora, [...])`（src/components/actions.rs）；带载荷动作（选主题/语言/标签页/最近文件）走 `#[action(namespace = velora)]`。
-- `SHORTCUT_DEFINITIONS`：每条命令 id/分类/默认键/`context: "BlockEditor"`；`resolved_keybindings` 合并 config.toml `[keybindings]` 覆盖，再追加固定绑定（⌘P/⇧⌘P/⌘1-9/缩放/光标历史）。
+- `SHORTCUT_DEFINITIONS`：每条命令 id/分类/默认键/`context`（键位匹配范围，见下小节）；`resolved_keybindings` 合并 config.toml `[keybindings]` 覆盖，再追加固定绑定（⌘P/⇧⌘P/⌘1-9/缩放/光标历史）。
 - **命令注册表**（src/commands.rs）：`CommandSpec { id, CommandMenu, label: fn(&I18nStrings), action }`，静态 `COMMANDS` 表是**菜单与命令面板的唯一事实源**（有守卫测试）。
 - 菜单（app_menu/）：`build_menus`（app_menu/build_menus.rs，macOS 六菜单；非 macOS App 并入 File）→ `install_menus`（app_menu.rs）；~30 个 `cx.on_action` 处理者 → `dispatch_menu_action`（if/else 链，有源码扫描守卫）。退出走 `cx.defer`（让应用内未保存对话框工作）。
+
+### 快捷键的触发范围与动作派发（2026-10-11）
+
+想让一条快捷键「窗口有焦点就能按」，需要两件事：键位 `context: None`（不设匹配范围；`Some("BlockEditor")` 只在焦点链经过块元素时匹配），并且动作要有 App 级全局监听（`App::on_action`）。两条都齐之前，焦点不在正文块上（在侧栏树、面板收起后焦点悬空等）时按键会静默丢失。判据仍然只有处理函数一处——如 ⌘/Ctrl-B 的「空选区开合侧栏 / 有选区加粗」全在 `Editor::on_bold_capture`，`build_menus::init` 里 BoldSelection 的全局监听只是把动作送到它。
+
+派发机制三条（vendor/gpui，改动键盘/面板相关代码前先读）：
+
+1. **焦点句柄不在当前渲染帧内时，按键派发回退到根节点**（`Window::dispatch_key_event` → `focus_node_id_in_rendered_frame` 的 `root_node_id()` 兜底）：挂在编辑器根元素上的 `on_action`/`capture_action` 整组收不到。面板收起后焦点还停在不再渲染的侧栏控件上就是这种状态，所以收起侧栏要把焦点交还正文（`Editor::refocus_document_after_sidebar_collapse`）。
+2. **`App::on_action` 全局监听只在冒泡阶段回调**，且窗口 capture/bubble 任一阶段 `stop_propagation` 后就不再执行；它是唯一不受焦点状态影响的动作通道（ToggleSidebar、BoldSelection、菜单命令都靠它）。
+3. **派发中的窗口还在 `window_update_stack` 上**，`WindowHandle::update`（以及走 `cx.active_window()` 的 `with_active_editor`）取不到它；全局监听里要操作发键窗口必须 `cx.defer` 延后一拍（退出流程同此手法）。
 
 ## 5. 配置层（src/config/）
 
