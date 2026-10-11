@@ -183,6 +183,10 @@ pub struct ListMarkerStyle {
     pub bullet: Option<char>,
     /// 有序项序号后面的分隔符：`.` 或 `)`。
     pub delimiter: Option<char>,
+    /// 任务项勾选框的原文写法：`x` 或 `X`。`[X]` 与 `[x]` 解析等价
+    /// （`checked` 相同），但写回必须照原文，否则任何一次模型重序列化
+    /// 都把用户没碰的 `[X]` 洗成 `[x]`。`None` 表示按规范 `x` 写。
+    pub task_box: Option<char>,
 }
 
 impl ListMarkerStyle {
@@ -194,6 +198,11 @@ impl ListMarkerStyle {
     /// 有序项实际使用的分隔符（没记过就是规范的 `.`）。
     pub fn delimiter_or_default(&self) -> char {
         self.delimiter.unwrap_or('.')
+    }
+
+    /// 勾选中的任务项实际使用的勾选框字符（没记过就是规范的 `x`）。
+    pub fn checked_task_box(&self) -> char {
+        self.task_box.unwrap_or('x')
     }
 }
 
@@ -406,9 +415,14 @@ impl BlockKind {
         if let Some(bullet @ ('-' | '*' | '+')) = value.chars().next()
             && value[bullet.len_utf8()..].starts_with([' ', '\t'])
         {
+            // 任务项连勾选框写法一起记：用户敲的是 `- [X] `，写回不许变 `[x] `。
+            let rest = &value[bullet.len_utf8() + 1..];
+            let task_box = BlockKind::parse_task_list_item_prefix(rest)
+                .and_then(|(box_char, _)| (box_char != ' ').then_some(box_char));
             return Some(ListMarkerStyle {
                 bullet: Some(bullet),
                 delimiter: None,
+                task_box,
             });
         }
         let digits = value.bytes().take_while(|byte| byte.is_ascii_digit()).count();
@@ -419,6 +433,7 @@ impl BlockKind {
             return Some(ListMarkerStyle {
                 bullet: None,
                 delimiter: Some(delimiter),
+                task_box: None,
             });
         }
         None
@@ -553,24 +568,27 @@ impl BlockKind {
     ///
     /// Accepted forms are `[ ]`, `[x]`, and `[X]`, optionally followed by a
     /// space or tab before the item text. An empty title is also valid.
-    pub fn parse_task_list_item_prefix(value: &str) -> Option<(bool, usize)> {
+    /// 解析任务项勾选框前缀，返回 (勾选框字符, 前缀字节数)。勾选框字符
+    /// `' '`/`'x'`/`'X'` 是原文写法的唯一出处，调用方按它记 `task_box`。
+    pub fn parse_task_list_item_prefix(value: &str) -> Option<(char, usize)> {
         let bytes = value.as_bytes();
         if bytes.len() < 3 || bytes[0] != b'[' || bytes[2] != b']' {
             return None;
         }
 
-        let checked = match bytes[1] {
-            b' ' => false,
-            b'x' | b'X' => true,
+        let box_char = match bytes[1] {
+            b' ' => ' ',
+            b'x' => 'x',
+            b'X' => 'X',
             _ => return None,
         };
 
         if bytes.len() == 3 {
-            return Some((checked, 3));
+            return Some((box_char, 3));
         }
 
         if matches!(bytes[3], b' ' | b'\t') {
-            Some((checked, 4))
+            Some((box_char, 4))
         } else {
             None
         }
@@ -578,8 +596,8 @@ impl BlockKind {
 
     fn parse_task_list_shortcut(value: &str) -> Option<(bool, usize)> {
         let rest = value.strip_prefix("- ")?;
-        let (checked, prefix_len) = Self::parse_task_list_item_prefix(rest)?;
-        Some((checked, 2 + prefix_len))
+        let (box_char, prefix_len) = Self::parse_task_list_item_prefix(rest)?;
+        Some((box_char != ' ', 2 + prefix_len))
     }
 
     fn numbered_list_shortcut_prefix_len(value: &str) -> Option<usize> {
@@ -815,15 +833,18 @@ impl BlockRecord {
                 &format!("{indentation}{} ", self.list_marker.bullet_or_default()),
                 &format!("{indentation}  "),
             ),
-            BlockKind::TaskListItem { checked } => prefixed_multiline(
-                &title_markdown,
-                &format!(
-                    "{indentation}{} [{}] ",
-                    self.list_marker.bullet_or_default(),
-                    if checked { "x" } else { " " }
-                ),
-                &format!("{indentation}      "),
-            ),
+            BlockKind::TaskListItem { checked } => {
+                let box_char = if checked {
+                    self.list_marker.checked_task_box()
+                } else {
+                    ' '
+                };
+                prefixed_multiline(
+                    &title_markdown,
+                    &format!("{indentation}{} [{box_char}] ", self.list_marker.bullet_or_default()),
+                    &format!("{indentation}      "),
+                )
+            }
             BlockKind::NumberedListItem => {
                 let ordinal = list_ordinal.unwrap_or(1);
                 prefixed_multiline(

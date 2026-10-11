@@ -1393,10 +1393,13 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 let markdown = title.expect("bullet title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let measured_lines = line_prefixes(&markdown);
+                // 前缀必须与 markdown_line 的落笔同判据（记号与勾选框写法都照原文），
+                // 否则映射偏移与实际字节错位。
+                let bullet = block.read(cx).record.list_marker.bullet_or_default();
                 self.push_measured_inline_mapping(
                     block,
                     markdown,
-                    format!("{indentation}- "),
+                    format!("{indentation}{bullet} "),
                     format!("{indentation}  "),
                     measured_lines,
                     quote_depth,
@@ -1408,10 +1411,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 let markdown = title.expect("task title").markdown().to_string();
                 let indentation = "  ".repeat(list_depth);
                 let measured_lines = line_prefixes(&markdown);
+                let list_marker = block.read(cx).record.list_marker;
+                let box_char = if checked {
+                    list_marker.checked_task_box()
+                } else {
+                    ' '
+                };
                 self.push_measured_inline_mapping(
                     block,
                     markdown,
-                    format!("{indentation}- [{}] ", if checked { "x" } else { " " }),
+                    format!("{indentation}{} [{box_char}] ", list_marker.bullet_or_default()),
                     format!("{indentation}      "),
                     measured_lines,
                     quote_depth,

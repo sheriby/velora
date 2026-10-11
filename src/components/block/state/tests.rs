@@ -132,15 +132,15 @@
     fn parses_task_list_item_prefixes() {
         assert_eq!(
             BlockKind::parse_task_list_item_prefix("[ ] a"),
-            Some((false, 4))
+            Some((' ', 4))
         );
         assert_eq!(
             BlockKind::parse_task_list_item_prefix("[x] a"),
-            Some((true, 4))
+            Some(('x', 4))
         );
         assert_eq!(
             BlockKind::parse_task_list_item_prefix("[X] a"),
-            Some((true, 4))
+            Some(('X', 4))
         );
         assert_eq!(BlockKind::parse_task_list_item_prefix("[a] a"), None);
     }

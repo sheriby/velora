@@ -27,7 +27,29 @@
             );
             assert_eq!(
                 editor.document.markdown_text(cx),
-                "- [ ] todo\n* [x] done\n+ [x] shipped"
+                "- [ ] todo\n* [x] done\n+ [X] shipped"
+            );
+        });
+    }
+
+    /// `[X]` 与 `[x]` 解析等价，但勾选框写法是文件里的事实：`checked: bool`
+    /// 之外还要记下原文写法（`ListMarkerStyle::task_box`），否则任何一次
+    /// 模型重序列化都把用户没碰的 `[X]` 洗成 `[x]`（不变量 3）。
+    #[gpui::test]
+    async fn task_list_round_trip_keeps_uppercase_box_spelling(cx: &mut TestAppContext) {
+        let markdown = "- [X] 大写勾选\n- [x] 小写勾选\n- [ ] 未勾选".to_string();
+        let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.clone(), None));
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.document.markdown_text(cx), markdown);
+            let visible = editor.document.visible_blocks();
+            assert_eq!(
+                visible[0].entity.read(cx).kind(),
+                BlockKind::TaskListItem { checked: true }
+            );
+            assert_eq!(
+                visible[2].entity.read(cx).kind(),
+                BlockKind::TaskListItem { checked: false }
             );
         });
     }

@@ -41,16 +41,23 @@ impl Block {
 
         if !self.uses_raw_text_editing() && self.kind() == BlockKind::BulletedListItem {
             let visible_text = next_title.visible_text();
-            if let Some((checked, prefix_len)) =
+            if let Some((box_char, prefix_len)) =
                 BlockKind::parse_task_list_item_prefix(&visible_text)
             {
                 next_title.remove_visible_prefix(prefix_len);
+                // 勾选框写法跟记号一样从原文里记：`[X]` 不许在写回时变 `[x]`。
+                let style = crate::components::ListMarkerStyle {
+                    task_box: (box_char != ' ').then_some(box_char),
+                    ..self.record.list_marker
+                };
                 return (
-                    BlockKind::TaskListItem { checked },
+                    BlockKind::TaskListItem {
+                        checked: box_char != ' ',
+                    },
                     next_title,
                     cursor.saturating_sub(prefix_len),
                     prefix_len,
-                    self.record.list_marker,
+                    style,
                 );
             }
         }

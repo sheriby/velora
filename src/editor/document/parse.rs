@@ -325,14 +325,17 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
         let text = after_marker
             .strip_prefix(' ')
             .or_else(|| after_marker.strip_prefix('\t'))?;
-        let (kind, text) =
-            if let Some((checked, prefix_len)) = BlockKind::parse_task_list_item_prefix(text) {
+        let (kind, text, task_box) =
+            if let Some((box_char, prefix_len)) = BlockKind::parse_task_list_item_prefix(text) {
                 (
-                    BlockKind::TaskListItem { checked },
+                    BlockKind::TaskListItem {
+                        checked: box_char != ' ',
+                    },
                     text[prefix_len..].to_string(),
+                    (box_char != ' ').then_some(box_char),
                 )
             } else {
-                (BlockKind::BulletedListItem, text.to_string())
+                (BlockKind::BulletedListItem, text.to_string(), None)
             };
         return Some(ListMarker {
             kind,
@@ -343,6 +346,7 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
             style: ListMarkerStyle {
                 bullet: Some(marker),
                 delimiter: None,
+                task_box,
             },
             numbered_start: None,
             text,
@@ -362,6 +366,7 @@ pub(crate) fn parse_list_marker(line: &str) -> Option<ListMarker> {
         style: ListMarkerStyle {
             bullet: None,
             delimiter: Some(delimiter),
+            task_box: None,
         },
         numbered_start: rest[..digit_len].parse::<usize>().ok(),
         text: text.to_string(),
