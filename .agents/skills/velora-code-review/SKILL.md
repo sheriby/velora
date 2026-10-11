@@ -5,7 +5,7 @@ description: 对 Velora(GPUI / Rust 桌面 Markdown 编辑器)的某个固定点
 
 # Velora 代码评审(缺陷导向)
 
-输入:一个固定点(tag / commit / 分支)与模式(全量树或两 tag 之间的 diff)。产出:`docs/reviews/` 下一份分维度、分级、带验证状态的 Markdown 报告。**评审只读,不改代码**;修复交由 `velora-gpui-bugfix`。
+输入:一个固定点(tag / commit / 分支)与模式(全量树或两 tag 之间的 diff)。产出:`docs/reviews/` 下一份分维度、分级、带验证状态的 Markdown 报告。**评审只读,不改代码**;修复交由 `velora-tdd`。
 
 **缺陷导向**:风格、命名、格式交给 formatter 与 CI,人工评审只覆盖机器查不出的问题——逻辑错误、边界、并发竞态、资源泄漏、安全、性能悬崖,以及本仓库高发的「同一处口径被抄成第二份」。不导致崩溃、错误结果、数据丢失、安全事故或性能劣化的,不进报告。
 
