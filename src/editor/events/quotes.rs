@@ -35,23 +35,8 @@ impl Editor {
             return false;
         }
 
-        text.split('\n').skip(1).any(|line| {
-            let trimmed_end = line.trim_end();
-            if trimmed_end.is_empty() {
-                return false;
-            }
-
-            let leading_spaces = trimmed_end.bytes().take_while(|b| *b == b' ').count();
-            if leading_spaces >= 4 {
-                return true;
-            }
-
-            BlockKind::detect_markdown_shortcut(&format!("{trimmed_end} "))
-                .is_some_and(|(kind, _)| kind != BlockKind::Paragraph)
-                || BlockKind::parse_code_fence_opening(trimmed_end).is_some()
-                || BlockKind::parse_separator_line(trimmed_end)
-                || BlockKind::parse_atx_heading_line(trimmed_end).is_some()
-        })
+        // 行首块语法判定只有 components/block 一处判据（含 ≤3 空格围栏缩进）。
+        crate::components::Block::multiline_quote_edit_requires_reparse(text)
     }
 
     pub(crate) fn block_event_clears_cross_block_selection(event: &BlockEvent) -> bool {

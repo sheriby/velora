@@ -505,3 +505,45 @@ async fn home_and_end_move_within_the_current_hard_line(cx: &mut TestAppContext)
         assert_eq!(block.selected_range, 2..5, "Shift+End 应选到行尾");
     });
 }
+
+/// 引用内行首块语法判据认 1~3 空格缩进的围栏（评审报告维度一建议 3）：
+/// 读侧 strip_fence_indent 认 ≤3 空格——引用内敲 ` ```js ` 必须触发
+/// reparse，否则块结构在光标底下重构。判据只留 normalize 一处，
+/// editor/events/quotes.rs 的那份抄本改调它。
+#[gpui::test]
+async fn quote_line_block_syntax_recognizes_indented_fences(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("> 引用正文\n```js"),
+            ),
+        )
+    });
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            block.set_runtime_context(None, std::sync::Arc::default(), std::sync::Arc::default(), std::sync::Arc::default());
+            let _ = window;
+        });
+    });
+    block.read_with(cx, |block, _cx| {
+        assert!(
+            crate::components::block::runtime::Block::multiline_quote_edit_requires_reparse(
+                "> 引用正文\n```js",
+            ),
+            "前置：顶格围栏要触发 reparse"
+        );
+    });
+    // 一格缩进的围栏（引用内粘贴的常见形状）同样要触发。
+    block.read_with(cx, |_block, _cx| {
+        assert!(
+            crate::components::block::runtime::Block::multiline_quote_edit_requires_reparse(
+                "> 引用正文\n ```js",
+            ),
+            "≤3 空格缩进的围栏必须触发 reparse（读侧认这个形状）"
+        );
+    });
+    let _ = block;
+}

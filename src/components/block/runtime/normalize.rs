@@ -71,7 +71,11 @@ impl Block {
         )
     }
 
-    fn quote_line_starts_block_syntax(line: &str) -> bool {
+    /// 引用内某行是否自己开启块语法的**唯一**判据（editor/events/quotes.rs
+    /// 的那份抄本改调这里）。读侧 strip_fence_indent 认 1~3 空格缩进的围栏，
+    /// 判定前剥掉同量缩进——否则引用内敲 ` ```js ` 不 reparse，块结构在
+    /// 光标底下重构。
+    pub(crate) fn quote_line_starts_block_syntax(line: &str) -> bool {
         let trimmed_end = line.trim_end();
         if trimmed_end.is_empty() {
             return false;
@@ -81,12 +85,14 @@ impl Block {
         if leading_spaces >= 4 {
             return true;
         }
+        // 走到这里时缩进必 ≤3（ASCII 空格，按字节切安全）。
+        let dedented = &trimmed_end[leading_spaces..];
 
-        BlockKind::detect_markdown_shortcut(&format!("{trimmed_end} "))
+        BlockKind::detect_markdown_shortcut(&format!("{dedented} "))
             .is_some_and(|(kind, _)| kind != BlockKind::Paragraph)
-            || BlockKind::parse_code_fence_opening(trimmed_end).is_some()
-            || BlockKind::parse_separator_line(trimmed_end)
-            || BlockKind::parse_atx_heading_line(trimmed_end).is_some()
+            || BlockKind::parse_code_fence_opening(dedented).is_some()
+            || BlockKind::parse_separator_line(dedented)
+            || BlockKind::parse_atx_heading_line(dedented).is_some()
     }
 
     pub(crate) fn multiline_quote_edit_requires_reparse(text: &str) -> bool {
