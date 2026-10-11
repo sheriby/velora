@@ -598,6 +598,11 @@ pub(crate) fn remap_moved_path(
     } else {
         return None;
     };
+    // 空 suffix 就是被移动项自身：`join("")` 会补一个尾分隔符（`…/new.md/`），
+    // 此后读这个路径直接 ENOTDIR——文件路径必须原样是 destination。
+    if suffix.as_os_str().is_empty() {
+        return Some(destination.to_path_buf());
+    }
     Some(destination.join(suffix))
 }
 

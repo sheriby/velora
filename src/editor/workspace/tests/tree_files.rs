@@ -357,14 +357,18 @@ fn moving_a_folder_remaps_open_document_descendants() {
         ),
         None
     );
+    // 被移动项自身必须**原样**映射到 destination：`Path` 的 `==` 忽略尾
+    // 分隔符，`Some(…/new.md/)` 也能通过，所以这里按字符串对账
+    // （尾斜杠会让之后的读盘直接 ENOTDIR）。
     assert_eq!(
         remap_moved_path(
             Path::new("/workspace/old.md"),
             Path::new("/workspace/old.md"),
             Path::new("/workspace/new.md"),
             false,
-        ),
-        Some(PathBuf::from("/workspace/new.md"))
+        )
+        .map(|path| path.to_string_lossy().into_owned()),
+        Some("/workspace/new.md".to_string())
     );
 }
 

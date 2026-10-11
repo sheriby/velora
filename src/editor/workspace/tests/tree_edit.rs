@@ -1,7 +1,9 @@
 use super::super::{Editor, OverlayInputKind, WorkspaceMenuAction, WorkspaceSelection};
+use crate::components::UndoCaptureKind;
 use gpui::{Entity, EntityInputHandler, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 fn tree_fixture(cx: &mut TestAppContext) -> (Entity<Editor>, &mut VisualTestContext, PathBuf) {
     cx.update(|cx| {
@@ -176,6 +178,63 @@ async fn tree_rename_keeps_unsaved_document_and_changes_only_the_name(cx: &mut T
                 .any(|tab| tab.path == renamed)
         );
     });
+}
+
+/// 重命名「正在编辑的文档」之后的落点必须是原样新路径：`remap_moved_path`
+/// 走 `destination.join("")` 时 Rust 会补一个尾分隔符（`…/new.md/`），此后
+/// 自动保存的外部修改检查读这个路径直接 ENOTDIR（os error 20），冲突弹窗
+/// 弹起、`file_error` 置位，整个文件树换成「无法读取工作区」。
+#[gpui::test]
+async fn renaming_the_open_document_keeps_its_path_readable(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let original = root.join("original.md");
+    fs::write(&original, "# 磁盘原文\n").expect("写夹具");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(original.clone(), window, cx);
+            editor.workspace.selected = Some(WorkspaceSelection::File(original.clone()));
+            editor.refresh_workspace_tree(cx);
+        });
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.prompt_rename_selected(window, cx))
+    });
+    redraw(cx);
+    cx.simulate_input("重命名");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let renamed = root.join("重命名.md");
+    assert!(renamed.exists(), "夹具：改名应已落盘");
+
+    // 重命名之后再编辑（报修的动作序）：等自动保存跑完一轮。
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.root_blocks()[0].clone();
+        block.update(cx, |block, cx| {
+            block.prepare_undo_capture(UndoCaptureKind::CoalescibleText, cx);
+            block.replace_text_in_visible_range(0..0, "abs", None, false, cx);
+        });
+    });
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            !editor.has_external_autosave_conflict(),
+            "改名后的路径必须能读盘，自动保存不得被误判成外部修改"
+        );
+        assert!(
+            editor.workspace.file_error.is_none(),
+            "文件树不得进错误态：{:?}",
+            editor.workspace.file_error
+        );
+    });
+    assert!(
+        fs::read_to_string(&renamed)
+            .expect("读取自动保存结果")
+            .contains("abs"),
+        "自动保存应把编辑落到改名后的文件"
+    );
 }
 
 #[gpui::test]
