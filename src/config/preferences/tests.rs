@@ -1358,3 +1358,70 @@ fn update_preferences_default_to_startup_checks_and_preserve_beta_and_skip_setti
     assert_eq!(saved.get("updates").and_then(|updates| updates.get("include_prereleases")).and_then(toml::Value::as_bool), Some(true));
     assert_eq!(saved.get("updates").and_then(|updates| updates.get("ignored_version")).and_then(toml::Value::as_str), Some("0.2.5"));
 }
+
+/// 读侧接受 width 480..=8000 / height 320..=4000，写侧却 clamp 到
+/// 480..=4096 / 360..=4096：手写 5000×340 本次生效，之后任何一次保存
+/// 偏好把它改写成 4096×360（读/写两份边界，评审 v0.2.6 维度二建议 19）。
+/// 两侧必须共用同一对边界：读得进的值，原样保存回去。
+#[test]
+fn window_size_bounds_are_shared_by_read_and_save() {
+    let root = std::env::temp_dir().join(format!(
+        "velora-preferences-bounds-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("temp root should exist");
+    let dirs = VeloraConfigDirs::from_root(&root);
+    std::fs::write(
+        dirs.app_config_file(),
+        r#"
+            [window]
+            default_window_width = 5000
+            default_window_height = 340
+        "#,
+    )
+    .expect("config should be written");
+
+    let loaded = load_or_create_app_preferences_with_dirs_and_locales(&dirs, ["zh-CN"])
+        .expect("preferences should load");
+    assert_eq!(loaded.default_window_width, 5000, "前置：读侧接受 5000");
+    assert_eq!(loaded.default_window_height, 340, "前置：读侧接受 340");
+
+    // 任意一次偏好保存（值来自 UI，UI 又来自读侧）：不该改写用户尺寸。
+    save_preferences_from_window_with_dirs(
+        loaded.startup_open,
+        &loaded.default_theme_id,
+        loaded.image_paste_behavior,
+        &loaded.fonts,
+        loaded.writing_width,
+        BTreeMap::new(),
+        &loaded.status_bar,
+        loaded.tree_sort,
+        loaded.sidebar_open,
+        loaded.sidebar_panel,
+        loaded.autosave_debounce_ms,
+        loaded.remember_window_bounds,
+        loaded.window_open_position,
+        loaded.smart_punctuation,
+        loaded.autosave,
+        loaded.zoom_percent,
+        loaded.default_window_width,
+        loaded.default_window_height,
+        loaded.external_change_policy,
+        loaded.delete_policy,
+        loaded.updates.check_on_startup,
+        loaded.updates.include_prereleases,
+        &dirs,
+    )
+    .expect("save should succeed");
+
+    let reread = read_app_preferences_with_dirs(&dirs).expect("reread");
+    assert_eq!(
+        reread.default_window_width, 5000,
+        "保存后重读不得把 5000 洗成 4096"
+    );
+    assert_eq!(
+        reread.default_window_height, 340,
+        "保存后重读不得把 340 洗成 360"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

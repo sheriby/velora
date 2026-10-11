@@ -274,6 +274,12 @@ pub(crate) fn load_or_create_app_preferences() -> anyhow::Result<AppPreferences>
     load_or_create_app_preferences_with_dirs_and_locales(&dirs, sys_locale::get_locales())
 }
 
+/// 默认窗口尺寸的合法边界（含端点）。读侧过滤与写侧 clamp 必须共用这一对：
+/// 曾各自维护（读 480..=8000/320..=4000、写 480..=4096/360..=4096），
+/// 手写的 5000×340 本次生效、任何一次保存偏好就被改写成 4096×360。
+pub(crate) const DEFAULT_WINDOW_WIDTH_BOUNDS: std::ops::RangeInclusive<i64> = 480..=8_000;
+pub(crate) const DEFAULT_WINDOW_HEIGHT_BOUNDS: std::ops::RangeInclusive<i64> = 320..=4_000;
+
 pub(crate) fn app_preferences_from_toml_value(
     value: &toml::Value,
     fallback_language_id: &str,
@@ -492,12 +498,12 @@ pub(crate) fn app_preferences_from_toml_value(
     let default_window_width = window
         .and_then(|window| window.get("default_window_width"))
         .and_then(toml::Value::as_integer)
-        .filter(|width| (480..=8_000).contains(width))
+        .filter(|width| DEFAULT_WINDOW_WIDTH_BOUNDS.contains(width))
         .unwrap_or(1080);
     let default_window_height = window
         .and_then(|window| window.get("default_window_height"))
         .and_then(toml::Value::as_integer)
-        .filter(|height| (320..=4_000).contains(height))
+        .filter(|height| DEFAULT_WINDOW_HEIGHT_BOUNDS.contains(height))
         .unwrap_or(720);
     let window_frame = window
         .and_then(|window| window.get("frame"))
@@ -778,8 +784,10 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     preferences.external_change_policy = external_change_policy;
     preferences.delete_policy = delete_policy;
     preferences.zoom_percent = zoom_percent.clamp(60, 200);
-    preferences.default_window_width = default_window_width.clamp(480, 4096);
-    preferences.default_window_height = default_window_height.clamp(360, 4096);
+    preferences.default_window_width =
+        default_window_width.clamp(*DEFAULT_WINDOW_WIDTH_BOUNDS.start(), *DEFAULT_WINDOW_WIDTH_BOUNDS.end());
+    preferences.default_window_height =
+        default_window_height.clamp(*DEFAULT_WINDOW_HEIGHT_BOUNDS.start(), *DEFAULT_WINDOW_HEIGHT_BOUNDS.end());
     preferences.keybindings = normalize_shortcut_config(&keybindings);
     preferences.status_bar = status_bar.clone();
     save_app_preferences_with_dirs(&preferences, dirs)?;
