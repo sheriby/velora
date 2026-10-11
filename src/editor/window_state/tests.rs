@@ -1,5 +1,6 @@
 mod tests {
-    use super::super::{LinkTarget, classify_link_target, heading_line_for_anchor, resolve_local_link_path};
+    use crate::file_url::resolve_local_link_path;
+    use super::super::{LinkTarget, classify_link_target, heading_line_for_anchor};
     use crate::editor::Editor;
     use gpui::TestAppContext;
     use std::fs;

@@ -650,7 +650,7 @@ impl Block {
             let strings = cx.global::<I18nManager>().strings().clone();
             let seg_id = ("hover-footnote", segment_hash(text, span.range.start));
             let tooltip_text =
-                hover_preview_label(Some(&footnote_id), "", false, &strings);
+                hover_preview_label(Some(&footnote_id), "", None, &strings);
             return element
                 .id(seg_id)
                 .tooltip(move |_, cx| {
@@ -662,16 +662,17 @@ impl Block {
                 .into_any_element();
         } else if let Some(link) = span.link.as_ref() {
             let open_target = link.open_target.clone();
-            let is_remote =
-                open_target.starts_with("http://") || open_target.starts_with("https://");
-            let strings = cx.global::<I18nManager>().strings().clone();
-            let label =
-                hover_preview_label(None, &open_target, is_remote, &strings);
+            let base_dir = self.image_base_dir().map(std::path::Path::to_path_buf);
             let seg_id = ("hover-link", segment_hash(text, span.range.start));
             return element
                 .id(seg_id)
                 .tooltip(move |_, cx| {
-                    cx.new(|_| HoverPreviewTooltip { label: label.clone().into() }).into()
+                    // 标签（含存在性 stat）只在悬停那一拍算，渲染期零开销
+                    // ——与上方注释的承诺一致。
+                    let strings = cx.global::<I18nManager>().strings().clone();
+                    let label =
+                        hover_preview_label(None, &open_target, base_dir.as_deref(), &strings);
+                    cx.new(|_| HoverPreviewTooltip { label: label.into() }).into()
                 })
                 .into_any_element();
         }

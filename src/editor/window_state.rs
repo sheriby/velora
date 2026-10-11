@@ -3,7 +3,7 @@
 
 use super::*;
 pub(crate) use crate::export::html::heading_line_for_anchor;
-use crate::file_url::percent_decode_or_raw;
+use crate::file_url::{percent_decode_or_raw, resolve_local_link_path, split_link_anchor};
 use crate::components::markdown::link::EXTERNAL_LINK_SCHEMES;
 
 /// P4b：stride 大多未知时的单帧最大预挂载行数。上限只削视口上下的余量，
@@ -1045,23 +1045,7 @@ fn strip_file_url_prefix<'a>(target: &'a str, lowered: &str) -> Option<&'a str> 
         .and_then(|_| target.get("file:".len()..))
 }
 
-fn split_link_anchor(target: &str) -> (&str, Option<&str>) {
-    match target.find('#') {
-        Some(index) => (&target[..index], Some(&target[index + 1..])),
-        None => (target, None),
-    }
-}
 
-/// 本地链接的落点：绝对路径直接用，相对路径按基准目录解析。基准由
-/// `Editor::local_link_base_dir` 一处决定（文档父目录 → 工作区根），与图片
-/// base_dir 同源；两边都没有基准时退相对路径（按进程 CWD 判存在性）。
-pub(crate) fn resolve_local_link_path(base_dir: Option<&Path>, path: &str) -> PathBuf {
-    let candidate = PathBuf::from(path);
-    if candidate.is_absolute() {
-        return candidate;
-    }
-    base_dir.unwrap_or(Path::new(".")).join(candidate)
-}
 
 #[cfg(test)]
 mod tests;

@@ -6,7 +6,7 @@
 //! 三个结果。解码口径只留这一份：任何「路径里可能有 percent 转义」的地方都调它。
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Parses a local file URL into a path.
 ///
@@ -62,6 +62,34 @@ pub(crate) fn strip_file_scheme_prefix(value: &str) -> Option<&str> {
     let is_file = url_scheme(value).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file"));
     // scheme 恰为 4 个 ASCII 字母加冒号，第 5 字节必是字符边界。
     is_file.then(|| &value["file:".len()..])
+}
+
+/// 链接目标里的锚点切分：第一个裸 `#` 前是路径/目标，后面是锚点。
+pub(crate) fn split_link_anchor(target: &str) -> (&str, Option<&str>) {
+    match target.find('#') {
+        Some(index) => (&target[..index], Some(&target[index + 1..])),
+        None => (target, None),
+    }
+}
+
+/// 本地链接的落点：绝对路径直接用，相对路径按基准目录解析。基准由
+/// `Editor::local_link_base_dir` 一处决定（文档父目录 → 工作区根），与图片
+/// base_dir 同源；两边都没有基准时退相对路径（按进程 CWD 判存在性）。
+pub(crate) fn resolve_local_link_path(base_dir: Option<&Path>, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        return candidate;
+    }
+    base_dir.unwrap_or(Path::new(".")).join(candidate)
+}
+
+/// 绝对 `file:` URL → 本地绝对路径。scheme、authority 与 Windows 盘符是 URL
+/// 语法，交给 `url` crate（与粘贴图片同一套）；它同时负责 percent 解码。
+/// 畸形 URL 与远程 `file:` authority 返回 `None`。
+pub(crate) fn local_path_from_file_url(destination: &str) -> Option<PathBuf> {
+    let file_url = url::Url::parse(destination).ok()?;
+    let path = file_url.to_file_path().ok()?;
+    path.is_absolute().then_some(path)
 }
 
 /// 唯一的 percent 解码：`%XX` 还原成对应字节。非法转义（`%` 后面不跟两个十六进制
@@ -137,7 +165,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{parse_file_url, percent_decode, percent_decode_or_raw, url_scheme};
     use crate::file_url::strip_file_scheme_prefix;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parses_file_url_with_spaces() {

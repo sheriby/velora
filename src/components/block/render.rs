@@ -114,19 +114,41 @@ fn segment_hash(text: &str, range_start: usize) -> u64 {
     hash
 }
 
+/// 悬停标签：脚注给脚注标签；链接给目标与存在性。存在性按「点开它时那条
+/// 解析」判（`file_url::resolve_local_link_path`，与点击同源）——旧实现拿
+/// 未解析的原文直接 `Path::exists`：相对目标按进程 CWD 判、带 `#锚点` 必判
+/// 不存在、`mailto:` 被当文件路径，与点击行为结论相反（评审报告未验证 24）。
+/// 远程、非 http 外部协议与纯 `#锚点` 不谈存在性。
 fn hover_preview_label(
     footnote_id: Option<&str>,
     open_target: &str,
-    is_remote: bool,
+    base_dir: Option<&std::path::Path>,
     strings: &I18nStrings,
 ) -> String {
     if let Some(id) = footnote_id {
         return format!("{} [^{}]", strings.hover_footnote_prefix, id);
     }
-    if is_remote {
+    use crate::file_url::{local_path_from_file_url, resolve_local_link_path, split_link_anchor, strip_file_scheme_prefix, url_scheme};
+
+    if crate::net::is_remote_image_source(open_target) {
         return open_target.to_string();
     }
-    let exists = std::path::Path::new(open_target).exists();
+    let (path_part, _) = split_link_anchor(open_target);
+    if path_part.is_empty() {
+        // 纯 `#锚点`：当前文档内跳。
+        return open_target.to_string();
+    }
+    let resolved = if let Some(rest) = strip_file_scheme_prefix(path_part) {
+        let _ = rest;
+        local_path_from_file_url(path_part)
+    } else if url_scheme(path_part).is_some() {
+        // mailto:/tel: 等外部协议交系统处理器，不是本地路径。
+        return open_target.to_string();
+    } else {
+        let decoded = crate::file_url::percent_decode_or_raw(path_part);
+        Some(resolve_local_link_path(base_dir, decoded.as_ref()))
+    };
+    let exists = resolved.is_some_and(|path| path.exists());
     if exists {
         format!("\u{2713} {open_target} \u{2014} {}", strings.hover_target_exists)
     } else {
@@ -165,6 +187,15 @@ fn render_image_placeholder(
     let t = &theme.typography;
     let compact_height = height.min(px(72.0));
     let label = fallback_image_label(&runtime.alt, strings);
+    // 装配失败（进程内没有 HTTP 客户端）时远程图永远加载不出：把「整篇没有
+    // 网络能力」与「这一张加载失败」分开说（评审报告安全建议 7）。
+    let failure_reason = if matches!(runtime.resolved_source, ImageResolvedSource::Remote(_))
+        && crate::net::http_client_install_error().is_some()
+    {
+        strings.image_network_unavailable.clone()
+    } else {
+        strings.image_load_failed.clone()
+    };
     div()
         .min_w(px(0.0))
         .max_w(width)
@@ -181,7 +212,7 @@ fn render_image_placeholder(
         .px(px(d.block_padding_x))
         .text_size(px(t.text_size * 0.82))
         .text_color(c.image_placeholder_text)
-        .child(SharedString::from(strings.image_load_failed.clone()))
+        .child(SharedString::from(failure_reason))
         .child(
             div()
                 .min_w(px(0.0))
@@ -296,3 +327,52 @@ mod shell;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod hover_label_tests {
+    // 精准导入：外层有 gpui 的同名 `test` 属性宏（AGENTS.md §1）。
+    use super::hover_preview_label;
+    use crate::i18n::I18nStrings;
+
+    /// 悬停存在性按「点开它时那条解析」判（评审报告未验证 24）。旧实现拿
+    /// **未解析的原文**直接 Path::exists：相对链接按进程 CWD 判、带 `#锚点`
+    /// 必判不存在、`mailto:` 被当文件路径——与点击行为结论相反。
+    #[test]
+    fn hover_existence_matches_the_click_time_resolution() {
+        let strings = I18nStrings::zh_cn();
+
+        // 带 `#锚点` 的目标：文件存在与否只看路径部分，锚点不参与。
+        assert!(
+            !hover_preview_label(None, "不存在的文件.md#某节", None, &strings)
+                .contains('\u{2713}'),
+            "文件不存在的带锚目标不得判存在"
+        );
+        // `mailto:`/`tel:` 这类非 http 外部协议不是本地路径：不谈存在性。
+        assert!(
+            !hover_preview_label(None, "mailto:a@example.com", None, &strings)
+                .contains('\u{2717}'),
+            "mailto 目标不得按文件路径判不存在"
+        );
+        // 纯 `#锚点` 在当前文档内跳：不谈存在性。
+        assert!(
+            !hover_preview_label(None, "#某节", None, &strings).contains('\u{2717}'),
+            "纯锚点不得按文件路径判不存在"
+        );
+
+        // 相对目标按基准目录（文档父目录/工作区根）判，不按进程 CWD：
+        // base_dir 指到含该文件的目录应判存在，指到空目录判不存在。
+        let root = std::env::temp_dir().join(format!("velora-hover-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("notes")).expect("create root");
+        std::fs::write(root.join("notes").join("a.md"), "# a\n").expect("write target");
+        assert!(
+            hover_preview_label(None, "notes/a.md", Some(&root), &strings).contains('\u{2713}'),
+            "基准目录内的相对目标应判存在"
+        );
+        assert!(
+            hover_preview_label(None, "notes/missing.md", Some(&root), &strings)
+                .contains('\u{2717}'),
+            "基准目录内缺失的目标应判不存在"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

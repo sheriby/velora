@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::SharedUri;
 
-use crate::file_url::{percent_decode_or_raw, strip_file_scheme_prefix};
+use crate::file_url::{local_path_from_file_url, percent_decode_or_raw, strip_file_scheme_prefix};
 use crate::net;
 
 /// Active fenced code block while scanning for image reference definitions.
@@ -143,16 +143,6 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
         .map(|dir| dir.join(path))
         .unwrap_or_else(|| path.to_path_buf());
     ImageResolvedSource::Local(resolved)
-}
-
-/// 绝对 `file:` URL → 本地绝对路径。scheme、authority 与 Windows 盘符是 URL 语法，
-/// 交给 `url` crate（与粘贴图片 `src/components/block/interactions.rs` 同一套）；它
-/// 同时负责 percent 解码，所以这条分支不能再解第二遍（`%25` 解两次会变味）。
-/// 畸形 URL 与远程 `file:` authority 返回 `None`，退回普通路径口径。
-fn local_path_from_file_url(destination: &str) -> Option<PathBuf> {
-    let file_url = url::Url::parse(destination).ok()?;
-    let path = file_url.to_file_path().ok()?;
-    path.is_absolute().then_some(path)
 }
 
 /// Splits a trailing `{width=NN%}` attribute off a standalone image, as written
