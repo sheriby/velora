@@ -258,6 +258,20 @@ async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut Test
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// 历史版本文件名是纳秒时间戳（记录端为防同毫秒覆盖用 `as_nanos()` 命名），
+/// 浮层换算成 Unix 秒再格式化；曾按毫秒换算，`1.7e18 / 1000` 秒被当日期，
+/// 浮层每行日期都是垃圾，无法按时间挑版本。
+#[test]
+fn file_history_version_label_parses_nanosecond_stems() {
+    // 1791676800 秒 = 2026-10-11 00:00 UTC。
+    let label = super::super::file_history::file_history_version_label("1791676800000000000")
+        .expect("纳秒文件名应能换算出标签");
+    assert_eq!(label, "2026-10-11 00:00");
+
+    // 非数字文件名（人工放置的文件）回退原样显示，不参与换算。
+    assert_eq!(super::super::file_history::file_history_version_label("notes"), None);
+}
+
 #[test]
 fn file_history_records_dedupes_and_prunes() {
     // 存储约定：时间戳命名、同内容去重、每文件保留最近 20 条。

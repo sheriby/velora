@@ -18,6 +18,16 @@ pub(crate) struct FileHistoryOverlay {
     pub(crate) selected: usize,
 }
 
+/// 历史版本的文件名是**纳秒**时间戳（`record_file_history_bytes` 用纳秒命名，
+/// 同一毫秒内的连续保存不能互相覆盖）；浮层把它换算成 Unix 秒后格式化。
+/// 换算单位必须与记录端一致，否则 1.7e18 级的数值被当日期解析，
+/// 浮层每行日期都是垃圾。
+pub(crate) fn file_history_version_label(stem: &str) -> Option<String> {
+    let stamp = stem.parse::<u64>().ok()?;
+    let seconds = stamp / 1_000_000_000;
+    Some(super::workspace::chrono_like_date_string_public(seconds))
+}
+
 impl Editor {
     pub(crate) fn file_history_is_open(&self) -> bool {
         self.file_history_overlay.is_some()
@@ -184,11 +194,7 @@ impl Editor {
             let label = version
                 .file_stem()
                 .and_then(|stem| stem.to_str())
-                .and_then(|stem| stem.parse::<u64>().ok())
-                .map(|millis| {
-                    let seconds = millis / 1000;
-                    super::workspace::chrono_like_date_string_public(seconds)
-                })
+                .and_then(file_history_version_label)
                 .unwrap_or_else(|| version.display().to_string());
             let restore = cx.listener(move |editor, _: &MouseDownEvent, _window, cx| {
                 editor.restore_file_history_version(index, cx);
