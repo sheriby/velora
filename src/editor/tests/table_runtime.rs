@@ -677,3 +677,27 @@ async fn removing_the_only_table_leaves_one_empty_paragraph(cx: &mut TestAppCont
     });
 }
 
+
+/// 表格轴高亮同步只写真变化（评审报告维度四建议 7）：旧实现对所有可见表 ×
+/// 所有格无条件 update + notify，一次预览/选列 = 表块 + 全部格子都写一遍。
+/// 写入前比旧值后，一次选列只剩目标表块与那一列的格子。
+#[gpui::test]
+async fn selecting_a_table_column_writes_only_that_column(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = ["| A | B | C |", "| --- | --- | --- |", "| 1 | 2 | 3 |", "| 4 | 5 | 6 |"].join("\n");
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown, None));
+
+    let before = crate::editor::table_edit::probe::axis_writes();
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        editor.preview_table_axis(table.entity_id(), crate::components::TableAxisKind::Column, 1, true, cx);
+        editor.select_table_axis(table.entity_id(), crate::components::TableAxisKind::Column, 1, cx);
+    });
+    let writes = crate::editor::table_edit::probe::axis_writes() - before;
+    // 预览一趟 + 选中一趟：每趟目标表块 1 次 + 目标列 3 格（表头 + 两行正文）。
+    // 旧形状是每趟 10 个实体全写（两趟 20 次）。
+    assert_eq!(
+        writes, 8,
+        "一次预览 + 一次选列只许写目标表与那一列（实际 {writes} 次）"
+    );
+}

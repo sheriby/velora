@@ -73,16 +73,22 @@ impl Block {
         self.table_append_row_close_task = None;
     }
 
+    /// 返回是否真有变化：没变就不 notify（表格轴高亮同步只写真变化）。
     pub(crate) fn set_table_axis_visual_state(
         &mut self,
         preview: Option<TableAxisMarker>,
         selection: Option<TableAxisMarker>,
-    ) {
+    ) -> bool {
+        let changed = self.table_axis_preview != preview || self.table_axis_selection != selection;
         self.table_axis_preview = preview;
         self.table_axis_selection = selection;
+        changed
     }
 
-    pub(crate) fn set_table_axis_highlight(&mut self, highlight: TableAxisHighlight) {
+    /// 返回是否真有变化。
+    pub(crate) fn set_table_axis_highlight(&mut self, highlight: TableAxisHighlight) -> bool {
+        let changed = self.table_axis_highlight != highlight;
         self.table_axis_highlight = highlight;
+        changed
     }
 }

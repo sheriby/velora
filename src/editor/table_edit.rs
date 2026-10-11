@@ -1360,9 +1360,24 @@ impl Editor {
                 .filter(|selection| selection.table_block_id == block_id)
                 .map(Self::table_axis_marker);
 
+            // 非目标表短路：还挂着旧标记（高亮刚移走的表）才需要清一趟，
+            // 从未沾过的表连同它的格子整体跳过——以前每趟把所有可见表 ×
+            // 所有格都 update + notify 一遍。
+            if preview_marker.is_none() && selected_marker.is_none() {
+                let has_stale_markers = table_block.read_with(cx, |block, _| {
+                    block.table_axis_preview.is_some() || block.table_axis_selection.is_some()
+                });
+                if !has_stale_markers {
+                    continue;
+                }
+            }
+
             table_block.update(cx, move |block, cx| {
-                block.set_table_axis_visual_state(preview_marker, selected_marker);
-                cx.notify();
+                if block.set_table_axis_visual_state(preview_marker, selected_marker) {
+                    cx.notify();
+                    #[cfg(test)]
+                    probe::note_axis_write();
+                }
             });
 
             let Some(runtime) = table_block.read(cx).table_runtime.clone() else {
@@ -1394,8 +1409,12 @@ impl Editor {
                 };
 
                 cell.update(cx, move |block, cx| {
-                    block.set_table_axis_highlight(highlight);
-                    cx.notify();
+                    let changed = block.set_table_axis_highlight(highlight);
+                    if changed {
+                        cx.notify();
+                        #[cfg(test)]
+                        probe::note_axis_write();
+                    }
                 });
             };
 
@@ -1533,4 +1552,20 @@ pub(crate) fn cell_content_range_in_line(
         return Some(line_start + at..line_start + at);
     }
     Some(line_start + left..line_start + right)
+}
+
+/// 形状探针：表格轴高亮同步的实体写入次数（表块 + 格子）。thread-local，
+/// 并行测试各数各的。
+#[cfg(test)]
+pub(crate) mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static TABLE_AXIS_WRITES: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn note_axis_write() {
+        TABLE_AXIS_WRITES.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(crate) fn axis_writes() -> u64 {
+        TABLE_AXIS_WRITES.with(|counter| counter.get())
+    }
 }
