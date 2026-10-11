@@ -488,6 +488,46 @@ mod tests {
         fs::remove_dir_all(&root).expect("clean up fixture dir");
     }
 
+    /// RFC 3986 的 scheme 大小写不敏感：`FILE:///…` 与 `file:///…` 是同一个
+    /// URL。判定只认小写字面量时，大写写法整个被当成相对路径拼进文档目录
+    /// （`<base>/FILE:/…`），图加载不出而同样写法的链接能点。
+    #[test]
+    fn file_url_scheme_matching_is_case_insensitive() {
+        let root = fixture_dir();
+        let target = root.join("assets").join("blue card.png");
+
+        // 同一个文件的绝对 URL，三种大小写写法必须解析到同一条本地路径。
+        let lowercase = format!("file://{}", target.display());
+        assert_eq!(
+            local_path_of(&lowercase, Some(&root)),
+            target,
+            "前置：小写写法本来就能解"
+        );
+        for url in [
+            format!("FILE://{}", target.display()),
+            format!("File://{}", target.display()),
+        ] {
+            assert_eq!(
+                local_path_of(&url, Some(&root)),
+                target,
+                "scheme 大小写不敏感：{url} 应与 {lowercase} 解到同一个文件"
+            );
+        }
+
+        // 相对写法的 scheme 同样大小写不敏感：剥掉后按文档目录解析。
+        assert_eq!(
+            local_path_of("FILE:relative.png", Some(&root)),
+            root.join("relative.png")
+        );
+
+        // 不是 `file` 的 scheme 前缀不许误剥：带冒号的相对文件名原样保留。
+        assert_eq!(
+            local_path_of("note:backup.png", Some(&root)),
+            root.join("note:backup.png")
+        );
+        fs::remove_dir_all(&root).expect("clean up fixture dir");
+    }
+
     #[test]
     fn keeps_remote_sources_remote_and_out_of_the_filesystem() {
         // 远程写法不能被 percent 解码后当本地文件读：`%20` 是 URL 的一部分，

@@ -39,6 +39,31 @@ pub(crate) fn parse_file_url(value: &str) -> Option<PathBuf> {
     Some(PathBuf::from(value))
 }
 
+/// RFC 3986 的 scheme 语法：字母开头，后跟字母 / 数字 / `+` / `-` / `.`，以 `:` 收尾。
+/// 返回不含冒号的 scheme 切片。`note:backup.png` 的 `note` 同样是合法 scheme——
+/// 认不认由调用方决定，这里只管语法。
+pub(crate) fn url_scheme(value: &str) -> Option<&str> {
+    let colon = value.find(':')?;
+    let scheme = &value[..colon];
+    let mut chars = scheme.chars();
+    if !chars.next()?.is_ascii_alphabetic() {
+        return None;
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.')) {
+        return None;
+    }
+    Some(scheme)
+}
+
+/// 剥掉 `file:` scheme 前缀，按 RFC 3986 大小写不敏感（`FILE:` 与 `file:` 是同一个
+/// scheme）。值不带 `file:` scheme 时返回 `None`，调用方保留原文——带冒号的相对
+/// 文件名（`note:backup.png`）不许在这里被误剥。
+pub(crate) fn strip_file_scheme_prefix(value: &str) -> Option<&str> {
+    let is_file = url_scheme(value).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file"));
+    // scheme 恰为 4 个 ASCII 字母加冒号，第 5 字节必是字符边界。
+    is_file.then(|| &value["file:".len()..])
+}
+
 /// 唯一的 percent 解码：`%XX` 还原成对应字节。非法转义（`%` 后面不跟两个十六进制
 /// 数字，含串尾的裸 `%`）按字面保留——`assets/100% done.png` 是真实存在的文件名，
 /// 把它改坏就找不到文件了。解码结果不是合法 UTF-8 时返回 `None`。
@@ -110,7 +135,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_file_url, percent_decode, percent_decode_or_raw};
+    use super::{parse_file_url, percent_decode, percent_decode_or_raw, url_scheme};
+    use crate::file_url::strip_file_scheme_prefix;
     use std::path::PathBuf;
 
     #[test]
@@ -179,5 +205,29 @@ mod tests {
     fn gives_up_when_decoded_bytes_are_not_utf8() {
         assert!(percent_decode("%FF%FE").is_none());
         assert_eq!(percent_decode_or_raw("%FF%FE").as_ref(), "%FF%FE");
+    }
+
+    #[test]
+    fn scheme_syntax_follows_rfc3986() {
+        // 合法：字母开头，后跟字母/数字/+/-/.。
+        assert_eq!(url_scheme("https://example.com"), Some("https"));
+        assert_eq!(url_scheme("FILE:///tmp/a.png"), Some("FILE"));
+        assert_eq!(url_scheme("x+y-z.1:rest"), Some("x+y-z.1"));
+        // `note:backup.png` 的 `note` 语法上就是 scheme，认不认由调用方定。
+        assert_eq!(url_scheme("note:backup.png"), Some("note"));
+        // 非法：数字开头、空 scheme、无冒号。
+        assert_eq!(url_scheme("1note:x"), None);
+        assert_eq!(url_scheme(":rest"), None);
+        assert_eq!(url_scheme("plain-path.png"), None);
+    }
+
+    #[test]
+    fn strips_file_scheme_prefix_case_insensitively() {
+        assert_eq!(strip_file_scheme_prefix("file:relative.png"), Some("relative.png"));
+        assert_eq!(strip_file_scheme_prefix("FILE:relative.png"), Some("relative.png"));
+        assert_eq!(strip_file_scheme_prefix("File:///tmp/a.png"), Some("///tmp/a.png"));
+        // 非 file 的 scheme 与无 scheme 都不动原文。
+        assert_eq!(strip_file_scheme_prefix("note:backup.png"), None);
+        assert_eq!(strip_file_scheme_prefix("assets/a.png"), None);
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::SharedUri;
 
-use crate::file_url::percent_decode_or_raw;
+use crate::file_url::{percent_decode_or_raw, strip_file_scheme_prefix};
 use crate::net;
 
 /// Active fenced code block while scanning for image reference definitions.
@@ -116,11 +116,15 @@ pub(crate) fn resolve_image_source(source: &str, base_dir: Option<&Path>) -> Ima
 
     // `file:` 后紧跟 `/` 才是绝对文件 URL；`file:relative.png` 是相对文档的写法，
     // 按 RFC 3986 剥掉 scheme 再走相对解析——直接丢给 `url` 会被解成根目录下的文件。
-    let absolute_file_url = destination.starts_with("file:/");
-    let destination = if absolute_file_url {
-        destination
-    } else {
-        destination.strip_prefix("file:").unwrap_or(destination)
+    // scheme 比较按语法小写归一（`FILE:///…` 与 `file:///…` 是同一个 URL），非 `file`
+    // 的 scheme（`note:backup.png`）不剥，原样当相对路径。
+    let after_file_scheme = strip_file_scheme_prefix(destination);
+    let absolute_file_url = after_file_scheme.is_some_and(|rest| rest.starts_with('/'));
+    let destination = match after_file_scheme {
+        // 绝对 URL 整条交给 `url` crate（它自己的 scheme 解析就是大小写不敏感的）。
+        _ if absolute_file_url => destination,
+        Some(rest) => rest,
+        None => destination,
     };
 
     if absolute_file_url
