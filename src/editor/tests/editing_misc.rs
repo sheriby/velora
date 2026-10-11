@@ -270,6 +270,8 @@ async fn copy_as_html_writes_html_source_to_clipboard(cx: &mut TestAppContext) {
         Editor::from_markdown(cx, "# Title\n\nbody".into(), None)
     });
     editor.update(cx, |editor, cx| editor.copy_as_html(cx));
+    // 渲染在后台任务里跑，泵执行器后产物才落剪贴板。
+    cx.run_until_parked();
     let text = cx.update(|_window, cx| {
         cx.read_from_clipboard().and_then(|item| item.text())
     });
@@ -566,4 +568,32 @@ async fn markdown_source_mode_highlights_with_monospace_pipeline(cx: &mut TestAp
             "标题/#、code span、粗体记号应产出高亮 span"
         );
     });
+}
+
+/// 「复制为 HTML」的整篇渲染（LaTeX/mermaid 转 SVG、本地图读盘转 base64）
+/// 不在动作派发里同步跑（评审报告维度四建议 6）：大文档渲染是 CPU 密集，
+/// 前台跑会冻结窗口。判据取派发边界——动作返回时剪贴板必须还是空的，
+/// 只泵后台执行器后产物才到位。
+#[gpui::test]
+async fn copy_as_html_defers_rendering_to_the_background(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "# 标题\n\n正文段落。\n\n$$x^2$$\n".into(), None)
+    });
+
+    editor.update(cx, |editor, cx| editor.copy_as_html(cx));
+    let immediate = cx.update(|_window, cx| {
+        cx.read_from_clipboard().and_then(|item| item.text())
+    });
+    assert!(
+        immediate.is_none(),
+        "动作返回时渲染不许已完成（前台同步渲染的形状）：{immediate:?}"
+    );
+
+    cx.run_until_parked();
+    let text = cx.update(|_window, cx| {
+        cx.read_from_clipboard().and_then(|item| item.text())
+    });
+    let text = text.expect("泵后台执行器后剪贴板应有渲染产物");
+    assert!(text.contains("<h1"), "产物应是渲染后的 HTML：{text}");
 }

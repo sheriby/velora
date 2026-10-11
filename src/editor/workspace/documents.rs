@@ -364,14 +364,34 @@ impl Editor {
             .as_ref()
             .and_then(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "Velora".into());
-        let html = crate::export::html::render_html_with_base_dir(
-            &markdown,
-            &theme,
-            &title,
-            base_dir.as_deref(),
-        );
-        cx.write_to_clipboard(copy_as_html_clipboard_item(html));
-        cx.notify();
+        // 整篇渲染（LaTeX/mermaid 转 SVG、本地图读盘转 base64）是 CPU 密集，
+        // 与 HTML/PDF/PNG 导出同属后台活：前台同步跑会冻结窗口（评审报告
+        // 维度四建议 6）。剪贴板写回必须回主线程。
+        let weak_editor = cx.entity().downgrade();
+        let worker = cx.background_spawn(async move {
+            crate::export::html::render_html_with_base_dir(
+                &markdown,
+                &theme,
+                &title,
+                base_dir.as_deref(),
+            )
+        });
+        self.copy_html_task = Some(cx.spawn(
+            async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let html = worker.await;
+                if weak_editor
+                    .update(cx, |_editor, cx| {
+                        cx.write_to_clipboard(copy_as_html_clipboard_item(html));
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    // 编辑器实体已消失（窗口关掉）：剪贴板没处写，丢弃即可；
+                    // 渲染 API 不带失败分支（内部错误都退化成可见占位），
+                    // 没有需要送应用内模态的失败路径。
+                }
+            },
+        ));
     }
 
     /// 「复制为 Markdown」：把选区的源码文本（无选区时整篇）原样写进剪贴板。
