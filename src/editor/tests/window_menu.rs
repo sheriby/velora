@@ -1,5 +1,19 @@
 use super::common::*;
 
+#[gpui::test]
+async fn review_window_menu_file_history_opens_overlay(cx: &mut TestAppContext) {
+    // 窗口菜单白名单包含文件历史，但执行分支曾缺失。
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("review-menu-history");
+    fs::write(&path, "正文").unwrap();
+    cx.on_quit({ let path = path.clone(); move || { fs::remove_file(path).unwrap(); } });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), Some(path)));
+    cx.update(|window, cx| crate::app_menu::dispatch_menu_action_for_editor(
+        &crate::components::FileHistory, &editor.downgrade(), window, cx,
+    ));
+    assert!(editor.read_with(cx, |editor, _| editor.file_history_overlay.is_some()));
+}
+
 #[test]
 fn about_dialog_body_lines_use_velora_brand_and_repository_link() {
     let strings = I18nStrings::zh_cn();

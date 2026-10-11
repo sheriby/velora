@@ -726,10 +726,22 @@ fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindo
     }
 }
 
+pub(crate) type EditorMenuHandler = fn(&mut Editor, &mut Window, &mut Context<Editor>);
+
+pub(crate) fn editor_menu_handler(action: &dyn Action) -> Option<EditorMenuHandler> {
+    if action.as_any().is::<FormatDocument>() {
+        Some(|editor, _, cx| { editor.format_document(cx); })
+    } else if action.as_any().is::<FileHistory>() {
+        Some(|editor, _, cx| editor.open_file_history(cx))
+    } else {
+        None
+    }
+}
+
 fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
-    action.as_any().is::<SaveDocument>()
+    editor_menu_handler(action).is_some()
+        || action.as_any().is::<SaveDocument>()
         || action.as_any().is::<SaveDocumentAs>()
-        || action.as_any().is::<FileHistory>()
         || action.as_any().is::<ExportHtml>()
         || action.as_any().is::<ExportPdf>()
         || action.as_any().is::<ExportPng>()
@@ -858,6 +870,12 @@ fn perform_quit_application(cx: &mut App) {
 
 /// Executes one of the app-menu actions against the current application state.
 pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
+    if let Some(handler) = editor_menu_handler(action) {
+        if with_active_editor(cx, handler).is_none() {
+            eprintln!("无法派发编辑器菜单动作：活动窗口不可用");
+        }
+        return;
+    }
     if action.as_any().is::<NewWindow>() {
         open_editor_window(cx, String::new(), None);
     } else if action.as_any().is::<OpenFile>() {

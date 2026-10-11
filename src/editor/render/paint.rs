@@ -1,4 +1,9 @@
 use super::*;
+use crate::components::{
+    BlockDown, BlockUp, End, FileHistory, FormatDocument, Home, JumpToBottom, JumpToTop, MoveLeft, MoveRight,
+    PageDown, PageUp, SelectEnd, SelectHome, SelectLeft, SelectRight,
+    WordMoveLeft, WordMoveRight, WordSelectLeft, WordSelectRight,
+};
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -358,7 +363,7 @@ impl Render for Editor {
                             focus_mode_active,
                             focused_visible_index,
                             index,
-                            index + 1,
+                            rows[row].visible_end,
                         ))
                         .child(entity.clone());
                     let element = if rendered_mode {
@@ -380,7 +385,7 @@ impl Render for Editor {
                     members,
                 } => {
                     let index = rows[row].visible_start;
-                    let group_end = index + members.len();
+                    let group_end = rows[row].visible_end;
                     if let Some(variant) = callout_variant {
                         let mut group_children: Vec<AnyElement> = Vec::new();
                         let mut member_index = 0usize;
@@ -853,6 +858,26 @@ impl Render for Editor {
                 cx.listener(Self::on_workspace_resize_mouse_up),
             )
             .capture_action(cx.listener(Self::on_copy_capture))
+            .on_action(cx.listener(Self::on_registered_menu_action::<FormatDocument>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<FileHistory>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<MoveLeft>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<MoveRight>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordMoveLeft>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordMoveRight>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<Home>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<End>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<BlockUp>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<BlockDown>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<PageUp>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<PageDown>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<JumpToTop>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<JumpToBottom>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectLeft>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectRight>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordSelectLeft>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<WordSelectRight>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectHome>))
+            .capture_action(cx.listener(Self::on_cursor_motion_capture::<SelectEnd>))
             .capture_action(cx.listener(Self::on_cut_capture))
             .capture_action(cx.listener(Self::on_paste_as_plain_text_capture))
             .capture_action(cx.listener(Self::on_delete_capture))

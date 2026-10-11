@@ -322,7 +322,9 @@ impl Block {
         if position.x >= bounds.right() {
             return text.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        crate::components::markdown::inline::clamp_to_char_boundary(
+            text, line.closest_index_for_x(position.x - bounds.left()),
+        )
     }
 
     pub(crate) fn reset_code_language_input_layout(&mut self) {

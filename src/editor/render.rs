@@ -149,6 +149,7 @@ pub(crate) struct RenderedRowPlan {
 pub(crate) struct RenderedRowPlanRow {
     /// 行首块在可见块序列中的下标（透明度/窗口计算用）。
     pub visible_start: usize,
+    pub visible_end: usize,
     pub first_id: EntityId,
     pub body: RenderedRowBody,
 }
@@ -645,11 +646,13 @@ impl Editor {
             ) {
                 let mut members = Vec::new();
                 let mut group_end = position;
+                let mut visible_end = first_index + 1;
                 while group_end < kept.len()
                     && spacing_of(kept[group_end] as usize).callout_anchor
                         == Some(callout_anchor)
                 {
                     let index = kept[group_end] as usize;
+                    visible_end = index + 1;
                     members.push(RenderedGroupMember {
                         entity: entity_of(index),
                         spacing: spacing_of(index),
@@ -657,7 +660,8 @@ impl Editor {
                     group_end += 1;
                 }
                 rows.push(RenderedRowPlanRow {
-                    visible_start: position,
+                    visible_start: first_index,
+                    visible_end,
                     first_id,
                     body: RenderedRowBody::Group {
                         callout_variant: Some(callout_variant),
@@ -671,11 +675,13 @@ impl Editor {
             if let Some(footnote_anchor) = first_spacing.footnote_anchor {
                 let mut members = Vec::new();
                 let mut group_end = position;
+                let mut visible_end = first_index + 1;
                 while group_end < kept.len()
                     && spacing_of(kept[group_end] as usize).footnote_anchor
                         == Some(footnote_anchor)
                 {
                     let index = kept[group_end] as usize;
+                    visible_end = index + 1;
                     members.push(RenderedGroupMember {
                         entity: entity_of(index),
                         spacing: spacing_of(index),
@@ -683,7 +689,8 @@ impl Editor {
                     group_end += 1;
                 }
                 rows.push(RenderedRowPlanRow {
-                    visible_start: position,
+                    visible_start: first_index,
+                    visible_end,
                     first_id,
                     body: RenderedRowBody::Group {
                         callout_variant: None,
@@ -695,7 +702,8 @@ impl Editor {
             }
 
             rows.push(RenderedRowPlanRow {
-                visible_start: position,
+                visible_start: first_index,
+                visible_end: first_index + 1,
                 first_id,
                 body: RenderedRowBody::Ordinary {
                     entity: entity_of(first_index),

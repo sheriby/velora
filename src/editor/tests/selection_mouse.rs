@@ -4,6 +4,34 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn review_arrow_clears_cross_cell_selection_before_delete(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(
+        cx, "| ab | cd |\n| --- | --- |\n| ef | gh |".into(), None,
+    ));
+    redraw(cx);
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        let cell = table.read(cx).table_runtime.as_ref().unwrap().header[1].clone();
+        cell.update(cx, |cell, cx| { cell.move_to(2, cx); cell.focus_handle.focus(window); });
+        editor.active_entity_id = Some(cell.entity_id());
+        editor.table_text_selection = Some(TableTextSelection {
+            table_block_id: table.entity_id(),
+            anchor: TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 0 },
+            focus: TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 2 },
+        });
+        editor.sync_table_text_selection_visuals(cx);
+    }));
+    redraw(cx);
+    cx.dispatch_action(crate::components::MoveLeft);
+    redraw(cx);
+    assert!(editor.read_with(cx, |editor, _| editor.table_text_selection.is_none()));
+    cx.dispatch_action(crate::components::DeleteBack);
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), "| ab | d |\n| --- | --- |\n| ef | gh |");
+}
+
+#[gpui::test]
 async fn review_cut_keeps_clipboard_when_table_deletion_has_no_mapping(cx: &mut TestAppContext) {
     // 映射不可用时剪切应保留文档与剪贴板，旧路径先复制再忽略删除失败。
     init_editor_test_app(cx);

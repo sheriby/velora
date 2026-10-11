@@ -298,7 +298,9 @@ impl EntityInputHandler for Block {
         {
             Ok(idx) | Err(idx) => idx,
         };
-        let utf8_index = ranges[line_idx].start + utf8_offset_in_line;
+        let utf8_index = crate::components::markdown::inline::clamp_to_char_boundary(
+            text, ranges[line_idx].start + utf8_offset_in_line,
+        );
         Some(Self::utf8_to_utf16_in(self.display_text(), utf8_index))
     }
 }

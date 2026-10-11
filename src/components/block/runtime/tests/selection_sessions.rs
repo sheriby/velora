@@ -10,6 +10,65 @@ use gpui::{
     TestAppContext, point, px,
 };
 
+fn approximate_geometry_line(text: &str) -> gpui::WrappedLine {
+    // 模拟几何层返回字符内部的近似字节偏移，只验证边界收敛。
+    let mut line = gpui::WrappedLine::default();
+    *std::ops::DerefMut::deref_mut(&mut line) = std::sync::Arc::new(gpui::WrappedLineLayout {
+        unwrapped_layout: std::sync::Arc::new(gpui::LineLayout { len: 1, ..Default::default() }),
+        wrap_boundaries: Default::default(),
+        wrap_width: None,
+    });
+    line.text = text.to_owned().into();
+    line
+}
+
+#[gpui::test]
+async fn review_vertical_entry_clamps_geometry_to_character_boundary(cx: &mut TestAppContext) {
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("中文"))));
+    block.update(cx, |block, _| {
+        block.last_line_height = px(16.0);
+        block.last_layout = Some(vec![approximate_geometry_line("中文")]);
+        assert_eq!(block.entry_offset_for_vertical_focus(false, Some(px(8.0))), 0);
+    });
+}
+
+#[gpui::test]
+async fn review_vertical_motion_clamps_geometry_to_character_boundary(cx: &mut TestAppContext) {
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("a\n中文"))));
+    block.update(cx, |block, cx| {
+        block.last_line_height = px(16.0);
+        block.last_layout = Some(vec![approximate_geometry_line("a"), approximate_geometry_line("中文")]);
+        assert!(block.move_cursor_vertically(1, px(8.0), cx));
+        assert_eq!(block.cursor_offset(), 2);
+    });
+}
+
+#[gpui::test]
+async fn review_code_language_click_clamps_geometry_to_character_boundary(cx: &mut TestAppContext) {
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::new(
+        BlockKind::CodeBlock { language: Some("中文".into()) }, InlineTextTree::plain("代码"),
+    )));
+    block.update(cx, |block, _| {
+        block.code_language_last_bounds = Some(gpui::Bounds::new(point(px(0.0), px(0.0)), gpui::size(px(16.0), px(16.0))));
+        block.code_language_last_layout = Some(gpui::ShapedLine::default().with_len(1));
+        assert_eq!(block.code_language_index_for_mouse_position(point(px(8.0), px(8.0))), 0);
+    });
+}
+
+#[gpui::test]
+async fn review_input_point_clamps_geometry_before_utf16_conversion(cx: &mut TestAppContext) {
+    cx.update(|cx| { I18nManager::init(cx); ThemeManager::init(cx); });
+    let (block, cx) = cx.add_window_view(|_, cx| Block::with_record(
+        cx, BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("a\n中文")),
+    ));
+    cx.update(|window, cx| block.update(cx, |block, cx| {
+        block.last_line_height = px(16.0);
+        block.last_bounds = Some(gpui::Bounds::new(point(px(0.0), px(0.0)), gpui::size(px(16.0), px(32.0))));
+        block.last_layout = Some(vec![approximate_geometry_line("a"), approximate_geometry_line("中文")]);
+        assert_eq!(gpui::EntityInputHandler::character_index_for_point(block, point(px(8.0), px(24.0)), window, cx), Some(2));
+    }));
+}
+
 
 
 #[gpui::test]

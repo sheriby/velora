@@ -26,6 +26,18 @@ pub(super) struct NormalizedCrossBlockSelection {
 }
 
 impl Editor {
+    pub(super) fn on_cursor_motion_capture<A: Action>(
+        &mut self,
+        _: &A,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cross_block_selection.is_some() || self.table_text_selection.is_some() {
+            self.clear_cross_block_selection(cx);
+        }
+        cx.propagate();
+    }
+
     fn clear_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) -> bool {
         let mut changed = false;
         for visible in self.document.visible_blocks().to_vec() {

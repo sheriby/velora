@@ -14,6 +14,27 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn review_arrow_after_cross_block_selection_deletes_only_at_caret(cx: &mut TestAppContext) {
+        // 箭头移标曾保留编辑器层选区，随后退格会删除整段旧选区。
+        init_editor_test_app(cx);
+        let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha\n\nbeta".into(), None));
+        redraw(cx);
+        cx.update(|window, cx| editor.update(cx, |editor, cx| {
+            let block = editor.document.visible_blocks()[1].entity.clone();
+            block.update(cx, |block, cx| { block.move_to(4, cx); block.focus_handle.focus(window); });
+            editor.active_entity_id = Some(block.entity_id());
+            set_selection(editor, 0, 1, 1, 4, cx);
+        }));
+        redraw(cx);
+        cx.dispatch_action(crate::components::MoveLeft);
+        redraw(cx);
+        assert!(editor.read_with(cx, |editor, _| editor.cross_block_selection.is_none()));
+        cx.dispatch_action(crate::components::DeleteBack);
+        redraw(cx);
+        assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), "alpha\n\nbea");
+    }
+
     fn redraw(cx: &mut gpui::VisualTestContext) {
         cx.update(|window, cx| window.draw(cx).clear());
         cx.run_until_parked();

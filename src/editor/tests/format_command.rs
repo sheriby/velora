@@ -7,6 +7,29 @@
 
 use super::common::*;
 
+#[gpui::test]
+async fn review_format_command_runs_through_menu_and_window_dispatch(cx: &mut TestAppContext) {
+    // 方法本身可用，但菜单白名单与全局派发均曾漏接格式化动作。
+    init_editor_test_app(cx);
+    cx.update(crate::app_menu::init);
+    for route in 0..3 {
+        let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(
+            cx, "标题\n===\n\n__强调__".into(), None,
+        ));
+        redraw(cx);
+        activate_visual_window(cx);
+        match route {
+            0 => cx.cx.update(|cx| crate::app_menu::dispatch_menu_action(&crate::components::FormatDocument, cx)),
+            1 => cx.update(|window, cx| crate::app_menu::dispatch_menu_action_for_editor(
+                &crate::components::FormatDocument, &editor.downgrade(), window, cx,
+            )),
+            _ => cx.dispatch_action(crate::components::FormatDocument),
+        }
+        cx.run_until_parked();
+        assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), "# 标题\n\n**强调**", "派发路径 {route}");
+    }
+}
+
 /// 四种「模型写法与文件写法不同」的形状挤在一份文档里。
 const LOSSY_WRITING_STYLE: &str = concat!(
     "标题甲\n",

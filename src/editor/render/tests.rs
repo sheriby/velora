@@ -14,6 +14,30 @@
     use gpui::{OwnedMenu, OwnedMenuItem};
     use uuid::Uuid;
 
+    #[gpui::test]
+    async fn review_folded_row_plan_uses_snapshot_coordinates(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| {
+            crate::theme::ThemeManager::init(cx);
+            crate::i18n::I18nManager::init(cx);
+            crate::components::init(cx);
+        });
+        let editor = cx.new(|cx| crate::editor::Editor::from_markdown(
+            cx, "## 第一节\n\n甲\n\n乙\n\n## 第二节\n\n光标行".into(), None,
+        ));
+        editor.update(cx, |editor, cx| {
+            let heading = editor.document.visible_blocks()[0].entity.clone();
+            heading.update(cx, |block, _| block.folded = true);
+            let kept = editor.apply_heading_fold_filter(cx);
+            assert_eq!(kept, vec![0, 3, 4]);
+            let plan = editor.build_rendered_row_plan(&kept, 0, 0, 0, true, 4.0, 5, cx);
+            // 焦点与专注模式使用快照坐标，行计划不能换成折叠后的序号。
+            assert_eq!(plan.visible_starts, vec![0, 3, 4]);
+            let row = plan.rows.last().unwrap();
+            assert_eq!(focus_mode_row_opacity(true, Some(4), row.visible_start, row.visible_start + 1), 1.0);
+        });
+    }
+
     fn disabled_menu_action(name: &str) -> OwnedMenuItem {
         OwnedMenuItem::Action {
             name: name.into(),

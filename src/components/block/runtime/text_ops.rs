@@ -388,7 +388,9 @@ impl Block {
                 Ok(idx) | Err(idx) => idx,
             };
 
-        let flat_offset = ranges[target_line_idx].start + target_offset_in_line;
+        let flat_offset = crate::components::markdown::inline::clamp_to_char_boundary(
+            text, ranges[target_line_idx].start + target_offset_in_line,
+        );
         self.move_to_with_preferred_x(flat_offset, Some(preferred_x), cx);
         true
     }
@@ -430,7 +432,9 @@ impl Block {
         {
             Ok(idx) | Err(idx) => idx,
         };
-        ranges[target_line_idx].start + offset_in_line
+        crate::components::markdown::inline::clamp_to_char_boundary(
+            text, ranges[target_line_idx].start + offset_in_line,
+        )
     }
 
     pub fn move_to_with_preferred_x(

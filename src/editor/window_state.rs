@@ -10,6 +10,19 @@ use crate::file_url::percent_decode_or_raw;
 const COLD_RUN_MAX_ROWS: usize = 12;
 
 impl Editor {
+    pub(super) fn on_registered_menu_action<A: Action>(
+        &mut self,
+        action: &A,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(handler) = crate::app_menu::editor_menu_handler(action) {
+            handler(self, window, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
     pub(super) fn scrollbar_geometry(
         viewport_height: f32,
         max_scroll_y: f32,
