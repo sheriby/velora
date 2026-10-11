@@ -1,6 +1,21 @@
 use super::common::*;
 
 #[gpui::test]
+async fn review_footnote_references_inside_table_cells_resolve(cx: &mut TestAppContext) {
+    // 表格格子不在可见块树内，脚注注册表曾漏扫它们。
+    let source = "| [^a] |\n| --- |\n| [^a] |\n\n[^a]: 注释";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+    editor.read_with(cx, |editor, cx| {
+        let runtime = editor.document.first_root().unwrap().read(cx).table_runtime.as_ref().unwrap().clone();
+        for cell in [&runtime.header[0], &runtime.rows[0][0]] {
+            let block = cell.read(cx);
+            assert_eq!(block.inline_footnote_hit_at(0).map(|hit| hit.ordinal), Some(1));
+            assert_eq!(block.display_text(), "¹");
+        }
+    });
+}
+
+#[gpui::test]
 async fn root_level_footnotes_number_by_first_reference_and_render_in_place(
     cx: &mut TestAppContext,
 ) {

@@ -1907,7 +1907,7 @@ fn table_row_container_prefix(line: &str) -> usize {
 ///
 /// 用的是量格子同一把尺（`table_row_slots`：转义的 `|` 不算列分隔），所以表头里的
 /// 写法不会把定界行看成别的行。
-fn is_table_delimiter_slots(line: &str, columns: usize) -> bool {
+pub(super) fn is_table_delimiter_slots(line: &str, columns: usize) -> bool {
     let slots = table_row_slots(line);
     slots.len() == columns
         && slots.iter().all(|slot| {

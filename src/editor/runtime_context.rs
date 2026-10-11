@@ -153,18 +153,31 @@ impl Editor {
         });
     }
 
+    fn editable_blocks_in_document_order(&self, cx: &App) -> Vec<Entity<Block>> {
+        let mut blocks = Vec::new();
+        for visible in self.document.visible_blocks() {
+            blocks.push(visible.entity.clone());
+            let block = visible.entity.read(cx);
+            if block.kind() == BlockKind::Table && let Some(runtime) = &block.table_runtime {
+                blocks.extend(runtime.header.iter().cloned());
+                blocks.extend(runtime.rows.iter().flatten().cloned());
+            }
+        }
+        blocks
+    }
+
     pub(super) fn rebuild_footnote_registry(&mut self, cx: &App) {
         let mut definitions = HashMap::new();
-        let visible = self.document.visible_blocks().to_vec();
-        for visible_block in &visible {
-            let block = visible_block.entity.read(cx);
+        let entities = self.editable_blocks_in_document_order(cx);
+        for entity in &entities {
+            let block = entity.read(cx);
             if block.kind() != BlockKind::FootnoteDefinition {
                 continue;
             }
 
             let allow_definition = self
                 .document
-                .find_block_location(visible_block.entity.entity_id())
+                .find_block_location(entity.entity_id())
                 .is_some_and(|location| {
                     location.parent.is_none()
                         || location
@@ -178,7 +191,7 @@ impl Editor {
 
             definitions
                 .entry(block.record.title.visible_text().to_string())
-                .or_insert(visible_block.entity.entity_id());
+                .or_insert(entity.entity_id());
         }
 
         let mut bindings = HashMap::<String, FootnoteDefinitionBinding>::new();
@@ -196,8 +209,8 @@ impl Editor {
         let mut next_ordinal = 1usize;
         let mut occurrence_index = 0usize;
         let mut block_occurrences = HashMap::<uuid::Uuid, Vec<FootnoteResolvedOccurrence>>::new();
-        for visible_block in visible {
-            let block = visible_block.entity.read(cx);
+        for entity in entities {
+            let block = entity.read(cx);
             let block_id = block.record.id;
             for fragment in &block.record.title.fragments {
                 let Some(footnote) = fragment.footnote.as_ref() else {
@@ -210,7 +223,7 @@ impl Editor {
                     }
                     if binding.first_reference.is_none() {
                         binding.first_reference = Some(FootnoteReferenceLocation {
-                            entity_id: visible_block.entity.entity_id(),
+                            entity_id: entity.entity_id(),
                             occurrence_index,
                         });
                     }
@@ -251,42 +264,15 @@ impl Editor {
         self.link_reference_definitions = Arc::new(parse_link_reference_definitions(&markdown));
         self.rebuild_footnote_registry(cx);
         self.runtime_context_sensitive_blocks.clear();
-        let visible = self.document.visible_blocks().to_vec();
-        for visible_block in visible {
-            let is_sensitive = visible_block.entity.read_with(cx, |block, _cx| {
+        for entity in self.editable_blocks_in_document_order(cx) {
+            let is_sensitive = entity.read_with(cx, |block, _cx| {
                 Self::block_may_change_document_references(block)
             });
             if is_sensitive {
                 self.runtime_context_sensitive_blocks
-                    .insert(visible_block.entity.entity_id());
+                    .insert(entity.entity_id());
             }
-            self.sync_runtime_context_for_block(&visible_block.entity, base_dir.as_deref(), cx);
-            if visible_block.entity.read(cx).kind() != BlockKind::Table {
-                continue;
-            }
-            let Some(runtime) = visible_block.entity.read(cx).table_runtime.clone() else {
-                continue;
-            };
-            for cell in runtime.header {
-                if cell.read_with(cx, |block, _cx| {
-                    Self::block_may_change_document_references(block)
-                }) {
-                    self.runtime_context_sensitive_blocks
-                        .insert(cell.entity_id());
-                }
-                self.sync_runtime_context_for_block(&cell, base_dir.as_deref(), cx);
-            }
-            for row in runtime.rows {
-                for cell in row {
-                    if cell.read_with(cx, |block, _cx| {
-                        Self::block_may_change_document_references(block)
-                    }) {
-                        self.runtime_context_sensitive_blocks
-                            .insert(cell.entity_id());
-                    }
-                    self.sync_runtime_context_for_block(&cell, base_dir.as_deref(), cx);
-                }
-            }
+            self.sync_runtime_context_for_block(&entity, base_dir.as_deref(), cx);
         }
     }
 

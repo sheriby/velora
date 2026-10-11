@@ -106,8 +106,7 @@ impl Editor {
     /// 在表尾加了一行。文件里表格的一行就是文本的一行，所以按最后一行的骨架补一行
     /// （把每格内容换成等长空白），列宽与对齐写法原样留着。
     ///
-    /// 返回 `false` 表示这行插不出来：表没有自己的区间（挂在容器里）、行里数出的
-    /// 竖线跟列数对不上（单元格里有转义竖线），那种情况交回整块写。
+    /// 返回 `false` 表示表没有自己的区间，或源码槽位与列数不一致。
     fn write_back_table_row_insertion(
         &mut self,
         table_block: &Entity<Block>,
@@ -128,21 +127,19 @@ impl Editor {
         let Some((last_row_line, last_row_text)) = self.table_source_lines(&span).pop() else {
             return false;
         };
-        // 竖线数对不上列数，说明格子里有转义竖线，骨架算不准。
-        if last_row_text.chars().filter(|character| *character == '|').count() != columns + 1 {
+        let slots = table_row_slots(&last_row_text);
+        if slots.len() != columns {
             return false;
         }
-        let new_row = last_row_text
-            .split('|')
-            .map(|segment| {
-                if segment.chars().all(|character| character.is_whitespace()) {
-                    segment.to_string()
-                } else {
-                    " ".repeat(segment.chars().count())
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("|");
+        let mut new_row = last_row_text.clone();
+        for slot in slots.into_iter().rev() {
+            let Some(content) = last_row_text.get(slot.clone()) else {
+                return false;
+            };
+            if !content.chars().all(char::is_whitespace) {
+                new_row.replace_range(slot, &" ".repeat(content.chars().count()));
+            }
+        }
 
         let inserted = format!("\n{new_row}");
         let offset = self.buffer.line_range(last_row_line).end;
@@ -185,7 +182,7 @@ impl Editor {
         }
         let target_line = match lines.get(row_index + 2) {
             Some((line, text))
-                if text.chars().filter(|character| *character == '|').count() == columns + 1 =>
+                if table_row_slots(text).len() == columns =>
             {
                 *line
             }
@@ -238,18 +235,24 @@ impl Editor {
         let Some((delimiter_line, delimiter_text)) = lines.get(1).cloned() else {
             return false;
         };
-        let mut cells = delimiter_text.split('|').collect::<Vec<_>>();
-        if cells.len() != columns + 2 {
+        let slots = table_row_slots(&delimiter_text);
+        if slots.len() != columns {
             return false;
         }
-        let Some(new_cell) = realigned_delimiter_cell(cells[column + 1], alignment) else {
+        let Some(slot) = slots.get(column).cloned() else {
             return false;
         };
-        if new_cell == cells[column + 1] {
+        let Some(cell) = delimiter_text.get(slot.clone()) else {
+            return false;
+        };
+        let Some(new_cell) = realigned_delimiter_cell(cell, alignment) else {
+            return false;
+        };
+        if new_cell == cell {
             return true;
         }
-        cells[column + 1] = &new_cell;
-        let new_line = cells.join("|");
+        let mut new_line = delimiter_text;
+        new_line.replace_range(slot, &new_cell);
 
         let old_line_range = self.buffer.line_range(delimiter_line);
         let applied = self.buffer.edit(old_line_range.clone(), &new_line);
@@ -538,7 +541,7 @@ impl Editor {
         let promoted_line = lines[2].0;
         let promoted_text = lines[2].1.clone();
         for text in [&header_text, &promoted_text] {
-            if text.chars().filter(|character| *character == '|').count() != columns + 1 {
+            if table_row_slots(text).len() != columns {
                 return false;
             }
         }
@@ -1455,7 +1458,7 @@ fn unescaped_pipe_offsets(line: &str) -> Vec<usize> {
 fn realigned_delimiter_cell(cell: &str, alignment: TableColumnAlignment) -> Option<String> {
     let core = cell.trim();
     let old_dashes = core.matches('-').count();
-    if old_dashes == 0 || !core.chars().all(|character| character == '-' || character == ':') {
+    if !super::source_mapping::is_table_delimiter_slots(cell, 1) {
         return None;
     }
     let (left, right) = match alignment {
@@ -1489,27 +1492,18 @@ fn realigned_delimiter_cell(cell: &str, alignment: TableColumnAlignment) -> Opti
 /// 这是量格子位置唯一的一把尺：反斜杠转义的 `|` 不算列分隔符，首尾没有外层管道符的
 /// 写法（`Name | Score`）也能量出来；外层管道符两侧那个空槽不算数据格。
 pub(crate) fn table_row_slots(line: &str) -> Vec<Range<usize>> {
-    let bytes = line.as_bytes();
     let mut slots: Vec<Range<usize>> = Vec::new();
     let mut start = 0usize;
-    let mut escaped = false;
-    for (offset, byte) in bytes.iter().enumerate() {
-        if *byte == b'\\' {
-            escaped = !escaped;
-        } else if *byte == b'|' && !escaped {
-            slots.push(start..offset);
-            start = offset + 1;
-            escaped = false;
-        } else {
-            escaped = false;
-        }
+    for offset in unescaped_pipe_offsets(line) {
+        slots.push(start..offset);
+        start = offset + 1;
     }
     slots.push(start..line.len());
-    // 外层管道符两侧什么都没有：那一格不算数据。
-    if slots.first().is_some_and(|slot| slot.is_empty()) {
+    // 外层管道符之外的缩进与填充不是单元格，字节区间仍以原行为基准。
+    if slots.first().is_some_and(|slot| line.get(slot.clone()).is_some_and(|text| text.trim().is_empty())) {
         slots.remove(0);
     }
-    if slots.last().is_some_and(|slot| slot.is_empty()) {
+    if slots.last().is_some_and(|slot| line.get(slot.clone()).is_some_and(|text| text.trim().is_empty())) {
         slots.pop();
     }
     slots

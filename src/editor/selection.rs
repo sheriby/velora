@@ -96,8 +96,11 @@ impl Editor {
 
     pub(super) fn on_cut_capture(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.table_text_selection_text(cx) {
+            if !self.replace_table_text_selection_with_text("", UndoCaptureKind::NonCoalescible, cx) {
+                cx.propagate();
+                return;
+            }
             cx.write_to_clipboard(ClipboardItem::new_string(text));
-            self.replace_table_text_selection_with_text("", UndoCaptureKind::NonCoalescible, cx);
             cx.stop_propagation();
             return;
         }
@@ -105,8 +108,11 @@ impl Editor {
             cx.propagate();
             return;
         };
+        if !self.delete_cross_block_selection(cx) {
+            cx.propagate();
+            return;
+        }
         cx.write_to_clipboard(ClipboardItem::new_string(markdown));
-        self.delete_cross_block_selection(cx);
         cx.stop_propagation();
     }
 
@@ -813,8 +819,8 @@ impl Editor {
         }
 
         // Fall back to a single block with a non-collapsed selection range.
-        for visible in self.document.visible_blocks() {
-            let block = visible.entity.read_untracked(cx);
+        for entity in self.single_block_selection_candidates() {
+            let block = entity.read_untracked(cx);
             if block.selected_range.is_empty() {
                 continue;
             }
@@ -846,8 +852,8 @@ impl Editor {
         // Fall back to a single block with a non-collapsed selection range.
         // P7：untracked 读——每帧全文档扫描时跳过 accessed 集合插入
         // （160k 块 × ~0.2µs 的纯追踪开销曾是稳态帧的大头）。
-        for visible in self.document.visible_blocks() {
-            let block = visible.entity.read_untracked(cx);
+        for entity in self.single_block_selection_candidates() {
+            let block = entity.read_untracked(cx);
             if block.selected_range.is_empty() {
                 continue;
             }
@@ -862,6 +868,13 @@ impl Editor {
         }
 
         None
+    }
+
+    fn single_block_selection_candidates(&self) -> impl Iterator<Item = &Entity<Block>> {
+        self.active_entity_id
+            .and_then(|id| self.table_cells.get(&id).map(|binding| &binding.cell))
+            .into_iter()
+            .chain(self.document.visible_blocks().iter().map(|visible| &visible.entity))
     }
 }
 

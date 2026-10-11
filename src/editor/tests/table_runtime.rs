@@ -2,6 +2,45 @@ use super::common::*;
 use gpui::{Div, IntoElement, Render, Stateful, Styled};
 
 #[gpui::test]
+async fn review_indented_table_insertion_preserves_outer_padding(cx: &mut TestAppContext) {
+    // 外层管道符之外的缩进不是单元格，结构编辑不能因此退回整表重拼。
+    let source = "   | A    | B    |  \n   |:-----|-----:|  \n   | a\\|b | c    |  ";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        assert_eq!(table.read(cx).kind(), BlockKind::Table);
+        editor.append_table_row(&table, cx);
+        assert!(editor.buffer.text().starts_with(source));
+    });
+}
+
+#[gpui::test]
+async fn review_table_structure_edits_preserve_escaped_pipes_and_padding(cx: &mut TestAppContext) {
+    // 转义竖线曾触发整表重拼，连未编辑行的列宽与对齐写法也被改掉。
+    let source = "| A    | B     |\n|:-----|------:|\n| a\\|b | 中文   |\n| c\\|d | e     |";
+    for operation in 0..3 {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+        editor.update(cx, |editor, cx| {
+            let table = editor.document.first_root().unwrap().clone();
+            match operation {
+                0 => {
+                    editor.append_table_row(&table, cx);
+                    assert!(editor.buffer.text().starts_with(source));
+                }
+                1 => {
+                    editor.delete_table_row(&table, 0, cx);
+                    assert_eq!(editor.buffer.text(), "| A    | B     |\n|:-----|------:|\n| c\\|d | e     |");
+                }
+                _ => {
+                    editor.delete_table_header_row(&table, cx);
+                    assert_eq!(editor.buffer.text(), "| a\\|b | 中文   |\n|:-----|------:|\n| c\\|d | e     |");
+                }
+            }
+        });
+    }
+}
+
+#[gpui::test]
 async fn code_and_table_panels_use_95_percent_of_the_visible_content_width(
     cx: &mut TestAppContext,
 ) {

@@ -332,6 +332,7 @@ impl Editor {
         let mut ranges = Vec::new();
         for (_, cell, range) in cells {
             let Some(mapping) = self.source_mapping_for_entity(cell.entity_id(), cx) else {
+                eprintln!("无法修改表格选区：单元格 {:?} 缺少源码映射", cell.entity_id());
                 return None;
             };
             let Some(start) = self.mapping_source_range_endpoint(&mapping, range.start, false, cx)

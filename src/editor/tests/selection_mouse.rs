@@ -4,6 +4,45 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn review_cut_keeps_clipboard_when_table_deletion_has_no_mapping(cx: &mut TestAppContext) {
+    // 映射不可用时剪切应保留文档与剪贴板，旧路径先复制再忽略删除失败。
+    init_editor_test_app(cx);
+    let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        editor.table_text_selection = Some(TableTextSelection {
+            table_block_id: table.entity_id(),
+            anchor: TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 0 },
+            focus: TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 2 },
+        });
+        editor.document.clear_source_span(table.entity_id());
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("保留".into()));
+        editor.on_cut_capture(&crate::components::Cut, window, cx);
+        assert_eq!(editor.buffer.text(), source);
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("保留"));
+    }));
+}
+
+#[gpui::test]
+async fn review_copy_inside_one_table_cell_uses_only_selected_text(cx: &mut TestAppContext) {
+    // 格内选区曾不参与选区读取，复制为 Markdown 因而退回整篇文档。
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(
+        cx, "| alpha 其他 |\n| --- |\n| 正文 |".into(), None,
+    ));
+    editor.update(cx, |editor, cx| {
+        let cell = editor.document.first_root().unwrap().read(cx).table_runtime.as_ref().unwrap().header[0].clone();
+        cell.update(cx, |cell, _| cell.selected_range = 0..5);
+        editor.active_entity_id = Some(cell.entity_id());
+        assert_eq!(editor.selected_visible_text(cx).as_deref(), Some("alpha"));
+        assert_eq!(editor.selected_markdown_text(cx).as_deref(), Some("alpha"));
+        assert!(editor.copy_as_markdown(cx));
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("alpha"));
+    });
+}
+
+#[gpui::test]
 async fn dragging_inside_a_rendered_code_block_does_not_panic(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     // 用户报修：在一篇长 markdown（含多个 fence）里，把鼠标放到 ``​`text`` 代码块内部
