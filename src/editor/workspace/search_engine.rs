@@ -182,12 +182,25 @@ impl CompiledQuery {
             for range in fuzzy_subsequence_ranges(line, query) {
                 // 子序列匹配天生不切字符，但和引擎那条出口规矩保持一致，一律核对。
                 let absolute_range = (absolute + range.start)..(absolute + range.end);
-                if CompiledQuery::is_on_char_boundary(haystack, &absolute_range) {
-                    hits.push(SearchHit {
-                        range: absolute_range,
-                        line: Some(line_number as u64),
-                    });
+                if !CompiledQuery::is_on_char_boundary(haystack, &absolute_range) {
+                    continue;
                 }
+                // 出口 normalize：起点升序生成时只与上一条留用项比一次，
+                // 被它整段盖住的（`ab` 对 `aab` 同时给 0..3 与 1..3）不进表——
+                // 「从后往前替换」的前提靠它成立。
+                if hits
+                    .last()
+                    .is_some_and(|last: &SearchHit| {
+                        absolute_range.start >= last.range.start
+                            && absolute_range.end <= last.range.end
+                    })
+                {
+                    continue;
+                }
+                hits.push(SearchHit {
+                    range: absolute_range,
+                    line: Some(line_number as u64),
+                });
             }
             absolute += raw_line.len();
         }

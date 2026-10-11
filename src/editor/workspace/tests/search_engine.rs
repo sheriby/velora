@@ -669,3 +669,28 @@ fn a_zero_width_match_on_a_line_boundary_is_reported_once() {
     deduped.dedup();
     assert_eq!(deduped, ranges, "空行相邻的两个边界也不该重复：{ranges:?}");
 }
+
+/// 模糊命中出口不允许交出互相覆盖的区间（评审报告维度二建议 3）：`ab` 对
+/// `aab` 以前同时交出 `0..3` 与 `1..3`（`aab` 是 `ab` 的超串），「从后往前
+/// 替换」的前提被打破——先替换 0..3 后，旧的 1..3 落在错位字节上。出口处
+/// 只与上一条留用项比一次：起点升序、被上一条整段盖住的不进表。
+#[test]
+fn fuzzy_hits_exit_normalizes_covered_ranges() {
+    let query = compile(
+        "ab",
+        options(false, false, false, true),
+    );
+    let source = "先是 aab 结尾\n第二行 ab\n";
+    let ranges: Vec<Range<usize>> = query
+        .find_all(source.as_bytes())
+        .into_iter()
+        .map(|hit| hit.range)
+        .collect();
+    let first = source.find("aab").expect("aab 在第一行");
+    let second = source.rfind("ab").expect("第二行的 ab");
+    assert_eq!(
+        ranges,
+        vec![first..first + 3, second..second + 2],
+        "被上一条盖住的子序列命中不得进表（实际 {ranges:?}）"
+    );
+}
