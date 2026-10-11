@@ -259,3 +259,48 @@ async fn double_click_selects_word_at_offset(cx: &mut TestAppContext) {
     assert_eq!(select_at(19), 14..19, "点文本末尾应选中最后一个词");
     assert_eq!(select_at(1_000), 14..19, "超界偏移应收敛到最后一个词");
 }
+
+/// 后台窗口不为光标闪烁（评审报告维度四建议 11）：`is_focused` 判不出窗口已不是
+/// key window（macOS 红绿灯变灰时 gpui 不清 window.focus），只看焦点时后台窗口
+/// 的 33ms 闪烁任务每拍 `cx.notify()`，前台线程持续全块重绘。闪烁开关要同时看
+/// `window.is_window_active()`——公式编辑器的草稿光标（formula_editor.rs）同语义。
+#[gpui::test]
+async fn background_window_stops_the_cursor_blink_task(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::config::EditorSettings::install_test_settings(cx, true);
+    });
+    let (block, cx) = cx.add_window_view(|_, cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("正文")),
+        )
+    });
+
+    // 前置：活动窗口 + 块聚焦，闪烁任务在跑。测试窗口默认失活，先显式激活。
+    cx.update(|window, cx| {
+        window.activate_window();
+        let handle = block.read(cx).focus_handle.clone();
+        window.focus(&handle);
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    assert!(
+        block.read_with(cx, |block, _| block.cursor_blink_task.is_some()),
+        "活动窗口 + 聚焦时闪烁任务应在跑"
+    );
+
+    // 窗口失活（用户切到别的应用/窗口）：闪烁任务必须停。
+    cx.deactivate_window();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+    assert!(
+        block.read_with(cx, |block, _| block.cursor_blink_task.is_none()),
+        "后台窗口不应保留光标闪烁任务（每 33ms 一次 notify 重绘）"
+    );
+}

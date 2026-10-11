@@ -21,7 +21,11 @@ impl Render for Block {
 
         let focused = self.focus_handle.is_focused(window);
         let code_language_focused = self.code_language_focus_handle.is_focused(window);
-        let input_active = focused || code_language_focused;
+        // 输入态（含 33ms 光标闪烁任务）还要求窗口是活动窗口：gpui 的 `is_focused`
+        // 判不出窗口已不是 key window（macOS 红绿灯变灰时 window.focus 不清零），
+        // 只看焦点时后台窗口持续闪烁、前台线程每拍全块重绘；公式编辑器的草稿
+        // 光标（formula_editor.rs）同一条语义。
+        let input_active = (focused || code_language_focused) && window.is_window_active();
         if self.sync_image_focus_state(focused) {
             cx.notify();
         }
@@ -182,9 +186,12 @@ impl Render for Block {
                         BlockKind::HtmlBlock | BlockKind::MathBlock | BlockKind::MermaidBlock
                     ))
         {
-            if focused && self.cursor_blink_task.is_none() {
+            // 闪烁开关同上一处：焦点之外还要窗口是活动窗口；分支选择本身仍只看
+            // 焦点——后台化不能改变这里渲染哪种元素树。
+            let blink_active = focused && window.is_window_active();
+            if blink_active && self.cursor_blink_task.is_none() {
                 self.start_cursor_blink(cx);
-            } else if !focused && self.cursor_blink_task.is_some() {
+            } else if !blink_active && self.cursor_blink_task.is_some() {
                 self.cursor_blink_task = None;
             }
             // 行号视图（源码文档分块）与代码块一样用等宽字体和代码字号：
