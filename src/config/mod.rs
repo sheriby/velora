@@ -24,8 +24,10 @@ pub(crate) use preferences::{
 };
 pub(crate) use recovery::{
     RecoverySnapshot, read_recovery_snapshots, remove_recovery_snapshot, save_recovery_snapshot,
-    save_recovery_snapshot_with_dir,
 };
+/// 测试专用（权限用例往临时目录写快照）：非测试构建没人用，门住别出警告。
+#[cfg(test)]
+pub(crate) use recovery::save_recovery_snapshot_with_dir;
 pub(crate) use session::{SessionState, read_session, save_session};
 
 /// 配置目录里落盘的文件一律收成 0600（Unix）：同目录还有 recovery/*.json（未保存
