@@ -642,6 +642,7 @@ impl Render for Editor {
 
         let content_area = div()
             .id("editor-scroll")
+            .debug_selector(|| "editor-scroll".to_string())
             .w_full()
             .h_full()
             .flex_1()
@@ -721,10 +722,30 @@ impl Render for Editor {
         };
 
         let content_area = content_area.into_any_element();
+        // 浮层叠在正文上而不是顶替它：以前这里直接把 content_area 换成浮层，
+        // 背后的文档整块消失（⌘P / ⇧⌘P 一开就是一块灰板）。
         let content_area = if self.quick_open.is_some() {
-            self.render_quick_open_overlay(&theme, cx)
+            let overlay = self.render_quick_open_overlay(&theme, cx);
+            div()
+                .relative()
+                .w_full()
+                .h_full()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(content_area)
+                .child(overlay)
+                .into_any_element()
         } else if self.command_palette.is_some() {
-            crate::editor::command_palette::render_command_palette_overlay(self, &theme, cx)
+            let overlay = crate::editor::command_palette::render_command_palette_overlay(self, &theme, cx);
+            div()
+                .relative()
+                .w_full()
+                .h_full()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(content_area)
+                .child(overlay)
+                .into_any_element()
         } else {
             content_area
         };

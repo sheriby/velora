@@ -134,6 +134,43 @@ fn assert_quick_open_result(results: &[PathBuf], expected_name: &str) {
     );
 }
 
+/// ⌘P 面板的落点：偏上居中、叠在正文上——不能把正文整块换成灰板
+/// （以前浮层顶替 content_area，后面的文档全没了，只剩遮罩的灰色）。
+#[gpui::test]
+async fn quick_open_panel_floats_top_centered_over_the_document(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "正文一行。".into(), None));
+    redraw(cx);
+    let before = cx
+        .debug_bounds("editor-scroll")
+        .expect("夹具：面板未开时正文的滚动容器应该在");
+
+    editor.update_in(cx, |editor, window, cx| editor.toggle_quick_open(window, cx));
+    redraw(cx);
+
+    let after = cx
+        .debug_bounds("editor-scroll")
+        .expect("⌘P 面板开着时正文应仍渲染在面板后面");
+    assert_eq!(
+        before, after,
+        "面板是叠上去的，正文几何不应被挤动：{before:?} -> {after:?}"
+    );
+    let overlay = cx.debug_bounds("quick-open-overlay").expect("遮罩应已绘制");
+    let panel = cx.debug_bounds("quick-open-panel").expect("面板应已绘制");
+    let overlay_center: f32 = (overlay.origin.x + overlay.size.width / 2.0).into();
+    let panel_center: f32 = (panel.origin.x + panel.size.width / 2.0).into();
+    assert!(
+        (panel_center - overlay_center).abs() <= 1.0,
+        "面板应水平居中：panel={panel:?} overlay={overlay:?}"
+    );
+    let top_offset: f32 = (panel.origin.y - overlay.origin.y).into();
+    assert!(
+        (top_offset - 64.0).abs() <= 1.0,
+        "面板应偏上（距浮层顶 64）：{top_offset}"
+    );
+}
+
 #[gpui::test]
 async fn quick_open_accepts_ime_text_for_non_ascii_file_names(cx: &mut TestAppContext) {
     // roadmap E9：⌘P 输入接 EntityInputHandler，中文文件名可直接用输入法拼写。

@@ -67,6 +67,40 @@ fn open_palette(editor: &Entity<Editor>, cx: &mut VisualTestContext) {
     redraw(cx);
 }
 
+/// ⇧⌘P 面板与 ⌘P 同一条口径：偏上居中、叠在正文上，不换掉正文、不留灰板。
+#[gpui::test]
+async fn command_palette_panel_floats_top_centered_over_the_document(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    redraw(cx);
+    let before = cx
+        .debug_bounds("editor-scroll")
+        .expect("夹具：正文的滚动容器应该在");
+
+    open_palette(&editor, cx);
+
+    let after = cx
+        .debug_bounds("editor-scroll")
+        .expect("⇧⌘P 面板开着时正文应仍渲染在面板后面");
+    assert_eq!(
+        before, after,
+        "面板是叠上去的，正文几何不应被挤动：{before:?} -> {after:?}"
+    );
+    let overlay = cx.debug_bounds("command-palette-overlay").expect("遮罩应已绘制");
+    let panel = cx.debug_bounds("command-palette-panel").expect("面板应已绘制");
+    let overlay_center: f32 = (overlay.origin.x + overlay.size.width / 2.0).into();
+    let panel_center: f32 = (panel.origin.x + panel.size.width / 2.0).into();
+    assert!(
+        (panel_center - overlay_center).abs() <= 1.0,
+        "面板应水平居中：panel={panel:?} overlay={overlay:?}"
+    );
+    let top_offset: f32 = (panel.origin.y - overlay.origin.y).into();
+    assert!(
+        (top_offset - 64.0).abs() <= 1.0,
+        "面板应偏上（距浮层顶 64）：{top_offset}"
+    );
+}
+
 /// 注册表里这条命令排第几：面板没输入查询时列的就是这份顺序，
 /// 按下标走到那一条再回车，用例不依赖界面语言。
 fn registry_index(id: &str) -> usize {

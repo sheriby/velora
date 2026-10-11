@@ -235,13 +235,17 @@ pub(super) fn render_command_palette_overlay(
 
     div()
         .id("command-palette-overlay")
+        .debug_selector(|| "command-palette-overlay".into())
         .absolute()
         .top_0()
         .left_0()
         .right_0()
         .bottom_0()
         .occlude()
-        .bg(c.dialog_backdrop)
+        .flex()
+        .flex_col()
+        .items_center()
+        .pt(px(64.0))
         .on_mouse_down(MouseButton::Left, {
             let editor_handle = editor_handle.clone();
             move |_, _, cx| {
@@ -251,12 +255,9 @@ pub(super) fn render_command_palette_overlay(
         .child(
             div()
                 .id("command-palette-panel")
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(px(64.0))
+                .debug_selector(|| "command-palette-panel".into())
+                .w_full()
                 .max_w(px(560.0))
-                .mx_auto()
                 .flex()
                 .flex_col()
                 .p(px(8.0))

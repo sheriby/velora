@@ -138,7 +138,10 @@ impl Editor {
             .right_0()
             .bottom_0()
             .occlude()
-            .bg(c.dialog_backdrop)
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt(px(64.0))
             .on_mouse_down(MouseButton::Left, {
                 let editor = cx.entity().downgrade();
                 move |_, _, cx| {
@@ -148,17 +151,13 @@ impl Editor {
             .child(
                 div()
                     .id("quick-open-panel")
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .top(px(64.0))
-                    .mx(px(d.editor_padding * 2.0))
+                    .debug_selector(|| "quick-open-panel".into())
+                    .w_full()
                     .max_w(px(560.0))
                     .flex()
                     .flex_col()
                     .p(px(8.0))
                     .gap(px(4.0))
-                    .mx_auto()
                     .bg(c.dialog_surface)
                     .border(px(d.dialog_border_width))
                     .border_color(c.dialog_border)
