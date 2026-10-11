@@ -12,6 +12,9 @@ impl Block {
 
     pub(crate) fn convert_to_paragraph(&mut self, cx: &mut Context<Self>) {
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
+        if self.record.kind.is_code_block() {
+            self.record.clear_code_family_books();
+        }
         self.record.kind = BlockKind::Paragraph;
         self.record.raw_fallback = None;
         self.quote_reparse_requested = false;
@@ -66,10 +69,7 @@ impl Block {
             self.record.list_marker = marker;
         }
         if !next.is_code_block() {
-            // 换出代码块那一族：围栏行与「文件里本来是四格缩进」这两本账跟着清，
-            // 留着的话下一次序列化还会按代码块的形状写（把正文包进围栏、或补回缩进）。
-            self.record.code_is_indented = false;
-            self.record.source_fence_lines = None;
+            self.record.clear_code_family_books();
         }
         self.record.kind = next;
         self.record.raw_fallback = None;
@@ -87,6 +87,7 @@ impl Block {
     ) {
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
         self.clear_inline_projection();
+        self.record.clear_code_family_books();
         self.record.kind = BlockKind::CodeBlock { language };
         self.record.raw_fallback = None;
         self.record.set_title(InlineTextTree::plain(String::new()));

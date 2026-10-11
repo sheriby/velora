@@ -341,3 +341,60 @@ async fn unchanged_text_reuses_the_same_layout_arc_across_frames(cx: &mut TestAp
         "文本未变的两帧应共用同一份布局（只 bump 引用计数，不深拷 Vec）"
     );
 }
+
+/// 换出/换进代码块的两条旁路入口也要清「代码族账本」（评审报告维度二建议
+/// 12）：`convert_to_paragraph` 与 `enter_code_block` 直改 `record.kind`，
+/// `code_is_indented`/`source_fence_lines` 留着的话，下一次序列化仍按旧
+/// 形状落笔——缩进代码退回正文再敲 ``` 回车，刚打的围栏会被缩进账吃掉。
+/// `set_kind_in_place` 早已清这两本账，三个入口必须同一口径。
+#[gpui::test]
+async fn code_kind_side_entries_clear_the_code_family_books(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+
+    // 缩进代码 → 正文 → 围栏：账必须清干净。
+    let block = cx.new(|cx| {
+        let mut block = Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::CodeBlock { language: None },
+                InlineTextTree::plain("缩进正文"),
+            ),
+        );
+        block.record.code_is_indented = true;
+        block
+    });
+    block.update(cx, |block, cx| {
+        block.convert_to_paragraph(cx);
+        block.enter_code_block(None, cx);
+    });
+    block.read_with(cx, |block, _cx| {
+        assert!(
+            !block.record.code_is_indented && block.record.source_fence_lines.is_none(),
+            "缩进/围栏两本账必须清掉（code_is_indented={}, fence={:?}），否则写回按旧形状落笔",
+            block.record.code_is_indented,
+            block.record.source_fence_lines
+        );
+    });
+
+    // 围栏代码 → 正文：同样不许留账。
+    let block = cx.new(|cx| {
+        let mut block = Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::CodeBlock { language: Some("rust".into()) },
+                InlineTextTree::plain("fn main() {}"),
+            ),
+        );
+        block.record.source_fence_lines = Some((0, 2));
+        block
+    });
+    block.update(cx, |block, cx| {
+        block.convert_to_paragraph(cx);
+    });
+    block.read_with(cx, |block, _cx| {
+        assert!(
+            !block.record.code_is_indented && block.record.source_fence_lines.is_none(),
+            "换出代码块后不得留围栏账"
+        );
+    });
+}

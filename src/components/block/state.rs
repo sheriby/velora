@@ -669,6 +669,15 @@ pub struct BlockRecord {
 }
 
 impl BlockRecord {
+    /// 清掉「代码族」两本账：围栏行范围与「文件里本来是四格缩进」。换出代码
+    /// 块的**所有**入口（set_kind_in_place、convert_to_paragraph、
+    /// enter_code_block）都必须走这一处——留着的话下一次序列化仍按代码族
+    /// 形状落笔（正文被包回围栏、或补回缩进），用户刚打的 ``` 会被吃掉。
+    pub(crate) fn clear_code_family_books(&mut self) {
+        self.code_is_indented = false;
+        self.source_fence_lines = None;
+    }
+
     pub fn new(kind: BlockKind, title: InlineTextTree) -> Self {
         let mut record = Self {
             id: Uuid::new_v4(),
