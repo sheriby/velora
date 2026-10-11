@@ -64,7 +64,7 @@
 
     #[test]
     fn serialize_round_trips_the_original_bytes_for_literal_markers() {
-        // 回归（用户报修 2026-10-05：搜索跳转高亮错位一个字符）：裸的 `~`/`*`/
+        // 回归（报修 2026-10-05：搜索跳转高亮错位一个字符）：裸的 `~`/`*`/
         // 反引号不许被洗成 `\~`/`\*`/`\``——多出的反斜杠让块 markdown 与缓冲区
         // 字节错位，命中换算整体漂移。逐条断言：parse∘serialize == 恒等。
         for text in [
@@ -131,8 +131,7 @@
         assert!(InlineTextTree::from_markdown("alpha $x$ beta").has_mixed_inline_visuals());
         assert!(InlineTextTree::from_markdown("alpha^sup^ beta").has_mixed_inline_visuals());
         assert!(InlineTextTree::from_markdown("alpha ![a](b.png) beta").has_mixed_inline_visuals());
-        // 代码段内部不解析任何 Markdown：这里的 `![` 只是字面文本（用户报修：
-        // 表格单元格里被反引号包住的图片语法渲染成了「无法加载图片」占位框）。
+        // 代码段内部不解析任何 Markdown：这里的 `![` 只是字面文本。
         assert!(
             !InlineTextTree::from_markdown("源码 `![alt](path){width=NN%}`，100%")
                 .has_mixed_inline_visuals(),

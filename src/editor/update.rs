@@ -143,8 +143,7 @@ impl Editor {
             return;
         }
         cx.update_global::<UpdateSession, _>(|session, _| session.startup_checked = true);
-        // 开机路径一律不打扰用户：上次安装留下的失败原因只进日志（用户报修：连不上
-        // GitHub 的机器每次启动都被「更新失败」拦一下）。用户自己点的路径另说。
+        // 开机路径一律不打扰用户：上次安装留下的失败原因只进日志。用户自己点的路径另说。
         match update_check::take_install_error() {
             Ok(Some(detail)) => {
                 eprintln!("上次更新安装失败：{detail}");
@@ -248,8 +247,7 @@ impl Editor {
                 self.show_message_modal(strings.update_up_to_date_title, detail, cx);
             }
             Ok(UpdateCheckResult::UpToDate(_)) => {}
-            // 自动检查失败静默，只记日志（用户报修：连不上 GitHub 的机器每次启动都弹
-            // 一次「更新失败」）；手动检查是用户自己问的，要回话。
+            // 自动检查失败静默，只记日志；手动检查是用户自己问的，要回话。
             Err(error) if manual => self.show_update_failure(&error.to_string(), cx),
             Err(error) => eprintln!("检查更新失败（自动检查，不打扰用户）：{error}"),
         }
@@ -671,9 +669,8 @@ mod tests {
         drop(editor);
     }
 
-    /// 自动检查更新失败必须静默：用户报修——连不上 GitHub 的机器每次启动都弹一次
-    /// 「更新失败」，关掉下次启动还来，很打扰人。手动点「检查更新」失败仍然要说一声：
-    /// 那是用户自己问的，静默等于点了没反应。
+    /// 自动检查更新失败必须静默：连不上 GitHub 的机器不该在每次启动时被「更新失败」
+    /// 打扰。手动点「检查更新」失败仍然要说一声：那是用户自己问的，静默等于点了没反应。
     #[gpui::test]
     async fn automatic_update_check_failures_are_silent_while_manual_ones_speak(
         cx: &mut TestAppContext,

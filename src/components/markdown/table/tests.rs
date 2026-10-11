@@ -8,7 +8,7 @@ mod tests {
     use crate::components::InlineTextTree;
     use gpui::{AppContext, Hsla, SharedString, TestAppContext, TextRun, font, px, rgba};
 
-    /// 用户报修场景的端到端不变量：水位法钉住的列，必须放得下按「渲染格式」
+    /// 端到端不变量：水位法钉住的列，必须放得下按「渲染格式」
     /// （行内代码换 code 字体族/字号、渲染期水平间距）排出来的最长行。
     /// 测量端任何与渲染端的管线错位（曾经先后漏掉：写作列宽上限、渲染间距、
     /// code 字体族）都会在这里以 mid-word 折行暴露。
@@ -30,7 +30,7 @@ mod tests {
 
             for source in documents {
                 let lines: Vec<String> = source.lines().map(str::to_string).collect();
-                let table = parse_table_region(&lines).expect("用户报修表格应能解析");
+                let table = parse_table_region(&lines).expect("表格语料应能解析");
                 let layout = TableColumnLayout::measure(&table, table_width, window, &theme, cx);
                 let preferred = measure_preferred_column_widths(&table, window, &theme, &fonts, true);
                 let chrome = cell_chrome_width(&theme);
@@ -322,8 +322,8 @@ mod tests {
 
     #[test]
     fn cell_splitting_keeps_code_span_and_math_backslashes_literal() {
-        // 用户报修（cases/02-table-code.md、cases/02-table-math.md）：切分单元格时
-        // 对 `\\`/`\|` 做了一次无条件反转义——那是发生在「还不知道这段文字是不是
+        // 切分单元格时曾对 `\\`/`\|` 做无条件反转义（cases/02-table-code.md、
+        // cases/02-table-math.md）：那是发生在「还不知道这段文字是不是
         // 代码段/公式」之前的预处理，把 `a\\b` 显示成 `a\b`、把 `$a\|b$` 的转义竖线
         // 洗成裸竖线，改了文档的意思。切分必须尊重 markdown 上下文，反转义留给
         // 单元格自己的行内解析。
@@ -388,8 +388,8 @@ mod tests {
 
     #[test]
     fn table_cell_br_renders_line_break_not_an_underlined_tag_name() {
-        // 用户报修（cases/11-table-br.md，见 screenshots/11-table-br.png）：
-        // 单元格里的 `first<br>second` 渲染成带下划线的 "br"。期望：真正断行、
+        // （cases/11-table-br.md，见 screenshots/11-table-br.png）单元格里的
+        // `first<br>second` 曾渲染成带下划线的 "br"；期望：真正断行、
         // 无下划线、无字面标签名，保存仍是 `<br>` 写法。
         let lines = vec![
             "| Item | Lines |".to_string(),
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn narrow_column_does_not_steal_the_average_share() {
-        // 用户报修：一列内容很短、另外两列内容装不下时，短的列不该拿到平均份额
+        // 一列内容很短、另外两列内容装不下时，短的列不该拿到平均份额
         // （1000/3≈333），而应该只拿「内容宽 + 一点点」，腾出的空间给宽列。
         let layout =
             TableColumnLayout::from_preferred_widths(&[60.0, 500.0, 500.0], 1000.0, 60.0);
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn wide_cell_does_not_squeeze_narrow_columns() {
-        // 用户报修：最后一列内容极长的 5 列表格，前三列被挤成几个字符。列宽应该
+        // 最后一列内容极长的 5 列表格，不许把前三列挤成几个字符。列宽应该
         // 先满足内容少的列，剩下的空间才归长列。
         let layout = TableColumnLayout::from_preferred_widths(
             &[260.0, 60.0, 150.0, 60.0, 3000.0],

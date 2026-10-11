@@ -280,7 +280,7 @@ impl Editor {
                     .spawn(async move {
                         for document in documents_for_write {
                             // 失败时把真正出问题的文件路径一起带回去：冲突要记在
-                            // 那个文件上，而不是第一个有路径的标签（用户报修）。
+                            // 那个文件上，而不是第一个有路径的标签。
                             let failing_path = document.path.clone();
                             crate::config::save_recovery_snapshot(&document.recovery)
                                 .map_err(|error| (failing_path.clone(), error))?;

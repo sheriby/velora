@@ -143,7 +143,7 @@ impl Editor {
 
         // 右下角的模式切换按钮（用户需求：阅读时长信息换成源码切换）。
         // 普通文本/代码文件与无法渲染的 markdown 没有渲染视图可切，不显示
-        // （用户报修：纯文本文件右下角不该有源码图标）。
+        // （纯文本文件右下角不该有源码图标）。
         if !(self.code_document
             || self.source_mode_fallback_required
             || self.image_preview.is_some())

@@ -56,7 +56,7 @@ impl Block {
     ///
     /// 松列表 `- xx` / 空行 / `- xx` 里，空行块原本占「一行高（约 27px）+ 上下
     /// padding（8px）」= 35px，加上相邻块间距就是 47px，比正文一行还高，看着就是
-    /// 一个巨大的空行（用户报修）。收窄后空行只贡献一个 `block_gap`，松列表项目
+    /// 一个巨大的空行。收窄后空行只贡献一个 `block_gap`，松列表项目
     /// 之间是正常的段间距。聚焦后恢复整行高度，否则光标和输入框看不见。
     pub(crate) fn collapses_to_blank_gap(&self, focused: bool, source_mode: bool) -> bool {
         !focused

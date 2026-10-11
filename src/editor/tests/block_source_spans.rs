@@ -1462,8 +1462,7 @@ async fn source_mode_newline_block_gets_markdown_highlight(cx: &mut TestAppConte
 
 /// 源码模式一行的行距必须等于行计划的估算值（`block_min_height`）。两者不一致
 /// 时每行差几像素，几十行累计成漂移，虚拟滚动按漂移后的位置决定挂载哪些行，
-/// 于是屏幕上那几行根本没被挂载——表现就是「空白行不显示行号」（用户报修：
-/// 一直按回车，中间十几行没有行号）。
+/// 于是屏幕上那几行根本没被挂载——表现就是「空白行不显示行号」。
 #[gpui::test]
 async fn source_mode_row_pitch_matches_the_plan_estimate(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

@@ -241,7 +241,7 @@ pub(crate) fn parse_table_cell_inline_images(markdown: &str) -> Vec<TableCellInl
 
     while cursor < markdown.len() {
         // 行内代码里的 `![alt](src)` 是字面文本：CommonMark 不解析代码段内部的
-        // 语法，整段直接跳过（用户报修：表格单元格里被反引号包住的图片语法
+        // 语法，整段直接跳过（此前表格单元格里被反引号包住的图片语法
         // 渲染成了「无法加载图片」占位框）。
         if markdown.as_bytes()[cursor] == b'`'
             && !is_escaped(markdown, cursor)

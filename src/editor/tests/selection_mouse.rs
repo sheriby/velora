@@ -73,8 +73,8 @@ async fn review_copy_inside_one_table_cell_uses_only_selected_text(cx: &mut Test
 #[gpui::test]
 async fn dragging_inside_a_rendered_code_block_does_not_panic(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    // 用户报修：在一篇长 markdown（含多个 fence）里，把鼠标放到 ``​`text`` 代码块内部
-    // 按住拖动选中时 coredump。这里用同构文档真实模拟。
+    // 在一篇长 markdown（含多个 fence）里，把鼠标放到 ``​`text`` 代码块内部
+    // 按住拖动选中曾导致 coredump。这里用同构文档真实模拟。
     let markdown = r#"# 基于 opencode 插件的自定义上下文压缩
 
 ## 1. 背景与问题
@@ -167,8 +167,8 @@ seg_k (k ≥ 2) = [system]
 #[gpui::test]
 async fn dragging_inside_a_paragraph_without_prior_focus_selects(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    // 用户报修：想去选另一段的文字，拖多少次都没反应，必须先单击那一段把光标
-    // 落下去，第二次才拖得动。落点在没有聚焦的块上时只放光标、不起选区。
+    // 想去选另一段的文字，直接拖动也必须起选区：落点在没聚焦的块上时曾只放
+    // 光标、不起选区，要先单击那一段、第二次才拖得动。
     let markdown = "alpha one beta\n\nsecond paragraph here\n";
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown.to_string(), None));
@@ -285,7 +285,7 @@ async fn mouse_over_a_block_whose_text_shrank_since_layout_does_not_panic(cx: &m
 #[gpui::test]
 async fn dragging_the_left_button_across_cjk_blocks_keeps_selecting(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    // 用户报修：左键按住拖动选择文本时又卡又容易崩。拖动路径上每次 mouse_move
+    // 左键按住拖动选择文本必须流畅且不崩。拖动路径上每次 mouse_move
     // 都会重新定位端点并同步全部可见块的选中样式；中文文档还要跨 UTF-8 字符
     // 边界取偏移。这个用例真的模拟按住拖动。
     let markdown = (0..400)
@@ -432,7 +432,7 @@ fn cell_selection_ranges(
         .collect()
 }
 
-/// 报修：按住拖动选不上表格里的文字，只能选出一个格子里的文字。
+/// 按住拖动必须能选上表格里的文字，而不是只选出一个格子里的文字。
 ///
 /// 现象：从 a 拖到 d，抬手后只有按下那一格自己的文字带着选中色，别的格子毫无反应。
 /// 根因：表格块没有自己的文本元素（格子才是文本），`last_bounds` 一直是空，落点换算

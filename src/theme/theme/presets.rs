@@ -34,10 +34,10 @@ fn recolor_builtin(mut theme: Theme, name: &str, palette: BuiltinPalette) -> The
     c.text_placeholder = color(palette.muted);
     c.text_link = color(palette.accent);
     // 当前行高亮跟主题走：取各色板的选区淡色（forest 即淡绿系）垫在光标行下，
-    // alpha 压到 40%——高亮一旦接近不透明就会盖住正文（用户报修）。
+    // alpha 压到 40%——高亮一旦接近不透明就会盖住正文。
     c.current_line_bg = color((palette.selection & 0xffffff00) | 0x66);
-    // 活动搜索命中：固定橙色、更实，与普通命中的浅黄拉开层次（用户报修：
-    // 原来绑主题选区色，forest 下是淡绿，跟正文贴在一起根本看不出来）。
+    // 活动搜索命中：固定橙色、更实，与普通命中的浅黄拉开层次（原来绑主题
+    // 选区色，forest 下是淡绿，跟正文贴在一起根本看不出来）。
     c.search_active_highlight_bg = color(0xff9500b4);
     c.text_h1 = color(palette.text);
     c.text_h2 = color(palette.text);
@@ -518,8 +518,7 @@ impl Theme {
         theme.dimensions.h1_border_width = 0.0;
         theme.dimensions.h1_margin_bottom = 10.0;
         theme.dimensions.table_cell_padding_y = 9.0;
-        // 源码高亮跟着换暖调：低饱和但仍是多色相（用户报修：源码高亮不能
-        // 一个颜色刷到底）。
+        // 源码高亮跟着换暖调：低饱和但仍是多色相，不能一个颜色刷到底。
         {
             let c = &mut theme.colors;
             c.md_syntax_heading1 = Hsla::from(rgba(0x2b5f8aff));
@@ -568,7 +567,7 @@ impl Theme {
         theme.dimensions.code_block_padding_y = 12.0;
         theme.dimensions.table_cell_padding_y = 7.0;
         // 源码高亮刻意跳出绿色单色系；蓝色标题、
-        // 青绿代码、紫标签，参照 VS Code 语义（用户报修：源码模式满屏绿）。
+        // 青绿代码、紫标签，参照 VS Code 语义。
         {
             let c = &mut theme.colors;
             c.md_syntax_heading1 = Hsla::from(rgba(0x1e6fa8ff));

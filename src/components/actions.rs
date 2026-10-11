@@ -451,8 +451,7 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         context: BLOCK_CONTEXT,
     },
     ShortcutDefinition {
-        // 「选择全文」一步就选整篇，不吃 `SelectAll` 那条 750ms 的按压计时（报修「全文
-        // 选择不直观：要连按两次才选到全文」）。
+        // 「选择全文」一步就选整篇，不吃 `SelectAll` 那条 750ms 的按压计时。
         //
         // 档位留空（全局）而不是 `BlockEditor`：用户把「全选」那颗 ⌘A 改到 `ctrl-shift-a`
         // 是受支持的写法（见 `select_all_shortcut_can_be_customized`），两条命令挤在同一
@@ -725,8 +724,8 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         id: "toggle_sidebar",
         category: ShortcutCategory::Navigation,
         // 不设默认键位：`ctrl-w` 在 Unix/Emacs 里是「删除前一个词」、在浏览器里是
-        // 「关标签」，误按就把侧边栏收起来（用户报修「经常错误触发」）。现在的入口是
-        // 「视图 → 切换侧边栏」与空选区时的 cmd/ctrl-b（见 `Editor::on_bold_capture`）。
+        // 「关标签」，误按就把侧边栏收起来。现在的入口是「视图 → 切换侧边栏」
+        // 与空选区时的 cmd/ctrl-b（见 `Editor::on_bold_capture`）。
         default_keys: &[],
         context: None,
     },

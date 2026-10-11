@@ -43,7 +43,7 @@
     #[test]
     fn toggle_sidebar_ships_without_a_default_shortcut() {
         // `ctrl-w` 在这个位置是个坑（Unix/Emacs 删前一个词、浏览器关标签），
-        // 误按就收起侧边栏（用户报修「经常错误触发」）。默认不再绑任何键；
+        // 误按就收起侧边栏。默认不再绑任何键；
         // 空选区下的 cmd/ctrl-b 走加粗那条捕获路径，见
         // `Editor::on_bold_capture`。
         assert!(

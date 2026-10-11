@@ -250,7 +250,7 @@ impl Editor {
                     state.caret_preferred = None;
                     state.marked_range = marked_range;
                     // 敲字这条路径也得刷 \ 补全：只同步预览的话，第一个反斜杠
-                    // 永远不弹，要再敲一个字删掉才弹（用户报修）。
+                    // 永远不弹，要再敲一个字删掉才弹。
                     crate::editor::Editor::refresh_formula_draft_completion(state);
                     crate::editor::Editor::sync_formula_preview(state, cx);
                 }

@@ -45,7 +45,7 @@
 
     #[gpui::test]
     async fn scaled_typography_applies_font_size_and_ui_zoom(cx: &mut TestAppContext) {
-        // 用户报修：界面缩放设置了没反应。缩放与字号必须是同一个派生，
+        // 缩放与字号必须是同一个派生，
         // 正文/代码/标题一起缩放；文档块以前只套字号，漏了缩放因子。
         init_preferences_test_app(cx);
         cx.update_global::<EditorSettings, _>(|settings, _cx| {
@@ -1063,8 +1063,7 @@
 
     #[gpui::test]
     async fn preferences_pages_render_inside_a_scroll_container(cx: &mut TestAppContext) {
-        // 用户报修（Windows）：偏好设置「文件」页内容超出窗口高度时无法滚动。
-        // 页面内容必须挂在 overflow_y_scroll 容器里。
+        // 内容超出窗口高度时必须能滚动：页面内容挂在 overflow_y_scroll 容器里。
         init_preferences_test_app(cx);
         let handle = cx.update(|cx| {
             open_preferences_window_with_state(
@@ -1105,9 +1104,8 @@
 
     #[gpui::test]
     async fn preferences_pages_really_scroll_when_content_overflows(cx: &mut TestAppContext) {
-        // 用户报修（两次）：偏好设置「文件」「窗口」两页内容超出窗口高度时滚不动。
-        // 旧的测试只验了「挂了一个 overflow 容器」——容器在但高度被上一层的 flex_1
-        // 压成视口高度，于是根本滚不动。这里用滚动句柄验 max_offset。
+        // 内容超出视口只验「挂了一个 overflow 容器」不够——容器在但高度被上一层的
+        // flex_1 压成视口高度，于是根本滚不动。这里用滚动句柄验 max_offset。
         init_preferences_test_app(cx);
         // 窗口开矮一点：内容必然超出视口（测试平台不支持 resize，只能一开始就开小）。
         let handle = cx.update(|cx| {
@@ -1158,7 +1156,7 @@
     #[gpui::test]
     async fn window_page_exposes_zoom_and_default_size_controls(cx: &mut TestAppContext) {
         // roadmap H1 批次二：偏好设置「窗口」分组页（缩放 + 默认窗口尺寸）；
-        // 用户报修补齐：打开位置下拉与「记住窗口位置与大小」开关也放在这一页。
+        // 打开位置下拉与「记住窗口位置与大小」开关也放在这一页。
         init_preferences_test_app(cx);
         let handle = cx.update(|cx| {
             open_preferences_window_with_state(
@@ -1199,7 +1197,7 @@
 
     #[gpui::test]
     async fn clicking_a_zoom_dropdown_item_updates_the_selection(cx: &mut TestAppContext) {
-        // 用户报修：界面缩放设置了没反应。这条守住入口本身——点「125%」必须
+        // 这条守住入口本身——点「125%」必须
         // 真的写进窗口状态并进入待保存（渲染侧的修正在下面那条测试里）。
         init_preferences_test_app(cx);
         let handle = cx.update(|cx| {
@@ -1348,10 +1346,9 @@
         );
     }
 
-    /// 报修：改「启动时打开侧边栏」「启动时侧边栏显示」后点保存，按钮一直停在
-    /// 「有未保存改动」的绿色样式上（看起来像保存没反应）。根因：
-    /// apply_saved_preferences 回写 saved_* 快照时漏了这两个字段，
-    /// 保存后 has_unsaved_changes() 仍为真。
+    /// 改「启动时打开侧边栏」「启动时侧边栏显示」后点保存，按钮要离开「有未保存
+    /// 改动」的绿色样式。此前 apply_saved_preferences 回写 saved_* 快照时漏了
+    /// 这两个字段，保存后 has_unsaved_changes() 恒为真，看起来像保存没反应。
     #[gpui::test]
     async fn saving_sidebar_startup_options_clears_dirty_state(cx: &mut TestAppContext) {
         init_preferences_test_app(cx);

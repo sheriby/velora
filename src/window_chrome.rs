@@ -399,8 +399,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
     let root = match layout.controls {
         TitlebarControlMode::NativeTrafficLights => {
             // 红绿灯预留位不能被压缩：标签多了整行溢出时，taffy 会按
-            // flex_shrink 把这个空档挤掉，第一个标签就滑到窗口按钮下面
-            // （用户报修：第一个标签一直在左移）。
+            // flex_shrink 把这个空档挤掉，第一个标签就滑到窗口按钮下面。
             let traffic_light_spacer = || {
                 div()
                     .w(px(MAC_TRAFFIC_LIGHT_RESERVED_WIDTH))

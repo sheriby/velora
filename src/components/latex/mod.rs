@@ -21,7 +21,7 @@ std::thread_local! {
 
 pub(crate) use symbols::{LatexCategory, LatexSymbol, LATEX_SYMBOLS, inside_inline_math, latex_command_before_cursor, latex_completions_for};
 
-/// 块级公式与行内公式同字号（用户报修：`$$ ... $$` 渲染出来明显偏大）。
+/// 块级公式与行内公式同字号（`$$ ... $$` 曾渲染得明显偏大）。
 /// KaTeX/Typora 的 display 模式只改变极限位置，不放大字号。
 const DISPLAY_MATH_SCALE: f32 = INLINE_MATH_SCALE;
 const INLINE_MATH_SCALE: f32 = 1.12;
@@ -37,8 +37,8 @@ pub(crate) struct DisplayMathSource {
 
 /// 块源码沿 `$$…$$` 切出来的一个分段：公式，或公式**以外**的文字。
 ///
-/// 用户报修（cases/03-formula-tail.md）：单行 `$$x^2$$ LOST_SENTINEL` 里旧实现只
-/// 取第一段公式体，闭合 `$$` 之后的文字被解析器整个丢掉，界面上什么都看不见。
+/// cases/03-formula-tail.md：单行 `$$x^2$$ LOST_SENTINEL` 里旧实现只
+/// 取第一段公式体，闭合 `$$` 之后的文字被解析器整个丢掉。
 /// 解析必须交代**整个源码跨度**——渲染端要用分段表（`parse_display_math_segments`），
 /// `DisplayMathSource` 只是「第一个公式」的视图，供分类器与草稿提取使用。
 /// 导出侧同样应当消费分段表，否则导出也会丢尾部文字。
@@ -198,7 +198,7 @@ struct LatexSvgCache {
 ///
 /// **渲染与导出不要走这个视图**：整个源码跨度（公式前后的文字）归
 /// [`parse_display_math_segments`]；只取本函数会把 `$$x^2$$ LOST_SENTINEL` 的
-/// 尾部文字丢掉（用户报修 cases/03-formula-tail.md 的根因）。本函数保持旧的严格
+/// 尾部文字丢掉（cases/03-formula-tail.md 的根因）。本函数保持旧的严格
 /// 口径：首段必须就是公式，`text $$x$$` 这种「文字开头」的形状仍按普通文本处理。
 pub(crate) fn parse_display_math_source(raw: &str) -> Option<DisplayMathSource> {
     let segments = parse_display_math_segments(raw)?;
@@ -215,7 +215,7 @@ pub(crate) fn parse_display_math_source(raw: &str) -> Option<DisplayMathSource> 
 ///
 /// 旧实现两条路径都用 ratex 的默认（`MathStyle::Display`）：行内 `$\sum_0^1$` 会按行间
 /// 尺寸排版（大字形、上下限放上下），再塞进行内公式那条 `max_h = 1.65em` 的框里，
-/// 于是整体被压小、上下标位置也不对（用户报修：`\sum`、`\int` 非常小）。
+/// 于是整体被压小、上下标位置也不对（`\sum`、`\int` 曾非常小）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum MathLayout {
     /// 行间公式（`$$ ... $$`）。
@@ -333,7 +333,7 @@ pub(crate) fn render_latex_to_svg(
 }
 
 /// ratex 把根标签的 `width`/`height` 标成 `pt`，而 usvg/gpui（以及浏览器）会按
-/// 96/72 把 pt 换成 px，于是公式比请求的字号大 1/3（用户报修：块级公式明显过大）。
+/// 96/72 把 pt 换成 px，于是公式比请求的字号大 1/3。
 /// 它的坐标空间本身就是「1 单位 = 该字号下的 1px」，所以把单位改写成 `px`。
 fn normalize_svg_size_units_to_px(svg: &str) -> String {
     let head_end = svg.find('>').unwrap_or(svg.len());
@@ -575,8 +575,8 @@ mod tests {
 
     #[test]
     fn display_math_segments_account_for_the_whole_source_span() {
-        // 用户报修（cases/03-formula-tail.md）：`$$x^2$$ LOST_SENTINEL` 里闭合 `$$`
-        // 之后的文字被单行解析分支整个丢掉，界面上看不见。解析必须交代整个跨度，
+        // cases/03-formula-tail.md：`$$x^2$$ LOST_SENTINEL` 里闭合 `$$`
+        // 之后的文字曾被单行解析分支整个丢掉。解析必须交代整个跨度，
         // 尾部文字作为行内内容交给渲染端。
         let segments = parse_display_math_segments("$$x^2$$ LOST_SENTINEL").expect("segments");
         assert_eq!(
@@ -651,7 +651,7 @@ mod tests {
 
     #[test]
     fn display_math_font_size_matches_inline_math() {
-        // 用户报修：块级公式字号明显大于正文/行内公式，两者应同字号。
+        // 块级公式字号曾明显大于正文/行内公式；两者应同字号。
         assert_eq!(display_math_font_size(20.0), inline_math_font_size(20.0));
         assert!((display_math_font_size(20.0) - 22.4).abs() < 0.001);
     }

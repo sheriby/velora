@@ -11,7 +11,7 @@ use std::time::Duration;
 
 #[gpui::test]
 async fn manual_save_then_typing_does_not_report_an_external_change(cx: &mut TestAppContext) {
-// 用户报修（审查发现）：⌘S 只同步 Editor::file_version，工作区标签还留着旧版本号；
+// ⌘S 曾只同步 Editor::file_version，工作区标签还留着旧版本号；
 // 再敲一个字，自动保存拿旧版本去校验刚写的盘上内容，误报「检测到外部修改」
 // 并停掉整个会话的自动保存。
 cx.update(|cx| {
@@ -167,7 +167,7 @@ editor.read_with(cx, |editor, _cx| {
 
 #[gpui::test]
 async fn workspace_context_menu_keeps_the_right_clicked_directory(cx: &mut TestAppContext) {
-    // 用户报修：右键目录后，侧栏每帧把选中项改回活动文件，菜单动作
+    // 右键目录后，侧栏不能每帧把选中项改回活动文件，否则菜单动作
     // （新建/粘贴/重命名/删除…）会作用到活动文件上。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);

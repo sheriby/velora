@@ -208,7 +208,7 @@ fn review_markdown_extensions_share_all_entry_predicates() {
 
 #[gpui::test]
 async fn switching_workspace_drops_the_previous_workspaces_tabs(cx: &mut TestAppContext) {
-    // 用户报修：切换工作区之后，顶栏还留着上一个工作区的标签。
+    // 切换工作区之后，顶栏不得再留着上一个工作区的标签。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -507,7 +507,7 @@ async fn switching_workspace_saves_dirty_stale_tabs_instead_of_losing_them(
 
 #[gpui::test]
 async fn clicking_a_file_keeps_the_tree_scroll_offset(cx: &mut TestAppContext) {
-    // 用户报修：长文件树滚到下面后点一个文件，树会刷新并自动置顶。
+    // 长文件树滚到下面后点一个文件，树刷新后不得自动置顶。
     // 根因是打开文件时把已扫描的树清成 None，重扫落地前的那一帧侧栏只剩
     // 「…」（内容高度 ≈30px），gpui 的 div 会把记住的偏移按新的 scroll_max
     // 夹到 0 并写回，重扫完成后偏移已经没了。
@@ -723,7 +723,7 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
 }
 
 /// 「点开看看」的入口都开成预览标签：搜索结果、⌘P、正文链接连着点也只占一个标签位，
-/// 不再越点越多（用户报修）。改过的那一篇在 `finish_dirty` 就地转固定，不会被下一个
+/// 不再越点越多。改过的那一篇在 `finish_dirty` 就地转固定，不会被下一个
 /// 预览替换掉。
 #[gpui::test]
 async fn browsing_entries_keep_a_single_preview_tab(cx: &mut TestAppContext) {
@@ -970,7 +970,7 @@ async fn the_dirty_dot_marks_the_active_tab(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn the_close_tab_command_closes_the_active_tab(cx: &mut TestAppContext) {
     // 用户要求：cmd/ctrl-w 关当前标签页（浏览器肌肉记忆）。此前 ctrl-w 挂在
-    // 「切换侧边栏」上，误按就把侧边栏收起来（用户报修「经常错误触发」）。
+    // 「切换侧边栏」上，误按就把侧边栏收起来。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);

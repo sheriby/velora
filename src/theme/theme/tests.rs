@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn current_line_highlight_stays_transparent_and_theme_tinted() {
-        // 用户报修：深色默认主题的当前行高亮曾是 94% 不透明白，直接盖住正文。
+        // 深色默认主题的当前行高亮曾是 94% 不透明白，直接盖住正文。
         // 高亮必须低透明度，且内置色板主题取自 selection 淡色（跟主题走）。
         let themes = [
             ("default", Theme::default_theme()),

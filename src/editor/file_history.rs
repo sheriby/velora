@@ -121,8 +121,7 @@ impl Editor {
         };
         let file_path = self.file_path.clone();
         // 兑现「可撤销」：恢复前把当前文档压进撤销栈，⌘Z 能回到恢复前的
-        // 内容（用户报修：恢复会清空整个 undo 栈，误按 Enter 就丢掉当前
-        // 未保存的修改且无法撤回）。
+        // 内容。
         let selection_before = self.capture_source_selection_snapshot(cx);
         let pre_restore_text = self.buffer.text();
         self.pending_undo_capture = None;

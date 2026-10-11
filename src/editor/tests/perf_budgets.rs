@@ -476,9 +476,8 @@ async fn per_keystroke_document_passes_stay_bounded(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn ui_zoom_scales_document_text(cx: &mut TestAppContext) {
-    // 用户报修：偏好设置「界面缩放」/ ⌘+/⌘- 改了没有任何反应。
-    // 根因：正文块渲染自己拼主题排版，只套了字号设置，漏掉缩放因子；
-    // 缩放只作用在编辑器外壳那份主题上。
+    // 偏好设置「界面缩放」/ ⌘+/⌘- 必须作用到正文块文本：此前正文块渲染自己拼
+    // 主题排版，只套了字号设置，漏掉缩放因子；缩放只作用在编辑器外壳那份主题上。
     init_editor_test_app(cx);
     cx.update(|cx| crate::config::EditorSettings::init(cx, true));
     let (_editor, cx) = cx.add_window_view(|_window, cx| {
@@ -512,7 +511,7 @@ async fn ui_zoom_scales_document_text(cx: &mut TestAppContext) {
 async fn blank_line_block_renders_as_a_small_gap(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     // 松列表（- a / 空行 / - b）：空行块原本占一整行高 + 上下 padding，加起来
-    // 比正文一行还高（用户报修：空行太大）。空行块应该只剩下一个块间距的高度。
+    // 比正文一行还高。空行块应该只剩下一个块间距的高度。
     let (_editor, cx) = cx.add_window_view(|_window, cx| {
         Editor::from_markdown(cx, "- a\n\n- b\n".to_string(), None)
     });

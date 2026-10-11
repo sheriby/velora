@@ -19,7 +19,7 @@ fn sidebar_is_visible(cx: &mut gpui::VisualTestContext) -> (bool, bool) {
 
 #[gpui::test]
 async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut TestAppContext) {
-    // 用户报修：收起侧边栏经常误触，误触后整条（含图标列）都没了，只能靠贴左边
+    // 收起侧边栏此前经常被误触，误触后整条（含图标列）都没了，只能靠贴左边
     // 缘的浮层找回来。现行契约：收起就是整条不占布局、正文满宽，唤出只有命令
     // 那一条；没有贴边浮层，也没有常驻的图标列（用户明确不要常驻入口）。
     init_sidebar_test_app(cx);
@@ -102,7 +102,7 @@ fn removed_knowledge_panels_in_old_sessions_fall_back_to_files() {
 
 #[gpui::test]
 async fn hovering_the_left_edge_does_not_open_the_sidebar(cx: &mut TestAppContext) {
-    // 「贴边唤出整条侧边栏」是误触重灾区（用户报修），整个自动隐藏机制已删。
+    // 「贴边唤出整条侧边栏」曾是误触重灾区，整个自动隐藏机制已删。
     // 收起后指针贴左缘停留再久也不该有东西冒出来。
     init_sidebar_test_app(cx);
     let (editor, cx) =
@@ -300,7 +300,7 @@ async fn ctrl_b_toggles_the_sidebar_without_block_focus(cx: &mut TestAppContext)
 
 #[gpui::test]
 async fn scrolling_inside_the_sidebar_tree_does_not_scroll_the_document(cx: &mut TestAppContext) {
-    // 用户报修过：在侧栏文件树里滚，正文跟着一起滚。滚轮命中必须只落在树那一列上。
+    // 在侧栏文件树里滚时，正文曾跟着一起滚。滚轮命中必须只落在树那一列上。
     init_sidebar_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-sidebar-scroll-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
@@ -451,10 +451,10 @@ async fn the_sidebar_remembers_its_last_state_globally(cx: &mut TestAppContext) 
     let _ = fs::remove_dir_all(config_root);
 }
 
-/// 报修：直接打开文件启动 Velora（Windows 关联双击 / macOS 双击某个 md），
-/// 「启动时打开侧边栏」「启动时侧边栏显示」两项不生效，侧栏记忆也不生效。
-/// 根因：这两项判据只在 `apply_workspace_root`（打开文件夹）里跑，直接开文件
-/// 走开窗路径（`open_editor_window_from_document`），从不应用启动状态。
+/// 直接打开文件启动 Velora（Windows 关联双击 / macOS 双击某个 md）时，
+/// 「启动时打开侧边栏」「启动时侧边栏显示」两项也要生效。此前这两项判据只在
+/// `apply_workspace_root`（打开文件夹）里跑，直接开文件走开窗路径
+/// （`open_editor_window_from_document`），从不应用启动状态。
 #[gpui::test]
 async fn opening_a_file_directly_applies_pinned_sidebar_startup_settings(
     cx: &mut TestAppContext,

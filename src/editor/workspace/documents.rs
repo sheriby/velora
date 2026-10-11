@@ -73,7 +73,7 @@ impl Editor {
         // 只有工作区根目录真的换了才丢树：同一根目录下点开一个文件时把树清空，
         // 会让侧栏在后台重扫的那一帧只剩「…」占位（内容高度≈30px），gpui 的
         // div 会把记住的滚动偏移按新的 scroll_max 夹到 0 并写回，于是长树滚到
-        // 下面再点文件就自动置顶（用户报修）。重扫照旧会刷新内容。
+        // 下面再点文件就自动置顶。重扫照旧会刷新内容。
         let previous_root = self.workspace.root.clone();
         self.clear_workspace_file_error();
         self.workspace.outline_stale = true;
@@ -236,7 +236,7 @@ impl Editor {
 
     /// 手动保存成功后同步工作区标签：版本号、内容与脏标记都要跟上刚落盘的
     /// 文件，否则下一次自动保存会拿旧版本去校验新内容，把自己的保存误报成
-    /// 外部修改（用户报修）。
+    /// 外部修改。
     pub(crate) fn mark_workspace_document_saved(
         &mut self,
         path: &Path,

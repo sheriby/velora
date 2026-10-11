@@ -508,7 +508,7 @@ pub(crate) fn emphasis_run_bounds(tokens: &[CharToken], index: usize) -> (Option
 
 /// `_` 的开启条件（CommonMark 侧翼规则）：左侧成翼，且不同时右侧成翼，除非前面是标点。
 /// 没有这条限制时 `topic_embedding_attention` 会解析成 文本 + 斜体 + 文本，
-/// 存盘时整段被重写成 `*` 定界符（用户报修）。
+/// 存盘时整段被重写成 `*` 定界符。
 pub(crate) fn underscore_can_open(prev: Option<char>, next: Option<char>) -> bool {
     let (left, right) = emphasis_flanking(prev, next);
     left && (!right || prev.is_some_and(is_emphasis_punctuation))

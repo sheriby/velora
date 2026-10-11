@@ -51,7 +51,7 @@ fn isolated_window_frame_config(test_name: &str) -> (PathBuf, crate::config::Tes
 async fn quitting_the_app_remembers_each_window_frame(cx: &mut TestAppContext) {
     let (root, _root_guard) = isolated_window_frame_config("window-frame-quit");
     // roadmap A2：⌘Q 也必须记住窗口位置与大小。此前只有关闭单窗口才落盘，
-    // 「调完位置直接退出」会把调整丢掉（用户报修）。先放一个哨兵 frame，
+    // 「调完位置直接退出」会把调整丢掉。先放一个哨兵 frame，
     // 用来区分「退出路径没写盘」与「写盘写对了」。
     init_editor_test_app(cx);
     crate::config::store_window_frame(crate::config::WindowFrame {
@@ -91,7 +91,7 @@ async fn quitting_the_app_remembers_each_window_frame(cx: &mut TestAppContext) {
 async fn platform_close_remembers_the_window_frame(cx: &mut TestAppContext) {
     let (root, _root_guard) = isolated_window_frame_config("window-frame-platform-close");
     // 平台自己发起的关闭（macOS 红灯）不经过应用内任何关闭入口，
-    // 只有 on_window_should_close 能在窗口还活着时落盘（用户报修场景）。
+    // 只有 on_window_should_close 能在窗口还活着时落盘。
     init_editor_test_app(cx);
     crate::config::store_window_frame(crate::config::WindowFrame {
         x: 3,
@@ -247,7 +247,7 @@ async fn window_frame_from_a_missing_display_keeps_its_size(cx: &mut TestAppCont
 
 #[test]
 fn every_editor_window_removal_remembers_the_frame() {
-    // 用户报修：调整窗口位置/大小后关闭、下一次启动又回到旧位置。
+    // 窗口位置/大小的调整必须在关闭后保住、下次启动仍生效。
     // 窗口移除统一走 Editor::close_editor_window（先落盘再移除），
     // 这条守卫挡住「新写一条关闭路径时忘了记 frame」。
     assert_eq!(

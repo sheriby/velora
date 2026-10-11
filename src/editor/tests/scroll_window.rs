@@ -440,8 +440,7 @@ fn rendered_window_cap_never_trims_into_the_viewport() {
     // 源码模式一行实测恰好等于估算值（15px 字号 × 1.6 行高不足 28，空块被
     // min_h 撑到 28）。旧上限把终点钉在「视口首行 + 24 行」，一屏 37 行的
     // 视口下沿永远落在 spacer 上，而续帧量到的只有已挂载的那段——没挂载
-    // 的行永远量不到，永远无法收敛（用户报修：连打回车后第 24 行往后没有
-    // 行号，切换一次模式才恢复）。
+    // 的行永远量不到，永远无法收敛。
     let strides = uniform_strides(31, 28.0);
     let window = Editor::rendered_window(&strides, 0.0, 1016.0, 800.0, None);
     assert_eq!(window.run_start, 0);
@@ -671,8 +670,8 @@ async fn starting_and_ending_scrollbar_drag_updates_editor_state(cx: &mut TestAp
 }
 
 
-/// 源码模式里连打回车，视口下沿的行永远挂不上——那几行没有行号（用户报修：
-/// 文末疯狂打回车，中间十几行行号消失，切一次模式再切回来才恢复）。
+/// 源码模式里连打回车，视口下沿的行必须挂上、行号必须完整：旧实现下这些行
+/// 挂不上——文末连打回车，中间十几行行号消失，切一次模式再切回来才恢复。
 ///
 /// 回车新建的是逐行空块，实测行高恰好等于行计划的估算值 `block_min_height`；
 /// 冷启动上限的 known 只数实测值**严格大于**估算值的行，这样的行永远不算

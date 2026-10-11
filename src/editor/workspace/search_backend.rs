@@ -102,8 +102,7 @@ pub(crate) fn fuzzy_subsequence_ranges(line: &str, query: &str) -> Vec<Range<usi
     let mut ranges = Vec::new();
     for start_index in 0..positions.len() {
         // 起点必须真的命中查询首字符：以前从这里往后扫到能补全子序列就算命中，
-        // 区间会从没参与匹配的字符开始（用户报修：模糊模式下高亮落在命中词
-        // 前面的字上）。
+        // 区间会从没参与匹配的字符开始。
         let (start_offset, start_char) = positions[start_index];
         let folded_start = start_char.to_lowercase().next().unwrap_or(start_char);
         if folded_start != query_chars[0] {
@@ -162,8 +161,7 @@ pub(crate) fn search_file_label(path: &Path, root: &Path) -> String {
 }
 
 /// 文件内容缓存：上一轮搜过的文件本轮直接走内存，只付一次 stat 的代价校验
-/// 是否过期（用户报修：工作区变大后每敲一键都全树重读磁盘，比 VS Code 慢得
-/// 多）。容量超限时按最久未用驱逐。
+/// 是否过期。容量超限时按最久未用驱逐。
 const SEARCH_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 const SEARCH_CACHE_MAX_FILE_BYTES: u64 = 20_000_000;
 
@@ -318,8 +316,8 @@ pub(crate) fn search_single_file(
     };
     // 行切分、字节偏移记账、模式编译与匹配全部交给 ripgrep；这里只把它交回的
     // 「每根含命中行的第一个命中」换算成侧栏一行（行内偏移 + 预览）。
-    // `remaining` 是本轮还剩多少条位置：每文件全量收集（此前硬编码 3 条，用户
-    // 报修「结果不全」），只受全局 limit 约束——收满引擎就停止读文件剩余部分。
+    // `remaining` 是本轮还剩多少条位置：每文件全量收集（此前硬编码 3 条，结果不全），
+    // 只受全局 limit 约束——收满引擎就停止读文件剩余部分。
     let remaining = limit - hits.len();
     let file_hits = matcher.find_first_line_hits(&source, remaining);
     for (ordinal, hit) in file_hits.iter().enumerate() {
@@ -342,7 +340,7 @@ pub(crate) fn search_single_file(
 /// 工作区搜索：文件名单由调用方给（换根后走盘那份，见
 /// `collect_workspace_files_on_disk`），按 CPU 核数分片在后台线程池并行扫描；结果
 /// 按分片顺序合并保持顺序稳定。上一轮读过且未变更的文件内容直接命中缓存，不再
-/// 逐个重读磁盘（用户报修：大工作区搜索远慢于 VS Code）。
+/// 逐个重读磁盘。
 pub(crate) async fn search_workspace_files(
     root: &Path,
     paths: &[PathBuf],

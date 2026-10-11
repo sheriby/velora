@@ -19,8 +19,7 @@ impl Block {
 
     /// 表格列宽备忘（性能）：`measure` 会对每格做 no-wrap `shape_text`，此前
     /// 每帧全量重测——文档打开后每次悬停/点击触发的重绘都拖着 O(单元格) 的
-    /// 文字排版，Windows DirectWrite 上尤其明显（用户报修：打开文件后第二次
-    /// 点击起整个界面卡死）。键（主题代数/字号/容器宽/表内容）均未变时整帧
+    /// 文字排版，Windows DirectWrite 上尤其明显。键（主题代数/字号/容器宽/表内容）均未变时整帧
     /// 零 shape。
     pub(crate) fn cached_table_column_layout(
         &mut self,

@@ -91,7 +91,7 @@ impl WritingWidthPreference {
     /// 正文列宽。`available_width` 是视口减掉两侧编辑器内边距的可用宽，
     /// `theme_centered_width` 是主题那套居中宽度（`Editor::centered_column_width`）。
     ///
-    /// 定值在高分屏上只占窗口一小截：3840 宽的屏幕上 760px 不到两成（用户报修）。
+    /// 定值在高分屏上只占窗口一小截：3840 宽的屏幕上 760px 不到两成。
     /// 除「跟随主题」外都改成占可用宽度的比例，px 退成下限——窗口窄到比例算出来
     /// 比下限还小时取下限，与定值时代的表现一致；窗口再宽就按比例长。
     pub(crate) fn column_width(
@@ -303,7 +303,7 @@ impl DeletePolicy {
     }
 }
 
-/// 新窗口的打开位置（用户报修：缺少窗口位置设置）。
+/// 新窗口的打开位置。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WindowOpenPosition {
     /// 用上次关闭时记住的位置与大小（默认，roadmap A2 行为）。

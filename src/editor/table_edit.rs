@@ -668,9 +668,8 @@ impl Editor {
         self.table_axis_preview = None;
         let visible = self.document.visible_blocks().to_vec();
         // 表格重建会替换全部单元格实体：滚动/焦点锚点若指向旧 cell，重建后
-        // 就成了文档树里查不到的悬空 id，跳转滚动永无坐标（用户报修：表格里
-        // 的搜索命中点了没反应）。在旧 runtime 销毁前确认悬空锚点确是某表的
-        // 单元格并记下宿主，重建后把锚点迁到宿主表格块。
+        // 就成了文档树里查不到的悬空 id，跳转滚动永无坐标。在旧 runtime 销毁前
+        // 确认悬空锚点确是某表的单元格并记下宿主，重建后把锚点迁到宿主表格块。
         let mut stale_cell_host: Option<Entity<Block>> = None;
         if let Some(anchor) = self.active_entity_id.or(self.pending_focus)
             && self.document.block_entity_by_id(anchor).is_none()

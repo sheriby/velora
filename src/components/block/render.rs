@@ -79,7 +79,7 @@ impl Render for HoverPreviewTooltip {
 ///
 /// 行内代码跟随「代码块字体大小」设置，上标/下标缩小到 72%，其余跟随正文。
 /// 可编辑文本的 `TextRun` 现在也能带逐段字号（vendored gpui 本地补丁），显示态
-/// 与编辑态用同一套字号规则，点击进入编辑不再跳变（用户报修）。
+/// 与编辑态用同一套字号规则，点击进入编辑不再跳变。
 fn inline_display_font_size(
     span: &crate::components::InlineSpan,
     font_size: f32,
@@ -96,8 +96,7 @@ fn inline_display_font_size(
 
 /// 该段文本里的 `![alt](src)` 是否应提升为行内图片控件。
 ///
-/// 行内代码内部是字面文本，不解析任何 Markdown（用户报修：表格单元格里被反引号
-/// 包住的图片语法渲染成了「无法加载图片」占位框）。
+/// 行内代码内部是字面文本，不解析任何 Markdown。
 fn promotes_inline_images(text: &str, style: &crate::components::InlineStyle) -> bool {
     !style.code && text.contains("![")
 }
@@ -309,7 +308,7 @@ fn visible_quote_guides(block: &Block) -> usize {
 
 /// 与编辑器正文列同一条公式的内容列宽度（`Editor::writing_column_width`），表格量宽、
 /// 图片与 mermaid 估宽必须用同一个宽度：两处各算各的，拿超宽容器算出的列宽比例套到
-/// 真实窄容器上，钉住列会被压到内容宽以下折行（用户报修：水位法列宽完全不对）。
+/// 真实窄容器上，钉住列会被压到内容宽以下折行。
 fn content_column_width(viewport_width: f32, d: &ThemeDimensions, cx: &App) -> f32 {
     Editor::writing_column_width(viewport_width, d, cx)
 }

@@ -180,7 +180,7 @@ async fn typing_consecutive_backslashes_keeps_every_one(cx: &mut TestAppContext)
 
     let backslashes = |count: usize| "\\".repeat(count);
 
-    // 用户报修：渲染模式里连按反斜杠只能得到一个（`\\` 被当成“转义的反斜杠”塔缩）。
+    // 渲染模式里连按反斜杠必须逐个可见：`\\` 不得被当成“转义的反斜杠”折叠成一个。
     for count in 1..=3 {
         cx.simulate_input("\\");
         redraw(cx);
@@ -244,7 +244,7 @@ async fn typing_backslashes_in_link_blocks_does_not_multiply(cx: &mut TestAppCon
     init_editor_test_app(cx);
     let count_backslashes = |value: &str| value.matches('\\').count();
 
-    // 用户报修：行首是自动链接的块里按反斜杠，可见数量按「两倍加一」翻倍
+    // 行首是自动链接的块里按反斜杠，可见数量不得按「两倍加一」翻倍
     // （1 -> 3 -> 7）。这三类块都走 markdown 源直编路径。
     // 反斜杠的翻倍只发生在**插入点**（escape_markdown_insertion，防连锁翻倍）；
     // 序列化按转义区间原样保留、不再叠加——文件里恒为「可见数 × 2」，重读不变。
@@ -304,8 +304,8 @@ async fn typing_backslashes_in_link_blocks_does_not_multiply(cx: &mut TestAppCon
 #[gpui::test]
 async fn caret_lands_outside_leading_and_trailing_markup(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    // 用户报修：块首是 `**`、`<...>`、`[...]()` 这类标记时，打开文件后光标不在行首
-    // （跑到标记里面），行尾光标也会落进标记内部甚至越过可见文本。
+    // 块首是 `**`、`<...>`、`[...]()` 这类标记时，打开文件后光标必须落在行首
+    // （不能跑到标记里面），行尾光标也不得落进标记内部甚至越过可见文本。
     for source in [
         "alpha",
         "**bold** tail",
@@ -347,8 +347,8 @@ async fn caret_lands_outside_leading_and_trailing_markup(cx: &mut TestAppContext
 #[gpui::test]
 async fn cjk_wrapping_does_not_start_lines_with_punctuation(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    // 中文没有词间空格，断行器逐字断行；没有行首禁则时标点会被推到下一行行首
-    // （用户报修：标点经常出现在一行开头）。断点落在哪个字由容器宽度决定，所以
+    // 中文没有词间空格，断行器逐字断行；没有行首禁则时标点会被推到下一行行首。
+    // 断点落在哪个字由容器宽度决定，所以
     // 这里把所有宽度都扫一遍——旧实现在其中不少宽度上会让标点开头。
     let text = "这是一段用来验证中文行首禁则的文字，里面有逗号、顿号；还有冒号：和分号。句号也不该落到行首，问号呢？感叹号也是！如果标点出现在行首，就说明禁则没有生效。".to_string();
     let font = gpui::Font {
@@ -497,7 +497,7 @@ async fn rendered_prose_wraps_to_width_without_leading_punctuation(cx: &mut Test
 #[gpui::test]
 #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn undo_scroll_after_document_replace_stays_single_shot(cx: &mut TestAppContext) {
-    // 用户报修：编辑中按 Ctrl+Z，窗口来回滚动。撤销会替换整篇块，这一帧的
+    // 编辑中按 Ctrl+Z 不得让窗口来回滚动。撤销会替换整篇块，这一帧的
     // 块边界/行高都是旧布局或估计值，最容易出现「先按旧几何滚一次、下一帧
     // 再按新几何纠正」。这里守住：撤销后滚动应用 ≤1 次、逐帧偏移不反向，
     // 且撤销后的活动块最终落在视口内。

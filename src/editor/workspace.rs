@@ -436,7 +436,7 @@ pub(super) struct WorkspaceState {
     tab_context_menu: Option<TabContextMenu>,
     panel_width: Option<f32>,
     resize_drag: Option<WorkspaceResizeDrag>,
-    /// 侧栏文件树滚动位置：让「点文件后重扫不跳回顶部」可断言（用户报修）。
+    /// 侧栏文件树滚动位置：让「点文件后重扫不跳回顶部」可断言。
     pub(crate) tree_scroll_handle: ScrollHandle,
 }
 

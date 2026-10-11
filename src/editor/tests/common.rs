@@ -95,8 +95,8 @@ pub(super) fn redraw(cx: &mut gpui::VisualTestContext) {
 /// 用系统真实字体逐条量出这些标签的像素宽，返回与输入同序的一份宽度。
 ///
 /// 菜单的面板宽是按字符类别估出来的（`estimated_menu_label_width`），估少了标签会被
-/// `.truncate()` 切掉一角且不报错（用户两次报修的都是这一处）。守卫拿真实度量对一遍，
-/// 换字体或改系数时才会红。`cx.text_system()` 在 App 层不暴露度量接口，要走窗口那一份。
+/// `.truncate()` 切掉一角且不报错。守卫拿真实度量对一遍，换字体或改系数时才会红。
+/// `cx.text_system()` 在 App 层不暴露度量接口，要走窗口那一份。
 pub(super) fn real_label_widths(
     labels: &[String],
     text_size: f32,

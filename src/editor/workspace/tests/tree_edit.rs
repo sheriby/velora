@@ -548,7 +548,7 @@ async fn the_file_tree_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
 
 /// 菜单开着时，鼠标压在菜单面板上，面板底下那一行文件不该还算悬停。
 ///
-/// 现象（用户报修）：右键菜单弹出来以后，鼠标在菜单上面移动，菜单下面的文件跟着亮
+/// 现象：右键菜单弹出来以后，鼠标在菜单上面移动，菜单下面的文件跟着亮
 /// 悬停底色。根因：工作区菜单的遮罩与面板都没 `occlude`，GPUI 的命中测试
 /// （`Window::hit_test`）只在遇到 `HitboxBehavior::BlockMouse` 时才停，于是菜单底下那一
 /// 层的行也进了命中集合，`is_hovered` 跟着为真（点击也会一起漏过去）。

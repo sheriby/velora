@@ -23,7 +23,7 @@ fn source(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
 
 #[gpui::test]
 async fn image_scale_is_available_from_the_menu_without_a_resize_handle(cx: &mut TestAppContext) {
-    // 用户报修：常驻缩放圆点破坏图片观感，去掉手柄后仍需支持右键缩放。
+    // 常驻缩放圆点破坏图片观感，去掉手柄后仍需支持右键缩放。
     init_editor_test_app(cx);
     let (_editor, cx) = cx.add_window_view(|_, cx| {
         Editor::from_markdown(cx, "![图例](./missing.png)".to_string(), None)

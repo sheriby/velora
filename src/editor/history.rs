@@ -289,7 +289,7 @@ impl Editor {
                 // 源码文档按 512 行切成多根投影块（SOURCE_DOCUMENT_CHUNK_LINES）：
                 // 选区必须写进**包含落点的那一根**。以前一律钳在第一根块的长度
                 // 里——文件超过 512 行后，512 行之外的搜索命中、大纲与 `[TOC]`
-                // 跳转全部落在第一块末尾（用户报修：点击都停在 512 行）。
+                // 跳转全部落在第一块末尾。
                 let mappings = self.source_mappings_in_range(&snapshot.range, cx);
                 let target = mappings
                     .iter()

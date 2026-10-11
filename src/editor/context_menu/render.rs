@@ -132,7 +132,7 @@ impl Editor {
                 };
                 // 两块面板中间那条缝的感应带：从主面板边缘一直盖到二级面板外沿，
                 // 高度跟着二级面板走。缝只有几个像素宽，鼠标从父行横过去时就会
-                // 经过它，停在那儿不该被当成离开菜单（用户报修）。
+                // 经过它，停在那儿不该被当成离开菜单。
                 // 与二级面板有重叠：两块各记一份悬停，同一次移动里谁后到都不影响判定。
                 let submenu_bridge = match (submenu_origin, submenu_panels.as_ref()) {
                     (Some(submenu_origin), Some((geometry, _))) => {

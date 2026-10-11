@@ -194,7 +194,7 @@ async fn a_file_without_a_trailing_newline_still_reports_its_last_line(cx: &mut 
 async fn one_file_contributes_every_matching_line_up_to_the_global_limit(
     cx: &mut TestAppContext,
 ) {
-    // 单文件全量收集：曾经硬编码「每文件只报 3 条」被用户报修过「结果不全」。
+    // 单文件全量收集：曾经硬编码「每文件只报 3 条」，导致结果不全。
     // 顺带钉住引擎侧的早停只在**收满全局 limit** 时发生，而不是每文件一个小组。
     let background = cx.executor();
     let root = std::env::temp_dir().join(format!("velora-per-file-{}", uuid::Uuid::new_v4()));

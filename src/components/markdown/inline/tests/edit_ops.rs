@@ -348,8 +348,8 @@
 
     #[test]
     fn paren_math_never_falls_to_the_currency_heuristic() {
-        // 用户报修（cases/07-numeric-math.md）：`value \(42\).` 被 `$42$` 的货币启发
-        // 误判成钱数、原样显示。`\(...\)` 是无歧义的 TeX 定界符，货币启发只许作用在
+        // `\(...\)` 是无歧义的 TeX 定界符：`value \(42\).` 不许被 `$42$` 的货币启发
+        // 误判成钱数（cases/07-numeric-math.md）。货币启发只许作用在
         // `$…$` 这种本身就与钱写法冲突的定界符上（规则见 looks_like_obvious_currency）。
         for (markdown, start) in [
             (r"value \(42\).", "value ".len()),
@@ -407,8 +407,8 @@
 
     #[test]
     fn escapes_all_ascii_punctuation_not_just_the_old_whitelist() {
-        // 用户报修（cases/10-escape.md）：转义白名单只认 `\ * _ ~ [ ] ` ^ 与三个标签，
-        // CommonMark 转义的是**全部 ASCII 标点**——`\#` 该显示裸 `#`，不该多一个反斜杠。
+        // CommonMark 转义的是**全部 ASCII 标点**，不只 `\ * _ ~ [ ] ` ^ 与三个标签——
+        // `\#` 该显示裸 `#`，不该多一个反斜杠（cases/10-escape.md）。
         let markdown = "\\*literal stars\\* \\# literal hash \\\\backslash and \\<u>literal tag\\</u>";
         let tree = InlineTextTree::from_markdown(markdown);
         assert_eq!(
@@ -440,7 +440,7 @@
 
     #[test]
     fn backslash_end_of_line_is_a_hard_break_without_the_backslash() {
-        // 用户报修（cases/10-line-break.md）：`Slash one\` + 换行是 CommonMark 硬换行，
+        // `Slash one\` + 换行是 CommonMark 硬换行（cases/10-line-break.md）：
         // 可见文本不该留着反斜杠；序列化必须把用户的反斜杠写法逐字节写回。
         let markdown = "Slash one\\\nSlash two";
         let tree = InlineTextTree::from_markdown(markdown);
@@ -995,7 +995,7 @@
 
     #[test]
     fn intraword_underscores_stay_literal() {
-        // 用户报修：`**topic_embedding_attention 有轨迹无产物**` 渲染成
+        // 词内下划线必须按字面保留：`**topic_embedding_attention 有轨迹无产物**` 曾渲染成
         // `**topic*embedding*attention 有轨迹无产物**`，存盘后原文被改写。
         for source in [
             "**topic_embedding_attention 有轨迹无产物**",

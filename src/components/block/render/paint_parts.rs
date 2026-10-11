@@ -51,7 +51,7 @@ impl Render for Block {
             focused && self.display_text().is_empty() && self.marked_range.is_none();
 
         // 文档块必须和编辑器外壳共用字号派生：块以前只套字号、漏掉界面缩放，
-        // 导致缩放设置对正文完全没反应（用户报修）。派生收进 ThemeManager
+        // 导致缩放设置对正文完全没反应。派生收进 ThemeManager
         // 缓存成 Arc：块只借用，不再每块每帧克隆整份 Theme 自己派生。
         let theme = cx.global::<ThemeManager>().derived_theme(cx);
         let fonts = crate::config::EditorSettings::fonts(cx);
@@ -176,8 +176,7 @@ impl Render for Block {
 
         // Source-mode rendering: raw text with no formatting.
         // 聚焦的数学块要放行到下面的 kind 分支：ƒx 按钮、公式编辑卡片与
-        // SVG↔文本切换都挂在那里——这里早退会把它们全拦成死代码
-        // （用户报修：公式编辑器找不到，按钮从未上屏）。
+        // SVG↔文本切换都挂在那里——这里早退会把它们全拦成死代码。
         if self.is_source_raw_mode()
             && (focused && self.kind() != BlockKind::MathBlock
                 || !focused
@@ -195,8 +194,7 @@ impl Render for Block {
                 self.cursor_blink_task = None;
             }
             // 行号视图（源码文档分块）与代码块一样用等宽字体和代码字号：
-            // 行号跟着正文字体走，等宽才能上下对齐（用户报修：markdown 源码
-            // 模式要用等宽字体、行号没对齐）。
+            // 行号跟着正文字体走，等宽才能上下对齐。
             let source_document = self.show_source_line_numbers();
             let source_base = self
                 .render_shell(
@@ -228,9 +226,8 @@ impl Render for Block {
             } else if self.kind() == BlockKind::Comment {
                 source_base.bg(c.comment_bg).rounded_sm()
             } else if focused && !source_document {
-                // 行号视图的块是 512 行一切的分块：聚焦底色会把整屏铺满
-                // （用户报修：markdown 源码界面一大片绿）。光标定位有当前行
-                // 高亮兜底，这里不再上块底色。
+                // 行号视图的块是 512 行一切的分块：聚焦底色会把整屏铺满。
+                // 光标定位有当前行高亮兜底，这里不再上块底色。
                 source_base.bg(c.source_mode_block_bg).rounded_sm()
             } else {
                 source_base
@@ -246,8 +243,7 @@ impl Render for Block {
                 .into_any_element();
         }
 
-        // 空行块不渲染内容：空的文本元素自带一行高，会把 min_h 撑开（用户报修：
-        // 松列表里的空行比正文一行还高）。
+        // 空行块不渲染内容：空的文本元素自带一行高，会把 min_h 撑开。
         if self.collapses_to_blank_gap(focused, false) {
             return self
                 .render_shell(
@@ -498,7 +494,7 @@ impl Render for Block {
                     if showing_rendered_image {
                         // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：
                         // 按视口估算量不到 callout/嵌套的真实容器，图片与占位框会
-                        // 冲出右边界（用户报修）。
+                        // 冲出右边界。
                         let max_width = relative(1.0);
                         if let Some(runtime) = self.image_runtime() {
                             div().flex_grow().child(self.render_image_content(
@@ -651,7 +647,7 @@ impl Render for Block {
                     if showing_rendered_image {
                         // 列表项里的图片按「所在列的可用宽度」封顶（relative(1.0)）：
                         // 按视口估算量不到 callout/嵌套的真实容器，图片与占位框会
-                        // 冲出右边界（用户报修）。
+                        // 冲出右边界。
                         let max_width = relative(1.0);
                         if let Some(runtime) = self.image_runtime() {
                             div().flex_grow().child(self.render_image_content(
@@ -1548,7 +1544,7 @@ impl Render for Block {
                     return focused_base.w_full().child(child).into_any_element();
                 }
                 // 聚焦编辑：整个块（含 $$ 定界行）铺公式卡片底色——底色只盖
-                // 公式行时，$$ 行像掉在块外（用户报修）。编辑器入口两个：
+                // 公式行时，$$ 行像掉在块外。编辑器入口两个：
                 // 卡片右上角的 ƒx 小标记（与首行 `$$` 同一水平带），双击也可。
                 let card_padding_x = d.block_padding_x.max(8.0);
                 let card_padding_y = d.block_padding_y.max(6.0);

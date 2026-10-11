@@ -5,7 +5,7 @@ use crate::config::{SidebarOpenPreference, SidebarPanelPreference};
 impl Editor {
     /// write runs on the background executor: on Windows a synchronous small
     /// write in a click handler stalls the interaction (Defender 实时扫描放大
-    /// 延迟，用户报修：打开第二个文件起界面卡顿)。写入用全局锁串行，避免并发
+    /// 延迟，曾导致打开第二个文件起界面卡顿)。写入用全局锁串行，避免并发
     /// 交错。
     pub(crate) fn persist_session(&mut self, cx: &mut Context<Self>) {
         self.snapshot_current_document(cx);
@@ -107,8 +107,8 @@ impl Editor {
             crate::app_menu::install_menus(cx);
         }
         self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
-        // 切换工作区 = 换一套工作集：不属于新根目录的标签必须收起（用户报修：
-        // 换了工作区之后顶栏还留着上一个工作区的标签）。
+        // 切换工作区 = 换一套工作集：不属于新根目录的标签必须收起
+        // （此前换了工作区之后顶栏还留着上一个工作区的标签）。
         self.workspace.root = Some(root);
         self.workspace.file_tree = None;
         // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
@@ -181,7 +181,7 @@ impl Editor {
     }
 
     /// 工作区根就绪后启动文件监听；同一根不重复启动（
-    /// 隐含根：只打开单个文件时也要监听，否则外部修改不会重载，用户报修）。
+    /// 隐含根：只打开单个文件时也要监听，否则外部修改不会重载）。
     pub(crate) fn ensure_workspace_watcher(&mut self, cx: &mut Context<Self>) {
         let Some(root) = self.workspace.root.clone() else {
             return;
@@ -206,7 +206,7 @@ impl Editor {
     }
 
     /// 合并连续的 watcher 事件，防抖后强制重扫文件树：外部新建/删除/改名
-    /// 也要反映到树、⌘P 与工作区搜索的文件列表里（用户报修：外部改动后
+    /// 也要反映到树、⌘P 与工作区搜索的文件列表里（此前外部改动后
     /// 树一直是旧的，点进去报「无法预览」）。
     pub(crate) fn schedule_workspace_tree_refresh(&mut self, cx: &mut Context<Self>) {
         self.workspace.tree_refresh_generation = self

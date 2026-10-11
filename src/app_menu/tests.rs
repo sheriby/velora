@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn open_file_dialog_prompt_is_generic() {
-        // 用户报修：打开文件的对话框确定铵钮上写着「打开 Markdown 文件」。这个字符串
+        // 打开文件的对话框确定铵钮上曾写着「打开 Markdown 文件」。这个字符串
         // 原样进原生对话框的确定铵钮，必须短而通用；文件夹入口要有自己的文案。
         use crate::i18n::I18nStrings;
         for strings in [I18nStrings::zh_cn(), I18nStrings::en_us()] {

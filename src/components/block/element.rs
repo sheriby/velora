@@ -83,8 +83,7 @@ fn prose_spacing(
 /// 行宽随间距增长。
 ///
 /// 表格列宽测量与正文渲染必须走同一条管线：测量不加间距，水位法钉在
-/// 「测量内容宽 + 余量」上的列，渲染时因间距变宽必然 mid-word 折行
-/// （用户报修）。
+/// 「测量内容宽 + 余量」上的列，渲染时因间距变宽必然 mid-word 折行。
 pub(crate) fn add_render_spacing(
     lines: &mut [WrappedLine],
     code_ranges: &[Range<usize>],
@@ -278,7 +277,7 @@ pub(crate) fn build_text_runs(
             background_color,
             underline,
             strikethrough,
-            // 行内代码跟随「代码块字体大小」设置（用户报修：显示态与编辑态
+            // 行内代码跟随「代码块字体大小」设置（显示态与编辑态
             // 必须同字号，否则点击进入编辑的瞬间字号会跳变）。
             font_size: inline_style.code.then_some(code_font_size),
         });
@@ -317,7 +316,7 @@ fn build_code_text_runs(
         .code_highlight_result()
         .map(|r| r.spans.as_slice())
         .unwrap_or(&[]);
-    // 数学块聚焦编辑的是 LaTeX 源码：整块等宽（用户报修）。代码块与源码
+    // 数学块聚焦编辑的是 LaTeX 源码：整块等宽。代码块与源码
     // 分块的 base run 已由调用方换成代码字体，只有数学块还需要这里补。
     let force_code_font = input.kind() == BlockKind::MathBlock;
     let mut boundaries = vec![0, display_text.len()];

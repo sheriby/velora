@@ -444,7 +444,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         // 只在还没有任何结果可显示时才用「…」占位：重新搜索期间继续显示上一次
-        // 的结果，避免侧栏闪空（用户报修）。
+        // 的结果，避免侧栏闪空。
         if self.workspace.search_pending && self.workspace.search_results.is_empty() {
             return div()
                 .p(px(12.0))
@@ -499,9 +499,9 @@ impl Editor {
                     .iter()
                     .filter(|other| other.path == hit.path)
                     .count();
-                // 文件头整行可点击并代表该组第一条命中（用户报修：此前文件名
-                // 本身点不了，只有它下面一条没有内容的空行能点）。文件名命中
-                // 没有行号，点击就只是打开这个文件；内容命中则跳到该处匹配。
+                // 文件头整行可点击并代表该组第一条命中：此前文件名本身点不了，
+                // 只有它下面一条没有内容的空行能点。文件名命中没有行号，
+                // 点击就只是打开这个文件；内容命中则跳到该处匹配。
                 let header_selected = self.workspace.search_active_index == Some(index);
                 let header_editor = editor.clone();
                 visible.push(
@@ -641,8 +641,8 @@ impl Editor {
         // （用户需求）。改过的那篇由 `finish_dirty` 就地转固定，不会被替换掉。
         self.open_workspace_file_in_mode(path.clone(), WorkspaceOpenMode::Preview, window, cx);
         // 路径表示可能不一致（树扫描 canonicalize，打开路径未必；macOS
-        // /var ↔ /private/var）：字面比较失败会让整个跳转块静默跳过——
-        // 用户报修「点了完全没反应」。双方 canonicalize 后再比。
+        // /var ↔ /private/var）：字面比较失败会让整个跳转块静默跳过。
+        // 双方 canonicalize 后再比。
         let same_file = match (self.file_path.as_ref(), path.canonicalize()) {
             (Some(open), Ok(canonical)) => {
                 open == &path
@@ -658,7 +658,7 @@ impl Editor {
             // 就允许文档是脏的——未保存的编辑会把行往上或往下推，行号与字节
             // 就近都不可靠。但「文件内第 k 个含词行」的对应关系不灭：编辑要么
             // 增删含词行（那时命中本身也变了），要么只挪位置。
-            // （用户报修：两个不同命中被解析到同一处，点击无反应。）
+            // （旧解析曾把两个不同命中解析到同一处，导致点击无反应。）
             //
             // 现在这层对应关系读的是文档命中表（§4.3 那张），取「第 k 个含命中
             // 起点的行」的第一个命中——与旧的手写循环对非跨行查询逐位相同，但

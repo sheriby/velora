@@ -169,8 +169,8 @@
 
     #[gpui::test]
     async fn preserves_intraword_underscores_in_paragraph_round_trip(cx: &mut TestAppContext) {
-        // 用户报修：含下划线标识符的段落存盘后被改写。`topic_embedding_attention`
-        // 词中下划线按 CommonMark 不是强调定界符，原文必须原样保留。
+        // `topic_embedding_attention` 词中下划线按 CommonMark 不是强调定界符，
+        // 原文必须原样保留。
         let source = "数据来源：`work_0826A3_fa/评估汇总.md`（**topic_embedding_attention 有轨迹无产物**，按步骤 2.7 用 `trace_extract_chain.py` 提取）。";
         let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
 

@@ -1442,7 +1442,7 @@ async fn typing_above_a_nested_table_keeps_its_cells_on_their_own_rows(cx: &mut 
 ///
 /// 用户在原文里用的是圆括号，编辑器却把项当成「只有序号、没有写法」的东西：显示按
 /// 规范补点号，序列化也按规范补点号，于是回车一分为二的那一刻，用户自己写的记号
-/// 被换掉了（用户报修「为啥 1) 还会变成 1. 啊！！」）。
+/// 被换掉了。
 #[gpui::test]
 async fn splitting_a_paren_numbered_item_keeps_the_paren_marker(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

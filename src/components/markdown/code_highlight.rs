@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn builtin_themes_give_markdown_syntax_distinct_colours() {
-        // 用户报修两轮：满屏一个颜色不行，标题六级之间也要有区分度。
+        // 不能满屏一个颜色，标题六级之间也要有区分度。
         // 谁把字段映射到同一个来源，这两条断言就红。
         let key = |color: &gpui::Hsla| {
             let rgba = gpui::Rgba::from(*color);
@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn emphasis_markers_render_in_default_text_colour() {
-        // 用户报修：`*`/`**` 定界符不该有自己的颜色。
+        // `*`/`**` 定界符不该有自己的颜色。
         for theme in [Theme::default_theme(), Theme::forest_theme()] {
             assert_eq!(
                 code_highlight_color(&theme.colors, CodeHighlightClass::MarkdownEmphasisMarker),

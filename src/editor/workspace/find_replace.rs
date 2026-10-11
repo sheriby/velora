@@ -97,7 +97,7 @@ impl Editor {
             self.sync_document_search_highlights(cx);
         }
         // 去抖窗口里保留上一次的结果，新结果落地后再整体替换：清空会让侧栏
-        // 先闪成空白再恢复（用户报修，watcher 刷新文件树等任何重新调度都会触发）。
+        // 先闪成空白再恢复，watcher 刷新文件树等任何重新调度都会触发。
         self.workspace.search_pending = true;
         let editor = cx.entity().downgrade();
         let background = cx.background_executor().clone();
@@ -184,13 +184,13 @@ impl Editor {
     pub(crate) fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         self.outline_clicked_document_identity = None;
         // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建。落点在
-        // 未物化的部分时，选区找不到归属的投影块，会被钳进首块末尾——用户
-        // 报修：第一次点击命中停在 512 行，再点才对。跳转前先把续建落地；
+        // 未物化的部分时，选区找不到归属的投影块，会被钳进首块末尾——第一次
+        // 点击命中就会停在 512 行，再点才对。跳转前先把续建落地；
         // 已物化的文档这里是空操作。
         self.flush_pending_materialization(cx);
         self.push_cursor_location(cx);
         // 命中在折叠标题的章节里时先展开：块被折叠过滤不挂载，既画不出高亮
-        // 也滚不过去（用户报修）。
+        // 也滚不过去。
         if self.unfold_sections_covering_source_range(&range, cx) {
             self.fold_state_version = self.fold_state_version.wrapping_add(1);
         }
@@ -203,8 +203,8 @@ impl Editor {
         );
         self.workspace.search_navigation_selection = Some(self.capture_source_selection_snapshot(cx).range);
         // 跳转目标的滚动锚点不能是表格单元格：cell 不注册进文档块树，且随
-        // 表格重建而亡——锚它则滚动系统永远查不到坐标（用户报修：表格里的
-        // 搜索命中点了没反应）。apply 落在 cell 上时这里校正为宿主表格块；
+        // 表格重建而亡——锚它则滚动系统永远查不到坐标，表格里的搜索命中点不动。
+        // apply 落在 cell 上时这里校正为宿主表格块；
         // 视图切换等恢复路径不受影响（它们需要 cell 锚点继续编辑）。
         if let Some(anchor) = self.active_entity_id
             && self.document.block_entity_by_id(anchor).is_none()
@@ -218,8 +218,8 @@ impl Editor {
                 self.pending_focus = Some(host);
             }
         }
-        // 搜索跳转不能把焦点从查询框抢进正文：那样继续敲字会直接改写文档
-        // （用户报修）。本帧块仍拿到焦点，apply_pending_scroll_into_view 靠
+        // 搜索跳转不能把焦点从查询框抢进正文：那样继续敲字会直接改写文档。
+        // 本帧块仍拿到焦点，apply_pending_scroll_into_view 靠
         // 它算滚动目标；同帧稍后 apply_pending_workspace_search_focus 把焦点
         // 交还查询框。滚动目标另走 active_entity_id（见 ensure_focused_
         // caret_visible），不依赖焦点。
@@ -230,7 +230,7 @@ impl Editor {
         self.pending_scroll_center_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
         // 活动命中变了（跳转/循环）：重算文档内高亮，让用户看得出当前
-        // 停在哪一个命中上（用户报修：来回跳毫无视觉反馈）。
+        // 停在哪一个命中上。
         self.sync_document_search_highlights(cx);
         cx.notify();
     }
@@ -346,8 +346,7 @@ impl Editor {
     }
 
     /// Enter/「下一个/上一个」按钮的统一入口：工作区范围在结果列表里
-    /// 循环（此前是空操作，来回跳毫无反应——用户报修），文档范围在当前
-    /// 文档内循环。
+    /// 循环（此前是空操作），文档范围在当前文档内循环。
     pub(crate) fn advance_search_match(
         &mut self,
         reverse: bool,

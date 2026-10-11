@@ -99,9 +99,8 @@ async fn status_bar_breadcrumb_renders_without_panicking(cx: &mut TestAppContext
 
 #[gpui::test]
 async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext) {
-    // 用户报修：标签开多了，第一个标签一直在左移，最后压到红绿灯下面。
-    // 根因是标题行的红绿灯预留位（和应用绘制的窗口按钮）没有 flex_shrink_0，
-    // 整行溢出时被 taffy 挤扁。
+    // 标签开多了也不许让第一个标签左移、压到红绿灯下面：标题行的红绿灯预留位
+    // （和应用绘制的窗口按钮）必须 flex_shrink_0，否则整行溢出时会被 taffy 挤扁。
     init_editor_test_app(cx);
     let root = temp_markdown_path("tab-strip-overflow");
     fs::create_dir_all(&root).unwrap();

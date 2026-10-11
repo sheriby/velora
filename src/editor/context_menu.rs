@@ -352,8 +352,8 @@ impl Editor {
             self.cancel_modal(window, cx);
             return;
         }
-        // 信息弹窗与标题栏菜单也是瞬态 UI，且没有其他键盘退出口（用户报修：
-        // Esc 关不掉「关于/检查更新」弹窗，也关不掉标题栏菜单）。
+        // 信息弹窗与标题栏菜单也是瞬态 UI，且没有其他键盘退出口——Esc 必须能关掉
+        // 「关于/检查更新」弹窗与标题栏菜单。
         if self.info_dialog.is_some() {
             cx.stop_propagation();
             self.hide_info_dialog(cx);
@@ -456,8 +456,7 @@ impl Editor {
     }
 
     /// 从已打开的插入对话框插入表格。与 UI 事件解耦（便于测试），并把这次
-    /// 结构插入纳入撤销栈：其它表格操作都走 prepare/finalize，此前这条漏了
-    /// （用户报修：插入表格后 Ctrl+Z 没反应，或者把上一次编辑一并揪掉）。
+    /// 结构插入纳入撤销栈：其它表格操作都走 prepare/finalize，此前这条漏了。
     pub(super) fn insert_table_from_dialog(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(dialog) = self.table_insert_dialog.take() else {
             return false;

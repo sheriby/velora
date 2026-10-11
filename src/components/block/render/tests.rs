@@ -57,8 +57,8 @@ mod tests {
 
     #[test]
     fn numbered_list_marker_writes_the_delimiter_the_item_was_parsed_with() {
-        // 显示也要照原文的写法：用户写的是 `1)`，屏上不该变成 `1.`（用户报修
-        // 「为啥 1) 还会变成 1. 啊！！」）。没记过的按规范写点号。
+        // 显示也要照原文的写法：用户写的是 `1)`，屏上不该变成 `1.`。
+        // 没记过的按规范写点号。
         assert_eq!(numbered_list_marker(0, 1, '.'), "1.");
         assert_eq!(numbered_list_marker(0, 12, ')'), "12)");
         assert_eq!(numbered_list_marker(1, 2, ')'), "b)");
@@ -77,8 +77,8 @@ mod tests {
 
     #[test]
     fn inline_code_uses_the_code_font_size_while_scripts_shrink() {
-        // 用户报修：点击含行内代码的行，代码字号会跳回正文大小；且行内代码
-        // 应当跟随「代码块字体大小」设置。显示态与编辑态现在同字号。
+        // 行内代码跟随「代码块字体大小」设置，显示态与编辑态同字号，
+        // 点击含行内代码的行不得出现字号跳变。
         let span_with = |style: InlineStyle| InlineSpan {
             range: 0..1,
             style,

@@ -129,7 +129,7 @@ async fn document_find_searches_unsaved_edits_and_selects_matches(cx: &mut TestA
 
 #[gpui::test]
 async fn document_find_enter_right_after_typing_still_jumps(cx: &mut TestAppContext) {
-    // 用户报修：打完查询立刻回车（120ms 去抖窗口内）会静默什么都不做。
+    // 打完查询立刻回车（120ms 去抖窗口内）也必须立刻跳转。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -165,7 +165,7 @@ async fn document_find_enter_right_after_typing_still_jumps(cx: &mut TestAppCont
 
 #[gpui::test]
 async fn document_find_jump_keeps_the_query_field_focused(cx: &mut TestAppContext) {
-    // 用户报修：跳转后焦点被抢进正文，继续敲字直接改写文档（数据损坏）。
+    // 跳转后焦点必须留在查询框：否则继续敲字会直接改写文档（数据损坏）。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -219,7 +219,7 @@ async fn document_find_jump_keeps_the_query_field_focused(cx: &mut TestAppContex
 
 #[gpui::test]
 async fn document_find_highlights_survive_a_view_mode_switch(cx: &mut TestAppContext) {
-    // 用户报修：切渲染/源码模式后文档内搜索高亮全丢，直到改查询才回来。
+    // 切渲染/源码模式后文档内搜索高亮必须保留，不能直到改查询才回来。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -262,7 +262,7 @@ async fn document_find_highlights_survive_a_view_mode_switch(cx: &mut TestAppCon
 async fn document_find_jump_unfolds_the_section_containing_the_match(
     cx: &mut TestAppContext,
 ) {
-    // 用户报修：折叠标题里的命中搜不到也看不到（块被过滤，不挂载也不滚动）。
+    // 折叠标题里的命中必须搜得到、看得到（块被过滤后会既不挂载也不滚动）。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -299,7 +299,7 @@ async fn document_find_jump_unfolds_the_section_containing_the_match(
 
 #[gpui::test]
 async fn closing_the_sidebar_clears_document_find_highlights(cx: &mut TestAppContext) {
-    // 用户报修：关侧栏后正文里的搜索高亮还留着，没有面板解释也清不掉。
+    // 关侧栏后正文里的搜索高亮必须随之清掉，不能留着无从清除。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);

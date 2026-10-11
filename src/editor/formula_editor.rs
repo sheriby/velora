@@ -120,7 +120,7 @@ pub(crate) struct FormulaDraftLine {
 
 /// 把草稿按行切成带 LaTeX 语法色的渲染段。配色与数学块编辑态同源（同一套
 /// `highlight_latex_source` + `code_highlight_color`）：弹窗里改的就是那几行
-/// 源码，两处颜色不一样会让人觉得不是同一个公式（用户报修：草稿没颜色）。
+/// 源码，两处颜色不一样会让人觉得不是同一个公式。
 /// `selection` 是草稿坐标下的选区，落在哪段 run 上就给哪段加选中底色。
 pub(crate) fn formula_draft_lines(
     draft: &str,
@@ -744,7 +744,7 @@ impl Editor {
     /// 弹窗内的专用按键（输入框元素上注册）：Esc 取消、⌘/Ctrl+Enter 应用、
     /// 普通 Enter 换行（多行公式环境常用）、退格/前向删除与方向键自管——
     /// DeleteBack 等动作绑定在块编辑器的 key context 上，焦点在弹窗草稿时
-    /// 根本不派发，删除会静默失效（用户报修：草稿无法删除）。
+    /// 根本不派发，删除会静默失效。
     pub(crate) fn formula_editor_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -1089,7 +1089,7 @@ impl Editor {
 
     /// 量出草稿当前的分行换行布局（文本、run、软换行后的行高与顶部）。
     /// 渲染、光标、补全浮层、指针命中四处共用这一份：各算各的就会在长行软换行
-    /// 之后对不上（用户报修：多行光标位置不对）。
+    /// 之后对不上。
     fn measure_formula_draft(&self, window: &Window, cx: &App) -> Vec<DraftLineLayout> {
         let Some(state) = self.formula_editor.as_ref() else {
             return Vec::new();
@@ -1276,7 +1276,7 @@ impl Editor {
         // 闪烁任务跟着焦点走：聚焦草稿时跑，失焦就停（Task drop 即取消）。
         // 与 Block::render 里 start_cursor_blink 的开关口径一致。
         // 窗口不是 key（macOS 红绿灯变灰）时 gpui 不清 window.focus，光靠
-        // is_focused 判不出「失焦」——光标得连带窗口激活态一起看（用户报修）。
+        // is_focused 判不出「失焦」——光标得连带窗口激活态一起看。
         let draft_focused = self
             .formula_editor
             .as_ref()
@@ -1589,7 +1589,7 @@ impl Editor {
                     )
                     .child(category_label(tab, strings));
                 // 选中的页签不挂 hover 变浅——浮层上 hover 色与选中底色相近
-                // 时，选中态会一晃就没（用户报修）。
+                // 时，选中态会一晃就没。
                 if is_active {
                     tab.into_any_element()
                 } else {
@@ -1626,7 +1626,7 @@ impl Editor {
                     }
                 })
                 // 列宽交给 grid 均分（w_full），行高固定——内容宽度不齐时
-                // 格子也不会七扭八歪（用户报修：函数分类排版乱）。
+                // 格子也不会七扭八歪。
                 .h(px(CELL))
                 .w_full()
                 .flex()

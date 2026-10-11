@@ -1348,7 +1348,7 @@ mod tests {
     #[test]
     fn links_on_later_lines_do_not_bleed_into_earlier_ones() {
         // 回归：try_scan_link 曾用行内相对偏移当整块坐标，第二行的链接色
-        // 会画到第一行的文字上（用户报修：README 第 7 行前半截被串色）。
+        // 会画到第一行的文字上（README 第 7 行前半截曾被串色）。
         let text = "# 标题\n\n看 [文档](https://example.com/a) 与 ![图](img/甲.png)\n";
         let link_line_start = text.find("看 [文档]").expect("链接行");
         let spans = highlight(text);

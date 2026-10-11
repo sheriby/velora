@@ -197,8 +197,8 @@ impl Editor {
         // 上限只削视口上下的预挂载余量；视口自身这一段必须整段挂上——终点
         // 一旦剪进视口内部（旧实现钉在视口首行 + 2×COLD_RUN_MAX_ROWS 行），
         // 比这宽的视口下沿就落在 spacer 上，而续帧量到的只有已挂载的那段，
-        // 没挂上的行永远量不到，needs_fill 从此原地踏步（用户报修：源码
-        // 模式文末连打回车，第 24 行往后没有行号，切换一次模式才恢复）。
+        // 没挂上的行永远量不到，needs_fill 从此原地踏步（源码模式文末
+        // 连打回车时，第 24 行往后曾没有行号，切换一次模式才恢复）。
         let mut needs_fill = false;
         if viewport_first < n {
             let lead_floor = viewport_first.saturating_sub(COLD_RUN_MAX_ROWS);
@@ -422,8 +422,8 @@ impl Editor {
     /// 「选择全文」（⌘⇧A / Ctrl+Shift+A）：键位与命令面板都汇到这一条。
     ///
     /// 与 ⌘A 那条「先当前段落、再按一次选整篇」的循环共用同一个选区模型，只是不看
-    /// 那台计时器（`Editor::select_document`）；报修「全文选择不直观」要的就是这条
-    /// 明面上的入口，不是让人去猜双击。
+    /// 那台计时器（`Editor::select_document`）；选全文要有这条明面上的入口，
+    /// 不该让人去猜双击。
     pub(crate) fn on_select_document_action(
         &mut self,
         _: &crate::components::SelectDocument,
@@ -556,7 +556,7 @@ impl Editor {
         self.dismiss_contextual_overlays(cx);
         self.sync_table_axis_visuals(cx);
         // 模式切换会换掉整套块实体，文档内搜索高亮必须重算，否则正文里的
-        // 命中全丢（用户报修）。非查找场景下该函数自行早退/清理。
+        // 命中全丢。非查找场景下该函数自行早退/清理。
         if self.workspace.is_open
             && self.workspace.active_tab == super::workspace::WorkspaceTab::Search
             && !self.workspace.search_query.trim().is_empty()
@@ -638,7 +638,7 @@ impl Editor {
             blocks[*index].update(cx, |block, _cx| block.set_source_line_start(line_index + 1));
         }
         // 行号栏宽度基准跟着总行数走：编辑增删行后各块同步更新，栏宽保持
-        // 全文档一致（用户报修：512 上下行号对不齐）。
+        // 全文档一致（此前 512 上下行号对不齐）。
         let basis = self.buffer.line_count();
         for block in &blocks {
             block.update(cx, |block, _cx| block.set_source_line_gutter_basis(basis));

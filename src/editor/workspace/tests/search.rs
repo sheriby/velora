@@ -158,8 +158,8 @@ fn long_cjk_markdown() -> String {
 
 #[test]
 fn text_sniffing_accepts_a_prefix_cut_mid_character() {
-    // 用户报修：8 KiB 读取窗切在多字节字符中间时，窗口内不是合法 UTF-8，
-    // 于是整篇中文文档被判成二进制，只显示「无法使用文本编辑器预览该文件」。
+    // 8 KiB 读取窗切在多字节字符中间时，窗口内不是合法 UTF-8，整篇中文
+    // 文档曾被判成二进制、只显示「无法使用文本编辑器预览该文件」；必须按文本接受。
     let root = std::env::temp_dir().join(format!("velora-sniff-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create dir");
     let path = root.join("长篇.md");
@@ -335,8 +335,8 @@ async fn clicking_a_search_hit_in_a_dirty_file_lands_on_the_match(cx: &mut TestA
 
 #[gpui::test]
 async fn workspace_search_cache_picks_up_modified_content(cx: &mut TestAppContext) {
-    // 内容缓存：mtime 未变走内存；文件被改写后必须反映新内容（用户报修
-    // 的性能优化不能牺牲正确性）。
+    // 内容缓存：mtime 未变走内存；文件被改写后必须反映新内容（性能优化
+    // 不能牺牲正确性）。
     let background = cx.executor();
     let root =
         std::env::temp_dir().join(format!("velora-search-cache-{}", uuid::Uuid::new_v4()));
@@ -413,9 +413,9 @@ async fn workspace_search_returns_content_hits_after_typing(cx: &mut TestAppCont
 
 #[gpui::test]
 async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut TestAppContext) {
-    // 用户报修：搜索结果里文件名本身点不了，只有它下面一条没有内容的空行能点。
-    // 原因是文件名命中（line=None）也渲染了一行（py(4) 且无内容），而文件头
-    // 完全没有点击处理。现在文件头整行可点并代表该组第一条命中。
+    // 文件头必须整行可点并代表该组第一条命中：此前文件名本身点不了，只有它
+    // 下面一条没有内容的空行能点。原因是文件名命中（line=None）也渲染了一行
+    // （py(4) 且无内容），而文件头完全没有点击处理。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -528,9 +528,9 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
 
 #[gpui::test]
 async fn re_search_keeps_previous_results_visible(cx: &mut TestAppContext) {
-    // 用户报修：点击搜索结果后侧栏闪一下——先空白再恢复。触发重新搜索的来源
-    // 很多（watcher 刷新文件树、重新调度等），但闪空的根因是重新搜索一开始就
-    // 清空 `search_results`，面板在 120ms 去抖窗口里只剩「…」。
+    // 点击搜索结果后侧栏不得闪空：此前会先空白再恢复。触发重新搜索的来源
+    // 很多（watcher 刷新文件树、重新调度等），根因是重新搜索一开始就清空
+    // `search_results`，面板在 120ms 去抖窗口里只剩「…」。
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -612,7 +612,7 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
     });
     // 早命中在文档开头、晚命中在末尾：跳转必须双向跟随——向下跳进从未
     // 绘制过的区域（目标块没有布局边界，精确居中无从算起），向上跳反向
-    // 滚回首屏（用户报修：浏览过一遍之前跳转不响应；浏览=全部画过=边界齐）。
+    // 滚回首屏。未浏览过一遍之前跳转曾不响应；浏览=全部画过=边界齐。
     let mut big = String::from("## Top\n\n开头段落就有测试命中\n");
     for index in 0..200 {
         big.push_str(&format!(
@@ -824,7 +824,7 @@ async fn document_search_hit_inside_table_jumps(cx: &mut TestAppContext) {
         cx.run_until_parked();
     }
     editor.read_with(cx, |editor, cx| {
-        // 回归（用户报修：表格里的搜索命中点了没反应）：
+        // 回归（表格里的搜索命中此前点了没反应）：
         // 1) 滚动必须把表格滚进视口；2) 滚动锚点是宿主表格块而非
         // 单元格（cell 实体随表格重建而亡，锚它=悬空 id=永无坐标）。
         let scroll_y = f32::from(editor.scroll_handle.offset().y);
@@ -868,7 +868,7 @@ async fn workspace_search_reports_all_hits_and_jumps_by_proximity(cx: &mut TestA
         crate::components::init(cx);
     });
     // 复刻 BASELINE_0408.md：一张几十行的表格，"测试"在大量表格行里。
-    // 此前每文件硬编码 3 条命中（用户报修「结果不全」），行号取磁盘原文
+    // 此前每文件硬编码 3 条命中，结果不全；行号取磁盘原文
     // 而跳转锚定序列化文本（规范化后行数变化→行号错位、点了乱跳）。
     // 表格放文档末尾（贴近 BASELINE_0408 实况）：跳转必须滚进未绘制区域。
     let mut md = String::from("# 基线\n\n引导段落。\n");
@@ -987,7 +987,7 @@ async fn cycling_hits_within_one_viewport_still_centers(cx: &mut TestAppContext)
         crate::theme::ThemeManager::init(cx);
         crate::components::init(cx);
     });
-    // 用户报修：多个命中相距不远时点「下一个」视口不动/不居中。文档要有
+    // 多个命中相距不远时点「下一个」，视口曾不动/不居中。文档要有
     // 足够滚动空间（两屏以上），两个命中相距约半屏，逐个点击时每次都应把
     // 当前命中精确居中。
     let mut md = String::from("# 标题\n\n第一段 alpha 在这里\n");
@@ -1148,7 +1148,7 @@ async fn same_file_workspace_hit_jumps_by_the_file_line(cx: &mut TestAppContext)
     });
 }
 
-/// 回归（用户报修 2026-10-05）：刚打开的代码文件只同步建首块（512 行），
+/// 回归（2026-10-05）：刚打开的代码文件只同步建首块（512 行），
 /// 其余进 PendingSourceTail 后台续建——第一次点击 512 行之外的命中时投影块
 /// 还不存在，选区被钳进首块末尾，再点才对。跳转前必须把续建落地。
 #[gpui::test]
@@ -1239,7 +1239,7 @@ async fn first_click_into_a_freshly_opened_code_file_lands_in_the_right_chunk(
     });
 }
 
-/// 回归（用户报修 2026-10-05）：源码分块各自按「块内最后行号」算行号栏宽，
+/// 回归（2026-10-05）：源码分块各自按「块内最后行号」算行号栏宽，
 /// 第二块算到 1024 行宽出一位，512 上下两段行号没有右对齐。栏宽必须按
 /// 全文档总行数统一。
 #[gpui::test]
@@ -1304,7 +1304,7 @@ async fn source_chunk_gutters_share_one_width_basis(cx: &mut TestAppContext) {
             );
         }
         // 行号视图的内容列要贴近窗口左缘：左 inset = 半个滚动 padding(12) +
-        // 块壳 padding(12) = 24px（原来 24+12+12=48，用户报修太空、减半）。
+        // 块壳 padding(12) = 24px（原来 24+12+12=48，空隙过大，减半）。
         let first = roots[0].read(cx);
         let content_left = f32::from(first.last_bounds.expect("块应有布局").left())
             - f32::from(first.last_gutter_width);
@@ -1315,7 +1315,7 @@ async fn source_chunk_gutters_share_one_width_basis(cx: &mut TestAppContext) {
     });
 }
 
-/// 回归（用户报修 2026-10-05）：源码文档按 512 行切块后，搜索跳转的选区被
+/// 回归（2026-10-05）：源码文档按 512 行切块后，搜索跳转的选区被
 /// 钳进第一根投影块——512 行之外的命中点击后全部停在 512 行。选区必须
 /// 落进**包含它的那一根**投影块。
 #[gpui::test]
@@ -1377,7 +1377,7 @@ async fn source_mode_jump_lands_in_the_chunk_containing_the_hit(cx: &mut TestApp
     }
 }
 
-/// 回归（用户报修 2026-10-05）：点击搜索结果跳转后，活动高亮落在命中词
+/// 回归（2026-10-05）：点击搜索结果跳转后，活动高亮落在命中词
 /// 前面的字上（截图：绿块盖住「（含测试）」的「含」，真正的命中没高亮）。
 /// 既有测试只守「buffer 区间 == 命中词」「选区 == 活动区间」——换算到块
 /// 显示文本这一步整体偏移时它们照样全绿。这条直接断言：每个块上高亮/
@@ -1436,7 +1436,7 @@ async fn workspace_hit_highlight_covers_the_match_text_in_the_block(cx: &mut Tes
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
 
-    // 点第 5 行（引用分册行）的命中——真实报修场景。
+    // 点第 5 行（引用分册行）的命中。
     let hit_index = editor.read_with(cx, |editor, _cx| {
         editor
             .workspace

@@ -223,8 +223,7 @@ mod tests {
         assert_eq!(pack.id, "zh-CN");
         assert_eq!(pack.name, "简体中文");
         assert_eq!(pack.strings.menu_file, "文件菜单");
-        // 本轮新增的键在旧语言包里缺省时，必须回退到内置默认而不是留空
-        // （用户报修过外置语言包把界面刷成空白的一类问题）。
+        // 本轮新增的键在旧语言包里缺省时，必须回退到内置默认而不是留空。
         assert_eq!(pack.strings.insert_formula, "公式编辑器");
         assert_eq!(pack.strings.formula_editor_hint, "Enter 换行 · Esc 取消 · ⌘Enter 应用");
         assert_eq!(

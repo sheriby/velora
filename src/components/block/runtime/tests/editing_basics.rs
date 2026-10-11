@@ -289,7 +289,7 @@ async fn frontmatter_block_avoids_source_raw_paint_branch(cx: &mut TestAppContex
         assert_eq!(block.kind(), BlockKind::FrontMatter);
         assert!(block.uses_raw_text_editing());
         // 回归防护：FrontMatter 一旦落到 SourceRaw，paint 的 source-raw 前置
-        // 分支会在未聚焦时按纯文本渲染，YAML 代码块外观永远出不来（用户报修）。
+        // 分支会在未聚焦时按纯文本渲染，YAML 代码块外观永远出不来。
         // 它必须与代码块同构走 CodeBlockRaw，始终渲染 widget。
         assert!(!block.is_source_raw_mode());
         assert_eq!(block.display_text(), markdown);

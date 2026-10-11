@@ -4,8 +4,7 @@ impl Editor {
     pub(crate) fn toggle_workspace_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.is_open {
             self.workspace.is_open = false;
-            // 面板关了就不该再显示正文搜索高亮（用户报修：残留高亮没有面板
-            // 可以解释，也没有别的路径清它）。inactive 分支会清掉全部范围。
+            // 面板关了就不该再显示正文搜索高亮。inactive 分支会清掉全部范围。
             self.sync_document_search_highlights(cx);
             self.refocus_document_after_sidebar_collapse(window, cx);
         } else {

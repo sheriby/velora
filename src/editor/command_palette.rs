@@ -292,7 +292,7 @@ pub(super) fn render_command_palette_overlay(
                             state.query.clone()
                         })
                         // 输入走编辑器的单行输入处理器：与搜索框/⌘P 共用 IME 路由，
-                        // 中文与非 ASCII 文本能输入（用户报修：面板里打字没反应）。
+                        // 中文与非 ASCII 文本能输入（此前面板里打字没反应）。
                         .child(
                             canvas(|_, _, _| (), {
                                 let focus = focus.clone();

@@ -443,8 +443,8 @@ impl Editor {
             }
             Some(view) => {
                 // 视口按交回来的那份摆好，并且不挂「滚到活动块」——挂了就会把视口
-                // 拽向活动块（通常是文档首块），用户报修的正是这个。内容变矮时
-                // gpui 在布局那一趟把偏移夹回可滚范围并写回，这里不必介入。
+                // 拽向活动块（通常是文档首块）。内容变矮时 gpui 在布局那一趟把偏移
+                // 夹回可滚范围并写回，这里不必介入。
                 self.pending_scroll_active_block_into_view = false;
                 self.pending_scroll_center_into_view = false;
                 self.pending_scroll_recheck_after_layout = false;

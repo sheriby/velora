@@ -449,7 +449,7 @@
 
     #[gpui::test]
     async fn inline_code_runs_use_the_code_font_size(cx: &mut TestAppContext) {
-        // 用户报修：点击含行内代码的行，代码字号跳回正文。这要求可编辑文本
+        // 点击含行内代码的行时，代码字号不得跳回正文。这要求可编辑文本
         // 也带上逐段字号（vendored gpui 本地补丁），且行内代码跟随
         // 「代码块字体大小」设置——显示态（分段路径）与编辑态（本路径）同值。
         let cx = cx.add_empty_window();
@@ -732,7 +732,7 @@
 
     #[gpui::test]
     async fn math_block_edits_run_in_the_code_font(cx: &mut TestAppContext) {
-        // 用户报修：数学块聚焦编辑的是 LaTeX 源码，等宽才对得清命令与下标；
+        // 数学块聚焦编辑的是 LaTeX 源码，等宽才对得清命令与下标；
         // 普通段落不受影响。数学块走 build_code_text_runs（它有高亮结果）。
         let cx = cx.add_empty_window();
         let math_block = cx.new(|cx| {

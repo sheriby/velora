@@ -296,7 +296,7 @@ impl TableColumnLayout {
         //
         // 两种直觉做法都是错的：按内容宽度做权重，一列内容特別长时会把权重全吃
         // 走，其余列被压到只剩几个字符；把内容窄的列拉到平均份额，它白白占着空
-        // 位，宽列反倒被压到内容宽度以下换行（用户报修）。
+        // 位，宽列反倒被压到内容宽度以下换行。
         let floor_width = min_column_width.max(0.0).min(equal_share);
         let mut widths = vec![floor_width; column_count];
         let mut remaining = (safe_table_width - floor_width * column_count as f32).max(0.0);
@@ -457,8 +457,7 @@ fn measure_cell_preferred_width(
         .map(|mut lines| {
             // 列宽必须按渲染管线算：正文渲染在折行前会给行加水平间距（行内代码
             // 两侧 code_gap、相邻字形的字距、中西文边界 autospacing）。测量不补
-            // 上这部分，钉在「内容宽+余量」上的列渲染时必然 mid-word 折行
-            // （用户报修）。
+            // 上这部分，钉在「内容宽+余量」上的列渲染时必然 mid-word 折行。
             let code_ranges: Vec<_> = cache
                 .spans()
                 .iter()
@@ -512,7 +511,7 @@ fn measurement_runs(
             // 哪段用什么字体渲染，就用什么字体量：行内代码段与渲染端
             // （build_text_runs）同样换 code 字体族、提到 Medium、用「代码块
             // 字体大小」。按正文字体量等宽 token 会系统性偏窄，钉住列渲染时
-            // mid-word 折行（用户报修）。正文段仍按正文字体量。
+            // mid-word 折行。正文段仍按正文字体量。
             font.family = SharedString::from(fonts.code_family.clone());
             if font.weight < FontWeight::MEDIUM {
                 font.weight = FontWeight::MEDIUM;
@@ -566,7 +565,7 @@ fn strip_table_indent(line: &str) -> Option<&str> {
 /// 只做**位置**判断，不做任何反转义——未转义是行内解析器在切完格之后的事，
 /// 那时才知道每段是不是代码/公式。切分与序列化共用这一份扫描（
 /// `escape_cell_separator_pipes`），两端才不会对「哪个竖线会切开」各说各话
-/// （用户报修 cases/02-table-code.md：预处理反转义把 `` `a\\b` `` 显示成 `a\b`、
+/// （cases/02-table-code.md：预处理反转义曾把 `` `a\\b` `` 显示成 `a\b`、
 /// 把 `$a\|b$` 的转义竖线洗成裸竖线，改了文档的意思）。
 fn cell_separator_positions(text: &str) -> Vec<usize> {
     let chars = text.chars().collect::<Vec<_>>();

@@ -288,7 +288,7 @@ async fn right_click_inside_a_block_opens_the_document_menu(cx: &mut TestAppCont
         );
     }
     // 六颗要排满这一条：第一颗贴着面板内框左边，最后一颗贴着右边。
-    // 按自然宽度挤在左半、右边空一截，看着就是没对齐（用户看图报修）。
+    // 按自然宽度会挤在左半、右边空一截，看着就是没对齐。
     let first = quick_action_bounds(QUICK_ACTION_ROWS[0], cx);
     let last_name = QUICK_ACTION_ROWS.last().copied().unwrap();
     let last = quick_action_bounds(last_name, cx);
@@ -815,7 +815,7 @@ fn open_submenu(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Option<D
     })
 }
 
-/// 报修：二级菜单太容易自己收掉。鼠标从父行横到二级面板上（一次移动事件里就跨过去了），
+/// 鼠标从父行横到二级面板上时（一次移动事件里就跨过去了），
 /// 面板得一直开着：父行的 mouse-out 与面板的 mouse-in 是同一次移动里的两件事，
 /// 谁先谁后不应该决定面板的生死。
 #[gpui::test]
@@ -927,7 +927,7 @@ fn seam_point(submenu_selector: &'static str, cx: &mut VisualTestContext) -> gpu
     seam
 }
 
-/// 报修：手快滑出二级面板一眼，面板就没了。滑出去再滑回来要还来得及：
+/// 手快滑出二级面板不得立刻收掉，滑出去再滑回来要还来得及：
 /// 时限之内回到面板上，那块面板还在；真离开了才收。
 #[gpui::test]
 async fn the_submenu_waits_out_a_brief_slip_outside_the_menu(cx: &mut TestAppContext) {
@@ -976,7 +976,7 @@ async fn the_submenu_waits_out_a_brief_slip_outside_the_menu(cx: &mut TestAppCon
     assert_eq!(open_submenu(&editor, cx), None, "离开菜单之后该收起来");
 }
 
-/// 报修：两块面板中间那条缝里停一下，二级面板立马就没了。缝也要算「还在菜单上」——
+/// 两块面板中间那条缝也要算「还在菜单上」——
 /// 鼠标从父行横到面板上时正好会经过它。
 #[gpui::test]
 async fn resting_in_the_seam_between_the_panels_keeps_the_submenu_open(cx: &mut TestAppContext) {

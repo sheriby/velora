@@ -359,14 +359,14 @@ async fn autosave_does_not_overwrite_external_file_changes(cx: &mut TestAppConte
 
 /// 自动保存读不到盘上内容时，只能有一个框，而且必须是那个能解除冲突的框。
 ///
-/// 用户报修（Windows 验收）：「自动保存提示 Save Failed」。能在 HEAD 复现的触发条件是
+/// 能在 HEAD 复现的触发条件是
 /// 「这一篇的文件此刻读不出来」——被别的程序独占、被同步盘移走、被改名、被删掉。
 /// 这类失败在 `verify_file_version` 里长成「无法读取文件以检查外部修改：…」，与
 /// 「检测到外部修改」是同一件事的两面（都不能写，都要靠重载解除），失败上报那一支
 /// 两个前缀都认；可最后决定要不要再弹一个框的那道判断只认后一个前缀，于是冲突框之上
 /// 又叠了一个「保存失败」框。`show_modal` 是**替换**语义：用户丢掉的是「重载 / 另存为」
 /// 这个唯一的解除入口，只剩一块「好」，而自动保存仍然停着——看上去就像「自动保存
-/// 自己失败了」，正是要报修的那句话。
+/// 自己失败了」。
 #[gpui::test]
 async fn an_unreadable_file_at_autosave_shows_the_conflict_modal_only(
     cx: &mut TestAppContext,

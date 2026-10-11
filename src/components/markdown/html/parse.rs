@@ -747,7 +747,7 @@ pub(crate) fn is_inline_tag(name: &str) -> bool {
 }
 
 /// 行内 void / 自闭 HTML 标签的分类：**行内解析器识别 void 标签的唯一表**。
-/// 没有这张表时 `<br>` 会被 autolink 规则吃掉尖括号（用户报修 cases/11-table-br.md：
+/// 没有这张表时 `<br>` 会被 autolink 规则吃掉尖括号（cases/11-table-br.md：
 /// 单元格里渲染成带下划线的 "br"）。下一个要支持的 void 标签（`<hr>`、`<wbr>`、
 /// 行内 `<img>`……）进表即被识别，不需要再补一处特例。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

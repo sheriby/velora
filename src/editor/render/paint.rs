@@ -140,8 +140,8 @@ impl Render for Editor {
         // table cell maps to its containing table block's row. 跳转滚动进行中
         // （pending_scroll_active_block_into_view）时焦点通常已交还查询框，
         // 此刻必须把活动块（滚动目标）也钉在窗口里：否则目标滑出绘制窗口、
-        // 边界被丢弃，精确居中失去坐标，估算爬行与之互相拉锯（用户报修：
-        // 向上跳回开头的命中永远停在半路）。
+        // 边界被丢弃，精确居中失去坐标，估算爬行与之互相拉锯，向上跳回
+        // 开头的命中会停在半路。
         let focused_visible_index = self
             .focused_edit_target_entity_id(window, cx)
             .and_then(|id| {
@@ -184,7 +184,7 @@ impl Render for Editor {
 
         // 行号视图（代码文件 / 切到源码的文档）：列宽吃满内容盒，不再居中留白。
         // 行号左边的空 = 滚动区左 padding（减半后 12）+ 块壳自身 block_padding_x
-        // （12），合计 24——原来是 24+12+12=48，用户报修太空、整小一半。
+        // （12），合计 24——原来 24+12+12=48，留白太大、整小一半。
         let source_view =
             self.code_document || self.view_mode == crate::editor::ViewMode::Source;
         let centered_width = if source_view {
@@ -599,7 +599,7 @@ impl Render for Editor {
             .h_full()
             .items_center()
             // 正文区域（含最后一块下方那片空白）默认就是文字光标：块自己的命中区
-            // 只覆盖块内，末尾以下没人设光标，鼠标在那儿变成箭头（用户报修）。
+            // 只覆盖块内，末尾以下没人设光标，鼠标在那儿会变成箭头。
             // 块级请求在后，链接上的手型仍由块覆盖。
             .cursor(CursorStyle::IBeam)
             .bg(theme.colors.editor_background)
@@ -613,7 +613,7 @@ impl Render for Editor {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_editor_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_editor_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_editor_scroll_wheel))
-            // 行号视图左 padding 减半：行号贴窗口左缘（用户报修：左边空隙大）。
+            // 行号视图左 padding 减半：行号贴窗口左缘。
             .pl(px(if source_view {
                 d.editor_padding * 0.5
             } else {

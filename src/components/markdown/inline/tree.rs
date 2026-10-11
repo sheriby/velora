@@ -1062,8 +1062,7 @@ impl InlineTextTree {
     }
 
     /// 归一化**可见文本**（编辑后重解析）：转义来的记号与反斜杠是字面字符，不是定界符。
-    /// 用户按一次 `\` 就应该看到一个反斜杠，连按两次不该塔缩成一个（用户报修：
-    /// 渲染模式里打不出两个连续的反斜杠）。
+    /// 用户按一次 `\` 就应该看到一个反斜杠，连按两次不该塔缩成一个。
     pub fn normalize_visible_text_with_link_references(
         &self,
         reference_definitions: &LinkReferenceDefinitions,

@@ -400,8 +400,7 @@ async fn opening_a_single_file_starts_the_workspace_watcher(cx: &mut TestAppCont
     });
 }
 
-/// 外部改动重载只换内容，不换阅读现场：视图模式与视口位置都不许被重置
-/// （用户报修：重载之后源码模式自动跳回所见即所得，且页面弹回文档顶部）。
+/// 外部改动重载只换内容，不换阅读现场：视图模式与视口位置都不许被重置。
 #[gpui::test]
 async fn reloading_an_externally_changed_document_keeps_source_mode_and_viewport(
     cx: &mut TestAppContext,

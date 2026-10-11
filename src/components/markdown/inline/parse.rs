@@ -149,7 +149,7 @@ pub(crate) struct CharToken {
     pub(crate) html_style: Option<HtmlInlineStyle>,
     pub(crate) source_range: Range<usize>,
     /// 这个字符是字面文本，不能当语法读。编辑可见文本时有两种：反斜杠永远是字面字符
-    /// （用户按一次 `\` 就该看到一个，连按两次不该塔缩成一个——用户报修：渲染模式里
+    /// （用户按一次 `\` 就该看到一个，连按两次不该塔缩成一个——渲染模式里曾
     /// 打不出两个连续的反斜杠）；`escaped` 那种是源码用反斜杠换来的字面记号。
     /// 源码里没配对的定界符（`2 * 3` 的星号）不在其列：它仍然是语法候选，用户后来补
     /// 一颗星就该成强调。读 markdown 源文件时恒为 false，转义语义照旧。
@@ -666,7 +666,7 @@ pub(crate) fn parse_inline_math(
     let source = tokens_to_string(&tokens[index..=close_end]);
     let body = tokens_to_string(&tokens[body_start..close_start]);
     // 货币启发只针对 `$…$` 这种**本身就有歧义**的定界符（`$42$` 更像钱）；
-    // `\(...\)` 是无歧义的 TeX 写法，任何内容都按公式读（用户报修 cases/07-numeric-math.md：
+    // `\(...\)` 是无歧义的 TeX 写法，任何内容都按公式读（cases/07-numeric-math.md：
     // `\(42\)` 被当成钱数）。判据见 `looks_like_currency_between`，导出侧调的是同一个函数。
     if matches!(delimiter, InlineMathDelimiter::Dollar)
         && looks_like_obvious_currency(tokens, index, close_end, &body)
@@ -756,7 +756,7 @@ pub(crate) fn token_is_backslash_escaped(tokens: &[CharToken], index: usize) -> 
 /// 曾抄过一份近似实现，两份一旦漂移就是「界面里是公式、HTML 里是钱」那类下游报修。
 ///
 /// 只作用于歧义定界符 `$…$`：`\(...\)` 是无歧义的 TeX 写法，任何内容都按公式读，
-/// 调用方不得在它身上引用本判据（用户报修 cases/07-numeric-math.md：`\(42\)` 被当钱数）。
+/// 调用方不得在它身上引用本判据（cases/07-numeric-math.md：`\(42\)` 被当钱数）。
 pub(crate) fn looks_like_currency_between(
     before: Option<char>,
     after: Option<char>,

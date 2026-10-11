@@ -271,8 +271,8 @@ async fn outline_jump_lands_inside_the_target_heading(cx: &mut TestAppContext) {
             .expect("target heading line");
         editor.open_outline_node(format!("outline-{line}"), line, cx);
 
-        // 用户报修：跳转后选区落在「上一块末尾两个字 + 标题开头两个字」，
-        // 即映射把标题行起点解析进了前一个块——绝不允许产生跨块选区。
+        // 跳转后选区不得跨块：曾落在「上一块末尾两个字 + 标题开头两个字」，
+        // 即映射把标题行起点解析进了前一个块。
         assert!(
             editor.cross_block_selection.is_none(),
             "大纲跳转到单行标题不应产生跨块选区"
@@ -308,7 +308,7 @@ async fn source_mappings_align_with_the_real_document_text(cx: &mut TestAppConte
     // 复刻 ascend-kernel-developer.md 的真实构造：代码围栏/列表项后直接跟
     // `---`（无空行）、嵌套 front matter、双空行、表格。映射的
     // full_source_range 必须逐字节对齐原文，否则大纲跳转/搜索定位随文档
-    // 深度累积漂移（用户报修：光标落在「沟通风格」的沟和通之间）。
+    // 深度累积漂移（曾表现为光标落在「沟通风格」的沟和通之间）。
     let source = concat!(
         "---\n",
         "name: ascend-kernel-developer\n",

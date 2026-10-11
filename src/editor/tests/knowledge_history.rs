@@ -484,8 +484,8 @@ async fn closing_quick_open_restores_focus_to_the_document(cx: &mut TestAppConte
 
 #[gpui::test]
 async fn file_history_restore_can_be_undone(cx: &mut TestAppContext) {
-    // 用户报修（审查发现）：恢复历史版本会清空 undo 栈，模块注释承诺的
-    // 「可撤销」是假的——误按 Enter 就丢掉当前未保存内容且无法撤回。
+    // 恢复历史版本曾清空 undo 栈，模块注释承诺的「可撤销」落了空——
+    // 误按 Enter 就丢掉当前未保存内容且无法撤回。
     init_editor_test_app(cx);
     let path = temp_markdown_path("file-history-undo");
     std::fs::write(&path, "当前内容").expect("seed current");

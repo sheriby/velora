@@ -21,7 +21,7 @@ use crate::theme::ThemeDimensions;
 
 /// 指针离开菜单之后，二级面板还留着的时限。手快时滑出去一眼再滑回来，
 /// 靠这一段兜住（任一个悬停区重新收到 hover 就撤销这次收起）。
-/// 240ms：120ms 时手滑出去一眼面板就没了（用户报修），400ms 又嫌走得慢。
+/// 240ms：120ms 时手滑出去一眼面板就没了，400ms 又嫌走得慢。
 const SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(240);
 
 /// 标题那一档的行 id，按下标取用（`level` 已经在 1..=6 内）。
@@ -602,8 +602,7 @@ impl Editor {
     }
 
     /// 主面板与二级面板中间那条缝的悬停：停在这条缝里也算「还在菜单上」。
-    /// 缝只有几个像素宽，从父行横到面板上时正好会经过它（用户报修：停在缝里
-    /// 面板立马就收）。
+    /// 缝只有几个像素宽，从父行横到面板上时正好会经过它。
     pub(crate) fn set_document_submenu_bridge_hover(
         &mut self,
         hovered: bool,
@@ -841,9 +840,9 @@ const MENU_VIEWPORT_MARGIN: f32 = 6.0;
 /// 二级菜单父行右侧那枚箭头的占位。
 const SUBMENU_ARROW: &str = "\u{203a}";
 /// 一行宽度的余量：`estimated_menu_label_width` 是按字符类别估的，实测英文最宽那一行
-/// （`Numbered List`，12 号字）估出来只比真实宽度多 0.4px——换个字体回落或缩放就截字
-/// （用户报修：「一级标题」只剩「一级标」）。Windows 原生测试又量到面板被内容
-/// 撑宽 1px，留 4px 覆盖字形回落和像素取整差异，面板尺寸仍由同一份几何决定。
+/// （`Numbered List`，12 号字）估出来只比真实宽度多 0.4px——换个字体回落或缩放就截字。
+/// Windows 原生测试又量到面板被内容撑宽 1px，留 4px 覆盖字形回落和像素取整差异，
+/// 面板尺寸仍由同一份几何决定。
 const MENU_ROW_WIDTH_ALLOWANCE: f32 = 4.0;
 
 /// 一列行的几何：面板尺寸与每一行的顶部偏移。渲染摆放与落点计算共用同一份，

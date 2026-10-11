@@ -537,7 +537,7 @@ async fn typing_a_toc_marker_fills_its_entries_on_that_frame(cx: &mut TestAppCon
 #[gpui::test]
 async fn markdown_source_mode_highlights_with_monospace_pipeline(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    // 用户报修：markdown 源码模式没有等宽字体、没有基础语法高亮（对标
+    // markdown 源码模式必须提供等宽字体与基础语法高亮（对标
     // VS Code 的 markdown 源码视图）。切到源码后：分块走高亮管线（markdown
     // 语法 span）、行号标志打开（等宽字体与行号对齐都靠它）。
     let markdown = "# 标题\n\n正文 `code` **粗体**。\n";

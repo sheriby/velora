@@ -216,8 +216,7 @@ impl Block {
         let mut markdown = self.record.title.serialize_markdown();
         let replaced_text = markdown[markdown_range.clone()].to_string();
         // 键入的文本按可见字符拼进 markdown，反斜杠要再转义一次：否则它会与
-        // `serialize_markdown` 重新转义出来的旧反斜杠叠加，每按一次数量翻倍
-        // （用户报修：行首是自动链接的块里按反斜杠，可见文本 1→3→7）。
+        // `serialize_markdown` 重新转义出来的旧反斜杠叠加，每按一次数量翻倍。
         let inserted_markdown = escape_markdown_insertion(new_text);
         let inserted_markdown_len = inserted_markdown.len();
         markdown.replace_range(markdown_range.clone(), &inserted_markdown);

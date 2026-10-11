@@ -254,7 +254,7 @@ fn prompt_and_open_paths(
             .flatten()
     });
     // 能同时选文件和文件夹的平台（macOS）保留混合选择；Windows 上文件入口
-    // 必须是纯文件，否则 `FOS_PICKFOLDERS` 会让对话框只能选文件夹（用户报修）。
+    // 必须是纯文件，否则 `FOS_PICKFOLDERS` 会让对话框只能选文件夹。
     let (files, directories) = match kind {
         PathPromptKind::Files => (true, cx.can_select_mixed_files_and_dirs()),
         PathPromptKind::Folders => (false, true),

@@ -26,7 +26,7 @@ impl Block {
     }
 
     /// 光标落在块首/块尾时用外侧亲和性。默认映射会把光标放到标记「里面」：块首是
-    /// `**`、`<...>`、`[...]()` 这类标记时，打开文件后光标就不在行首了（用户报修），
+    /// `**`、`<...>`、`[...]()` 这类标记时，打开文件后光标就不在行首了，
     /// 行尾同理。块内部的偏移不受影响（在粗体里继续打字仍然留在粗体里）。
     pub(crate) fn caret_affinity_for_clean_offset(
         &self,
@@ -188,7 +188,7 @@ impl Block {
 
     /// 光标贴在自动链接的可见文本边缘时，把插入点映射到 `<`/`>` 之外。
     /// 自动链接的「标签」就是 URL 本身，插到里面会把链接写坏，转义字符也会直接落进
-    /// 显示文本（用户报修：行首自动链接前按反斜杠，可见数量翻倍）。
+    /// 显示文本。
     pub(crate) fn autolink_boundary_markdown_range(&self, clean_range: &Range<usize>) -> Option<Range<usize>> {
         if clean_range.start != clean_range.end {
             return None;
