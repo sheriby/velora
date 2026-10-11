@@ -60,13 +60,25 @@ fn fence_line_width(measured: Option<&MeasuredFencePrefixes>, uniform: usize, in
 /// 只留作测试里对拍增量结果与计回扫次数的参照（见 indented_code_mapping_tests）。
 #[cfg(test)]
 fn full_line_index_of(content: &str, offset: usize) -> usize {
-    FULL_LINE_RESCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    probe::note_rescan();
     content[..offset].bytes().filter(|byte| *byte == b'\n').count()
 }
 
 /// 形状探针：`full_line_index_of` 在生产路径被调一次就是一次整段回扫。
+/// thread-local：并行测试各数各的，互不污染。
 #[cfg(test)]
-static FULL_LINE_RESCANS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static FULL_LINE_RESCANS: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(super) fn note_rescan() {
+        FULL_LINE_RESCANS.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(super) fn rescans() -> u64 {
+        FULL_LINE_RESCANS.with(|counter| counter.get())
+    }
+}
 
 fn leading_blank_bytes(line: &str) -> usize {
     line.bytes()
@@ -1936,18 +1948,18 @@ pub(super) fn is_table_delimiter_slots(line: &str, columns: usize) -> bool {
 mod indented_code_mapping_tests {
     // 精准导入：外层 `use super::*` 会把 gpui 的同名 `test` 属性宏带进来，
     // 宏展开递归（AGENTS.md §1 撞过的坑）。
-    use super::{Editor, FULL_LINE_RESCANS, full_line_index_of};
-    use std::sync::atomic::Ordering;
+    use super::Editor;
+    use super::full_line_index_of;
 
     /// 生产路径不得回扫前缀：缩进代码块每键重建映射，换行分支里对
     /// `content[..offset]` 全前缀数 `\n` 是行数平方级（评审报告维度四建议 8）。
     #[test]
     fn indented_mapping_never_rescans_the_content_prefix() {
         let content = "一行\n两行\n三行\n四行\n五行\n六行\n七行";
-        let before = FULL_LINE_RESCANS.load(Ordering::Relaxed);
+        let before = super::probe::rescans();
         let produced = Editor::build_indented_code_content_mapping(content, &[0, 2, 4, 6, 8, 10, 12, 14]);
         assert_eq!(
-            FULL_LINE_RESCANS.load(Ordering::Relaxed) - before,
+            super::probe::rescans() - before,
             0,
             "生产路径的换行计数必须在循环内增量，不允许整段回扫"
         );

@@ -832,8 +832,6 @@
     /// 悬停期间每帧每个链接 span 都重复付一遍（评审报告维度四建议 3 后半）。
     #[gpui::test]
     async fn one_hit_test_dispatch_builds_one_hard_line_table(cx: &mut TestAppContext) {
-        use std::sync::atomic::Ordering;
-
         let cx = cx.add_empty_window();
         let block = cx.new(|cx| {
             Block::with_record(
@@ -848,7 +846,7 @@
         });
         let display_text = block.read_with(cx, |block, _cx| block.display_text().to_string());
         let lines = shaped_lines(&display_text, px(320.0), cx);
-        let before = super::HARD_LINE_RANGE_BUILDS.load(Ordering::Relaxed);
+        let before = super::probe::builds();
         // 探针打在块外一个必不命中的位置：span 循环要扫完三个链接才返回 None。
         block.read_with(cx, |block, _cx| {
             let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(320.0), px(20.0)));
@@ -857,7 +855,7 @@
                 None
             );
         });
-        let builds = super::HARD_LINE_RANGE_BUILDS.load(Ordering::Relaxed) - before;
+        let builds = super::probe::builds() - before;
         assert_eq!(
             builds, 1,
             "一次派发只准造一张硬行表（实际 {builds} 张：还在按 span 重建）"

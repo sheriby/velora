@@ -339,7 +339,24 @@ impl Recon {
 
 /// `group` 必须包含配对的 Start/End 事件：Start 的 range.start 是段首锚点，
 /// 用来接住「段落第一个字符是被转义标记的前导反斜杠」这种情况。
+/// 形状探针：一次导出里 recon 的全量重建次数（未闭合 `$$` 并段曾每段重建）。
+#[cfg(test)]
+mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static RECON_BUILDS: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(super) fn note_recon_build() {
+        RECON_BUILDS.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(super) fn recon_builds() -> u64 {
+        RECON_BUILDS.with(|counter| counter.get())
+    }
+}
+
 fn build_recon(body: &str, group: &[(Event<'_>, Range<usize>)]) -> Recon {
+    #[cfg(test)]
+    probe::note_recon_build();
     // 逐字节累计再一次性转 UTF-8：拼接段都来自合法文本，lossy 只是保险。
     let mut bytes = Vec::new();
     let mut positions: Vec<usize> = Vec::new();
@@ -371,6 +388,94 @@ fn build_recon(body: &str, group: &[(Event<'_>, Range<usize>)]) -> Recon {
         text: String::from_utf8_lossy(&bytes).into_owned(),
         positions,
     }
+}
+
+/// 数一段事件组按 recon 口径贡献的非重叠 `$$` 个数。`pending_dollar` 与
+/// `last_end` 由调用方跨组携带：前者记字节流末尾悬着的单个 `$`（跨段边界
+/// 也能与下一组开头的 `$` 配成一对），后者记上一条被扫事件的结束偏移
+/// （组间 gap 与 build_recon 全量重建时扫的是同一份字节）。
+fn count_display_markers_in_group(
+    body: &str,
+    group: &[(Event<'_>, Range<usize>)],
+    pending_dollar: &mut bool,
+    last_end: &mut Option<usize>,
+) -> usize {
+    let Some((_, first_range)) = group.first() else {
+        return 0;
+    };
+    if last_end.is_none() {
+        *last_end = Some(first_range.start);
+    }
+    let mut count = 0usize;
+    for (event, range) in group.iter().skip(1) {
+        match event {
+            Event::Text(_)
+            | Event::FootnoteReference(_)
+            | Event::SoftBreak
+            | Event::HardBreak => {
+                count += count_display_markers_between(body, *last_end, range.start, pending_dollar);
+                count += count_display_markers_between(body, Some(range.start), range.end, pending_dollar);
+                *last_end = Some(range.end);
+            }
+            Event::Code(_) | Event::InlineHtml(_) => {
+                // 代码跨度与内联 HTML 是屏障：内容不扫，只推进游标。
+                count += count_display_markers_between(body, *last_end, range.start, pending_dollar);
+                *last_end = Some(range.end);
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+/// 数 `body[start..end]` 里的非重叠 `$$`，跨调用边界悬着的单个 `$` 由
+/// `pending_dollar` 结转（与整段拼接后 `find("$$")` 的口径一致）。
+fn count_display_markers_between(
+    body: &str,
+    start: Option<usize>,
+    end: usize,
+    pending_dollar: &mut bool,
+) -> usize {
+    let Some(start) = start else { return 0 };
+    let Some(chunk) = body.get(start..end) else {
+        return 0;
+    };
+    let bytes = chunk.as_bytes();
+    let mut count = 0usize;
+    let mut index = 0usize;
+    if *pending_dollar {
+        let mut leading = 0usize;
+        while index < bytes.len() && bytes[index] == b'$' {
+            leading += 1;
+            index += 1;
+        }
+        // 开头的 `$` 游程：第一个与悬着的配对，余下两两配对、奇数个再悬一个。
+        if leading >= 1 {
+            count += 1;
+            count += (leading - 1) / 2;
+            *pending_dollar = (leading - 1) % 2 == 1;
+        } else {
+            *pending_dollar = false;
+        }
+    }
+    let mut run = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'$' {
+            run += 1;
+        } else if run > 0 {
+            count += run / 2;
+            *pending_dollar = run % 2 == 1;
+            run = 0;
+        } else {
+            *pending_dollar = false;
+        }
+        index += 1;
+    }
+    if run > 0 {
+        count += run / 2;
+        *pending_dollar = run % 2 == 1;
+    }
+    count
 }
 
 fn push_recon_gap(
@@ -1183,15 +1288,29 @@ impl<'a> ExportRewriter<'a> {
 
     /// `$$` 开了没关、且后面紧跟纯段落时，向后合并重建直到闭合。
     fn merge_display_paragraphs(&self, start: usize, first_end: usize) -> Option<usize> {
+        // 先按段增量定位闭合 `$$`（每段只扫自己那段字节），数满两个标记就停；
+        // 最终 emit_merged_display 一次性重建。旧的「每并一段对已并区间全量
+        // build_recon」是 O(k²) 字节扫描。计数口径与 build_recon 的字节流
+        // 完全一致：gap 与文本事件照扫、代码跨度/内联 HTML 是屏障、跨段
+        // 边界悬着的单个 `$` 也能与下一段开头配对。
+        let mut pending_dollar = false;
+        let mut last_end: Option<usize> = None;
+        let first_group = self.events.get(start..first_end)?;
+        let marker_count = count_display_markers_in_group(
+            self.body,
+            first_group,
+            &mut pending_dollar,
+            &mut last_end,
+        );
+        if marker_count == 0 {
+            return None;
+        }
+        if marker_count >= 2 {
+            return Some(first_end);
+        }
+
         let mut merged_end = first_end;
         loop {
-            let slice = self.events.get(start..merged_end)?;
-            let recon = build_recon(self.body, slice);
-            let opener = recon.text.find("$$")?;
-            if recon.text.get(opener + 2..)?.contains("$$") {
-                return Some(merged_end);
-            }
-
             // 下一事件必须是紧跟着的纯段落，否则放弃合并、按原样渲染（不误伤）。
             if !matches!(
                 self.events.get(merged_end).map(|(event, _)| event),
@@ -1203,6 +1322,16 @@ impl<'a> ExportRewriter<'a> {
                 self.group_end(merged_end, |event| matches!(event, Event::End(TagEnd::Paragraph)));
             if next_end <= merged_end {
                 return None;
+            }
+            let group = self.events.get(merged_end..next_end)?;
+            let added = count_display_markers_in_group(
+                self.body,
+                group,
+                &mut pending_dollar,
+                &mut last_end,
+            );
+            if marker_count + added >= 2 {
+                return Some(next_end);
             }
             merged_end = next_end;
         }

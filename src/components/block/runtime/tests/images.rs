@@ -188,8 +188,6 @@ async fn broken_rendered_image_syntax_blurs_back_to_plain_text(cx: &mut TestAppC
 /// 挡板只有一条：fragments 里没有 `![` 且当前也不是图片块，就整体跳过。
 #[gpui::test]
 async fn plain_blocks_skip_the_image_runtime_scan(cx: &mut TestAppContext) {
-    use std::sync::atomic::Ordering;
-
     let cx = cx.add_empty_window();
     let plain = cx.new(|cx| {
         Block::with_record(
@@ -200,12 +198,12 @@ async fn plain_blocks_skip_the_image_runtime_scan(cx: &mut TestAppContext) {
             ),
         )
     });
-    let before = crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed);
+    let before = crate::components::block::runtime::image::probe::scans();
     plain.update(cx, |block, _cx| {
         block.set_runtime_context(None, Arc::default(), Arc::default(), Arc::default());
     });
     let scanned =
-        crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed) - before;
+        crate::components::block::runtime::image::probe::scans() - before;
     assert_eq!(scanned, 0, "无 ![ 标记的块不该进图片解析路径");
 }
 
@@ -213,8 +211,6 @@ async fn plain_blocks_skip_the_image_runtime_scan(cx: &mut TestAppContext) {
 /// 否则删掉 `!` 那一键图片残留。
 #[gpui::test]
 async fn image_blocks_still_enter_the_image_runtime_scan(cx: &mut TestAppContext) {
-    use std::sync::atomic::Ordering;
-
     let cx = cx.add_empty_window();
     let image_block = cx.new(|cx| {
         Block::with_record(
@@ -225,12 +221,12 @@ async fn image_blocks_still_enter_the_image_runtime_scan(cx: &mut TestAppContext
             ),
         )
     });
-    let before = crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed);
+    let before = crate::components::block::runtime::image::probe::scans();
     image_block.update(cx, |block, _cx| {
         block.set_runtime_context(None, Arc::default(), Arc::default(), Arc::default());
     });
     assert!(
-        crate::components::block::runtime::image::IMAGE_SYNC_SCANS.load(Ordering::Relaxed) > before,
+        crate::components::block::runtime::image::probe::scans() > before,
         "带 ![ 的块必须进解析路径"
     );
 }

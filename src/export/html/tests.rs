@@ -1311,4 +1311,39 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
     }
+
+    /// 未闭合 `$$` 向后并段不再每段全量重建 recon（评审报告维度四建议 14）：
+    /// 旧循环每并一段就对已并区间整体 build_recon 一遍，k 段是 O(k²) 字节
+    /// 扫描。新形状：定位闭合时每段只扫自己那段，最终 emit 只重建一次。
+    #[test]
+    fn unclosed_display_math_merges_with_one_recon_build() {
+        let mut markdown = String::from("$$ 公式开头\n\n");
+        for index in 0..20 {
+            markdown.push_str(&format!("第{index}段正文，足够普通。\n\n"));
+        }
+        markdown.push_str("公式结尾 $$\n\n收尾段。\n");
+
+        let before = super::super::probe::recon_builds();
+        let html = render_html(&markdown, &Theme::default_theme(), "并段");
+        let builds = super::super::probe::recon_builds() - before;
+        // 修复前实测 25 次（每并一段重建一遍）；修复后只剩各段落常规
+        // span 检测的固有重建（实测 3 次），不随并段数增长。
+        assert!(
+            builds <= 4,
+            "并段定位不许全量重建 recon，重建数必须与并段数无关（实际 {builds} 次）"
+        );
+
+        let body = body_only(&html);
+        // 被并的段落是公式体的一部分（多段块级公式），闭合 `$$` 之后的内容
+        // 才按正文输出——「不吞内容」盯的是闭合点之后的正文。
+        assert!(
+            body.contains("vlt-math") || body.contains("vlt-display-math"),
+            "公式本体要在：{body}"
+        );
+        assert!(
+            !body.contains("公式开头") && !body.contains("公式结尾"),
+            "公式定界符内的内容归公式，不按正文重复输出：{body}"
+        );
+        assert!(body.contains("收尾段"), "闭合 $$ 之后的正文不许被吞：{body}");
+    }
 }

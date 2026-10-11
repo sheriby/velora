@@ -70,8 +70,7 @@ impl Block {
         };
         if may_be_image {
             #[cfg(test)]
-            crate::components::block::runtime::image::IMAGE_SYNC_SCANS
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            probe::note_scan();
         }
         let next_runtime = markdown
             .as_deref()
@@ -160,6 +159,17 @@ impl Block {
 }
 
 /// 形状探针：进入图片解析路径（visible_text 拼接 + parse）的块数。
+/// thread-local：并行测试各数各的，互不污染。
 #[cfg(test)]
-pub(crate) static IMAGE_SYNC_SCANS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub(crate) mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static IMAGE_SYNC_SCANS: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn note_scan() {
+        IMAGE_SYNC_SCANS.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(crate) fn scans() -> u64 {
+        IMAGE_SYNC_SCANS.with(|counter| counter.get())
+    }
+}

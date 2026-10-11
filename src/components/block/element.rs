@@ -399,7 +399,7 @@ fn build_code_text_runs(
 /// WrappedLine produced by `shape_text`.
 pub(super) fn hard_line_ranges(text: &str) -> Vec<Range<usize>> {
     #[cfg(test)]
-    HARD_LINE_RANGE_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    probe::note_build();
     let mut ranges = Vec::new();
     let mut start = 0;
     for (idx, _) in text.match_indices('\n') {
@@ -411,10 +411,20 @@ pub(super) fn hard_line_ranges(text: &str) -> Vec<Range<usize>> {
 }
 
 /// 形状探针：整块行表的构建次数。一次派发（一次命中测试、一帧 prepaint）
-/// 只准造一张表，行内 span 数再多也只造一张。
+/// 只准造一张表，行内 span 数再多也只造一张。thread-local：并行测试各数各的。
 #[cfg(test)]
-static HARD_LINE_RANGE_BUILDS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static HARD_LINE_RANGE_BUILDS: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(super) fn note_build() {
+        HARD_LINE_RANGE_BUILDS.with(|counter| counter.set(counter.get() + 1));
+    }
+    pub(super) fn builds() -> u64 {
+        HARD_LINE_RANGE_BUILDS.with(|counter| counter.get())
+    }
+}
 
 /// 光标处的括号匹配：光标前一个字符优先（贴着括号），其次光标处字符；
 /// 返回 (开括号偏移, 闭括号偏移)。扫描限深且带步数上限（`MAX_BRACKET_SCAN`），
