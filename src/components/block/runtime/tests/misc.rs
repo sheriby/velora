@@ -523,12 +523,12 @@ async fn quote_line_block_syntax_recognizes_indented_fences(cx: &mut TestAppCont
         )
     });
     cx.update(|window, cx| {
-        block.update(cx, |block, block_cx| {
+        block.update(cx, |block, _block_cx| {
             block.set_runtime_context(None, std::sync::Arc::default(), std::sync::Arc::default(), std::sync::Arc::default());
             let _ = window;
         });
     });
-    block.read_with(cx, |block, _cx| {
+    block.read_with(cx, |_block, _cx| {
         assert!(
             crate::components::block::runtime::Block::multiline_quote_edit_requires_reparse(
                 "> 引用正文\n```js",

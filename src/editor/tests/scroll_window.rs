@@ -910,7 +910,7 @@ async fn zooming_clears_the_row_stride_cache(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn stable_frames_derive_theme_once(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    let (editor, cx) = cx.add_window_view(|_window, cx| {
+    let (_editor, cx) = cx.add_window_view(|_window, cx| {
         Editor::from_markdown(cx, "一\n\n二\n\n三\n\n四\n\n五\n".to_string(), None)
     });
     redraw(cx);

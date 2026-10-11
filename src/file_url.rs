@@ -165,7 +165,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{parse_file_url, percent_decode, percent_decode_or_raw, url_scheme};
     use crate::file_url::strip_file_scheme_prefix;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     #[test]
     fn parses_file_url_with_spaces() {
