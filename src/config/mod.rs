@@ -24,8 +24,19 @@ pub(crate) use preferences::{
 };
 pub(crate) use recovery::{
     RecoverySnapshot, read_recovery_snapshots, remove_recovery_snapshot, save_recovery_snapshot,
+    save_recovery_snapshot_with_dir,
 };
 pub(crate) use session::{SessionState, read_session, save_session};
+
+/// 配置目录里落盘的文件一律收成 0600（Unix）：同目录还有 recovery/*.json（未保存
+/// 正文全文）、session.json（工作区绝对路径）与 .history/*.md（每个版本全文），
+/// 默认 umask 的 0644 会让同机其他本地用户读到。Windows 的用户目录本身带按用户
+/// 的 ACL，不动。
+#[cfg(unix)]
+fn restrict_config_file_to_owner(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
 
 /// 配置文件原子写：同目录临时文件 + rename。
 ///
@@ -40,6 +51,9 @@ pub(crate) fn write_config_file_atomic(path: &Path, contents: &str) -> std::io::
         .unwrap_or_default();
     let temp = path.with_file_name(format!(".{file_name}.velora-{}.tmp", uuid::Uuid::new_v4()));
     let mut file = std::fs::File::create(&temp)?;
+    // 建出就收紧：临时文件里同样是配置全文，不留给 umask 一个可读窗口。
+    #[cfg(unix)]
+    restrict_config_file_to_owner(&temp)?;
     file.write_all(contents.as_bytes())?;
     // rename 前落稳内容，避免断电后留下已替换名称的空配置。
     file.sync_all()?;
@@ -230,7 +244,11 @@ pub(crate) fn record_file_history_bytes(file: &Path, content: &[u8]) -> std::io:
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    std::fs::write(dir.join(format!("{stamp}.md")), content)?;
+    let version_path = dir.join(format!("{stamp}.md"));
+    std::fs::write(&version_path, content)?;
+    // 版本文件是文档全文：写完即收 0600，同目录判据只有上面那一条。
+    #[cfg(unix)]
+    restrict_config_file_to_owner(&version_path)?;
     // 按时间戳升序保留最新的 N 条。
     let mut versions = list_file_history_asc(file);
     while versions.len() > MAX_VERSIONS_PER_FILE {
@@ -925,3 +943,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 }
+
+    /// 配置目录里落盘的文件一律 0600（Unix）：同目录还有 recovery/*.json（未保存
+    /// 正文全文）、session.json（工作区绝对路径）与 .history/*.md（每个版本全文），
+    /// 默认 umask 的 0644 会让同机其他本地用户读到（评审报告安全建议 6）。
+    #[test]
+    #[cfg(unix)]
+    fn config_dir_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn mode_of(path: &Path) -> u32 {
+            std::fs::metadata(path)
+                .expect("stat written file")
+                .permissions()
+                .mode()
+                & 0o777
+        }
+
+        let root = std::env::temp_dir().join(format!("velora-config-mode-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // 1) 原子写（config.toml / session.json 走这条）。
+        let config_path = root.join("config.toml");
+        crate::config::write_config_file_atomic(&config_path, "key = 1\n").unwrap();
+        assert_eq!(mode_of(&config_path), 0o600, "原子写的落盘文件应 0600");
+
+        // 2) 恢复快照（未保存正文全文）。
+        let snapshot = crate::config::RecoverySnapshot {
+            id: uuid::Uuid::new_v4(),
+            source_path: None,
+            markdown: "未保存的正文".to_string(),
+        };
+        crate::config::save_recovery_snapshot_with_dir(&snapshot, &root).unwrap();
+        let snapshot_path = root.join(format!("{}.json", snapshot.id));
+        assert_eq!(mode_of(&snapshot_path), 0o600, "恢复快照应 0600");
+
+        let _ = std::fs::remove_dir_all(root);
+    }

@@ -19,7 +19,7 @@ pub(crate) fn save_recovery_snapshot(snapshot: &RecoverySnapshot) -> Result<()> 
     save_recovery_snapshot_with_dir(snapshot, &VeloraConfigDirs::from_system()?.recovery_dir())
 }
 
-fn save_recovery_snapshot_with_dir(snapshot: &RecoverySnapshot, dir: &Path) -> Result<()> {
+pub(crate) fn save_recovery_snapshot_with_dir(snapshot: &RecoverySnapshot, dir: &Path) -> Result<()> {
     std::fs::create_dir_all(dir)
         .with_context(|| format!("failed to create recovery directory '{}'", dir.display()))?;
     let path = dir.join(format!("{}.json", snapshot.id));
@@ -28,6 +28,14 @@ fn save_recovery_snapshot_with_dir(snapshot: &RecoverySnapshot, dir: &Path) -> R
     std::fs::write(&temporary_path, contents).with_context(|| {
         format!(
             "failed to write recovery snapshot '{}'",
+            temporary_path.display()
+        )
+    })?;
+    // 快照是未保存正文全文：rename 前收成 0600（判据在 config/mod.rs 一处）。
+    #[cfg(unix)]
+    super::restrict_config_file_to_owner(&temporary_path).with_context(|| {
+        format!(
+            "failed to restrict recovery snapshot '{}'",
             temporary_path.display()
         )
     })?;
