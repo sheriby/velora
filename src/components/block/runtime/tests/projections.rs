@@ -145,6 +145,30 @@ async fn paragraph_shortcut_creates_task_item_directly(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+async fn paragraph_shortcut_creates_heading_with_ideographic_space(cx: &mut TestAppContext) {
+    // 输入法把「# 后的空格」打成全角（U+3000）时同样触发标题转换：
+    // 前缀宽 5 字节（`##` + 3 字节全角空格），剥离必须按字节走。
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
+
+    block.update(cx, |block, cx| {
+        block.apply_title_edit(
+            InlineTextTree::plain("##\u{3000}标题"),
+            "##\u{3000}标题".len(),
+            None,
+            None,
+            None,
+            None,
+            cx,
+        );
+    });
+
+    let kind = block.read_with(cx, |block, _cx| block.kind());
+    let text = block.read_with(cx, |block, _cx| block.display_text().to_string());
+    assert_eq!(kind, BlockKind::Heading { level: 2 });
+    assert_eq!(text, "标题");
+}
+
+#[gpui::test]
 async fn paragraph_shortcut_creates_parenthesized_numbered_list_directly(cx: &mut TestAppContext) {
     let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph(String::new())));
 
