@@ -47,7 +47,22 @@ fn hand_written_hits(source: &str, query: &str, options: SearchOptions) -> Vec<R
         }
         absolute += raw_line.len();
     }
-    out
+    // 有意差异之五：模糊模式互相覆盖的区间（`ab` 对 `aab` 给 0..3 与 1..3）
+    // 是退役实现的缺陷——它打破「从后往前替换」的前提，引擎出口已按
+    // 「只与上一条留用项比一次」normalize（fuzzy_hits_exit_normalizes_
+    // covered_ranges 钉住）。誊本在这里套同一条出口规则，对照矩阵其余
+    // 形态仍逐位比对。
+    let mut normalized = Vec::new();
+    for range in out {
+        if normalized
+            .last()
+            .is_some_and(|last: &Range<usize>| range.start >= last.start && range.end <= last.end)
+        {
+            continue;
+        }
+        normalized.push(range);
+    }
+    normalized
 }
 
 /// 旧 `SearchMatcher::find_in_line` 的分支顺序，一字不改。
