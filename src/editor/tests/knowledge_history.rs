@@ -258,6 +258,38 @@ async fn typing_wikilink_opens_completion_and_enter_inserts_target(cx: &mut Test
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// 插入表格对话框的步进器与 TableData::new_empty 都要有规模上限：
+/// 每格是一个块实体，无上限的 `+` 连点到 200×200 会同步建 4 万个块，
+/// 前台长时间冻结（评审 v0.2.6 维度二建议 22）。
+#[test]
+fn table_insert_dialog_steppers_saturate_at_safe_bounds() {
+    use crate::components::markdown::table::TableData;
+    let mut dialog = crate::editor::context_menu::TableInsertDialogState {
+        target: crate::editor::context_menu::TableInsertTarget::Append,
+        body_rows: TableData::MAX_CREATED_ROWS - 1,
+        columns: TableData::MAX_CREATED_COLUMNS - 1,
+    };
+    dialog.increment_rows();
+    dialog.increment_rows();
+    assert_eq!(
+        dialog.body_rows,
+        TableData::MAX_CREATED_ROWS,
+        "行步进应停在上限"
+    );
+    dialog.increment_columns();
+    dialog.increment_columns();
+    assert_eq!(
+        dialog.columns,
+        TableData::MAX_CREATED_COLUMNS,
+        "列步进应停在上限"
+    );
+
+    // new_empty 兜同一层：超大入参不再建巨表。
+    let table = TableData::new_empty(200, 200);
+    assert_eq!(table.rows.len(), TableData::MAX_CREATED_ROWS);
+    assert_eq!(table.header.len(), TableData::MAX_CREATED_COLUMNS);
+}
+
 /// 历史版本文件名是纳秒时间戳（记录端为防同毫秒覆盖用 `as_nanos()` 命名），
 /// 浮层换算成 Unix 秒再格式化；曾按毫秒换算，`1.7e18 / 1000` 秒被当日期，
 /// 浮层每行日期都是垃圾，无法按时间挑版本。

@@ -79,6 +79,18 @@ impl ContextMenuState {
 }
 
 /// State for the table insertion dialog opened from the context menu.
+impl TableInsertDialogState {
+    /// 行列步进只从对话框自身增长，钳到 TableData 的建表上限
+    /// （无上限连点会同步建几万个块实体、前台冻结）。
+    pub(crate) fn increment_rows(&mut self) {
+        self.body_rows = (self.body_rows + 1).min(crate::components::markdown::table::TableData::MAX_CREATED_ROWS);
+    }
+
+    pub(crate) fn increment_columns(&mut self) {
+        self.columns = (self.columns + 1).min(crate::components::markdown::table::TableData::MAX_CREATED_COLUMNS);
+    }
+}
+
 pub(super) struct TableInsertDialogState {
     pub target: TableInsertTarget,
     pub body_rows: usize,
@@ -396,7 +408,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(dialog) = self.table_insert_dialog.as_mut() {
-            dialog.body_rows += 1;
+            dialog.increment_rows();
             cx.notify();
         }
     }
@@ -420,7 +432,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(dialog) = self.table_insert_dialog.as_mut() {
-            dialog.columns += 1;
+            dialog.increment_columns();
             cx.notify();
         }
     }

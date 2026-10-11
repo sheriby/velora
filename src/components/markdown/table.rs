@@ -73,14 +73,19 @@ impl PartialEq for TableData {
 impl Eq for TableData {}
 
 impl TableData {
+    /// 一次能建出的表格规模上限（行数含表头之外的正文行）。每格是一个
+    /// 块实体，无上限的入参会同步建出几万个块、前台长时间冻结。
+    pub const MAX_CREATED_ROWS: usize = 100;
+    pub const MAX_CREATED_COLUMNS: usize = 30;
+
     /// Creates an empty table with one header row, `body_rows` body rows, and
     /// `columns` left-aligned columns.
     pub fn new_empty(body_rows: usize, columns: usize) -> Self {
-        let columns = columns.max(1);
+        let columns = columns.clamp(1, Self::MAX_CREATED_COLUMNS);
         let header = (0..columns)
             .map(|_| InlineTextTree::plain(String::new()))
             .collect::<Vec<_>>();
-        let rows = (0..body_rows.max(1))
+        let rows = (0..body_rows.clamp(1, Self::MAX_CREATED_ROWS))
             .map(|_| {
                 (0..columns)
                     .map(|_| InlineTextTree::plain(String::new()))
