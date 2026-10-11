@@ -134,8 +134,8 @@ mod tests {
 
     #[test]
     fn theme_token_documentation_covers_every_token() {
-        // roadmap H3：主题 token 全表文档化；结构体新增字段必须同步 docs/主题变量.md。
-        let doc = include_str!("../../../docs/主题变量.md");
+        // roadmap H3：主题 token 全表文档化；结构体新增字段必须同步 docs/theme-tokens.md。
+        let doc = include_str!("../../../docs/theme-tokens.md");
         let json = Theme::default_theme().to_json().expect("theme json");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse theme json");
 

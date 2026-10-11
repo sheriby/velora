@@ -262,7 +262,7 @@
 
 - 新增 13 枚描出来的 svg 图标（`assets/icon/editor/`：撤销、重做、剪切、复制、粘贴、粘贴为纯文本、复制为 Markdown、复制为 HTML、格式、插入、切换源码、段落、链接），16 的框、1.4–1.5 的描边、`currentColor`，与既有工作区图标同一套画法。
 - 国际化 42 个新键，中文、英文、德文与语言包 API 五处位点齐；未为新条目改任何既有键名。
-- 文档：`docs/architecture/editor-core.md` 新增 §8「四处入口一套实现：正文右键菜单、选中工具栏与命令面板」；`overview.md` 的关键不变量加第 9 条（一个动作只有一处实现）；`workspace-ui.md` 补预览标签、未保存标记与浮层层级；需求计划与逐笔落地记录见 `docs/plans/2026-10-05-selection-and-context-menus.md`。
+- 文档：`docs/architecture/editor-core.md` 新增 §8「四处入口一套实现：正文右键菜单、选中工具栏与命令面板」；`overview.md` 的关键不变量加第 9 条（一个动作只有一处实现）；`workspace-ui.md` 补预览标签、未保存标记与浮层层级。
 
 ## [0.2.1] - 2026-10-05
 

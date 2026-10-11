@@ -96,10 +96,10 @@ markdown 路径（`manual_markdown_load_probe`）：
 
 ## 4. 已定位根因（代码证据）
 
-1. **纯文本/代码文件整文件单块**：`replace_document_content`（src/editor/file_drop.rs）对 `is_code_file` 的文件建单个 `BlockKind::CodeBlock`。渲染、shape、undo 快照、序列化全压在一块。
-2. **shape_text 无跨帧 memo**：`BlockTextElement::request_layout`（src/components/block/element.rs）每帧对每个挂载块重新 `build_text_runs` + `shape_text`。滚动时静态块白白重 shape。
-3. **每帧文档级固定开销**：`visible_blocks().to_vec()` 全量克隆 + 折叠过滤每帧扫描全部块 + 结构变化检测逐 id 比较；主题 clone + 全字号缩放；表格列宽每帧重测所有单元格（render-pipeline.md §6）。
-4. **undo 全文快照**：每条 undo 条目持有整篇源码（10MB × 200 条上限），大文件下 finalize 一次 clone 全文（src/editor/history.rs）。
+1. **纯文本/代码文件整文件单块**：`replace_document_content`（src/editor/file_drop.rs）对 `is_code_file` 的文件建单个 `BlockKind::CodeBlock`。渲染、shape、undo 快照、序列化全压在一块。**（已解：P2a 512 行分块 + 视口窗口化）**
+2. **shape_text 无跨帧 memo**：`BlockTextElement::request_layout`（src/components/block/element.rs）每帧对每个挂载块重新 `build_text_runs` + `shape_text`。滚动时静态块白白重 shape。**（已解：P3 shape memo，键结构在 src/components/block/runtime/mod.rs `ShapeMemoKey`）**
+3. **每帧文档级固定开销**：`visible_blocks().to_vec()` 全量克隆 + 折叠过滤每帧扫描全部块 + 结构变化检测逐 id 比较；主题 clone + 全字号缩放；表格列宽每帧重测所有单元格（render-pipeline.md §6）。**（部分解：P4b 行计划缓存、行元数据进快照；可见列表克隆、主题 clone 与表格列宽仍在）**
+4. **undo 全文快照**：每条 undo 条目持有整篇源码（10MB × 200 条上限），大文件下 finalize 一次 clone 全文（src/editor/history.rs）。**（已解：2026-10-03 起为增量组 `Vec<AppliedEdit>`）**
 5. 10MiB markdown 总构建成本 ≈ 160k 个 GPUI 实体创建（G8 渐进导入已拉开首屏，总量固定）。
 
 ## 5. 优化台账（每项一个功能点提交；完成一项更新一行）
@@ -115,7 +115,7 @@ markdown 路径（`manual_markdown_load_probe`）：
 | P4b | 行结构计划缓存（折叠过滤/分组扫描按修订+折叠+TOC 版本缓存）；元素构建推迟到挂载 | ✅ 2026-09-28 bc6cf13 | 10MiB markdown（160k 块）稳态 293→36.5ms/帧（8x） |
 | P5 | undo/编辑路径瘦身：raw_source_text 单遍追加；代码文档跳过全文档图片注册表重建 | ✅ 2026-09-28 73db8ca | 10MiB 序列化 86→1.0ms；编辑触发器（含 \`[\`/\`<\` 的日志）不再每键 O(文档) |
 | P3 | shape memo：BlockTextElement 布局键缓存（文本代数/宽度/字号/字体指纹/主题），min-content 测量短路，冷启动挂载上限 | ✅ 2026-09-28 | 编辑后首帧从 ~250ms（病态 1px 重 shape × taffy 多次 measure）降至 ~22ms |
-| P7 | 10x 验收：全夹具复测 + 台账更新 | ⬜ | |
+| P7 | 10x 验收：全夹具复测 + 台账更新 | ✅ 2026-09-28 | 见 §3「P7 终态」：markdown 8.2–10.6x、代码 14–216x，≥10x 达标 |
 
 ## 6. 记录
 

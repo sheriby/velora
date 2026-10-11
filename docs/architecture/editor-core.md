@@ -1,8 +1,7 @@
 # Editor Core（文档模型与编辑管线）
 
 > 面向后续 agent 的代码导览。初稿 2026-09-28（`perf` 分支）；**2026-10-03 按「buffer 为唯一
-> 事实源」重构改写 §1/§2/§3/§4/§5/§7**，分支 `s2-buffer-source-of-truth`，设计记录见
-> [../plans/2026-10-02-buffer-as-source-of-truth-refactor.md](../plans/2026-10-02-buffer-as-source-of-truth-refactor.md)。
+> 事实源」重构改写 §1/§2/§3/§4/§5/§7**，分支 `s2-buffer-source-of-truth`；2026-10-12 修订条目编号与过期引用。
 > **行号会漂移，函数名不会**——引用以 `文件:函数名` 为主，行号仅作当时定位参考。
 > 相关文档：[overview.md](./overview.md)、[render-pipeline.md](./render-pipeline.md)、[workspace-ui.md](./workspace-ui.md)、[testing-and-build.md](./testing-and-build.md)
 
@@ -125,7 +124,7 @@ Workspace (src/editor/workspace.rs)
 23. **块内每行的记号宽度是解析期记下的数据，不是事后比出来的；谁重新分配区间，谁就让它过期**（`BlockRecord::source_line_prefixes`，src/components/block/state.rs）：ATX 标题由 `parse_atx_heading_line_with_marker` 交出记号宽度，根段落一律 0（一行都没剥），列表项按「行长度 − `marker.text` 长度」（缩进、`+`/`*`/`-`、`1)`、制表符分隔、任务框一起算进去）。位置换算先问这份数据（`recorded_block_line_prefixes`，src/editor/source_mapping.rs），问不到才退回按文件量那一族（`measured_block_*`），所以迁一族形状不用动消费者。**兄弟块之间的接缝也是解析期的数据**（`BlockRecord::source_separator_bytes`）：走树推进下一块时一律加「一个换行」，可列表项的正文与续段之间在文件里隔着空行——少算那几位，续段的起点就抬到上一行的换行上（实测 `- 外甲` 空一行 `  内乙`，在续段块首打字得到 `- 外甲\n写\n  内乙`，行首缩进也没了）。空行每一行的字节 = 上级容器已经让开的 + 这一行剩下的 + 它自己的换行，`attach_item_child` 在挂子块时顺手记下（引用那一族本来就把空行折成显式的分隔子块，所以没这个洞）。容器里那些「模型里就是原文」的形状（HTML、注释、展示数学、分隔线、认不出的语法）由 `note_region_line_prefixes` 在解析期把每一行让开的字节记到块上——这一族事后**没有记号可剥**可比，只有剥容器记号的那段代码当场知道；顶格的切片块不记（全零与不记等价），继续走恒等表。**记下来的位置会过期**：结构写回会改块自己那一行的形状（Setext 提成 ATX 就多了 `# `），旧账让每个块内偏移整体漂两位（实测内容末尾报第 9 位，文件里在 11 位）。规矩是 `write_back_root_region` 重新挂哪一段的区间，那一段里每块的这份账**要么按刚落笔的形状重记、要么作废**，不许留着旧的：落笔那一行是序列化拼出来的，拼了几位就记几位（`written_line_ledger`，src/editor/mod.rs——标题 `# `、列表记号连缩进、代码块按它自己那一族），认不出形状的那一族（容器、表格）就清掉，换算交回按文件量，直到重新解析给它新的账。代码块「文件里有没有围栏行」也因此记在块上（`BlockRecord::code_is_indented`，由解析器走的那条分支决定），别拿「账在不在」当族别——账会因为重新落笔而缺，缺了就把缩进代码块拼成带围栏的形状。每一族都已经记上了：ATX 与 Setext 标题、根段落、列表项、引用与列表里的**子块**（上级容器吃掉的字节由 `origins` 一路带进递归解析）、多行块的续行、代码围栏（开栏与闭栏的缩进按**文件那一行**记：`strip_fence_indent` 加上 `origins`）、缩进代码块、整块原样保留那一族（HTML、注释、展示数学、分隔线）。**写侧用的是同一份账**（`recorded_code_block_widths`，src/editor/tree.rs；引用那一段按记下的宽度补 `>` 与空格），所以「按一次回车把没碰过的行重拼一遍」在这两族不再发生——以前列表项里那四格围栏缩进会被洗成两格、`>乙引用` 会被写成 `> 乙引用`，那是按键路径上做规范化。块内行数改了，这份账由 `adjust_line_prefixes_for_text_edit`（src/components/block/runtime/code.rs）跟着改：拆出来的那一行继承原来那一行的宽度；一次改动跨过多行又生出多行的形状直接把账作废（宁可退回量，也不要一份错账），按字节比出来的公共前缀还要退回字符边界——两个汉字共用首字节时不然会 panic。还留在退路上的一处：拆围栏自己那一步里有一回换算落在「模型已经多一行、文件那一行还没写下去」的窗口里，那一次只能比（量的还是文件那一行，落点由守卫钉住）。缩进代码块以前把块后那行分隔空行也吃进内容（`collect_indented_code_block` 那个 `trim().is_empty()` 分支要等后面还接着缩进内容才算数），模型的行数与文件的行数因此差一行，现在也记上了；它落笔时不再发明一对围栏行（`source_fence_lines` 是 `None` 就是文件里没有那两行）。`measured_*` 那一族因此留着，但它只做「账还没有」的退路，不再是每一键的常规路径。迁移进度看 `line_prefix_from_record` / `line_prefix_measured` 两个计数器：打字与容器内拆行上都该读到 0（实测 2026-10-04：这七族打字 6 键、引用与列表与围栏里各拆一行，`line_prefix_measured` 全程 +0）。守卫：`an_atx_heading_remembers_where_its_content_starts`、`typing_in_an_atx_heading_uses_the_parse_time_prefix`、`typing_in_a_paragraph_uses_the_parse_time_prefix`、`typing_in_a_list_item_uses_the_parse_time_prefix`（五种记号写法）、`typing_in_a_setext_heading_uses_the_parse_time_prefix`、`newline_in_a_fenced_code_block_inserts_only_a_line_break`、`newline_in_a_list_nested_fence_keeps_the_indent_the_user_wrote`（两次回车都要钉住）、`breaking_a_line_inside_a_quote_keeps_the_other_lines_as_written`、`typing_at_the_head_of_a_cjk_quote_line_keeps_the_line_ledger`、`an_indented_code_block_does_not_eat_the_separator_line_after_it`、`newline_in_an_indented_code_block_keeps_the_indented_style`、`a_real_editing_session_never_measures_marker_widths_after_the_fact`（五族形状走一遍打字—回车—打字，比出来的那条路一步都不许出现）、`a_rewritten_block_refreshes_its_parse_time_prefix_record`、`an_atomic_block_in_a_quote_remembers_what_its_lines_yielded`（记下之后还要验一遍「按这份账从文件里读得出这一行的内容，且行长度正好等于记号加内容」）、`typing_at_the_head_of_an_atomic_block_in_a_quote_stays_after_the_marker`（七种写法：`> `、记号后不带空格的 `>`、两层 `>>`、注释、多行数学、分隔线、引用里认不出的标题）。
     - 列表项续段的接缝守卫：`typing_at_the_head_of_a_list_item_continuation_lands_on_its_own_line`（八种形状：空行后的续段、紧挨着的第二行、第三段、空行里带空格、有序项、任务项、空行后的围栏，外加引用里第二段作对照）。
 
-25. **块的源码区间存在块树的一张表里，一次编辑平移一趟，不逐块改实体**（`DocumentTree::source_spans` + `set_source_span`/`source_span_of`/`shift_source_spans_after`）：区间以前挂在 `BlockRecord` 上，每次编辑都要把编辑点之后的每一根块读出来、写回去（10 MiB 一次按键：106,455 根，收集 22ms + 平移 32ms = 57ms，占那次按键的三成）。现在表在树这一侧，一次编辑就是一趟 `values_mut` 紧凑循环（同一场景 <1ms）；落笔方照样覆盖自己那一条（`grow_root_span_after_edit`/`write_back_block_source`/`attach_root_spans`），删块/换根块时表跟着清。守卫 `typing_at_the_document_head_keeps_every_root_span_tiled`：在 120 根块的文档段首打一个字，所有区间仍把文件铺满、每段都读得回本块内容（去掉平移这一步它立刻红）。
+24. **块的源码区间存在块树的一张表里，一次编辑平移一趟，不逐块改实体**（`DocumentTree::source_spans` + `set_source_span`/`source_span_of`/`shift_source_spans_after`）：区间以前挂在 `BlockRecord` 上，每次编辑都要把编辑点之后的每一根块读出来、写回去（10 MiB 一次按键：106,455 根，收集 22ms + 平移 32ms = 57ms，占那次按键的三成）。现在表在树这一侧，一次编辑就是一趟 `values_mut` 紧凑循环（同一场景 <1ms）；落笔方照样覆盖自己那一条（`grow_root_span_after_edit`/`write_back_block_source`/`attach_root_spans`），删块/换根块时表跟着清。守卫 `typing_at_the_document_head_keeps_every_root_span_tiled`：在 120 根块的文档段首打一个字，所有区间仍把文件铺满、每段都读得回本块内容（去掉平移这一步它立刻红）。
 25. **源码视图 markdown 高亮的接缝状态是编辑器逐块串联的数据**
     （`Block.source_fence_entry/exit`，src/components/block/runtime/code.rs 的
     `sync_code_highlight`）：块文本变化时高亮随 `sync_render_cache` 重算，出口
@@ -135,7 +134,7 @@ Workspace (src/editor/workspace.rs)
     热路径只多一次实体读）。高亮变化要递增 `highlight_generation` 推翻 shape
     备忘，否则级联换色上不了屏（块文本没变、备忘键其余位不动）。渲染侧详情见
     render-pipeline.md §5。
-24. **行结构计划读的是可见列表同步那一趟记下的元数据，不再逐块读实体**（`RenderedRowSpacingInfo`，src/editor/render.rs；`DocumentTree::row_spacing_at`）：行计划每键重建一次，「重建里读了几个块实体」就是它随文档长的系数——10 MiB 的 159,683 个可见块以前被读两遍（折叠过滤一遍、分组扫描一遍），实测 121ms。现在分组锚点（引用组、标注、脚注）、层级、列表标记这些**结构量**跟 `visible` 一起进快照（`sync_block_list` 本来就算出这些值写回块上，顺手存同一份；两块 vec 同进同出），折叠过滤只剩标题要碰实体（chevron 的 `foldable` 与 `folded` 是块自己的状态），`[TOC]` 候选之外一个不读。闸门 `row_plan_rebuild_reads_only_the_headings_not_every_block`：100 标题 / 200 块的文档一次按键，700 次实体读 → 100 次。
+26. **行结构计划读的是可见列表同步那一趟记下的元数据，不再逐块读实体**（`RenderedRowSpacingInfo`，src/editor/render.rs；`DocumentTree::row_spacing_at`）：行计划每键重建一次，「重建里读了几个块实体」就是它随文档长的系数——10 MiB 的 159,683 个可见块以前被读两遍（折叠过滤一遍、分组扫描一遍），实测 121ms。现在分组锚点（引用组、标注、脚注）、层级、列表标记这些**结构量**跟 `visible` 一起进快照（`sync_block_list` 本来就算出这些值写回块上，顺手存同一份；两块 vec 同进同出），折叠过滤只剩标题要碰实体（chevron 的 `foldable` 与 `folded` 是块自己的状态），`[TOC]` 候选之外一个不读。闸门 `row_plan_rebuild_reads_only_the_headings_not_every_block`：100 标题 / 200 块的文档一次按键，700 次实体读 → 100 次。
     但 `[TOC]` 是**文本形状**，而整棵同步只在结构变化时重跑：文本一变（`BlockEvent::Changed`）就当场刷新那一条的 `is_toc`/`had_toc`（`DocumentTree::refresh_row_spacing_for`），折叠过滤写完条目之后再刷一次。守卫 `typing_a_toc_marker_fills_its_entries_on_that_frame`：把 `待填` 改成 `[TOC]` 的**这一帧**就要有目录条目，改回去的这一帧条目被清掉。以后谁想让快照「不跟着文本走」，先看这条守卫——它钉的就是「文本形状与快照里的记号同帧一致」。
 
 ## 4. Undo/历史（src/editor/history.rs）
@@ -205,9 +204,7 @@ Workspace (src/editor/workspace.rs)
   序列化长度」的记账），只剩一处入口：窗口内一根有区间的块都没有时的退回。**块内**那段前缀重建已经收窄：单行内容的块（标题、段落、列表项、任务项、单子块引用）
   按文件量记号宽度（不变式 15），代码围栏的开行、内容行、闭合行也按文件量（不变式 16）。
   块内那段前缀重建已经全部改成按文件量：单行按 15、围栏与缩进代码块按 16/17、多行按每行（18）。
-  它还是要为每一根块现算一遍映射，真正能删掉它的是「每个子块与每个格子在解析期就记下自己的字节区间」；再往下要等
-  每个子块与每个格子都在解析期记下自己的字节区间才能删（方案 §4 的 `SourceRegion`，表格 cells 已经在
-  按结构量了）。
+  它还是要为每一根块现算一遍映射，真正能删掉它的是「每个子块与每个格子在解析期就记下自己的字节区间」（表格 cells 已经在按结构量了）。
 - **大纲跟随滚动已经不付全文的钱**（`sync_outline_follow_scroll`，src/editor/workspace/tree_sync.rs）：
   块起点问它自己的 `source_span`（容器里的子块退回那一根块的映射），行号问 `buffer.line_of`，
   于是 `outline_follow_cache`（按 revision 缓存的整篇 ranges + 百万条 `newlines`）整个删掉。
@@ -258,8 +255,8 @@ Workspace (src/editor/workspace.rs)
 | 1 MiB 源码模式一次按键 | 改前 **1.99s（整篇落笔 1 次）**，改后 141ms（整篇落笔 0 次、整篇 mapping 0 次）（2026-10-04） |
 | 1 MiB 五个静止帧 | 7.1ms，遍数全 0（不打字不重算任何东西） |
 | 10 MiB 一次按键（markdown） | 改前 **546ms，其中大纲把整篇按行重扫 585499 行**；改后 **241ms**，大纲重扫 0 行（2026-10-04，预算 1500ms） |
-| 同上，行计划那一档（2026-10-04） | 行计划 1 次 **121ms → 41ms**：折叠过滤与分组扫描不再逐块读实体（159,683 个可见块两遍）；行元数据随可见列表同步进快照（不变式 24）。按键总量 241ms → 195–233ms（六键实测） |
-| 同上，区间平移那一档（2026-10-04） | 写回段 **57ms → ~1ms**：区间表从块实体搬到块树（不变式 25；106,455 根块不再逐个 `read`+`update`）。按键总量 195–233ms → **144–186ms**（六键实测），行计划仍是里面最大的一笔（41–44ms） |
+| 同上，行计划那一档（2026-10-04） | 行计划 1 次 **121ms → 41ms**：折叠过滤与分组扫描不再逐块读实体（159,683 个可见块两遍）；行元数据随可见列表同步进快照（不变式 26）。按键总量 241ms → 195–233ms（六键实测） |
+| 同上，区间平移那一档（2026-10-04） | 写回段 **57ms → ~1ms**：区间表从块实体搬到块树（不变式 24；106,455 根块不再逐个 `read`+`update`）。按键总量 195–233ms → **144–186ms**（六键实测），行计划仍是里面最大的一笔（41–44ms） |
 | 10 MiB 代码文档一次大纲同步（围栏压在 512 行切片接缝上） | 改前 **142ms，重扫 585499 行（=全文），每帧整篇重扫 1 次**；改后 **44ms，重扫 512 行（=改动那一片），整篇重扫 0 次**（2026-10-04） |
 | 同上，那 40ms 拆段量（临时段计时，2026-10-04 深夜） | 按字节数行号 **5ms → 0.26ms**（每块记换行偏移表，`99a7f93`）、按块走查 0.54ms、**拼那棵 5.3 万节点的标题树 37ms**（未解，树是整篇一份） |
 | 10 MiB 代码文档，侧栏大纲页签开着时一次按键（2026-10-04） | 改前 **2.3–2.6s**：53,227 行大纲**每帧整棵树走成元素树**（这一档比同文档其他线性成本加起来大一个量级）；按视口开窗后 **350–395ms**。闸门 `outline_panel_renders_only_the_rows_in_the_viewport`（3,000 标题，一帧 ≤200 行，且窗口跟着滚动走） |
@@ -293,7 +290,7 @@ Workspace (src/editor/workspace.rs)
 
 ## 8. 四处入口一套实现：正文右键菜单、选中工具栏与命令面板
 
-设计与逐功能点的记录见 [../plans/2026-10-05-selection-and-context-menus.md](../plans/2026-10-05-selection-and-context-menus.md)（FP1–FP12）。这一族的口径只有一句：**一个动作只有一处实现**——快捷键、正文右键菜单的一行、选中工具栏的一颗按钮、命令面板的一条，四条路汇到同一组函数上；新增一条命令要四条一起有，缺一条就是「菜单里点得到、键位按不动」那类不一致。
+这一族的口径只有一句：**一个动作只有一处实现**——快捷键、正文右键菜单的一行、选中工具栏的一颗按钮、命令面板的一条，四条路汇到同一组函数上；新增一条命令要四条一起有，缺一条就是「菜单里点得到、键位按不动」那类不一致。
 
 - **汇合点**（都在编辑器层，跨块选区在这一层切块、只开一个 `NonCoalescible` 撤销组）：行内格式与清除格式 `Editor::toggle_inline_format_on_selection` / `clear_inline_format_on_selection`（src/editor/format_ops.rs，两条共用 `apply_inline_selection_edit`）；段落转换 `Editor::apply_block_kind_to_selection`（src/editor/paragraph_ops.rs）；插入类 `Editor::insert_block_after_selection` / `insert_link_on_selection` / `open_image_picker`（src/editor/insert_ops.rs）；「复制为 Markdown」`Editor::copy_as_markdown`（src/editor/workspace/documents.rs）。键盘那一侧的捕获处理者在 `handle_inline_format_capture`（src/editor/format_ops.rs:143）分岔：焦点在某一块上且选区不跨块就 `cx.propagate()` 交回块里那条路径（`Block::toggle_inline_format`，src/components/block/runtime/text_ops.rs），其余两种在编辑器层收掉。
 - **块级动作走派发，不经上面那组汇合点**：撤销、重做、剪切、复制、粘贴、粘贴为纯文本、复制为 Markdown、复制为 HTML、切换源码视图这九项 `run_document_menu_command`（src/editor/context_menu/document_menu.rs:460）交 `window.dispatch_action`，与键位同一条链。前六项不再占长行：第二期 FP16 把它们画到面板顶部的图标条上（`DocumentMenuRow::QuickActions`，:208；渲染 `render_document_menu_quick_actions`，src/editor/context_menu/render.rs:634），派发路径一字未动，置灰口径收进 `Editor::quick_action_is_available`（:276），标签与生效键位写在每颗的悬停说明里（`quick_action_tooltip`，:249）；`PasteAsPlainText` 到 `Editor::on_paste_as_plain_text_capture`（src/editor/clipboard_ops.rs:13）再调回块里的 `Block::on_paste_as_plain_text`。「全选」不再占菜单一行（第二期 FP14），但 `SelectAll` 那条循环还在：块里的 `Block::on_select_all` → `Editor::on_rendered_select_all_press`（src/editor/selection.rs:286，一次选这一块、再来一次选整篇）。这一处混合是刻意的：块里那条实现本就带跨块与图片分支，编辑器层不再另写一份。作者反馈里「要连按两次才选到全文、菜单里找不到入口」这一条，补的是**另一条命令**而不是把 FP14 那行加回去：`SelectDocument`（⌘⇧A，一步选整篇，走 `Editor::select_document` → 同一个 `select_all_rendered_document`，一套选区模型两条入口）有键位、命令面板、偏好设置那一行，仍然**不进正文右键菜单**——FP14 的理由（多占一行没额外信息）对「选当前块」那条循环成立，对「选全文」也照样按那条口径处理，可发现性由面板与偏好页两处满足。偏好页把 `SelectAll` 的标签写成「全选（当前段落）」，与「选择全文」并排，让用户看得见 ⌘A 第一下到底做了什么。

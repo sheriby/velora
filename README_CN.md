@@ -8,9 +8,9 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 
 ## 界面预览
 
-![Velora 工作区：文件树、多标签页与实时所见即所得编辑](docs/验收记录/2026-09-30-velora-macos-原生界面.png)
+![Velora 工作区：文件树、多标签页与实时所见即所得编辑](assets/screenshots/workspace.png)
 
-![六套内置主题：Velora Light、Paper、Forest、Velora Dark、Midnight 与 Ink](docs/design/主题预览.png)
+![六套内置主题：Velora Light、Paper、Forest、Velora Dark、Midnight 与 Ink](assets/screenshots/themes.png)
 
 ## ✨ 功能
 
@@ -59,7 +59,7 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 
 ### 外观与设置
 
-- **六套内置主题**——Velora 浅色 / 深色、Paper、Forest、Midnight 与 Ink，并可跟随系统外观自动切换；自定义主题包放入用户目录即可加载。
+- **六套内置主题**——Velora 浅色 / 深色、Paper、Forest、Midnight 与 Ink，并可跟随系统外观自动切换；自定义主题包放入用户目录即可加载（字段清单见[主题 token 参考](docs/theme-tokens.md)）。
 - **专注模式与打字机模式**；正文与代码字体、字号可调，写作列宽可配置。
 - **中英双语界面**——内置简体中文与英文；外置语言包放入用户目录即用。
 - **应用内偏好设置**——一个窗口集中管理文件、主题、图片、快捷键、窗口与状态栏选项。

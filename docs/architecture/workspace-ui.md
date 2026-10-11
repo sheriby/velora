@@ -1,6 +1,6 @@
 # Workspace & UI（工作区、配置、主题与命令系统）
 
-> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支。
+> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-10-12 复核过期条目。
 > **行号会漂移，函数名不会**。相关文档：[overview.md](./overview.md)、[editor-core.md](./editor-core.md)、[render-pipeline.md](./render-pipeline.md)、[testing-and-build.md](./testing-and-build.md)
 
 ## 1. 启动（src/main.rs）
@@ -58,20 +58,20 @@
 
 ## 6. 主题系统（src/theme/）
 
-- `Theme = { name, colors(61), dimensions(244), typography(482), placeholders }`；serde 带 fallback 合并（旧字段缺失不炸）。内置 6 主题 + `system`（跟随窗口外观，`observe_window_appearance` 驱动）。
+- `Theme = { name, colors, dimensions, typography, placeholders }`；serde 带 fallback 合并（旧字段缺失不炸）。内置 6 主题 + `system`（跟随窗口外观，`observe_window_appearance` 驱动）。token 全表见 [../theme-tokens.md](../theme-tokens.md)。
 - `ThemeManager` Global：启动从 `themes_dir` 加载自定义主题；`current_arc()` O(1) Arc 给渲染热路径。组件直接读 `theme.colors.*`/`dimensions.*`。
 - `Editor::render` 每帧 clone 主题一次并应用字体偏好 + 缩放到 typography（缩放是整套字号乘系数）。
 
-## 7. i18n（src/i18n/mod.rs，~3000 行）
+## 7. i18n（src/i18n/，约 4,000 行）
 
-- `I18nStrings`（~137 个 String 字段）内置 `zh_cn()`/`en_us()`；外部 JSON(C) 包从 `languages_dir` 加载并 fallback 补全。
+- `I18nStrings`（约 380 个 String 字段，src/i18n/strings.rs）内置 `zh_cn()`/`en_us()`；外部 JSON(C) 包从 `languages_dir` 加载并 fallback 补全。
 - `I18nManager` Global：`strings()`/`strings_arc()`（热路径零拷贝）。
 - **新增字符串的登记点**：struct 字段、zh_cn()、en_us()、（如需）catalog——漏一处会解析错误；菜单文案走 `CommandSpec.label` 闭包。
 
 ## 8. 侧栏三面板的防重算设计
 
 - **状态栏**（status_bar.rs）：字数/阅读时长读缓冲区（= 文件内容）；长块提示按 `(document_revision, bool)` 缓存；行列号仅 Source 模式算。
-- **大纲**：`sync_workspace_outline` 仅当缓冲区内容与 `outline_source` 不同才重建（比较零拷贝，`build_outline_tree` 用 pulldown-cmark，围栏代码安全）；滚动跟随高亮按字节偏移分区 + `outline_follow_cache`（按 revision 键）。
+- **大纲**：是块树的一份投影——按根块缓存行摘要（`OutlineSegment`），只重扫被改过的字节所在的块；侧栏收起且无 `[TOC]` 块时不重算，`[TOC]` 块在自己需要的那一帧直接要清单。滚动跟随按块自己的 `source_span` + `buffer.line_of`，旧有的 `outline_follow_cache` 已删。成本接在 `outline_rebuilds` / `outline_lines_scanned` / `outline_full_rescans` 三个计数器上，细节见 editor-core.md §3 第 22 条与 §5。
 - **搜索**：`schedule_workspace_search` 代数计数 + 120ms 去抖；工作区域走缓存的树、文档域走源码，均在 background executor + catch_unwind；结果上限 200；**重搜期间保留旧结果**（防闪空白）；文档内命中经 `sync_document_search_highlights` 画进块。
 - ⌘P 快速切换（quick_open.rs）：过滤 `workspace_openable_files()`（文本与图片），上限 12，IME 输入路由经 Editor 的 input handler。
 - ⇧⌘P 命令面板（command_palette.rs）：条目来自 `commands::commands()`（`Edit`/`Format` 两档只进面板、不进系统菜单栏）；按回车与点一行同一条收尾 `run_palette_command`（:100）→ `window.dispatch_action`。面板输入框持有窗口焦点，块那一层不在派发路径上（派发读的是上一帧的派发树），所以块级命令在编辑器层收口，见 editor-core.md §8。

@@ -1,13 +1,13 @@
 # 测试与构建基建
 
-> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支。
+> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-10-12 复核计数与路径。
 > **行号会漂移，函数名不会**——引用以 `文件:函数名` 为主。
 > 相关文档：[overview.md](./overview.md)、[editor-core.md](./editor-core.md)、[render-pipeline.md](./render-pipeline.md)、[workspace-ui.md](./workspace-ui.md)
 
 ## 1. 测试组织
 
-- **没有顶层 Rust `tests/` target**；测试夹具统一放在根目录 `fixtures/`。全部 Rust 测试是 bin crate 内的 `#[cfg(test)]` 模块（1069 项）。
-- **2026-09-30 起测试与源码分离**：内联测试模块已全部迁出为同级文件——`editor/tests.rs`+`editor/tests/`（20 个主题文件 + common.rs 脚手架）、`workspace/tests/`、`document/tests/`、`events/tests/`、`block/runtime/tests/`、以及各文件的 `<name>/tests.rs`。引导与共享助手集中在 `editor/tests/common.rs`。
+- **没有顶层 Rust `tests/` target**；测试夹具统一放在根目录 `fixtures/`。全部 Rust 测试是 bin crate 内的 `#[cfg(test)]` 模块（2026-10-12 实测 1954 项）。
+- **2026-09-30 起测试与源码分离**：内联测试模块已全部迁出为同级文件——`editor/tests.rs`+`editor/tests/`（42 个主题文件 + common.rs 脚手架）、`workspace/tests/`（15 个主题文件）、`document/tests/`、`events/tests/`、`block/runtime/tests/`、以及各文件的 `<name>/tests.rs`。引导与共享助手集中在 `editor/tests/common.rs`。
 - **引导**：`init_editor_test_app`（src/editor/tests/common.rs）在 `TestAppContext` 里初始化 `I18nManager`/`ThemeManager`/`components::init`。窗口用 vendored 辅助 `cx.add_window_view(...)`（vendor/gpui/src/app/test_context.rs）。
 - **重绘惯用法**：`redraw()`（editor/tests/common.rs）= `window.draw(cx).clear()` + `run_until_parked`。断言元素真实布局用 `debug_bounds("名字")` + `simulate_click`（vendored gpui 的 test-only 通道）。
 - **配置隔离**：`override_test_config_root`/`TestConfigRootGuard`（src/config/mod.rs，线程局部 RAII）。
@@ -34,7 +34,7 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
   ```
   输出 `construct_ms / first_draw_ms / steady_p95_ms / edit_update_ms / serialize_ms`（12 次重绘取 p95）。走 `Editor::from_markdown`——**测代码文件路径需要另设入口**。
 - **`VELORA_STARTUP_TIMING=1`**（src/main.rs `startup_timing_enabled`/`log_startup_phase`）：分阶段启动耗时打 stderr。
-- **大文档预算断言**：`large_document_opens_within_budget`（src/editor/tests/import_perf.rs）——首开块数、`open_elapsed*5 < total_elapsed`（渐进导入比例性）、分块导入与单遍逐字节一致、**每块成本 ≤ 400µs**、180s 续建死线；预算 `[1,2,3,5,8]` 等价性用例。
+- **大文档预算断言**：`large_document_opens_within_budget`（src/editor/tests/perf_budgets.rs，墙钟闸门 `#[ignore]`，本地手动跑）——首开块数、`open_elapsed*3 < total_elapsed`（渐进导入比例性）、分块导入与单遍逐字节一致、**每块成本 ≤ 400µs**、180s 续建死线；预算 `[1,2,3,5,8]` 等价性用例在 src/editor/tests/import_perf.rs。
 
 ## 4. 构建与 profile
 
@@ -68,5 +68,5 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 - scripts/package-macos.sh：release 构建 → .app（Info.plist/图标）→ pkgbuild/productbuild → dist/。
 - scripts/package-windows.ps1 + .nsi：PowerShell 7 在 Windows x64 MSVC 环境中原生 `--release` 构建，自动定位 Windows SDK 的 `fxc.exe`，断言 PE32+ 且内嵌 manifest 字符串（回归守卫），生成 NSIS 安装包。
 - resources/：macOS Info.plist/pkg Distribution、windows .rc/.manifest（build.rs 内嵌）。
-- assets/icon/：应用图标 + 标题栏 chrome SVG（main.rs 内嵌）+ 侧栏 SVG 图标集。
+- assets/icon/：应用图标 + 标题栏 chrome SVG（main.rs 内嵌）+ 侧栏 SVG 图标集；assets/screenshots/：README 截图（workspace.png / themes.png）。
 - **i18n 是代码不是数据文件**：src/i18n/mod.rs 内置 zh-CN/en-US 两套；外部 JSON(C) 语言包经 `from_json` 加载（用户 languages 目录直放即用）。新增 UI 字符串要同时登记两处内置表。

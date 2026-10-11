@@ -62,7 +62,7 @@ regex = "1"
 # regex 引擎适配成 grep-matcher 的 Matcher trait，grep-searcher 负责按行迭代、
 # 绝对字节偏移记账与提前停止。三者的传递依赖（bstr / aho-corasick /
 # regex-automata / regex-syntax / memchr / memmap2 / log）已全部在 Cargo.lock
-# 里且版本精确对上，零重复编译单元。方案见 docs/plans/2026-10-05-ripgrep-search-engine.md。
+# 里且版本精确对上，零重复编译单元。
 grep-searcher = "0.1.17"
 grep-regex = "0.1.14"
 grep-matcher = "0.1.9"

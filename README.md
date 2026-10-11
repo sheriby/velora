@@ -8,9 +8,9 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 
 ## Screenshots
 
-![The Velora workspace: file tree, multiple tabs, and live WYSIWYG Markdown editing](docs/验收记录/2026-09-30-velora-macos-原生界面.png)
+![The Velora workspace: file tree, multiple tabs, and live WYSIWYG Markdown editing](assets/screenshots/workspace.png)
 
-![The six built-in themes: Velora Light, Paper, Forest, Velora Dark, Midnight and Ink](docs/design/主题预览.png)
+![The six built-in themes: Velora Light, Paper, Forest, Velora Dark, Midnight and Ink](assets/screenshots/themes.png)
 
 ## ✨ Features
 
@@ -58,7 +58,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 
 ### Look & feel
 
-- **Six built-in themes** — Velora Light / Dark, Paper, Forest, Midnight and Ink — plus automatic switching with the system appearance; custom theme packs load from the user directory.
+- **Six built-in themes** — Velora Light / Dark, Paper, Forest, Midnight and Ink — plus automatic switching with the system appearance; custom theme packs load from the user directory (see the [theme token reference](docs/theme-tokens.md)).
 - **Focus & typewriter modes**, adjustable body/code fonts and sizes, and a configurable writing measure.
 - **Bilingual UI** — Simplified Chinese and English built in; external language packs load by dropping them into the user directory.
 - **In-app preferences** — one window for files, themes, images, shortcuts, window and status-bar options.

@@ -45,8 +45,8 @@ async fn image_scale_baseline_follows_the_text_column_and_keeps_the_aspect_ratio
     // 用户要求：100% 对应正文容器宽度的 95%，图片左右边界绝不越过正文。
     // 侧栏会挤窄正文；必须核对实际块边界与滚动视口，不能拿整窗宽度当正文宽度。
     init_editor_test_app(cx);
-    let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("docs/验收记录/2026-09-30-velora-macos-原生界面.png");
+    let image_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/screenshots/workspace.png");
     let markdown = format!("![图例]({})", image_path.display());
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
@@ -108,8 +108,8 @@ async fn image_scale_baseline_follows_the_text_column_and_keeps_the_aspect_ratio
 async fn image_scale_layout_keeps_the_aspect_ratio_with_a_container_width(cx: &mut TestAppContext) {
     // 列表图片按容器比例限宽，也不能保留未缩放的原图高度。
     init_editor_test_app(cx);
-    let image_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("docs/验收记录/2026-09-30-velora-macos-原生界面.png");
+    let image_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/screenshots/workspace.png");
     let markdown = format!("![图例]({})", image_path.display());
     let (_block, cx) = cx.add_window_view(|_, cx| {
         let mut block = Block::with_record(

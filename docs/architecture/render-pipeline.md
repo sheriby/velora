@@ -1,6 +1,6 @@
 # Render Pipeline（渲染管线）
 
-> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支。
+> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-10-12 复核过期条目。
 > **行号会漂移，函数名不会**。相关文档：[overview.md](./overview.md)、[editor-core.md](./editor-core.md)、[workspace-ui.md](./workspace-ui.md)、[testing-and-build.md](./testing-and-build.md)
 
 ## 1. 每帧入口与滚动容器（src/editor/render/paint.rs `impl Render for Editor`；行计划/菜单几何类型在 render.rs，标题栏与滚动同步在 render/sync.rs）
@@ -27,7 +27,7 @@
   - `prepaint`：光标 quad、选区 quad、行内代码圆角背景、搜索高亮、行号 ShapedLine、hitbox。
   - `paint`：画 quad/行号/文本行；聚焦时 `window.handle_input` 注册 IME；⌘ 悬停链接变手型；**把 `last_layout`/`last_bounds`/`last_line_height` 写回 Block**——这是命中测试的布局缓存。
   - `build_text_runs`：行内 span 边界 + IME marked 合并排序；逐 run 应用代码字体/逐 run `font_size`（vendored 补丁）/粗斜体/链接下划线/删除线等。
-- **关键性能事实：`shape_text` 每帧对每个挂载块重跑，无跨帧 memo**（GPUI 自身缓存之外）。滚动时静态块也在反复 shaping。表格列宽测量（`TableColumnLayout::measure` → 每单元格 `shape_text` no-wrap）**同样每帧重测不缓存**。
+- **`shape_text` 有跨帧 memo**（2026-09-28 P3，`ShapeMemoKey` 在 src/components/block/runtime/mod.rs）：键含文本代数、高亮代数、换行宽与 prose 开关、字号、字体指纹、主题指纹、长行展开代数，命中直接复用 `Vec<WrappedLine>`；打字的那一块、改字号、换主题、高亮换代才重新 `shape_text`。表格列宽测量（`TableColumnLayout::measure` → 每单元格 `shape_text` no-wrap）仍每帧重测不缓存。
 
 ## 4. 块级运行时缓存（src/components/block/runtime/）
 
@@ -64,7 +64,7 @@
 
 ## 6. 每帧文档级开销清单（优化候选，按嫌疑排序）
 
-1. `shape_text` 每帧重 shape 所有挂载块（element.rs request_layout）。
+1. `shape_text`：有布局键 memo（文本代数/高亮代数/换行宽/字号/字体指纹/主题指纹/长行展开代数），键不变零重排；只有键变化的那一块重 shape。
 2. 表格列宽每帧重测所有单元格（markdown/table.rs `measure_preferred_column_widths`）。
 3. `visible_blocks().to_vec()` 全量克隆 + 折叠过滤每帧扫描（src/editor/render/paint.rs render 开头）。
 4. 主题 clone + 全字号缩放套用每帧执行。

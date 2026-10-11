@@ -1382,8 +1382,8 @@ async fn source_mode_jump_lands_in_the_chunk_containing_the_hit(cx: &mut TestApp
 /// 既有测试只守「buffer 区间 == 命中词」「选区 == 活动区间」——换算到块
 /// 显示文本这一步整体偏移时它们照样全绿。这条直接断言：每个块上高亮/
 /// 活动区间在显示文本里切出来的必须是命中词。结构复刻
-/// docs/architecture/overview.md：第 5 行是带 5 个内联链接的引用行，
-/// 第 9 行段落里是「（含测试）」。
+/// docs/architecture/overview.md（2026-10-12 同步过文本）：第 5 行是带
+/// 5 个内联链接的引用行，第 9 行段落里含「含测试」。
 #[gpui::test]
 async fn workspace_hit_highlight_covers_the_match_text_in_the_block(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -1400,13 +1400,13 @@ async fn workspace_hit_highlight_covers_the_match_text_in_the_block(cx: &mut Tes
     let source = concat!(
         "# Velora Architecture Overview（总览）\n",
         "\n",
-        "> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-09-30 随「巨型文件拆分」重构更新模块地图。**docs/ 下的历史文档可能过期，以本目录 + 代码为准。**\n",
+        "> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-09-30 随「巨型文件拆分」重构更新模块地图，2026-10-12 复核模块清单与计数。**与代码冲突时以代码为准。**\n",
         "> 行号会漂移，函数名不会——引用以 `文件:函数名` 为主。\n",
         "> 分册：[editor-core.md](./editor-core.md)（文档模型/编辑/undo/持久化） · [render-pipeline.md](./render-pipeline.md)（渲染/虚拟化/缓存） · [workspace-ui.md](./workspace-ui.md)（工作区/配置/主题/命令） · [testing-and-build.md](./testing-and-build.md)（测试/基准/构建/vendored 补丁） · [performance.md](./performance.md)（性能基线与优化台账）\n",
         "\n",
         "## Velora 是什么\n",
         "\n",
-        "原生 Markdown 编辑器（对标 Typora/Obsidian），Rust + **vendored GPUI 0.2.2**（`[patch.crates-io]` 指向 `vendor/gpui`，带 5 组本地补丁，见 testing-and-build.md §6）。单 bin crate（~95k 行（含测试），`src/main.rs`），无 workspace。发版 macOS + Windows（交叉编译 `releasewin`）。\n",
+        "原生 Markdown 编辑器（对标 Typora/Obsidian），Rust + **vendored GPUI 0.2.2**（`[patch.crates-io]` 指向 `vendor/gpui`，带 7 组本地补丁，见 testing-and-build.md §5）。单 bin crate（~157k 行含测试，2026-10-12 实测，`src/main.rs`），无 workspace。发版 macOS + Windows（各平台原生构建 `release`）。\n",
         "\n",
         "### 文件组织约定（2026-09-30 重构后）\n",
         "\n",
