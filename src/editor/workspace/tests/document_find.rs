@@ -658,3 +658,72 @@ async fn replace_all_replaces_exactly_the_hits_it_reports(cx: &mut TestAppContex
         "替换后的文本不对：{buffer:?}"
     );
 }
+
+/// 切标签后文档范围的搜索现场必须按新文档重算（评审报告维度二建议 7）：
+/// search_results 与跳转锚点里的字节区间说的是上一篇文档的 buffer——
+/// 命中表按缓冲区身份自失效，结果列表不会。不重算的话切到没有该词的
+/// 文档，列表还挂着旧行，点一条就在新文档的错误字节上选中。
+#[gpui::test]
+async fn switching_tabs_reruns_the_document_search(cx: &mut TestAppContext) {
+    use crate::editor::workspace::WorkspaceOpenMode;
+
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir()
+        .join(format!("velora-tab-search-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create root");
+    let with_word = root.join("a.md");
+    fs::write(&with_word, "alpha here\n").expect("write a");
+    let without_word = root.join("b.md");
+    fs::write(&without_word, "没有那个词\n").expect("write b");
+
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file_in_mode(
+                with_word.clone(),
+                WorkspaceOpenMode::Pinned,
+                window,
+                cx,
+            );
+            editor.open_document_find(cx);
+            editor.workspace.search_query = "alpha".into();
+            editor.schedule_workspace_search(cx);
+        });
+    });
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert_eq!(
+            editor.workspace.search_results.len(),
+            1,
+            "前置：第一篇文档应有一条命中"
+        );
+    });
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file_in_mode(
+                without_word.clone(),
+                WorkspaceOpenMode::Pinned,
+                window,
+                cx,
+            );
+        });
+    });
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.workspace.search_results.is_empty(),
+            "切到没有该词的文档后结果列表必须归零（实际 {} 行）",
+            editor.workspace.search_results.len()
+        );
+    });
+    let _ = fs::remove_dir_all(root);
+}
