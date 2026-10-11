@@ -1363,3 +1363,39 @@ async fn folder_hover_has_no_name_tooltip_and_file_metadata_tooltip_remains(
     );
     fs::remove_dir_all(&root).expect("清理夹具");
 }
+
+/// 按修改时间排序的行为等价守卫（无红点，纯形状优化的钉子）：最新在前、
+/// 目录成组在前。比较器里每次比较现开两次 fs::metadata（约 2·n·log n 次
+/// 系统调用）已收进 sort_by_cached_key 的「每节点一次」——谁改回按比较
+/// 取元数据，排序行为不变但慢回去了，这条只钉行为那一半。
+#[test]
+fn workspace_scan_sorts_by_modified_time_newest_first() {
+    use std::time::UNIX_EPOCH;
+
+    let root =
+        std::env::temp_dir().join(format!("velora-workspace-mtime-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("目录乙")).expect("create dirs");
+    let stamp = |file: &str, seconds: u64| {
+        let path = root.join(file);
+        fs::write(&path, file).expect("write file");
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open for mtime");
+        file.set_modified(UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+            .expect("set mtime");
+    };
+    stamp("老.md", 1_000);
+    stamp("中.md", 2_000);
+    stamp("新.md", 3_000);
+
+    let tree =
+        scan_workspace_dir_recursive(&root, TreeSortPreference::ModifiedTime).expect("scan tree");
+    let labels = tree
+        .children
+        .iter()
+        .map(|node| node.label.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(labels, vec!["目录乙", "新.md", "中.md", "老.md"]);
+    let _ = fs::remove_dir_all(root);
+}

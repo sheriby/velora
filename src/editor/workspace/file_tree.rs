@@ -150,47 +150,42 @@ pub(crate) fn scan_workspace_dir_recursive(
 }
 
 fn sort_workspace_children(children: &mut [WorkspaceTreeNode], sort: TreeSortPreference) {
-    children.sort_by(|left, right| {
-        let left_dir = matches!(left.kind, WorkspaceTreeKind::Directory(_));
-        let right_dir = matches!(right.kind, WorkspaceTreeKind::Directory(_));
-        // Directories always group first; within a group the preference
-        // decides the key (roadmap D2).
-        right_dir.cmp(&left_dir).then_with(|| match sort {
-            TreeSortPreference::Name => compare_labels(&left.label, &right.label),
+    // 键每个节点只算一次（sort_by_cached_key）：按修改时间排序时比较器里
+    // 现开两次 fs::metadata，约 2·n·log n 次系统调用（Windows 上 Defender
+    // 还会放大）；标签的小写比较也从每次比较两份分配降到每节点一份。
+    // Directories always group first; within a group the preference decides
+    // the key (roadmap D2). 排序键里的变体只在同一种偏好下互比。
+    children.sort_by_cached_key(|node| {
+        let is_file = !matches!(node.kind, WorkspaceTreeKind::Directory(_));
+        let key = match sort {
+            TreeSortPreference::Name => TreeSortKey::Label(node.label.to_lowercase()),
             TreeSortPreference::ModifiedTime => {
-                let left_time = fs::metadata(tree_node_path(left))
+                // Newest first; missing metadata sorts last（Reverse(None) 最大）。
+                let modified = fs::metadata(tree_node_path(node))
                     .ok()
                     .and_then(|meta| meta.modified().ok());
-                let right_time = fs::metadata(tree_node_path(right))
-                    .ok()
-                    .and_then(|meta| meta.modified().ok());
-                // Newest first; missing metadata sorts last.
-                right_time.cmp(&left_time)
+                TreeSortKey::Time(std::cmp::Reverse(modified))
             }
-            TreeSortPreference::Type => {
-                let left_ext = tree_node_path(left)
+            TreeSortPreference::Type => TreeSortKey::Type((
+                tree_node_path(node)
                     .extension()
-                    .map(|e| e.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let right_ext = tree_node_path(right)
-                    .extension()
-                    .map(|e| e.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                left_ext
-                    .cmp(&right_ext)
-                    .then_with(|| compare_labels(&left.label, &right.label))
-            }
-        })
+                    .map(|extension| extension.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                node.label.to_lowercase(),
+            )),
+        };
+        (is_file, key)
     });
 }
 
-/// 忽略大小写的标签比较。`to_lowercase()` 每次比较要分配两份字符串，几万条的
-/// 子目录就是几百万次分配（扫描耗时里占大头）。
-fn compare_labels(left: &str, right: &str) -> std::cmp::Ordering {
-    left.chars()
-        .flat_map(char::to_lowercase)
-        .cmp(right.chars().flat_map(char::to_lowercase))
+/// 排序键：同一次排序里只会出现同一种偏好的变体。
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum TreeSortKey {
+    Label(String),
+    Time(std::cmp::Reverse<Option<std::time::SystemTime>>),
+    Type((String, String)),
 }
+
 
 /// 工作区里的所有文件（含只做文件名匹配的其它类型）：搜索 / 全部替换 / 快速切换 /
 /// 索引用它，不再依赖侧栏那棵树——树只加载展开过的层，拿它当名单会让范围随展开状态
