@@ -569,22 +569,26 @@ where
 {
     let detected_language_id = detected_language_id_from_locales(locales);
     let path = dirs.app_config_file();
-    let preferences = match std::fs::read_to_string(&path) {
-        Ok(text) => toml::from_str::<toml::Value>(&text)
-            .map(|value| load_preferences_from_toml_value(&value, detected_language_id).0)
-            .unwrap_or_else(|_| AppPreferences {
+    let (preferences, needs_write) = match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let value = toml::from_str::<toml::Value>(&text)
+                .with_context(|| format!("无法解析配置 '{}'，原文件已保留", path.display()))?;
+            load_preferences_from_toml_value(&value, detected_language_id)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (
+            AppPreferences {
                 default_language_id: detected_language_id.into(),
                 ..AppPreferences::default()
-            }),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => AppPreferences {
-            default_language_id: detected_language_id.into(),
-            ..AppPreferences::default()
-        },
+            },
+            true,
+        ),
         Err(err) => {
             return Err(err).with_context(|| format!("failed to read '{}'", path.display()));
         }
     };
-    save_app_preferences_with_dirs(&preferences, dirs)?;
+    if needs_write {
+        save_app_preferences_with_dirs(&preferences, dirs)?;
+    }
     Ok(preferences)
 }
 

@@ -510,6 +510,12 @@ fn show_window_prompt(window: Option<AnyWindowHandle>, title: &str, detail: &str
     show_message_on_active_editor_in(window, title, detail, cx);
 }
 
+pub(crate) fn report_preferences_failure(detail: &str, cx: &mut App) {
+    let title = cx.global::<I18nManager>().strings().open_failed_title.clone();
+    let window = editor_window_for_folder_open(cx).map(Into::into);
+    show_message_on_active_editor_in(window, &title, detail, cx);
+}
+
 /// 在指定（或当前）编辑器窗口里弹应用内模态提示；拿不到编辑器窗口时退回 stderr。
 fn show_message_on_active_editor_in(
     window: Option<AnyWindowHandle>,

@@ -437,6 +437,8 @@ fn main() {
         log_startup_phase(startup_start, "app.run entered");
         let preferences = config::load_or_create_app_preferences().unwrap_or_else(|err| {
             eprintln!("failed to initialize app preferences: {err}");
+            let detail = err.to_string();
+            cx.defer(move |cx| app_menu::report_preferences_failure(&detail, cx));
             Default::default()
         });
         log_startup_phase(startup_start, "preferences loaded");

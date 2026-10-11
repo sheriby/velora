@@ -16,6 +16,33 @@
     use gpui::px;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn review_malformed_preferences_are_preserved_and_reported() {
+        // 启动解析失败曾立即回写默认值，原配置无法恢复。
+        let root = std::env::temp_dir().join(format!("velora-config-malformed-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let dirs = VeloraConfigDirs::from_root(&root);
+        let source = "[theme]\ndefault_theme_id = \"未闭合\n";
+        std::fs::write(dirs.app_config_file(), source).unwrap();
+        let result = load_or_create_app_preferences_with_dirs_and_locales(&dirs, ["zh-CN"]);
+        assert_eq!(std::fs::read_to_string(dirs.app_config_file()).unwrap(), source);
+        assert!(result.is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn review_current_preferences_are_not_rewritten_on_startup() {
+        // 当前版本无需迁移，启动不能删掉手写注释或未知扩展字段。
+        let root = std::env::temp_dir().join(format!("velora-config-current-{}", uuid::Uuid::new_v4()));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        save_app_preferences_with_dirs(&AppPreferences::default(), &dirs).unwrap();
+        let source = format!("{}\n# 保留手写注释\n[extension]\ncustom = true\n", std::fs::read_to_string(dirs.app_config_file()).unwrap());
+        std::fs::write(dirs.app_config_file(), &source).unwrap();
+        load_or_create_app_preferences_with_dirs_and_locales(&dirs, ["zh-CN"]).unwrap();
+        assert_eq!(std::fs::read_to_string(dirs.app_config_file()).unwrap(), source);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[gpui::test]
     async fn scaled_typography_applies_font_size_and_ui_zoom(cx: &mut TestAppContext) {
         // 用户报修：界面缩放设置了没反应。缩放与字号必须是同一个派生，
