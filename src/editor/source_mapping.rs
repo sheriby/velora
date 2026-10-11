@@ -851,7 +851,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut line_start = span.start;
 
         if let Some(header_line) = raw_lines.next() {
-            self.push_table_row_mappings(header_line, line_start, &runtime.header, mappings);
+            self.push_table_row_mappings(header_line, line_start, &runtime.header, mappings, cx);
             line_start += header_line.len() + 1;
         }
         if let Some(separator_line) = raw_lines.next() {
@@ -859,7 +859,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         }
         for row_cells in runtime.rows.iter() {
             let Some(row_line) = raw_lines.next() else { break };
-            self.push_table_row_mappings(row_line, line_start, row_cells, mappings);
+            self.push_table_row_mappings(row_line, line_start, row_cells, mappings, cx);
             line_start += row_line.len() + 1;
         }
 
@@ -878,6 +878,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         line_start: usize,
         cells: &[Entity<Block>],
         mappings: &mut Vec<SourceTargetMapping>,
+        cx: &App,
     ) {
         // 挂在容器里的行写着 `> | 甲 | 乙 |`：容器记号不是第一列。
         let prefix = table_row_container_prefix(row_line);
@@ -886,6 +887,14 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             let Some(range) = cell_content_range_in_line(core, line_start + prefix, column) else {
                 continue;
             };
+            // 恒等表只在源码段与格内容**写回形态**等长时成立（源码 `a<br />b`
+            // 8 字节，模型内容 `a\nb` 写回 `a<br>b` 6 字节——格尾的换算会落进
+            // `<br />` 的 `>` 之前）。对账用 serialize_markdown：`\|` 会转义回
+            // 写法，转义管道的格子照常对得上。不等长就不推这一格，落点交回
+            // 宿主表格块——与 push_table_mappings_in_root 的既有规矩一致。
+            if range.len() != cell.read(cx).record.title.serialize_markdown().len() {
+                continue;
+            }
             let len = range.len();
             mappings.push(SourceTargetMapping {
                 entity: cell.clone(),
@@ -966,11 +975,11 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             .map(|row| row.end)
             .unwrap_or(delimiter.end);
 
-        self.push_table_row_mappings(&header_line, header.start, &runtime.header, mappings);
+        self.push_table_row_mappings(&header_line, header.start, &runtime.header, mappings, cx);
         for (row_index, row) in row_ranges.iter().enumerate() {
             let row_line = self.buffer.slice(row.clone());
             if let Some(cells) = runtime.rows.get(row_index) {
-                self.push_table_row_mappings(&row_line, row.start, cells, mappings);
+                self.push_table_row_mappings(&row_line, row.start, cells, mappings, cx);
             }
         }
 

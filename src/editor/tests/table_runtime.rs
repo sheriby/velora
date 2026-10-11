@@ -701,3 +701,49 @@ async fn selecting_a_table_column_writes_only_that_column(cx: &mut TestAppContex
         "一次预览 + 一次选列只许写目标表与那一列（实际 {writes} 次）"
     );
 }
+
+/// 表格格映射与格内容对账（评审报告维度二建议 5 后半）：源码格
+/// `a<br />b`（8 字节）解析进模型的格内容是 `a<br>b`（6 字节）——
+/// 以前一律按源码段长度推恒等表，格尾的偏移换算落到 `<br />` 的 `>` 
+/// 之前几位，点击/跳转/高亮全偏。不等长的格不许推映射，落点交回宿主
+/// 表格块（与 push_table_mappings_in_root 的既有规矩一致）；对得上号的
+/// 格照常要推。
+#[gpui::test]
+async fn table_cell_mappings_account_for_content_length(cx: &mut TestAppContext) {
+    let markdown = "| a<br />b | 平文 |\n| --- | --- |\n";
+    let editor = cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None));
+    editor.update(cx, |editor, cx| {
+        let mappings = editor.source_mappings_in_range(&(0..markdown.len()), cx);
+        let table = editor.document.first_root().expect("table root").clone();
+        let header = table
+            .read(cx)
+            .table_runtime
+            .as_ref()
+            .expect("table runtime")
+            .header
+            .clone();
+        let mismatched = &header[0];
+        let plain = &header[1];
+        assert_eq!(
+            mismatched.read(cx).display_text(),
+            "a\nb",
+            "前置：模型里的格内容（换行 1 字节）确实比源码 <br />（5 字节）短"
+        );
+        let mapping_for = |cell: &gpui::Entity<crate::components::Block>| {
+            mappings
+                .iter()
+                .find(|mapping| mapping.entity.entity_id() == cell.entity_id())
+                .map(|mapping| mapping.content_to_source.len())
+        };
+        assert_eq!(
+            mapping_for(mismatched),
+            None,
+            "源码（8 字节段）与内容（3 字节）不等长的格不得推恒等表"
+        );
+        assert_eq!(
+            mapping_for(plain),
+            Some(7),
+            "对得上号的格仍要推映射（平文 6 字节 → 0..=6 共 7 项）"
+        );
+    });
+}
