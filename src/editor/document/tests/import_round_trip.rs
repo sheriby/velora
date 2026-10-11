@@ -4,6 +4,25 @@
     use crate::components::{BlockKind, Editor};
 
     #[gpui::test]
+    async fn review_setext_underline_does_not_promote_block_syntax(cx: &mut TestAppContext) {
+        // 非段落行后的划线曾吞并前行，编辑后原块语法与分隔线一同丢失。
+        for (caption, expected) in [
+            ("# 标题", BlockKind::Heading { level: 1 }),
+            ("- 项", BlockKind::BulletedListItem),
+            ("> 引用", BlockKind::Quote),
+            ("    code", BlockKind::CodeBlock { language: None }),
+        ] {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, format!("{caption}\n---\n正文"), None));
+            editor.read_with(cx, |editor, cx| {
+                let blocks = editor.document.visible_blocks();
+                assert_eq!(blocks[0].entity.read(cx).kind(), expected, "{caption}");
+                assert!(blocks.iter().any(|block| block.entity.read(cx).kind() == BlockKind::Separator),
+                    "{caption}: {:?}", blocks.iter().map(|block| block.entity.read(cx).kind()).collect::<Vec<_>>());
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn imports_setext_headings_and_grouped_paragraphs(cx: &mut TestAppContext) {
         let editor = cx.new(|cx| {
             Editor::from_markdown(

@@ -1894,14 +1894,7 @@ impl Editor {
         let markdown_file = snapshot
             .source_path
             .as_ref()
-            .is_none_or(|path| {
-                workspace::is_markdown_file(path)
-                    || path
-                        .extension()
-                        .is_some_and(|extension| {
-                            extension.to_string_lossy().eq_ignore_ascii_case("markdown")
-                        })
-            });
+            .is_none_or(|path| workspace::is_markdown_document(path));
         let code_language = snapshot
             .source_path
             .as_ref()

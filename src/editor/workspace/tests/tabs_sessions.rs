@@ -7,6 +7,16 @@ use gpui::{
 use std::fs;
 use std::time::Duration;
 
+#[test]
+fn review_markdown_extensions_share_all_entry_predicates() {
+    // .markdown 在打开入口可用，在搜索、重载与文件列表却被窄判据排除。
+    for name in ["notes.md", "notes.markdown", "NOTES.MARKDOWN"] {
+        let path = std::path::Path::new(name);
+        assert!(super::super::is_markdown_file(path));
+    }
+    assert!(!super::super::is_markdown_file(std::path::Path::new("notes.txt")));
+}
+
 
 #[gpui::test]
 async fn switching_workspace_drops_the_previous_workspaces_tabs(cx: &mut TestAppContext) {

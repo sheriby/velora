@@ -525,7 +525,7 @@ fn outline_headings(
             Some((level, title)) => Some((offset, level, title)),
             None => match BlockKind::parse_setext_underline(line).zip(previous) {
                 Some((level, (caption_index, caption)))
-                    if is_setext_caption(caption.trim()) =>
+                    if crate::editor::document::line_is_setext_heading_content(caption) =>
                 {
                     Some((caption_index, level, caption.trim().to_string()))
                 }
@@ -612,15 +612,6 @@ pub(crate) fn nest_outline_headings(headings: &[OutlineHeading]) -> Vec<Workspac
 pub(crate) fn build_outline_tree(markdown: &str) -> Vec<WorkspaceTreeNode> {
     let (headings, _) = outline_headings(0, markdown, None);
     nest_outline_headings(&headings)
-}
-
-/// 划线上方那行能不能当标题正文：列表项、引用、分隔线、围栏这些都不算。
-fn is_setext_caption(caption: &str) -> bool {
-    !caption.is_empty()
-        && !caption.starts_with('#')
-        && !caption.starts_with('>')
-        && !matches!(caption.chars().next(), Some('-') | Some('*') | Some('+') | Some('`') | Some('~'))
-        && BlockKind::parse_atx_heading_line(caption).is_none()
 }
 
 pub(crate) fn children_at_path_mut<'a>(

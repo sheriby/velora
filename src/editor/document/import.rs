@@ -307,6 +307,7 @@ impl Editor {
             if let Some(level) = lines
                 .get(index + 1)
                 .and_then(|next| BlockKind::parse_setext_underline(next))
+                .filter(|_| line_is_setext_heading_content(line))
             {
                 let heading = native_block(
                     cx,

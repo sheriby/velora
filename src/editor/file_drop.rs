@@ -101,11 +101,7 @@ impl Editor {
 
 impl Editor {
     pub(super) fn is_markdown_file_path(path: &Path) -> bool {
-        path.is_file()
-            && path.extension().is_some_and(|extension| {
-                extension.to_string_lossy().eq_ignore_ascii_case("md")
-                    || extension.to_string_lossy().eq_ignore_ascii_case("markdown")
-            })
+        path.is_file() && super::workspace::is_markdown_document(path)
     }
 
     pub(super) fn first_dropped_markdown_path(paths: &[PathBuf]) -> Option<PathBuf> {

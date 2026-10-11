@@ -559,10 +559,7 @@ pub(crate) fn fallback_delete(target: &Path, is_directory: bool) -> std::io::Res
     }
 }
 
-pub(crate) fn is_markdown_file(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("md"))
-}
+pub(crate) use is_markdown_document as is_markdown_file;
 
 /// 是否按 Markdown 文档打开：仅 `.md` / `.markdown`。所有打开入口（工作区树、
 /// 拖拽、命令行）必须共用这一条判定，否则同一文件两条入口行为不一致。

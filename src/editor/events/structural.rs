@@ -75,8 +75,7 @@ impl Editor {
         if block.kind() != BlockKind::Paragraph || !block.children.is_empty() {
             return false;
         }
-        let text = block.record.title.visible_text();
-        !text.trim().is_empty() && !text.contains('\n')
+        crate::editor::document::line_is_setext_heading_content(&block.record.title.serialize_markdown())
     }
 
     /// Handles Enter pressed on a paragraph that is a pure setext underline.

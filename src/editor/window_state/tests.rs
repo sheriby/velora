@@ -6,6 +6,17 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn review_anchor_lines_follow_exported_heading_structure() {
+        // 围栏里的井号曾污染锚点去重，setext 与引用内标题没有落点。
+        let source = "```md\n# 安装\n```\n\n安装\n===\n\n> # 安装\n\n# **安装**\n";
+        let html = crate::export::html::render_html(source, &crate::theme::Theme::default_theme(), "标题");
+        for (anchor, line) in [("安装", 4), ("安装-1", 7), ("安装-2", 9)] {
+            assert!(html.contains(&format!("id=\"{anchor}\"")));
+            assert_eq!(heading_line_for_anchor(source, anchor), Some(line));
+        }
+    }
+
+    #[test]
     fn link_targets_are_classified_without_asking_the_user() {
         assert_eq!(
             classify_link_target("https://example.com/a?b=1"),

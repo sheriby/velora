@@ -17,6 +17,25 @@ pub(crate) fn strip_fence_indent(line: &str) -> Option<&str> {
     (indent <= 3).then_some(&line[indent..])
 }
 
+pub(crate) fn line_is_setext_heading_content(line: &str) -> bool {
+    let Some(content) = strip_fence_indent(line) else {
+        return false;
+    };
+    !content.trim().is_empty()
+        && !content.starts_with('\t')
+        && !content.contains('\n')
+        && BlockKind::parse_atx_heading_line(content).is_none()
+        && !BlockKind::parse_separator_line(content)
+        && parse_list_marker(content).is_none()
+        && !is_quote_start(content)
+        && parse_opening_fence(content).is_none()
+        && parse_standalone_image(content).is_none()
+        && !is_display_math_start(content)
+        && !is_block_html_start(content)
+        && !is_reference_definition_start(content)
+        && !is_footnote_definition_start(content)
+}
+
 pub(crate) fn collect_html_fallback_region(lines: &[String], start: usize) -> usize {
     let mut index = start + 1;
     while index < lines.len() {
@@ -694,6 +713,7 @@ pub(crate) fn quote_content_starts_unsupported(lines: &[String], index: usize) -
         || lines
             .get(index + 1)
             .and_then(|next| BlockKind::parse_setext_underline(next))
+            .filter(|_| line_is_setext_heading_content(line))
             .is_some()
 }
 
@@ -724,6 +744,7 @@ pub(crate) fn collect_unsupported_quote_region(lines: &[String], start: usize) -
     if lines
         .get(start + 1)
         .and_then(|next| BlockKind::parse_setext_underline(next))
+        .filter(|_| line_is_setext_heading_content(line))
         .is_some()
     {
         return Some((start + 2).min(lines.len()));
@@ -756,6 +777,9 @@ pub(crate) fn collect_list_item_region(lines: &[String], start: usize, marker_in
         }
 
         let (indent_columns, _) = leading_indent_columns_and_bytes(line);
+        if indent_columns <= marker_indent_columns && BlockKind::parse_separator_line(line) {
+            return index.saturating_sub(pending_blank_lines);
+        }
         if indent_columns > marker_indent_columns || pending_blank_lines == 0 {
             pending_blank_lines = 0;
             index += 1;
@@ -785,6 +809,7 @@ pub(crate) fn looks_like_root_block_start(lines: &[String], index: usize) -> boo
         || lines
             .get(index + 1)
             .and_then(|next| BlockKind::parse_setext_underline(next))
+            .filter(|_| line_is_setext_heading_content(line))
             .is_some()
         || is_root_table_candidate_line(line)
         || is_display_math_start(line)

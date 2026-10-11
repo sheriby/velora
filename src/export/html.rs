@@ -209,6 +209,18 @@ struct HeadingAnchor {
     level: u8,
     title: String,
     slug: Option<String>,
+    source_start: usize,
+}
+
+/// 应用内跳转复用导出的事件流与锚点表，围栏和嵌套标题不再由行扫描重猜。
+pub(crate) fn heading_line_for_anchor(source: &str, anchor: &str) -> Option<usize> {
+    let needle = heading_slug(anchor)?;
+    let body = split_front_matter(source).map(|(_, body)| body).unwrap_or(source);
+    let events = Parser::new_ext(body, markdown_options()).into_offset_iter().collect::<Vec<_>>();
+    let heading = collect_heading_anchors(&events).into_iter()
+        .find(|heading| heading.slug.as_deref() == Some(needle.as_str()))?;
+    let offset = source.len() - body.len() + heading.source_start;
+    Some(source.get(..offset)?.bytes().filter(|byte| *byte == b'\n').count())
 }
 
 /// 第一遍扫描：按文档顺序收集标题文本与去重后的锚点 id。
@@ -225,6 +237,7 @@ fn collect_heading_anchors(events: &[(Event<'_>, Range<usize>)]) -> Vec<HeadingA
                 continue;
             }
         };
+        let source_start = events[index].1.start;
         index += 1;
         let mut title = String::new();
         while index < events.len() && !matches!(events[index].0, Event::End(TagEnd::Heading(_))) {
@@ -234,7 +247,7 @@ fn collect_heading_anchors(events: &[(Event<'_>, Range<usize>)]) -> Vec<HeadingA
             index += 1;
         }
         let slug = unique_heading_slug(heading_slug(&title), &mut seen);
-        anchors.push(HeadingAnchor { level, title, slug });
+        anchors.push(HeadingAnchor { level, title, slug, source_start });
     }
     anchors
 }
