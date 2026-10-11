@@ -142,6 +142,7 @@ impl Render for PreferencesWindow {
                 .child(
                     div()
                         .id("preferences-save")
+                        .debug_selector(|| "preferences-save".to_string())
                         .h(px(d.dialog_button_height))
                         .px(px(d.dialog_button_padding_x))
                         .flex()

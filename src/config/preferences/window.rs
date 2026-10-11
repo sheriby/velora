@@ -619,6 +619,8 @@ impl PreferencesWindow {
         self.saved_status_bar_show_sidebar_toggle = self.status_bar_show_sidebar_toggle;
         self.saved_status_bar_show_mode_switch = self.status_bar_show_mode_switch;
         self.saved_tree_sort = self.tree_sort;
+        self.saved_sidebar_open = self.sidebar_open;
+        self.saved_sidebar_panel = self.sidebar_panel;
         self.saved_autosave_debounce_ms = self.autosave_debounce_ms;
         self.saved_autosave = self.autosave;
         self.saved_check_updates_on_startup = self.check_updates_on_startup;

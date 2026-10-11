@@ -1348,6 +1348,63 @@
         );
     }
 
+    /// 报修：改「启动时打开侧边栏」「启动时侧边栏显示」后点保存，按钮一直停在
+    /// 「有未保存改动」的绿色样式上（看起来像保存没反应）。根因：
+    /// apply_saved_preferences 回写 saved_* 快照时漏了这两个字段，
+    /// 保存后 has_unsaved_changes() 仍为真。
+    #[gpui::test]
+    async fn saving_sidebar_startup_options_clears_dirty_state(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| {
+            open_preferences_window_with_state(
+                cx,
+                AppPreferences::default(),
+                default_theme_options(),
+                "Preferences".into(),
+            )
+        });
+        let mut preferences_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+
+        for id in [
+            "preferences-sidebar-open-dropdown",
+            "preferences-sidebar-open-always",
+            "preferences-sidebar-panel-dropdown",
+            "preferences-sidebar-panel-outline",
+        ] {
+            preferences_cx.update(|window, cx| window.draw(cx).clear());
+            preferences_cx.run_until_parked();
+            let bounds = preferences_cx
+                .debug_bounds(id)
+                .unwrap_or_else(|| panic!("{id} 应已绘制"));
+            preferences_cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        }
+
+        handle
+            .update(cx, |preferences, _window, _cx| {
+                assert_eq!(preferences.sidebar_open, SidebarOpenPreference::Always);
+                assert_eq!(preferences.sidebar_panel, SidebarPanelPreference::Outline);
+                assert!(preferences.has_unsaved_changes(), "改完应进入待保存状态");
+            })
+            .expect("偏好窗口应可更新");
+
+        preferences_cx.update(|window, cx| window.draw(cx).clear());
+        preferences_cx.run_until_parked();
+        let save = preferences_cx
+            .debug_bounds("preferences-save")
+            .expect("保存按钮应已绘制");
+        preferences_cx.simulate_click(save.center(), gpui::Modifiers::none());
+        preferences_cx.run_until_parked();
+
+        handle
+            .update(cx, |preferences, _window, _cx| {
+                assert!(
+                    !preferences.has_unsaved_changes(),
+                    "保存后不该再有未保存改动：按钮应转灰，而不是一直绿色"
+                );
+            })
+            .expect("偏好窗口应可更新");
+    }
+
 #[test]
 fn update_preferences_default_to_startup_checks_and_preserve_beta_and_skip_settings() {
     let defaults = toml::Value::try_from(super::PreferencesFile::from(&AppPreferences::default())).expect("默认配置");
