@@ -1328,7 +1328,10 @@ impl<'a> ExportRewriter<'a> {
             .collect()
     }
 
-    /// 公式体 → 内联 svg 包装；渲染失败退回转义字面量（与阅读视图的失败可见一致）。
+    /// 公式体 → svg 包装；渲染失败退回转义字面量（与阅读视图的失败可见一致）。
+    /// 包装类按版式选：行内公式进 `vlt-inline-math`（svg 压 1.8em），块级公式
+    /// 进 `vlt-math`——段中出现的块级公式与段首同语义（UI 的分段表把
+    /// `$$a$$ 文 $$b$$` 都按块级排版），压进行内包装会把分式上下标压扁。
     fn render_math_html(
         &self,
         latex: &str,
@@ -1336,8 +1339,12 @@ impl<'a> ExportRewriter<'a> {
         font_size: f32,
         fallback_raw: &str,
     ) -> String {
+        let wrapper_class = match layout {
+            crate::components::latex::MathLayout::Display => "vlt-math",
+            crate::components::latex::MathLayout::Inline => "vlt-inline-math",
+        };
         match render_latex_to_svg(latex, self.theme.colors.text_default, font_size, layout) {
-            Ok(svg) => format!("<span class=\"vlt-inline-math\">{svg}</span>"),
+            Ok(svg) => format!("<span class=\"{wrapper_class}\">{svg}</span>"),
             Err(_) => css::escape_html(fallback_raw),
         }
     }

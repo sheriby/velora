@@ -1120,6 +1120,28 @@ mod tests {
         assert!(body.contains("$$x^2$$"), "actual: {html}");
     }
 
+    /// 段首公式闭合后、同段再来一对 `$$`：UI 的分段表（single_line_segments）
+    /// 把两段都按块级公式排版；导出侧第二个公式此前掉进行内包装
+    /// （`vlt-inline-math` 的 CSS 把 svg 压到 1.8em），同一份文档两个公式
+    /// 两种尺寸，带分式的块级公式上下标被压扁。
+    #[test]
+    fn second_display_formula_mid_paragraph_uses_block_wrapper() {
+        let html = render_html(
+            "$$x^2$$ 及 $$\\frac{a}{b}$$",
+            &Theme::default_theme(),
+            "Doc",
+        );
+        let body = body_only(&html);
+
+        assert_eq!(body.matches("<svg").count(), 2, "actual: {html}");
+        assert_eq!(
+            body.matches("class=\"vlt-math\"").count(),
+            2,
+            "两个块级公式都应使用 vlt-math 包装：{html}"
+        );
+        assert!(!body.contains("vlt-inline-math"), "actual: {html}");
+    }
+
     #[test]
     fn exports_empty_display_math_block_as_math_or_error() {
         let html = render_html("$$\n\n$$", &Theme::default_theme(), "Doc");
