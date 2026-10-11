@@ -138,16 +138,16 @@ impl Editor {
                 self.run_selected_command(window, cx);
                 return;
             }
-            "down" => {
-                if let Some(state) = self.command_palette.as_mut() {
-                    state.selected = state.selected.saturating_add(1);
-                    cx.notify();
-                }
-                return;
-            }
-            "up" => {
-                if let Some(state) = self.command_palette.as_mut() {
-                    state.selected = state.selected.saturating_sub(1);
+            "down" | "up" => {
+                // 与 quick_open 同一判据：rem_euclid 环绕。只有 saturating_add 的话
+                // selected 会无限自增，越过末条后按 Up 要连按很多次才回到范围内。
+                let len = self.filtered_commands(cx).len();
+                if len > 0
+                    && let Some(state) = self.command_palette.as_mut()
+                {
+                    let current = (state.selected as isize).min(len as isize - 1);
+                    let delta = if key == "down" { 1 } else { -1 };
+                    state.selected = (current + delta).rem_euclid(len as isize) as usize;
                     cx.notify();
                 }
                 return;

@@ -231,3 +231,45 @@ async fn enter_with_no_matching_row_runs_nothing(cx: &mut TestAppContext) {
         "没执行成，面板该留着"
     );
 }
+
+/// 面板 Down 只有 saturating_add、没有 clamp/环绕：滚过末条后 selected
+/// 无限自增，此后按 Up 要连按很多次才回到范围内（看起来「按了没动」）。
+/// quick_open 那一份用 rem_euclid 环绕，这里应是同一判据
+/// （评审 v0.2.6 未验证 19）。
+#[gpui::test]
+async fn command_palette_selection_wraps_within_entries(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    open_palette(&editor, cx);
+
+    // 空查询时面板列的就是注册表顺序（registry_index 同一判据）。
+    let count = commands().len();
+    assert!(count > 1, "前置：面板条目多于一条");
+
+    // 连按 Down 越过末条：环绕回起点侧，落点可精确推演为 (count+3) % count。
+    for _ in 0..(count + 3) {
+        cx.simulate_keystrokes("down");
+    }
+    let expected_after_downs = (count + 3) % count;
+    editor.read_with(cx, |editor, _| {
+        let selected = editor.command_palette.as_ref().expect("面板开着").selected;
+        assert_eq!(
+            selected, expected_after_downs,
+            "Down 越过末条应环绕：selected={selected} 条目数={count}"
+        );
+    });
+
+    // 回到首条后再按 Up：环绕到末条，而不是钉死在 0。
+    for _ in 0..expected_after_downs {
+        cx.simulate_keystrokes("up");
+    }
+    cx.simulate_keystrokes("up");
+    editor.read_with(cx, |editor, _| {
+        let selected = editor.command_palette.as_ref().expect("面板开着").selected;
+        assert_eq!(
+            selected,
+            count - 1,
+            "首条按 Up 应环绕到末条：selected={selected} 条目数={count}"
+        );
+    });
+}
