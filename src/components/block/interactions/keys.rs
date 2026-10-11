@@ -423,6 +423,7 @@ impl Block {
     /// 空白与标点各自成段，CJK 按字素分组）。
     pub(crate) fn select_word_at(&mut self, offset: usize, cx: &mut Context<Self>) {
         use unicode_segmentation::UnicodeSegmentation;
+        self.drop_stale_ime_marked_range(cx);
         let text = self.display_text();
         if text.is_empty() {
             return;

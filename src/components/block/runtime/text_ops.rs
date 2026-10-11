@@ -550,11 +550,24 @@ impl Block {
         );
     }
 
+    /// 用户主动移标/选择时把 IME 组合跨度作废：replace_text_in_range 在不带
+    /// 范围时回落到 marked_range，过期的跨度会把字写回已离开的区间。清点放在
+    /// move_to/select_to/select_word_at 三个用户意图入口——不放
+    /// assign_collapsed_selection_offset 那层，IME 自己刚挂上的跨度也走那条
+    /// 路，在那层清会把它抹掉。
+    pub(crate) fn drop_stale_ime_marked_range(&mut self, cx: &mut Context<Self>) {
+        if self.marked_range.take().is_some() {
+            cx.notify();
+        }
+    }
+
     pub fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.drop_stale_ime_marked_range(cx);
         self.move_to_with_preferred_x(offset, None, cx);
     }
 
     pub fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.drop_stale_ime_marked_range(cx);
         let clamped_offset = offset.min(self.visible_len());
         if self.selection_reversed {
             self.selected_range.start = clamped_offset;

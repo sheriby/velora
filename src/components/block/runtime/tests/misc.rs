@@ -398,3 +398,48 @@ async fn code_kind_side_entries_clear_the_code_family_books(cx: &mut TestAppCont
         );
     });
 }
+
+/// 用户主动移标/选择后 IME 组合跨度必须作废（评审报告维度二建议 10）：
+/// replace_text_in_range 在不带范围时回落到 marked_range——拼音组合中按
+/// ←/→ 或点别处再打字，过期的跨度会把字写回已离开的区间。清的动作放在
+/// move_to/select_to/select_word_at 三个用户意图入口，不放在
+/// assign_collapsed_selection_offset 那层（IME 自己刚挂的跨度走那条路）。
+#[gpui::test]
+async fn moving_the_cursor_invalidates_a_stale_ime_marked_range(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(BlockKind::Paragraph, InlineTextTree::plain("alpha beta")),
+        )
+    });
+    block.update(cx, |block, _cx| {
+        block.marked_range = Some(4..9); // IME preedit 假象
+    });
+    cx.update(|_window, cx| {
+        block.update(cx, |block, block_cx| block.move_to(1, block_cx));
+    });
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(
+            block.marked_range,
+            None,
+            "移标后过期的组合跨度必须作废，否则下一次输入写回旧区间"
+        );
+    });
+
+    // 下游效果：不带范围输入一个字符应落在光标处（1），不是旧 preedit 区间。
+    cx.update(|window, cx| {
+        block.update(cx, |block, block_cx| {
+            <Block as EntityInputHandler>::replace_text_in_range(
+                block, None, "X", window, block_cx,
+            );
+        });
+    });
+    block.read_with(cx, |block, _cx| {
+        assert_eq!(
+            block.display_text().to_string(),
+            "aXlpha beta",
+            "输入应落在当前光标处"
+        );
+    });
+}
