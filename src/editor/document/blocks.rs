@@ -155,7 +155,7 @@ impl Editor {
                 }
                 let footnote_end = collect_footnote_definition_region(lines, index);
                 if let Some(footnote) =
-                    build_native_footnote_definition_block(cx, &lines[index..footnote_end])
+                    build_native_footnote_definition_block(cx, &lines[index..footnote_end], origins.get(index..footnote_end).unwrap_or(&[]))
                 {
                     children.push(footnote);
                     saw_child = true;
@@ -402,7 +402,7 @@ impl Editor {
             if is_footnote_definition_start(line) {
                 let footnote_end = collect_footnote_definition_region(lines, index);
                 if let Some(footnote) =
-                    build_native_footnote_definition_block(cx, &lines[index..footnote_end])
+                    build_native_footnote_definition_block(cx, &lines[index..footnote_end], origins.get(index..footnote_end).unwrap_or(&[]))
                 {
                     children.push(footnote);
                     index = footnote_end;

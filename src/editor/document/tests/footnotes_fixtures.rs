@@ -2,6 +2,25 @@
 
     
     use crate::components::{BlockKind, Editor};
+
+    #[gpui::test]
+    async fn core_repair_footnote_children_keep_the_absolute_source_prefixes(cx: &mut TestAppContext) {
+        for (source, expected) in [
+            ("[^1]: abc\n    def", vec![6, 4]),
+            ("[^1]: abc  \n    def", vec![6, 4]),
+            ("[^1]: abc\n\tdef", vec![6, 1]),
+            ("> [^1]: abc\n>     def", vec![8, 6]),
+            ("> [^1]: abc\n> \tdef", vec![8, 3]),
+            ("[^1]:\n    ```rust\n    abc\n    def\n    ```", vec![4, 4]),
+        ] {
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+            editor.read_with(cx, |editor, cx| {
+                let body = editor.document.visible_blocks().iter()
+                    .find(|entry| entry.entity.read(cx).record.title.visible_text().contains("abc")).unwrap();
+                assert_eq!(body.entity.read(cx).record.source_line_prefixes, expected, "{source}");
+            });
+        }
+    }
     #[gpui::test]
 
     async fn test_md_fixture_keeps_mixed_supported_and_raw_sections_visible(

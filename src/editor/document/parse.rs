@@ -1134,27 +1134,30 @@ pub(crate) fn append_quote_separator_children(
 pub(crate) fn build_native_footnote_definition_block(
     cx: &mut Context<Editor>,
     lines: &[String],
+    origins: &[usize],
 ) -> Option<Entity<crate::editor::Block>> {
     let (id, first_line) = parse_footnote_definition_head(lines.first()?)?;
     let mut body_lines = Vec::new();
+    let mut body_origins = Vec::new();
     if !first_line.is_empty() {
+        body_origins.push(origins.first().copied().unwrap_or(0) + lines.first()?.trim_end().len() - first_line.len());
         body_lines.push(first_line);
     }
 
-    for line in lines.iter().skip(1) {
+    for (index, line) in lines.iter().enumerate().skip(1) {
+        let inherited = origins.get(index).copied().unwrap_or(0);
         if line.trim().is_empty() {
+            body_origins.push(inherited + line.len());
             body_lines.push(String::new());
         } else {
-            body_lines.push(
-                strip_leading_columns(line, 4)
-                    .unwrap_or(line.as_str())
-                    .to_string(),
-            );
+            let stripped = strip_leading_columns(line, 4).unwrap_or(line.as_str());
+            body_origins.push(inherited + line.len() - stripped.len());
+            body_lines.push(stripped.to_string());
         }
     }
 
     let children =
-        Editor::build_blocks_from_lines_internal(cx, &body_lines, false, ChunkCursor::WHOLE_DOCUMENT)
+        Editor::build_blocks_from_lines_with_origins(cx, &body_lines, false, ChunkCursor::WHOLE_DOCUMENT, &body_origins)
             .0;
     let block = Editor::new_block(
         cx,

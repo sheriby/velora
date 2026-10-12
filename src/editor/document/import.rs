@@ -167,6 +167,20 @@ impl Editor {
         Vec<std::ops::Range<usize>>,
         usize,
     ) {
+        Self::build_blocks_from_lines_with_origins(cx, lines, allow_root_footnote_definitions, cursor, &[])
+    }
+
+    pub(super) fn build_blocks_from_lines_with_origins(
+        cx: &mut Context<Self>,
+        lines: &[String],
+        allow_root_footnote_definitions: bool,
+        cursor: ChunkCursor,
+        origins: &[usize],
+    ) -> (
+        Vec<Entity<crate::editor::Block>>,
+        Vec<std::ops::Range<usize>>,
+        usize,
+    ) {
         let mut roots = Vec::new();
         // 与 `roots` 同步：每根块消费的行区间（相对传入的 `lines` 切片）。
         let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
@@ -230,7 +244,7 @@ impl Editor {
                     let empty = native_block(cx, BlockKind::Paragraph, String::new());
                     // 空段落占的那一行同样没剥任何东西。
                     empty.update(cx, |block, _cx| {
-                        block.record.source_line_prefixes = vec![0];
+                        block.record.source_line_prefixes = vec![origins.get(blank_start + offset).copied().unwrap_or(0) as u32];
                     });
                     roots.push(empty);
                     // 空段落占住空行段里的一条空行；多出来的空行是块间分隔符，
@@ -241,8 +255,8 @@ impl Editor {
             }
 
             if parse_opening_fence(line).is_some() {
-                let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index, &[]) else {
-                    let paragraph = Self::collect_paragraph_block(cx, lines, index, &[]);
+                let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index, origins) else {
+                    let paragraph = Self::collect_paragraph_block(cx, lines, index, origins);
                     roots.push(paragraph.0);
                     spans.push(index..paragraph.1);
                     index = paragraph.1;
@@ -263,7 +277,7 @@ impl Editor {
                 continue;
             }
 
-            if let Some((block, end)) = collect_comment_block(cx, lines, index, &[]) {
+            if let Some((block, end)) = collect_comment_block(cx, lines, index, origins) {
                 roots.push(block);
                 spans.push(index..end);
                 index = end;
@@ -282,7 +296,7 @@ impl Editor {
                 let end = collect_footnote_definition_region(lines, index);
                 if allow_root_footnote_definitions {
                     if let Some(block) =
-                        build_native_footnote_definition_block(cx, &lines[index..end])
+                        build_native_footnote_definition_block(cx, &lines[index..end], origins.get(index..end).unwrap_or(&[]))
                     {
                         roots.push(block);
                     } else {
@@ -314,11 +328,10 @@ impl Editor {
                     BlockKind::Heading { level },
                     line.trim_end().to_string(),
                 );
-                // Setext 标题的内容行**没有记号**：整行（连前导空白）就是内容，所以宽度是 0
-                // ——这是这里一眼看到的事实，不是事后拿文件行与模型行比出来的。底下那一行是
-                // 下划线，不在模型里，位置表按文件的行长度走（`file_lens`），不需要为它记什么。
+                // Setext 内容行不剥自己的记号，只继承上级容器已消费的前缀。
+                // 下划线不在标题文本里，不给它记内容偏移。
                 heading.update(cx, |heading, _cx| {
-                    heading.record.source_line_prefixes = vec![0];
+                    heading.record.source_line_prefixes = vec![origins.get(index).copied().unwrap_or(0) as u32];
                 });
                 roots.push(heading);
                 spans.push(index..index + 2);
@@ -347,7 +360,7 @@ impl Editor {
             }
 
             if strip_indented_code_prefix(line).is_some() {
-                let Some((block, next_index)) = collect_indented_code_block(cx, lines, index, &[])
+                let Some((block, next_index)) = collect_indented_code_block(cx, lines, index, origins)
                 else {
                     unreachable!("indented code prefix disappeared after detection");
                 };
@@ -365,7 +378,7 @@ impl Editor {
                 // top-level items.
                 let remaining = cursor.root_budget.saturating_sub(roots.len()).max(1);
                 let (blocks, block_spans, next_index) =
-                    Self::collect_list_blocks(cx, lines, index, remaining, &[]);
+                    Self::collect_list_blocks(cx, lines, index, remaining, origins);
                 for (block, block_span) in blocks.into_iter().zip(block_spans) {
                     roots.push(block);
                     spans.push(block_span);
@@ -375,7 +388,7 @@ impl Editor {
             }
 
             if is_quote_start(line) {
-                let (block, next_index) = Self::collect_quote_block(cx, lines, index, &[]);
+                let (block, next_index) = Self::collect_quote_block(cx, lines, index, origins);
                 roots.push(block);
                 spans.push(index..next_index);
                 index = next_index;
@@ -389,7 +402,7 @@ impl Editor {
                 // 记号（本行前导缩进 + `#…` + 那一个空格）占几位，是剥它的那段代码
                 // 当场就知道的事实：记下来，位置换算就不必事后拿文件行与模型行比。
                 heading.update(cx, |heading, _cx| {
-                    heading.record.source_line_prefixes = vec![marker_len as u32];
+                    heading.record.source_line_prefixes = vec![(origins.get(index).copied().unwrap_or(0) + marker_len) as u32];
                 });
                 roots.push(heading);
                 spans.push(index..index + 1);
@@ -432,7 +445,7 @@ impl Editor {
                 continue;
             }
 
-            let paragraph = Self::collect_paragraph_block(cx, lines, index, &[]);
+            let paragraph = Self::collect_paragraph_block(cx, lines, index, origins);
             roots.push(paragraph.0);
             spans.push(index..paragraph.1);
             index = paragraph.1;
