@@ -223,6 +223,8 @@ pub struct Block {
     /// shape_text，此前每帧全量重测；命中键时整帧零 shape。表内容或键变化
     /// 时失效。
     pub(crate) column_layout_memo: Option<ColumnLayoutMemo>,
+    #[cfg(test)]
+    pub(crate) column_layout_measurements: u64,
     collapsed_caret_affinity: CollapsedCaretAffinity,
     /// When true, block-level shortcuts and inline formatting are
     /// suppressed; the block stores raw text for source-mode editing.
@@ -376,6 +378,8 @@ impl Block {
             long_line_wrap_generation: 0,
             last_gutter_width: Pixels::ZERO,
             column_layout_memo: None,
+            #[cfg(test)]
+            column_layout_measurements: 0,
             collapsed_caret_affinity: CollapsedCaretAffinity::Default,
             edit_mode,
             show_source_line_numbers: false,
@@ -857,6 +861,7 @@ pub(crate) struct ColumnLayoutMemo {
     pub code_size_bits: u32,
     pub text_size_bits: u32,
     pub width_bits: u32,
+    pub font_fingerprint: u64,
     pub table: crate::components::markdown::table::TableData,
     pub layout: crate::components::markdown::table::TableColumnLayout,
 }

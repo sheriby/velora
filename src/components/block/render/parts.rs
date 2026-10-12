@@ -29,6 +29,13 @@ impl Block {
         cx: &mut Context<Self>,
     ) -> Option<TableColumnLayout> {
         let table = self.record.table.clone()?;
+        use std::hash::{Hash, Hasher};
+        let fonts = crate::config::EditorSettings::scaled_fonts(cx);
+        let base_font = window.text_style().font();
+        let mut font_hasher = std::hash::DefaultHasher::new();
+        (&base_font.family, base_font.weight, base_font.style,
+            &fonts.code_family, fonts.code_size).hash(&mut font_hasher);
+        let font_fingerprint = font_hasher.finish();
         let theme_fingerprint = {
             // 参与 measure 的主题标量混一个指纹：字号/字距/内边距变了要重测。
             let t = &theme.typography;
@@ -49,17 +56,21 @@ impl Block {
             && memo.code_size_bits == code_size_bits
             && memo.text_size_bits == text_size_bits
             && memo.width_bits == width_bits
+            && memo.font_fingerprint == font_fingerprint
             && memo.table == table
         {
             return Some(memo.layout.clone());
         }
 
+        #[cfg(test)]
+        { self.column_layout_measurements += 1; }
         let layout = TableColumnLayout::measure(&table, table_width, window, theme, cx);
         self.set_column_layout_memo(ColumnLayoutMemo {
             theme_fingerprint,
             code_size_bits,
             text_size_bits,
             width_bits,
+            font_fingerprint,
             table,
             layout: layout.clone(),
         });

@@ -1,6 +1,30 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_table_font_families_invalidate_column_measurement(cx: &mut TestAppContext) {
+    use crate::config::preferences::{AppPreferences, open_preferences_window_with_state};
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let preferences = cx.update(|cx| open_preferences_window_with_state(cx, AppPreferences::default(), Vec::new(), "字体".into()));
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "| thin | `wide` |\n| --- | --- |\n| content | `code` |".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let table = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    let before = table.read_with(cx, |table, _| table.column_layout_measurements);
+    redraw(cx);
+    assert_eq!(table.read_with(cx, |table, _| table.column_layout_measurements), before);
+    let mut settings = AppPreferences::default();
+    settings.fonts.markdown_family = "Arial".into();
+    settings.fonts.code_family = "Courier New".into();
+    preferences.update(cx, |preferences, window, cx| preferences.apply_saved_preferences(settings, window, cx)).unwrap();
+    redraw(cx);
+    let after = table.read_with(cx, |table, _| table.column_layout_measurements);
+    assert!(after > before, "字体家族变化后列宽须重新测量：{before} -> {after}");
+    redraw(cx);
+    assert_eq!(table.read_with(cx, |table, _| table.column_layout_measurements), after);
+}
+
+#[gpui::test]
 async fn core_repair_style_changes_with_identical_text_refresh_shaped_runs(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "first\n\nabc".into(), None));
