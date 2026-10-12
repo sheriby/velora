@@ -45,6 +45,73 @@ impl TableTextSelection {
 }
 
 impl Editor {
+    pub(crate) fn table_text_selection_snapshot(&self, cx: &App) -> Option<UndoSelectionSnapshot> {
+        let selection = self.table_text_selection?;
+        let (start, end) = selection.normalized();
+        let endpoint = |position: TableTextPosition, at_end: bool| {
+            let cell = self.table_cell_entity(selection.table_block_id, position.cell, cx)?;
+            let mapping = self.source_mapping_for_entity(cell.entity_id(), cx)?;
+            self.mapping_source_range_endpoint(&mapping, position.offset, at_end, cx)
+        };
+        Some(UndoSelectionSnapshot {
+            range: endpoint(start, false)?..endpoint(end, true)?,
+            reversed: selection.anchor.order_key() > selection.focus.order_key(),
+        })
+    }
+
+    pub(crate) fn apply_table_text_selection_snapshot(
+        &mut self,
+        snapshot: &UndoSelectionSnapshot,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if snapshot.range.is_empty() {
+            return false;
+        }
+        let mappings = self.source_mappings_in_range(&snapshot.range, cx);
+        let endpoint = |offset| {
+            let mapping = mappings.iter().find(|mapping| {
+                self.table_cells.contains_key(&mapping.entity.entity_id())
+                    && Self::source_range_contains(&mapping.full_source_range, offset)
+            })?;
+            let binding = self.table_cells.get(&mapping.entity.entity_id())?;
+            let local = offset.saturating_sub(mapping.full_source_range.start);
+            let content = mapping.source_to_content.get(local).copied()?;
+            let clean = mapping
+                .entity
+                .read(cx)
+                .record
+                .title
+                .markdown_offset_map()
+                .markdown_to_visible_offset(content);
+            Some((
+                binding.table_block.entity_id(),
+                TableTextPosition {
+                    cell: binding.position,
+                    offset: clean,
+                },
+            ))
+        };
+        let Some((start_table, start)) = endpoint(snapshot.range.start) else {
+            return false;
+        };
+        let Some((end_table, end)) = endpoint(snapshot.range.end) else {
+            return false;
+        };
+        if start_table != end_table || start.cell == end.cell {
+            return false;
+        }
+        let (anchor, focus) = if snapshot.reversed {
+            (end, start)
+        } else {
+            (start, end)
+        };
+        self.select_table_text_range(start_table, anchor, focus, cx);
+        if let Some(cell) = self.table_cell_entity(start_table, focus.cell, cx) {
+            self.focus_block(cell.entity_id());
+        }
+        true
+    }
+
     /// 屏幕上这一点对应的表格文本位置（哪张表、哪一格、格内第几个字）。
     ///
     /// 格子的块内偏移存的是干净坐标，与块内选区同一条口径。
@@ -188,6 +255,7 @@ impl Editor {
     ///
     /// 表格整张落在一个跨块选区里时也走这里：整张表的文字都算选中。
     pub(crate) fn sync_table_text_selection_visuals(&mut self, cx: &mut Context<Self>) {
+        self.sync_document_selection_ownership(cx);
         for (table_block_id, position) in std::mem::take(&mut self.table_text_selection_painted) {
             let Some(cell) = self.table_cell_entity(table_block_id, position, cx) else {
                 continue;

@@ -146,7 +146,9 @@ impl Editor {
         let image_reference_definitions = self.image_reference_definitions.clone();
         let link_reference_definitions = self.link_reference_definitions.clone();
         let footnote_registry = self.footnote_registry.clone();
+        let document_selection_active = self.document_selection_active.clone();
         block.update(cx, move |block, cx| {
+            block.document_selection_active = Some(document_selection_active.clone());
             block.set_runtime_context(
                 next_base_dir.clone(),
                 image_reference_definitions.clone(),

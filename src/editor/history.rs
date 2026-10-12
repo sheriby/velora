@@ -21,6 +21,9 @@ impl Editor {
     }
 
     pub(super) fn capture_source_selection_snapshot(&self, cx: &App) -> UndoSelectionSnapshot {
+        if let Some(snapshot) = self.table_text_selection_snapshot(cx) {
+            return snapshot;
+        }
         if let Some(snapshot) = self.cross_block_source_selection_snapshot(cx) {
             return snapshot;
         }
@@ -470,6 +473,7 @@ impl Editor {
             reversed: snapshot.reversed,
         };
         let snapshot = &clamped;
+        self.clear_cross_block_selection(cx);
         match self.view_mode {
             ViewMode::Source => {
                 // 源码文档按 512 行切成多根投影块（SOURCE_DOCUMENT_CHUNK_LINES）：
@@ -554,10 +558,14 @@ impl Editor {
                         }
                     });
                 }
+                self.apply_cross_block_selection_snapshot_if_possible(snapshot, cx);
                 self.pending_focus = Some(anchor_id);
                 self.active_entity_id = Some(anchor_id);
             }
             ViewMode::Rendered => {
+                if self.apply_table_text_selection_snapshot(snapshot, cx) {
+                    return;
+                }
                 if self.apply_cross_block_selection_snapshot_if_possible(snapshot, cx) {
                     return;
                 }

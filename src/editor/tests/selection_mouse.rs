@@ -4,6 +4,87 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn core_repair_shift_click_returning_to_the_anchor_keeps_the_original_anchor(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "abc\n\ndef\n\nghi".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let first = editor.read_with(cx, |editor, cx| editor.document.visible_blocks()[0].entity.read(cx).last_bounds.unwrap());
+    let start = gpui::point(first.left() + px(1.0), first.center().y);
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let mut shift = Modifiers::none();
+    shift.shift = true;
+    let third = editor.read_with(cx, |editor, cx| editor.document.visible_blocks()[2].entity.read(cx).last_bounds.unwrap());
+    let end = gpui::point(third.left() + px(1.0), third.center().y);
+    cx.simulate_mouse_down(end, gpui::MouseButton::Left, shift);
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, shift);
+    redraw(cx);
+    assert!(editor.read_with(cx, |editor, _| editor.cross_block_selection.is_some()));
+    let first = editor.read_with(cx, |editor, cx| editor.document.visible_blocks()[0].entity.read(cx).last_bounds.unwrap());
+    let back = gpui::point(first.right() - px(1.0), first.center().y);
+    cx.simulate_mouse_down(back, gpui::MouseButton::Left, shift);
+    cx.simulate_mouse_up(back, gpui::MouseButton::Left, shift);
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.selected_visible_text(cx)).as_deref(), Some("abc"));
+    cx.simulate_input("X");
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), "X\n\ndef\n\nghi");
+}
+
+#[gpui::test]
+async fn core_repair_cross_cell_undo_restores_the_logical_text_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        editor.select_table_text_range(table.entity_id(),
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1 },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1 }, cx,
+        );
+        let cell = table.read(cx).table_runtime.as_ref().unwrap().header[1].clone();
+        editor.focus_block(cell.entity_id());
+        assert_eq!(editor.table_text_selection_text(cx).as_deref(), Some("b\tc"));
+        assert!(editor.replace_table_text_selection_with_text("", UndoCaptureKind::NonCoalescible, cx));
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), source);
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.table_text_selection_text(cx)).as_deref(), Some("b\tc"));
+    cx.dispatch_action(crate::components::Copy);
+    assert_eq!(cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())).as_deref(), Some("b\tc"));
+}
+
+#[gpui::test]
+async fn core_repair_cross_cell_selection_survives_a_source_view_round_trip(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        editor.select_table_text_range(table.entity_id(),
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1 },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1 }, cx,
+        );
+        editor.toggle_view_mode(cx);
+    });
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.table_text_selection_text(cx).as_deref(), Some("b\tc"));
+        let selection = editor.table_text_selection.unwrap();
+        assert_eq!(selection.anchor.cell.column, 1);
+        assert_eq!(selection.focus.cell.column, 0);
+    });
+}
+
+#[gpui::test]
 async fn review_arrow_clears_cross_cell_selection_before_delete(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(

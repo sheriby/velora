@@ -149,7 +149,7 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.editor_selection_range.is_some() || self.selected_range.is_empty() {
+        if self.has_document_selection() || self.selected_range.is_empty() {
             return;
         }
         let text = self.display_text();
@@ -240,7 +240,7 @@ impl Block {
             let trimmed = text.trim();
             if !plain_only
                 && Self::is_bare_url(trimmed)
-                && self.editor_selection_range.is_none()
+                && !self.has_document_selection()
                 && !self.selected_range.is_empty()
             {
                 self.paste_url_as_link(trimmed, window, cx);
@@ -267,7 +267,7 @@ impl Block {
             // Only rendered rich-text blocks apply paste correction. Raw/code
             // contexts preserve bytes, and table cells flatten newlines so the
             // surrounding table structure is not accidentally split.
-            if self.editor_selection_range.is_some() {
+            if self.has_document_selection() {
                 cx.emit(BlockEvent::RequestReplaceCrossBlockSelection {
                     text,
                     selected_range_relative: None,

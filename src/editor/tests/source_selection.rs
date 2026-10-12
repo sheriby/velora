@@ -10,6 +10,43 @@ use gpui::App;
 
 const CHUNK_LINES: usize = 512;
 
+#[gpui::test]
+async fn core_repair_restored_source_selection_reaches_copy_and_input(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = numbered_lines(1100);
+    let boundary = chunk_start(&source, 1);
+    let range = boundary - 2..boundary + 3;
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.apply_selection_snapshot_in_current_mode(
+        &UndoSelectionSnapshot { range: range.clone(), reversed: false }, cx,
+    ));
+    redraw(cx);
+    cx.dispatch_action(crate::components::Copy);
+    let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(copied.as_deref(), Some(&source[range.clone()]));
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.capture_source_selection_snapshot(cx).range), range);
+    cx.simulate_input("X");
+    redraw(cx);
+    let mut expected = source.clone();
+    expected.replace_range(range, "X");
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), expected);
+}
+
+#[gpui::test]
+async fn core_repair_source_select_document_copies_every_chunk(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = numbered_lines(1100);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.select_document(cx));
+    redraw(cx);
+    cx.dispatch_action(crate::components::Copy);
+    assert_eq!(cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text())).as_deref(), Some(source.as_str()));
+}
+
 /// `n` 行 `line 1..n` 的定长文本，返回文本与「第 `chunk` 块起点」的字节偏移。
 fn numbered_lines(n: usize) -> String {
     (1..=n).map(|i| format!("line {i}\n")).collect()

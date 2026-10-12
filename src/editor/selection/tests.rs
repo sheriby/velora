@@ -729,4 +729,33 @@ mod tests {
             "跨块选区没铺到每一根块上，选中长度={selected:?}"
         );
     }
+
+    #[gpui::test]
+    async fn core_repair_input_replaces_a_cross_block_selection_with_an_empty_anchor_slice(cx: &mut TestAppContext) {
+        use gpui::EntityInputHandler;
+        init_editor_test_app(cx);
+        let mut mismatches = Vec::new();
+        for input in 0..3 {
+            let (editor, window_cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "abc\n\ndef".into(), None));
+            redraw(window_cx);
+            let anchor = editor.update(window_cx, |editor, cx| {
+                let anchor = editor.document.first_root().unwrap().clone();
+                anchor.update(cx, |block, cx| block.move_to(3, cx));
+                set_selection(editor, 0, 3, 1, 2, cx);
+                anchor
+            });
+            anchor.update_in(window_cx, |block, window, cx| match input {
+                0 => block.replace_text_in_range(None, "X", window, cx),
+                1 => block.replace_and_mark_text_in_range(None, "X", Some(1..1), window, cx),
+                _ => {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string("X".into()));
+                    block.on_paste_as_plain_text(&crate::components::PasteAsPlainText, window, cx);
+                }
+            });
+            redraw(window_cx);
+            let actual = editor.read_with(window_cx, |editor, _| editor.buffer.text());
+            if actual != "abcXf" { mismatches.push((input, actual)); }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:?}");
+    }
 }

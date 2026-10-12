@@ -329,6 +329,7 @@ pub struct Editor {
     /// 已经铺到格子上的那一批跨格高亮（表格重建会换掉格子实体，位置解析不到就当没有）。
     table_text_selection_painted: Vec<(EntityId, TableCellPosition)>,
     cross_block_selection: Option<CrossBlockSelection>,
+    document_selection_active: std::rc::Rc<std::cell::Cell<bool>>,
     cross_block_drag: Option<CrossBlockDrag>,
     rendered_select_all_cycle: Option<RenderedSelectAllCycle>,
     /// Open top-level menu in the in-window fallback menu bar.
@@ -794,6 +795,7 @@ impl Editor {
             table_text_selection: None,
             table_text_selection_painted: Vec::new(),
             cross_block_selection: None,
+            document_selection_active: std::rc::Rc::new(std::cell::Cell::new(false)),
             cross_block_drag: None,
             rendered_select_all_cycle: None,
             menu_bar_open: None,

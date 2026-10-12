@@ -252,6 +252,10 @@ impl Block {
         }
     }
 
+    pub(crate) fn has_document_selection(&self) -> bool {
+        self.document_selection_active.as_ref().is_some_and(|selection| selection.get())
+    }
+
     pub(crate) fn prepare_undo_capture(&self, kind: UndoCaptureKind, cx: &mut Context<Self>) {
         let selection = crate::components::BlockUndoSelection {
             content_range: self.current_range_to_markdown_range(self.selected_range.clone()),

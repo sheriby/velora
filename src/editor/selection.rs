@@ -26,6 +26,12 @@ pub(super) struct NormalizedCrossBlockSelection {
 }
 
 impl Editor {
+    fn sync_document_selection_ownership(&self, cx: &App) {
+        self.document_selection_active.set(
+            self.normalized_cross_block_selection(cx).is_some()
+                || self.table_text_selection.is_some_and(|selection| selection.anchor != selection.focus),
+        );
+    }
     pub(super) fn on_cursor_motion_capture<A: Action>(
         &mut self,
         _: &A,
@@ -39,6 +45,7 @@ impl Editor {
     }
 
     fn clear_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) -> bool {
+        self.sync_document_selection_ownership(cx);
         let mut changed = false;
         for visible in self.document.visible_blocks().to_vec() {
             visible.entity.update(cx, |block, cx| {
@@ -208,28 +215,15 @@ impl Editor {
 
     /// 「选择全文」那条命令的落点：一次按下就把整篇选上，不看 ⌘A 那台 750ms 计数器。
     ///
-    /// 整文档的选择只有 [`Self::select_all_rendered_document`] 这一份实现，块里那条
+    /// 整文档的选择只有 [`Self::select_all_document_blocks`] 这一份实现，块里那条
     /// 循环与命令面板/键位这一条入口都汇到它——一个选区模型、两个入口。源码模式整篇
     /// 就是那一根源文本块，选满它即选满全文。
     pub(super) fn select_document(&mut self, cx: &mut Context<Self>) {
         self.workspace.search_navigation_selection = None;
-        match self.view_mode {
-            ViewMode::Rendered => self.select_all_rendered_document(cx),
-            ViewMode::Source => {
-                let Some(source) = self
-                    .document
-                    .visible_blocks()
-                    .first()
-                    .map(|visible| visible.entity.clone())
-                else {
-                    return;
-                };
-                self.select_whole_block_text(source, cx);
-            }
-        }
+        self.select_all_document_blocks(cx);
     }
 
-    fn select_all_rendered_document(&mut self, cx: &mut Context<Self>) {
+    fn select_all_document_blocks(&mut self, cx: &mut Context<Self>) {
         if self.rendered_document_is_fully_selected(cx) {
             return;
         }
@@ -309,7 +303,7 @@ impl Editor {
         if count == 1 {
             self.select_whole_block_text(block, cx);
         } else {
-            self.select_all_rendered_document(cx);
+            self.select_all_document_blocks(cx);
         }
     }
 
@@ -436,6 +430,7 @@ impl Editor {
     /// 先生成干净区间，再按各块自己的投影换成显示偏移：选区存的是干净坐标，
     /// 高亮画的是显示坐标，换算只在这一处发生。
     fn sync_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) {
+        self.sync_document_selection_ownership(cx);
         let normalized = self.normalized_cross_block_selection(cx);
         let visible_blocks = self.document.visible_blocks().to_vec();
         for (index, visible) in visible_blocks.into_iter().enumerate() {
@@ -459,6 +454,7 @@ impl Editor {
             });
 
             visible.entity.update(cx, |block, cx| {
+                block.document_selection_active = Some(self.document_selection_active.clone());
                 if block.editor_selection_range != next_range {
                     block.editor_selection_range = next_range.clone();
                     cx.notify();
@@ -582,13 +578,14 @@ impl Editor {
         let content_offset =
             mapping.source_to_content[local.min(mapping.source_to_content.len().saturating_sub(1))];
         let block = mapping.entity.read(cx);
+        let offset = if block.uses_raw_text_editing() || block.kind().is_code_block() {
+            content_offset.min(block.visible_len())
+        } else {
+            block.record.title.markdown_offset_map().markdown_to_visible_offset(content_offset)
+        };
         Some(CrossBlockSelectionEndpoint {
             entity_id: mapping.entity.entity_id(),
-            offset: block
-                .record
-                .title
-                .markdown_offset_map()
-                .markdown_to_visible_offset(content_offset),
+            offset,
         })
     }
 
@@ -598,6 +595,14 @@ impl Editor {
         cx: &App,
     ) -> Option<Range<usize>> {
         let visible = self.document.visible_blocks().to_vec();
+        if self.view_mode == ViewMode::Source
+            && selection.start_index == 0
+            && selection.end_index + 1 == visible.len()
+            && selection.start.offset == 0
+            && visible.last().is_some_and(|last| selection.end.offset >= last.entity.read(cx).clean_visible_len())
+        {
+            return Some(0..self.buffer.byte_len());
+        }
 
         // 端点先按块内偏移换算成缓冲区字节；算不出来的（表格这类整块原子的 cell）
         // 取这一块的边界，按它在选区的哪一头来。

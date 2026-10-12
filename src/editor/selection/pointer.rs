@@ -93,8 +93,8 @@ impl Editor {
         if self.table_text_anchor_at_point(position, cx).is_some() {
             return false;
         }
-        // 同一根块里的 shift+点交给块自己的扩选（与 mouse_move 的同块早退同一条口径）。
-        if anchor.entity_id == focus.entity_id {
+        // 跨块扩选回到锚点块仍归同一条逻辑选区，不能交给失焦块重新落锚。
+        if anchor.entity_id == focus.entity_id && self.cross_block_selection.is_none() {
             return false;
         }
         let anchor_is_whole_block = self.block_at_endpoint_selects_whole(anchor, cx);
