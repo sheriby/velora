@@ -8,6 +8,22 @@
     use crate::components::{BlockKind, Editor};
 
     #[test]
+    fn core_repair_unclosed_fence_fallback_scans_linear_input() {
+        let mut failures = Vec::new();
+        for count in [100, 200, 400] {
+            for unsupported in [false, true] {
+                let mut source = "```rust\n".repeat(count);
+                if unsupported { source.push_str("!!! note\nbody"); }
+                super::super::scan_probe::reset();
+                assert_eq!(Editor::markdown_requires_source_mode_fallback(&source), unsupported);
+                let work = super::super::scan_probe::bytes();
+                if work > source.len() * 6 { failures.push((count, unsupported, work, source.len())); }
+            }
+        }
+        assert!(failures.is_empty(), "未闭合围栏不能对每个开栏重新扫描后文：{failures:?}");
+    }
+
+    #[test]
     fn closing_fence_follows_the_commonmark_run_rule() {
         let opener = parse_opening_fence("````rust").expect("opening fence");
 

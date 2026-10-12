@@ -1,5 +1,13 @@
 use super::*;
 
+#[cfg(test)]
+pub(crate) mod scan_probe {
+    thread_local! { static BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    pub(crate) fn reset() { BYTES.set(0); }
+    pub(crate) fn add(bytes: usize) { BYTES.set(BYTES.get() + bytes); }
+    pub(crate) fn bytes() -> usize { BYTES.get() }
+}
+
 pub(crate) struct ListMarker {
     pub(crate) kind: BlockKind,
     pub(crate) indent_columns: usize,
@@ -49,117 +57,128 @@ pub(crate) fn collect_html_fallback_region(lines: &[String], start: usize) -> us
     index
 }
 
-pub(crate) fn pending_inline_code_run_len(markdown: &str) -> Option<usize> {
-    let mut open_run_len = None;
-    let mut chars = markdown.char_indices().peekable();
-
-    while let Some((_, ch)) = chars.next() {
-        if open_run_len.is_none() && ch == '\\' {
-            let _ = chars.next();
-            continue;
-        }
-
-        if ch != '`' {
-            continue;
-        }
-
-        let mut run_len = 1usize;
-        while chars.peek().is_some_and(|(_, ch)| *ch == '`') {
-            let _ = chars.next();
-            run_len += 1;
-        }
-
-        if open_run_len == Some(run_len) {
-            open_run_len = None;
-        } else if open_run_len.is_none() {
-            open_run_len = Some(run_len);
-        }
-    }
-
-    open_run_len
+#[derive(Default)]
+pub(crate) struct InlineCodeState {
+    pub(crate) pending_run: Option<usize>,
+    escaped_next: bool,
 }
 
-pub(crate) fn line_contains_matching_backtick_run(line: &str, run_len: usize) -> bool {
-    let mut chars = line.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '`' {
-            continue;
-        }
-
-        let mut current_run_len = 1usize;
-        while chars.peek().is_some_and(|ch| *ch == '`') {
-            let _ = chars.next();
-            current_run_len += 1;
-        }
-
-        if current_run_len == run_len {
-            return true;
+impl InlineCodeState {
+    pub(crate) fn consume(&mut self, text: &str) {
+        #[cfg(test)]
+        scan_probe::add(text.len());
+        let mut characters = text.chars().peekable();
+        while let Some(character) = characters.next() {
+            if self.escaped_next {
+                self.escaped_next = false;
+                continue;
+            }
+            if self.pending_run.is_none() && character == '\\' {
+                self.escaped_next = true;
+                continue;
+            }
+            if character != '`' { continue; }
+            let mut length = 1;
+            while characters.peek() == Some(&'`') {
+                characters.next();
+                length += 1;
+            }
+            if self.pending_run == Some(length) {
+                self.pending_run = None;
+            } else if self.pending_run.is_none() {
+                self.pending_run = Some(length);
+            }
         }
     }
-
-    false
 }
 
-pub(crate) fn paragraph_can_continue_through_boundary(
-    paragraph_lines: &[String],
-    lines: &[String],
-    boundary_index: usize,
-) -> bool {
-    let Some(run_len) = pending_inline_code_run_len(&paragraph_lines.join("\n")) else {
-        return false;
-    };
+#[derive(Clone, Copy, Default)]
+struct FenceSuffix {
+    backtick: usize,
+    tilde: usize,
+}
 
-    lines[boundary_index..]
-        .iter()
-        .any(|line| line_contains_matching_backtick_run(line, run_len))
+pub(crate) struct MarkdownLookahead {
+    backtick_last_line: std::collections::HashMap<usize, usize>,
+    fence_suffix_max: Vec<FenceSuffix>,
+}
+
+impl MarkdownLookahead {
+    pub(crate) fn new(lines: &[String]) -> Self {
+        let mut backtick_last_line = std::collections::HashMap::new();
+        for (index, line) in lines.iter().enumerate() {
+            #[cfg(test)]
+            scan_probe::add(line.len());
+            // 后文查询沿用字面游程；转义只影响段落已经读到的前缀状态。
+            let mut characters = line.chars().peekable();
+            while let Some(character) = characters.next() {
+                if character != '`' { continue; }
+                let mut length = 1;
+                while characters.peek() == Some(&'`') {
+                    characters.next();
+                    length += 1;
+                }
+                backtick_last_line.insert(length, index);
+            }
+        }
+        let mut maximum = FenceSuffix::default();
+        let mut fence_suffix_max = vec![maximum];
+        for line in lines.iter().rev() {
+            #[cfg(test)]
+            scan_probe::add(line.len());
+            if let Some((marker, length)) = closing_fence_run(line) {
+                match marker {
+                    '`' => maximum.backtick = maximum.backtick.max(length),
+                    '~' => maximum.tilde = maximum.tilde.max(length),
+                    _ => {}
+                }
+            }
+            fence_suffix_max.push(maximum);
+        }
+        fence_suffix_max.reverse();
+        Self { backtick_last_line, fence_suffix_max }
+    }
+
+    pub(crate) fn has_backtick_after(&self, length: usize, line: usize) -> bool {
+        self.backtick_last_line.get(&length).is_some_and(|last| *last >= line)
+    }
+
+    pub(super) fn matching_fence(&self, lines: &[String], start: usize, opener: &FenceInfo, line_base: usize) -> Option<usize> {
+        let maximum = self.fence_suffix_max.get(line_base + start + 1)?;
+        let available = match opener.ch { '`' => maximum.backtick, '~' => maximum.tilde, _ => 0 };
+        if available < opener.len { return None; }
+        // 首个合法闭合决定边界；继续寻找后续开栏会吞并相邻块（#58）。
+        lines.iter().enumerate().skip(start + 1).find_map(|(index, line)| {
+            #[cfg(test)]
+            scan_probe::add(line.len());
+            is_closing_fence(line, opener).then_some(index)
+        })
+    }
 }
 
 pub(crate) fn parse_opening_fence(line: &str) -> Option<FenceInfo> {
     BlockKind::parse_code_fence_opening(strip_fence_indent(line)?.trim_end())
 }
 
-pub(crate) fn is_closing_fence(line: &str, opener: &FenceInfo) -> bool {
-    let Some(trimmed) = strip_fence_indent(line).map(str::trim_end) else {
-        return false;
-    };
-    if !trimmed.starts_with(opener.ch) {
-        return false;
-    }
-    let run_len = trimmed.chars().take_while(|&c| c == opener.ch).count();
-    // CommonMark: a closing fence is the *same* fence char, *at least* as long as
-    // the opener, and followed by nothing but whitespace. Anything shorter, of a
-    // different char, or still carrying an info string is ordinary content — so a
-    // ```` ``` inside code ```` line inside a ```` ```` ```` block is never a closer.
-    if run_len < opener.len {
-        return false;
-    }
-    trimmed[run_len * opener.ch.len_utf8()..].is_empty()
+fn closing_fence_run(line: &str) -> Option<(char, usize)> {
+    let trimmed = strip_fence_indent(line)?.trim_end();
+    let marker = trimmed.chars().next()?;
+    if !matches!(marker, '`' | '~') { return None; }
+    let length = trimmed.chars().take_while(|character| *character == marker).count();
+    (length >= 3 && length == trimmed.len()).then_some((marker, length))
 }
 
+pub(crate) fn is_closing_fence(line: &str, opener: &FenceInfo) -> bool {
+    closing_fence_run(line).is_some_and(|(marker, length)| marker == opener.ch && length >= opener.len)
+}
+
+#[cfg(test)]
 pub(crate) fn find_matching_closing_fence(
     lines: &[String],
     start_index: usize,
     opener: &FenceInfo,
 ) -> Option<usize> {
-    for index in (start_index + 1)..lines.len() {
-        // A fenced block closes at its first valid closing fence, as in CommonMark.
-        // Scanning for a later fence (the previous behavior) let any opener
-        // swallow the following blocks whose closing fences are bare, merging
-        // them and corrupting them on round-trip (issue #58). A bare closing
-        // fence is indistinguishable from an empty opener, so first-match is
-        // the only unambiguous rule.
-        //
-        // There is deliberately no second test for "looks like another opener":
-        // an info-tagged line (```` ``` inside code ````) is not a closer, so by
-        // the same predicate it is just code content and the scan continues. It
-        // used to abort here, which abandoned well-formed blocks whose body
-        // legitimately contains a shorter or text-bearing fence run.
-        if is_closing_fence(&lines[index], opener) {
-            return Some(index);
-        }
-    }
-
-    None
+    MarkdownLookahead::new(lines).matching_fence(lines, start_index, opener, 0)
 }
 
 pub(crate) fn is_fenced_div_opening(line: &str) -> bool {
@@ -880,9 +899,11 @@ pub(crate) fn collect_fenced_code_block(
     lines: &[String],
     start: usize,
     origins: &[usize],
+    lookahead: &MarkdownLookahead,
+    line_base: usize,
 ) -> Option<(Entity<crate::editor::Block>, usize)> {
     let fence = parse_opening_fence(&lines[start])?;
-    let closing_index = find_matching_closing_fence(lines, start, &fence)?;
+    let closing_index = lookahead.matching_fence(lines, start, &fence, line_base)?;
     if is_mermaid_info_string(fence.language.as_ref().map(|language| language.as_ref())) {
         let raw = lines[start..=closing_index].join("\n");
         return Some((

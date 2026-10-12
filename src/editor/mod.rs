@@ -610,8 +610,10 @@ impl Editor {
         // 缓冲区先于块树建好：导入器要把每根块的源码区间换算成字节区间，
         // 靠的就是它的行索引。
         let buffer = buffer::TextBuffer::from_text(&normalized);
+        let lines = Arc::new(Self::split_markdown_lines(&normalized));
+        let lookahead = Arc::new(document::MarkdownLookahead::new(&lines));
         let source_mode_fallback_required =
-            Self::markdown_requires_source_mode_fallback(&normalized);
+            Self::markdown_lines_require_source_mode_fallback(&lines, &lookahead);
         let mut pending_tail = None;
         let mut initial_spans: Vec<(gpui::EntityId, std::ops::Range<usize>)> = Vec::new();
         let mut roots = if source_mode_fallback_required {
@@ -626,7 +628,6 @@ impl Editor {
             }
             roots
         } else {
-            let lines = Arc::new(Self::split_markdown_lines(&normalized));
             let (roots, root_spans, next_line) = Self::build_root_block_chunk(
                 cx,
                 &lines,
@@ -635,6 +636,8 @@ impl Editor {
                     is_document_start: true,
                     previous_root_is_list_item: false,
                 },
+                &lookahead,
+                0,
             );
             if next_line < lines.len() {
                 pending_tail = Some(PendingTail {
@@ -644,6 +647,7 @@ impl Editor {
                         .unwrap_or(false),
                     next_line,
                     lines,
+                    lookahead,
                 });
             }
             initial_spans.extend(
@@ -913,6 +917,8 @@ impl Editor {
                 is_document_start: false,
                 previous_root_is_list_item: tail.previous_root_is_list_item,
             },
+            &tail.lookahead,
+            tail.next_line,
         );
         debug_assert!(consumed > 0, "a chunk with a non-zero budget always advances");
         let previous_root_is_list_item = roots
@@ -938,6 +944,7 @@ impl Editor {
         if next_line < tail.lines.len() {
             self.document.set_pending_tail(Some(PendingTail {
                 lines: tail.lines,
+                lookahead: tail.lookahead,
                 next_line,
                 previous_root_is_list_item,
             }));

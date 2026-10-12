@@ -3,10 +3,15 @@ use super::*;
 impl Editor {
     pub(crate) fn markdown_requires_source_mode_fallback(markdown: &str) -> bool {
         let lines = markdown.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+        let lookahead = MarkdownLookahead::new(&lines);
+        Self::markdown_lines_require_source_mode_fallback(&lines, &lookahead)
+    }
+
+    pub(crate) fn markdown_lines_require_source_mode_fallback(lines: &[String], lookahead: &MarkdownLookahead) -> bool {
         let mut index = 0;
         while index < lines.len() {
             if let Some(fence) = parse_opening_fence(&lines[index]) {
-                if let Some(closing_index) = find_matching_closing_fence(&lines, index, &fence) {
+                if let Some(closing_index) = lookahead.matching_fence(lines, index, &fence, 0) {
                     index = closing_index + 1;
                     continue;
                 }
@@ -40,8 +45,9 @@ impl Editor {
     ) -> Vec<Entity<crate::editor::Block>> {
         let source = self.buffer.text();
         let lines = std::sync::Arc::new(Self::split_markdown_lines(&source));
+        let lookahead = MarkdownLookahead::new(&lines);
         let (mut roots, root_spans, _consumed) =
-            Self::build_root_block_chunk(cx, &lines, ChunkCursor::WHOLE_DOCUMENT);
+            Self::build_root_block_chunk(cx, &lines, ChunkCursor::WHOLE_DOCUMENT, &lookahead, 0);
         if roots.is_empty() {
             roots.push(Self::new_block(
                 cx,
@@ -137,12 +143,14 @@ impl Editor {
         cx: &mut Context<Self>,
         lines: &[String],
         cursor: ChunkCursor,
+        lookahead: &MarkdownLookahead,
+        line_base: usize,
     ) -> (
         Vec<Entity<crate::editor::Block>>,
         Vec<std::ops::Range<usize>>,
         usize,
     ) {
-        Self::build_blocks_from_lines_internal(cx, lines, true, cursor)
+        Self::build_blocks_from_lines_with_lookahead(cx, lines, true, cursor, &[], lookahead, line_base)
     }
 
     /// Builds runtime blocks from Markdown lines.
@@ -181,6 +189,19 @@ impl Editor {
         Vec<std::ops::Range<usize>>,
         usize,
     ) {
+        let lookahead = MarkdownLookahead::new(lines);
+        Self::build_blocks_from_lines_with_lookahead(cx, lines, allow_root_footnote_definitions, cursor, origins, &lookahead, 0)
+    }
+
+    fn build_blocks_from_lines_with_lookahead(
+        cx: &mut Context<Self>,
+        lines: &[String],
+        allow_root_footnote_definitions: bool,
+        cursor: ChunkCursor,
+        origins: &[usize],
+        lookahead: &MarkdownLookahead,
+        line_base: usize,
+    ) -> (Vec<Entity<crate::editor::Block>>, Vec<std::ops::Range<usize>>, usize) {
         let mut roots = Vec::new();
         // 与 `roots` 同步：每根块消费的行区间（相对传入的 `lines` 切片）。
         let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
@@ -255,8 +276,8 @@ impl Editor {
             }
 
             if parse_opening_fence(line).is_some() {
-                let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index, origins) else {
-                    let paragraph = Self::collect_paragraph_block(cx, lines, index, origins);
+                let Some((block, next_index)) = collect_fenced_code_block(cx, lines, index, origins, lookahead, line_base) else {
+                    let paragraph = Self::collect_paragraph_block(cx, lines, index, origins, lookahead, line_base);
                     roots.push(paragraph.0);
                     spans.push(index..paragraph.1);
                     index = paragraph.1;
@@ -445,7 +466,7 @@ impl Editor {
                 continue;
             }
 
-            let paragraph = Self::collect_paragraph_block(cx, lines, index, origins);
+            let paragraph = Self::collect_paragraph_block(cx, lines, index, origins, lookahead, line_base);
             roots.push(paragraph.0);
             spans.push(index..paragraph.1);
             index = paragraph.1;

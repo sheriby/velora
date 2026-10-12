@@ -4,6 +4,48 @@
     use crate::components::{BlockKind, Editor};
 
     #[gpui::test]
+    async fn core_repair_incremental_chunks_share_lookahead_without_rescanning_the_tail(cx: &mut TestAppContext) {
+        let source = (0..3000).map(|index| format!("paragraph {index}\n\n")).collect::<String>();
+        super::super::scan_probe::reset();
+        let chunked = cx.new(|cx| Editor::from_markdown_with_chunk_budget(cx, source.clone(), None, 1));
+        chunked.update(cx, |editor, cx| {
+            while editor.document.pending_tail().is_some() {
+                editor.materialize_next_pending_chunk(cx);
+            }
+        });
+        let work = super::super::scan_probe::bytes();
+        assert!(work <= source.len() * 6, "分批不能重复索引剩余全文：{work} / {}", source.len());
+        let full = cx.new(|cx| Editor::from_markdown_with_chunk_budget(cx, source.clone(), None, usize::MAX));
+        let signature = |editor: &Editor, cx: &gpui::App| editor.document.visible_blocks().iter().map(|visible| {
+            let block = visible.entity.read(cx);
+            (block.kind(), block.record.title.visible_text())
+        }).collect::<Vec<_>>();
+        let expected = full.read_with(cx, signature);
+        chunked.read_with(cx, |editor, cx| {
+            assert_eq!(editor.buffer.text(), source);
+            assert_eq!(signature(editor, cx), expected);
+        });
+    }
+
+    #[gpui::test]
+    async fn core_repair_inline_code_paragraph_lookahead_scans_linear_input(cx: &mut TestAppContext) {
+        let mut failures = Vec::new();
+        for count in [100, 200, 400] {
+            let source = format!("`begin\n{}end`", "body\n\n".repeat(count));
+            super::super::scan_probe::reset();
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.clone(), None));
+            let work = super::super::scan_probe::bytes();
+            editor.read_with(cx, |editor, cx| {
+                assert_eq!(editor.buffer.text(), source);
+                assert_eq!(editor.document.root_count(), 1);
+                assert_eq!(editor.document.first_root().unwrap().read(cx).kind(), BlockKind::Paragraph);
+            });
+            if work > source.len() * 12 { failures.push((count, work, source.len())); }
+        }
+        assert!(failures.is_empty(), "段落前缀及后文扫描应随输入线性增长：{failures:?}");
+    }
+
+    #[gpui::test]
     async fn review_image_paragraph_can_be_setext_heading(cx: &mut TestAppContext) {
         // 图片行仍是段落，不能因原生图片运行时而排除合法 setext 标题。
         let source = "![图片](pic.png)\n---";

@@ -18,15 +18,22 @@ impl Editor {
         lines: &[String],
         start: usize,
         origins: &[usize],
+        lookahead: &MarkdownLookahead,
+        line_base: usize,
     ) -> (Entity<crate::editor::Block>, usize) {
-        let mut paragraph_lines = vec![lines[start].to_string()];
+        let first = lines.get(start).map(String::as_str).unwrap_or_default();
+        let mut paragraph_lines = vec![first.to_owned()];
+        let mut inline_code = InlineCodeState::default();
+        inline_code.consume(first);
         let mut index = start + 1;
         while index < lines.len() {
             if (lines[index].trim().is_empty() || looks_like_root_block_start(lines, index))
-                && !paragraph_can_continue_through_boundary(&paragraph_lines, lines, index)
+                && !inline_code.pending_run.is_some_and(|length| lookahead.has_backtick_after(length, line_base + index))
             {
                 break;
             }
+            inline_code.consume("\n");
+            inline_code.consume(&lines[index]);
             paragraph_lines.push(lines[index].to_string());
             index += 1;
         }
@@ -113,6 +120,7 @@ impl Editor {
             );
         }
 
+        let lookahead = MarkdownLookahead::new(lines);
         let mut title_markdown = String::new();
         // 引用自己那份正文的每一行让开几字节（文件口径）。空行段折成一行、开头的
         // 空行没有内容行，这两种都会让「内容第 i 行」对不上「文件第 i 行」——那时
@@ -247,7 +255,7 @@ impl Editor {
 
             if parse_opening_fence(line).is_some()
                 && let Some((code_block, consumed)) =
-                    collect_fenced_code_block(cx, lines, index, origins)
+                    collect_fenced_code_block(cx, lines, index, origins, &lookahead, 0)
             {
                 if pending_blank_lines > 0 && (!title_markdown.is_empty() || !children.is_empty()) {
                     append_quote_separator_children(&mut children, pending_blank_lines, cx);
@@ -369,6 +377,7 @@ impl Editor {
         title: String,
         marker: Option<SharedString>,
     ) -> Option<Entity<crate::editor::Block>> {
+        let lookahead = MarkdownLookahead::new(lines);
         let inherited = |at: usize| origins.get(at).copied().unwrap_or(0);
         let mut children = Vec::new();
         let mut index = 0usize;
@@ -462,7 +471,7 @@ impl Editor {
 
             if parse_opening_fence(line).is_some()
                 && let Some((code_block, consumed)) =
-                    collect_fenced_code_block(cx, lines, index, origins)
+                    collect_fenced_code_block(cx, lines, index, origins, &lookahead, 0)
             {
                 children.push(code_block);
                 index = consumed;
@@ -660,7 +669,7 @@ impl Editor {
 
                     if parse_opening_fence(&anchor_dedented[0]).is_some()
                         && let Some((code_block, consumed)) =
-                            collect_fenced_code_block(cx, &anchor_dedented, 0, &anchor_origins)
+                            collect_fenced_code_block(cx, &anchor_dedented, 0, &anchor_origins, &MarkdownLookahead::new(&anchor_dedented), 0)
                     {
                         attach_item_child(&block, vec![code_block], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
@@ -807,7 +816,7 @@ impl Editor {
                             .is_some();
                     if should_promote_plain_child {
                         let (paragraph, consumed) =
-                            Self::collect_paragraph_block(cx, &anchor_dedented, 0, &anchor_origins);
+                            Self::collect_paragraph_block(cx, &anchor_dedented, 0, &anchor_origins, &MarkdownLookahead::new(&anchor_dedented), 0);
                         attach_item_child(&block, vec![paragraph], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;

@@ -27,6 +27,7 @@ pub(super) struct PendingTail {
     /// same forward context a single full pass would (paragraph continuation and
     /// setext detection scan ahead).
     pub(super) lines: Arc<Vec<String>>,
+    pub(super) lookahead: Arc<super::document::MarkdownLookahead>,
     /// Index of the first line that has not been consumed by a chunk.
     pub(super) next_line: usize,
     /// Whether the last built root is a list item, so a blank run opening the
@@ -463,6 +464,8 @@ impl DocumentTree {
                     is_document_start: false,
                     previous_root_is_list_item: tail.previous_root_is_list_item,
                 },
+                &tail.lookahead,
+                tail.next_line,
             );
             let previous_root_is_list_item = roots
                 .last()
@@ -473,6 +476,7 @@ impl DocumentTree {
             self.pending = if next_line < tail.lines.len() {
                 Some(PendingTail {
                     lines: tail.lines.clone(),
+                    lookahead: tail.lookahead.clone(),
                     next_line,
                     previous_root_is_list_item,
                 })
