@@ -1,5 +1,5 @@
 mod tests {
-    use gpui::{AppContext, Bounds, Context, Modifiers, MouseButton, TestAppContext, point, px, size};
+    use gpui::{AppContext, Context, Modifiers, MouseButton, TestAppContext, point, px};
 
     use super::super::{CrossBlockSelection, CrossBlockSelectionEndpoint, Editor};
     use crate::components::{BlockKind, Cut, Undo, UndoCaptureKind};
@@ -64,55 +64,50 @@ mod tests {
         editor.sync_cross_block_selection_visuals(cx);
     }
 
-    fn assign_visible_block_bounds(editor: &mut Editor, cx: &mut Context<Editor>) {
-        for (index, visible) in editor
-            .document
-            .visible_blocks()
-            .to_vec()
-            .into_iter()
-            .enumerate()
-        {
-            visible.entity.update(cx, move |block, _cx| {
-                block.last_bounds = Some(Bounds::new(
-                    point(px(0.0), px(index as f32 * 32.0)),
-                    size(px(400.0), px(24.0)),
-                ));
-            });
-        }
-    }
-
-    #[test]
-    fn mouse_down_starts_cross_block_drag_after_clearing_old_selection() {
-        let mut cx = TestAppContext::single();
-        init_editor_test_app(&mut cx);
-        let editor =
-            cx.new(|cx| Editor::from_markdown(cx, "alpha\n\nbeta\n\ngamma".to_string(), None));
-
-        editor.update(&mut cx, |editor, cx| {
-            assign_visible_block_bounds(editor, cx);
-            set_selection(editor, 0, 0, 2, 2, cx);
-            assert!(editor.cross_block_selection.is_some());
-            assert!(
-                editor
-                    .document
-                    .visible_blocks()
-                    .iter()
-                    .any(|visible| visible.entity.read(cx).editor_selection_range.is_some())
-            );
-
-            editor.begin_cross_block_drag_at_point(point(px(8.0), px(4.0)), cx);
-
-            assert!(editor.cross_block_selection.is_none());
-            assert!(editor.cross_block_drag.is_some());
-            assert!(
-                editor
-                    .document
-                    .visible_blocks()
-                    .iter()
-                    .all(|visible| visible.entity.read(cx).editor_selection_range.is_none())
-            );
+    #[gpui::test]
+    async fn mouse_down_starts_cross_block_drag_after_clearing_old_selection(cx: &mut TestAppContext) {
+        // 落点换算只认这一帧挂载的行，几何得走真帧；手工铺 `last_bounds` 不再算数。
+        init_editor_test_app(cx);
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, "alpha\n\nbeta\n\ngamma".to_string(), None)
         });
-        cx.quit();
+        redraw(cx);
+        redraw(cx);
+
+        let press = editor.read_with(cx, |editor, cx| {
+            let first = editor.document.visible_blocks()[0]
+                .entity
+                .read(cx)
+                .last_bounds
+                .expect("第一块该有布局边界");
+            point(first.left() + px(2.0), first.center().y)
+        });
+
+        cx.update(|_, cx| {
+            editor.update(cx, |editor, cx| {
+                set_selection(editor, 0, 0, 2, 2, cx);
+                assert!(editor.cross_block_selection.is_some());
+                assert!(
+                    editor
+                        .document
+                        .visible_blocks()
+                        .iter()
+                        .any(|visible| visible.entity.read(cx).editor_selection_range.is_some())
+                );
+
+                editor.begin_cross_block_drag_at_point(press, cx);
+
+                assert!(editor.cross_block_selection.is_none());
+                assert!(editor.cross_block_drag.is_some(), "按下该武装跨块拖拽");
+                assert!(
+                    editor
+                        .document
+                        .visible_blocks()
+                        .iter()
+                        .all(|visible| visible.entity.read(cx).editor_selection_range.is_none())
+                );
+            });
+        });
     }
 
     #[test]

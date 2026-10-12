@@ -1119,6 +1119,7 @@ async fn shift_click_on_a_formula_includes_the_formula(cx: &mut TestAppContext) 
 /// 没人清它。端点换算遍历全文档时，这些陈旧边界会被当成落点——长文档往下翻过几屏，
 /// 文档开头的一块就把落点抢走，选区从上面拉下来一大片。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn a_press_ignores_bounds_left_behind_by_unmounted_blocks(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let markdown = (0..400)
@@ -1145,8 +1146,12 @@ async fn a_press_ignores_bounds_left_behind_by_unmounted_blocks(cx: &mut TestApp
     redraw(cx);
 
     // 前置条件：挂载窗口已经移开文首，视口中央是别的块。
+    // 窗口由上一帧的行区间与行计划换出来（生产代码里同一份判据）。
     let (mounted_start, mounted_end, center) = editor.read_with(cx, |editor, _cx| {
-        let (start, end) = editor.mounted_visible_range().expect("挂载窗口可见");
+        let run = editor.prev_mounted_run.expect("挂载区");
+        let plan = editor.rendered_row_plan.clone().expect("行计划");
+        let start = plan.rows[run.row_start].visible_start;
+        let end = plan.rows[run.row_end - 1].visible_end;
         (start, end, editor.scroll_handle.bounds().center())
     });
     assert!(
@@ -1280,6 +1285,7 @@ async fn dragging_through_an_unfocused_paragraph_with_inline_math_selects_it(cx:
 /// 现象：① 表格里只装公式的格子选不中；② 从 2.2 往 2.3 拖，公式下面那一段选不上，
 /// 越往下拖越选不上；③ 从第 4 章往下拖，文档前面按不到的内容也被选中。
 #[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let markdown = std::fs::read_to_string("fixtures/regressions/15-long-doc-math-selection.md")
@@ -1435,4 +1441,120 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
             "文档前面的内容不该被拉进来：{text:?}"
         );
     });
+}
+
+/// 守门：不管一行装的是哪种块（正文、标题、列表、引用、代码块、表格、公式、分隔线、
+/// 图片），只要它挂载着，指针落在这一行里就必须解析到这一行自己的块。
+///
+/// 这一层过去靠块自己画下来的 `last_bounds`，于是两类毛病反复出现：只画图片的块没有
+/// 那个字段（点不到），划出挂载窗口的块留着旧值（点到几屏之前）。这条用例长文档 + 真
+/// 滚动，把每一行都点一遍——新加一种块类型时它会先红。
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+async fn every_mounted_row_resolves_to_its_own_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..40)
+        .map(|index| {
+            format!(
+                "## 第 {index} 节\n\n\
+                 正文段落 {index}，行内公式 $a_{index}+b$ 与行内代码 `let x = {index};`。\n\n\
+                 {{{{=x_{index}=}}}} 这是分隔线\n\n\
+                 > 引用 {index}\n\n\
+                 - 列表项 {index}\n\n\
+                 ```rust\nlet y = {index};\n```\n\n\
+                 | 列 A | 列 B |\n| --- | --- |\n| $c_{index}$ | 文字 {index} |\n\n\
+                 $$m_{index}=\\max_j s_j$$\n\n\
+                 ![图 {index}](missing-{index}.png)\n"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    redraw(cx);
+
+    let wheel_at = editor.read_with(cx, |editor, _cx| editor.scroll_handle.bounds().center());
+    for round in 0..3 {
+        if round > 0 {
+            for _ in 0..3 {
+                cx.simulate_mouse_move(wheel_at, None, Modifiers::none());
+                cx.simulate_event(gpui::ScrollWheelEvent {
+                    position: wheel_at,
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-900.0))),
+                    modifiers: Modifiers::none(),
+                    touch_phase: gpui::TouchPhase::default(),
+                });
+                redraw(cx);
+                redraw(cx);
+            }
+        }
+
+        // 从后往前点：按下会把那一块聚焦、它下面的行会挪位置，先点下面的行，
+        // 已经点过的不会被我自己的按下搅动。每一行都在按下前重取几何。
+        let row_range = editor.read_with(cx, |editor, _cx| {
+            let run = editor.prev_mounted_run.expect("挂载区");
+            (run.row_start, run.row_end)
+        });
+        let row_geometry = |cx: &mut VisualTestContext, row: usize| {
+            editor.read_with(cx, |editor, _cx| {
+                let run = editor.prev_mounted_run?;
+                if row < run.row_start || row >= run.row_end {
+                    return None;
+                }
+                let plan = editor.rendered_row_plan.clone()?;
+                let scroll = editor.scroll_handle.offset();
+                let viewport = editor.scroll_handle.bounds();
+                let item = editor
+                    .scroll_handle
+                    .bounds_for_item(run.child_base + row - run.row_start)?;
+                let top = f32::from(item.top()) + f32::from(scroll.y);
+                let bottom = f32::from(item.bottom()) + f32::from(scroll.y);
+                if top < f32::from(viewport.top()) || bottom > f32::from(viewport.bottom()) {
+                    return None;
+                }
+                let plan_row = &plan.rows[row];
+                let ids: Vec<gpui::EntityId> = (plan_row.visible_start..plan_row.visible_end)
+                    .map(|index| editor.document.visible_blocks()[index].entity.entity_id())
+                    .collect();
+                Some((px((top + bottom) / 2.0), ids))
+            })
+        };
+        // 每轮均匀取十几行：一行一行点下来太慢，而覆盖靠的是「每种块都被点到」。
+        let span = (row_range.1 - row_range.0).max(1);
+        let stride = (span / 14).max(1);
+        let mut pressed = 0;
+        for row in (row_range.0..row_range.1).rev().step_by(stride) {
+            let Some((y, ids)) = row_geometry(&mut cx.clone(), row) else {
+                continue;
+            };
+            let point = gpui::point(px(700.0), y);
+            cx.simulate_mouse_down(point, gpui::MouseButton::Left, Modifiers::none());
+            redraw(cx);
+            let anchored = editor
+                .read_with(cx, |editor, _cx| editor.cross_block_drag.map(|drag| drag.anchor.entity_id));
+            cx.simulate_mouse_up(point, gpui::MouseButton::Left, Modifiers::none());
+            redraw(cx);
+            let anchored = anchored.unwrap_or_else(|| panic!("第 {round} 轮 y={y:?} 没有武装锚点"));
+            assert!(
+                ids.contains(&anchored),
+                "第 {round} 轮 y={y:?} 该落在这一行的块里，实际锚点在别的块：{:?}",
+                editor.read_with(cx, |editor, cx| {
+                    let mut parts: Vec<String> = Vec::new();
+                    for id in std::iter::once(anchored).chain(ids.iter().copied()) {
+                        if let Some(block) = editor.document.block_entity_by_id(id) {
+                            let block = block.read(cx);
+                            parts.push(format!(
+                                "{:?} {:?}",
+                                block.kind(),
+                                block.display_text().chars().take(20).collect::<String>()
+                            ));
+                        }
+                    }
+                    parts.join(" | ")
+                })
+            );
+            pressed += 1;
+        }
+        assert!(pressed > 0, "第 {round} 轮该点到行");
+    }
 }

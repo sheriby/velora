@@ -134,23 +134,12 @@ impl Editor {
         })
     }
 
-    /// 这一帧挂载着的可见块下标区间。
-    ///
-    /// 挂载窗口之外的行只是 spacer，那些块这一帧没有被画，`last_bounds` 停在最后一次
-    /// 画下来的位置。取不到窗口（首帧）或者块序列已经变了就返回 None，调用方按老口径
-    /// 遍历全文档。
-    pub(crate) fn mounted_visible_range(&self) -> Option<(usize, usize)> {
-        let run = self
-            .prev_mounted_run
-            .filter(|run| self.mounted_run_is_addressable(*run))?;
-        let plan = self.rendered_row_plan.as_ref()?;
-        if plan.visible_len != self.document.visible_blocks().len() {
-            return None;
+    /// 某一块的块首端点。
+    fn block_start_endpoint(&self, index: usize) -> CrossBlockSelectionEndpoint {
+        CrossBlockSelectionEndpoint {
+            entity_id: self.document.visible_blocks()[index].entity.entity_id(),
+            offset: 0,
         }
-        let start = plan.rows.get(run.row_start)?.visible_start;
-        let last = run.row_end.checked_sub(1)?;
-        let end = plan.rows.get(last)?.visible_end;
-        (start < end).then_some((start, end))
     }
 
     /// 端点所在的块能不能按指针位置给出块内偏移。只画图片的块（未聚焦的公式、
@@ -335,61 +324,66 @@ impl Editor {
     /// 拖动过程中起点块会因聚焦而显形、别的块又收回去，显示长度随时在变，端点要是记的
     /// 是显示偏移，选区就跟着漂——画出来的高亮比选区的字节短一截，按删除留在文件里的
     /// 又是另一段字节。命中测试给出的显示偏移在这里换算一次，之后就都按干净坐标算。
+    ///
+    /// 几何只问**这一帧挂载着的行**：行的屏幕边界是这一帧渲染写进滚动句柄的，块自己的
+    /// `last_bounds` 只在它被画过之后才有值、划出挂载窗口也不清理（长文档往下翻过几屏，
+    /// 上面那些块留着旧的屏幕边界，照它算端点会把文档开头的一块当成落点）。挂载区之外
+    /// 的块，指针够不到；指针落在挂载区上方或下方时夹到边上的那一块。
+    ///
+    /// 行里那些没有文本布局的块（未聚焦的公式、带行内公式的段落、表格格子里的公式）量不出
+    /// 块内偏移，取行边界当它的位置、整块算：跳过它们会把这一段空间算成「上一块的块尾」，
+    /// 从正文往它们身上拖时端点一直停在上面那一段，与按下时的端点同块同偏移，
+    /// `on_editor_mouse_move` 的同块早退把选区压着不建。
     fn cross_block_endpoint_for_point(
         &self,
         position: Point<Pixels>,
         anchor: Option<CrossBlockSelectionEndpoint>,
         cx: &App,
     ) -> Option<CrossBlockSelectionEndpoint> {
-        // 落点只在**这一帧挂载着的**那些块里找。块自己的 `last_bounds` 是它最后一次
-        // 被画下来时写下的，划出挂载窗口之后没人清它：长文档里往下翻过几屏，上面那些块
-        // 留着旧的屏幕边界，照它算端点会把文档开头的一块当成落点，选区从上面拉下来一大片。
-        let mounted = self.mounted_visible_range();
-        let mut previous: Option<(Entity<Block>, Bounds<Pixels>)> = None;
-        // 没有文本布局的块（表格、分隔线、未聚焦的公式与图表）在屏幕上照样占位置，
-        // 只是量不出块内偏移。跳过它们会把这一段空间算成「上一块的块尾」，于是从正文
-        // 往表格里拖时端点一直停在上面那一段，与按下时的端点同块同偏移，
-        // `on_editor_mouse_move` 的同块早退把选区压着不建——表格怎么拖都进不了选区。
-        // 落点落在它们这一段里就归它们自己。
-        let mut layout_less: Option<Entity<Block>> = None;
-        for (index, visible) in self.document.visible_blocks().iter().enumerate() {
-            if mounted.is_some_and(|(start, end)| index < start || index >= end) {
-                continue;
-            }
-            let entity = visible.entity.clone();
-            let bounds = entity.read(cx).last_bounds;
-            let Some(bounds) = bounds else {
-                layout_less.get_or_insert(entity);
+        let run = self
+            .prev_mounted_run
+            .filter(|run| self.mounted_run_is_addressable(*run))?;
+        let plan = self.rendered_row_plan.as_ref()?;
+        let visible_blocks = self.document.visible_blocks();
+        if plan.visible_len != visible_blocks.len() {
+            return None;
+        }
+        let scroll = self.scroll_handle.offset();
+        let mut previous: Option<CrossBlockSelectionEndpoint> = None;
+        for row in run.row_start..run.row_end {
+            let child = run.child_base + row - run.row_start;
+            let Some(item) = self.scroll_handle.bounds_for_item(child) else {
                 continue;
             };
-
-            if position.y < bounds.top() {
-                // 上一块底与这一块顶之间的空间属于中间那些块：归最上面那一块。
-                if let Some(layout_less) = layout_less {
-                    let offset = self.whole_block_offset(&layout_less, anchor, cx);
-                    return Some(CrossBlockSelectionEndpoint {
-                        entity_id: layout_less.entity_id(),
-                        offset,
-                    });
-                }
-                // 落点在这一块上方：归上一块的块尾；没有上一块就归它的块首。
-                if let Some((previous, _)) = previous {
-                    let offset = previous.read(cx).clean_visible_len();
-                    return Some(CrossBlockSelectionEndpoint {
-                        entity_id: previous.entity_id(),
-                        offset,
-                    });
-                }
-                return Some(CrossBlockSelectionEndpoint {
-                    entity_id: entity.entity_id(),
-                    offset: 0,
-                });
+            let mut row_bounds = item;
+            row_bounds.origin += scroll;
+            let Some(plan_row) = plan.rows.get(row) else {
+                continue;
+            };
+            let members = plan_row.visible_start..plan_row.visible_end.min(visible_blocks.len());
+            if position.y < row_bounds.top() {
+                // 落点在这一行上方：归上一行的块尾；没有上一行就归这一行的块首。
+                return Some(previous.unwrap_or_else(|| self.block_start_endpoint(members.start)));
             }
-
-            if position.y <= bounds.bottom() {
+            if position.y <= row_bounds.bottom() {
+                // 一行里挑块：单块的直接就是它；callout / 脚注组里几块共用一行，
+                // 按各块自己的边界挑（那些边界是这一帧画的），都够不着就取最后一块。
+                let mut chosen = members.start;
+                for index in members.clone() {
+                    chosen = index;
+                    let bounds = visible_blocks[index]
+                        .entity
+                        .read(cx)
+                        .last_bounds
+                        .unwrap_or(row_bounds);
+                    if position.y <= bounds.bottom() {
+                        break;
+                    }
+                }
+                let entity = visible_blocks[chosen].entity.clone();
                 let block = entity.read(cx);
                 // 只画图片的块量不出块内偏移（没有文字布局），整块算：它在选区起点侧
-                // 就取块首、在终点侧取块尾，与中间隔着的那一段空间同一套口径。
+                // 就取块首、在终点侧取块尾。文本块的块内偏移由它自己裁到上下边界。
                 let offset = if block.has_text_layout() {
                     block.current_to_clean_offset(block.index_for_mouse_position(position))
                 } else {
@@ -400,22 +394,14 @@ impl Editor {
                     offset,
                 });
             }
-
-            previous = Some((entity, bounds));
-            layout_less = None;
-        }
-
-        if let Some(layout_less) = layout_less {
-            let offset = self.whole_block_offset(&layout_less, anchor, cx);
-            return Some(CrossBlockSelectionEndpoint {
-                entity_id: layout_less.entity_id(),
-                offset,
+            let last = members.end.saturating_sub(1).max(members.start);
+            previous = Some(CrossBlockSelectionEndpoint {
+                entity_id: visible_blocks[last].entity.entity_id(),
+                offset: visible_blocks[last].entity.read(cx).clean_visible_len(),
             });
         }
-        previous.map(|(entity, _)| CrossBlockSelectionEndpoint {
-            entity_id: entity.entity_id(),
-            offset: entity.read(cx).clean_visible_len(),
-        })
+        // 落点在整个挂载区下方：归最后一块的块尾。
+        previous
     }
 
     /// 没有文字布局的块（未聚焦的公式、带行内公式的段落、只装公式的格子）量不出块内
