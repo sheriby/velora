@@ -1,7 +1,7 @@
 # Editor Core（文档模型与编辑管线）
 
 > 面向后续 agent 的代码导览。初稿 2026-09-28（`perf` 分支）；**2026-10-03 按「buffer 为唯一
-> 事实源」重构改写 §1/§2/§3/§4/§5/§7**，分支 `s2-buffer-source-of-truth`；2026-10-12 修订条目编号与过期引用。
+> 事实源」重构改写 §1/§2/§3/§4/§5/§7**，分支 `s2-buffer-source-of-truth`；2026-10-13 更新原文映射、输入与任务边界。
 > **行号会漂移，函数名不会**——引用以 `文件:函数名` 为主，行号仅作当时定位参考。
 > 相关文档：[overview.md](./overview.md)、[render-pipeline.md](./render-pipeline.md)、[workspace-ui.md](./workspace-ui.md)、[testing-and-build.md](./testing-and-build.md)
 
@@ -73,10 +73,9 @@ Workspace (src/editor/workspace.rs)
 - **解析器是手写逐行扫描器，不是 pulldown-cmark**（pulldown-cmark 只用于 HTML 导出）。分发顺序见 `build_blocks_from_lines_internal`（src/editor/document/import.rs；识别函数在 src/editor/document/parse.rs）：frontmatter → 空行段 → 围栏代码 → fenced div → HTML 注释/块 → 脚注定义 → 引用定义 → setext 标题 → 独立图片 → 缩进代码 → 列表 → 引用块/callout → ATX 标题 → 分隔线 → 表格（含 pipeless）→ 展示数学 → 兜底段落。
 - **标题分隔符 = {ASCII 空格, 制表符, 全角空格 U+3000}（2026-10-11）**：中文输入法会把「# 后的空格」打成全角、外部文件与粘贴会带真 tab，判据在 `BlockKind::parse_atx_heading_line_with_marker` 一处（`marker_len` 按字节并入分隔符宽度，块内偏移/大纲/源码映射共用），打字/粘贴的 `detect_markdown_shortcut` 同一套。tab 是 CommonMark 原生分隔符、pulldown 原生认，不需要归一；U+3000 则要——进 pulldown 之前由 `heading_separators_for_parse`（src/export/html.rs）把标题记号里的 U+3000 原位换成三个 ASCII 空格（同字节数、偏移不变；代码块/HTML 块区间取自 pulldown 事件流不碰）——这是 overview 不变量 10 允许的字节等价词法归一，两个 pulldown 解析点（导出、Ctrl+点击锚点跳转）共用。**闭合井号只认 ASCII 空格前缀**：实测这版 pulldown 对「tab/全角 + 闭合井号」同样不剥，应用侧同判保持两面一致。守卫：`heading_separator_accepts_ideographic_space`、`heading_separator_accepts_tab`、`imports_atx_heading_with_ideographic_space_separator`、`imports_atx_heading_with_tab_separator`、`exports_ideographic_space_heading_separator_as_heading`、`exports_tab_separated_heading_as_heading`、`ideographic_space_normalization_only_touches_heading_markers`。
 - 每块行内解析：`native_block` → `InlineTextTree::from_markdown`。无法表达的构造 → `raw_block`（`BlockKind::RawMarkdown`）逐字保留。
-- **分块/渐进导入**（大文档关键）：`PendingTail` + `start_pending_materialization_task`/`materialize_next_pending_chunk`（src/editor/mod.rs），游标是 `ChunkCursor`（src/editor/document.rs：`root_budget`/`is_document_start`/`previous_root_is_list_item`）。预算 `FIRST_CHUNK_ROOTS=2000`、`STEADY_CHUNK_ROOTS=250`：首屏同步建 2000 块，其余后台每轮 250 块续建。需要全文的操作调 `flush_pending_materialization`；区域重投影（§3）在 `pending_tail().is_some()` 时直接放弃走全量。
-- **纯文本/代码文件路径（性能敏感）**：`from_file_source`（src/editor/mod.rs）按 `workspace::is_code_file`（src/editor/workspace/search_backend.rs，扩展名表含 `log/lock/toml/txt/csv/json/...`）分流 → `replace_document_from_code_source` → `replace_document_content`（src/editor/file_drop.rs）：**整个文件变成单个 `BlockKind::CodeBlock` 块**，Source 模式等宽编辑。文件全文只有一份的事实源是 `buffer`，读取侧与保存都走它（初稿里的
-`last_stable_source_text`、`document_search_source` 那几份副本已删）。**剩下的两份开销**：解析出来的
-`record.title` 仍是一块拥有的副本，加上单块 10 MB 文本的 shaping/行计划——按行窗口渲染没做之前改不掉。
+- **分块/渐进导入**（大文档关键）：`PendingTail` + `start_pending_materialization_task`/`materialize_next_pending_chunk`（src/editor/mod.rs），游标是 `ChunkCursor`（src/editor/document.rs：`root_budget`/`is_document_start`/`previous_root_is_list_item`）。预算 `FIRST_CHUNK_ROOTS=2000`、`STEADY_CHUNK_ROOTS=250`：首屏同步建 2000 块，其余前台任务每轮 250 块续建，批次之间实际让出执行权；文档替换取消旧任务并校验加载代次。需要全文的操作调 `flush_pending_materialization`；区域重投影（§3）在 `pending_tail().is_some()` 时直接放弃走全量。
+- **纯文本/代码文件路径（性能敏感）**：`from_file_source` 按既有扩展名表分流，源码按最多 512 行分块，后续渐进加载与 Markdown 路径共用文档身份约束。读取与保存使用 `buffer`，不从分块投影重建全文。
+- **解析前瞻**：`MarkdownLookahead` 一次建立反引号与围栏闭合索引，首批预检查与渐进尾部共享；段落收集维护增量行内代码状态，不在每个空行边界重扫全部前缀。
 
 ## 3. 编辑：按键 → 区间落笔 → 局部重投影
 
@@ -306,3 +305,17 @@ Workspace (src/editor/workspace.rs)
 - **图片缩放**：图片右键菜单绑定点击时的块 id，提供 25%、50%、75%、100% 及自定义 20–100% 输入。`src/editor/context_menu.rs:set_image_scale_from_menu` 共用 `Block::write_image_width_back_to_source` 写入 `{width=NN%}`，100% 移除属性；一次确认对应一步撤销。渲染同时缩放图片固有尺寸和容器宽高上限，小图也会实际缩小，宽高比保持不变。
 - **已知边界**：段落与插入两档既没有默认键位也不进命令面板（没有可对齐的业界键位，硬造一串反而多记一件事）；插入表格没有键位、不进面板，只有右键菜单那一条入口；上标、下标只在右键菜单与键位上，工具栏那一条放六个行内格式、链接、清除格式与「段落」下拉，格子里是符号与图标、不放词（词交给悬停说明与二级面板）；插入表格与插入图片不进工具栏（那两颗是插入类动作，宽度按九颗格子收）；图片菜单在视口内收拢并支持滚动；表格轴面板仍直接用右键坐标，不走 `document_menu_origins`，贴边会溢出窗口。
 
+
+## 9. 核心评审后的共享边界（2026-10-13）
+
+- **原文坐标**：`InlineSourceOffsetMap` 来自原文解析，组合结构前缀和围栏映射；序列化的偏移表不再用于猜原文位置。多行粘贴按修改前的 clean 范围换算源码替换区间。
+- **编辑前状态**：`BlockUndoSelection` 随 `PrepareUndo` 携带修改前范围与方向，删除扩选前捕获；历史结算不读取已被修改的 Block 选择。
+- **逻辑选择**：`document_selection_active` 共享输入归属；视觉字段只描述当前投影下的高亮。跨块、跨源码分块、跨格的复制、输入、预编辑与快照恢复消费同一逻辑范围；格子重建后按源码端点恢复。
+- **组合生命周期**：组合提交、取消与文字变化分开处理；同文本提交也封口历史组、清组合状态，保存守卫读取当前文档组合状态。
+- **类型接缝**：`source_kind` 记录与源码同步的块类型；类型改变统一写回祖先根与左右必要分隔，保留未编辑的非规范邻块。
+- **跨格输入**：相对选择与组合范围随输入传递，换行归一与竖线转义复用表格序列化规则；不将旧格子的实体身份写入恢复快照。
+- **保存提交**：手动、自动与保存关闭共用原子落盘协议，保留目标权限与软链指向；staging 后最终提交前再次校验磁盘版本与请求身份。初次异步版本登记尚未完成时，手动保存先用打开时原文建立基线。
+- **标签形状**：脏标签重新激活时同时恢复文本与 `FileShape`，不继承其他标签的编码或行尾。
+- **分块维护**：`TextBuffer:edit` 局部合并相邻小块，内容相等独立于分块边界；不以编辑次数累积碎片。
+
+回归证据与剩余验证边界见 [统一评审报告](../reviews/editor-unified-7146668.md)。
