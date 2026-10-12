@@ -68,7 +68,22 @@ pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> 
     // 时 canonicalize 失败，按原路径落盘。
     let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let temp_path = autosave_temp_path(path);
-    let mut file = std::fs::File::create(&temp_path)?;
+    let permissions = match std::fs::metadata(path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temp_path)?;
+    if let Some(permissions) = permissions {
+        file.set_permissions(permissions)?;
+    }
     file.write_all(contents)?;
     file.sync_all()?;
     drop(file);
@@ -827,6 +842,21 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::{safe_code_fence, safe_code_fence_with_info, write_atomic};
+
+    #[test]
+    #[cfg(unix)]
+    fn core_repair_atomic_save_preserves_private_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("velora-private-save-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("private.md");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_atomic(&path, b"new").unwrap();
+        let permissions = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(permissions, 0o600);
+    }
 
     #[test]
     fn atomic_write_replaces_content_and_leaves_no_temp() {
