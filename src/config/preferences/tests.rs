@@ -1552,3 +1552,94 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
         std::fs::set_permissions(&root, permissions).expect("restore");
         let _ = std::fs::remove_dir_all(root);
     }
+
+    /// 手配的自定义状态栏按钮必须到得了状态栏。镜像 `StatusBarSettings` 里没有那一位，
+    /// `EditorSettings::status_bar_preferences` 就恒交回空表，而 `status_bar.rs` 的渲染
+    /// 循环读的正是它——盘上那段解析出来了却没人读，整条功能链是死的（评审报告维度二 4）。
+    #[gpui::test]
+    async fn configured_status_bar_buttons_reach_the_status_bar(cx: &mut gpui::TestAppContext) {
+        let buttons = vec![super::StatusBarButton {
+            id: "word_count".into(),
+            label: "字数".into(),
+            action_id: "select_document".into(),
+        }];
+        cx.update(|cx| {
+            EditorSettings::set_global(
+                cx,
+                true,
+                false,
+                &StatusBarPreferences {
+                    custom_buttons: buttons.clone(),
+                    ..Default::default()
+                },
+            );
+        });
+        let read_back = cx.update(|cx| EditorSettings::status_bar_preferences(cx));
+        assert_eq!(
+            read_back.custom_buttons, buttons,
+            "配置里的自定义按钮没进运行时镜像：状态栏那条渲染循环永远拿到空表"
+        );
+    }
+
+    /// 偏好页那一次「保存」不能把盘上手配的自定义按钮抹掉。那一页没有按钮控件，
+    /// `save_preferences_from_window_with_dirs` 却整段覆盖 `preferences.status_bar`，
+    /// 传进来的空表就此盖上用户配的这一段——同上那条的丢数据那一半，且更难发现：
+    /// 用户改一次设置，config.toml 里那段就没了。
+    #[gpui::test]
+    async fn saving_preferences_keeps_hand_configured_status_bar_buttons(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _ = cx;
+        let root = std::env::temp_dir()
+            .join(format!("velora-status-bar-buttons-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create config root");
+        let _guard = crate::config::override_test_config_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
+
+        let buttons = vec![super::StatusBarButton {
+            id: "word_count".into(),
+            label: "字数".into(),
+            action_id: "select_document".into(),
+        }];
+        let mut seeded = AppPreferences::default();
+        seeded.status_bar.custom_buttons = buttons.clone();
+        save_app_preferences_with_dirs(&seeded, &dirs).expect("seed config");
+        let on_disk = read_app_preferences_with_dirs(&dirs).expect("read seeded config");
+
+        // 偏好页交回来的那份：五个开关是它管得到的，按钮它压根没有控件。
+        let saved = save_preferences_from_window_with_dirs(
+            on_disk.startup_open,
+            &on_disk.default_theme_id,
+            on_disk.image_paste_behavior,
+            &on_disk.fonts,
+            on_disk.writing_width,
+            on_disk.keybindings.clone(),
+            &StatusBarPreferences {
+                custom_buttons: Vec::new(),
+                ..on_disk.status_bar.clone()
+            },
+            on_disk.tree_sort,
+            on_disk.sidebar_open,
+            on_disk.sidebar_panel,
+            on_disk.autosave_debounce_ms,
+            on_disk.remember_window_bounds,
+            on_disk.window_open_position,
+            on_disk.smart_punctuation,
+            on_disk.autosave,
+            on_disk.zoom_percent as i64,
+            1080,
+            720,
+            on_disk.external_change_policy,
+            on_disk.delete_policy,
+            false,
+            false,
+            &dirs,
+        )
+        .expect("save preferences from window");
+
+        assert_eq!(
+            saved.status_bar.custom_buttons, buttons,
+            "偏好页保存把用户手配的自定义状态栏按钮抹掉了（盘上那段从此没了）"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }

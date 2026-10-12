@@ -814,7 +814,12 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     preferences.default_window_height =
         default_window_height.clamp(*DEFAULT_WINDOW_HEIGHT_BOUNDS.start(), *DEFAULT_WINDOW_HEIGHT_BOUNDS.end());
     preferences.keybindings = normalize_shortcut_config(&keybindings);
-    preferences.status_bar = status_bar.clone();
+    // 自定义按钮在该页没有控件（只能手改 config.toml 那段），而这里是**整段**覆盖
+    // `preferences.status_bar`：照 UI 交回来的那份原样写就把用户手配的按钮抹掉了。
+    // UI 管得到的是那五个开关，按钮这一段留着盘上那份。
+    let mut saved_status_bar = status_bar.clone();
+    saved_status_bar.custom_buttons = std::mem::take(&mut preferences.status_bar.custom_buttons);
+    preferences.status_bar = saved_status_bar;
     save_app_preferences_with_dirs(&preferences, dirs)?;
     Ok(preferences)
 }

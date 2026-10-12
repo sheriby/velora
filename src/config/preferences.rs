@@ -495,6 +495,25 @@ struct StatusBarSettings {
     status_bar_show_cursor_position: bool,
     status_bar_show_sidebar_toggle: bool,
     status_bar_show_mode_switch: bool,
+    /// 用户手配的自定义按钮（`config.toml` 里 `[status_bar] custom_buttons`）。
+    /// 镜像里必须有这一位：`status_bar.rs` 的渲染循环读的是运行时镜像而不是盘，
+    /// 少它就是「写了没人读」——配置解析得好好的，状态栏永远拿空表。
+    custom_buttons: Vec<StatusBarButton>,
+}
+
+impl StatusBarSettings {
+    /// 运行时镜像 → 状态栏配置。这份重建原本在三个调用点各抄一遍，且每份都把
+    /// `custom_buttons` 交回空表；判据收在这一处，加字段时不会再漏掉某一份。
+    fn to_preferences(&self) -> StatusBarPreferences {
+        StatusBarPreferences {
+            enabled: self.status_bar_enabled,
+            show_word_count: self.status_bar_show_word_count,
+            show_cursor_position: self.status_bar_show_cursor_position,
+            show_sidebar_toggle: self.status_bar_show_sidebar_toggle,
+            show_mode_switch: self.status_bar_show_mode_switch,
+            custom_buttons: self.custom_buttons.clone(),
+        }
+    }
 }
 
 /// Runtime-accessible editor settings mirrored from [`AppPreferences`] so the
@@ -655,6 +674,7 @@ impl EditorSettings {
                 status_bar_show_cursor_position: status_bar.show_cursor_position,
                 status_bar_show_sidebar_toggle: status_bar.show_sidebar_toggle,
                 status_bar_show_mode_switch: status_bar.show_mode_switch,
+                custom_buttons: status_bar.custom_buttons.clone(),
             },
         });
     }
@@ -997,14 +1017,7 @@ impl EditorSettings {
     pub fn set_show_table_headers(cx: &mut App, show_table_headers: bool) {
         let status_bar = cx
             .try_global::<Self>()
-            .map(|s| StatusBarPreferences {
-                enabled: s.status_bar_settings.status_bar_enabled,
-                show_word_count: s.status_bar_settings.status_bar_show_word_count,
-                show_cursor_position: s.status_bar_settings.status_bar_show_cursor_position,
-                show_sidebar_toggle: s.status_bar_settings.status_bar_show_sidebar_toggle,
-                show_mode_switch: s.status_bar_settings.status_bar_show_mode_switch,
-                custom_buttons: Vec::new(),
-            })
+            .map(|s| s.status_bar_settings.to_preferences())
             .unwrap_or_default();
         Self::set_global(cx, show_table_headers, Self::smart_punctuation(cx), &status_bar);
         match read_app_preferences() {
@@ -1021,14 +1034,7 @@ impl EditorSettings {
     pub fn set_smart_punctuation(cx: &mut App, smart_punctuation: bool) {
         let status_bar = cx
             .try_global::<Self>()
-            .map(|s| StatusBarPreferences {
-                enabled: s.status_bar_settings.status_bar_enabled,
-                show_word_count: s.status_bar_settings.status_bar_show_word_count,
-                show_cursor_position: s.status_bar_settings.status_bar_show_cursor_position,
-                show_sidebar_toggle: s.status_bar_settings.status_bar_show_sidebar_toggle,
-                show_mode_switch: s.status_bar_settings.status_bar_show_mode_switch,
-                custom_buttons: Vec::new(),
-            })
+            .map(|s| s.status_bar_settings.to_preferences())
             .unwrap_or_default();
         let show_table_headers = Self::show_table_headers(cx);
         Self::set_global(cx, show_table_headers, smart_punctuation, &status_bar);
@@ -1045,14 +1051,7 @@ impl EditorSettings {
 
     pub fn status_bar_preferences(cx: &App) -> StatusBarPreferences {
         cx.try_global::<Self>()
-            .map(|s| StatusBarPreferences {
-                enabled: s.status_bar_settings.status_bar_enabled,
-                show_word_count: s.status_bar_settings.status_bar_show_word_count,
-                show_cursor_position: s.status_bar_settings.status_bar_show_cursor_position,
-                show_sidebar_toggle: s.status_bar_settings.status_bar_show_sidebar_toggle,
-                show_mode_switch: s.status_bar_settings.status_bar_show_mode_switch,
-                custom_buttons: Vec::new(),
-            })
+            .map(|s| s.status_bar_settings.to_preferences())
             .unwrap_or_default()
     }
 }

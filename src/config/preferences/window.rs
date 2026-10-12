@@ -523,6 +523,8 @@ impl PreferencesWindow {
                 show_cursor_position: self.status_bar_show_cursor_position,
                 show_sidebar_toggle: self.status_bar_show_sidebar_toggle,
                 show_mode_switch: self.status_bar_show_mode_switch,
+                // 这一页没有自定义按钮的控件；落盘时保留盘上那一段
+                //（见 `save_preferences_from_window_with_dirs`），这里交空表不参与判定。
                 custom_buttons: Vec::new(),
             },
             self.tree_sort,
