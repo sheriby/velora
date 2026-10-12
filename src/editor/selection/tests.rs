@@ -15,6 +15,34 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn core_repair_local_selection_does_not_visit_unrelated_document_blocks(cx: &mut TestAppContext) {
+        init_editor_test_app(cx);
+        let mut work = Vec::new();
+        for count in [100, 1000] {
+            let source = (0..count).map(|index| format!("line {index}\n\n")).collect::<String>();
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.clone(), None));
+            editor.update(cx, |editor, cx| {
+                let before = editor.selection_visual_visits.get();
+                set_selection(editor, 2, 2, 3, 3, cx);
+                assert_eq!(editor.cross_block_selected_markdown(cx).as_deref(), Some("ne 2\n\nlin"));
+                set_selection(editor, 2, 1, 2, 3, cx);
+                editor.clear_cross_block_selection(cx);
+                assert!(editor.cross_block_selection.is_none());
+                for index in [2, 3] {
+                    assert!(editor.document.visible_blocks()[index].entity.read(cx).editor_selection_clean_range.is_none());
+                }
+                work.push((count, editor.selection_visual_visits.get() - before));
+                set_selection(editor, 2, 2, 3, 3, cx);
+                assert!(editor.replace_cross_block_selection_with_text("X", None, false, UndoCaptureKind::NonCoalescible, cx));
+                assert_eq!(editor.buffer.text(), source.replacen("line 2\n\nline 3", "liXe 3", 1));
+                editor.undo_document(cx);
+                assert_eq!(editor.buffer.text(), source);
+            });
+        }
+        assert!(work.iter().all(|(_, visits)| *visits <= 16), "局部扩选、回缩与清除不能逐块访问整篇：{work:?}");
+    }
+
+    #[gpui::test]
     async fn review_arrow_after_cross_block_selection_deletes_only_at_caret(cx: &mut TestAppContext) {
         // 箭头移标曾保留编辑器层选区，随后退格会删除整段旧选区。
         init_editor_test_app(cx);

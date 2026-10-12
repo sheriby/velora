@@ -299,12 +299,11 @@ impl Editor {
         let Some(selection) = self.normalized_cross_block_selection(cx) else {
             return Vec::new();
         };
-        let visible_blocks = self.document.visible_blocks().to_vec();
+        let visible_blocks = self.document.visible_blocks().get(selection.start_index..=selection.end_index).unwrap_or(&[]);
         let mut cells = Vec::new();
-        for (index, visible) in visible_blocks.into_iter().enumerate() {
-            if index < selection.start_index || index > selection.end_index {
-                continue;
-            }
+        for visible in visible_blocks {
+            #[cfg(test)]
+            self.selection_visual_visits.set(self.selection_visual_visits.get() + 1);
             let table = visible.entity.clone();
             let Some(runtime) = table.read(cx).table_runtime.clone() else {
                 continue;

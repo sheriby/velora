@@ -47,8 +47,11 @@ impl Editor {
     fn clear_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) -> bool {
         self.sync_document_selection_ownership(cx);
         let mut changed = false;
-        for visible in self.document.visible_blocks().to_vec() {
-            visible.entity.update(cx, |block, cx| {
+        for entity_id in std::mem::take(&mut self.cross_block_selection_painted) {
+            #[cfg(test)]
+            self.selection_visual_visits.set(self.selection_visual_visits.get() + 1);
+            let Some(entity) = self.document.block_entity_by_id(entity_id) else { continue; };
+            entity.update(cx, |block, cx| {
                 if block.editor_selection_clean_range.take().is_some() {
                     changed = true;
                     cx.notify();
@@ -436,12 +439,15 @@ impl Editor {
     fn sync_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) {
         self.sync_document_selection_ownership(cx);
         let normalized = self.normalized_cross_block_selection(cx);
-        let visible_blocks = self.document.visible_blocks().to_vec();
-        for (index, visible) in visible_blocks.into_iter().enumerate() {
+        let visible_blocks = normalized.and_then(|selection| self.document.visible_blocks()
+            .get(selection.start_index..=selection.end_index).map(|blocks| blocks.to_vec())).unwrap_or_default();
+        let mut painted = Vec::new();
+        let mut painted_ids = std::collections::HashSet::new();
+        for (relative_index, visible) in visible_blocks.into_iter().enumerate() {
+            #[cfg(test)]
+            self.selection_visual_visits.set(self.selection_visual_visits.get() + 1);
             let next_range = normalized.and_then(|selection| {
-                if index < selection.start_index || index > selection.end_index {
-                    return None;
-                }
+                let index = selection.start_index + relative_index;
                 let block = visible.entity.read(cx);
                 let len = block.clean_visible_len();
                 let range = if selection.start_index == selection.end_index {
@@ -456,13 +462,34 @@ impl Editor {
                 (!range.is_empty()).then_some(range)
             });
 
-            visible.entity.update(cx, |block, cx| {
-                block.document_selection_active = Some(self.document_selection_active.clone());
-                if block.editor_selection_clean_range != next_range {
-                    block.editor_selection_clean_range = next_range.clone();
-                    cx.notify();
-                }
-            });
+            if next_range.is_some() {
+                painted.push(visible.entity.entity_id());
+                painted_ids.insert(visible.entity.entity_id());
+            }
+            let needs_update = {
+                let block = visible.entity.read(cx);
+                block.editor_selection_clean_range != next_range
+                    || block.document_selection_active.as_ref().is_none_or(|current| !std::rc::Rc::ptr_eq(current, &self.document_selection_active))
+            };
+            if needs_update {
+                visible.entity.update(cx, |block, cx| {
+                    block.document_selection_active = Some(self.document_selection_active.clone());
+                    if block.editor_selection_clean_range != next_range {
+                        block.editor_selection_clean_range = next_range;
+                        cx.notify();
+                    }
+                });
+            }
+        }
+        for entity_id in std::mem::replace(&mut self.cross_block_selection_painted, painted) {
+            if painted_ids.contains(&entity_id) { continue; }
+            #[cfg(test)]
+            self.selection_visual_visits.set(self.selection_visual_visits.get() + 1);
+            if let Some(block) = self.document.block_entity_by_id(entity_id)
+                && block.read(cx).editor_selection_clean_range.is_some()
+            {
+                block.update(cx, |block, cx| { block.editor_selection_clean_range = None; cx.notify(); });
+            }
         }
         // 表格格子上的高亮由同一份选区状态派生：整张表落进跨块选区时，格子上也要亮，
         // 不然用户看到的是「表格什么也没选中」。
