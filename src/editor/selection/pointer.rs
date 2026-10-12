@@ -134,6 +134,25 @@ impl Editor {
         })
     }
 
+    /// 这一帧挂载着的可见块下标区间。
+    ///
+    /// 挂载窗口之外的行只是 spacer，那些块这一帧没有被画，`last_bounds` 停在最后一次
+    /// 画下来的位置。取不到窗口（首帧）或者块序列已经变了就返回 None，调用方按老口径
+    /// 遍历全文档。
+    pub(crate) fn mounted_visible_range(&self) -> Option<(usize, usize)> {
+        let run = self
+            .prev_mounted_run
+            .filter(|run| self.mounted_run_is_addressable(*run))?;
+        let plan = self.rendered_row_plan.as_ref()?;
+        if plan.visible_len != self.document.visible_blocks().len() {
+            return None;
+        }
+        let start = plan.rows.get(run.row_start)?.visible_start;
+        let last = run.row_end.checked_sub(1)?;
+        let end = plan.rows.get(last)?.visible_end;
+        (start < end).then_some((start, end))
+    }
+
     /// 端点所在的块有没有可寻址的文字布局。没有的块（未聚焦的公式、图表只画图片）
     /// 量不出块内偏移，指针落在它上面只能整块进选区。
     fn block_at_endpoint_is_layout_less(
@@ -322,6 +341,10 @@ impl Editor {
         anchor: Option<CrossBlockSelectionEndpoint>,
         cx: &App,
     ) -> Option<CrossBlockSelectionEndpoint> {
+        // 落点只在**这一帧挂载着的**那些块里找。块自己的 `last_bounds` 是它最后一次
+        // 被画下来时写下的，划出挂载窗口之后没人清它：长文档里往下翻过几屏，上面那些块
+        // 留着旧的屏幕边界，照它算端点会把文档开头的一块当成落点，选区从上面拉下来一大片。
+        let mounted = self.mounted_visible_range();
         let mut previous: Option<(Entity<Block>, Bounds<Pixels>)> = None;
         // 没有文本布局的块（表格、分隔线、未聚焦的公式与图表）在屏幕上照样占位置，
         // 只是量不出块内偏移。跳过它们会把这一段空间算成「上一块的块尾」，于是从正文
@@ -329,7 +352,10 @@ impl Editor {
         // `on_editor_mouse_move` 的同块早退把选区压着不建——表格怎么拖都进不了选区。
         // 落点落在它们这一段里就归它们自己。
         let mut layout_less: Option<Entity<Block>> = None;
-        for visible in self.document.visible_blocks() {
+        for (index, visible) in self.document.visible_blocks().iter().enumerate() {
+            if mounted.is_some_and(|(start, end)| index < start || index >= end) {
+                continue;
+            }
             let entity = visible.entity.clone();
             let bounds = entity.read(cx).last_bounds;
             let Some(bounds) = bounds else {

@@ -1114,3 +1114,91 @@ async fn shift_click_on_a_formula_includes_the_formula(cx: &mut TestAppContext) 
         assert!(text.contains("x = 1"), "公式该在选区里：{text:?}");
     });
 }
+
+/// 缺陷：块划出挂载窗口之后，它的 `last_bounds` 停在最后一次画下来的屏幕位置，
+/// 没人清它。端点换算遍历全文档时，这些陈旧边界会被当成落点——长文档往下翻过几屏，
+/// 文档开头的一块就把落点抢走，选区从上面拉下来一大片。
+#[gpui::test]
+async fn a_press_ignores_bounds_left_behind_by_unmounted_blocks(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..400)
+        .map(|index| format!("## Section {index}\n\nParagraph body for section {index}.\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    redraw(cx);
+
+    // 滚轮往下翻过几屏。
+    let wheel_at = editor.read_with(cx, |editor, _cx| editor.scroll_handle.bounds().center());
+    for _ in 0..30 {
+        cx.simulate_mouse_move(wheel_at, None, Modifiers::none());
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: wheel_at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-400.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::default(),
+        });
+        redraw(cx);
+    }
+    redraw(cx);
+    redraw(cx);
+
+    // 前置条件：挂载窗口已经移开文首，视口中央是别的块。
+    let (mounted_start, mounted_end, center) = editor.read_with(cx, |editor, _cx| {
+        let (start, end) = editor.mounted_visible_range().expect("挂载窗口可见");
+        (start, end, editor.scroll_handle.bounds().center())
+    });
+    assert!(
+        mounted_start > 0,
+        "前置条件：滚动之后挂载窗口该离开文首，实际从 {mounted_start} 开始"
+    );
+
+    // 造出「没挂载但留着边界」的那一块：把它的边界挪到视口中央，正是渲染留下的形状。
+    // 写完不重绘——重绘就等于把真实状态摆回来，滚动留下的痕迹正是这样留在内存里的。
+    let stale_index = mounted_start - 1;
+    assert!(stale_index < mounted_start, "前置条件：拿的是一块没挂载的块");
+    editor.update(cx, |editor, cx| {
+        let stale = editor.document.visible_blocks()[stale_index].entity.clone();
+        stale.update(cx, |block, _cx| {
+            block.last_bounds = Some(Bounds::new(
+                gpui::point(center.x - px(200.0), center.y - px(10.0)),
+                gpui::size(px(400.0), px(20.0)),
+            ));
+        });
+        assert!(
+            editor.document.visible_blocks()[stale_index]
+                .entity
+                .read(cx)
+                .last_bounds
+                .is_some_and(|bounds| bounds.contains(&center)),
+            "前置条件：陈旧边界该盖住视口中央"
+        );
+    });
+
+    cx.simulate_mouse_down(center, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let end = gpui::point(center.x, center.y + px(30.0));
+    cx.simulate_mouse_move(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+
+    editor.read_with(cx, |editor, _cx| {
+        let selection = editor
+            .cross_block_selection
+            .expect("视口里按下拖动该有跨块选区");
+        let anchor_index = editor
+            .document
+            .visible_index_for_entity_id(selection.anchor.entity_id)
+            .expect("锚点仍在文档里");
+        assert_ne!(
+            anchor_index, stale_index,
+            "没挂载的那一块留着陈旧边界，不能拿它当落点"
+        );
+        assert!(
+            anchor_index >= mounted_start && anchor_index < mounted_end,
+            "锚点必须落在挂载窗口 {mounted_start}..{mounted_end} 里，实际 {anchor_index}"
+        );
+    });
+}
