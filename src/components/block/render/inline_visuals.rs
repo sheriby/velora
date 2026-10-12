@@ -127,7 +127,7 @@ impl Block {
         container.into_any_element()
     }
 
-    pub(crate) fn render_math_content(&self, theme: &Theme) -> AnyElement {
+    pub(crate) fn render_math_content(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
@@ -211,7 +211,8 @@ impl Block {
             .flex_col()
             .gap(px(d.block_padding_y.max(4.0)))
             .py(px(d.block_padding_y.max(6.0)))
-            .children(content);
+            .children(content)
+            .child(Self::block_bounds_recorder(cx));
         // 跨块选区把这一块整段选上时它是一张图片，没有文字布局可铺高亮：不在这里
         // 补一条底色，选中的公式在屏幕上和没选中一样。
         let container = if self
@@ -383,7 +384,7 @@ impl Block {
         font_weight: FontWeight,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        div()
+        let runs = div()
             .w_full()
             .min_w(px(0.0))
             .flex()
@@ -401,7 +402,45 @@ impl Block {
                 font_weight,
                 cx,
             ))
-            .into_any_element()
+            .child(Self::block_bounds_recorder(cx));
+        // 这一段没有文本元素，逐字高亮铺不出来：落在选区里就整块铺一条底色，
+        // 否则选中的公式在屏幕上和没选中一样。
+        let runs = if self
+            .editor_selection_range
+            .as_ref()
+            .is_some_and(|range| !range.is_empty())
+        {
+            runs.bg(theme.colors.selection)
+        } else {
+            runs
+        };
+        runs.into_any_element()
+    }
+
+    /// 把这一块在屏幕上的边界记下来。
+    ///
+    /// 只画图片的块（未聚焦的公式、带行内公式的段落、表格格子）没有文本元素，
+    /// `last_bounds` 与 `last_layout` 都是空的。指针命中测试与表格按格选字都读
+    /// `last_bounds`，缺了它这些块在屏幕上占着位置却谁也点不到。
+    ///
+    /// 绝对定位、不参与 flex 布局，只在 prepaint 里记一个数。
+    fn block_bounds_recorder(cx: &Context<Self>) -> impl IntoElement {
+        let entity = cx.entity();
+        canvas(
+            // 这个 gpui 里 `Entity::update` 借 `&mut App` 时不返回 Result（实体在这一帧
+            // 必然是活的：它正在渲染自己），所以这里不需要处理错误。
+            move |bounds, _window, cx| {
+                entity.update(cx, |block: &mut Self, _cx| {
+                    block.last_bounds = Some(bounds);
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
     }
 
     pub(crate) fn render_inline_tree_children(

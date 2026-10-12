@@ -156,13 +156,22 @@ impl Editor {
                 if (row, column) < start_key || (row, column) > end_key {
                     continue;
                 }
-                let len = cell.read(cx).clean_visible_len();
+                let block = cell.read(cx);
+                let len = block.clean_visible_len();
+                // 只装公式的格子没有文字布局，指针位置量不出格内偏移（一直是 0）：
+                // 这种格子整格算，否则落在选区终点侧的那一格区间是空的，看上去就是
+                // 「格子里的公式选不中」。
+                let (start_offset, end_offset) = if block.has_text_layout() {
+                    (start.offset.min(len), end.offset.min(len))
+                } else {
+                    (0, len)
+                };
                 let range = if start.cell == end.cell {
-                    start.offset.min(len)..end.offset.min(len)
+                    start_offset.min(end_offset)..start_offset.max(end_offset)
                 } else if position == start.cell {
-                    start.offset.min(len)..len
+                    start_offset..len
                 } else if position == end.cell {
-                    0..end.offset.min(len)
+                    0..end_offset
                 } else {
                     0..len
                 };

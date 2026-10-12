@@ -15,7 +15,7 @@ impl Editor {
             .map(|anchor| CrossBlockDrag {
                 anchor,
                 anchor_table_cell: self.table_text_anchor_at_point(position, cx),
-                anchor_is_whole_block: self.block_at_endpoint_is_layout_less(anchor, cx),
+                anchor_is_whole_block: self.block_at_endpoint_selects_whole(anchor, cx),
             });
         if changed {
             cx.notify();
@@ -97,7 +97,7 @@ impl Editor {
         if anchor.entity_id == focus.entity_id {
             return false;
         }
-        let anchor_is_whole_block = self.block_at_endpoint_is_layout_less(anchor, cx);
+        let anchor_is_whole_block = self.block_at_endpoint_selects_whole(anchor, cx);
         let selection = CrossBlockSelection {
             anchor: self.whole_block_anchor(anchor, focus, anchor_is_whole_block, cx),
             focus,
@@ -153,16 +153,16 @@ impl Editor {
         (start < end).then_some((start, end))
     }
 
-    /// 端点所在的块有没有可寻址的文字布局。没有的块（未聚焦的公式、图表只画图片）
-    /// 量不出块内偏移，指针落在它上面只能整块进选区。
-    fn block_at_endpoint_is_layout_less(
+    /// 端点所在的块能不能按指针位置给出块内偏移。只画图片的块（未聚焦的公式、
+    /// 带行内公式的段落、只装公式的格子）没有文字布局，指针落在它上面只能整块进选区。
+    fn block_at_endpoint_selects_whole(
         &self,
         endpoint: CrossBlockSelectionEndpoint,
         cx: &App,
     ) -> bool {
         self.document
             .block_entity_by_id(endpoint.entity_id)
-            .is_some_and(|block| block.read(cx).last_bounds.is_none())
+            .is_some_and(|block| !block.read(cx).has_text_layout())
     }
 
     /// 锚点落在没有文字布局的块上时，端点得整块算，不能是块内偏移。
@@ -366,7 +366,7 @@ impl Editor {
             if position.y < bounds.top() {
                 // 上一块底与这一块顶之间的空间属于中间那些块：归最上面那一块。
                 if let Some(layout_less) = layout_less {
-                    let offset = self.layout_less_endpoint_offset(&layout_less, anchor, cx);
+                    let offset = self.whole_block_offset(&layout_less, anchor, cx);
                     return Some(CrossBlockSelectionEndpoint {
                         entity_id: layout_less.entity_id(),
                         offset,
@@ -388,7 +388,13 @@ impl Editor {
 
             if position.y <= bounds.bottom() {
                 let block = entity.read(cx);
-                let offset = block.current_to_clean_offset(block.index_for_mouse_position(position));
+                // 只画图片的块量不出块内偏移（没有文字布局），整块算：它在选区起点侧
+                // 就取块首、在终点侧取块尾，与中间隔着的那一段空间同一套口径。
+                let offset = if block.has_text_layout() {
+                    block.current_to_clean_offset(block.index_for_mouse_position(position))
+                } else {
+                    self.whole_block_offset(&entity, anchor, cx)
+                };
                 return Some(CrossBlockSelectionEndpoint {
                     entity_id: entity.entity_id(),
                     offset,
@@ -400,7 +406,7 @@ impl Editor {
         }
 
         if let Some(layout_less) = layout_less {
-            let offset = self.layout_less_endpoint_offset(&layout_less, anchor, cx);
+            let offset = self.whole_block_offset(&layout_less, anchor, cx);
             return Some(CrossBlockSelectionEndpoint {
                 entity_id: layout_less.entity_id(),
                 offset,
@@ -412,13 +418,14 @@ impl Editor {
         })
     }
 
-    /// 没有文字布局的块（未聚焦的公式、图表）量不出块内偏移，端点只能取块首或块尾。
+    /// 没有文字布局的块（未聚焦的公式、带行内公式的段落、只装公式的格子）量不出块内
+    /// 偏移，端点只能取块首或块尾。
     ///
     /// 取哪一头由拖动方向定：焦点在锚点下方（往下拖）时这一块是选区的起点侧，取块首；
     /// 往上拖时它是终点侧，取块尾——终点侧取块首等于一个字也不选，选区中间横着的
     /// 那一根公式就永远选不中。按下那一下还不知道方向，随后的每次 move 都会按方向
     /// 改写锚点（见 [`Self::whole_block_anchor`]）。
-    fn layout_less_endpoint_offset(
+    fn whole_block_offset(
         &self,
         entity: &Entity<Block>,
         anchor: Option<CrossBlockSelectionEndpoint>,

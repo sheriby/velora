@@ -1202,3 +1202,237 @@ async fn a_press_ignores_bounds_left_behind_by_unmounted_blocks(cx: &mut TestApp
         );
     });
 }
+
+/// 缺陷：格子里只有公式时（`$q$`）格子没有文字布局，`last_bounds` 也一直空着——
+/// 表格按格选字认不出它，整格点不到；落在选区终点侧的那一格区间还会是空的。
+#[gpui::test]
+async fn dragging_across_table_cells_holding_formulas_selects_them(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "alpha\n\n| $q$ | 含义 |\n| --- | --- |\n| $U$ | key 集合 |\n\ngamma".to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let start = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    let end = cell_text_end(cell_bounds(&editor, cx, (1, 1)));
+    drag_across(&mut cx.clone(), start, &[], end);
+
+    editor.read_with(cx, |editor, cx| {
+        let ranges = cell_selection_ranges(cx, &table);
+        assert!(
+            ranges.iter().all(|range| range.is_some()),
+            "四格都该带上选中区间，实际 {ranges:?}"
+        );
+        let text = editor.selected_visible_text(cx).expect("表格里该有选区");
+        assert!(text.contains("$q$"), "只装公式的格子该整格选上：{text:?}");
+        assert!(text.contains("$U$"), "只装公式的格子该整格选上：{text:?}");
+        assert!(text.contains("key 集合"), "有文字的格子该选上：{text:?}");
+    });
+}
+
+/// 缺陷：未聚焦、带行内公式的段落只画图片，没有 `last_bounds` 也没有文字布局，
+/// 指针落点换算看不见它——从上一段拖过它就是选不上，越往下拖越选不上。
+#[gpui::test]
+async fn dragging_through_an_unfocused_paragraph_with_inline_math_selects_it(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(
+            cx,
+            "第一段纯文字\n\n$y$ 就是不切分时这一行的输出\n\n最后一段".to_string(),
+            None,
+        )
+    });
+    redraw(cx);
+    redraw(cx);
+    redraw(cx);
+
+    let (start, end) = editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        let first = visible[0].entity.read(cx).last_bounds.expect("第一段");
+        let last = visible[2].entity.read(cx).last_bounds.expect("最后一段");
+        (
+            gpui::point(first.left() + px(1.0), first.center().y),
+            gpui::point(last.left() + px(20.0), last.center().y),
+        )
+    });
+    drag_across(&mut cx.clone(), start, &[], end);
+
+    editor.read_with(cx, |editor, cx| {
+        let text = editor.selected_visible_text(cx).expect("该有跨块选区");
+        assert!(
+            text.contains("$y$ 就是不切分时这一行的输出"),
+            "带行内公式的那一段该进选区：{text:?}"
+        );
+        assert!(text.contains("最后"), "拖到的那一段该进选区：{text:?}");
+    });
+}
+
+/// 报修原文（`fixtures/regressions/15-long-doc-math-selection.md`，512 行、含公式与表格）
+/// 上的三处拖动：表格里的公式、公式下面那一段、从第 4 章往下拖。
+///
+/// 现象：① 表格里只装公式的格子选不中；② 从 2.2 往 2.3 拖，公式下面那一段选不上，
+/// 越往下拖越选不上；③ 从第 4 章往下拖，文档前面按不到的内容也被选中。
+#[gpui::test]
+async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = std::fs::read_to_string("fixtures/regressions/15-long-doc-math-selection.md")
+        .expect("报修原文");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    redraw(cx);
+
+    // 轮子往下滚，直到某一块的边界落进视口中间，返回它是否找到。
+    let wheel_at = editor.read_with(cx, |editor, _cx| editor.scroll_handle.bounds().center());
+    let visible_with_room = |cx: &mut VisualTestContext, index: usize| {
+        for _ in 0..60 {
+            let visible = editor.read_with(cx, |editor, cx| {
+                let viewport = editor.scroll_handle.bounds();
+                editor.document.visible_blocks()[index]
+                    .entity
+                    .read(cx)
+                    .last_bounds
+                    .is_some_and(|bounds| {
+                        bounds.top() > viewport.top() + px(80.0)
+                            && bounds.bottom() < viewport.bottom() - px(160.0)
+                    })
+            });
+            if visible {
+                return true;
+            }
+            cx.simulate_mouse_move(wheel_at, None, Modifiers::none());
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: wheel_at,
+                delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-300.0))),
+                modifiers: Modifiers::none(),
+                touch_phase: gpui::TouchPhase::default(),
+            });
+            redraw(cx);
+            redraw(cx);
+        }
+        false
+    };
+    let index_of = |cx: &mut VisualTestContext, needle: &str| {
+        editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .position(|visible| visible.entity.read(cx).display_text().contains(needle))
+                .unwrap_or_else(|| panic!("文档里找不到 {needle}"))
+        })
+    };
+
+    // ① 2.1 那张表：格子里装的是公式。
+    let section_21 = index_of(&mut cx.clone(), "2.1 基本量");
+    assert!(visible_with_room(&mut cx.clone(), section_21), "2.1 该滚进视口");
+    let (start, end) = editor.read_with(cx, |editor, cx| {
+        let viewport_bottom = editor.scroll_handle.bounds().bottom();
+        let table = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index >= section_21)
+            .find(|(_, visible)| visible.entity.read(cx).kind() == BlockKind::Table)
+            .expect("2.1 下面该有表格")
+            .1
+            .entity
+            .clone();
+        let in_view: Vec<Bounds<gpui::Pixels>> = table_cells(cx, &table)
+            .into_iter()
+            .filter_map(|cell| cell.read(cx).last_bounds)
+            .filter(|bounds| bounds.bottom() < viewport_bottom - px(20.0))
+            .collect();
+        let first = in_view.first().copied().expect("视口里该有格子");
+        let last = in_view.last().copied().expect("视口里该有格子");
+        (
+            gpui::point(first.left() + px(1.0), first.center().y),
+            gpui::point(last.right() - px(1.0), last.center().y),
+        )
+    });
+    drag_across(&mut cx.clone(), start, &[], end);
+    editor.read_with(cx, |editor, cx| {
+        let text = editor.selected_visible_text(cx).expect("表格里该有选区");
+        assert!(text.contains("$q$"), "只装公式的格子该选上：{text:?}");
+        assert!(
+            text.contains("该行的 query 向量"),
+            "公式与文字混着的格子该选上：{text:?}"
+        );
+    });
+
+    // ② 从 2.2 往 2.3 拖：中间的公式与公式下面那一段都要进来。
+    let section_22 = index_of(&mut cx.clone(), "2.2 真值");
+    assert!(visible_with_room(&mut cx.clone(), section_22), "2.2 该滚进视口");
+    let (start, end) = editor.read_with(cx, |editor, cx| {
+        let bounds = editor.document.visible_blocks()[section_22]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("2.2 该有边界");
+        let start = gpui::point(bounds.left() + px(1.0), bounds.center().y);
+        let bottom = f32::from(editor.scroll_handle.bounds().bottom()) - 40.0;
+        let end_y = (f32::from(start.y) + 260.0).min(bottom);
+        (start, gpui::point(start.x, px(end_y)))
+    });
+    drag_across(&mut cx.clone(), start, &[], end);
+    editor.read_with(cx, |editor, cx| {
+        let text = editor.selected_visible_text(cx).expect("2.2 往下拖该有选区");
+        assert!(text.contains("2.2 真值"), "起点那一段该在选区里：{text:?}");
+        assert!(text.contains("m_{all}"), "中间的公式该在选区里：{text:?}");
+        assert!(
+            text.contains("$y$ 就是"),
+            "公式下面那一段该在选区里：{text:?}"
+        );
+    });
+
+    // ③ 从第 4 章往下拖：不能把文档前面的内容也拉进来。
+    let chapter_4 = index_of(&mut cx.clone(), "第 4 章");
+    for _ in 0..60 {
+        redraw(cx);
+        redraw(cx);
+        let visible = editor.read_with(cx, |editor, cx| {
+            editor.document.visible_blocks()[chapter_4]
+                .entity
+                .read(cx)
+                .last_bounds
+                .is_some_and(|bounds| bounds.top() > editor.scroll_handle.bounds().top())
+        });
+        if visible {
+            break;
+        }
+        cx.simulate_mouse_move(wheel_at, None, Modifiers::none());
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: wheel_at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(300.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::default(),
+        });
+    }
+    let (start, end) = editor.read_with(cx, |editor, cx| {
+        let bounds = editor.document.visible_blocks()[chapter_4]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("第 4 章该有边界");
+        let start = gpui::point(bounds.left() + px(30.0), bounds.center().y);
+        let bottom = f32::from(editor.scroll_handle.bounds().bottom()) - 40.0;
+        let end_y = (f32::from(start.y) + 480.0).min(bottom);
+        (start, gpui::point(start.x, px(end_y)))
+    });
+    drag_across(&mut cx.clone(), start, &[], end);
+    editor.read_with(cx, |editor, cx| {
+        let text = editor.selected_visible_text(cx).expect("第 4 章往下拖该有选区");
+        assert!(text.contains("反向推导"), "起点那一段该在选区里：{text:?}");
+        assert!(
+            !text.contains("符号定义"),
+            "文档前面的内容不该被拉进来：{text:?}"
+        );
+    });
+}

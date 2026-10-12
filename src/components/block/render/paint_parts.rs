@@ -1538,7 +1538,7 @@ impl Render for Block {
                 let child = if focused {
                     BlockTextElement::new(cx.entity(), is_placeholder).into_any_element()
                 } else {
-                    self.render_math_content(&theme)
+                    self.render_math_content(&theme, cx)
                 };
                 if !focused {
                     return focused_base.w_full().child(child).into_any_element();
