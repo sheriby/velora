@@ -59,6 +59,7 @@ impl Editor {
                         recovery_id: self.recovery_id,
                         file_version,
                         markdown,
+                        file_shape: self.buffer.file_shape(),
                         dirty: false,
                         preview: false,
                         view: Some(view),
@@ -121,6 +122,7 @@ impl Editor {
                 recovery_id: self.recovery_id,
                 file_version,
                 markdown,
+                file_shape: self.buffer.file_shape(),
                 dirty: self.document_dirty,
                 preview: false,
                 view: None,
@@ -162,6 +164,7 @@ impl Editor {
             .find(|tab| tab.path == path)
         {
             tab.markdown = markdown;
+            tab.file_shape = self.buffer.file_shape();
             tab.dirty = self.document_dirty;
             tab.view = Some(view);
         } else {
@@ -172,6 +175,7 @@ impl Editor {
                     .file_version
                     .unwrap_or_else(|| crate::editor::persistence::file_content_version(&markdown)),
                 markdown,
+                file_shape: self.buffer.file_shape(),
                 dirty: self.document_dirty,
                 preview: false,
                 view: Some(view),

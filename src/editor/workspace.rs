@@ -128,6 +128,7 @@ pub(crate) struct WorkspaceDocumentTab {
     recovery_id: uuid::Uuid,
     file_version: u64,
     markdown: String,
+    file_shape: Option<super::buffer::FileShape>,
     dirty: bool,
     /// 预览标签（用户需求）：单击树节点打开，切换到其它文件时未修改的
     /// 预览标签被替换、不再占据标签栏；双击打开或产生修改后转为固定展示。

@@ -50,7 +50,7 @@ async fn review_workspace_replace_preserves_all_supported_file_shapes(cx: &mut T
         editor.workspace.open_documents.push(super::super::WorkspaceDocumentTab {
             path: files[0].clone(), recovery_id: uuid::Uuid::new_v4(),
             file_version: crate::editor::persistence::file_content_version(before),
-            markdown: before.replace("\r\n", "\n"), dirty: true, preview: false, view: None,
+            markdown: before.replace("\r\n", "\n"), file_shape: None, dirty: true, preview: false, view: None,
         });
         editor.workspace.search_query = "old".into();
         editor.workspace.replace_query = "new".into();
@@ -72,7 +72,7 @@ async fn review_workspace_replace_does_not_overwrite_external_changes(cx: &mut T
         editor.workspace.open_documents.push(super::super::WorkspaceDocumentTab {
             path: path.clone(), recovery_id: uuid::Uuid::new_v4(),
             file_version: crate::editor::persistence::file_content_version("old"),
-            markdown: "old".into(), dirty: true, preview: false, view: None,
+            markdown: "old".into(), file_shape: None, dirty: true, preview: false, view: None,
         });
         editor.workspace.search_query = "old".into(); editor.workspace.replace_query = "new".into();
         editor.replace_all_workspace_matches(window, cx);
@@ -94,7 +94,7 @@ async fn review_save_and_close_keeps_tabs_when_a_write_fails(cx: &mut TestAppCon
             editor.workspace.open_documents.push(super::super::WorkspaceDocumentTab {
                 path: path.clone(), recovery_id: uuid::Uuid::new_v4(),
                 file_version: crate::editor::persistence::file_content_version("old"),
-                markdown: "edited".into(), dirty: true, preview: false, view: None,
+                markdown: "edited".into(), file_shape: None, dirty: true, preview: false, view: None,
             });
         }
         let closing = editor.workspace.open_documents.clone();
@@ -1051,6 +1051,29 @@ fn utf16_le_with_bom(text: &str) -> Vec<u8> {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
     bytes
+}
+
+#[gpui::test]
+async fn core_repair_reactivating_a_dirty_tab_preserves_its_file_shape(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "dirty-reactivation");
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, utf16_le_with_bom("原文\r\n")).unwrap();
+    fs::write(&second, "other").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| editor.update(cx, |editor, cx| {
+        editor.open_workspace_file(first.clone(), window, cx);
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block.record.set_title(crate::components::InlineTextTree::plain("编辑"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+        editor.open_workspace_file(second.clone(), window, cx);
+        editor.open_workspace_file(first.clone(), window, cx);
+        assert_eq!(editor.document_bytes_for_save(), utf16_le_with_bom("编辑\r\n"));
+    }));
 }
 
 /// 这一篇现在盘上的文本（按它自己的编码解出来）。

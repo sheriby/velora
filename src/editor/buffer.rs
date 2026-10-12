@@ -179,6 +179,15 @@ impl TextBuffer {
         self.unrepresentable = previous.unrepresentable.clone();
     }
 
+    pub(crate) fn file_shape(&self) -> Option<FileShape> {
+        self.shape
+    }
+
+    pub(crate) fn restore_file_shape(&mut self, shape: FileShape) {
+        self.shape = Some(shape);
+        self.pristine = None;
+    }
+
     /// 一次编辑都没落过时为真；此时 [`file_bytes`](Self::file_bytes) 就是原字节。
     /// 只有测试闸门读它——生产侧一律直接要 [`file_bytes`](Self::file_bytes)。
     #[cfg(test)]

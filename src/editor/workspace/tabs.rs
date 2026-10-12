@@ -523,6 +523,7 @@ impl Editor {
         // 这个标签上次离开时的阅读现场。取不到就是本次会话第一次读这篇，按打开新
         // 文档的口径走（渲染态、文档顶部）。
         let cached_view = cached.as_ref().and_then(|tab| tab.view.clone());
+        let cached_file_shape = cached.as_ref().filter(|tab| tab.dirty).and_then(|tab| tab.file_shape);
         // `raw` 是本次读盘拿到的原始字节；脏标签的内容来自内存而不是磁盘，
         // 那种情况没有「原样写回」的依据，留空。
         let (markdown, raw, dirty, recovery_id, file_version) = if image_file {
@@ -578,6 +579,7 @@ impl Editor {
                 recovery_id,
                 file_version,
                 markdown: markdown.clone(),
+                file_shape: cached_file_shape,
                 dirty,
                 preview,
                 view: None,
@@ -614,6 +616,9 @@ impl Editor {
             self.restore_document_from_code_source(markdown, path.clone(), cached_view, cx);
         }
         self.attach_file_origin(raw);
+        if let Some(shape) = cached_file_shape {
+            self.buffer.restore_file_shape(shape);
+        }
         self.document_dirty = dirty;
         self.file_version = Some(file_version);
         if dirty || self.has_dirty_workspace_documents() {
@@ -664,6 +669,7 @@ impl Editor {
             recovery_id: uuid::Uuid::new_v4(),
             file_version: 0,
             markdown: String::new(),
+            file_shape: None,
             dirty: false,
             preview: false,
             view: None,
