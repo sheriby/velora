@@ -4,6 +4,13 @@
 
 use std::time::Instant;
 
+#[cfg(test)]
+pub(crate) mod stride_probe {
+    thread_local! { static ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+    pub(crate) fn add(rows: usize) { ROWS.set(ROWS.get() + rows); }
+    pub(crate) fn rows() -> usize { ROWS.get() }
+}
+
 pub(super) use gpui::*;
 
 pub(super) use super::{Editor, InfoDialogKind, MountedRun, tree::VisibleTreeAnchors};
@@ -122,6 +129,40 @@ impl RenderedRowSpacingInfo {
     }
 }
 
+pub(crate) struct StridePrefix {
+    pub(super) nonnegative: Vec<f32>,
+    pub(super) positive: Vec<f32>,
+    dirty_from: Option<usize>,
+}
+
+impl StridePrefix {
+    fn new() -> Self {
+        Self { nonnegative: vec![0.0], positive: vec![0.0], dirty_from: Some(0) }
+    }
+
+    fn invalidate_from(&mut self, row: usize) {
+        self.dirty_from = Some(self.dirty_from.map_or(row, |current| current.min(row)));
+    }
+
+    fn refresh(&mut self, strides: &[f32]) {
+        if self.nonnegative.len() != strides.len() + 1 { self.invalidate_from(0); }
+        let Some(start) = self.dirty_from.take() else { return; };
+        let start = start.min(strides.len());
+        self.nonnegative.truncate(start + 1);
+        self.positive.truncate(start + 1);
+        let mut nonnegative = self.nonnegative.last().copied().unwrap_or_default();
+        let mut positive = self.positive.last().copied().unwrap_or_default();
+        for &stride in strides.iter().skip(start) {
+            #[cfg(test)]
+            stride_probe::add(1);
+            nonnegative += stride.max(0.0);
+            positive += stride.max(1.0);
+            self.nonnegative.push(nonnegative);
+            self.positive.push(positive);
+        }
+    }
+}
+
 /// P4b：行结构计划——折叠过滤与分组扫描的一次性产物，按
 /// (行元数据版本, fold_state_version, toc 版本, 渲染模式) 缓存。未变更帧直接
 /// 复用，不再对全文档做逐块实体读取；元素只在行真正挂载时构建。
@@ -144,9 +185,38 @@ pub(crate) struct RenderedRowPlan {
     pub gaps: Vec<f32>,
     pub first_ids: Vec<EntityId>,
     /// 每行 footprint；学习更新原地写回，未变更帧免 160k 次哈希查找。
-    pub strides: std::rc::Rc<std::cell::RefCell<Vec<f32>>>,
+    strides: std::rc::Rc<std::cell::RefCell<Vec<f32>>>,
     /// 滚动条坐标使用固定的行权重；首次测量行高只改变布局，不改变文档进度。
     pub scrollbar_strides: Vec<f32>,
+    pub(super) scrollbar_prefix: Vec<f32>,
+    stride_prefix: std::cell::RefCell<StridePrefix>,
+}
+
+impl RenderedRowPlan {
+    pub(super) fn strides(&self) -> std::cell::Ref<'_, Vec<f32>> {
+        self.strides.borrow()
+    }
+
+    pub(super) fn stride_prefix(&self) -> std::cell::Ref<'_, StridePrefix> {
+        if self.stride_prefix.borrow().dirty_from.is_some() {
+            self.stride_prefix.borrow_mut().refresh(&self.strides.borrow());
+        }
+        self.stride_prefix.borrow()
+    }
+
+    pub(super) fn set_stride(&self, row: usize, stride: f32) {
+        if let Some(previous) = self.strides.borrow_mut().get_mut(row)
+            && *previous != stride
+        {
+            *previous = stride;
+            self.stride_prefix.borrow_mut().invalidate_from(row);
+        }
+    }
+
+    pub(super) fn fill_strides(&self, stride: f32) {
+        self.strides.borrow_mut().fill(stride);
+        self.stride_prefix.borrow_mut().invalidate_from(0);
+    }
 }
 
 pub(crate) struct RenderedRowPlanRow {
@@ -754,7 +824,7 @@ impl Editor {
                 .collect::<Vec<f32>>(),
         ));
 
-        let scrollbar_strides = rows
+        let scrollbar_strides: Vec<f32> = rows
             .iter()
             .zip(strides.borrow().iter())
             .map(|(row, stride)| {
@@ -773,6 +843,12 @@ impl Editor {
                 }
             })
             .collect();
+        let mut scrollbar_prefix = vec![0.0];
+        let mut total_weight = 0.0;
+        for &weight in &scrollbar_strides {
+            total_weight += weight.max(1.0);
+            scrollbar_prefix.push(total_weight);
+        }
         RenderedRowPlan {
             row_meta_version,
             fold_version,
@@ -787,6 +863,8 @@ impl Editor {
             first_ids,
             strides,
             scrollbar_strides,
+            scrollbar_prefix,
+            stride_prefix: std::cell::RefCell::new(StridePrefix::new()),
         }
     }
 }
@@ -795,6 +873,43 @@ mod overlays;
 mod menu_render;
 mod paint;
 mod sync;
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::{StridePrefix, stride_probe};
+    use crate::editor::Editor;
+
+    #[test]
+    fn stride_prefix_preserves_zero_height_windows_and_positive_scroll_weights() {
+        let mut strides = vec![2.0, 0.0, -3.0, 5.0];
+        let mut prefix = StridePrefix::new();
+        prefix.refresh(&strides);
+        assert_eq!(prefix.nonnegative, vec![0.0, 2.0, 2.0, 2.0, 7.0]);
+        assert_eq!(prefix.positive, vec![0.0, 2.0, 3.0, 4.0, 9.0]);
+        let before = stride_probe::rows();
+        prefix.refresh(&strides);
+        assert_eq!(stride_probe::rows(), before);
+        strides[2] = 7.0;
+        prefix.invalidate_from(2);
+        prefix.refresh(&strides);
+        assert_eq!(stride_probe::rows() - before, 2);
+        let window = Editor::rendered_window_from_prefix(&prefix.nonnegative, 3.0, 0.0, 0.0, None);
+        assert_eq!((window.run_start, window.run_end), (2, 3));
+        assert_eq!(Editor::map_scroll_offset(3.0, &strides, &[10.0, 20.0, 30.0, 40.0]), 30.0);
+    }
+
+    #[test]
+    fn stride_prefix_rebuilds_after_all_heights_are_invalidated() {
+        let mut prefix = StridePrefix::new();
+        prefix.refresh(&[10.0, 20.0, 30.0]);
+        prefix.invalidate_from(0);
+        prefix.refresh(&[6.0, 6.0, 6.0]);
+        let window = Editor::rendered_window_from_prefix(&prefix.nonnegative, 12.0, 6.0, 0.0, Some(0));
+        assert_eq!((window.run_start, window.run_end), (1, 3));
+        assert_eq!(window.focus_island.unwrap().row, 0);
+        assert_eq!(window.top_h + window.bottom_h + 12.0 + 6.0, 18.0);
+    }
+}
 
 #[cfg(test)]
 mod tests;

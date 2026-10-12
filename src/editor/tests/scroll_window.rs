@@ -1,6 +1,19 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_stable_frames_do_not_rescan_all_row_heights(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = (0..1000).map(|index| format!("paragraph {index}\n\n")).collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    for _ in 0..5 { redraw(cx); }
+    let before = crate::editor::render::stride_probe::rows();
+    for _ in 0..5 { redraw(cx); }
+    let visited = crate::editor::render::stride_probe::rows() - before;
+    assert_eq!(visited, 0, "排版和滚动未变的帧不应重扫全文行高与滚动权重");
+    assert!(editor.read_with(cx, |editor, _| editor.prev_mounted_run.is_some()));
+}
+
+#[gpui::test]
 async fn core_repair_visual_search_targets_finish_scroll_without_taking_query_focus(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let mut pending = Vec::new();
@@ -87,7 +100,7 @@ async fn core_repair_focus_island_relearns_its_real_height(cx: &mut TestAppConte
         assert!(run.row_start > 0, "首块需成为离屏焦点岛");
         let plan = editor.rendered_row_plan.as_ref().unwrap();
         editor.row_stride_cache.remove(&plan.first_ids[0]);
-        plan.strides.borrow_mut()[0] = 1.0;
+        plan.set_stride(0, 1.0);
     });
     redraw(cx);
     editor.read_with(cx, |editor, _| {

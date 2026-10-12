@@ -51,43 +51,51 @@ impl Editor {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn map_scroll_offset(position: f32, from: &[f32], to: &[f32]) -> f32 {
-        let position = position.max(0.0);
-        let mut from_start = 0.0;
-        let mut to_start = 0.0;
-        for (&from_height, &to_height) in from.iter().zip(to) {
-            let from_height = from_height.max(1.0);
-            let to_height = to_height.max(1.0);
-            if position <= from_start + from_height {
-                return to_start + (position - from_start) / from_height * to_height;
-            }
-            from_start += from_height;
-            to_start += to_height;
-        }
-        // 留白不属于最后一块，沿用整篇的平均比例，避免短末块首次量高时改变进度分母。
-        let trailing_scale = if from_start > 0.0 {
-            to_start / from_start
-        } else {
-            1.0
+        let prefix = |values: &[f32]| {
+            let mut result = vec![0.0];
+            let mut total = 0.0;
+            for value in values { total += value.max(1.0); result.push(total); }
+            result
         };
-        to_start + (position - from_start) * trailing_scale
+        Self::map_scroll_prefix(position, &prefix(from), &prefix(to), from, to)
+    }
+
+    fn map_scroll_prefix(position: f32, from_prefix: &[f32], to_prefix: &[f32], from: &[f32], to: &[f32]) -> f32 {
+        let position = position.max(0.0);
+        let rows = from.len().min(to.len());
+        let from_ends = from_prefix.get(1..=rows).unwrap_or(&[]);
+        let row = from_ends.partition_point(|end| *end < position);
+        if row < rows {
+            let from_start = from_prefix.get(row).copied().unwrap_or_default();
+            let from_height = from.get(row).copied().unwrap_or(1.0).max(1.0);
+            let to_start = to_prefix.get(row).copied().unwrap_or_default();
+            let to_height = to.get(row).copied().unwrap_or(1.0).max(1.0);
+            return to_start + (position - from_start) / from_height * to_height;
+        }
+        let from_total = from_prefix.get(rows).copied().unwrap_or_default();
+        let to_total = to_prefix.get(rows).copied().unwrap_or_default();
+        let scale = if from_total > 0.0 { to_total / from_total } else { 1.0 };
+        to_total + (position - from_total) * scale
     }
 
     pub(super) fn scrollbar_document_position(&self, scroll_y: f32, inverse: bool) -> f32 {
         let Some(plan) = self.rendered_row_plan.as_ref() else {
             return scroll_y;
         };
-        let strides = plan.strides.borrow();
+        let prefix = plan.stride_prefix();
+        let strides = plan.strides();
         // 文末预留半屏：以视口中心定位，滚动终点就是文档末尾，
         // 不会因最后几行首次量高而改变进度分母。
         let half_viewport = f32::from(self.scroll_handle.bounds().size.height) * 0.5;
-        let origin = Self::map_scroll_offset(half_viewport, &strides, &plan.scrollbar_strides);
+        let origin = Self::map_scroll_prefix(half_viewport, &prefix.positive, &plan.scrollbar_prefix, &strides, &plan.scrollbar_strides);
         if inverse {
-            (Self::map_scroll_offset(scroll_y + origin, &plan.scrollbar_strides, &strides)
+            (Self::map_scroll_prefix(scroll_y + origin, &plan.scrollbar_prefix, &prefix.positive, &plan.scrollbar_strides, &strides)
                 - half_viewport)
                 .max(0.0)
         } else {
-            (Self::map_scroll_offset(scroll_y + half_viewport, &strides, &plan.scrollbar_strides)
+            (Self::map_scroll_prefix(scroll_y + half_viewport, &prefix.positive, &plan.scrollbar_prefix, &strides, &plan.scrollbar_strides)
                 - origin)
                 .max(0.0)
         }
@@ -151,6 +159,7 @@ impl Editor {
     /// so a viewport wider than the cap's row budget (source mode's 28px lines
     /// fit 37 to a screen) cannot strand its lower edge on a spacer. Pure, so it
     /// is unit-tested headlessly.
+    #[cfg(test)]
     pub(super) fn rendered_window(
         strides: &[f32],
         scroll_y: f32,
@@ -158,7 +167,20 @@ impl Editor {
         overdraw: f32,
         focus_row: Option<usize>,
     ) -> RenderWindow {
-        let n = strides.len();
+        let mut prefix = vec![0.0];
+        let mut total = 0.0;
+        for stride in strides { total += stride.max(0.0); prefix.push(total); }
+        Self::rendered_window_from_prefix(&prefix, scroll_y, viewport_height, overdraw, focus_row)
+    }
+
+    pub(super) fn rendered_window_from_prefix(
+        prefix: &[f32],
+        scroll_y: f32,
+        viewport_height: f32,
+        overdraw: f32,
+        focus_row: Option<usize>,
+    ) -> RenderWindow {
+        let n = prefix.len().saturating_sub(1);
         if n == 0 {
             return RenderWindow {
                 run_start: 0,
@@ -174,34 +196,15 @@ impl Editor {
         let band_bottom = scroll_y + viewport_height + overdraw;
         let viewport_bottom = scroll_y + viewport_height;
 
-        let mut run_start = n;
-        let mut run_end = 0usize;
-        let mut top_of_start = 0.0f32;
-        let mut bottom_of_end = 0.0f32;
-        // 视口自身落到的行区间。冷启动上限只许削掉这之外的预挂载行。
-        let mut viewport_first = n;
-        let mut viewport_last = 0usize;
-        let mut cursor = 0.0f32;
-        for (index, &stride) in strides.iter().enumerate() {
-            let top = cursor;
-            let bottom = cursor + stride.max(0.0);
-            if bottom >= band_top && top <= band_bottom {
-                if index < run_start {
-                    run_start = index;
-                    top_of_start = top;
-                }
-                run_end = index + 1;
-                bottom_of_end = bottom;
-            }
-            if viewport_first == n && bottom >= scroll_y {
-                viewport_first = index;
-            }
-            if top <= viewport_bottom {
-                viewport_last = index + 1;
-            }
-            cursor = bottom;
-        }
-        let total = cursor;
+        let tops = prefix.get(..n).unwrap_or(&[]);
+        let bottoms = prefix.get(1..=n).unwrap_or(&[]);
+        let mut run_start = bottoms.partition_point(|bottom| *bottom < band_top);
+        let mut run_end = tops.partition_point(|top| *top <= band_bottom);
+        let mut top_of_start = prefix.get(run_start).copied().unwrap_or_default();
+        let mut bottom_of_end = prefix.get(run_end).copied().unwrap_or_default();
+        let viewport_first = bottoms.partition_point(|bottom| *bottom < scroll_y);
+        let viewport_last = tops.partition_point(|top| *top <= viewport_bottom);
+        let total = prefix.last().copied().unwrap_or_default();
 
         // P4b 冷启动保护：绝大多数 stride 还是估计值时，行高被严重低估
         // （一行真实 9000px 估计 16px），带状扫描会一口气挂载几十个巨行。
@@ -215,19 +218,12 @@ impl Editor {
             let lead_floor = viewport_first.saturating_sub(COLD_RUN_MAX_ROWS);
             if run_start < lead_floor {
                 run_start = lead_floor;
-                top_of_start = strides[..lead_floor]
-                    .iter()
-                    .map(|stride| stride.max(0.0))
-                    .sum();
+                top_of_start = prefix.get(lead_floor).copied().unwrap_or_default();
             }
             let cover_end = (viewport_last + COLD_RUN_MAX_ROWS).min(run_end);
             if cover_end < run_end {
                 run_end = cover_end;
-                bottom_of_end = strides
-                    .iter()
-                    .take(run_end)
-                    .map(|stride| stride.max(0.0))
-                    .sum();
+                bottom_of_end = prefix.get(run_end).copied().unwrap_or_default();
             }
             needs_fill = run_end < viewport_last;
         }
@@ -239,13 +235,9 @@ impl Editor {
         if run_start >= run_end {
             run_end = n;
             bottom_of_end = total;
-            run_start = n - 1;
-            top_of_start = total - strides[n - 1].max(0.0);
             let floor = (total - viewport_height - overdraw).max(0.0);
-            while run_start > 0 && top_of_start > floor {
-                run_start -= 1;
-                top_of_start -= strides[run_start].max(0.0);
-            }
+            run_start = tops.partition_point(|top| *top <= floor).saturating_sub(1);
+            top_of_start = prefix.get(run_start).copied().unwrap_or_default();
         }
 
         // Keep the focused row mounted; GPUI blurs an unmounted caret. It goes on
@@ -256,8 +248,8 @@ impl Editor {
         let mut bottom_h = total - bottom_of_end;
         let mut focus_island = None;
         if let Some(focus_row) = focus_row.map(|row| row.min(n - 1)) {
-            let focus_top: f32 = strides[..focus_row].iter().map(|s| s.max(0.0)).sum();
-            let focus_bottom = focus_top + strides[focus_row].max(0.0);
+            let focus_top = prefix.get(focus_row).copied().unwrap_or_default();
+            let focus_bottom = prefix.get(focus_row + 1).copied().unwrap_or(focus_top);
             if focus_row < run_start {
                 focus_island = Some(FocusIsland {
                     row: focus_row,

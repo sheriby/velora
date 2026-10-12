@@ -241,7 +241,7 @@ impl Render for Editor {
             self.row_stride_cache_clears
                 .set(self.row_stride_cache_clears.get() + 1);
             self.row_stride_cache.clear();
-            rendered_row_plan.strides.borrow_mut().fill(d.block_min_height.max(1.0));
+            rendered_row_plan.fill_strides(d.block_min_height.max(1.0));
             self.row_stride_width = Some(centered_width);
             self.row_stride_theme = Some(layout_theme.clone());
         }
@@ -258,10 +258,7 @@ impl Render for Editor {
                             + row_top_gaps.get(row + 1).copied().unwrap_or(0.0);
                         if stride > 0.0 && stride.is_finite() {
                             self.row_stride_cache.insert(row_first_ids[row], stride);
-                            if let Some(slot) = rendered_row_plan.strides.borrow_mut().get_mut(row)
-                            {
-                                *slot = stride;
-                            }
+                            rendered_row_plan.set_stride(row, stride);
                         }
                     }
                 }
@@ -307,7 +304,7 @@ impl Render for Editor {
         let thumb_top = scrollbar_geometry.thumb_top;
         let scrollbar_max_position = scrollbar_geometry.max_scroll_y;
 
-        let strides = rendered_row_plan.strides.borrow();
+        let stride_prefix = rendered_row_plan.stride_prefix();
 
         // Bound the cache against block churn, only when it outgrows the live rows.
         if self.row_stride_cache.len() > row_first_ids.len().saturating_mul(2)
@@ -318,8 +315,8 @@ impl Render for Editor {
             self.row_scrollbar_stride_cache.retain(|id, _| live.contains(id));
         }
 
-        let render_window = Self::rendered_window(
-            &strides,
+        let render_window = Self::rendered_window_from_prefix(
+            &stride_prefix.nonnegative,
             current_scroll_y,
             viewport_height,
             RENDER_OVERDRAW_PX,
