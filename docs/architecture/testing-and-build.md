@@ -68,5 +68,5 @@ cargo test         # 全量；大文档预算测试需要先生成 perf 夹具
 - scripts/package-macos.sh：release 构建 → .app（Info.plist/图标）→ pkgbuild/productbuild → dist/。
 - scripts/package-windows.ps1 + .nsi：PowerShell 7 在 Windows x64 MSVC 环境中原生 `--release` 构建，自动定位 Windows SDK 的 `fxc.exe`，断言 PE32+ 且内嵌 manifest 字符串（回归守卫），生成 NSIS 安装包。
 - resources/：macOS Info.plist/pkg Distribution、windows .rc/.manifest（build.rs 内嵌）。
-- assets/icon/：应用图标 + 标题栏 chrome SVG（main.rs 内嵌）+ 侧栏 SVG 图标集；assets/screenshots/：README 截图（workspace.png / themes.png）。
+- assets/icon/：应用图标 + 标题栏 chrome SVG（main.rs 内嵌）+ 侧栏 SVG 图标集；assets/screenshots/：README 截图（workspace.png / editor.png / themes.png）。workspace.png 另被 `editor/tests/image_scale.rs` 当图片缩放夹具，那张图的高宽比由测试从 PNG 头读，换图不必改测试。
 - **i18n 是代码不是数据文件**：src/i18n/mod.rs 内置 zh-CN/en-US 两套；外部 JSON(C) 语言包经 `from_json` 加载（用户 languages 目录直放即用）。新增 UI 字符串要同时登记两处内置表。

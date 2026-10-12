@@ -1,6 +1,18 @@
 use super::common::*;
 use gpui::{Entity, MouseButton, point};
 
+/// 夹具图的高宽比——从 PNG 自己的 IHDR 头里读，不写死数字。
+///
+/// 这几条断言的是「图片随宽度等比缩放」，算期望高度就得知道这张图本身的宽高比。
+/// 写死的话，README 每换一次封面图就要回来改测试；两条断言各写一遍还会漏一遍。
+fn fixture_image_aspect(path: &std::path::Path) -> f32 {
+    let header = std::fs::read(path).expect("read the fixture image");
+    // 8 字节签名 + 4 字节块长度 + "IHDR"，其后是宽、高各 4 字节大端。
+    let width = u32::from_be_bytes(header[16..20].try_into().expect("IHDR width field"));
+    let height = u32::from_be_bytes(header[20..24].try_into().expect("IHDR height field"));
+    height as f32 / width as f32
+}
+
 fn open_image_menu(cx: &mut VisualTestContext) {
     let image = cx.debug_bounds("image-content").expect("图片或占位框");
     let position = image.center();
@@ -48,6 +60,7 @@ async fn image_scale_baseline_follows_the_text_column_and_keeps_the_aspect_ratio
     let image_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/screenshots/workspace.png");
     let markdown = format!("![图例]({})", image_path.display());
+    let aspect = fixture_image_aspect(&image_path);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
     for (width, sidebar_open) in [
@@ -96,7 +109,7 @@ async fn image_scale_baseline_follows_the_text_column_and_keeps_the_aspect_ratio
                 "窗口 {width} 的 {percent}% 应按正文宽度计算：期望 {expected_width}，实际 {scaled:?}"
             );
             assert!(
-                (f32::from(scaled.height) - expected_width * 2136.0 / 2720.0).abs() < 1.0,
+                (f32::from(scaled.height) - expected_width * aspect).abs() < 1.0,
                 "图片高度应随宽度等比变化，实际 {scaled:?}"
             );
         }
@@ -111,6 +124,7 @@ async fn image_scale_layout_keeps_the_aspect_ratio_with_a_container_width(cx: &m
     let image_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/screenshots/workspace.png");
     let markdown = format!("![图例]({})", image_path.display());
+    let aspect = fixture_image_aspect(&image_path);
     let (_block, cx) = cx.add_window_view(|_, cx| {
         let mut block = Block::with_record(
             cx,
@@ -130,7 +144,7 @@ async fn image_scale_layout_keeps_the_aspect_ratio_with_a_container_width(cx: &m
         .expect("列表图片尺寸")
         .size;
     assert!(
-        (f32::from(size.height) - f32::from(size.width) * 2136.0 / 2720.0).abs() < 1.0,
+        (f32::from(size.height) - f32::from(size.width) * aspect).abs() < 1.0,
         "图片布局框应贴合实际图片，不保留多余高度，实际 {size:?}"
     );
 }
