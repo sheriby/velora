@@ -67,10 +67,10 @@ impl Render for Editor {
             cx,
         );
 
-        let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
+        let layout_theme = cx.global::<ThemeManager>().derived_theme(cx);
+        let mut theme = layout_theme.as_ref().clone();
         let fonts = crate::config::EditorSettings::fonts(cx);
         // 字号设置 + 界面缩放（⌘+/⌘-/⌘0）由这一个派生负责，文档块共用。
-        crate::config::EditorSettings::apply_scaled_typography(cx, &mut theme);
         crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
         let body_font_family = if fonts.markdown_family == "theme" {
             &theme.typography.body_font_family
@@ -236,18 +236,18 @@ impl Render for Editor {
         // floor and every block wraps a character per line; keeping those
         // measurements would leave the document permanently mis-sized.
         let width_changed = self.row_stride_width != Some(centered_width);
-        let font_size_changed = self.row_stride_font_size != Some(effective_text_size);
-        if width_changed || font_size_changed {
+        let layout_changed = self.row_stride_theme.as_ref().is_none_or(|previous| !std::sync::Arc::ptr_eq(previous, &layout_theme));
+        if width_changed || layout_changed {
             self.row_stride_cache_clears
                 .set(self.row_stride_cache_clears.get() + 1);
             self.row_stride_cache.clear();
             rendered_row_plan.strides.borrow_mut().fill(d.block_min_height.max(1.0));
             self.row_stride_width = Some(centered_width);
-            self.row_stride_font_size = Some(effective_text_size);
+            self.row_stride_theme = Some(layout_theme.clone());
         }
 
         // 每行直接量高并计入下一行的上间距；只读相邻行顶点会漏掉挂载区最后一行。
-        if !structural_change && !width_changed && !font_size_changed {
+        if !structural_change && !width_changed && !layout_changed {
             if let Some(prev) = self
                 .prev_mounted_run
                 .filter(|prev| self.mounted_run_is_addressable(*prev))

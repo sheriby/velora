@@ -163,8 +163,8 @@ pub struct Editor {
     toc_state_version: u64,
     /// 内容栏宽度变更时丢弃另一宽度下测得的行高。
     row_stride_width: Option<f32>,
-    /// 生效字号（设置 + ⌘± 缩放派生）变更时同样丢弃另一字号下测得的行高。
-    row_stride_font_size: Option<f32>,
+    /// 持有已测高度对应的派生主题，字体、字号和主题度量变化时一起失效。
+    row_stride_theme: Option<Arc<crate::theme::Theme>>,
     /// 性能计数器：逐行量高缓存被整体清空的次数（列宽或字号变化）。
     /// 形状探针用，守「⌘± 后不许沿用旧字号的高度」。
     row_stride_cache_clears: std::cell::Cell<u64>,
@@ -718,7 +718,7 @@ impl Editor {
             open_generation: 0,
             toc_state_version: 0,
             row_stride_width: None,
-            row_stride_font_size: None,
+            row_stride_theme: None,
             row_stride_cache_clears: std::cell::Cell::default(),
             source_serializations: std::cell::Cell::default(),
             source_serialization_nanos: std::cell::Cell::default(),

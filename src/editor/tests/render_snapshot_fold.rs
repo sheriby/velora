@@ -1,6 +1,41 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_document_height_cache_tracks_code_fonts_and_theme_metrics(cx: &mut TestAppContext) {
+    use crate::config::preferences::{AppPreferences, open_preferences_window_with_state};
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let preferences = cx.update(|cx| open_preferences_window_with_state(cx, AppPreferences::default(), Vec::new(), "字体".into()));
+    let source = (0..80).map(|index| format!("paragraph {index}\n\n```rust\nlet value = {index};\n```\n\n")).collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+    redraw(cx);
+    let mut before = editor.read_with(cx, |editor, _| editor.row_stride_cache_clears.get());
+    let mut failures = Vec::new();
+    let mut settings = AppPreferences::default();
+    for (label, family, size) in [("代码字体", "Courier New", 14), ("代码字号", "Courier New", 20)] {
+        settings.fonts.code_family = family.into();
+        settings.fonts.code_size = size;
+        preferences.update(cx, |preferences, window, cx| preferences.apply_saved_preferences(settings.clone(), window, cx)).unwrap();
+        redraw(cx);
+        let after = editor.read_with(cx, |editor, _| editor.row_stride_cache_clears.get());
+        if after <= before { failures.push(label); }
+        before = after;
+    }
+    cx.update(|_, cx| {
+        let mut theme = cx.global::<ThemeManager>().current_arc().as_ref().clone();
+        theme.typography.text_line_height += 0.3;
+        cx.global_mut::<ThemeManager>().set_theme(theme);
+    });
+    redraw(cx);
+    let after = editor.read_with(cx, |editor, _| editor.row_stride_cache_clears.get());
+    if after <= before { failures.push("主题行高"); }
+    assert!(failures.is_empty(), "这些排版输入变更未作废旧高度：{failures:?}");
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.row_stride_cache_clears.get()), after);
+}
+
+#[gpui::test]
 async fn core_repair_table_font_families_invalidate_column_measurement(cx: &mut TestAppContext) {
     use crate::config::preferences::{AppPreferences, open_preferences_window_with_state};
     init_editor_test_app(cx);
