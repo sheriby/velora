@@ -92,7 +92,7 @@ mod tests {
                         .document
                         .visible_blocks()
                         .iter()
-                        .any(|visible| visible.entity.read(cx).editor_selection_range.is_some())
+                        .any(|visible| visible.entity.read(cx).editor_selection_clean_range.is_some())
                 );
 
                 editor.begin_cross_block_drag_at_point(press, cx);
@@ -104,7 +104,7 @@ mod tests {
                         .document
                         .visible_blocks()
                         .iter()
-                        .all(|visible| visible.entity.read(cx).editor_selection_range.is_none())
+                        .all(|visible| visible.entity.read(cx).editor_selection_clean_range.is_none())
                 );
             });
         });
@@ -193,7 +193,7 @@ mod tests {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
             assert_eq!(block.selected_range, 4..4);
             assert_eq!(block.marked_range, Some(2..4));
-            assert!(block.editor_selection_range.is_none());
+            assert!(block.editor_selection_clean_range.is_none());
         });
         cx.quit();
     }
@@ -222,7 +222,7 @@ mod tests {
             );
             for visible in visible {
                 let block = visible.entity.read(cx);
-                assert_eq!(block.editor_selection_range, Some(0..block.visible_len()));
+                assert_eq!(block.editor_selection_clean_range, Some(0..block.visible_len()));
             }
         });
         cx.quit();
@@ -308,8 +308,8 @@ mod tests {
             set_selection(editor, 1, 0, 2, item2_len, cx);
 
             // 高亮铺满两行：端点在干净坐标里，各块按自己的投影换成显示偏移。
-            assert_eq!(item1.read(cx).editor_selection_range, Some(0..item1_len));
-            assert_eq!(item2.read(cx).editor_selection_range, Some(0..item2_len));
+            assert_eq!(item1.read(cx).editor_selection_clean_range, Some(0..item1_len));
+            assert_eq!(item2.read(cx).editor_selection_clean_range, Some(0..item2_len));
 
             // 交出去的就是文件里那两行字节，连同行首的列表记号与 `**`。
             let copied = editor.cross_block_selected_markdown(cx).expect("选区文本");
@@ -367,7 +367,7 @@ mod tests {
             editor.sync_cross_block_selection_visuals(cx);
 
             assert_eq!(
-                item2.read(cx).editor_selection_range,
+                item2.read(cx).editor_selection_display_range(),
                 Some(0..revealed_len),
                 "高亮要铺到行尾：显形出来的记号也在选区内"
             );
@@ -717,7 +717,7 @@ mod tests {
                 .map(|block| {
                     block
                         .read(cx)
-                        .editor_selection_range
+                        .editor_selection_clean_range
                         .clone()
                         .filter(|range| range.start != range.end)
                         .map(|range| range.len())
@@ -757,5 +757,25 @@ mod tests {
             if actual != "abcXf" { mismatches.push((input, actual)); }
         }
         assert!(mismatches.is_empty(), "{mismatches:?}");
+    }
+
+    #[gpui::test]
+    async fn core_repair_document_highlight_uses_the_current_inline_projection(cx: &mut TestAppContext) {
+        init_editor_test_app(cx);
+        let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "first\n\n**abc**".into(), None));
+        redraw(cx);
+        redraw(cx);
+        let target = editor.update(cx, |editor, cx| {
+            set_selection(editor, 0, 0, 1, 3, cx);
+            editor.document.root_blocks()[1].clone()
+        });
+        target.update_in(cx, |block, window, cx| {
+            block.focus_handle.focus(window);
+            block.selected_range = 1..1;
+            block.sync_inline_projection_for_focus(true);
+            assert!(block.display_text().len() > block.clean_visible_len(), "text={}", block.display_text());
+            assert_eq!(block.editor_selection_display_range(), Some(block.clean_range_to_display_range(0..3)));
+            cx.notify();
+        });
     }
 }

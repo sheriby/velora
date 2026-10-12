@@ -49,7 +49,7 @@ impl Editor {
         let mut changed = false;
         for visible in self.document.visible_blocks().to_vec() {
             visible.entity.update(cx, |block, cx| {
-                if block.editor_selection_range.take().is_some() {
+                if block.editor_selection_clean_range.take().is_some() {
                     changed = true;
                     cx.notify();
                 }
@@ -61,7 +61,7 @@ impl Editor {
                 continue;
             };
             cell.update(cx, |cell, cx| {
-                if cell.editor_selection_range.take().is_some() {
+                if cell.editor_selection_clean_range.take().is_some() {
                     changed = true;
                     cx.notify();
                 }
@@ -428,8 +428,7 @@ impl Editor {
 
     /// 把选区的干净区间铺到每一根块上。
     ///
-    /// 先生成干净区间，再按各块自己的投影换成显示偏移：选区存的是干净坐标，
-    /// 高亮画的是显示坐标，换算只在这一处发生。
+    /// 切片保留干净坐标，呈现与工具栏在当前投影确定后换成显示范围。
     fn sync_cross_block_selection_visuals(&mut self, cx: &mut Context<Self>) {
         self.sync_document_selection_ownership(cx);
         let normalized = self.normalized_cross_block_selection(cx);
@@ -450,14 +449,13 @@ impl Editor {
                 } else {
                     0..len
                 };
-                let range = block.clean_range_to_display_range(range);
                 (!range.is_empty()).then_some(range)
             });
 
             visible.entity.update(cx, |block, cx| {
                 block.document_selection_active = Some(self.document_selection_active.clone());
-                if block.editor_selection_range != next_range {
-                    block.editor_selection_range = next_range.clone();
+                if block.editor_selection_clean_range != next_range {
+                    block.editor_selection_clean_range = next_range.clone();
                     cx.notify();
                 }
             });

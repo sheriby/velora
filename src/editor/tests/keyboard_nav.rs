@@ -183,7 +183,7 @@ async fn repeated_ctrl_a_selects_all_rendered_blocks(cx: &mut TestAppContext) {
             let block = visible.entity.read(cx);
             let len = block.visible_len();
             if len > 0 {
-                assert_eq!(block.editor_selection_range, Some(0..len));
+                assert_eq!(block.editor_selection_clean_range, Some(0..len));
             }
         }
     });
@@ -201,7 +201,7 @@ async fn repeated_ctrl_a_selects_all_rendered_blocks(cx: &mut TestAppContext) {
             let block = visible.entity.read(cx);
             let len = block.visible_len();
             if len > 0 {
-                assert_eq!(block.editor_selection_range, Some(0..len));
+                assert_eq!(block.editor_selection_clean_range, Some(0..len));
             }
         }
     });
@@ -864,7 +864,7 @@ fn assert_whole_document_selected(
             let len = block.visible_len();
             if len > 0 {
                 assert_eq!(
-                    block.editor_selection_range,
+                    block.editor_selection_clean_range,
                     Some(0..len),
                     "{pressed}：这一块的高亮该铺满（{}）",
                     block.display_text()

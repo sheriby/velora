@@ -293,7 +293,7 @@ impl Block {
             return;
         }
 
-        if self.editor_selection_range.is_some() {
+        if self.editor_selection_clean_range.is_some() {
             cx.emit(BlockEvent::RequestReplaceCrossBlockSelection {
                 text: "\n".to_string(),
                 selected_range_relative: None,

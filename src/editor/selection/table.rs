@@ -5,7 +5,7 @@
 //! 选上，复制出去是这几格的字（同行的格用制表符接，行与行之间换行）。
 //!
 //! 所以这里存的是**格内的可见文本偏移**（与块内选区间一套干净坐标）：高亮按格切段铺到
-//! 格子的 `editor_selection_range` 上（与跨块选区同一套换算与画法），复制与删除按同一份
+//! 格子的 `editor_selection_clean_range` 上（与跨块选区同一套换算与画法），复制与删除按同一份
 //! 切段走。格子自己的块内选区不受影响——指针没离开按下那一格时，选文字还是格子自己的事。
 
 use super::*;
@@ -261,7 +261,7 @@ impl Editor {
                 continue;
             };
             cell.update(cx, |cell, cx| {
-                if cell.editor_selection_range.take().is_some() {
+                if cell.editor_selection_clean_range.take().is_some() {
                     cx.notify();
                 }
             });
@@ -273,8 +273,7 @@ impl Editor {
         };
         let mut painted = Vec::with_capacity(cells.len());
         for (position, cell, range) in cells {
-            let display_range = cell.read(cx).clean_range_to_display_range(range);
-            if display_range.is_empty() {
+            if range.is_empty() {
                 continue;
             }
             let table_block_id = self.table_cell_host_table(cell.entity_id());
@@ -282,8 +281,8 @@ impl Editor {
                 painted.push((table_block_id, position));
             }
             cell.update(cx, |cell, cx| {
-                if cell.editor_selection_range != Some(display_range.clone()) {
-                    cell.editor_selection_range = Some(display_range.clone());
+                if cell.editor_selection_clean_range != Some(range.clone()) {
+                    cell.editor_selection_clean_range = Some(range.clone());
                     cx.notify();
                 }
             });

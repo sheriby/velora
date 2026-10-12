@@ -216,7 +216,7 @@ impl Block {
         // 跨块选区把这一块整段选上时它是一张图片，没有文字布局可铺高亮：不在这里
         // 补一条底色，选中的公式在屏幕上和没选中一样。
         let container = if self
-            .editor_selection_range
+            .editor_selection_clean_range
             .as_ref()
             .is_some_and(|range| !range.is_empty())
         {
@@ -406,7 +406,7 @@ impl Block {
         // 这一段没有文本元素，逐字高亮铺不出来：落在选区里就整块铺一条底色，
         // 否则选中的公式在屏幕上和没选中一样。
         let runs = if self
-            .editor_selection_range
+            .editor_selection_clean_range
             .as_ref()
             .is_some_and(|range| !range.is_empty())
         {
@@ -432,6 +432,7 @@ impl Block {
             move |bounds, _window, cx| {
                 entity.update(cx, |block: &mut Self, _cx| {
                     block.last_bounds = Some(bounds);
+                    block.last_layout = None;
                 });
             },
             |_, _, _, _| {},

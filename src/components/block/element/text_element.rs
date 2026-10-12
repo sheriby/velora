@@ -423,12 +423,10 @@ impl Element for BlockTextElement {
     ) -> Self::PrepaintState {
         let theme = cx.global::<ThemeManager>().current_arc();
         let input = self.input.read(cx);
-        let editor_selection_range = input
-            .editor_selection_range
-            .as_ref()
-            .filter(|range| !range.is_empty())
-            .cloned();
-        let selected_range = editor_selection_range
+        let editor_selection_display_range = input
+            .editor_selection_display_range()
+            .filter(|range| !range.is_empty());
+        let selected_range = editor_selection_display_range
             .clone()
             .unwrap_or_else(|| input.selected_range.clone());
         let cursor = input.cursor_offset();
@@ -535,7 +533,7 @@ impl Element for BlockTextElement {
         let text_align = input.text_align();
 
         let (current_line_quads, selection_quads, bracket_quads, cursor_quad) =
-            if (focused || editor_selection_range.is_some()) && !lines.is_empty() {
+            if (focused || editor_selection_display_range.is_some()) && !lines.is_empty() {
                 if self.is_placeholder {
                     // Placeholder: cursor after the placeholder text
                     let layout = &lines[0];

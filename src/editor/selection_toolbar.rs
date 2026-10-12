@@ -98,7 +98,7 @@ impl Editor {
             let mut union: Option<Bounds<Pixels>> = None;
             for entry in self.document.visible_blocks() {
                 let block = entry.entity.read(cx);
-                let Some(range) = block.editor_selection_range.clone() else {
+                let Some(range) = block.editor_selection_display_range() else {
                     continue;
                 };
                 if range.is_empty() {

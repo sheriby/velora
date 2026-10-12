@@ -4,6 +4,23 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn core_repair_mixed_paragraph_does_not_keep_text_layout_after_blur(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "first\n\ntext $x$ end".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let (first, mixed) = editor.read_with(cx, |editor, _| (editor.document.root_blocks()[0].clone(), editor.document.root_blocks()[1].clone()));
+    editor.update(cx, |editor, _| editor.focus_block(mixed.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    assert!(mixed.read_with(cx, |block, _| block.has_text_layout()));
+    editor.update(cx, |editor, _| editor.focus_block(first.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    assert!(!mixed.read_with(cx, |block, _| block.has_text_layout()), "混合视觉呈现不能使用聚焦期间的旧文字布局");
+}
+
+#[gpui::test]
 async fn core_repair_shift_click_returning_to_the_anchor_keeps_the_original_anchor(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "abc\n\ndef\n\nghi".into(), None));
@@ -560,7 +577,7 @@ fn cell_selection_ranges(
 ) -> Vec<Option<std::ops::Range<usize>>> {
     table_cells(cx, table)
         .into_iter()
-        .map(|cell| cell.read(cx).editor_selection_range.clone())
+        .map(|cell| cell.read(cx).editor_selection_clean_range.clone())
         .collect()
 }
 
@@ -1039,7 +1056,7 @@ async fn dragging_across_newly_typed_source_lines_selects_the_code_block(
         let blocks = editor.document.visible_blocks();
         let states: Vec<Option<std::ops::Range<usize>>> = blocks
             .iter()
-            .map(|visible| visible.entity.read(cx).editor_selection_range.clone())
+            .map(|visible| visible.entity.read(cx).editor_selection_clean_range.clone())
             .collect();
         assert_eq!(
             states.len(),

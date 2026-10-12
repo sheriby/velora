@@ -321,7 +321,7 @@ async fn ime_selection_ignores_editor_external_selection(cx: &mut TestAppContext
 
     block.update(cx, |block, _cx| {
         block.selected_range = 1..1;
-        block.editor_selection_range = Some(0..block.visible_len());
+        block.editor_selection_clean_range = Some(0..block.visible_len());
     });
 
     let selection = cx.update(|window, cx| {
