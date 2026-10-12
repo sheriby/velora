@@ -9,7 +9,7 @@
 //! 切段走。格子自己的块内选区不受影响——指针没离开按下那一格时，选文字还是格子自己的事。
 
 use super::*;
-use crate::components::TableCellPosition;
+use crate::components::{TableCellPosition, InlineTextTree, serialize_table_cell_markdown};
 
 /// 表格里的一处文本位置：第几行第几列的那一格，加上这一格里的**干净**可见偏移。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -436,22 +436,34 @@ impl Editor {
     pub(crate) fn replace_table_text_selection_with_text(
         &mut self,
         new_text: &str,
+        selected_range_relative: Option<Range<usize>>,
+        mark_inserted_text: bool,
         undo_kind: UndoCaptureKind,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(selection) = self.table_text_selection else {
+        if self.table_text_selection.is_none() {
             return false;
-        };
+        }
         let Some(mut ranges) = self.table_text_selection_source_ranges(cx) else {
             return false;
         };
-        let (start, _) = selection.normalized();
         ranges.sort_by_key(|range| range.start);
         // 新文字落在选区**起点**那一段的开头（与跨块替换同一条口径）。从后往前删，
         // 起点的字节位置不会被后面的删除挪动。
         let Some(insertion) = ranges.first().map(|range| range.start) else {
             return false;
         };
+        let serialized_input = |input: &str| {
+            let flattened = crate::components::flatten_table_cell_input(input);
+            serialize_table_cell_markdown(&InlineTextTree::plain(flattened))
+        };
+        let inserted = serialized_input(new_text);
+        let source_offset = |offset| {
+            let offset = crate::components::markdown::inline::clamp_to_char_boundary(new_text, offset);
+            insertion + serialized_input(new_text.get(..offset).unwrap_or_default()).len()
+        };
+        let selected_source = selected_range_relative.map(|relative| source_offset(relative.start)..source_offset(relative.end))
+            .unwrap_or(insertion + inserted.len()..insertion + inserted.len());
 
         self.prepare_undo_capture(undo_kind, cx);
         self.table_text_selection = None;
@@ -460,22 +472,15 @@ impl Editor {
             let applied = self.buffer.edit(range.clone(), "");
             self.record_buffer_edit(applied);
         }
-        if !new_text.is_empty() {
-            let applied = self.buffer.edit(insertion..insertion, new_text);
+        if !inserted.is_empty() {
+            let applied = self.buffer.edit(insertion..insertion, &inserted);
             self.record_buffer_edit(applied);
         }
         self.rebuild_document_from_buffer(cx);
         // 光标回到起点那一格新文字的末尾，不然删完/打完没有下一次敲字的地方。
-        let caret = start.offset + new_text.len();
-        if let Some(cell) = self.table_cell_entity(selection.table_block_id, start.cell, cx) {
-            let cell_id = cell.entity_id();
-            cell.update(cx, |cell, cx| {
-                let caret = cell.clean_to_current_cursor_offset(caret);
-                cell.selected_range = caret..caret;
-                cell.selection_reversed = false;
-                cx.notify();
-            });
-            self.focus_block(cell_id);
+        self.apply_selection_snapshot_in_current_mode(&UndoSelectionSnapshot { range: selected_source, reversed: false }, cx);
+        if mark_inserted_text && !inserted.is_empty() {
+            self.apply_marked_source_range(insertion..insertion + inserted.len(), cx);
         }
         self.mark_dirty_written_back(cx);
         self.finalize_pending_undo_capture(cx);

@@ -278,7 +278,7 @@ impl Block {
             }
 
             if self.is_table_cell() {
-                let flattened = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+                let flattened = crate::components::flatten_table_cell_input(&text);
                 self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
                 self.replace_text_in_range(None, &flattened, window, cx);
                 return;

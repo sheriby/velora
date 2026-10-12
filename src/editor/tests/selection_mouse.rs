@@ -4,6 +4,64 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn core_repair_cross_cell_replacement_keeps_table_structure_and_input_target(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+    let mut mismatches = Vec::new();
+    for (input, expected) in [("|", "| a\\| | d |\n| --- | --- |\n| ef | gh |"), ("X\nY", "| aX Y | d |\n| --- | --- |\n| ef | gh |"), ("中", "| a中 | d |\n| --- | --- |\n| ef | gh |")] {
+        let (editor, window_cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+        redraw(window_cx);
+        editor.update(window_cx, |editor, cx| {
+            let table = editor.document.first_root().unwrap().clone();
+            editor.select_table_text_range(table.entity_id(),
+                TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1, whole_cell: false },
+                TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1, whole_cell: false }, cx);
+            let cell = table.read(cx).table_runtime.as_ref().unwrap().header[1].clone();
+            editor.focus_block(cell.entity_id());
+            assert!(editor.replace_cross_block_selection_with_text(input, None, false, UndoCaptureKind::NonCoalescible, cx));
+        });
+        redraw(window_cx);
+        let actual = editor.read_with(window_cx, |editor, _| editor.buffer.text());
+        if actual != expected { mismatches.push((input, actual, expected.to_string())); }
+        window_cx.simulate_input("Z");
+        redraw(window_cx);
+        let actual = editor.read_with(window_cx, |editor, _| editor.buffer.text());
+        let expected = expected.replacen(" | d |", "Z | d |", 1);
+        if actual != expected { mismatches.push((input, actual, expected)); }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+}
+
+#[gpui::test]
+async fn core_repair_cross_cell_preedit_keeps_relative_selection_and_composition(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().unwrap().clone();
+        editor.select_table_text_range(table.entity_id(),
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1, whole_cell: false },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1, whole_cell: false }, cx);
+        assert!(editor.replace_cross_block_selection_with_text("ni", Some(1..1), true, UndoCaptureKind::ImeComposition, cx));
+    });
+    redraw(cx);
+    let cell = editor.read_with(cx, |editor, cx| {
+        let cell = editor.current_edit_target_from_state(cx).unwrap();
+        assert_eq!(cell.read(cx).record.title.visible_text(), "ani");
+        assert_eq!(cell.read(cx).selection_clean_range(), 2..2);
+        assert_eq!(cell.read(cx).marked_range, Some(1..3));
+        assert!(editor.has_marked_document_text(cx));
+        cell
+    });
+    cell.update_in(cx, |cell, window, cx| cell.replace_text_in_range(None, "中", window, cx));
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), "| a中 | d |\n| --- | --- |\n| ef | gh |");
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), source);
+}
+
+#[gpui::test]
 async fn core_repair_formula_cell_drag_anchor_survives_focus_projection(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha\n\n| text | $q$ |\n| --- | --- |\n| one | two |".into(), None));
@@ -137,7 +195,7 @@ async fn core_repair_cross_cell_undo_restores_the_logical_text_selection(cx: &mu
         let cell = table.read(cx).table_runtime.as_ref().unwrap().header[1].clone();
         editor.focus_block(cell.entity_id());
         assert_eq!(editor.table_text_selection_text(cx).as_deref(), Some("b\tc"));
-        assert!(editor.replace_table_text_selection_with_text("", UndoCaptureKind::NonCoalescible, cx));
+        assert!(editor.replace_table_text_selection_with_text("", None, false, UndoCaptureKind::NonCoalescible, cx));
     });
     redraw(cx);
     editor.update(cx, |editor, cx| editor.undo_document(cx));

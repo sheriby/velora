@@ -731,6 +731,10 @@ pub(crate) fn serialize_table_cell_markdown(tree: &InlineTextTree) -> String {
         .replace('\n', "<br>")
 }
 
+pub(crate) fn flatten_table_cell_input(text: &str) -> String {
+    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
+}
+
 fn serialize_row<'a>(cells: impl IntoIterator<Item = &'a InlineTextTree>) -> String {
     let rendered = cells
         .into_iter()

@@ -115,7 +115,7 @@ impl Editor {
 
     pub(super) fn on_cut_capture(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.table_text_selection_text(cx) {
-            if !self.replace_table_text_selection_with_text("", UndoCaptureKind::NonCoalescible, cx) {
+            if !self.replace_table_text_selection_with_text("", None, false, UndoCaptureKind::NonCoalescible, cx) {
                 cx.propagate();
                 return;
             }
@@ -143,6 +143,8 @@ impl Editor {
     ) {
         let handled = self.replace_table_text_selection_with_text(
             "",
+            None,
+            false,
             UndoCaptureKind::NonCoalescible,
             cx,
         ) || self.delete_cross_block_selection(cx);
@@ -161,6 +163,8 @@ impl Editor {
     ) {
         let handled = self.replace_table_text_selection_with_text(
             "",
+            None,
+            false,
             UndoCaptureKind::NonCoalescible,
             cx,
         ) || self.delete_cross_block_selection(cx);
@@ -703,7 +707,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.table_text_selection.is_some() {
-            return self.replace_table_text_selection_with_text(new_text, undo_kind, cx);
+            return self.replace_table_text_selection_with_text(new_text, selected_range_relative, mark_inserted_text, undo_kind, cx);
         }
         let Some(selection) = self.normalized_cross_block_selection(cx) else {
             return false;
