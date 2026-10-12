@@ -4,6 +4,23 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn core_repair_formula_cell_drag_anchor_survives_focus_projection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha\n\n| text | $q$ |\n| --- | --- |\n| one | two |".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let start = cell_bounds(&editor, cx, (0, 1)).center();
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let end = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::none());
+    let text = editor.read_with(cx, |editor, cx| editor.selected_visible_text(cx)).unwrap();
+    assert!(text.contains("$q$"), "聚焦后锚点仍需保留按下时的整格选择：{text:?}");
+}
+
+#[gpui::test]
 async fn core_repair_offscreen_table_bounds_cannot_claim_a_mounted_cell(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let mut source = "| old |\n| --- |\n| cell |\n\n".to_string();
@@ -114,8 +131,8 @@ async fn core_repair_cross_cell_undo_restores_the_logical_text_selection(cx: &mu
     editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().unwrap().clone();
         editor.select_table_text_range(table.entity_id(),
-            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1 },
-            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1 }, cx,
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1, whole_cell: false },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1, whole_cell: false }, cx,
         );
         let cell = table.read(cx).table_runtime.as_ref().unwrap().header[1].clone();
         editor.focus_block(cell.entity_id());
@@ -140,8 +157,8 @@ async fn core_repair_cross_cell_selection_survives_a_source_view_round_trip(cx: 
     editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().unwrap().clone();
         editor.select_table_text_range(table.entity_id(),
-            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1 },
-            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1 }, cx,
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1, whole_cell: false },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1, whole_cell: false }, cx,
         );
         editor.toggle_view_mode(cx);
     });
@@ -170,8 +187,8 @@ async fn review_arrow_clears_cross_cell_selection_before_delete(cx: &mut TestApp
         editor.active_entity_id = Some(cell.entity_id());
         editor.table_text_selection = Some(TableTextSelection {
             table_block_id: table.entity_id(),
-            anchor: TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 0 },
-            focus: TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 2 },
+            anchor: TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 0, whole_cell: false },
+            focus: TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 2, whole_cell: false },
         });
         editor.sync_table_text_selection_visuals(cx);
     }));
@@ -194,8 +211,8 @@ async fn review_cut_keeps_clipboard_when_table_deletion_has_no_mapping(cx: &mut 
         let table = editor.document.first_root().unwrap().clone();
         editor.table_text_selection = Some(TableTextSelection {
             table_block_id: table.entity_id(),
-            anchor: TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 0 },
-            focus: TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 2 },
+            anchor: TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 0, whole_cell: false },
+            focus: TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 2, whole_cell: false },
         });
         editor.document.clear_source_span(table.entity_id());
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("保留".into()));
@@ -707,10 +724,12 @@ async fn cross_cell_selection_keeps_text_granularity(cx: &mut TestAppContext) {
             anchor: TableTextPosition {
                 cell: TableCellPosition { row: 0, column: 0 },
                 offset: 1,
+                whole_cell: false,
             },
             focus: TableTextPosition {
                 cell: TableCellPosition { row: 1, column: 1 },
                 offset: 1,
+                whole_cell: false,
             },
         });
         editor.sync_table_text_selection_visuals(cx);

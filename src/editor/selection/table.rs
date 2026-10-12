@@ -16,6 +16,7 @@ use crate::components::TableCellPosition;
 pub(crate) struct TableTextPosition {
     pub(crate) cell: TableCellPosition,
     pub(crate) offset: usize,
+    pub(crate) whole_cell: bool,
 }
 
 /// 跨格的文本选区：从锚点选到落点。
@@ -51,7 +52,10 @@ impl Editor {
         let endpoint = |position: TableTextPosition, at_end: bool| {
             let cell = self.table_cell_entity(selection.table_block_id, position.cell, cx)?;
             let mapping = self.source_mapping_for_entity(cell.entity_id(), cx)?;
-            self.mapping_source_range_endpoint(&mapping, position.offset, at_end, cx)
+            let offset = if position.whole_cell {
+                if at_end { cell.read(cx).clean_visible_len() } else { 0 }
+            } else { position.offset };
+            self.mapping_source_range_endpoint(&mapping, offset, at_end, cx)
         };
         Some(UndoSelectionSnapshot {
             range: endpoint(start, false)?..endpoint(end, true)?,
@@ -88,6 +92,7 @@ impl Editor {
                 TableTextPosition {
                     cell: binding.position,
                     offset: clean,
+                    whole_cell: false,
                 },
             ))
         };
@@ -135,6 +140,7 @@ impl Editor {
             TableTextPosition {
                 cell: cell_position,
                 offset,
+                whole_cell: !cell.has_text_layout(),
             },
         ))
     }
@@ -225,14 +231,9 @@ impl Editor {
                 }
                 let block = cell.read(cx);
                 let len = block.clean_visible_len();
-                // 只装公式的格子没有文字布局，指针位置量不出格内偏移（一直是 0）：
-                // 这种格子整格算，否则落在选区终点侧的那一格区间是空的，看上去就是
-                // 「格子里的公式选不中」。
-                let (start_offset, end_offset) = if block.has_text_layout() {
-                    (start.offset.min(len), end.offset.min(len))
-                } else {
-                    (0, len)
-                };
+                // 按下后焦点可能显形出文字布局；整格语义属于端点，不能随下一帧改变。
+                let start_offset = if start.whole_cell { 0 } else { start.offset.min(len) };
+                let end_offset = if end.whole_cell { len } else { end.offset.min(len) };
                 let range = if start.cell == end.cell {
                     start_offset.min(end_offset)..start_offset.max(end_offset)
                 } else if position == start.cell {
@@ -333,6 +334,7 @@ impl Editor {
             let start = TableTextPosition {
                 cell: TableCellPosition { row: 0, column: 0 },
                 offset: 0,
+                whole_cell: false,
             };
             let end = TableTextPosition {
                 cell: TableCellPosition {
@@ -340,6 +342,7 @@ impl Editor {
                     column: last_column,
                 },
                 offset: last_cell.read(cx).clean_visible_len(),
+                whole_cell: false,
             };
             cells.extend(self.table_cells_in_text_range(&table, start, end, cx));
         }
