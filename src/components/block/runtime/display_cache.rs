@@ -16,7 +16,12 @@ impl Block {
         let collapsed_affinity = self.current_collapsed_caret_affinity();
         let keep_projection =
             self.projection.is_some() && self.edit_mode.supports_inline_projection();
-        self.render_cache = self.record.title.render_cache();
+        let next_cache = self.record.title.render_cache();
+        if next_cache.spans() != self.render_cache.spans() {
+            self.render_generation = self.render_generation.wrapping_add(1);
+            self.shape_memo = None;
+        }
+        self.render_cache = next_cache;
         self.sync_code_highlight();
         self.sync_image_runtime();
         self.projection = None;

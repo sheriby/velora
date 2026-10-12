@@ -1,6 +1,52 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_style_changes_with_identical_text_refresh_shaped_runs(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "first\n\nabc".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| editor.document.root_blocks()[1].clone());
+    let before = block.read_with(cx, |block, _| block.shape_memo_entry().unwrap().lines);
+    block.update(cx, |block, cx| {
+        let mut title = block.record.title.clone();
+        title.toggle_bold(0..3);
+        block.record.set_title(title);
+        block.sync_render_cache();
+        cx.notify();
+    });
+    redraw(cx);
+    let after = block.read_with(cx, |block, _| {
+        assert_eq!(block.display_text(), "abc");
+        assert!(block.inline_spans().iter().any(|span| span.style.bold));
+        let after = block.shape_memo_entry().unwrap().lines;
+        assert!(!Arc::ptr_eq(&before, &after));
+        after
+    });
+    redraw(cx);
+    let unchanged = block.read_with(cx, |block, _| block.shape_memo_entry().unwrap().lines);
+    assert!(Arc::ptr_eq(&after, &unchanged), "输入未变的帧应继续复用排版产物");
+}
+
+#[gpui::test]
+async fn core_repair_same_text_composition_refreshes_and_removes_underline(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "abc".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    let before = block.read_with(cx, |block, _| block.shape_memo_entry().unwrap().lines);
+    block.update_in(cx, |block, window, cx| block.replace_and_mark_text_in_range(Some(0..3), "abc", Some(3..3), window, cx));
+    redraw(cx);
+    let marked = block.read_with(cx, |block, _| block.shape_memo_entry().unwrap().lines);
+    assert!(!Arc::ptr_eq(&before, &marked), "预编辑标记必须进入当前排版产物");
+    block.update_in(cx, |block, window, cx| block.unmark_text(window, cx));
+    redraw(cx);
+    let committed = block.read_with(cx, |block, _| block.shape_memo_entry().unwrap().lines);
+    assert!(!Arc::ptr_eq(&marked, &committed), "取消组合标记不能继续复用预编辑的排版产物");
+}
+
+#[gpui::test]
 async fn changing_font_categories_relayouts_body_and_code_independently(cx: &mut TestAppContext) {
     use crate::config::preferences::{
         AppPreferences, FontPreferences, open_preferences_window_with_state,

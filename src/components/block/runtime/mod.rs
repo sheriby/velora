@@ -200,6 +200,7 @@ pub struct Block {
     cached_display_text: SharedString,
     /// 文本代数：cached_display_text 内容变化时递增（P3 shape 备忘键）。
     display_generation: u64,
+    render_generation: u64,
     /// 硬行表按 display_generation 缓存：表是显示文本的纯函数，同一代文本
     /// 只建一次，命中测试、每帧选区/高亮、几何反推共用一份（B10 把布局收成
     /// Arc 后，这是行表侧的对应收口）。
@@ -367,6 +368,7 @@ impl Block {
             projection_cache_key: None,
             cached_display_text: SharedString::default(),
             display_generation: 0,
+            render_generation: 0,
             hard_line_ranges_cache: std::cell::RefCell::new(None),
             shape_memo: None,
             long_line_plan: None,
@@ -610,6 +612,10 @@ impl Block {
         self.display_generation
     }
 
+    pub(crate) fn render_generation(&self) -> u64 {
+        self.render_generation
+    }
+
     pub(crate) fn highlight_generation(&self) -> u64 {
         self.highlight_generation
     }
@@ -812,6 +818,8 @@ mod tests;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ShapeMemoKey {
     pub generation: u64,
+    pub render_generation: u64,
+    pub marked_range: Option<(usize, usize)>,
     /// 高亮代数：markdown 源码分块的接缝状态级联更新不改块文本，靠它把
     /// 旧配色的 shape 备忘作废。
     pub highlight_generation: u64,
