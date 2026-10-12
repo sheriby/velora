@@ -506,6 +506,9 @@ pub(super) struct CrossBlockDrag {
     /// 按下的那一下落在哪个表格格子上、格内第几个字。指针没离开这一格时选字仍是
     /// 格子自己的事；离开之后编辑器才接手，把两格之间的文字按格切段选上。
     pub(super) anchor_table_cell: Option<(EntityId, TableTextPosition)>,
+    /// 按下那一下的落点落在没有文字布局的块上（未聚焦的公式、图表）：这个锚点按整块算。
+    /// 得在按下当刻记下来——按下本身会把这一块聚焦，它随后就有了文字布局。
+    pub(super) anchor_is_whole_block: bool,
 }
 
 /// Short-lived Ctrl/Cmd+A press counter for rendered-mode selection upgrade.

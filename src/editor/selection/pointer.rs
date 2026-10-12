@@ -8,11 +8,14 @@ impl Editor {
         let had_table_selection = self.table_text_selection.take().is_some();
         let changed_visuals = self.clear_cross_block_selection_visuals(cx);
         let changed = had_selection || had_table_selection || changed_visuals;
+        // 按下那一下还不知道拖动方向：端点先记块尾，随后的每次 move 由
+        // whole_block_anchor 按方向改写。
         self.cross_block_drag = self
-            .cross_block_endpoint_for_point(position, cx)
+            .cross_block_endpoint_for_point(position, None, cx)
             .map(|anchor| CrossBlockDrag {
                 anchor,
                 anchor_table_cell: self.table_text_anchor_at_point(position, cx),
+                anchor_is_whole_block: self.block_at_endpoint_is_layout_less(anchor, cx),
             });
         if changed {
             cx.notify();
@@ -79,21 +82,26 @@ impl Editor {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(focus) = self.cross_block_endpoint_for_point(position, cx) else {
+        // 先取锚点：它决定指针落在没有文字布局的块里时给哪个端点。
+        let Some(anchor) = self.cross_block_shift_anchor(cx) else {
+            return false;
+        };
+        let Some(focus) = self.cross_block_endpoint_for_point(position, Some(anchor), cx) else {
             return false;
         };
         // 落在表格格子上的按下归表格自己的按格选字，不在这里扩。
         if self.table_text_anchor_at_point(position, cx).is_some() {
             return false;
         }
-        let Some(anchor) = self.cross_block_shift_anchor(cx) else {
-            return false;
-        };
         // 同一根块里的 shift+点交给块自己的扩选（与 mouse_move 的同块早退同一条口径）。
         if anchor.entity_id == focus.entity_id {
             return false;
         }
-        let selection = CrossBlockSelection { anchor, focus };
+        let anchor_is_whole_block = self.block_at_endpoint_is_layout_less(anchor, cx);
+        let selection = CrossBlockSelection {
+            anchor: self.whole_block_anchor(anchor, focus, anchor_is_whole_block, cx),
+            focus,
+        };
         if self.cross_block_selection_is_empty(selection) {
             return false;
         }
@@ -101,6 +109,7 @@ impl Editor {
         self.cross_block_drag = Some(CrossBlockDrag {
             anchor,
             anchor_table_cell: None,
+            anchor_is_whole_block,
         });
         self.cross_block_selection = Some(selection);
         self.sync_cross_block_selection_visuals(cx);
@@ -123,6 +132,53 @@ impl Editor {
             entity_id: target.entity_id(),
             offset: anchor,
         })
+    }
+
+    /// 端点所在的块有没有可寻址的文字布局。没有的块（未聚焦的公式、图表只画图片）
+    /// 量不出块内偏移，指针落在它上面只能整块进选区。
+    fn block_at_endpoint_is_layout_less(
+        &self,
+        endpoint: CrossBlockSelectionEndpoint,
+        cx: &App,
+    ) -> bool {
+        self.document
+            .block_entity_by_id(endpoint.entity_id)
+            .is_some_and(|block| block.read(cx).last_bounds.is_none())
+    }
+
+    /// 锚点落在没有文字布局的块上时，端点得整块算，不能是块内偏移。
+    ///
+    /// 锚点在这类块上时命中测试给不出块内偏移（按下那一下给的是块尾，方向还没定），
+    /// 这里按焦点在锚点上方还是下方把它定成块首或块尾：往下拖它进起点侧（块首，
+    /// 整块都进来），往上拖它进终点侧（块尾，同样整块都进来）。
+    fn whole_block_anchor(
+        &self,
+        anchor: CrossBlockSelectionEndpoint,
+        focus: CrossBlockSelectionEndpoint,
+        is_whole_block: bool,
+        cx: &App,
+    ) -> CrossBlockSelectionEndpoint {
+        if !is_whole_block {
+            return anchor;
+        }
+        let Some(block) = self.document.block_entity_by_id(anchor.entity_id) else {
+            return anchor;
+        };
+        let (Some(anchor_index), Some(focus_index)) = (
+            self.document.visible_index_for_entity_id(anchor.entity_id),
+            self.document.visible_index_for_entity_id(focus.entity_id),
+        ) else {
+            return anchor;
+        };
+        let offset = if focus_index < anchor_index {
+            block.read(cx).clean_visible_len()
+        } else {
+            0
+        };
+        CrossBlockSelectionEndpoint {
+            entity_id: anchor.entity_id,
+            offset,
+        }
     }
 
     pub(crate) fn on_editor_capture_mouse_down(
@@ -197,10 +253,11 @@ impl Editor {
         let Some(drag) = self.cross_block_drag else {
             return;
         };
-        let Some(focus) = self.cross_block_endpoint_for_point(event.position, cx) else {
+        let Some(focus) =
+            self.cross_block_endpoint_for_point(event.position, Some(drag.anchor), cx)
+        else {
             return;
         };
-
         // 在表格格子上按下的拖动：指针离开按下那一格之后由编辑器接手，把两格之间的
         // 文字按格切段选上（同行的格连着，行与行之间换行）。没离开那一格时选字还是
         // 格子自己的块内选区，编辑器一个字都不碰。
@@ -232,10 +289,8 @@ impl Editor {
             return;
         }
 
-        let selection = CrossBlockSelection {
-            anchor: drag.anchor,
-            focus,
-        };
+        let anchor = self.whole_block_anchor(drag.anchor, focus, drag.anchor_is_whole_block, cx);
+        let selection = CrossBlockSelection { anchor, focus };
         if self.cross_block_selection_is_empty(selection) {
             self.cross_block_selection = None;
         } else {
@@ -264,6 +319,7 @@ impl Editor {
     fn cross_block_endpoint_for_point(
         &self,
         position: Point<Pixels>,
+        anchor: Option<CrossBlockSelectionEndpoint>,
         cx: &App,
     ) -> Option<CrossBlockSelectionEndpoint> {
         let mut previous: Option<(Entity<Block>, Bounds<Pixels>)> = None;
@@ -284,9 +340,10 @@ impl Editor {
             if position.y < bounds.top() {
                 // 上一块底与这一块顶之间的空间属于中间那些块：归最上面那一块。
                 if let Some(layout_less) = layout_less {
+                    let offset = self.layout_less_endpoint_offset(&layout_less, anchor, cx);
                     return Some(CrossBlockSelectionEndpoint {
                         entity_id: layout_less.entity_id(),
-                        offset: 0,
+                        offset,
                     });
                 }
                 // 落点在这一块上方：归上一块的块尾；没有上一块就归它的块首。
@@ -317,14 +374,40 @@ impl Editor {
         }
 
         if let Some(layout_less) = layout_less {
+            let offset = self.layout_less_endpoint_offset(&layout_less, anchor, cx);
             return Some(CrossBlockSelectionEndpoint {
                 entity_id: layout_less.entity_id(),
-                offset: 0,
+                offset,
             });
         }
         previous.map(|(entity, _)| CrossBlockSelectionEndpoint {
             entity_id: entity.entity_id(),
             offset: entity.read(cx).clean_visible_len(),
         })
+    }
+
+    /// 没有文字布局的块（未聚焦的公式、图表）量不出块内偏移，端点只能取块首或块尾。
+    ///
+    /// 取哪一头由拖动方向定：焦点在锚点下方（往下拖）时这一块是选区的起点侧，取块首；
+    /// 往上拖时它是终点侧，取块尾——终点侧取块首等于一个字也不选，选区中间横着的
+    /// 那一根公式就永远选不中。按下那一下还不知道方向，随后的每次 move 都会按方向
+    /// 改写锚点（见 [`Self::whole_block_anchor`]）。
+    fn layout_less_endpoint_offset(
+        &self,
+        entity: &Entity<Block>,
+        anchor: Option<CrossBlockSelectionEndpoint>,
+        cx: &App,
+    ) -> usize {
+        let end = entity.read(cx).clean_visible_len();
+        let Some(anchor) = anchor else {
+            return end;
+        };
+        let Some(anchor_index) = self.document.visible_index_for_entity_id(anchor.entity_id) else {
+            return end;
+        };
+        match self.document.visible_index_for_entity_id(entity.entity_id()) {
+            Some(index) if anchor_index > index => 0,
+            _ => end,
+        }
     }
 }

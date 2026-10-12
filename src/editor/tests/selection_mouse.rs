@@ -976,3 +976,141 @@ async fn dragging_across_newly_typed_source_lines_selects_the_code_block(
         );
     });
 }
+
+/// 一段正文 + 一根公式 + 一段正文：公式块未聚焦时只画 KaTeX 图片、没有文字布局。
+const MATH_DOC: &str = "alpha\n\n$$\nx = 1\n$$\n\ngamma";
+
+/// 文档第 index 根可见块的上/下半区里的一个点。
+fn block_half_point(
+    editor: &Entity<Editor>,
+    cx: &mut VisualTestContext,
+    index: usize,
+    half: f32,
+) -> gpui::Point<gpui::Pixels> {
+    let bounds = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[index]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("这一块该有布局边界")
+    });
+    gpui::point(bounds.left() + px(1.0), bounds.top() + bounds.size.height * half)
+}
+
+/// 缺陷：公式块未聚焦时没有文字布局，指针落在它这一段空间里给出的端点是块首，
+/// 于是「从上一段往下拖进公式」选出来的只有上一段，公式一个字也进不来。
+#[gpui::test]
+async fn dragging_into_a_formula_selects_the_formula(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, MATH_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    // 公式块没有 last_bounds：它的位置由上下两段的边界夹出来。
+    let (alpha_bottom, gamma_top) = editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        let alpha = visible[0].entity.read(cx).last_bounds.expect("alpha").bottom();
+        let gamma = visible[2].entity.read(cx).last_bounds.expect("gamma").top();
+        (alpha, gamma)
+    });
+    let in_formula = gpui::point(px(700.0), alpha_bottom + (gamma_top - alpha_bottom) * 0.25);
+
+    let start = block_half_point(&editor, cx, 0, 0.5);
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_move(in_formula, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(in_formula, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let text = editor
+            .selected_visible_text(cx)
+            .expect("拖进公式应当有跨块选区");
+        assert!(text.contains("alpha"), "上一段该在选区里：{text:?}");
+        assert!(text.contains("x = 1"), "公式该在选区里：{text:?}");
+    });
+
+    // 聚焦的公式块要铺出选中底色（KaTeX 是图片，没有文字布局可画高亮）。
+    assert!(
+        cx.debug_bounds("math-block-selection").is_some(),
+        "选区里的公式块该铺选中底色"
+    );
+}
+
+/// 反方向：从下一段往上拖进公式，公式同样要整块进选区。
+#[gpui::test]
+async fn dragging_up_into_a_formula_selects_the_formula(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, MATH_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let (alpha_bottom, gamma_top) = editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        let alpha = visible[0].entity.read(cx).last_bounds.expect("alpha").bottom();
+        let gamma = visible[2].entity.read(cx).last_bounds.expect("gamma").top();
+        (alpha, gamma)
+    });
+    let in_formula = gpui::point(px(700.0), alpha_bottom + (gamma_top - alpha_bottom) * 0.75);
+
+    let start = block_half_point(&editor, cx, 2, 0.5);
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_move(in_formula, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_up(in_formula, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let text = editor
+            .selected_visible_text(cx)
+            .expect("往上拖进公式应当有跨块选区");
+        assert!(text.contains("x = 1"), "公式该在选区里：{text:?}");
+    });
+    assert!(
+        cx.debug_bounds("math-block-selection").is_some(),
+        "选区里的公式块该铺选中底色"
+    );
+}
+
+/// Shift+点落在公式上：公式要进选区，不能只选到上一段。
+#[gpui::test]
+async fn shift_click_on_a_formula_includes_the_formula(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, MATH_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let (alpha_bottom, gamma_top) = editor.read_with(cx, |editor, cx| {
+        let visible = editor.document.visible_blocks().to_vec();
+        let alpha = visible[0].entity.read(cx).last_bounds.expect("alpha").bottom();
+        let gamma = visible[2].entity.read(cx).last_bounds.expect("gamma").top();
+        (alpha, gamma)
+    });
+    let in_formula = gpui::point(px(700.0), alpha_bottom + (gamma_top - alpha_bottom) * 0.75);
+
+    let start = block_half_point(&editor, cx, 0, 0.5);
+    let mut shift = Modifiers::none();
+    shift.shift = true;
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    cx.simulate_mouse_down(in_formula, gpui::MouseButton::Left, shift);
+    cx.simulate_mouse_up(in_formula, gpui::MouseButton::Left, shift);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let text = editor
+            .selected_visible_text(cx)
+            .expect("Shift+点在公式上应当有跨块选区");
+        assert!(text.contains("alpha"), "上一段该在选区里：{text:?}");
+        assert!(text.contains("x = 1"), "公式该在选区里：{text:?}");
+    });
+}

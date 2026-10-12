@@ -205,14 +205,27 @@ impl Block {
                 .into_any_element(),
         });
 
-        div()
+        let container = div()
             .w_full()
             .flex()
             .flex_col()
             .gap(px(d.block_padding_y.max(4.0)))
             .py(px(d.block_padding_y.max(6.0)))
-            .children(content)
-            .into_any_element()
+            .children(content);
+        // 跨块选区把这一块整段选上时它是一张图片，没有文字布局可铺高亮：不在这里
+        // 补一条底色，选中的公式在屏幕上和没选中一样。
+        let container = if self
+            .editor_selection_range
+            .as_ref()
+            .is_some_and(|range| !range.is_empty())
+        {
+            container
+                .bg(c.selection)
+                .debug_selector(|| "math-block-selection".to_string())
+        } else {
+            container
+        };
+        container.into_any_element()
     }
 
     pub(crate) fn render_mermaid_content(&self, theme: &Theme, window: &Window, cx: &App) -> AnyElement {
