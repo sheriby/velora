@@ -1,6 +1,64 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_visual_search_targets_finish_scroll_without_taking_query_focus(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut pending = Vec::new();
+    for visual in ["$$\nneedle + 1\n$$", "```mermaid\ngraph TD\nneedle-->end\n```"] {
+        let source = format!("intro\n\n{}{}\n\ntail", (0..60).map(|index| format!("paragraph {index}\n\n")).collect::<String>(), visual);
+        let range_start = source.find("needle").unwrap();
+        let (editor, window_cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+        redraw(window_cx);
+        editor.update(window_cx, |editor, cx| {
+            editor.open_document_find(cx);
+            editor.jump_to_document_search_range(range_start..range_start + 6, cx);
+        });
+        for _ in 0..100 {
+            redraw(window_cx);
+            window_cx.executor().advance_clock(Duration::from_millis(16));
+            window_cx.run_until_parked();
+        }
+        editor.read_with(window_cx, |editor, cx| {
+            if editor.pending_scroll_active_block_into_view || editor.pending_scroll_center_into_view {
+                pending.push(visual);
+            }
+            let host = editor.document.block_entity_by_id(editor.active_entity_id.unwrap()).unwrap();
+            assert!(editor.entity_is_mounted(host.entity_id()));
+            assert!(!host.read(cx).has_text_layout(), "搜索焦点保持在查询框时，目标需走视觉呈现");
+            let bounds = editor.scroll_target_bounds(&host, true, cx).unwrap();
+            let viewport = editor.scroll_handle.bounds();
+            assert!(bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top(), "视觉命中目标需进入当前视口");
+        });
+        window_cx.simulate_input("Z");
+        redraw(window_cx);
+        assert_eq!(editor.read_with(window_cx, |editor, _| editor.buffer.text()), source);
+        assert!(editor.read_with(window_cx, |editor, _| editor.workspace.search_query.contains('Z')));
+    }
+    assert!(pending.is_empty(), "无文字布局的目标无限续帧：{pending:?}");
+}
+
+#[gpui::test]
+async fn core_repair_missing_scroll_geometry_also_consumes_the_retry_budget(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "body".into(), None));
+    redraw(cx);
+    let missing = cx.new(|cx| crate::components::Block::with_record(cx, BlockRecord::paragraph("missing")));
+    editor.update(cx, |editor, _| {
+        editor.active_entity_id = Some(missing.entity_id());
+        editor.pending_focus = None;
+        editor.pending_scroll_active_block_into_view = true;
+        editor.pending_scroll_center_into_view = true;
+        editor.pending_scroll_recheck_after_layout = false;
+        editor.scroll_settle_frames = 2;
+    });
+    for _ in 0..4 {
+        cx.update(|window, cx| editor.update(cx, |editor, cx| editor.apply_pending_scroll_into_view(window, cx)));
+    }
+    assert!(!editor.read_with(cx, |editor, _| editor.pending_scroll_active_block_into_view));
+    assert!(editor.read_with(cx, |editor, _| editor.scroll_recheck_task.is_none()));
+}
+
+#[gpui::test]
 async fn core_repair_changed_row_plan_rejects_previous_frame_geometry(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# first\n\nbody\n\n# second".into(), None));

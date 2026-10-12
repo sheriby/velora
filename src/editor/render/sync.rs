@@ -88,13 +88,13 @@ impl Editor {
         let active_bounds_from_anchor = if is_cell_anchor
             && let Some(cell) = anchor_block.as_ref()
         {
-            cell.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+            self.scroll_target_bounds(cell, self.pending_scroll_center_into_view, cx)
         } else {
             None
         };
         let Some(active_bounds) = active_bounds_from_anchor
             .or_else(|| {
-                focused_block.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+                self.scroll_target_bounds(&focused_block, self.pending_scroll_center_into_view, cx)
             })
         else {
             // 目标块尚未绘制：渲染窗口只画视口附近的块，窗外的块既没有
@@ -264,42 +264,15 @@ impl Editor {
         // scroll_to_item indexed children by position, which the spacers break;
         // the focused block is always mounted, so pixel math on its bounds works.
         let has_bounds = self.ensure_focused_caret_visible(window, cx);
-        if !has_bounds {
-            self.schedule_followup_frame(cx);
-            return;
-        }
-
-        if self.pending_scroll_center_into_view {
-            // 居中「到位即停」：偏差达标才清标志；未达标（布局还在漂移/
-            // 爬行途中）继续排帧，不受 settle 倒计时约束——倒计时到点就把
-            // 标志清了，命中永远停在视口边缘。
-            if self.jump_center_converged(cx) {
-                self.pending_scroll_active_block_into_view = false;
-                self.pending_scroll_center_into_view = false;
-                self.scroll_settle_frames = 0;
-                self.scroll_recheck_task = None;
-                return;
-            }
-            if self.scroll_settle_frames > 0 {
-                self.scroll_settle_frames -= 1;
-                self.schedule_followup_frame(cx);
-                return;
-            }
-            // 硬上限到点仍未收敛（异常布局）：放弃并清标志，避免无限帧。
-            self.pending_scroll_active_block_into_view = false;
-            self.pending_scroll_center_into_view = false;
-            self.scroll_recheck_task = None;
-            return;
-        }
-
-        if self.scroll_settle_frames > 0 {
+        let centered = has_bounds && self.pending_scroll_center_into_view && self.jump_center_converged(cx);
+        if !centered && self.scroll_settle_frames > 0 {
             self.scroll_settle_frames -= 1;
             self.schedule_followup_frame(cx);
             return;
         }
-
         self.pending_scroll_active_block_into_view = false;
         self.pending_scroll_center_into_view = false;
+        self.scroll_settle_frames = 0;
         self.scroll_recheck_task = None;
     }
 
@@ -318,15 +291,14 @@ impl Editor {
             block.table_cell_position().is_some()
         });
         let bounds = if is_cell {
-            anchor_block
-                .read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+            self.scroll_target_bounds(&anchor_block, true, cx)
                 .or_else(|| {
                     let binding = self.table_cell_binding(anchor_block.entity_id())?;
                     let host = binding.table_block;
-                    host.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+                    self.scroll_target_bounds(&host, true, cx)
                 })
         } else {
-            anchor_block.read_with(cx, |block, _cx| block.active_range_or_cursor_bounds())
+            self.scroll_target_bounds(&anchor_block, true, cx)
         };
         let Some(bounds) = bounds else {
             return false;
@@ -336,6 +308,34 @@ impl Editor {
             f32::from(viewport.top()) + f32::from(viewport.size.height) * 0.5;
         let target_center = f32::from(bounds.top()) + f32::from(bounds.size.height) * 0.5;
         (target_center - viewport_center).abs() <= Self::JUMP_CENTER_TOLERANCE_PX
+    }
+
+    pub(crate) fn scroll_target_bounds(
+        &self,
+        block: &Entity<Block>,
+        include_shell: bool,
+        cx: &App,
+    ) -> Option<Bounds<Pixels>> {
+        let host_id = self.table_cell_binding(block.entity_id())
+            .map(|binding| binding.table_block.entity_id())
+            .unwrap_or(block.entity_id());
+        if !self.entity_is_mounted(host_id) { return None; }
+        let state = block.read(cx);
+        let caret = state.active_range_or_cursor_bounds();
+        if !include_shell { return caret; }
+        if let Some(bounds) = caret.or(state.last_bounds) {
+            return Some(bounds);
+        }
+        let run = self.prev_mounted_run.filter(|run| self.mounted_run_is_addressable(*run))?;
+        let plan = self.rendered_row_plan.as_ref()?;
+        let (_, child) = run.rows().find(|(row, _)| {
+            plan.rows.get(*row).is_some_and(|row| {
+                row.entities().any(|entity| entity.entity_id() == host_id)
+            })
+        })?;
+        let mut bounds = self.scroll_handle.bounds_for_item(child)?;
+        bounds.origin += self.scroll_handle.offset();
+        Some(bounds)
     }
 
     /// Requests a repaint one frame out for work that cannot finish inside this
