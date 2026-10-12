@@ -163,7 +163,7 @@ async fn the_palette_runs_the_inline_format_commands(cx: &mut TestAppContext) {
         for _ in 0..registry_index(id) {
             cx.simulate_keystrokes("down");
         }
-        cx.simulate_keystrokes("return");
+        cx.simulate_keystrokes("enter");
         redraw(cx);
 
         assert_eq!(
@@ -176,6 +176,38 @@ async fn the_palette_runs_the_inline_format_commands(cx: &mut TestAppContext) {
             "{id} 执行完面板该收起"
         );
     }
+}
+
+/// 面板执行选中项必须认**平台真会发出来的键名**。gpui 三个平台都把 Return 键报成
+/// `"enter"`（`vendor/gpui/src/platform/mac/events.rs`、`platform/windows/events.rs`
+/// 的 `VK_RETURN`、`platform/linux/platform.rs` 的 `Keysym::Return`），
+/// `Keystroke::parse` 又不做 enter/return 归一，所以匹配 `"return"` 的那一支在生产里
+/// 永不命中——面板只能用鼠标点。守卫若自己发 `"return"`，造的正是 OS 永不产生的字符串，
+/// 于是十二条面板用例全绿而功能是死的。
+#[gpui::test]
+async fn the_command_palette_executes_on_the_platform_enter_key(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+
+    let (editor, cx) = open_editor(DOC, cx);
+    redraw(cx);
+    select(&editor, 0, 0..5, cx);
+
+    open_palette(&editor, cx);
+    for _ in 0..registry_index("bold_selection") {
+        cx.simulate_keystrokes("down");
+    }
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+
+    assert_eq!(
+        buffer_text(&editor, cx),
+        "**alpha** one\n\nbeta two\n",
+        "按平台真发的 Enter 应当执行选中的「加粗」，与键位那条走同一处实现"
+    );
+    assert!(
+        editor.read_with(cx, |editor, _| editor.command_palette.is_none()),
+        "执行完面板该收起"
+    );
 }
 
 #[gpui::test]
@@ -192,7 +224,7 @@ async fn the_palette_runs_the_clipboard_commands(cx: &mut TestAppContext) {
     for _ in 0..registry_index("paste_as_plain_text") {
         cx.simulate_keystrokes("down");
     }
-    cx.simulate_keystrokes("return");
+    cx.simulate_keystrokes("enter");
     redraw(cx);
     assert_eq!(
         buffer_text(&editor, cx),
@@ -207,7 +239,7 @@ async fn the_palette_runs_the_clipboard_commands(cx: &mut TestAppContext) {
     for _ in 0..registry_index("copy_as_markdown") {
         cx.simulate_keystrokes("down");
     }
-    cx.simulate_keystrokes("return");
+    cx.simulate_keystrokes("enter");
     redraw(cx);
     assert_eq!(
         clipboard_text(cx).as_deref(),
@@ -235,7 +267,7 @@ async fn typing_then_enter_runs_the_row_the_query_left(cx: &mut TestAppContext) 
     open_palette(&editor, cx);
     let label = command_label("bold_selection", cx);
     cx.simulate_input(&label);
-    cx.simulate_keystrokes("return");
+    cx.simulate_keystrokes("enter");
     redraw(cx);
     assert_eq!(
         buffer_text(&editor, cx),
@@ -257,7 +289,7 @@ async fn enter_with_no_matching_row_runs_nothing(cx: &mut TestAppContext) {
     select(&editor, 0, 0..5, cx);
     open_palette(&editor, cx);
     cx.simulate_input("不可能命中任何一条的查询zzz");
-    cx.simulate_keystrokes("return");
+    cx.simulate_keystrokes("enter");
     redraw(cx);
     assert_eq!(buffer_text(&editor, cx), DOC, "没有命中就不该动文档");
     assert!(

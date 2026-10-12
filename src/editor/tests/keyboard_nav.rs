@@ -935,7 +935,7 @@ async fn select_document_command_runs_from_the_command_palette(cx: &mut TestAppC
     });
     redraw(cx);
     cx.simulate_input(&label);
-    cx.simulate_keystrokes("return");
+    cx.simulate_keystrokes("enter");
     redraw(cx);
 
     assert_whole_document_selected(&editor, cx, "从命令面板执行「选择全文」");

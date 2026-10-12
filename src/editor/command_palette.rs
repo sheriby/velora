@@ -134,7 +134,11 @@ impl Editor {
                 self.close_command_palette(cx);
                 return;
             }
-            "return" => {
+            // 键名要写平台真发得出来的那一个：gpui 三个平台都把 Return 键报成
+            // `"enter"`（mac `events.rs`、windows 的 `VK_RETURN`、linux 的
+            // `Keysym::Return`），`Keystroke::parse` 不做 enter/return 归一。
+            // 匹配 `"return"` 的那一支在生产里永不命中，面板只剩鼠标可点。
+            "enter" => {
                 self.run_selected_command(window, cx);
                 return;
             }
