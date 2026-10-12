@@ -161,10 +161,14 @@ impl Editor {
     pub(crate) fn select_table_text_range(
         &mut self,
         table_block_id: EntityId,
-        anchor: TableTextPosition,
-        focus: TableTextPosition,
+        mut anchor: TableTextPosition,
+        mut focus: TableTextPosition,
         cx: &mut Context<Self>,
     ) {
+        if anchor.cell == focus.cell && (anchor.whole_cell || focus.whole_cell) {
+            anchor.whole_cell = true;
+            focus.whole_cell = true;
+        }
         let next = TableTextSelection {
             table_block_id,
             anchor,

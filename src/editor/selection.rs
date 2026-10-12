@@ -29,7 +29,9 @@ impl Editor {
     fn sync_document_selection_ownership(&self, cx: &App) {
         self.document_selection_active.set(
             self.normalized_cross_block_selection(cx).is_some()
-                || self.table_text_selection.is_some_and(|selection| selection.anchor != selection.focus),
+                || self.table_text_selection.is_some_and(|selection| {
+                    selection.anchor != selection.focus || selection.anchor.whole_cell || selection.focus.whole_cell
+                }),
         );
     }
     pub(super) fn on_cursor_motion_capture<A: Action>(

@@ -4,6 +4,31 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn core_repair_formula_cell_return_drag_keeps_the_atomic_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "alpha\n\n| text | $q$ |\n| --- | --- |\n| one | two |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    redraw(cx);
+    let start = cell_bounds(&editor, cx, (0, 1)).center();
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let outside = cell_text_start(cell_bounds(&editor, cx, (0, 0)));
+    cx.simulate_mouse_move(outside, Some(gpui::MouseButton::Left), Modifiers::none());
+    redraw(cx);
+    let back = cell_text_start(cell_bounds(&editor, cx, (0, 1)));
+    cx.simulate_mouse_move(back, Some(gpui::MouseButton::Left), Modifiers::none());
+    cx.simulate_mouse_up(back, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.selected_visible_text(cx)).as_deref(), Some("$q$"));
+    cx.simulate_input("X");
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), source.replace("$q$", "X"));
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), source);
+}
+
+#[gpui::test]
 async fn core_repair_new_table_cells_route_input_from_an_empty_selection_anchor(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = format!("first\n\n| ab | cd |\n| --- | --- |\n| ef | gh |\n\n{}", (0..400).map(|index| format!("paragraph {index}\n\n")).collect::<String>());
