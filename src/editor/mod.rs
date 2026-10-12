@@ -538,6 +538,7 @@ pub(super) struct SourceTargetMapping {
     full_source_range: std::ops::Range<usize>,
     content_to_source: Vec<usize>,
     source_to_content: Vec<usize>,
+    parsed_source_markdown: Option<String>,
 }
 
 /// The two editing views the editor can present.
@@ -1266,7 +1267,10 @@ impl Editor {
         {
             return false;
         }
-        let Some(at) = self.caret_source_offset(block.entity_id(), visible_offset, cx) else {
+        let Some(mapping) = self.source_mapping_for_entity(block.entity_id(), cx) else {
+            return false;
+        };
+        let Some(at) = self.mapping_source_offset(&mapping, visible_offset, cx) else {
             return false;
         };
         let Some(root) = self.document.root_ancestor_of(block.entity_id()) else {
@@ -1275,21 +1279,15 @@ impl Editor {
         let Some(span) = self.document.source_span_of(root.entity_id()) else {
             return false;
         };
-        // 换算出来的位置必须在缓冲区里、也得落在这一根块的区间内：映射表是按块树
-        // 的序列化算的，容器里的块（引用、列表）区间与缓冲区并不一一对应，越界就
-        // 说明这次改动不是「往源码里插几个字节」那么简单，退回整块写回。
+        // 新建块或过期结构账本可能没有原文映射，不能让兜底位置写出根块边界。
         if at > self.buffer.byte_len() || !self.buffer.is_char_boundary(at) {
             return false;
         }
         if at < span.start || at > span.end {
             return false;
         }
-        // 映射按块的**序列化**记前缀（`"> "`、`"- "`、`"1. "`），用户写非规范前缀
-        //（或解析期账本对不上现状）时换算出的落点会整体漂移，而且仍然落在根块
-        // 区间内、上述守卫拦不住——直接 splice 会把字节插进相邻字符中间。落笔前
-        // 核对插入点两侧的缓冲区字节确实与模型一致：不一致就退整块写回（内容
-        // 正确，只是这一块的写法可能被规范化），绝不写错位。
-        if !self.insertion_context_matches_source(block, visible_offset, at, cx) {
+        // Block 已先修改投影；只有插入点之前仍与原文解析一致，才能沿用旧坐标。
+        if !self.insertion_context_matches_source(block, &mapping, visible_offset, at, cx) {
             return false;
         }
 
@@ -1307,14 +1305,12 @@ impl Editor {
 
     /// 插入点两侧的缓冲区字节与模型一致吗？
     ///
-    /// 映射声称「可见偏移 n 的插入点在源码字节 `at`」。这个换算建立在前缀规范
-    /// 的前提上；前提不成立（非规范前缀、解析期账过期）时 `at` 会漂移。核对
-    /// 办法：插入点之前的模型字节（同行）必须与缓冲区逐字节相同——字节都对上，
-    /// splice 就不可能插错；前文跨了行（行首还有没量过的容器前缀）就改核对
-    /// 插入点之后的同行字节。两个方向都对不上时返回 false，由调用方退整块写回。
+    /// 富文本必须先解析原文再核对，直接比较序列化字节会把合法 HTML 写法
+    /// 误判为坐标过期；原样编辑的代码/源码块仍核对实际字节。
     fn insertion_context_matches_source(
         &self,
         block: &Entity<Block>,
+        mapping: &SourceTargetMapping,
         visible_offset: usize,
         at: usize,
         cx: &App,
@@ -1345,15 +1341,23 @@ impl Editor {
         if markdown_offset > markdown.len() || !markdown.is_char_boundary(markdown_offset) {
             return false;
         }
-        // 行内局部核对：模型当前行里、插入点之前/之后的内容字节，必须与缓冲区
-        // 里 `at` 两侧逐字节相同。内容字节在模型与缓冲区里是同一份（容器前缀在
-        // 内容之前，不参与比较），所以逐行异形前缀的账、多行引用、缩进代码都
-        // 不会被误伤；账过期或前缀漂移时两侧对不上，退整块写回。
         let line_start_in_md = markdown[..markdown_offset]
             .rfind('\n')
             .map(|index| index + 1)
             .unwrap_or(0);
         let within_before = &markdown[line_start_in_md..markdown_offset];
+        if let Some(original) = &mapping.parsed_source_markdown {
+            let Some(original_offset) = at.checked_sub(mapping.full_source_range.start)
+                .and_then(|offset| mapping.source_to_content.get(offset)).copied()
+            else {
+                return false;
+            };
+            let Some(before) = original.get(..original_offset) else {
+                return false;
+            };
+            let original_line_start = before.rfind('\n').map(|offset| offset + 1).unwrap_or(0);
+            return before.get(original_line_start..) == Some(within_before);
+        }
         if !within_before.is_empty() {
             return at >= within_before.len()
                 && self.buffer.is_char_boundary(at - within_before.len())

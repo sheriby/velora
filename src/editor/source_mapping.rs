@@ -1,6 +1,7 @@
 //! Source-offset mapping between canonical Markdown and rendered blocks.
 
 use std::ops::Range;
+use crate::components::CalloutVariant;
 
 use super::table_edit::{cell_content_range_in_line, table_row_slots};
 use super::*;
@@ -284,20 +285,75 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         block: &Entity<Block>,
         content_markdown: String,
         measured: &MeasuredBlockLines,
+        parse_inline: bool,
         absolute_start: usize,
         mappings: &mut Vec<SourceTargetMapping>,
     ) -> usize {
-        let (full_len, content_to_source, source_to_content) =
+        let original_content = parse_inline.then(|| {
+            let mut content = String::new();
+            let mut line_start = absolute_start;
+            for (index, prefix) in measured.prefixes.iter().copied().enumerate() {
+                let file_len = measured.file_lens.get(index).copied().unwrap_or(0);
+                let line = self
+                    .buffer
+                    .slice(line_start..line_start + prefix + file_len);
+                let mut body = line.get(prefix..).unwrap_or_default();
+                // 闭合 ATX 记号不是正文，必须沿用导入器的判据剥掉。
+                if let Some(content_len) = line.get(..prefix).and_then(|before| {
+                    before
+                        .char_indices()
+                        .filter(|(_, character)| *character == '#')
+                        .find_map(|(start, _)| {
+                            let (_, title, marker_len) =
+                                BlockKind::parse_atx_heading_line_with_marker(line.get(start..)?)?;
+                            (start + marker_len == prefix).then_some(title.len())
+                        })
+                }) {
+                    body = body.get(..content_len).unwrap_or(body);
+                }
+                if index > 0 {
+                    content.push('\n');
+                }
+                content.push_str(body);
+                line_start += prefix + file_len + 1;
+            }
+            content
+        });
+        let (full_len, mut content_to_source, mut source_to_content) =
             Self::build_line_prefixed_content_mapping(
-                &content_markdown,
+                original_content.as_deref().unwrap_or(&content_markdown),
                 &measured.prefixes,
                 &measured.file_lens,
             );
+        let mut original_markdown = None;
+        if let Some(original_content) = original_content {
+            let inline = crate::components::markdown::inline::InlineSourceOffsetMap::parse(
+                &original_content,
+                &self.link_reference_definitions,
+            );
+            content_to_source = inline
+                .markdown_to_source
+                .iter()
+                .map(|offset| content_to_source.get(*offset).copied().unwrap_or(full_len))
+                .collect();
+            source_to_content = source_to_content
+                .iter()
+                .map(|offset| {
+                    inline
+                        .source_to_markdown
+                        .get(*offset)
+                        .copied()
+                        .unwrap_or(inline.markdown.len())
+                })
+                .collect();
+            original_markdown = Some(inline.markdown);
+        }
         mappings.push(SourceTargetMapping {
             entity: block.clone(),
             full_source_range: absolute_start..absolute_start + full_len,
             content_to_source,
             source_to_content,
+            parsed_source_markdown: original_markdown,
         });
         full_len
     }
@@ -330,6 +386,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             full_source_range: absolute_start..absolute_start + full_text.len(),
             content_to_source,
             source_to_content,
+            parsed_source_markdown: None,
         });
         full_text.len()
     }
@@ -375,6 +432,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             full_source_range: absolute_start..absolute_start + full_text.len(),
             content_to_source,
             source_to_content,
+            parsed_source_markdown: None,
         });
         full_text.len()
     }
@@ -412,6 +470,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             full_source_range: absolute_start..absolute_start + full_text.len(),
             content_to_source,
             source_to_content,
+            parsed_source_markdown: None,
         });
         full_text.len()
     }
@@ -791,6 +850,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             full_source_range: absolute_start..absolute_start + full_text.len(),
             content_to_source,
             source_to_content,
+            parsed_source_markdown: None,
         });
         full_text.len()
     }
@@ -851,7 +911,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         let mut line_start = span.start;
 
         if let Some(header_line) = raw_lines.next() {
-            self.push_table_row_mappings(header_line, line_start, &runtime.header, mappings, cx);
+            self.push_table_row_mappings(header_line, line_start, &runtime.header, mappings);
             line_start += header_line.len() + 1;
         }
         if let Some(separator_line) = raw_lines.next() {
@@ -859,7 +919,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         }
         for row_cells in runtime.rows.iter() {
             let Some(row_line) = raw_lines.next() else { break };
-            self.push_table_row_mappings(row_line, line_start, row_cells, mappings, cx);
+            self.push_table_row_mappings(row_line, line_start, row_cells, mappings);
             line_start += row_line.len() + 1;
         }
 
@@ -878,7 +938,6 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         line_start: usize,
         cells: &[Entity<Block>],
         mappings: &mut Vec<SourceTargetMapping>,
-        cx: &App,
     ) {
         // 挂在容器里的行写着 `> | 甲 | 乙 |`：容器记号不是第一列。
         let prefix = table_row_container_prefix(row_line);
@@ -887,20 +946,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             let Some(range) = cell_content_range_in_line(core, line_start + prefix, column) else {
                 continue;
             };
-            // 恒等表只在源码段与格内容**写回形态**等长时成立（源码 `a<br />b`
-            // 8 字节，模型内容 `a\nb` 写回 `a<br>b` 6 字节——格尾的换算会落进
-            // `<br />` 的 `>` 之前）。对账用 serialize_markdown：`\|` 会转义回
-            // 写法，转义管道的格子照常对得上。不等长就不推这一格，落点交回
-            // 宿主表格块——与 push_table_mappings_in_root 的既有规矩一致。
-            if range.len() != cell.read(cx).record.title.serialize_markdown().len() {
-                continue;
-            }
-            let len = range.len();
+            let original_content = self.buffer.slice(range.clone());
+            let inline = crate::components::markdown::inline::InlineSourceOffsetMap::parse(
+                &original_content, &self.link_reference_definitions,
+            );
             mappings.push(SourceTargetMapping {
                 entity: cell.clone(),
                 full_source_range: range,
-                content_to_source: (0..=len).collect(),
-                source_to_content: (0..=len).collect(),
+                content_to_source: inline.markdown_to_source,
+                source_to_content: inline.source_to_markdown,
+                parsed_source_markdown: Some(inline.markdown),
             });
         }
     }
@@ -975,11 +1030,11 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             .map(|row| row.end)
             .unwrap_or(delimiter.end);
 
-        self.push_table_row_mappings(&header_line, header.start, &runtime.header, mappings, cx);
+        self.push_table_row_mappings(&header_line, header.start, &runtime.header, mappings);
         for (row_index, row) in row_ranges.iter().enumerate() {
             let row_line = self.buffer.slice(row.clone());
             if let Some(cells) = runtime.rows.get(row_index) {
-                self.push_table_row_mappings(&row_line, row.start, cells, mappings, cx);
+                self.push_table_row_mappings(&row_line, row.start, cells, mappings);
             }
         }
 
@@ -1024,6 +1079,16 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             BlockKind::Quote => {
                 let stripped = super::document::strip_one_quote_level(&rest)?;
                 consumed += rest.len() - stripped.len();
+            }
+            BlockKind::Callout(_) => {
+                let stripped = super::document::strip_one_quote_level(&rest)?;
+                let (_, title) = CalloutVariant::parse_header_line(&stripped)?;
+                consumed += rest.len() - title.len();
+            }
+            BlockKind::FootnoteDefinition => {
+                let (_, first_line) = super::document::parse_footnote_definition_head(&rest)?;
+                consumed += rest.len() - first_line.len();
+                child_dedent = 4;
             }
             BlockKind::BulletedListItem
             | BlockKind::TaskListItem { .. }
@@ -1211,6 +1276,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 block,
                 content_markdown,
                 &measured,
+                true,
                 absolute_start,
                 mappings,
             ),
@@ -1245,6 +1311,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             full_source_range: absolute_start..end,
             content_to_source: identity.clone(),
             source_to_content: identity,
+            parsed_source_markdown: None,
         });
         block_ranges.insert(block.entity_id(), absolute_start..end);
         len
@@ -1288,6 +1355,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                         block,
                         content,
                         &measured,
+                        false,
                         absolute_start,
                         mappings,
                     );
@@ -1505,14 +1573,17 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                         full_source_range: absolute_start..absolute_start + full_text.len(),
                         content_to_source: vec![full_text.len()],
                         source_to_content: vec![0; full_text.len() + 1],
+                        parsed_source_markdown: None,
                     });
                     full_text.len()
                 } else {
-                    self.push_inline_block_mapping(
+                    let measured_lines = line_prefixes(&title_markdown);
+                    self.push_measured_inline_mapping(
                         block,
                         title_markdown,
                         format!("[!{}] ", variant.marker()),
                         String::new(),
+                        measured_lines,
                         quote_depth + 1,
                         absolute_start,
                         mappings,
@@ -1542,21 +1613,27 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             if let Some(first_child) = children.first()
                 && first_child.read(cx).kind() == BlockKind::Paragraph
             {
-                total_len = self.push_inline_block_mapping(
-                    first_child,
-                    first_child
+                let markdown = first_child
                         .read(cx)
                         .record
                         .title
                         .markdown_offset_map()
                         .markdown()
-                        .to_string(),
+                        .to_string();
+                let measured_lines = self.measured_block_line_prefixes(
+                    &markdown, absolute_start, quote_depth, list_dedent,
+                    &BlockKind::FootnoteDefinition,
+                );
+                total_len = self.push_measured_inline_mapping(
+                    first_child,
+                    markdown,
                     block
                         .read(cx)
                         .footnote_definition_id()
                         .map(|id| format!("[^{id}]: "))
                         .unwrap_or_else(|| "[^]: ".to_string()),
                     "    ".to_string(),
+                    measured_lines,
                     quote_depth,
                     absolute_start,
                     mappings,

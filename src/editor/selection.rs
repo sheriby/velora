@@ -491,7 +491,7 @@ impl Editor {
     ///
     /// 只给**插入点**用：块首打一个字要落在 `**` 里面，这是对的口径。
     /// 选区的区间端点不能走它，见 `mapping_source_range_endpoint`。
-    fn mapping_source_offset(
+    pub(super) fn mapping_source_offset(
         &self,
         mapping: &SourceTargetMapping,
         offset: usize,

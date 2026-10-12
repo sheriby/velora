@@ -359,3 +359,38 @@
             );
         }
     }
+
+    #[test]
+    fn core_repair_source_mapping_preserves_visible_and_link_target_offsets() {
+        use super::super::{InlineSourceOffsetMap, LinkReferenceDefinitions};
+        for source in [
+            "a <strong>b</strong> Z",
+            "a ` b ` Z",
+            "a ` b\r\nc ` Z",
+            "a <br />Z",
+            "甲 <strong>乙</strong> Z",
+            "a [<strong>b</strong>](https://example.com \"title\") Z",
+        ] {
+            let mapping = InlineSourceOffsetMap::parse(source, &LinkReferenceDefinitions::default());
+            let source_offset = source.rfind('Z').unwrap();
+            let markdown_offset = mapping.markdown.rfind('Z').unwrap();
+            assert_eq!(mapping.markdown_to_source[markdown_offset], source_offset, "{source}");
+            assert_eq!(mapping.source_to_markdown[source_offset], markdown_offset, "{source}");
+            assert!(mapping.markdown_to_source.windows(2).all(|pair| pair[0] <= pair[1]), "{source}");
+            assert!(mapping.source_to_markdown.windows(2).all(|pair| pair[0] <= pair[1]), "{source}");
+            for (offset, mapped) in mapping.markdown_to_source.iter().enumerate() {
+                if mapping.markdown.is_char_boundary(offset) {
+                    assert!(source.is_char_boundary(*mapped), "{source}: {offset} -> {mapped}");
+                }
+            }
+            if let Some(offset) = mapping.markdown.find("example") {
+                assert_eq!(mapping.markdown_to_source[offset], source.find("example").unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn core_repair_code_normalization_keeps_following_escapes_at_their_characters() {
+        let tree = InlineTextTree::from_markdown("` b ` \\*Z");
+        assert_eq!(tree.serialize_markdown(), "`b` \\*Z");
+    }

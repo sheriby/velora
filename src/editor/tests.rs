@@ -40,6 +40,7 @@ mod save_transactions;
 mod scroll_window;
 mod selection_toolbar;
 mod source_selection;
+mod source_mapping_fidelity;
 mod source_highlight;
 mod selection_mouse;
 mod table_runtime;

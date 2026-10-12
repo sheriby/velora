@@ -702,12 +702,7 @@ async fn selecting_a_table_column_writes_only_that_column(cx: &mut TestAppContex
     );
 }
 
-/// 表格格映射与格内容对账（评审报告维度二建议 5 后半）：源码格
-/// `a<br />b`（8 字节）解析进模型的格内容是 `a<br>b`（6 字节）——
-/// 以前一律按源码段长度推恒等表，格尾的偏移换算落到 `<br />` 的 `>` 
-/// 之前几位，点击/跳转/高亮全偏。不等长的格不许推映射，落点交回宿主
-/// 表格块（与 push_table_mappings_in_root 的既有规矩一致）；对得上号的
-/// 格照常要推。
+/// 单元格即使采用不同长度的换行标签，也要能把正文位置换算回原文。
 #[gpui::test]
 async fn table_cell_mappings_account_for_content_length(cx: &mut TestAppContext) {
     let markdown = "| a<br />b | 平文 |\n| --- | --- |\n";
@@ -722,12 +717,12 @@ async fn table_cell_mappings_account_for_content_length(cx: &mut TestAppContext)
             .expect("table runtime")
             .header
             .clone();
-        let mismatched = &header[0];
+        let line_break_cell = &header[0];
         let plain = &header[1];
         assert_eq!(
-            mismatched.read(cx).display_text(),
+            line_break_cell.read(cx).display_text(),
             "a\nb",
-            "前置：模型里的格内容（换行 1 字节）确实比源码 <br />（5 字节）短"
+            "模型中的换行只有一字节"
         );
         let mapping_for = |cell: &gpui::Entity<crate::components::Block>| {
             mappings
@@ -736,9 +731,9 @@ async fn table_cell_mappings_account_for_content_length(cx: &mut TestAppContext)
                 .map(|mapping| mapping.content_to_source.len())
         };
         assert_eq!(
-            mapping_for(mismatched),
-            None,
-            "源码（8 字节段）与内容（3 字节）不等长的格不得推恒等表"
+            editor.caret_source_offset(line_break_cell.entity_id(), 2, cx),
+            markdown.rfind('b'),
+            "标签后面的字符应落在原文 b 之前"
         );
         assert_eq!(
             mapping_for(plain),

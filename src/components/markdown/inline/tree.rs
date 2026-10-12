@@ -52,11 +52,21 @@ impl InlineTextTree {
         markdown: &str,
         reference_definitions: &LinkReferenceDefinitions,
     ) -> Self {
-        let mut tree = Self::plain(markdown)
-            .normalize_inline_syntax_with_link_references(reference_definitions)
-            .tree;
-        tree.normalize_code_spans();
-        tree
+        Self::parse_markdown_with_offsets(markdown, reference_definitions).tree
+    }
+
+    pub(crate) fn parse_markdown_with_offsets(
+        markdown: &str,
+        reference_definitions: &LinkReferenceDefinitions,
+    ) -> InlineEditResult {
+        let mut result = Self::plain(markdown)
+            .normalize_inline_syntax_with_link_references(reference_definitions);
+        if let Some(normalized_offsets) = result.tree.normalize_code_spans() {
+            for offset in &mut result.visible_to_normalized {
+                *offset = normalized_offsets.get(*offset).copied().unwrap_or(0);
+            }
+        }
+        result
     }
 
     /// Code-span content normalization:
@@ -64,19 +74,88 @@ impl InlineTextTree {
     ///   across hard lines in the editor.
     /// - If the content is not entirely spaces and both starts AND ends with
     ///   a single space, those two spaces are stripped.
-    fn normalize_code_spans(&mut self) {
+    fn normalize_code_spans(&mut self) -> Option<Vec<usize>> {
+        let mut offsets: Option<Vec<usize>> = None;
+        let total_len = self.visible_len();
+        let mut original_start = 0;
+        let mut normalized_start = 0;
         for fragment in &mut self.fragments {
-            if fragment.style.code && !fragment.text.is_empty() {
-                let mut s = fragment.text.replace("\r\n", "\n").replace('\r', "\n");
-                let all_space = s.chars().all(|c| c == ' ');
-                if !all_space && s.starts_with(' ') && s.ends_with(' ') {
-                    s.remove(0);
-                    s.pop();
+            let original_len = fragment.text.len();
+            let trim_spaces = fragment.style.code
+                && fragment.text.starts_with(' ')
+                && fragment.text.ends_with(' ')
+                && !fragment.text.chars().all(|character| character == ' ');
+            if fragment.style.code && (trim_spaces || fragment.text.contains('\r')) {
+                let mapping = offsets.get_or_insert_with(|| (0..=total_len).collect());
+                let mut normalized_text = String::with_capacity(original_len);
+                let mut characters = fragment.text.char_indices().peekable();
+                while let Some((start, character)) = characters.next() {
+                    let mut end = start + character.len_utf8();
+                    let normalized_character = if character == '\r' {
+                        if characters.peek().is_some_and(|(_, next)| *next == '\n') {
+                            characters.next();
+                            end += 1;
+                        }
+                        '\n'
+                    } else {
+                        character
+                    };
+                    for local in start..end {
+                        if let Some(slot) = mapping.get_mut(original_start + local) {
+                            *slot = normalized_start
+                                + normalized_text.len()
+                                + (local - start).min(normalized_character.len_utf8());
+                        }
+                    }
+                    normalized_text.push(normalized_character);
                 }
-                fragment.text = s;
+                if let Some(slot) = mapping.get_mut(original_start + original_len) {
+                    *slot = normalized_start + normalized_text.len();
+                }
+                if trim_spaces {
+                    normalized_text.remove(0);
+                    normalized_text.pop();
+                    for slot in mapping
+                        .iter_mut()
+                        .skip(original_start)
+                        .take(original_len + 1)
+                    {
+                        *slot = normalized_start
+                            + (*slot - normalized_start)
+                                .saturating_sub(1)
+                                .min(normalized_text.len());
+                    }
+                }
+                fragment.text = normalized_text;
+            }
+            if let Some(mapping) = &mut offsets {
+                // 代码跨度之后的转义区间也跟随收缩，不能继续使用旧可见坐标。
+                if fragment.text.len() == original_len {
+                    for local in 0..=original_len {
+                        if let Some(slot) = mapping.get_mut(original_start + local) {
+                            *slot = normalized_start + local;
+                        }
+                    }
+                }
+            }
+            original_start += original_len;
+            normalized_start += fragment.text.len();
+        }
+        if let Some(mapping) = &offsets {
+            debug_assert_eq!(mapping.len(), total_len + 1);
+            for escaped in &mut self.escaped_offsets {
+                escaped.start = mapping
+                    .get(escaped.start as usize)
+                    .copied()
+                    .unwrap_or(normalized_start) as u32;
+                escaped.end = mapping
+                    .get(escaped.end as usize)
+                    .copied()
+                    .unwrap_or(normalized_start) as u32;
             }
         }
         self.normalize_fragments();
+        offsets
     }
 
     pub fn from_fragments(fragments: Vec<InlineFragment>) -> Self {

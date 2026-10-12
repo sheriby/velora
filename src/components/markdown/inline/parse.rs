@@ -22,6 +22,149 @@ impl InlineEditResult {
     }
 }
 
+pub(crate) struct InlineSourceOffsetMap {
+    pub markdown: String,
+    pub markdown_to_source: Vec<usize>,
+    pub source_to_markdown: Vec<usize>,
+}
+
+impl InlineSourceOffsetMap {
+    pub(crate) fn parse(source: &str, definitions: &LinkReferenceDefinitions) -> Self {
+        let parsed = InlineTextTree::parse_markdown_with_offsets(source, definitions);
+        let serialized = parsed.tree.markdown_offset_map();
+        if serialized.markdown == source {
+            let identity: Vec<usize> = (0..=source.len()).collect();
+            return Self {
+                markdown: serialized.markdown,
+                markdown_to_source: identity.clone(),
+                source_to_markdown: identity,
+            };
+        }
+        let markdown_to_source = align_inline_offsets(
+            &serialized.markdown,
+            &serialized.markdown_to_visible,
+            source,
+            &parsed.visible_to_normalized,
+        );
+        let source_to_markdown = align_inline_offsets(
+            source,
+            &parsed.visible_to_normalized,
+            &serialized.markdown,
+            &serialized.markdown_to_visible,
+        );
+        Self {
+            markdown: serialized.markdown,
+            markdown_to_source,
+            source_to_markdown,
+        }
+    }
+}
+
+fn align_inline_offsets(
+    from: &str,
+    from_to_visible: &[usize],
+    to: &str,
+    to_to_visible: &[usize],
+) -> Vec<usize> {
+    let mut result = vec![0; from_to_visible.len()];
+    let mut from_start = 0;
+    let mut to_start = 0;
+    while let Some(visible) = from_to_visible.get(from_start).copied() {
+        let mut from_end = from_start;
+        while from_to_visible.get(from_end + 1) == Some(&visible) {
+            from_end += 1;
+        }
+        while to_to_visible
+            .get(to_start)
+            .is_some_and(|offset| *offset < visible)
+        {
+            to_start += 1;
+        }
+        let mut to_end = to_start;
+        while to_to_visible.get(to_end + 1) == Some(&visible) {
+            to_end += 1;
+        }
+        let target_start = to_start.min(to.len());
+        let target_end = to_end.min(to.len());
+        if let (Some(from_group), Some(to_group)) = (
+            from.get(from_start..from_end),
+            to.get(target_start..target_end),
+        ) {
+            // 同一可见边界可能含闭合样式及链接目标。保留相同的前后字节，
+            // 才能在 HTML 样式改写后仍准确编辑显形出来的链接地址。
+            let common_prefix = from_group
+                .bytes()
+                .zip(to_group.bytes())
+                .take_while(|(left, right)| left == right)
+                .count();
+            let prefix = (0..=common_prefix)
+                .rev()
+                .find(|offset| {
+                    from_group.is_char_boundary(*offset) && to_group.is_char_boundary(*offset)
+                })
+                .unwrap_or(0);
+            let common_suffix = from_group
+                .bytes()
+                .rev()
+                .zip(to_group.bytes().rev())
+                .take(
+                    from_group
+                        .len()
+                        .saturating_sub(prefix)
+                        .min(to_group.len().saturating_sub(prefix)),
+                )
+                .take_while(|(left, right)| left == right)
+                .count();
+            let suffix = (0..=common_suffix)
+                .rev()
+                .find(|offset| {
+                    from_group.is_char_boundary(from_group.len() - offset)
+                        && to_group.is_char_boundary(to_group.len() - offset)
+                })
+                .unwrap_or(0);
+            for (local, slot) in result
+                .iter_mut()
+                .skip(from_start)
+                .take(from_end - from_start + 1)
+                .enumerate()
+            {
+                let target = if local == from_group.len() {
+                    to_group.len()
+                } else if local <= prefix {
+                    local
+                } else if local >= from_group.len() - suffix {
+                    to_group.len() - (from_group.len() - local)
+                } else {
+                    prefix
+                        + (local - prefix) * (to_group.len() - prefix - suffix)
+                            / (from_group.len() - prefix - suffix)
+                };
+                let target = if from_group.is_char_boundary(local) {
+                    (0..=target)
+                        .rev()
+                        .find(|offset| to_group.is_char_boundary(*offset))
+                        .unwrap_or(0)
+                } else {
+                    target
+                };
+                *slot = target_start + target;
+            }
+        } else {
+            // 字形内部的字节边界不能切 str，但仍须保留 UTF-8 的相对位置。
+            for slot in result
+                .iter_mut()
+                .skip(from_start)
+                .take(from_end - from_start + 1)
+            {
+                *slot = target_start;
+            }
+        }
+        from_start = from_end + 1;
+        to_start = to_end;
+    }
+    result
+}
+
 /// Ordered preference of delimiter variants used by the DP serializer.
 /// Lower rank = more preferred.  Markdown delimiters are preferred over HTML
 /// because they are shorter and more idiomatic.
