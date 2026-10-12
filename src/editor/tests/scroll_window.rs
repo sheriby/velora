@@ -1,6 +1,51 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_cold_blank_rows_fill_the_viewport_without_cursor_repaints(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = format!("{}sentinel", "\n".repeat(80));
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    editor.update(cx, |editor, cx| {
+        editor.open_document_find(cx);
+        editor.pending_scroll_active_block_into_view = false;
+        editor.pending_scroll_recheck_after_layout = false;
+        editor.scroll_recheck_task = None;
+    });
+    for _ in 0..4 { redraw(cx); }
+    cx.update(|_, cx| {
+        let mut theme = cx.global::<ThemeManager>().current().clone();
+        theme.dimensions.block_gap = 6.0;
+        theme.dimensions.block_padding_y = 0.0;
+        cx.global_mut::<ThemeManager>().set_theme(theme);
+    });
+    let requested = std::rc::Rc::new(std::cell::Cell::new(false));
+    let _subscription = cx.update(|_, cx| cx.observe(&editor, {
+        let requested = requested.clone();
+        move |_, _| requested.set(true)
+    }));
+    editor.update(cx, |editor, cx| {
+        editor.cold_fill_frames = 0;
+        editor.scroll_recheck_task = None;
+        cx.notify();
+    });
+    redraw(cx);
+    requested.set(false);
+    for _ in 0..8 {
+        cx.executor().advance_clock(Duration::from_millis(16));
+        cx.run_until_parked();
+        let notify = requested.replace(false);
+        if notify { redraw(cx); }
+    }
+    editor.read_with(cx, |editor, cx| {
+        let sentinel = editor.document.visible_blocks().last().unwrap().entity.clone();
+        assert!(editor.entity_is_mounted(sentinel.entity_id()), "实际可放进视口的后文不能被冷启动 spacer 遮住");
+        let bounds = sentinel.read(cx).last_bounds.unwrap();
+        let viewport = editor.scroll_handle.bounds();
+        assert!(bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top(), "后文应进入视口");
+    });
+}
+
+#[gpui::test]
 async fn core_repair_stable_frames_do_not_rescan_all_row_heights(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = (0..1000).map(|index| format!("paragraph {index}\n\n")).collect::<String>();

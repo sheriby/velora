@@ -315,13 +315,24 @@ impl Render for Editor {
             self.row_scrollbar_stride_cache.retain(|id, _| live.contains(id));
         }
 
-        let render_window = Self::rendered_window_from_prefix(
+        let mut render_window = Self::rendered_window_from_prefix(
             &stride_prefix.nonnegative,
             current_scroll_y,
             viewport_height,
             RENDER_OVERDRAW_PX,
             focus_row,
         );
+        let unmeasured = (render_window.run_start..render_window.run_end)
+            .chain(render_window.focus_island.map(|island| island.row))
+            .any(|row| row_first_ids.get(row).is_some_and(|id| !self.row_stride_cache.contains_key(id)));
+        let measured_underfill = !structural_change && !width_changed && !layout_changed
+            && self.prev_mounted_run.filter(|run| self.mounted_run_is_addressable(*run))
+                .is_some_and(|run| {
+                    run.row_end < rows.len() && run.row_end > run.row_start
+                        && self.scroll_handle.bounds_for_item(run.child_base + run.row_end - run.row_start - 1)
+                            .is_some_and(|bounds| bounds.bottom() + self.scroll_handle.offset().y < viewport_bounds.bottom())
+                });
+        render_window.needs_fill |= unmeasured || measured_underfill;
 
         // 冷启动续挂：行高仍被低估时一帧铺不满视口，立刻排下一帧继续补，
         // 而不是把整屏 spacer 留给读者、等到下一次输入才补上。
