@@ -3,6 +3,24 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+#[test]
+fn core_repair_editing_does_not_accumulate_one_chunk_per_keystroke() {
+    let mut buffer = TextBuffer::from_text("start");
+    for _ in 0..1000 {
+        let end = buffer.byte_len();
+        buffer.edit(end..end, "字");
+    }
+    assert_eq!(buffer.text(), format!("start{}", "字".repeat(1000)));
+    assert!(buffer.chunks.len() <= 3, "{} 分块承载 {} 字节", buffer.chunks.len(), buffer.byte_len());
+}
+
+#[test]
+fn core_repair_content_equality_ignores_chunk_boundaries() {
+    let mut buffer = TextBuffer::from_text("same content");
+    buffer.split_at(5);
+    assert!(buffer.same_content(&TextBuffer::from_text("same content")));
+}
+
 /// std 的 `str::floor_char_boundary` 还没稳定，测试自己往回退到字符边界。
 fn floor_char_boundary(text: &str, offset: usize) -> usize {
     let mut offset = offset.min(text.len());

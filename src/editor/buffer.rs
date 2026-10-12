@@ -217,8 +217,8 @@ impl TextBuffer {
             && self
                 .chunks
                 .iter()
-                .zip(other.chunks.iter())
-                .all(|(mine, theirs)| mine.text == theirs.text)
+                .flat_map(|chunk| chunk.text.bytes())
+                .eq(other.chunks.iter().flat_map(|chunk| chunk.text.bytes()))
     }
 
     /// 内容与给定文本逐字节相同吗？不复制自己，用来跳过「其实没变的整篇重投影」。
@@ -423,7 +423,25 @@ impl TextBuffer {
         let start = self.split_at(range.start);
         let end = self.split_at(range.end);
         self.probed(text.len());
-        self.chunks.splice(start..end, chunkify(text));
+        let inserted = chunkify(text);
+        let inserted_chunks = inserted.len();
+        self.chunks.splice(start..end, inserted);
+        let mut index = start.saturating_sub(1);
+        let mut boundary = (start + inserted_chunks + 1).min(self.chunks.len());
+        while index + 1 < boundary {
+            if self.chunks[index].byte_len() + self.chunks[index + 1].byte_len() <= MAX_CHUNK_BYTES {
+                let right = self.chunks.remove(index + 1);
+                let left = &mut self.chunks[index];
+                let offset = left.byte_len();
+                left.text.push_str(&right.text);
+                left.newlines.extend(
+                    right.newlines.into_iter().map(|at| (offset + at as usize) as u16),
+                );
+                boundary -= 1;
+            } else {
+                index += 1;
+            }
+        }
         self.total_bytes += text.len();
         self.total_bytes -= removed.len();
 
