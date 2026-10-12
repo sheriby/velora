@@ -647,6 +647,8 @@ impl BlockKind {
 pub struct BlockRecord {
     pub id: Uuid,
     pub kind: BlockKind,
+    /// 当前源码投影的种类；块就地换种类后，编辑器必须重新确认相邻解析边界。
+    pub(crate) source_kind: BlockKind,
     pub title: InlineTextTree,
     pub table: Option<TableData>,
     pub html: Option<HtmlDocument>,
@@ -702,6 +704,7 @@ impl BlockRecord {
     pub fn new(kind: BlockKind, title: InlineTextTree) -> Self {
         let mut record = Self {
             id: Uuid::new_v4(),
+            source_kind: kind.clone(),
             kind,
             title,
             table: None,

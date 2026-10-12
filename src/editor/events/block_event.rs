@@ -88,6 +88,10 @@ impl Editor {
 
         match event {
             BlockEvent::Changed => {
+                let kind_changed = self.writes_through_the_buffer() && {
+                    let block = block.read(cx);
+                    block.record.kind != block.record.source_kind
+                };
                 // 模型直改（重命名、补全、程序化编辑）同样会走到 Changed：它们在改
                 // 用户文档，撤销必须覆盖。没有开着的组就补开一个——delta 撤销栈的
                 // 前提是每一次缓冲区写入都被记账，这条不变式在这里收口（组已开时
@@ -142,7 +146,8 @@ impl Editor {
                 if splitting {
                     self.mark_dirty_written_back(cx);
                 } else if structure_unchanged
-                    && (self.write_back_visible_insertion(&block, cx)
+                    && ((kind_changed && self.write_back_changed_block_kind(&block, cx))
+                        || (!kind_changed && self.write_back_visible_insertion(&block, cx))
                         || self.write_back_block_source(&block, cx))
                 {
                     self.mark_dirty_written_back(cx);

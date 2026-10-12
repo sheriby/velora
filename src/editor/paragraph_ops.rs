@@ -86,7 +86,7 @@ impl Editor {
     ///
     /// 根块序列一旦变了（带子块的列表项换成标题会把子块提上来），接缝归属就不再由
     /// 这一段说了算，这条路直接放弃。
-    fn write_back_block_kind_region(
+    pub(super) fn write_back_block_kind_region(
         &mut self,
         ids_before: &[EntityId],
         changed: &[Entity<Block>],
@@ -116,6 +116,9 @@ impl Editor {
         } else {
             first
         };
+        if last + 1 < layout.len() && self.root_writing_matches_file(last + 1, &layout, cx) {
+            last += 1;
+        }
         let Some(region_start) = layout[start_index].1.clone().map(|span| span.start) else {
             return false;
         };
@@ -147,7 +150,38 @@ impl Editor {
             };
             self.reanchor_record_span(&block, span, cx);
         }
+        self.ensure_block_kind_boundary(last, cx);
+        if let Some(previous) = start_index.checked_sub(1) {
+            self.ensure_block_kind_boundary(previous, cx);
+        }
         true
+    }
+
+    pub(super) fn write_back_changed_block_kind(&mut self, block: &Entity<Block>, cx: &mut Context<Self>) -> bool {
+        let Some(root) = self.document.root_ancestor_of(block.entity_id()) else { return false; };
+        let ids: Vec<_> = self.document.root_layout().iter().map(|(id, _)| *id).collect();
+        self.write_back_block_kind_region(&ids, std::slice::from_ref(&root), cx)
+    }
+
+    fn ensure_block_kind_boundary(&mut self, previous_index: usize, cx: &App) {
+        let roots = self.document.root_blocks();
+        let Some(previous) = roots.get(previous_index) else { return; };
+        let Some(next) = roots.get(previous_index + 1) else { return; };
+        let previous_state = previous.read(cx);
+        let next_state = next.read(cx);
+        if previous_state.is_empty() || next_state.is_empty() { return; }
+        let needed = 1 + crate::editor::tree::DocumentTree::root_separator_count(previous_state.kind().is_list_item(), next_state.kind().is_list_item(), 0);
+        let Some(before) = self.document.source_span_of(previous.entity_id()) else { return; };
+        let Some(after) = self.document.source_span_of(next.entity_id()) else { return; };
+        if before.end > after.start || after.start > self.buffer.byte_len() { return; }
+        let gap = self.buffer.slice(before.end..after.start);
+        if !gap.chars().all(char::is_whitespace) { return; }
+        let missing = needed.saturating_sub(gap.bytes().filter(|byte| *byte == b'\n').count());
+        if missing > 0 {
+            let applied = self.buffer.edit(before.end..before.end, &"\n".repeat(missing));
+            self.record_buffer_edit(applied);
+            self.shift_root_spans_after(before.end, missing as i64);
+        }
     }
 
     /// 选区盖住的可见块各自往上找到根块，按文档顺序去重。

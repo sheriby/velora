@@ -1111,11 +1111,7 @@ impl DocumentTree {
 
             let current_is_list_item = block_ref.kind().is_list_item();
             if wrote_non_empty_root {
-                let separator_count = if previous_was_list_item && current_is_list_item {
-                    pending_empty_roots
-                } else {
-                    pending_empty_roots + 1
-                };
+                let separator_count = Self::root_separator_count(previous_was_list_item, current_is_list_item, pending_empty_roots);
                 lines.extend(std::iter::repeat_n(String::new(), separator_count));
             } else if pending_empty_roots > 0 {
                 lines.extend(std::iter::repeat_n(String::new(), pending_empty_roots));
@@ -1142,10 +1138,8 @@ impl DocumentTree {
                 .is_some_and(|line| line_is_list_marker(line));
             let separator_count = if !wrote_non_empty_root {
                 pending_empty_roots
-            } else if previous_was_list_item && next_is_list_item {
-                pending_empty_roots
             } else {
-                pending_empty_roots + 1
+                Self::root_separator_count(previous_was_list_item, next_is_list_item, pending_empty_roots)
             };
             lines.extend(std::iter::repeat_n(String::new(), separator_count));
             lines.extend(tail.lines[tail.next_line..].iter().cloned());
@@ -1159,6 +1153,10 @@ impl DocumentTree {
         } else if pending_empty_roots > 1 {
             lines.extend(std::iter::repeat_n(String::new(), pending_empty_roots));
         }
+    }
+
+    pub(crate) fn root_separator_count(previous_is_list_item: bool, current_is_list_item: bool, empty_roots: usize) -> usize {
+        empty_roots + usize::from(!(previous_is_list_item && current_is_list_item))
     }
 
     /// 这一块在文件里每一行让开几字节：开栏行、每条内容行、闭合行。读侧用的就是这份账

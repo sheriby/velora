@@ -1448,6 +1448,7 @@ impl Editor {
         let new_source = self.document.block_markdown_source(block, cx);
         if self.buffer.slice(old_span.clone()) == new_source {
             // 投影刷新但内容没变：不动缓冲区，区间照旧有效。
+            block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
             return true;
         }
 
@@ -1468,6 +1469,7 @@ impl Editor {
             self.shift_root_spans_after(old_span.end, delta);
         }
         self.document.set_source_span(block.entity_id(), new_span);
+        block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
         if let Some((prefixes, fence)) = ledger {
             block.update(cx, |block, _cx| {
                 block.record.source_line_prefixes = prefixes;
@@ -1538,6 +1540,7 @@ impl Editor {
         let ledger = Self::written_line_ledger(block.read(cx));
         self.document.set_source_span(block.entity_id(), span);
         block.update(cx, |block, _cx| {
+            block.record.source_kind = block.record.kind.clone();
             block.record.source_separator_bytes = 0;
             match ledger {
                 Some((prefixes, fence)) => {
@@ -1857,7 +1860,7 @@ impl Editor {
                 self.apply_resynced_text(&text);
                 // 区间只有在它派生自的那份文本里才成立：跳过重投影时也别动区间，
                 // 写回路径已经把区间按缓冲区字节摆好了。
-                self.reattach_root_spans(&block_spans, &text);
+                self.reattach_root_spans(&block_spans, &text, cx);
             }
         } else if !skip_resync {
             // 源码/代码文档：缓冲区装的是不套围栏的源码文本。这一遍同样是 O(文档)
@@ -1917,9 +1920,11 @@ impl Editor {
         &mut self,
         block_spans: &[(EntityId, std::ops::Range<usize>)],
         text: &str,
+        cx: &mut Context<Self>,
     ) {
         let roots = self.document.root_blocks().to_vec();
         for block in roots {
+            block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
             let span = block_spans
                 .iter()
                 .find(|(id, _)| *id == block.entity_id())

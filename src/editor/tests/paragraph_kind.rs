@@ -12,6 +12,39 @@ use gpui::Entity;
 
 const TWO_PARAGRAPHS: &str = "标题甲\n\n正文乙\n";
 
+#[gpui::test]
+async fn core_repair_kind_changes_match_full_parse_at_both_neighbor_boundaries(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut mismatches = Vec::new();
+    for (source, index, menu) in [("alpha\n# beta\n# gamma", 1, false), ("# alpha\nbeta", 0, false), ("# alpha\nbeta", 0, true), ("a <strong>b</strong> c\n# beta", 1, false), ("# alpha\na <strong>b</strong> c", 0, true)] {
+        let (editor, window_cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+        redraw(window_cx);
+        put_caret(&editor, index, 0, window_cx);
+        if menu { window_cx.dispatch_action(ParagraphText); } else { window_cx.dispatch_action(DeleteBack); }
+        redraw(window_cx);
+        let signature = |editor: &Entity<Editor>, cx: &mut VisualTestContext| editor.read_with(cx, |editor, cx| {
+            editor.document.visible_blocks().iter().map(|visible| {
+                let block = visible.entity.read(cx);
+                (format!("{:?}", block.kind()), block.record.title.visible_text())
+            }).collect::<Vec<_>>()
+        });
+        for typed in [false, true] {
+            if typed { window_cx.simulate_input("X"); redraw(window_cx); }
+            let text = buffer_text(&editor, window_cx);
+            for preserved in source.lines().filter(|line| line.contains("<strong>")) {
+                assert!(text.contains(preserved), "相邻块原文不能被规范化：{text}");
+            }
+            let fresh = window_cx.new(|cx| Editor::from_markdown(cx, text, None));
+            let actual = signature(&editor, window_cx);
+            let expected = signature(&fresh, window_cx);
+            if actual != expected { mismatches.push((source, menu, typed, actual, expected)); }
+        }
+        editor.update(window_cx, |editor, cx| { editor.undo_document(cx); editor.undo_document(cx); });
+        assert_eq!(buffer_text(&editor, window_cx), source);
+    }
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+}
+
 fn visible_block(
     editor: &Entity<Editor>,
     index: usize,
