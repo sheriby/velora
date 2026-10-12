@@ -1,6 +1,32 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_multiline_paste_replaces_the_original_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut mismatches = Vec::new();
+    for (source, expected) in [("abcde", "aX\n\nYde"), ("**abcde** tail", "**aX\n\nYde** tail"), ("a <strong>bcde</strong> end", "a <strong>bX\n\nYde</strong> end")] {
+        let (editor, window_cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+        redraw(window_cx);
+        let block = editor.read_with(window_cx, |editor, _| editor.document.first_root().unwrap().clone());
+        window_cx.update(|window, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("X\nY".into()));
+            block.update(cx, |block, cx| {
+                let range = if source.starts_with("a ") { 3..4 } else { 1..3 };
+                block.selected_range = block.clean_range_to_display_range(range);
+                block.on_paste_as_plain_text(&crate::components::PasteAsPlainText, window, cx);
+            });
+        });
+        redraw(window_cx);
+        let actual = editor.read_with(window_cx, |editor, _| editor.buffer.text());
+        if actual != expected { mismatches.push((source, actual, expected)); }
+        editor.update(window_cx, |editor, cx| editor.undo_document(cx));
+        redraw(window_cx);
+        assert_eq!(editor.read_with(window_cx, |editor, _| editor.buffer.text()), source);
+    }
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+}
+
+#[gpui::test]
 async fn core_repair_footnote_header_children_map_from_their_actual_start(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let mut mismatches = Vec::new();

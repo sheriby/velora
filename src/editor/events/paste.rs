@@ -1,7 +1,7 @@
 use super::*;
 
 impl Editor {
-    /// 多行粘贴在缓冲区里就是一次插入：把剪贴板文本插到光标处，别的块一个字节
+    /// 多行粘贴在缓冲区里是一次替换：剪贴板文本覆盖原选择，别的块一个字节
     /// 都不动，块结构交给导入器从缓冲区重新认（与打开文件同一套规则）。
     ///
     /// 旧路径自己按行拼块、再 `mark_dirty` 让重同步把整篇从块树重新序列化，于是
@@ -19,9 +19,21 @@ impl Editor {
         split_physical_lines: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(at) = self.caret_source_offset(block.entity_id(), leading.visible_len(), cx) else {
+        let Some(mapping) = self.source_mapping_for_entity(block.entity_id(), cx) else {
             return false;
         };
+        let original = block.read(cx);
+        let clean_start = leading.visible_len();
+        let clean_end = original.clean_visible_len().saturating_sub(trailing.visible_len());
+        if clean_end < clean_start {
+            return false;
+        }
+        let markdown_range = original.record.title.markdown_offset_map()
+            .visible_to_markdown_range(clean_start..clean_end);
+        let Some(source_start) = mapping.content_to_source.get(markdown_range.start).copied() else { return false; };
+        let Some(source_end) = mapping.content_to_source.get(markdown_range.end).copied() else { return false; };
+        let source_range = mapping.full_source_range.start + source_start
+            ..mapping.full_source_range.start + source_end;
         // 物理行粘贴是「一段一行」：空行丢掉，行与行之间补分隔空行。
         // 结构粘贴保留剪贴板原样的换行，但结构块必须独占一行，所以只在光标那一侧
         // 还留着文字时补空行把它和前后隔开。
@@ -48,7 +60,7 @@ impl Editor {
         }
 
         self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
-        let applied = self.buffer.edit(at..at, &inserted);
+        let applied = self.buffer.edit(source_range, &inserted);
         // 光标停在粘贴文本的末尾：插入点之后、原文剩下的那截之前。
         let caret = applied.new_range.end;
         self.record_buffer_edit(applied);
