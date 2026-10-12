@@ -1,6 +1,59 @@
 use super::common::*;
 
 #[gpui::test]
+#[cfg(unix)]
+async fn core_repair_autosave_preserves_symlink_targets(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let real = temp_markdown_path("autosave-link-real");
+    let link = temp_markdown_path("autosave-link");
+    fs::write(&real, "old").unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    cx.on_quit({
+        let (real, link) = (real.clone(), link.clone());
+        move || { fs::remove_file(link).unwrap(); fs::remove_file(real).unwrap(); }
+    });
+    let document = crate::editor::encoding::load_document(&link).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_loaded_document(cx, document, Some(link.clone())));
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block.record.set_title(InlineTextTree::plain("saved"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(fs::read_to_string(&real).unwrap(), "saved");
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn core_repair_autosave_preserves_private_permissions(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("autosave-private");
+    fs::write(&path, "old").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    cx.on_quit({ let path = path.clone(); move || fs::remove_file(path).unwrap() });
+    let document = crate::editor::encoding::load_document(&path).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_loaded_document(cx, document, Some(path.clone())));
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block.record.set_title(InlineTextTree::plain("saved"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "saved");
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+}
+
+#[gpui::test]
 async fn ctrl_s_saves_rendered_mode_edit_to_existing_file(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
 
@@ -36,6 +89,45 @@ async fn ctrl_s_saves_rendered_mode_edit_to_existing_file(cx: &mut TestAppContex
         assert!(!editor.document_dirty);
         assert!(!editor.pending_save);
     });
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn core_repair_save_and_close_preserves_symlink_targets(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let real = temp_markdown_path("save-close-link-real");
+    let link = temp_markdown_path("save-close-link");
+    fs::write(&real, "old").unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    cx.on_quit({
+        let (real, link) = (real.clone(), link.clone());
+        move || { fs::remove_file(link).unwrap(); fs::remove_file(real).unwrap(); }
+    });
+    let document = crate::editor::encoding::load_document(&link).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_loaded_document(cx, document, Some(link.clone())));
+    edit_first_block(&editor, cx, "saved");
+    editor.update_in(cx, |editor, window, cx| editor.save_dirty_workspace_documents_and_close(window, cx));
+    cx.run_until_parked();
+    assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(fs::read_to_string(&real).unwrap(), "saved");
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn core_repair_save_and_close_preserves_private_permissions(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("save-close-private");
+    fs::write(&path, "old").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    cx.on_quit({ let path = path.clone(); move || fs::remove_file(path).unwrap() });
+    let document = crate::editor::encoding::load_document(&path).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_loaded_document(cx, document, Some(path.clone())));
+    edit_first_block(&editor, cx, "saved");
+    editor.update_in(cx, |editor, window, cx| editor.save_dirty_workspace_documents_and_close(window, cx));
+    cx.run_until_parked();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "saved");
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
 }
 
 #[gpui::test]

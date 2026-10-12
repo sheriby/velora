@@ -62,36 +62,53 @@ fn autosave_temp_path(path: &Path) -> PathBuf {
 /// 收 `&[u8]` 而不是 `&str`：保存的内容可能就是打开时读到的原始字节（未编辑的
 /// 文档），那不必是合法 UTF-8。
 pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    // 目标是符号链接时穿透到真正目标：临时文件与 rename 都落在真实路径上，
-    // 链接本身不被顶掉（同步盘软链工作流不断）。目标还不存在（首次保存）
-    // 时 canonicalize 失败，按原路径落盘。
-    let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let temp_path = autosave_temp_path(path);
-    let permissions = match std::fs::metadata(path) {
-        Ok(metadata) => Some(metadata.permissions()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+    StagedDocumentWrite::prepare(path, contents)?.commit()
+}
+
+struct StagedDocumentWrite {
+    target: PathBuf,
+    temporary: PathBuf,
+}
+
+impl StagedDocumentWrite {
+    fn prepare(path: &Path, contents: &[u8]) -> std::io::Result<Self> {
+        use std::io::Write;
+        let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let permissions = match std::fs::metadata(&target) {
+            Ok(metadata) => Some(metadata.permissions()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let staged = Self { temporary: autosave_temp_path(&target), target };
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&staged.temporary)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(contents)?;
+        file.sync_all()?;
+        drop(file);
+        Ok(staged)
     }
-    let mut file = options.open(&temp_path)?;
-    if let Some(permissions) = permissions {
-        file.set_permissions(permissions)?;
+
+    fn commit(self) -> std::io::Result<()> {
+        std::fs::rename(&self.temporary, &self.target)
     }
-    file.write_all(contents)?;
-    file.sync_all()?;
-    drop(file);
-    match std::fs::rename(&temp_path, path) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = std::fs::remove_file(&temp_path);
-            Err(error)
+}
+
+impl Drop for StagedDocumentWrite {
+    fn drop(&mut self) {
+        // 取消任务、批量准备失败或旧版本被拒绝时，也不能留下正文临时文件。
+        if let Err(error) = std::fs::remove_file(&self.temporary)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("无法清理保存临时文件 '{}': {error}", self.temporary.display());
         }
     }
 }
@@ -204,7 +221,7 @@ pub(super) fn file_content_version_normalized(markdown: &str) -> u64 {
 struct PendingAutosaveDocument {
     recovery: crate::config::RecoverySnapshot,
     path: Option<PathBuf>,
-    temp_path: Option<PathBuf>,
+    write_file: bool,
     file_version: Option<u64>,
     /// 活动文档的落盘字节（缓冲区原始字节/按形状重编码）。`None` = 后台标签，
     /// 退写恢复快照里的文本（形状丢失是已知限制）。
@@ -254,11 +271,7 @@ impl Editor {
                                     source_path: Some(document.path.clone()),
                                     markdown: document.markdown,
                                 },
-                                // 自动保存关掉时不给临时路径：后台那一趟只写恢复快照
-                                // 并校验文件版本，末尾的 rename 循环按 `temp_path` 跳过
-                                // 这一篇，真文件不动。
-                                temp_path: autosave_writes
-                                    .then(|| autosave_temp_path(&document.path)),
+                                write_file: autosave_writes,
                                 file_version: Some(document.file_version),
                                 path: Some(document.path),
                                 bytes: document.bytes,
@@ -272,7 +285,7 @@ impl Editor {
                                     markdown: editor.document_text_for_save(),
                                 },
                                 path: None,
-                                temp_path: None,
+                                write_file: false,
                                 file_version: None,
                                 bytes: None,
                             });
@@ -293,6 +306,7 @@ impl Editor {
                 let write_result = cx
                     .background_executor()
                     .spawn(async move {
+                        let mut prepared = Vec::new();
                         for document in documents_for_write {
                             // 失败时把真正出问题的文件路径一起带回去：冲突要记在
                             // 那个文件上，而不是第一个有路径的标签。
@@ -308,37 +322,34 @@ impl Editor {
                                 .map_err(|error| (failing_path.clone(), error))?,
                                 _ => Vec::new(),
                             };
-                            if let Some(temp_path) = document.temp_path.as_ref() {
+                            let staged = if let Some(path) = document.path.as_ref().filter(|_| document.write_file) {
                                 // 优先写缓冲区字节；后台那一页按磁盘上的形状重新编码
                                 // （见 `autosave_payload`），CRLF/UTF-16/GB18030 文档
                                 // 经 autosave 不能被洗成 LF/UTF-8。
                                 let payload = autosave_payload(&document, &disk_raw);
-                                std::fs::write(temp_path, payload)
-                                    .map_err(|error| {
-                                        (failing_path.clone(), anyhow::Error::from(error))
-                                    })?;
+                                let staged = StagedDocumentWrite::prepare(path, &payload)
+                                    .map_err(|error| (failing_path.clone(), anyhow::Error::from(error)))?;
                                 if let (Some(path), Some(expected_version)) =
                                     (document.path.as_deref(), document.file_version)
                                 {
                                     verify_file_version(path, expected_version)
                                         .map_err(|error| (failing_path.clone(), error))?;
                                 }
-                            }
+                                Some(staged)
+                            } else {
+                                None
+                            };
+                            prepared.push(staged);
                         }
-                        Ok::<_, (Option<PathBuf>, anyhow::Error)>(())
+                        Ok::<_, (Option<PathBuf>, anyhow::Error)>(prepared)
                     })
                     .await;
                 editor
                     .update(cx, move |editor, cx| {
                         editor.autosave_task = None;
-                        match write_result {
-                            Ok(()) => {}
+                        let prepared = match write_result {
+                            Ok(prepared) => prepared,
                             Err((failing_path, error)) => {
-                                for document in &documents {
-                                    if let Some(temp_path) = document.temp_path.as_ref() {
-                                        let _ = std::fs::remove_file(temp_path);
-                                    }
-                                }
                                 if editor.document_revision != revision {
                                     editor.schedule_autosave(cx);
                                     return;
@@ -370,27 +381,22 @@ impl Editor {
                                 }
                                 return;
                             }
-                        }
+                        };
 
                         if editor.document_revision != revision {
-                            for document in &documents {
-                                if let Some(temp_path) = document.temp_path.as_ref() {
-                                    let _ = std::fs::remove_file(temp_path);
-                                }
-                            }
+                            drop(prepared);
                             editor.schedule_autosave(cx);
                             return;
                         }
 
                         let mut saved_documents = Vec::new();
-                        for document in &documents {
-                            let (Some(path), Some(temp_path)) =
-                                (document.path.as_ref(), document.temp_path.as_ref())
+                        for (document, staged) in documents.iter().zip(prepared) {
+                            let (Some(path), Some(staged)) =
+                                (document.path.as_ref(), staged)
                             else {
                                 continue;
                             };
-                            if let Err(error) = std::fs::rename(temp_path, path) {
-                                let _ = std::fs::remove_file(temp_path);
+                            if let Err(error) = staged.commit() {
                                 eprintln!("failed to autosave '{}': {error}", path.display());
                                 continue;
                             }
@@ -462,7 +468,6 @@ impl Editor {
                 .spawn(async move {
                     let mut prepared = Vec::new();
                     for document in documents_for_write {
-                        let temp_path = autosave_temp_path(&document.path);
                         crate::config::save_recovery_snapshot(&crate::config::RecoverySnapshot {
                             id: document.recovery_id,
                             source_path: Some(document.path.clone()),
@@ -475,11 +480,11 @@ impl Editor {
                             Some(bytes) => bytes.to_vec(),
                             None => encoded_with_disk_shape(&document.markdown, &disk_raw),
                         };
-                        std::fs::write(&temp_path, payload).with_context(|| {
+                        let staged = StagedDocumentWrite::prepare(&document.path, &payload).with_context(|| {
                             format!("failed to stage '{}'", document.path.display())
                         })?;
                         verify_file_version(&document.path, document.file_version)?;
-                        prepared.push((document, temp_path));
+                        prepared.push((document, staged));
                     }
                     Ok::<_, anyhow::Error>(prepared)
                 })
@@ -502,9 +507,7 @@ impl Editor {
                         }
                     };
                     if editor.document_revision != revision {
-                        for (_, temp_path) in &prepared {
-                            let _ = std::fs::remove_file(temp_path);
-                        }
+                        drop(prepared);
                         editor.pending_close_after_save = false;
                         editor.show_unsaved_changes_dialog = true;
                         cx.notify();
@@ -513,9 +516,8 @@ impl Editor {
 
                     let mut saved_documents = Vec::new();
                     let mut failed_save = false;
-                    for (document, temp_path) in prepared {
-                        if let Err(error) = std::fs::rename(&temp_path, &document.path) {
-                            let _ = std::fs::remove_file(&temp_path);
+                    for (document, staged) in prepared {
+                        if let Err(error) = staged.commit() {
                             eprintln!("failed to save '{}': {error}", document.path.display());
                             failed_save = true;
                             continue;
