@@ -282,6 +282,57 @@ async fn mouse_over_a_block_whose_text_shrank_since_layout_does_not_panic(cx: &m
     );
 }
 
+/// 缺陷：按住左键拖动能把选区拉过段界，但「点一下、按住 shift 再点另一段」在抬起时
+/// 选区仍是空的——只有同段内的 shift 扩选（块自己的那条路）能用。
+#[gpui::test]
+async fn shift_click_selects_across_paragraphs(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "第一段正文\n\n第二段正文\n\n第三段正文".into(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let first = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[0]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("段落该有布局边界")
+    });
+    let in_first = gpui::point(first.left() + px(1.0), first.center().y);
+    cx.simulate_mouse_down(in_first, gpui::MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(in_first, gpui::MouseButton::Left, Modifiers::none());
+    redraw(cx);
+
+    let third = editor.read_with(cx, |editor, cx| {
+        editor.document.visible_blocks()[2]
+            .entity
+            .read(cx)
+            .last_bounds
+            .expect("段落该有布局边界")
+    });
+    let mut shift = Modifiers::none();
+    shift.shift = true;
+    let in_third = gpui::point(third.left() + px(1.0), third.center().y);
+    cx.simulate_mouse_down(in_third, gpui::MouseButton::Left, shift);
+    cx.simulate_mouse_up(in_third, gpui::MouseButton::Left, shift);
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        let selection = editor
+            .cross_block_selection
+            .expect("跨段 shift+点应当成选区");
+        let visible = editor.document.visible_blocks();
+        assert_eq!(selection.anchor.entity_id, visible[0].entity.entity_id());
+        assert_eq!(selection.focus.entity_id, visible[2].entity.entity_id());
+        assert_eq!(selection.anchor.offset, 0, "锚点该停在第一段的该点处");
+        let text = editor.selected_visible_text(cx).unwrap_or_default();
+        assert!(text.contains("第一段正文"), "第一段该进选区：{text:?}");
+        assert!(text.contains("第二段正文"), "中间那一段该进选区：{text:?}");
+    });
+}
+
 #[gpui::test]
 async fn dragging_the_left_button_across_cjk_blocks_keeps_selecting(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

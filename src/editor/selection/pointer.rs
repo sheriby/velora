@@ -68,6 +68,63 @@ impl Editor {
         cx.notify();
     }
 
+    /// shift+按下：从既有锚点扩选，而不是在按下处重新落锚。
+    ///
+    /// 拖选靠 mouse_move 拉开选区，但「点一下、按住 shift 再点另一段」没有中间的
+    /// move：原先的路径在按下处重落一次锚点，抬手时选区仍是空的，跨段 shift 扩选
+    /// 于是只剩同段内那一截（那段由块自己的 shift+点处理）。返回 true 表示这一次
+    /// 按下已经变成扩选，调用方不要再去落光标。
+    fn extend_cross_block_selection_at_point(
+        &mut self,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(focus) = self.cross_block_endpoint_for_point(position, cx) else {
+            return false;
+        };
+        // 落在表格格子上的按下归表格自己的按格选字，不在这里扩。
+        if self.table_text_anchor_at_point(position, cx).is_some() {
+            return false;
+        }
+        let Some(anchor) = self.cross_block_shift_anchor(cx) else {
+            return false;
+        };
+        // 同一根块里的 shift+点交给块自己的扩选（与 mouse_move 的同块早退同一条口径）。
+        if anchor.entity_id == focus.entity_id {
+            return false;
+        }
+        let selection = CrossBlockSelection { anchor, focus };
+        if self.cross_block_selection_is_empty(selection) {
+            return false;
+        }
+        // 记住这个锚点：接着按住拖动时扩的是同一条选区，不再重新落锚。
+        self.cross_block_drag = Some(CrossBlockDrag {
+            anchor,
+            anchor_table_cell: None,
+        });
+        self.cross_block_selection = Some(selection);
+        self.sync_cross_block_selection_visuals(cx);
+        cx.notify();
+        true
+    }
+
+    /// shift 扩选的锚点：已有跨块选区就用它的起点；否则用当前编辑目标的光标
+    /// （或它在块内的选区锚）。两者都没有（表格选区在手上）就返回 None。
+    fn cross_block_shift_anchor(&self, cx: &App) -> Option<CrossBlockSelectionEndpoint> {
+        if let Some(selection) = self.cross_block_selection {
+            return Some(selection.anchor);
+        }
+        if self.table_text_selection.is_some() {
+            return None;
+        }
+        let target = self.current_edit_target_from_state(cx)?;
+        let (anchor, _) = target.read(cx).clean_selection_anchor_focus();
+        Some(CrossBlockSelectionEndpoint {
+            entity_id: target.entity_id(),
+            offset: anchor,
+        })
+    }
+
     pub(crate) fn on_editor_capture_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -117,10 +174,14 @@ impl Editor {
         }
         // 源码模式的块也要武装跨块拖拽：回车新建的是逐行块，跨块拖选是刚需。
         // 同一根块里的拖动由 mouse_move 的同块早退交还给块内选区，这里武装
-        // 只记锚点，不影响块内行为。
+        // 只记锚点，不影响块内行为。按住 shift 的按下不落光标，直接换成扩选。
         self.rendered_select_all_cycle = None;
-        self.place_caret_below_document_end(event.position, cx);
-        self.begin_cross_block_drag_at_point(event.position, cx);
+        let extended =
+            event.modifiers.shift && self.extend_cross_block_selection_at_point(event.position, cx);
+        if !extended {
+            self.place_caret_below_document_end(event.position, cx);
+            self.begin_cross_block_drag_at_point(event.position, cx);
+        }
         cx.propagate();
     }
 
