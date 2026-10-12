@@ -369,6 +369,7 @@ impl DocumentTree {
         // The replacement defines the whole document, so any not-yet-built tail
         // belongs to the previous content.
         self.pending = None;
+        self.pending_source = None;
         self.rebuild_metadata_and_snapshot(cx);
     }
 

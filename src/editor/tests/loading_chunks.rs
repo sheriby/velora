@@ -1,6 +1,33 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_replacing_a_loading_code_document_discards_its_tail(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_code_source("old\n".repeat(1100), PathBuf::from("old.log"), cx);
+        editor.replace_document_from_code_source("fresh".into(), PathBuf::from("fresh.log"), cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.document.raw_source_text(cx), "fresh");
+        assert_eq!(editor.buffer.text(), "fresh");
+    });
+}
+
+#[gpui::test]
+async fn core_repair_replacing_a_loading_code_document_with_markdown_discards_its_tail(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.replace_document_from_code_source("old\n".repeat(1100), PathBuf::from("old.log"), cx);
+        editor.replace_document_from_markdown("fresh".into(), None, cx);
+        editor.flush_pending_materialization(cx);
+        assert_eq!(editor.document.markdown_text(cx), "fresh");
+    });
+}
+
+#[gpui::test]
 #[ignore = "手动大文件诊断；设置 VELORA_PERF_FILE 后单独运行"]
 async fn manual_markdown_load_probe(cx: &mut TestAppContext) {
     let path = std::env::var("VELORA_PERF_FILE").expect("需要设置 VELORA_PERF_FILE");

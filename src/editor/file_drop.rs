@@ -293,6 +293,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.image_preview = None;
+        self.pending_materialization_task = None;
         // `Restore` 那份现场由调用方在换内容之前记好，这里只负责在块树重建之后交还。
         let restored_view = match kind {
             ImportKind::Open => None,
