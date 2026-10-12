@@ -35,6 +35,7 @@ mod read_side_sees_the_file;
 mod render_snapshot_fold;
 mod round_trip_fidelity;
 mod save_autosave_ime;
+mod save_transactions;
 mod scroll_window;
 mod selection_toolbar;
 mod source_selection;

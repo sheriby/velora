@@ -206,6 +206,26 @@ impl Editor {
             .collect()
     }
 
+    pub(crate) fn workspace_save_document_is_open(&self, id: uuid::Uuid, path: Option<&Path>) -> bool {
+        (self.recovery_id == id && self.file_path.as_deref() == path)
+            || self.workspace.open_documents.iter().any(|tab| {
+                tab.recovery_id == id && Some(tab.path.as_path()) == path
+            })
+    }
+
+    pub(crate) fn workspace_save_snapshot_is_current(&self, id: uuid::Uuid, path: &Path, text: &str) -> bool {
+        if !self.workspace_save_document_is_open(id, Some(path)) {
+            return false;
+        }
+        if self.file_path.as_deref() == Some(path) {
+            self.document_dirty && self.buffer.matches_text(text)
+        } else {
+            self.workspace.open_documents.iter().any(|tab| {
+                tab.recovery_id == id && tab.path == path && tab.dirty && tab.markdown == text
+            })
+        }
+    }
+
     pub(crate) fn mark_workspace_documents_saved(
         &mut self,
         saved: &[WorkspaceAutosaveDocument],

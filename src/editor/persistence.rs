@@ -70,6 +70,13 @@ struct StagedDocumentWrite {
     temporary: PathBuf,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct DocumentSaveIdentity {
+    recovery_id: uuid::Uuid,
+    buffer_id: u64,
+    revision: u64,
+}
+
 impl StagedDocumentWrite {
     fn prepare(path: &Path, contents: &[u8]) -> std::io::Result<Self> {
         use std::io::Write;
@@ -99,6 +106,19 @@ impl StagedDocumentWrite {
 
     fn commit(self) -> std::io::Result<()> {
         std::fs::rename(&self.temporary, &self.target)
+    }
+
+    fn commit_checked(self, path: &Path, expected_version: u64) -> anyhow::Result<()> {
+        let target = std::fs::canonicalize(path).map_err(|error| ExternalChange {
+            path: path.to_path_buf(), reason: Some(error.to_string()),
+        })?;
+        if target != self.target {
+            return Err(ExternalChange {
+                path: path.to_path_buf(), reason: Some("文件目标已变化".into()),
+            }.into());
+        }
+        verify_file_version(path, expected_version)?;
+        Ok(self.commit()?)
     }
 }
 
@@ -164,17 +184,7 @@ fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<Vec
     Ok(document.raw)
 }
 
-/// 后台标签落盘的字节：形状取自磁盘上还在的那份文件。
-///
-/// `WorkspaceDocumentTab` 只存缓冲区文本（LF、解码后的），不存字节与 `FileShape`——
-/// tabs.rs / session_watcher.rs 里那两行「tab 快照携带字节与 FileShape（独立工作项，
-/// 见 FIXPLAN B2）」就是这个洞：切走的页面没有缓冲区，落盘只剩 `text.as_bytes()`，
-/// 于是 UTF-16 的 BOM 与编码、GB18030 的编码、CRLF 的行尾一起被洗成 UTF-8/LF。
-/// 那正是「编码修复」要堵的那一类数据丢失，只是换了个入口。
-///
-/// 不在每个标签上再存一份整篇字节：盘上的形状还在原文件里，写之前按它重新编码就行，
-/// 编码器仍然只有 `FileShape::encode` 一个，读盘的漏斗也只有 `encoding::load_document`
-/// 一个——两处都是既有事实源，不新增第三份要同步的账。
+/// 后台标签没有未编辑的原始字节，写入前用同一次版本校验读取的文件形状编码。
 pub(super) fn tab_write_bytes(path: &Path, text: &str, expected_version: u64) -> anyhow::Result<Vec<u8>> {
     let raw = verify_file_version(path, expected_version)?;
     Ok(encoded_with_disk_shape(text, &raw))
@@ -384,20 +394,50 @@ impl Editor {
                         };
 
                         if editor.document_revision != revision {
+                            for document in &documents {
+                                if !editor.workspace_save_document_is_open(document.recovery.id, document.path.as_deref())
+                                    && let Err(error) = crate::config::remove_recovery_snapshot(document.recovery.id)
+                                {
+                                    eprintln!("无法清理已关闭文档的恢复快照：{error}");
+                                }
+                            }
                             drop(prepared);
                             editor.schedule_autosave(cx);
                             return;
                         }
 
                         let mut saved_documents = Vec::new();
+                        #[cfg(test)]
+                        if let Some(hook) = editor.save_commit_hook.take() {
+                            hook(editor, cx);
+                        }
                         for (document, staged) in documents.iter().zip(prepared) {
                             let (Some(path), Some(staged)) =
                                 (document.path.as_ref(), staged)
                             else {
                                 continue;
                             };
-                            if let Err(error) = staged.commit() {
+                            if !editor.workspace_save_snapshot_is_current(document.recovery.id, path, &document.recovery.markdown) {
+                                if !editor.workspace_save_document_is_open(document.recovery.id, Some(path))
+                                    && let Err(error) = crate::config::remove_recovery_snapshot(document.recovery.id)
+                                {
+                                    eprintln!("无法清理已关闭文档的恢复快照：{error}");
+                                }
+                                continue;
+                            }
+                            let result = match document.file_version {
+                                Some(version) => staged.commit_checked(path, version),
+                                None => staged.commit().map_err(anyhow::Error::from),
+                            };
+                            if let Err(error) = result {
                                 eprintln!("failed to autosave '{}': {error}", path.display());
+                                if is_external_change(&error) {
+                                    editor.report_external_change_conflict(path.clone(), error.to_string(), cx);
+                                } else {
+                                    editor.report_workspace_file_error(error.to_string(), cx);
+                                    let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+                                    editor.show_message_modal(title, error.to_string(), cx);
+                                }
                                 continue;
                             }
                             if let Err(error) =
@@ -516,9 +556,24 @@ impl Editor {
 
                     let mut saved_documents = Vec::new();
                     let mut failed_save = false;
+                    #[cfg(test)]
+                    if let Some(hook) = editor.save_commit_hook.take() {
+                        hook(editor, cx);
+                    }
                     for (document, staged) in prepared {
-                        if let Err(error) = staged.commit() {
+                        if !editor.workspace_save_snapshot_is_current(document.recovery_id, &document.path, &document.markdown) {
+                            failed_save = true;
+                            continue;
+                        }
+                        if let Err(error) = staged.commit_checked(&document.path, document.file_version) {
                             eprintln!("failed to save '{}': {error}", document.path.display());
+                            if is_external_change(&error) {
+                                editor.report_external_change_conflict(document.path.clone(), error.to_string(), cx);
+                            } else {
+                                editor.report_workspace_file_error(error.to_string(), cx);
+                                let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
+                                editor.show_message_modal(title, error.to_string(), cx);
+                            }
                             failed_save = true;
                             continue;
                         }
@@ -625,9 +680,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.document_revision = self.document_revision.wrapping_add(1);
-        // 版本号必须来自**实际写盘的那份字节**对应的文本：另存流程在弹面板前就
-        // 取了字节，面板期间缓冲区再变的话，完成时现取的文本与磁盘就对不上了，
-        // 下一次校验会把自己写的文件误判成外部修改。
+        // 版本号取实际写入的文本，不能由完成时的另一份状态推算。
         let saved_markdown = saved_text;
         self.file_version = Some(file_content_version(&saved_markdown));
         // 标签里的版本号也要跟上（自动保存按它校验磁盘，见
@@ -698,7 +751,20 @@ impl Editor {
         }
         let bytes = self.document_bytes_for_save();
         let saved_text = self.document_text_for_save();
-        match write_atomic(path, &bytes) {
+        let identity = self.document_save_identity();
+        let expected_version = self.file_version;
+        let result = StagedDocumentWrite::prepare(path, &bytes).map_err(anyhow::Error::from).and_then(|staged| {
+            #[cfg(test)]
+            if let Some(hook) = self.save_commit_hook.take() {
+                hook(self, cx);
+            }
+            anyhow::ensure!(identity == self.document_save_identity(), "文档在准备保存期间已改变");
+            match expected_version {
+                Some(version) => staged.commit_checked(path, version),
+                None => staged.commit().map_err(anyhow::Error::from),
+            }
+        });
+        match result {
             Ok(_) => {
                 self.apply_successful_save(path.to_path_buf(), saved_text, bytes, cx);
                 window.set_window_edited(false);
@@ -707,11 +773,36 @@ impl Editor {
             Err(err) => {
                 let detail = err.to_string();
                 let strings = cx.global::<I18nManager>().strings().clone();
-                self.show_message_modal(strings.save_failed_title.clone(), detail, cx);
+                if is_external_change(&err) {
+                    self.report_external_change_conflict(path.to_path_buf(), detail, cx);
+                } else {
+                    self.show_message_modal(strings.save_failed_title.clone(), detail, cx);
+                }
                 let _ = window;
                 false
             }
         }
+    }
+
+    pub(super) fn document_save_identity(&self) -> DocumentSaveIdentity {
+        DocumentSaveIdentity {
+            recovery_id: self.recovery_id, buffer_id: self.buffer.identity(), revision: self.buffer.revision(),
+        }
+    }
+
+    pub(super) fn complete_save_request(
+        &mut self,
+        path: PathBuf,
+        identity: DocumentSaveIdentity,
+        saved_text: String,
+        saved_bytes: Vec<u8>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(identity == self.document_save_identity(),
+            "文档在保存面板期间已改变，请重新保存当前内容");
+        write_atomic(&path, &saved_bytes)?;
+        self.apply_successful_save(path, saved_text, saved_bytes, cx);
+        Ok(())
     }
 
     fn save_document_via_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -723,6 +814,7 @@ impl Editor {
         // 先取字节再弹面板：未编辑的文档保存的就是打开时那份原始字节。
         let markdown = self.document_bytes_for_save();
         let saved_text = self.document_text_for_save();
+        let identity = self.document_save_identity();
         let (default_dir, suggested_name) = self.save_dialog_defaults();
         let prompt = cx.prompt_for_new_path(&default_dir, suggested_name.as_deref());
         let weak_editor = cx.entity().downgrade();
@@ -762,24 +854,26 @@ impl Editor {
                 path.set_extension("md");
             }
 
-            if let Err(err) = write_atomic(&path, &markdown) {
-                if should_close_after_save {
-                    let _ = weak_editor_for_write_error
-                        .update(cx, |this, cx| this.abort_pending_close_after_save(cx));
+            let result = weak_editor.update(cx, move |this, cx| {
+                this.complete_save_request(path, identity, saved_text, markdown, cx)
+            }).and_then(|result| result);
+            if let Err(err) = result {
+                if should_close_after_save
+                    && let Err(error) = weak_editor_for_write_error
+                        .update(cx, |this, cx| this.abort_pending_close_after_save(cx))
+                {
+                    eprintln!("无法取消保存后的关闭请求：{error}");
                 }
                 let detail = err.to_string();
-                let _ = weak_editor_for_write_error.update(cx, move |this, cx| {
+                if let Err(error) = weak_editor_for_write_error.update(cx, move |this, cx| {
                     let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
                     this.show_message_modal(title, detail.clone(), cx);
-                });
-                let _ = window_handle;
+                }) {
+                    eprintln!("无法显示保存失败：{error}");
+                }
                 return;
             }
 
-            let path_for_state = path.clone();
-            let _ = weak_editor.update(cx, move |this, cx| {
-                this.apply_successful_save(path_for_state, saved_text, markdown, cx);
-            });
             let _ = cx.update_window(
                 window_handle,
                 move |_view: AnyView, window: &mut Window, cx: &mut App| {

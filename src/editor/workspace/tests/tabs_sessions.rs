@@ -1400,3 +1400,34 @@ async fn switching_workspace_keeps_the_shape_of_dirty_tabs(cx: &mut TestAppConte
         "收起脏标签的写盘也要是原子写，不该留下临时文件，实测 {leftovers:?}"
     );
 }
+
+#[gpui::test]
+async fn core_repair_autosave_does_not_commit_a_discarded_background_tab(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "discard-staged");
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, "old").unwrap();
+    fs::write(&second, "second").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "old".into(), Some(first.clone())));
+    let recovery_id = editor.read_with(cx, |editor, _| editor.recovery_id);
+    cx.cx.on_quit(move || crate::config::remove_recovery_snapshot(recovery_id).unwrap());
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block.record.set_title(crate::components::InlineTextTree::plain("ours"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    editor.update_in(cx, |editor, window, cx| editor.open_workspace_file(second.clone(), window, cx));
+    editor.update(cx, |editor, _| {
+        editor.save_commit_hook = Some(Box::new({
+            let first = first.clone();
+            move |editor, _| editor.workspace.open_documents.retain(|tab| tab.path != first)
+        }));
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(fs::read_to_string(first).unwrap(), "old");
+}

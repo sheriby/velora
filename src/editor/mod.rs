@@ -118,6 +118,8 @@ pub struct Editor {
     /// 防抖中的 frame 写盘任务；重新赋值即取消上一个计时。
     window_frame_write_task: Option<Task<()>>,
     autosave_task: Option<Task<()>>,
+    #[cfg(test)]
+    save_commit_hook: Option<Box<dyn FnOnce(&mut Editor, &mut Context<Editor>)>>,
     /// Background task importing the rest of a document that was opened with a
     /// partial block tree (roadmap G8).
     pending_materialization_task: Option<Task<()>>,
@@ -686,6 +688,8 @@ impl Editor {
             window_bounds_subscription: None,
             window_frame_write_task: None,
             autosave_task: None,
+            #[cfg(test)]
+            save_commit_hook: None,
             pending_materialization_task: None,
             recovery_id: uuid::Uuid::new_v4(),
             recovery_source_path: None,
