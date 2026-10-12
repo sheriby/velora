@@ -243,10 +243,11 @@ impl Editor {
         self.dismiss_contextual_overlays(cx);
         self.clear_table_axis_preview(cx);
         self.clear_table_axis_selection(cx);
+        let source_mode = self.view_mode == ViewMode::Source;
         for visible in &visible {
             visible.entity.update(cx, |block, cx| {
                 let cursor = block.cursor_offset();
-                let collapsed = cursor..cursor;
+                let collapsed = if source_mode { 0..block.visible_len() } else { cursor..cursor };
                 if block.selected_range != collapsed {
                     block.selected_range = collapsed;
                     cx.notify();
