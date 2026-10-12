@@ -1,6 +1,58 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_materialization_allows_other_tasks_between_chunks(cx: &mut TestAppContext) {
+    use std::{cell::Cell, rc::Rc};
+    init_editor_test_app(cx);
+    let total = 2000;
+    let source = "# heading\n\n".repeat(total).trim_end_matches('\n').to_string();
+    let editor = cx.new(|cx| Editor::from_markdown_with_chunk_budget(cx, source, None, 1));
+    let observed = Rc::new(Cell::new(0));
+    editor.update(cx, |editor, _| {
+        editor.materialization_step_hook = Some(Box::new({
+            let observed = observed.clone();
+            move |_, cx| {
+                cx.spawn(async move |this, cx| {
+                    observed.set(this.update(cx, |editor, _| editor.document.root_count()).unwrap());
+                }).detach();
+            }
+        }));
+    });
+    cx.run_until_parked();
+    assert!(observed.get() > 1 && observed.get() < total, "另一个任务在第 {} 根块时得到调度", observed.get());
+    assert_eq!(editor.read_with(cx, |editor, _| editor.document.root_count()), total);
+}
+
+#[gpui::test]
+async fn core_repair_typing_during_code_materialization_keeps_later_line_numbers(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "row\n".repeat(6000);
+    let path = temp_markdown_path("loading-line-numbers").with_extension("log");
+    fs::write(&path, &source).unwrap();
+    cx.on_quit({ let path = path.clone(); move || fs::remove_file(path).unwrap() });
+    let editor = cx.new(|cx| Editor::from_file_source(cx, source.clone(), Some(path)));
+    editor.update(cx, |editor, _| {
+        editor.materialization_step_hook = Some(Box::new(|_, cx| {
+            cx.spawn(async move |this, cx| {
+                this.update(cx, |editor, cx| {
+                    let first = editor.document.first_root().unwrap().clone();
+                    first.update(cx, |block, cx| block.replace_text_in_visible_range(0..0, "new\n", None, false, cx));
+                }).unwrap();
+            }).detach();
+        }));
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.buffer.text(), format!("new\n{source}"));
+        assert_eq!(editor.document.raw_source_text(cx), editor.buffer.text());
+        for block in editor.document.root_blocks() {
+            let span = editor.document.source_span_of(block.entity_id()).unwrap();
+            assert_eq!(block.read(cx).source_line_start(), editor.buffer.line_of(span.start) + 1);
+        }
+    });
+}
+
+#[gpui::test]
 async fn core_repair_replacing_a_loading_code_document_discards_its_tail(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));

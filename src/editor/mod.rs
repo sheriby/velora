@@ -123,6 +123,8 @@ pub struct Editor {
     /// Background task importing the rest of a document that was opened with a
     /// partial block tree (roadmap G8).
     pending_materialization_task: Option<Task<()>>,
+    #[cfg(test)]
+    materialization_step_hook: Option<Box<dyn FnOnce(&mut Editor, &mut Context<Editor>)>>,
     recovery_id: uuid::Uuid,
     recovery_source_path: Option<PathBuf>,
     is_recovered_document: bool,
@@ -691,6 +693,8 @@ impl Editor {
             #[cfg(test)]
             save_commit_hook: None,
             pending_materialization_task: None,
+            #[cfg(test)]
+            materialization_step_hook: None,
             recovery_id: uuid::Uuid::new_v4(),
             recovery_source_path: None,
             is_recovered_document: false,
@@ -841,15 +845,34 @@ impl Editor {
             async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 loop {
                     let Ok(more) = this
-                        .update(cx, |editor, cx| editor.materialize_next_pending_chunk(cx))
+                        .update(cx, |editor, cx| {
+                            let more = editor.materialize_next_pending_chunk(cx);
+                            #[cfg(test)]
+                            if let Some(hook) = editor.materialization_step_hook.take() {
+                                hook(editor, cx);
+                            }
+                            more
+                        })
                     else {
                         return;
                     };
                     if !more {
                         break;
                     }
+                    let mut has_yielded = false;
+                    std::future::poll_fn(|task_cx| {
+                        if has_yielded {
+                            std::task::Poll::Ready(())
+                        } else {
+                            has_yielded = true;
+                            task_cx.waker().wake_by_ref();
+                            std::task::Poll::Pending
+                        }
+                    }).await;
                 }
-                let _ = this.update(cx, |editor, _cx| editor.pending_materialization_task = None);
+                if let Err(error) = this.update(cx, |editor, _cx| editor.pending_materialization_task = None) {
+                    eprintln!("无法结束文档物化任务：{error}");
+                }
             },
         ));
     }
@@ -976,6 +999,7 @@ impl Editor {
         // 区间按**整棵根序列**重挂：这一片是接在已物化的那些片之后的，只按新块自己
         // 从 0 数会把第二片排到第一片身上（区间重叠，写回就把字节写到别的块里）。
         self.reattach_source_document_spans(cx);
+        self.refresh_source_line_starts(cx);
 
         if offset < tail.source.len() {
             let rest = tail.source.split_off(offset);
