@@ -587,9 +587,13 @@ fn detect_inline_spans(text: &str) -> Vec<DetectedSpan> {
         }
 
         if text[index..].starts_with("$$") && !is_escaped_ascii(text, index) {
+            // 闭合定界符借应用侧那一处判据（按反斜杠游程判奇偶），不许在这里
+            // `find("$$")` 再猜一次：`\$` 是字面美元，不构成闭合。
             if crate::components::latex::starts_display_math_block(text)
-                && let Some(relative) = text[index + 2..].find("$$") {
-                let end = index + 4 + relative;
+                && let Some((math_body, _)) =
+                    crate::components::latex::split_display_math_closing_line(&text[index + 2..])
+            {
+                let end = index + 4 + math_body.len();
                 let span = DetectedSpan {
                     start: index,
                     end,
@@ -733,7 +737,10 @@ fn locate_inline_paren_math_source(line: &str, index: usize) -> Option<(usize, S
     // `\(...\)` 是无歧义的 TeX 定界符：这里**不许**过问钱/公式判据
     // （`inline::parse::looks_like_currency_between` 只服务 `$…$`），否则 `\(42\)`
     // 会被当成钱数原样导出（cases/07-numeric-math.md，与阅读视图同一口径）。
-    if !line[index..].starts_with("\\(") {
+    // 开界与闭界都要认反斜杠游程：`a\\(b\\)` 里那两对 `\\` 是转义出来的字面反斜杠，
+    // 括号是普通字符（内存模型走 `parse_until` 的转义分支就是这个结果）。裸
+    // `starts_with("\\(")` 会把第二个 `\` 当开界符，凭空造出一体为 `b\` 的公式。
+    if !line[index..].starts_with("\\(") || is_escaped_ascii(line, index) {
         return None;
     }
     let mut cursor = index + 2;
@@ -741,7 +748,7 @@ fn locate_inline_paren_math_source(line: &str, index: usize) -> Option<(usize, S
         if line[cursor..].starts_with('\n') {
             return None;
         }
-        if line[cursor..].starts_with("\\)") {
+        if line[cursor..].starts_with("\\)") && !is_escaped_ascii(line, cursor) {
             let body = &line[index + 2..cursor];
             if valid_inline_math_body(body) {
                 return Some((cursor + 2, body.to_string()));

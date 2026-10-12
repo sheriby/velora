@@ -780,6 +780,51 @@ mod tests {
         assert!(!body.contains("\\begin{aligned}"), "actual: {html}");
     }
 
+    /// 导出面找闭合 `$$` 必须借应用侧那一处判据（`latex::split_display_math_closing_line`
+    /// 按反斜杠游程判奇偶），不许在这里 `find("$$")` 再猜一次：`\$` 是字面美元，不构成
+    /// 闭合。`8c7f8ec` 把唯一正本升级成认 `\$` 之后，导出这份裸搜索就成了第二份会漂的
+    /// 判据（评审报告维度一 2）。
+    ///
+    /// 断的是「整段被当成**一个**显示公式块交给公式管线」，不断「渲得出来」——这种写法
+    /// 的公式体里必然留着一个 `$$`，ratex 本就读不了，两面都只能落到错误卡；漂开时导出
+    /// 会把这行当普通段落原样吐出去（界面是一张公式、分享物是源码字面），那才是要钉的。
+    #[test]
+    fn exports_display_math_with_backslash_escaped_dollars_inside() {
+        let markdown = r"$$a\$$ 和 b$$";
+        let html = render_html(markdown, &Theme::default_theme(), "Doc");
+        let body = body_only(&html);
+
+        assert!(
+            body.contains("vlt-math-error"),
+            "整段该被认成一个显示公式块（与 `parse_display_math_segments` 同一判据）；\
+             导出却把它当普通段落原样吐出：actual: {body}"
+        );
+        assert!(
+            body.contains(r"$$a\$$ 和 b$$"),
+            "公式体要延伸到**真正的**闭合符，整段原文一起进错误卡，不能截在转义美元上；\
+             actual: {body}"
+        );
+    }
+
+    /// `\\( \\)` 那一支同理：开界要认反斜杠游程。`a\\(b\\)` 里 `\\` 是转义出来的字面
+    /// 反斜杠、括号是普通字符（内存模型走 `parse_until` 的转义分支就是这个结果），
+    /// 导出原先不查，把第二个 `\` 当开界符造出一体为 `b\` 的公式。
+    #[test]
+    fn keeps_escaped_paren_math_literal_in_export() {
+        let markdown = r"路径 a\\(b\\) 结尾";
+        let html = render_html(markdown, &Theme::default_theme(), "Doc");
+        let body = body_only(&html);
+
+        assert!(
+            !body.contains("class=\"vlt-math\""),
+            "转义反斜杠之后的 `\\(` 不是公式定界符，不该产出公式；actual: {html}"
+        );
+        assert!(
+            body.contains(r"a\(b\)"),
+            "正文该是 `\\\\` 解出来的字面反斜杠加括号（`a\\(b\\)`），不是公式；actual: {body}"
+        );
+    }
+
     #[test]
     fn exports_display_math_inside_blockquote() {
         // cases/05-quote-math.md：引用块里的公式曾原样导出 `$$` 源码。
