@@ -1,6 +1,29 @@
 use super::common::*;
 
 #[gpui::test]
+async fn core_repair_footnote_header_children_map_from_their_actual_start(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut mismatches = Vec::new();
+    for source in [
+        "[^1]: # abc",
+        "[^1]: > abc",
+        "[^1]: ```rust\n    abc\n    ```",
+        "> [^1]: # abc",
+        "> [^1]: ```rust\n>     abc\n>     ```",
+    ] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.into(), None));
+        editor.read_with(cx, |editor, cx| {
+            let body = editor.document.visible_blocks().iter()
+                .find(|entry| entry.entity.read(cx).record.title.visible_text() == "abc").unwrap();
+            let actual = editor.caret_source_offset(body.entity.entity_id(), 1, cx);
+            let expected = source.find("abc").map(|offset| offset + 1);
+            if actual != expected { mismatches.push((source, actual, expected)); }
+        });
+    }
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+}
+
+#[gpui::test]
 async fn core_repair_inline_offsets_use_the_original_markdown(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let mut mismatches = Vec::new();

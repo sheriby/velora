@@ -561,10 +561,9 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         content: &str,
         language: Option<&SharedString>,
         absolute_start: usize,
-        quote_depth: usize,
         cx: &App,
     ) -> Option<MeasuredFencePrefixes> {
-        if quote_depth > 0 || !self.buffer.is_char_boundary(absolute_start) {
+        if !self.buffer.is_char_boundary(absolute_start) {
             return None;
         }
         let (open, close) = block.read(cx).record.source_fence_lines?;
@@ -586,25 +585,19 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
 
         let mut line_index = self.buffer.line_of(absolute_start);
         let open_range = self.buffer.line_range(line_index);
-        if open_range.start != absolute_start {
-            return None;
-        }
-        let open_line = self.buffer.slice(open_range);
-        let recorded_open = open as usize;
+        let consumed = absolute_start - open_range.start;
+        let open_line = self.buffer.slice(absolute_start..open_range.end);
+        let recorded_open = (open as usize).checked_sub(consumed)?;
         let open_body = open_line.get(recorded_open..)?;
         let opener = BlockKind::parse_code_fence_opening(open_body)?;
-        if opener.language.as_ref() != language
-            || !open_line.get(..recorded_open)?.chars().all(|ch| ch == ' ' || ch == '\t')
-        {
+        if opener.language.as_ref() != language {
             return None;
         }
 
         line_index += 1 + model_lines.len();
         let close_line = self.buffer.slice(self.buffer.line_range(line_index));
         let recorded_close = close as usize;
-        if !document::is_closing_fence(close_line.get(recorded_close..)?, &opener)
-            || !close_line.get(..recorded_close)?.chars().all(|ch| ch == ' ' || ch == '\t')
-        {
+        if !document::is_closing_fence(close_line.get(recorded_close..)?, &opener) {
             return None;
         }
         self.line_prefix_from_record
@@ -780,23 +773,17 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             )
         };
 
-        let measured = self
-            .recorded_fence_prefixes(
-                block,
+        let recorded =
+            self.recorded_fence_prefixes(block, &content, language.as_ref(), absolute_start, cx);
+        let has_recorded_fence = recorded.is_some();
+        let measured = recorded.or_else(|| {
+            self.measured_code_block_line_prefixes(
                 &content,
                 language.as_ref(),
                 absolute_start,
                 quote_depth,
-                cx,
             )
-            .or_else(|| {
-                self.measured_code_block_line_prefixes(
-                    &content,
-                    language.as_ref(),
-                    absolute_start,
-                    quote_depth,
-                )
-            });
+        });
         let (full_text, content_to_source, source_to_content) = match measured.as_ref() {
             Some(prefixes) => Self::build_code_block_content_mapping(
                 &content,
@@ -843,7 +830,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 full_text,
                 content_to_source,
                 source_to_content,
-                quote_depth,
+                if has_recorded_fence { 0 } else { quote_depth },
             );
         mappings.push(SourceTargetMapping {
             entity: block.clone(),
@@ -1123,7 +1110,8 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// ——`collect_quote_block` 与 `dedent_lines_with_origins` 把每行的继承量一路传下来。
     /// 还没记到的形状交回 `measured_block_line_prefixes`：代码围栏、缩进代码块、表格格子，
     /// 以及容器自己那份多行正文（空行段折进行数就对不上，见下）。
-    /// 行数对不上、块起点不在行首、记号宽度比那一行还长，都算「这份数据不能用」，交回量。
+    /// 首行可接在脚注定义头后；前面已经消费的字节须从记录的绝对前缀扣除。
+    /// 行数或前缀边界对不上时才退回量取。
     fn recorded_block_line_prefixes(
         &self,
         block: &Entity<Block>,
@@ -1137,9 +1125,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             return None;
         }
         let first_line = self.buffer.line_of(absolute_start);
-        if self.buffer.line_start(first_line) != absolute_start {
-            return None;
-        }
+        let consumed = absolute_start - self.buffer.line_start(first_line);
         let mut prefixes = Vec::with_capacity(recorded.len());
         let mut file_lens = Vec::with_capacity(recorded.len());
         for (offset, prefix) in recorded.iter().enumerate() {
@@ -1148,12 +1134,21 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
             if prefix > range.len() {
                 return None;
             }
+            let file_len = range.len() - prefix;
+            let prefix = if offset == 0 {
+                prefix.checked_sub(consumed)?
+            } else {
+                prefix
+            };
             prefixes.push(prefix);
-            file_lens.push(range.len() - prefix);
+            file_lens.push(file_len);
         }
         self.line_prefix_from_record
             .set(self.line_prefix_from_record.get() + prefixes.len() as u64);
-        Some(MeasuredBlockLines { prefixes, file_lens })
+        Some(MeasuredBlockLines {
+            prefixes,
+            file_lens,
+        })
     }
 
     /// 切片块（渲染视图里就是文件那几位字节的形状）每一行在自己那一行里让开几字节：
