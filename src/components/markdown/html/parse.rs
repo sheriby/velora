@@ -172,6 +172,15 @@ pub(crate) fn sanitize_html_for_export(raw_source: &str) -> String {
         .collect::<String>()
 }
 
+pub(crate) fn sanitize_inline_html_open_for_export(raw_source: &str, expected_name: &str) -> Option<String> {
+    // 安全判据必须读取 DOM 解码后的属性，不能将实体混淆的 URL 当作普通相对路径。
+    let document = parse_html_document(raw_source);
+    if document.nodes.len() != 1 { return None; }
+    let node = document.nodes.first()?;
+    if node.kind != HtmlNodeKind::InlineSemantic || node.tag_name != expected_name { return None; }
+    Some(sanitized_open_tag(node))
+}
+
 /// Parses the safe visual subset of a semantic node's `style` attribute.
 pub(crate) fn style_for_node(node: &HtmlNode) -> HtmlInlineStyle {
     if node.kind == HtmlNodeKind::RawTextBlock {

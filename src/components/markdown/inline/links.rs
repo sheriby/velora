@@ -209,11 +209,10 @@ pub(crate) fn locate_inline_html_open_tag(tokens: &[CharToken], index: usize) ->
     None
 }
 
-pub(crate) fn locate_inline_html_close_tag(
+fn locate_inline_html_close_tag_info(
     tokens: &[CharToken],
     index: usize,
-    expected_name: &str,
-) -> Option<usize> {
+) -> Option<(String, usize)> {
     if tokens.get(index)?.ch != '<' || tokens.get(index + 1)?.ch != '/' {
         return None;
     }
@@ -233,16 +232,40 @@ pub(crate) fn locate_inline_html_close_tag(
         return None;
     }
     let name = tokens_to_string(&tokens[name_start..cursor]).to_ascii_lowercase();
-    if name != expected_name {
-        return None;
-    }
     while tokens
         .get(cursor)
         .is_some_and(|token| token.ch.is_whitespace())
     {
         cursor += 1;
     }
-    (tokens.get(cursor)?.ch == '>').then_some(cursor)
+    (tokens.get(cursor)?.ch == '>').then_some((name, cursor))
+}
+
+pub(crate) fn locate_inline_html_close_tag(tokens: &[CharToken], index: usize, expected_name: &str) -> Option<usize> {
+    let (name, end) = locate_inline_html_close_tag_info(tokens, index)?;
+    (name == expected_name).then_some(end)
+}
+
+pub(crate) enum InlineHtmlBoundary {
+    Open(InlineHtmlTag),
+    Close(String),
+}
+
+pub(crate) fn single_inline_html_boundary(source: &str) -> Option<InlineHtmlBoundary> {
+    let tokens: Vec<_> = source.trim().char_indices().map(|(index, character)| CharToken {
+        ch: character,
+        style: InlineStyle::default(),
+        html_style: None,
+        source_range: index..index + character.len_utf8(),
+        literal_char: false,
+        escaped: false,
+        escaped_sequence: None,
+    }).collect();
+    if let Some(tag) = locate_inline_html_open_tag(&tokens, 0) {
+        return (tag.end_index + 1 == tokens.len()).then_some(InlineHtmlBoundary::Open(tag));
+    }
+    let (name, end) = locate_inline_html_close_tag_info(&tokens, 0)?;
+    (end + 1 == tokens.len()).then_some(InlineHtmlBoundary::Close(name))
 }
 
 pub(crate) fn locate_matching_inline_html_close(

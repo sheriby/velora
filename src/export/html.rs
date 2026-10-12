@@ -1015,6 +1015,34 @@ impl<'a> ExportRewriter<'a> {
         sanitize_html_for_export(trimmed)
     }
 
+    fn transform_inline_html(&self, content: &str, stack: &mut Vec<(String, bool)>) -> Vec<Event<'a>> {
+        use crate::components::markdown::inline::{InlineHtmlBoundary, single_inline_html_boundary};
+        use crate::components::markdown::html::{sanitize_inline_html_open_for_export, void_inline_html_tag};
+        match single_inline_html_boundary(content) {
+            Some(InlineHtmlBoundary::Open(tag)) if !tag.self_closing && void_inline_html_tag(&tag.name).is_none() => {
+                let sanitized = sanitize_inline_html_open_for_export(content, &tag.name);
+                stack.push((tag.name, sanitized.is_some()));
+                vec![Event::Html(CowStr::from(sanitized.unwrap_or_else(|| self.sanitize_raw_html(content))))]
+            }
+            Some(InlineHtmlBoundary::Close(name)) => {
+                let Some(position) = stack.iter().rposition(|(opening, _)| *opening == name) else {
+                    return Vec::new();
+                };
+                stack.drain(position..).rev().filter_map(|(name, emitted)| {
+                    emitted.then(|| Event::Html(CowStr::from(format!("</{name}>"))))
+                }).collect()
+            }
+            _ => vec![Event::Html(CowStr::from(self.sanitize_raw_html(content)))],
+        }
+    }
+
+    fn finish_inline_html_scope(stack: &mut Vec<(String, bool)>) -> Vec<Event<'a>> {
+        // 行内标签不能跨出当前块；拒绝的同名内层标签也要占位，防止误关外层。
+        stack.drain(..).rev().filter_map(|(name, emitted)| {
+            emitted.then(|| Event::Html(CowStr::from(format!("</{name}>"))))
+        }).collect()
+    }
+
     fn rewrite_internal_anchor(&self, dest_url: CowStr<'a>) -> CowStr<'a> {
         let Some(fragment) = dest_url.strip_prefix('#') else {
             return dest_url;
@@ -1225,7 +1253,7 @@ impl<'a> ExportRewriter<'a> {
         let recon = build_recon(self.body, group);
 
         if recon.is_blank() {
-            output.extend(group.iter().map(|(event, _)| event.clone()));
+            output.extend(self.walk_group(group, &[], 0, self.body.len()));
             return end - start;
         }
         if is_paragraph && recon.text.trim() == "[TOC]" {
@@ -1592,6 +1620,7 @@ impl<'a> ExportRewriter<'a> {
         ceiling: usize,
     ) -> Vec<Event<'a>> {
         let mut output = Vec::new();
+        let mut inline_html_stack = Vec::new();
         // 上一个替换消费到的全局偏移；用来跳过「起点落在替换区间内部」的叶子
         // （块级公式跨 SoftBreak 时，下一行的行首就在区间里）。
         let mut consumed_until = floor;
@@ -1615,6 +1644,9 @@ impl<'a> ExportRewriter<'a> {
                 if let Some(item) = covering_tag {
                     consumed_until = consumed_until.max(item.global_end);
                     continue;
+                }
+                if matches!(event, Event::End(TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::TableCell | TagEnd::Item)) {
+                    output.extend(Self::finish_inline_html_scope(&mut inline_html_stack));
                 }
                 output.extend(self.transform_event(event.clone()));
                 continue;
@@ -1672,8 +1704,13 @@ impl<'a> ExportRewriter<'a> {
                 consumed_until = consumed_until.max(item.global_end);
                 continue;
             }
-            output.extend(self.transform_event(event.clone()));
+            if let Event::InlineHtml(content) = event {
+                output.extend(self.transform_inline_html(content.as_ref(), &mut inline_html_stack));
+            } else {
+                output.extend(self.transform_event(event.clone()));
+            }
         }
+        output.extend(Self::finish_inline_html_scope(&mut inline_html_stack));
         output
     }
 

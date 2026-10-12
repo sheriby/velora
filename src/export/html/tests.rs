@@ -12,6 +12,46 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn core_repair_inline_html_styles_keep_their_contents_and_nested_markdown() {
+        let mut failures = Vec::new();
+        for (source, expected) in [
+            ("测试<strong>加粗：</strong>测试", "<strong>加粗：</strong>"),
+            ("text <strong><em>nested</em></strong> end", "<strong><em>nested</em></strong>"),
+            ("text <em>italic **bold** [link](https://example.com)</em> end", "<em>italic <strong>bold</strong> <a href=\"https://example.com\">link</a></em>"),
+            ("# text <strong>heading</strong>", "<strong>heading</strong>"),
+            ("| text <strong>cell</strong> |\n| --- |\n| value |", "<strong>cell</strong>"),
+        ] {
+            let html = render_html(source, &Theme::default_theme(), "行内格式");
+            if !body_only(&html).contains(expected) { failures.push((source, body_only(&html).to_string())); }
+        }
+        let html = render_html("text <strong>$x$</strong> end", &Theme::default_theme(), "公式");
+        let body = body_only(&html);
+        if !body.contains("<strong><span class=\"vlt-inline-math\"") || !body.contains("</span></strong>") {
+            failures.push(("公式", body.to_string()));
+        }
+        assert!(failures.is_empty(), "行内标签不能在内容之前自动闭合：{failures:?}");
+    }
+
+    #[test]
+    fn core_repair_inline_html_sanitization_blocks_dangerous_attributes_and_scope_leaks() {
+        for source in [
+            "text <strong onclick=\"alert(1)\">danger</strong> end",
+            "text <a href=\"java&#x73;cript:alert(1)\">danger</a> end",
+            "# <img src=\"javascript:alert(1)\">",
+        ] {
+            let html = render_html(source, &Theme::default_theme(), "净化");
+            let body = body_only(&html);
+            assert!(!body.contains("<strong onclick="), "{body}");
+            assert!(!body.contains("href=\"javascript:"), "{body}");
+            assert!(!body.contains("src=\"javascript:"), "{body}");
+        }
+        let html = render_html("text <strong>open\n\nnext", &Theme::default_theme(), "范围");
+        assert!(body_only(&html).contains("<p>next</p>"));
+        let html = render_html("text <strong><em>nested</strong> end\n\nnext", &Theme::default_theme(), "错配");
+        assert!(body_only(&html).contains("<p>next</p>"));
+    }
+
+    #[test]
     fn review_export_recognizes_math_next_to_escaped_dollar() {
         for source in ["$x\\$$", "\\$$x$"] {
             let html = render_html(source, &Theme::default_theme(), "转义");
