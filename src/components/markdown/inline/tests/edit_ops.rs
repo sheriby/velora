@@ -1083,3 +1083,117 @@
             "写回再重读，用户敲的反斜杠一个不能少"
         );
     }
+
+    /// CJK 语境里的强调：中文句子标点后面不跟空格，按 CommonMark 的侧翼判定收尾标记
+    /// 永远关不上，于是 `**注意：**重点` 整段按字面画。按 markdown-cjk-friendly 的口径放
+    /// 宽：CJK 标点不算标点，CJK 字可以顶替规则里要求的「空白或标点」。
+    ///
+    /// 只放宽 `*` 家族（含 `~~`/`==`）；`_` 仍走原判据，词内下划线必须继续按字面保留。
+    #[test]
+    fn cjk_punctuation_next_to_a_marker_still_forms_emphasis() {
+        fn marked(sample: &str) -> (bool, String) {
+            let tree = InlineTextTree::from_markdown(sample);
+            let visible = tree
+                .fragments
+                .iter()
+                .map(|fragment| {
+                    let mut marks = String::new();
+                    if fragment.style.bold {
+                        marks.push('B');
+                    }
+                    if fragment.style.italic {
+                        marks.push('I');
+                    }
+                    if fragment.style.strikethrough {
+                        marks.push('S');
+                    }
+                    if fragment.style.highlight {
+                        marks.push('H');
+                    }
+                    if marks.is_empty() {
+                        marks.push('_');
+                    }
+                    format!("[{marks}]{}", fragment.text)
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            let styled = tree.fragments.iter().any(|fragment| {
+                fragment.style.bold
+                    || fragment.style.italic
+                    || fragment.style.strikethrough
+                    || fragment.style.highlight
+            });
+            (styled, visible)
+        }
+
+        // 收尾标记紧跟在全角标点后面：中文写作的常态。
+        for sample in [
+            "测试**加粗：**测试",
+            "测试*斜体：*测试",
+            "测试~~删除：~~测试",
+            "测试==高亮：==测试",
+            "**注意：**这是重点",
+            "（**强调**）中文",
+            "中文「**引用**」句",
+            "**这些星号会被识别为强调标记，而不是原样显示。**都是因为这个句子。",
+            "**このアスタリスクは強調記号として認識されます。**この文のおかげで。",
+            "他说**这段话，很重要，**你记一下",
+            "断句。**下一句是重点。**再往后",
+        ] {
+            let (styled, visible) = marked(sample);
+            assert!(styled, "{sample:?} 该成形，实际按字面：{visible}");
+        }
+
+        // 收尾标记后面跟 CJK 字、前面是 ASCII 标点：CommonMark 里也关不上。
+        let (styled, _) = marked("**他强调(parenthesis)**가 있는 바람에");
+        assert!(styled, "括号后接 CJK 字该成形");
+
+        // 已经成形的写法不许被这次放宽弄坏。
+        for sample in [
+            "测试**加粗**测试",
+            "测试 **加粗：** 测试",
+            "测试**加粗**：测试",
+            "**粗体** 中文",
+        ] {
+            let (styled, visible) = marked(sample);
+            assert!(styled, "{sample:?} 本来成形，现在按字面：{visible}");
+        }
+
+        // 词内下划线仍按字面保留，外面那对 `**` 照旧成形。
+        let (styled, visible) = marked("**topic_embedding_attention 有轨迹无产物**");
+        assert!(styled, "粗体该成形");
+        assert!(visible.contains("_attention"), "词内下划线按字面保留：{visible}");
+
+        // 收紧过的地方保持：ASCII 标点两侧仍不成翼。
+        for sample in ["2~~(3+4)~~5", "*a.*b", "a**b:**c"] {
+            let (styled, visible) = marked(sample);
+            assert!(!styled, "{sample:?} 该按字面，实际成形：{visible}");
+            assert_eq!(visible, format!("[_]{sample}"), "{sample:?} 字面保留");
+        }
+        assert_eq!(
+            marked("topic_embedding_attention").1,
+            "[_]topic_embedding_attention",
+            "词内下划线按字面保留"
+        );
+    }
+
+    /// 已知分叉：导出（pulldown-cmark）没有 CJK 开关，同一份文件在导出 HTML/PDF 里
+    /// 仍是字面。这条用例把分叉摆在明面上，免得以后有人照导出「修」编辑器。
+    #[test]
+    fn the_export_still_shows_cjk_emphasis_literally() {
+        let sample = "测试**加粗：**测试";
+        assert!(
+            InlineTextTree::from_markdown(sample)
+                .fragments
+                .iter()
+                .any(|fragment| fragment.style.bold),
+            "编辑器该成形"
+        );
+        assert!(
+            !pulldown_cmark::Parser::new(sample).any(|event| matches!(
+                event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Strong)
+            )),
+            "导出仍是字面"
+        );
+    }

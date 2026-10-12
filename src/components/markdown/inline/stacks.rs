@@ -461,7 +461,7 @@ pub(crate) fn delimiter_can_open(marker: char, prev: Option<char>, next: Option<
         '_' => underscore_can_open(prev, next),
         // `*` 家族按星号规则（左翼即可开，词内允许）；`~~`/`==` 与 GFM/Typora 同口径
         // 走同一套标点侧翼——没有它时 `2~~(3+4)~~5` 会被整段划掉而导出按字面。
-        '*' | '~' | '=' => emphasis_flanking(prev, next).0,
+        '*' | '~' | '=' => cjk_emphasis_flanking(prev, next).0,
         _ => true,
     }
 }
@@ -472,7 +472,7 @@ pub(crate) fn delimiter_can_close(marker: char, prev: Option<char>, next: Option
     }
     match marker {
         '_' => underscore_can_close(prev, next),
-        '*' | '~' | '=' => emphasis_flanking(prev, next).1,
+        '*' | '~' | '=' => cjk_emphasis_flanking(prev, next).1,
         _ => true,
     }
 }
@@ -528,6 +528,65 @@ pub(crate) fn is_emphasis_punctuation(ch: char) -> bool {
     } else {
         !ch.is_alphanumeric() && !ch.is_whitespace()
     }
+}
+
+/// [CJK character] 的范围，取自 `markdown-cjk-friendly` 规范的 `ranges.md`
+/// （Unicode 18；该文件由它仓库里的 `print-ranges` 生成）。这里是逐条抄录，不做取舍：
+/// 判定只服务于强调侧翼，少抄一段只会让某种装饰符号旁的强调退回 CommonMark 行为。
+///
+/// [CJK character]: https://github.com/tats-u/markdown-cjk-friendly/blob/main/ranges.md
+fn is_cjk_character(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{1100}'..='\u{11FF}' | '\u{20A9}' | '\u{2329}'..='\u{232A}' | '\u{2630}'..='\u{2637}' |
+        '\u{268A}'..='\u{268F}' | '\u{2E80}'..='\u{2E99}' | '\u{2E9B}'..='\u{2EF3}' |
+        '\u{2F00}'..='\u{2FD5}' | '\u{2FF0}'..='\u{303E}' | '\u{3041}'..='\u{3096}' |
+        '\u{3099}'..='\u{30FF}' | '\u{3105}'..='\u{312F}' | '\u{3131}'..='\u{318E}' |
+        '\u{3190}'..='\u{31E5}' | '\u{31EF}'..='\u{321E}' | '\u{3220}'..='\u{3247}' |
+        '\u{3250}'..='\u{A48C}' | '\u{A490}'..='\u{A4C6}' | '\u{A960}'..='\u{A97C}' |
+        '\u{AC00}'..='\u{D7A3}' | '\u{D7B0}'..='\u{D7C6}' | '\u{D7CB}'..='\u{D7FB}' |
+        '\u{F900}'..='\u{FAFF}' | '\u{FE10}'..='\u{FE19}' | '\u{FE30}'..='\u{FE52}' |
+        '\u{FE54}'..='\u{FE66}' | '\u{FE68}'..='\u{FE6B}' | '\u{FF01}'..='\u{FFBE}' |
+        '\u{FFC2}'..='\u{FFC7}' | '\u{FFCA}'..='\u{FFCF}' | '\u{FFD2}'..='\u{FFD7}' |
+        '\u{FFDA}'..='\u{FFDC}' | '\u{FFE0}'..='\u{FFE6}' | '\u{FFE8}'..='\u{FFEE}' |
+        '\u{16FE0}'..='\u{16FE4}' | '\u{16FF0}'..='\u{16FF6}' | '\u{17000}'..='\u{18CDA}' |
+        '\u{18CFF}'..='\u{18D20}' | '\u{18D80}'..='\u{18DF2}' | '\u{18E00}'..='\u{19191}' |
+        '\u{191A0}'..='\u{191D2}' | '\u{1AFF0}'..='\u{1AFF3}' | '\u{1AFF5}'..='\u{1AFFB}' |
+        '\u{1AFFD}'..='\u{1AFFE}' | '\u{1B000}'..='\u{1B128}' | '\u{1B132}' | '\u{1B150}'..='\u{1B152}'
+        | '\u{1B155}' | '\u{1B164}'..='\u{1B168}' | '\u{1B170}'..='\u{1B2FB}' |
+        '\u{1D300}'..='\u{1D356}' | '\u{1D360}'..='\u{1D376}' | '\u{1F1AE}' | '\u{1F200}' | '\u{1F202}'
+        | '\u{1F210}'..='\u{1F219}' | '\u{1F21B}'..='\u{1F22E}' | '\u{1F230}'..='\u{1F231}' |
+        '\u{1F237}' | '\u{1F23B}' | '\u{1F240}'..='\u{1F248}' | '\u{1F260}'..='\u{1F265}' | '\u{1F7DA}'
+        | '\u{20000}'..='\u{3FFFD}' | '\u{FE00}'..='\u{FE0E}'
+    )
+}
+
+/// CJK 标点 = 规范意义上的标点里那些 CJK 字：`：` `。` `，` `「` `」` `（` `）` 都在里面。
+fn is_cjk_punctuation(ch: char) -> bool {
+    is_emphasis_punctuation(ch) && is_cjk_character(ch)
+}
+
+/// 侧翼判定里的「标点」。CommonMark 按 Unicode 标点判，可中文标点后面不跟空格，
+/// 于是 `**注意：**这是重点` 的收尾标记永远不成右翼，整段按字面画。按
+/// `markdown-cjk-friendly` 的口径把 CJK 标点排除，CJK 字还顶替规则里要求的「空白或标点」。
+fn is_non_cjk_punctuation(ch: char) -> bool {
+    is_emphasis_punctuation(ch) && !is_cjk_punctuation(ch)
+}
+
+/// `*` 家族的侧翼判定（CJK 口径）。`_` 家族仍走 `emphasis_flanking`：词内下划线必须继续
+/// 按字面保留（`topic_embedding_attention`），两边判据不同是故意的。
+fn cjk_emphasis_flanking(prev: Option<char>, next: Option<char>) -> (bool, bool) {
+    let left = next.is_some_and(|ch| !ch.is_whitespace())
+        && (!next.is_some_and(is_non_cjk_punctuation)
+            || prev.is_none_or(|ch| {
+                ch.is_whitespace() || is_non_cjk_punctuation(ch) || is_cjk_character(ch)
+            }));
+    let right = prev.is_some_and(|ch| !ch.is_whitespace())
+        && (!prev.is_some_and(is_non_cjk_punctuation)
+            || next.is_none_or(|ch| {
+                ch.is_whitespace() || is_non_cjk_punctuation(ch) || is_cjk_character(ch)
+            }));
+    (left, right)
 }
 
 pub(crate) fn can_open_script(tokens: &[CharToken], index: usize, marker: char) -> bool {
