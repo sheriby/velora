@@ -4,6 +4,28 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn core_repair_new_table_cells_route_input_from_an_empty_selection_anchor(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = format!("first\n\n| ab | cd |\n| --- | --- |\n| ef | gh |\n\n{}", (0..400).map(|index| format!("paragraph {index}\n\n")).collect::<String>());
+    let cx = cx.add_empty_window();
+    let editor = cx.new(|cx| Editor::from_markdown_with_chunk_budget(cx, source.clone(), None, 1));
+    let cell = editor.update(cx, |editor, cx| {
+        assert!(editor.materialize_next_pending_chunk(cx));
+        assert!(editor.document.pending_tail().is_some());
+        let table = editor.document.root_blocks().iter().find(|block| block.read(cx).kind() == BlockKind::Table).unwrap().clone();
+        let cell = table.read(cx).table_runtime.as_ref().unwrap().header[0].clone();
+        editor.select_table_text_range(table.entity_id(),
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 2, whole_cell: false },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1, whole_cell: false }, cx);
+        editor.focus_block(cell.entity_id());
+        cell
+    });
+    cell.update_in(cx, |cell, window, cx| cell.replace_text_in_range(None, "X", window, cx));
+    redraw(cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), source.replacen("| ab | cd |", "| ab | Xd |", 1));
+}
+
+#[gpui::test]
 async fn core_repair_cross_cell_replacement_keeps_table_structure_and_input_target(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";

@@ -257,6 +257,17 @@ impl Editor {
     /// 表格整张落在一个跨块选区里时也走这里：整张表的文字都算选中。
     pub(crate) fn sync_table_text_selection_visuals(&mut self, cx: &mut Context<Self>) {
         self.sync_document_selection_ownership(cx);
+        if let Some(selection) = self.table_text_selection {
+            for endpoint in [selection.anchor, selection.focus] {
+                if let Some(cell) = self.table_cell_entity(selection.table_block_id, endpoint.cell, cx) {
+                    let needs_binding = cell.read(cx).document_selection_active.as_ref()
+                        .is_none_or(|current| !std::rc::Rc::ptr_eq(current, &self.document_selection_active));
+                    if needs_binding {
+                        cell.update(cx, |cell, _| cell.document_selection_active = Some(self.document_selection_active.clone()));
+                    }
+                }
+            }
+        }
         for (table_block_id, position) in std::mem::take(&mut self.table_text_selection_painted) {
             let Some(cell) = self.table_cell_entity(table_block_id, position, cx) else {
                 continue;
@@ -282,6 +293,7 @@ impl Editor {
                 painted.push((table_block_id, position));
             }
             cell.update(cx, |cell, cx| {
+                cell.document_selection_active = Some(self.document_selection_active.clone());
                 if cell.editor_selection_clean_range != Some(range.clone()) {
                     cell.editor_selection_clean_range = Some(range.clone());
                     cx.notify();
