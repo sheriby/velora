@@ -252,9 +252,7 @@ impl Render for Editor {
                 .prev_mounted_run
                 .filter(|prev| self.mounted_run_is_addressable(*prev))
             {
-                let prev_end = prev.row_end.min(row_first_ids.len());
-                for row in prev.row_start..prev_end {
-                    let child = prev.child_base + row - prev.row_start;
+                for (row, child) in prev.rows().filter(|(row, _)| *row < row_first_ids.len()) {
                     if let Some(bounds) = self.scroll_handle.bounds_for_item(child) {
                         let stride = f32::from(bounds.size.height)
                             + row_top_gaps.get(row + 1).copied().unwrap_or(0.0);
@@ -563,8 +561,10 @@ impl Render for Editor {
             rows.push(build_row_element(row));
         };
 
+        let mut island_child = None;
         if let Some(island) = island.filter(|_| island_before_run) {
             push_spacer(&mut block_rows, spacer_before(island.row, island.lead_h, 0));
+            island_child = Some((island.row, block_rows.len()));
             take_row(&mut block_rows, island.row);
         }
         push_spacer(
@@ -577,6 +577,7 @@ impl Render for Editor {
         }
         if let Some(island) = island.filter(|_| !island_before_run) {
             push_spacer(&mut block_rows, spacer_before(island.row, island.lead_h, render_window.run_end));
+            island_child = Some((island.row, block_rows.len()));
             take_row(&mut block_rows, island.row);
         }
         let first_trailing_row = island.filter(|_| !island_before_run).map_or(render_window.run_end, |island| island.row + 1);
@@ -588,6 +589,10 @@ impl Render for Editor {
             row_end: render_window.run_end,
             child_base: run_child_base,
             child_count: block_rows.len(),
+            focus_island: island_child,
+            document_identity: self.buffer.identity(),
+            plan_version: (rendered_row_plan.row_meta_version, rendered_row_plan.fold_version,
+                rendered_row_plan.toc_version, rendered_row_plan.visible_len, rendered_row_plan.rendered_mode),
         });
 
         let scroll_content = div()

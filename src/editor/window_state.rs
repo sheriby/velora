@@ -117,7 +117,10 @@ impl Editor {
     /// would otherwise pair the wrong rows silently; a changed child count means
     /// the recorded indices are stale and the refresh must be skipped.
     pub(super) fn mounted_run_is_addressable(&self, run: MountedRun) -> bool {
-        run.child_count > 0
+        run.document_identity == self.buffer.identity()
+            && run.plan_version == (self.document.row_meta_version(), self.fold_state_version,
+                self.toc_state_version, self.document.visible_blocks().len(), self.view_mode == ViewMode::Rendered)
+            && run.child_count > 0
             && self
                 .scroll_handle
                 .bounds_for_item(run.child_count - 1)
@@ -126,6 +129,14 @@ impl Editor {
                 .scroll_handle
                 .bounds_for_item(run.child_count)
                 .is_none()
+    }
+
+    pub(super) fn entity_is_mounted(&self, entity_id: EntityId) -> bool {
+        let Some(run) = self.prev_mounted_run.filter(|run| self.mounted_run_is_addressable(*run)) else {
+            return false;
+        };
+        let Some(plan) = self.rendered_row_plan.as_ref() else { return false; };
+        run.rows().any(|(row, _)| plan.rows.get(row).is_some_and(|row| row.entities().any(|entity| entity.entity_id() == entity_id)))
     }
 
     /// Picks the contiguous run of rows to mount; the culled runs become

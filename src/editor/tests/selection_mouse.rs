@@ -4,6 +4,61 @@ use crate::components::TableCellPosition;
 use gpui::{Bounds, Entity};
 
 #[gpui::test]
+async fn core_repair_offscreen_table_bounds_cannot_claim_a_mounted_cell(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let mut source = "| old |\n| --- |\n| cell |\n\n".to_string();
+    source.push_str(&(0..160).map(|index| format!("paragraph {index}\n\n")).collect::<String>());
+    source.push_str("| new |\n| --- |\n| cell |");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    cx.run_until_parked();
+    redraw(cx);
+    redraw(cx);
+    let (old, current) = editor.read_with(cx, |editor, _| (editor.document.first_root().unwrap().clone(), editor.document.root_blocks().last().unwrap().clone()));
+    editor.update(cx, |editor, cx| {
+        let cell = current.read(cx).table_runtime.as_ref().unwrap().header[0].clone();
+        editor.focus_block(cell.entity_id());
+        editor.request_active_block_scroll_into_view(cx);
+    });
+    for _ in 0..4 {
+        editor.update(cx, |editor, _| {
+            editor.pending_scroll_active_block_into_view = false;
+            editor.pending_scroll_recheck_after_layout = false;
+            editor.scroll_handle.set_offset(gpui::point(px(0.0), -editor.scroll_handle.max_offset().height));
+        });
+        redraw(cx);
+    }
+    assert!(!editor.read_with(cx, |editor, _| editor.entity_is_mounted(old.entity_id())), "旧表格需离开挂载集合");
+    let (new_cell, point) = editor.read_with(cx, |_, cx| {
+        let cell = current.read(cx).table_runtime.as_ref().unwrap().header[0].clone();
+        let bounds = cell.read(cx).last_bounds.unwrap();
+        (cell, bounds.center())
+    });
+    let old_cells = editor.read_with(cx, |_, cx| {
+        let runtime = old.read(cx).table_runtime.as_ref().unwrap().clone();
+        runtime.header.iter().chain(runtime.rows.iter().flatten()).cloned().collect::<Vec<_>>()
+    });
+    let new_bounds = new_cell.read_with(cx, |cell, _| cell.last_bounds.unwrap());
+    for cell in old_cells { cell.update(cx, |cell, _| cell.last_bounds = Some(new_bounds)); }
+    new_cell.update(cx, |cell, _| cell.last_bounds = None);
+    assert!(editor.read_with(cx, |editor, cx| editor.table_cell_at_point(point, cx)).is_none(), "未挂载的旧格子不能参与命中");
+    new_cell.update(cx, |cell, _| cell.last_bounds = Some(new_bounds));
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.table_cell_at_point(point, cx)).map(|hit| hit.0), Some(current.entity_id()));
+}
+
+#[gpui::test]
+async fn core_repair_untitled_callout_header_does_not_swallow_body_hit(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "> [!NOTE]\n> first\n>\n> second".into(), None));
+    redraw(cx);
+    redraw(cx);
+    let body = editor.read_with(cx, |editor, _| editor.document.visible_blocks().last().unwrap().entity.clone());
+    let point = body.read_with(cx, |block, _| block.last_bounds.unwrap().center());
+    cx.simulate_mouse_down(point, gpui::MouseButton::Left, Modifiers::none());
+    assert_eq!(editor.read_with(cx, |editor, _| editor.cross_block_drag.unwrap().anchor.entity_id), body.entity_id());
+    cx.simulate_mouse_up(point, gpui::MouseButton::Left, Modifiers::none());
+}
+
+#[gpui::test]
 async fn core_repair_mixed_paragraph_does_not_keep_text_layout_after_blur(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "first\n\ntext $x$ end".into(), None));

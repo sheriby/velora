@@ -36,6 +36,9 @@ impl Editor {
         else {
             return;
         };
+        if !self.entity_is_mounted(last.entity_id()) {
+            return;
+        }
         let bounds = last.read(cx).last_bounds.or_else(|| {
             if !last
                 .read(cx)
@@ -132,14 +135,6 @@ impl Editor {
             entity_id: target.entity_id(),
             offset: anchor,
         })
-    }
-
-    /// 某一块的块首端点。
-    fn block_start_endpoint(&self, index: usize) -> CrossBlockSelectionEndpoint {
-        CrossBlockSelectionEndpoint {
-            entity_id: self.document.visible_blocks()[index].entity.entity_id(),
-            offset: 0,
-        }
     }
 
     /// 端点所在的块能不能按指针位置给出块内偏移。只画图片的块（未聚焦的公式、
@@ -350,8 +345,7 @@ impl Editor {
         }
         let scroll = self.scroll_handle.offset();
         let mut previous: Option<CrossBlockSelectionEndpoint> = None;
-        for row in run.row_start..run.row_end {
-            let child = run.child_base + row - run.row_start;
+        for (row, child) in run.rows() {
             let Some(item) = self.scroll_handle.bounds_for_item(child) else {
                 continue;
             };
@@ -360,44 +354,54 @@ impl Editor {
             let Some(plan_row) = plan.rows.get(row) else {
                 continue;
             };
-            let members = plan_row.visible_start..plan_row.visible_end.min(visible_blocks.len());
+            let members: Vec<_> = plan_row.entities().filter_map(|entity| {
+                let block = entity.read(cx);
+                let bounds = block.last_bounds.or_else(|| {
+                    block.table_runtime.as_ref().and_then(|runtime| {
+                        runtime.header.iter().chain(runtime.rows.iter().flatten())
+                            .filter_map(|cell| cell.read(cx).last_bounds)
+                            .reduce(|bounds, cell| bounds.union(&cell))
+                    })
+                });
+                let bounds = match &plan_row.body {
+                    crate::editor::render::RenderedRowBody::Ordinary { .. } => Some(bounds.unwrap_or(row_bounds)),
+                    crate::editor::render::RenderedRowBody::Group { .. } => bounds,
+                }?;
+                Some((entity, bounds))
+            }).collect();
+            let Some((first, _)) = members.first() else { continue; };
             if position.y < row_bounds.top() {
                 // 落点在这一行上方：归上一行的块尾；没有上一行就归这一行的块首。
-                return Some(previous.unwrap_or_else(|| self.block_start_endpoint(members.start)));
+                return Some(previous.unwrap_or(CrossBlockSelectionEndpoint { entity_id: first.entity_id(), offset: 0 }));
             }
             if position.y <= row_bounds.bottom() {
                 // 一行里挑块：单块的直接就是它；callout / 脚注组里几块共用一行，
                 // 按各块自己的边界挑（那些边界是这一帧画的），都够不着就取最后一块。
-                let mut chosen = members.start;
-                for index in members.clone() {
-                    chosen = index;
-                    let bounds = visible_blocks[index]
-                        .entity
-                        .read(cx)
-                        .last_bounds
-                        .unwrap_or(row_bounds);
+                let mut chosen = *first;
+                for (entity, bounds) in &members {
+                    chosen = *entity;
                     if position.y <= bounds.bottom() {
                         break;
                     }
                 }
-                let entity = visible_blocks[chosen].entity.clone();
+                let entity = chosen;
                 let block = entity.read(cx);
                 // 只画图片的块量不出块内偏移（没有文字布局），整块算：它在选区起点侧
                 // 就取块首、在终点侧取块尾。文本块的块内偏移由它自己裁到上下边界。
                 let offset = if block.has_text_layout() {
                     block.current_to_clean_offset(block.index_for_mouse_position(position))
                 } else {
-                    self.whole_block_offset(&entity, anchor, cx)
+                    self.whole_block_offset(entity, anchor, cx)
                 };
                 return Some(CrossBlockSelectionEndpoint {
                     entity_id: entity.entity_id(),
                     offset,
                 });
             }
-            let last = members.end.saturating_sub(1).max(members.start);
+            let Some((last, _)) = members.last() else { continue; };
             previous = Some(CrossBlockSelectionEndpoint {
-                entity_id: visible_blocks[last].entity.entity_id(),
-                offset: visible_blocks[last].entity.read(cx).clean_visible_len(),
+                entity_id: last.entity_id(),
+                offset: last.read(cx).clean_visible_len(),
             });
         }
         // 落点在整个挂载区下方：归最后一块的块尾。

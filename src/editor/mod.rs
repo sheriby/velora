@@ -420,6 +420,17 @@ struct MountedRun {
     row_end: usize,
     child_base: usize,
     child_count: usize,
+    focus_island: Option<(usize, usize)>,
+    document_identity: u64,
+    plan_version: (u64, u64, u64, usize, bool),
+}
+
+impl MountedRun {
+    fn rows(self) -> impl Iterator<Item = (usize, usize)> {
+        self.focus_island.filter(|(row, _)| *row < self.row_start).into_iter()
+            .chain((self.row_start..self.row_end).map(move |row| (row, self.child_base + row - self.row_start)))
+            .chain(self.focus_island.filter(|(row, _)| *row >= self.row_end))
+    }
 }
 
 /// Focused row mounted on its own, away from the run. Its position relative to

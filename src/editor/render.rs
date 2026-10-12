@@ -176,6 +176,14 @@ pub(crate) struct RenderedGroupMember {
 }
 
 impl RenderedRowPlanRow {
+    pub(super) fn entities(&self) -> impl Iterator<Item = &Entity<Block>> {
+        let (ordinary, members): (Option<&Entity<Block>>, &[RenderedGroupMember]) = match &self.body {
+            RenderedRowBody::Ordinary { entity, .. } => (Some(entity), &[]),
+            RenderedRowBody::Group { members, .. } => (None, members),
+        };
+        ordinary.into_iter().chain(members.iter().map(|member| &member.entity))
+    }
+
     fn first_spacing(&self) -> RenderedRowSpacingInfo {
         match &self.body {
             RenderedRowBody::Ordinary { spacing, .. } => *spacing,

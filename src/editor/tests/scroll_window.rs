@@ -1,5 +1,43 @@
 use super::common::*;
 
+#[gpui::test]
+async fn core_repair_changed_row_plan_rejects_previous_frame_geometry(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# first\n\nbody\n\n# second".into(), None));
+    redraw(cx);
+    redraw(cx);
+    editor.update(cx, |editor, _| {
+        let run = editor.prev_mounted_run.unwrap();
+        assert!(editor.mounted_run_is_addressable(run));
+        editor.fold_state_version += 1;
+        assert!(!editor.mounted_run_is_addressable(run), "结构版本变化后旧几何不能继续参与命中与量高");
+    });
+}
+
+#[gpui::test]
+async fn core_repair_focus_island_relearns_its_real_height(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = format!("```rust\n{}\n```\n\n{}", "let value = 1;\n".repeat(80), (0..200).map(|index| format!("paragraph {index}\n\n")).collect::<String>());
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
+    for _ in 0..4 { redraw(cx); }
+    for _ in 0..6 {
+        editor.update(cx, |editor, _| editor.scroll_handle.set_offset(gpui::point(px(0.0), -editor.scroll_handle.max_offset().height)));
+        redraw(cx);
+    }
+    editor.update(cx, |editor, _| {
+        let run = editor.prev_mounted_run.unwrap();
+        assert!(run.row_start > 0, "首块需成为离屏焦点岛");
+        let plan = editor.rendered_row_plan.as_ref().unwrap();
+        editor.row_stride_cache.remove(&plan.first_ids[0]);
+        plan.strides.borrow_mut()[0] = 1.0;
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        let plan = editor.rendered_row_plan.as_ref().unwrap();
+        assert!(editor.row_stride_cache.get(&plan.first_ids[0]).is_some_and(|height| *height > 1.0), "挂载的焦点岛应恢复真实高度");
+    });
+}
+
 /// 1046 行源码已读到末行，滑块仍在半屏附近，后续拖动几乎全落在文末留白。
 #[gpui::test]
 async fn scrollbar_reaches_the_end_when_the_last_source_line_is_visible(cx: &mut TestAppContext) {

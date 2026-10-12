@@ -1437,16 +1437,23 @@ impl Editor {
         position: Point<Pixels>,
         cx: &App,
     ) -> Option<(EntityId, TableCellPosition)> {
-        self.table_cells
-            .values()
-            .find(|binding| {
-                binding
-                    .cell
-                    .read(cx)
-                    .last_bounds
-                    .is_some_and(|bounds| bounds.contains(&position))
-            })
-            .map(|binding| (binding.table_block.entity_id(), binding.position))
+        let run = self.prev_mounted_run.filter(|run| self.mounted_run_is_addressable(*run))?;
+        let plan = self.rendered_row_plan.as_ref()?;
+        for (row, _) in run.rows() {
+            let Some(row) = plan.rows.get(row) else { continue; };
+            for table in row.entities() {
+                let block = table.read(cx);
+                let Some(runtime) = block.table_runtime.as_ref() else { continue; };
+                for (row, cells) in std::iter::once(&runtime.header).chain(runtime.rows.iter()).enumerate() {
+                    for (column, cell) in cells.iter().enumerate() {
+                        if cell.read(cx).last_bounds.is_some_and(|bounds| bounds.contains(&position)) {
+                            return Some((table.entity_id(), TableCellPosition { row, column }));
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
