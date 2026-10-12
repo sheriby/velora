@@ -47,5 +47,6 @@ mod table_runtime;
 mod tree_quick_open;
 mod typing_wrapping;
 mod undo_history_deltas;
+mod undo_selection_capture;
 mod window_menu;
 mod workspace_shell;

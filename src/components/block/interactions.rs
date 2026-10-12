@@ -464,6 +464,7 @@ impl Block {
                 if previous == self.cursor_offset() {
                     return;
                 }
+                self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
                 self.select_to(previous, cx);
             }
             self.replace_text_in_range(None, "", window, cx);
@@ -479,6 +480,7 @@ impl Block {
                 return;
             }
             if self.selected_range.is_empty() {
+                self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
                 self.select_to(self.previous_boundary(self.cursor_offset()), cx);
             }
             self.replace_text_in_range(None, "", window, cx);
@@ -549,6 +551,7 @@ impl Block {
         }
 
         if self.selected_range.is_empty() {
+            self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
             self.select_to(self.previous_boundary(self.cursor_offset()), cx);
         }
         self.replace_text_in_range(None, "", window, cx);
@@ -561,6 +564,7 @@ impl Block {
                 if next == self.cursor_offset() {
                     return;
                 }
+                self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
                 self.select_to(next, cx);
             }
             self.replace_text_in_range(None, "", window, cx);
@@ -574,6 +578,7 @@ impl Block {
                 return;
             }
             if self.selected_range.is_empty() {
+                self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
                 self.select_to(self.next_boundary(self.cursor_offset()), cx);
             }
             self.replace_text_in_range(None, "", window, cx);
@@ -592,6 +597,7 @@ impl Block {
         }
 
         if self.selected_range.is_empty() {
+            self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
             self.select_to(self.next_boundary(self.cursor_offset()), cx);
         }
         self.replace_text_in_range(None, "", window, cx);
@@ -610,6 +616,7 @@ impl Block {
                 self.on_delete_back(&DeleteBack, window, cx);
                 return;
             }
+            self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
             self.select_to(self.previous_word_start(self.cursor_offset()), cx);
         }
         self.replace_text_in_range(None, "", window, cx);
@@ -628,6 +635,7 @@ impl Block {
                 self.on_delete(&Delete, window, cx);
                 return;
             }
+            self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
             self.select_to(self.next_word_start(self.cursor_offset()), cx);
         }
         self.replace_text_in_range(None, "", window, cx);

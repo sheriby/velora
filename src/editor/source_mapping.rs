@@ -82,9 +82,7 @@ mod probe {
 }
 
 fn leading_blank_bytes(line: &str) -> usize {
-    line.bytes()
-        .take_while(|byte| *byte == b' ' || *byte == b'\t')
-        .count()
+    BlockKind::leading_blank_bytes(line)
 }
 
 impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到的文档文本。
@@ -280,7 +278,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         (total_len, content_to_source, source_to_content)
     }
 
-    fn push_line_prefixed_inline_mapping(
+    pub(super) fn push_line_prefixed_inline_mapping(
         &self,
         block: &Entity<Block>,
         content_markdown: String,
@@ -1039,7 +1037,7 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// 引用每层都在自己那一行上，所以每行都重量；列表的上级只留下缩进，交给本块的
     /// 记号（或段落继承来的 `list_dedent`）吃掉。
     /// 这一行与模型对不上（剥不动、起点不在行首）就 `None`，调用方退回按模型拼。
-    fn measured_block_prefix(
+    pub(super) fn measured_block_prefix(
         &self,
         at: usize,
         quote_depth: usize,

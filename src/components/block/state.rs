@@ -239,6 +239,10 @@ impl SeparatorMarker {
 }
 
 impl BlockKind {
+    pub(crate) fn leading_blank_bytes(line: &str) -> usize {
+        line.bytes().take_while(|byte| matches!(byte, b' ' | b'\t')).count()
+    }
+
     /// Returns true when blocks of this kind may own child blocks in the
     /// current runtime tree.
     pub fn supports_children(&self) -> bool {
@@ -986,6 +990,40 @@ pub enum PastedImageSource {
     LocalPath(PathBuf),
 }
 
+/// GPUI 事件延迟派发；只传改动前的坐标与行形状，不复制正文。
+#[derive(Debug, Clone)]
+pub struct BlockUndoSelection {
+    pub content_range: std::ops::Range<usize>,
+    pub reversed: bool,
+    pub source: BlockUndoSource,
+}
+
+#[derive(Debug, Clone)]
+pub enum BlockUndoSource {
+    Inline {
+        kind: BlockKind,
+        source_line_prefixes: Vec<u32>,
+        line_indents: Vec<usize>,
+    },
+    Lines(BlockUndoLineSelection),
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockUndoLineSelection {
+    pub start: BlockUndoLinePosition,
+    pub end: BlockUndoLinePosition,
+    pub first_body_line: usize,
+    pub source_line_prefixes: Vec<u32>,
+    pub quote_depth: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockUndoLinePosition {
+    pub line: usize,
+    pub column: usize,
+    pub indentation: usize,
+}
+
 /// Events emitted by a block to its parent editor when structural
 /// changes or focus transfers are needed that the block cannot handle alone.
 ///
@@ -993,8 +1031,11 @@ pub enum PastedImageSource {
 /// `cx.subscribe(&block, Self::on_block_event)`.
 #[derive(Debug, Clone)]
 pub enum BlockEvent {
-    /// Capture the current document state before an upcoming mutation.
-    PrepareUndo { kind: UndoCaptureKind },
+    /// 将修改前的选择交给编辑器，派发时不得再读取已变化的块选择。
+    PrepareUndo {
+        kind: UndoCaptureKind,
+        selection: BlockUndoSelection,
+    },
     /// The block's content or kind changed; the editor should mark the
     /// document dirty and optionally scroll to keep the block visible.
     Changed,

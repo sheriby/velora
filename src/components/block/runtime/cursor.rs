@@ -244,8 +244,64 @@ impl Block {
         self.markdown_range_to_current_range(offset..offset).start
     }
 
+    pub(crate) fn text_edit_undo_kind(&self) -> UndoCaptureKind {
+        if self.marked_range.is_some() {
+            UndoCaptureKind::ImeCompositionCommit
+        } else {
+            UndoCaptureKind::CoalescibleText
+        }
+    }
+
     pub(crate) fn prepare_undo_capture(&self, kind: UndoCaptureKind, cx: &mut Context<Self>) {
-        cx.emit(BlockEvent::PrepareUndo { kind });
+        let selection = crate::components::BlockUndoSelection {
+            content_range: self.current_range_to_markdown_range(self.selected_range.clone()),
+            reversed: self.selection_reversed,
+            source: if self.uses_raw_text_editing() || self.kind().is_code_block() {
+                let position = |offset| {
+                    let text = self.display_text();
+                    let offset = crate::components::clamp_to_char_boundary(text, offset);
+                    let before = &text[..offset];
+                    let line = before.matches('\n').count();
+                    let line_start = before.rfind('\n').map(|offset| offset + 1).unwrap_or(0);
+                    let line_text = text
+                        .get(line_start..)
+                        .unwrap_or_default()
+                        .split('\n')
+                        .next()
+                        .unwrap_or_default();
+                    crate::components::BlockUndoLinePosition {
+                        line,
+                        column: offset - line_start,
+                        indentation: BlockKind::leading_blank_bytes(line_text),
+                    }
+                };
+                crate::components::BlockUndoSource::Lines(
+                    crate::components::BlockUndoLineSelection {
+                        start: position(self.selected_range.start),
+                        end: position(self.selected_range.end),
+                        first_body_line: usize::from(
+                            self.kind().is_code_block()
+                                && !self.is_source_raw_mode()
+                                && !self.record.code_is_indented,
+                        ),
+                        source_line_prefixes: self.record.source_line_prefixes.clone(),
+                        quote_depth: self.quote_depth,
+                    },
+                )
+            } else {
+                crate::components::BlockUndoSource::Inline {
+                    kind: self.kind(),
+                    source_line_prefixes: self.record.source_line_prefixes.clone(),
+                    line_indents: self
+                        .record
+                        .title_markdown()
+                        .split('\n')
+                        .map(BlockKind::leading_blank_bytes)
+                        .collect(),
+                }
+            },
+        };
+        cx.emit(BlockEvent::PrepareUndo { kind, selection });
     }
 
     pub(crate) fn utf16_to_utf8_in(text: &str, offset: usize) -> usize {

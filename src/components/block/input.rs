@@ -102,21 +102,12 @@ impl EntityInputHandler for Block {
                 text: new_text.to_string(),
                 selected_range_relative: None,
                 mark_inserted_text: false,
-                undo_kind: if self.marked_range.is_some() {
-                    UndoCaptureKind::ImeCompositionCommit
-                } else {
-                    UndoCaptureKind::CoalescibleText
-                },
+                undo_kind: self.text_edit_undo_kind(),
             });
             return;
         }
 
-        let undo_kind = if self.marked_range.is_some() {
-            UndoCaptureKind::ImeCompositionCommit
-        } else {
-            UndoCaptureKind::CoalescibleText
-        };
-        self.prepare_undo_capture(undo_kind, cx);
+        self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
         let mut visible_range = range_utf16
             .as_ref()
             .map(|range| self.range_from_utf16(range))

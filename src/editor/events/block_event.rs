@@ -19,8 +19,8 @@ impl Editor {
             }
             return;
         }
-        if let BlockEvent::PrepareUndo { kind } = event {
-            self.prepare_undo_capture(*kind, cx);
+        if let BlockEvent::PrepareUndo { kind, selection } = event {
+            self.prepare_block_undo_capture(&block, *kind, selection, cx);
             return;
         }
 

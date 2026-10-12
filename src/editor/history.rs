@@ -94,11 +94,10 @@ impl Editor {
     ///
     /// 组里的字节增量由 [`Editor::record_buffer_edit`] 在每次 `TextBuffer::edit`
     /// 落地后追加，所以准备阶段的工作量与文档大小无关。
-    pub(super) fn begin_history_group(&mut self, kind: UndoCaptureKind, cx: &App) -> HistoryEntry {
+    pub(super) fn begin_history_group(&mut self, kind: UndoCaptureKind, selection: UndoSelectionSnapshot) -> HistoryEntry {
         HistoryEntry {
             edits: Vec::new(),
-            // 选区现场算：调用点是编辑开始前，算出来就是编辑前的选区。
-            selection: self.capture_source_selection_snapshot(cx),
+            selection,
             timestamp: Instant::now(),
             kind,
         }
@@ -156,8 +155,176 @@ impl Editor {
         if self.history_restore_in_progress || self.pending_undo_capture.is_some() {
             return;
         }
+        let selection = self.capture_source_selection_snapshot(cx);
         self.pending_undo_capture = Some(PendingUndoCapture {
-            snapshot: self.begin_history_group(kind, cx),
+            snapshot: self.begin_history_group(kind, selection),
+        });
+    }
+
+    pub(super) fn prepare_block_undo_capture(
+        &mut self,
+        block: &Entity<Block>,
+        kind: UndoCaptureKind,
+        before: &crate::components::BlockUndoSelection,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history_restore_in_progress || self.pending_undo_capture.is_some() {
+            return;
+        }
+        let root_span = self.document.source_span_of(block.entity_id());
+        let mapping = if matches!(before.source, crate::components::BlockUndoSource::Lines(_))
+            && root_span.is_some()
+        {
+            None
+        } else {
+            self.source_mapping_for_entity(block.entity_id(), cx)
+        };
+        let range = if let crate::components::BlockUndoSource::Lines(lines) = &before.source {
+            let source_start = root_span.clone().map(|span| span.start).or_else(|| {
+                mapping
+                    .as_ref()
+                    .map(|mapping| mapping.full_source_range.start)
+            });
+            let Some(source_start) = source_start else {
+                return;
+            };
+            let first_line = self.buffer.line_of(source_start) + lines.first_body_line;
+            let offset = |position: &crate::components::BlockUndoLinePosition| {
+                let source_line = self.buffer.line_range(first_line + position.line);
+                let prefix = lines
+                    .source_line_prefixes
+                    .get(position.line)
+                    .copied()
+                    .map(|prefix| prefix as usize)
+                    .unwrap_or_else(|| {
+                        let text = self.buffer.slice(source_line.clone());
+                        let mut stripped = text.clone();
+                        for _ in 0..lines.quote_depth {
+                            let Some(next) = super::document::strip_one_quote_level(&stripped)
+                            else {
+                                break;
+                            };
+                            stripped = next;
+                        }
+                        let indentation = BlockKind::leading_blank_bytes(&stripped);
+                        text.len() - stripped.len()
+                            + indentation.saturating_sub(position.indentation)
+                    });
+                (source_line.start + prefix + position.column).min(source_line.end)
+            };
+            offset(&lines.start)..offset(&lines.end)
+        } else {
+            let crate::components::BlockUndoSource::Inline {
+                kind: source_kind,
+                source_line_prefixes,
+                line_indents,
+            } = &before.source
+            else {
+                return;
+            };
+            let source_start = root_span.map(|span| span.start).or_else(|| {
+                mapping
+                    .as_ref()
+                    .map(|mapping| mapping.full_source_range.start)
+            });
+            let Some(source_start) = source_start else {
+                return;
+            };
+            let needs_rebuild = mapping.as_ref().is_none_or(|mapping| {
+                block.read(cx).kind() != *source_kind
+                    || mapping
+                        .parsed_source_markdown
+                        .as_ref()
+                        .is_none_or(|markdown| markdown.split('\n').count() != line_indents.len())
+                    || block.read(cx).record.source_line_prefixes != *source_line_prefixes
+            });
+            let mapping = if needs_rebuild && !self.table_cells.contains_key(&block.entity_id()) {
+                let first_line = self.buffer.line_of(source_start);
+                let quote_depth = block.read(cx).quote_depth;
+                let parent_quotes =
+                    quote_depth.saturating_sub(usize::from(source_kind.is_quote_container()));
+                let render_depth = block.read(cx).render_depth;
+                let consumed = source_start - self.buffer.line_start(first_line);
+                let first_prefix = source_line_prefixes
+                    .first()
+                    .copied()
+                    .and_then(|prefix| (prefix as usize).checked_sub(consumed))
+                    .or_else(|| {
+                        self.measured_block_prefix(
+                            source_start,
+                            parent_quotes,
+                            render_depth * 2,
+                            source_kind,
+                        )
+                        .map(|prefix| prefix.0)
+                    })
+                    .unwrap_or(0);
+                let mut prefixes = Vec::new();
+                let mut file_lens = Vec::new();
+                for (index, model_indent) in line_indents.iter().enumerate() {
+                    let line = self.buffer.line_range(first_line + index);
+                    let start = if index == 0 { source_start } else { line.start };
+                    let text = self.buffer.slice(start..line.end);
+                    let prefix = if index == 0 {
+                        first_prefix
+                    } else if let Some(prefix) = source_line_prefixes.get(index) {
+                        *prefix as usize
+                    } else {
+                        let mut stripped = text.clone();
+                        for _ in 0..quote_depth {
+                            let Some(next) = super::document::strip_one_quote_level(&stripped)
+                            else {
+                                break;
+                            };
+                            stripped = next;
+                        }
+                        text.len() - stripped.len()
+                            + BlockKind::leading_blank_bytes(&stripped)
+                                .saturating_sub(*model_indent)
+                    };
+                    prefixes.push(prefix.min(text.len()));
+                    file_lens.push(text.len().saturating_sub(prefix));
+                }
+                let mut mappings = Vec::new();
+                self.push_line_prefixed_inline_mapping(
+                    block,
+                    String::new(),
+                    &super::source_mapping::MeasuredBlockLines {
+                        prefixes,
+                        file_lens,
+                    },
+                    true,
+                    source_start,
+                    &mut mappings,
+                );
+                let Some(mapping) = mappings.into_iter().next() else {
+                    return;
+                };
+                mapping
+            } else {
+                let Some(mapping) = mapping else {
+                    return;
+                };
+                mapping
+            };
+            let start = mapping
+                .content_to_source
+                .get(before.content_range.start)
+                .copied()
+                .unwrap_or_else(|| mapping.content_to_source.last().copied().unwrap_or(0));
+            let end = mapping
+                .content_to_source
+                .get(before.content_range.end)
+                .copied()
+                .unwrap_or_else(|| mapping.content_to_source.last().copied().unwrap_or(0));
+            mapping.full_source_range.start + start..mapping.full_source_range.start + end
+        };
+        let selection = UndoSelectionSnapshot {
+            range,
+            reversed: before.reversed,
+        };
+        self.pending_undo_capture = Some(PendingUndoCapture {
+            snapshot: self.begin_history_group(kind, selection),
         });
     }
 
