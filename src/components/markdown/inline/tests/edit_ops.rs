@@ -1197,3 +1197,26 @@
             "导出仍是字面"
         );
     }
+
+    #[test]
+    fn core_repair_manual_cjk_emphasis_serializes_for_the_actual_html_exporter() {
+        let mut failures = Vec::new();
+        for (source, range, bold, italic, expected) in [
+            ("测试加粗：测试", 6..15, true, false, "<strong>加粗：</strong>"),
+            ("测试斜体：测试", 6..15, false, true, "<em>斜体：</em>"),
+            ("测试加粗：测试", 6..15, true, true, "<strong><em>加粗：</em></strong>"),
+            ("a bold z", 2..6, true, false, "<strong>bold</strong>"),
+        ] {
+            let mut tree = InlineTextTree::plain(source);
+            if bold { tree.toggle_bold(range.clone()); }
+            if italic { tree.toggle_italic(range); }
+            let markdown = tree.serialize_markdown();
+            let html = crate::export::html::render_html(&markdown, &crate::theme::Theme::default_theme(), "格式兼容");
+            let body = html.split_once("<body>").expect("导出正文").1;
+            if !body.contains(expected) { failures.push((source, markdown.clone(), expected)); }
+            let parsed = InlineTextTree::from_markdown(&markdown);
+            assert_eq!(parsed.visible_text(), source);
+            assert!(parsed.fragments.iter().any(|fragment| (!bold || fragment.style.bold) && (!italic || fragment.style.italic)));
+        }
+        assert!(failures.is_empty(), "手动格式不能在导出时变成字面记号：{failures:?}");
+    }

@@ -270,9 +270,8 @@ pub(crate) fn stack_transition_cost(
         | Delimiter::StrikethroughMarkdown
         | Delimiter::HighlightMarkdown = delimiter
         {
-            // 判定整个定界符串的侧翼，避免序列化生成解析器不能接受的强调。
-            // 删除线与高亮走同一个 `delimiter_can_*` 谓词，写出去的记号同样
-            // 必须能被自己重新解析。
+            // 序列化的星号需被导出器的 CommonMark 规则接受；UI 配对仍支持 CJK。
+            // 删除线与高亮保留编辑器的侧翼判据。
             let ch = match delimiter {
                 Delimiter::StrikethroughMarkdown => '~',
                 Delimiter::HighlightMarkdown => '=',
@@ -284,10 +283,11 @@ pub(crate) fn stack_transition_cost(
             let end = cursor + marker_string[cursor..].chars().take_while(|other| *other == ch).count();
             let prev = marker_string[..start].chars().next_back().or(before);
             let next = marker_string[end..].chars().next().or(after);
-            let valid = if opening {
-                delimiter_can_open(ch, prev, next)
-            } else {
-                delimiter_can_close(ch, prev, next)
+            let valid = match (ch, opening) {
+                ('*', true) => emphasis_flanking(prev, next).0,
+                ('*', false) => emphasis_flanking(prev, next).1,
+                (_, true) => delimiter_can_open(ch, prev, next),
+                (_, false) => delimiter_can_close(ch, prev, next),
             };
             if !valid {
                 flanking_penalty += 1_000;
