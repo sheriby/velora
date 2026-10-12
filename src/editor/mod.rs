@@ -129,6 +129,7 @@ pub struct Editor {
     recovery_source_path: Option<PathBuf>,
     is_recovered_document: bool,
     file_version: Option<u64>,
+    pending_file_version_text: Option<Arc<str>>,
     window_handle: Option<AnyWindowHandle>,
     system_appearance_subscription: Option<Subscription>,
     file_path: Option<PathBuf>,
@@ -718,6 +719,7 @@ impl Editor {
             file_version: file_path
                 .as_ref()
                 .map(|_| persistence::file_content_version(&normalized)),
+            pending_file_version_text: None,
             window_handle: None,
             system_appearance_subscription: None,
             file_path,

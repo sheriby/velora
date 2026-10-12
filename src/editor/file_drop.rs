@@ -376,12 +376,14 @@ impl Editor {
         }
 
         // P7：内容哈希移出同步打开路径（10MiB 全文 SipHash ~15-25ms），
-        // 后台计算后写回；保存/自动保存在此期间按未登记（None）处理。
+        // 后台计算后写回；提前手动保存时也必须校验打开时的不可变文本。
         self.file_version = None;
+        self.pending_file_version_text = None;
         let open_generation = self.open_generation.wrapping_add(1);
         self.open_generation = open_generation;
         if file_path.is_some() {
-            let hash_input = normalized.clone();
+            let hash_input: std::sync::Arc<str> = std::sync::Arc::from(normalized.as_str());
+            self.pending_file_version_text = Some(hash_input.clone());
             let hash_generation = open_generation;
             cx.spawn(async move |this, cx| {
                 let version = cx
@@ -389,11 +391,16 @@ impl Editor {
                         super::persistence::file_content_version_normalized(&hash_input)
                     })
                     .await;
-                let _ = this.update(cx, |editor, _cx| {
-                    if editor.open_generation == hash_generation && editor.file_version.is_none() {
-                        editor.file_version = Some(version);
+                if let Err(error) = this.update(cx, |editor, _cx| {
+                    if editor.open_generation == hash_generation {
+                        if editor.file_version.is_none() {
+                            editor.file_version = Some(version);
+                        }
+                        editor.pending_file_version_text = None;
                     }
-                });
+                }) {
+                    eprintln!("打开版本登记已取消：{error}");
+                }
             })
             .detach();
         }

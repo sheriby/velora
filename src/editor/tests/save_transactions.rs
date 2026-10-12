@@ -1,5 +1,54 @@
 use super::common::*;
 
+#[gpui::test]
+async fn core_repair_saving_before_open_version_registration_preserves_external_changes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("save-before-open-hash");
+    fs::write(&path, "old").unwrap();
+    cx.on_quit({ let path = path.clone(); move || fs::remove_file(path).unwrap() });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "scratch".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.replace_document_from_markdown("old".into(), Some(path.clone()), cx);
+        assert!(editor.file_version.is_none(), "后台登记不能在当前更新内提前完成");
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block.record.set_title(InlineTextTree::plain("ours"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+        fs::write(&path, "external").unwrap();
+        editor.save_to_existing_path(&path, window, cx);
+    });
+    assert_eq!(fs::read_to_string(&path).unwrap(), "external");
+    assert!(editor.read_with(cx, |editor, _| editor.document_dirty && editor.modal_is_open()));
+    let recovery_id = editor.read_with(cx, |editor, _| editor.recovery_id);
+    cx.cx.on_quit(move || crate::config::remove_recovery_snapshot(recovery_id).unwrap());
+}
+
+#[gpui::test]
+async fn core_repair_early_valid_save_is_not_reset_by_the_open_hash_callback(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("early-valid-save");
+    fs::write(&path, "old").unwrap();
+    cx.on_quit({ let path = path.clone(); move || fs::remove_file(path).unwrap() });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "scratch".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.replace_document_from_markdown("old".into(), Some(path.clone()), cx);
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block.record.set_title(InlineTextTree::plain("ours"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+        assert!(editor.save_to_existing_path(&path, window, cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "ours");
+    assert_eq!(editor.read_with(cx, |editor, _| editor.file_version), Some(crate::editor::persistence::file_content_version("ours")));
+    let recovery_id = editor.read_with(cx, |editor, _| editor.recovery_id);
+    cx.cx.on_quit(move || crate::config::remove_recovery_snapshot(recovery_id).unwrap());
+}
+
 fn staged_external_change(cx: &mut TestAppContext, save_mode: u8) {
     init_editor_test_app(cx);
     let path = temp_markdown_path("staged-conflict");

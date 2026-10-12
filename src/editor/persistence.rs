@@ -731,6 +731,11 @@ impl Editor {
             cx.notify();
             return false;
         }
+        if self.file_version.is_none()
+            && let Some(opened_text) = self.pending_file_version_text.take()
+        {
+            self.file_version = Some(file_content_version_normalized(&opened_text));
+        }
         if let Some(expected_version) = self.file_version
             && let Err(error) = verify_file_version(path, expected_version)
         {
