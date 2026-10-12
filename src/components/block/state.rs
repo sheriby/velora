@@ -998,6 +998,8 @@ pub enum BlockEvent {
     /// The block's content or kind changed; the editor should mark the
     /// document dirty and optionally scroll to keep the block visible.
     Changed,
+    /// 组合结束可能不改任何字节，撤销与保存仍需收到状态变化。
+    CompositionChanged,
     /// The heading's fold chevron was clicked (roadmap C7). The editor flips
     /// `folded` and re-renders; view-only state, so the document is not
     /// marked dirty.

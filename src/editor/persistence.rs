@@ -240,10 +240,9 @@ struct PendingAutosaveDocument {
 
 impl Editor {
     pub(super) fn has_marked_document_text(&self, cx: &App) -> bool {
-        self.document.flatten_visible_blocks().iter().any(|block| {
-            let block = block.entity.read(cx);
-            block.marked_range.is_some() || block.code_language_marked_range.is_some()
-        })
+        self.document.visible_blocks().iter().map(|block| &block.entity)
+            .chain(self.table_cells.values().map(|binding| &binding.cell))
+            .any(|block| block.read(cx).has_marked_text())
     }
 
     pub(super) fn schedule_autosave(&mut self, cx: &mut Context<Self>) {

@@ -68,6 +68,10 @@ impl Block {
         self.record.title.visible_len()
     }
 
+    pub(crate) fn has_marked_text(&self) -> bool {
+        self.marked_range.is_some() || self.code_language_marked_range.is_some()
+    }
+
     /// 这一块有没有可寻址的文字布局。
     ///
     /// 只画图片的块没有：未聚焦的公式块、带行内公式的段落、只装公式的表格格子都走

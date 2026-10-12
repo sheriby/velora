@@ -456,6 +456,7 @@ impl Block {
     ) {
         let old_kind = self.record.kind.clone();
         let old_title = self.record.title.clone();
+        let old_marked_range = self.marked_range.clone();
         let old_title_was_empty = old_title.visible_text().is_empty();
         let mut collapsed_affinity = self.current_collapsed_caret_affinity();
         let keep_projection =
@@ -523,6 +524,9 @@ impl Block {
 
         if self.record.kind != old_kind || self.record.title != old_title {
             cx.emit(BlockEvent::Changed);
+        }
+        if self.marked_range != old_marked_range {
+            cx.emit(BlockEvent::CompositionChanged);
         }
         cx.notify();
     }

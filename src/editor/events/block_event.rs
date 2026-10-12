@@ -9,6 +9,16 @@ impl Editor {
         event: &BlockEvent,
         cx: &mut Context<Self>,
     ) {
+        if matches!(event, BlockEvent::CompositionChanged) {
+            if self.focusable_entity_by_id(block.entity_id()).is_some() {
+                if !block.read(cx).has_marked_text() {
+                    self.finish_ime_composition(cx);
+                    self.schedule_autosave(cx);
+                }
+                cx.notify();
+            }
+            return;
+        }
         if let BlockEvent::PrepareUndo { kind } = event {
             self.prepare_undo_capture(*kind, cx);
             return;
@@ -1042,6 +1052,7 @@ impl Editor {
             }
             BlockEvent::RequestRenderedSelectAll => {}
             BlockEvent::PrepareUndo { .. } => {}
+            BlockEvent::CompositionChanged => {}
         }
     }
 }

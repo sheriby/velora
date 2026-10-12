@@ -19,6 +19,7 @@ mod image_runtime;
 mod image_scale;
 mod import_perf;
 mod inline_format;
+mod ime_lifecycle;
 mod insert_blocks;
 mod insert_image;
 mod keyboard_nav;

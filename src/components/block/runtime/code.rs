@@ -225,6 +225,7 @@ impl Block {
         }
 
         let current = self.code_language_text().to_string();
+        let old_marked_range = self.code_language_marked_range.clone();
         let range = range.start.min(current.len())..range.end.min(current.len());
         let inserted = new_text.replace("\r\n", " ").replace(['\r', '\n'], " ");
         let mut raw_next = String::new();
@@ -300,6 +301,9 @@ impl Block {
         };
         if old_language != next_language {
             cx.emit(BlockEvent::Changed);
+        }
+        if self.code_language_marked_range != old_marked_range {
+            cx.emit(BlockEvent::CompositionChanged);
         }
         cx.notify();
     }

@@ -178,6 +178,25 @@ impl Editor {
         self.last_selection_snapshot = self.capture_source_selection_snapshot(cx);
     }
 
+    pub(super) fn finish_ime_composition(&mut self, cx: &mut Context<Self>) {
+        if self.history_restore_in_progress {
+            return;
+        }
+        self.finalize_pending_undo_capture(cx);
+        let noop = self.undo_history.last()
+            .filter(|entry| entry.kind == UndoCaptureKind::ImeComposition)
+            .map(|entry| Self::history_group_is_noop(&self.buffer, &entry.edits));
+        match noop {
+            Some(true) => { self.undo_history.pop(); }
+            Some(false) => {
+                if let Some(entry) = self.undo_history.last_mut() {
+                    entry.kind = UndoCaptureKind::NonCoalescible;
+                }
+            }
+            None => {}
+        }
+    }
+
     pub(super) fn finalize_pending_undo_capture(&mut self, _cx: &mut Context<Self>) {
         if self.history_restore_in_progress {
             self.pending_undo_capture = None;

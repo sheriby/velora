@@ -68,13 +68,16 @@ impl EntityInputHandler for Block {
             .map(|range| self.range_to_utf16(range))
     }
 
-    fn unmark_text(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
-        if self.code_language_focus_handle.is_focused(window) {
-            self.code_language_marked_range = None;
-            return;
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let changed = if self.code_language_focus_handle.is_focused(window) {
+            self.code_language_marked_range.take().is_some()
+        } else {
+            self.marked_range.take().is_some()
+        };
+        if changed {
+            cx.emit(BlockEvent::CompositionChanged);
+            cx.notify();
         }
-
-        self.marked_range = None;
     }
 
     fn replace_text_in_range(

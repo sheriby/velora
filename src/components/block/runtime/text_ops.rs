@@ -557,6 +557,7 @@ impl Block {
     /// 路，在那层清会把它抹掉。
     pub(crate) fn drop_stale_ime_marked_range(&mut self, cx: &mut Context<Self>) {
         if self.marked_range.take().is_some() {
+            cx.emit(BlockEvent::CompositionChanged);
             cx.notify();
         }
     }
