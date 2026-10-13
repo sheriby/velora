@@ -292,8 +292,11 @@ async fn saving_after_an_edit_on_the_second_line_preserves_every_other_byte(cx: 
         }
     }
 
+    // 围栏与表格归结构后，这两类的模型文本只留正文（或干脆为空），首块不再是可量
+    // 形状。当前语料里可量的是 5 条：引用前缀、front matter、两条硬换行、
+    // fenced div。
     assert!(
-        measured >= 6,
+        measured >= 5,
         "首块有第二行的形状只剩 {measured} 个可量：夹具变了"
     );
     assert!(
