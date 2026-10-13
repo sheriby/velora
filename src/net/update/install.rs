@@ -217,6 +217,25 @@ try {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// 安装包必须自己收掉还在跑的 Velora：窗口各自成进程（资源管理器再开一个文件就是
+    /// 一个进程），它们在用着 `velora.exe`，覆盖失败只会让「更新没动静、再点还是失败」
+    /// 重演。安装与卸载两段都要有——卸载同样要删 `velora.exe`。
+    #[test]
+    fn windows_installer_closes_running_instances_before_touching_the_executable() {
+        let script = include_str!("../../../scripts/package-windows.nsi");
+        assert_eq!(
+            script.matches("taskkill.exe").count(),
+            2,
+            "安装与卸载两段都要先收掉跑着的实例"
+        );
+        for line in script.lines().filter(|line| line.contains("taskkill.exe")) {
+            assert!(
+                line.contains("/IM velora.exe /F /T"),
+                "要连子进程一起收掉：{line}"
+            );
+        }
+    }
+
     #[test]
     fn installer_helpers_wait_for_exit_and_use_installer_arguments_as_data() {
         assert!(MACOS_HELPER.contains("while /bin/kill -0"));

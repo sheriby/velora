@@ -30,6 +30,13 @@ UninstPage instfiles
 
 Section "安装 Velora" SEC_MAIN
   SetOutPath "$INSTDIR"
+  ; 关掉还在跑的 Velora：窗口各自成进程（资源管理器再开一个文件就是一个进程，应用内
+  ; 「新建窗口」是同一个进程的多个窗口），它们在用着 velora.exe，不关就覆盖不了。
+  ; 安装器是被静默调起来的，覆盖失败只会让「更新没动静、再点一次还是失败」重演，
+  ; 所以这里代为收尾：/T 连子进程一起，/F 不等窗口同意。
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM velora.exe /F /T'
+  Pop $0
+  Sleep 300
   File "${REPO_ROOT}\target\release\velora.exe"
   File "${REPO_ROOT}\LICENSE-APACHE"
 
@@ -47,6 +54,10 @@ Section "安装 Velora" SEC_MAIN
 SectionEnd
 
 Section "Uninstall"
+  ; 与安装同理：卸载也要删 velora.exe，跑着的实例先把它们收掉。
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM velora.exe /F /T'
+  Pop $0
+  Sleep 300
   Delete "$SMPROGRAMS\Velora\Velora.lnk"
   Delete "$SMPROGRAMS\Velora\卸载 Velora.lnk"
   RMDir "$SMPROGRAMS\Velora"
