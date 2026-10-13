@@ -77,10 +77,17 @@ pub(super) struct DocumentSaveIdentity {
     revision: u64,
 }
 
+/// 这一笔要写到哪个文件上：软链穿透到真身，路径键与标签侧同一处
+/// （`file_url::canonical_path` 会剥掉 Windows 的 verbatim 前缀）——各解各的会让
+/// 同一文件在保存侧与标签侧是两个不相等的键。
+fn canonical_write_target(path: &Path) -> PathBuf {
+    crate::file_url::canonical_path(path)
+}
+
 impl StagedDocumentWrite {
     fn prepare(path: &Path, contents: &[u8]) -> std::io::Result<Self> {
         use std::io::Write;
-        let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let target = canonical_write_target(path);
         let permissions = match std::fs::metadata(&target) {
             Ok(metadata) => Some(metadata.permissions()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -109,9 +116,11 @@ impl StagedDocumentWrite {
     }
 
     fn commit_checked(self, path: &Path, expected_version: u64) -> anyhow::Result<()> {
-        let target = std::fs::canonicalize(path).map_err(|error| ExternalChange {
-            path: path.to_path_buf(), reason: Some(error.to_string()),
-        })?;
+        let target = std::fs::canonicalize(path)
+            .map(|target| canonical_write_target(&target))
+            .map_err(|error| ExternalChange {
+                path: path.to_path_buf(), reason: Some(error.to_string()),
+            })?;
         if target != self.target {
             return Err(ExternalChange {
                 path: path.to_path_buf(), reason: Some("文件目标已变化".into()),
@@ -954,7 +963,34 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use super::{safe_code_fence, safe_code_fence_with_info, write_atomic};
+    use super::{canonical_write_target, safe_code_fence, safe_code_fence_with_info, write_atomic};
+    use std::path::PathBuf;
+
+    /// 保存侧与标签侧「同一个文件的那条路径键」必须由同一个函数给出。
+    ///
+    /// 保存侧当时各自调 `std::fs::canonicalize`，标签那两处走 `file_url::canonical_path`
+    /// （会剥掉 Windows 的 verbatim 前缀）——同一文件于是可能得到两个不相等的键，而脏标签
+    /// 匹配与磁盘版本对账正是它的第一批消费者。断的是「键里不出现 verbatim 前缀、且与
+    /// 标签那把键相等」的形状，不按平台写死：路径不存在时 canonicalize 原样返回，前缀
+    /// 就留在键里——macOS 上也测得出。
+    #[test]
+    fn review_write_target_uses_the_same_path_key_as_the_tab_registry() {
+        for path in [
+            PathBuf::from(r"\\?\C:\definitely\missing\notes.md"),
+            PathBuf::from(r"\\?\UNC\server\share\notes.md"),
+        ] {
+            let target = canonical_write_target(&path);
+            assert!(
+                !target.to_string_lossy().starts_with(r"\\?\"),
+                "{path:?} 的写盘目标带着 verbatim 前缀：{target:?}"
+            );
+            assert_eq!(
+                target,
+                crate::file_url::canonical_path(&path),
+                "{path:?} 的写盘目标与标签那把键不是同一条"
+            );
+        }
+    }
 
     #[test]
     #[cfg(unix)]

@@ -544,9 +544,7 @@ fn show_async_message_modal(
 /// 「<名> copy[ 序号]」式唯一副本路径（roadmap D6，与右键「创建副本」共用）。
 /// 标签路径是否落在工作区根目录内（两边都尽力规范化，失败则按原样比较）。
 fn path_is_within_root(root: &Path, path: &Path) -> bool {
-    let normalize = |value: &Path| -> PathBuf {
-        std::fs::canonicalize(value).unwrap_or_else(|_| value.to_path_buf())
-    };
+    let normalize = |value: &Path| -> PathBuf { crate::file_url::canonical_path(value) };
     normalize(path).starts_with(normalize(root))
 }
 
