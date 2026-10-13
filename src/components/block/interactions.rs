@@ -293,7 +293,10 @@ impl Block {
             return;
         }
 
-        if self.editor_selection_clean_range.is_some() {
+        // 归属判据只看全局那一处：局部 `editor_selection_clean_range` 在端点落在块首/
+        // 块尾时是 `None`（干净切片为空就不铺高亮），拿它判断会让回车走本地拆块路径，
+        // 整段选区没被替换就被结构事件清掉。
+        if self.has_document_selection() {
             cx.emit(BlockEvent::RequestReplaceCrossBlockSelection {
                 text: "\n".to_string(),
                 selected_range_relative: None,

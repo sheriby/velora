@@ -63,6 +63,52 @@ mod tests {
         assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), "alpha\n\nbea");
     }
 
+    /// 回车换行该与敲字符同一口径：整段跨块选区被换掉。
+    ///
+    /// 触发形状：选区右端落在块的**开头**（`sync_cross_block_selection_visuals` 算出的
+    /// 干净切片是 `0..0`，`(!range.is_empty()).then_some(range)` 不给它挂高亮）——
+    /// 于是「文档级选区生效中」这条全局判据为真、而这一块局部的
+    /// `editor_selection_clean_range` 是 `None`。`on_newline` 当时只读后者，回车走的是
+    /// 块本地拆块路径，整段选区没被替换就被结构事件清掉，A 的文字留在文档里。
+    #[gpui::test]
+    async fn review_newline_replaces_a_cross_block_selection_that_leaves_no_clean_range(
+        cx: &mut TestAppContext,
+    ) {
+        init_editor_test_app(cx);
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha\n\nbeta".into(), None));
+        redraw(cx);
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                let block = editor.document.visible_blocks()[1].entity.clone();
+                block.update(cx, |block, cx| {
+                    block.move_to(0, cx);
+                    block.focus_handle.focus(window);
+                });
+                editor.active_entity_id = Some(block.entity_id());
+                set_selection(editor, 0, 2, 1, 0, cx);
+                assert!(
+                    block.read(cx).has_document_selection(),
+                    "夹具前提：全局判据说「选区生效中」"
+                );
+                assert!(
+                    block.read(cx).editor_selection_clean_range.is_none(),
+                    "夹具前提：这一块的干净切片是空的，局部判据因此看不见选区"
+                );
+            })
+        });
+        redraw(cx);
+
+        cx.simulate_keystrokes("enter");
+        redraw(cx);
+
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx)),
+            "al\nbeta",
+            "回车该与敲字符同一口径：整段跨块选区换成换行，A 剩下那半截文字不该留在文档里"
+        );
+    }
+
     fn redraw(cx: &mut gpui::VisualTestContext) {
         cx.update(|window, cx| window.draw(cx).clear());
         cx.run_until_parked();
