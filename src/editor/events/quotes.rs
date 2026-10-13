@@ -57,6 +57,11 @@ impl Editor {
                 | BlockEvent::ToggleTaskChecked
                 | BlockEvent::RequestAppendTableColumn
                 | BlockEvent::RequestAppendTableRow
+                // 换格先收选区：焦点走进另一格之后，旧选区不再代表「当前选中什么」，
+                // 留着它下一键就会按旧选区去替换**旧格子**的字节（表格分支只发这两个
+                // 事件就 return，没有再经过别的清除点）。
+                | BlockEvent::RequestTableCellMoveHorizontal { .. }
+                | BlockEvent::RequestTableCellMoveVertical { .. }
                 | BlockEvent::RequestDelete
         )
     }

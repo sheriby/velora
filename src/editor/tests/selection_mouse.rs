@@ -1062,6 +1062,44 @@ async fn typing_over_a_cross_cell_selection_replaces_it(cx: &mut TestAppContext)
     });
 }
 
+/// 换格（回车/Tab 让焦点走进另一格）要先把跨格选区收掉：不收的话，下一键仍被算成
+/// 「这一格上的选区还在」，输入路径于是按旧选区替换——删掉的是**旧格子**那几段字节、
+/// 字落在旧选区起点，新格一个字都没收到，旧高亮还亮着。
+#[gpui::test]
+async fn review_moving_between_table_cells_clears_the_cross_cell_selection(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| ab | cd |\n| --- | --- |\n| ef | gh |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        let anchor = table.read(cx).table_runtime.as_ref().unwrap().header[1].clone();
+        editor.select_table_text_range(
+            table.entity_id(),
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 1 }, offset: 1, whole_cell: false },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 1, whole_cell: false },
+            cx,
+        );
+        editor.focus_block(anchor.entity_id());
+    });
+    redraw(cx);
+
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.table_text_selection.is_none()),
+        "回车换格之后跨格选区还在，下一键会拿它去替换旧格子的字节"
+    );
+
+    cx.simulate_input("X");
+    redraw(cx);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text()),
+        "| ab | cd |\n| --- | --- |\n| ef | Xgh |",
+        "敲的字要落在换过去的那一格"
+    );
+}
+
 /// 从表格里往外拖：整张表跟着走进跨块选区（格子上的高亮也一起亮）。
 #[gpui::test]
 async fn dragging_from_a_table_cell_out_of_the_table_keeps_the_table(cx: &mut TestAppContext) {
