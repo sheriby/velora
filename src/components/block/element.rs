@@ -417,10 +417,12 @@ pub(super) fn hard_line_ranges(text: &str) -> Vec<Range<usize>> {
 /// 只准造一张表，行内 span 数再多也只造一张。thread-local：并行测试各数各的。
 #[cfg(test)]
 mod probe {
+    use super::Pixels;
     use std::cell::Cell;
     thread_local! {
         static HARD_LINE_RANGE_BUILDS: Cell<u64> = const { Cell::new(0) };
         static TEXT_RUNS_BUILDS: Cell<u64> = const { Cell::new(0) };
+        static INLINE_CODE_SIZE: Cell<Option<Pixels>> = const { Cell::new(None) };
     }
     pub(super) fn note_build() {
         HARD_LINE_RANGE_BUILDS.with(|counter| counter.set(counter.get() + 1));
@@ -433,6 +435,14 @@ mod probe {
     }
     pub(crate) fn text_runs_builds() -> u64 {
         TEXT_RUNS_BUILDS.with(|counter| counter.get())
+    }
+    /// 最近一次排版里行内代码用的字号：标题里的缩放只能在排版那一趟看出来，
+    /// 用例靠它钉住「调用点传的是本块正文字号，不是 1 倍」。
+    pub(crate) fn note_inline_code_size(size: Pixels) {
+        INLINE_CODE_SIZE.with(|slot| slot.set(Some(size)));
+    }
+    pub(crate) fn inline_code_size() -> Option<Pixels> {
+        INLINE_CODE_SIZE.with(|slot| slot.get())
     }
 }
 

@@ -2,7 +2,7 @@ use super::*;
 
 mod tests {
     use super::{
-        inline_display_font_size,
+        inline_code_font_size, inline_display_font_size,
         numbered_list_marker, promotes_inline_images, wikilink_target,
     };
     use crate::components::{BlockRecord, InlineScript, InlineSpan, InlineStyle};
@@ -91,14 +91,30 @@ mod tests {
             code: true,
             ..InlineStyle::default()
         });
-        assert_eq!(inline_display_font_size(&code_span, 16.0, 13.0), 13.0);
+        // 正文块：本块字号与主题正文相同，行内代码就是设置里的那个值。
+        assert_eq!(inline_display_font_size(&code_span, 16.0, 13.0, 16.0), 13.0);
+        // 标题：正文被放大到两倍，代码同比放大（不跟就会在 H1/H2 里变成一小撮）。
+        assert_eq!(inline_display_font_size(&code_span, 32.0, 13.0, 16.0), 26.0);
         let superscript = span_with(InlineStyle {
             script: InlineScript::Superscript,
             ..InlineStyle::default()
         });
-        assert_eq!(inline_display_font_size(&superscript, 16.0, 13.0), 11.52);
+        assert_eq!(inline_display_font_size(&superscript, 16.0, 13.0, 16.0), 11.52);
         let plain = span_with(InlineStyle::default());
-        assert_eq!(inline_display_font_size(&plain, 16.0, 13.0), 16.0);
+        assert_eq!(inline_display_font_size(&plain, 16.0, 13.0, 16.0), 16.0);
+    }
+
+    #[test]
+    fn inline_code_size_follows_the_block_font_size() {
+        // 正文块比值 1：取值与用户设置一致。
+        assert_eq!(inline_code_font_size(15.0, 17.0, 17.0), 15.0);
+        // H1 36（正文 17）：15×36/17。
+        assert!((inline_code_font_size(15.0, 36.0, 17.0) - 31.764_706).abs() < 0.001);
+        // H6 14：比正文小，也同比缩。
+        assert!((inline_code_font_size(15.0, 14.0, 17.0) - 12.352_941).abs() < 0.001);
+        // 主题可自定义：正文号是 0 时不许除出无穷大，也不许小于 1px。
+        assert_eq!(inline_code_font_size(15.0, 36.0, 0.0), 15.0);
+        assert_eq!(inline_code_font_size(0.0, 36.0, 17.0), 1.0);
     }
 
     #[test]

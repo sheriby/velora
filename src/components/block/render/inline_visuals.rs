@@ -670,6 +670,7 @@ impl Block {
             span,
             font_size,
             crate::config::EditorSettings::scaled_font_sizes(cx).1,
+            crate::config::EditorSettings::scaled_font_sizes(cx).0,
         );
 
         let mut element = div()

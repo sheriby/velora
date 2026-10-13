@@ -75,18 +75,43 @@ impl Render for HoverPreviewTooltip {
     }
 }
 
+/// 行内代码在**本块**里的字号。
+///
+/// 「代码字体大小」是相对正文设定的（默认正文 16、代码 14）。标题里的正文被放大了
+/// （H1 是正文的 2.25 倍），代码若还按绝对值画，标题中就会冒出一小撮 14px 的字
+/// （报修：H1/H2 里的 `xx` 小得离谱）。这里按本块正文字号与**段落**字号的比值同比
+/// 缩放：正文块比值是 1，取值与从前完全一致；H1 里就是 14×2.25。
+///
+/// 基准取 `EditorSettings::scaled_font_sizes(cx).0`（正文设置 × 界面缩放），不要用
+/// `theme.typography.text_size`——后者是主题原值，没套上用户字号与缩放，比值会漂。
+///
+/// 显示态（混合分段路径）与编辑态（`TextRun` 逐段字号）都调这一处判据。
+pub(crate) fn inline_code_font_size(
+    code_font_size: f32,
+    font_size: f32,
+    body_font_size: f32,
+) -> f32 {
+    // 目标字号可自定义（主题/设置），被写成 0 时别除出无穷大。
+    if body_font_size <= 0.0 {
+        return code_font_size.max(1.0);
+    }
+    (code_font_size * (font_size / body_font_size)).max(1.0)
+}
+
 /// 行内片段在「混合分段」渲染路径（数学/上下标/行内图片同块）里用的显示字号。
 ///
-/// 行内代码跟随「代码块字体大小」设置，上标/下标缩小到 72%，其余跟随正文。
+/// 行内代码跟随「代码块字体大小」设置（并按本块正文同比缩放，见
+/// [`inline_code_font_size`]），上标/下标缩小到 72%，其余跟随正文。
 /// 可编辑文本的 `TextRun` 现在也能带逐段字号（vendored gpui 本地补丁），显示态
 /// 与编辑态用同一套字号规则，点击进入编辑不再跳变。
 fn inline_display_font_size(
     span: &crate::components::InlineSpan,
     font_size: f32,
     code_font_size: f32,
+    body_font_size: f32,
 ) -> f32 {
     if span.style.code {
-        code_font_size.max(1.0)
+        inline_code_font_size(code_font_size, font_size, body_font_size)
     } else if span.style.has_script() {
         (font_size * 0.72).max(6.0)
     } else {

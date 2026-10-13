@@ -984,3 +984,48 @@ async fn unchanged_text_reuses_the_hard_line_table_across_frames(cx: &mut TestAp
         "文本未变的帧不该重建硬行表（实际 {builds} 次）"
     );
 }
+
+/// 标题里的行内代码必须跟着标题放大（报修：H1/H2 里的 `xx` 小得离谱）。
+/// 这里走真实排版那一趟，读的是元素实际用的字号——只测纯函数钉不住调用点。
+#[gpui::test]
+async fn inline_code_in_a_heading_follows_the_heading_size(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+    });
+    let theme = cx.update(|cx| {
+        cx.global::<crate::theme::ThemeManager>().current_arc()
+    });
+    let (block, cx) = cx.add_window_view(|_, cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Heading { level: 1 },
+                InlineTextTree::from_markdown("标题里的 `代码` 片段"),
+            ),
+        )
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.run_until_parked();
+
+    let observed = super::probe::inline_code_size().expect("排版过带行内代码的块");
+    let fonts = cx.update(|_window, cx| crate::config::EditorSettings::scaled_fonts(cx));
+    // 基准是**生效的正文号**（设置 × 缩放），不是主题原值：渲染用的是套过设置的那份排版。
+    let body_size = cx.update(|_window, cx| {
+        crate::config::EditorSettings::scaled_font_sizes(cx).0
+    });
+    let expected = fonts.code_size as f32 * theme.typography.h1_size / body_size;
+    assert!(
+        f32::from(observed) > fonts.code_size as f32,
+        "H1 里的行内代码不该还是正文那个字号：{}",
+        f32::from(observed)
+    );
+    assert!(
+        (f32::from(observed) - expected).abs() < 0.01,
+        "H1 里的行内代码要按标题号同比放大：期望 {expected}，实际 {}",
+        f32::from(observed)
+    );
+    let _ = block;
+}

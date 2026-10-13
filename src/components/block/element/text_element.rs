@@ -119,17 +119,16 @@ impl Element for BlockTextElement {
         // 与 runs 上实际盖的值同源——build_text_runs 只给非空行内代码 span 盖
         // `Some(代码字号)`，代码块管线与占位符都不盖。
         let font_prefs = crate::config::EditorSettings::scaled_fonts(cx);
-        let uses_inline_code_font = !is_placeholder
-            && !(input.kind().is_code_block() || input.code_highlight_result().is_some())
-            && input
-                .inline_spans()
-                .iter()
-                .any(|span| span.style.code && !span.range.is_empty());
-        let code_size = if uses_inline_code_font {
-            px(font_prefs.code_size as f32)
-        } else {
-            px(0.0)
-        };
+        // 行内代码字号按「本块正文 / 段落字号」缩放：标题里正文被放大了，代码不跟着走
+        // 就会在 H1/H2 里变成一小撮（报修）。行高与 runs 上的字号取同一个值。
+        // 没有行内代码的块也跟着算：这个值恒小于本块正文行高，不影响它们的行高。
+        let code_size = px(crate::components::block::render::inline_code_font_size(
+            font_prefs.code_size as f32,
+            f32::from(font_size),
+            crate::config::EditorSettings::scaled_font_sizes(cx).0,
+        ));
+        #[cfg(test)]
+        probe::note_inline_code_size(code_size);
         let line_height = window.line_height().max(code_size * 1.35);
         let source_line_start = input.source_line_start();
         // 栏宽按全文档基准算（整篇总行数），分块上下才右对齐；基准没挂上时
@@ -265,7 +264,7 @@ impl Element for BlockTextElement {
                                 theme.colors.text_link,
                                 show_code_backgrounds,
                                 &fonts.code_family,
-                                px(fonts.code_size as f32),
+                                code_size,
                                 theme.colors.comment_bg,
                             )
                         }
@@ -430,15 +429,17 @@ impl Element for BlockTextElement {
             .clone()
             .unwrap_or_else(|| input.selected_range.clone());
         let cursor = input.cursor_offset();
-        let code_size = if input.inline_spans().iter().any(|span| span.style.code) {
-            px(crate::config::EditorSettings::scaled_font_sizes(cx).1)
-        } else { px(0.0) };
-        let line_height = window.line_height().max(code_size * 1.35);
+        let style = window.text_style();
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let code_size = crate::components::block::render::inline_code_font_size(
+            crate::config::EditorSettings::scaled_font_sizes(cx).1,
+            f32::from(font_size),
+            crate::config::EditorSettings::scaled_font_sizes(cx).0,
+        );
+        let line_height = window.line_height().max(px(code_size) * 1.35);
         let focused = input.focus_handle.is_focused(window);
         let show_inline_code_backgrounds = !input.is_source_raw_mode();
         let show_source_line_numbers = input.show_source_line_numbers();
-        let style = window.text_style();
-        let font_size = style.font_size.to_pixels(window.rem_size());
 
         let lines = request_layout.borrow_mut().take().unwrap_or_default();
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
