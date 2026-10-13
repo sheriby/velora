@@ -132,6 +132,114 @@ async fn review_save_and_close_writes_the_buffer_typed_while_the_dialog_was_open
     );
 }
 
+
+/// 一趟里既有冲突又有纯写盘失败：只出一个框，而且必须是带解除入口的冲突框。
+///
+/// 提交循环里逐个失败各自弹框，而 `show_modal` 是**替换**语义：后弹的「保存失败」
+/// （只有一个「好」）把冲突框顶掉，而 `workspace.external_change_conflict` 是单槽位，
+/// 只剩最后一个 path——用户再也看不到「重载 / 另存为」，`has_external_autosave_conflict`
+/// 还让后续每一趟自动保存早退，看起来就是「自动保存永久停摆」。
+#[gpui::test]
+#[cfg(unix)]
+async fn review_autosave_aggregates_conflict_and_write_failure_into_one_modal(
+    cx: &mut TestAppContext,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    init_review_workspace_app(cx);
+
+    let root = review_workspace_fixture(cx, "autosave-mixed-failures");
+    let conflict_root = root.join("conflict");
+    let blocked_root = root.join("blocked");
+    fs::create_dir_all(&conflict_root).unwrap();
+    fs::create_dir_all(&blocked_root).unwrap();
+    let conflict = conflict_root.join("conflict.md");
+    let blocked = blocked_root.join("blocked.md");
+    fs::write(&conflict, "old").unwrap();
+    fs::write(&blocked, "old").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "old".into(), Some(conflict.clone()))
+    });
+    let recovery_id = editor.read_with(cx, |editor, _| editor.recovery_id);
+    cx.cx
+        .on_quit(move || crate::config::remove_recovery_snapshot(recovery_id).unwrap());
+
+    let dirtied = |editor: &mut Editor, cx: &mut gpui::Context<Editor>| {
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block
+                .record
+                .set_title(crate::components::InlineTextTree::plain("ours"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    };
+    // 活动文档先脏，再打开第二篇把它挤到后台，第二篇也弄脏：两页都进这一趟自动保存。
+    editor.update(cx, |editor, cx| dirtied(editor, cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.open_workspace_file(blocked.clone(), window, cx);
+    });
+    editor.update(cx, |editor, cx| dirtied(editor, cx));
+    editor.update(cx, |editor, cx| editor.snapshot_current_document(cx));
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor
+            .workspace
+            .open_documents
+            .iter()
+            .filter(|tab| tab.dirty)
+            .count()),
+        2,
+        "夹具前提：两页都是脏的"
+    );
+
+    // 提交那一刻：A 的盘上内容被别人换掉（冲突），B 的目录变成不可写（纯写盘失败）。
+    editor.update(cx, |editor, _cx| {
+        editor.save_commit_hook = Some(Box::new({
+            let conflict = conflict.clone();
+            let blocked_root = blocked_root.clone();
+            move |_, _| {
+                fs::write(&conflict, "external").unwrap();
+                fs::set_permissions(&blocked_root, fs::Permissions::from_mode(0o500)).unwrap();
+            }
+        }));
+    });
+
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    // 收尾：目录放开，不然清理与后续读取都被挡住。
+    fs::set_permissions(&blocked_root, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let strings = cx.update(|_window, cx| cx.global::<crate::i18n::I18nManager>().strings().clone());
+    editor.read_with(cx, |editor, _cx| {
+        assert!(
+            editor.has_external_autosave_conflict(),
+            "冲突要记下来，后续自动保存都靠它把写盘停住"
+        );
+        let spec = editor.modal_spec().expect("一趟失败至少要给一个框");
+        assert_eq!(
+            spec.title, strings.external_change_title,
+            "冲突框被「保存失败」顶掉了：用户手里只剩一块「好」，实测 {:?}",
+            spec.title
+        );
+        assert_eq!(
+            spec.buttons.len(),
+            3,
+            "「重载 / 另存为 / 继续编辑」三个入口不能被顶掉，实测 {:?}",
+            spec.buttons
+        );
+        assert!(
+            editor.workspace.file_error.is_some(),
+            "另一篇的写盘失败要走红字，不能跟着冲突框一起丢"
+        );
+    });
+    assert_eq!(
+        fs::read_to_string(&blocked).unwrap(),
+        "old",
+        "写不进去的那一篇盘上不该变"
+    );
+    assert_eq!(fs::read_to_string(&conflict).unwrap(), "external");
+}
+
 #[gpui::test]
 async fn review_workspace_replace_preserves_all_supported_file_shapes(cx: &mut TestAppContext) {
     init_review_workspace_app(cx);

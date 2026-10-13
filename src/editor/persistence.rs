@@ -406,6 +406,12 @@ impl Editor {
                         }
 
                         let mut saved_documents = Vec::new();
+                        // 一趟里的失败先收集再上报：`show_modal` 是**替换**语义，逐条
+                        // 弹框会把带「重载 / 另存为」的冲突框顶成只剩一块「好」的
+                        // 「保存失败」，而后续每一趟自动保存又因冲突早退——用户再也
+                        // 看不到解除入口。有冲突只出冲突框，其余纯写盘失败走红字。
+                        let mut conflict: Option<(PathBuf, String)> = None;
+                        let mut write_failures: Vec<String> = Vec::new();
                         #[cfg(test)]
                         if let Some(hook) = editor.save_commit_hook.take() {
                             hook(editor, cx);
@@ -431,11 +437,11 @@ impl Editor {
                             if let Err(error) = result {
                                 eprintln!("failed to autosave '{}': {error}", path.display());
                                 if is_external_change(&error) {
-                                    editor.report_external_change_conflict(path.clone(), error.to_string(), cx);
+                                    // `external_change_conflict` 是单槽位：这一趟取第一处
+                                    // 够用，多篇都冲突时它们本来就是同一个外部动作。
+                                    conflict.get_or_insert_with(|| (path.clone(), error.to_string()));
                                 } else {
-                                    editor.report_workspace_file_error(error.to_string(), cx);
-                                    let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
-                                    editor.show_message_modal(title, error.to_string(), cx);
+                                    write_failures.push(error.to_string());
                                 }
                                 continue;
                             }
@@ -451,6 +457,12 @@ impl Editor {
                                 markdown: document.recovery.markdown.clone(),
                                 bytes: document.bytes.clone(),
                             });
+                        }
+                        if let Some((path, detail)) = conflict {
+                            editor.report_external_change_conflict(path, detail, cx);
+                        }
+                        for detail in write_failures {
+                            editor.report_workspace_file_error(detail, cx);
                         }
                         if editor.mark_workspace_documents_saved(&saved_documents) {
                             editor.document_dirty = false;
