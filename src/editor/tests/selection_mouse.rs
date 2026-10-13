@@ -1062,6 +1062,34 @@ async fn typing_over_a_cross_cell_selection_replaces_it(cx: &mut TestAppContext)
     });
 }
 
+
+/// 跨格复制按 (行, 列) 全量补位：空格子的列位也要留出来。
+///
+/// `table_cells_in_text_range` 把空区间整格剔掉，文本拼接那支又只按「同一行的下一个
+/// 非空格」补一个制表符——`a | (空) | b` 复制出来成了 `a\tb`，粘回表里会串列。
+/// 高亮与删除那条路可以跳空段（没东西可画 / 可删），文本不行。
+#[gpui::test]
+async fn review_copying_across_an_empty_table_cell_keeps_the_column(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "| a |  | b |\n| --- | --- | --- |\n| 1 | 2 | 3 |";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let table = editor.document.first_root().expect("table root").clone();
+        editor.select_table_text_range(
+            table.entity_id(),
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 0 }, offset: 0, whole_cell: false },
+            TableTextPosition { cell: TableCellPosition { row: 0, column: 2 }, offset: 1, whole_cell: false },
+            cx,
+        );
+        assert_eq!(
+            editor.table_text_selection_text(cx).as_deref(),
+            Some("a\t\tb"),
+            "中间那一格是空的，但它占着一列：复制出来的文本要留住那个制表符"
+        );
+    });
+}
+
 /// 换格（回车/Tab 让焦点走进另一格）要先把跨格选区收掉：不收的话，下一键仍被算成
 /// 「这一格上的选区还在」，输入路径于是按旧选区替换——删掉的是**旧格子**那几段字节、
 /// 字落在旧选区起点，新格一个字都没收到，旧高亮还亮着。

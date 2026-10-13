@@ -210,7 +210,33 @@ impl Editor {
         Some((table, cells))
     }
 
+    /// 某一格在选区里那一段（干净坐标）。\n    ///\n    /// 判据只此一处：高亮 / 删除那条路（`table_cells_in_text_range`）与文本拼接都从
+    /// 它取，空区间由调用方决定跳不跳——高亮与删除可以跳（没东西可画可删），复制不行
+    /// （列位要留）。
+    fn table_cell_range_in_text_selection(
+        start: TableTextPosition,
+        end: TableTextPosition,
+        position: TableCellPosition,
+        len: usize,
+    ) -> Range<usize> {
+        // 按下后焦点可能显形出文字布局；整格语义属于端点，不能随下一帧改变。
+        let start_offset = if start.whole_cell { 0 } else { start.offset.min(len) };
+        let end_offset = if end.whole_cell { len } else { end.offset.min(len) };
+        if start.cell == end.cell {
+            start_offset.min(end_offset)..start_offset.max(end_offset)
+        } else if position == start.cell {
+            start_offset..len
+        } else if position == end.cell {
+            0..end_offset
+        } else {
+            0..len
+        }
+    }
+
     /// 写到 `start..end` 之间的那几格（按 `TableCellPosition` 行优先序）。
+    ///
+    /// 空区间整格剔掉：这一份给高亮与删除用。要给用户看的文本走
+    /// `table_text_selection_text`，那边按列全量补位。
     fn table_cells_in_text_range(
         &self,
         table: &Entity<Block>,
@@ -235,18 +261,7 @@ impl Editor {
                 }
                 let block = cell.read(cx);
                 let len = block.clean_visible_len();
-                // 按下后焦点可能显形出文字布局；整格语义属于端点，不能随下一帧改变。
-                let start_offset = if start.whole_cell { 0 } else { start.offset.min(len) };
-                let end_offset = if end.whole_cell { len } else { end.offset.min(len) };
-                let range = if start.cell == end.cell {
-                    start_offset.min(end_offset)..start_offset.max(end_offset)
-                } else if position == start.cell {
-                    start_offset..len
-                } else if position == end.cell {
-                    0..end_offset
-                } else {
-                    0..len
-                };
+                let range = Self::table_cell_range_in_text_selection(start, end, position, len);
                 if range.is_empty() {
                     continue;
                 }
@@ -394,24 +409,58 @@ impl Editor {
     /// 跨格选区交出去的文本：同行的格用制表符接，行与行之间换行（用户口径）。
     ///
     /// 读的是屏幕上那串字（干净坐标），不带管道符、不带列宽填充、不带格子里的记号。
+    /// 按选区的 (行, 列) 矩形**全量补位**：空格子的列位也要留出来，不然
+    /// `a | (空) | b` 复制出来成了 `a\tb`，粘回表里会串列。
     pub(crate) fn table_text_selection_text(&self, cx: &App) -> Option<String> {
-        let (_, cells) = self.table_text_selection_cells(cx)?;
+        let selection = self.table_text_selection?;
+        let table = self.document.block_entity_by_id(selection.table_block_id)?;
+        let runtime = table.read(cx).table_runtime.clone()?;
+        let (start, end) = selection.normalized();
         let mut text = String::new();
-        let mut current_row: Option<usize> = None;
-        for (position, cell, range) in cells {
-            let cell_state = cell.read(cx);
-            let clean = cell_state.record.title.visible_text();
-            let range = clamp_range_to_char_boundaries(&clean, range);
-            if range.is_empty() {
+        let mut written_rows = 0usize;
+        for row in start.cell.row..=end.cell.row {
+            let row_cells = if row == 0 {
+                Some(&runtime.header)
+            } else {
+                runtime.rows.get(row - 1)
+            };
+            let Some(row_cells) = row_cells else {
+                continue;
+            };
+            let mut row_text = String::new();
+            let mut written_cells = 0usize;
+            for column in start.cell.column..=end.cell.column {
+                let Some(cell) = row_cells.get(column) else {
+                    continue;
+                };
+                let cell_state = cell.read(cx);
+                let clean = cell_state.record.title.visible_text();
+                let len = cell_state.clean_visible_len();
+                let position = TableCellPosition { row, column };
+                let range =
+                    Self::table_cell_range_in_text_selection(start, end, position, len);
+                // 端点停在格边（格首 / 格尾）时那一格整格不算在选区里：与高亮那条路
+                // 同一口径（`table_cells_in_text_range` 把空区间整格剔掉），这也是
+                // `dragging_between_cell_edges_keeps_the_text_granularity` 钉住的语义。
+                // 夹在中间的格子不受此限：空也要占它那一列（列位不能丢）。
+                if range.is_empty() && (position == start.cell || position == end.cell) {
+                    continue;
+                }
+                let range = clamp_range_to_char_boundaries(&clean, range);
+                if written_cells > 0 {
+                    row_text.push('\t');
+                }
+                row_text.push_str(&clean[range]);
+                written_cells += 1;
+            }
+            if written_cells == 0 {
                 continue;
             }
-            match current_row {
-                Some(row) if row == position.row => text.push('\t'),
-                Some(_) => text.push('\n'),
-                None => {}
+            if written_rows > 0 {
+                text.push('\n');
             }
-            text.push_str(&clean[range]);
-            current_row = Some(position.row);
+            text.push_str(&row_text);
+            written_rows += 1;
         }
         (!text.is_empty()).then_some(text)
     }
