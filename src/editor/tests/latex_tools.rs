@@ -2,6 +2,7 @@
 
 use super::common::*;
 use crate::components::latex::LATEX_SYMBOLS;
+use crate::editor::insert_ops::InsertBlockTarget;
 
 fn block_with_text(
     editor: &Editor,
@@ -64,7 +65,7 @@ async fn latex_completion_confirms_template_in_math_block(cx: &mut TestAppContex
     });
     assert!(open, "数学块里的 \\al 应弹出补全");
     assert_eq!(first, Some("alpha"));
-    assert_eq!(anchor, 3, "锚点应在反斜杠上");
+    assert_eq!(anchor, 0, "锚点应在反斜杠上（正文 0 位，围栏不在模型里）");
 
     // Enter 确认：查询串换成模板，光标落到插入文本的落点上。
     editor.update(cx, |editor, cx| {
@@ -75,7 +76,7 @@ async fn latex_completion_confirms_template_in_math_block(cx: &mut TestAppContex
         assert!(!editor.latex_completion_is_open(), "确认后浮层该收起");
         let text = math.read(_cx).display_text();
         assert_eq!(
-            text, "$$\n\\alpha \n$$",
+            text, "\\alpha ",
             "确认该把 \\al 换成 \\alpha 加尾随空格，实际 {text:?}"
         );
         // 确认是一次不可合并的 undo 组：连续确认不能被合并成一步。
@@ -115,8 +116,8 @@ async fn latex_completion_tab_confirms_in_math_block(cx: &mut TestAppContext) {
         assert!(!editor.latex_completion_is_open(), "确认后浮层该收起");
         assert_eq!(
             math.read(cx).display_text(),
-            "$$\n\\alpha \n$$",
-            "Tab 该插入模板而不是制表符"
+            "\\alpha ",
+            "Tab 该插入模板而不是制表符（模型里只有正文）"
         );
     });
 }
@@ -255,8 +256,8 @@ async fn formula_editor_draft_previews_and_applies(cx: &mut TestAppContext) {
         assert!(editor.formula_editor.is_none(), "应用后弹窗该关闭");
         let text = math.read(cx).display_text();
         assert_eq!(
-            text, "$$\n\\frac{}{}\n$$",
-            "草稿应写回数学块，实际 {text:?}"
+            text, "\\frac{}{}",
+            "草稿应写回数学块的正文，实际 {text:?}"
         );
         assert_eq!(
             editor.undo_history.len(),
@@ -303,7 +304,7 @@ async fn formula_editor_cancel_keeps_block_unchanged(cx: &mut TestAppContext) {
         assert!(editor.formula_editor.is_none(), "取消后弹窗该关闭");
         let text = math.read(cx).display_text();
         assert_eq!(
-            text, "$$\nF = ma\n$$",
+            text, "F = ma",
             "取消不得改动块文本，实际 {text:?}"
         );
     });
@@ -1371,4 +1372,273 @@ fn formula_draft_lines_carry_latex_syntax_colors() {
     );
     let total: usize = selected_first.runs.iter().map(|run| run.len).sum();
     assert_eq!(total, selected_first.text.len(), "切开选区后 run 仍要铺满整行");
+}
+
+/// 公式块的字节就是它自己那一段 markdown：空块在文件里写不出对应字节。
+/// 整块选中（含两端四个 `$`）删掉之后，这一块该被收掉，而不是留成零宽空块——
+/// 零宽空块会让块树与文件字节对不上（读回来是别的块）。
+#[gpui::test]
+async fn deleting_every_byte_of_a_math_block_removes_the_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "$$\nx^2\n$$\n\n后段\n".into(), None)
+    });
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
+    redraw(cx);
+
+    editor.update_in(cx, |_editor, window, cx| {
+        math.update(cx, |block, block_cx| {
+            let len = block.visible_len();
+            block.selected_range = 0..len;
+            block.on_delete_back(&DeleteBack, window, block_cx);
+        });
+    });
+    redraw(cx);
+
+    let (kinds, buffer) = editor.read_with(cx, |editor, cx| {
+        (
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .map(|block| format!("{:?}", block.read(cx).kind()))
+                .collect::<Vec<_>>(),
+            editor.buffer.text(),
+        )
+    });
+    assert_eq!(
+        kinds,
+        vec!["Paragraph".to_string()],
+        "空公式块该被收掉，实际留下的块树：{kinds:?}，缓冲区 {buffer:?}"
+    );
+    assert_eq!(buffer, "后段\n", "删掉公式块之后文件里不该留下多余空行");
+    // 落盘字节读回来必须是同一棵树：零宽空块留下的那些字节读回来是别的块。
+    let reread = cx.new(|cx| Editor::from_markdown(cx, buffer.clone(), None));
+    let reread_kinds = reread.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .root_blocks()
+            .iter()
+            .map(|block| format!("{:?}", block.read(cx).kind()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(reread_kinds, kinds, "写回的字节读不回同一棵树：{buffer:?}");
+
+    // 删文本与收块是同一次操作：一步撤销回到原样。
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor.buffer.text(),
+            "$$\nx^2\n$$\n\n后段\n",
+            "一步撤销该把整次删除退回"
+        );
+        assert_eq!(
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .map(|block| format!("{:?}", block.read(cx).kind()))
+                .collect::<Vec<_>>(),
+            vec!["MathBlock".to_string(), "Paragraph".to_string()],
+        );
+    });
+}
+
+/// 文档里只有这一个公式块时同样收掉它，但文档至少要留一个段落（编辑器不许零块文档）。
+#[gpui::test]
+async fn deleting_the_only_math_block_leaves_one_empty_paragraph(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "$$\nx^2\n$$".into(), None)
+    });
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
+    redraw(cx);
+
+    // 文档里只有这一块，前向删除（Delete）与退格各走一条入口，这里取 Delete。
+    editor.update_in(cx, |_editor, window, cx| {
+        math.update(cx, |block, block_cx| {
+            let len = block.visible_len();
+            block.selected_range = 0..len;
+            block.on_delete(&Delete, window, block_cx);
+        });
+    });
+    redraw(cx);
+
+    let (kinds, text) = editor.read_with(cx, |editor, cx| {
+        (
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .map(|block| format!("{:?}", block.read(cx).kind()))
+                .collect::<Vec<_>>(),
+            editor.buffer.text(),
+        )
+    });
+    assert_eq!(kinds, vec!["Paragraph".to_string()], "文档要留一个空段落");
+    assert_eq!(text, "");
+}
+
+
+/// 公式块与代码块同一条路：模型里只有正文，两行 `$$` 归结构。
+/// 用户因此根本删不到定界符，也就删不出「少一个 `$` 的半个公式块」。
+#[gpui::test]
+async fn math_block_model_has_no_dollar_delimiters(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    redraw(cx);
+
+    // ① 打字那一路：`$$` + 回车。
+    editor.update_in(cx, |editor, window, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        block.update(cx, |block, block_cx| {
+            block.replace_text_in_visible_range(0..0, "$$", None, false, block_cx);
+            block.move_to(block.visible_len(), block_cx);
+            block.on_newline(&Newline, window, block_cx);
+        });
+        let _ = editor;
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let math = math_block_entity(editor, cx).expect("该有一个公式块");
+        let math = math.read(cx);
+        assert_eq!(math.kind(), BlockKind::MathBlock);
+        assert_eq!(math.display_text(), "", "模型里只有正文，没有 `$`");
+        assert_eq!(editor.document.markdown_text(cx), "$$\n\n$$", "文件里仍是一对围栏");
+    });
+
+    // ② 菜单那一路。
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "正文甲\n".into(), None));
+    redraw(cx);
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.visible_blocks()[0].entity.clone();
+        block.update(cx, |block, _cx| block.move_to(block.visible_len(), _cx));
+        editor.focus_block(block.entity_id());
+        assert!(
+            editor.insert_block_after_selection(InsertBlockTarget::MathBlock, cx),
+            "菜单该插进一块公式"
+        );
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let math = math_block_entity(editor, cx).expect("该有一个公式块");
+        assert_eq!(math.read(cx).display_text(), "");
+        assert_eq!(editor.document.markdown_text(cx), "正文甲\n\n$$\n\n$$\n\n");
+    });
+}
+
+/// 往正文里打字：两行围栏照旧落进文件，落盘字节读回来还是同一个公式块。
+#[gpui::test]
+async fn typing_in_the_math_body_keeps_the_fences_in_the_file(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    editor.update_in(cx, |_editor, window, cx| {
+        math.update(cx, |block, block_cx| {
+            block.replace_text_in_visible_range(0..0, "x^2", None, false, block_cx);
+        });
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(math.read(cx).display_text(), "x^2", "模型里只有正文");
+        assert_eq!(
+            editor.document.markdown_text(cx),
+            "$$\nx^2\n$$",
+            "写回文件时必须把两行围栏补回来"
+        );
+    });
+    let written = editor.read_with(cx, |editor, cx| editor.document.markdown_text(cx));
+    let reread = cx.new(|cx| Editor::from_markdown(cx, written.clone(), None));
+    let reread_kinds = reread.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .map(|visible| visible.entity.read(cx).kind())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(reread_kinds, vec![BlockKind::MathBlock], "落盘字节读不回公式块");
+}
+
+/// 空的公式块（正文一个字都没有）再按退格就整块收掉——与空代码块同一条规则。
+#[gpui::test]
+async fn backspace_on_an_empty_math_block_removes_the_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "$$\n\n$$\n\n后段\n".into(), None));
+    redraw(cx);
+
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("夹具应有一个数学块");
+    editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    editor.update_in(cx, |_editor, window, cx| {
+        math.update(cx, |block, block_cx| block.on_delete_back(&DeleteBack, window, block_cx));
+    });
+    redraw(cx);
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .map(|block| format!("{:?}", block.read(cx).kind()))
+                .collect::<Vec<_>>(),
+            vec!["Paragraph".to_string()],
+            "空公式块该整块收掉"
+        );
+        assert_eq!(editor.buffer.text(), "后段\n");
+    });
+}
+
+/// 其余形状整段存原文：单行 `$$x^2$$` 与闭合行带尾文的写法里，定界符与正文夹在
+/// 同一行，藏起来没有无歧义的落点（报修第 3 条要求尾文留在块文本里显示）。
+#[gpui::test]
+async fn non_classic_math_shapes_keep_the_source_in_the_model(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (source, expected) in [
+        ("$$x^2$$\n", "$$x^2$$"),
+        ("$$x^2$$ LOST_SENTINEL\n", "$$x^2$$ LOST_SENTINEL"),
+        ("$$\nx^2\n$$ 尾文\n", "$$\nx^2\n$$ 尾文"),
+    ] {
+        let editor = cx.new(|cx| Editor::from_markdown(cx, source.to_string(), None));
+        editor.read_with(cx, |editor, cx| {
+            let math = math_block_entity(editor, cx).unwrap_or_else(|| {
+                panic!("{source:?} 该读成一个公式块：{:?}", editor.document.markdown_text(cx))
+            });
+            assert_eq!(
+                math.read(cx).display_text(),
+                expected,
+                "{source:?} 的形状该整段存原文"
+            );
+            assert_eq!(
+                editor.document.markdown_text(cx),
+                source.trim_end_matches('\n'),
+                "字节不该被改"
+            );
+        });
+    }
 }

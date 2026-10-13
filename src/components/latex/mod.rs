@@ -211,6 +211,40 @@ pub(crate) fn parse_display_math_source(raw: &str) -> Option<DisplayMathSource> 
     })
 }
 
+/// 经典多行形状的开栏行与收栏行：`$$` 各自独占一行、顶格。
+///
+/// 认得的形状只有这一种。单行 `$$x^2$$`、闭合行带尾文（`$$x^2$$ 尾文`）、
+/// 缩进或容器里的写法都不算：那几种写法里定界符与正文夹在同一行（尾文还留在块文本里
+/// 显示），把定界符藏起来没有无歧义的落点。
+pub(crate) const DISPLAY_MATH_OPEN: &str = "$$\n";
+pub(crate) const DISPLAY_MATH_CLOSE: &str = "\n$$";
+
+/// 经典多行形状的读侧：`$$\n正文…\n$$` 取出正文（空正文就是空串）。
+///
+/// 认出之后块文本只留正文，两行围栏归结构（与代码块同一条路，见
+/// [`compose_display_math_region`]）：用户改不到定界符，也就删不出一个
+/// 「少了一个 `$` 的半个公式块」。
+pub(crate) fn split_display_math_region(region: &str) -> Option<String> {
+    let mut lines = region.split('\n');
+    if lines.next()? != "$$" {
+        return None;
+    }
+    let rest = lines.collect::<Vec<_>>();
+    let (close, body) = rest.split_last()?;
+    if *close != "$$" {
+        return None;
+    }
+    Some(body.join("\n"))
+}
+
+/// 经典多行形状的写侧：正文两边的围栏按这一处补回来。
+///
+/// 读侧 [`split_display_math_region`] 与写侧只有这一对函数，围栏的字节口径不会分家。
+pub(crate) fn compose_display_math_region(body: &str) -> String {
+    format!("{DISPLAY_MATH_OPEN}{body}{DISPLAY_MATH_CLOSE}")
+}
+
+
 /// TeX 排版样式：行间公式用 Display，行内公式必须用 Text。
 ///
 /// 旧实现两条路径都用 ratex 的默认（`MathStyle::Display`）：行内 `$\sum_0^1$` 会按行间

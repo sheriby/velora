@@ -191,7 +191,11 @@
             let visible = editor.document.visible_blocks();
             assert_eq!(visible.len(), 1);
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::MathBlock);
-            assert_eq!(visible[0].entity.read(cx).display_text(), markdown);
+            // 顶格的经典形状：模型里只有正文，两行围栏归结构（写回去仍是同一份字节）。
+            assert_eq!(
+                visible[0].entity.read(cx).display_text(),
+                "\\int_0^1 x^2 dx"
+            );
             assert_eq!(editor.document.markdown_text(cx), markdown);
         });
     }

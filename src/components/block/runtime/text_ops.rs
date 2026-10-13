@@ -16,6 +16,7 @@ impl Block {
             self.record.clear_code_family_books();
         }
         self.record.kind = BlockKind::Paragraph;
+        self.record.math_body_only = false;
         self.record.raw_fallback = None;
         self.quote_reparse_requested = false;
         self.mark_changed(cx);
@@ -72,12 +73,22 @@ impl Block {
             self.record.clear_code_family_books();
         }
         self.record.kind = next;
+        self.record.math_body_only = false;
+        self.record.raw_fallback = None;
         self.record.raw_fallback = None;
         self.quote_reparse_requested = false;
         self.clear_inline_projection();
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();
         true
+    }
+
+    /// 这一块在文档里顶格：不在引用、标注、列表项里。
+    ///
+    /// 「模型只留正文」的公式块只在这一层成立：容器里的块文本要与文件行一一对齐，
+    /// 位置换算靠的正是这份对齐（见 [`BlockRecord::math_body_only`]）。
+    pub(crate) fn sits_at_root_level(&self) -> bool {
+        self.quote_depth == 0 && self.callout_depth == 0 && !self.is_direct_list_child()
     }
 
     pub(crate) fn enter_code_block(
@@ -89,6 +100,7 @@ impl Block {
         self.clear_inline_projection();
         self.record.clear_code_family_books();
         self.record.kind = BlockKind::CodeBlock { language };
+        self.record.math_body_only = false;
         self.record.raw_fallback = None;
         self.record.set_title(InlineTextTree::plain(String::new()));
         self.quote_reparse_requested = false;
@@ -105,19 +117,26 @@ impl Block {
     /// Convert the current paragraph into a display-math block. `body` becomes
     /// the formula source between the fences (empty for a fresh `$$` block), and
     /// the caret lands at the start of that body line.
+    ///
+    /// 顶格的块模型里只留正文（两行围栏归结构，见 [`BlockRecord::math_body`]）：
+    /// 光标就是正文里的 0 位，用户也改不到定界符。
     pub(crate) fn enter_math_block(&mut self, body: &str, cx: &mut Context<Self>) {
-        // 空正文也留一个空行（`$$\n\n$$`）：光标落在中间这一行的行首，用户一眼看得出
-        // 往哪儿打字；两条记号紧挨的写法，光标停在收尾那行上。
-        let source = if body.trim().is_empty() {
+        // 容器里的块只能整段存原文：那边的模型文本要与文件行一一对齐（见
+        // `math_body_or_raw_block`），光标落在两行围栏之间。
+        let body_only = self.sits_at_root_level();
+        let source = if body_only {
+            body.to_string()
+        } else if body.trim().is_empty() {
             "$$\n\n$$".to_string()
         } else {
             format!("$$\n{body}\n$$")
         };
-        let cursor = "$$\n".len();
+        let cursor = if body_only { 0 } else { "$$\n".len() };
 
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
         self.clear_inline_projection();
         self.record.kind = BlockKind::MathBlock;
+        self.record.math_body_only = body_only;
         self.record.set_title(InlineTextTree::plain(source));
         self.quote_reparse_requested = false;
         self.sync_edit_mode_from_kind();

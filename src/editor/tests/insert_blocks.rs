@@ -185,8 +185,8 @@ async fn inserting_a_math_block_puts_the_caret_on_the_empty_body_line(cx: &mut T
     );
     assert_eq!(
         caret_of(&editor, 1, cx),
-        3..3,
-        "光标该落在中间那一空行的行首"
+        0..0,
+        "光标该落在正文 0 位（围栏不在模型里）"
     );
 }
 

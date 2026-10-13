@@ -1288,6 +1288,37 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
     /// 源码视图的块 ↔ 缓冲区切片：内容第 n 个字节就是「块起点 + n」，两侧都是恒等表。
     ///
     /// 返回这一份切片的长度，走查用它推进到下一根块（源码文档的块间只隔一个换行）。
+    /// 经典形状的公式块：模型文本只有正文，文件里正文前面还有一行 `$$`、后面还有一行
+    /// `$$`。位置换算整体让开开头那一行（`DISPLAY_MATH_OPEN`）——内容第 0 位就是正文首字节。
+    ///
+    /// `full_source_range` 落在正文上：内容坐标与源码坐标只差这一个起点，撤销/重放的
+    /// 记账口径不变。返回的是这一段在文件里吃掉的字节数（含两行围栏）——调用方靠它推进
+    /// 兄弟块的起点，算成正文长度会让后一块整体前移。
+    fn push_math_body_mapping(
+        &self,
+        block: &Entity<Block>,
+        region_start: usize,
+        mappings: &mut Vec<SourceTargetMapping>,
+        block_ranges: &mut HashMap<EntityId, Range<usize>>,
+        cx: &App,
+    ) -> usize {
+        let body_len = block.read(cx).display_text().len();
+        let content_start = region_start + crate::components::latex::DISPLAY_MATH_OPEN.len();
+        let identity: Vec<usize> = (0..=body_len).collect();
+        mappings.push(SourceTargetMapping {
+            entity: block.clone(),
+            full_source_range: content_start..content_start + body_len,
+            content_to_source: identity.clone(),
+            source_to_content: identity,
+            parsed_source_markdown: None,
+        });
+        let region_len = content_start - region_start
+            + body_len
+            + crate::components::latex::DISPLAY_MATH_CLOSE.len();
+        block_ranges.insert(block.entity_id(), region_start..region_start + region_len);
+        region_len
+    }
+
     fn push_source_slice_mapping(
         &self,
         block: &Entity<Block>,
@@ -1326,6 +1357,19 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         // 围栏长度`）会切进多字节字符中间——`def 甲():` 里 `甲` 占三位，切在第 5 位直接
         // panic。内容偏移与源码偏移只差一个块起点。
         if block.read(cx).is_source_raw_mode() {
+            // 经典形状的公式块：模型文本是正文，内容从开头那一行 `$$` 之后开始。
+            if block.read(cx).record.math_body_only
+                && matches!(block.read(cx).record.kind, BlockKind::MathBlock)
+            {
+                return self.push_math_body_mapping(
+                    block,
+                    absolute_start,
+                    mappings,
+                    block_ranges,
+                    cx,
+                );
+            }
+            // 挂在容器里的切片块（引用/列表里的 HTML、注释、数学、认不出的语法）：可见文本
             // 挂在容器里的切片块（引用/列表里的 HTML、注释、数学、认不出的语法）：可见文本
             // 是**剥掉容器记号**那一段，而走树交下来的起点是整行的行首，恒等表于是把内容第
             // 0 位算到 `>` 记号上（实测在 `> <p>甲文</p>` 块首打一个字，字写在 `>` 前面，

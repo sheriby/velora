@@ -680,6 +680,10 @@ pub struct BlockRecord {
     /// 走的那条分支，不是「账上有没有记号宽度」——账会因为重新落笔而缺，缺了就把这一族
     /// 拼成带围栏的形状，等于在按键路径上换了用户的写法。
     pub code_is_indented: bool,
+    /// 这一块的模型文本只有公式正文，两行围栏由序列化那一侧补回来（见
+    /// [`BlockRecord::math_body`]）。`false` 是其余形状：模型文本就是原文区域，
+    /// 整段可编辑（单行 `$$x^2$$`、闭合行带尾文、缩进或容器里的写法）。
+    pub(crate) math_body_only: bool,
     /// 标注头 `[!...]` 里那一串照用户写的样子存（`note` 与 `NOTE` 是两种写法）。
     /// `None` 是「没记」，序列化退回规范形状；「格式化文档」把它清成 `None`。
     pub callout_marker: Option<SharedString>,
@@ -719,6 +723,7 @@ impl BlockRecord {
             source_separator_bytes: 0,
             source_fence_lines: None,
             code_is_indented: false,
+            math_body_only: false,
             callout_marker: None,
             title_revision: 0,
             markdown_memo: std::cell::RefCell::new(None),
@@ -730,6 +735,19 @@ impl BlockRecord {
     pub fn with_plain_text(kind: BlockKind, text: impl Into<String>) -> Self {
         Self::new(kind, InlineTextTree::plain(text.into()))
     }
+
+    /// 经典形状的公式块（`$$` 行、正文、`$$` 行，两行顶格）：模型里只存正文。
+    ///
+    /// 两行围栏归结构，由 [`BlockRecord::sync_raw_fallback`] 与写回那一侧按
+    /// [`crate::components::latex::compose_display_math_region`] 补回来——
+    /// 与代码块同一条路：代码块的围栏也删不掉，因为模型里根本没有它们。
+    pub(crate) fn math_body(body: impl Into<String>) -> Self {
+        let mut record = Self::with_plain_text(BlockKind::MathBlock, body);
+        record.math_body_only = true;
+        record.sync_raw_fallback();
+        record
+    }
+
 
     pub fn paragraph(text: impl Into<String>) -> Self {
         Self::with_plain_text(BlockKind::Paragraph, text)
@@ -944,7 +962,16 @@ impl BlockRecord {
 
     fn sync_raw_fallback(&mut self) {
         if self.kind_uses_raw_fallback() {
-            self.raw_fallback = Some(self.title.visible_text().to_string());
+            let text = self.title.visible_text().to_string();
+            // 经典形状的公式块：模型文本只有正文，原文区域得把两行围栏补回来——
+            // 渲染与整篇序列化读的都是 `raw_fallback`（见 `render_math_content` 与
+            // `collect_single_block_markdown_lines`）。
+            let body_only = self.math_body_only && self.kind == BlockKind::MathBlock;
+            self.raw_fallback = Some(if body_only {
+                crate::components::latex::compose_display_math_region(&text)
+            } else {
+                text
+            });
             if self.kind == BlockKind::HtmlBlock {
                 self.html = self
                     .raw_fallback

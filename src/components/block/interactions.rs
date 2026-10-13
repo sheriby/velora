@@ -452,6 +452,15 @@ impl Block {
         });
     }
 
+    /// 这次删除是否把整块的可见文本清空。
+    ///
+    /// 源码分块块类（公式、HTML、原始 markdown、mermaid）的字节就是整段 markdown 自己：
+    /// 空块在文件里写不出对应字节，留下零宽空块会让块树与缓冲区对不上（读回来是别的块）。
+    /// 这一族删空时改请编辑器把块收掉，与空代码块同一条规则（见 `on_delete_back`）。
+    fn removal_clears_the_whole_block(&self, removed: &std::ops::Range<usize>) -> bool {
+        removed.start == 0 && removed.end >= self.visible_len()
+    }
+
     pub(crate) fn on_delete_back(
         &mut self,
         _: &DeleteBack,
@@ -472,6 +481,13 @@ impl Block {
         }
 
         if self.is_source_raw_mode() {
+            // 空的源码分块块（模型里一个字都没有，例如刚插进来的空公式块）再按退格就是
+            // 「收掉这一块」——与空代码块同一条规则。这一条必须排在合并边界之前：排在后面
+            // 就永远轮不到它，空块只会把光标送到上一块去。
+            if self.selected_range.is_empty() && self.display_text().is_empty() {
+                cx.emit(BlockEvent::RequestDelete);
+                return;
+            }
             if self.selected_range.is_empty() && self.cursor_offset() == 0 {
                 // 源码分块文档：块首退格 = 删除与前一块之间的边界换行。
                 cx.emit(BlockEvent::RequestMergeIntoPrev {
@@ -483,7 +499,14 @@ impl Block {
                 self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
                 self.select_to(self.previous_boundary(self.cursor_offset()), cx);
             }
+            // 源码分块块类的字节就是整段 markdown 自己（围栏、`$$`、HTML 标签都在里面）：
+            // 空块在文件里写不出对应字节，留下零宽空块会让块树与缓冲区对不上（读回来是别的块）。
+            // 先按用户的意思把文本删掉（写回缓冲区），再请编辑器收掉这个空块。
+            let clears_the_block = self.removal_clears_the_whole_block(&self.selected_range);
             self.replace_text_in_range(None, "", window, cx);
+            if clears_the_block {
+                cx.emit(BlockEvent::RequestDelete);
+            }
             return;
         }
 
@@ -572,6 +595,11 @@ impl Block {
         }
 
         if self.is_source_raw_mode() {
+            // 与 `on_delete_back` 同一条规则：空块的前向删除也是收掉这一块。
+            if self.selected_range.is_empty() && self.display_text().is_empty() {
+                cx.emit(BlockEvent::RequestDelete);
+                return;
+            }
             if self.selected_range.is_empty() && self.cursor_offset() == self.visible_len() {
                 // 源码分块文档：块尾前向删除 = 删除与下一块之间的边界换行。
                 cx.emit(BlockEvent::RequestMergeFromNext);
@@ -581,7 +609,12 @@ impl Block {
                 self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
                 self.select_to(self.next_boundary(self.cursor_offset()), cx);
             }
+            // 与 `on_delete_back` 同一个口径：先删文本，再收掉被删空的块。
+            let clears_the_block = self.removal_clears_the_whole_block(&self.selected_range);
             self.replace_text_in_range(None, "", window, cx);
+            if clears_the_block {
+                cx.emit(BlockEvent::RequestDelete);
+            }
             return;
         }
 

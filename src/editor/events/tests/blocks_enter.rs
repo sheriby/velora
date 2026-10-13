@@ -261,8 +261,9 @@
             assert_eq!(visible.len(), 1);
             let block = visible[0].entity.read(cx);
             assert_eq!(block.kind(), BlockKind::MathBlock);
-            assert_eq!(block.display_text(), "$$\n\n$$");
-            assert_eq!(block.selected_range, 3..3);
+            // 模型里只有正文：围栏归结构（与代码块同一条路），块内根本没有 `$` 可删。
+            assert_eq!(block.display_text(), "");
+            assert_eq!(block.selected_range, 0..0);
             assert!(block.uses_raw_text_editing());
             assert_eq!(editor.document.markdown_text(cx), "$$\n\n$$");
             // 空正文留一个空行（`$$\n\n$$`），光标落在这一行行首；落盘字节读回来还得是一个公式块。
@@ -307,8 +308,8 @@
             let block = visible[0].entity.read(cx);
             assert_eq!(block.kind(), BlockKind::MathBlock);
             // The pre-existing text is kept as the formula body.
-            assert_eq!(block.display_text(), "$$\nE = mc^2\n$$");
-            assert_eq!(block.selected_range, "$$\n".len().."$$\n".len());
+            assert_eq!(block.display_text(), "E = mc^2");
+            assert_eq!(block.selected_range, 0..0);
             assert_eq!(editor.document.markdown_text(cx), "$$\nE = mc^2\n$$");
         });
     }
@@ -366,7 +367,7 @@
             let visible = editor.document.visible_blocks();
             assert_eq!(visible.len(), 2);
             assert_eq!(visible[0].entity.read(cx).kind(), BlockKind::MathBlock);
-            assert_eq!(visible[0].entity.read(cx).display_text(), "$$\n\n$$");
+            assert_eq!(visible[0].entity.read(cx).display_text(), "");
             assert_eq!(visible[1].entity.read(cx).kind(), BlockKind::Paragraph);
             assert_eq!(visible[1].entity.read(cx).display_text(), "");
             assert_eq!(editor.document.markdown_text(cx), "$$\n\n$$\n\n");

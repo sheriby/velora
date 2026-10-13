@@ -315,9 +315,9 @@ impl Editor {
             InsertBlockTarget::CodeBlock => {
                 BlockRecord::with_plain_text(BlockKind::CodeBlock { language: None }, String::new())
             }
-            // 空公式中间留一个空行，与打字那一路（`enter_math_block` 的空正文）同一个形状：
-            // 光标落在这一行行首，与 `focus_inserted_block` 的 3 对得上。
-            InsertBlockTarget::MathBlock => BlockRecord::math("$$\n\n$$".to_string()),
+            // 公式块与代码块同一条路：模型里只存正文，两行围栏由序列化那一侧补回来，
+            // 所以插出来的是一块空正文（写进文件是 `$$\n\n$$`），光标落在正文 0 位。
+            InsertBlockTarget::MathBlock => BlockRecord::math_body(String::new()),
             InsertBlockTarget::Separator => {
                 BlockRecord::with_plain_text(BlockKind::Separator, String::new())
             }
@@ -380,7 +380,7 @@ impl Editor {
     ) {
         let caret = match target {
             InsertBlockTarget::CodeBlock => 0,
-            InsertBlockTarget::MathBlock => "$$\n".len(),
+            InsertBlockTarget::MathBlock => 0,
             InsertBlockTarget::FrontMatter => "---\n".len(),
             InsertBlockTarget::Toc => "[toc]".len(),
             InsertBlockTarget::Separator => 0,

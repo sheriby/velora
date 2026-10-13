@@ -721,7 +721,10 @@ impl Editor {
             return;
         };
         let end = start + formula_raw.len();
-        let replacement = if !formula_raw.contains('\n') && !draft.contains('\n') {
+        let replacement = if block.read(cx).record.math_body_only {
+            // 模型里只有正文：草稿就是新的正文，两行围栏由序列化那一侧补回来。
+            draft.trim().to_string()
+        } else if !formula_raw.contains('\n') && !draft.contains('\n') {
             format!("$${draft}$$")
         } else {
             format!("$$\n{}\n$$", draft.trim())

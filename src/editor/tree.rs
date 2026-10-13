@@ -551,6 +551,18 @@ impl DocumentTree {
     }
 
     pub(crate) fn block_markdown_source(&self, block: &Entity<Block>, cx: &App) -> String {
+        // 经典形状的公式块：模型文本只有正文，一段原文里还夹着两行 `$$`——写回与
+        // 整篇序列化必须用同一份字节（`raw_fallback` 由 `sync_raw_fallback` 按
+        // `compose_display_math_region` 维护），否则围栏会被这一段写回抹掉。
+        if block.read(cx).record.math_body_only
+            && matches!(block.read(cx).record.kind, BlockKind::MathBlock)
+        {
+            return block.read(cx).record.raw_fallback.clone().unwrap_or_else(|| {
+                crate::components::latex::compose_display_math_region(
+                    &block.read(cx).display_text(),
+                )
+            });
+        }
         // 源码/代码文档的块没有 markdown 形状：它的「源码」就是它自己那份文本。
         // 走序列化会给它补一对 ``` 围栏，而文件里根本没有围栏那两行——按区间写回
         // 就等于把围栏写进用户的纯文本文件。

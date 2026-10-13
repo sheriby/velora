@@ -371,7 +371,9 @@ impl Editor {
             // 缩进 4 格的公式块之前会被当成代码块显示源码。
             if is_display_math_start_at_any_indent(line) {
                 let end = collect_display_math_region(lines, index);
-                roots.push(math_or_raw_block(
+                // 顶格的经典形状（`$$` 行、正文、`$$` 行）走「模型只存正文」那一支：
+                // 围栏归结构，用户改不到定界符（见 `BlockRecord::math_body`）。
+                roots.push(math_body_or_raw_block(
                     cx,
                     dedent_math_region(&lines[index..end]),
                 ));

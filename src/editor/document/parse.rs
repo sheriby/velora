@@ -1012,6 +1012,23 @@ pub(crate) fn math_or_raw_block(cx: &mut Context<Editor>, markdown: String) -> E
     }
 }
 
+/// 顶格区域的入口：`$$` 行、正文、`$$` 行的经典形状走「模型只存正文」那一支
+/// （围栏归结构，见 [`BlockRecord::math_body`]）；其余形状（单行 `$$x^2$$`、闭合行
+/// 带尾文、缩进过的写法）整段存原文——那些形状里定界符与正文夹在同一行，
+/// 藏起来没有无歧义的落点。
+///
+/// 容器的子块不用这一支：那边交上来的文本已经剥过容器记号，模型文本与文件行
+/// 一一对齐，位置换算靠的正是这份对齐（见 `note_region_line_prefixes`）。
+pub(crate) fn math_body_or_raw_block(
+    cx: &mut Context<Editor>,
+    markdown: String,
+) -> Entity<crate::editor::Block> {
+    let Some(body) = crate::components::latex::split_display_math_region(&markdown) else {
+        return math_or_raw_block(cx, markdown);
+    };
+    Editor::new_block(cx, BlockRecord::math_body(body))
+}
+
 /// 这一块在文件里就是 `lines[region]` 那几行、模型里存的是它们剥掉上级容器记号之后的样子时，
 /// 把「每一行让开几字节」记到块上（不变式 23）。
 ///
