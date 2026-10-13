@@ -9,7 +9,7 @@ pub(super) use cssparser::color::{parse_hash_color, parse_named_color};
 pub(super) use html5ever::serialize::{SerializeOpts, TraversalScope, serialize};
 pub(super) use html5ever::tendril::TendrilSink;
 pub(super) use html5ever::{Attribute, parse_document};
-pub(super) use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
+pub(super) use markup5ever_rcdom::{Handle, Node, NodeData, RcDom, SerializableHandle};
 
 /// Safety classification for an HTML fragment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

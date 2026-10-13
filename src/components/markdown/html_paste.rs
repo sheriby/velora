@@ -6,8 +6,13 @@
 //! that adds no Markdown structure keeps the plain-text flavor of the
 //! pasteboard instead.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use htmd::HtmlToMarkdown;
 use htmd::options::{BulletListMarker, Options};
+
+use super::html::{Handle, Node, NodeData, parse_html_fragment, serialize_handle};
 
 /// Converts an HTML fragment into Markdown. `text_fallback` is returned
 /// unchanged when the fragment carries no convertible structure.
@@ -26,7 +31,9 @@ pub(crate) fn html_to_markdown_or(html: &str, text_fallback: &str) -> String {
     converted.to_string()
 }
 
-/// Reads `public.html` from the macOS pasteboard, if present.
+/// Reads `public.html` from the macOS pasteboard, if present. GPUI does not fill
+/// the HTML flavor of the clipboard item on macOS, so the pasteboard is read
+/// directly.
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
 pub(crate) fn clipboard_html() -> Option<String> {
@@ -61,16 +68,109 @@ pub(crate) fn clipboard_html() -> Option<String> {
 }
 
 /// Paste decision: convert the pasteboard HTML when it carries real Markdown
-/// structure, otherwise keep the plain-text flavor untouched.
-pub(crate) fn maybe_markdown_from_clipboard(plain: &str) -> String {
-    let Some(html) = clipboard_html() else {
+/// structure, otherwise keep the plain-text flavor untouched. `item_html` is
+/// the HTML flavor of the clipboard item, which GPUI fills on Windows.
+pub(crate) fn maybe_markdown_from_clipboard(item_html: Option<&str>, plain: &str) -> String {
+    let html = item_html.map(str::to_string).or_else(clipboard_html);
+    let Some(html) = html else {
         return plain.to_string();
     };
     html_to_markdown_or(&html, plain)
 }
 
 fn convert(html: &str) -> String {
-    converter().convert(html).unwrap_or_default()
+    converter()
+        .convert(&with_table_headers(html))
+        .unwrap_or_default()
+}
+
+/// Returns `html` rewritten so every table starts with a header row.
+///
+/// `htmd` converts a table only when the markup carries an explicit `<th>` or
+/// `<thead>`; a table whose cells are all `<td>`, which is what most sites
+/// emit, silently degrades to paragraphs. Promoting each table's first row to
+/// `<th>` cells gives `htmd` the same header it takes for a header-less table
+/// in its faithful mode. Fragments without such a table keep their exact
+/// source text, so nothing but those tables passes through the DOM round trip.
+fn with_table_headers(html: &str) -> String {
+    let dom = parse_html_fragment(html);
+    if promote_first_rows(&dom.document) == 0 {
+        return html.to_string();
+    }
+    // rcdom refuses to serialize a document node, so its children go one by
+    // one; that is the same text without the wrapping element.
+    dom.document
+        .children
+        .borrow()
+        .iter()
+        .map(serialize_handle)
+        .collect()
+}
+
+/// Promotes the first row of every table in the subtree. Returns how many rows
+/// were promoted.
+fn promote_first_rows(node: &Handle) -> usize {
+    let mut promoted = 0;
+    for child in node.children.borrow().iter() {
+        if let NodeData::Element { name, .. } = &child.data
+            && name.local.as_ref() == "table"
+            && let Some(row) = first_row(child)
+        {
+            promoted += promote_row_to_header(&row);
+        }
+        promoted += promote_first_rows(child);
+    }
+    promoted
+}
+
+/// First `<tr>` of one table. `html5ever` moves loose rows into an implicit
+/// `<tbody>`, so the search walks the table's section elements.
+fn first_row(table: &Handle) -> Option<Handle> {
+    table.children.borrow().iter().find_map(|child| {
+        let NodeData::Element { name, .. } = &child.data else {
+            return None;
+        };
+        match name.local.as_ref() {
+            "tr" => Some(child.clone()),
+            "tbody" | "thead" | "tfoot" => first_row(child),
+            _ => None,
+        }
+    })
+}
+
+/// Renames the `<td>` cells of `row` to `<th>` cells. Attributes and children
+/// stay, so cell formatting and cell contents survive the rename.
+fn promote_row_to_header(row: &Handle) -> usize {
+    let mut promoted = 0;
+    for cell in row.children.borrow_mut().iter_mut() {
+        let NodeData::Element { name, attrs, .. } = &cell.data else {
+            continue;
+        };
+        if name.local.as_ref() != "td" {
+            continue;
+        }
+
+        let mut header_name = name.clone();
+        header_name.local = "th".into();
+        let header = Node::new(NodeData::Element {
+            name: header_name,
+            attrs: RefCell::new(attrs.borrow().clone()),
+            template_contents: RefCell::new(None),
+            mathml_annotation_xml_integration_point: false,
+        });
+        // rcdom nodes hold their parent as a weak handle. The moved children
+        // must point at the new cell, or ancestry checks inside it stop at a
+        // dead node and treat nested tables as top-level ones.
+        let children = std::mem::take(&mut *cell.children.borrow_mut());
+        for child in children.iter() {
+            child.parent.set(Some(Rc::downgrade(&header)));
+        }
+        *header.children.borrow_mut() = children;
+
+        *cell = header;
+        promoted += 1;
+    }
+    promoted
 }
 
 fn converter() -> HtmlToMarkdown {
@@ -200,5 +300,105 @@ mod tests {
         assert_eq!(table.rows.len(), 2);
         assert_eq!(table.header[0].serialize_markdown(), "源文件");
         assert_eq!(table.rows[1][2].serialize_markdown(), "剔除");
+    }
+
+    #[test]
+    fn header_less_table_pastes_as_a_native_table() {
+        // 报修：网站上复制的表格在 Word/Typora 里是表格，在 Velora 里成了纯文本。
+        // 根因：`htmd` 的 Pure 模式拒收没有显式表头的表格，整表退化成段落文字，
+        // 粘贴策略再把那段文字换回剪贴板的纯文本味道，表格结构就此丢失。
+        let markdown = super::html_to_markdown_or(
+            "<meta charset='utf-8'><table border=\"1\" cellpadding=\"1\" style=\"border-collapse: collapse\"><tbody><tr><td>日期</td><td>版本</td></tr><tr><td>2026-08-04</td><td>1.0</td></tr></tbody></table>",
+            "日期\t版本\n2026-08-04\t1.0",
+        );
+        let lines = markdown.lines().map(str::to_string).collect::<Vec<_>>();
+        let table = super::super::table::parse_root_table_region(&lines)
+            .expect("无表头的 HTML 表格必须粘成原生表格");
+        assert_eq!(table.header[0].serialize_markdown(), "日期");
+        assert_eq!(table.header[1].serialize_markdown(), "版本");
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(table.rows[0][0].serialize_markdown(), "2026-08-04");
+        assert_eq!(table.rows[0][1].serialize_markdown(), "1.0");
+    }
+
+    #[test]
+    fn header_less_table_keeps_surrounding_text_and_cell_markup() {
+        let markdown = super::html_to_markdown_or(
+            "<p>版本记录</p><table><tbody><tr><td><b>源文件</b></td><td>动作</td></tr><tr><td><a href=\"https://example.com/a.md\">a.md</a></td><td>增强</td></tr></tbody></table>",
+            "版本记录\n源文件\t动作\na.md\t增强",
+        );
+        assert!(markdown.contains("版本记录"), "actual: {markdown}");
+        assert!(
+            markdown.contains("[a.md](https://example.com/a.md)"),
+            "actual: {markdown}"
+        );
+        let lines = markdown
+            .lines()
+            .skip_while(|line| !line.starts_with('|'))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let table = super::super::table::parse_root_table_region(&lines)
+            .expect("无表头的 HTML 表格必须粘成原生表格");
+        assert_eq!(table.header[0].serialize_markdown(), "**源文件**");
+        assert_eq!(table.rows.len(), 1);
+    }
+
+    #[test]
+    fn clipboard_html_flavor_pastes_as_a_native_table() {
+        // 报修的粘法：剪贴板里既有 HTML 味道（网站的表格），又有纯文本味道
+        // （制表符分隔）。HTML 味道优先，粘出来才是表格。
+        let markdown = super::maybe_markdown_from_clipboard(
+            Some(
+                "<table><tbody><tr><td>日期</td><td>版本</td></tr><tr><td>2026-08-04</td><td>1.0</td></tr></tbody></table>",
+            ),
+            "日期\t版本\n2026-08-04\t1.0",
+        );
+        let lines = markdown.lines().map(str::to_string).collect::<Vec<_>>();
+        let table = super::super::table::parse_root_table_region(&lines)
+            .expect("剪贴板 HTML 味道里的表格必须粘成原生表格");
+        assert_eq!(table.header[0].serialize_markdown(), "日期");
+        assert_eq!(table.rows.len(), 1);
+    }
+
+    // `gpui` 的 `cf_html_fragment` 只有 Velora 这一个调用方，且 gpui 包在仓库外
+    // （`[patch.crates-io]` 指过来的 vendor 目录）不能单独跑测试，所以它的检查
+    // 落在用得着它的地方。
+    #[test]
+    fn windows_clipboard_payload_yields_the_markup() {
+        // 一段 Chrome 形状的 `CF_HTML`：头部偏移是字节偏移。
+        let payload = "Version:0.9\nStartHTML:0000000131\nEndHTML:0000000267\nStartFragment:0000000164\nEndFragment:0000000234\nSourceURL:https://example.com/\n<html><body>\n<!--StartFragment--><table border=\"1\"><tbody><tr><td>A</td><td>B</td></tr></tbody></table><!--EndFragment-->\n</body></html>";
+        let fragment = gpui::cf_html_fragment(payload.as_bytes()).expect("必须取出选中的那段标记");
+        assert_eq!(
+            fragment,
+            "<table border=\"1\"><tbody><tr><td>A</td><td>B</td></tr></tbody></table>"
+        );
+        let markdown = super::html_to_markdown_or(&fragment, "A\tB");
+        let lines = markdown.lines().map(str::to_string).collect::<Vec<_>>();
+        assert!(
+            super::super::table::parse_root_table_region(&lines).is_some(),
+            "actual: {markdown}"
+        );
+    }
+
+    #[test]
+    fn windows_clipboard_payload_without_fragment_offsets_yields_the_markup() {
+        let payload = "Version:0.9\nStartHTML:0000000052\nEndHTML:0000000089\n<html><body><p>text</p></body></html>";
+        let fragment =
+            gpui::cf_html_fragment(payload.as_bytes()).expect("没有片段偏移时取整段标记");
+        assert_eq!(fragment, "<html><body><p>text</p></body></html>");
+    }
+
+    #[test]
+    fn windows_clipboard_payload_without_markup_yields_nothing() {
+        for payload in [
+            "",
+            "Version:0.9\nStartHTML:0000000105\nEndFragment:0000000999\n",
+            "Version:0.9\nStartFragment:0000000164\nEndFragment:0000000164\n<html></html>",
+        ] {
+            assert!(
+                gpui::cf_html_fragment(payload.as_bytes()).is_none(),
+                "actual payload: {payload}"
+            );
+        }
     }
 }

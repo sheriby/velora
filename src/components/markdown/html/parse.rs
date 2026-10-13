@@ -32,7 +32,7 @@ pub(crate) fn parse_html_document(raw_source: &str) -> HtmlDocument {
 
 /// Parses a fragment the way a browser does: `html5ever` never fails, it
 /// recovers from malformed markup instead of rejecting it.
-fn parse_html_fragment(raw_source: &str) -> RcDom {
+pub(crate) fn parse_html_fragment(raw_source: &str) -> RcDom {
     let mut source = std::io::Cursor::new(raw_source.as_bytes());
     parse_document(RcDom::default(), Default::default())
         .from_utf8()
@@ -134,7 +134,7 @@ fn dom_attrs(attrs: &[Attribute]) -> Vec<HtmlAttr> {
         .collect()
 }
 
-fn serialize_handle(node: &Handle) -> String {
+pub(crate) fn serialize_handle(node: &Handle) -> String {
     let mut bytes = Vec::new();
     let serializable = SerializableHandle::from(node.clone());
     // `SerializeOpts::default()` is `ChildrenOnly`, which drops the node itself.

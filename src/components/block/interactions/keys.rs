@@ -248,11 +248,13 @@ impl Block {
             }
             // Clipboard HTML flavors convert to Markdown here (roadmap B3);
             // plain-text clipboards pass through untouched.
-            #[cfg(target_os = "macos")]
             let text = if plain_only {
                 text
             } else {
-                crate::components::markdown::html_paste::maybe_markdown_from_clipboard(&text)
+                crate::components::markdown::html_paste::maybe_markdown_from_clipboard(
+                    item.html(),
+                    &text,
+                )
             };
             if !plain_only && let Some(source) = Self::pasted_image_source_from_text(&text) {
                 let (leading, trailing) = self.paste_image_split();
