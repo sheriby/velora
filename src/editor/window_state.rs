@@ -10,11 +10,6 @@ use crate::components::markdown::link::EXTERNAL_LINK_SCHEMES;
 /// 视口自身必须始终有挂载行覆盖。
 const COLD_RUN_MAX_ROWS: usize = 12;
 
-/// 交还阅读现场时最多再摆几帧。未量到的行按最小行高估，锚点行上方的估值要几帧才
-/// 长上来（冷启动续挂的上限是 `COLD_FILL_MAX_FRAMES` = 8），所以留出余量；摆到位
-/// 或帧数用完就停，见 `Editor::apply_pending_scroll_restore`。16ms 一帧，共约 200ms。
-pub(crate) const SCROLL_RESTORE_SETTLE_FRAMES: u8 = 12;
-
 impl Editor {
     pub(super) fn on_registered_menu_action<A: Action>(
         &mut self,
@@ -178,12 +173,26 @@ impl Editor {
         Self::rendered_window_from_prefix(&prefix, scroll_y, viewport_height, overdraw, focus_row)
     }
 
+    #[cfg(test)]
     pub(super) fn rendered_window_from_prefix(
         prefix: &[f32],
         scroll_y: f32,
         viewport_height: f32,
         overdraw: f32,
         focus_row: Option<usize>,
+    ) -> RenderWindow {
+        Self::rendered_window_with_row_floor(
+            prefix, scroll_y, viewport_height, overdraw, focus_row, None,
+        )
+    }
+
+    pub(super) fn rendered_window_with_row_floor(
+        prefix: &[f32],
+        scroll_y: f32,
+        viewport_height: f32,
+        overdraw: f32,
+        focus_row: Option<usize>,
+        row_floor: Option<usize>,
     ) -> RenderWindow {
         let n = prefix.len().saturating_sub(1);
         if n == 0 {
@@ -242,6 +251,13 @@ impl Editor {
             bottom_of_end = total;
             let floor = (total - viewport_height - overdraw).max(0.0);
             run_start = tops.partition_point(|top| *top <= floor).saturating_sub(1);
+            top_of_start = prefix.get(run_start).copied().unwrap_or_default();
+        }
+
+        // 刚滚动就切走时，前文还有未量过的行。切回后扩展挂载上边界会首次量到
+        // 那些行，让同一段文字向下挪；用户未操作前沿用离开时的上边界。
+        if let Some(row_floor) = row_floor.filter(|floor| *floor < run_end) {
+            run_start = run_start.max(row_floor);
             top_of_start = prefix.get(run_start).copied().unwrap_or_default();
         }
 
@@ -518,13 +534,63 @@ impl Editor {
     /// 只在「马上要换掉整棵块树、但文档还是这篇或要切回另一篇」的入口用；
     /// 现场要在换之前取，块树一换旧实体 id 就作废了。
     pub(crate) fn capture_document_view(&self, cx: &App) -> DocumentView {
+        if let Some(view) = &self.pending_scroll_restore {
+            return view.clone();
+        }
         let scroll_y = f32::from(self.scroll_handle.offset().y);
         DocumentView {
             view_mode: self.view_mode,
             scroll_y,
             row_anchor: self.capture_scroll_row_anchor(scroll_y),
+            row_layout: self.capture_document_row_layout(),
             selection: self.capture_source_selection_snapshot(cx),
         }
+    }
+
+    fn capture_document_row_layout(&self) -> Option<Arc<DocumentRowLayout>> {
+        let plan = self.rendered_row_plan.as_ref()?;
+        if plan.row_meta_version != self.document.row_meta_version()
+            || plan.rendered_mode != (self.view_mode == ViewMode::Rendered)
+            || plan.fold_version != self.fold_state_version
+        {
+            return None;
+        }
+        let mounted = self
+            .prev_mounted_run
+            .filter(|run| self.mounted_run_is_addressable(*run));
+        let strides = plan.strides();
+        let mut rows = plan
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(row, planned)| DocumentRowMeasurement {
+                visible_start: planned.visible_start,
+                visible_end: planned.visible_end,
+                height: strides.get(row).copied().unwrap_or(0.0)
+                    - plan.gaps.get(row + 1).copied().unwrap_or(0.0),
+                measured: self.row_stride_cache.contains_key(&planned.first_id),
+            })
+            .collect::<Vec<_>>();
+        // 最后一帧的真实行高尚未进下一帧的缓存，离开前必须一并带走。
+        if let Some(mounted) = mounted {
+            for (row, child) in mounted.rows() {
+                if let Some(bounds) = self.scroll_handle.bounds_for_item(child)
+                    && let Some(measurement) = rows.get_mut(row)
+                {
+                    measurement.height = f32::from(bounds.size.height);
+                    measurement.measured = true;
+                }
+            }
+        }
+        Some(Arc::new(DocumentRowLayout {
+            width: self.row_stride_width?,
+            theme: self.row_stride_theme.clone()?,
+            rendered_mode: plan.rendered_mode,
+            content_len: self.buffer.byte_len(),
+            content_version: persistence::file_content_version_normalized(&self.buffer.text()),
+            row_start: mounted.map(|run| run.row_start),
+            rows,
+        }))
     }
 
     /// 视口顶压在哪一行。行计划还没建时（窗口第一帧）给不出锚点。
@@ -548,38 +614,51 @@ impl Editor {
         })
     }
 
-    /// 把刚交回来的阅读现场摆到位。
-    ///
-    /// 单个像素偏移摆不住：行高是逐帧学出来的，未量到的行按最小行高估，切回来
-    /// 的那一帧整篇比上次矮，gpui 会把偏移夹回可滚范围。所以按锚点行算目标偏移，
-    /// 并且在后续几帧里接着摆——估值长上来之后目标跟着长，位置才真的回去。
-    pub(crate) fn apply_pending_scroll_restore(&mut self, cx: &mut Context<Self>) {
-        let Some(pending) = self.pending_scroll_restore else {
-            return;
+    /// 行高与偏移一起交还，首帧之后不再干预滚动。
+    pub(crate) fn apply_pending_scroll_restore(&mut self) -> bool {
+        let Some(view) = self.pending_scroll_restore.take() else {
+            return false;
         };
-        let target = match pending.row_anchor.and_then(|anchor| self.anchor_scroll_y(&anchor)) {
-            Some(anchored) => anchored,
-            None => pending.scroll_y,
-        };
-        let max_offset_y = f32::from(self.scroll_handle.max_offset().height).max(0.0);
-        let applied = target.min(0.0).max(-max_offset_y);
-        let mut offset = self.scroll_handle.offset();
-        offset.y = px(applied);
-        self.scroll_handle.set_offset(offset);
-        // 摆到位不等于摆住：行高一边摆一边量，锚点行上方的估值长上来时同一行
-        // 会往下走，视口就退回前面几行（实测切回来能差两行）。所以整段交还期内
-        // 每帧重摆一次，直到帧数用完——期间用户一动（滚轮、翻页、拖滚动条、
-        // 光标移动）就作废，见 `cancel_pending_scroll_restore` 的各调用点。
-        let frames_left = pending.frames_left.saturating_sub(1);
-        if frames_left == 0 {
-            self.pending_scroll_restore = None;
-        } else {
-            self.pending_scroll_restore = Some(PendingScrollRestore {
-                frames_left,
-                ..pending
-            });
-            self.schedule_followup_frame(cx);
+        let mut restored_rows = 0;
+        if let Some(layout) = &view.row_layout
+            && let Some(plan) = &self.rendered_row_plan
+            && self.row_stride_width == Some(layout.width)
+            && self
+                .row_stride_theme
+                .as_ref()
+                .is_some_and(|theme| Arc::ptr_eq(theme, &layout.theme))
+            && plan.rendered_mode == layout.rendered_mode
+        {
+            for (row, (measurement, planned)) in layout.rows.iter().zip(&plan.rows).enumerate() {
+                if measurement.visible_start != planned.visible_start
+                    || measurement.visible_end != planned.visible_end
+                {
+                    break;
+                }
+                let stride = measurement.height + plan.gaps.get(row + 1).copied().unwrap_or(0.0);
+                plan.set_stride(row, stride);
+                if measurement.measured {
+                    self.row_stride_cache.insert(planned.first_id, stride);
+                }
+                restored_rows += 1;
+            }
         }
+        let target = if view.row_anchor.is_some_and(|anchor| anchor.row < restored_rows) {
+            self.restored_row_start = view
+                .row_layout
+                .as_ref()
+                .and_then(|layout| layout.row_start);
+            view.scroll_y
+        } else {
+            view.row_anchor
+                .and_then(|anchor| self.anchor_scroll_y(&anchor))
+                .unwrap_or(view.scroll_y)
+        };
+        let mut offset = self.scroll_handle.offset();
+        // 句柄的上限还是上一标签的，不能在新标签布局之前用它夹取。
+        offset.y = px(target.min(0.0));
+        self.scroll_handle.set_offset(offset);
+        true
     }
 
     /// 锚点行当前在内容坐标里的位置；行结构与记下来时对不上就不认这个锚点。
@@ -594,9 +673,10 @@ impl Editor {
         Some(-(top + anchor.within))
     }
 
-    /// 用户自己滚了：挂着的交还作废（否则后续几帧会把视口拽回去）。
+    /// 用户操作优先于尚未交还的标签现场。
     pub(crate) fn cancel_pending_scroll_restore(&mut self) {
         self.pending_scroll_restore = None;
+        self.restored_row_start = None;
     }
 
     pub(crate) fn toggle_view_mode(&mut self, cx: &mut Context<Self>) {
@@ -729,6 +809,7 @@ impl Editor {
     }
 
     pub(super) fn request_active_block_scroll_into_view(&mut self, cx: &mut Context<Self>) {
+        self.cancel_pending_scroll_restore();
         self.pending_scroll_recheck_after_layout = true;
         if !self.pending_scroll_active_block_into_view {
             self.pending_scroll_active_block_into_view = true;

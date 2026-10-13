@@ -168,6 +168,7 @@ impl Editor {
         {
             self.open_workspace_file(path, window, cx);
         }
+        self.cancel_pending_scroll_restore();
         self.apply_selection_snapshot_in_current_mode(
             &UndoSelectionSnapshot {
                 range: location.range,
@@ -182,6 +183,7 @@ impl Editor {
     }
 
     pub(crate) fn jump_to_document_search_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        self.cancel_pending_scroll_restore();
         self.outline_clicked_document_identity = None;
         // 刚打开的大文件只同步建了首块（512 行），其余还在后台续建。落点在
         // 未物化的部分时，选区找不到归属的投影块，会被钳进首块末尾——第一次

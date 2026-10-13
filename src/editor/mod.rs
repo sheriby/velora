@@ -96,8 +96,8 @@ pub struct Editor {
     /// center instead of the minimal scroll-into-view adjustment.
     pending_scroll_center_into_view: bool,
     pending_scroll_recheck_after_layout: bool,
-    /// 标签切换要交还的阅读现场（按行锚定），摆到位之前一直挂着。
-    pub(super) pending_scroll_restore: Option<PendingScrollRestore>,
+    /// 标签切换的阅读现场，只在新行计划就绪的首帧交还。
+    pub(super) pending_scroll_restore: Option<DocumentView>,
     pending_save: bool,
     pending_save_as: bool,
     pending_window_edited: bool,
@@ -168,6 +168,7 @@ pub struct Editor {
     row_stride_width: Option<f32>,
     /// 持有已测高度对应的派生主题，字体、字号和主题度量变化时一起失效。
     row_stride_theme: Option<Arc<crate::theme::Theme>>,
+    restored_row_start: Option<usize>,
     /// 性能计数器：逐行量高缓存被整体清空的次数（列宽或字号变化）。
     /// 形状探针用，守「⌘± 后不许沿用旧字号的高度」。
     row_stride_cache_clears: std::cell::Cell<u64>,
@@ -475,10 +476,41 @@ pub(crate) struct DocumentView {
     /// 存 `f32` 而不是 `Pixels`：`Pixels` 没有 `Debug`，标签要能打印。代价是这一项
     /// 只能比到 `PartialEq`——浮点相等在这里就是「同一个偏移」，不做近似。
     scroll_y: f32,
-    /// 视口顶压在哪一行。像素偏移在窗口化渲染下不可靠（见 `ScrollRowAnchor`），
-    /// 行结构对得上时按它交还；对不上（换了视图模式、重载换了内容）才退回 `scroll_y`。
+    /// 缺少有效的行高度量时，按同一投影里的行锚点一次换算阅读位置。
     row_anchor: Option<ScrollRowAnchor>,
+    row_layout: Option<Arc<DocumentRowLayout>>,
     selection: UndoSelectionSnapshot,
+}
+
+#[derive(Debug)]
+pub(crate) struct DocumentRowLayout {
+    width: f32,
+    theme: Arc<crate::theme::Theme>,
+    rendered_mode: bool,
+    content_len: usize,
+    content_version: u64,
+    row_start: Option<usize>,
+    rows: Vec<DocumentRowMeasurement>,
+}
+
+impl PartialEq for DocumentRowLayout {
+    fn eq(&self, other: &Self) -> bool {
+        self.width == other.width
+            && Arc::ptr_eq(&self.theme, &other.theme)
+            && self.rendered_mode == other.rendered_mode
+            && self.content_len == other.content_len
+            && self.content_version == other.content_version
+            && self.row_start == other.row_start
+            && self.rows == other.rows
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct DocumentRowMeasurement {
+    visible_start: usize,
+    visible_end: usize,
+    height: f32,
+    measured: bool,
 }
 
 /// 视口顶压在哪一行、压进这一行多少像素。
@@ -495,18 +527,6 @@ pub(crate) struct ScrollRowAnchor {
     row: usize,
     /// 视口顶相对该行顶部的距离，单位像素。
     within: f32,
-}
-
-/// 待交还的阅读现场：目标 + 还能再摆几帧。
-///
-/// 行高估值是逐帧学出来的，一次摆不到位（没量到的行还按最小行高算，整篇偏矮），
-/// 所以按几帧摆到能落的位置为止。
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PendingScrollRestore {
-    /// 先摆上的像素偏移（挂不上锚点、或锚点行超出当时的可滚范围时的落点）。
-    pub(super) scroll_y: f32,
-    pub(super) row_anchor: Option<ScrollRowAnchor>,
-    pub(super) frames_left: u8,
 }
 
 /// One undo history entry containing source text and selection state.
@@ -773,6 +793,7 @@ impl Editor {
             toc_state_version: 0,
             row_stride_width: None,
             row_stride_theme: None,
+            restored_row_start: None,
             row_stride_cache_clears: std::cell::Cell::default(),
             source_serializations: std::cell::Cell::default(),
             source_serialization_nanos: std::cell::Cell::default(),

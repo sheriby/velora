@@ -135,9 +135,6 @@ impl Render for Editor {
                 plan
             }
         };
-        // 交还阅读现场要在行计划建好之后、读偏移之前：锚点行靠计划的 stride 前缀
-        // 换算成像素，而且换算结果这一帧就要进 `current_scroll_y`。
-        self.apply_pending_scroll_restore(cx);
         let rows = &rendered_row_plan.rows;
         // The focused row is always kept mounted so its caret is not blurred; a
         // table cell maps to its containing table block's row. 跳转滚动进行中
@@ -177,13 +174,12 @@ impl Render for Editor {
         let menu_bar_height =
             in_window_menu_bar_height_for_target_os(std::env::consts::OS, has_menus, d);
         let scroll_trigger_padding = (d.block_min_height * 0.75).max(16.0);
-        let max_scroll_y = f32::from(self.scroll_handle.max_offset().height.max(px(0.0)));
+        let mut max_scroll_y = f32::from(self.scroll_handle.max_offset().height.max(px(0.0)));
         let viewport_height = f32::from(viewport_bounds.size.height.max(px(1.0)));
         // Extra room below the last block so the lowest line can be scrolled up
         // to the viewport center instead of being pinned to the bottom edge.
         let scroll_beyond_bottom = viewport_height * 0.5;
         let viewport_width = f32::from(viewport_bounds.size.width.max(px(1.0)));
-        let has_overflow = max_scroll_y > 0.5;
 
         // 行号视图（代码文件 / 切到源码的文档）：列宽吃满内容盒，不再居中留白。
         // 行号左边的空 = 滚动区左 padding（减半后 12）+ 块壳自身 block_padding_x
@@ -196,11 +192,6 @@ impl Render for Editor {
             Self::writing_column_width(viewport_width, &theme.dimensions, cx)
         };
         let mut current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).clamp(0.0, max_scroll_y);
-
-        let show_custom_scrollbar = has_overflow
-            && (self.scrollbar_drag.is_some()
-                || self.scrollbar_hovered
-                || Instant::now() <= self.scrollbar_visible_until);
 
         // Spacing metadata is read on demand instead of pre-collected into a
         // Vec<RenderedRowSpacingInfo> sized to all visible blocks. For long
@@ -231,6 +222,7 @@ impl Render for Editor {
                     .zip(&self.prev_visible_block_ids)
                     .any(|(row, prev)| row.first_id != *prev));
         if structural_change {
+            self.restored_row_start = None;
             self.prev_visible_block_ids = rows.iter().map(|row| row.first_id).collect();
         }
 
@@ -241,6 +233,7 @@ impl Render for Editor {
         let width_changed = self.row_stride_width != Some(centered_width);
         let layout_changed = self.row_stride_theme.as_ref().is_none_or(|previous| !std::sync::Arc::ptr_eq(previous, &layout_theme));
         if width_changed || layout_changed {
+            self.restored_row_start = None;
             self.row_stride_cache_clears
                 .set(self.row_stride_cache_clears.get() + 1);
             self.row_stride_cache.clear();
@@ -267,6 +260,17 @@ impl Render for Editor {
                 }
             }
         }
+
+        if self.apply_pending_scroll_restore() {
+            current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).max(0.0);
+            // 首帧的窗口必须覆盖保存的落点，滚动上限由新标签的布局决定。
+            max_scroll_y = max_scroll_y.max(current_scroll_y);
+        }
+        let has_overflow = max_scroll_y > 0.5;
+        let show_custom_scrollbar = has_overflow
+            && (self.scrollbar_drag.is_some()
+                || self.scrollbar_hovered
+                || Instant::now() <= self.scrollbar_visible_until);
 
         if let Some(drag) = self.scrollbar_drag {
             let position = Self::scroll_offset_for_thumb_top(
@@ -318,12 +322,13 @@ impl Render for Editor {
             self.row_scrollbar_stride_cache.retain(|id, _| live.contains(id));
         }
 
-        let mut render_window = Self::rendered_window_from_prefix(
+        let mut render_window = Self::rendered_window_with_row_floor(
             &stride_prefix.nonnegative,
             current_scroll_y,
             viewport_height,
             RENDER_OVERDRAW_PX,
             focus_row,
+            self.restored_row_start,
         );
         let unmeasured = (render_window.run_start..render_window.run_end)
             .chain(render_window.focus_island.map(|island| island.row))

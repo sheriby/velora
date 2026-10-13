@@ -6,8 +6,7 @@ use anyhow::{Context as AnyhowContext, Result};
 use gpui::*;
 
 use super::tree::PendingSourceTail;
-use super::window_state::SCROLL_RESTORE_SETTLE_FRAMES;
-use super::{DocumentView, Editor, PendingScrollRestore, ViewMode};
+use super::{DocumentView, Editor, ViewMode};
 use crate::components::{Block, BlockKind, BlockRecord};
 use crate::i18n::I18nManager;
 
@@ -295,8 +294,9 @@ impl Editor {
     ) {
         self.image_preview = None;
         self.pending_materialization_task = None;
+        self.restored_row_start = None;
         // `Restore` 那份现场由调用方在换内容之前记好，这里只负责在块树重建之后交还。
-        let restored_view = match kind {
+        let mut restored_view = match kind {
             ImportKind::Open => None,
             ImportKind::Restore(view) => Some(view),
         };
@@ -307,6 +307,19 @@ impl Editor {
         } else {
             markdown
         };
+        if let Some(view) = &mut restored_view {
+            // 仅复用未变的正文高度；追加内容仍可复用旧前缀，改写正文则重新度量。
+            if view.row_layout.as_ref().is_some_and(|layout| {
+                normalized
+                    .get(..layout.content_len)
+                    .is_none_or(|prefix| {
+                        super::persistence::file_content_version_normalized(prefix)
+                            != layout.content_version
+                    })
+            }) {
+                view.row_layout = None;
+            }
+        }
         // 内容整体换掉了，事实源必须跟着换：缓冲区留着上一个文档的内容，
         // 保存就会写出别的文件的字节。
         let preserve_file_shape = file_path.is_some() && file_path == self.file_path;
@@ -453,19 +466,13 @@ impl Editor {
             }
             Some(view) => {
                 // 视口按交回来的那份摆好，并且不挂「滚到活动块」——挂了就会把视口
-                // 拽向活动块（通常是文档首块）。内容变矮时 gpui 在布局那一趟把偏移
-                // 夹回可滚范围并写回，这里不必介入；夹掉的部分由 `pending_scroll_restore`
-                // 在后续几帧里按行锚点补回来（像素偏移本身在这次导入里已经不可靠）。
+                // 拽向活动块（通常是文档首块）。行高与偏移一起在首帧交还，不能在
+                // 后续帧重摆偏移，否则会覆盖用户输入触发的光标滚动。
                 self.pending_scroll_active_block_into_view = false;
                 self.pending_scroll_center_into_view = false;
                 self.pending_scroll_recheck_after_layout = false;
                 self.scroll_handle
                     .set_offset(point(px(0.0), px(view.scroll_y)));
-                self.pending_scroll_restore = Some(PendingScrollRestore {
-                    scroll_y: view.scroll_y,
-                    row_anchor: view.row_anchor,
-                    frames_left: SCROLL_RESTORE_SETTLE_FRAMES,
-                });
                 // 块树整棵换掉，旧实体 id 一律作废：先清空，再由选区快照把光标落到
                 // 新树上覆盖它的那一根（跨块选区只恢复选区本身、不写活动块，那种
                 // 落点按文档首块，与打开新文档同口径）。
@@ -480,6 +487,7 @@ impl Editor {
                     self.pending_focus = self.first_focusable_entity_id(cx);
                     self.active_entity_id = self.pending_focus;
                 }
+                self.pending_scroll_restore = Some(view);
             }
         }
 

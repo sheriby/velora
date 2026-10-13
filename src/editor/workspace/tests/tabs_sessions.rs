@@ -1556,3 +1556,194 @@ async fn switching_three_tabs_keeps_each_position(cx: &mut TestAppContext) {
         "前置：三篇的落点要互不相同，实测 {expected:?}"
     );
 }
+
+#[gpui::test]
+async fn switching_tabs_restores_the_first_frame_without_followup_scrolling(
+    cx: &mut TestAppContext,
+) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "stationary-reading-position");
+    let alpha = root.join("alpha.md");
+    let beta = root.join("beta.md");
+    fs::write(&alpha, super::external_changes::long_markdown(400)).unwrap();
+    fs::write(&beta, super::external_changes::long_markdown(40)).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha.clone(), window, cx);
+            editor.workspace.is_open = false;
+        })
+    });
+    for _ in 0..5 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    editor.update(cx, |editor, cx| {
+        editor.set_vertical_scroll_offset(px(-3000.0), cx)
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let (offset, visible_index, visible_top) = editor.read_with(cx, |editor, cx| {
+        let viewport = editor.scroll_handle.bounds();
+        let (index, bounds) = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .enumerate()
+            .filter(|(_, visible)| editor.entity_is_mounted(visible.entity.entity_id()))
+            .filter_map(|(index, visible)| {
+                visible
+                    .entity
+                    .read(cx)
+                    .last_bounds
+                    .map(|bounds| (index, bounds))
+            })
+            .find(|(_, bounds)| {
+                bounds.bottom() > viewport.top() && bounds.top() < viewport.bottom()
+            })
+            .expect("前置：视口内有可见段落");
+        (editor.scroll_handle.offset().y, index, bounds.top())
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(beta.clone(), window, cx)
+        })
+    });
+    for _ in 0..5 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha.clone(), window, cx);
+            editor.open_workspace_file(beta, window, cx);
+            editor.open_workspace_file(alpha, window, cx);
+        })
+    });
+    for frame in 0..16 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(
+                editor.scroll_handle.offset().y,
+                offset,
+                "切回后的第 {frame} 帧不应滚动"
+            );
+            let bounds = editor.document.visible_blocks()[visible_index]
+                .entity
+                .read(cx)
+                .last_bounds
+                .expect("切回首帧应直接绘制原先可见的段落");
+            assert_eq!(
+                bounds.top(),
+                visible_top,
+                "切回后的第 {frame} 帧段落不应位移"
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(16));
+        cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+async fn typing_immediately_after_restoring_a_tab_keeps_the_caret_visible(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let source = super::external_changes::long_markdown(200);
+    let path = review_workspace_fixture(cx, "restore-typing").join("alpha.md");
+    fs::write(&path, &source).unwrap();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), Some(path.clone())));
+    for _ in 0..5 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    editor.update(cx, |editor, cx| {
+        editor.set_vertical_scroll_offset(px(-1200.0), cx)
+    });
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    let view = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    editor.update(cx, |editor, cx| {
+        editor.restore_document_from_markdown(source, path, Some(view), cx)
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.simulate_input("X");
+    cx.run_until_parked();
+    for _ in 0..16 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    editor.read_with(cx, |editor, cx| {
+        assert!(
+            editor.buffer.text().starts_with('X'),
+            "前置：文字已输入到原先的光标处"
+        );
+        let active = editor
+            .document
+            .block_entity_by_id(editor.active_entity_id.unwrap())
+            .unwrap();
+        let bounds = active.read(cx).last_bounds.unwrap();
+        let viewport = editor.scroll_handle.bounds();
+        assert!(
+            bounds.bottom() > viewport.top() && bounds.top() < viewport.bottom(),
+            "输入后的光标不能被恢复逻辑拉到屏外"
+        );
+    });
+}
+
+#[gpui::test]
+async fn switching_source_tabs_restores_the_first_frame_without_followup_scrolling(
+    cx: &mut TestAppContext,
+) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "stationary-source-position");
+    let alpha = root.join("alpha.txt");
+    let beta = root.join("beta.md");
+    fs::write(
+        &alpha,
+        (0..4096)
+            .map(|index| format!("line {index}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    fs::write(&beta, "short\n").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha.clone(), window, cx);
+            editor.workspace.is_open = false;
+            editor.flush_pending_materialization(cx);
+        })
+    });
+    for _ in 0..5 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    editor.update(cx, |editor, cx| {
+        editor.set_vertical_scroll_offset(px(-15000.0), cx)
+    });
+    for _ in 0..5 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    let offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    assert!(offset <= px(-15000.0), "前置：视口深入第二个源码分块");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(beta, window, cx)
+        })
+    });
+    for _ in 0..5 {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(alpha, window, cx)
+        })
+    });
+    for frame in 0..16 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor.scroll_handle.offset().y,
+                offset,
+                "切回源码后的第 {frame} 帧不应滚动"
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(16));
+        cx.run_until_parked();
+    }
+}
