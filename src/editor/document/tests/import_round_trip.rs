@@ -45,6 +45,43 @@
         assert!(failures.is_empty(), "段落前缀及后文扫描应随输入线性增长：{failures:?}");
     }
 
+
+    /// 一项大列表（松散列表：一项里很多子段）不能对每个子块重扫剩余区间。
+    ///
+    /// 26ffd2c 把根块路径那份重复扫描合并掉了，列表项这条原样留着：项内每个子块各建一份
+    /// 前瞻索引、各切一次「本项剩余区间」→ O(子块数 × 剩余行数)。闸门看**扫描量**（不是
+    /// 墙钟）：同一份夹具翻倍时，每个字节的扫描量不许跟着涨。修复前实测 40.9 / 81.3 / 165.1
+    /// （翻倍即翻倍），修复后 3.5 上下。
+    #[gpui::test]
+    async fn review_loose_list_item_children_share_the_lookahead(cx: &mut TestAppContext) {
+        let mut failures = Vec::new();
+        for count in [60usize, 120, 240] {
+            let mut source = String::from("- 首项\n\n");
+            for index in 0..count {
+                source.push_str(&format!("  body {index}\n\n"));
+            }
+            super::super::scan_probe::reset();
+            let editor = cx.new(|cx| Editor::from_markdown(cx, source.clone(), None));
+            let work = super::super::scan_probe::bytes();
+            editor.read_with(cx, |editor, cx| {
+                assert_eq!(editor.buffer.text(), source);
+                assert_eq!(editor.document.root_count(), 1, "整篇是一项大列表");
+                assert_eq!(
+                    editor.document.visible_blocks().len(),
+                    count + 1,
+                    "项本身 + 每个子段"
+                );
+            });
+            if work > source.len() * 12 {
+                failures.push((count, work, source.len()));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "列表项内每个子块都在重扫剩余区间（数量随输入平方增长）：{failures:?}"
+        );
+    }
+
     #[gpui::test]
     async fn review_image_paragraph_can_be_setext_heading(cx: &mut TestAppContext) {
         // 图片行仍是段落，不能因原生图片运行时而排除合法 setext 标题。

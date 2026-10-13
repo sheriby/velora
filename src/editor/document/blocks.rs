@@ -610,6 +610,11 @@ impl Editor {
             let mut pending_blank_lines = 0usize;
             let mut fallback_raw = false;
             let mut saw_child = false;
+            // 项内每个子块都要一份前瞻索引（`MarkdownLookahead::new` 是正反两趟逐字符
+            // 扫描）。同一缩进量下后面几次切出来的切片是第一次那份的**后缀**，索引
+            // 可以带着 `line_base` 复用；每轮重建是 O(子块数 × 剩余行数) 的账。
+            // 缩进量变了（更深的子项）就换一份。
+            let mut item_lookahead: Option<(usize, usize, std::sync::Arc<MarkdownLookahead>)> = None;
 
             if let Some((markdown, consumed)) = item_math {
                 attach_child_blocks(&block, vec![math_or_raw_block(cx, markdown)], cx);
@@ -667,9 +672,23 @@ impl Editor {
                         continue;
                     }
 
+                    let (lookahead, line_base) = match item_lookahead
+                        .as_ref()
+                        .filter(|(indent, ..)| *indent == line_indent_columns)
+                    {
+                        Some((_, base, lookahead)) => (lookahead.clone(), body_index - base),
+                        None => {
+                            let lookahead =
+                                std::sync::Arc::new(MarkdownLookahead::new(&anchor_dedented));
+                            item_lookahead =
+                                Some((line_indent_columns, body_index, lookahead.clone()));
+                            (lookahead, 0)
+                        }
+                    };
+
                     if parse_opening_fence(&anchor_dedented[0]).is_some()
                         && let Some((code_block, consumed)) =
-                            collect_fenced_code_block(cx, &anchor_dedented, 0, &anchor_origins, &MarkdownLookahead::new(&anchor_dedented), 0)
+                            collect_fenced_code_block(cx, &anchor_dedented, 0, &anchor_origins, &lookahead, line_base)
                     {
                         attach_item_child(&block, vec![code_block], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
@@ -816,7 +835,7 @@ impl Editor {
                             .is_some();
                     if should_promote_plain_child {
                         let (paragraph, consumed) =
-                            Self::collect_paragraph_block(cx, &anchor_dedented, 0, &anchor_origins, &MarkdownLookahead::new(&anchor_dedented), 0);
+                            Self::collect_paragraph_block(cx, &anchor_dedented, 0, &anchor_origins, &lookahead, line_base);
                         attach_item_child(&block, vec![paragraph], lines, origins, body_index, pending_blank_lines, cx);
                         body_index += consumed;
                         pending_blank_lines = 0;
