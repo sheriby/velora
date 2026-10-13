@@ -1022,11 +1022,37 @@ impl<'a> ExportRewriter<'a> {
         sanitize_html_for_export(trimmed)
     }
 
-    fn transform_inline_html(&self, content: &str, stack: &mut Vec<(String, bool)>) -> Vec<Event<'a>> {
-        use crate::components::markdown::inline::{InlineHtmlBoundary, single_inline_html_boundary};
+    /// 行内 HTML 叶子：单个开标签当作用域压栈，闭标签出栈，其余按净化后的原文出去。
+    ///
+    /// `rest_of_block` 是同**行内块**（段落 / 标题 / 表格格 / 列表项）里这个标签之后的
+    /// 源码：开标签只有在那一块里配得上对才当作用域。配对判据与阅读视图同一处
+    /// （`locate_matching_inline_html_close`）——界面配不上对就整段按字面（
+    /// `html_like_tags_are_not_autolinks_when_unsafe_or_unclosed`），导出也必须按字面；
+    /// 浏览器语义会在块尾自动补闭标签，两面就此分叉（评审 B8，契约取阅读视图那一侧）。
+    fn transform_inline_html(
+        &self,
+        content: &str,
+        rest_of_block: &str,
+        stack: &mut Vec<(String, bool)>,
+    ) -> Vec<Event<'a>> {
+        use crate::components::markdown::inline::{
+            InlineHtmlBoundary, lex_tokens_for_boundary_scan, locate_matching_inline_html_close,
+            single_inline_html_boundary,
+        };
         use crate::components::markdown::html::{sanitize_inline_html_open_for_export, void_inline_html_tag};
         match single_inline_html_boundary(content) {
             Some(InlineHtmlBoundary::Open(tag)) if !tag.self_closing && void_inline_html_tag(&tag.name).is_none() => {
+                let paired = locate_matching_inline_html_close(
+                    &lex_tokens_for_boundary_scan(rest_of_block),
+                    0,
+                    &tag.name,
+                )
+                .is_some();
+                if !paired {
+                    // 按字面：整段标签源码转义出去（净化器会把落单的标签自己补成
+                    // 一对，正是「凭空多出一个作用域」的那件事）。
+                    return vec![Event::Html(CowStr::from(css::escape_html(content)))];
+                }
                 let sanitized = sanitize_inline_html_open_for_export(content, &tag.name);
                 stack.push((tag.name, sanitized.is_some()));
                 vec![Event::Html(CowStr::from(sanitized.unwrap_or_else(|| self.sanitize_raw_html(content))))]
@@ -1628,6 +1654,10 @@ impl<'a> ExportRewriter<'a> {
     ) -> Vec<Event<'a>> {
         let mut output = Vec::new();
         let mut inline_html_stack = Vec::new();
+        // 行内 HTML 的配对预扫只看到「同一行内块」为止：与 `finish_inline_html_scope`
+        // 收栈的时机同一处（`End(Paragraph|Heading|TableCell|Item)`），所以这里跟着
+        // 这几个标签的开合维护当前块的结束偏移（标签事件的 range 是包裹区间）。
+        let mut open_inline_block_ends: Vec<usize> = Vec::new();
         // 上一个替换消费到的全局偏移；用来跳过「起点落在替换区间内部」的叶子
         // （块级公式跨 SoftBreak 时，下一行的行首就在区间里）。
         let mut consumed_until = floor;
@@ -1653,7 +1683,10 @@ impl<'a> ExportRewriter<'a> {
                     continue;
                 }
                 if matches!(event, Event::End(TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::TableCell | TagEnd::Item)) {
+                    open_inline_block_ends.pop();
                     output.extend(Self::finish_inline_html_scope(&mut inline_html_stack));
+                } else if matches!(event, Event::Start(Tag::Paragraph | Tag::Heading { .. } | Tag::TableCell | Tag::Item)) {
+                    open_inline_block_ends.push(raw_end.min(ceiling));
                 }
                 output.extend(self.transform_event(event.clone()));
                 continue;
@@ -1712,7 +1745,16 @@ impl<'a> ExportRewriter<'a> {
                 continue;
             }
             if let Event::InlineHtml(content) = event {
-                output.extend(self.transform_inline_html(content.as_ref(), &mut inline_html_stack));
+                let block_end = open_inline_block_ends.last().copied().unwrap_or(ceiling);
+                let rest_of_block = self
+                    .body
+                    .get(raw_end.min(block_end)..block_end)
+                    .unwrap_or_default();
+                output.extend(self.transform_inline_html(
+                    content.as_ref(),
+                    rest_of_block,
+                    &mut inline_html_stack,
+                ));
             } else {
                 output.extend(self.transform_event(event.clone()));
             }

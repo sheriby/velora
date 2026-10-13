@@ -251,16 +251,30 @@ pub(crate) enum InlineHtmlBoundary {
     Close(String),
 }
 
+/// 把一段**行内词法之外**的源码切成判据用的 token 串。
+///
+/// 只问「标签配不配得上对」的两个调用点共用：`single_inline_html_boundary`（判断
+/// 一段事件内容是不是单个标签）与导出侧的配对预扫（`export/html.rs` 里
+/// `transform_inline_html` 找同行内块内的闭标签）。样式与转义都按默认——这两处不读
+/// 它们，构造口径却必须一致，否则两边会把同一段源码读成不同的标签。
+pub(crate) fn lex_tokens_for_boundary_scan(source: &str) -> Vec<CharToken> {
+    source
+        .trim()
+        .char_indices()
+        .map(|(index, character)| CharToken {
+            ch: character,
+            style: InlineStyle::default(),
+            html_style: None,
+            source_range: index..index + character.len_utf8(),
+            literal_char: false,
+            escaped: false,
+            escaped_sequence: None,
+        })
+        .collect()
+}
+
 pub(crate) fn single_inline_html_boundary(source: &str) -> Option<InlineHtmlBoundary> {
-    let tokens: Vec<_> = source.trim().char_indices().map(|(index, character)| CharToken {
-        ch: character,
-        style: InlineStyle::default(),
-        html_style: None,
-        source_range: index..index + character.len_utf8(),
-        literal_char: false,
-        escaped: false,
-        escaped_sequence: None,
-    }).collect();
+    let tokens = lex_tokens_for_boundary_scan(source);
     if let Some(tag) = locate_inline_html_open_tag(&tokens, 0) {
         return (tag.end_index + 1 == tokens.len()).then_some(InlineHtmlBoundary::Open(tag));
     }

@@ -51,6 +51,36 @@ mod tests {
         assert!(body_only(&html).contains("<p>next</p>"));
     }
 
+
+    /// 没配上对的行内标签在导出里也必须按字面。
+    ///
+    /// 阅读视图（`inline/parse.rs:parse_inline_html_container` → `locate_matching_inline_html_close`）
+    /// 配不上对就整段按字面（`html_like_tags_are_not_autolinks_when_unsafe_or_unclosed`），
+    /// 而 6f7253a 把导出改成浏览器语义——块尾按栈自动补闭标签。同一句语法于是两面
+    /// 分叉：界面显示字面 `text <strong>open`，导出把后面的字染成粗体。契约取阅读视图
+    /// 那一侧：导出是「所见」的另一种载体，不该凭空补出用户没写的作用域。
+    #[test]
+    fn review_unclosed_inline_html_exports_literally_like_the_reading_view() {
+        let html = render_html("text <strong>open\n\nnext", &Theme::default_theme(), "范围");
+        let body = body_only(&html);
+        assert!(
+            !body.contains("<strong>open"),
+            "没配对的 <strong> 又被当成作用域了：{body}"
+        );
+        assert!(body.contains("&lt;strong&gt;open"), "该按字面显示：{body}");
+        assert!(body.contains("<p>next</p>"), "下一段不受影响：{body}");
+
+        // 配对的那一半照旧：样式与内容都在，下一段也不受影响。
+        let html = render_html("text <strong>bold</strong> end", &Theme::default_theme(), "范围");
+        assert!(body_only(&html).contains("<strong>bold</strong>"));
+
+        // 错配：`<strong>` 配到了闭标签、里面的 `<em>` 没有 → 只有 `em` 退字面。
+        let html = render_html("text <strong><em>nested</strong> end\n\nnext", &Theme::default_theme(), "范围");
+        let body = body_only(&html);
+        assert!(body.contains("<strong>&lt;em&gt;nested</strong>"), "{body}");
+        assert!(body.contains("<p>next</p>"), "{body}");
+    }
+
     #[test]
     fn review_export_recognizes_math_next_to_escaped_dollar() {
         for source in ["$x\\$$", "\\$$x$"] {
