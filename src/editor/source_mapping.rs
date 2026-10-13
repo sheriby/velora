@@ -1213,41 +1213,87 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
         kind: &BlockKind,
     ) -> Option<MeasuredBlockLines> {
         let first = self.measured_block_prefix(absolute_start, quote_depth, list_dedent, kind)?;
-        let model_lines: Vec<&str> = content_markdown.split('\n').collect();
+        let model_indents = content_markdown
+            .split('\n')
+            .map(leading_blank_bytes)
+            .collect::<Vec<usize>>();
+        let lines =
+            self.measured_block_lines(absolute_start, first.0, &model_indents, None, quote_depth, kind)?;
+        // 记账放在**这一条入口**上（不是 `measured_block_lines` 里）：量表与防护测试
+        // （`a_real_editing_session_never_measures_marker_widths_after_the_fact`）判的是
+        // 「块映射这条路上还在事后拿文件行与模型行比记号宽度没有」，那是不变式 23 的退路
+        // 何时被用到。单行块不计：那种块的记号宽度是「本块记号自己有多宽」，第一行量一次
+        // 就够，防护测试关心的「事后逐行比」从来只指多行内容（原来的早退也是这个口径）。
+        if model_indents.len() > 1 {
+            self.line_prefix_measured
+                .set(self.line_prefix_measured.get() + lines.prefixes.len() as u64);
+        }
+        Some(lines)
+    }
+
+    /// 块内容每一行在自己那一行里让开几个字节——判据只此一处。
+    ///
+    /// 调用方只负责给「首行的让开量」与「模型每一行的缩进」，续行怎么量在这里统一：
+    /// 剥掉 `quote_depth` 层引用记号**再加本块自己那层**（`kind == Quote`），剩下的缩进比
+    /// 模型这一行多出来的那截就是文件里被吃掉的字节数；对不上（记号剥不动、模型缩进比
+    /// 文件大、行不在缓冲区里）就整块放弃，不钳零——钳零会让字节落进上一行的内容里。
+    ///
+    /// - 块重建（`measured_block_line_prefixes`）首行从 `measured_block_prefix` 取，
+    ///   缩进从内容 markdown 取，解析期没记账；
+    /// - 撤销组快照（`history::prepare_block_undo_capture`）首行优先用解析期记在块上的
+    ///   那一份账（`source_line_prefixes[0]` 减去块起点在本行里的偏移），续行也优先用它，
+    ///   缺了才量。
+    pub(super) fn measured_block_lines(
+        &self,
+        absolute_start: usize,
+        first_prefix: usize,
+        model_indents: &[usize],
+        recorded_prefixes: Option<&[u32]>,
+        quote_depth: usize,
+        kind: &BlockKind,
+    ) -> Option<MeasuredBlockLines> {
         let open_line = self.buffer.slice(self.buffer.line_range(self.buffer.line_of(absolute_start)));
-        let mut prefixes = vec![first.0];
-        let mut file_lens = vec![open_line.len() - first.0];
-        if model_lines.len() == 1 {
+        if first_prefix > open_line.len() {
+            return None;
+        }
+        let mut prefixes = vec![first_prefix];
+        let mut file_lens = vec![open_line.len() - first_prefix];
+        if model_indents.len() <= 1 {
             return Some(MeasuredBlockLines { prefixes, file_lens });
         }
 
         let levels = quote_depth + usize::from(matches!(kind, BlockKind::Quote));
         let mut line_index = self.buffer.line_of(absolute_start);
-        for model_line in model_lines.iter().skip(1) {
+        for (index, model_indent) in model_indents.iter().enumerate().skip(1) {
             line_index += 1;
             let range = self.buffer.line_range(line_index);
             if range.start >= self.buffer.byte_len() {
                 return None;
             }
             let file_line = self.buffer.slice(range);
-            let mut rest = file_line.clone();
-            let mut consumed = 0usize;
-            for _ in 0..levels {
-                let stripped = super::document::strip_one_quote_level(&rest)?;
-                consumed += rest.len() - stripped.len();
-                rest = stripped;
-            }
-            let file_indent = leading_blank_bytes(&rest);
-            let model_indent = leading_blank_bytes(model_line);
-            if model_indent > file_indent {
+            let prefix = match recorded_prefixes.and_then(|prefixes| prefixes.get(index)) {
+                Some(prefix) => *prefix as usize,
+                None => {
+                    let mut rest = file_line.clone();
+                    let mut consumed = 0usize;
+                    for _ in 0..levels {
+                        let stripped = super::document::strip_one_quote_level(&rest)?;
+                        consumed += rest.len() - stripped.len();
+                        rest = stripped;
+                    }
+                    let file_indent = leading_blank_bytes(&rest);
+                    if *model_indent > file_indent {
+                        return None;
+                    }
+                    consumed + (file_indent - model_indent)
+                }
+            };
+            if prefix > file_line.len() {
                 return None;
             }
-            let prefix = consumed + (file_indent - model_indent);
             prefixes.push(prefix);
             file_lens.push(file_line.len() - prefix);
         }
-        self.line_prefix_measured
-            .set(self.line_prefix_measured.get() + prefixes.len() as u64);
         Some(MeasuredBlockLines { prefixes, file_lens })
     }
 

@@ -248,6 +248,10 @@ impl Editor {
                     quote_depth.saturating_sub(usize::from(source_kind.is_quote_container()));
                 let render_depth = block.read(cx).render_depth;
                 let consumed = source_start - self.buffer.line_start(first_line);
+                // 首行优先用解析期记在块上的那一份账（绝对前缀减去块起点在本行里的
+                // 偏移）；没有那份账才按文件字节量，量的口径与块重建同一处
+                // （`measured_block_lines`）。量不出就放弃这一组，不钳零——钳零会让
+                // 快照落点漂进上一行的内容里。
                 let first_prefix = source_line_prefixes
                     .first()
                     .copied()
@@ -256,46 +260,33 @@ impl Editor {
                         self.measured_block_prefix(
                             source_start,
                             parent_quotes,
+                            // 解析器算出来的实测 dedent 只存在于它的递归栈上，撤销这条
+                            // 路拿不到；按模型深度估一个（每级两个空格）。这一支只在
+                            // 块上没记到那份账时才走（围栏、缩进代码块、容器自己的多行
+                            // 正文），记过的形状都走上面那一支。
                             render_depth * 2,
                             source_kind,
                         )
                         .map(|prefix| prefix.0)
-                    })
-                    .unwrap_or(0);
-                let mut prefixes = Vec::new();
-                let mut file_lens = Vec::new();
-                for (index, model_indent) in line_indents.iter().enumerate() {
-                    let line = self.buffer.line_range(first_line + index);
-                    let start = if index == 0 { source_start } else { line.start };
-                    let text = self.buffer.slice(start..line.end);
-                    let prefix = if index == 0 {
-                        first_prefix
-                    } else if let Some(prefix) = source_line_prefixes.get(index) {
-                        *prefix as usize
-                    } else {
-                        let mut stripped = text.clone();
-                        for _ in 0..quote_depth {
-                            let Some(next) = super::document::strip_one_quote_level(&stripped)
-                            else {
-                                break;
-                            };
-                            stripped = next;
-                        }
-                        text.len() - stripped.len()
-                            + BlockKind::leading_blank_bytes(&stripped)
-                                .saturating_sub(*model_indent)
-                    };
-                    prefixes.push(prefix.min(text.len()));
-                    file_lens.push(text.len().saturating_sub(prefix));
-                }
+                    });
+                let Some(first_prefix) = first_prefix else {
+                    return;
+                };
+                let Some(measured) = self.measured_block_lines(
+                    source_start,
+                    first_prefix,
+                    line_indents,
+                    Some(source_line_prefixes),
+                    parent_quotes,
+                    source_kind,
+                ) else {
+                    return;
+                };
                 let mut mappings = Vec::new();
                 self.push_line_prefixed_inline_mapping(
                     block,
                     String::new(),
-                    &super::source_mapping::MeasuredBlockLines {
-                        prefixes,
-                        file_lens,
-                    },
+                    &measured,
                     true,
                     source_start,
                     &mut mappings,
