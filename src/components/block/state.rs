@@ -526,6 +526,37 @@ impl BlockKind {
         }
     }
 
+    /// 围栏行的缩进口径：行首最多三格空格。四格（或制表符）就是缩进代码块的**内容**，
+    /// 开栏与闭合栏两边都按它判——这是围栏行唯一的一处缩进规则。
+    pub fn strip_code_fence_indent(line: &str) -> Option<&str> {
+        let indent = line.bytes().take_while(|byte| *byte == b' ').count();
+        (indent <= 3).then_some(&line[indent..])
+    }
+
+    /// 这一行是不是 `marker` 那个开栏的闭合行：缩进不超三格、记号同族、长度不短于开栏、
+    /// 记号之后只剩空白。
+    ///
+    /// 开栏那一侧是 [`Self::parse_code_fence_opening`]（`parse_opening_fence` 会把行首
+    /// 缩进剥掉再交给它）。块树、大纲与 mermaid 三处都从这一对走：各写各的必然漂成
+    /// 「四格缩进的 ``` 在大纲里算闭合、在块树里算内容」。
+    pub fn closes_code_fence(line: &str, marker: char, len: usize) -> bool {
+        Self::closing_code_fence_run(line)
+            .is_some_and(|(run_marker, run)| run_marker == marker && run >= len)
+    }
+
+    /// 这一行是不是一条完整的围栏游程？是就给出（记号, 长度）。
+    ///
+    /// 闭合判据与围栏前瞻的记账共用它：两边各自数一遍游程必然漂。
+    pub fn closing_code_fence_run(line: &str) -> Option<(char, usize)> {
+        let trimmed = Self::strip_code_fence_indent(line)?.trim_end();
+        let marker = trimmed.chars().next()?;
+        if !matches!(marker, '`' | '~') {
+            return None;
+        }
+        let run = trimmed.chars().take_while(|character| *character == marker).count();
+        (run >= 3 && run == trimmed.chars().count()).then_some((marker, run))
+    }
+
     pub fn parse_code_fence_opening(value: &str) -> Option<CodeFenceOpening> {
         let trimmed = value.trim_end();
         let ch = trimmed.chars().next()?;

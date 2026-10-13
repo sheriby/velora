@@ -495,7 +495,6 @@ fn outline_headings(
     let mut in_front_matter = false;
 
     for (offset, line) in lines.lines().enumerate() {
-        let trimmed = line.trim_start();
         if first_line == 0 && offset == 0 && line.trim_end_matches('\r') == "---" {
             in_front_matter = true;
             continue;
@@ -508,15 +507,22 @@ fn outline_headings(
             continue;
         }
         if let Some((marker, len)) = fence {
-            if is_closing_fence(trimmed, marker, len) {
+            if crate::components::BlockKind::closes_code_fence(line, marker, len) {
                 fence = None;
             }
             previous = None;
             continue;
         }
 
-        if let Some(next_fence) = opening_fence(trimmed) {
-            fence = Some(next_fence);
+        // 围栏判据与块树同一处（`BlockKind`）：行首缩进、记号同族、长度都按那一份。
+        // 以前这里用 `trim_start()` 之后的行判，四格缩进的 ``` 当场出栏，代码块里的
+        // `#` 就成了大纲条目（`[TOC]` 跟着生成错误的目录）。
+        if let Some(opener) = crate::components::BlockKind::parse_code_fence_opening(
+            crate::components::BlockKind::strip_code_fence_indent(line)
+                .unwrap_or_default()
+                .trim_end(),
+        ) {
+            fence = Some((opener.ch, opener.len));
             previous = None;
             continue;
         }
@@ -625,16 +631,3 @@ pub(crate) fn children_at_path_mut<'a>(
     current
 }
 
-pub(crate) fn opening_fence(trimmed: &str) -> Option<(char, usize)> {
-    let marker = trimmed.chars().next()?;
-    if marker != '`' && marker != '~' {
-        return None;
-    }
-    let len = trimmed.chars().take_while(|ch| *ch == marker).count();
-    (len >= 3).then_some((marker, len))
-}
-
-pub(crate) fn is_closing_fence(trimmed: &str, marker: char, len: usize) -> bool {
-    let count = trimmed.chars().take_while(|ch| *ch == marker).count();
-    count >= len && trimmed[count..].trim().is_empty()
-}

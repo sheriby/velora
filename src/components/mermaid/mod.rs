@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, anyhow};
 use directories::ProjectDirs;
 
+use crate::components::block::BlockKind;
+
 const SIMPLE_MERMAID_LINE_LIMIT: usize = 8;
 const MERMAID_COMPLEX_TARGET_WIDTH_RATIO: f32 = 0.9;
 const MERMAID_MAX_VIEWPORT_WIDTH_RATIO: f32 = 1.15;
@@ -67,7 +69,7 @@ pub(crate) fn is_mermaid_info_string(info: Option<&str>) -> bool {
 
 /// Parse a line as a Mermaid opening fence.
 pub(crate) fn parse_mermaid_fence_start(line: &str) -> Option<MermaidFence> {
-    let trimmed = strip_fence_indent(line)?.trim_end();
+    let trimmed = BlockKind::strip_code_fence_indent(line)?.trim_end();
     let marker = trimmed.chars().next()?;
     if marker != '`' && marker != '~' {
         return None;
@@ -89,15 +91,7 @@ pub(crate) fn parse_mermaid_fence_start(line: &str) -> Option<MermaidFence> {
 
 /// Returns true when `line` closes the given Mermaid fence.
 pub(crate) fn is_mermaid_closing_fence(line: &str, fence: MermaidFence) -> bool {
-    let Some(trimmed) = strip_fence_indent(line).map(str::trim_end) else {
-        return false;
-    };
-    if !trimmed.starts_with(fence.marker) {
-        return false;
-    }
-
-    let len = trimmed.chars().take_while(|ch| *ch == fence.marker).count();
-    len >= fence.len && trimmed[fence.marker.len_utf8() * len..].trim().is_empty()
+    BlockKind::closes_code_fence(line, fence.marker, fence.len)
 }
 
 /// Parse raw fenced Markdown into the Mermaid diagram source it contains.
@@ -108,7 +102,7 @@ pub(crate) fn parse_mermaid_fence_source(raw: &str) -> Option<MermaidSource> {
         return None;
     }
 
-    let opening = strip_fence_indent(lines[0])?.trim_end();
+    let opening = BlockKind::strip_code_fence_indent(lines[0])?.trim_end();
     let fence = parse_mermaid_fence_start(opening)?;
     let info = opening[fence.marker.len_utf8() * fence.len..]
         .trim()
@@ -308,11 +302,6 @@ pub(crate) fn mermaid_display_scale(
         .min(height_sanity_scale)
         .min(MERMAID_MAX_SCALE)
         .max(1.0)
-}
-
-fn strip_fence_indent(line: &str) -> Option<&str> {
-    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
-    (indent <= 3).then_some(&line[indent..])
 }
 
 /// Rewrites the root SVG element so GPUI sees the intended intrinsic size.

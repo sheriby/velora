@@ -11,6 +11,7 @@ mod search_matcher_snapshot;
 mod search_perf;
 mod search_random_consistency;
 mod sidebar;
+mod outline_fences;
 mod tabs_sessions;
 mod tabs_state;
 mod tree_files;

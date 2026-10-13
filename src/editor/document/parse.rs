@@ -20,13 +20,9 @@ pub(crate) struct ListMarker {
     pub(crate) text: String,
 }
 
-pub(crate) fn strip_fence_indent(line: &str) -> Option<&str> {
-    let indent = line.bytes().take_while(|b| *b == b' ').count();
-    (indent <= 3).then_some(&line[indent..])
-}
 
 pub(crate) fn line_is_setext_heading_content(line: &str) -> bool {
-    let Some(content) = strip_fence_indent(line) else {
+    let Some(content) = BlockKind::strip_code_fence_indent(line) else {
         return false;
     };
     !content.trim().is_empty()
@@ -126,7 +122,7 @@ impl MarkdownLookahead {
         for line in lines.iter().rev() {
             #[cfg(test)]
             scan_probe::add(line.len());
-            if let Some((marker, length)) = closing_fence_run(line) {
+            if let Some((marker, length)) = BlockKind::closing_code_fence_run(line) {
                 match marker {
                     '`' => maximum.backtick = maximum.backtick.max(length),
                     '~' => maximum.tilde = maximum.tilde.max(length),
@@ -157,19 +153,11 @@ impl MarkdownLookahead {
 }
 
 pub(crate) fn parse_opening_fence(line: &str) -> Option<FenceInfo> {
-    BlockKind::parse_code_fence_opening(strip_fence_indent(line)?.trim_end())
-}
-
-fn closing_fence_run(line: &str) -> Option<(char, usize)> {
-    let trimmed = strip_fence_indent(line)?.trim_end();
-    let marker = trimmed.chars().next()?;
-    if !matches!(marker, '`' | '~') { return None; }
-    let length = trimmed.chars().take_while(|character| *character == marker).count();
-    (length >= 3 && length == trimmed.len()).then_some((marker, length))
+    BlockKind::parse_code_fence_opening(BlockKind::strip_code_fence_indent(line)?.trim_end())
 }
 
 pub(crate) fn is_closing_fence(line: &str, opener: &FenceInfo) -> bool {
-    closing_fence_run(line).is_some_and(|(marker, length)| marker == opener.ch && length >= opener.len)
+    BlockKind::closes_code_fence(line, opener.ch, opener.len)
 }
 
 #[cfg(test)]
@@ -182,13 +170,13 @@ pub(crate) fn find_matching_closing_fence(
 }
 
 pub(crate) fn is_fenced_div_opening(line: &str) -> bool {
-    strip_fence_indent(line)
+    BlockKind::strip_code_fence_indent(line)
         .and_then(|line| line.strip_prefix(":::"))
         .is_some_and(|suffix| !suffix.trim().is_empty())
 }
 
 pub(crate) fn is_fenced_div_closing(line: &str) -> bool {
-    strip_fence_indent(line).is_some_and(|line| line.trim() == ":::")
+    BlockKind::strip_code_fence_indent(line).is_some_and(|line| line.trim() == ":::")
 }
 
 pub(crate) fn collect_fenced_div_end(lines: &[String], start: usize) -> Option<usize> {
@@ -207,7 +195,7 @@ pub(crate) fn collect_fenced_div_end(lines: &[String], start: usize) -> Option<u
 }
 
 pub(crate) fn is_unsupported_admonition_opening(line: &str) -> bool {
-    strip_fence_indent(line).is_some_and(|line| {
+    BlockKind::strip_code_fence_indent(line).is_some_and(|line| {
         let line = line.trim_start();
         line.starts_with("!!!") || line.starts_with("???")
     })
@@ -644,7 +632,7 @@ pub(crate) fn collect_display_math_region(lines: &[String], start: usize) -> usi
 }
 
 pub(crate) fn parse_html_block_start(line: &str) -> Option<HtmlBlockStart> {
-    let rest = strip_fence_indent(line)?.trim_end();
+    let rest = BlockKind::strip_code_fence_indent(line)?.trim_end();
     if rest.starts_with("<!--") {
         return Some(HtmlBlockStart::Comment);
     }
@@ -690,7 +678,7 @@ pub(crate) fn is_html_void_block_tag(name: &str) -> bool {
 }
 
 pub(crate) fn parse_html_close_tag_name(line: &str) -> Option<String> {
-    let rest = strip_fence_indent(line)?.trim_end();
+    let rest = BlockKind::strip_code_fence_indent(line)?.trim_end();
     let tagged = rest.strip_prefix("</")?;
     let name_len = tagged
         .chars()
@@ -926,10 +914,10 @@ pub(crate) fn collect_fenced_code_block(
     // 否则挂在列表项里的围栏报出来的宽度少几位，核对不上就交回按文件量那条路。
     let open_indent = origins.get(start).copied().unwrap_or(0)
         + lines[start].len()
-        - strip_fence_indent(&lines[start]).unwrap_or("").len();
+        - BlockKind::strip_code_fence_indent(&lines[start]).unwrap_or("").len();
     let close_indent = origins.get(closing_index).copied().unwrap_or(0)
         + lines[closing_index].len()
-        - strip_fence_indent(&lines[closing_index]).unwrap_or("").len();
+        - BlockKind::strip_code_fence_indent(&lines[closing_index]).unwrap_or("").len();
     block.update(cx, |block, _cx| {
         block.record.source_line_prefixes = prefixes;
         block.record.source_fence_lines = Some((open_indent as u32, close_indent as u32));
