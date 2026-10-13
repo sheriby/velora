@@ -512,19 +512,33 @@ impl Default for WorkspaceState {
 }
 
 /// 后台任务里往某个编辑器窗口弹应用内模态（取代系统原生弹窗）。
+///
+/// 提示不许静默消失：窗口已关或拿不到编辑器窗口时，这条错误就没处可去了，
+/// 至少写进 stderr；不然「保存失败」这类消息会连一句话都不留。
 fn show_async_message_modal(
     window_handle: AnyWindowHandle,
     cx: &mut AsyncApp,
     build: impl FnOnce(&crate::i18n::I18nStrings) -> (String, String),
 ) {
     let Some(handle) = window_handle.downcast::<Editor>() else {
+        let detail = cx
+            .update(|cx| {
+                let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
+                let (title, detail) = build(&strings);
+                format!("{title}: {detail}")
+            })
+            .unwrap_or_else(|error| format!("读取提示文案失败：{error}"));
+        eprintln!("无法显示提示（窗口不是编辑器窗口）：{detail}");
         return;
     };
-    let _ = handle.update(cx, move |editor, _window, cx| {
+    let result = handle.update(cx, move |editor, _window, cx| {
         let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
         let (title, detail) = build(&strings);
         editor.show_message_modal(title, detail, cx);
     });
+    if let Err(error) = result {
+        eprintln!("无法显示提示：{error}（窗口可能已关闭）");
+    }
 }
 
 /// 「<名> copy[ 序号]」式唯一副本路径（roadmap D6，与右键「创建副本」共用）。

@@ -521,6 +521,12 @@ pub(crate) fn report_preferences_failure(detail: &str, cx: &mut App) {
 }
 
 /// 在指定（或当前）编辑器窗口里弹应用内模态提示；拿不到编辑器窗口时退回 stderr。
+///
+/// 这类提示一律不许静默丢掉。窗口句柄这条路有个坑：若调用发生在**该窗口自己的事件
+/// 派发里**（菜单点击、快捷键处理），那一刻窗口已被 take 出应用状态
+/// （`App::update_window_id` 里的 `cx.windows.get_mut(id)?.take()?`），按句柄再 update
+/// 只会得到「window not found」。同步一下不行就排到下一跳重试（那时派发已结束、窗口
+/// 回到表里），两次都不成才写日志。
 fn show_message_on_active_editor_in(
     window: Option<AnyWindowHandle>,
     title: &str,
@@ -533,8 +539,23 @@ fn show_message_on_active_editor_in(
     };
     let title = title.to_string();
     let detail = detail.to_string();
-    let _ = handle.update(cx, move |editor, _window, cx| {
-        editor.show_message_modal(title.clone(), detail.clone(), cx);
+    let attempt = handle.update(cx, {
+        let title = title.clone();
+        let detail = detail.clone();
+        move |editor, _window, cx| {
+            editor.show_message_modal(title, detail, cx);
+        }
+    });
+    if attempt.is_ok() {
+        return;
+    }
+    cx.defer(move |cx| {
+        let attempt = handle.update(cx, |editor, _window, cx| {
+            editor.show_message_modal(title.clone(), detail.clone(), cx);
+        });
+        if let Err(error) = attempt {
+            eprintln!("无法显示提示（{title}: {detail}）：{error}");
+        }
     });
 }
 
@@ -547,7 +568,15 @@ fn with_active_editor<R>(
     update: impl FnOnce(&mut Editor, &mut Window, &mut Context<Editor>) -> R,
 ) -> Option<R> {
     let window = cx.active_window()?.downcast::<Editor>()?;
-    window.update(cx, update).ok()
+    match window.update(cx, update) {
+        Ok(result) => Some(result),
+        Err(error) => {
+            // 同上：窗口正被自己的事件派发 take 着时这里必失败。动作本身没法重试
+            // （闭包只跑一次），至少不能默默变成「点了没反应」。
+            eprintln!("无法在活动窗口里执行菜单动作（窗口正被自己的事件派发占用）：{error}");
+            None
+        }
+    }
 }
 
 fn show_info_dialog_on_active_editor(cx: &mut App, kind: InfoDialogKind) {

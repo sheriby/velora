@@ -783,3 +783,25 @@ async fn every_menu_bar_command_has_a_handler(cx: &mut TestAppContext) {
 
     assert!(missing.is_empty(), "以下命令没有处理者：{missing:?}");
 }
+
+/// 提示不许被静默丢掉：菜单点击、快捷键这些调用点跑在该窗口自己的事件派发里，
+/// 那一刻窗口已被 take 出应用状态，按 `WindowHandle::update` 弹窗只会拿到
+/// 「window not found」。这条用例就站在那个位置调提示，断言它下一跳还是会出来。
+#[gpui::test]
+async fn a_prompt_raised_inside_the_window_dispatch_still_shows(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "正文".into(), None));
+
+    // `TestAppContext::update` 把窗口交出来的同时也就把它 take 走了——与应用里
+    // 「正处在窗口派发内部」是同一个状态。
+    cx.update(|_window, cx| {
+        crate::app_menu::report_preferences_failure("写入配置失败", cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        editor.read_with(cx, |editor, _| editor.modal_is_open()),
+        "在窗口派发内部发出的提示也要弹出来，不能没有下文"
+    );
+}

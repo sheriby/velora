@@ -498,7 +498,6 @@ impl Editor {
         self.pending_close_after_save = true;
         let editor = cx.entity().downgrade();
         let window_handle = window.window_handle();
-        let editor_window_for_error = Some(window_handle);
         let background = cx.background_executor().clone();
 
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -606,12 +605,12 @@ impl Editor {
                 })
                 .unwrap_or((false, None));
             if let Some((external_change, detail)) = error_detail {
-                if let Some(error_window) = editor_window_for_error {
-                    if external_change {
-                        Self::show_external_change_error(error_window, detail, cx);
-                    } else {
-                        Self::show_workspace_save_error(error_window, detail, cx);
-                    }
+                // 窗口已经没了的话，`show_async_message_modal` 会把这条写进 stderr：
+                // 保存失败不许静默消失。
+                if external_change {
+                    Self::show_external_change_error(window_handle, detail, cx);
+                } else {
+                    Self::show_workspace_save_error(window_handle, detail, cx);
                 }
             }
             if close_window {
