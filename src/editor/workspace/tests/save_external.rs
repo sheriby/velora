@@ -266,7 +266,7 @@ async fn the_conflict_modal_reload_reads_the_disk_version_back(cx: &mut TestAppC
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "alpha\n").unwrap();
     let cleanup = root.clone();
@@ -381,7 +381,7 @@ async fn the_conflict_modal_save_as_keeps_the_edits_and_asks_for_a_new_path(
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "alpha\n").unwrap();
     let cleanup = root.clone();

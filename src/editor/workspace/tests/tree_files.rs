@@ -1267,8 +1267,7 @@ async fn dirs_below_the_default_depth_load_when_expanded(cx: &mut TestAppContext
 
     // 根会被 canonicalize（macOS 的 /var 是 /private/var 的软链），节点 id 按
     // 规范路径算。
-    let dir_path = std::fs::canonicalize(root.join("a").join("b").join("c"))
-        .expect("canonicalize deep dir");
+    let dir_path = crate::file_url::canonical_path(&root.join("a").join("b").join("c"));
     let dir_id = file_node_id(&dir_path);
     editor.read_with(cx, |editor, _| {
         let tree = editor.workspace.file_tree.as_ref().expect("换根后应有树");

@@ -44,8 +44,10 @@ impl Editor {
 
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         // Canonicalize so recent-folder entries read as real absolute paths
-        // (a CLI "." would otherwise be recorded as "<cwd>/.").
-        let root = std::fs::canonicalize(&root).unwrap_or(root);
+        // (a CLI "." would otherwise be recorded as "<cwd>/.")，再去掉 Windows 的
+        // verbatim 前缀：canonicalize 在那边返回 `\\?\C:\…`，直接落进最近文件夹与
+        // 会话就是用户看不懂的一串（口径见 `file_url::canonical_path`）。
+        let root = crate::file_url::canonical_path(&root);
         self.snapshot_current_document(cx);
         if self.document_dirty && self.file_path.as_ref().is_some_and(|path| !path_is_within_root(&root, path)) {
             let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();

@@ -17,7 +17,7 @@ async fn workspace_tree_scan_is_async_and_applies_result(cx: &mut TestAppContext
 
     cx.run_until_parked();
     let expected =
-        std::fs::canonicalize(root.join("nested").join("note.md")).expect("canonicalize");
+        crate::file_url::canonical_path(&root.join("nested").join("note.md"));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
     });
@@ -43,7 +43,7 @@ async fn workspace_tree_scan_discards_stale_root_results(cx: &mut TestAppContext
     });
 
     cx.run_until_parked();
-    let expected_b = std::fs::canonicalize(root_b.join("b.md")).expect("canonicalize");
+    let expected_b = crate::file_url::canonical_path(&root_b.join("b.md"));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace_text_files(), vec![expected_b.clone()]);
     });
@@ -64,7 +64,7 @@ async fn reopening_workspace_root_rescans_after_tree_is_cleared(cx: &mut TestApp
         editor.set_workspace_root(root.clone(), cx);
     });
     cx.run_until_parked();
-    let expected = std::fs::canonicalize(root.join("a.md")).expect("canonicalize");
+    let expected = crate::file_url::canonical_path(&root.join("a.md"));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
     });
@@ -673,4 +673,38 @@ async fn scrolling_with_the_outline_open_follows_the_heading_above_the_viewport(
         0,
         "滚动跟随一次重拼了整篇 source mapping"
     );
+}
+
+/// 工作区根会一路流进「打开最近」、会话文件与菜单标签：Windows 上 `canonicalize`
+/// 给的 `\\?\C:\…` 抄到那三处就是用户看不懂的一列（报修：打开最近全是它）。
+/// 落进工作区状态的必须是用户认得的那条写法。
+#[gpui::test]
+async fn workspace_root_is_kept_in_the_form_the_user_recognizes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-root-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        let stored = editor
+            .workspace
+            .root
+            .clone()
+            .expect("工作区根要落位");
+        assert!(
+            !stored.to_string_lossy().starts_with(r"\\?\"),
+            "工作区根不该是 verbatim 写法：{}",
+            stored.display()
+        );
+        // 与「打开最近」同一口径：两边剥完之后是同一条路径，不会出现同一目录两行。
+        assert_eq!(
+            stored,
+            crate::file_url::strip_verbatim_prefix(
+                &crate::file_url::canonical_path(&root)
+            )
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
 }

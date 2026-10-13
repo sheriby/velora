@@ -2,6 +2,7 @@
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use super::VeloraConfigDirs;
 
@@ -27,6 +28,26 @@ pub(crate) struct SessionState {
     pub(crate) sidebar_open: Option<bool>,
 }
 
+impl SessionState {
+    /// 以用户认得的写法取回会话里的路径。
+    ///
+    /// 老会话里可能留着带 `\\?\` 的 Windows 路径（当年 `canonicalize` 写进去的）：侧栏
+    /// 宽度记忆是按根路径**字符串**比对的，写法不一致就找不回；恢复出的标签路径也会跟
+    /// 着进界面。剥前缀的判据只存一处（`file_url::strip_verbatim_prefix`）。
+    fn normalize_paths(&mut self) {
+        let normalize = |text: &str| {
+            crate::file_url::strip_verbatim_prefix(Path::new(text))
+                .to_string_lossy()
+                .into_owned()
+        };
+        self.root = self.root.as_deref().map(normalize);
+        for tab in &mut self.tabs {
+            *tab = normalize(tab);
+        }
+        self.active = self.active.as_deref().map(normalize);
+    }
+}
+
 pub(crate) fn read_session() -> anyhow::Result<SessionState> {
     read_session_with_dirs(&VeloraConfigDirs::from_system()?)
 }
@@ -46,7 +67,10 @@ fn read_session_with_dirs(dirs: &VeloraConfigDirs) -> anyhow::Result<SessionStat
             return Err(err).with_context(|| format!("failed to read '{}'", path.display()));
         }
     };
-    serde_json::from_str(&text).with_context(|| format!("failed to parse '{}'", path.display()))
+    let mut session: SessionState =
+        serde_json::from_str(&text).with_context(|| format!("failed to parse '{}'", path.display()))?;
+    session.normalize_paths();
+    Ok(session)
 }
 
 fn save_session_with_dirs(
@@ -71,6 +95,32 @@ fn session_file(dirs: &VeloraConfigDirs) -> std::path::PathBuf {
 mod tests {
     use super::{SessionState, read_session_with_dirs, save_session_with_dirs};
     use crate::config::VeloraConfigDirs;
+
+    /// 老会话里的 `\\?\` 前缀（Windows 上 canonicalize 写的）读回来就要是正常写法：
+    /// 侧栏宽度记忆按根路径字符串比对，形态不一致就找不回。
+    #[test]
+    fn session_paths_lose_the_windows_verbatim_prefix_on_read() {
+        let root = std::env::temp_dir().join(format!(
+            "velora-session-verbatim-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        std::fs::create_dir_all(&dirs.root).expect("create config dir");
+        // 写法与当年的旧版本落盘一致：根、标签、当前标签都带 `\\?\`。
+        let legacy = serde_json::json!({
+            "root": r"\\?\C:\notes",
+            "tabs": [r"\\?\C:\notes\a.md", r"\\?\UNC\server\share\b.md"],
+            "active": r"\\?\C:\notes\a.md",
+        });
+        std::fs::write(super::session_file(&dirs), legacy.to_string()).expect("write session");
+
+        let session = read_session_with_dirs(&dirs).expect("read session");
+        assert_eq!(session.root.as_deref(), Some(r"C:\notes"));
+        assert_eq!(session.tabs, vec![r"C:\notes\a.md", r"\\server\share\b.md"]);
+        assert_eq!(session.active.as_deref(), Some(r"C:\notes\a.md"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn session_write_leaves_no_partial_or_temp_files() {

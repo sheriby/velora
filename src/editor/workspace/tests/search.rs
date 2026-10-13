@@ -267,7 +267,7 @@ async fn clicking_a_search_hit_in_a_dirty_file_lands_on_the_match(cx: &mut TestA
     ));
     fs::create_dir_all(&root).unwrap();
     // 与树/搜索产出的 canonical 路径对齐（macOS /var → /private/var）。
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "first para\n\nbeta target\n").unwrap();
     cx.on_quit({
@@ -493,14 +493,13 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
     cx.simulate_click(header.center(), Modifiers::none());
     cx.update(|window, cx| window.draw(cx).clear());
     // macOS 的 /var 会被打开流程规范化为 /private/var，断言前统一 canonicalize。
-    let banner = fs::canonicalize(root.join("assets").join("velora-banner.png"))
-        .expect("canonical banner path");
+    let banner = crate::file_url::canonical_path(&root.join("assets").join("velora-banner.png"));
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             editor
                 .image_preview
                 .as_ref()
-                .and_then(|preview| fs::canonicalize(&preview.path).ok()),
+                .map(|preview| crate::file_url::canonical_path(&preview.path)),
             Some(banner.clone()),
             "点图片文件名应打开图片预览"
         );
@@ -512,13 +511,13 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
         .expect("第二个文件头应渲染");
     cx.simulate_click(notes_header.center(), Modifiers::none());
     cx.update(|window, cx| window.draw(cx).clear());
-    let notes = fs::canonicalize(root.join("velora-notes.md")).expect("canonical notes path");
+    let notes = crate::file_url::canonical_path(&root.join("velora-notes.md"));
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             editor
                 .file_path
                 .as_ref()
-                .and_then(|path| fs::canonicalize(path).ok()),
+                .map(|path| crate::file_url::canonical_path(path)),
             Some(notes.clone()),
             "点文件头应打开对应的 Markdown 文件"
         );
@@ -625,7 +624,7 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
     std::fs::create_dir_all(&root).expect("mkdir");
     std::fs::write(root.join("big.md"), &big).expect("write big");
     std::fs::write(root.join("start.md"), "# start\n\nseed\n").expect("write start");
-    let big_path = std::fs::canonicalize(root.join("big.md")).expect("canonicalize");
+    let big_path = crate::file_url::canonical_path(&root.join("big.md"));
 
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
@@ -883,7 +882,7 @@ async fn workspace_search_reports_all_hits_and_jumps_by_proximity(cx: &mut TestA
     std::fs::create_dir_all(&root).expect("mkdir");
     std::fs::write(root.join("baseline.md"), &md).expect("write");
     std::fs::write(root.join("start.md"), "# start\n\nseed\n").expect("write start");
-    let baseline = std::fs::canonicalize(root.join("baseline.md")).expect("canonicalize");
+    let baseline = crate::file_url::canonical_path(&root.join("baseline.md"));
 
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
@@ -1118,7 +1117,7 @@ async fn same_file_workspace_hit_jumps_by_the_file_line(cx: &mut TestAppContext)
     cx.run_until_parked();
 
     // 树扫描的命中路径是 canonicalize 过的（macOS 下 /var ↔ /private/var）。
-    let scanned_path = path.canonicalize().expect("canonicalize fixture path");
+    let scanned_path = crate::file_url::canonical_path(&path);
     let hit_index = editor.read_with(cx, |editor, _cx| {
         editor
             .workspace
@@ -1196,7 +1195,7 @@ async fn first_click_into_a_freshly_opened_code_file_lands_in_the_right_chunk(
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
 
-    let scanned_path = path.canonicalize().expect("canonicalize fixture path");
+    let scanned_path = crate::file_url::canonical_path(&path);
     let hit_index = editor.read_with(cx, |editor, _cx| {
         editor
             .workspace

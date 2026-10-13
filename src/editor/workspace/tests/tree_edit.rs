@@ -13,7 +13,7 @@ fn tree_fixture(cx: &mut TestAppContext) -> (Entity<Editor>, &mut VisualTestCont
     });
     let root = std::env::temp_dir().join(format!("velora-tree-name-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).expect("创建目录");
-    let root = fs::canonicalize(root).expect("规范化路径");
+    let root = crate::file_url::canonical_path(root);
     cx.on_quit({
         let root = root.clone();
         move || fs::remove_dir_all(root).expect("删除夹具")
@@ -341,7 +341,7 @@ async fn copy_tree_paths_and_filename_uses_the_selected_target(cx: &mut TestAppC
             .and_then(|item| item.text())
             .expect("绝对路径");
         assert_eq!(
-            fs::canonicalize(&copied).expect("复制的路径应可直接使用"),
+            crate::file_url::canonical_path(&copied),
             target
         );
         #[cfg(windows)]
@@ -521,7 +521,7 @@ async fn markdown_creation_opens_an_input_inside_the_tree(cx: &mut TestAppContex
     });
     let root = std::env::temp_dir().join(format!("velora-tree-edit-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).expect("创建夹具目录");
-    let root = fs::canonicalize(root).expect("规范化夹具路径");
+    let root = crate::file_url::canonical_path(root);
     cx.on_quit({
         let root = root.clone();
         move || fs::remove_dir_all(root).expect("删除夹具目录")

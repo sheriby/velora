@@ -498,7 +498,7 @@ async fn clicking_a_cross_line_workspace_hit_selects_the_whole_span(cx: &mut Tes
     init(cx);
     let root = std::env::temp_dir().join(format!("velora-xline-jump-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create dir");
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "alpha\n\nmid\n\nsecond note\n").expect("write");
     cx.on_quit({
@@ -561,7 +561,7 @@ async fn clicking_a_workspace_hit_after_deleting_the_line_falls_back(cx: &mut Te
     let root =
         std::env::temp_dir().join(format!("velora-xline-fallback-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create dir");
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     // 三段各占一个块（中间留空行），删掉最后一段就只剩两个命中组。
     fs::write(&path, "needle one\n\nneedle two\n\nneedle three\n").expect("write");

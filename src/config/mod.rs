@@ -339,7 +339,9 @@ fn record_recent_folder_with_dirs(
     }
 
     let mut paths = read_recent_folders_with_dirs(dirs)?;
-    let path = path.to_path_buf();
+    // 存进去的是给用户看的写法：Windows 的 canonicalize 会带上 `\\?\` 前缀，
+    // 不剥掉这里就得多一条同目录的重复记录（口径见 `file_url::strip_verbatim_prefix`）。
+    let path = crate::file_url::strip_verbatim_prefix(path);
     paths.retain(|existing| !same_recent_path(existing, &path));
     paths.insert(0, path);
     paths.truncate(RECENT_FOLDERS_LIMIT);
@@ -373,7 +375,9 @@ fn normalize_recent_folders(paths: impl IntoIterator<Item = PathBuf>) -> Vec<Pat
         if trimmed.is_empty() {
             continue;
         }
-        let path = PathBuf::from(trimmed);
+        // 历史文件里可能留着带 `\\?\` 前缀的老记录（Windows 上 canonicalize 写的）：
+        // 读的时候顺手收成正常写法，用户不必删历史来治这一列。
+        let path = crate::file_url::strip_verbatim_prefix(&PathBuf::from(trimmed));
         if !path.is_dir()
             || normalized
                 .iter()
@@ -420,7 +424,9 @@ pub(crate) fn record_recent_file_with_dirs(
     }
 
     let mut paths = read_recent_files_with_dirs(dirs)?;
-    let path = path.to_path_buf();
+    // 与最近文件夹同口径：存的是给用户看的写法（Windows 的 `\\?\` 前缀先剥掉，
+    // 否则同一条路径会被存成两条）。
+    let path = crate::file_url::strip_verbatim_prefix(path);
     paths.retain(|existing| !same_recent_path(existing, &path));
     paths.insert(0, path);
     paths.truncate(RECENT_FILES_LIMIT);
@@ -433,7 +439,8 @@ pub(crate) fn remove_recent_file_with_dirs(
     dirs: &VeloraConfigDirs,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let mut paths = read_recent_files_with_dirs(dirs)?;
-    paths.retain(|existing| !same_recent_path(existing, path));
+    let path = crate::file_url::strip_verbatim_prefix(path);
+    paths.retain(|existing| !same_recent_path(existing, &path));
     write_recent_files_with_dirs(&paths, dirs)?;
     Ok(paths)
 }
@@ -477,7 +484,8 @@ fn normalize_recent_files(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathB
         if trimmed.is_empty() {
             continue;
         }
-        let path = PathBuf::from(trimmed);
+        // 同最近文件夹：老历史里的 `\\?\` 记录读出来就要是正常写法。
+        let path = crate::file_url::strip_verbatim_prefix(&PathBuf::from(trimmed));
         if !is_recordable_recent_file_path(&path) {
             continue;
         }
@@ -828,6 +836,71 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Windows 上 `canonicalize` 写进历史的是 `\\?\C:\…`：老记录读出来必须是正常写法，
+    /// 而且与正常写法的同一条路径要合成一条——否则「打开最近」里同一行会出现两次。
+    #[test]
+    fn recent_history_cleans_windows_verbatim_paths() {
+        let root = std::env::temp_dir().join(format!("velora-config-{}", uuid::Uuid::new_v4()));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            dirs.history_file(),
+            "\\\\?\\C:\\one.md\nC:\\one.md\n\\\\?\\UNC\\server\\share\\two.md\n",
+        )
+        .unwrap();
+
+        let expected = vec![
+            PathBuf::from("C:\\one.md"),
+            PathBuf::from("\\\\server\\share\\two.md"),
+        ];
+        assert_eq!(read_recent_files_with_dirs(&dirs).unwrap(), expected);
+
+        // 再记一次正常写法：不许因为它和已有的 verbatim 那条写法不同就多出一条。
+        assert_eq!(
+            record_recent_file_with_dirs(Path::new("C:\\one.md"), &dirs).unwrap(),
+            expected
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 最近文件夹（「打开最近」列的就是它）在 Windows 上曾被 canonicalize 写成
+    /// `\\?\C:\…`。这里用真实的临时目录验证落盘与读回都不带前缀。
+    #[cfg(windows)]
+    #[test]
+    fn recent_folder_history_drops_the_verbatim_prefix() {
+        let root = std::env::temp_dir().join(format!("velora-config-{}", uuid::Uuid::new_v4()));
+        let dirs = VeloraConfigDirs::from_root(&root);
+        let folder = std::env::temp_dir().join(format!("velora-folder-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&folder).unwrap();
+
+        let canonical = std::fs::canonicalize(&folder).expect("canonicalize");
+        assert!(
+            canonical.to_string_lossy().starts_with(r"\\?\"),
+            "前置：Windows 的 canonicalize 本来就会带前缀：{}",
+            canonical.display()
+        );
+
+        let recorded = record_recent_folder_with_dirs(&canonical, &dirs).unwrap();
+        assert_eq!(recorded.len(), 1);
+        let stored = recorded[0].to_string_lossy().to_string();
+        let without_prefix = crate::file_url::strip_verbatim_prefix(&canonical)
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            !stored.starts_with(r"\\?\"),
+            "落盘的文件夹不该带 verbatim 前缀：{stored}"
+        );
+        assert!(
+            stored.eq_ignore_ascii_case(&without_prefix),
+            "剥前缀之外不许改动路径：{stored}"
+        );
+        assert_eq!(read_recent_folders_with_dirs(&dirs).unwrap(), recorded);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(folder);
     }
 
     #[test]

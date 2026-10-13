@@ -485,7 +485,7 @@ async fn clicking_a_cross_line_workspace_hit_broken_by_an_edit_falls_back(
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create dir");
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "alpha\n\nmid\n\nalpha\n\nlast\n").expect("write");
     cx.on_quit({

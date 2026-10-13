@@ -129,7 +129,7 @@ async fn review_workspace_switch_confirms_live_unsaved_buffer(cx: &mut TestAppCo
     editor.update(cx, |editor, cx| {
         editor.set_workspace_root(root_b, cx);
         assert!(editor.modal_is_open());
-        assert_eq!(editor.workspace.root.as_deref(), Some(root_a.canonicalize().unwrap().as_path()));
+        assert_eq!(editor.workspace.root.as_deref(), Some(crate::file_url::canonical_path(&root_a).as_path()));
         assert_eq!(editor.buffer.text(), live);
     });
     cx.update(|window, cx| editor.update(cx, |editor, cx| editor.cancel_modal(window, cx)));
@@ -160,7 +160,7 @@ async fn review_workspace_switch_save_and_discard_choices_preserve_disk_intent(c
             assert!(editor.modal_is_open());
         });
         cx.update(|window, cx| editor.update(cx, |editor, cx| editor.dismiss_modal(choice, window, cx)));
-        assert_eq!(editor.read_with(cx, |editor, _| editor.workspace.root.clone()), Some(root_b.canonicalize().unwrap()));
+        assert_eq!(editor.read_with(cx, |editor, _| editor.workspace.root.clone()), Some(crate::file_url::canonical_path(&root_b)));
         assert_eq!(fs::read_to_string(path).unwrap(), if choice == 0 { live } else { "old".into() });
     }
 }
@@ -170,7 +170,7 @@ async fn review_recovery_merge_preserves_utf16_file_shape(cx: &mut TestAppContex
     init_review_workspace_app(cx);
     let root = review_workspace_fixture(cx, "recovery-shape");
     let path = root.join("notes.md"); fs::write(&path, utf16_le_with_bom("原文\r\n")).unwrap();
-    let path = path.canonicalize().unwrap();
+    let path = crate::file_url::canonical_path(&path);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
     cx.update(|window, cx| editor.update(cx, |editor, cx| {
         editor.open_workspace_file(path.clone(), window, cx);
@@ -601,7 +601,7 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     ));
     fs::create_dir_all(&root).unwrap();
     // macOS 的 /var → /private/var 符号链接：树里与标签的路径都按 canonical 走。
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let alpha = root.join("alpha.md");
     let beta = root.join("beta.md");
     let text = super::external_changes::long_markdown(400);
@@ -737,7 +737,7 @@ async fn browsing_entries_keep_a_single_preview_tab(cx: &mut TestAppContext) {
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let home = root.join("home.md");
     let alpha = root.join("alpha.md");
     let beta = root.join("beta.md");
@@ -903,7 +903,7 @@ async fn the_dirty_dot_marks_the_active_tab(cx: &mut TestAppContext) {
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let alpha = root.join("alpha.md");
     fs::write(&alpha, "# alpha\n").unwrap();
     cx.on_quit({
@@ -1100,7 +1100,7 @@ async fn autosaving_a_background_dirty_tab_keeps_its_encoding_shape(cx: &mut Tes
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let first = root.join("first.md");
     let second = root.join("second.md");
     fs::write(&first, utf16_le_with_bom("第一段\n")).unwrap();
@@ -1185,7 +1185,7 @@ async fn autosaving_a_background_dirty_tab_keeps_crlf_line_endings(cx: &mut Test
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let first = root.join("first.md");
     let second = root.join("second.md");
     fs::write(&first, "第一段\r\n第二段\r\n").unwrap();
@@ -1264,7 +1264,7 @@ async fn saving_a_closed_tab_keeps_its_encoding_shape(cx: &mut TestAppContext) {
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let first = root.join("first.md");
     let second = root.join("second.md");
     fs::write(&first, utf16_le_with_bom("第一段\n")).unwrap();

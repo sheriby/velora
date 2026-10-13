@@ -25,8 +25,7 @@ async fn wikilink_creates_missing_file_at_workspace_root(cx: &mut TestAppContext
     });
     // The open path is canonicalized by set_workspace_root, so compare
     // against the canonical form of the created file.
-    let canonical_created = std::fs::canonicalize(&created_for_assert)
-        .expect("canonicalize created");
+    let canonical_created = crate::file_url::canonical_path(&created_for_assert);
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.file_path, Some(canonical_created.clone()));
     });
@@ -57,7 +56,7 @@ async fn wikilink_opens_existing_workspace_file(cx: &mut TestAppContext) {
         });
         window.draw(cx).clear();
     });
-    let canonical_existing = std::fs::canonicalize(&existing).expect("canonicalize existing");
+    let canonical_existing = crate::file_url::canonical_path(&existing);
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.file_path.as_deref(), Some(canonical_existing.as_path()));
     });

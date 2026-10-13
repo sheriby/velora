@@ -33,7 +33,7 @@ async fn an_external_edit_lands_in_the_view_with_the_same_size_and_mtime(
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     // 9 字节；替换文本 `# 改文\n` 同样 9 字节（每个汉字 3 字节）。
     fs::write(&path, "# 原文\n").unwrap();
@@ -105,7 +105,7 @@ async fn a_deleted_then_recreated_file_refreshes_the_view(cx: &mut TestAppContex
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "# 原文\n").unwrap();
     cx.on_quit({
@@ -166,7 +166,7 @@ async fn an_external_edit_does_not_clobber_unsaved_local_edits(cx: &mut TestAppC
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "# 原文\n").unwrap();
     cx.on_quit({
@@ -237,7 +237,7 @@ async fn an_unreadable_external_change_is_reported_and_rechecked(cx: &mut TestAp
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("note.md");
     fs::write(&path, "# 原文\n").unwrap();
     cx.on_quit({
@@ -311,7 +311,7 @@ async fn external_file_events_refresh_the_workspace_tree(cx: &mut TestAppContext
     // macOS 上 /var 是 /private/var 的符号链接：set_workspace_root 会把根
     // canonicalize，树里的路径全是 /private/var/...；测试断言用的路径必须
     // 与之同源，否则 path == 断言永远失败。
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let existing = root.join("a.md");
     fs::write(&existing, "# a\n").unwrap();
     cx.on_quit({
@@ -415,7 +415,7 @@ async fn reloading_an_externally_changed_document_keeps_source_mode_and_viewport
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("long.md");
     fs::write(&path, long_markdown(400)).unwrap();
     cx.on_quit({
@@ -507,7 +507,7 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("long.md");
     fs::write(&path, long_markdown(400)).unwrap();
     cx.on_quit({
@@ -595,7 +595,7 @@ async fn reloading_a_chunked_code_document_keeps_the_caret(cx: &mut TestAppConte
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(&root).unwrap();
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let path = root.join("big.rs");
     let source = || {
         (1..=1100)

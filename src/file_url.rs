@@ -1,5 +1,5 @@
 //! File URL parsing for platform open-file events, and the repository's only
-//! percent-decoding rule.
+//! rules for percent decoding and for Windows verbatim (`\\?\`) paths.
 //!
 //! 图片目标（`src/components/markdown/image.rs:resolve_image_source`）与导出锚点
 //! （`src/export/html.rs`）以前各自带一份 `%XX` 解码器，同一个写法在三个入口解出
@@ -92,6 +92,52 @@ pub(crate) fn local_path_from_file_url(destination: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
+/// Windows 的 verbatim 前缀的口径（见 [`strip_verbatim_prefix`]）。
+///
+/// `canonicalize` + 去前缀合成一处，是因为两件事总是要一起做：解析 `.`/软链要靠前者，
+/// 落到状态与界面里要用后者。丢掉前缀不会丢掉长路径能力——大于 MAX_PATH 时 `std` 自己
+/// 会临时拼上 verbatim 前缀（`std::sys::path` 内部做的），调用方不必操心。
+pub(crate) fn canonical_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    strip_verbatim_prefix(&std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+/// 去掉 Windows 的 verbatim 前缀，还原成用户认得的写法。
+///
+/// `std::fs::canonicalize` 在 Windows 上返回 `\\?\C:\Users\…`（UNC 是
+/// `\\?\UNC\server\share\…`）。这个前缀是给 Win32 绕过 MAX_PATH 与规范化用的，
+/// 不该出现在最近列表、会话文件或标签标题里——「打开最近」整列 `\\?\` 就是这么来的。
+/// 只剥前缀：`\\?\C:\a` 与 `\\?\UNC\server\share` 剥完都仍是同一条路径，可用。
+///
+/// 非 Windows 平台与不带前缀的路径原样返回（判断只此一处，别在调用点再写一遍）。
+pub(crate) fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let Some(text) = path.to_str() else {
+        // 非法 UTF-8 的路径（Windows 上可能出现）没法安全剥前缀，原样留着。
+        return path.to_path_buf();
+    };
+    let Some(rest) = text.strip_prefix(r"\\?\") else {
+        return path.to_path_buf();
+    };
+    // UNC：`\\?\UNC\server\share\…` → `\\server\share\…`。
+    if rest
+        .get(..4)
+        .is_some_and(|head| head.eq_ignore_ascii_case("UNC\\"))
+    {
+        return PathBuf::from(format!(r"\\{}", &rest[4..]));
+    }
+    // 盘符：`\\?\C:\…` → `C:\…`。没盘符的 verbatim 路径（`\\?\Volume{…}\`）剥完
+    // 就不再是绝对路径了，宁可不剥——它还不到用户眼前，但至少能用。
+    let is_drive = matches!(
+        rest.as_bytes(),
+        [letter, b':', b'\\', ..] if letter.is_ascii_alphabetic()
+    );
+    if is_drive {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// 唯一的 percent 解码：`%XX` 还原成对应字节。非法转义（`%` 后面不跟两个十六进制
 /// 数字，含串尾的裸 `%`）按字面保留——`assets/100% done.png` 是真实存在的文件名，
 /// 把它改坏就找不到文件了。解码结果不是合法 UTF-8 时返回 `None`。
@@ -163,9 +209,11 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_file_url, percent_decode, percent_decode_or_raw, url_scheme};
+    use super::{
+        parse_file_url, percent_decode, percent_decode_or_raw, strip_verbatim_prefix, url_scheme,
+    };
     use crate::file_url::strip_file_scheme_prefix;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parses_file_url_with_spaces() {
@@ -257,5 +305,37 @@ mod tests {
         // 非 file 的 scheme 与无 scheme 都不动原文。
         assert_eq!(strip_file_scheme_prefix("note:backup.png"), None);
         assert_eq!(strip_file_scheme_prefix("assets/a.png"), None);
+    }
+
+    #[test]
+    fn strips_the_windows_verbatim_prefix() {
+        // canonicalize 在 Windows 上给的两种形态：盘符与 UNC。
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\C:\Users\me\notes")),
+            PathBuf::from(r"C:\Users\me\notes")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\UNC\server\share\notes")),
+            PathBuf::from(r"\\server\share\notes")
+        );
+        // 已是正常写法、以及 Unix 路径：原样返回，不动字节。
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"C:\Users\me\notes")),
+            PathBuf::from(r"C:\Users\me\notes")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new("/Users/me/notes")),
+            PathBuf::from("/Users/me/notes")
+        );
+        // 剥完没内容的（光秃秃的前缀）、以及没有盘符的 volume 路径：原样留着，
+        // 不能交出空路径或相对路径。
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\")),
+            PathBuf::from(r"\\?\")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\Volume{9f2c}\notes")),
+            PathBuf::from(r"\\?\Volume{9f2c}\notes")
+        );
     }
 }

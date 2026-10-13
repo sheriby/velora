@@ -1016,7 +1016,7 @@ fn isolated_doc_dir(cx: &mut TestAppContext, test_name: &str) -> PathBuf {
     fs::create_dir_all(&root).expect("create document dir");
     // macOS 上 /var ↔ /private/var 是两个名字：不 canonicalize，编辑器算出的路径与
     // 断言里的对不上，临时残留也就扫不准。
-    let root = fs::canonicalize(&root).unwrap_or(root);
+    let root = crate::file_url::canonical_path(&root);
     let cleanup = root.clone();
     cx.on_quit(move || {
         let _ = fs::remove_dir_all(cleanup);

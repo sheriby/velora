@@ -514,7 +514,7 @@ async fn unsaved_document_resolves_relative_links_against_workspace_root(
     let first_block = editor.read_with(cx, |editor, _cx| {
         editor.document.visible_blocks()[0].entity.clone()
     });
-    let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
+    let canonical_root = crate::file_url::canonical_path(&root);
     first_block.read_with(cx, |block, _cx| {
         assert_eq!(
             block.image_base_dir(),
@@ -534,7 +534,7 @@ async fn unsaved_document_resolves_relative_links_against_workspace_root(
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(
             editor.file_path.as_deref(),
-            Some(fs::canonicalize(&linked).expect("canonicalize linked").as_path()),
+            Some(crate::file_url::canonical_path(&linked).as_path()),
             "相对链接应按工作区根解析并打开目标文件"
         );
     });

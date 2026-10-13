@@ -921,7 +921,7 @@ const ICO_PREVIEW_BYTES: &[u8] = include_bytes!(concat!(
 fn image_preview_fixture_root(cx: &mut TestAppContext) -> PathBuf {
     let root = temp_fixture_dir().join(format!("image-preview-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).expect("创建图片预览夹具目录");
-    let root = fs::canonicalize(root).expect("规范化夹具目录");
+    let root = crate::file_url::canonical_path(root);
     cx.on_quit({
         let root = root.clone();
         move || fs::remove_dir_all(root).expect("清理图片预览夹具")

@@ -306,7 +306,8 @@ impl Editor {
         {
             let local_path = match &runtime.resolved_source {
                 crate::components::markdown::image::ImageResolvedSource::Local(path) => Some(
-                    std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
+                    // 图片菜单里的「复制路径」跟最近列表一样不能带 `\\?\`（Windows）。
+                    crate::file_url::canonical_path(path),
                 ),
                 crate::components::markdown::image::ImageResolvedSource::Remote(_) => None,
             };

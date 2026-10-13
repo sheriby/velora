@@ -29,7 +29,7 @@ fn scratch_dir(cx: &mut TestAppContext, tag: &str) -> PathBuf {
     fs::create_dir_all(&candidate).expect("建临时目录");
     // macOS 的临时目录是软链接（/var → /private/var）：不收敛一遍，算出来的相对路径
     // 与文件真正的目录不同，图片行会写成 `../../var/...`。
-    let dir = candidate.canonicalize().expect("收敛临时目录");
+    let dir = crate::file_url::canonical_path(&candidate);
     let cleanup = dir.clone();
     cx.on_quit(move || {
         let _ = fs::remove_dir_all(&cleanup);
