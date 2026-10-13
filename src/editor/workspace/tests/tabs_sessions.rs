@@ -23,6 +23,116 @@ pub(super) fn review_workspace_fixture(cx: &mut TestAppContext, label: &str) -> 
 }
 
 #[gpui::test]
+async fn review_save_and_close_defers_while_an_ime_composition_is_open(
+    cx: &mut TestAppContext,
+) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "close-ime");
+    let path = root.join("notes.md");
+    fs::write(&path, "旧\n").unwrap();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+        })
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    block.update(cx, |block, _| block.selected_range = 0..0);
+    block.update_in(cx, |block, window, cx| {
+        block.replace_and_mark_text_in_range(None, "新", Some(1..1), window, cx)
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.snapshot_current_document(cx);
+            assert!(editor.document_dirty, "夹具前提：组合已经把这一页改脏");
+            let closing = editor.workspace.open_documents.clone();
+            assert!(closing.iter().any(|tab| tab.dirty), "夹具前提：这一页的标签是脏的");
+            editor.finish_close_workspace_tabs(&closing, true, window, cx);
+        })
+    });
+
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "旧\n",
+        "组合没落定就不该写盘：写出去的是半个词"
+    );
+    assert!(
+        editor.read_with(cx, |editor, _| editor
+            .workspace
+            .open_documents
+            .iter()
+            .any(|tab| tab.path == path)),
+        "延后保存时标签得留着，不能让用户以为已经关掉了"
+    );
+}
+
+/// 「保存并关闭」必须写**当前缓冲区**，而不是弹框那一刻的标签快照。
+///
+/// 模态自身不抢焦点（`modal.rs` 明写：不然会跟编辑器的焦点岛打架），拦截器也只吃
+/// Enter/Esc——框开着用户还能继续打字。用快照落盘再清脏标记、删恢复快照，磁盘就永远
+/// 落后于缓冲区：退出或崩溃即丢字。
+#[gpui::test]
+async fn review_save_and_close_writes_the_buffer_typed_while_the_dialog_was_open(
+    cx: &mut TestAppContext,
+) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "close-live-buffer");
+    let path = root.join("notes.md");
+    fs::write(&path, "旧\n").unwrap();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    let recovery = editor.read_with(cx, |editor, _| editor.recovery_id);
+    cx.cx
+        .on_quit(move || crate::config::remove_recovery_snapshot(recovery).unwrap());
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(root.clone(), cx);
+            editor.open_workspace_file(path.clone(), window, cx);
+            let block = editor.document.first_root().unwrap().clone();
+            block.update(cx, |block, _| block.focus_handle.focus(window));
+        })
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    cx.simulate_input("甲");
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    // 点标签 X：先快照、再弹「保存并关闭」。
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.close_workspace_tabs(&[path.clone()], window, cx);
+            assert!(editor.modal_is_open(), "脏标签关闭该先问一句");
+        })
+    });
+    // 框开着：继续打字（模态不抢焦点，输入直接落到缓冲区）。
+    cx.simulate_input("乙");
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let live = editor.read_with(cx, |editor, _| editor.buffer.text());
+    assert!(live.contains("甲乙"), "夹具前提：框开着时新打的字进了缓冲区：{live:?}");
+
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.dismiss_modal(0, window, cx))
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        live,
+        "磁盘该是缓冲区当前内容：拿弹框前的快照落盘就把这一步打的字丢在盘外了"
+    );
+}
+
+#[gpui::test]
 async fn review_workspace_replace_preserves_all_supported_file_shapes(cx: &mut TestAppContext) {
     init_review_workspace_app(cx);
     let root = review_workspace_fixture(cx, "replace-shape");

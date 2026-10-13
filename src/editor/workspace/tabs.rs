@@ -829,8 +829,29 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if save_first {
+            if self.has_marked_document_text(cx) {
+                // 组合还没落定：这一趟不写盘也不关标签，等它结束（收尾那一步会按
+                // `pending_save` 再存一次）。与其余四个保存入口同一道闸门——拿正在
+                // 组合的正文落盘，写出去的是半个词。
+                self.pending_save = true;
+                cx.notify();
+                return;
+            }
             for tab in closing {
                 if !tab.dirty {
+                    continue;
+                }
+                // 活动文档的正文在缓冲区里，而 `closing` 是弹框那一刻的标签快照：
+                // 模态不抢焦点，用户能边打字边点「保存并关闭」，拿快照落盘就把那一
+                // 步之后打的字丢在盘外（脏标记与恢复快照又被清掉，退出即丢字）。
+                // 这一页走与其他保存入口同一条路：当前缓冲区字节 + 版本闸门 + 提交
+                // 前现势校验。
+                if self.file_path.as_ref() == Some(&tab.path)
+                    && self.recovery_id == tab.recovery_id
+                {
+                    if !self.save_to_existing_path(&tab.path, window, cx) {
+                        return;
+                    }
                     continue;
                 }
                 let bytes = match crate::editor::persistence::tab_write_bytes(&tab.path, &tab.markdown, tab.file_version) {
