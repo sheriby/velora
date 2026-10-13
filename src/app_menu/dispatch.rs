@@ -50,7 +50,7 @@ pub(crate) fn dispatch_menu_action_for_editor(
     } else if action.as_any().is::<OpenPreferences>() {
         open_preferences_window(cx);
     } else if let Some(action) = action.as_any().downcast_ref::<OpenRecentFile>() {
-        open_recent_file_with_error_window(cx, PathBuf::from(&action.path), current_window);
+        open_recent_path_in_editor(cx, PathBuf::from(&action.path), &target, window);
     } else if action.as_any().is::<NoRecentFiles>() {
     } else if action.as_any().is::<AddLanguageConfig>() {
         prompt_and_import_language_config_with_error_window(cx, current_window);

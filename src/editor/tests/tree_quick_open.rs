@@ -708,3 +708,110 @@ async fn workspace_root_is_kept_in_the_form_the_user_recognizes(cx: &mut TestApp
     });
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// 「打开最近」点一条工作区：就该就地换工作区（同一个窗口里侧栏跟着换）。
+#[gpui::test]
+async fn a_recent_workspace_entry_switches_the_workspace(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root_a = std::env::temp_dir().join(format!("velora-recent-a-{}", uuid::Uuid::new_v4()));
+    let root_b = std::env::temp_dir().join(format!("velora-recent-b-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root_a).expect("create a");
+    std::fs::create_dir_all(&root_b).expect("create b");
+    std::fs::write(root_a.join("a.md"), "# a\n").expect("write a");
+    std::fs::write(root_b.join("b.md"), "# b\n").expect("write b");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root_a.clone(), cx));
+    cx.run_until_parked();
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.workspace.root.clone()),
+        Some(crate::file_url::canonical_path(&root_a))
+    );
+
+    // 菜单条目携带的是标签字符串（全路径），点下去就走这条派发。
+    let label = crate::file_url::canonical_path(&root_b)
+        .to_string_lossy()
+        .into_owned();
+    cx.update(|window, cx| {
+        crate::app_menu::dispatch_menu_action_for_editor(
+            &crate::components::OpenRecentFile { path: label },
+            &editor.downgrade(),
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.root,
+            Some(crate::file_url::canonical_path(&root_b)),
+            "点最近工作区应当就地换根"
+        );
+        assert!(
+            !editor.workspace_text_files().is_empty(),
+            "换了根要重新列出文件：{:?}",
+            editor.workspace_text_files()
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(root_a);
+    let _ = std::fs::remove_dir_all(root_b);
+}
+
+/// 同一条派发路上的两条分支：点最近**文件**要开成标签，点已经不在的条目要给出提示。
+/// 两者以前都栽在同一个坑里——点击处理器里按窗口句柄再 update，窗口已被 take 出表，
+/// `let _ =` 把「window not found」吞掉，点了什么都不发生。
+#[gpui::test]
+async fn a_recent_entry_opens_a_file_and_reports_a_missing_one(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-recent-file-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("create root");
+    let note = root.join("note.md");
+    std::fs::write(&note, "# note\n").expect("write note");
+    let missing = root.join("gone.md");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    cx.run_until_parked();
+
+    let note_label = crate::file_url::canonical_path(&note)
+        .to_string_lossy()
+        .into_owned();
+    cx.update(|window, cx| {
+        crate::app_menu::dispatch_menu_action_for_editor(
+            &crate::components::OpenRecentFile { path: note_label.clone() },
+            &editor.downgrade(),
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.file_path.as_deref(),
+            Some(crate::file_url::canonical_path(&note).as_path()),
+            "点最近文件应当开成标签"
+        );
+    });
+
+    cx.update(|window, cx| {
+        crate::app_menu::dispatch_menu_action_for_editor(
+            &crate::components::OpenRecentFile {
+                path: missing.to_string_lossy().into_owned(),
+            },
+            &editor.downgrade(),
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(
+        editor.read_with(cx, |editor, _| editor.modal_is_open()),
+        "条目已经不在时要给出提示，不能静默什么都不做"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}

@@ -680,21 +680,9 @@ fn open_recent_file_with_error_window(
         return;
     }
     if !path.is_file() {
-        if let Err(err) = remove_recent_file(&path) {
-            eprintln!("failed to remove missing recent file: {err}");
-        }
-        install_menus(cx);
-        cx.refresh_windows();
-        let strings = cx.global::<I18nManager>().strings().clone();
-        let detail = strings
-            .recent_file_missing_message_template
-            .replace("{path}", &path.to_string_lossy());
-        show_window_prompt(
-            error_window,
-            &strings.recent_file_missing_title,
-            &detail,
-            cx,
-        );
+        let (title, detail) = missing_recent_path_message(cx, &path);
+        drop_missing_recent_path(cx, &path);
+        show_window_prompt(error_window, &title, &detail, cx);
         return;
     }
 
@@ -715,6 +703,59 @@ fn open_recent_file_with_error_window(
             .clone();
         show_window_prompt(error_window, &title, &err.to_string(), cx);
     }
+}
+
+/// 窗内菜单（Windows / Linux，以及 macOS 上的应用内菜单栏）点「打开最近」的落点。
+///
+/// 调用方手里已经有编辑器实体与窗口，所以**不能**再走 `open_recent_file_with_error_window`
+/// 那条「按窗口句柄查找 + `WindowHandle::update`」的路：点击处理器跑在该窗口自己的事件
+/// 派发里，那一刻窗口已被 take 出应用状态，按句柄再查只会拿到「window not found」，
+/// 被 `let _ =` 吞下去就是「点了没反应」（报修：最近工作区点了不切换）。
+pub(crate) fn open_recent_path_in_editor(
+    cx: &mut App,
+    path: PathBuf,
+    editor: &WeakEntity<Editor>,
+    window: &mut Window,
+) {
+    if path.is_dir() {
+        if let Err(error) = editor.update(cx, |editor, cx| editor.set_workspace_root(path, cx)) {
+            eprintln!("无法切换到最近的工作区：{error}");
+        }
+        return;
+    }
+    if !path.is_file() {
+        let (title, detail) = missing_recent_path_message(cx, &path);
+        drop_missing_recent_path(cx, &path);
+        if let Err(error) = editor.update(cx, |editor, cx| {
+            editor.show_message_modal(title, detail, cx);
+        }) {
+            eprintln!("无法提示最近条目已不在：{error}");
+        }
+        return;
+    }
+    let opened = editor.update(cx, |editor, cx| editor.open_workspace_file(path, window, cx));
+    if let Err(error) = opened {
+        eprintln!("无法打开最近的文件：{error}");
+    }
+}
+
+/// 最近条目已经不在磁盘上：清掉它并给出去向（提示由调用方决定用哪条路弹）。
+fn drop_missing_recent_path(cx: &mut App, path: &Path) {
+    if let Err(err) = remove_recent_file(path) {
+        eprintln!("failed to remove missing recent file: {err}");
+    }
+    install_menus(cx);
+    cx.refresh_windows();
+}
+
+fn missing_recent_path_message(cx: &App, path: &Path) -> (String, String) {
+    let strings = cx.global::<I18nManager>().strings().clone();
+    (
+        strings.recent_file_missing_title.clone(),
+        strings
+            .recent_file_missing_message_template
+            .replace("{path}", &path.to_string_lossy()),
+    )
 }
 
 fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindowHandle>) {
