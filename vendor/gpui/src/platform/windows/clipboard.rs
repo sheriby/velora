@@ -18,7 +18,9 @@ use windows::Win32::{
 };
 use windows_core::PCWSTR;
 
-use crate::{ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, hash};
+use crate::{
+    ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, cf_html_fragment, hash,
+};
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
@@ -26,6 +28,8 @@ const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 // Clipboard formats
 static CLIPBOARD_HASH_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal text hash")));
+static CLIPBOARD_HTML_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| register_clipboard_format(windows::core::w!("HTML Format")));
 static CLIPBOARD_METADATA_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal metadata")));
 static CLIPBOARD_SVG_FORMAT: LazyLock<u32> =
@@ -259,7 +263,7 @@ where
         if let Some(entry) = f(*item_format) {
             return Some(ClipboardItem {
                 entries: vec![entry],
-                html: None,
+                html: read_html_from_clipboard(),
             });
         }
     }
@@ -279,6 +283,16 @@ where
         }
     }
     None
+}
+
+/// Reads the `HTML Format` flavor. Browsers and Word write it next to the
+/// plain text, so a pasted table keeps its structure; the payload is `CF_HTML`
+/// framing around the selected markup.
+fn read_html_from_clipboard() -> Option<String> {
+    let payload = with_clipboard_data(*CLIPBOARD_HTML_FORMAT, |data_ptr, size| {
+        unsafe { std::slice::from_raw_parts(data_ptr as *const u8, size) }.to_vec()
+    })?;
+    cf_html_fragment(&payload)
 }
 
 fn read_string_from_clipboard() -> Option<ClipboardEntry> {
