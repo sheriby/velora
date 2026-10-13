@@ -578,7 +578,7 @@ impl Editor {
                     marker.content_indent_columns,
                 ));
                 let consumed = collect_display_math_region(&region, 0);
-                let markdown = dedent_math_region(&region[..consumed]);
+                let markdown = crate::components::latex::dedent_math_region(&region[..consumed]);
                 parse_display_math_source(&markdown).is_some().then_some((markdown, consumed))
             } else {
                 None
@@ -814,7 +814,7 @@ impl Editor {
                             &block,
                             vec![math_or_raw_block(
                                 cx,
-                                dedent_math_region(&anchor_dedented[..consumed]),
+                                crate::components::latex::dedent_math_region(&anchor_dedented[..consumed]),
                             )],
                             lines,
                             origins,

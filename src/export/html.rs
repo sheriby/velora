@@ -861,6 +861,7 @@ fn is_escaped_ascii(line: &str, index: usize) -> bool {
 /// 事件流分发描述：先按不可变借用取出需要的信息，再调用会改 self 的方法，
 /// 避免 match  scrutinee 借用与 &mut self 冲突。
 enum Dispatch {
+    IndentedCode,
     Mermaid,
     BlockQuote(Option<BlockQuoteKind>),
     Paragraph,
@@ -907,6 +908,56 @@ impl<'a> ExportRewriter<'a> {
         }
     }
 
+    /// 缩进代码块里其实是显示公式时按公式渲染；不是就交回普通那条路（返回 `None`）。
+    ///
+    /// 块模型认「任意缩进的 `$$…$$` 块」是公式（`components::latex::display_math_source_of_region`：
+    /// 人们常把公式写在 4 空格缩进里，Typora 粘过来的文档尤其多），而 pulldown 先把它读成
+    /// **缩进代码块**——不在这里接住，同一段 `$$` 界面是公式、导出是
+    /// `<pre><code>$$…$$</code></pre>`。
+    fn rewrite_indented_math_block(
+        &self,
+        start: usize,
+        output: &mut Vec<Event<'a>>,
+    ) -> Option<usize> {
+        let end = self.group_end(start, |event| matches!(event, Event::End(TagEnd::CodeBlock)));
+        let mut content_start = usize::MAX;
+        let mut content_end = 0usize;
+        for (event, range) in &self.events[start..end] {
+            if matches!(event, Event::Text(_)) {
+                content_start = content_start.min(range.start);
+                content_end = content_end.max(range.end);
+            }
+        }
+        if content_start > content_end {
+            return None;
+        }
+        let body = self.body.get(content_start..content_end)?;
+        let lines = body
+            .trim_matches('\n')
+            .split('\n')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let (_, source) = crate::components::latex::display_math_source_of_region(&lines)?;
+        match render_latex_to_svg(
+            &source.body,
+            self.theme.colors.text_default,
+            display_math_font_size(self.theme.typography.text_size),
+            crate::components::latex::MathLayout::Display,
+        ) {
+            Ok(svg) => output.push(Event::Html(CowStr::from(format!(
+                "<div class=\"vlt-math\">{svg}</div>"
+            )))),
+            Err(error) => {
+                eprintln!("export: 公式渲染失败: {error}");
+                output.push(Event::Html(CowStr::from(format!(
+                    "<pre class=\"vlt-math-error\">{}</pre>",
+                    css::escape_html(body)
+                ))));
+            }
+        }
+        Some(end - start)
+    }
+
     fn rewrite(mut self) -> Vec<Event<'a>> {
         let mut output = Vec::new();
         let mut index = 0usize;
@@ -917,6 +968,7 @@ impl<'a> ExportRewriter<'a> {
                 {
                     Dispatch::Mermaid
                 }
+                Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)) => Dispatch::IndentedCode,
                 Event::Start(Tag::BlockQuote(kind)) => Dispatch::BlockQuote(*kind),
                 Event::Start(Tag::Paragraph) => Dispatch::Paragraph,
                 Event::Start(Tag::Heading { level, .. }) => Dispatch::Heading(*level),
@@ -927,6 +979,12 @@ impl<'a> ExportRewriter<'a> {
             };
             let consumed = match dispatch {
                 Dispatch::Mermaid => self.rewrite_mermaid_block(index, &mut output),
+                Dispatch::IndentedCode => self
+                    .rewrite_indented_math_block(index, &mut output)
+                    .unwrap_or_else(|| {
+                        output.extend(self.transform_event(self.events[index].0.clone()));
+                        1
+                    }),
                 Dispatch::BlockQuote(kind) => self.rewrite_blockquote(index, kind, &mut output),
                 Dispatch::Paragraph => self.rewrite_paragraph(index, &mut output),
                 Dispatch::Heading(level) => self.rewrite_heading(index, level, &mut output),

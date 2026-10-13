@@ -74,6 +74,69 @@ pub(crate) fn split_display_math_closing_line(line: &str) -> Option<(&str, &str)
     None
 }
 
+/// 一段块源码去掉公共缩进（Tab 按 4 列的下一档算，与解析器的列口径一致）。
+///
+/// 人们常把公式写在 4 空格缩进或列表项里（Typora 粘过来的文档尤其多），块模型认公式
+/// 之前要先按区域里**最少**的非空行缩进去缩进。这份账只此一处：导出在缩进代码块里
+/// 认出公式时也走它。
+fn strip_leading_columns(line: &str, columns: usize) -> Option<&str> {
+    if columns == 0 {
+        return Some(line);
+    }
+    if line.trim().is_empty() {
+        return Some("");
+    }
+    let mut consumed = 0usize;
+    for (index, ch) in line.char_indices() {
+        let after = index + ch.len_utf8();
+        match ch {
+            ' ' => consumed += 1,
+            '\t' => consumed += 4 - (consumed % 4),
+            _ => break,
+        }
+        if consumed >= columns {
+            return Some(&line[after..]);
+        }
+    }
+    None
+}
+
+pub(crate) fn dedent_math_region(region: &[String]) -> String {
+    let columns_of = |line: &str| {
+        let mut columns = 0usize;
+        for ch in line.chars() {
+            match ch {
+                ' ' => columns += 1,
+                '\t' => columns += 4 - (columns % 4),
+                _ => break,
+            }
+        }
+        columns
+    };
+    let indent = region
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| columns_of(line))
+        .min()
+        .unwrap_or(0);
+    region
+        .iter()
+        .map(|line| strip_leading_columns(line, indent).unwrap_or(line.as_str()).to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 区域里是不是一段显示公式：去掉公共缩进后交给 [`parse_display_math_source`]。
+///
+/// 块模型与导出共用这一处判据（`starts_display_math_block` 那条「≤3 空格」是行内语境
+/// 的口径，整块这一侧不限缩进）。交出（去缩进后的正文, 公式体）。
+pub(crate) fn display_math_source_of_region(
+    region: &[String],
+) -> Option<(String, DisplayMathSource)> {
+    let markdown = dedent_math_region(region);
+    parse_display_math_source(&markdown).map(|source| (markdown, source))
+}
+
 /// 把块级源码完整切成公式/文字分段；一个公式都识别不出来才返回 `None`。
 pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSegment>> {
     let trimmed = raw.trim_matches('\n');

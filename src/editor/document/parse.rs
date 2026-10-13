@@ -575,19 +575,8 @@ pub(crate) fn is_display_math_start_at_any_indent(line: &str) -> bool {
     line.trim_start().starts_with("$$")
 }
 
-/// 把公式块区域整体去掉公共缩进后拼成 Markdown 文本。
-///
-/// `parse_display_math_source` 只接受 ≤3 空格缩进的 `$$`，这里先按区域里**最少**的
-/// 非空行缩进去缩进，缩进 4 格以上的公式块也能识别。
-pub(crate) fn dedent_math_region(region: &[String]) -> String {
-    let indent = region
-        .iter()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| leading_indent_columns_and_bytes(line).0)
-        .min()
-        .unwrap_or(0);
-    dedent_lines(region, indent).join("\n")
-}
+
+
 
 pub(crate) fn collect_display_math_region(lines: &[String], start: usize) -> usize {
     // 两端都 trim：调用方可能带着任意缩进过来（`  $$` / `    $$`），

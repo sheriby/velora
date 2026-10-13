@@ -375,7 +375,7 @@ impl Editor {
                 // 围栏归结构，用户改不到定界符（见 `BlockRecord::math_body`）。
                 roots.push(math_body_or_raw_block(
                     cx,
-                    dedent_math_region(&lines[index..end]),
+                    crate::components::latex::dedent_math_region(&lines[index..end]),
                 ));
                 spans.push(index..end);
                 index = end;

@@ -59,6 +59,31 @@ mod tests {
     /// 而 6f7253a 把导出改成浏览器语义——块尾按栈自动补闭标签。同一句语法于是两面
     /// 分叉：界面显示字面 `text <strong>open`，导出把后面的字染成粗体。契约取阅读视图
     /// 那一侧：导出是「所见」的另一种载体，不该凭空补出用户没写的作用域。
+
+    /// 缩进四格的 `$$…$$` 与顶格的一样是公式——与阅读视图同一判据。
+    ///
+    /// 块模型认「任意缩进的 `$$` 块」是公式（Typora 粘过来的文档常这样写），pulldown 先
+    /// 把它读成缩进代码块：不接住的话，同一段 `$$` 界面是公式、导出是
+    /// `<pre><code>$$…$$</code></pre>`（评审 E1）。
+    #[test]
+    fn review_indented_display_math_exports_as_math_like_the_reading_view() {
+        for source in ["$$x^2$$", "  $$x^2$$", "    $$x^2$$", "\t$$x^2$$"] {
+            let html = render_html(source, &Theme::default_theme(), "公式");
+            assert!(
+                body_only(&html).contains("class=\"vlt-math\""),
+                "{source:?} 该按公式导出：{}",
+                body_only(&html)
+            );
+        }
+        // 围栏代码块里的 `$$` 仍是代码（用户明说是代码）。
+        let html = render_html("```text\n$$x$$\n```", &Theme::default_theme(), "公式");
+        assert!(
+            body_only(&html).contains("language-text"),
+            "{}",
+            body_only(&html)
+        );
+    }
+
     #[test]
     fn review_unclosed_inline_html_exports_literally_like_the_reading_view() {
         let html = render_html("text <strong>open\n\nnext", &Theme::default_theme(), "范围");
