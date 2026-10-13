@@ -1,11 +1,11 @@
 ---
 name: velora-code-review
-description: 对 Velora(GPUI / Rust 桌面 Markdown 编辑器)的某个固定点做缺陷导向的全量或增量代码评审。四个维度按优先级并行:①仓库既有不变量与 GPUI 契约、②正确性/边界/并发、③安全、④性能与效率。用 git worktree 隔离该 tag,按模块切给并行只读子代理,主线程验证去噪后聚合成 docs/reviews/ 下的一份 Markdown 报告。只评审、不改代码。Use when 用户说"review 一下这个 tag/版本""帮我看看某个版本的全部代码""发版前做个质量关口""对比两个版本审一遍"。Triggers include "code review", "评审", "审一遍", "看看这个版本/tag 的代码"。
+description: 仅用于 Velora 的整个 Git tag 全量评审，或两个 Git tag 之间提交的增量评审。按模块并行只读评审，验证后生成 docs/reviews/ 报告。触发示例：“review v0.2.8 整个 tag”“review v0.2.7..v0.2.8 之间的提交”。不用于单个 commit（包括 HEAD）、分支、未提交改动或未指定 tag 范围的普通 code review；“review”“评审”“发版前质量关口”等泛词本身不触发。
 ---
 
 # Velora 代码评审(缺陷导向)
 
-输入:一个固定点(tag / commit / 分支)与模式(全量树或两 tag 之间的 diff)。产出:`docs/reviews/` 下一份分维度、分级、带验证状态的 Markdown 报告。**评审只读,不改代码**;修复交由 `velora-tdd`。
+输入:一个 Git tag（评审整棵树），或两个 Git tag（评审两者之间的提交与 diff）。产出:`docs/reviews/` 下一份分维度、分级、带验证状态的 Markdown 报告。**评审只读,不改代码**;修复交由 `velora-tdd`。
 
 **缺陷导向**:风格、命名、格式交给 formatter 与 CI,人工评审只覆盖机器查不出的问题——逻辑错误、边界、并发竞态、资源泄漏、安全、性能悬崖,以及本仓库高发的「同一处口径被抄成第二份」。不导致崩溃、错误结果、数据丢失、安全事故或性能劣化的,不进报告。
 
@@ -13,17 +13,20 @@ description: 对 Velora(GPUI / Rust 桌面 Markdown 编辑器)的某个固定点
 
 ## 0 固定点与隔离
 
-固定点由用户给定(`vX.Y.Z` / commit / 分支 / `HEAD~5`);未指定则询问。
+先判断用户请求的范围：只有整个 tag 或两个 tag 之间的提交评审适用本技能。单个 commit（包括 `HEAD` / `HEAD~5` / SHA）、分支及未提交改动按普通代码评审处理，不套用本技能的 worktree、并行子代理或报告流程；即使该 commit 恰好有 tag，也不能扩大范围。
+
+用户已明确要求 tag 评审但漏给 tag 名时，再询问具体 tag；普通 review 请求不要追问 tag。每个输入都必须确认为 Git tag，再解析为固定 commit：
 
 ```bash
-git rev-parse <固定点>                       # 坏引用在此即失败
-git log <固定点> -1 --format='%H %s'
+git show-ref --verify refs/tags/<tag>
+git rev-parse 'refs/tags/<tag>^{commit}'
+git log refs/tags/<tag> -1 --format='%H %s'
 ```
 
 **不在当前工作树 checkout 该 tag**:工作树可能有未提交改动,`git checkout <tag>` 会破坏它们。改用隔离 worktree,置于工作区内 `.review/worktrees/<tag>`;放在工作区外会使子代理的 Read/Grep 越界并触发权限中断。
 
 ```bash
-git worktree add --detach .review/worktrees/<tag> <固定点>
+git worktree add --detach .review/worktrees/<tag> 'refs/tags/<tag>^{commit}'
 ```
 
 - 评审一律读 `.review/worktrees/<tag>/` 下的树,不读主工作树 `src/`(可能已被改动)。
@@ -32,9 +35,9 @@ git worktree add --detach .review/worktrees/<tag> <固定点>
 
 **不跑 `cargo build` 或全量 `cargo test`**:评审只读,按 AGENTS.md §4 不涉门禁,且 `cargo build` 为分钟级。仅当某条发现取决于能否编译或某测试红绿时,跑单条 `cargo test --bin velora <名字>`。
 
-**模式**:
-- **Diff**(存在上一个 release tag 时默认):审 `git diff <prev>..<tag>`,`prev` 取 `git describe --tags --abbrev=0 --exclude='*-beta*' <tag>^`。只看增量,读足上下文。
-- **全量**(用户要求「全部代码」或无上一个 tag):审 `<tag>` 处整棵树。约 152k 行 / 273 文件,须先做风险排序、分块、并行子代理。
+**模式由用户指定的 tag 范围决定**:
+- **全量**（一个 tag）：审 `<tag>` 处整棵树，不自动改为与上一 release tag 的 diff。约 152k 行 / 273 文件,须先做风险排序、分块、并行子代理。
+- **Diff**（两个 tag）：审用户给定的 `<prev>..<tag>` 之间的提交与 `git diff refs/tags/<prev>..refs/tags/<tag>`。只看增量,读足上下文，不自动选取或替换端点。
 
 **报告写入主工作树**,而非 detached worktree(后者随 `git worktree remove` 一并删除)。`docs/reviews/` 需先 `mkdir -p`。路径:全量 `docs/reviews/vX.Y.Z.md`;diff `docs/reviews/vA.B.C..vX.Y.Z.md`。
 
@@ -163,15 +166,14 @@ git worktree add --detach .review/worktrees/<tag> <固定点>
 
 - 全量:`review tag vX.Y.Z`(或「审一遍 vX.Y.Z 全部代码」)→ top-N 模块,报告 `docs/reviews/vX.Y.Z.md`。
 - 增量:`review vA.B.C..vX.Y.Z` → diff 模式,报告 `docs/reviews/vA.B.C..vX.Y.Z.md`。
-- 无 tag 或要求「整个仓库」:全量模式审 top-10 风险块,明确告知跳过项。
-- 发版前质量关口:配合 `velora-release`,在打 tag 前对候选 commit 跑增量评审。
+- 不触发示例：`review HEAD 这个修复提交`、`review abc1234`、`review dev 分支`、`review 未提交改动`、`review 整个仓库`、未指定 tag 范围的「发版前质量关口」。这些请求按普通代码评审处理。
 
 ## 6 检查清单
 
 - [ ] 用工作区内 worktree(`.review/worktrees/<tag>`)隔离该 tag,未碰主工作树改动,未 `git add` `.review/`
-- [ ] 坏引用已在第 0 步拦截
+- [ ] 请求范围是整个 tag 或两个 tag 之间的提交；每个端点均已确认为 Git tag，坏引用已在第 0 步拦截
 - [ ] 全程未跑 `cargo build`/全量测试;需要时仅跑单条 `cargo test`
-- [ ] 模式与 `prev` tag 判定正确;报告写入主工作树 `docs/reviews/`(非将被删的 worktree),已 `mkdir -p docs/reviews`
+- [ ] 一个 tag 按全量评审，两个 tag 按用户给定的范围增量评审；报告写入主工作树 `docs/reviews/`(非将被删的 worktree),已 `mkdir -p docs/reviews`
 - [ ] 子代理均只读、brief 自包含、要求证据 + confidence、限 ~10 条产出
 - [ ] 维度一已查(口径单一性 + GPUI 重入/借还锁/Task/unwrap),未止于通用四项
 - [ ] 维度二走了 Markdown 往返保真清单,对照 `fixtures/regressions/*` + `author_report.rs` 核三个 surface 判据单一
