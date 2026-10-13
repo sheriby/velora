@@ -135,6 +135,9 @@ impl Render for Editor {
                 plan
             }
         };
+        // 交还阅读现场要在行计划建好之后、读偏移之前：锚点行靠计划的 stride 前缀
+        // 换算成像素，而且换算结果这一帧就要进 `current_scroll_y`。
+        self.apply_pending_scroll_restore(cx);
         let rows = &rendered_row_plan.rows;
         // The focused row is always kept mounted so its caret is not blurred; a
         // table cell maps to its containing table block's row. 跳转滚动进行中

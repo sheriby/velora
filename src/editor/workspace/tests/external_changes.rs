@@ -539,6 +539,9 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
         block.update(cx, |block, _cx| block.selected_range = 3..3);
     });
     let offset_before = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
+    let anchor_before = editor.read_with(cx, |editor, cx| {
+        editor.capture_document_view(cx).row_anchor
+    });
     let caret_before = editor.read_with(cx, |editor, cx| {
         editor.capture_source_selection_snapshot(cx)
     });
@@ -560,16 +563,19 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
         cx.update(|window, cx| window.draw(cx).clear());
     }
 
-    editor.read_with(cx, |editor, _| {
+    editor.read_with(cx, |editor, cx| {
         assert_eq!(
             editor.view_mode,
             crate::editor::ViewMode::Rendered,
             "外部重载不该改动视图模式"
         );
+        // 比行锚点，不比 `scroll_y`：行高逐帧量出来，没量到的行按最小行高估，
+        // 同一段的像素位置随「此刻量到上面多少行」变。实测这篇重载前上面 50 行量过、
+        // 重载后 69 行，同一行的像素位置就从 -3000 变成 -2424（见 `ScrollRowAnchor`）。
         assert_eq!(
-            editor.scroll_handle.offset().y,
-            offset_before,
-            "外部重载把视口弹回了文档顶部"
+            editor.capture_document_view(cx).row_anchor,
+            anchor_before,
+            "外部重载把阅读位置挪走了"
         );
     });
     let caret_after = editor.read_with(cx, |editor, cx| {

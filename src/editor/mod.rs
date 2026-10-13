@@ -96,6 +96,8 @@ pub struct Editor {
     /// center instead of the minimal scroll-into-view adjustment.
     pending_scroll_center_into_view: bool,
     pending_scroll_recheck_after_layout: bool,
+    /// 标签切换要交还的阅读现场（按行锚定），摆到位之前一直挂着。
+    pub(super) pending_scroll_restore: Option<PendingScrollRestore>,
     pending_save: bool,
     pending_save_as: bool,
     pending_window_edited: bool,
@@ -473,7 +475,38 @@ pub(crate) struct DocumentView {
     /// 存 `f32` 而不是 `Pixels`：`Pixels` 没有 `Debug`，标签要能打印。代价是这一项
     /// 只能比到 `PartialEq`——浮点相等在这里就是「同一个偏移」，不做近似。
     scroll_y: f32,
+    /// 视口顶压在哪一行。像素偏移在窗口化渲染下不可靠（见 `ScrollRowAnchor`），
+    /// 行结构对得上时按它交还；对不上（换了视图模式、重载换了内容）才退回 `scroll_y`。
+    row_anchor: Option<ScrollRowAnchor>,
     selection: UndoSelectionSnapshot,
+}
+
+/// 视口顶压在哪一行、压进这一行多少像素。
+///
+/// 只记像素偏移不行：行高按已量到的行插值，没量到的行按最小行高估
+/// （`block_min_height`）。切走再回来时那些行还没量，整篇高度比上次矮一截，
+/// gpui 在布局那一趟把偏移夹回可滚范围并写回句柄——用户看到的就是「切回来
+/// 位置串了」。行下标与高度估值无关，所以拿它当锚点。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ScrollRowAnchor {
+    /// 行下标只在同一套行结构里有意义：渲染模式变了（渲染态是按块分行，源码态是按
+    /// 512 行分块），同一个下标指向的就不是同一段文字了，这种锚点不认。
+    rendered_mode: bool,
+    row: usize,
+    /// 视口顶相对该行顶部的距离，单位像素。
+    within: f32,
+}
+
+/// 待交还的阅读现场：目标 + 还能再摆几帧。
+///
+/// 行高估值是逐帧学出来的，一次摆不到位（没量到的行还按最小行高算，整篇偏矮），
+/// 所以按几帧摆到能落的位置为止。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingScrollRestore {
+    /// 先摆上的像素偏移（挂不上锚点、或锚点行超出当时的可滚范围时的落点）。
+    pub(super) scroll_y: f32,
+    pub(super) row_anchor: Option<ScrollRowAnchor>,
+    pub(super) frames_left: u8,
 }
 
 /// One undo history entry containing source text and selection state.
@@ -693,6 +726,7 @@ impl Editor {
             pending_scroll_active_block_into_view: true,
             pending_scroll_center_into_view: false,
             pending_scroll_recheck_after_layout: true,
+            pending_scroll_restore: None,
             pending_save: false,
             pending_save_as: false,
             pending_window_edited: false,

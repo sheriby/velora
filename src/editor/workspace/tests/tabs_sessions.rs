@@ -694,10 +694,12 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
         restored.view_mode, alpha_view.view_mode,
         "切回 alpha 把源码模式换掉了，实测 {restored:?}"
     );
+    // 比的是行锚点，不是 `scroll_y`：行高逐帧量出来，没量到的行按最小行高估，
+    // 同一段文字两次访问的像素位置本来就不同（见 `ScrollRowAnchor`）。
     assert_eq!(
-        restored.scroll_y, alpha_view.scroll_y,
-        "切回 alpha 的视口不对：应 {}，实测 {}",
-        alpha_view.scroll_y, restored.scroll_y
+        restored.row_anchor, alpha_view.row_anchor,
+        "切回 alpha 的落点不对：应 {:?}，实测 {:?}",
+        alpha_view.row_anchor, restored.row_anchor
     );
     assert_eq!(
         restored.selection.range, alpha_view.selection.range,
@@ -717,8 +719,18 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     }
     let restored = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
     assert_eq!(
-        restored, beta_view,
-        "切回 beta 没有还原它自己的阅读现场（现场必须是按篇存的）"
+        restored.view_mode, beta_view.view_mode,
+        "切回 beta 把视图模式换掉了，实测 {restored:?}"
+    );
+    assert_eq!(
+        restored.row_anchor, beta_view.row_anchor,
+        "切回 beta 的落点不对：应 {:?}，实测 {:?}",
+        beta_view.row_anchor, restored.row_anchor
+    );
+    assert_eq!(
+        restored.selection.range, beta_view.selection.range,
+        "切回 beta 的光标不对：应 {:?}，实测 {:?}",
+        beta_view.selection.range, restored.selection.range
     );
 }
 
@@ -1430,4 +1442,117 @@ async fn core_repair_autosave_does_not_commit_a_discarded_background_tab(cx: &mu
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert_eq!(fs::read_to_string(first).unwrap(), "old");
+}
+
+
+/// 三个标签来回切 + 滚轮：切回来的落点必须是走时那一段。
+///
+/// 断言的是**行锚点**而不是像素偏移：行高是逐帧量出来的，没量到的行按最小行高
+/// 估，所以同一段文字在两次访问里的像素偏移本来就不同（整篇估值不同）。用户看到
+/// 的是「切回来还是那一段」——那一段由锚点保证。
+#[gpui::test]
+async fn switching_three_tabs_keeps_each_position(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!(
+        "velora-three-tabs-reading-position-{}",
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = crate::file_url::canonical_path(&root);
+    let paths: Vec<std::path::PathBuf> = ["alpha", "beta", "gamma"]
+        .iter()
+        .zip([400usize, 40, 150])
+        .map(|(name, paragraphs)| {
+            let path = root.join(format!("{name}.md"));
+            fs::write(&path, super::external_changes::long_markdown(paragraphs)).unwrap();
+            path
+        })
+        .collect();
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.workspace.is_open = false;
+    });
+    // 交还现场要几帧才落定（行高边摆边量），所以每一步都多画几帧再断言。
+    let settle = |frames: usize, cx: &mut gpui::VisualTestContext| {
+        for _ in 0..frames {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear());
+        }
+    };
+    let anchor_now = |cx: &gpui::VisualTestContext| {
+        editor.read_with(cx, |editor, cx| {
+            editor.capture_document_view(cx).row_anchor
+        })
+    };
+
+    let mut expected = vec![None; paths.len()];
+    let mut active = usize::MAX;
+    let mut seed = 0x2545F491u32;
+    for step in 0..18 {
+        let next = (seed as usize >> 3) % paths.len();
+        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        if next == active {
+            continue;
+        }
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_file_in_mode(
+                    paths[next].clone(),
+                    WorkspaceOpenMode::Activate,
+                    window,
+                    cx,
+                )
+            })
+        });
+        settle(14, cx);
+        // 本次会话第一次读这一篇：没有期望值，按打开新文档的口径（文档顶部）。
+        if let Some(expected) = expected[next] {
+            assert_eq!(
+                anchor_now(cx),
+                Some(expected),
+                "第 {step} 步切到 {} 时的落点不对：应 {expected:?}，实测 {:?}",
+                paths[next].display(),
+                anchor_now(cx)
+            );
+        }
+        active = next;
+        // 滚一段，再把此刻的落点记成这一篇的期望值。
+        let position = editor.read_with(cx, |editor, _| editor.scroll_handle.bounds().center());
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-300.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::default(),
+        });
+        settle(3, cx);
+        let anchor = anchor_now(cx);
+        assert!(anchor.is_some(), "第 {step} 步滚过之后应记下落点");
+        expected[active] = anchor;
+    }
+    assert!(
+        expected.iter().all(|anchor| anchor.is_some()),
+        "三篇都该被切到过，实测 {expected:?}"
+    );
+    assert!(
+        expected
+            .iter()
+            .filter_map(|anchor| *anchor)
+            .map(|anchor| anchor.row)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            > 1,
+        "前置：三篇的落点要互不相同，实测 {expected:?}"
+    );
 }

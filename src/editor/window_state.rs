@@ -10,6 +10,11 @@ use crate::components::markdown::link::EXTERNAL_LINK_SCHEMES;
 /// 视口自身必须始终有挂载行覆盖。
 const COLD_RUN_MAX_ROWS: usize = 12;
 
+/// 交还阅读现场时最多再摆几帧。未量到的行按最小行高估，锚点行上方的估值要几帧才
+/// 长上来（冷启动续挂的上限是 `COLD_FILL_MAX_FRAMES` = 8），所以留出余量；摆到位
+/// 或帧数用完就停，见 `Editor::apply_pending_scroll_restore`。16ms 一帧，共约 200ms。
+pub(crate) const SCROLL_RESTORE_SETTLE_FRAMES: u8 = 12;
+
 impl Editor {
     pub(super) fn on_registered_menu_action<A: Action>(
         &mut self,
@@ -513,11 +518,85 @@ impl Editor {
     /// 只在「马上要换掉整棵块树、但文档还是这篇或要切回另一篇」的入口用；
     /// 现场要在换之前取，块树一换旧实体 id 就作废了。
     pub(crate) fn capture_document_view(&self, cx: &App) -> DocumentView {
+        let scroll_y = f32::from(self.scroll_handle.offset().y);
         DocumentView {
             view_mode: self.view_mode,
-            scroll_y: f32::from(self.scroll_handle.offset().y),
+            scroll_y,
+            row_anchor: self.capture_scroll_row_anchor(scroll_y),
             selection: self.capture_source_selection_snapshot(cx),
         }
+    }
+
+    /// 视口顶压在哪一行。行计划还没建时（窗口第一帧）给不出锚点。
+    fn capture_scroll_row_anchor(&self, scroll_y: f32) -> Option<ScrollRowAnchor> {
+        let plan = self.rendered_row_plan.as_ref()?;
+        let rows = plan.rows.len();
+        if rows == 0 {
+            return None;
+        }
+        let prefix = plan.stride_prefix();
+        let tops = &prefix.nonnegative;
+        let content_y = (-scroll_y).max(0.0);
+        let row = tops
+            .partition_point(|top| *top <= content_y)
+            .saturating_sub(1)
+            .min(rows - 1);
+        Some(ScrollRowAnchor {
+            rendered_mode: plan.rendered_mode,
+            row,
+            within: content_y - tops.get(row).copied().unwrap_or(0.0),
+        })
+    }
+
+    /// 把刚交回来的阅读现场摆到位。
+    ///
+    /// 单个像素偏移摆不住：行高是逐帧学出来的，未量到的行按最小行高估，切回来
+    /// 的那一帧整篇比上次矮，gpui 会把偏移夹回可滚范围。所以按锚点行算目标偏移，
+    /// 并且在后续几帧里接着摆——估值长上来之后目标跟着长，位置才真的回去。
+    pub(crate) fn apply_pending_scroll_restore(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_scroll_restore else {
+            return;
+        };
+        let target = match pending.row_anchor.and_then(|anchor| self.anchor_scroll_y(&anchor)) {
+            Some(anchored) => anchored,
+            None => pending.scroll_y,
+        };
+        let max_offset_y = f32::from(self.scroll_handle.max_offset().height).max(0.0);
+        let applied = target.min(0.0).max(-max_offset_y);
+        let mut offset = self.scroll_handle.offset();
+        offset.y = px(applied);
+        self.scroll_handle.set_offset(offset);
+        // 摆到位不等于摆住：行高一边摆一边量，锚点行上方的估值长上来时同一行
+        // 会往下走，视口就退回前面几行（实测切回来能差两行）。所以整段交还期内
+        // 每帧重摆一次，直到帧数用完——期间用户一动（滚轮、翻页、拖滚动条、
+        // 光标移动）就作废，见 `cancel_pending_scroll_restore` 的各调用点。
+        let frames_left = pending.frames_left.saturating_sub(1);
+        if frames_left == 0 {
+            self.pending_scroll_restore = None;
+        } else {
+            self.pending_scroll_restore = Some(PendingScrollRestore {
+                frames_left,
+                ..pending
+            });
+            self.schedule_followup_frame(cx);
+        }
+    }
+
+    /// 锚点行当前在内容坐标里的位置；行结构与记下来时对不上就不认这个锚点。
+    fn anchor_scroll_y(&self, anchor: &ScrollRowAnchor) -> Option<f32> {
+        let plan = self.rendered_row_plan.as_ref()?;
+        if plan.rendered_mode != anchor.rendered_mode || plan.rows.is_empty() {
+            return None;
+        }
+        let row = anchor.row.min(plan.rows.len() - 1);
+        let prefix = plan.stride_prefix();
+        let top = prefix.nonnegative.get(row).copied().unwrap_or(0.0);
+        Some(-(top + anchor.within))
+    }
+
+    /// 用户自己滚了：挂着的交还作废（否则后续几帧会把视口拽回去）。
+    pub(crate) fn cancel_pending_scroll_restore(&mut self) {
+        self.pending_scroll_restore = None;
     }
 
     pub(crate) fn toggle_view_mode(&mut self, cx: &mut Context<Self>) {
@@ -551,6 +630,8 @@ impl Editor {
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_recheck_after_layout = true;
         self.last_scroll_viewport_size = None;
+        // 换了投影（也让行锚点的行结构作废）：挂着的交还不再有效。
+        self.cancel_pending_scroll_restore();
         self.pending_window_title_refresh = true;
         self.close_dialog_restore_focus = None;
         self.table_axis_preview = None;
