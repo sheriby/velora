@@ -164,7 +164,7 @@ async fn inserting_a_code_block_lands_below_the_current_block_and_undoes_as_a_st
 }
 
 #[gpui::test]
-async fn inserting_a_math_block_puts_the_caret_after_the_opening_marker(cx: &mut TestAppContext) {
+async fn inserting_a_math_block_puts_the_caret_on_the_empty_body_line(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = open_editor(ONE_PARAGRAPH, cx);
     redraw(cx);
@@ -173,7 +173,7 @@ async fn inserting_a_math_block_puts_the_caret_after_the_opening_marker(cx: &mut
     assert!(insert(&editor, InsertBlockTarget::MathBlock, cx));
     redraw(cx);
 
-    assert_eq!(buffer_text(&editor, cx), "正文甲\n\n$$\n$$\n\n");
+    assert_eq!(buffer_text(&editor, cx), "正文甲\n\n$$\n\n$$\n\n");
     assert_eq!(
         kinds(&editor, cx),
         vec![
@@ -183,7 +183,11 @@ async fn inserting_a_math_block_puts_the_caret_after_the_opening_marker(cx: &mut
         ],
         "块树与写回的字节不一致"
     );
-    assert_eq!(caret_of(&editor, 1, cx), 3..3, "光标该落在开栏之后那一行");
+    assert_eq!(
+        caret_of(&editor, 1, cx),
+        3..3,
+        "光标该落在中间那一空行的行首"
+    );
 }
 
 #[gpui::test]

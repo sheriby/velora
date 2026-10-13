@@ -315,8 +315,9 @@ impl Editor {
             InsertBlockTarget::CodeBlock => {
                 BlockRecord::with_plain_text(BlockKind::CodeBlock { language: None }, String::new())
             }
-            // 空公式的两条记号紧挨着写，与打字那一路（`enter_math_block` 的空正文）同一个形状。
-            InsertBlockTarget::MathBlock => BlockRecord::math("$$\n$$".to_string()),
+            // 空公式中间留一个空行，与打字那一路（`enter_math_block` 的空正文）同一个形状：
+            // 光标落在这一行行首，与 `focus_inserted_block` 的 3 对得上。
+            InsertBlockTarget::MathBlock => BlockRecord::math("$$\n\n$$".to_string()),
             InsertBlockTarget::Separator => {
                 BlockRecord::with_plain_text(BlockKind::Separator, String::new())
             }

@@ -106,10 +106,10 @@ impl Block {
     /// the formula source between the fences (empty for a fresh `$$` block), and
     /// the caret lands at the start of that body line.
     pub(crate) fn enter_math_block(&mut self, body: &str, cx: &mut Context<Self>) {
-        // 空正文时两条记号紧挨着：`$$\n\n$$` 这种中间空一行的写法，区域扫描在空行处
-        // 看到下一行是收尾记号就把块收掉，读回来散成两块原始 markdown。
+        // 空正文也留一个空行（`$$\n\n$$`）：光标落在中间这一行的行首，用户一眼看得出
+        // 往哪儿打字；两条记号紧挨的写法，光标停在收尾那行上。
         let source = if body.trim().is_empty() {
-            "$$\n$$".to_string()
+            "$$\n\n$$".to_string()
         } else {
             format!("$$\n{body}\n$$")
         };
