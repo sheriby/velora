@@ -30,10 +30,9 @@ UninstPage instfiles
 
 Section "安装 Velora" SEC_MAIN
   SetOutPath "$INSTDIR"
-  ; 关掉还在跑的 Velora：窗口各自成进程（资源管理器再开一个文件就是一个进程，应用内
-  ; 「新建窗口」是同一个进程的多个窗口），它们在用着 velora.exe，不关就覆盖不了。
-  ; 安装器是被静默调起来的，覆盖失败只会让「更新没动静、再点一次还是失败」重演，
-  ; 所以这里代为收尾：/T 连子进程一起，/F 不等窗口同意。
+  ; 兜底：更新那条路已经由 PowerShell 帮手先请一遍、并确认没有实例了（那边的关法是
+  ; 不带 /F 的 taskkill，让窗口弹自己的「未保存」提示）。这里留着 /F 是防「确认之后又
+  ; 有人双击图标」这种竞态——那时窗口里还没有内容。
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM velora.exe /F /T'
   Pop $0
   Sleep 300
@@ -54,14 +53,23 @@ Section "安装 Velora" SEC_MAIN
 SectionEnd
 
 Section "Uninstall"
-  ; 与安装同理：卸载也要删 velora.exe，跑着的实例先把它们收掉。
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM velora.exe /F /T'
+  ; 卸载器没有应用层帮它先请一遍，所以自己请：不带 /F 的 taskkill 只发 WM_CLOSE，
+  ; 未保存的窗口会弹出自己的提示。还留着就不继续删——硬删会把用户正在编辑的内容一起
+  ; 带走，而应用已经要卸载了，恢复快照也没人去开。
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM velora.exe /T'
   Pop $0
   Sleep 300
   Delete "$SMPROGRAMS\Velora\Velora.lnk"
   Delete "$SMPROGRAMS\Velora\卸载 Velora.lnk"
   RMDir "$SMPROGRAMS\Velora"
   Delete "$INSTDIR\velora.exe"
+  ; 删不掉就是还被锁着。这时别往下走：留下的半套卸载比「先关掉再来一次」更糟。
+  IfFileExists "$INSTDIR\velora.exe" 0 velora_uninstall_can_delete
+    IfSilent velora_uninstall_stop
+    MessageBox MB_OK|MB_ICONEXCLAMATION "还有 Velora 窗口在运行（可能有未保存的内容）。请先关闭它们，再重新卸载。"
+  velora_uninstall_stop:
+    Quit
+  velora_uninstall_can_delete:
   Delete "$INSTDIR\LICENSE-APACHE"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
