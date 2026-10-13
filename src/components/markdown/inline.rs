@@ -123,7 +123,9 @@ impl InlineStyle {
             Delimiter::BoldHtml => self.with_bold(),
             Delimiter::ItalicHtml => self.with_italic(),
             Delimiter::Underline => self.with_underline(),
-            Delimiter::StrikethroughMarkdown => self.with_strikethrough(),
+            Delimiter::StrikethroughMarkdown | Delimiter::StrikethroughHtml => {
+                self.with_strikethrough()
+            }
             Delimiter::HighlightMarkdown => self.with_highlight(),
             Delimiter::CodeMarkdown { .. } => self.with_code(),
             Delimiter::SuperscriptMarkdown | Delimiter::SuperscriptHtml => self.with_superscript(),

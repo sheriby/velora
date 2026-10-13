@@ -142,8 +142,10 @@ pub(crate) fn stack_variants(
         markdown_stack.push(Delimiter::CodeMarkdown { run_len });
     }
 
-    let has_emphasis = style.bold || style.italic;
-    if !has_emphasis {
+    // HTML 退路：星号的侧翼不合格时靠 `<strong>`/`<em>`，删除线同理靠 `<del>`
+    // （导出器认 Markdown 的那套判据比编辑器严，`~~删除：~~` 会按字面出去）。
+    let has_alternative = style.bold || style.italic || style.strikethrough;
+    if !has_alternative {
         return vec![markdown_stack];
     }
 
@@ -155,7 +157,7 @@ pub(crate) fn stack_variants(
         html_stack.push(Delimiter::Underline);
     }
     if style.strikethrough {
-        html_stack.push(Delimiter::StrikethroughMarkdown);
+        html_stack.push(Delimiter::StrikethroughHtml);
     }
     if style.highlight {
         html_stack.push(Delimiter::HighlightMarkdown);
@@ -270,8 +272,12 @@ pub(crate) fn stack_transition_cost(
         | Delimiter::StrikethroughMarkdown
         | Delimiter::HighlightMarkdown = delimiter
         {
-            // 序列化的星号需被导出器的 CommonMark 规则接受；UI 配对仍支持 CJK。
-            // 删除线与高亮保留编辑器的侧翼判据。
+            // 序列化出去的记号要能被导出器读成同样的样式，判据就得按**导出器**的规则；
+            // UI 配对仍支持 CJK 放宽（`delimiter_can_*`）。星号按 CommonMark 侧翼（严格），
+            // 删除线按 pulldown 的 `~~` 判据（见 `strikethrough_exports_as_markdown`），
+            // 两个都不合格时 DP 才落到 HTML 候选。高亮（`==`）读回去的还是编辑器那一对
+            // `delimiter_can_*`（导出侧 `locate_highlight_close` 也调它们），判据只有一处，
+            // 保持原来的放宽口径。
             let ch = match delimiter {
                 Delimiter::StrikethroughMarkdown => '~',
                 Delimiter::HighlightMarkdown => '=',
@@ -286,6 +292,8 @@ pub(crate) fn stack_transition_cost(
             let valid = match (ch, opening) {
                 ('*', true) => emphasis_flanking(prev, next).0,
                 ('*', false) => emphasis_flanking(prev, next).1,
+                ('~', true) => strikethrough_exports_as_markdown(true, prev, next),
+                ('~', false) => strikethrough_exports_as_markdown(false, prev, next),
                 (_, true) => delimiter_can_open(ch, prev, next),
                 (_, false) => delimiter_can_close(ch, prev, next),
             };
@@ -522,6 +530,26 @@ pub(crate) fn underscore_can_close(prev: Option<char>, next: Option<char>) -> bo
 
 /// 侧翼规则需要的「标点」分类。标准库没有 Unicode 标点分类，这里近似：ASCII 走
 /// 自己的标点表，其余字符除了字母、数字、空白都算标点（全角标点、日文标点等成立）。
+/// 导出器（pulldown 0.13 的 GFM `~~`）读不读得出来：序列化侧的判据。
+///
+/// 与编辑器放宽过的 `delimiter_can_*`（CJK 口径）不是一回事，也不能合成一条：编辑器
+/// 认 `测试~~删除：~~测试`（`markdown-cjk-friendly` 的口径），而 pulldown 的
+/// `delim_run_can_close` 对 `run_len > 1` 的 `~` 串在前一个字符是标点、后一个不是空白
+/// 或标点时判不成立——同一份文件界面划掉、导出按字面。这里按它的规则判，
+/// 判不成立就让 DP 落到 `<del>` 那支候选（`StrikethroughHtml`）。
+///
+/// 依据（pulldown-cmark 0.13.4 `src/firstpass.rs`，`~~` 走 `count == 2`）：
+/// - 开：`next` 存在且不是空白（`run_len > 1` 时不再看标点）；
+/// - 闭：`prev` 存在且不是空白，且（`prev` 不是标点，或 `next` 是空白/标点/没有）。
+fn strikethrough_exports_as_markdown(opening: bool, prev: Option<char>, next: Option<char>) -> bool {
+    if opening {
+        return next.is_some_and(|ch| !ch.is_whitespace());
+    }
+    prev.is_some_and(|ch| !ch.is_whitespace())
+        && (!prev.is_some_and(is_emphasis_punctuation)
+            || next.is_none_or(|ch| ch.is_whitespace() || is_emphasis_punctuation(ch)))
+}
+
 pub(crate) fn is_emphasis_punctuation(ch: char) -> bool {
     if ch.is_ascii() {
         ch.is_ascii_punctuation()

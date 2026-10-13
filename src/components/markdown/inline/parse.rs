@@ -176,6 +176,9 @@ pub(crate) enum Delimiter {
     ItalicMarkdown { marker: char },
     /// Markdown strikethrough marker `~~`.
     StrikethroughMarkdown,
+    /// HTML strikethrough marker `<del>`：导出器（pulldown）的 `~~` 侧翼判据比编辑器
+    /// 严，中文标点旁这种写法只能落到它头上（与 `<strong>`/`<em>` 同一条退路）。
+    StrikethroughHtml,
     /// Typora 式的标记文本 `==`。
     HighlightMarkdown,
     /// Markdown superscript marker `^`.
@@ -204,6 +207,7 @@ impl Delimiter {
             Self::BoldMarkdown { marker } => marker.to_string().repeat(2),
             Self::ItalicMarkdown { marker } => marker.to_string(),
             Self::StrikethroughMarkdown => "~~".into(),
+            Self::StrikethroughHtml => "<del>".into(),
             Self::HighlightMarkdown => "==".into(),
             Self::SuperscriptMarkdown => "^".into(),
             Self::SubscriptMarkdown => "~".into(),
@@ -221,6 +225,7 @@ impl Delimiter {
             Self::BoldMarkdown { marker } => marker.to_string().repeat(2),
             Self::ItalicMarkdown { marker } => marker.to_string(),
             Self::StrikethroughMarkdown => "~~".into(),
+            Self::StrikethroughHtml => "</del>".into(),
             Self::HighlightMarkdown => "==".into(),
             Self::SuperscriptMarkdown => "^".into(),
             Self::SubscriptMarkdown => "~".into(),
@@ -249,6 +254,7 @@ impl Delimiter {
             Self::SuperscriptMarkdown | Self::SubscriptMarkdown => 3,
             Self::ItalicMarkdown { .. } => 4,
             Self::SuperscriptHtml | Self::SubscriptHtml => 5,
+            Self::StrikethroughHtml => 6,
             Self::BoldHtml => 6,
             Self::ItalicHtml => 7,
             Self::CodeMarkdown { .. } => 8,
@@ -258,7 +264,11 @@ impl Delimiter {
     pub(crate) fn is_html(self) -> bool {
         matches!(
             self,
-            Self::BoldHtml | Self::ItalicHtml | Self::SuperscriptHtml | Self::SubscriptHtml
+            Self::BoldHtml
+                | Self::ItalicHtml
+                | Self::StrikethroughHtml
+                | Self::SuperscriptHtml
+                | Self::SubscriptHtml
         )
     }
 }

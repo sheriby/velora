@@ -1177,6 +1177,34 @@
         );
     }
 
+
+    /// 同一条契约的删除线那一半：解析侧早把 `~~` 的侧翼放宽到 CJK 口径，序列化侧
+    /// 却从来没有 `<del>` 候选——中文标点旁的删除线界面划掉、导出按字面（pulldown 的
+    /// `delim_run_can_close` 对 `run_len > 1` 在 `prev = '：'` 时不认）。星号那条退路
+    /// （HTML 栈 + 64 分 vs 侧翼不合格的 1000 分）对删除线无处可退。
+    #[test]
+    fn core_repair_manual_cjk_strikethrough_serializes_for_the_actual_html_exporter() {
+        let mut failures = Vec::new();
+        for (source, range, expected) in [
+            ("测试删除：测试", 6..15, "<del>删除：</del>"),
+            ("a struck z", 2..8, "<del>struck</del>"),
+        ] {
+            let mut tree = InlineTextTree::plain(source);
+            tree.toggle_strikethrough(range);
+            let markdown = tree.serialize_markdown();
+            let html = crate::export::html::render_html(&markdown, &crate::theme::Theme::default_theme(), "格式兼容");
+            let body = html.split_once("<body>").expect("导出正文").1;
+            if !body.contains(expected) { failures.push((source, markdown.clone(), expected)); }
+            let parsed = InlineTextTree::from_markdown(&markdown);
+            assert_eq!(parsed.visible_text(), source);
+            assert!(
+                parsed.fragments.iter().any(|fragment| fragment.style.strikethrough),
+                "写回去的那份还得读成删除线：{markdown:?}"
+            );
+        }
+        assert!(failures.is_empty(), "手动删除线不能在导出时变成字面记号：{failures:?}");
+    }
+
     /// 已知分叉：导出（pulldown-cmark）没有 CJK 开关，同一份文件在导出 HTML/PDF 里
     /// 仍是字面。这条用例把分叉摆在明面上，免得以后有人照导出「修」编辑器。
     #[test]
