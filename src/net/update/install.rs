@@ -171,6 +171,12 @@ error_file="$4"
 previous_executable="$5"
 shift 5
 while /bin/kill -0 "$process_id" 2>/dev/null; do /bin/sleep 0.2; done
+# 其他窗口各自是别的进程（命令行启动、`open -n`、或另一份副本）。它们还在跑旧版本时：
+# `installer` 往 /Applications 里覆盖这个正在用的 bundle，而 `open` 只会唤醒那个还在跑
+# 的旧实例、`--args` 被丢掉——用户看到的还是旧版本在提示更新，与 Windows 那次同源。
+/usr/bin/killall -TERM velora 2>/dev/null
+/bin/sleep 0.5
+/usr/bin/killall -KILL velora 2>/dev/null
 /usr/bin/osascript -e 'on run argv
   do shell script "/usr/sbin/installer -pkg " & quoted form of (item 1 of argv) & " -target /" with administrator privileges
 end run' "$package" >"$error_file" 2>&1
@@ -234,6 +240,22 @@ mod tests {
                 "要连子进程一起收掉：{line}"
             );
         }
+    }
+
+    /// macOS 侧同样要收掉其他实例，理由与 Windows 那条不同：`installer` 覆盖的是正在
+    /// 使用的 bundle，而 `open` 只会唤醒还在跑的旧实例、`--args` 被丢掉。Windows 那侧
+    /// 由安装包负责（见上一条用例）。
+    #[test]
+    fn macos_helper_closes_remaining_instances_before_installing() {
+        assert!(MACOS_HELPER.contains("/usr/bin/killall -TERM velora"));
+        assert!(MACOS_HELPER.contains("/usr/bin/killall -KILL velora"));
+        let term = MACOS_HELPER.find("-TERM").expect("先请退");
+        let kill = MACOS_HELPER.find("-KILL").expect("再强杀");
+        let install = MACOS_HELPER.find("installer -pkg").expect("安装");
+        assert!(
+            term < kill && kill < install,
+            "先请退、再强杀、最后才安装：{MACOS_HELPER}"
+        );
     }
 
     #[test]
