@@ -473,12 +473,15 @@ pub(crate) struct UndoSelectionSnapshot {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DocumentView {
     view_mode: ViewMode,
+    content_len: usize,
+    content_version: u64,
     /// 存 `f32` 而不是 `Pixels`：`Pixels` 没有 `Debug`，标签要能打印。代价是这一项
     /// 只能比到 `PartialEq`——浮点相等在这里就是「同一个偏移」，不做近似。
     scroll_y: f32,
     /// 缺少有效的行高度量时，按同一投影里的行锚点一次换算阅读位置。
     row_anchor: Option<ScrollRowAnchor>,
     row_layout: Option<Arc<DocumentRowLayout>>,
+    editing_state: Option<Arc<DocumentEditingState>>,
     selection: UndoSelectionSnapshot,
 }
 
@@ -487,8 +490,6 @@ pub(crate) struct DocumentRowLayout {
     width: f32,
     theme: Arc<crate::theme::Theme>,
     rendered_mode: bool,
-    content_len: usize,
-    content_version: u64,
     row_start: Option<usize>,
     rows: Vec<DocumentRowMeasurement>,
 }
@@ -498,8 +499,6 @@ impl PartialEq for DocumentRowLayout {
         self.width == other.width
             && Arc::ptr_eq(&self.theme, &other.theme)
             && self.rendered_mode == other.rendered_mode
-            && self.content_len == other.content_len
-            && self.content_version == other.content_version
             && self.row_start == other.row_start
             && self.rows == other.rows
     }
@@ -511,6 +510,24 @@ pub(crate) struct DocumentRowMeasurement {
     visible_end: usize,
     height: f32,
     measured: bool,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct DocumentEditingState {
+    undo_history: Vec<HistoryEntry>,
+    redo_history: Vec<HistoryEntry>,
+    pending_undo_capture: Option<PendingUndoCapture>,
+    blocks: Vec<DocumentBlockState>,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct DocumentBlockState {
+    visible_index: usize,
+    kind: BlockKind,
+    folded: bool,
+    expanded_long_lines: std::collections::BTreeSet<usize>,
+    table_container_width: Option<f32>,
+    column_layout_memo: Option<crate::components::ColumnLayoutMemo>,
 }
 
 /// 视口顶压在哪一行、压进这一行多少像素。
@@ -530,7 +547,7 @@ pub(crate) struct ScrollRowAnchor {
 }
 
 /// One undo history entry containing source text and selection state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct HistoryEntry {
     /// 这一步在缓冲区上留下的写入记录，按文档顺序。
     ///
@@ -553,7 +570,7 @@ impl HistoryEntry {
 }
 
 /// Deferred undo capture used to coalesce adjacent typing edits.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct PendingUndoCapture {
     snapshot: HistoryEntry,
 }

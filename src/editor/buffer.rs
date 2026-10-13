@@ -87,7 +87,7 @@ impl Chunk {
 
 /// 一次已经落地的编辑，自带逆操作。撤销栈只要把这些逆操作按反序重放，
 /// 不需要再存任何全文快照。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AppliedEdit {
     /// 被换掉的原文；撤销时放回去的就是它。
     pub(crate) removed: String,

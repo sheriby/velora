@@ -1,6 +1,125 @@
 use super::*;
+use super::super::{DocumentBlockState, DocumentEditingState, DocumentRowLayout, ViewMode};
 
 impl Editor {
+    pub(crate) fn capture_document_editing_state(&self, cx: &App) -> DocumentEditingState {
+        let tables: HashSet<_> = self
+            .table_cells
+            .values()
+            .map(|binding| binding.table_block.entity_id())
+            .collect();
+        let blocks = self
+            .document
+            .visible_blocks()
+            .iter()
+            .enumerate()
+            .filter_map(|(visible_index, entry)| {
+                let metadata = self.document.row_spacing_at(visible_index);
+                if metadata.heading_level.is_none()
+                    && metadata.source_document_lines == 0
+                    && !tables.contains(&entry.entity.entity_id())
+                {
+                    return None;
+                }
+                let block = entry.entity.read(cx);
+                if !block.folded
+                    && block.expanded_long_lines.is_empty()
+                    && block.table_container_width.is_none()
+                    && block.column_layout_memo.is_none()
+                {
+                    return None;
+                }
+                Some(DocumentBlockState {
+                    visible_index,
+                    kind: block.kind(),
+                    folded: block.folded,
+                    expanded_long_lines: block.expanded_long_lines.clone(),
+                    table_container_width: block.table_container_width.map(f32::from),
+                    column_layout_memo: block.column_layout_memo.clone(),
+                })
+            })
+            .collect();
+        DocumentEditingState {
+            undo_history: self.undo_history.clone(),
+            redo_history: self.redo_history.clone(),
+            pending_undo_capture: self.pending_undo_capture.clone(),
+            blocks,
+        }
+    }
+
+    pub(crate) fn restore_document_editing_state(
+        &mut self,
+        state: &DocumentEditingState,
+        layout: Option<&DocumentRowLayout>,
+        same_projection: bool,
+        restore_history: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let layout_matches = layout.is_some_and(|layout| {
+            let theme = cx.global::<ThemeManager>().derived_theme(cx);
+            let viewport_width = f32::from(self.scroll_handle.bounds().size.width).max(1.0);
+            let width = if self.code_document || self.view_mode == ViewMode::Source {
+                (viewport_width - theme.dimensions.editor_padding * 1.5).max(1.0)
+            } else {
+                Self::writing_column_width(viewport_width, &theme.dimensions, cx)
+            };
+            layout.width == width && std::sync::Arc::ptr_eq(&layout.theme, &theme)
+        });
+        let mut restored_fold = false;
+        if same_projection {
+            for saved in &state.blocks {
+                let Some(entry) = self.document.visible_blocks().get(saved.visible_index) else {
+                    continue;
+                };
+                if entry.entity.read(cx).kind() != saved.kind {
+                    continue;
+                }
+                restored_fold |= saved.folded;
+                entry.entity.update(cx, |block, cx| {
+                    block.folded = saved.folded;
+                    block.expanded_long_lines = saved.expanded_long_lines.clone();
+                    block.shape_memo = None;
+                    if layout_matches {
+                        block.table_container_width = saved.table_container_width.map(px);
+                        block.column_layout_memo = saved.column_layout_memo.clone();
+                    } else if saved.table_container_width.is_some() {
+                        let viewport_width = f32::from(self.scroll_handle.bounds().size.width);
+                        if viewport_width > 0.0 {
+                            let theme = cx.global::<ThemeManager>().derived_theme(cx);
+                            // 输入变了要重测，但首轮仍应按正文视口而非整个窗口分列。
+                            block.table_container_width = Some(px(block
+                                .table_container_width_for_viewport(
+                                    viewport_width,
+                                    &theme.dimensions,
+                                    cx,
+                                )));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        }
+        if restored_fold {
+            self.fold_state_version = self.fold_state_version.wrapping_add(1);
+        }
+        if restore_history {
+            self.undo_history = state.undo_history.clone();
+            self.redo_history = state.redo_history.clone();
+            self.pending_undo_capture = state.pending_undo_capture.clone();
+            self.finalize_pending_undo_capture(cx);
+            // 切换标签结束连续输入组，回来的新输入不能并入离开前的编辑。
+            if let Some(entry) = self.undo_history.last_mut()
+                && matches!(
+                    entry.kind,
+                    crate::components::UndoCaptureKind::CoalescibleText
+                        | crate::components::UndoCaptureKind::ImeComposition
+                )
+            {
+                entry.kind = crate::components::UndoCaptureKind::NonCoalescible;
+            }
+        }
+    }
+
     pub(crate) fn sync_workspace_after_document_path_change(&mut self, cx: &mut Context<Self>) {
         if let Some(path) = self.file_path.clone() {
             let previous = self.workspace.active_document.clone();

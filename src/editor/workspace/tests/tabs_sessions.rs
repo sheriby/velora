@@ -7,7 +7,7 @@ use gpui::{
 use std::fs;
 use std::time::Duration;
 
-fn init_review_workspace_app(cx: &mut TestAppContext) {
+pub(super) fn init_review_workspace_app(cx: &mut TestAppContext) {
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);
         crate::theme::ThemeManager::init(cx);
@@ -15,7 +15,7 @@ fn init_review_workspace_app(cx: &mut TestAppContext) {
     });
 }
 
-fn review_workspace_fixture(cx: &mut TestAppContext, label: &str) -> std::path::PathBuf {
+pub(super) fn review_workspace_fixture(cx: &mut TestAppContext, label: &str) -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!("velora-review-{label}-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
     cx.on_quit({ let root = root.clone(); move || fs::remove_dir_all(root).unwrap() });

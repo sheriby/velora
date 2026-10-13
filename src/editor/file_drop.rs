@@ -308,16 +308,12 @@ impl Editor {
             markdown
         };
         if let Some(view) = &mut restored_view {
-            // 仅复用未变的正文高度；追加内容仍可复用旧前缀，改写正文则重新度量。
-            if view.row_layout.as_ref().is_some_and(|layout| {
-                normalized
-                    .get(..layout.content_len)
-                    .is_none_or(|prefix| {
-                        super::persistence::file_content_version_normalized(prefix)
-                            != layout.content_version
-                    })
+            // 追加内容仍可复用旧前缀的显示状态，改写前文则不能沿用旧现场。
+            if normalized.get(..view.content_len).is_none_or(|prefix| {
+                super::persistence::file_content_version_normalized(prefix) != view.content_version
             }) {
                 view.row_layout = None;
+                view.editing_state = None;
             }
         }
         // 内容整体换掉了，事实源必须跟着换：缓冲区留着上一个文档的内容，
@@ -339,6 +335,16 @@ impl Editor {
         } else {
             ViewMode::Rendered
         };
+        let restored_editing_state = restored_view.as_ref().and_then(|view| {
+            view.editing_state.as_ref().map(|state| {
+                (
+                    state.clone(),
+                    view.row_layout.clone(),
+                    view.view_mode == view_mode,
+                    view.content_len == normalized.len(),
+                )
+            })
+        });
         let mut pending_code_tail = None;
         let mut roots = if is_code || source_mode_fallback_required {
             // 大纯文本文件不再整文件压进单块：按行分块让视口窗口化能裁剪
@@ -496,6 +502,16 @@ impl Editor {
         self.pending_undo_capture = None;
         self.last_selection_snapshot = Self::empty_selection_snapshot();
         self.history_restore_in_progress = false;
+        self.last_selection_snapshot_source = None;
+        if let Some((state, layout, same_projection, restore_history)) = restored_editing_state {
+            self.restore_document_editing_state(
+                &state,
+                layout.as_deref(),
+                same_projection,
+                restore_history,
+                cx,
+            );
+        }
         self.sync_workspace_after_document_path_change(cx);
         cx.notify();
     }

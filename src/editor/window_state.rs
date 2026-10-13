@@ -540,9 +540,12 @@ impl Editor {
         let scroll_y = f32::from(self.scroll_handle.offset().y);
         DocumentView {
             view_mode: self.view_mode,
+            content_len: self.buffer.byte_len(),
+            content_version: persistence::file_content_version_normalized(&self.buffer.text()),
             scroll_y,
             row_anchor: self.capture_scroll_row_anchor(scroll_y),
             row_layout: self.capture_document_row_layout(),
+            editing_state: Some(Arc::new(self.capture_document_editing_state(cx))),
             selection: self.capture_source_selection_snapshot(cx),
         }
     }
@@ -586,8 +589,6 @@ impl Editor {
             width: self.row_stride_width?,
             theme: self.row_stride_theme.clone()?,
             rendered_mode: plan.rendered_mode,
-            content_len: self.buffer.byte_len(),
-            content_version: persistence::file_content_version_normalized(&self.buffer.text()),
             row_start: mounted.map(|run| run.row_start),
             rows,
         }))

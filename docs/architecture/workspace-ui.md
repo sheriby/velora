@@ -17,6 +17,7 @@
 
 - `active_tab: {Files, Search, Outline}`、`root`、`file_tree: Option<WorkspaceTreeNode>`（递归 children）、`outline_tree`/`toc_entries`、`expanded: HashSet<String>`、`open_documents: Vec<WorkspaceDocumentTab>`、搜索/替换全套状态、`panel_width` 等。
 - **标签是快照不是 Editor 实体**：`WorkspaceDocumentTab { path, recovery_id, file_version, markdown, dirty, preview, view }`。单个 Editor 在切换激活标签时换入换出 `DocumentTree` 内容（`snapshot_current_document` 把**缓冲区文本**存回标签——自动保存与恢复快照的内容来源就是它，取块树序列化的话一份没编辑过的文件进快照就已经被洗过一遍）。
+- `DocumentView` 同时保留阅读位置、行高度量、撤销/重做及尚未收尾的编辑组、标题折叠、源码长行展开和表格列宽备忘。块重建后按相同投影里的可见下标与块类型恢复，状态不持有旧实体。完整正文版本一致才恢复编辑历史；未变的正文前缀可复用显示状态。列宽与主题输入变化时，表格按当前正文视口重测。切换结束连续键入组，切回后的输入单独撤销；这些状态仅在当前进程保留，不改变会话文件格式。
 - 打开文件流：树节点点击 → `open_workspace_file`：UTF-16 BOM/文本嗅探（`has_utf16_bom`/`is_likely_text_file`）→ 推标签 → `reveal_path_in_tree` 展开祖先 → `restore_document_from_markdown` 或 `restore_document_from_code_source`（分流见 editor-core.md §2）——标签上存着这篇的阅读现场就按它交还，本次会话没读过才按新文档从顶部与渲染态起步（见 editor-core.md §6）→ 调度 autosave + `persist_session`。现场只活在这一进程里，不写进会话文件。
 - 图片文件在文本嗅探前分流：格式判据复用 `gpui::Img::extensions()`，`image_preview` 用 `ImageAssetLoader` 后台解码。标签只缓存路径，二进制不进文本缓冲区；编辑、保存和文本导出入口跳过图片。外部修改使图片缓存失效后重新加载，解码失败显示应用内模态。
 - `set_workspace_root`：canonicalize、按根恢复侧栏宽、剪枝根外标签、启动 watcher、持久化会话。

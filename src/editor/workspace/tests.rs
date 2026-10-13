@@ -12,6 +12,7 @@ mod search_perf;
 mod search_random_consistency;
 mod sidebar;
 mod tabs_sessions;
+mod tabs_state;
 mod tree_files;
 mod tree_edit;
 mod workspace_scan;

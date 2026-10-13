@@ -857,6 +857,7 @@ impl LongLinePlan {
 }
 
 /// 表格列宽备忘的键：主题代数 + 字号 + 容器宽 + 表内容本身。
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ColumnLayoutMemo {
     pub theme_fingerprint: u64,
     pub code_size_bits: u32,

@@ -1084,7 +1084,7 @@ impl Render for Block {
                     .table_container_width
                     .map(f32::from)
                     .unwrap_or_else(|| {
-                        effective_image_width(self, viewport_width, d, cx) * VISUAL_BLOCK_WIDTH_RATIO
+                        self.table_container_width_for_viewport(viewport_width, d, cx)
                     });
                 let table_width = (container_width - f32::from(right_gutter)).max(1.0);
                 let column_layout = self

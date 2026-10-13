@@ -1,6 +1,20 @@
 use super::*;
 
 impl Block {
+    pub(crate) fn table_container_width_for_viewport(
+        &self,
+        viewport_width: f32,
+        dimensions: &ThemeDimensions,
+        cx: &App,
+    ) -> f32 {
+        let list_inset = dimensions.nested_block_indent * self.render_depth as f32;
+        (container_image_width_budget(self, viewport_width, dimensions, cx)
+            - dimensions.block_padding_x * 2.0
+            - list_inset)
+            .max(1.0)
+            * VISUAL_BLOCK_WIDTH_RATIO
+    }
+
     pub(crate) fn list_marker_column(&self, theme: &Theme) -> Div {
         let dimensions = &theme.dimensions;
         div()
