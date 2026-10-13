@@ -25,8 +25,9 @@ pub(crate) use preferences::{
 pub(crate) use recovery::{
     RecoverySnapshot, read_recovery_snapshots, remove_recovery_snapshot, save_recovery_snapshot,
 };
-/// 测试专用（权限用例往临时目录写快照）：非测试构建没人用，门住别出警告。
-#[cfg(test)]
+/// 测试专用（权限用例往临时目录写快照）：只有 unix 的权限用例用，非测试构建与
+/// Windows 测试构建都没人用，门住别出警告。
+#[cfg(all(test, unix))]
 pub(crate) use recovery::save_recovery_snapshot_with_dir;
 pub(crate) use session::{SessionState, read_session, save_session};
 
@@ -883,7 +884,7 @@ mod tests {
             canonical.display()
         );
 
-        let recorded = record_recent_folder_with_dirs(&canonical, &dirs).unwrap();
+        let recorded = super::record_recent_folder_with_dirs(&canonical, &dirs).unwrap();
         assert_eq!(recorded.len(), 1);
         let stored = recorded[0].to_string_lossy().to_string();
         let without_prefix = crate::file_url::strip_verbatim_prefix(&canonical)
@@ -897,7 +898,7 @@ mod tests {
             stored.eq_ignore_ascii_case(&without_prefix),
             "剥前缀之外不许改动路径：{stored}"
         );
-        assert_eq!(read_recent_folders_with_dirs(&dirs).unwrap(), recorded);
+        assert_eq!(super::read_recent_folders_with_dirs(&dirs).unwrap(), recorded);
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(folder);
