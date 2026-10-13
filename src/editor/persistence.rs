@@ -170,7 +170,7 @@ fn is_external_change(error: &anyhow::Error) -> bool {
 
 /// 读盘比对版本，并**把盘上的原始字节一起交回去**：落盘要按这份文件自己的形状重新
 /// 编码（见 [`autosave_payload`]），而校验读的正是同一个文件，不必再读第二遍。
-fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<Vec<u8>> {
+pub(super) fn verify_file_version(path: &Path, expected_version: u64) -> anyhow::Result<Vec<u8>> {
     let document = super::encoding::load_document(path).map_err(|error| ExternalChange {
         path: path.to_path_buf(),
         reason: Some(error.to_string()),
@@ -815,10 +815,12 @@ impl Editor {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(identity == self.document_save_identity(),
             "文档在保存面板期间已改变，请重新保存当前内容");
+        self.ensure_save_as_target_is_free(&path)?;
         write_atomic(&path, &saved_bytes)?;
         self.apply_successful_save(path, saved_text, saved_bytes, cx);
         Ok(())
     }
+
 
     fn save_document_via_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.has_marked_document_text(cx) {

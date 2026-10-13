@@ -819,6 +819,30 @@ impl Editor {
         );
     }
 
+    /// 另存为的目标正好是**另一篇**已打开标签的文件时的拦阻。
+    ///
+    /// 盘上那一份归那一页：它可能带着未保存的修改（脏标记、恢复快照都在它名下），
+    /// 我们的字节直接盖上去等于把那一页的未保存内容静默丢掉，随后
+    /// `sync_workspace_after_document_path_change` 还会把它的脏状态抹成干净。干净的那
+    /// 一页也不能绕开版本闸门——按它记的盘上版本核一次再写。
+    pub(crate) fn ensure_save_as_target_is_free(&self, path: &Path) -> anyhow::Result<()> {
+        let target = crate::file_url::canonical_path(path);
+        let Some(other) = self.workspace.open_documents.iter().find(|tab| {
+            tab.recovery_id != self.recovery_id
+                && crate::file_url::canonical_path(&tab.path) == target
+        }) else {
+            return Ok(());
+        };
+        if other.dirty {
+            anyhow::bail!(
+                "「{}」已在另一个标签里打开，且有未保存的修改：先保存或关掉它，再另存到这个文件名",
+                path.display()
+            );
+        }
+        crate::editor::persistence::verify_file_version(&other.path, other.file_version)?;
+        Ok(())
+    }
+
     /// Removes closed tabs from the strip, optionally saving their cached
     /// content first, and activates the nearest remaining neighbour.
     pub(crate) fn finish_close_workspace_tabs(

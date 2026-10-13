@@ -300,6 +300,134 @@ async fn review_workspace_replace_does_not_overwrite_external_changes(cx: &mut T
     }));
 }
 
+
+/// 另存为的目标正好是**另一篇脏标签**的文件时，必须拦下。
+///
+/// `complete_save_request` 对目标路径零盘上校验，`write_atomic` 直接盖；成功后
+/// `sync_workspace_after_document_path_change` 命中已打开标签那一支，把那一页的
+/// `recovery_id/markdown/dirty` 全换成我们的（`dirty = false`）——那一页的未保存
+/// 内容当场失踪，它的恢复快照（旧 recovery_id）成孤儿。
+#[gpui::test]
+async fn review_save_as_onto_another_dirty_tab_is_refused(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "save-as-onto-dirty-tab");
+    let alpha = root.join("alpha.md");
+    let beta = root.join("beta.md");
+    fs::write(&alpha, "alpha\n").unwrap();
+    fs::write(&beta, "beta\n").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha\n".into(), Some(alpha.clone()))
+    });
+    let alpha_recovery = editor.read_with(cx, |editor, _| editor.recovery_id);
+    cx.cx
+        .on_quit(move || crate::config::remove_recovery_snapshot(alpha_recovery).unwrap());
+
+    // 打开 beta 并留下未保存的修改。
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.open_workspace_file(beta.clone(), window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block
+                .record
+                .set_title(crate::components::InlineTextTree::plain("beta edits"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+
+    // 回到 alpha，改一改，然后「另存为」选到 beta 的路径。
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(alpha.clone(), window, cx)
+    });
+    editor.update(cx, |editor, cx| {
+        let block = editor.document.first_root().unwrap().clone();
+        block.update(cx, |block, _| {
+            block
+                .record
+                .set_title(crate::components::InlineTextTree::plain("alpha edits"));
+            block.sync_render_cache();
+        });
+        editor.mark_dirty(cx);
+    });
+    let outcome = editor.update(cx, |editor, cx| {
+        let identity = editor.document_save_identity();
+        let bytes = editor.document_bytes_for_save();
+        let text = editor.document_text_for_save();
+        editor.complete_save_request(beta.clone(), identity, text, bytes, cx)
+    });
+    let error = outcome.expect_err("目标已经是另一篇脏标签的文件：不能直接盖掉它");
+    assert!(
+        error.to_string().contains("已在另一个标签里打开"),
+        "拦下的理由要说到用户听得懂：{error}"
+    );
+
+    assert_eq!(
+        fs::read_to_string(&beta).unwrap(),
+        "beta\n",
+        "被拦下就不该动盘上那一份"
+    );
+    editor.read_with(cx, |editor, _| {
+        let beta_tab = editor
+            .workspace
+            .open_documents
+            .iter()
+            .find(|tab| tab.path == beta)
+            .expect("beta 标签还得在");
+        assert!(beta_tab.dirty, "beta 的未保存状态不能被抹成干净");
+        assert_eq!(beta_tab.markdown, "beta edits\n", "beta 的未保存内容不能被换成我们的");
+    });
+}
+
+
+/// 另一半：目标是另一篇**干净**标签的文件，也要按那一页记的盘上版本核一次。
+///
+/// 那一份文件在标签还开着的时候被外部改过——直接盖上去等于绕开版本闸门，
+/// 把「盘上已经不是我们看到的那一篇」这件事吞掉。
+#[gpui::test]
+async fn review_save_as_onto_a_stale_clean_tab_is_refused(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "save-as-onto-stale-tab");
+    let alpha = root.join("alpha.md");
+    let beta = root.join("beta.md");
+    fs::write(&alpha, "alpha\n").unwrap();
+    fs::write(&beta, "beta\n").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "alpha\n".into(), Some(alpha.clone()))
+    });
+    let alpha_recovery = editor.read_with(cx, |editor, _| editor.recovery_id);
+    cx.cx
+        .on_quit(move || crate::config::remove_recovery_snapshot(alpha_recovery).unwrap());
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.open_workspace_file(beta.clone(), window, cx);
+    });
+    // 外部把 beta 改掉（标签里那一份还是干净的、记着旧版本）。
+    fs::write(&beta, "beta 被外部改了\n").unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(alpha.clone(), window, cx)
+    });
+
+    let outcome = editor.update(cx, |editor, cx| {
+        let identity = editor.document_save_identity();
+        let bytes = editor.document_bytes_for_save();
+        let text = editor.document_text_for_save();
+        editor.complete_save_request(beta.clone(), identity, text, bytes, cx)
+    });
+    assert!(
+        outcome.is_err(),
+        "目标那一页记的版本与盘上对不上：不能当没看见直接盖"
+    );
+    assert_eq!(
+        fs::read_to_string(&beta).unwrap(),
+        "beta 被外部改了\n",
+        "被拦下就不该动盘上那一份"
+    );
+}
+
 #[gpui::test]
 async fn review_save_and_close_keeps_tabs_when_a_write_fails(cx: &mut TestAppContext) {
     init_review_workspace_app(cx);
