@@ -674,11 +674,199 @@ impl Editor {
         Some(-(top + anchor.within))
     }
 
+    /// 视口顶那一行的缓冲区字节偏移。
+    ///
+    /// 两种视图是同一份缓冲区的两份投影，行结构不同但字节偏移都算得出来：
+    /// 源码分块是缓冲区的连续切片（块内偏移就是字节偏移），渲染块要经
+    /// 「显示偏移 → 内容偏移 → 源码偏移」这条与选区快照同源的换算。
+    fn capture_viewport_source_anchor(&self, cx: &App) -> Option<ViewModeScrollAnchor> {
+        let (entity, bounds, y) = self.block_at_viewport_top(cx)?;
+        let block = entity.read(cx);
+        let local = block.index_for_mouse_position(point(bounds.left() + px(1.0), y));
+        let id = entity.entity_id();
+        let span = self.document.source_span_of(id)?;
+        let identity = span.start + local.min(span.len());
+        if self.view_mode == ViewMode::Source || self.code_document {
+            return Some(ViewModeScrollAnchor {
+                offset: identity,
+                settle_frames: Self::VIEW_MODE_SCROLL_SETTLE_FRAMES,
+            });
+        }
+        // 渲染块的源码偏移要走与选区快照同源的换算；映射缺失时退回按块内
+        // 偏移直接读（代码块等 raw 编辑的块本就是同一坐标）。
+        let offset = self
+            .source_mapping_for_entity(id, cx)
+            .map(|mapping| {
+                let content = block.current_range_to_markdown_range(local..local).start;
+                let last = mapping.content_to_source.len().saturating_sub(1);
+                mapping.full_source_range.start + mapping.content_to_source[content.min(last)]
+            })
+            .unwrap_or(identity);
+        Some(ViewModeScrollAnchor {
+            offset,
+            settle_frames: Self::VIEW_MODE_SCROLL_SETTLE_FRAMES,
+        })
+    }
+
+    /// 视口顶落在哪一块上：返回它、量到的边界，以及取落点用的窗口 y。
+    ///
+    /// 只认**当前挂载**的块：`last_bounds` 不会随块滚出视口清掉，曾画过的块会
+    /// 一直留着上次的窗口坐标；而被钉在窗口里的光标块（焦点岛）即使远在屏幕
+    /// 外也有新鲜边界。按陈旧坐标挑落点，会把早已滚过去的块认成读者看的地方。
+    /// 视口顶落在块间空隙上时取下面第一段的块首。
+    ///
+    /// 表格、分隔线这类块没有文字元素（`last_bounds` 恒为空），它们的落点只能
+    /// 按行框量；量不出文字布局时块内偏移恒为块首（`index_for_mouse_position`）。
+    fn block_at_viewport_top(
+        &self,
+        cx: &App,
+    ) -> Option<(Entity<Block>, Bounds<Pixels>, Pixels)> {
+        let viewport_top = self.scroll_handle.bounds().top();
+        let mut below: Option<(Entity<Block>, Bounds<Pixels>)> = None;
+        for entry in self.document.visible_blocks() {
+            let id = entry.entity.entity_id();
+            if !self.entity_is_mounted(id) {
+                continue;
+            }
+            let block = entry.entity.read(cx);
+            let Some(bounds) = block.last_bounds.or_else(|| self.mounted_row_bounds(id)) else {
+                continue;
+            };
+            if bounds.bottom() <= viewport_top {
+                continue;
+            }
+            if bounds.top() >= viewport_top {
+                below.get_or_insert_with(|| (entry.entity.clone(), bounds));
+                continue;
+            }
+            return Some((entry.entity.clone(), bounds, viewport_top));
+        }
+        below.map(|(entity, bounds)| (entity, bounds, bounds.top()))
+    }
+
+    /// 缓冲区字节偏移 → 它所在的块与块内显示偏移（换投影后交还阅读位置用）。
+    pub(crate) fn block_and_display_offset_for_source_offset(
+        &self,
+        offset: usize,
+        cx: &App,
+    ) -> Option<(Entity<Block>, usize)> {
+        for entry in self.document.visible_blocks() {
+            let id = entry.entity.entity_id();
+            let Some(span) = self.document.source_span_of(id) else {
+                continue;
+            };
+            if offset < span.start || offset > span.end {
+                continue;
+            }
+            let block = entry.entity.read(cx);
+            if self.view_mode == ViewMode::Source || self.code_document {
+                return Some((entry.entity.clone(), (offset - span.start).min(block.visible_len())));
+            }
+            // 渲染块要沿与选区快照同源的反向换算回到显示偏移；映射缺失时
+            // 退回按块内偏移直接读（代码块等 raw 编辑的块本就是同一坐标）。
+            let Some(mapping) = self.source_mapping_for_entity(id, cx) else {
+                return Some((entry.entity.clone(), (offset - span.start).min(block.visible_len())));
+            };
+            let last = mapping.source_to_content.len().saturating_sub(1);
+            let relative = offset.saturating_sub(mapping.full_source_range.start);
+            let content = mapping.source_to_content[relative.min(last)];
+            let display = block.markdown_range_to_current_range(content..content).start;
+            return Some((entry.entity.clone(), display));
+        }
+        None
+    }
+
+    /// 换投影时交还的阅读位置：目标块的块内几何来自上一帧的绘制结果，未挂载时
+    /// 先按行计划估算把它拉进窗口，下一帧再按真实几何对齐。
+    /// 返回是否改动了滚动偏移。
+    pub(crate) fn apply_pending_view_mode_scroll(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(anchor) = self.pending_view_mode_scroll else {
+            return false;
+        };
+        if anchor.settle_frames == 0 {
+            self.pending_view_mode_scroll = None;
+            return false;
+        }
+        let remap = |frames: u8| ViewModeScrollAnchor {
+            offset: anchor.offset,
+            settle_frames: frames,
+        };
+        let Some((block, local)) =
+            self.block_and_display_offset_for_source_offset(anchor.offset, cx)
+        else {
+            // 目标已经不在任何块里（这几十帧里文档被改过）：交还作废。
+            self.pending_view_mode_scroll = None;
+            return false;
+        };
+        // 挂载之外的目标只有陈旧几何可用：等它被钉成焦点岛画出真边界再说。
+        let anchor_top = self
+            .entity_is_mounted(block.entity_id())
+            .then(|| block.read(cx).visible_range_bounds(local..local).map(|bounds| bounds.top()))
+            .flatten()
+            .or_else(|| self.mounted_row_bounds(block.entity_id()).map(|bounds| bounds.top()));
+        // 目标块还没挂载时只有估计：先按行计划把它拉进窗口，下一帧它就有真实
+        // 几何了。渲染态一行可能只有几行字，源码态一屏却盖大半个 512 行分块——
+        // 照着像素偏移原样换过去，目标块很可能落在窗外，永远等不到自己的几何。
+        let target = match anchor_top {
+            Some(anchor_top) => {
+                let viewport_top = self.scroll_handle.bounds().top();
+                let delta = anchor_top - viewport_top;
+                if delta.abs() <= px(0.5) {
+                    self.pending_view_mode_scroll = None;
+                    return false;
+                }
+                self.scroll_handle.offset().y - delta
+            }
+            None => {
+                let Some(estimated) = self.estimated_scroll_y_for_block(block.entity_id()) else {
+                    self.pending_view_mode_scroll = Some(remap(anchor.settle_frames - 1));
+                    self.schedule_followup_frame(cx);
+                    return false;
+                };
+                estimated
+            }
+        };
+        let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
+        let current = self.scroll_handle.offset().y;
+        let target = target.min(px(0.0)).max(-max_offset_y);
+        let mut offset = self.scroll_handle.offset();
+        offset.y = target;
+        self.scroll_handle.set_offset(offset);
+        // 行高要等测量落定：自己排下一帧，不能指望外部输入来推。
+        self.pending_view_mode_scroll = Some(remap(anchor.settle_frames - 1));
+        self.schedule_followup_frame(cx);
+        target != current
+    }
+
+    /// 某一块在行计划里的估计滚动偏移（负值）。
+    ///
+    /// 没量过的行只是下界估计，所以它只能保证把目标行拉进窗口，精确对齐还得
+    /// 靠下一帧的真实几何——与标签切回的交还同一套路（`anchor_scroll_y`）。
+    fn estimated_scroll_y_for_block(&self, entity_id: EntityId) -> Option<Pixels> {
+        let plan = self.rendered_row_plan.as_ref()?;
+        let visible_index = self.document.visible_index_for_entity_id(entity_id)?;
+        let row = plan
+            .visible_starts
+            .partition_point(|start| *start <= visible_index)
+            .saturating_sub(1);
+        let top = plan.stride_prefix().nonnegative.get(row).copied().unwrap_or(0.0);
+        Some(px(-top))
+    }
+
+    /// 用户操作优先于尚未交还的阅读位置。
+    pub(crate) fn cancel_pending_view_mode_scroll(&mut self) {
+        self.pending_view_mode_scroll = None;
+    }
+
     /// 用户操作优先于尚未交还的标签现场。
     pub(crate) fn cancel_pending_scroll_restore(&mut self) {
         self.pending_scroll_restore = None;
         self.restored_row_start = None;
     }
+
+    /// 换投影交还阅读位置的 settle 帧数：首帧把它钉成焦点岛、次帧拿到几何，
+    /// 再留几帧校正测量漂移——与滚动的 settle 同一量级。
+    const VIEW_MODE_SCROLL_SETTLE_FRAMES: u8 = 6;
 
     pub(crate) fn toggle_view_mode(&mut self, cx: &mut Context<Self>) {
         if self.image_preview.is_some() {
@@ -686,6 +874,10 @@ impl Editor {
         }
         self.end_block_pointer_selection_sessions(cx);
         let selection_snapshot = self.capture_source_selection_snapshot(cx);
+        // 换投影之前先把视口顶记成缓冲区坐标：两边行结构不同，只有这个坐标跨
+        // 模式成立。必须趁 `view_mode` 还没翻的时候取——挂载行与行计划是按
+        // 「当前是哪种投影」记账的，翻完再取就认不出当前挂载了哪一块。
+        let view_anchor = self.capture_viewport_source_anchor(cx);
         self.clear_cross_block_selection(cx);
         self.rendered_select_all_cycle = None;
         match self.view_mode {
@@ -705,10 +897,14 @@ impl Editor {
             }
         }
         // 两种视图都是缓冲区的一份投影：换视图 = 换投影，文本与区间都从缓冲区来。
+        self.pending_view_mode_scroll = view_anchor;
         self.rebuild_document_from_buffer(cx);
 
         self.apply_selection_snapshot_in_current_mode(&selection_snapshot, cx);
-        self.pending_scroll_active_block_into_view = true;
+        // 有阅读位置锚点时不再把光标块滚进视口：读者可能正滚在别处看，光标留在
+        // 文件开头也要留在原地，视口交给锚点交还（旧行为是一律滚到光标，模式一
+        // 切就被拽回文档顶部）。
+        self.pending_scroll_active_block_into_view = self.pending_view_mode_scroll.is_none();
         self.pending_scroll_recheck_after_layout = true;
         self.last_scroll_viewport_size = None;
         // 换了投影（也让行锚点的行结构作废）：挂着的交还不再有效。

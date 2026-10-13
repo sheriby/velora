@@ -823,6 +823,7 @@ impl Editor {
 
     /// 撤销/重做一步的收尾：把选区放回那一步之前的现场。
     fn apply_restored_selection(&mut self, entry: &HistoryEntry, cx: &mut Context<Self>) {
+        self.cancel_pending_view_mode_scroll();
         self.apply_selection_snapshot_in_current_mode(&entry.selection, cx);
         self.pending_scroll_active_block_into_view = true;
         self.pending_scroll_recheck_after_layout = true;

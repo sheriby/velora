@@ -88,6 +88,8 @@ impl Editor {
 
         match event {
             BlockEvent::Changed => {
+                // 用户改了文档：换投影交还的阅读位置按旧字节记账，一律作废。
+                self.cancel_pending_view_mode_scroll();
                 let kind_changed = self.writes_through_the_buffer() && {
                     let block = block.read(cx);
                     block.record.kind != block.record.source_kind

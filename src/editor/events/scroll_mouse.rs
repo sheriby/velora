@@ -111,6 +111,7 @@ impl Editor {
         }
         // 用户自己滚了：挂着的交还作废，否则后续几帧会把视口拽回去。
         self.cancel_pending_scroll_restore();
+        self.cancel_pending_view_mode_scroll();
         self.bump_scrollbar_visibility(cx);
     }
 
@@ -174,6 +175,7 @@ impl Editor {
         self.pending_scroll_active_block_into_view = false;
         self.pending_scroll_recheck_after_layout = false;
         self.cancel_pending_scroll_restore();
+        self.cancel_pending_view_mode_scroll();
         self.bump_scrollbar_visibility(cx);
         cx.notify();
     }
@@ -187,6 +189,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.cancel_pending_scroll_restore();
+        self.cancel_pending_view_mode_scroll();
         let position =
             self.scrollbar_document_position(-f32::from(self.scroll_handle.offset().y), false);
         let progress = if max_scroll_y > 0.0 {

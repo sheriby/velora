@@ -130,6 +130,7 @@ impl Editor {
 
     pub(crate) fn focus_block(&mut self, entity_id: EntityId) {
         self.cancel_pending_scroll_restore();
+        self.cancel_pending_view_mode_scroll();
         self.pending_focus = Some(entity_id);
         self.active_entity_id = Some(entity_id);
         self.pending_scroll_active_block_into_view = true;

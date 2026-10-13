@@ -98,6 +98,12 @@ pub struct Editor {
     pending_scroll_recheck_after_layout: bool,
     /// 标签切换的阅读现场，只在新行计划就绪的首帧交还。
     pub(super) pending_scroll_restore: Option<DocumentView>,
+    /// 换投影（切换视图模式）时要交还的阅读位置。
+    ///
+    /// 行锚点跨模式用不了：两边的行结构完全不同（渲染态按块、源码态按 512 行
+    /// 切片），`ScrollRowAnchor` 只在本模式的行计划里成立。唯一两端都算得出来
+    /// 的坐标是缓冲区字节偏移——用户看到的是「同一处内容还在视口顶」。
+    pending_view_mode_scroll: Option<ViewModeScrollAnchor>,
     pending_save: bool,
     pending_save_as: bool,
     pending_window_edited: bool,
@@ -619,6 +625,14 @@ pub(super) struct CursorLocation {
 
 const CURSOR_HISTORY_LIMIT: usize = 100;
 
+/// 切视图时要交还的阅读位置：视口顶那一行的缓冲区字节偏移。
+#[derive(Clone, Copy, Debug)]
+struct ViewModeScrollAnchor {
+    offset: usize,
+    /// 剩余精修帧数：目标块的块内几何要等它在新投影里画过一帧才有。
+    settle_frames: u8,
+}
+
 pub(super) struct SourceTargetMapping {
     entity: Entity<Block>,
     full_source_range: std::ops::Range<usize>,
@@ -764,6 +778,7 @@ impl Editor {
             pending_scroll_center_into_view: false,
             pending_scroll_recheck_after_layout: true,
             pending_scroll_restore: None,
+            pending_view_mode_scroll: None,
             pending_save: false,
             pending_save_as: false,
             pending_window_edited: false,

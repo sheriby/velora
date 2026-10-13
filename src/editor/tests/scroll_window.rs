@@ -1057,6 +1057,129 @@ async fn zooming_clears_the_row_stride_cache(cx: &mut TestAppContext) {
     );
 }
 
+/// 视口顶对应的缓冲区行号。两种视图是同一份缓冲区的两份投影，切视图前后
+/// 这个数应该停在原地——它是「读者正看着哪一段」的坐标，与光标无关。
+///
+/// 只认当前挂载的块：`last_bounds` 不会随块滚出视口清掉（曾画过就一直留着上次
+/// 的窗口坐标），拿它当「这一块在视口里」会把陈旧的文档开头认成落点。
+fn source_line_at_viewport_top(editor: &Editor, cx: &gpui::App) -> Option<usize> {
+    let viewport_top = editor.scroll_handle.bounds().top();
+    for entry in editor.document.visible_blocks() {
+        let id = entry.entity.entity_id();
+        if !editor.entity_is_mounted(id) {
+            continue;
+        }
+        let block = entry.entity.read(cx);
+        let Some(bounds) = block.last_bounds else {
+            continue;
+        };
+        if bounds.bottom() <= viewport_top {
+            continue;
+        }
+        let y = viewport_top.max(bounds.top());
+        let local = block.index_for_mouse_position(gpui::point(bounds.left() + px(1.0), y));
+        let span = editor.document.source_span_of(id)?;
+        let offset = if editor.view_mode == ViewMode::Source {
+            span.start + local.min(span.len())
+        } else {
+            let content = block.current_range_to_markdown_range(local..local).start;
+            let mapping = editor.source_mapping_for_entity(id, cx)?;
+            let last = mapping.content_to_source.len().saturating_sub(1);
+            span.start + mapping.content_to_source[content.min(last)]
+        };
+        return Some(editor.buffer.line_of(offset));
+    }
+    None
+}
+
+fn settle_view_frames(cx: &mut VisualTestContext) {
+    for _ in 0..8 {
+        cx.executor().advance_clock(Duration::from_millis(16));
+        redraw(cx);
+    }
+}
+
+/// 1500 行软换行正文：渲染态是一块长段落，源码态切成 512 行的三根投影块——
+/// 两种视图的行结构完全不同，唯一能对上的坐标是缓冲区字节偏移。
+fn soft_wrapped_source_lines(lines: usize) -> String {
+    (0..lines)
+        .map(|index| format!("第 {index} 行正文"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn scroll_viewport_to_fraction(editor: &gpui::Entity<Editor>, cx: &mut VisualTestContext, fraction: f32) {
+    // 走用户滚动的真实入口：
+    // `set_vertical_scroll_offset` 会作废还在排队的「把光标块滚进视口」，
+    // 和鼠标滚轮/拖滑块是同一条语义（`on_editor_scroll_wheel`）。
+    editor.update(cx, |editor, cx| {
+        let max = editor.scroll_handle.max_offset().height;
+        editor.set_vertical_scroll_offset(-max * fraction, cx);
+    });
+    settle_view_frames(cx);
+}
+
+/// 光标留在文档开头、读者正滚在中段时切视图模式：视口要停在同一处内容上。
+///
+/// 旧实现切完只把**光标**所在块滚进视口（`pending_scroll_active_block_into_view`），
+/// 光标留在文档开头时，切一次模式就被拽回顶部。
+#[gpui::test]
+async fn switching_to_source_mode_keeps_the_reading_position(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, soft_wrapped_source_lines(1500), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    scroll_viewport_to_fraction(&editor, cx, 0.5);
+    let before = editor
+        .read_with(cx, |editor, cx| source_line_at_viewport_top(editor, cx))
+        .expect("视口顶应落在已绘制的块上");
+    assert!(before > 100, "前提：视口已滚到中段（第 {before} 行）");
+
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    settle_view_frames(cx);
+
+    let after = editor
+        .read_with(cx, |editor, cx| source_line_at_viewport_top(editor, cx))
+        .expect("视口顶应落在已绘制的块上");
+    assert!(
+        after.abs_diff(before) <= 2,
+        "切到源码模式后视口顶应停在原来那一行附近：切前第 {before} 行，切后第 {after} 行"
+    );
+}
+
+/// 反向的一半：源码模式里滚着看，切回渲染视图也要停在原地。
+#[gpui::test]
+async fn switching_back_to_rendered_mode_keeps_the_reading_position(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, soft_wrapped_source_lines(1500), None)
+    });
+    redraw(cx);
+    redraw(cx);
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    settle_view_frames(cx);
+
+    scroll_viewport_to_fraction(&editor, cx, 0.5);
+    let before = editor
+        .read_with(cx, |editor, cx| source_line_at_viewport_top(editor, cx))
+        .expect("视口顶应落在已绘制的块上");
+    assert!(before > 100, "前提：视口已滚到中段（第 {before} 行）");
+
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    settle_view_frames(cx);
+
+    let after = editor
+        .read_with(cx, |editor, cx| source_line_at_viewport_top(editor, cx))
+        .expect("视口顶应落在已绘制的块上");
+    assert!(
+        after.abs_diff(before) <= 2,
+        "切回渲染模式后视口顶应停在原来那一行附近：切前第 {before} 行，切后第 {after} 行"
+    );
+}
+
 /// 每块每帧不许做整份主题的字号派生（评审报告维度四建议 5）：块渲染以前
 /// 各自 clone 整份 Theme（约 4KB）再 apply_scaled_typography——六块文档三帧
 /// 就是二十来次整份克隆。外壳与块共用 ThemeManager 的派生 Arc 后，稳定帧不再派生。
@@ -1077,3 +1200,53 @@ async fn stable_frames_derive_theme_once(cx: &mut TestAppContext) {
         "稳定帧应复用派生主题，实际仍派生 {derives} 次"
     );
 }
+
+/// 源码模式切回渲染模式：视口顶要停在同一处内容上。
+///
+/// 夹具必须是**多块**文档：单块文档整篇就是一个块，块级几何永远是新鲜的，
+/// 抓不到「视口顶落在了哪一块」这件事上的陈旧坐标——`last_bounds` 不会随块
+/// 滚出视口清掉，曾画过的块会一直留着上次的窗口坐标，按它挑落点就会把文档
+/// 开头认成读者正看的地方。
+#[gpui::test]
+async fn toggling_view_mode_round_trip_keeps_the_reading_position(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..240)
+        .map(|index| {
+            format!(
+                "## 小节 {index}\n\n小节 {index} 的正文，带 `代码` 与 [链接](https://example.com)。\n\n- 列表项 {index}\n- 另一项\n\n---\n\n"
+            )
+        })
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    // 先让行高量定：冷启动的 stride 是估计值，按它算出的滚动上限远小于全文，
+    // 这时候设的「滚到一半」只滚了一点点。
+    settle_view_frames(cx);
+    settle_view_frames(cx);
+
+    scroll_viewport_to_fraction(&editor, cx, 0.5);
+    let start = editor
+        .read_with(cx, |editor, cx| source_line_at_viewport_top(editor, cx))
+        .expect("视口顶应落在已挂载的块上");
+    assert!(start > 200, "前提：视口已滚到中段（第 {start} 行）");
+
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    settle_view_frames(cx);
+    let source = editor
+        .read_with(cx, |editor, cx| source_line_at_viewport_top(editor, cx))
+        .expect("源码模式应有落点");
+    assert!(
+        source.abs_diff(start) <= 2,
+        "切到源码模式后视口顶应停在原来那一行附近：切前第 {start} 行，切后第 {source} 行"
+    );
+
+    editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
+    settle_view_frames(cx);
+    let back = editor
+        .read_with(cx, |editor, cx| source_line_at_viewport_top(editor, cx))
+        .expect("渲染模式应有落点");
+    assert!(
+        back.abs_diff(start) <= 2,
+        "切回渲染模式后视口顶应停在原来那一行附近：切前第 {start} 行，切后第 {back} 行"
+    );
+}
+

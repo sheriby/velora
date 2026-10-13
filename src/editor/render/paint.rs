@@ -266,6 +266,12 @@ impl Render for Editor {
             // 首帧的窗口必须覆盖保存的落点，滚动上限由新标签的布局决定。
             max_scroll_y = max_scroll_y.max(current_scroll_y);
         }
+        // 换投影交还的阅读位置：紧接着的行窗口要按修正后的偏移选行，否则目标块
+        // 落在窗外、这一帧拿不到它的几何。
+        if self.apply_pending_view_mode_scroll(cx) {
+            current_scroll_y = (-f32::from(self.scroll_handle.offset().y)).max(0.0);
+            max_scroll_y = max_scroll_y.max(current_scroll_y);
+        }
         let has_overflow = max_scroll_y > 0.5;
         let show_custom_scrollbar = has_overflow
             && (self.scrollbar_drag.is_some()

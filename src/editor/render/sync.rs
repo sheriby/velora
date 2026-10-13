@@ -326,11 +326,19 @@ impl Editor {
         if let Some(bounds) = caret.or(state.last_bounds) {
             return Some(bounds);
         }
+        self.mounted_row_bounds(host_id)
+    }
+
+    /// 这一块所在挂载行的窗口坐标。
+    ///
+    /// 表格、分隔线这类没有文字元素的块只有行框可量（`last_bounds` 恒为空），
+    /// 「把某块滚到视口顶」对它们只能按行对齐。
+    pub(crate) fn mounted_row_bounds(&self, entity_id: EntityId) -> Option<Bounds<Pixels>> {
         let run = self.prev_mounted_run.filter(|run| self.mounted_run_is_addressable(*run))?;
         let plan = self.rendered_row_plan.as_ref()?;
         let (_, child) = run.rows().find(|(row, _)| {
             plan.rows.get(*row).is_some_and(|row| {
-                row.entities().any(|entity| entity.entity_id() == host_id)
+                row.entities().any(|entity| entity.entity_id() == entity_id)
             })
         })?;
         let mut bounds = self.scroll_handle.bounds_for_item(child)?;

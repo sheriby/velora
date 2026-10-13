@@ -460,6 +460,8 @@ impl Editor {
         self.sync_table_axis_visuals(cx);
         self.clear_cross_block_selection(cx);
 
+        // 整篇换文件：上一篇挂着的阅读位置交还一律作废。
+        self.cancel_pending_view_mode_scroll();
         match restored_view {
             None => {
                 self.pending_scroll_active_block_into_view = true;
