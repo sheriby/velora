@@ -1,86 +1,150 @@
-# Velora Architecture Overview（总览）
+# Velora 架构总览
 
-> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-09-30 随「巨型文件拆分」重构更新模块地图，2026-10-12 复核模块清单与计数。**与代码冲突时以代码为准。**
-> 行号会漂移，函数名不会——引用以 `文件:函数名` 为主。
-> 分册：[editor-core.md](./editor-core.md)（文档模型/编辑/undo/持久化） · [render-pipeline.md](./render-pipeline.md)（渲染/虚拟化/缓存） · [workspace-ui.md](./workspace-ui.md)（工作区/配置/主题/命令） · [testing-and-build.md](./testing-and-build.md)（测试/基准/构建/vendored 补丁） · [performance.md](./performance.md)（性能基线与优化台账）
+> 面向后续 agent 的代码导览。基于 `dev`，2026-10-14 重写。**与代码冲突时以代码为准。**
+> 引用位置一律用 `文件:函数名` 或 `文件:类型名`——行号会漂，名字不会。
+> 本册只讲骨架与判据；细节在分册，别在这里堆字段清单。
+
+## 分册地图
+
+| 分册 | 覆盖 | 什么问题查它 |
+|---|---|---|
+| [editor-core.md](./editor-core.md) | 缓冲区、块树、导入解析、写回、位置换算、undo | 内容不对、字节被洗、光标落点错、撤销错、大文档卡 |
+| [markdown-model.md](./markdown-model.md) | 行内模型与解析/序列化、表格/HTML/图片/公式/mermaid、代码高亮、导出 | 往返保真、写法被改、样式丢、富媒体渲染、导出与界面不一致 |
+| [render-pipeline.md](./render-pipeline.md) | 帧入口、行计划、虚拟化、块渲染分派、文本元素、缓存 | 画面不对、滚动跳动、掉帧、缓存不失效 |
+| [workspace-ui.md](./workspace-ui.md) | 启动、标签、文件树、侧栏、搜索、浮层、事件路由、命令与键位、配置/主题/i18n | 面板/菜单/快捷键/搜索/标签/窗口行为 |
+| [testing-and-build.md](./testing-and-build.md) | 测试组织、门禁、夹具、CI、打包、vendored gpui 补丁 | 怎么跑测试、怎么出包、升级 gpui 要重放什么 |
+| [performance.md](./performance.md) | 计数器、闸门、成本结构、优化套路 | 性能改动前后怎么量、哪些路径禁止全文操作 |
+| [../theme-tokens.md](../theme-tokens.md) | 主题 token 全表 | 加/改颜色与尺寸 |
 
 ## Velora 是什么
 
-原生 Markdown 编辑器（对标 Typora/Obsidian），Rust + **vendored GPUI 0.2.2**（`[patch.crates-io]` 指向 `vendor/gpui`，带 7 组本地补丁，见 testing-and-build.md §5）。单 bin crate（~157k 行含测试，2026-10-12 实测，`src/main.rs`），无 workspace。发版 macOS + Windows（各平台原生构建 `release`）。
+原生 Markdown 编辑器（对标 Typora/Obsidian）。Rust + **vendored GPUI 0.2.2**（`Cargo.toml` 的 `[patch.crates-io]` 指向 `vendor/gpui`，带本地补丁，清单见 testing-and-build.md §7）。**单 bin crate、无 workspace**：全部代码在 `src/`，入口 `src/main.rs`，测试全是 bin 内的 `#[cfg(test)]` 模块。发布平台 macOS（ARM64 + Intel）与 Windows x64，不支持 Linux。
 
-### 文件组织约定（2026-09-30 重构后）
+## 核心分层与所有权
 
-除两个已声明的例外（`editor/render/paint.rs` 的单函数 `Render::render`、`block/render/paint_parts.rs` 的单函数 `Element::paint`），**所有源文件 ≤1000 行**。大模块一律按「`foo.rs` 根 + `foo/` 子目录」拆分：根放类型定义与模块声明，子文件按职责承载 `impl` 块；测试统一放 `<name>/tests.rs` 或 `<name>/tests/` 子目录（`mod tests;` 挂载），不再内联在源文件尾部。跨子模块共享的自由函数在根以 `pub(super) use child::*` 聚合导出。
+理解这个仓库只需要抓住一条主线：**内容只有一个事实源，其余全是投影。**
+
+```
+磁盘字节
+  └─ encoding::load_document        唯一读盘漏斗（解码 + 形状嗅探，判不出就拒绝打开）
+       └─ TextBuffer                ★ 唯一内容事实源（LF 规范文本 + FileShape 记原形状）
+            └─ DocumentTree         投影：块树（roots: Vec<Entity<Block>>）
+                 └─ Block/BlockRecord  每块缓存自己那段文本的解析结果 + 写法账
+                      └─ InlineTextTree 块内行内模型（定界符不落盘）
+```
+
+- **写只有一条路**：`TextBuffer::edit`。任何"改文档"最终都要变成对缓冲区某个字节区间的编辑。
+- **块树可以从缓冲区重建**，反过来不行——所以**禁止**"从块树序列化出全文当文档内容"。保存、版本号、搜索、大纲、导出一律读缓冲区。
+- **块与文档的唯一对应关系是字节区间**：`DocumentTree::source_spans`（`EntityId → Range<usize>`，表在树侧不在块上）。编辑落笔、位置换算、增量重算全靠它。
+- **块的文本是缓存不是内容**：`record.title` 的语义是 `parse(buffer[span])` 的结果。
+
+派生视图（大纲、搜索命中、状态栏统计、行计划）的通用规矩：**只重算被改过的字节所在的那部分**，成本必须接进计数器（见 performance.md）。
 
 ## 顶层模块地图
 
 ```
 src/
-├── main.rs                 启动、资产内嵌、startup timing
-├── app_identity.rs         应用标识（reverse-DNS app id，窗口与打包共用）
-├── file_url.rs             平台打开事件的文件 URL 解析；全仓唯一的 percent-decoding 判据
-├── app_menu.rs             菜单/动作分发根（app_menu/build_menus.rs 构建、command_menus.rs 命令条目、dispatch.rs 动作路由、tests.rs）
-├── commands.rs             命令注册表（菜单+命令面板唯一事实源）
-├── window_chrome.rs        自绘标题栏/红绿灯/客户端装饰
+├── main.rs              启动、资产内嵌、startup timing
+├── app_identity.rs      reverse-DNS 应用标识（窗口与打包共用）
+├── file_url.rs          平台打开事件的文件 URL 解析；全仓唯一 percent-decoding 判据
+├── commands.rs          命令注册表 COMMANDS（系统菜单 + 命令面板的唯一事实源）
+├── app_menu.rs + app_menu/   菜单构建、命令条目、动作路由
+├── window_chrome.rs     自绘标题栏 / 窗口按钮 / 拖拽区 / 标签条并入
 ├── components/
-│   ├── actions.rs          gpui actions + 快捷键定义（tests 在 actions/tests.rs）
-│   ├── menu.rs / switch.rs 菜单共用渲染（行/分隔线/面板）、拨动开关组件
-│   ├── block/              ★ 块实体
-│   │   ├── state.rs            块记录（tests 在 state/tests.rs）
-│   │   ├── runtime/            缓存与运行时：mod.rs(编辑模式/缓存结构) normalize.rs(快捷前缀) text_ops.rs(类型转换/undo) cursor.rs(光标/选区投影) display_cache.rs(渲染缓存/链接脚注注册) projection.rs+projection/build.rs(行内投影) code.rs image.rs table.rs tests/（9 个主题文件）
-│   │   ├── render.rs+render/   外观：render.rs(常量/tooltip) parts.rs html 样式 inline_visuals.rs content.rs shell.rs paint_parts.rs(Render/Element 主体★单函数例外) link_cursor.rs tests.rs
-│   │   └── element.rs+element/ 文本元素：element.rs(布局函数) code_input.rs text_element.rs tests.rs
-│   ├── markdown/           行内解析 inline.rs+inline/{tree,parse,links,delimiters,stacks}.rs；HTML html.rs+html/parse.rs；表格 table.rs+table/tests.rs；图片 image.rs+image/tests.rs；代码高亮/链接/脚注/粘贴
-│   └── latex/ mermaid/     公式与图表渲染（SVG 路径）
+│   ├── actions.rs       gpui 动作声明 + 快捷键表 + 键位安装
+│   ├── block/           ★ 块实体：state(记录) runtime(缓存/编辑) render(外观) element(文本元素) interactions(输入)
+│   ├── markdown/        ★ 行内模型与解析/序列化、表格、HTML、图片、代码高亮、脚注、链接、粘贴
+│   ├── latex/ mermaid/  公式与图表 → SVG（进程 + 磁盘双层缓存）
+│   └── menu.rs switch.rs 共用 UI 组件
 ├── editor/
-│   ├── mod.rs              ★ Editor 实体与常量（分块预算等）
-│   ├── buffer.rs+buffer/   ★ 文档唯一事实源：分块文本 + FileShape（file_shape.rs 记编码/行尾）
-│   ├── encoding.rs         读盘漏斗：原始字节/规范文本/文件形状的唯一判据（BOM/UTF-16/GB18030）
-│   ├── document.rs+document/   ★ markdown→块 导入：document.rs(类型) parse.rs(逐行扫描) import.rs blocks.rs(分块构建) document/tests/（6 个主题文件）
-│   ├── tree.rs             ★ DocumentTree + 可见快照 + PendingTail（tests 在 tree/tests.rs）
-│   ├── render.rs+render/   ★ 每帧渲染：render.rs(行计划类型/菜单几何) sync.rs(标题栏/焦点/滚动同步) menu_render.rs(窗口内菜单) overlays.rs(欢迎页/浮层/对话框) paint.rs(Render 主体★单函数例外) tests.rs
-│   ├── events.rs+events/   块事件总线根：events.rs(按键捕获/焦点) paste.rs(粘贴/图片) quotes.rs structural.rs(结构性换行) scroll_mouse.rs table_nav.rs block_event.rs(事件分发)；events/tests/（6 个主题文件）
-│   ├── selection.rs+selection/  跨块选区（tests、pointer.rs 命中换算、table.rs 表格跨格）/ source_mapping.rs 源码↔块偏移映射 / selection_toolbar.rs 选中工具栏
-│   ├── history.rs          增量组 undo/redo（不是全文快照）
-│   ├── persistence.rs      原子写/autosave/外部修改检测
-│   ├── workspace.rs+workspace/ ★ 侧栏根：tabs session_watcher prompts context_menus sidebar documents document_matches tree_sync tree_ops tree_edit find_replace search_backend search_engine search_bench render_{tabs,panel,tree,search} file_tree overlay_input input_handler；workspace/tests/（15 个主题文件）
-│   ├── tests.rs+tests/     编辑器测试入口：common.rs 共享脚手架 + 42 个主题文件（加载/滚动/选区/保存/菜单/导出/表格/图片/脚注/undo/键盘/性能/长行/知识面板等）
-│   └── 其余单文件：status_bar quick_open command_palette file_history image_preview formula_editor latex_completion modal context_menu.rs+context_menu/ watcher file_drop close window_state table_edit runtime_context workspace_index format_ops paragraph_ops insert_ops clipboard_ops export update
-├── config/                 config.toml / session.json / recovery；preferences.rs+preferences/{persistence,window,widgets,pages_general,pages_shortcuts_window,render,tests}.rs
-├── theme/                  theme.rs+theme/{de,presets,manager_parts,tests}.rs：token 结构 / JSON 兼容反序列化 / 六套内置主题 / 全局管理；token 全表见 [theme-tokens.md](../theme-tokens.md)
-├── i18n/                   mod.rs + strings.rs de.rs de_impl.rs strings_api.rs keys.rs pack.rs manager.rs tests.rs：双语+外置语言包
-├── net/                    HTTP 客户端与更新检查
-└── export/                 html.rs+html/{css,tests}.rs / pdf / png / 打印（Chromium 无头）
-vendor/gpui/                vendored 框架 + 本地补丁
-scripts/ fixtures/
+│   ├── mod.rs           ★ Editor 实体（窗口级控制器）与写回分档、区间维护
+│   ├── buffer.rs + buffer/  ★ TextBuffer 与 FileShape（编码/行尾/BOM）
+│   ├── encoding.rs      读盘漏斗
+│   ├── tree.rs          ★ DocumentTree、可见快照、区间表、序列化
+│   ├── document.rs + document/  ★ markdown → 块的手写逐行解析器
+│   ├── source_mapping.rs ★ 块内偏移 ↔ 缓冲区字节的全部换算
+│   ├── history.rs       增量组 undo/redo
+│   ├── persistence.rs   原子写、autosave、外部修改检测
+│   ├── render.rs + render/  ★ 每帧渲染、行计划、滚动同步、浮层绘制
+│   ├── events.rs + events/  按键捕获、块事件总线、粘贴、滚动与鼠标、表格导航
+│   ├── selection.rs + selection/  跨块选区、指针命中、表格跨格选区
+│   ├── workspace.rs + workspace/ ★ 侧栏：标签、文件树、大纲、搜索、会话与监听
+│   └── 单文件：status_bar quick_open command_palette modal context_menu/ selection_toolbar
+│              table_edit format_ops paragraph_ops insert_ops clipboard_ops window_state
+│              runtime_context workspace_index file_history image_preview formula_editor
+│              latex_completion watcher file_drop close update
+├── config/              config.toml / session.json / recovery 快照 / 偏好设置窗口
+├── theme/               token 结构、JSON 反序列化、内置主题、全局管理
+├── i18n/                双语内置表 + 外置语言包（i18n 是代码不是数据文件）
+├── net/                 HTTP 客户端与应用更新检查
+└── export/              HTML / PDF / PNG / 打印（PDF、PNG、打印走无头 Chromium）
+vendor/gpui/             vendored 框架 + 本地补丁
+scripts/ fixtures/       夹具生成、打包脚本；fixtures/perf 不进版本库
 ```
 
-## 五条主干流
+文件组织约定：大模块一律「同名 `foo.rs` 根 + `foo/` 子目录」，根放类型定义与模块声明，子文件承载 `impl`；测试统一放 `<name>/tests.rs` 或 `<name>/tests/`，不内联在源文件尾部。新目录不要再新增 `mod.rs`。
 
-1. **启动**：main → 全局初始化（配置/i18n/主题/HTTP/keybindings）→ 恢复会话或打开参数目标 → 菜单延迟安装。见 workspace-ui.md §1。
-2. **打开文件**：树点击/⌘P/最近列表 → `open_workspace_file` → 按扩展名分流：markdown 走 `build_root_blocks_from_markdown`（分块渐进，`FIRST_CHUNK_ROOTS=2000`/`STEADY_CHUNK_ROOTS=250`）；**代码/纯文本整文件变单 CodeBlock（Source 模式）**；图片走只读预览（`image_preview`，二进制不进缓冲区）。见 editor-core.md §2。
-3. **编辑**：按键 → 焦点 Block input handler → `replace_text_in_visible_range` 改 `record.title` → `BlockEvent::Changed` → Editor `mark_dirty`（revision+autosave）+ undo 落栈 + 引用敏感块刷新运行时。序列化惰性。见 editor-core.md §3-4。
-4. **渲染**：`Editor::render` → 可见快照 + 折叠过滤 → `rendered_window`（±800px overdraw）→ 窗口内行建真实元素、屏外行 spacer → `BlockTextElement`（build_text_runs → shape_text → paint，写回 last_layout）。见 render-pipeline.md。
-5. **持久化**：autosave 防抖后台（恢复快照+临时文件）→ 原子 rename；外部修改经内容哈希检测 + notify watcher。见 editor-core.md §6。
+## 主干流
+
+**打开**：`encoding::load_document` → `Editor::from_loaded_document` → LF 归一进 `TextBuffer` → 切行 + 前瞻索引 → `build_root_block_chunk` 建首屏根块（预算见 editor-core.md §4）→ 换算并写入区间表 → 剩余行挂 `PendingTail`，前台任务分批续建。代码/纯文本文件不分块解析，按固定行数切片成 source-raw 块并进 Source 视图；图片走只读预览，二进制不进缓冲区。
+
+**编辑**：按键 → 焦点块的 input handler 改 `record.title` → `BlockEvent::Changed` → `Editor::on_block_event` → 开撤销组 → **按精度分档写回缓冲区**（细→粗，逐档失败才降级，兜底是整篇重投影）→ 平移区间表 → 必要时区域重投影 → 引用敏感块在写回**之后**刷新运行时 → 批处理末尾结算撤销组。
+
+**渲染**：`Editor::render` → 可见快照 + 折叠过滤 → 行计划（按结构版本缓存）→ 视口开窗（行高前缀索引 + overdraw）→ 窗口内行建真实元素、屏外行 spacer → `BlockTextElement` 的 request_layout/prepaint/paint（shape 结果跨帧备忘，paint 末尾把布局写回块供命中测试用）。
+
+**保存**：`document_bytes_for_save` = 缓冲区字节（未编辑过就是打开时那份原字节）→ 临时文件 + fsync + rename 原子写 → 校验磁盘版本 → 更新版本号、清恢复快照。autosave 是防抖后台任务，写恢复快照 + 临时文件，回主线程校对修订号后提交。
+
+**导出**：markdown → HTML 的块结构一律由 pulldown-cmark 认定，公式/提示框/图片内联/标题 id/目录都在它的**事件流**上替换（见不变量 10）。PDF/PNG/打印在 HTML 之上走无头 Chromium。
 
 ## 关键不变量（改代码前必读）
 
-1. **禁止 Editor update 重入**：实体 update 内不得再 `editor.update()`（历史 coredump）。
-2. **块文本只存 `InlineTextTree`**：定界符不落盘，序列化时按确定性规则重建；Raw 类块（frontmatter/HTML/数学/mermaid/不支持的构造）用 `raw_fallback` 逐字保留。
-3. **往返无损**：markdown 导入→序列化必须逐字节还原（有守卫测试；分块导入与单遍导入等价也有测试）。
-4. **行尾与编码形状记在缓冲区**：`TextBuffer` 的 `FileShape` 存原文件的行尾/编码，落盘按它重编码；没编辑过的文档 `file_bytes()` 就是打开时那份原始字节。
-5. **`document_revision` 是缓存键**：大纲跟随、长块提示等按它失效；渲染期跨实体写字段安全（不自动 notify），需要重绘必须显式 `cx.notify()`。
-6. **GPUI 限制**：svg 不继承父 div text_color；`.id()` 后变 Stateful 类型（if/else 分支需 into_any_element 统一）；TextRun 逐段字号是本地补丁（Linux 未接）。
-7. **所有提示用应用内模态**，禁系统原生弹窗（源码审计测试守卫）。
-8. **cargo build 与 cargo test 都要过**（test-only 代码只在测试构建存在）。
-9. **一个动作只有一处实现**：快捷键、正文右键菜单、选中工具栏、命令面板四条入口汇到编辑器层同一组函数上，可用判定也只有一份（菜单灰掉的命令键位按下去同样不写）；新增一条命令要四条一起有，见 editor-core.md §8。
-10. **导出块结构只算一份，改写只在事件流上**：markdown → HTML 的块结构（围栏、引用层级、代码段、Setext 下划线、链接地址）一律由 pulldown-cmark 认定，公式、提示框、图片内联、标题 id 与目录都在它的**事件流**上替换；不允许行扫描重猜块结构——曾经那一整族「界面正常、HTML 不对」报修就出自那里。唯一例外：**字节等价的词法归一**——手写解析器比严格 CommonMark 多认的写法（如标题分隔符的全角空格 U+3000）在进 pulldown 前原位换成等价 ASCII，要求同字节数（偏移一个不动）、判据只借 `BlockKind` 解析器一处、字面区（代码块/HTML 块）取自 pulldown 自己的事件流；块结构仍然是 pulldown 算的那一份（`heading_separators_for_parse`，src/export/html.rs）。
-11. **读写两头对称**：一种编码要能解码就必须能按同一种编码写回（UTF-16LE/BE 自己拼 code unit，`encoding_rs` 的 UTF-16 `encode` 不是解码的逆操作），能不能无损读写只在 `encoding::load_document` 这一个漏斗上判一次，四个打开入口都经过它；判不出来的字节拒绝打开，不以乱码打开再写回。字节表（BOM 之类）只准存在一处。
-12. **快捷键的触发范围**：要让某个键「窗口有焦点就能按」，键位要不设 `context`，且动作要有 App 级全局监听（`cx.on_action`）——两条缺一，焦点不在正文块上（侧栏树、面板收起后焦点悬空）时按键会静默丢失；焦点句柄不在渲染帧内时派发回退到根节点，挂在编辑器根部元素上的监听全收不到，所以面板收起要把焦点交还正文（`Editor::refocus_document_after_sidebar_collapse`）。判据仍只有处理函数一处（如 ⌘/Ctrl-B 的双身份全在 `Editor::on_bold_capture`）。机制细节见 workspace-ui.md §4。
+1. **禁止 Editor 重入更新**：实体 `update` 闭包内不得再 `editor.update()`（历史上因此 coredump）。同一实体也不能边 `read` 边 `update`。
+2. **缓冲区是唯一事实源**，块树是投影；`TextBuffer::edit` 是唯一写入口，且每次用户可见的 edit 必须落在一个开着的撤销组里。
+3. **往返无损**：markdown 导入 → 序列化必须逐字节还原未编辑部分。定界符不落盘，但**写法落盘**（强调记号、列表记号、转义、原始源码）。
+4. **规范化只住一条命令**：Setext→ATX、`__`→`**`、`1)`→`1.`、表格列宽重排只许 `format_document` 做；打开、打字、保存、撤销、重投影一律保原写法。
+5. **行尾与编码形状记在缓冲区**（`FileShape`），落盘按它还原。能解码就必须能按同一种编码写回；判不出来的字节拒绝打开，不以乱码打开再写回。字节表（BOM 等）只准存在一处。
+6. **文档级坐标一律用缓冲区字节偏移**，不要再引入"序列化文本里的偏移"。来自旧内容的偏移进新内容前必须过 `floor_char_boundary`。
+7. **`document_revision` 是缓存键**；跨文档缓存还要带 `TextBuffer::identity`（两份未编辑文档 revision 同为 0）。渲染期跨实体写字段安全（不自动通知），要重绘必须显式 `cx.notify()`。
+8. **按键路径禁止全文操作**：整篇序列化、整篇映射重建、整棵快照重排、大纲整篇重扫、逐块读实体，全部有计数器与闸门测试盯着（performance.md）。
+9. **一条语法只准有一处判据**：编码/BOM 字节表、可转义字符集、图片路径解析、表格竖线切分、标题分隔符这类"口径"被抄出第二份就必然漂移，而报修会以**下游消费者**的面貌出现。动手前先 grep 现成的那一处（单点清单见 markdown-model.md §9）。
+10. **导出块结构只算一份**：markdown → HTML 的块结构由 pulldown-cmark 认定，改写只在它的事件流上；不允许行扫描重猜块结构。唯一例外是**字节等价的词法归一**（同字节数、偏移不动、判据只借 `BlockKind` 解析器一处、字面区取自 pulldown 自己的事件流），见 `heading_separators_for_parse`（src/export/html.rs）。
+11. **一个动作只有一处实现**：快捷键、正文右键菜单、选中工具栏、命令面板四条入口汇到编辑器层同一组函数，可用判定也只有一份。新增命令要四条一起有，键位仪式八处见 workspace-ui.md §9。
+12. **所有提示用应用内模态**，禁系统原生弹窗（源码审计测试守卫）。
+13. **GPUI 限制**：svg 不继承父 div 的 text_color；`.id()` 后元素变 Stateful（if/else 分支需 `into_any_element` 统一）；`TextRun` 逐段字号是本地补丁；焦点句柄不在当前渲染帧内时按键派发回退根节点（收起面板要把焦点交还正文）；`is_focused` 判不出窗口切走，画光标要加 `is_window_active`。
+14. **`cargo build` 与 `cargo test --bin velora` 都要过**：vendored gpui 里有只在测试构建存在的代码，只跑测试会漏掉生产构建错误。
 
-## 当前性能要点
+## 定位索引：要改 X 去哪
 
-- 大文档（markdown）已具备：渐进导入、可见快照、视口窗口化（±800px）、stride 学习、块级渲染缓存、shape 布局键 memo、增量大纲。
-- 已解决的旧瓶颈（2026-09-28 基线）：纯文本整文件单块（10MiB log 稳态 8.7s/帧 → 512 行分块 + 窗口化）、`shape_text` 每帧重跑所有挂载块（→ 布局键 memo）、大纲每帧整篇重扫（→ 按根块增量，见 editor-core.md §3 第 22 条）。数据与优化台账见 performance.md。
-- 本轮收敛：表格列宽按内容、字体与字号复用；派生主题共享，实际度量输入变化时失效行高；窗口和滚动权重使用前缀索引，稳定帧不再扫描全文行高；跨块高亮只访问选区及需清理的旧集合。
-- 尚未解决：部分结构编辑仍需重建可见列表与行计划；是否继续收敛以访问规模和基准为依据。
+| 要动的东西 | 入口 |
+|---|---|
+| 某种 markdown 语法认不出/认错 | `src/editor/document/parse.rs` 的识别函数族 + `document/import.rs:build_blocks_from_lines_with_lookahead` 的分发顺序 |
+| 块种类与它的判据 | `src/components/block/state.rs:BlockKind`（解析判据与 `markdown_line` 序列化都在这） |
+| 行内样式/强调/链接/脚注/行内公式 | `src/components/markdown/inline/`（解析 parse.rs、定界符规则 delimiters.rs、序列化选栈 stacks.rs） |
+| 打字后字节写错地方 | `src/editor/mod.rs` 的 `write_back_*` 分档 + `src/editor/source_mapping.rs` 的换算族 |
+| 光标/选区落点 | `selection.rs:mapping_source_offset`（插入点口径）与 `mapping_source_range_endpoint`（区间端点口径）——两套口径不能混 |
+| 撤销行为 | `src/editor/history.rs`（开组/记账/结算/重放） |
+| 表格编辑与格子定位 | `src/editor/table_edit.rs`（写侧）+ `source_mapping.rs:push_table_*`（读侧），两侧共用同一把尺 |
+| 编码/行尾/BOM | `src/editor/buffer/file_shape.rs`（唯一字节表）+ `src/editor/encoding.rs`（唯一漏斗） |
+| 保存/自动保存/外部修改冲突 | `src/editor/persistence.rs`；冲突模态在 `workspace/documents.rs` |
+| 打开文件/标签切换/阅读现场 | `workspace/tabs.rs`、`workspace/documents.rs`、`file_drop.rs:replace_document_content` |
+| 文件树/扫描/重命名 | `workspace/file_tree.rs`、`workspace/tree_sync.rs`、`workspace/tree_edit.rs` |
+| 搜索（工作区 / 文档内） | `workspace/find_replace.rs`（调度）、`search_backend.rs` + `search_engine.rs`（工作区）、`document_matches.rs`（文档内命中表）、`tree_sync.rs:sync_document_search_highlights`（画进块） |
+| 大纲 / `[TOC]` | `workspace/tree_sync.rs:sync_workspace_outline`（增量缓存 `OutlineSegment`） |
+| 每帧渲染 / 滚动 / 视口开窗 | `src/editor/render/paint.rs`（`impl Render for Editor`）、`render.rs`（行计划类型）、`window_state.rs:rendered_window_*` |
+| 单块外观 | `src/components/block/render/paint_parts.rs`（kind 分派）+ `render/shell.rs`（公共壳） |
+| 文本绘制 / 命中测试几何 | `src/components/block/element/text_element.rs` + `element.rs` |
+| 块内缓存不失效 | `src/components/block/runtime/display_cache.rs:sync_render_cache`（失效枢纽） |
+| 代码高亮（围栏块 / 源码视图） | `markdown/code_highlight.rs`（tree-sitter）/ `markdown/source_highlight.rs`（手写扫描器） |
+| 公式、mermaid | `src/components/latex/`、`src/components/mermaid/` |
+| 图片路径/尺寸/加载 | `markdown/image.rs:resolve_image_source`（唯一路径口径）+ `block/runtime/image.rs` |
+| HTML 块渲染与安全 | `markdown/html/parse.rs`（白名单与分类）+ `block/render/content.rs:render_html_node` |
+| 导出 HTML/CSS/PDF/PNG/打印 | `src/export/`（口径见 markdown-model.md §8） |
+| 新命令/快捷键/菜单条目 | `components/actions.rs` → `commands.rs` → `app_menu/` → 编辑器层处理者 → `context_menu/document_menu.rs` → `selection_toolbar.rs`（八处，见 workspace-ui.md §9） |
+| 右键菜单 / 选中工具栏 / 命令面板 / ⌘P | `editor/context_menu/`、`selection_toolbar.rs`、`command_palette.rs`、`quick_open.rs`；层级与互斥见 workspace-ui.md §7 |
+| 偏好设置窗口 | `src/config/preferences/` |
+| 主题 token | `src/theme/theme/`（结构在 theme.rs，反序列化在 de.rs，内置主题在 presets.rs）+ `docs/theme-tokens.md` |
+| 文案 / 双语 | `src/i18n/strings.rs`（结构 + zh_cn + en_us，三处都要登记） |
+| 应用更新 | `src/editor/update.rs` + `src/net/` |
+| 启动顺序 / 窗口 frame 记忆 | `src/main.rs`、`src/editor/close.rs` |
+| 拖放文件 | `src/editor/file_drop.rs` |
+| gpui 行为异常（焦点、派发、shaping、Windows 对话框） | 先查 testing-and-build.md §7 的本地补丁清单，再读 `vendor/gpui` |

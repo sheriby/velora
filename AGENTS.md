@@ -6,7 +6,7 @@
 
 ## 0 开工之前
 
-- 先读 `docs/architecture/overview.md` 的「关键不变量」那一节（十一条，改代码前必读）。
+- 先读 `docs/architecture/overview.md` 的「关键不变量」那一节（改代码前必读），再按它的「定位索引」跳到分册。
 - 先看 `git status`：工作树里可能有使用者未提交的改动，别一起提交，也别覆盖。
 - 完成的标准是两条命令都过：`cargo build`（零警告）与 `cargo test --bin velora`（全绿）。
 - 提交、推送、打标签、发版都**先拿到明确授权**再做；推送标签是不可逆的公开动作。
@@ -72,7 +72,7 @@
 - svg 不继承父 `div` 的文字颜色。
 - `.id()` 之后元素类型变成 Stateful，`if` / `else` 两个分支要 `into_any_element` 统一类型。
 - `TextRun` 的逐段字号是本地补丁，Linux 未接。
-- 一个动作只有一处实现：新增命令要键位、正文右键菜单、选中工具栏、命令面板四条入口一起有（见 `docs/architecture/editor-core.md` 第八节）。
+- 一个动作只有一处实现：新增命令要键位、正文右键菜单、选中工具栏、命令面板四条入口一起有（见 `docs/architecture/workspace-ui.md` 的「命令、动作与键位」一节）。
 - 提示一律应用内模态，不用系统原生弹窗。
 
 ## 3 测试

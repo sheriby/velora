@@ -1,141 +1,79 @@
-# Performance Ledger（性能基线与优化台账）
+# 性能：可观测性、闸门与成本结构
 
-> 大文件性能优化的活文档：基线数据、已定位根因、已做/计划中的优化、验证方法。
-> 写作于 2026-09-28，`perf` 分支。相关：[render-pipeline.md](./render-pipeline.md)、[editor-core.md](./editor-core.md)
+> 基于 `dev`，2026-10-14 重写。这一册回答三件事：**成本怎么量**、**哪些路径禁止全文操作**、**优化按什么套路做**。
+> 具体毫秒数会漂，别把这里的数字当基线；要数字就跑探针。相关：[editor-core.md](./editor-core.md) · [render-pipeline.md](./render-pipeline.md) · [testing-and-build.md](./testing-and-build.md)
 
-## 1. 目标（用户设定）
+## 1. 目标与测量
 
-- 长普通文本（cargo.lock ~8k 行、1MiB/10MiB log）：**100ms 内打开 + 流畅滚动**。
-- 大 markdown：懒加载/裁剪渲染，保证可用流畅度。
-- 整体大文件流畅度提升 **≥10x**。dev 构建验证（热依赖 crate 在 dev 下已 opt-level=3，数字有代表性；本地代码 O0）。
-
-## 2. 复现与测量方法
+目标（用户设定）：1MiB/10MiB 级普通文本 **100ms 内打开 + 流畅滚动**；大 markdown 靠懒加载与裁剪渲染保证可用流畅度；整体大文件流畅度提升 ≥10x。验证在 dev 构建（热依赖已 opt-level=3，数字有代表性；本地代码 O0）。
 
 ```bash
-# 夹具（markdown 两个，gitignored）
-node scripts/generate-fixtures.mjs fixtures/perf
+node scripts/generate-fixtures.mjs fixtures/perf          # 夹具不进版本库，不生成则相关用例静默自跳
 
-# 加载探针（构造/首绘/稳态 p95/编辑/序列化）
-VELORA_PERF_FILE=<file> cargo test manual_markdown_load_probe -- --ignored --nocapture
-VELORA_PERF_FILE=<file> cargo test manual_code_load_probe   -- --ignored --nocapture   # 代码文件路径（P1 新增）
+VELORA_PERF_FILE=<utf8 文件> cargo test manual_markdown_load_probe -- --ignored --nocapture
+VELORA_PERF_FILE=<代码扩展名文件> cargo test manual_code_load_probe -- --ignored --nocapture
+VELORA_STARTUP_TIMING=1 <velora>                          # 启动分阶段耗时 → stderr
+cargo test probe_attribute_ten_mib -- --ignored --nocapture   # 大文档按键成本拆段归因
 ```
 
-| 夹具 | 说明 |
-|---|---|
-| `fixtures/perf/one-mib.md` / `ten-mib.md` | 重复中文段落单元，15,968 / 159,683 块 |
-| `/tmp/velora-perf-fixtures/log-1mib.log` | 9,891 行无空行日志（自建，勿入库） |
-| `/tmp/velora-perf-fixtures/log-10mib.log` | 98,909 行无空行日志 |
-| `/tmp/velora-perf-fixtures/cargo-lock-real` | 仓库 Cargo.lock 拷贝，8,536 行 / 205KB |
+两个探针都在 `editor/tests/loading_chunks.rs`，输出 `construct_ms / first_draw_ms / steady_p95_ms / edit_update_ms / serialize_ms`。**夹具文件名必须带代码扩展名**才会走代码路径分流（无扩展名会误走 markdown 路径，断言会抓住）。`construct_ms` 含测试里同步跑完的续建部分，不代表真实打开时间；真实打开 = 读文件 + 同步构造首块 + 首帧，其余续建。
 
-## 3. 基线与终态（2026-09-28，dev 构建，含测试窗口开销）
+## 2. 计数器：成本的唯一读法
 
-markdown 路径（`Editor::from_markdown`，`manual_markdown_load_probe`）：
+**任何"每帧/每键做了多少全文工作"都必须接进计数器**，否则闸门全绿也看不见它（历史上两处盲区：兜底重投影的源码分支不计序列化、侧栏大纲不在任何计数器里）。
 
-| 夹具 | 块数 | construct_ms | first_draw | steady_p95 | serialize_ms |
-|---|---:|---:|---:|---:|---:|
-| log-1mib（全文 1 段落块） | 1 | 1,697 | 655 | **647** | 6.9 |
-| log-10mib（全文 1 块） | 1 | 17,465 | 6,338 | **8,701** | 86 |
-| cargo-lock-real（空行分块） | 829 | 236 | 4.2 | **4.0** | 26 |
-| one-mib.md | 15,968 | 2,986 | 31 | 35 | 231 |
-| ten-mib.md | 159,683 | 109,759（测试内跑完全部续建） | 282 | **293** | 2,079 |
+`Editor`（`src/editor/mod.rs`，均为 `Cell<u64>`）：
 
-读法：
-- Cargo.lock 证明**多块 + 视口窗口化是对的**：829 块稳态 4ms/帧。
-- log 的 647ms~8.7s/帧证明**整文件单块是毒药**：窗口化救不了单块（块即窗口）。
-- ten-mib.md 稳态 293ms/帧 ≈ 每帧文档级固定开销 × 160k 块（见 §4-3）。
-- 探针 construct_ms 含后台续建在测试里同步跑完的部分；真实应用首屏时间以首绘为准。
+| 计数器 | 数什么 | 正常编辑序列上应该是 |
+|---|---|---|
+| `source_serializations` / `_nanos` | 整篇重新序列化（兜底重投影、格式化文档命令） | 0（格式化命令除外） |
+| `source_mapping_builds` / `_full_builds` / `_nanos` | 块内偏移映射重建次数 / 其中整篇的 | 只随改动块数走，整篇 0 |
+| `word_count_scans` | 状态栏整篇分词 | 0（有静默窗口缓存） |
+| `document_match_scans` | 文档内命中表整篇重扫 | 只随查询/修订变化 |
+| `row_plan_rebuilds` / `row_plan_block_reads` / `_nanos` | 行计划重建次数 / 其中读了几个块实体 | 打字 0 次重建；重建时只读标题 |
+| `roots_reprojected` | 增量重投影产出的根块数 | 只随本次改动 |
+| `outline_rebuilds` / `outline_full_rescans` / `outline_lines_scanned` / `_nanos` | 大纲标题树重拼 / 整篇重扫 / 累计扫描行数 | 整篇重扫 0 |
+| `panel_rows_rendered` / `panel_first_row_rendered` | 侧栏列表上帧渲染行数 / 窗口起始行 | 一帧只画视口那些行 |
+| `line_prefix_from_record` / `line_prefix_measured` | 记号宽度取解析期账 / 事后按文件量 | 后者 0（迁移进度就看它） |
+| `caret_scroll_applications`、`row_stride_cache_clears` | 光标滚动入视次数、行高缓存清空次数 | 不随文档大小增长 |
+| `panel_fill_frames` / `cold_fill_frames` / `scroll_settle_frames`（`u8`） | 补帧计数 | 有上限 |
 
-### P7 边缘指标收敛（2026-09-28 第二轮复测，read_untracked + 哈希后台化后）
+`DocumentTree`：`whole_document_renders`（**非兜底路径上悄悄发生的**整篇序列化）、`snapshot_rebuilds` / `snapshot_nanos`。
+`TextBuffer`：`line_probe_bytes`（建换行索引读了多少正文——查询行号必须读 0 字节）。
+`BlockRecord`：`title_revision`（序列化备忘键）。
 
-代码路径（`manual_code_load_probe`）：
+## 3. 闸门清单
 
-| 夹具 | 同步构造 | 首绘 | 稳态帧 | 编辑更新 |
-|---|---:|---:|---:|---:|
-| sample.lock | 4.5 | 1.1 | 1.2 | 22.7 |
-| log-1mib | **12.1** | 1.3 | 1.3 | 31.1 |
-| log-10mib | **99.7（≤100 达标）** | 2.2 | 2.3 | 54.7 |
+**形状闸门**（断言计数器增量，确定性，随常规测试跑）：
 
-markdown 路径（`manual_markdown_load_probe`）：
+- `a_real_editing_session_never_falls_back_to_whole_document_serialization` — 打字、拆块、勾任务框、缩进/提级/降级、标注里拆块、表格全套结构命令、多行粘贴逐条走一遍，整篇落笔增量为 0。白名单 `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED`（`editor/tests/round_trip_fidelity.rs`）是**空表**，每加一条命令只能让它更短。
+- `a_real_editing_session_never_measures_marker_widths_after_the_fact` — 记号宽度不许事后按文件量（`line_prefix_measured` 全程 0）。
+- `typing_a_plain_character_does_not_rebuild_the_row_plan`、`typing_in_a_heading_without_a_toc_block_reuses_the_row_plan`、`row_plan_rebuild_reads_only_the_headings_not_every_block`。
+- `per_keystroke_document_passes_stay_bounded`、`typing_does_not_rescan_status_bar_statistics_every_key`。
+- `the_incremental_outline_matches_a_whole_document_scan`（差分 + 钉住"全程一次整篇重扫都不许发生"——只比结果的话退回整篇照样一致，等于自证）、`the_outline_is_only_built_for_a_reader`、`outline_panel_renders_only_the_rows_in_the_viewport`。
+- `clicking_an_outline_heading_unfolds_it_without_a_document_wide_mapping`、`document_find_highlights_map_only_the_blocks_with_hits`、`typing_at_the_document_head_keeps_every_root_span_tiled`。
+- `asking_for_line_numbers_does_not_read_the_text`、`rebuilding_the_line_index_costs_only_the_edited_bytes`。
+- `undo_memory_does_not_scale_with_document_size`、`two_hundred_undo_steps_stay_within_the_memory_budget`。
 
-| 夹具 | 首绘 | 稳态帧 |
-|---|---:|---:|
-| one-mib.md（15,968 块） | 1.4 | **1.3（基线 35 → 26.9x）** |
-| ten-mib.md（159,683 块） | 10.8 | **10.8（基线 293 → 27.1x，≥10x 达标）** |
+**墙钟闸门**（`#[ignore]`，本地手动跑，CI 永不跑；并发抢 CPU 下会假红，单跑能过就按假红处理，不要放宽预算）：`large_document_opens_within_budget`、`large_code_document_opens_within_budget`、`one_mib_typing_stays_within_budget`、`ten_mib_typing_does_not_scan_the_whole_document`、`one_mib_source_mode_typing_stays_within_budget`、`one_mib_code_document_typing_stays_within_budget`。
 
-收敛手段：`file_content_version` 后台化 + 规范化直通哈希；vendored gpui
-新增 `Entity::read_untracked`（跳过 accessed 集合登记）——状态栏选区
-扫描每帧 16 万次集合插入曾是 160k 块文档稳态帧的最大单项。
+> 并行跑测下**绝对墙钟会误报**：新写性能用例优先断言形状（计数器、相对关系、访问规模），不要断言毫秒数。
 
-### P7 终态（2026-09-28，优化后同一探针复测）
+## 4. 成本结构：什么已经收敛，什么还随文档长
 
-代码路径（`manual_code_load_probe`，真实 `from_file_source`）：
+**与文档大小无关（已收敛）**：稳态帧（不打字不重算任何东西）· 打字后的整篇序列化（0 次）· 行号查询（只二分每块的换行偏移表）· 大纲（按根块增量，没人看就不算）· 行计划（打字不重排，缓存键是结构版本不是文档修订）· 区间平移（树侧一趟循环）· 搜索高亮（只为有命中的根块建映射）· shape（跨帧备忘）· 撤销内存（存增量）。
 
-| 夹具 | 构造(同步) | 首绘 | 稳态帧 | 编辑更新 | 编辑后绘制 |
-|---|---:|---:|---:|---:|---:|
-| sample.lock（205KB） | 22.6 | 1.1 | 1.1 | 21.9 | 2.1 |
-| log-1mib | 51.0 | 1.4 | 1.4 | 32.4 | 2.7 |
-| log-10mib | 103.3 | 2.3 | 2.2 | 55.6 | 4.0 |
+**仍与文档大小同向**：
 
-markdown 路径（`manual_markdown_load_probe`）：
+1. **可见列表重排与行计划重建的剩余部分**。渲染态 markdown 大文档的根块数就是文档规模；源码视图按固定行数切片，块数少一个量级，但**这一档的可见列表不裁剪**（所有切片块都算"可见"），每键的行计划工作随块数走。要解掉需要"块内/列表也按行窗口投影"。
+2. **大纲标题树整篇一份**：节点 id 记着整篇行号，任何一处改动都重拼全树。已优化掉的是"只有文字变了"那一档（原地换标签，不重拼）；剩下的要按改动那段增量拼。
+3. **一次性全文操作**：整篇序列化、整篇映射重建、全文分词——都不在按键路径上，但格式化文档、全部替换、导出会付一次。
 
-| 夹具 | 首绘 | 稳态帧 | 编辑后绘制 |
-|---|---:|---:|---:|
-| one-mib.md（15,968 块） | 3.4 | 3.3 | 15.6 |
-| ten-mib.md（159,683 块） | 35.7 | 35.8 | 199.4 |
+## 5. 优化套路（这个仓库反复用的四招）
 
-对照基线（§3）的提升倍数（dev 构建）：
+1. **脏区间 + 增量重算**：缓冲区记 `take_dirty_region`，派生视图只重算相交的部分；结构命令重新分配接缝时要显式 `note_outline_dirty_region`（块自己的字节没动但指向变了）。
+2. **缓存键要含身份与结构版本**：`identity + revision` 缺一不可（两份未编辑文档 revision 同为 0）；跨接缝的状态（围栏）要进键；行计划用 `row_meta_version` 而不是文档修订。
+3. **没人看就不算**：侧栏收起时大纲一帧都不算；`[TOC]` 块在自己需要的那一帧直接要清单；状态栏统计等文档安静下来再补算。
+4. **把逐块读实体换成同趟记下的元数据**：可见列表同步那一趟顺手把结构量存进快照（两块 vec 同进同出），下游不再逐个 `read` 实体；`Entity::read_untracked` 用于纯读的热路径（跳过 accessed 集合登记）。
 
-- **纯文本/代码**：10MiB log 稳态 476→2.2ms（**216x**）、打开同步段 2011→103ms（**20x**）、
-  编辑 765→56ms（**14x**）；1MiB log 稳态 39.5→1.4ms（28x）、打开 177→51ms；
-  lock 稳态 28.4→1.1ms（26x）、打开 98→23ms。1MiB 内普通文本打开已进 100ms
-  （dev O0），10MiB 同步构造 103ms、release 预期 ~30-40ms。
-- **markdown**：10MiB/160k 块稳态 293→35.8ms（**8.2x**）、首绘 282→35.7ms；
-  1MiB 稳态 35→3.3ms（**10.6x**）。
-- 说明：探针 construct_ms 在测试平台内含流式续建排水与自动重绘，不代表真实
-  打开时间；真实打开 = 文件读 + 同步构造（首块）+ 首帧，其余后台续建。
-
-## 4. 已定位根因（代码证据）
-
-1. **纯文本/代码文件整文件单块**：`replace_document_content`（src/editor/file_drop.rs）对 `is_code_file` 的文件建单个 `BlockKind::CodeBlock`。渲染、shape、undo 快照、序列化全压在一块。**（已解：P2a 512 行分块 + 视口窗口化）**
-2. **shape_text 无跨帧 memo**：`BlockTextElement::request_layout`（src/components/block/element.rs）每帧对每个挂载块重新 `build_text_runs` + `shape_text`。滚动时静态块白白重 shape。**（已解：P3 shape memo，键结构在 src/components/block/runtime/mod.rs `ShapeMemoKey`）**
-3. **每帧文档级固定开销**：`visible_blocks().to_vec()` 全量克隆 + 折叠过滤每帧扫描全部块 + 结构变化检测逐 id 比较；主题 clone + 全字号缩放；表格列宽每帧重测所有单元格（render-pipeline.md §6）。**（部分解：P4b 行计划缓存、行元数据进快照；可见列表克隆、主题 clone 与表格列宽仍在）**
-4. **undo 全文快照**：每条 undo 条目持有整篇源码（10MB × 200 条上限），大文件下 finalize 一次 clone 全文（src/editor/history.rs）。**（已解：2026-10-03 起为增量组 `Vec<AppliedEdit>`）**
-5. 10MiB markdown 总构建成本 ≈ 160k 个 GPUI 实体创建（G8 渐进导入已拉开首屏，总量固定）。
-
-## 5. 优化台账（每项一个功能点提交；完成一项更新一行）
-
-| # | 优化 | 状态 | 结果 |
-|---|---|---|---|
-| P1 | 代码路径探针（`from_file_source` 真实路径的 ignored 探针，补齐基线） | ✅ 2026-09-28 | 见 §6 |
-| P1.1 | 代码路径基线（`manual_code_load_probe` 实测） | ✅ 2026-09-28 | lock 稳态 28ms/帧；10MiB 稳态 476ms/帧、打开 ~2.5s |
-| P2a | 纯文本按 512 行分块导入 + 行号续号 + 无损守卫 | ✅ 2026-09-28 c84ef19 | 10MiB log 稳态 442→8.8ms/帧（50x），编辑 765→167ms |
-| P2b | 分块边界编辑（块尾回车/块首退格/块尾前删）+ 行号刷新 | ✅ 2026-09-28 639eabd | 边界编辑语义与单块一致，round-trip 无损 |
-| P2c | 渐进导入（首块同步 + PendingTail 后台续建，每步 4 块） | ✅ 2026-09-28 c697df8 | 首屏只建 512 行；续建每步 ~2.6ms |
-| P4a | 状态栏字数/行数按修订缓存；导入零拷贝规范化 | ✅ 2026-09-28 c654bb7 | 移除每帧整篇重序列化（原 10-80ms/帧） |
-| P4b | 行结构计划缓存（折叠过滤/分组扫描按修订+折叠+TOC 版本缓存）；元素构建推迟到挂载 | ✅ 2026-09-28 bc6cf13 | 10MiB markdown（160k 块）稳态 293→36.5ms/帧（8x） |
-| P5 | undo/编辑路径瘦身：raw_source_text 单遍追加；代码文档跳过全文档图片注册表重建 | ✅ 2026-09-28 73db8ca | 10MiB 序列化 86→1.0ms；编辑触发器（含 \`[\`/\`<\` 的日志）不再每键 O(文档) |
-| P3 | shape memo：BlockTextElement 布局键缓存（文本代数/宽度/字号/字体指纹/主题），min-content 测量短路，冷启动挂载上限 | ✅ 2026-09-28 | 编辑后首帧从 ~250ms（病态 1px 重 shape × taffy 多次 measure）降至 ~22ms |
-| P7 | 10x 验收：全夹具复测 + 台账更新 | ✅ 2026-09-28 | 见 §3「P7 终态」：markdown 8.2–10.6x、代码 14–216x，≥10x 达标 |
-
-## 6. 记录
-
-### 已知剩余（后续候选）
-- 大 markdown 编辑路径：undo finalize 的 `markdown_text` 全文重序列化
-  （160k 块约 2.1s，基线即如此，非本次回归）。候选：按块脏标记的
-  增量序列化缓存。
-- 表格列宽仍每帧重测所有单元格（见 render-pipeline.md §6）。
-- 历史条目无字节预算：200 条 × 全文快照，超大文档内存上限偏高。
-- 流式续建循环无 yield，真实应用打开 10MiB 文档首秒内会有一次
-  ~100-200ms 的主线程占用（G8 markdown 同样存在）。
-
-### 2026-09-28 P1 代码路径探针与基线
-新增 `manual_code_load_probe`（src/editor/tests/loading_chunks.rs，`#[ignore]`，同一 `VELORA_PERF_FILE` 入口）：走 `Editor::from_file_source` 真实代码文件路径，断言进入 Source 模式，输出与 markdown 探针同格式。基线（dev，单 CodeBlock 现状）：
-
-| 夹具 | construct_ms | first_draw | steady_p95 |
-|---|---:|---:|---:|
-| sample.lock（205KB/8.5k 行） | 98 | 28.5 | **28.4** |
-| log-1mib | 196 | 38.3 | **39.5** |
-| log-10mib | 2,011 | 457 | **476** |
-
-- 代码路径（source-raw，跳过行内样式）比探针里 markdown 路径快一个量级，但仍远不达标：lock ≈35fps（用户感知的"有点卡"），10MiB 打开 ~2.5s、1.5fps。
-- 教训：探针夹具文件名必须带代码扩展名（`.lock`），否则 `is_code_file` 分流不生效（`cargo-lock-real` 无扩展名 → 误走 markdown 路径，断言立刻抓住）。
+改性能相关的代码，收尾要跑对应闸门并**当场实测数字**（不沿用记忆），把结论写进提交正文。

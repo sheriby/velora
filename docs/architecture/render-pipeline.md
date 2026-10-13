@@ -1,72 +1,97 @@
-# Render Pipeline（渲染管线）
+# Render Pipeline：渲染管线
 
-> 面向后续 agent 的代码导览。写作于 2026-09-28，基于 `perf` 分支；2026-10-13 对照核心修复复核。
-> **行号会漂移，函数名不会**。相关文档：[overview.md](./overview.md)、[editor-core.md](./editor-core.md)、[workspace-ui.md](./workspace-ui.md)、[testing-and-build.md](./testing-and-build.md)
+> 基于 `dev`，2026-10-14 重写。引用用 `文件:函数名`。
+> 相关：[overview.md](./overview.md) · [editor-core.md](./editor-core.md) · [markdown-model.md](./markdown-model.md) · [performance.md](./performance.md)
 
-## 1. 每帧入口与滚动容器（src/editor/render/paint.rs `impl Render for Editor`；行计划/菜单几何类型在 render.rs，标题栏与滚动同步在 render/sync.rs）
+## 1. 每帧入口
 
-- 每帧：关闭守卫/外观观察者 → 挂起焦点/滚动入视 → `sync_scroll_viewport` + 大纲跟随滚动 → 复用按主题与会话缩放派生的共享主题。
-- **滚动是手动列表 + 原生滚动 div，不是 uniform_list**：`div().id("editor-scroll-inner").overflow_y_scroll().track_scroll(&self.scroll_handle)`；`scroll_handle.offset().y`（负值）为滚动位置，翻页/跳转经 `set_offset`（src/editor/events/scroll_mouse.rs）。自定义滚动条覆盖层 + canvas 鼠标事件（几何在 `scrollbar_geometry`，src/editor/window_state.rs）。
-- 可见块 = `document.visible_blocks()`（缓存的 DFS `VisibleTreeSnapshot`，结构变更时 `rebuild_metadata_and_snapshot` 重建）+ `apply_heading_fold_filter`（折叠标题过滤，同时填充 foldable/[TOC]）。
-- 行分组：callout 组（`callout_anchor`）/脚注组（`footnote_anchor`）合并为 `RowElement::{Group,Ordinary}`；行计划按结构版本缓存分组成员与间距，测量高度独立维护。
+`impl Render for Editor` 在 `src/editor/render/paint.rs`（本仓少数几个允许超长的单函数之一）。行计划与菜单几何的类型在 `render.rs`，标题栏/焦点/滚动同步在 `render/sync.rs`，窗口内菜单在 `render/menu_render.rs`，欢迎页与浮层在 `render/overlays.rs`。
 
-## 2. 视口虚拟化（已存在，测试 tests.rs 渲染窗口裁剪组）
+每帧顺序（简化）：关闭守卫与外观观察者 → 挂起的焦点/滚动入视 → `sync_scroll_viewport` + 大纲跟随滚动 → 派生本帧主题（共享，只在度量输入变化时失效）→ 侧栏与标签条 → 正文滚动区 → 浮层。
 
-- 状态在 Editor：`row_stride_cache: HashMap<EntityId, f32>`（每行 footprint，键=行首块）、`prev_mounted_run: Option<MountedRun>`、`prev_visible_block_ids`；结构体 `RenderWindow`/`MountedRun`/`FocusIsland`（src/editor/mod.rs）。
-- **stride 学习**：从仍可寻址的上帧挂载集合读取 `scroll_handle.bounds_for_item(child)`，主窗口与焦点岛都回收高度；列宽或派生主题度量变化清缓存；>2×活行时剪枝；未测行用 `d.block_min_height` 下界估计。
-- **窗口选取**：`rendered_window_from_prefix`（window_state.rs）——通过行高前缀索引二分定位与 `[scroll_y-800, scroll_y+viewport+800]` 相交的连续行段；估计不足时回退尾段。**焦点行恒挂载**为独立 focus island（自带前导 spacer）。
-- 屏外行 → `div().h(px(...))` spacer（丢掉行自身 mt 间距）；只有窗口内 + focus island 的行创建真实元素。
+**滚动是手动列表 + 原生滚动 div，不是 `uniform_list`**：`div().id("editor-scroll-inner").overflow_y_scroll().track_scroll(&scroll_handle)`；`scroll_handle.offset().y`（负值）是滚动位置，翻页与跳转经 `set_offset`（`events/scroll_mouse.rs`）。滚动条是自绘覆盖层 + canvas 鼠标事件（几何在 `window_state.rs:scrollbar_geometry`）。
 
-## 3. 块渲染与 BlockTextElement（src/components/block/）
+**切视图模式要保住阅读位置**：切换前记下视口顶部那个块的**缓冲区字节锚点**（`window_state.rs:capture_viewport_source_anchor` → `ViewModeScrollAnchor`），切换后按锚点重算滚动偏移并在若干帧内收敛（`apply_pending_view_mode_scroll`，帧数有上限）；任何换现场的动作要先 `cancel_pending_view_mode_scroll`，否则挂起的锚点会把用户已经滚到的位置拽回去。两种模式的行高与块划分不同，所以锚点必须记在缓冲区坐标上，记滚动偏移或行下标都跨不过去。
 
-- `impl Render for Block`：同步图片焦点态与行内投影（`sync_inline_projection_for_focus`）→ 光标闪烁启停 → 按 kind 分派：表格单元格 / source-raw（纯 `BlockTextElement` + 可选行号槽）/ 独立图片 / 标题(带折叠 chevron) / 列表(标记符+复选框) / CodeBlock(面板+复制按钮+`CodeLanguageInputElement`) / Table / HtmlBlock / Math+Mermaid(未聚焦渲染 SVG，聚焦退回文本) / TOC / 默认文本 → `wrap_with_quote_guides`。
-- 公共壳 `render_shell`：`Stateful<Div>` + `key_context("BlockEditor")` + track_focus + 全部动作 + 鼠标处理。
-- 公共排版：H1/H2 居中、H3 左对齐，普通文本与混合公式/图片路径共用对齐规则；无序、有序、任务列表共用标记列宽与首行对齐，列表项不再叠加上下内边距。正文粗体沿用主题的 `text_link` 强调色，标题保留自身文字色。软换行的绘制、光标、选区、点击与上下键定位共用 `element.rs:aligned_row_left`，每个视觉行单独计算居中留白。
-- **`BlockTextElement`**（src/components/block/element/text_element.rs，自定义 `Element`；类型定义在 element.rs）：
-  - `request_layout`：读块 → `shared_display_text()`（Arc SharedString）→ `build_text_runs` / `build_code_text_runs` → `window.text_system().shape_text(...)`（`request_measured_layout` 内）→ `Vec<WrappedLine>` 存 `Rc<RefCell>`。
-  - `prepaint`：光标 quad、选区 quad、行内代码圆角背景、搜索高亮、行号 ShapedLine、hitbox。
-  - `paint`：画 quad/行号/文本行；聚焦时 `window.handle_input` 注册 IME；⌘ 悬停链接变手型；**把 `last_layout`/`last_bounds`/`last_line_height` 写回 Block**——这是命中测试的布局缓存。
-  - `build_text_runs`：行内 span 边界 + IME marked 合并排序；逐 run 应用代码字体/逐 run `font_size`（vendored 补丁）/粗斜体/链接下划线/删除线等。
-- **`shape_text` 有跨帧 memo**（2026-09-28 P3，`ShapeMemoKey` 在 src/components/block/runtime/mod.rs）：键含文本代数、高亮代数、换行宽与 prose 开关、字号、字体指纹、主题指纹、长行展开代数，命中直接复用 `Vec<WrappedLine>`；打字的那一块、改字号、换主题、高亮换代才重新 `shape_text`。组合标记范围和实际样式变化也进入排版签名。表格列宽测量按内容版本、字体与字号缓存，稳定帧复用。
+## 2. 可见列表与行计划
 
-## 4. 块级运行时缓存（src/components/block/runtime/）
+- 可见块 = `DocumentTree::visible_blocks()`（缓存的 DFS 快照 `VisibleTreeSnapshot`，结构变更时 `rebuild_metadata_and_snapshot` 重建）+ `apply_heading_fold_filter`（折叠过滤，同时填 `foldable` 与 `[TOC]` 条目）。
+- 快照里有**两块对齐的 vec**：`visible`（可见序 + entity→索引）与 `row_spacing`（分组锚点、层级、列表标记这些**结构量**）。它们由 `sync_block_list` 同一趟算出，目的是让行计划重建**不必逐块读实体**（大文档上"读几个块实体"就是随文档增长的系数）。折叠过滤只剩标题需要碰实体。
+- 行分组：callout 组 / 脚注组合并为 `RowElement::{Group, Ordinary}`；行计划按**结构版本**缓存（`row_meta_version`，只在可见列表重排、增量追加、`is_toc` 翻面时动），**不按文档修订缓存**——否则正文里打字会白白重排整份计划。
+- `[TOC]` 是**文本形状**，而整棵同步只在结构变化时重跑：文本一变就当场刷新那一条（`DocumentTree::refresh_row_spacing_for`），折叠过滤写完条目之后再刷一次。守卫 `typing_a_toc_marker_fills_its_entries_on_that_frame`。
 
-失效枢纽 = `sync_render_cache`（runtime/mod.rs）：重建 `InlineRenderCache`、`sync_code_highlight`、`sync_image_runtime`、清/重建投影、刷新 `cached_display_text`。所有文本替换路径与 `with_record` 都会调用（**编辑后即时重建，非按帧懒重建**）。
+## 3. 视口虚拟化
 
-| 缓存 | 位置 | 失效时机 |
-|---|---|---|
-| `render_cache: InlineRenderCache` | Block 字段 | 每次文本变更（sync_render_cache） |
-| `projection: ExpandedInlineProjection` | Block 字段 | 焦点/选区/IME 变化；键 `projection_cache_key=(supports_projection, selected, marked)` 短路光标闪烁帧；blur/原始模式清除 |
-| `code_highlight: CodeHighlightResult` | Block 字段 | 每次文本变更；tree-sitter 配置进程级 `LazyLock` 注册表共享，但**每块每次高亮无跨帧结果缓存** |
-| `cached_display_text: SharedString` | Block 字段 | sync_render_cache（Arc 共享，帧间零拷贝） |
-| `last_layout`/`last_bounds` | Block 字段 | 每次 paint 写回；命中测试/光标可见性/stride 学习复用；Math/Mermaid/HTML 未聚焦时丢弃 |
-| `table_runtime` | Block 字段 | `rebuild_table_runtimes` 文档级重建（含单元格块实体） |
-| `image_runtime` | Block 字段 | sync_render_cache + `set_runtime_context`（基目录/引用定义变化）；`rebuild_image_runtimes` 文档级（只对引用敏感块增量，见 runtime_context.rs） |
+- 状态在 Editor：`row_stride_cache`（每行 footprint，键 = 行首块）、上一帧挂载集合 `prev_mounted_run`、`prev_visible_block_ids`；类型 `RenderWindow` / `MountedRun` / `FocusIsland`（`src/editor/mod.rs`）。
+- **stride 学习**：从仍可寻址的上帧挂载集合读 `scroll_handle.bounds_for_item(child)` 回收真实高度；列宽或派生主题度量变化时清缓存；未测行用块最小高度做下界估计。
+- **窗口选取**：`window_state.rs:rendered_window_from_prefix`——用行高**前缀索引**二分定位与 `[scroll_y - overdraw, scroll_y + viewport + overdraw]` 相交的连续行段；估计不足时回退尾段。**焦点行恒挂载**为独立 focus island（自带前导 spacer）。稳定帧不扫描全文行高。
+- 屏外行渲染成等高 spacer（丢掉行自身外边距）；只有窗口内 + focus island 的行创建真实元素。
+- 冷启动补帧有预算上限（单帧预挂载行数、续挂帧数），不依赖正文光标闪烁去驱动。
 
-## 5. Markdown vs 纯文本渲染差异
+## 4. 块渲染分派（src/components/block/render/）
 
-- **源码视图的 markdown 语法高亮**（2026-10-07）：源码分块（Paragraph +
-  `source_language == "markdown"`）的高亮走手写逐行扫描器
-  （src/components/markdown/source_highlight.rs），不走 tree-sitter——后者
-  逐块解析拿不到跨 512 行接缝的围栏状态，捕获名也与主题色对不上。着色数据
-  是 `CodeHighlightSpan`（字节区间 + `CodeHighlightClass`），build 时经
-  `sync_code_highlight` 产出、build_text_runs 系的 `build_code_text_runs`
-  消费成 TextRun。跨块接缝：每块记 `source_fence_entry/exit`
-  （MarkdownSourceState：围栏/公式/frontmatter/HTML 注释），编辑器在整棵
-  重建时全量重串、打字后增量级联；高亮结果变化会递增
-  `highlight_generation`（进 shape 备忘键）。颜色取主题 `md_syntax_*` 七
-  字段，语义对齐 VS Code。
+`impl Render for Block` 在 `render/paint_parts.rs`。先命中先返回：
 
-- `ViewMode::Source` / 代码文件：按最多 512 行分块，`EditMode::SourceRaw` 渲染纯 `BlockTextElement` + 行号槽，无行内样式。
-- `ViewMode::Rendered`：行内样式 + 投影定界符（编辑中）+ 图片/数学/mermaid/HTML 块/表格/callout/脚注。
-- **长块护栏**：未聚焦且超 `LONG_BLOCK_SOURCE_LIMIT` 的块按纯 div 渲染、跳过 span 布局（`render_text_or_mixed_inline_visuals`）。
-- 未聚焦含混合视觉（数学/上标/行内图）的块按 `flex_wrap` 词段 div 渲染（`render_inline_text_word_segments`）而非 BlockTextElement。
+1. `renders_nothing()`（空 HTML 文档）→ 空 div。
+2. 每帧公共副作用：同步图片焦点态 → `sync_inline_projection_for_focus` → 按 `input_active`（**焦点 ∧ 窗口活动**）启停光标闪烁任务。
+3. **表格单元格** → 格子外观 + 内容。
+4. **source-raw 早退**：源码视图/代码文档/raw 类块未聚焦 → 纯 `BlockTextElement`（可选行号槽、等宽字体）。聚焦的数学块放行到 kind 分支（ƒx 按钮挂那里）。
+5. 空段落未聚焦 → 只留块间距高度的壳（`collapses_to_blank_gap`，影响 stride 估计）。
+6. **按 kind 分派**：分隔线 / 标题（带折叠 chevron）/ 三种列表项（标记列 + 内容）/ 引用 / callout 头行 / 脚注定义（徽章 + 回跳）/ 代码块面板（红绿灯、复制按钮、语言输入框）/ frontmatter（键值卡片，聚焦退 YAML 源码）/ 表格网格 / HTML 块递归渲染 / 数学与 mermaid（未聚焦画 SVG，聚焦退回文本编辑）/ `[TOC]` 目录 / 兜底文本。
+7. 出口统一 `wrap_with_quote_guides`（引用竖线）。
 
-## 6. 当前帧几何与成本边界
+兜底那一路 `render_text_or_mixed_inline_visuals`（`render/inline_visuals.rs`）再分三档：未聚焦且超长块 → 纯 div 源码文本（**长块护栏**）；聚焦或无混合视觉 → `BlockTextElement`；未聚焦但含混合视觉（行内公式/上下标/行内图片）→ flex_wrap 词段 div + `block_bounds_recorder`。
 
-- `MountedRun` 带文档身份与行计划版本，统一枚举主窗口和焦点岛；命中测试只访问当前计划的真实成员。表格以当前格子边界命中，不消费屏外旧坐标。
-- 逻辑选择保存干净文本范围，当前显示范围最后由投影派生。公式等原子格的整格端点在起拖时确定，拖回同格仍保留整格语义。
-- `RenderedRowPlan:set_stride` / `fill_strides` 统一高度写入，变化只作废对应前缀后缀。窗口高度使用非负权重，滚动映射使用最小为 1 的权重；稳定帧不扫描全文。
-- 当前挂载行尚未测量或上一有效帧主窗口未填满视口时，冷启动补帧沿用有限预算；不依赖正文光标闪烁。
-- `src/editor/render/sync.rs:scroll_target_bounds` 统一文字范围与原子壳几何。搜索跳转可以使用原子边界，普通光标跟随等待实际光标；所有等待分支共用重试预算。
-- `shape_text`、表格列宽与派生主题都有跨帧复用；结构变化仍可能重建行计划，不宣称所有编辑路径均与全文规模无关。
+公共壳 `render/shell.rs:render_shell` 挂 `key_context("BlockEditor")`、`track_focus`、全部块级动作与鼠标处理。
+
+**`EditMode` 三档**（`runtime/mod.rs:EditMode::for_kind`）：`RenderedRich`（属性树编辑，唯一支持投影）、`SourceRaw`（raw 字节编辑：RawMarkdown/Comment/HtmlBlock/MathBlock/MermaidBlock 与整体源码视图）、`CodeBlockRaw`（代码块与 frontmatter；frontmatter 归 SourceRaw 会绕过代码外观）。
+
+## 5. BlockTextElement 与 shape 备忘
+
+自定义 `Element`，类型定义在 `block/element/code_input.rs`，实现在 `block/element/text_element.rs`；布局与几何工具函数在 `block/element.rs`。
+
+- **request_layout**：取显示文本与换行/字距开关 → 算备忘键 → 在测量闭包里：wrap 宽过小（min-content 测量）直接返回估算下界不 shape；**键命中就复用行表，连 runs 都不建**；未命中才 `build_text_runs`（行内 span + IME marked 合并边界）或 `build_code_text_runs`（高亮 span → 颜色/字形），然后 `window.text_system().shape_text`，再补字距与中西文 autospace，写回备忘。有长行折叠计划时按硬行逐行 shape（折叠行不换行、截断加提示）。
+- **prepaint**：插 hitbox；算光标 quad（含闪烁透明度、当前行高亮、括号配对底色）、选区 quad、行内代码圆角背景、搜索高亮、行号。
+- **paint**：链接悬停手型；聚焦时 `window.handle_input` 注册 IME；按层序绘制；**末尾把 `last_layout` / `last_bounds` / `last_line_height` / 行号槽宽写回块**——这是命中测试、光标可见性、滚动定位、stride 学习共用的布局缓存。
+- **`ShapeMemoKey`**（`runtime/mod.rs`）：文本代数、span 结构代数、marked 区间、高亮代数、换行宽、换行/字距开关、字号、字体指纹、主题指纹（取 Arc 指针）、长行折叠代数。任一不符即重 shape；文本变、spans 变、折叠切换还会主动置 None。**高亮代数单独进键**：源码视图的围栏级联换色时块文本没变，不递增就上不了一屏。
+- 软换行的绘制、光标、选区、点击与上下键定位共用 `element.rs:aligned_row_left`（每个视觉行单独算居中留白）。
+
+## 6. 块级缓存与失效
+
+失效枢纽是 `runtime/display_cache.rs:sync_render_cache`：重建行内渲染缓存 → 同步代码高亮 → 同步图片运行时 → 清/重建投影 → 刷新共享显示文本。**所有文本替换路径与 `with_record` 都调它，是编辑后即时重建，不是按帧懒重建。**
+
+| 缓存 | 失效时机 |
+|---|---|
+| `render_cache`（可见文本 + spans + 链接/脚注命中） | 每次文本变更 |
+| `cached_display_text` / `display_generation` | 内容真变了才换 Arc 并递增代数、清 shape 备忘 |
+| `projection`（定界符显形） | 焦点/选区/IME 变化；按 `projection_cache_key` 短路光标闪烁帧；失焦与非 RenderedRich 清除 |
+| `code_highlight` / `highlight_generation` | 每次文本变更、语言字段变更、源码视图接缝级联；结果变化递增代数 |
+| `shape_memo` | 见 §5 |
+| `hard_line_ranges_cache` | 按显示代数 |
+| `last_layout` / `last_bounds` | 每次 paint 写回；数学与 mermaid 未聚焦时主动置 None |
+| `column_layout_memo`（表格列宽） | 键含主题指纹、字号、容器宽、字体、表内容版本 |
+| `table_runtime` / `image_runtime` | 文档级重建（`rebuild_table_runtimes` / `rebuild_image_runtimes`，后者只对引用敏感块增量） |
+
+**定界符投影**（`runtime/projection.rs` + `projection/build.rs`）：把光标/选区/IME **触碰到的**行内构造的定界符显形进显示文本，并产出双向偏移表。三套坐标系要分清：**clean**（`record.title` 可见文本）、**current/display**（投影后的显示文本，`selected_range` 与 `marked_range` 都在这一系）、**markdown**（序列化源码）。块内偏移一律是 UTF-8 字节；只有 IME 边界是 UTF-16（`block/input.rs` 换算）。
+
+**源码视图的 markdown 高亮**：每块记 `source_fence_entry/exit`（围栏/数学/frontmatter/注释状态），编辑器在整树重建后 `resync_source_fence_states` 全量串联，打字后 `cascade_source_fence_states_after` 增量级联（下一块入口一致就停）。行号槽宽按全文档总行数统一（`source_line_gutter_basis`），分块右对齐。
+
+## 7. 帧几何与命中测试
+
+- `MountedRun` 带文档身份与行计划版本，统一枚举主窗口与焦点岛；命中测试只访问当前计划的真实成员（`bounds_for_item` 对旧帧成员返回 None）。表格以当前格子边界命中，不消费屏外旧坐标。
+- **断言几何之前先重绘**：命中测试读的是上一帧写下的 `last_bounds`/`last_layout`，没画过就是 0。
+- `last_bounds`/`last_layout` 为空的三种情况：从未 paint；数学/mermaid 未聚焦；只画图片或混合视觉的块（`block_bounds_recorder` 只写 bounds，判据是 `has_text_layout()`）——这类块的命中测试只能整块粒度。表格块自己没有文本元素（可见长度 0），所以跨块落点换算把"上一块底与下一块顶之间"那段空间归给中间量不出文本布局的块。
+- `render/sync.rs:scroll_target_bounds` 统一文字范围与原子壳（公式/图片）几何：搜索跳转可以用原子边界，普通光标跟随等待实际光标；所有等待分支共用重试预算。
+
+## 8. 陷阱
+
+- 没有文本元素的 kind/状态：分隔线、未聚焦的表格与 HTML/数学/mermaid、`[TOC]` 段落、`renders_nothing` 的 HTML、未聚焦的混合视觉块、长块护栏降级的 div。给它们做命中测试或选区之前先确认。
+- 长块与长行护栏常量在 `src/components/mod.rs`（未聚焦长块降级阈值、长行折叠阈值与折叠态截断长度）。长行折叠只对带行号槽的代码块/段落启用。
+- run 的 `len` 以字节计且必须覆盖全文，否则 `shape_text` 丢弃无 run 覆盖的尾部（截断提示行要复制行尾 run 盖住 marker 字节）。
+- 光标闪烁必须要求 `window.is_window_active()`：gpui 的 `is_focused` 判不出窗口切走，否则后台窗口持续闪烁导致全块重绘。
+- `.id()` 之后元素类型变 Stateful，if/else 两分支要 `into_any_element` 统一；svg 不继承父 div 的 text_color；`TextRun` 逐段字号是本地补丁（Linux 未接）。
+- 无窗口测试的文本系统是等宽模拟（`NoopTextSystem`）：只断言结构与偏移，别断言像素宽度与字形。要真实宽度就在窗口里用 `window.text_system().shape_text`。
+
+## 9. 测试落点
+
+`editor/tests/`（滚动条几何与渲染窗口裁剪、`scroll_window.rs`、长行、`image_runtime.rs`、`latex_tools.rs`）、`block/element/tests.rs`（几何与排版、备忘命中、硬行表）、`block/render/tests.rs`（外观与列宽备忘）、`block/runtime/tests/`（投影、IME、代码语言、图片、链接与选区）、`workspace/tests/sidebar.rs`（面板开窗）。
