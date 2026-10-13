@@ -35,6 +35,48 @@ async fn core_repair_document_height_cache_tracks_code_fonts_and_theme_metrics(c
     assert_eq!(editor.read_with(cx, |editor, _| editor.row_stride_cache_clears.get()), after);
 }
 
+/// 只换正文字体族（行内代码字体不动）也要重测列宽。
+///
+/// 列宽备忘当时只把「窗口字体 + 代码字体」混进指纹：正文族的偏好位
+/// （`fonts.markdown_family`）不在键里，于是设置里换正文字体后 memo 全键命中、
+/// 不重测，列宽按旧字体钉住——渲染按新字体排，mid-word 折行。
+#[gpui::test]
+async fn review_table_body_font_family_alone_invalidates_column_measurement(
+    cx: &mut TestAppContext,
+) {
+    use crate::config::preferences::{AppPreferences, open_preferences_window_with_state};
+    init_editor_test_app(cx);
+    cx.update(|cx| crate::config::EditorSettings::init(cx, true));
+    let preferences = cx.update(|cx| {
+        open_preferences_window_with_state(cx, AppPreferences::default(), Vec::new(), "字体".into())
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(
+            cx,
+            "| thin | `wide` |\n| --- | --- |\n| content | `code` |".into(),
+            None,
+        )
+    });
+    redraw(cx);
+    redraw(cx);
+    let table = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    let before = table.read_with(cx, |table, _| table.column_layout_measurements);
+
+    let mut settings = AppPreferences::default();
+    settings.fonts.markdown_family = "Arial".into();
+    preferences
+        .update(cx, |preferences, window, cx| {
+            preferences.apply_saved_preferences(settings, window, cx)
+        })
+        .unwrap();
+    redraw(cx);
+    let after = table.read_with(cx, |table, _| table.column_layout_measurements);
+    assert!(
+        after > before,
+        "正文（markdown）字体族换了，列宽却没重测：{before} -> {after}"
+    );
+}
+
 #[gpui::test]
 async fn core_repair_table_font_families_invalidate_column_measurement(cx: &mut TestAppContext) {
     use crate::config::preferences::{AppPreferences, open_preferences_window_with_state};
@@ -436,4 +478,3 @@ async fn broken_image_placeholder_stays_compact_inside_the_column(cx: &mut TestA
         bounds.right()
     );
 }
-
