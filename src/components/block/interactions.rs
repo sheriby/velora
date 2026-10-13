@@ -118,7 +118,7 @@ impl Block {
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();
         self.assign_collapsed_selection_offset(0, CollapsedCaretAffinity::Default, None);
-        self.marked_range = None;
+        self.set_marked_range(None, cx);
         self.cursor_blink_epoch = std::time::Instant::now();
         cx.emit(BlockEvent::Changed);
         cx.notify();
@@ -448,7 +448,7 @@ impl Block {
         self.mark_changed(cx);
         let cursor = self.visible_len();
         self.assign_collapsed_selection_offset(cursor, CollapsedCaretAffinity::Default, None);
-        self.marked_range = None;
+        self.set_marked_range(None, cx);
         cx.emit(BlockEvent::RequestNewline {
             trailing,
             source_already_mutated: true,

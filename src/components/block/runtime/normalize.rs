@@ -224,7 +224,9 @@ impl Block {
                         .min(projected_link_run.display_range.len());
                 self.selected_range = start..end;
                 self.selection_reversed = false;
-                self.marked_range = if mark_inserted_text && !new_text.is_empty() {
+                // 提交（`mark_inserted_text == false`）会在这里把跨度清掉：标题没变的
+                // 同字上屏只有这一条路径会碰 marked，必须从这里把「组合结束」发出去。
+                let next_marked_range = if mark_inserted_text && !new_text.is_empty() {
                     Some(start..end)
                 } else {
                     None
@@ -235,6 +237,7 @@ impl Block {
                 if self.record.kind != old_kind || self.record.title != old_title {
                     cx.emit(BlockEvent::Changed);
                 }
+                self.set_marked_range(next_marked_range, cx);
                 cx.notify();
                 return;
             }
@@ -456,7 +459,6 @@ impl Block {
     ) {
         let old_kind = self.record.kind.clone();
         let old_title = self.record.title.clone();
-        let old_marked_range = self.marked_range.clone();
         let old_title_was_empty = old_title.visible_text().is_empty();
         let mut collapsed_affinity = self.current_collapsed_caret_affinity();
         let keep_projection =
@@ -505,7 +507,7 @@ impl Block {
             collapsed_affinity = affinity;
         }
 
-        self.marked_range = next_marked_clean
+        let next_marked_range = next_marked_clean
             .clone()
             .map(|range| self.clean_to_current_range(range));
         if next_selected_clean.is_empty() {
@@ -525,8 +527,9 @@ impl Block {
         if self.record.kind != old_kind || self.record.title != old_title {
             cx.emit(BlockEvent::Changed);
         }
-        if self.marked_range != old_marked_range {
-            cx.emit(BlockEvent::CompositionChanged);
+        if self.marked_range != next_marked_range {
+            // 跨度要等投影定稿后再落：它按当前投影换算，上面那几行会动选区的亲和性。
+            self.set_marked_range(next_marked_range, cx);
         }
         cx.notify();
     }

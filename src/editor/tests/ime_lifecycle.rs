@@ -20,6 +20,53 @@ async fn core_repair_same_text_ime_commit_separates_following_typing(cx: &mut Te
     assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), "note");
 }
 
+/// 链接标签里的同字上屏也要把组合收尾。
+///
+/// 标签里的编辑走链接投影（`apply_link_projection_edit`）：那条早退分支把 `marked_range`
+/// 置 `None` 后只按「kind 或 title 变了」发 `Changed` 就 return——提交文本与已 marked 的
+/// 文本相同时标题没变，于是既无 `Changed` 也无 `CompositionChanged`；而 GPUI 的
+/// `unmark_text` 拿到的 `marked_range` 已经是 `None`（`changed == false`）也不发。
+/// `Editor::finish_ime_composition` 全仓唯一触发点就是 `block_event.rs` 的
+/// `CompositionChanged` 臂，于是撤销组一直开着：下一次编辑的字节并进这个
+/// `ImeCompositionCommit` 组，组内选区是组合开始前的旧现场，一次撤销退两步。
+#[gpui::test]
+async fn review_same_text_ime_commit_inside_a_link_label_finishes_the_composition(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "[中](https://example.test)";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
+    // 标签“中”在展开后的显示坐标里是 1..4；选中整段标签再上屏，走的才是那条早退分支。
+    let label = 1..1 + "中".len();
+    block.update_in(cx, |block, window, cx| {
+        block.focus_handle.focus(window);
+        block.selected_range = label.clone();
+        block.sync_inline_projection_for_focus(true);
+        // 组合开始：把整段标签换成同一个字，走的正是那条早退分支。
+        block.replace_and_mark_text_in_range(Some(1..2), "中", None, window, cx);
+    });
+    redraw(cx);
+    assert!(
+        block.read_with(cx, |block, _| block.has_marked_text()),
+        "夹具前提：标签里正组合着「中」"
+    );
+
+    // 同字上屏：提交文本 = 已 marked 文本，字节没变。
+    block.update_in(cx, |block, window, cx| {
+        block.replace_text_in_range(Some(1..2), "中", window, cx)
+    });
+    redraw(cx);
+
+    assert!(!block.read_with(cx, |block, _| block.has_marked_text()));
+    assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), source);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.pending_undo_capture.is_none()),
+        "组合结束了撤销组还开着：下一次编辑会并进这个组，一次撤销退两步"
+    );
+}
+
 fn composition_end_autosaves(cx: &mut TestAppContext, unmark: bool) {
     init_editor_test_app(cx);
     let path = temp_markdown_path("same-ime-save");

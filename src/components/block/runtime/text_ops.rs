@@ -10,6 +10,22 @@ impl Block {
         cx.notify();
     }
 
+    /// 改 IME 组合跨度（marked range）的唯一出口：值变了就发 `CompositionChanged`。
+    ///
+    /// 这条信号全仓只有一个消费者（`editor/events/block_event.rs` 的
+    /// `CompositionChanged` 臂 → `Editor::finish_ime_composition` + 排自动保存），
+    /// 它按「块上还有没有 marked 文本」判断该不该收尾，所以凡是改动跨度的编辑路径都
+    /// 从这里走。少发一处的后果不是「少一次重绘」：编辑器那侧的撤销组会一直开着，
+    /// 下一次编辑的字节并进这个 `ImeCompositionCommit` 组，一次撤销退两步。
+    pub(crate) fn set_marked_range(&mut self, next: Option<Range<usize>>, cx: &mut Context<Self>) {
+        if self.marked_range == next {
+            return;
+        }
+        self.marked_range = next;
+        cx.emit(BlockEvent::CompositionChanged);
+        cx.notify();
+    }
+
     pub(crate) fn convert_to_paragraph(&mut self, cx: &mut Context<Self>) {
         self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
         if self.record.kind.is_code_block() {
@@ -107,7 +123,7 @@ impl Block {
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();
         self.assign_collapsed_selection_offset(0, CollapsedCaretAffinity::Default, None);
-        self.marked_range = None;
+        self.set_marked_range(None, cx);
         self.cursor_blink_epoch = Instant::now();
         self.clear_vertical_motion();
         cx.emit(BlockEvent::Changed);
@@ -142,7 +158,7 @@ impl Block {
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();
         self.assign_collapsed_selection_offset(cursor, CollapsedCaretAffinity::Default, None);
-        self.marked_range = None;
+        self.set_marked_range(None, cx);
         self.cursor_blink_epoch = Instant::now();
         self.clear_vertical_motion();
         cx.emit(BlockEvent::Changed);
@@ -575,12 +591,8 @@ impl Block {
     /// assign_collapsed_selection_offset 那层，IME 自己刚挂上的跨度也走那条
     /// 路，在那层清会把它抹掉。
     pub(crate) fn drop_stale_ime_marked_range(&mut self, cx: &mut Context<Self>) {
-        if self.marked_range.take().is_some() {
-            cx.emit(BlockEvent::CompositionChanged);
-            cx.notify();
-        }
+        self.set_marked_range(None, cx);
     }
-
     /// 光标所在**硬行**的显示范围：Home/End 四条入口与 Up/Down 同源判据
     /// （shared_hard_line_ranges + line_index_for_offset）。行表非空恒成立，
     /// 越界兜底退整块范围。
