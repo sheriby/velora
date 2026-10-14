@@ -175,8 +175,18 @@ while /bin/kill -0 "$process_id" 2>/dev/null; do /bin/sleep 0.2; done
 # `installer` 往 /Applications 里覆盖这个正在用的 bundle，而 `open` 只会唤醒那个还在跑
 # 的旧实例、`--args` 被丢掉——用户看到的还是旧版本在提示更新，与 Windows 那次同源。
 /usr/bin/killall -TERM velora 2>/dev/null
-/bin/sleep 0.5
-/usr/bin/killall -KILL velora 2>/dev/null
+# 与 Windows 同一条口径：只请它们自己关（TERM 走正常终止流程，窗口有机会弹「未保存」），
+# 等满这个上限还不退就放弃这趟更新——0.5 秒后强杀会把用户正在编辑的内容一起带走。
+close_timeout_seconds=30
+deadline=$((`/bin/date +%s` + close_timeout_seconds))
+while /usr/bin/killall -0 velora 2>/dev/null; do
+  if [ "`/bin/date +%s`" -ge "$deadline" ]; then
+    /bin/echo '还有其他 Velora 窗口未关闭（请在那些窗口里保存或放弃改动，再更新一次）' >"$error_file"
+    "$previous_executable" "$@" >/dev/null 2>&1 &
+    exit 0
+  fi
+  /bin/sleep 0.2
+done
 /usr/bin/osascript -e 'on run argv
   do shell script "/usr/sbin/installer -pkg " & quoted form of (item 1 of argv) & " -target /" with administrator privileges
 end run' "$package" >"$error_file" 2>&1
@@ -297,19 +307,34 @@ mod tests {
         assert!(uninstall.contains("IfFileExists \"$INSTDIR\\velora.exe\""));
     }
 
-    /// macOS 侧同样要收掉其他实例，理由与 Windows 那条不同：`installer` 覆盖的是正在
-    /// 使用的 bundle，而 `open` 只会唤醒还在跑的旧实例、`--args` 被丢掉。Windows 那侧
-    /// 由安装包负责（见上一条用例）。
+    /// macOS 侧收掉其他实例的理由与 Windows 不同（`installer` 覆盖的是正在使用的 bundle，
+    /// 而 `open` 只会唤醒还在跑的旧实例、`--args` 被丢掉），但**关法必须同一条口径**：
+    /// 先请它们自己退，到点还不退就放弃这趟更新。`killall -KILL` 会把别的窗口里未保存的
+    /// 正文一起带走——GPUI 不在 SIGTERM 里跑窗口关闭流程，那句「还有未保存的修改」根本
+    /// 弹不出来。
     #[test]
-    fn macos_helper_closes_remaining_instances_before_installing() {
+    fn macos_helper_asks_other_instances_to_close_instead_of_killing_them() {
         assert!(MACOS_HELPER.contains("/usr/bin/killall -TERM velora"));
-        assert!(MACOS_HELPER.contains("/usr/bin/killall -KILL velora"));
-        let term = MACOS_HELPER.find("-TERM").expect("先请退");
-        let kill = MACOS_HELPER.find("-KILL").expect("再强杀");
-        let install = MACOS_HELPER.find("installer -pkg").expect("安装");
         assert!(
-            term < kill && kill < install,
-            "先请退、再强杀、最后才安装：{MACOS_HELPER}"
+            !MACOS_HELPER.contains("-KILL"),
+            "强杀会把其他窗口里未保存的编辑一起带走：{MACOS_HELPER}"
+        );
+        assert!(
+            MACOS_HELPER.contains("还有其他 Velora 窗口未关闭"),
+            "不退就该放弃这趟更新：{MACOS_HELPER}"
+        );
+        let ask = MACOS_HELPER.find("-TERM velora").expect("先请退");
+        let poll = MACOS_HELPER
+            .find("killall -0 velora")
+            .expect("再等它退干净");
+        let install = MACOS_HELPER.find("installer -pkg").expect("最后才安装");
+        assert!(
+            ask < poll && poll < install,
+            "先请退、等退干净、再安装：{MACOS_HELPER}"
+        );
+        assert!(
+            MACOS_HELPER.contains("$previous_executable"),
+            "放弃这趟要把旧版本开回来"
         );
     }
 
