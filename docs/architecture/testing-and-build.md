@@ -74,6 +74,7 @@ cargo test --bin velora     # 全绿
 6. **Windows 主线程任务泵限时**：`WindowsPlatformInner::run_foreground_task` 一次唤醒最多跑 10ms 主线程任务，跑满就重投一次自定义消息（对齐上游 zed#43678）。原版把队列一次 drain 完，任务积压时消息循环拿不到处理机会——原生文件对话框的模态循环靠它转，表现是对话框卡住不响应。该结构体因此多持一个窗口句柄（构造签名多一个 `HWND`）。
 7. **Windows 原生文件对话框走专用 STA 线程**：`prompt_for_paths` / `prompt_for_new_path` 在专用线程上创建并 `Show`（该线程自己 `OleInitialize`/`OleUninitialize`），结果经 oneshot 发回。原因：gpui 的 UI 线程启动时就 `OleInitialize`，对话框原先住在同一个 STA 公寓里，刚关掉的模态会在这个线程队列里留下激活/焦点消息，导致同进程第 2 次开对话框时壳层把窗口建好却十几秒不 `ShowWindow`（同类先例 AvaloniaUI/Avalonia#21266、#21433）。`HWND` 不是 `Send`，用包装类型带过去，到线程后再 `IsWindow` 复验。两个对话框都设了固定 `SetClientGuid` 把旧状态一次性退役（**注意是一次性的**，状态会重新攒起来）。管不到的情形：壳层在显示窗口前访问不可达位置（断开的映射网络盘、失联的快速访问项、慢的第三方命名空间扩展）——那类只能在打开前用 `SetFolder` 显式指定目录压掉（保存对话框已有，打开对话框受 `PathPromptOptions` 所限还没有）。
 8. **`Entity::read_untracked`**：跳过 accessed 集合登记的读。状态栏一类每帧扫描在十万级块文档上曾把大量集合插入变成稳态帧的最大单项。
+9. **剪贴板的 HTML 味道**（db8b009）：`platform.rs` 加 `mod cf_html;` 与 `pub use cf_html::*;`；新增 `platform/cf_html.rs`——从 `CF_HTML` 载荷按 `StartFragment`/`EndFragment`（退回 `StartHTML`/`EndHTML`）的**字节**偏移切出选中的那段标记，载荷不是合法 UTF-8 就当这一味道不存在；`platform/windows/clipboard.rs` 加 `CLIPBOARD_HTML_FORMAT` 与 `read_html_from_clipboard`，带 `MAX_CLIPBOARD_HTML_BYTES`（2 MiB）上限，超限交回 `None` 让粘贴回退到同一次复制的纯文本。没有它，从网站复制的**无表头表格**在 Windows 上只会粘成纯文本（c42baff 的消费面）。macOS 侧不经这里，由 `src/components/markdown/html_paste.rs:clipboard_html` 直读 pasteboard 的 `public.html`。
 
 ## 8. 脚本与资源
 

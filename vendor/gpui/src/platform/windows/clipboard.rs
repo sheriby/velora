@@ -28,6 +28,7 @@ const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 // Clipboard formats
 static CLIPBOARD_HASH_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("GPUI internal text hash")));
+// 本地补丁（velora）：读出剪贴板里的 HTML 味道，见 docs/architecture/testing-and-build.md §7 第 9 条
 static CLIPBOARD_HTML_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("HTML Format")));
 static CLIPBOARD_METADATA_FORMAT: LazyLock<u32> =
@@ -288,10 +289,25 @@ where
 /// Reads the `HTML Format` flavor. Browsers and Word write it next to the
 /// plain text, so a pasted table keeps its structure; the payload is `CF_HTML`
 /// framing around the selected markup.
+/// Upper bound for the `CF_HTML` flavor. Copying a full web page puts several
+/// megabytes in that flavor; the payload is read on the foreground thread and
+/// then copied a few more times on the way to the converter, so an unbounded
+/// read freezes the window. Anything above this counts as "no HTML flavor",
+/// which lets the paste fall back to the plain text of the same copy.
+const MAX_CLIPBOARD_HTML_BYTES: usize = 2 * 1024 * 1024;
+
 fn read_html_from_clipboard() -> Option<String> {
     let payload = with_clipboard_data(*CLIPBOARD_HTML_FORMAT, |data_ptr, size| {
-        unsafe { std::slice::from_raw_parts(data_ptr as *const u8, size) }.to_vec()
-    })?;
+        if size > MAX_CLIPBOARD_HTML_BYTES {
+            log::warn!(
+                "clipboard HTML flavor is {} bytes, above the {} byte limit; falling back to text",
+                size,
+                MAX_CLIPBOARD_HTML_BYTES
+            );
+            return None;
+        }
+        Some(unsafe { std::slice::from_raw_parts(data_ptr as *const u8, size) }.to_vec())
+    })??;
     cf_html_fragment(&payload)
 }
 
@@ -382,6 +398,12 @@ where
     let global = HGLOBAL(unsafe { GetClipboardData(format).ok() }?.0);
     let size = unsafe { GlobalSize(global) };
     let data_ptr = unsafe { GlobalLock(global) };
+    // 本地内存句柄可以锁定失败（内存压力、别的进程仍在写）。把空指针连同非零
+    // 长度交给调用方，就是让 `from_raw_parts(null, size)` 造出一个非法切片。
+    // 锁定失败时不解锁：`GlobalLock` 失败意味着句柄从未被锁上。
+    if data_ptr.is_null() {
+        return None;
+    }
     let result = f(data_ptr, size);
     unsafe { GlobalUnlock(global).ok() };
     Some(result)

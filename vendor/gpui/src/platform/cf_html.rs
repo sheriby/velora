@@ -1,3 +1,5 @@
+//! 本地补丁（velora）：见 `docs/architecture/testing-and-build.md` §7 第 9 条。
+//!
 //! `CF_HTML`, the Windows clipboard flavor that carries copied HTML.
 //!
 //! The payload is a set of ASCII `Key:Value` header lines followed by the
@@ -25,12 +27,16 @@ pub fn cf_html_fragment(payload: &[u8]) -> Option<String> {
         return None;
     }
 
-    let fragment = String::from_utf8_lossy(&payload[start..end]);
-    let fragment = fragment.trim();
+    // A payload that is not valid UTF-8 (a Chinese-locale Word or Write clipboard
+    // writes its declared code page) is not a flavor we can show: decoding it
+    // lossily would put U+FFFD runs into the document and let them be saved back.
+    // Reporting no flavor lets the paste fall back to the plain-text one.
+    let fragment = String::from_utf8(payload[start..end].to_vec()).ok()?;
+    let fragment = fragment.trim().to_string();
     if fragment.is_empty() {
         None
     } else {
-        Some(fragment.to_string())
+        Some(fragment)
     }
 }
 

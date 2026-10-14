@@ -1,4 +1,5 @@
 mod app_menu;
+// 本地补丁（velora）：CF_HTML 片段提取，见 docs/architecture/testing-and-build.md §7 第 9 条
 mod cf_html;
 mod keyboard;
 mod keystroke;

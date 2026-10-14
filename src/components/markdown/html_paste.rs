@@ -401,4 +401,17 @@ mod tests {
             );
         }
     }
+
+    /// 载荷不是合法 UTF-8（中文版 Word/写字板按自己声明的编码写多字节）时，这一味道算
+    /// **没有**：让粘贴回退到同一次复制的纯文本味道，而不是把乱码写进缓冲区、还可能被
+    /// 保存回文件。口径与不变量 5 一致——判不出来的字节拒绝，不以乱码呈现。
+    #[test]
+    fn windows_clipboard_payload_with_invalid_utf8_yields_nothing() {
+        let payload = b"Version:0.9\n<p>\xc3\x28\xe6\x97</p>";
+        assert!(
+            gpui::cf_html_fragment(payload).is_none(),
+            "actual: {:?}",
+            gpui::cf_html_fragment(payload)
+        );
+    }
 }
