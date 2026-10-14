@@ -361,6 +361,7 @@ fn render_custom_button(
     let d = &theme.dimensions;
 
     let id = button.id.clone();
+    let action_id = button.action_id.clone();
     let hovered = state.custom_button_hovered.as_deref() == Some(&button.id);
 
     div()
@@ -381,6 +382,14 @@ fn render_custom_button(
         .text_size(px(d.status_bar_text_size))
         .text_color(c.status_bar_text)
         .child(button.label.clone())
+        .on_click(cx.listener(
+            move |editor: &mut Editor,
+                  _event: &gpui::ClickEvent,
+                  window: &mut Window,
+                  cx: &mut Context<Editor>| {
+                editor.dispatch_status_bar_command(&action_id, window, cx);
+            },
+        ))
         .on_hover(cx.listener(
             move |editor: &mut Editor,
                   hovered: &bool,
@@ -395,6 +404,27 @@ fn render_custom_button(
             },
         ))
         .into_any_element()
+}
+
+impl Editor {
+    /// 状态栏自定义按钮的派发收口：按 `action_id` 在命令注册表里找那条动作并派发，与键位、
+    /// 正文右键菜单、选中工具栏、命令面板共用同一个事实源（不变量 11）。查不到返回 `false`。
+    pub(crate) fn dispatch_status_bar_command(
+        &mut self,
+        action_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(spec) = crate::commands::commands()
+            .iter()
+            .find(|spec| spec.id == action_id)
+        else {
+            eprintln!("状态栏按钮的 action_id {action_id:?} 不在命令注册表里，这一下不派发");
+            return false;
+        };
+        window.dispatch_action(spec.boxed_action(), cx);
+        true
+    }
 }
 
 /// Count words in mixed CJK / Latin text.
@@ -451,6 +481,24 @@ fn is_cjk_char(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{count_words, document_has_long_source_block};
+
+    /// 渲染侧必须把按钮接到派发收口上。`.cursor_pointer()` 明示可点而函数体里只有
+    /// `.on_hover`，配了 `action_id` 的按钮就是个静态装饰（评审必修 A2）。
+    #[test]
+    fn custom_button_render_body_dispatches_on_click() {
+        let body = include_str!("status_bar.rs")
+            .split("fn render_custom_button")
+            .nth(1)
+            .expect("渲染函数应在本文件里")
+            .split("\n}\n")
+            .next()
+            .unwrap_or_default();
+        assert!(body.contains(".on_click"), "按钮没有点击处理器：{body}");
+        assert!(
+            body.contains("dispatch_status_bar_command"),
+            "点击没走命令注册表那处收口：{body}"
+        );
+    }
 
     #[test]
     fn long_source_block_hint_tracks_single_long_line() {

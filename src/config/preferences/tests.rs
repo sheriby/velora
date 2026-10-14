@@ -1643,3 +1643,45 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
         );
         let _ = std::fs::remove_dir_all(root);
     }
+
+    /// `action_id` 只对得上命令注册表里那一条才算数。查不到的按钮不该进运行时——画出来
+    /// 就是「配了个没用的按钮」，比不画更糟（评审必修 A2 的另一半）。
+    #[gpui::test]
+    async fn unknown_status_bar_action_id_is_dropped_when_config_is_read(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _ = cx;
+        let root = std::env::temp_dir()
+            .join(format!("velora-status-bar-unknown-action-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create config root");
+        let _guard = crate::config::override_test_config_root(&root);
+        let dirs = VeloraConfigDirs::from_root(&root);
+
+        let mut seeded = AppPreferences::default();
+        seeded.status_bar.custom_buttons = vec![
+            super::StatusBarButton {
+                id: "good".into(),
+                label: "全选".into(),
+                action_id: "select_document".into(),
+            },
+            super::StatusBarButton {
+                id: "typo".into(),
+                label: "不存在".into(),
+                action_id: "no_such_command".into(),
+            },
+        ];
+        save_app_preferences_with_dirs(&seeded, &dirs).expect("seed config");
+
+        let read_back = read_app_preferences_with_dirs(&dirs).expect("read seeded config");
+        assert_eq!(
+            read_back
+                .status_bar
+                .custom_buttons
+                .iter()
+                .map(|button| button.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["good"],
+            "查不到的 action_id 该在读取处判掉，只留对得上的那一条"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }

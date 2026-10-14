@@ -458,14 +458,27 @@ pub(crate) fn app_preferences_from_toml_value(
                         .filter_map(|item| {
                             let id = item.get("id")?.as_str()?.to_string();
                             let label = item.get("label")?.as_str()?.to_string();
+                            let action_id = item
+                                .get("action_id")
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            // 按得下去的按钮才有资格进运行时：`action_id` 对不上命令注册表
+                            // 里那一条，状态栏只会多出一个「点了没反应」的装饰。
+                            let known = crate::commands::commands()
+                                .iter()
+                                .any(|spec| spec.id == action_id);
+                            if !known {
+                                eprintln!(
+                                    "config.toml 里状态栏按钮 {id:?} 的 action_id {action_id:?} \
+                                     不在命令注册表里，已忽略"
+                                );
+                                return None;
+                            }
                             Some(StatusBarButton {
                                 id,
                                 label,
-                                action_id: item
-                                    .get("action_id")
-                                    .and_then(|a| a.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
+                                action_id,
                             })
                         })
                         .collect()

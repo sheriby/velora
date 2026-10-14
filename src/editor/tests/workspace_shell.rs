@@ -62,6 +62,44 @@ async fn welcome_page_hides_once_a_document_opens(cx: &mut TestAppContext) {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// 状态栏自定义按钮配的 `action_id` 必须真接进动作收口：点一下等价于走那条命令的键位。
+///
+/// 现象：`config.toml` 里配了 `{ id=…, label=…, action_id="select_document" }`，重启后
+/// 状态栏出现该按钮（`.cursor_pointer()` 明示可点），点击毫无反应。根因：607f692 把按钮
+/// 接进了运行时镜像与渲染，派发那一半没接——`action_id` 这个字段在产品代码里零消费。
+#[gpui::test]
+async fn status_bar_custom_button_dispatches_its_registry_action(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, "alpha one\n\nbeta two\n".to_string(), None)
+    });
+    redraw(cx);
+
+    let dispatched = editor.update_in(cx, |editor, window, cx| {
+        editor.dispatch_status_bar_command("select_document", window, cx)
+    });
+    redraw(cx);
+
+    assert!(dispatched, "注册表里有这条 id，按钮就该派发它");
+    let selected = editor.read_with(cx, |editor, cx| editor.selected_visible_text(cx));
+    assert!(
+        editor.read_with(cx, |editor, _| editor.cross_block_selection.is_some()),
+        "派发之后该有跨块选区"
+    );
+    // 选了多少由选区那一层定口径（块间隙不重复算空行），这里只认「两块都在选区里」。
+    let selected = selected.expect("全选该交回可见文本");
+    assert!(
+        selected.contains("alpha one") && selected.contains("beta two"),
+        "两块正文都该在选区里：{selected:?}"
+    );
+
+    // 对照：乱配的 id 判为查不到，不派发也不崩。
+    let unknown = editor.update_in(cx, |editor, window, cx| {
+        editor.dispatch_status_bar_command("no_such_command", window, cx)
+    });
+    assert!(!unknown, "查不到的 action_id 不该被当成派发成功");
+}
+
 #[gpui::test]
 async fn status_bar_breadcrumb_renders_without_panicking(cx: &mut TestAppContext) {
     cx.update(|cx| {
