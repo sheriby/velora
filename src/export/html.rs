@@ -910,7 +910,7 @@ impl<'a> ExportRewriter<'a> {
 
     /// 缩进代码块里其实是显示公式时按公式渲染；不是就交回普通那条路（返回 `None`）。
     ///
-    /// 块模型认「任意缩进的 `$$…$$` 块」是公式（`components::latex::display_math_source_of_region`：
+    /// 块模型认「任意缩进的 `$$…$$` 块」是公式（`components::latex::parse_display_math_segments`：
     /// 人们常把公式写在 4 空格缩进里，Typora 粘过来的文档尤其多），而 pulldown 先把它读成
     /// **缩进代码块**——不在这里接住，同一段 `$$` 界面是公式、导出是
     /// `<pre><code>$$…$$</code></pre>`。
@@ -937,25 +937,52 @@ impl<'a> ExportRewriter<'a> {
             .split('\n')
             .map(str::to_string)
             .collect::<Vec<_>>();
-        let (_, source) = crate::components::latex::display_math_source_of_region(&lines)?;
-        match render_latex_to_svg(
-            &source.body,
-            self.theme.colors.text_default,
-            display_math_font_size(self.theme.typography.text_size),
-            crate::components::latex::MathLayout::Display,
-        ) {
-            Ok(svg) => output.push(Event::Html(CowStr::from(format!(
-                "<div class=\"vlt-math\">{svg}</div>"
-            )))),
-            Err(error) => {
-                eprintln!("export: 公式渲染失败: {error}");
-                output.push(Event::Html(CowStr::from(format!(
-                    "<pre class=\"vlt-math-error\">{}</pre>",
-                    css::escape_html(body)
-                ))));
+        // 分段表而不是「第一个公式」视图：`$$…$$` 之后的文字与同块里的第二条公式都要
+        // 留在导出里，与阅读视图 `render_math_content` 消费同一份分段。
+        let segments = crate::components::latex::parse_display_math_segments(&lines.join("\n"))?;
+        for segment in segments {
+            match segment {
+                crate::components::latex::DisplayMathSegment::Formula { raw, body } => {
+                    match render_latex_to_svg(
+                        &body,
+                        self.theme.colors.text_default,
+                        display_math_font_size(self.theme.typography.text_size),
+                        crate::components::latex::MathLayout::Display,
+                    ) {
+                        Ok(svg) => output.push(Event::Html(CowStr::from(format!(
+                            "<div class=\"vlt-math\">{svg}</div>"
+                        )))),
+                        Err(error) => {
+                            eprintln!("export: 公式渲染失败: {error}");
+                            output.push(Event::Html(CowStr::from(format!(
+                                "<pre class=\"vlt-math-error\">{}</pre>",
+                                css::escape_html(&raw)
+                            ))));
+                        }
+                    }
+                }
+                crate::components::latex::DisplayMathSegment::Text { markdown } => {
+                    if markdown.trim().is_empty() {
+                        continue;
+                    }
+                    output.push(Event::Html(CowStr::from(self.inline_fragment_html(&markdown))));
+                }
             }
         }
         Some(end - start)
+    }
+
+    /// 一段孤立的 markdown 走行内管线，产物连 `<p>` 一起返回：与顶格 `$$…$$ 尾文`
+    /// 那条路（`leading_display_prefix` 的 remainder 重走 `walk_group`）同一套输出形状。
+    fn inline_fragment_html(&self, markdown: &str) -> String {
+        let mut events: Vec<(Event<'_>, Range<usize>)> =
+            Parser::new_ext(markdown, markdown_options())
+                .into_offset_iter()
+                .collect();
+        sanitize_url_events(&mut events, self.base_dir);
+        let mut fragment = String::new();
+        html::push_html(&mut fragment, events.into_iter().map(|(event, _)| event));
+        fragment
     }
 
     fn rewrite(mut self) -> Vec<Event<'a>> {
@@ -1117,7 +1144,9 @@ impl<'a> ExportRewriter<'a> {
             }
             Some(InlineHtmlBoundary::Close(name)) => {
                 let Some(position) = stack.iter().rposition(|(opening, _)| *opening == name) else {
-                    return Vec::new();
+                    // 落单的闭标签：界面按字面显示这几个字符，导出同样转义出去——
+                    // 整段丢弃会让导出比阅读视图少字。
+                    return vec![Event::Html(CowStr::from(css::escape_html(content)))];
                 };
                 stack.drain(position..).rev().filter_map(|(name, emitted)| {
                     emitted.then(|| Event::Html(CowStr::from(format!("</{name}>"))))

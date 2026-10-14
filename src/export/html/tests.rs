@@ -85,6 +85,28 @@ mod tests {
     }
 
     #[test]
+    fn review_indented_display_math_keeps_text_after_the_closing_fence() {
+        // cases/03-formula-tail.md 的缩进形态：旧实现取「第一个公式」视图而不是分段表，
+        // 闭合 `$$` 之后的正文与同块第二条公式在导出里凭空消失。
+        let html = render_html("    $$x^2$$ LOST_SENTINEL", &Theme::default_theme(), "公式");
+        let body = body_only(&html);
+        assert!(body.contains("class=\"vlt-math\""), "{body}");
+        assert!(
+            body.contains("LOST_SENTINEL"),
+            "缩进公式的尾文被吞掉了：{body}"
+        );
+        assert!(!body.contains("$$"), "定界符不该留在导出里：{body}");
+
+        let html = render_html("    $$a^2$$ $$b^2$$", &Theme::default_theme(), "公式");
+        let body = body_only(&html);
+        assert_eq!(
+            body.matches("class=\"vlt-math\"").count(),
+            2,
+            "一块里的第二条公式不该消失：{body}"
+        );
+    }
+
+    #[test]
     fn review_unclosed_inline_html_exports_literally_like_the_reading_view() {
         let html = render_html("text <strong>open\n\nnext", &Theme::default_theme(), "范围");
         let body = body_only(&html);
@@ -104,6 +126,20 @@ mod tests {
         let body = body_only(&html);
         assert!(body.contains("<strong>&lt;em&gt;nested</strong>"), "{body}");
         assert!(body.contains("<p>next</p>"), "{body}");
+
+        // 落单的**闭**标签：界面按字面显示那几个字符，导出却把它整段丢掉。
+        for (source, escaped) in [
+            ("text </em> tail", "&lt;/em&gt;"),
+            ("a </strong> b", "&lt;/strong&gt;"),
+            ("没有开标签 </code> 收尾", "&lt;/code&gt;"),
+        ] {
+            let html = render_html(source, &Theme::default_theme(), "闭标签");
+            let body = body_only(&html);
+            assert!(
+                body.contains(escaped),
+                "{source:?} 的落单闭标签该按字面出去：{body}"
+            );
+        }
     }
 
     #[test]

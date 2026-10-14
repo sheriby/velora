@@ -126,17 +126,6 @@ pub(crate) fn dedent_math_region(region: &[String]) -> String {
         .join("\n")
 }
 
-/// 区域里是不是一段显示公式：去掉公共缩进后交给 [`parse_display_math_source`]。
-///
-/// 块模型与导出共用这一处判据（`starts_display_math_block` 那条「≤3 空格」是行内语境
-/// 的口径，整块这一侧不限缩进）。交出（去缩进后的正文, 公式体）。
-pub(crate) fn display_math_source_of_region(
-    region: &[String],
-) -> Option<(String, DisplayMathSource)> {
-    let markdown = dedent_math_region(region);
-    parse_display_math_source(&markdown).map(|source| (markdown, source))
-}
-
 /// 把块级源码完整切成公式/文字分段；一个公式都识别不出来才返回 `None`。
 pub(crate) fn parse_display_math_segments(raw: &str) -> Option<Vec<DisplayMathSegment>> {
     let trimmed = raw.trim_matches('\n');
