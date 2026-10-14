@@ -811,6 +811,39 @@ async fn dragging_across_table_cells_selects_that_text(cx: &mut TestAppContext) 
     });
 }
 
+/// 反向拖动（从右下往左上、落点列比锚点列小）时，复制出去的必须还是高亮那几格。
+///
+/// 现象：从 b 拖到 c，两格都画出选中色、Backspace 也删得掉，但复制出来是空的。
+/// 根因：复制那条路按「行区间 × 列区间」的**矩形**取格，而高亮/删除按行优先的
+/// **线性序**取格；`normalized()` 只保证线性序，列区间于是成了 `1..=0` 空循环。
+#[gpui::test]
+async fn dragging_backwards_across_table_cells_copies_the_highlighted_cells(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx.add_window_view(|_window, cx| {
+        Editor::from_markdown(cx, TABLE_DOC.to_string(), None)
+    });
+    redraw(cx);
+    redraw(cx);
+
+    let table = table_entity(&editor, cx);
+    let start = cell_text_start(cell_bounds(&editor, cx, (0, 1)));
+    let end = cell_text_end(cell_bounds(&editor, cx, (1, 0)));
+    drag_across(cx, start, &[], end);
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(
+            cell_selection_ranges(cx, &table),
+            vec![None, Some(0..1), Some(0..1), None],
+            "b 与 c 两格该被高亮"
+        );
+        assert_eq!(
+            editor.table_text_selection_text(cx).as_deref(),
+            Some("b\nc"),
+            "复制出去的必须就是高亮那两格"
+        );
+    });
+}
+
 /// 「选了多少就是多少」：只选到半格时，起点格与落点格只高亮选到的那一段。
 #[gpui::test]
 async fn cross_cell_selection_keeps_text_granularity(cx: &mut TestAppContext) {

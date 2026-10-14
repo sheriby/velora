@@ -210,7 +210,9 @@ impl Editor {
         Some((table, cells))
     }
 
-    /// 某一格在选区里那一段（干净坐标）。\n    ///\n    /// 判据只此一处：高亮 / 删除那条路（`table_cells_in_text_range`）与文本拼接都从
+    /// 某一格在选区里那一段（干净坐标）。
+    ///
+    /// 判据只此一处：高亮 / 删除那条路（`table_cells_in_text_range`）与文本拼接都从
     /// 它取，空区间由调用方决定跳不跳——高亮与删除可以跳（没东西可画可删），复制不行
     /// （列位要留）。
     fn table_cell_range_in_text_selection(
@@ -409,13 +411,15 @@ impl Editor {
     /// 跨格选区交出去的文本：同行的格用制表符接，行与行之间换行（用户口径）。
     ///
     /// 读的是屏幕上那串字（干净坐标），不带管道符、不带列宽填充、不带格子里的记号。
-    /// 按选区的 (行, 列) 矩形**全量补位**：空格子的列位也要留出来，不然
-    /// `a | (空) | b` 复制出来成了 `a\tb`，粘回表里会串列。
+    /// 取格与高亮/删除同一份口径（行优先线性序），并且**全量补位**：夹在中间的空格子
+    /// 列位也要留出来，不然 `a | (空) | b` 复制出来成了 `a\tb`，粘回表里会串列。
     pub(crate) fn table_text_selection_text(&self, cx: &App) -> Option<String> {
         let selection = self.table_text_selection?;
         let table = self.document.block_entity_by_id(selection.table_block_id)?;
         let runtime = table.read(cx).table_runtime.clone()?;
         let (start, end) = selection.normalized();
+        let start_key = (start.cell.row, start.cell.column);
+        let end_key = (end.cell.row, end.cell.column);
         let mut text = String::new();
         let mut written_rows = 0usize;
         for row in start.cell.row..=end.cell.row {
@@ -429,7 +433,13 @@ impl Editor {
             };
             let mut row_text = String::new();
             let mut written_cells = 0usize;
-            for column in start.cell.column..=end.cell.column {
+            // 取哪几格与高亮/删除同一份口径：行优先的线性序 `start_key..=end_key`，
+            // 不是行列两向的矩形——反向拖动（落点列小于锚点列）时矩形会退化成空区间，
+            // 于是格子被选中、被删掉，复制却交出空串。
+            for column in 0..row_cells.len() {
+                if (row, column) < start_key || (row, column) > end_key {
+                    continue;
+                }
                 let Some(cell) = row_cells.get(column) else {
                     continue;
                 };
