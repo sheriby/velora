@@ -1416,12 +1416,15 @@ impl Editor {    /// 读取侧（搜索、大纲、状态栏、跳转）看到�
                 );
             }
             // 挂在容器里的切片块（引用/列表里的 HTML、注释、数学、认不出的语法）：可见文本
-            // 挂在容器里的切片块（引用/列表里的 HTML、注释、数学、认不出的语法）：可见文本
             // 是**剥掉容器记号**那一段，而走树交下来的起点是整行的行首，恒等表于是把内容第
             // 0 位算到 `>` 记号上（实测在 `> <p>甲文</p>` 块首打一个字，字写在 `>` 前面，
             // 整块掉出引用）。每一行让开几字节走解析期记在块上的那一份账。
-            // 顶格的切片块（源码/代码文档）本来没有记号可让，继续用恒等表。
-            if quote_depth > 0 || list_dedent > 0 {
+            // 顶格的切片块（源码/代码文档）本来没有记号可让，继续用恒等表；根级的缩进公式
+            // 块也被记了账（剥掉的是缩进而不是容器记号），同样走这一条。
+            if quote_depth > 0
+                || list_dedent > 0
+                || !block.read(cx).record.source_line_prefixes.is_empty()
+            {
                 let content = block.read(cx).display_text().to_string();
                 let measured = self
                     .recorded_block_line_prefixes(block, &content, absolute_start, cx)

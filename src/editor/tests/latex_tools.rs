@@ -1642,3 +1642,31 @@ async fn non_classic_math_shapes_keep_the_source_in_the_model(cx: &mut TestAppCo
         });
     }
 }
+
+/// 缩进的经典 `$$` 块整段存原文（含围栏）：「模型只存正文」那一支把正文起点算成
+/// 「区域起点 + 顶格围栏」，缩进量会让块内偏移与块区间一起错位。
+#[gpui::test]
+async fn indented_math_blocks_keep_their_fences_and_indent(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for source in [
+        "    $$\n    x^2\n    $$\n",
+        "\t$$\n\tx^2\n\t$$\n",
+        "  $$\n  x^2\n  $$\n",
+    ] {
+        let editor = cx.new({
+            let source = source.to_string();
+            move |cx| Editor::from_markdown(cx, source, None)
+        });
+        editor.read_with(cx, |editor, cx| {
+            let math = math_block_entity(editor, cx).unwrap_or_else(|| {
+                panic!("{source:?} 该读成一个公式块：{:?}", editor.document.markdown_text(cx))
+            });
+            assert_eq!(
+                math.read(cx).display_text(),
+                "$$\nx^2\n$$",
+                "{source:?} 该整段存原文（含围栏），缩进记在每行的账上"
+            );
+            assert_eq!(editor.buffer.text(), source, "未编辑的字节必须原样保留");
+        });
+    }
+}

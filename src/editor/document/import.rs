@@ -371,12 +371,34 @@ impl Editor {
             // 缩进 4 格的公式块之前会被当成代码块显示源码。
             if is_display_math_start_at_any_indent(line) {
                 let end = collect_display_math_region(lines, index);
+                let region = &lines[index..end];
+                let original = region.join("\n");
+                let dedented = crate::components::latex::dedent_math_region(region);
                 // 顶格的经典形状（`$$` 行、正文、`$$` 行）走「模型只存正文」那一支：
                 // 围栏归结构，用户改不到定界符（见 `BlockRecord::math_body`）。
-                roots.push(math_body_or_raw_block(
-                    cx,
-                    crate::components::latex::dedent_math_region(&lines[index..end]),
-                ));
+                // 被剥过缩进的写法不走那一支——`push_math_body_mapping` 把正文起点算成
+                // 「区域起点 + 顶格围栏 3 字节」，缩进量会把偏移与块区间一起算错。它与
+                // 容器子块同一条路：整段存原文（含围栏），每行被剥掉的缩进记进
+                // `source_line_prefixes`，换算与写回都问这一份账。
+                let block = if dedented == original {
+                    math_body_or_raw_block(cx, dedented)
+                } else {
+                    let block = math_or_raw_block(cx, dedented.clone());
+                    let prefixes = region
+                        .iter()
+                        .zip(dedented.split('\n'))
+                        .map(|(file_line, model_line)| {
+                            file_line.len().saturating_sub(model_line.len()) as u32
+                        })
+                        .collect::<Vec<_>>();
+                    if prefixes.iter().any(|prefix| *prefix != 0) {
+                        block.update(cx, |block, _cx| {
+                            block.record.source_line_prefixes = prefixes;
+                        });
+                    }
+                    block
+                };
+                roots.push(block);
                 spans.push(index..end);
                 index = end;
                 continue;

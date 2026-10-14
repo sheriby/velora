@@ -150,6 +150,53 @@
     }
 
     #[gpui::test]
+    async fn indented_display_math_mapping_points_at_the_real_body(cx: &mut TestAppContext) {
+        // 块与文档的唯一对应关系是字节区间：缩进的经典 `$$` 块被去缩进后按「模型只存
+        // 正文」建块，而正文起点仍按顶格的 3 字节围栏算，映射与块区间一起偏掉缩进量。
+        for indent in ["    ", "\t", "  "] {
+            let markdown = format!("前段\n\n{indent}$$\n{indent}x^2\n{indent}$$\n\n后段\n");
+            let editor = cx.new({
+                let markdown = markdown.clone();
+                move |cx| Editor::from_markdown(cx, markdown, None)
+            });
+
+            editor.update(cx, |editor, cx| {
+                let source = editor.buffer.text();
+                assert_eq!(source, markdown, "{indent:?} 未编辑的原文必须逐字节还原");
+                let strip = |text: &str| -> Vec<String> {
+                    text.lines().map(|line| line.trim_start().to_string()).collect()
+                };
+                let mappings = editor.build_source_target_mappings(cx);
+                let math = mappings
+                    .iter()
+                    .find(|mapping| mapping.entity.read(cx).kind() == BlockKind::MathBlock)
+                    .expect("该有一个公式块");
+                let slice = source
+                    .get(math.full_source_range.clone())
+                    .unwrap_or("<映射越界>")
+                    .to_string();
+                // 映射覆盖的字节就是这一块的「那几行」：逐行去掉行首空白后必须与块模型
+                // 的正文逐行相等，否则点在正文上的字节落在别处。
+                assert_eq!(
+                    strip(&slice),
+                    strip(&math.entity.read(cx).display_text()),
+                    "{indent:?} 的映射切错了字节：切到 {slice:?}"
+                );
+                // 块区间记窄了会让它之后的每一块整体前移（大纲跳转与搜索定位随之错位）。
+                let tail = mappings
+                    .iter()
+                    .find(|mapping| mapping.entity.read(cx).display_text() == "后段")
+                    .expect("该有「后段」这一块");
+                assert_eq!(
+                    tail.full_source_range.start,
+                    source.rfind("后段").unwrap(),
+                    "{indent:?} 之后兄弟块起点漂移"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn imports_display_math_on_list_item_line(cx: &mut TestAppContext) {
         // 公式直接写在项标记后面：`- $$ … $$`。
         let markdown = concat!(
