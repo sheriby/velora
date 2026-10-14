@@ -210,6 +210,49 @@ async fn the_command_palette_executes_on_the_platform_enter_key(cx: &mut TestApp
     );
 }
 
+/// 输入法组合期间那颗回车属于「提交候选词」，不属于「执行高亮的那条命令」。
+///
+/// 现象：面板里用拼音打「打字机」，按回车选候选词，面板收起并执行了列表第一条。
+/// 根因：`on_command_palette_key_down` 新接的 `"enter"` 分支没看 `marked_range`，
+/// 而本仓对确认键早有那条判据（`workspace/tree_edit.rs:on_workspace_name_key_down`
+/// 的 `edit.pending || edit.marked_range.is_some()`、quick_open 的 backspace 分支）。
+#[gpui::test]
+async fn the_command_palette_ignores_enter_during_ime_composition(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = open_editor(DOC, cx);
+    redraw(cx);
+    select(&editor, 0, 0..5, cx);
+    open_palette(&editor, cx);
+
+    editor.update(cx, |editor, _cx| {
+        let state = editor.command_palette.as_mut().expect("面板应开着");
+        state.marked_range = Some(0..0);
+    });
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+
+    assert!(
+        editor.read_with(cx, |editor, _| editor.command_palette.is_some()),
+        "组合期间这颗回车该只交还给输入法，面板不该收起去执行命令"
+    );
+    assert_eq!(buffer_text(&editor, cx), DOC, "正文不该被改动");
+
+    // 对照：组合落定之后，同一颗回车照旧执行。
+    editor.update(cx, |editor, _cx| {
+        editor
+            .command_palette
+            .as_mut()
+            .expect("面板应还开着")
+            .marked_range = None;
+    });
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.command_palette.is_none()),
+        "组合结束后该执行选中的命令"
+    );
+}
+
 #[gpui::test]
 async fn the_palette_runs_the_clipboard_commands(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

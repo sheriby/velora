@@ -87,6 +87,11 @@ impl Editor {
         }
     }
 
+    /// 输入法正在拼字：确认键（回车、退格）要交还给输入法，不能当成「执行」。
+    pub(crate) fn overlay_is_composing(&self, kind: OverlayInputKind) -> bool {
+        self.input_marked(kind).is_some()
+    }
+
     pub(crate) fn input_marked(&self, kind: OverlayInputKind) -> Option<Range<usize>> {
         match kind {
             OverlayInputKind::TreeName => self.workspace.name_edit.as_ref().and_then(|edit| edit.marked_range.clone()),

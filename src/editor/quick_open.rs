@@ -7,6 +7,7 @@ use gpui::*;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::Editor;
+use super::workspace::OverlayInputKind;
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 
@@ -328,16 +329,20 @@ impl Editor {
                 self.quick_open_move_selection(1, cx);
             }
             "enter" => {
+                // 与命令面板同一条判据：组合期间的回车交还输入法，别拿去确认文件。
+                if self.overlay_is_composing(OverlayInputKind::QuickOpen) {
+                    return;
+                }
                 self.quick_open_confirm(window, cx);
             }
             "backspace" => {
                 // 组合期间由输入法自己处理退格，避免双删。
+                if self.overlay_is_composing(OverlayInputKind::QuickOpen) {
+                    return;
+                }
                 let Some(state) = self.quick_open.as_ref() else {
                     return;
                 };
-                if state.marked_range.is_some() {
-                    return;
-                }
                 let text = state.query.clone();
                 let selected = state.selected_range.clone();
                 let end = selected.end.min(text.len());

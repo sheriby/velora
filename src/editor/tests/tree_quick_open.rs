@@ -171,6 +171,73 @@ async fn quick_open_panel_floats_top_centered_over_the_document(cx: &mut TestApp
     );
 }
 
+/// 组合期间那颗回车属于输入法提交候选词，不该拿去确认文件（与命令面板同一条判据）。
+///
+/// 探针直接喂 `on_quick_open_key_down`：⌘P 的按键要经窗口焦点路由，夹具里结果列表
+/// 为空时确认本身是早退，走 `simulate_keystrokes` 会两头都「通过」而钉不住行为。
+#[gpui::test]
+async fn quick_open_ignores_enter_during_ime_composition(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!(
+        "velora-quick-open-ime-enter-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("create root");
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
+    std::fs::write(root.join("alpha.md"), "# Alpha\n").expect("write alpha");
+
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_quick_open(window, cx)
+    });
+    redraw(cx);
+    cx.simulate_input("alpha");
+
+    let enter = gpui::KeyDownEvent {
+        keystroke: gpui::Keystroke::parse("enter").expect("valid enter keystroke"),
+        is_held: false,
+    };
+    let opened_before = editor.read_with(cx, |editor, _| editor.file_path.clone());
+
+    editor.update_in(cx, |editor, window, cx| {
+        let state = editor.quick_open.as_mut().expect("面板应开着");
+        state.marked_range = Some(5..5);
+        assert!(
+            !state.results.is_empty(),
+            "前置：候选列表要有条目，否则确认本身就是早退"
+        );
+        editor.on_quick_open_key_down(&enter, window, cx);
+    });
+    redraw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.quick_open.is_some()),
+        "组合期间这颗回车该只交还给输入法"
+    );
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.file_path.clone()),
+        opened_before,
+        "组合期间不该把高亮那条文件打开"
+    );
+
+    // 对照：组合落定之后同一颗回车照旧确认。
+    editor.update_in(cx, |editor, window, cx| {
+        editor
+            .quick_open
+            .as_mut()
+            .expect("面板应还开着")
+            .marked_range = None;
+        editor.on_quick_open_key_down(&enter, window, cx);
+    });
+    redraw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.quick_open.is_none()),
+        "组合结束后该确认并打开高亮的那条"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[gpui::test]
 async fn quick_open_accepts_ime_text_for_non_ascii_file_names(cx: &mut TestAppContext) {
     // roadmap E9：⌘P 输入接 EntityInputHandler，中文文件名可直接用输入法拼写。
