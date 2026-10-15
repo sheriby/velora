@@ -1,6 +1,222 @@
 use super::common::*;
 
 #[gpui::test]
+async fn native_about_menu_action_opens_dialog_after_window_event(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = true;
+        cx.notify();
+    });
+    redraw(cx);
+    cx.update(|window, cx| {
+        window.activate_window();
+        crate::app_menu::dispatch_menu_action(&crate::components::ShowAbout, cx);
+    });
+    cx.run_until_parked();
+    assert!(
+        editor.read_with(cx, |editor, _| matches!(
+            editor.info_dialog,
+            Some(crate::editor::InfoDialogKind::About)
+        )),
+        "原生菜单事件结束后应显示关于弹层"
+    );
+}
+
+struct HamburgerMenuHarness {
+    editor: gpui::Entity<Editor>,
+    menus: Vec<gpui::OwnedMenu>,
+}
+
+impl gpui::Render for HamburgerMenuHarness {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use gpui::{ParentElement, Styled};
+        let theme = cx.global::<ThemeManager>().current().clone();
+        let panel = self.editor.update(cx, |editor, cx| {
+            editor.render_hamburger_menu_panel(&theme, cx, &self.menus, 36.0)
+        });
+        gpui::div().size_full().children(panel)
+    }
+}
+
+#[gpui::test]
+async fn windows_hamburger_menu_root_actions_open_settings_and_update_dialog(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, _| {
+        editor.hamburger_menu_open = true;
+        editor.update_check_in_progress = true;
+    });
+    let menus = vec![gpui::OwnedMenu {
+        name: "File".into(),
+        items: Vec::new(),
+    }];
+    let (_, cx) = cx.add_window_view(|_, _| HamburgerMenuHarness {
+        editor: editor.clone(),
+        menus,
+    });
+    redraw(cx);
+    let preferences = cx.debug_bounds("app-hamburger-preferences");
+    let updates = cx.debug_bounds("app-hamburger-check_updates");
+    assert!(
+        preferences.is_some() && updates.is_some(),
+        "偏好设置和检查更新应直接显示在一级列表"
+    );
+    cx.simulate_click(updates.unwrap().center(), Modifiers::none());
+    redraw(cx);
+    assert!(editor.read_with(cx, |editor, _| matches!(
+        editor.info_dialog,
+        Some(crate::editor::InfoDialogKind::CheckForUpdates)
+    )));
+    editor.update(cx, |editor, cx| {
+        assert!(!editor.hamburger_menu_open, "执行操作应关闭菜单");
+        editor.hamburger_menu_open = true;
+        cx.notify();
+    });
+    redraw(cx);
+    let preferences = cx
+        .debug_bounds("app-hamburger-preferences")
+        .expect("偏好设置入口");
+    cx.simulate_click(preferences.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.update(|_, cx| cx.windows().iter().any(|window| window
+            .downcast::<crate::config::preferences::PreferencesWindow>()
+            .is_some())),
+        "一级偏好设置按钮应打开设置窗口"
+    );
+}
+
+#[gpui::test]
+async fn welcome_page_keeps_two_primary_buttons_and_dispatches_open_action(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let actions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    cx.update(|cx| {
+        cx.on_action({
+            let actions = actions.clone();
+            move |_: &crate::components::OpenFile, _| actions.borrow_mut().push("file")
+        });
+    });
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = true;
+        cx.notify();
+    });
+    redraw(cx);
+    let file = cx.debug_bounds("welcome-open-file");
+    assert!(file.is_some(), "欢迎页应提供打开入口");
+    let new_document = cx
+        .debug_bounds("welcome-new-document")
+        .expect("新建文档入口");
+    assert_eq!(
+        file.unwrap().top(),
+        new_document.top(),
+        "保留两个主按钮并排的布局"
+    );
+    assert!(
+        cx.debug_bounds("welcome-open-folder").is_none(),
+        "欢迎页不增加第三个按钮"
+    );
+    cx.simulate_click(file.unwrap().center(), Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        *actions.borrow(),
+        vec!["file"],
+        "打开按钮应走既有原生打开动作"
+    );
+}
+
+#[gpui::test]
+async fn welcome_recent_folders_show_paths_even_for_system_temp_root(cx: &mut TestAppContext) {
+    let root = temp_fixture_dir().join(format!("welcome-paths-{}", temp_fixture_token()));
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    crate::config::record_recent_folder(&std::env::temp_dir()).expect("记录临时目录");
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = true;
+        cx.notify();
+    });
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("welcome-recent-path-0").is_some(),
+        "目录不能只显示 T 这样的末级名称，应保留记录并展示路径"
+    );
+    fs::remove_dir_all(root).expect("清理路径展示夹具");
+}
+
+#[gpui::test]
+async fn welcome_recent_remove_only_forgets_history_without_opening_or_deleting(
+    cx: &mut TestAppContext,
+) {
+    let root = temp_fixture_dir().join(format!("welcome-remove-{}", temp_fixture_token()));
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    let kept = root.join("kept");
+    let removed = root.join("removed");
+    fs::create_dir_all(&kept).expect("建立保留目录");
+    fs::create_dir_all(&removed).expect("建立移除目录");
+    fs::write(removed.join("note.md"), "保留正文").expect("写入目录内容");
+    crate::config::record_recent_folder(&kept).expect("记录保留目录");
+    crate::config::record_recent_folder(&removed).expect("记录移除目录");
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = true;
+        cx.notify();
+    });
+    redraw(cx);
+    let remove = cx.debug_bounds("welcome-recent-remove-0");
+    assert!(remove.is_some(), "每条最近记录的右侧应有移除按钮");
+    cx.simulate_click(remove.unwrap().center(), Modifiers::none());
+    redraw(cx);
+    assert_eq!(
+        crate::config::read_recent_folders().expect("重新读取历史"),
+        vec![kept.clone()]
+    );
+    assert_eq!(
+        fs::read_to_string(removed.join("note.md")).expect("实际文件仍存在"),
+        "保留正文"
+    );
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.show_welcome, "点击移除不能触发行的打开操作");
+        assert!(editor.workspace.root.is_none());
+        assert_eq!(editor.buffer.text(), "");
+    });
+    assert!(
+        cx.debug_bounds("welcome-recent-remove-1").is_none(),
+        "列表应立即刷新"
+    );
+    let remove_last = cx
+        .debug_bounds("welcome-recent-remove-0")
+        .expect("保留项也可移除");
+    cx.simulate_click(remove_last.center(), Modifiers::none());
+    redraw(cx);
+    assert!(
+        crate::config::read_recent_folders()
+            .expect("读取清空历史")
+            .is_empty()
+    );
+    assert!(
+        kept.is_dir() && removed.is_dir(),
+        "移除最后一条也不能删除目录"
+    );
+    assert!(cx.debug_bounds("welcome-recent-remove-0").is_none());
+    fs::remove_dir_all(root).expect("清理历史移除夹具");
+}
+
+#[gpui::test]
 async fn welcome_page_renders_and_dismisses_into_a_new_document(cx: &mut TestAppContext) {
     cx.update(|cx| {
         crate::i18n::I18nManager::init(cx);

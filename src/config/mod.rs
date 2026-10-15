@@ -318,6 +318,15 @@ pub(crate) fn record_recent_folder(path: &Path) -> anyhow::Result<Vec<PathBuf>> 
     record_recent_folder_with_dirs(path, &VeloraConfigDirs::from_system()?)
 }
 
+pub(crate) fn remove_recent_folder(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let dirs = VeloraConfigDirs::from_system()?;
+    let mut paths = read_recent_folders_with_dirs(&dirs)?;
+    let path = crate::file_url::strip_verbatim_prefix(path);
+    paths.retain(|existing| !same_recent_path(existing, &path));
+    write_recent_folders_with_dirs(&paths, &dirs)?;
+    Ok(paths)
+}
+
 fn read_recent_folders_with_dirs(dirs: &VeloraConfigDirs) -> anyhow::Result<Vec<PathBuf>> {
     let path = dirs.recent_folders_file();
     let text = match std::fs::read_to_string(&path) {

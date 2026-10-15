@@ -1078,7 +1078,7 @@ impl Render for Editor {
                 hamburger_menu_item_panel_origin(
                     open_index,
                     titlebar_height,
-                    &menu_labels,
+                    &hamburger_menu_labels(menus.as_deref().map(|menus| menus.as_slice()).unwrap_or_default(), &strings),
                     dimensions,
                 )
             } else {

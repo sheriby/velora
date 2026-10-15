@@ -385,6 +385,8 @@ pub struct I18nStrings {
     pub welcome_open: String,
     /// Welcome page recent-entries heading.
     pub welcome_recent: String,
+    /// 从最近打开列表移除记录，不删除磁盘内容。
+    pub welcome_remove_recent: String,
     /// Welcome page keyboard hint footer.
     pub welcome_shortcut_hint: String,
     /// Marker label for folder entries in lists.

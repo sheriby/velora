@@ -245,6 +245,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) welcome_new_document: Option<String>,
     pub(crate) welcome_open: Option<String>,
     pub(crate) welcome_recent: Option<String>,
+    pub(crate) welcome_remove_recent: Option<String>,
     pub(crate) welcome_shortcut_hint: Option<String>,
     pub(crate) workspace_folder_entry_label: Option<String>,
     pub(crate) quick_open_placeholder: Option<String>,

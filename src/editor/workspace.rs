@@ -98,8 +98,8 @@ pub(crate) struct WorkspaceTreeNode {
     pub(crate) children_loaded: bool,
 }
 
-struct WorkspaceTooltip {
-    label: String,
+pub(super) struct WorkspaceTooltip {
+    pub(super) label: String,
 }
 
 impl Render for WorkspaceTooltip {

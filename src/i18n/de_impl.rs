@@ -606,6 +606,7 @@ impl I18nStringsDe {
                 .unwrap_or(defaults.welcome_new_document),
             welcome_open: self.welcome_open.unwrap_or(defaults.welcome_open),
             welcome_recent: self.welcome_recent.unwrap_or(defaults.welcome_recent),
+            welcome_remove_recent: self.welcome_remove_recent.unwrap_or(defaults.welcome_remove_recent),
             welcome_shortcut_hint: self
                 .welcome_shortcut_hint
                 .unwrap_or(defaults.welcome_shortcut_hint),

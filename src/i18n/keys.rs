@@ -242,6 +242,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "welcome_new_document",
     "welcome_open",
     "welcome_recent",
+    "welcome_remove_recent",
     "welcome_shortcut_hint",
     "workspace_folder_entry_label",
     "quick_open_placeholder",

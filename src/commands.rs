@@ -81,7 +81,7 @@ macro_rules! command {
 }
 
 static COMMANDS: &[CommandSpec] = &[
-    // 应用菜单（macOS）/ 文件菜单末尾（其他平台）
+    // 应用菜单；Windows 的设置和更新入口放在汉堡菜单一级，退出放在文件菜单末尾。
     command!("preferences", App, menu_preferences, OpenPreferences),
     command!("check_updates", App, menu_check_updates, CheckForUpdates),
     command!(sep "quit", App, menu_quit, QuitApplication),
@@ -89,7 +89,7 @@ static COMMANDS: &[CommandSpec] = &[
     command!("new_window", File, menu_new_window, NewWindow),
     command!("close_tab", File, menu_close_tab, CloseTab),
     command!("close_window", File, menu_close_window, CloseWindow),
-    command!("open_file", File, menu_open_file, OpenFile),
+    command!(sep "open_file", File, menu_open_file, OpenFile),
     command!("open_folder", File, menu_open_folder, OpenFolder),
     command!(sep "save", File, menu_save, SaveDocument),
     command!("save_as", File, menu_save_as, SaveDocumentAs),
@@ -224,6 +224,10 @@ pub(crate) fn commands() -> &'static [CommandSpec] {
 /// 某个菜单下的命令。
 pub(crate) fn commands_for(menu: CommandMenu) -> impl Iterator<Item = &'static CommandSpec> {
     commands().iter().filter(move |spec| spec.menu == menu)
+}
+
+pub(crate) fn hamburger_root_commands() -> impl Iterator<Item = &'static CommandSpec> {
+    commands_for(CommandMenu::App).filter(|spec| spec.id != "quit")
 }
 
 #[cfg(test)]

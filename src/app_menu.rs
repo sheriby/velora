@@ -580,8 +580,14 @@ fn with_active_editor<R>(
 }
 
 fn show_info_dialog_on_active_editor(cx: &mut App, kind: InfoDialogKind) {
-    let _ = with_active_editor(cx, move |editor, _window, cx| {
-        editor.show_info_dialog(kind, cx);
+    let target = cx.active_window().and_then(|window| window.downcast::<Editor>());
+    // 原生菜单动作仍在窗口派发栈中，退出这一轮事件后才能通过句柄更新窗口。
+    cx.defer(move |cx| {
+        if let Some(target) = target
+            && let Err(error) = target.update(cx, |editor, _window, cx| editor.show_info_dialog(kind, cx))
+        {
+            eprintln!("无法显示应用信息：{error}");
+        }
     });
 }
 

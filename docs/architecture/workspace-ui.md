@@ -92,6 +92,7 @@
 - `resolved_keybindings(config)`：全表经 `key_binding_for`（命令 → 具体动作的一对一 match，**新增可绑定命令必须在这里补一行**）展开，合并 `config.toml [keybindings]` 的用户覆盖（校验 + 规范化 + 去重；**同 context 且共享任一键**算冲突，冲突的自定义方退回默认，循环至稳定），再追加**固定绑定**（⌘P、⇧⌘P、复制为 HTML、光标历史、缩放、⌘1-9 切标签）。
 - `install_keybindings` 装键位的同时写一份 `EffectiveShortcuts` Global——**菜单与工具栏显示的快捷键只读它**，用户改绑后显示跟随。
 - **命令注册表** `COMMANDS`（`src/commands.rs`）是系统菜单与命令面板的**唯一事实源**（`CommandSpec { id, 归属菜单, label 闭包读 i18n, action }`），有守卫测试。命令面板专有两档（Edit/Format）只进面板不进菜单栏，其 id 必须与键位表同名。
+- 文件菜单的「打开文件 / 打开文件夹 / 打开最近」连续排列。Windows 的偏好设置和检查更新由 `hamburger_root_commands` 提供一级动作；macOS 保留应用菜单，帮助菜单只列关于。欢迎页保留两个主按钮，最近目录显示路径并支持单条移除，移除只更新历史记录。
 - **快捷键的触发范围**：要让某个键"窗口有焦点就能按"，需要键位 `context: None` **且**动作有 App 级全局监听（`cx.on_action`）——两条缺一，焦点不在正文块上时按键会静默丢失。判据仍只有处理函数一处（如 ⌘/Ctrl-B 的"空选区开合侧栏 / 有选区加粗"全在 `Editor::on_bold_capture`）。
 - **派发机制三条**（vendor/gpui，改键盘/面板相关代码前先读）：
   1. **焦点句柄不在当前渲染帧内时，按键派发回退到根节点**——挂在编辑器根元素上的 `on_action`/`capture_action` 整组收不到。所以收起侧栏要把焦点交还正文。

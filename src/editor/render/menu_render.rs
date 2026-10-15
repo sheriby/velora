@@ -60,7 +60,8 @@ impl Editor {
         let d = &theme.dimensions;
         let t = &theme.typography;
         let editor = cx.entity().downgrade();
-        let labels: Vec<SharedString> = menus.iter().map(|menu| menu.name.clone()).collect();
+        let strings = cx.global::<I18nManager>().strings().clone();
+        let labels = hamburger_menu_labels(menus, &strings);
         let list_width = menu_panel_width_for_labels(&labels, d);
         Some(
             div()
@@ -80,37 +81,92 @@ impl Editor {
                 .rounded(px(d.menu_panel_radius))
                 .shadow_lg()
                 .on_hover(cx.listener(Self::on_menu_bar_hover))
-                .children(labels.iter().enumerate().map(|(index, label)| {
-                    let label = label.clone();
-                    let is_open = self.menu_bar_open == Some(index);
-                    let entry_editor = editor.clone();
+                .children(
+                    labels
+                        .iter()
+                        .take(menus.len())
+                        .enumerate()
+                        .map(|(index, label)| {
+                            let label = label.clone();
+                            let is_open = self.menu_bar_open == Some(index);
+                            let entry_editor = editor.clone();
+                            div()
+                                .id(("app-hamburger-menu-item", index))
+                                .w_full()
+                                .h(px(d.menu_item_height))
+                                .px(px(d.menu_item_padding_x))
+                                .flex()
+                                .items_center()
+                                .rounded(px(d.menu_item_radius))
+                                .bg(if is_open {
+                                    c.dialog_secondary_button_hover
+                                } else {
+                                    c.dialog_surface
+                                })
+                                .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                                .active(|this| this.opacity(0.92))
+                                .cursor_pointer()
+                                .text_size(px(d.menu_text_size))
+                                .font_weight(t.dialog_body_weight.to_font_weight())
+                                .text_color(c.dialog_secondary_button_text)
+                                .whitespace_nowrap()
+                                .child(label)
+                                .on_hover(move |hovered, _window, cx| {
+                                    if *hovered {
+                                        let _ = entry_editor.update(cx, |editor, cx| {
+                                            editor.open_hamburger_menu_item(index, cx)
+                                        });
+                                    }
+                                })
+                        }),
+                )
+                .child(
                     div()
-                        .id(("app-hamburger-menu-item", index))
+                        .h(px(d.menu_separator_height))
+                        .my(px(d.menu_separator_margin_y))
+                        .bg(c.dialog_border),
+                )
+                .children(crate::commands::hamburger_root_commands().map(|command| {
+                    let action = command.boxed_action();
+                    let entry_editor = editor.clone();
+                    let hover_editor = editor.clone();
+                    div()
+                        .id(command.id)
+                        .debug_selector(move || format!("app-hamburger-{}", command.id))
                         .w_full()
                         .h(px(d.menu_item_height))
                         .px(px(d.menu_item_padding_x))
                         .flex()
                         .items_center()
                         .rounded(px(d.menu_item_radius))
-                        .bg(if is_open {
-                            c.dialog_secondary_button_hover
-                        } else {
-                            c.dialog_surface
-                        })
                         .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .active(|this| this.opacity(0.92))
                         .cursor_pointer()
                         .text_size(px(d.menu_text_size))
-                        .font_weight(t.dialog_body_weight.to_font_weight())
                         .text_color(c.dialog_secondary_button_text)
-                        .whitespace_nowrap()
-                        .child(label)
-                        .on_hover(move |hovered, _window, cx| {
+                        .child(command.label(&strings))
+                        .on_hover(move |hovered, _, cx| {
                             if *hovered {
-                                let _ = entry_editor.update(cx, |editor, cx| {
-                                    editor.open_hamburger_menu_item(index, cx)
-                                });
+                                if let Err(error) = hover_editor.update(cx, |editor, cx| {
+                                    editor.menu_bar_open = None;
+                                    editor.close_menu_submenu(cx);
+                                    cx.notify();
+                                }) {
+                                    eprintln!("无法收起菜单子面板：{error}");
+                                }
                             }
+                        })
+                        .on_click(move |_, window, cx| {
+                            if let Err(error) =
+                                entry_editor.update(cx, |editor, cx| editor.close_menu_bar(cx))
+                            {
+                                eprintln!("无法关闭菜单：{error}");
+                            }
+                            dispatch_menu_action_for_editor(
+                                action.as_ref(),
+                                &entry_editor,
+                                window,
+                                cx,
+                            );
                         })
                 }))
                 .into_any_element(),

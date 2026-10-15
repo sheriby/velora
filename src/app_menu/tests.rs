@@ -163,9 +163,9 @@ mod tests {
             .unwrap_or_else(|| panic!("没有名为「{name}」的菜单"))
     }
 
-    /// 「打开最近」子菜单所在的序号：文件菜单里紧跟「打开文件」。
+    /// 「打开最近」子菜单所在的序号：文件菜单里紧跟「打开文件夹」。
     fn recent_submenu_slot(file_menu: &Menu) -> usize {
-        command_slot(file_menu, "open_file") + 1
+        command_slot(file_menu, "open_folder") + 1
     }
 
     /// 「打开最近」子菜单本身。两个平台同位置，不再分平台写下标。
@@ -236,23 +236,18 @@ mod tests {
         assert_eq!(command_label(file_menu, "close_tab"), "Close Tab");
         assert_eq!(command_label(file_menu, "close_window"), "Close Window");
 
-        // 「打开最近」紧跟在「打开文件」之后。
+        // 三个打开入口连续排列。
         assert_eq!(recent_submenu(&menus).name.to_string(), "Open Recent");
 
-        // 偏好设置：macOS 在应用菜单首项，其他平台跟在「打开最近」之后。
+        // macOS 的偏好设置保留在应用菜单；Windows 由汉堡一级入口承接。
+        #[cfg(target_os = "macos")]
         let preferences_menu = command_menu(&menus, "preferences");
+        #[cfg(target_os = "macos")]
         assert_eq!(command_label(preferences_menu, "preferences"), "Preferences");
         #[cfg(target_os = "macos")]
         assert_eq!(preferences_menu.name.to_string(), "Velora");
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(preferences_menu.name.to_string(), "File");
         #[cfg(target_os = "macos")]
         assert_eq!(command_slot(preferences_menu, "preferences"), 0);
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(
-            command_slot(preferences_menu, "preferences"),
-            recent_submenu_slot(file_menu) + 1
-        );
 
         let export_menu = command_menu(&menus, "export_html");
         assert_eq!(command_slot(export_menu, "export_html"), 0);
@@ -647,6 +642,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn application_menu_includes_a_manual_release_update_check() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
@@ -659,7 +655,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "macos"))]
     fn help_menu_contains_about_only() {
         let theme_manager = ThemeManager::default();
         let i18n_manager = I18nManager::default();
@@ -676,21 +671,23 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn help_menu_contains_cli_and_about_on_macos() {
-        let theme_manager = ThemeManager::default();
-        let i18n_manager = I18nManager::default();
-        let menus = build_menus(&theme_manager, &i18n_manager, &[]);
-        let help_items = &command_menu(&menus, "show_about").items;
-
-        // 安装或卸载命令、分隔线、关于
-        assert_eq!(help_items.len(), 3);
-        assert!(matches!(help_items[1], MenuItem::Separator));
-        match &help_items[2] {
-            MenuItem::Action { action, .. } => {
-                assert!(action.as_any().is::<ShowAbout>());
-            }
-            _ => panic!("expected about action item"),
+    fn open_file_folder_and_recent_are_adjacent_in_each_platform_file_menu() {
+        let strings = crate::i18n::I18nStrings::en_us();
+        for has_app_menu in [true, false] {
+            let menu = Menu {
+                name: strings.menu_file.clone().into(),
+                items: crate::app_menu::command_menus::file_menu_items(&strings, Vec::new(), has_app_menu),
+            };
+            let file_index = command_slot(&menu, "open_file");
+            assert_eq!(command_slot(&menu, "open_folder"), file_index + 1, "打开文件和打开文件夹之间不能插入其他条目");
+            assert!(matches!(menu.items.get(file_index + 2), Some(MenuItem::Submenu(recent)) if recent.name.as_ref() == strings.menu_open_recent_file));
         }
+    }
+
+    #[test]
+    fn windows_file_menu_excludes_preferences_and_update_check() {
+        let strings = crate::i18n::I18nStrings::en_us();
+        let items = crate::app_menu::command_menus::file_menu_items(&strings, Vec::new(), false);
+        assert!(!items.iter().any(|item| matches!(item, MenuItem::Action { action, .. } if action.as_any().is::<OpenPreferences>() || action.as_any().is::<CheckForUpdates>())), "偏好设置和检查更新应直接出现在 Windows 一级菜单");
     }
 }

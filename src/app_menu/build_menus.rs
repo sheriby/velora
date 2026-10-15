@@ -93,7 +93,7 @@ pub(crate) fn build_menus(
             },
             Menu {
                 name: strings.menu_file.clone().into(),
-                items: file_menu_items(&strings, recent_items),
+                items: file_menu_items(&strings, recent_items, true),
             },
         ]
     };
@@ -102,34 +102,10 @@ pub(crate) fn build_menus(
     let initial_menus = {
         vec![Menu {
             name: strings.menu_file.clone().into(),
-            items: file_menu_items(&strings, recent_items),
+            items: file_menu_items(&strings, recent_items, false),
         }]
     };
 
-    #[cfg(target_os = "macos")]
-    let help_items = {
-        // Show different menu item depending on whether CLI is already
-        // installed pointing to the current app.  Only portable
-        // installations (drag-installed .app bundles) need this —
-        // pkg-installed apps manage the symlink via postinstall.
-        let cli_installed = is_cli_symlink_current_app();
-        let mut items = Vec::new();
-        if cli_installed {
-            items.push(MenuItem::action(
-                SharedString::new(strings.menu_uninstall_cli_tool.as_str()),
-                UninstallCliTool,
-            ));
-        } else {
-            items.push(MenuItem::action(
-                SharedString::new(strings.menu_install_cli_tool.as_str()),
-                InstallCliTool,
-            ));
-        }
-        items.push(MenuItem::separator());
-        items.extend(command_menu_items(&strings, CommandMenu::Help));
-        items
-    };
-    #[cfg(not(target_os = "macos"))]
     let help_items = command_menu_items(&strings, CommandMenu::Help);
 
     let mut menus = initial_menus;

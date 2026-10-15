@@ -630,6 +630,12 @@ fn hamburger_menu_panel_top(titlebar_height: f32, dimensions: &ThemeDimensions) 
     (titlebar_height + dimensions.menu_bar_button_height) / 2.0 + dimensions.menu_bar_gap
 }
 
+fn hamburger_menu_labels(menus: &[OwnedMenu], strings: &I18nStrings) -> Vec<SharedString> {
+    menus.iter().map(|menu| menu.name.clone())
+        .chain(crate::commands::hamburger_root_commands().map(|command| command.label(strings).into()))
+        .collect()
+}
+
 /// 汉堡列表里第 `index` 行的顶端 y。行高与间距跟条目面板里的行保持一致
 /// （`menu_item_height` + `menu_panel_gap`），这样展开的条目面板能跟被划过的行对齐。
 fn hamburger_menu_row_top(
