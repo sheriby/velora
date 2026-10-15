@@ -175,7 +175,7 @@ while /bin/kill -0 "$process_id" 2>/dev/null; do /bin/sleep 0.2; done
 # `installer` 往 /Applications 里覆盖这个正在用的 bundle，而 `open` 只会唤醒那个还在跑
 # 的旧实例、`--args` 被丢掉——用户看到的还是旧版本在提示更新，与 Windows 那次同源。
 /usr/bin/killall -TERM velora 2>/dev/null
-# 与 Windows 同一条口径：只请它们自己关（TERM 走正常终止流程，窗口有机会弹「未保存」），
+# 与 Windows 用同一种做法：只请它们自己关（TERM 走正常终止流程，窗口有机会弹「未保存」），
 # 等满这个上限还不退就放弃这趟更新——0.5 秒后强杀会把用户正在编辑的内容一起带走。
 close_timeout_seconds=30
 deadline=$((`/bin/date +%s` + close_timeout_seconds))
@@ -308,7 +308,7 @@ mod tests {
     }
 
     /// macOS 侧收掉其他实例的理由与 Windows 不同（`installer` 覆盖的是正在使用的 bundle，
-    /// 而 `open` 只会唤醒还在跑的旧实例、`--args` 被丢掉），但**关法必须同一条口径**：
+    /// 而 `open` 只会唤醒还在跑的旧实例、`--args` 被丢掉），但**两边关法必须一致**：
     /// 先请它们自己退，到点还不退就放弃这趟更新。`killall -KILL` 会把别的窗口里未保存的
     /// 正文一起带走——GPUI 不在 SIGTERM 里跑窗口关闭流程，那句「还有未保存的修改」根本
     /// 弹不出来。

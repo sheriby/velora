@@ -127,7 +127,7 @@ mod tests {
         assert!(body.contains("<strong>&lt;em&gt;nested</strong>"), "{body}");
         assert!(body.contains("<p>next</p>"), "{body}");
 
-        // 落单的**闭**标签：界面按字面显示那几个字符，导出却把它整段丢掉。
+        // 没有配对的**闭合**标签：界面原样显示那几个字符，导出却把它整段丢掉。
         for (source, escaped) in [
             ("text </em> tail", "&lt;/em&gt;"),
             ("a </strong> b", "&lt;/strong&gt;"),
@@ -137,7 +137,7 @@ mod tests {
             let body = body_only(&html);
             assert!(
                 body.contains(escaped),
-                "{source:?} 的落单闭标签该按字面出去：{body}"
+                "{source:?} 里没配对的闭合标签该原样输出：{body}"
             );
         }
     }

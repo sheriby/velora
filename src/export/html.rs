@@ -1144,7 +1144,7 @@ impl<'a> ExportRewriter<'a> {
             }
             Some(InlineHtmlBoundary::Close(name)) => {
                 let Some(position) = stack.iter().rposition(|(opening, _)| *opening == name) else {
-                    // 落单的闭标签：界面按字面显示这几个字符，导出同样转义出去——
+                    // 没有配对的闭合标签：界面原样显示这几个字符，导出也一样转义后输出——
                     // 整段丢弃会让导出比阅读视图少字。
                     return vec![Event::Html(CowStr::from(css::escape_html(content)))];
                 };

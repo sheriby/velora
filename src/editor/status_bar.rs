@@ -407,8 +407,8 @@ fn render_custom_button(
 }
 
 impl Editor {
-    /// 状态栏自定义按钮的派发收口：按 `action_id` 在命令注册表里找那条动作并派发，与键位、
-    /// 正文右键菜单、选中工具栏、命令面板共用同一个事实源（不变量 11）。查不到返回 `false`。
+    /// 状态栏自定义按钮派发动作的唯一入口：按 `action_id` 在命令注册表里找那条动作并派发，
+    /// 与键位、正文右键菜单、选中工具栏、命令面板用同一份命令表（不变量 11）。查不到返回 `false`。
     pub(crate) fn dispatch_status_bar_command(
         &mut self,
         action_id: &str,
@@ -482,7 +482,7 @@ fn is_cjk_char(ch: char) -> bool {
 mod tests {
     use super::{count_words, document_has_long_source_block};
 
-    /// 渲染侧必须把按钮接到派发收口上。`.cursor_pointer()` 明示可点而函数体里只有
+    /// 渲染侧必须让按钮调用派发函数。`.cursor_pointer()` 明示可点而函数体里只有
     /// `.on_hover`，配了 `action_id` 的按钮就是个静态装饰（评审必修 A2）。
     #[test]
     fn custom_button_render_body_dispatches_on_click() {
@@ -496,7 +496,7 @@ mod tests {
         assert!(body.contains(".on_click"), "按钮没有点击处理器：{body}");
         assert!(
             body.contains("dispatch_status_bar_command"),
-            "点击没走命令注册表那处收口：{body}"
+            "点击没有调用派发函数：{body}"
         );
     }
 

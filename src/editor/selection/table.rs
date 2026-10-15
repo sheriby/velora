@@ -411,7 +411,7 @@ impl Editor {
     /// 跨格选区交出去的文本：同行的格用制表符接，行与行之间换行（用户口径）。
     ///
     /// 读的是屏幕上那串字（干净坐标），不带管道符、不带列宽填充、不带格子里的记号。
-    /// 取格与高亮/删除同一份口径（行优先线性序），并且**全量补位**：夹在中间的空格子
+    /// 取的格与高亮、删除完全一致（行优先线性序），并且**全量补位**：夹在中间的空格子
     /// 列位也要留出来，不然 `a | (空) | b` 复制出来成了 `a\tb`，粘回表里会串列。
     pub(crate) fn table_text_selection_text(&self, cx: &App) -> Option<String> {
         let selection = self.table_text_selection?;
@@ -433,7 +433,7 @@ impl Editor {
             };
             let mut row_text = String::new();
             let mut written_cells = 0usize;
-            // 取哪几格与高亮/删除同一份口径：行优先的线性序 `start_key..=end_key`，
+            // 取哪几格与高亮、删除用同一个判断：行优先的线性序 `start_key..=end_key`，
             // 不是行列两向的矩形——反向拖动（落点列小于锚点列）时矩形会退化成空区间，
             // 于是格子被选中、被删掉，复制却交出空串。
             for column in 0..row_cells.len() {

@@ -62,7 +62,7 @@ async fn welcome_page_hides_once_a_document_opens(cx: &mut TestAppContext) {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// 状态栏自定义按钮配的 `action_id` 必须真接进动作收口：点一下等价于走那条命令的键位。
+/// 状态栏自定义按钮配的 `action_id` 必须真的接上派发：点一下等价于按那条命令的键位。
 ///
 /// 现象：`config.toml` 里配了 `{ id=…, label=…, action_id="select_document" }`，重启后
 /// 状态栏出现该按钮（`.cursor_pointer()` 明示可点），点击毫无反应。根因：607f692 把按钮
@@ -86,8 +86,8 @@ async fn status_bar_custom_button_dispatches_its_registry_action(cx: &mut TestAp
         editor.read_with(cx, |editor, _| editor.cross_block_selection.is_some()),
         "派发之后该有跨块选区"
     );
-    // 选了多少由选区那一层定口径（块间隙不重复算空行），这里只认「两块都在选区里」。
-    let selected = selected.expect("全选该交回可见文本");
+    // 选了多少由选区那一层判断（块间隙不重复算空行），这里只认「两块都在选区里」。
+    let selected = selected.expect("全选应当返回可见文本");
     assert!(
         selected.contains("alpha one") && selected.contains("beta two"),
         "两块正文都该在选区里：{selected:?}"

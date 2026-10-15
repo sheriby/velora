@@ -141,7 +141,7 @@ impl Editor {
             // 匹配 `"return"` 的那一支在生产里永不命中，面板只剩鼠标可点。
             "enter" => {
                 // 组合期间这颗回车属于输入法提交候选词，不是「执行高亮的那条命令」：
-                // 判据借 `input_marked` 那一处（quick_open、树重命名同一口径）。
+                // 这一判断用 `input_marked` 那一份，quick_open 与树重命名也走它。
                 if self.overlay_is_composing(OverlayInputKind::CommandPalette) {
                     return;
                 }
