@@ -491,3 +491,80 @@ fn chunk_lookups_do_not_scan_every_chunk() {
         "查最后一行 + 取文末一段比较了 {probes} 次块（共 {chunks} 块）：这是线性查找"
     );
 }
+
+/// 前缀索引必须与「从第 0 块线性找」的参考实现在每一行、每个偏移上都一致。
+///
+/// 索引是增量的（切块补两项、编辑后从改动那一段重建），算错一位就会让 `line_start`
+/// 指到多字节字符中间——`slice` 当场 panic（`byte index ... is not a char boundary`）。
+/// 参考实现是**故意抄一遍**老口径的：差分测试要的就是第二份独立实现。
+#[test]
+fn chunk_starts_index_matches_a_linear_scan() {
+    fn reference_line_start(chunks: &[Chunk], line: usize, total: usize) -> usize {
+        if line == 0 {
+            return 0;
+        }
+        let mut base = 0usize;
+        let mut seen = 0usize;
+        for chunk in chunks {
+            if line <= seen + chunk.line_count() {
+                return base + chunk.newline(line - seen) + 1;
+            }
+            seen += chunk.line_count();
+            base += chunk.byte_len();
+        }
+        total
+    }
+
+    fn reference_locate(chunks: &[Chunk], offset: usize) -> (usize, usize) {
+        let mut base = 0usize;
+        for (index, chunk) in chunks.iter().enumerate() {
+            let len = chunk.byte_len();
+            if offset < base + len {
+                return (index, offset - base);
+            }
+            base += len;
+        }
+        match chunks.len() {
+            0 => (0, 0),
+            n => (n - 1, chunks[n - 1].byte_len()),
+        }
+    }
+
+    let mut buffer = TextBuffer::from_text(
+        &"第一行\n第二行长一些\n\n## 标题甲\n正文乙丙丁\n".repeat(24),
+    );
+    let mut offsets = Vec::new();
+    for step in 0..60usize {
+        let len = buffer.byte_len();
+        let raw = (step * 41) % len.max(1);
+        let start = buffer.floor_char_boundary(raw);
+        let end = buffer.floor_char_boundary((start + step % 7).min(len));
+        let inserted = if step % 3 == 0 { "甲乙\n丙" } else { "x" };
+        buffer.edit(start..end.max(start), inserted);
+
+        // 每次编辑之后全量比一遍：行起点、行区间、按偏移定位。
+        let lines = buffer.line_count();
+        for line in 0..=lines {
+            assert_eq!(
+                buffer.line_start(line),
+                reference_line_start(&buffer.chunks, line, buffer.byte_len()),
+                "第 {step} 步编辑后 line_start({line}) 与线性参考不一致"
+            );
+            let range = buffer.line_range(line);
+            assert!(
+                buffer.is_char_boundary(range.start) && buffer.is_char_boundary(range.end),
+                "第 {step} 步编辑后 line_range({line}) = {range:?} 落在字符边界之外"
+            );
+        }
+        let mut offset = 0usize;
+        while offset <= buffer.byte_len() {
+            assert_eq!(
+                buffer.locate(offset),
+                reference_locate(&buffer.chunks, offset),
+                "第 {step} 步编辑后 locate({offset}) 与线性参考不一致"
+            );
+            offset += if offsets.is_empty() { 1 } else { 1 };
+        }
+        offsets.push(start);
+    }
+}
