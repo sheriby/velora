@@ -886,6 +886,9 @@ fn probe_keystroke_stage_split(cx: &mut TestAppContext) {
         .and_then(|raw| raw.trim().parse().ok())
         .unwrap_or(300);
 
+    let Some(block) = first_block(&editor, cx) else {
+        panic!("{size} 夹具没有首块");
+    };
     let revision_before = editor.read_with(cx, |editor, _| editor.document_revision);
     let before = counter_snapshot(&editor, cx);
     let mut block_nanos = 0u128;
@@ -954,10 +957,6 @@ async fn probe_undo_stage_counters(cx: &mut TestAppContext) {
     let Some(editor) = editor_from_fixture(&input, cx) else {
         panic!("{size} 夹具建不出编辑器");
     };
-    let Some(block) = first_block(&editor, cx) else {
-        panic!("{size} 夹具没有首块");
-    };
-
     // 连做几轮「改一笔 → 撤销」：只做一轮看不出「第 N 次撤销更贵」那类累积效应
     // （实测套件里那条中位 17.7s 就比单跑贵得多）。
     let cycles: usize = env_value("VELORA_PROBE_CYCLES")
