@@ -63,7 +63,7 @@
             super::super::scan_probe::reset();
             let editor = cx.new(|cx| Editor::from_markdown(cx, source.clone(), None));
             let work = super::super::scan_probe::bytes();
-            editor.read_with(cx, |editor, cx| {
+            editor.read_with(cx, |editor, _cx| {
                 assert_eq!(editor.buffer.text(), source);
                 assert_eq!(editor.document.root_count(), 1, "整篇是一项大列表");
                 assert_eq!(

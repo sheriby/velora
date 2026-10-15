@@ -1553,7 +1553,7 @@ async fn typing_in_the_math_body_keeps_the_fences_in_the_file(cx: &mut TestAppCo
         .expect("夹具应有一个数学块");
     editor.update(cx, |editor, _cx| editor.focus_block(math.entity_id()));
     redraw(cx);
-    editor.update_in(cx, |_editor, window, cx| {
+    editor.update_in(cx, |_editor, _window, cx| {
         math.update(cx, |block, block_cx| {
             block.replace_text_in_visible_range(0..0, "x^2", None, false, block_cx);
         });
