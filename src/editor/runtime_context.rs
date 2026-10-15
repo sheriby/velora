@@ -3,23 +3,37 @@
 use super::*;
 
 impl Editor {
-    fn block_may_change_document_references(block: &Block) -> bool {
-        if matches!(
-            block.kind(),
-            BlockKind::RawMarkdown
-                | BlockKind::FrontMatter
-                | BlockKind::HtmlBlock
-                | BlockKind::FootnoteDefinition
-                | BlockKind::Table
-        ) {
-            return true;
-        }
-        block.record.title.fragments.iter().any(|fragment| {
-            fragment.link.is_some()
-                || fragment.footnote.is_some()
-                || fragment.text.contains('[')
-                || fragment.text.contains('<')
-        })
+    /// 这次编辑**可能**改动引用定义集或脚注引用表吗？
+    ///
+    /// 定义只有两种写法，两种都带 `]:`：`[label]: url`（图片与链接各一张表）与
+    /// `[^label]: text`（脚注定义）。脚注的**引用** `[^label]` 不带 `]:`，但它决定
+    /// 「哪几块引用了这个脚注」，注册表里的 `block_occurrences` 也要跟着重算。所以屏幕
+    /// 就两条：`]:` 或 `[^`。
+    ///
+    /// 扫的是**块自己的源码字节**（`buffer.slice(块区间)`）：解析器扫的就是这份缓冲区
+    /// 文本，屏幕得跟它看同一份东西，不能拿行内树里的片段去猜——定义行在行内树里未必
+    /// 还留着 `]:`。行内树那条只留给没有源码区间的块（子块、刚建出来还没落笔的）。
+    ///
+    /// 旧口径是「片段里出现 `[` 或 `<`，或块是表格/HTML/frontmatter/裸 markdown」：
+    /// 一个带 `[文字](链接)` 的段落、一句 `a < b` 都会让每键触发一次整篇注册表重建
+    /// （10 MiB 档一次 766ms）。收窄之后，定义行与脚注引用该动的仍然会动。
+    fn block_may_change_document_references(&self, block: &Entity<Block>, cx: &App) -> bool {
+        let source = self
+            .document
+            .source_span_of(block.entity_id())
+            .map(|span| self.buffer.slice(span));
+        let Some(source) = source else {
+            // 没有区间：退回行内树那份宽口径（宁可多重建一次，也别漏掉定义行的更新）。
+            return block.read_with(cx, |block, _cx| {
+                block.record.title.fragments.iter().any(|fragment| {
+                    fragment.link.is_some()
+                        || fragment.footnote.is_some()
+                        || fragment.text.contains('[')
+                        || fragment.text.contains('<')
+                })
+            });
+        };
+        contains_reference_definition_marker(&source)
     }
 
     pub(super) fn changed_block_needs_runtime_context_refresh(
@@ -35,9 +49,7 @@ impl Editor {
         }
         self.runtime_context_sensitive_blocks
             .contains(&block.entity_id())
-            || block.read_with(cx, |block, _cx| {
-                Self::block_may_change_document_references(block)
-            })
+            || self.block_may_change_document_references(block, cx)
     }
 
     pub(super) fn current_edit_target_entity_id_from_state(&self, cx: &App) -> Option<EntityId> {
@@ -273,9 +285,7 @@ impl Editor {
         self.rebuild_footnote_registry(cx);
         self.runtime_context_sensitive_blocks.clear();
         for entity in self.editable_blocks_in_document_order(cx) {
-            let is_sensitive = entity.read_with(cx, |block, _cx| {
-                Self::block_may_change_document_references(block)
-            });
+            let is_sensitive = self.block_may_change_document_references(&entity, cx);
             if is_sensitive {
                 self.runtime_context_sensitive_blocks
                     .insert(entity.entity_id());
@@ -348,4 +358,14 @@ impl Editor {
             .block_entity_by_id(entity_id)
             .filter(|block| block.read(cx).kind() == BlockKind::Table)
     }
+}
+
+/// 源码字节里有没有可能构成引用定义或脚注引用的记号。
+///
+/// 两条对应解析器与脚注注册表真正会读的东西：定义行必含 `]:`（label 的右括号紧跟
+/// 冒号），脚注引用必含 `[^`。围栏或 HTML 块里出现的这些字面量会被算进来——那是
+/// **故意**的过近似：代价是多重建一次，换来的是不必在这里重放解析器的跨行状态
+/// （围栏、HTML 注释、容器前缀）。判据只有这一处，解析器那边是真正认定定义的地方。
+fn contains_reference_definition_marker(source: &str) -> bool {
+    source.contains("]:") || source.contains("[^")
 }

@@ -1662,6 +1662,56 @@ async fn reattaching_root_spans_does_not_scan_candidates_per_block(cx: &mut Test
     );
 }
 
+/// 打字不许因为段落里有 `[` 或 `<` 就整篇重建引用注册表。
+///
+/// 定义行必含 `]:`、脚注引用必含 `[^`，屏幕收窄到这两条之后，一个带
+/// `[文字](链接)` 的段落（或一句 `a < b`）每键不再付一次整篇注册表重建
+/// （10 MiB 档一次 766ms）。正控保证收窄没把该动的漏掉：改定义行本身必须重建。
+#[gpui::test]
+async fn typing_a_link_paragraph_does_not_rebuild_the_reference_registry(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "段落里有 [文字](https://example.com) 与 a < b。\n\n[asset]: ./assets/a.png\n\n![图][asset]\n";
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None)));
+    cx.run_until_parked();
+
+    let blocks = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().to_vec());
+    assert!(
+        blocks.len() >= 3,
+        "夹具应有段落、定义行、图片三块，实际 {}",
+        blocks.len()
+    );
+    let paragraph = blocks[0].clone();
+    let definition = blocks[1].clone();
+
+    let before = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(before > 0, "建文档时就没重建过注册表，这条闸门量不到东西");
+
+    paragraph.update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+    });
+    cx.run_until_parked();
+    let after_paragraph = editor.read_with(cx, |editor, _cx| {
+        editor.reference_registry_rebuilds.get()
+    });
+    assert_eq!(
+        after_paragraph, before,
+        "带链接的段落里打字触发了整篇引用注册表重建"
+    );
+
+    // 正控：定义行本身改了必须重建（收窄不许把这一条漏掉）。
+    definition.update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..0, "y", None, false, cx);
+    });
+    cx.run_until_parked();
+    let after_definition = editor.read_with(cx, |editor, _cx| {
+        editor.reference_registry_rebuilds.get()
+    });
+    assert!(
+        after_definition > after_paragraph,
+        "改了定义行却没重建引用注册表"
+    );
+}
+
 /// 一次 ⌘Z 不许再做一遍整篇落笔。
 ///
 /// 撤销先重放逆操作、再 `rebuild_document_from_buffer`：块树整篇来自缓冲区，缓冲区就是
