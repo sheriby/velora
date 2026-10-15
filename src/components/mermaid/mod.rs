@@ -2,9 +2,11 @@
 //! 缓存写入 velora 独立目录。
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context as _, anyhow};
 use directories::ProjectDirs;
@@ -16,6 +18,81 @@ const MERMAID_COMPLEX_TARGET_WIDTH_RATIO: f32 = 0.9;
 const MERMAID_MAX_VIEWPORT_WIDTH_RATIO: f32 = 1.15;
 const MERMAID_SCALE_PER_EXTRA_LINE: f32 = 0.035;
 const MERMAID_MAX_SCALE: f32 = 1.75;
+
+/// 进程内缓存最多记几条显示结果。草稿每编辑一次就产生一个新键，不设上限就会一直
+/// 攒整份 SVG（与 latex 那份同一档：256 条）。
+const MERMAID_MEMORY_CACHE_LIMIT: usize = 256;
+
+/// 进程内的渲染结果缓存。
+///
+/// 渲染是**每次重绘**都跑的：正文里每张可见且失焦的图都会调到这里，而磁盘缓存命中
+/// 也要付 `create_dir_all`（两次）加 `fs::read_to_string`（两次：基础 SVG 与显示 SVG）。
+/// 形状照 `latex/mod.rs` 的 `LatexSvgCache`：`OnceLock<Mutex<..>>` + 条数上限 + 有序淘汰。
+///
+/// 为什么不只缓存渲染结果：算显示缩放要用渲染器的**固有尺寸**，它平时只能靠读基础
+/// SVG 得到。把固有尺寸也按正文键记一份，命中那条路就一次磁盘都不碰。
+#[derive(Default)]
+struct MermaidSvgMemoryCache {
+    intrinsic: HashMap<String, (f32, f32)>,
+    renders: HashMap<String, MermaidSvgRender>,
+    order: VecDeque<String>,
+}
+
+static MEMORY_CACHE: OnceLock<Mutex<MermaidSvgMemoryCache>> = OnceLock::new();
+
+fn memory_cache() -> &'static Mutex<MermaidSvgMemoryCache> {
+    MEMORY_CACHE.get_or_init(|| Mutex::new(MermaidSvgMemoryCache::default()))
+}
+
+/// 锁中毒按「未命中」处理：缓存未命中永远是对的，只是多付一次磁盘。
+fn lock_memory_cache() -> Option<std::sync::MutexGuard<'static, MermaidSvgMemoryCache>> {
+    memory_cache().lock().ok()
+}
+
+/// 内存里问一遍：命中就整条路不碰磁盘（不建目录、不读文件、不解析 SVG）。
+fn memory_cached_render(
+    body: &str,
+    base_key: &str,
+    available_width: f32,
+    viewport_width: f32,
+) -> Option<MermaidSvgRender> {
+    let (width, height) = {
+        let cache = lock_memory_cache()?;
+        *cache.intrinsic.get(base_key)?
+    };
+    let scale = mermaid_display_scale(body, width, height, available_width, viewport_width);
+    let display_key = mermaid_display_cache_key(body, scale);
+    let cache = lock_memory_cache()?;
+    let rendered = cache.renders.get(&display_key)?.clone();
+    // 磁盘上那份文件是 `img` 元素要读的东西：缓存目录被清理掉之后，内存里还留着
+    // 结果但文件已经没了，直接返回就会让图永远加载不出来。文件不在就按未命中走，
+    // 那条路会把它重新写出来。一次 `is_file` 仍比两次读盘加两次建目录便宜。
+    rendered.path.is_file().then_some(rendered)
+}
+
+fn remember_intrinsic(base_key: &str, width: f32, height: f32) {
+    let Some(mut cache) = lock_memory_cache() else {
+        return;
+    };
+    if cache.intrinsic.len() >= MERMAID_MEMORY_CACHE_LIMIT {
+        // 这张表每条只有两个 f32，超上限整张清掉：最坏多读一次基础 SVG。
+        cache.intrinsic.clear();
+    }
+    cache.intrinsic.insert(base_key.to_string(), (width, height));
+}
+
+fn remember_render(display_key: &str, rendered: &MermaidSvgRender) {
+    let Some(mut cache) = lock_memory_cache() else {
+        return;
+    };
+    if cache.renders.len() >= MERMAID_MEMORY_CACHE_LIMIT
+        && let Some(oldest) = cache.order.pop_front()
+    {
+        cache.renders.remove(&oldest);
+    }
+    cache.order.push_back(display_key.to_string());
+    cache.renders.insert(display_key.to_string(), rendered.clone());
+}
 
 /// Opening fence metadata for a Mermaid fenced code block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,9 +208,17 @@ fn render_mermaid_svg_for_display_with(
     renderer: MermaidRenderer,
 ) -> anyhow::Result<MermaidSvgRender> {
     let base_key = mermaid_cache_key(&source.body);
+    // 内存里先问一遍：命中就一次磁盘都不碰（这正是每帧渲染要付的那一笔）。
+    if let Some(rendered) =
+        memory_cached_render(&source.body, &base_key, available_width, viewport_width)
+    {
+        return Ok(rendered);
+    }
+
     let base_path = mermaid_base_cache_path(&base_key)?;
     let base_svg = render_mermaid_to_svg_cached_with(&source.body, &base_path, renderer)?;
     let intrinsic = mermaid_svg_intrinsic_size(&base_svg)?;
+    remember_intrinsic(&base_key, intrinsic.width, intrinsic.height);
     let scale = mermaid_display_scale(
         &source.body,
         intrinsic.width,
@@ -146,24 +231,28 @@ fn render_mermaid_svg_for_display_with(
     let display_path = mermaid_display_cache_path(&display_key)?;
     if let Some(svg) = read_svg_cache(&display_path) {
         let size = mermaid_svg_intrinsic_size(&svg)?;
-        return Ok(MermaidSvgRender {
+        let rendered = MermaidSvgRender {
             path: display_path,
             svg,
             display_width: size.width,
             display_height: size.height,
             display_scale: scale,
-        });
+        };
+        remember_render(&display_key, &rendered);
+        return Ok(rendered);
     }
 
     let (svg, size) = scale_mermaid_svg_for_display(&base_svg, scale)?;
     write_svg_cache(&display_path, &svg)?;
-    Ok(MermaidSvgRender {
+    let rendered = MermaidSvgRender {
         path: display_path,
         svg,
         display_width: size.width,
         display_height: size.height,
         display_scale: scale,
-    })
+    };
+    remember_render(&display_key, &rendered);
+    Ok(rendered)
 }
 
 /// Render a Mermaid diagram body into cached SVG text.
@@ -222,9 +311,25 @@ pub(crate) fn mermaid_display_cache_key(source: &str, scale: f32) -> String {
     format!("{MERMAID_SVG_CACHE_VERSION}-{:016x}", hasher.finish())
 }
 
+/// 测试探针：`read_svg_cache` 读了几次盘。内存缓存命中那条路必须一次都不读。
+#[cfg(test)]
+static TEST_CACHE_READS: OnceLock<Mutex<usize>> = OnceLock::new();
+
+#[cfg(test)]
+fn note_cache_read() {
+    if let Ok(mut reads) = TEST_CACHE_READS
+        .get_or_init(|| Mutex::new(0))
+        .lock()
+    {
+        *reads += 1;
+    }
+}
+
 /// 读 SVG 缓存：缺失或读不出按未命中；半截文件（无闭合 `</svg>`，断电/
 /// 并发写的产物）同样算未命中，下一次重渲染自愈。base 与 display 共用。
 fn read_svg_cache(path: &Path) -> Option<String> {
+    #[cfg(test)]
+    note_cache_read();
     let svg = fs::read_to_string(path).ok()?;
     svg.contains("</svg>").then_some(svg)
 }
@@ -776,6 +881,54 @@ mod tests {
     #[test]
     fn invalid_mermaid_returns_error() {
         assert!(render_mermaid_to_svg("not a real mermaid diagram ::::").is_err());
+    }
+
+    fn cache_reads() -> usize {
+        *TEST_CACHE_READS
+            .get_or_init(|| Mutex::new(0))
+            .lock()
+            .expect("cache reads mutex poisoned")
+    }
+
+    fn reset_cache_reads() {
+        *TEST_CACHE_READS
+            .get_or_init(|| Mutex::new(0))
+            .lock()
+            .expect("cache reads mutex poisoned") = 0;
+    }
+
+    /// 第二次渲染同一条公式/图必须走内存：磁盘缓存命中也要付 `create_dir_all` 加两次
+    /// `fs::read_to_string`，而渲染是**每次重绘**都跑的。这条钉住内存缓存别被绕开。
+    #[test]
+    fn a_second_display_render_does_not_read_the_disk_again() {
+        let source = unique_mermaid_source("memory-cache-hit-skips-disk");
+        let base_key = mermaid_cache_key(&source.body);
+        let base_path = mermaid_base_cache_path(&base_key).expect("base path");
+        remove_cache_file(&base_path);
+        reset_renderer_calls(&source.body);
+        reset_cache_reads();
+
+        let first = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+            .expect("first render");
+        assert_eq!(renderer_calls(&source.body), 1);
+        assert!(
+            cache_reads() > 0,
+            "第一次渲染一次盘都没读，这条闸门量不到东西"
+        );
+
+        reset_cache_reads();
+        let second = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+            .expect("cached render");
+        assert_eq!(second, first, "内存缓存给回来的结果与第一次不一致");
+        assert_eq!(
+            cache_reads(),
+            0,
+            "第二次渲染又读了盘：内存缓存没生效"
+        );
+        assert_eq!(renderer_calls(&source.body), 1);
+
+        remove_cache_file(&first.path);
+        remove_cache_file(&base_path);
     }
 
     #[test]
