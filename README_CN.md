@@ -6,7 +6,7 @@
 
 Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron、无 WebView，界面由 GPU 直接渲染，启动快、开销低、响应稳。WYSIWYG所见即所得，可随时切换 Markdown 源码。在性能之外，界面同样保持现代、简洁与可读，轻量而流畅。
 
-## 界面预览
+## 🖼️ 界面预览
 
 *所见即所得：行内样式、表格、代码高亮与 LaTeX 公式，标签页并入标题栏。*
 
@@ -139,9 +139,18 @@ cargo test
 | `[export]` | `theme` | 导出 HTML、PDF 与 PNG 时使用 `current` / `light` / `dark` |
 | `[updates]` | `check_on_startup`、`include_prereleases` | 启动时检查更新；包含预发布版本 |
 
-## 致谢
+## 🙏 致谢
 
-编辑器早期实现参考自 [Velotype](https://github.com/manyougz/velotype)。
+- **[Zed](https://github.com/zed-industries/zed)**: 提供 GPUI 框架，支撑原生界面与 GPU 渲染。
+- **[Velotype](https://github.com/manyougz/velotype)**: 编辑器早期实现的参考项目。
+- **[Merman](https://github.com/Latias94/merman)**: 原生 Mermaid 解析、布局与 SVG 渲染。
+- **[RaTeX](https://github.com/erweixin/RaTeX)**: LaTeX 公式解析、布局与 SVG 渲染。
+- **[Tree-sitter](https://github.com/tree-sitter/tree-sitter)**: 编程语言解析与语法高亮。
+- **[ripgrep](https://github.com/BurntSushi/ripgrep)**: 通过 `grep-*` 与 `ignore` 库提供进程内搜索及文件遍历。
+- **[pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark)**: HTML 导出中的 Markdown 解析。
+- **[htmd](https://github.com/letmutex/htmd)**: 富文本粘贴时的 HTML 转 Markdown。
+- **[resvg](https://github.com/linebender/resvg)**: GPUI 中的 SVG 光栅化。
+- **[chromiumoxide](https://github.com/mattsse/chromiumoxide)**: 驱动 Chromium 完成 PDF、PNG 导出与打印。
 
 ## 📄 许可证
 

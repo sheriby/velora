@@ -6,7 +6,7 @@
 
 Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebView, with the interface rendered directly on the GPU — faster startup, lower overhead, steadier response. WYSIWYG by default, switchable to Markdown source at any time. Beyond raw performance, the interface stays modern, clean and readable — light and fluid.
 
-## Screenshots
+## 🖼️ Screenshots
 
 *WYSIWYG editing: inline styles, tables, code highlighting and LaTeX, with tabs merged into the title bar.*
 
@@ -97,7 +97,7 @@ macOS keys shown; Ctrl-based equivalents work on other platforms. Shortcuts are 
 
 ## 🚀 Building from source
 
-需要 **Rust stable 工具链**。
+Requires the **Rust stable toolchain**.
 
 The repository's `.cargo/config.toml` wires `sccache` in as the compiler cache wrapper, so make sure it is installed first:
 
@@ -117,7 +117,7 @@ cargo test
 ## 📦 Release packages
 
 - **macOS** — run `scripts/package-macos.sh` to produce `dist/velora.app` and `dist/velora-<version>.pkg`. The package is unsigned and unnotarized, intended for local and small-scale internal use.
-- **Windows**——在 Windows x64 上用 PowerShell 7 执行 `./scripts/package-windows.ps1`，通过 MSVC 原生构建 release 安装包，生成 `dist/velora-<版本>-windows-x64-setup.exe`。需要 Rust MSVC 工具链、Visual Studio C++ 构建工具、Windows SDK 与 NSIS；CI 在原生 Windows 上运行构建与测试。
+- **Windows** — run `./scripts/package-windows.ps1` in PowerShell 7 on Windows x64 to build a release installer with the native MSVC toolchain: `dist/velora-<version>-windows-x64-setup.exe`. Requires the Rust MSVC toolchain, Visual Studio C++ Build Tools, the Windows SDK and NSIS. CI builds and tests on native Windows runners.
 
 ## ⚙️ Configuration
 
@@ -139,9 +139,18 @@ The main `config.toml` sections:
 | `[export]` | `theme` | `current` / `light` / `dark` for exported HTML, PDF and PNG |
 | `[updates]` | `check_on_startup`, `include_prereleases` | Check for updates at startup; include prerelease versions |
 
-## Acknowledgements
+## 🙏 Acknowledgements
 
-The editor's early implementation was written with reference to [Velotype](https://github.com/manyougz/velotype).
+- **[Zed](https://github.com/zed-industries/zed)**: The GPUI framework behind Velora's native, GPU-rendered interface.
+- **[Velotype](https://github.com/manyougz/velotype)**: Reference for the editor's early implementation.
+- **[Merman](https://github.com/Latias94/merman)**: Native Mermaid parsing, layout and SVG rendering.
+- **[RaTeX](https://github.com/erweixin/RaTeX)**: LaTeX math parsing, layout and SVG rendering.
+- **[Tree-sitter](https://github.com/tree-sitter/tree-sitter)**: Language parsers and syntax highlighting.
+- **[ripgrep](https://github.com/BurntSushi/ripgrep)**: In-process search and file traversal through its `grep-*` and `ignore` crates.
+- **[pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark)**: Markdown parsing for HTML export.
+- **[htmd](https://github.com/letmutex/htmd)**: HTML-to-Markdown conversion for rich-text paste.
+- **[resvg](https://github.com/linebender/resvg)**: SVG rasterization in GPUI.
+- **[chromiumoxide](https://github.com/mattsse/chromiumoxide)**: Chromium automation for PDF and PNG export and printing.
 
 ## 📄 License
 
