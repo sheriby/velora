@@ -135,9 +135,11 @@ jobs:
           IS_BETA: ${{ contains(github.ref_name, 'beta') }}
         run: |
           notes_file="docs/releases/$RELEASE_TAG.md"
-          flags=(--verify-tag --title "$RELEASE_TAG")
+          flags=(--verify-tag --title "Velora $RELEASE_TAG")
           if [[ -f "$notes_file" ]] && grep -q '[^[:space:]]' "$notes_file"; then
-            flags+=(--notes-file "$notes_file")
+            release_body_file="$RUNNER_TEMP/release-notes.md"
+            python3 scripts/release-notes-body.py "$notes_file" > "$release_body_file"
+            flags+=(--notes-file "$release_body_file")
           else
             flags+=(--generate-notes)
           fi
@@ -174,4 +176,6 @@ jobs:
             echo "::error::Add $notes_file with release notes before running this workflow"
             exit 1
           fi
-          gh release edit "$RELEASE_TAG" --notes-file "$notes_file"
+          release_body_file="$RUNNER_TEMP/release-notes.md"
+          python3 scripts/release-notes-body.py "$notes_file" > "$release_body_file"
+          gh release edit "$RELEASE_TAG" --title "Velora $RELEASE_TAG" --notes-file "$release_body_file"
