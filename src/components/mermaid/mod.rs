@@ -317,9 +317,9 @@ pub(crate) fn mermaid_display_cache_key(source: &str, scale: f32) -> String {
     format!("{MERMAID_SVG_CACHE_VERSION}-{:016x}", hasher.finish())
 }
 
-/// 测试探针：`read_svg_cache` 读了几次盘。内存缓存命中那条路必须一次都不读。
 #[cfg(test)]
 thread_local! {
+    // 并行的其他测试也会读取 SVG，计数不能跨线程汇总。
     static TEST_CACHE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -954,21 +954,47 @@ flowchart TD
         fs::remove_dir_all(root).expect("清理缓存测试目录");
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn mermaid_chinese_labels_use_pingfang_without_arbitrary_font_fallback() {
+    fn mermaid_chinese_labels_use_the_first_available_font_in_the_configured_stack() {
         let svg = render_mermaid_raw("flowchart LR\nA[创建订单] --> B[校验库存]").expect("生成中文图表");
-        let mut options = usvg::Options::default();
-        options.fontdb_mut().load_system_fonts();
-        let select_font = usvg::FontResolver::default_font_selector();
-        options.font_resolver.select_font = Box::new(move |font, database| {
-            let selected = select_font(font, database);
-            let face = selected.and_then(|id| database.face(id)).expect("系统字体应可解析");
-            assert!(face.families.iter().any(|(family, _)| family == "PingFang SC"),
-                "中文应使用苹方，避免 Arial 缺字后落到任意中文字体，实际：{:?}", face.families);
-            selected
-        });
-        usvg::Tree::from_str(&svg, &options).expect("原生文字解析");
+        // runner 不保证安装某种系统字体；合成字库按逆优先级注册，验证顺序来自 SVG 字体栈。
+        for (families, expected) in [
+            (&["Arial", "Microsoft YaHei", "PingFang SC"][..], "PingFang SC"),
+            (&["Arial", "Microsoft YaHei"][..], "Microsoft YaHei"),
+            (&["Arial"][..], "Arial"),
+        ] {
+            let mut options = usvg::Options::default();
+            let database = options.fontdb_mut();
+            database.load_font_data(include_bytes!("../../../fixtures/fonts/mermaid-cjk-test.ttf").to_vec());
+            let fixture_face = database.faces().next().cloned().expect("合成字体可解析");
+            database.remove_face(fixture_face.id);
+            for family in families {
+                let mut face = fixture_face.clone();
+                face.id = usvg::fontdb::ID::dummy();
+                for (name, _) in &mut face.families {
+                    *name = (*family).to_string();
+                }
+                database.push_face_info(face);
+            }
+            let selections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let select_font = usvg::FontResolver::default_font_selector();
+            options.font_resolver.select_font = Box::new({
+                let selections = selections.clone();
+                move |font, database| {
+                    let selected = select_font(font, database);
+                    let face = selected.and_then(|id| database.face(id)).expect("配置字体可解析");
+                    assert!(face.families.iter().any(|(family, _)| family == expected),
+                        "应优先使用可用的配置字体 {expected}，实际：{:?}", face.families);
+                    selections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    selected
+                }
+            });
+            options.font_resolver.select_fallback = Box::new(|character, _, _| {
+                panic!("合成字库应覆盖测试文本，不应触发缺字回退：{character}");
+            });
+            usvg::Tree::from_str(&svg, &options).expect("原生文字解析");
+            assert!(selections.load(std::sync::atomic::Ordering::Relaxed) > 0, "必须实际解析图中文字的字体");
+        }
     }
 
     #[test]
