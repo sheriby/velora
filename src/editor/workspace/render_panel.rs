@@ -401,8 +401,10 @@ impl Editor {
             );
         }
 
-        // 文件节点悬停显示 大小 · 修改时间（roadmap D7）。
-        let tooltip_text = tree_node_tooltip(&node);
+        // 文件节点悬停显示 大小 · 修改时间（roadmap D7）。这份提示里那次
+        // `fs::metadata` 只有真的悬停才该付：放在行构造期就是每个可见文件节点每帧
+        // 一次 stat（用户可能从不悬停），所以这里只搬两样字段、把 stat 留在闭包里。
+        let tooltip_facts = TreeTooltipFacts::from_node(&node);
         div()
             .id(("workspace-node", stable_node_hash(&node.id)))
             .debug_selector(move || node_selector.clone())
@@ -416,8 +418,8 @@ impl Editor {
             .pr(px(6.0))
             .rounded(px(4.0))
             .when(!node.kind_dir() && self.workspace.context_menu.is_none() && self.workspace.name_edit.is_none(), |this| this.tooltip(move |_, cx| {
-                let tooltip_text = tooltip_text.clone();
-                cx.new(|_| WorkspaceTooltip { label: tooltip_text }).into()
+                let label = tree_node_tooltip(&tooltip_facts);
+                cx.new(|_| WorkspaceTooltip { label }).into()
             }))
             .bg(if selected {
                 c.selection

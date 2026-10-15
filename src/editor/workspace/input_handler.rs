@@ -250,9 +250,33 @@ pub(crate) fn replace_in_source(source: &str, matcher: &SearchMatcher, replaceme
     updated
 }
 
+/// 悬停提示要用到的两样东西：节点种类（里面是路径）与显示名。
+///
+/// 整棵 `WorkspaceTreeNode` 带着子树，克隆它比一次 `fs::metadata` 贵得多；而提示的
+/// 那次 stat 只有用户真的悬停时才该付。行构造期先把这两样搬进惰性回调，帧上就只剩
+/// 一次路径克隆。
+#[derive(Clone)]
+pub(crate) struct TreeTooltipFacts {
+    kind: WorkspaceTreeKind,
+    label: String,
+}
+
+impl TreeTooltipFacts {
+    pub(crate) fn from_node(node: &WorkspaceTreeNode) -> Self {
+        Self {
+            kind: node.kind.clone(),
+            label: node.label.clone(),
+        }
+    }
+
+    fn is_dir(&self) -> bool {
+        matches!(self.kind, WorkspaceTreeKind::Directory(_))
+    }
+}
+
 /// Hover tooltip text for a tree node: relative path, size, and modified time
 /// for files; just the path for directories (roadmap D7).
-pub(crate) fn tree_node_tooltip(node: &WorkspaceTreeNode) -> String {
+pub(crate) fn tree_node_tooltip(node: &TreeTooltipFacts) -> String {
     let path = match &node.kind {
         WorkspaceTreeKind::Directory(path)
         | WorkspaceTreeKind::MarkdownFile(path)
@@ -264,7 +288,7 @@ pub(crate) fn tree_node_tooltip(node: &WorkspaceTreeNode) -> String {
         Ok(metadata) => metadata,
         Err(_) => return node.label.clone(),
     };
-    if node.kind_dir() {
+    if node.is_dir() {
         return node.label.clone();
     }
     let size = metadata.len();
