@@ -160,12 +160,27 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
       且互不重叠、按文档顺序单调」，再动增量。
       **闸门已就位**（`root_spans_stay_on_char_boundaries_across_edits_and_undo`）：
       今天的产品路径（撤销走整篇重建）上这条不变式一路成立；把增量接回去再跑，它崩在
-      `slice`（'第' 中间，偏移 718）。**上一版把这条读成「`is_char_boundary` 与 `slice`
-      矛盾」，那是错的**：加在屏幕里的体检在拼错误消息时自己调了 `slice`（取端点前后
-      几个字节），打印之前就 panic 了，「没触发」是假象。真实情况就是端点落在字符中间。
-      产品侧已按这个结论改：屏幕先过一道可信性检查，不可信就退回保守口径（不再崩）。
-      下一版接增量时，坏区间会被那条不变式闸门报出来（带步号与根块下标），顺着它查
-      「部分重投影之后哪一根的区间没重挂」即可。
+      `slice`（'第' 中间，偏移 718..737）。**已定位到确切位置**（安全诊断：在 `slice`
+      里打 `Backtrace::force_capture`，消息里绝不切片）：
+
+      ```
+      [slice-raw] 区间 718..737
+        TextBuffer::slice → Editor::history_row_signature → restore_history_row_layouts → undo_document
+      ```
+
+      也就是说：**增量重投影之后某根块的区间起点落在了字符中间**（718 是 '第' 的第二个
+      字节），而 `restore_history_row_layouts` 里的 `history_row_signature` 直接拿区间去
+      `slice`，于是崩在撤销收尾。同一个坏区间在收尾更早的「刷引用注册表」那一步也出现过
+      ——那处已经加了可信性闸（不可信就退回保守口径，不再崩）。
+      下一版的第一个断言点因此是**区间的产地**而不是消费者：在
+      `root_span_ranges`（`attach_root_spans` 用它把行区间换成字节区间）里断言算出来的
+      start/end 都在字符边界上——它一响就能指出是「增量那条 attach」还是「平移那条
+      `shift_source_spans_after`」把区间弄坏的。三道保险（`slice` 留诊断、消费者加闸、
+      产地加断言）之后，再谈把增量接回主线。
+
+      （另：早先记的「`is_char_boundary` 与 `slice` 矛盾」是错的——那次体检在拼消息时
+      自己调了 `slice`，打印前就崩了，见下一轮修正。）
+
    改动本身（判定改动字节范围 → 落在一根块里就只重投影那一根，否则退回整篇）已经写出
    来过，卡的是上面两处；谁接着做，先给 `reproject_root_region` 补一条「区域与解析边界
    对不上时怎么办」的判据，再谈接撤销。
