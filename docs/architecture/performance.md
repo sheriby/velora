@@ -141,6 +141,20 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
    在 `history.rs` 的引用结构规范化，撤销还没接。
 5. **缓冲区自己的写入**：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），一次写入要把 `chunks` 这一列整体后移，`locate()` 沿块线性找下标。1MiB 档 1.6µs、10MiB 档 10.7µs——绝对值还很小，但它是每键都付的，别把它当成常数。
 
+6. **行高起估为什么还是「一行高」**（试过，退回来了）。渲染态没量过的行一律按
+   `block_min_height`（28px）起估；想按「这块有几行」放大时踩到三件事：
+   - 行元数据里那个 `source_document_lines` **只在开源码行号（源码模式）时非 0**，
+     渲染态恒为 0（`Block::source_document_line_count`）。也就是说「数据已在快照里」
+     这个前提不成立——要放大得先新加一份「显示文本行数」的元数据（`display_line_count`
+     那个方向，随可见列表同步那一趟一起记）。
+   - 放大必须**限在渲染态**：源码/代码视图的块是固定切片，高度账在滚动条权重那边
+     （`scrollbar_strides` 已经是 `estimate × source_lines`），布局这一侧再乘一次会把
+     `scrollbar_reaches_the_end_when_the_last_source_line_is_visible` 算飞（末块压根
+     挂不上，4 帧后 `last_bounds` 还是 None）。
+   - 即便限在渲染态，`undo_and_redo_a_visible_character_keep_the_viewport_still` 也会红：
+     未实测行的起估一变，偏移映射跟着变（实测 -17593px → -35618px，而可见字没动）。
+     真要放大，得先做出「起估变化时按内容锚点还原视口」这一条。
+
 ## 5. 优化套路（这个仓库反复用的四招）
 
 1. **脏区间 + 增量重算**：缓冲区记 `take_dirty_region`，派生视图只重算相交的部分；结构命令重新分配接缝时要显式 `note_outline_dirty_region`（块自己的字节没动但指向变了）。
