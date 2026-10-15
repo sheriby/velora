@@ -141,7 +141,19 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
    - **测量装置的坑**：跨「换掉整棵树」的操作（撤销、切视图）复用块句柄，会让下一键
      落进整篇重投影。性能用例与探针都要每轮重新取块（`first_block(&editor, cx)`）。
    再降一档只有把撤销接到增量重投影上：`import.rs:reproject_root_region` 按根块重投影，
-   唯一生产调用点在 `history.rs` 的引用结构规范化，撤销还没接。
+   唯一生产调用点在 `history.rs` 的引用结构规范化。**试过一版，卡在两处，按现状退回**：
+   1. 区域边界对不上：`reproject_root_region` 要求窗口解析恰好在「本段行数」处给出一个
+      根边界，而根的区间右端按导入器口径**带着块尾空行**、窗口解析不把空行算进这一根
+      （实测：一次撤销改到段落，区域 2 行，解析出 `span 末端 [1, 3]`，`within=1` 而
+      `1 != 2` → 返回 `None` → 退回整篇）。要么统一「空行归谁」的口径，要么让区域由
+      **解析结果**去对齐而不是由根的区间去推。
+   2. 按空行裁剪区域时会撞上区间端点不在字符边界：`line_range(line_base + region_lines - 1)`
+      给出 `start byte index … is not a char boundary`（'第' 中间，偏移 1112）。
+      `chunk_starts_index_matches_a_linear_scan` 已证明前缀索引与线性参考逐行逐偏移一致，
+      所以嫌疑在 `line_of` / `line_range` 对「非行首偏移」或越界行号那一段口径上，未定位。
+   改动本身（判定改动字节范围 → 落在一根块里就只重投影那一根，否则退回整篇）已经写出
+   来过，卡的是上面两处；谁接着做，先给 `reproject_root_region` 补一条「区域与解析边界
+   对不上时怎么办」的判据，再谈接撤销。
 5. **缓冲区自己的写入**：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），一次写入要把 `chunks` 这一列整体后移，`locate()` 沿块线性找下标。1MiB 档 1.6µs、10MiB 档 10.7µs——绝对值还很小，但它是每键都付的，别把它当成常数。
 
 6. **行高起估为什么还是「一行高」**（试过，退回来了）。渲染态没量过的行一律按
