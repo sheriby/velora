@@ -99,6 +99,7 @@ impl Editor {
             );
 
         if !recent.is_empty() {
+            let home_directory = directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
             let mut list = div()
                 .w_full()
                 .flex()
@@ -129,16 +130,27 @@ impl Editor {
                 let entry_path = path.clone();
                 let remove_path = path.clone();
                 let tooltip_path = path.to_string_lossy().into_owned();
+                let parent_path = path.parent().unwrap_or(path);
+                let parent_label = match home_directory
+                    .as_ref()
+                    .and_then(|home| parent_path.strip_prefix(home).ok())
+                {
+                    Some(relative_path) => std::path::Path::new("~")
+                        .join(relative_path)
+                        .to_string_lossy()
+                        .into_owned(),
+                    None => parent_path.to_string_lossy().into_owned(),
+                };
                 let remove_label = strings.welcome_remove_recent.clone();
                 list = list.child(
                     div()
                         .id(("welcome-recent-entry", index))
                         .w_full()
-                        .px(px(10.0))
-                        .py(px(6.0))
+                        .px(px(8.0))
+                        .h(px(32.0))
                         .flex()
                         .items_center()
-                        .gap(px(10.0))
+                        .gap(px(8.0))
                         .rounded(px(5.0))
                         .cursor_pointer()
                         .hover(|this| this.bg(c.dialog_secondary_button_hover))
@@ -146,8 +158,8 @@ impl Editor {
                         .text_color(c.dialog_body)
                         .child(
                             svg()
-                                .path("icon/workspace/folder.svg")
-                                .size(px(16.0))
+                                .path("icon/workspace/open-folder.svg")
+                                .size(px(14.0))
                                 .text_color(c.dialog_muted),
                         )
                         .child(
@@ -155,18 +167,26 @@ impl Editor {
                                 .flex_1()
                                 .min_w(px(0.0))
                                 .flex()
-                                .flex_col()
-                                .gap(px(2.0))
-                                .child(div().truncate().child(label))
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .max_w(relative(0.55))
+                                        .flex_shrink_0()
+                                        .truncate()
+                                        .child(label),
+                                )
                                 .child(
                                     div()
                                         .debug_selector(move || {
                                             format!("welcome-recent-path-{index}")
                                         })
+                                        .flex_1()
+                                        .min_w(px(0.0))
                                         .truncate()
                                         .text_size(px(theme.typography.ui_text_size(10.5)))
                                         .text_color(c.dialog_muted)
-                                        .child(path.to_string_lossy().into_owned()),
+                                        .child(parent_label),
                                 )
                                 .id(("welcome-recent-details", index))
                                 .tooltip(move |_, cx| {
