@@ -1624,6 +1624,138 @@ async fn probe_attribute_ten_mib_markdown_with_outline_open(cx: &mut TestAppCont
     }
 }
 
+/// 稳态帧不许克隆整篇根块列表。
+///
+/// 侧栏打开时 `sync_workspace_outline` 每帧跑一次，而它的短路判断只需要根块数：
+/// 原来那行 `root_blocks().to_vec()` 写在判断**之前**，于是每帧克隆一次全部根块
+/// （克隆一根要付一次 Entity 引用计数与 LeakDetector 登记，10 MiB 档 106,456 根，
+/// 独立评审实测 3.7–4.7ms/帧）。
+#[gpui::test]
+async fn steady_frames_do_not_clone_the_outline_root_blocks(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = (0..300)
+        .map(|index| format!("# 标题 {index}\n\n正文 {index}\n\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+    editor.update(cx, |editor, _cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = crate::editor::workspace::WorkspaceTab::Outline;
+    });
+    redraw(cx);
+    redraw(cx);
+
+    // 先证明计数器是活的：拆一次块会改根块数，大纲必须重扫，克隆要留下数。
+    let before = editor.read_with(cx, |editor, _cx| editor.outline_root_blocks_cloned.get());
+    let revision_before = editor.read_with(cx, |editor, _cx| editor.document_revision);
+    cx.simulate_input("\n");
+    redraw(cx);
+    redraw(cx);
+    let revision_after = editor.read_with(cx, |editor, _cx| editor.document_revision);
+    assert!(
+        revision_after > revision_before,
+        "回车没落进编辑器，这条闸门测错了东西"
+    );
+    let after_edit = editor.read_with(cx, |editor, _cx| editor.outline_root_blocks_cloned.get());
+    assert!(
+        after_edit > before,
+        "大纲重扫时没克隆根块列表，计数器是死的：{before} -> {after_edit}"
+    );
+
+    // 闸门本体：静止帧一根都不许克隆。
+    let steady = editor.read_with(cx, |editor, _cx| editor.outline_root_blocks_cloned.get());
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    let after_idle = editor.read_with(cx, |editor, _cx| editor.outline_root_blocks_cloned.get());
+    assert_eq!(
+        after_idle,
+        steady,
+        "静止帧克隆了 {} 根根块",
+        after_idle - steady
+    );
+}
+
+/// 状态栏找选区文本不许扫全篇，也不许报出别的块上的残影选区。
+///
+/// 单块选区只可能在活动编辑目标那一块上（它是唯一持有焦点的块）。旧实现从文档第一块
+/// 起逐块找「第一个非空选区」：没有选区时（打字常态）一帧读遍全篇；文档前部留着上次
+/// 交互的残影时，报给状态栏的又是那一块的字。
+#[gpui::test]
+async fn status_bar_finds_the_selection_on_the_active_block_only(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = (0..300)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));
+    redraw(cx);
+
+    let (first_id, active_id) = editor.read_with(cx, |editor, _cx| {
+        let visible = editor.document.visible_blocks();
+        (
+            visible[0].entity.entity_id(),
+            visible[150].entity.entity_id(),
+        )
+    });
+    editor.update(cx, |editor, cx| {
+        let active = editor.document.block_entity_by_id(active_id).expect("活动块");
+        active.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            cx.notify();
+        });
+        editor.active_entity_id = Some(active_id);
+        editor.pending_focus = None;
+    });
+
+    // 没有选区：一个块实体都不该读。
+    let before = editor.read_with(cx, |editor, _cx| editor.status_bar_selection_block_reads.get());
+    let text = editor.read_with(cx, |editor, cx| editor.selected_visible_text(cx));
+    let after = editor.read_with(cx, |editor, _cx| editor.status_bar_selection_block_reads.get());
+    assert_eq!(text, None, "没有选区却报出了选区文本：{text:?}");
+    assert_eq!(
+        after,
+        before,
+        "没有选区时状态栏按可见顺序读了 {} 个块",
+        after - before
+    );
+
+    // 正控：活动块自己真有选区时必须报出来，而且仍然不扫别的块。
+    editor.update(cx, |editor, cx| {
+        let active = editor.document.block_entity_by_id(active_id).expect("活动块");
+        active.update(cx, |block, cx| {
+            block.selected_range = 0..3;
+            cx.notify();
+        });
+    });
+    let before = editor.read_with(cx, |editor, _cx| editor.status_bar_selection_block_reads.get());
+    let text = editor.read_with(cx, |editor, cx| editor.selected_visible_text(cx));
+    let after = editor.read_with(cx, |editor, _cx| editor.status_bar_selection_block_reads.get());
+    assert!(
+        text.as_deref().is_some_and(|selected| !selected.is_empty()),
+        "活动块上有选区却没报出来：{text:?}"
+    );
+    assert_eq!(after, before, "活动块有选区时还是扫了别的块");
+
+    // 残影：文档第一块留着旧选区，活动块光标折叠——报出来的必须是「没有选区」。
+    editor.update(cx, |editor, cx| {
+        let residue = editor.document.block_entity_by_id(first_id).expect("残影块");
+        residue.update(cx, |block, cx| {
+            block.selected_range = 0..3;
+            cx.notify();
+        });
+        let active = editor.document.block_entity_by_id(active_id).expect("活动块");
+        active.update(cx, |block, cx| {
+            block.selected_range = 0..0;
+            cx.notify();
+        });
+    });
+    let text = editor.read_with(cx, |editor, cx| editor.selected_visible_text(cx));
+    assert_eq!(
+        text, None,
+        "折叠光标下报出了别的块上的残影选区：{text:?}"
+    );
+}
+
 /// 侧栏大纲的渲染闸门：3,000 条标题全展开时，一帧只许把视口里那几十行建成元素。
 /// 10 MiB 代码文档实测 53,227 条大纲，旧实现每帧把整棵树走成元素树（打开大纲页签
 /// 后一次按键 2.3–2.6s 里的大头，其他线性成本加起来不到 300ms）——大纲面板和正文

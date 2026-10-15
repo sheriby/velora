@@ -773,13 +773,18 @@ impl Editor {
             ),
             (edits, repartitioned) => edits.or(repartitioned),
         };
-        let roots = self.document.root_blocks().to_vec();
+        // 短路判断只要根块数，**不能**为此克隆整根列表：克隆一根要付一次 Entity
+        // 引用计数与 LeakDetector 登记，而侧栏打开时这里每帧跑一次——10 MiB 档
+        // 106,456 根，实测每帧 3.7–4.7ms，稳态帧白付。
         if dirty.is_none()
             && !self.workspace.outline_stale
-            && roots.len() == self.workspace.outline_root_count
+            && self.document.root_count() == self.workspace.outline_root_count
         {
             return;
         }
+        let roots = self.document.root_blocks().to_vec();
+        self.outline_root_blocks_cloned
+            .set(self.outline_root_blocks_cloned.get() + roots.len() as u64);
         self.workspace.outline_root_count = roots.len();
         self.workspace.outline_stale = false;
 

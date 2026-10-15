@@ -249,6 +249,15 @@ pub struct Editor {
     /// 全部可见块加全部表格格子来问「有没有未落定的组合文本」，而调用点在每键的
     /// `schedule_autosave` 开头——这个数随文档长度长，就说明每键都在为一次守卫扫全篇。
     autosave_guard_block_reads: std::cell::Cell<u64>,
+    /// 计数器：大纲同步时整篇克隆了多少根块（`sync_workspace_outline`）。侧栏打开时
+    /// 这个函数每帧跑一次，而短路判断只需要根块数——克隆却要付每个 Entity 句柄的
+    /// 引用计数与 LeakDetector 登记（10 MiB 档 106,456 根，实测 3.7–4.7ms/帧）。
+    /// 它只该在大纲真的要重建时涨，不该随帧数涨。
+    outline_root_blocks_cloned: std::cell::Cell<u64>,
+    /// 计数器：状态栏找单块选区时按可见顺序读了多少个块实体。单块选区只可能在活动
+    /// 编辑目标那一块上，所以正常情况这个数必须是 0——它随文档长度长，就说明每帧
+    /// 都在为状态栏的选区文本扫全篇（10 MiB 档 159,683 块）。
+    status_bar_selection_block_reads: std::cell::Cell<u64>,
     /// 性能诊断：四类全文遍数的累计耗时（纳秒），只给基准用例与诊断读。
     source_serialization_nanos: std::cell::Cell<u64>,
     source_mapping_nanos: std::cell::Cell<u64>,
@@ -866,6 +875,8 @@ impl Editor {
             document_view_captures: std::cell::Cell::default(),
             reference_registry_rebuilds: std::cell::Cell::default(),
             autosave_guard_block_reads: std::cell::Cell::default(),
+            outline_root_blocks_cloned: std::cell::Cell::default(),
+            status_bar_selection_block_reads: std::cell::Cell::default(),
             prev_mounted_run: None,
             scroll_settle_frames: 0,
             cold_fill_frames: 0,

@@ -868,20 +868,42 @@ impl Editor {
             return wrote_chunk.then_some(text);
         }
 
-        // Fall back to a single block with a non-collapsed selection range.
-        for entity in self.single_block_selection_candidates() {
+        // 单块选区只可能在**活动编辑目标**那一块上：它是唯一持有 GPUI 焦点的块，
+        // 换焦点时上一条选区的残留会被收掉（源码分支的 `apply_selection_snapshot_*`
+        // 就专门做这件事）。旧实现从文档第一块起逐块找「第一个非空选区」：10 MiB 档
+        // 每帧读 159,683 个块实体，而且文档前部若留着残影，报给状态栏的是那一块的字。
+        let Some(active_id) = self.active_entity_id.or(self.pending_focus) else {
+            // 一个活动块都没有（还没建好、或焦点整个交还给外壳）：退回按可见顺序找。
+            return self.single_block_selection_text_in_visible_order(cx);
+        };
+        let Some(entity) = self.focusable_entity_by_id(active_id) else {
+            return self.single_block_selection_text_in_visible_order(cx);
+        };
+        let block = entity.read_untracked(cx);
+        if block.selected_range.is_empty() {
+            return None;
+        }
+        let display = block.display_text();
+        let range = clamp_range_to_char_boundaries(display, block.selected_range.clone());
+        (!range.is_empty()).then(|| display[range].to_owned())
+    }
+
+    /// 按可见顺序找第一个非空单块选区。只有拿不到活动块时才走这条 O(文档) 的路。
+    fn single_block_selection_text_in_visible_order(&self, cx: &App) -> Option<String> {
+        let mut scanned = 0u64;
+        let found = self.single_block_selection_candidates().find_map(|entity| {
+            scanned += 1;
             let block = entity.read_untracked(cx);
             if block.selected_range.is_empty() {
-                continue;
+                return None;
             }
             let display = block.display_text();
             let range = clamp_range_to_char_boundaries(display, block.selected_range.clone());
-            if !range.is_empty() {
-                return Some(display[range].to_owned());
-            }
-        }
-
-        None
+            (!range.is_empty()).then(|| display[range].to_owned())
+        });
+        self.status_bar_selection_block_reads
+            .set(self.status_bar_selection_block_reads.get() + scanned);
+        found
     }
 
     /// Returns the markdown text of the current selection, whether cross-block
