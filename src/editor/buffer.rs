@@ -95,10 +95,133 @@ pub(crate) struct AppliedEdit {
     pub(crate) new_range: Range<usize>,
 }
 
+/// 块的**前缀索引**：`byte_starts[i]` 是第 i 块的首字节偏移，`line_prefix[k]` 是前 k 块
+/// 里的换行总数（长度 = 块数 + 1，末项就是全篇换行数）。
+///
+/// 没有它时 `locate` / `line_start` / `line_count` / `slice` 都从第 0 块线性找。10 MiB
+/// 一档约 2,560 块，而一次整篇重投影要把每个根块的源码区间都换算一遍：实测一次 ⌘Z
+/// 在 10 MiB 档 **62 秒**，采样里绝大多数样本落在这些线性查找上
+/// （`TextBuffer::locate` / `line_start` / `slice` + `Chunk::line_count`）。
+#[derive(Clone, Default)]
+struct ChunkStarts {
+    byte_starts: Vec<usize>,
+    line_prefix: Vec<usize>,
+    /// 查询为了找到一块比较过几次。二分是 O(log 块数)；它随块数线性长就说明退回了
+    /// 从第 0 块开始找（闸门 `chunk_lookups_do_not_scan_every_chunk` 盯它）。
+    probes: std::cell::Cell<usize>,
+}
+
+impl ChunkStarts {
+    fn rebuild(chunks: &[Chunk]) -> Self {
+        let mut starts = Self {
+            byte_starts: Vec::with_capacity(chunks.len()),
+            line_prefix: Vec::with_capacity(chunks.len() + 1),
+            probes: std::cell::Cell::new(0),
+        };
+        starts.line_prefix.push(0);
+        let mut bytes = 0usize;
+        let mut lines = 0usize;
+        for chunk in chunks {
+            starts.byte_starts.push(bytes);
+            bytes += chunk.byte_len();
+            lines += chunk.line_count();
+            starts.line_prefix.push(lines);
+        }
+        starts
+    }
+
+    /// 从第 `from` 块起重建：编辑只动这一段的偏移与行号，前面的两项都没变。
+    fn rebuild_from(&mut self, chunks: &[Chunk], from: usize) {
+        let from = from.min(chunks.len());
+        self.byte_starts.truncate(from);
+        self.line_prefix.truncate(from + 1);
+        if self.line_prefix.is_empty() {
+            self.line_prefix.push(0);
+        }
+        let mut bytes = match self.byte_starts.last() {
+            Some(start) => start + chunks[from - 1].byte_len(),
+            None => 0,
+        };
+        let mut lines = self.line_prefix[self.line_prefix.len() - 1];
+        for chunk in &chunks[from..] {
+            self.byte_starts.push(bytes);
+            bytes += chunk.byte_len();
+            lines += chunk.line_count();
+            self.line_prefix.push(lines);
+        }
+    }
+
+    /// 在 `index` 后面插进一个块（切块用它）：两块的前缀各自记一笔，后面的项不用动
+    /// ——切块不改内容，总字节与总换行数都不变。
+    fn note_split(&mut self, index: usize, left_bytes: usize, left_lines: usize) {
+        let byte_start = self.byte_starts.get(index).copied().unwrap_or(0) + left_bytes;
+        self.byte_starts.insert(index + 1, byte_start);
+        let line_start = self.line_prefix.get(index).copied().unwrap_or(0) + left_lines;
+        self.line_prefix.insert(index + 1, line_start);
+    }
+
+    /// 第一个 `start >= needle` 的下标；同时记下比较了几次（闸门盯它别退回线性）。
+    fn lower_bound(&self, starts: &[usize], needle: usize) -> usize {
+        let (mut low, mut high) = (0usize, starts.len());
+        while low < high {
+            self.probes.set(self.probes.get() + 1);
+            let mid = low + (high - low) / 2;
+            if starts[mid] < needle {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low
+    }
+
+    /// 绝对字节偏移 →（块下标, 块内偏移）。与线性版同口径：落在块开头的偏移算给右边
+    /// 那块，越界钳到最后一块的块尾。
+    fn locate(&self, chunks: &[Chunk], offset: usize) -> (usize, usize) {
+        if chunks.is_empty() {
+            return (0, 0);
+        }
+        let index = self
+            .lower_bound(&self.byte_starts, offset.saturating_add(1))
+            .saturating_sub(1)
+            .min(chunks.len() - 1);
+        let local = offset
+            .saturating_sub(self.byte_starts[index])
+            .min(chunks[index].byte_len());
+        (index, local)
+    }
+
+    /// 第 `line` 行首个字节的偏移（`line` 越界返回 `total_bytes`）。与线性版的
+    /// `line <= seen + count` 等价：找第一块「到它为止的累计换行数 >= line」。
+    fn line_start(&self, chunks: &[Chunk], line: usize, total_bytes: usize) -> usize {
+        if line == 0 {
+            return 0;
+        }
+        let boundary = self.lower_bound(&self.line_prefix, line);
+        if boundary == 0 || boundary > chunks.len() {
+            return total_bytes;
+        }
+        let index = boundary - 1;
+        self.byte_starts[index]
+            + chunks[index].newline(line - self.line_prefix[index])
+            + 1
+    }
+
+    /// 取走并清零「查询比较过几次块」。
+    #[cfg(test)]
+    fn take_probes(&self) -> usize {
+        self.probes.replace(0)
+    }
+}
+
+
 /// 文档文本。所有编辑最终都落成一次 [`TextBuffer::edit`]。
 #[derive(Clone)]
 pub(crate) struct TextBuffer {
     chunks: Vec<Chunk>,
+    /// 块的前缀索引：`locate` / `line_start` / `line_count` / `slice` 都靠它，别再从
+    /// 第 0 块线性找（见 [`ChunkStarts`]）。
+    starts: ChunkStarts,
     /// 全文字节数。逐块加起来是 O(文本块数)，而 `byte_len` 在按根块走一圈的循环里
     /// 会被调到 O(根块数 × 文本块数)（10 MiB 文档一次按键 6 秒就是这么来的），
     /// 所以它必须是 O(1)：只有 [`edit`](Self::edit) 会动内容，跟着它记就行。
@@ -145,6 +268,7 @@ impl TextBuffer {
         let chunks = chunkify(text);
         let probed = text.len();
         Self {
+            starts: ChunkStarts::rebuild(&chunks),
             chunks,
             total_bytes: text.len(),
             shape: None,
@@ -267,10 +391,18 @@ impl TextBuffer {
     /// 取 `range` 指向的字节区间。
     pub(crate) fn slice(&self, range: Range<usize>) -> String {
         let mut out = String::with_capacity(range.end.saturating_sub(range.start));
-        let mut base = 0usize;
-        for chunk in &self.chunks {
+        if range.start >= range.end || self.chunks.is_empty() {
+            return out;
+        }
+        // 从起点那一块开始，不再从第 0 块扫；越过右端就停。
+        let (first, _) = self.starts.locate(&self.chunks, range.start);
+        let mut base = self.starts.byte_starts[first];
+        for chunk in &self.chunks[first..] {
             let end = base + chunk.byte_len();
-            if range.start < end && range.end > base {
+            if range.end <= base {
+                break;
+            }
+            if range.start < end {
                 let from = range.start.max(base) - base;
                 let to = range.end.min(end) - base;
                 out.push_str(&chunk.text[from..to]);
@@ -283,7 +415,14 @@ impl TextBuffer {
     /// 行数按 `split('\n')` 计：`"a\n"` 是 2 行（第二行为空），空文档是 1 行。
     /// 与编辑器状态栏、搜索结果的行号口径一致。
     pub(crate) fn line_count(&self) -> usize {
-        self.chunks.iter().map(Chunk::line_count).sum::<usize>() + 1
+        self.starts.line_prefix.last().copied().unwrap_or(0) + 1
+    }
+
+    /// 为了找一块扫过/比较过几个块：二分是 O(log 块数)，线性是 O(块数)。
+    /// 只有测试闸门读它（生产没有消费方）。
+    #[cfg(test)]
+    pub(crate) fn take_chunk_probes(&self) -> usize {
+        self.starts.take_probes()
     }
 
     /// 取走「建/维护换行索引读了多少字节」并清零。查询行号不该让它动一下。
@@ -299,19 +438,7 @@ impl TextBuffer {
 
     /// 第 `line` 行首个字节的偏移。`line` 越界时返回文末偏移。
     pub(crate) fn line_start(&self, line: usize) -> usize {
-        if line == 0 {
-            return 0;
-        }
-        let mut base = 0usize;
-        let mut seen = 0usize;
-        for chunk in &self.chunks {
-            if line <= seen + chunk.line_count() {
-                return base + chunk.newline(line - seen) + 1;
-            }
-            seen += chunk.line_count();
-            base += chunk.byte_len();
-        }
-        self.byte_len()
+        self.starts.line_start(&self.chunks, line, self.byte_len())
     }
 
     /// 第 `line` 行（0 基）的字节区间，**不含**行尾换行符。越界钳到文末。
@@ -444,6 +571,9 @@ impl TextBuffer {
         }
         self.total_bytes += text.len();
         self.total_bytes -= removed.len();
+        // 拼接与合并都从 `start - 1` 起动过块边界，前缀索引只重建这一段。
+        self.starts
+            .rebuild_from(&self.chunks, start.saturating_sub(1));
 
         AppliedEdit {
             removed,
@@ -467,24 +597,16 @@ impl TextBuffer {
             return index;
         }
         let right = self.chunks[index].split_at(local);
+        // 切完之后左半段就是 `self.chunks[index]`：它的块长与换行数正好是新块的两项前缀。
+        let left_lines = self.chunks[index].line_count();
+        self.starts.note_split(index, local, left_lines);
         self.chunks.insert(index + 1, right);
         index + 1
     }
 
     /// 绝对字节偏移 →（块下标, 块内偏移）。落在块开头的偏移算给右边那块。
     fn locate(&self, offset: usize) -> (usize, usize) {
-        let mut base = 0usize;
-        for (index, chunk) in self.chunks.iter().enumerate() {
-            let len = chunk.byte_len();
-            if offset < base + len {
-                return (index, offset - base);
-            }
-            base += len;
-        }
-        match self.chunks.len() {
-            0 => (0, 0),
-            n => (n - 1, self.chunks[n - 1].byte_len()),
-        }
+        self.starts.locate(&self.chunks, offset)
     }
 
     pub(crate) fn is_char_boundary(&self, offset: usize) -> bool {

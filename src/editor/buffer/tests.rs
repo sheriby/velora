@@ -463,3 +463,31 @@ fn matching_a_same_length_but_different_text_returns_false_instead_of_panicking(
     assert_eq!(other.len(), text.len());
     assert!(!buffer.matches_text(&other));
 }
+
+/// 按偏移与行号取字节不许从第 0 块线性找。
+///
+/// 10 MiB 一档约 2,560 块，而一次整篇重投影要把每个根块的源码区间都换算一遍：
+/// 实测一次 ⌘Z 在 10 MiB 档 **62 秒**，采样里绝大多数样本落在 `TextBuffer::locate` /
+/// `line_start` / `slice` 与 `Chunk::line_count` 的线性查找上。改成前缀索引 + 二分后，
+/// 查最后一行再取文末一段只该比较 O(log 块数) 次。
+#[test]
+fn chunk_lookups_do_not_scan_every_chunk() {
+    // 17 字节一行 × 65536 行 ≈ 1.1 MiB，按 4 KiB 上限切成 256 块以上。
+    let text = "0123456789abcdef\n".repeat(65536);
+    let buffer = TextBuffer::from_text(&text);
+    let chunks = buffer.chunks.len();
+    assert!(chunks >= 200, "夹具只有 {chunks} 块，量不出线性与二分的差别");
+    let total_lines = buffer.line_count();
+    assert_eq!(total_lines, 65537, "行数口径变了：{total_lines}");
+
+    buffer.take_chunk_probes();
+    let start = buffer.line_start(total_lines - 2);
+    let tail = buffer.slice(start..buffer.byte_len());
+    let probes = buffer.take_chunk_probes();
+
+    assert_eq!(tail, "0123456789abcdef\n", "取出来的不是在最后一行内容");
+    assert!(
+        probes <= 32,
+        "查最后一行 + 取文末一段比较了 {probes} 次块（共 {chunks} 块）：这是线性查找"
+    );
+}
