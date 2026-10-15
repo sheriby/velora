@@ -367,6 +367,12 @@ pub struct Editor {
     document_selection_active: std::rc::Rc<std::cell::Cell<bool>>,
     #[cfg(test)]
     selection_visual_visits: std::cell::Cell<usize>,
+    /// 计数器（测试探针）：重挂根块区间时为每根块比较了几条候选。整篇落笔要给
+    /// 每根块挂一次区间，线性查找是 O(根块数 × 条数)——实测一次 ⌘Z 在 10 MiB 档
+    /// 35 秒里绝大部分样本落在 `reattach_root_spans` 那次 `find` 上。建成一张表之后
+    /// 每根块只查一次，这个数只该随根块数长。
+    #[cfg(test)]
+    span_reattach_probes: std::cell::Cell<u64>,
     cross_block_drag: Option<CrossBlockDrag>,
     rendered_select_all_cycle: Option<RenderedSelectAllCycle>,
     /// Open top-level menu in the in-window fallback menu bar.
@@ -935,6 +941,8 @@ impl Editor {
             document_selection_active: std::rc::Rc::new(std::cell::Cell::new(false)),
             #[cfg(test)]
             selection_visual_visits: std::cell::Cell::new(0),
+            #[cfg(test)]
+            span_reattach_probes: std::cell::Cell::new(0),
             cross_block_drag: None,
             rendered_select_all_cycle: None,
             menu_bar_open: None,
@@ -2054,12 +2062,22 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let roots = self.document.root_blocks().to_vec();
+        // 逐根块在 `block_spans` 里线性找自己那一条是 O(根块数 × 条数)：10 MiB 档
+        // 106,456 根，采样里它占满一次整篇落笔（一次 ⌘Z 35 秒的绝大部分样本落在
+        // 这里那次 `find` 上）。先把它按 id 摊成一张表，再逐根块 O(1) 查。
+        let mut spans_by_block: std::collections::HashMap<EntityId, std::ops::Range<usize>> =
+            std::collections::HashMap::with_capacity(block_spans.len());
+        for (id, span) in block_spans {
+            spans_by_block.insert(*id, span.clone());
+        }
         for block in roots {
             block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
-            let span = block_spans
-                .iter()
-                .find(|(id, _)| *id == block.entity_id())
-                .map(|(_, span)| {
+            #[cfg(test)]
+            self.span_reattach_probes
+                .set(self.span_reattach_probes.get() + 1);
+            let span = spans_by_block
+                .get(&block.entity_id())
+                .map(|span| {
                     // 序列化那边记的区间右端含本块行尾的换行，写回约定不含。
                     let start = span.start.min(text.len());
                     let end = span.end.min(text.len());

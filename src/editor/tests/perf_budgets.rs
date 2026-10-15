@@ -1624,6 +1624,81 @@ async fn probe_attribute_ten_mib_markdown_with_outline_open(cx: &mut TestAppCont
     }
 }
 
+/// 整篇落笔给根块挂区间时，每根块只许查一次候选。
+///
+/// `reattach_root_spans` 原来对每根块在 `block_spans` 里线性 `find` 一遍，是
+/// O(根块数 × 条数)：10 MiB 档 106,456 根。采样里这一次 `find` 占满整篇落笔的
+/// 绝大部分样本——一次 ⌘Z 35 秒就是这么来的。摊成一张表之后每根块只查一次。
+#[gpui::test]
+async fn reattaching_root_spans_does_not_scan_candidates_per_block(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..400)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    cx.simulate_input("x");
+    redraw(cx);
+
+    let roots = editor.read_with(cx, |editor, _cx| editor.document.root_count() as u64);
+    assert!(roots > 100, "夹具只有 {roots} 根块，量不出线性与查表的差别");
+    editor.update(cx, |editor, _cx| editor.span_reattach_probes.set(0));
+    // 走一次整篇落笔（`resync_buffer_from_projection` → 重挂区间）：撤销自己会跳过
+    // 这一步，所以这里显式用 `mark_dirty` 那条路把它叫起来。
+    editor.update(cx, |editor, cx| {
+        let applied = editor.buffer.edit(0..0, "y");
+        editor.record_buffer_edit(applied);
+        editor.mark_dirty(cx);
+    });
+    redraw(cx);
+    let probes = editor.read_with(cx, |editor, _cx| editor.span_reattach_probes.get());
+    assert!(
+        probes > 0,
+        "这次操作没走重挂区间那一段，闸门测错了东西"
+    );
+    assert!(
+        probes <= roots * 2,
+        "给 {roots} 根块挂区间比较了 {probes} 次候选：这是逐根块扫一遍"
+    );
+}
+
+/// 一次 ⌘Z 不许再做一遍整篇落笔。
+///
+/// 撤销先重放逆操作、再 `rebuild_document_from_buffer`：块树整篇来自缓冲区，缓冲区就是
+/// 唯一事实源。`replay_history_group` 为此置了 `skip_next_resync`，于是收尾那次
+/// `mark_dirty` 不该再走「树 → 缓冲区」的整篇序列化（10 MiB 档那一位值 17.9 秒）。
+/// 这条闸门钉住那面跳过标志——有人把它挪掉，撤销就会多付一整篇序列化加逐根块重挂。
+#[gpui::test]
+async fn undo_does_not_fall_back_to_a_whole_document_resync(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..400)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n"))
+        .collect::<String>();
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+    for _ in 0..3 {
+        cx.simulate_input("x");
+        redraw(cx);
+    }
+
+    let before = whole_document_passes(&editor, cx);
+    let revision_before = editor.read_with(cx, |editor, _cx| editor.document_revision);
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    let after = whole_document_passes(&editor, cx);
+    let revision_after = editor.read_with(cx, |editor, _cx| editor.document_revision);
+    assert!(
+        revision_after > revision_before,
+        "撤销没落进编辑器，这条闸门测错了东西"
+    );
+    assert_eq!(
+        after.source_serializations - before.source_serializations
+            + (after.whole_document_renders - before.whole_document_renders),
+        0,
+        "一次 ⌘Z 做了整篇兜底重投影"
+    );
+}
+
 /// 稳态帧不许克隆整篇根块列表。
 ///
 /// 侧栏打开时 `sync_workspace_outline` 每帧跑一次，而它的短路判断只需要根块数：
