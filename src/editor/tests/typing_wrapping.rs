@@ -55,7 +55,7 @@ async fn typography_lists_share_a_hanging_indent_and_compact_spacing(cx: &mut Te
 }
 
 #[gpui::test]
-async fn typography_h1_h2_center_text_and_hit_testing_in_every_theme(cx: &mut TestAppContext) {
+async fn typography_heading_alignment_and_hit_testing_in_every_theme(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         Editor::from_markdown(
@@ -80,10 +80,10 @@ async fn typography_h1_h2_center_text_and_hit_testing_in_every_theme(cx: &mut Te
             for visible in editor.document.visible_blocks() {
                 let block = visible.entity.read(cx);
                 let expected = match block.kind() {
-                    BlockKind::Heading { level: 1 | 2 } => gpui::TextAlign::Center,
+                    BlockKind::Heading { level: 1 } => gpui::TextAlign::Center,
                     _ => gpui::TextAlign::Left,
                 };
-                // 标题原先始终沿用表格以外的左对齐，绘制与点击必须共用新对齐口径。
+                // 绘制与点击必须共用标题的实际对齐方式。
                 assert_eq!(block.text_align(), expected);
                 if !matches!(block.kind(), BlockKind::Heading { .. }) {
                     continue;
@@ -97,6 +97,8 @@ async fn typography_h1_h2_center_text_and_hit_testing_in_every_theme(cx: &mut Te
                             .abs()
                             <= px(1.0)
                     );
+                } else {
+                    assert!((left - bounds.left()).abs() <= px(1.0));
                 }
                 for (index, _) in block.display_text().char_indices() {
                     let position = line
@@ -106,7 +108,7 @@ async fn typography_h1_h2_center_text_and_hit_testing_in_every_theme(cx: &mut Te
                         left + position.x - px(0.1),
                         bounds.top() + block.last_line_height / 2.0,
                     ));
-                    assert_eq!(hit, index, "居中标题点击必须仍命中原文字节");
+                    assert_eq!(hit, index, "标题点击必须命中原文字节");
                 }
             }
         });
@@ -120,7 +122,7 @@ async fn typography_wrapped_heading_keeps_caret_selection_and_clicks_aligned(
 ) {
     init_editor_test_app(cx);
     let source = format!(
-        "## {}",
+        "# {}",
         "标题居中以后换行时光标和选区必须跟随文字的位置".repeat(3)
     );
     let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, source, None));

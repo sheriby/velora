@@ -177,6 +177,25 @@ async fn typing_destination_into_empty_link_parens_keeps_caret_inside(cx: &mut T
 }
 
 #[gpui::test]
+async fn h2_defaults_to_left_alignment_while_h1_stays_centered(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    for (level, expected) in [(2, gpui::TextAlign::Left), (1, gpui::TextAlign::Center)] {
+        let heading = cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::Heading { level },
+                    InlineTextTree::plain("标题"),
+                ),
+            )
+        });
+        heading.read_with(cx, |heading, _| {
+            assert_eq!(heading.text_align(), expected, "H{level} 的默认对齐");
+        });
+    }
+}
+
+#[gpui::test]
 async fn table_header_cells_center_by_default_and_respect_explicit_alignment(
     cx: &mut TestAppContext,
 ) {
