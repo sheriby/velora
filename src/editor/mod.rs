@@ -1249,7 +1249,19 @@ impl Editor {
                 } else {
                     raw_end
                 };
-                start..end.max(start)
+                // 区间的产地就在这里：两端必须是字符边界。落到多字节字符中间时，
+                // 后面每个拿它去 `buffer.slice` 的消费者都会 panic（实测崩在
+                // `history_row_signature`，偏移 718 落在中文 '第' 的第二个字节上）。
+                // 断言装在这一处，才能区分是「重挂区间那条 attach」还是「平移那条
+                // `shift_source_spans_after`」把区间弄坏的——消费者那边只能看到症状。
+                let span = start..end.max(start);
+                debug_assert!(
+                    buffer.is_char_boundary(span.start) && buffer.is_char_boundary(span.end),
+                    "根块区间 {span:?} 的端点落在多字节字符中间（line_base {line_base}、\
+                     行区间 {span:?}、全文 {total} 字节）",
+                    span = span,
+                );
+                span
             })
             .collect()
     }
