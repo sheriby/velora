@@ -328,15 +328,23 @@ fn cases() -> Vec<Case> {
                 let Some(editor) = editor_from_fixture(input, cx) else {
                     return None;
                 };
-                let Some(block) = first_block(&editor, cx) else {
+                if first_block(&editor, cx).is_none() {
                     return None;
-                };
+                }
                 let bytes = input.markdown.len() as u64;
                 let body: Box<Body> = Box::new(move |cx, count| {
                     // 一次 ⌘Z = 重放这一笔改动 + `rebuild_document_from_buffer`
                     // + `mark_dirty`（整篇兜底重投影）。两个单价都另有用例，这一条
                     // 量的是用户真正按下去的那一下。
+                    //
+                    // 每轮**重新取**首块：撤销会把整棵树换成新实体，攥着旧句柄打字
+                    // 打的是一个已经不在文档里的块（写回必然失败，于是每键退回整篇
+                    // 兜底重投影——实测 10 MiB 档把这一条从 7 秒抬到 16 秒）。用户
+                    // 打字打的是当前焦点里那个块，这里照同一件事来。
                     for _ in 0..count {
+                        let Some(block) = first_block(&editor, cx) else {
+                            break;
+                        };
                         block.update(cx, |block, cx| {
                             block.replace_text_in_visible_range(0..0, "x", None, false, cx);
                         });
@@ -782,6 +790,21 @@ fn document_state(editor: &Entity<Editor>, cx: &mut TestAppContext) -> String {
     })
 }
 
+/// 把两次快照里有变化的计数器打出来。
+fn print_counter_delta(
+    label: &str,
+    before: &[(&'static str, u64)],
+    after: &[(&'static str, u64)],
+) {
+    println!("\n-- {label}");
+    for ((name, from), (_, to)) in before.iter().zip(after) {
+        let delta = to.wrapping_sub(*from);
+        if delta != 0 {
+            println!("{name:<26}{delta:>14}");
+        }
+    }
+}
+
 /// 一键前后要比的计数器：`(名字, 当前值)`。
 ///
 /// 与 `bench_suite` 的分工：那一套报「一次整篇工作值多少毫秒」，这一份报「一键里
@@ -806,6 +829,8 @@ fn counter_snapshot(editor: &Entity<Editor>, cx: &mut TestAppContext) -> Vec<(&'
             ("行高缓存清空", editor.row_stride_cache_clears.get()),
             ("光标滚动入视", editor.caret_scroll_applications.get()),
             ("可见块克隆", editor.document.visible_blocks_cloned.get()),
+            ("重挂区间候选比较", editor.span_reattach_probes.get()),
+            ("投影重排耗时ns", editor.document.snapshot_nanos.get()),
             ("大纲根块克隆", editor.outline_root_blocks_cloned.get()),
             ("状态栏选区读块", editor.status_bar_selection_block_reads.get()),
             ("投影重排", editor.document.snapshot_rebuilds.get()),
@@ -844,9 +869,6 @@ fn probe_keystroke_stage_split(cx: &mut TestAppContext) {
     let input = Input { size, markdown };
     let Some(editor) = editor_from_fixture(&input, cx) else {
         panic!("{size} 夹具建不出编辑器");
-    };
-    let Some(block) = first_block(&editor, cx) else {
-        panic!("{size} 夹具没有首块");
     };
     println!("\n建好时：{}", document_state(&editor, cx));
     // 夹具打开是懒加载的：只建了首块，其余挂在待续建尾巴上。不补建就量，量到的是
@@ -900,3 +922,73 @@ fn probe_keystroke_stage_split(cx: &mut TestAppContext) {
         println!("{name:<26}{:>14.3}", (to - from) as f64 / keys as f64);
     }
 }
+
+/// 诊断探针：一次 ⌘Z 在各计数器上留下什么。
+///
+/// 用来回答一个具体问题：10 MiB 档撤销里「整篇落笔 → 重挂根块区间」那一段到底走不走
+/// （`span_reattach_probes` 是否涨）。走的话，`reattach_root_spans` 的查表化就是撤销
+/// 提速的主因之一；不走的话，那一刀的收益得另找解释。
+///
+/// ```bash
+/// VELORA_PROBE_SIZE=ten-mib cargo test --bin velora probe_undo_stage_counters \
+///   -- --ignored --nocapture
+/// ```
+#[gpui::test]
+#[ignore = "诊断探针：手动跑，看一次撤销在各计数器上的增量；CI 按 perf_bench 前缀整体跳过"]
+async fn probe_undo_stage_counters(cx: &mut TestAppContext) {
+    let requested = env_value("VELORA_PROBE_SIZE").unwrap_or_else(|| "ten-mib".to_string());
+    let Some(index) = SIZES.iter().position(|candidate| *candidate == requested) else {
+        panic!("未知档位 `{requested}`，可选：{}", SIZES.join(", "));
+    };
+    let size = SIZES[index];
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures/perf")
+        .join(format!("{size}.md"));
+    let markdown = fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "缺夹具 {}：先跑 `node scripts/generate-fixtures.mjs fixtures/perf`（{error}）",
+            path.display()
+        )
+    });
+    let input = Input { size, markdown };
+    let Some(editor) = editor_from_fixture(&input, cx) else {
+        panic!("{size} 夹具建不出编辑器");
+    };
+    let Some(block) = first_block(&editor, cx) else {
+        panic!("{size} 夹具没有首块");
+    };
+
+    // 连做几轮「改一笔 → 撤销」：只做一轮看不出「第 N 次撤销更贵」那类累积效应
+    // （实测套件里那条中位 17.7s 就比单跑贵得多）。
+    let cycles: usize = env_value("VELORA_PROBE_CYCLES")
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(3);
+    println!("\n== 撤销分轮（{size}，{cycles} 轮）");
+    for cycle in 0..cycles {
+        // 同上：撤销会换掉整棵树，每轮都要拿当前那一棵里的首块。
+        let Some(block) = first_block(&editor, cx) else {
+            panic!("第 {cycle} 轮取不到首块");
+        };
+        let before_type = counter_snapshot(&editor, cx);
+        let typed = Instant::now();
+        block.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+        });
+        cx.run_until_parked();
+        let typed = typed.elapsed();
+        let after_type = counter_snapshot(&editor, cx);
+        print_counter_delta(&format!("第 {cycle} 轮打字"), &before_type, &after_type);
+        let before = counter_snapshot(&editor, cx);
+        let started = Instant::now();
+        editor.update(cx, |editor, cx| {
+            editor.undo_document(cx);
+        });
+        cx.run_until_parked();
+        let elapsed = started.elapsed();
+        let after = counter_snapshot(&editor, cx);
+
+        println!("\n-- 第 {cycle} 轮：打字 {typed:?}｜撤销 {elapsed:?}");
+        print_counter_delta(&format!("第 {cycle} 轮撤销"), &before, &after);
+    }
+}
+
