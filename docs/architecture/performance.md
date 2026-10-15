@@ -97,6 +97,8 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 - `status_bar_finds_the_selection_on_the_active_block_only` — 状态栏找选区文本只读活动块，且不把别的块上的残影选区报出来。
 - `chunk_lookups_do_not_scan_every_chunk` — 按偏移/行号取字节不许从第 0 块线性找（`ChunkStarts::probes` ≤ 32 次比较 / 272 块）。
 - `reattaching_root_spans_does_not_scan_candidates_per_block`、`undo_does_not_fall_back_to_a_whole_document_resync` — 整篇落笔给根块挂区间是每根块查一次表；撤销收尾不许再序列化整篇。
+- `typing_a_link_paragraph_does_not_rebuild_the_reference_registry` — 段落里带 `[文字](链接)` 或 `a < b` 时打字不许触发整篇引用注册表重建；正控是改定义行必须触发。
+- `a_second_display_render_does_not_read_the_disk_again` — 同一条 mermaid 的第二次渲染一次盘都不许读（`TEST_CACHE_READS`）。
 - `autosave_does_not_capture_the_reading_position` — 自动保存的那一下只同步内容与脏位，
   不许采整篇阅读现场；同时守住「换标签必须采一次」，防止把该记的现场一并删掉。
 - `the_incremental_outline_matches_a_whole_document_scan`（差分 + 钉住"全程一次整篇重扫都不许发生"——只比结果的话退回整篇照样一致，等于自证）、`the_outline_is_only_built_for_a_reader`、`outline_panel_renders_only_the_rows_in_the_viewport`。
@@ -112,7 +114,7 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 
 ## 4. 成本结构：什么已经收敛，什么还随文档长
 
-**与文档大小无关（已收敛）**：稳态帧（不打字不重算任何东西）· 打字后的整篇序列化（0 次）· 行号查询（只二分每块的换行偏移表）· 大纲（按根块增量，没人看就不算）· 行计划（打字不重排，缓存键是结构版本不是文档修订）· 区间平移（树侧一趟循环）· 搜索高亮（只为有命中的根块建映射）· shape（跨帧备忘）· 撤销内存（存增量）。
+**与文档大小无关（已收敛）**：稳态帧（不打字不重算任何东西）· 打字后的整篇序列化（0 次）· 引用注册表重建（只在改动块的**源码字节**出现 `]:` 或 `[^` 时才走：带 `[文字](链接)` 的段落、`a < b` 这类正文不再触发；10 MiB 档它一次 766ms）· mermaid 重绘（进程内缓存命中，一次盘都不读）· 行号查询（只二分每块的换行偏移表）· 大纲（按根块增量，没人看就不算）· 行计划（打字不重排，缓存键是结构版本不是文档修订）· 区间平移（树侧一趟循环）· 搜索高亮（只为有命中的根块建映射）· shape（跨帧备忘）· 撤销内存（存增量）。
 
 **仍与文档大小同向**：
 
