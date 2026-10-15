@@ -319,16 +319,13 @@ pub(crate) fn mermaid_display_cache_key(source: &str, scale: f32) -> String {
 
 /// 测试探针：`read_svg_cache` 读了几次盘。内存缓存命中那条路必须一次都不读。
 #[cfg(test)]
-static TEST_CACHE_READS: OnceLock<Mutex<usize>> = OnceLock::new();
+thread_local! {
+    static TEST_CACHE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 fn note_cache_read() {
-    if let Ok(mut reads) = TEST_CACHE_READS
-        .get_or_init(|| Mutex::new(0))
-        .lock()
-    {
-        *reads += 1;
-    }
+    TEST_CACHE_READS.with(|reads| reads.set(reads.get() + 1));
 }
 
 /// 读 SVG 缓存：缺失或读不出按未命中；半截文件（无闭合 `</svg>`，断电/
@@ -993,17 +990,24 @@ flowchart TD
     }
 
     fn cache_reads() -> usize {
-        *TEST_CACHE_READS
-            .get_or_init(|| Mutex::new(0))
-            .lock()
-            .expect("cache reads mutex poisoned")
+        TEST_CACHE_READS.with(std::cell::Cell::get)
     }
 
     fn reset_cache_reads() {
-        *TEST_CACHE_READS
-            .get_or_init(|| Mutex::new(0))
-            .lock()
-            .expect("cache reads mutex poisoned") = 0;
+        TEST_CACHE_READS.with(|reads| reads.set(0));
+    }
+
+    #[test]
+    fn cache_read_probe_is_isolated_between_parallel_render_threads() {
+        reset_cache_reads();
+        let other_reads = std::thread::spawn(|| {
+            super::note_cache_read();
+            cache_reads()
+        })
+        .join()
+        .expect("渲染线程正常结束");
+        assert_eq!(other_reads, 1, "计数器必须记录所在渲染线程的读盘");
+        assert_eq!(cache_reads(), 0, "其他渲染线程不能污染本线程的读盘计数");
     }
 
     /// 第二次渲染同一条公式/图必须走内存：磁盘缓存命中也要付 `create_dir_all` 加两次
