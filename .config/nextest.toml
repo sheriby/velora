@@ -5,13 +5,16 @@
 #
 # 仓库里的两族 #[ignore] 语义不同，别混：
 #   慢用例（理由串以“慢用例”开头）：>1s 但断言是确定性的，本地默认跳过、CI 跑。
-#   墙钟预算闸门（perf_budgets 全族、search_bench、buffer 与 search_perf 各一条、
-#   loading_chunks 的两条手动探针）：量真实耗时，CI 机器慢会假红，只有本地手动跑。
+#   墙钟预算闸门（perf_budgets 全族、perf_bench 的实测套件、search_bench、buffer
+#   与 search_perf 各一条、loading_chunks 的两条手动探针）：量真实耗时，CI 机器慢会
+#   假红，只有本地手动跑。
 #
 # 本地只跑慢用例族（20 条）：
 #   cargo nextest run --bin velora --run-ignored ignored-only -E \
-#     'not test(/perf_budgets|search_bench|loading_chunks::manual|costs_nothing_proportional|searching_a_ten_mib_document_stays_within_budget/)'
-# 本地只跑墙钟闸门：把上面的 not test(...) 换成 test(/perf_budgets|search_bench/)。
+#     'not test(/perf_budgets|perf_bench|search_bench|loading_chunks::manual|costs_nothing_proportional|searching_a_ten_mib_document_stays_within_budget/)'
+# 本地只跑墙钟闸门：把上面的 not test(...) 换成 test(/perf_budgets|perf_bench|search_bench/)。
+# 实测套件（perf_bench）要与基线比，只在单线程下跑才稳：
+#   cargo nextest run --bin velora --run-ignored ignored-only -E 'test(/perf_bench/)' -- --test-threads=1
 
 [profile.default]
 # 单个用例跑过 1 秒即标 SLOW，并在输出里周期性报「still running」。只标记、

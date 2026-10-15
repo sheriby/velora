@@ -60,12 +60,14 @@ jobs:
       - name: Test (Slow Cases)
         # 慢用例（>1s，断言全部是确定性的）本地默认 #[ignore]，CI 跑：CI 机器
         # 不看护速度，但看护正确性。这里必须继续排除墙钟族——CI 机器慢、并发
-        # 抢 CPU，量时间的断言会假红。按 AGENTS.md §3 的约定，墙钟族只有四处
-        # （perf_budgets 全族、search_bench、buffer 与 search_perf 各一条、
-        # loading_chunks 的两条手动探针）；别处新增墙钟闸门时要在这里补 --skip。
+        # 抢 CPU，量时间的断言会假红。按 AGENTS.md §3 的约定，墙钟族只有五处
+        # （perf_budgets 全族、perf_bench 的实测套件、search_bench、buffer 与
+        # search_perf 各一条、loading_chunks 的两条手动探针）；别处新增墙钟闸门时
+        # 要在这里补 --skip。
         run: |
           cargo test --locked --bin velora -- --ignored \
             --skip perf_budgets \
+            --skip perf_bench \
             --skip search_bench \
             --skip "loading_chunks::manual" \
             --skip an_edit_on_an_eight_mib_buffer_costs_nothing_proportional_to_the_text \

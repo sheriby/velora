@@ -29,6 +29,7 @@ mod knowledge_history;
 mod knowledge_recovery;
 mod loading_chunks;
 mod long_lines;
+mod perf_bench;
 mod perf_budgets;
 mod palette_commands;
 mod paragraph_kind;
