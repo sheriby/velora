@@ -531,6 +531,58 @@ async fn per_keystroke_document_passes_stay_bounded(cx: &mut TestAppContext) {
     );
 }
 
+/// 一次按键不许克隆整篇可见块列表。
+///
+/// `on_block_events` 原来对每一次块事件都 `flatten_visible_blocks()`，而文本改动只需要
+/// 比「可见序列有没有变」。克隆一块要付一次 Entity 引用计数与 LeakDetector 登记：
+/// 10 MiB 档 159,683 块克隆一次实测 17ms，占满一次按键（`probe_keystroke_stage_split`
+/// 归因探针的块侧耗时从 17.4ms 降到 3.7ms 就是这一处）。
+#[gpui::test]
+async fn typing_does_not_clone_the_visible_block_list(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..400)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
+    redraw(cx);
+
+    // 计数器本身要是活的：直接克隆一次必须留下数，否则下面的 0 断言是死的。
+    let visible = editor.read_with(cx, |editor, _| editor.document.visible_blocks().len() as u64);
+    assert!(visible > 0, "夹具没有可见块");
+    let before = whole_document_passes(&editor, cx);
+    editor.update(cx, |editor, _cx| {
+        let cloned = editor.document.flatten_visible_blocks();
+        assert_eq!(cloned.len() as u64, visible, "克隆出来的块数对不上");
+    });
+    let after = whole_document_passes(&editor, cx);
+    assert_eq!(
+        after.visible_blocks_cloned - before.visible_blocks_cloned,
+        visible,
+        "克隆可见列表没进计数器：这条闸门量不到东西"
+    );
+
+    for _ in 0..3 {
+        let before = whole_document_passes(&editor, cx);
+        let revision_before = editor.read_with(cx, |editor, _| editor.document_revision);
+        cx.simulate_input("x");
+        redraw(cx);
+        let revision_after = editor.read_with(cx, |editor, _| editor.document_revision);
+        assert_eq!(
+            revision_after,
+            revision_before.wrapping_add(1),
+            "按键没落进编辑器，这条闸门测错了东西"
+        );
+        let after = whole_document_passes(&editor, cx);
+        assert_eq!(
+            after.visible_blocks_cloned - before.visible_blocks_cloned,
+            0,
+            "一次按键克隆了 {} 块可见列表",
+            after.visible_blocks_cloned - before.visible_blocks_cloned,
+        );
+    }
+}
+
 #[gpui::test]
 async fn ui_zoom_scales_document_text(cx: &mut TestAppContext) {
     // 偏好设置「界面缩放」/ ⌘+/⌘- 必须作用到正文块文本：此前正文块渲染自己拼
@@ -1190,6 +1242,7 @@ struct WholeDocumentPasses {
     word_count_scans: u64,
     source_serializations: u64,
     whole_document_renders: u64,
+    visible_blocks_cloned: u64,
 }
 
 fn whole_document_passes(
@@ -1209,6 +1262,7 @@ fn whole_document_passes(
         word_count_scans: editor.word_count_scans.get(),
         source_serializations: editor.source_serializations.get(),
         whole_document_renders: editor.document.whole_document_renders.get(),
+        visible_blocks_cloned: editor.document.visible_blocks_cloned.get(),
     })
 }
 

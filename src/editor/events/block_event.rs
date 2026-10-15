@@ -66,6 +66,16 @@ impl Editor {
             self.clear_cross_block_selection(cx);
         }
 
+        // 文本改动走自己的那条：它只需要「可见序列有没有变」，而整篇克隆要付每个
+        // Entity 句柄的引用计数与 LeakDetector 登记——10 MiB 档 159,683 块克隆一次
+        // 实测 17ms，占满一次按键。身份序列是 `Copy` 的 `EntityId`，比它便宜两个
+        // 数量级；「前一根/后一根实体」只有结构事件要。
+        if matches!(event, BlockEvent::Changed) {
+            let visible_ids_before = self.document.visible_block_ids();
+            self.on_block_changed(block, &visible_ids_before, cx);
+            return;
+        }
+
         // 结构事件要按区间写回：先记下根块布局，变更后再算「哪几根被换成了哪几根」。
         let roots_before = matches!(
             event,
@@ -87,88 +97,9 @@ impl Editor {
             .unwrap_or(0);
 
         match event {
-            BlockEvent::Changed => {
-                // 用户改了文档：换投影交还的阅读位置按旧字节记账，一律作废。
-                self.cancel_pending_view_mode_scroll();
-                let kind_changed = self.writes_through_the_buffer() && {
-                    let block = block.read(cx);
-                    block.record.kind != block.record.source_kind
-                };
-                // 模型直改（重命名、补全、程序化编辑）同样会走到 Changed：它们在改
-                // 用户文档，撤销必须覆盖。没有开着的组就补开一个——delta 撤销栈的
-                // 前提是每一次缓冲区写入都被记账，这条不变式在这里收口（组已开时
-                // prepare 是空操作，打字的 Coalescible 组不受影响）。
-                self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
-                // [[ 补全跟随编辑刷新（依据本次编辑后的文本与光标）。
-                self.update_wikilink_completion_for_block(&block, cx);
-                // `\` 公式补全同上：数学块/行内公式里的反斜杠命令。
-                self.update_latex_completion_for_block(&block, cx);
-                // 文本形状（`[TOC]`）变了就当场刷新快照里那一条元数据：整棵同步
-                // 只在结构变化时重跑，这条编辑不改结构。
-                self.document.refresh_row_spacing_for(block.entity_id(), cx);
-
-                let should_restart_numbered_list = block.update(cx, |block, _cx| {
-                    block.take_numbered_list_restart_requested()
-                });
-                if should_restart_numbered_list {
-                    self.insert_list_group_separator_before(block.entity_id(), cx);
-                }
-
-                let callout_focus_target = self.materialize_empty_callout_shortcut(&block, cx);
-
-                let should_normalize_quote =
-                    block.update(cx, |block, _cx| {
-                        let requested = block.take_quote_reparse_requested();
-                        requested && block.marked_range.is_none()
-                    }) || Self::rendered_quote_text_requires_reparse(&block, cx);
-
-                self.refresh_rendered_quote_metadata_if_needed(&block, cx);
-                let needs_reference_refresh = !should_normalize_quote
-                    && self.changed_block_needs_runtime_context_refresh(&block, cx);
-                if should_normalize_quote {
-                    self.normalize_rendered_quote_structure(&block, cx);
-                }
-                if let Some(focus_id) = callout_focus_target {
-                    self.focus_block(focus_id);
-                }
-                // 文本改动按区间写回缓冲区，未编辑的块因此保住原有字节。前提是这次
-                // 事件没动结构：根块序列一变，区间就整体错位，只能退回整篇重投影。
-                let structure_unchanged = {
-                    let after = self.document.visible_blocks();
-                    after.len() == visible_before.len()
-                        && after
-                            .iter()
-                            .zip(&visible_before)
-                            .all(|(a, b)| a.entity.entity_id() == b.entity.entity_id())
-                };
-                // 拆块的切分不落笔：光标之后那截是下一个块的源码，写出去就是「先删一遍
-                // 再写回一遍」——本块的区间塌成零宽，紧随的结构写回就没区间可用，只能
-                // 整篇重投影。留着区间，那一步才只改这一段。
-                let splitting = block.read(cx).split_truncation_pending();
-                if splitting {
-                    self.mark_dirty_written_back(cx);
-                } else if structure_unchanged
-                    && ((kind_changed && self.write_back_changed_block_kind(&block, cx))
-                        || (!kind_changed && self.write_back_visible_insertion(&block, cx))
-                        || self.write_back_block_source(&block, cx))
-                {
-                    self.mark_dirty_written_back(cx);
-                } else {
-                    self.mark_dirty(cx);
-                }
-                // markdown 源码视图：这次编辑若开/关了围栏、公式块，后续分块
-                // 的接缝状态要级联重串（一致时只多一次实体读；走了 mark_dirty
-                // 的整篇重投影会自己重串，这里立刻收敛为一次读）。
-                self.cascade_source_fence_states_after(block.entity_id(), cx);
-                // 引用定义要从缓冲区重解析，就得等这一笔落完：早一步读到的是改之前
-                // 的定义行——改 `[asset]:` 的地址，图片还指着旧地址
-                // （`editing_image_reference_definition_refreshes_existing_image`）。
-                if needs_reference_refresh {
-                    self.rebuild_image_runtimes(cx);
-                }
-                self.request_active_block_scroll_into_view(cx);
-                self.finalize_pending_undo_capture_at_end_of_batch(cx);
-            }
+            // 文本改动在函数开头就转给 `on_block_changed` 了：这个空分支只为
+            // 让 match 保持穷尽，好让「结构事件」那一组一眼可数。
+            BlockEvent::Changed => {}
             BlockEvent::RequestToggleFold => {
                 let folding_on = !block.read(cx).folded;
                 block.update(cx, |block, _cx| block.folded = folding_on);
@@ -1061,5 +992,98 @@ impl Editor {
             BlockEvent::PrepareUndo { .. } => {}
             BlockEvent::CompositionChanged => {}
         }
+    }
+
+    /// 一次文本改动的落笔：能按区间写回就写回，结构没变就不重投影。
+    ///
+    /// 它与结构事件分开走，因为这里只需要「可见序列有没有变」：整篇克隆
+    /// `VisibleBlock` 要付每个 Entity 句柄的引用计数与 LeakDetector 登记，
+    /// 10 MiB 档一次 17ms，占满一次按键。
+    fn on_block_changed(
+        &mut self,
+        block: Entity<crate::editor::Block>,
+        visible_ids_before: &[EntityId],
+        cx: &mut Context<Self>,
+    ) {
+        // 用户改了文档：换投影交还的阅读位置按旧字节记账，一律作废。
+        self.cancel_pending_view_mode_scroll();
+        let kind_changed = self.writes_through_the_buffer() && {
+            let block = block.read(cx);
+            block.record.kind != block.record.source_kind
+        };
+        // 模型直改（重命名、补全、程序化编辑）同样会走到 Changed：它们在改
+        // 用户文档，撤销必须覆盖。没有开着的组就补开一个——delta 撤销栈的
+        // 前提是每一次缓冲区写入都被记账，这条不变式在这里收口（组已开时
+        // prepare 是空操作，打字的 Coalescible 组不受影响）。
+        self.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        // [[ 补全跟随编辑刷新（依据本次编辑后的文本与光标）。
+        self.update_wikilink_completion_for_block(&block, cx);
+        // `\` 公式补全同上：数学块/行内公式里的反斜杠命令。
+        self.update_latex_completion_for_block(&block, cx);
+        // 文本形状（`[TOC]`）变了就当场刷新快照里那一条元数据：整棵同步
+        // 只在结构变化时重跑，这条编辑不改结构。
+        self.document.refresh_row_spacing_for(block.entity_id(), cx);
+
+        let should_restart_numbered_list = block.update(cx, |block, _cx| {
+            block.take_numbered_list_restart_requested()
+        });
+        if should_restart_numbered_list {
+            self.insert_list_group_separator_before(block.entity_id(), cx);
+        }
+
+        let callout_focus_target = self.materialize_empty_callout_shortcut(&block, cx);
+
+        let should_normalize_quote =
+            block.update(cx, |block, _cx| {
+                let requested = block.take_quote_reparse_requested();
+                requested && block.marked_range.is_none()
+            }) || Self::rendered_quote_text_requires_reparse(&block, cx);
+
+        self.refresh_rendered_quote_metadata_if_needed(&block, cx);
+        let needs_reference_refresh = !should_normalize_quote
+            && self.changed_block_needs_runtime_context_refresh(&block, cx);
+        if should_normalize_quote {
+            self.normalize_rendered_quote_structure(&block, cx);
+        }
+        if let Some(focus_id) = callout_focus_target {
+            self.focus_block(focus_id);
+        }
+        // 文本改动按区间写回缓冲区，未编辑的块因此保住原有字节。前提是这次
+        // 事件没动结构：根块序列一变，区间就整体错位，只能退回整篇重投影。
+    let structure_unchanged = {
+        let after = self.document.visible_blocks();
+        after.len() == visible_ids_before.len()
+        && after
+            .iter()
+            .zip(visible_ids_before)
+            .all(|(visible, entity_id)| visible.entity.entity_id() == *entity_id)
+    };
+        // 拆块的切分不落笔：光标之后那截是下一个块的源码，写出去就是「先删一遍
+        // 再写回一遍」——本块的区间塌成零宽，紧随的结构写回就没区间可用，只能
+        // 整篇重投影。留着区间，那一步才只改这一段。
+        let splitting = block.read(cx).split_truncation_pending();
+        if splitting {
+            self.mark_dirty_written_back(cx);
+        } else if structure_unchanged
+            && ((kind_changed && self.write_back_changed_block_kind(&block, cx))
+                || (!kind_changed && self.write_back_visible_insertion(&block, cx))
+                || self.write_back_block_source(&block, cx))
+        {
+            self.mark_dirty_written_back(cx);
+        } else {
+            self.mark_dirty(cx);
+        }
+        // markdown 源码视图：这次编辑若开/关了围栏、公式块，后续分块
+        // 的接缝状态要级联重串（一致时只多一次实体读；走了 mark_dirty
+        // 的整篇重投影会自己重串，这里立刻收敛为一次读）。
+        self.cascade_source_fence_states_after(block.entity_id(), cx);
+        // 引用定义要从缓冲区重解析，就得等这一笔落完：早一步读到的是改之前
+        // 的定义行——改 `[asset]:` 的地址，图片还指着旧地址
+        // （`editing_image_reference_definition_refreshes_existing_image`）。
+        if needs_reference_refresh {
+            self.rebuild_image_runtimes(cx);
+        }
+        self.request_active_block_scroll_into_view(cx);
+        self.finalize_pending_undo_capture_at_end_of_batch(cx);
     }
 }

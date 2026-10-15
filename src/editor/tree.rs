@@ -310,6 +310,15 @@ impl DocumentTree {
         self.snapshot.visible.clone()
     }
 
+    /// 可见列表的身份序列（`EntityId` 是 `Copy`）。与 [`Self::flatten_visible_blocks`]
+    /// 相比，克隆与比较都不碰引用计数，10 MiB 档便宜两个数量级。
+    pub(super) fn visible_block_ids(&self) -> Vec<EntityId> {
+        self.snapshot
+            .visible
+            .iter()
+            .map(|visible| visible.entity.entity_id())
+            .collect()
+    }
 
 
     pub(super) fn focused_block_entity_id(&self, window: &Window, cx: &App) -> Option<EntityId> {
