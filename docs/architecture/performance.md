@@ -158,6 +158,15 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
       （部分重投影只重挂新根，旧根的区间靠 `shift_source_spans_after` 平移）。
       下一版先写一条差分测试：「任意编辑序列之后，所有根的区间都必须落在字符边界上、
       且互不重叠、按文档顺序单调」，再动增量。
+      **闸门已就位**（`root_spans_stay_on_char_boundaries_across_edits_and_undo`）：
+      今天的产品路径（撤销走整篇重建）上这条不变式一路成立；把增量接回去再跑，它直接
+      崩在 `slice`（仍是 '第' 中间，偏移 718），也就是说 **`is_char_boundary` 与 `slice`
+      对同一偏移给出了不同答案**这件事复现了。嫌疑落在 `starts.byte_starts` 上：
+      `locate` 用 `offset - byte_starts[index]` 判边界，`slice` 用同一个 `byte_starts[first]`
+      算块内偏移——两者用的是同一张表，答案却不同，那只能是**索引漂移**（某个增量更新
+      路径没把 `byte_starts` 与 `chunks` 同步），而不是偏移本身。下一版从这里查：
+      在 `edit` / `split_at` / `note_split` / `rebuild_from` 之后断言
+      `byte_starts` 与「逐块累加的块长」逐项相等（一条纯断言，几行）。
    改动本身（判定改动字节范围 → 落在一根块里就只重投影那一根，否则退回整篇）已经写出
    来过，卡的是上面两处；谁接着做，先给 `reproject_root_region` 补一条「区域与解析边界
    对不上时怎么办」的判据，再谈接撤销。
