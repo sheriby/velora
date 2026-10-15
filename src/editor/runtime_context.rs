@@ -18,9 +18,18 @@ impl Editor {
     /// 一个带 `[文字](链接)` 的段落、一句 `a < b` 都会让每键触发一次整篇注册表重建
     /// （10 MiB 档一次 766ms）。收窄之后，定义行与脚注引用该动的仍然会动。
     fn block_may_change_document_references(&self, block: &Entity<Block>, cx: &App) -> bool {
+        // 区间不可信时（端点落在多字节字符中间、或越过缓冲区末尾）不要拿它去切片：
+        // 那会让整篇注册表重建当场 panic，而这里只是个**屏幕**——退回行内树那份保守
+        // 口径就够了（多重建一次，换的是不崩）。区间本身的问题由
+        // `root_spans_stay_on_char_boundaries_across_edits_and_undo` 那条不变式闸门报。
         let source = self
             .document
             .source_span_of(block.entity_id())
+            .filter(|span| {
+                span.end <= self.buffer.byte_len()
+                    && self.buffer.is_char_boundary(span.start)
+                    && self.buffer.is_char_boundary(span.end)
+            })
             .map(|span| self.buffer.slice(span));
         let Some(source) = source else {
             // 没有区间：退回行内树那份宽口径（宁可多重建一次，也别漏掉定义行的更新）。
