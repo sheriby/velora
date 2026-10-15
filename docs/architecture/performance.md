@@ -50,10 +50,10 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 | `model.buffer_edit` 一次缓冲区写入 | 1.6µs | 10.7µs | 6.7 |
 | `model.edit_and_undo_record` 一次写入加撤销记账 | 1.6µs | 10.7µs | 6.7 |
 | `model.keystroke_through_block` 一次按键（走块事件） | 1.61ms → **1.04ms** | **38.15ms → 3.38ms** | 23.7 → 3.3 |
-| `model.undo_document` 一次撤销（⌘Z） | **1.80s** | **62.0s** | 34 |
+| `model.undo_document` 一次撤销（⌘Z） | 1.55s → 见 §4.5 | **62.0s → 17.7s** | 34 → 11 |
 | `model.document_resync_fallback` 一次整篇兜底重投影 | 217.4ms | 17869ms | 82 |
 
-读法：`text.*` 那四条和 `capture_document_view` 的比值贴着 10（文档大 10 倍就贵 10 倍），`document_rebuild`、`image_runtime_rebuild` 略高（12~13.5），这几位都是纯整篇工作。四行不是：**按键那一条涨 23.7 倍**（10MiB 档一次按键 38ms，一秒钟敲不到 26 个字——原因见 §4.1，已收掉，现在 3.38ms）；**撤销那一条涨 34 倍**（一次 ⌘Z 在 10MiB 档 **62 秒**：它先整篇重解析建树（8.5s）、再走一次整篇兜底重投影（17.9s），还有 `capture/restore_history_row_layouts` 几趟 O(块数)，是当前最贵的、用户按得到的一下）；**兜底重投影涨 82 倍**（超线性，一次都碰不得，所以 §3 的形状闸门把它按在 0 次）；**一次缓冲区写入涨 6.7 倍**（1.6µs→10.7µs：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），10MiB 就是两千多块，每写一次都要把 `chunks` 这一列整体后移，`locate()` 还是沿块线性找下标；dev 档的 `debug_assert` 也走这一位，发布包会轻一些）。
+读法：`text.*` 那四条和 `capture_document_view` 的比值贴着 10（文档大 10 倍就贵 10 倍），`document_rebuild`、`image_runtime_rebuild` 略高（12~13.5），这几位都是纯整篇工作。四行不是：**按键那一条涨 23.7 倍**（10MiB 档一次按键 38ms，一秒钟敲不到 26 个字——原因见 §4.1，已收掉，现在 3.38ms）；**撤销那一条涨 34 倍**（一次 ⌘Z 在 10MiB 档原本 **62 秒**，采样拆出两笔平方级/线性查找后降到 **17.7s**，见 §4.5；它仍是当前最贵、用户按得到的一下）；**兜底重投影涨 82 倍**（超线性，一次都碰不得，所以 §3 的形状闸门把它按在 0 次）；**一次缓冲区写入涨 6.7 倍**（1.6µs→10.7µs：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），10MiB 就是两千多块，每写一次都要把 `chunks` 这一列整体后移，`locate()` 还是沿块线性找下标；dev 档的 `debug_assert` 也走这一位，发布包会轻一些）。
 
 ## 2. 计数器：成本的唯一读法
 
@@ -95,6 +95,8 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 - `typing_does_not_clone_the_visible_block_list` — 一次按键不许克隆整篇可见块列表（`DocumentTree::visible_blocks_cloned` 增量为 0；这条闸门同时证明计数器自己是活的）。
 - `steady_frames_do_not_clone_the_outline_root_blocks` — 侧栏打开时稳态帧不许克隆整篇根块（`outline_root_blocks_cloned` 增量为 0；拆一次块把计数器推到非 0，防止闸门量不到东西）。
 - `status_bar_finds_the_selection_on_the_active_block_only` — 状态栏找选区文本只读活动块，且不把别的块上的残影选区报出来。
+- `chunk_lookups_do_not_scan_every_chunk` — 按偏移/行号取字节不许从第 0 块线性找（`ChunkStarts::probes` ≤ 32 次比较 / 272 块）。
+- `reattaching_root_spans_does_not_scan_candidates_per_block`、`undo_does_not_fall_back_to_a_whole_document_resync` — 整篇落笔给根块挂区间是每根块查一次表；撤销收尾不许再序列化整篇。
 - `autosave_does_not_capture_the_reading_position` — 自动保存的那一下只同步内容与脏位，
   不许采整篇阅读现场；同时守住「换标签必须采一次」，防止把该记的现场一并删掉。
 - `the_incremental_outline_matches_a_whole_document_scan`（差分 + 钉住"全程一次整篇重扫都不许发生"——只比结果的话退回整篇照样一致，等于自证）、`the_outline_is_only_built_for_a_reader`、`outline_panel_renders_only_the_rows_in_the_viewport`。
@@ -118,7 +120,23 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
    这一档的 23.7 倍超线性曾经被归到这里，`sample` 采样证明不是：10MiB 档那次按键的 17ms 全花在 `on_block_events` 对**每一个块事件**克隆整篇可见块列表（`flatten_visible_blocks` → 每块一次 Entity 引用计数 + `LeakDetector::handle_created/released` + 句柄表插入），而文本改动只需要比「可见序列有没有变」。改成身份序列（`visible_block_ids`，`EntityId` 是 `Copy`）之后，同一台机器上 `probe_keystroke_stage_split` 的块侧耗时 17.4ms → 3.7ms（10MiB、连敲 200 键），`model.keystroke_through_block` 单跑 3.38ms／1MiB 档 1.04ms。剩下的 3.7ms 里还有整篇 `Chunk::line_count` 遍历与被编辑块自己的行内分隔符解析——**这一档现在才轮到行窗口那件事**，闸门见 §3 的 `typing_does_not_clone_the_visible_block_list`。
 2. **大纲标题树整篇一份**：节点 id 记着整篇行号，任何一处改动都重拼全树。已优化掉的是"只有文字变了"那一档（原地换标签，不重拼）；剩下的要按改动那段增量拼。另有两条已经收掉的每帧克隆：大纲同步的短路判断原来先 `root_blocks().to_vec()` 再比长度（侧栏打开时每帧一次，10MiB 档 106,456 根），现在比 `root_count()`；状态栏找选区原来从第一块起逐块扫（10MiB 档 159,683 块/帧），现在只看活动编辑目标那一块。
 3. **一次性全文操作**：整篇序列化、整篇映射重建、全文分词——都不在按键路径上，但格式化文档、全部替换、导出会付一次。单价见 §1.1（10MiB：序列化 261.7µs、哈希 13.81ms、分词 65.29ms、引用定义解析 374.43ms、重建树 8.5s）。
-4. **撤销与兜底重投影（当前最贵的一档，已实测）**：一次 ⌘Z 在 10MiB 档 62 秒（1MiB 档 1.80s）。撤销路径（`history.rs:undo_document`）里的整篇工作是叠起来的：`rebuild_document_from_buffer`（8.5s）+ `mark_dirty` 走整篇兜底重投影（17.9s）+ `capture/restore_history_row_layouts` 几趟 O(块数)；`rebuild_document_from_buffer` 还有 6 处别的调用点（redo、换文档、选区恢复、粘贴），`mark_dirty` 有 41 处调用点——**空白名单 `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED` 守的是 18 秒级的冻结，不是一帧的抖动**，新加命令落到这条路上就是秒级卡死。增量那条路已经具备：`import.rs:reproject_root_region` 按根块重投影，唯一生产调用点在 `history.rs` 的引用结构规范化，撤销还没接。
+4. **撤销与兜底重投影（当前最贵的一档，已实测，收了一半）**：一次 ⌘Z 在 10MiB 档
+   62 秒 → **17.7s**（1MiB 档 1.80s → 1.55s）。62 秒那份采样里没有一笔是「多算了一遍
+   整篇」，全是**按偏移/行号查询的线性查找**，两处：
+   - `TextBuffer` 的 `locate` / `line_start` / `line_count` / `slice` 从第 0 块线性扫
+     （10MiB 一档 2,560 块），而一次整篇重投影要把每个根块的区间都换算一遍 → 加前缀
+     索引改二分（62.0s → 35.5s）。
+   - `reattach_root_spans` 对每根块在 `block_spans` 里线性 `find` 自己那一条，O(根块数
+     × 条数)，10MiB 档 106,456 根 → 摊成一张表（35.5s → 17.7s）。
+   兜底重投影那一笔（10MiB 档 17.9s）**本来就被跳过**：`replay_history_group` 置了
+   `skip_next_resync`，撤销收尾那次 `mark_dirty` 因此不序列化（闸门
+   `undo_does_not_fall_back_to_a_whole_document_resync` 钉住这面标志）。剩下的
+   O(文档) 是 `rebuild_document_from_buffer`（8.5s 级）与 `capture/restore_history_row_layouts`
+   几趟逐根块——`rebuild_document_from_buffer` 还有 6 处别的调用点（redo、换文档、选区
+   恢复、粘贴），`mark_dirty` 有 41 处调用点，**空白名单
+   `WHOLE_DOCUMENT_RESYNC_STILL_ALLOWED` 守的是 18 秒级的冻结**。要再降一档只有把
+   撤销接到增量重投影上：`import.rs:reproject_root_region` 按根块重投影，唯一生产调用点
+   在 `history.rs` 的引用结构规范化，撤销还没接。
 5. **缓冲区自己的写入**：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），一次写入要把 `chunks` 这一列整体后移，`locate()` 沿块线性找下标。1MiB 档 1.6µs、10MiB 档 10.7µs——绝对值还很小，但它是每键都付的，别把它当成常数。
 
 ## 5. 优化套路（这个仓库反复用的四招）
