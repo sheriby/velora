@@ -68,7 +68,7 @@
   **callout 不在这里**：它是引用块头 `[!TYPE]`，模型在 `block/state.rs:CalloutVariant`，识别与建块在 `editor/document/blocks.rs`。
 - **图片**（`markdown/image.rs`）：**路径解析唯一口径 `resolve_image_source(src, base_dir)`**——剥尖括号 → 远程 URL（不做 percent 解码，`%20` 属于 URL）→ `file:` 前缀 → percent 解码 → 绝对或相对基目录。阅读视图与导出同源。`{width=NN%}` 是缩放手柄写回的属性。引用定义扫描要跳过围栏内/HTML 块内/注释内，并剥容器记号前缀。
 - **公式**（`components/latex/`）：`parse_display_math_segments` 交代**整个源码跨度**（支持 `$$x$$ 尾文`、同行多段）；只取"第一个公式"的那个视图给分类器与草稿用，**渲染与导出必须消费分段表**。ratex → SVG，`recolor_default_black` 换成主题色、根标签单位归一到 px。行内必须用 Text 样式排版，否则大算子被压小。
-- **mermaid**（`components/mermaid/`）：先过图类型白名单再渲染；产出含错误标记就视为失败，块渲染层退回显示源码。显示缩放按复杂度与可用宽度算。
+- **mermaid**（`components/mermaid/`）：先过图类型白名单，再由 Merman 原生渲染；流程图默认用 Dagre 布局与经典主题，输出走 resvg 兼容管线（HTML 标签转换为 SVG 文本）。中文字体排在 Arial 前，避免 resvg 缺字后任意回退。失败时块渲染层退回显示源码。正文按列宽适配，点击图表进入应用内预览，可缩放到原始大小并拖动查看，源码按钮保留块编辑入口。预览复用原尺寸 SVG，缩放不写入文档；磁盘显示缓存读根元素的实际宽高，不能用未缩放的 viewBox 尺寸。
 - **SVG 缓存**：公式与 mermaid 都是"进程内 LRU + 磁盘"两级，键含**版本串**（升级即整体失效）；mermaid 的显示态键把缩放按千分位分档（拖宽度不逐像素换键）；半截文件（无 `</svg>`）按未命中；写盘用同目录临时文件 + rename。
 
 ## 7. 代码高亮两条路

@@ -22,7 +22,8 @@ impl Render for Editor {
                     // 三个浮层（模态/文件历史/[[ 补全）各自过滤按键；都未打开
                     // 时这里只有三次布尔检查，打字热路径无感。
                     let _ = editor.update(cx, |editor, cx| {
-                        let mut consumed = editor.modal_handle_keystroke(keystroke, window, cx);
+                        let mut consumed = editor.mermaid_preview_key_down(keystroke, cx);
+                        consumed = consumed || editor.modal_handle_keystroke(keystroke, window, cx);
                         consumed = consumed || editor.file_history_key_down(keystroke, cx);
                         if !consumed {
                             consumed = editor.wikilink_completion_key_down(keystroke, cx);
@@ -1158,6 +1159,9 @@ impl Render for Editor {
         };
         let base = if let Some(notification) = self.render_update_notification(&theme, &strings, cx) {
             base.child(notification)
+        } else { base };
+        let base = if let Some(preview) = self.render_mermaid_preview_overlay(&theme, window, cx) {
+            base.child(preview)
         } else { base };
         if let Some(kind) = self.info_dialog {
             base.child(self.render_info_dialog_overlay(&theme, kind, cx))

@@ -1,6 +1,97 @@
 use super::common::*;
 
 #[gpui::test]
+async fn mermaid_preview_opens_zooms_and_closes_without_editing_document(cx: &mut TestAppContext) {
+    use gpui::{MouseButton, point};
+    init_editor_test_app(cx);
+    let body = std::iter::once("flowchart LR".to_string())
+        .chain((0..10).map(|index| {
+            format!(
+                "N{index}[中文处理阶段{index}] --> N{}[中文处理阶段{}]",
+                index + 1,
+                index + 1
+            )
+        }))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let markdown = format!("intro\n\n```mermaid\n{body}\n```\n\ntail");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    for _ in 0..3 {
+        redraw(cx);
+    }
+    let diagram = cx
+        .debug_bounds("mermaid-diagram-image")
+        .expect("正文图表应挂载");
+    assert!(cx.debug_bounds("mermaid-diagram-scroll").is_none(), "正文不应增加横向滚动条");
+    cx.simulate_mouse_down(diagram.center(), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(diagram.center(), MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("mermaid-preview").is_some(),
+        "点击图表应打开放大预览"
+    );
+    let before = cx.debug_bounds("mermaid-preview-image").expect("预览图像");
+    let zoom_in = cx
+        .debug_bounds("mermaid-preview-zoom-in")
+        .expect("放大按钮");
+    cx.simulate_mouse_down(zoom_in.center(), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(zoom_in.center(), MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let after = cx
+        .debug_bounds("mermaid-preview-image")
+        .expect("放大后的预览图像");
+    assert!(
+        after.size.width > before.size.width,
+        "预览中的放大按钮应增大图像"
+    );
+    let original_button = cx.debug_bounds("mermaid-preview-original").expect("原尺寸按钮");
+    cx.simulate_mouse_down(original_button.center(), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(original_button.center(), MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let original = cx.debug_bounds("mermaid-preview-image").expect("原尺寸图像");
+    let viewport = cx.debug_bounds("mermaid-preview-viewport").expect("预览视口");
+    assert!(original.size.width > viewport.size.width, "原尺寸图像应保留可拖动的完整内容");
+    let start = viewport.center();
+    let end = start - point(px(60.0), px(0.0));
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::none());
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let dragged = cx.debug_bounds("mermaid-preview-image").expect("拖动后的图像");
+    assert!(dragged.left() < original.left(), "放大后应能拖动查看被遮住的部分");
+    let reset = cx.debug_bounds("mermaid-preview-fit").expect("重置缩放按钮");
+    cx.simulate_mouse_down(reset.center(), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(reset.center(), MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    let fitted = cx.debug_bounds("mermaid-preview-image").expect("适配窗口的图像");
+    assert!((f32::from(fitted.size.width) - f32::from(before.size.width)).abs() < 1.0);
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text().to_string()),
+        markdown
+    );
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("mermaid-preview").is_none(),
+        "Esc 应关闭预览并返回正文"
+    );
+    let edit = cx.debug_bounds("mermaid-edit-source").expect("图表源码编辑入口");
+    cx.simulate_mouse_down(edit.center(), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(edit.center(), MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    redraw(cx);
+    editor.read_with(cx, |editor, cx| {
+        let active = editor.active_entity_id.expect("源码编辑应聚焦图表");
+        let block = editor.document.block_entity_by_id(active).expect("活动图表");
+        assert_eq!(block.read(cx).kind(), BlockKind::MermaidBlock);
+        assert!(block.read(cx).has_text_layout(), "源码编辑应显示可输入的文本布局");
+        assert_eq!(editor.buffer.text(), markdown);
+    });
+}
+
+#[gpui::test]
 async fn standalone_root_image_installs_runtime_and_resolves_relative_path(
     cx: &mut TestAppContext,
 ) {

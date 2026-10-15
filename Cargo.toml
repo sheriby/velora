@@ -102,7 +102,16 @@ ratex-types = "0.1.9"
 # rust-embed，让 dev 包也把字体真正嵌进二进制。
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 ratex-svg = { version = "0.1.9", features = ["embed-fonts", "standalone"] }
-mermaid-rs-renderer = { version = "0.3.0", default-features = false }
+# 仅编译应用已支持的图表后端，完整集合会显著增大调试链接产物。
+merman = { version = "0.9.0", default-features = false, features = [
+    "svg", "layout-cytoscape", "math",
+    "diagram-flowchart", "diagram-sequence", "diagram-class", "diagram-state",
+    "diagram-er", "diagram-pie", "diagram-mindmap", "diagram-journey",
+    "diagram-timeline", "diagram-gantt", "diagram-requirement", "diagram-git-graph",
+    "diagram-c4", "diagram-sankey", "diagram-quadrant-chart", "diagram-zenuml",
+    "diagram-block", "diagram-packet", "diagram-kanban", "diagram-architecture",
+    "diagram-radar", "diagram-treemap", "diagram-xychart",
+] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "default-tls"] }
 sys-locale = "0.3"
 tree-sitter = { version = "0.26.9", optional = true }
@@ -127,6 +136,8 @@ tree-sitter-yaml = { version = "0.7", optional = true }
 tree-sitter-toml = { package = "adot-tree-sitter-toml", version = "0.1", optional = true }
 
 [dev-dependencies]
+roxmltree = "0.20"
+usvg = "0.45"
 # Cargo 会合并生产与测试的特性，测试入口也必须关闭框架默认 manifest。
 gpui = { version = "0.2", default-features = false, features = ["test-support"] }
 unicode-segmentation = "1.13"
@@ -163,6 +174,10 @@ codegen-units = 256  # 可选：把 dev 的 codegen-units 调大，进一步并�
 # render goes through gpui/taffy/text-shaping; without these overrides each
 # block in a long document costs hundreds of µs/frame purely from O0 code.
 [profile.dev.package]
+dugong = { opt-level = 3 }
+merman = { opt-level = 3 }
+merman-core = { opt-level = 3 }
+merman-render = { opt-level = 3 }
 gpui = { opt-level = 3 }
 gpui-macros = { opt-level = 3 }
 gpui_http_client = { opt-level = 3 }

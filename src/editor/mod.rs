@@ -308,6 +308,7 @@ pub struct Editor {
     /// Extra explanation line for the unsupported-preview placeholder.
     pub(super) unsupported_preview_detail: Option<String>,
     image_preview: Option<image_preview::ImageFilePreview>,
+    mermaid_preview: Option<image_preview::MermaidPreview>,
     /// Folder picked through 文件 → 打开文件 that is waiting for the user to
     /// choose between replacing this window's working set and a new window.
     pub(super) pending_folder_choice: Option<PathBuf>,
@@ -906,6 +907,7 @@ impl Editor {
             unsupported_preview_path: None,
             unsupported_preview_detail: None,
             image_preview: None,
+            mermaid_preview: None,
             pending_folder_choice: None,
             show_welcome: false,
             search_highlighted_blocks: Vec::new(),

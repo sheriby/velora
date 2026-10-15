@@ -118,6 +118,9 @@ impl Editor {
                 self.pending_formula_editor = Some(block.entity_id());
                 cx.notify();
             }
+            BlockEvent::RequestMermaidPreview { markdown } => {
+                self.open_mermaid_preview(markdown, cx);
+            }
             BlockEvent::RequestNewline {
                 trailing,
                 source_already_mutated,

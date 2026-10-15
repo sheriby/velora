@@ -10,14 +10,14 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context as _, anyhow};
 use directories::ProjectDirs;
+use merman::svg::SvgPipeline;
+use merman::{
+    Engine, MermaidConfig, OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest,
+};
 
 use crate::components::block::BlockKind;
 
-const SIMPLE_MERMAID_LINE_LIMIT: usize = 8;
-const MERMAID_COMPLEX_TARGET_WIDTH_RATIO: f32 = 0.9;
-const MERMAID_MAX_VIEWPORT_WIDTH_RATIO: f32 = 1.15;
-const MERMAID_SCALE_PER_EXTRA_LINE: f32 = 0.035;
-const MERMAID_MAX_SCALE: f32 = 1.75;
+const MERMAID_FONT_SIZE: f32 = 16.0;
 
 /// 进程内缓存最多记几条显示结果。草稿每编辑一次就产生一个新键，不设上限就会一直
 /// 攒整份 SVG（与 latex 那份同一档：256 条）。
@@ -29,11 +29,11 @@ const MERMAID_MEMORY_CACHE_LIMIT: usize = 256;
 /// 也要付 `create_dir_all`（两次）加 `fs::read_to_string`（两次：基础 SVG 与显示 SVG）。
 /// 形状照 `latex/mod.rs` 的 `LatexSvgCache`：`OnceLock<Mutex<..>>` + 条数上限 + 有序淘汰。
 ///
-/// 为什么不只缓存渲染结果：算显示缩放要用渲染器的**固有尺寸**，它平时只能靠读基础
-/// SVG 得到。把固有尺寸也按正文键记一份，命中那条路就一次磁盘都不碰。
+/// 为什么不只缓存渲染结果：算显示缩放要用渲染器的**固有宽度**，它平时只能靠读基础
+/// SVG 得到。把固有宽度也按正文键记一份，命中那条路就一次磁盘都不碰。
 #[derive(Default)]
 struct MermaidSvgMemoryCache {
-    intrinsic: HashMap<String, (f32, f32)>,
+    intrinsic: HashMap<String, f32>,
     renders: HashMap<String, MermaidSvgRender>,
     order: VecDeque<String>,
 }
@@ -54,13 +54,12 @@ fn memory_cached_render(
     body: &str,
     base_key: &str,
     available_width: f32,
-    viewport_width: f32,
 ) -> Option<MermaidSvgRender> {
-    let (width, height) = {
+    let width = {
         let cache = lock_memory_cache()?;
         *cache.intrinsic.get(base_key)?
     };
-    let scale = mermaid_display_scale(body, width, height, available_width, viewport_width);
+    let scale = mermaid_display_scale(width, available_width);
     let display_key = mermaid_display_cache_key(body, scale);
     let cache = lock_memory_cache()?;
     let rendered = cache.renders.get(&display_key)?.clone();
@@ -70,15 +69,15 @@ fn memory_cached_render(
     rendered.path.is_file().then_some(rendered)
 }
 
-fn remember_intrinsic(base_key: &str, width: f32, height: f32) {
+fn remember_intrinsic(base_key: &str, width: f32) {
     let Some(mut cache) = lock_memory_cache() else {
         return;
     };
     if cache.intrinsic.len() >= MERMAID_MEMORY_CACHE_LIMIT {
-        // 这张表每条只有两个 f32，超上限整张清掉：最坏多读一次基础 SVG。
+        // 这张表每条只记宽度，超上限整张清掉：最坏多读一次基础 SVG。
         cache.intrinsic.clear();
     }
-    cache.intrinsic.insert(base_key.to_string(), (width, height));
+    cache.intrinsic.insert(base_key.to_string(), width);
 }
 
 fn remember_render(display_key: &str, rendered: &MermaidSvgRender) {
@@ -196,41 +195,32 @@ pub(crate) fn parse_mermaid_fence_source(raw: &str) -> Option<MermaidSource> {
 pub(crate) fn render_mermaid_svg_for_display(
     source: &MermaidSource,
     available_width: f32,
-    viewport_width: f32,
 ) -> anyhow::Result<MermaidSvgRender> {
-    render_mermaid_svg_for_display_with(source, available_width, viewport_width, render_mermaid_raw)
+    render_mermaid_svg_for_display_with(source, available_width, render_mermaid_raw)
 }
 
 fn render_mermaid_svg_for_display_with(
     source: &MermaidSource,
     available_width: f32,
-    viewport_width: f32,
     renderer: MermaidRenderer,
 ) -> anyhow::Result<MermaidSvgRender> {
     let base_key = mermaid_cache_key(&source.body);
     // 内存里先问一遍：命中就一次磁盘都不碰（这正是每帧渲染要付的那一笔）。
-    if let Some(rendered) =
-        memory_cached_render(&source.body, &base_key, available_width, viewport_width)
-    {
+    if let Some(rendered) = memory_cached_render(&source.body, &base_key, available_width) {
         return Ok(rendered);
     }
 
     let base_path = mermaid_base_cache_path(&base_key)?;
     let base_svg = render_mermaid_to_svg_cached_with(&source.body, &base_path, renderer)?;
     let intrinsic = mermaid_svg_intrinsic_size(&base_svg)?;
-    remember_intrinsic(&base_key, intrinsic.width, intrinsic.height);
-    let scale = mermaid_display_scale(
-        &source.body,
-        intrinsic.width,
-        intrinsic.height,
-        available_width,
-        viewport_width,
-    );
+    remember_intrinsic(&base_key, intrinsic.width);
+    let scale = mermaid_display_scale(intrinsic.width, available_width);
 
     let display_key = mermaid_display_cache_key(&source.body, scale);
     let display_path = mermaid_display_cache_path(&display_key)?;
     if let Some(svg) = read_svg_cache(&display_path) {
-        let size = mermaid_svg_intrinsic_size(&svg)?;
+        let (start, end) = svg_root_tag_range(&svg)?;
+        let size = svg_root_explicit_size(&svg[start..end])?;
         let rendered = MermaidSvgRender {
             path: display_path,
             svg,
@@ -282,15 +272,31 @@ fn render_mermaid_raw(source: &str) -> anyhow::Result<String> {
     if !looks_like_supported_mermaid_source(source) {
         return Err(anyhow::anyhow!("unsupported Mermaid diagram"));
     }
-    let svg = mermaid_rs_renderer::render(source).map_err(|err| anyhow::anyhow!("{err}"))?;
-    if svg.contains("class=\"error-text\"") || svg.contains("Syntax error in text") {
-        return Err(anyhow::anyhow!("Mermaid syntax error"));
-    }
-    Ok(svg)
+    let config = MermaidConfig::from_value(serde_json::json!({
+        "layout": "dagre",
+        "theme": "default",
+        "look": "classic",
+        "htmlLabels": false,
+        // resvg 按首个可用字体选主字体，Arial 在前会让中文落入任意缺字回退。
+        "fontFamily": "PingFang SC, Microsoft YaHei, Arial, sans-serif",
+        "themeVariables": { "fontSize": format!("{MERMAID_FONT_SIZE}px") },
+        "flowchart": { "useMaxWidth": false, "wrappingWidth": 240, "minNodeWidth": 0 }
+    }));
+    let renderer = Renderer::new().with_engine(Engine::new().with_site_config(config));
+    // GPUI 的 resvg 不绘制 foreignObject；用户配置启用 HTML 标签时也要保留 SVG 文本。
+    let request = SvgRequest {
+        pipeline: Some(SvgPipeline::resvg_safe()),
+        ..Default::default()
+    };
+    let output = renderer.render(RenderRequest::svg(source, OperationControl::new(), request))?;
+    let RenderOutput::Svg(Some(svg)) = output else {
+        return Err(anyhow!("Mermaid renderer produced no diagram"));
+    };
+    Ok(svg.into_parts().0)
 }
 
 /// SVG 缓存键的格式版本串：渲染器/键口径升级后旧档自然失效。
-const MERMAID_SVG_CACHE_VERSION: &str = "mermaid-svg-v1";
+const MERMAID_SVG_CACHE_VERSION: &str = "mermaid-svg-v3";
 
 /// Stable cache key for Mermaid content.
 pub(crate) fn mermaid_cache_key(source: &str) -> String {
@@ -304,7 +310,7 @@ pub(crate) fn mermaid_cache_key(source: &str) -> String {
 /// scale 是随窗口宽度连续变化的量：按 0.001 分档后进键，拖宽度不再一个
 /// 像素一个新键（缓存目录按「每张图 × 每种宽度」膨胀）。
 pub(crate) fn mermaid_display_cache_key(source: &str, scale: f32) -> String {
-    let bucketed = ((scale.max(0.1) * 1000.0).round() as i64).to_string();
+    let bucketed = ((scale * 1000.0).round() as i64).to_string();
     let mut hasher = DefaultHasher::new();
     mermaid_cache_key(source).hash(&mut hasher);
     bucketed.hash(&mut hasher);
@@ -341,7 +347,7 @@ fn write_svg_cache(path: &Path, svg: &str) -> anyhow::Result<()> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let temp = path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()));
+    let temp = path.with_file_name(format!("{file_name}.{}.{}.tmp", std::process::id(), uuid::Uuid::new_v4()));
     fs::write(&temp, svg).with_context(|| {
         format!("failed to write Mermaid SVG cache temp '{}'", temp.display())
     })?;
@@ -349,64 +355,9 @@ fn write_svg_cache(path: &Path, svg: &str) -> anyhow::Result<()> {
         .with_context(|| format!("failed to install Mermaid SVG cache '{}'", path.display()))
 }
 
-/// Counts diagram lines that materially contribute to rendered complexity.
-pub(crate) fn semantic_mermaid_line_count(source: &str) -> usize {
-    let mut in_frontmatter = false;
-    source
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return false;
-            }
-            if trimmed == "---" {
-                in_frontmatter = !in_frontmatter;
-                return false;
-            }
-            !(in_frontmatter || trimmed.starts_with("%%"))
-        })
-        .count()
-}
-
 /// Display scale used by the editor for rendered Mermaid diagrams.
-pub(crate) fn mermaid_display_scale(
-    source: &str,
-    intrinsic_width: f32,
-    intrinsic_height: f32,
-    available_width: f32,
-    viewport_width: f32,
-) -> f32 {
-    let line_count = semantic_mermaid_line_count(source);
-    if line_count <= SIMPLE_MERMAID_LINE_LIMIT {
-        return 1.0;
-    }
-
-    let intrinsic_width = intrinsic_width.max(1.0);
-    let intrinsic_height = intrinsic_height.max(1.0);
-    let available_width = available_width.max(1.0);
-    let viewport_width = viewport_width.max(available_width);
-    let extra_lines = line_count.saturating_sub(SIMPLE_MERMAID_LINE_LIMIT) as f32;
-
-    let complexity_scale = (1.0 + extra_lines * MERMAID_SCALE_PER_EXTRA_LINE)
-        .max(1.0)
-        .min(MERMAID_MAX_SCALE);
-    let target_column_width = available_width * MERMAID_COMPLEX_TARGET_WIDTH_RATIO;
-    let column_fit_scale = if intrinsic_width < target_column_width {
-        target_column_width / intrinsic_width
-    } else {
-        1.0
-    };
-    let viewport_limit_scale =
-        (viewport_width * MERMAID_MAX_VIEWPORT_WIDTH_RATIO / intrinsic_width).max(1.0);
-    let height_sanity_scale =
-        (viewport_width * MERMAID_MAX_VIEWPORT_WIDTH_RATIO / intrinsic_height).max(1.0);
-
-    complexity_scale
-        .max(column_fit_scale)
-        .min(viewport_limit_scale)
-        .min(height_sanity_scale)
-        .min(MERMAID_MAX_SCALE)
-        .max(1.0)
+pub(crate) fn mermaid_display_scale(intrinsic_width: f32, available_width: f32) -> f32 {
+    (available_width.max(1.0) / intrinsic_width.max(1.0)).min(1.0)
 }
 
 /// Rewrites the root SVG element so GPUI sees the intended intrinsic size.
@@ -414,7 +365,7 @@ pub(crate) fn scale_mermaid_svg_for_display(
     svg: &str,
     scale: f32,
 ) -> anyhow::Result<(String, MermaidSvgSize)> {
-    let scale = scale.max(0.1);
+    let scale = scale.max(f32::MIN_POSITIVE);
     let (start, end) = svg_root_tag_range(svg)?;
     let root_tag = &svg[start..end];
     let base_size = svg_root_size(root_tag)?;
@@ -467,6 +418,10 @@ fn svg_root_size(root_tag: &str) -> anyhow::Result<MermaidSvgSize> {
         return Ok(size);
     }
 
+    svg_root_explicit_size(root_tag)
+}
+
+fn svg_root_explicit_size(root_tag: &str) -> anyhow::Result<MermaidSvgSize> {
     let width = svg_root_attr(root_tag, "width")
         .and_then(|value| parse_svg_length(&value))
         .ok_or_else(|| anyhow!("Mermaid SVG root did not expose a usable width"))?;
@@ -769,38 +724,17 @@ mod tests {
     }
 
     #[test]
-    fn semantic_line_count_ignores_comments_blank_lines_and_frontmatter() {
-        let source = "---\ntitle: Demo\n---\nflowchart LR\n%% comment\n\nA --> B\nB --> C";
-        assert_eq!(semantic_mermaid_line_count(source), 3);
+    fn display_scale_keeps_small_diagrams_at_natural_size() {
+        assert_eq!(mermaid_display_scale(240.0, 720.0), 1.0);
+        assert_eq!(mermaid_display_scale(260.0, 720.0), 1.0);
     }
 
     #[test]
-    fn display_scale_uses_intrinsic_size_and_caps_growth() {
-        let simple = "flowchart LR\nA --> B\nB --> C";
-        assert_eq!(
-            mermaid_display_scale(simple, 240.0, 120.0, 720.0, 960.0),
-            1.0
-        );
-
-        let complex = std::iter::once("flowchart LR".to_string())
-            .chain((0..20).map(|index| format!("A{index} --> A{}", index + 1)))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let scale = mermaid_display_scale(&complex, 260.0, 140.0, 720.0, 960.0);
-        assert!(scale > 1.0);
-        assert!(scale <= MERMAID_MAX_SCALE);
-        assert!(260.0 * scale <= 960.0 * MERMAID_MAX_VIEWPORT_WIDTH_RATIO);
-    }
-
-    #[test]
-    fn display_scale_does_not_overgrow_already_wide_diagrams() {
-        let complex = std::iter::once("flowchart LR".to_string())
-            .chain((0..30).map(|index| format!("A{index} --> A{}", index + 1)))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let scale = mermaid_display_scale(&complex, 1400.0, 400.0, 720.0, 960.0);
-
-        assert_eq!(scale, 1.0);
+    fn display_scale_fits_wide_diagrams_to_the_text_column() {
+        for width in [1400.0, 14000.0] {
+            let scale = mermaid_display_scale(width, 720.0);
+            assert!(width * scale <= 720.001, "图表应适配正文列宽：{scale}");
+        }
     }
 
     #[test]
@@ -857,14 +791,135 @@ mod tests {
     }
 
     #[test]
+    fn renders_reported_flowchart_with_endpoint_reentry_without_panicking() {
+        let source = reported_complex_flowchart();
+        // 绕过缓存，防止已有 SVG 掩盖调试构建中回环连线触发的布局断言。
+        let rendered = std::panic::catch_unwind(|| render_mermaid_raw(&source.body));
+        assert!(rendered.is_ok(), "打开报修图表时渲染器不应 panic");
+        let svg = rendered
+            .expect("渲染器未 panic")
+            .expect("报修图表应生成 SVG");
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("</svg>"));
+        let size = mermaid_svg_intrinsic_size(&svg).expect("有效 SVG 尺寸");
+        assert!(size.width > 0.0 && size.height > 0.0);
+    }
+
+    fn reported_complex_flowchart() -> MermaidSource {
+        let raw = r#"```mermaid
+flowchart TD
+    U["用户/评测 harness"] --> S["dsh 会话"]
+    S --> MAIN["主模型: 强 agent 模型<br/>(deepseek-v4.1 等, agentic 强)"]
+    MAIN -->|"文本/表格/代码任务"| MAIN
+    MAIN -->|"工作区里有图"| RI["read_image<br/>(主模型声明 image input 时)"]
+    MAIN -->|"工作区里有视频"| AV["analyze_video (MCP)<br/>→ vllm Qwen3-VL"]
+    RI --> ATT["attachment 管线<br/>(image_url 自动拼装)"]
+    AV --> TXT["带时间戳的文本结论"]
+    ATT --> MAIN
+    TXT --> MAIN
+    MAIN --> ANS["回答: 先视频取口径 → 表格计算 → 答案"]
+```"#;
+        parse_mermaid_fence_source(raw).expect("回环流程图的 Mermaid 围栏")
+    }
+
+    #[test]
+    fn reported_flowchart_keeps_a_compact_portrait_layout() {
+        let source = reported_complex_flowchart();
+        let svg = render_mermaid_raw(&source.body).expect("报修图表应生成 SVG");
+        let size = mermaid_svg_intrinsic_size(&svg).expect("有效 SVG 尺寸");
+        assert!(
+            size.height <= size.width,
+            "报修图表应紧凑展示主干与回线，不能拉成长条：{size:?}"
+        );
+    }
+
+    #[test]
+    fn reported_flowchart_edge_labels_hide_mermaid_quote_delimiters() {
+        let source = reported_complex_flowchart();
+        let svg = render_mermaid_raw(&source.body).expect("报修图表应生成 SVG");
+        let document = roxmltree::Document::parse(&svg).expect("有效 SVG");
+        let labels: Vec<_> = document
+            .descendants()
+            .filter(|node| node.is_text())
+            .filter_map(|node| node.text())
+            .collect();
+        for label in ["文本/表格/代码任务", "工作区里有图", "工作区里有视频"] {
+            assert!(
+                labels.contains(&label),
+                "连线标签应去掉语法引号：{label}，实际：{labels:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reported_flowchart_native_svg_preserves_hierarchy_and_keeps_text_inside_canvas() {
+        fn collect_text(group: &usvg::Group, labels: &mut Vec<(String, usvg::Rect)>) {
+            for node in group.children() {
+                match node {
+                    usvg::Node::Group(group) => collect_text(group, labels),
+                    usvg::Node::Text(text) => labels.push((
+                        text.chunks().iter().map(|chunk| chunk.text()).collect(),
+                        text.abs_bounding_box(),
+                    )),
+                    _ => {}
+                }
+            }
+        }
+
+        let source = reported_complex_flowchart();
+        let svg = render_mermaid_raw(&source.body).expect("报修图表应生成 SVG");
+        assert!(
+            !svg.contains("<foreignObject"),
+            "原生显示不能依赖 HTML 标签"
+        );
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        let tree =
+            usvg::Tree::from_str(&svg, &options).expect("GPUI 使用的 SVG 解析器应能读取原图");
+        let mut labels = Vec::new();
+        collect_text(tree.root(), &mut labels);
+        for (label, bounds) in &labels {
+            assert!(
+                bounds.x() >= -1.0
+                    && bounds.y() >= -1.0
+                    && bounds.right() <= tree.size().width() + 1.0
+                    && bounds.bottom() <= tree.size().height() + 1.0,
+                "文字不能超出画布被裁切：{label}，{bounds:?}"
+            );
+        }
+        let top = |label: &str| {
+            labels
+                .iter()
+                .find(|(text, _)| text.starts_with(label))
+                .unwrap_or_else(|| panic!("图中缺少文字：{label}"))
+                .1
+                .y()
+        };
+        for (parent, child) in [
+            ("用户/评测", "dsh 会话"),
+            ("dsh 会话", "主模型:"),
+            ("主模型:", "回答:"),
+            ("主模型:", "read_image"),
+            ("read_image", "attachment"),
+            ("主模型:", "analyze_video"),
+            ("analyze_video", "带时间戳"),
+        ] {
+            assert!(
+                top(parent) < top(child),
+                "主干与分支应按 TD 方向排布：{parent} → {child}"
+            );
+        }
+    }
+
+    #[test]
     fn display_render_uses_scaled_intrinsic_size() {
         let source =
             parse_mermaid_fence_source("```mermaid\nflowchart LR\nA --> B\n```").expect("source");
-        let rendered = render_mermaid_svg_for_display(&source, 720.0, 960.0).expect("display svg");
+        let rendered = render_mermaid_svg_for_display(&source, 720.0).expect("display svg");
 
         assert!(rendered.display_width > 1.0);
         assert!(rendered.display_height > 1.0);
-        assert!(rendered.display_scale >= 1.0);
+        assert!(rendered.display_scale > 0.0 && rendered.display_scale <= 1.0);
         assert!(
             rendered
                 .svg
@@ -881,6 +936,60 @@ mod tests {
     #[test]
     fn invalid_mermaid_returns_error() {
         assert!(render_mermaid_to_svg("not a real mermaid diagram ::::").is_err());
+    }
+
+    #[test]
+    fn concurrent_mermaid_svg_cache_writes_keep_complete_files() {
+        let root = std::env::temp_dir().join(format!("velora-mermaid-concurrent-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("建立缓存测试目录");
+        let path = root.join("diagram.svg");
+        let svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\"><desc>{}</desc></svg>", "a".repeat(65536));
+        let barrier = std::sync::Barrier::new(8);
+        let results = std::thread::scope(|scope| {
+            let tasks: Vec<_> = (0..8).map(|_| scope.spawn(|| {
+                barrier.wait();
+                write_svg_cache(&path, &svg)
+            })).collect();
+            tasks.into_iter().map(|task| task.join().expect("缓存线程完成")).collect::<Vec<_>>()
+        });
+        assert!(results.iter().all(Result::is_ok), "相同图表的并发渲染不能抢用同一个临时文件：{results:?}");
+        assert_eq!(read_svg_cache(&path).as_deref(), Some(svg.as_str()));
+        fs::remove_dir_all(root).expect("清理缓存测试目录");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mermaid_chinese_labels_use_pingfang_without_arbitrary_font_fallback() {
+        let svg = render_mermaid_raw("flowchart LR\nA[创建订单] --> B[校验库存]").expect("生成中文图表");
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        let select_font = usvg::FontResolver::default_font_selector();
+        options.font_resolver.select_font = Box::new(move |font, database| {
+            let selected = select_font(font, database);
+            let face = selected.and_then(|id| database.face(id)).expect("系统字体应可解析");
+            assert!(face.families.iter().any(|(family, _)| family == "PingFang SC"),
+                "中文应使用苹方，避免 Arial 缺字后落到任意中文字体，实际：{:?}", face.families);
+            selected
+        });
+        usvg::Tree::from_str(&svg, &options).expect("原生文字解析");
+    }
+
+    #[test]
+    fn mermaid_renderer_preserves_labels_across_diagram_families() {
+        for (source, label) in [
+            ("sequenceDiagram\nAlice->>Bob: hello", "hello"),
+            ("classDiagram\nAnimal <|-- Dog", "Dog"),
+            ("stateDiagram-v2\n[*] --> Idle\nIdle --> Done", "Idle"),
+            ("pie\n\"Cats\" : 2\n\"Dogs\" : 3", "Cats"),
+            ("mindmap\nroot((Root))\n  Branch", "Branch"),
+            ("flowchart LR\nsubgraph Outer\nA[输入] --> B[输出]\nend", "输入"),
+        ] {
+            let svg = render_mermaid_raw(source).expect("既有图表类型应继续渲染");
+            let document = roxmltree::Document::parse(&svg).expect("有效 SVG");
+            assert!(document.descendants().any(|node|
+                node.is_text() && node.text().is_some_and(|text| text.contains(label))),
+                "图表中缺少标签：{source}");
+        }
     }
 
     fn cache_reads() -> usize {
@@ -908,7 +1017,7 @@ mod tests {
         reset_renderer_calls(&source.body);
         reset_cache_reads();
 
-        let first = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+        let first = render_mermaid_svg_for_display_with(&source, 720.0, test_renderer)
             .expect("first render");
         assert_eq!(renderer_calls(&source.body), 1);
         assert!(
@@ -917,7 +1026,7 @@ mod tests {
         );
 
         reset_cache_reads();
-        let second = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+        let second = render_mermaid_svg_for_display_with(&source, 720.0, test_renderer)
             .expect("cached render");
         assert_eq!(second, first, "内存缓存给回来的结果与第一次不一致");
         assert_eq!(
@@ -939,12 +1048,12 @@ mod tests {
         remove_cache_file(&base_path);
 
         reset_renderer_calls(&source.body);
-        let first = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+        let first = render_mermaid_svg_for_display_with(&source, 720.0, test_renderer)
             .expect("first render");
         assert_eq!(renderer_calls(&source.body), 1);
         let display_path = first.path.clone();
 
-        let second = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+        let second = render_mermaid_svg_for_display_with(&source, 720.0, test_renderer)
             .expect("cached render");
         assert_eq!(renderer_calls(&source.body), 1);
         assert_eq!(second.path, display_path);
@@ -963,12 +1072,12 @@ mod tests {
         remove_cache_file(&base_path);
 
         reset_renderer_calls(&source.body);
-        let first = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+        let first = render_mermaid_svg_for_display_with(&source, 720.0, test_renderer)
             .expect("first render");
         assert_eq!(renderer_calls(&source.body), 1);
         remove_cache_file(&first.path);
 
-        let second = render_mermaid_svg_for_display_with(&source, 720.0, 960.0, test_renderer)
+        let second = render_mermaid_svg_for_display_with(&source, 720.0, test_renderer)
             .expect("display rebuild");
         assert_eq!(renderer_calls(&source.body), 1);
         assert!(second.path.exists());
@@ -987,22 +1096,49 @@ mod tests {
         remove_cache_file(&base_path);
 
         reset_renderer_calls(&source.body);
-        let narrow = render_mermaid_svg_for_display_with(&source, 240.0, 320.0, test_renderer)
+        let narrow = render_mermaid_svg_for_display_with(&source, 64.0, test_renderer)
             .expect("narrow render");
         assert_eq!(renderer_calls(&source.body), 1);
 
-        let wide = render_mermaid_svg_for_display_with(&source, 900.0, 1200.0, test_renderer)
+        let wide = render_mermaid_svg_for_display_with(&source, 900.0, test_renderer)
             .expect("wide render");
         assert_eq!(renderer_calls(&source.body), 1);
         assert!(wide.path.exists());
+        assert!(narrow.display_width <= 64.0);
+        assert!(wide.display_width > narrow.display_width);
+        assert_ne!(narrow.path, wide.path);
 
         remove_cache_file(&narrow.path);
         remove_cache_file(&wide.path);
         remove_cache_file(&base_path);
     }
+
+    #[test]
+    fn display_disk_cache_preserves_fitted_dimensions_after_memory_miss() {
+        let source = unique_mermaid_source("fitted-dimensions-survive-memory-miss");
+        let first = render_mermaid_svg_for_display_with(&source, 64.0, test_renderer)
+            .expect("缩小到正文列");
+        let display_key = mermaid_display_cache_key(&source.body, first.display_scale);
+        {
+            let mut cache = lock_memory_cache().expect("内存缓存锁");
+            cache.renders.remove(&display_key);
+            cache.order.retain(|key| key != &display_key);
+        }
+        let second = render_mermaid_svg_for_display_with(&source, 64.0, test_renderer)
+            .expect("从磁盘恢复缩放图表");
+        assert_eq!(
+            second.display_width, first.display_width,
+            "缓存命中不能还原为未缩放宽度"
+        );
+        assert!((second.display_height - first.display_height).abs() < 0.001);
+        remove_cache_file(&first.path);
+        remove_cache_file(
+            &mermaid_base_cache_path(&mermaid_cache_key(&source.body)).expect("基础路径"),
+        );
+    }
 }
 
-    /// display 键的 scale 是连续量（column_fit_scale 随窗口宽度连续变化）：
+    /// display 键的 scale 是连续量（正文列宽随窗口宽度变化）：
     /// 不分档的话拖一下宽度一个新键、一次写盘，缓存目录按「每张图 × 每种
     /// 宽度」无限膨胀（评审报告维度二建议 16）。0.001 分档后进键。
     #[test]
@@ -1024,11 +1160,11 @@ mod tests {
     #[test]
     fn cache_keys_carry_a_format_version() {
         assert!(
-            mermaid_cache_key("flowchart LR").starts_with("mermaid-svg-v1-"),
+            mermaid_cache_key("flowchart LR").starts_with("mermaid-svg-v3-"),
             "base 键缺版本前缀"
         );
         assert!(
-            mermaid_display_cache_key("flowchart LR", 1.0).starts_with("mermaid-svg-v1-"),
+            mermaid_display_cache_key("flowchart LR", 1.0).starts_with("mermaid-svg-v3-"),
             "display 键缺版本前缀"
         );
     }

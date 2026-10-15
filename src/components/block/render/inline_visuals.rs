@@ -229,7 +229,7 @@ impl Block {
         container.into_any_element()
     }
 
-    pub(crate) fn render_mermaid_content(&self, theme: &Theme, window: &Window, cx: &App) -> AnyElement {
+    pub(crate) fn render_mermaid_content(&self, theme: &Theme, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
@@ -252,39 +252,39 @@ impl Block {
         let viewport_width = f32::from(window.viewport_size().width.max(px(1.0)));
         let available_width = effective_image_width(self, viewport_width, d, cx);
 
-        match render_mermaid_svg_for_display(&source, available_width, viewport_width) {
+        match render_mermaid_svg_for_display(&source, available_width) {
             Ok(rendered) => {
                 let display_width = rendered.display_width.max(1.0);
                 let display_height = rendered.display_height.max(1.0);
-                let image_path = rendered.path.clone();
-                let image = move || {
-                    img(image_path.clone())
-                        .w(px(display_width))
-                        .h(px(display_height))
-                };
-                let content = if display_width <= available_width + 0.5 {
-                    div()
-                        .w_full()
-                        .flex()
-                        .justify_center()
-                        .child(image())
-                        .into_any_element()
-                } else {
-                    div()
-                        .id(ElementId::Name(
-                            format!("mermaid-scroll-{}", self.record.id).into(),
-                        ))
-                        .w_full()
-                        .overflow_x_scroll()
-                        .scrollbar_width(px(0.0))
-                        .child(div().w(px(display_width)).child(image()))
-                        .into_any_element()
-                };
+                let markdown = source.raw.clone();
+                let image = img(rendered.path)
+                    .debug_selector(|| "mermaid-diagram-image".to_string())
+                    .w(px(display_width))
+                    .h(px(display_height))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |_block, _event, _window, cx| {
+                        cx.stop_propagation();
+                        cx.emit(BlockEvent::RequestMermaidPreview { markdown: markdown.clone() });
+                    }));
+                let edit = div()
+                    .id(ElementId::Name(format!("mermaid-edit-source-{}", self.record.id).into()))
+                    .debug_selector(|| "mermaid-edit-source".into())
+                    .absolute().top(px(4.0)).right(px(4.0))
+                    .px(px(6.0)).py(px(2.0)).rounded_sm()
+                    .bg(c.dialog_surface).text_color(c.dialog_muted)
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_block, _event, _window, cx| {
+                        cx.stop_propagation();
+                        cx.emit(BlockEvent::RequestFocus);
+                    }))
+                    .child("‹/›");
 
                 div()
                     .w_full()
+                    .relative()
                     .py(px(d.block_padding_y.max(6.0)))
-                    .child(content)
+                    .child(div().w_full().flex().justify_center().child(image))
+                    .child(edit)
                     .into_any_element()
             }
             Err(err) => div()
