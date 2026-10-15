@@ -1518,3 +1518,84 @@ async fn source_mode_row_pitch_matches_the_plan_estimate(cx: &mut TestAppContext
         );
     }
 }
+
+/// 区间不变式要**一路**成立：跨过打字、撤销、重做之后，每根块的区间仍在字符边界
+/// 上、递增、互不重叠、且只漏掉换行符。
+///
+/// 既有那几条用例只在静止态查一次。这条把同一条不变式挂在编辑序列的每一步上——
+/// 「部分重投影只重挂新根、旧根的区间靠平移」正是最容易在这里出错的地方（一次
+/// 增量撤销就撞过：区间起点落在中文'第'的中间，`buffer.slice` 当场 panic）。
+#[gpui::test]
+async fn root_spans_stay_on_char_boundaries_across_edits_and_undo(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..40)
+        .map(|index| format!("## 第 {index} 节\n\n第 {index} 段正文。\n\n"))
+        .collect::<String>();
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown, None)));
+    cx.run_until_parked();
+
+    let check = |editor: &gpui::Entity<Editor>, cx: &mut TestAppContext, label: &str| {
+        editor.read_with(cx, |editor, _cx| {
+            let buffer_text = editor.buffer.text();
+            let mut previous_end = 0usize;
+            let mut spans = Vec::new();
+            for (index, root) in editor.document.root_blocks().iter().enumerate() {
+                let span = editor
+                    .document
+                    .source_span_of(root.entity_id())
+                    .unwrap_or_else(|| panic!("{label}：第 {index} 根块没挂上源码区间"));
+                assert!(
+                    editor.buffer.is_char_boundary(span.start)
+                        && editor.buffer.is_char_boundary(span.end),
+                    "{label}：第 {index} 根的区间 {span:?} 端点落在多字节字符中间"
+                );
+                assert!(
+                    span.end <= buffer_text.len(),
+                    "{label}：第 {index} 根的区间 {span:?} 越过缓冲区末尾（{} 字节）",
+                    buffer_text.len()
+                );
+                assert!(
+                    span.start >= previous_end,
+                    "{label}：第 {index} 根的区间 {span:?} 与上一段重叠（上一段结束于 {previous_end}）"
+                );
+                previous_end = span.end;
+                spans.push(span);
+            }
+            assert_spans_tile_the_content(&spans, &buffer_text, label);
+        });
+    };
+
+    check(&editor, cx, "建好之后");
+    let roots = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().to_vec());
+    assert!(roots.len() > 20, "夹具只有 {} 根块", roots.len());
+
+    // 打字：开头那一根、中间那一根、末尾那一根，各打一个字。
+    for (label, index) in [("开头", 0usize), ("中间", 21), ("末尾", 39)] {
+        let block = roots[index].clone();
+        block.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+        });
+        cx.run_until_parked();
+        check(&editor, cx, &format!("{label}那一根打字之后"));
+    }
+
+    // 撤销两次、重做一次，再打一次字：整棵重建与增量重投影都要过同一条不变式。
+    for step in 0..3 {
+        editor.update(cx, |editor, cx| {
+            if step == 2 {
+                editor.redo_document(cx);
+            } else {
+                editor.undo_document(cx);
+            }
+        });
+        cx.run_until_parked();
+        check(&editor, cx, &format!("第 {step} 次撤销/重做之后"));
+    }
+
+    let fresh = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().to_vec());
+    fresh[3].update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..0, "y", None, false, cx);
+    });
+    cx.run_until_parked();
+    check(&editor, cx, "撤销之后再打字");
+}
