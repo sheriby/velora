@@ -719,6 +719,8 @@ impl Editor {
                 self.pending_focus = Some(host.entity_id());
             }
         }
+        // 收尾这一步是 `rebuild_document_from_buffer` 依赖的：它不再自己重复调一遍
+        // （见那里的注释）。挪掉这一行，整篇重建后的引用注册表就没人刷新了。
         self.rebuild_image_runtimes(cx);
         self.sync_table_axis_visuals(cx);
     }

@@ -1662,6 +1662,39 @@ async fn reattaching_root_spans_does_not_scan_candidates_per_block(cx: &mut Test
     );
 }
 
+/// 一次 ⌘Z 只许重建一遍整篇引用注册表。
+///
+/// `rebuild_document_from_buffer` 原来先 `rebuild_table_runtimes`（它的收尾已经调了
+/// `rebuild_image_runtimes`）再直接调一次 `rebuild_image_runtimes`：同一份缓冲区、同一棵
+/// 树连着重建两遍。10 MiB 档一次 766ms，撤销里白付一遍。这条钉成**恰好一次**——少一遍
+/// 说明表格那条收尾被挪了，多一遍说明重复调用又回来了。
+#[gpui::test]
+async fn undoing_once_rebuilds_the_reference_registry_exactly_once(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = (0..40)
+        .map(|index| format!("## 第 {index} 节\n\n[asset{index}]: ./assets/{index}.png\n"))
+        .collect::<String>();
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown, None)));
+    cx.run_until_parked();
+    let roots = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().to_vec());
+    let first = roots.first().cloned().expect("夹具应有根块");
+    first.update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+    });
+    cx.run_until_parked();
+
+    let before = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    cx.run_until_parked();
+    let after = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert_eq!(
+        after - before,
+        1,
+        "一次撤销重建了 {} 遍整篇引用注册表，应当是恰好一遍",
+        after - before
+    );
+}
+
 /// 打字不许因为段落里有 `[` 或 `<` 就整篇重建引用注册表。
 ///
 /// 定义行必含 `]:`、脚注引用必含 `[^`，屏幕收窄到这两条之后，一个带

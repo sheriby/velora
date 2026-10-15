@@ -690,8 +690,12 @@ impl Editor {
             ViewMode::Rendered => {
                 let roots = self.rebuild_root_blocks_from_buffer(cx);
                 self.document.replace_roots(roots, cx);
+                // 引用注册表的刷新由表格那一趟收尾代劳（`rebuild_table_runtimes` 的最后
+                // 一行）。**别再补一次 `rebuild_image_runtimes`**：同一份缓冲区、同一棵
+                // 树连着重建两遍是纯浪费——10 MiB 档一遍 766ms，撤销与切视图每次都白付
+                // （闸门 `undoing_once_rebuilds_the_reference_registry_exactly_once`
+                // 钉住「恰好一遍」）。
                 self.rebuild_table_runtimes(cx);
-                self.rebuild_image_runtimes(cx);
             }
             ViewMode::Source => {
                 // markdown 源码分块是 Paragraph：高亮语言记在块上；代码文件的
