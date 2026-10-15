@@ -234,6 +234,11 @@ pub struct Editor {
     /// 计数器：光标滚动实际改动的次数。撤销等操作会替换整篇块，
     /// 用旧布局的边界先滚一次、下一帧再纠正，就会让用户看到来回滚。
     caret_scroll_applications: std::cell::Cell<u64>,
+    /// 性能计数器：采过几次**整篇阅读现场**（`capture_document_view`）。一次要付
+    /// 全文哈希 + O(rows) 行测量 + O(blocks) 读实体 + 撤销栈深拷贝，只有「马上要
+    /// 换掉整棵块树、之后要把现场交还」的入口才该付；自动保存这类只需要同步内容
+    /// 与脏位的入口采了，就是按键路径上白做的整篇工作（不变量 8）。
+    document_view_captures: std::cell::Cell<u64>,
     /// 性能诊断：四类全文遍数的累计耗时（纳秒），只给基准用例与诊断读。
     source_serialization_nanos: std::cell::Cell<u64>,
     source_mapping_nanos: std::cell::Cell<u64>,
@@ -848,6 +853,7 @@ impl Editor {
             line_prefix_from_record: std::cell::Cell::default(),
             line_prefix_measured: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),
+            document_view_captures: std::cell::Cell::default(),
             prev_mounted_run: None,
             scroll_settle_frames: 0,
             cold_fill_frames: 0,

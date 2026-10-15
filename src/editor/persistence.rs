@@ -281,7 +281,7 @@ impl Editor {
                         }
                         let autosave_writes = crate::config::EditorSettings::autosave(cx);
                         let mut documents = editor
-                            .dirty_workspace_documents(cx)
+                            .dirty_workspace_documents()
                             .into_iter()
                             .map(|document| PendingAutosaveDocument {
                                 recovery: crate::config::RecoverySnapshot {
@@ -478,7 +478,7 @@ impl Editor {
                             editor.pending_window_edited = false;
                             editor.pending_window_unedited = true;
                             editor.pending_window_title_refresh = true;
-                            editor.snapshot_current_document(cx);
+                            editor.sync_current_document_content();
                         }
                         if !saved_documents.is_empty() {
                             cx.notify();
@@ -501,7 +501,7 @@ impl Editor {
             return;
         }
         self.snapshot_current_document(cx);
-        let documents = self.dirty_workspace_documents(cx);
+        let documents = self.dirty_workspace_documents();
         if self.document_dirty && self.file_path.is_none() {
             self.pending_close_after_save = true;
             self.pending_save = true;
@@ -610,7 +610,7 @@ impl Editor {
                         editor.pending_window_edited = false;
                         editor.pending_window_unedited = true;
                         editor.pending_window_title_refresh = true;
-                        editor.snapshot_current_document(cx);
+                        editor.sync_current_document_content();
                     }
                     let has_unsaved_documents =
                         editor.document_dirty || editor.has_dirty_workspace_documents();

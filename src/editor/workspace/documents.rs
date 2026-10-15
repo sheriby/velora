@@ -128,9 +128,9 @@ impl Editor {
                 let file_version = self
                     .file_version
                     .unwrap_or_else(|| crate::editor::persistence::file_content_version(&markdown));
-                // 路径换了但显示的还是这一篇：现场归它，落到哪个分支都按此刻的记，
-                // 不留旧标签那份可能对不上活文档的机会。
-                let view = self.capture_document_view(cx);
+                // 路径换了但显示的还是这一篇：这份现场归它，四个分支都按此刻的记录，
+                // 不给旧标签留下「和当前文档对不上」的机会。
+                let view = self.capture_document_view(&markdown, cx);
                 let previous_index = previous.as_ref().and_then(|previous| {
                     self.workspace
                         .open_documents
@@ -268,14 +268,28 @@ impl Editor {
         }
     }
 
+    /// 记下这一篇的内容和阅读现场，写进它的标签：离开这一篇的入口用它（换标签、关
+    /// 闭、外部改动重载），切回来按 `WorkspaceDocumentTab::view` 交还。
     pub(crate) fn snapshot_current_document(&mut self, cx: &App) {
+        let markdown = self.document_text_for_save();
+        let view = self.capture_document_view(&markdown, cx);
+        self.write_current_document_tab(markdown, Some(view));
+    }
+
+    /// 只把这一篇的内容与脏位写进标签，不采阅读现场：自动保存用它。采一次要付
+    /// 全文哈希、每行一条目的行测量、逐个块读实体和撤销栈的深拷贝，而这些在自动保
+    /// 存之后没有任何人读（读它的是换标签那一步，那一步自己会重新采）。
+    pub(crate) fn sync_current_document_content(&mut self) {
+        let markdown = self.document_text_for_save();
+        self.write_current_document_tab(markdown, None);
+    }
+
+    fn write_current_document_tab(&mut self, markdown: String, view: Option<DocumentView>) {
         let Some(path) = self.file_path.clone() else {
             return;
         };
-        let markdown = self.document_text_for_save();
-        // 离开这一篇之前把现场记在它的标签上：切回来时按这份交还（见
-        // `WorkspaceDocumentTab::view`）。自动保存也走这里，记的是当时的真实现场。
-        let view = self.capture_document_view(cx);
+        let file_shape = self.buffer.file_shape();
+        let dirty = self.document_dirty;
         if let Some(tab) = self
             .workspace
             .open_documents
@@ -283,31 +297,31 @@ impl Editor {
             .find(|tab| tab.path == path)
         {
             tab.markdown = markdown;
-            tab.file_shape = self.buffer.file_shape();
-            tab.dirty = self.document_dirty;
-            tab.view = Some(view);
+            tab.file_shape = file_shape;
+            tab.dirty = dirty;
+            if let Some(view) = view {
+                tab.view = Some(view);
+            }
         } else {
+            let file_version = self.file_version.unwrap_or_else(|| {
+                crate::editor::persistence::file_content_version(&markdown)
+            });
             self.workspace.open_documents.push(WorkspaceDocumentTab {
                 path: path.clone(),
                 recovery_id: self.recovery_id,
-                file_version: self
-                    .file_version
-                    .unwrap_or_else(|| crate::editor::persistence::file_content_version(&markdown)),
+                file_version,
                 markdown,
-                file_shape: self.buffer.file_shape(),
-                dirty: self.document_dirty,
+                file_shape,
+                dirty,
                 preview: false,
-                view: Some(view),
+                view,
             });
         }
         self.workspace.active_document = Some(path);
     }
 
-    pub(crate) fn dirty_workspace_documents(
-        &mut self,
-        cx: &App,
-    ) -> Vec<WorkspaceAutosaveDocument> {
-        self.snapshot_current_document(cx);
+    pub(crate) fn dirty_workspace_documents(&mut self) -> Vec<WorkspaceAutosaveDocument> {
+        self.sync_current_document_content();
         // 活动文档的落盘字节直接取自缓冲区；后台标签退写文本（见 struct 注释）。
         let active_bytes = self.document_bytes_for_save();
         let active_path = self.file_path.clone();

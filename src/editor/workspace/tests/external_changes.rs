@@ -543,7 +543,7 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
     }
     let offset_before = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
     let anchor_before = editor.read_with(cx, |editor, cx| {
-        editor.capture_document_view(cx).row_anchor
+        editor.capture_document_view(&editor.buffer.text(), cx).row_anchor
     });
     let caret_before = editor.read_with(cx, |editor, cx| {
         editor.capture_source_selection_snapshot(cx)
@@ -574,7 +574,7 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
         );
         assert_eq!(editor.scroll_handle.offset().y, offset_before, "追加内容后的外部重载不应滚动视口");
         assert_eq!(
-            editor.capture_document_view(cx).row_anchor,
+            editor.capture_document_view(&editor.buffer.text(), cx).row_anchor,
             anchor_before,
             "外部重载把阅读位置挪走了"
         );

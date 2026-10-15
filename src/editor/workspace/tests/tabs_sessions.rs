@@ -989,7 +989,9 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
         editor.active_entity_id = Some(block.entity_id());
         block.update(cx, |block, _cx| block.selected_range = caret..caret);
     });
-    let alpha_view = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    let alpha_view = editor.read_with(cx, |editor, cx| {
+        editor.capture_document_view(&editor.buffer.text(), cx)
+    });
     assert!(
         matches!(alpha_view.view_mode, crate::editor::ViewMode::Source)
             && alpha_view.scroll_y < 0.0
@@ -1022,7 +1024,9 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-1200.0), cx);
     });
-    let beta_view = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    let beta_view = editor.read_with(cx, |editor, cx| {
+        editor.capture_document_view(&editor.buffer.text(), cx)
+    });
     assert!(beta_view.scroll_y < 0.0, "前置：beta 应已滚开，实测 {beta_view:?}");
 
     // 切回 alpha：模式、视口、光标按它那份交还（跑几帧，夹取与校正都在这些帧里发生）。
@@ -1035,7 +1039,9 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     for _ in 0..4 {
         cx.update(|window, cx| window.draw(cx).clear());
     }
-    let restored = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    let restored = editor.read_with(cx, |editor, cx| {
+        editor.capture_document_view(&editor.buffer.text(), cx)
+    });
     assert_eq!(
         restored.view_mode, alpha_view.view_mode,
         "切回 alpha 把源码模式换掉了，实测 {restored:?}"
@@ -1063,7 +1069,9 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     for _ in 0..4 {
         cx.update(|window, cx| window.draw(cx).clear());
     }
-    let restored = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    let restored = editor.read_with(cx, |editor, cx| {
+        editor.capture_document_view(&editor.buffer.text(), cx)
+    });
     assert_eq!(
         restored.view_mode, beta_view.view_mode,
         "切回 beta 把视图模式换掉了，实测 {restored:?}"
@@ -1839,7 +1847,7 @@ async fn switching_three_tabs_keeps_each_position(cx: &mut TestAppContext) {
     };
     let anchor_now = |cx: &gpui::VisualTestContext| {
         editor.read_with(cx, |editor, cx| {
-            editor.capture_document_view(cx).row_anchor
+            editor.capture_document_view(&editor.buffer.text(), cx).row_anchor
         })
     };
 
@@ -2004,7 +2012,9 @@ async fn typing_immediately_after_restoring_a_tab_keeps_the_caret_visible(cx: &m
     for _ in 0..3 {
         cx.update(|window, cx| window.draw(cx).clear());
     }
-    let view = editor.read_with(cx, |editor, cx| editor.capture_document_view(cx));
+    let view = editor.read_with(cx, |editor, cx| {
+        editor.capture_document_view(&editor.buffer.text(), cx)
+    });
     editor.update(cx, |editor, cx| {
         editor.restore_document_from_markdown(source, path, Some(view), cx)
     });

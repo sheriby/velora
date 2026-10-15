@@ -61,6 +61,63 @@ async fn typing_does_not_rescan_status_bar_statistics_every_key(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn autosave_does_not_capture_the_reading_position(cx: &mut TestAppContext) {
+    // 不变量 8：自动保存的防抖回调跑在前景线程，一次 burst 只需要把内容与脏位同步
+    // 到标签上。整篇阅读现场（全文哈希 + O(rows) 行测量 + O(blocks) 读实体 + 撤销栈
+    // 深拷贝）只有「马上换掉整棵块树、之后要交还」的入口才用得上，自动保存采了没人用。
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("autosave-view-capture");
+    fs::write(&path, "alpha").expect("write document");
+    let cleanup = path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup);
+    });
+    let (editor, cx) = cx.add_window_view({
+        let path = path.clone();
+        move |_window, cx| Editor::from_markdown(cx, "alpha".to_string(), Some(path))
+    });
+    redraw(cx);
+    cx.simulate_input("!");
+    redraw(cx);
+
+    let before = editor.read_with(cx, |editor, _cx| {
+        assert!(editor.document_dirty, "前提：打完字这一篇必须是脏的");
+        editor.document_view_captures.get()
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_ne!(
+        fs::read_to_string(&path).expect("read autosaved document"),
+        "alpha",
+        "前提：这一秒里自动保存必须真的落盘，否则这条只是在量一个没跑的分支"
+    );
+    let during = editor.read_with(cx, |editor, _cx| editor.document_view_captures.get()) - before;
+    assert_eq!(
+        during, 0,
+        "自动保存 burst 采了 {during} 次整篇阅读现场：前景做了没人要用的整篇工作"
+    );
+
+    // 对称的一半：真正要交还现场的入口照旧必须采。
+    let second_path = temp_markdown_path("autosave-view-capture-second");
+    fs::write(&second_path, "beta").expect("write second document");
+    let cleanup_second = second_path.clone();
+    cx.on_quit(move || {
+        let _ = fs::remove_file(cleanup_second);
+    });
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(second_path, window, cx);
+        });
+    });
+    let after_switch = editor.read_with(cx, |editor, _cx| editor.document_view_captures.get());
+    assert!(
+        after_switch > before,
+        "换标签必须采一次现场，实测这一趟采了 {} 次",
+        after_switch - before
+    );
+}
+
+#[gpui::test]
 #[ignore = "墙钟预算闸门，依赖机器速度；单独跑：cargo test --bin velora -- --ignored"]
 async fn one_mib_typing_stays_within_budget(cx: &mut TestAppContext) {
     // P2 大文档输入预算：1 MiB 文档里一次按键的成本必须是「常数次全文遍数 +

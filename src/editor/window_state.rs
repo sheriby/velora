@@ -531,17 +531,19 @@ impl Editor {
 
     /// 记下这一篇文档的阅读现场：模式、视口偏移、光标区间。
     ///
-    /// 只在「马上要换掉整棵块树、但文档还是这篇或要切回另一篇」的入口用；
-    /// 现场要在换之前取，块树一换旧实体 id 就作废了。
-    pub(crate) fn capture_document_view(&self, cx: &App) -> DocumentView {
+    /// 只在「马上要换掉整棵块树、之后要把这份现场交还给同一篇」的入口用；换之前取，
+    /// 块树一换旧实体 id 就作废了。`content` 是调用方已经序列化好的整篇文本：这里不
+    /// 再取第二遍，全文哈希本来就只该在这份文本上算一次。
+    pub(crate) fn capture_document_view(&self, content: &str, cx: &App) -> DocumentView {
         if let Some(view) = &self.pending_scroll_restore {
             return view.clone();
         }
+        self.document_view_captures.set(self.document_view_captures.get() + 1);
         let scroll_y = f32::from(self.scroll_handle.offset().y);
         DocumentView {
             view_mode: self.view_mode,
-            content_len: self.buffer.byte_len(),
-            content_version: persistence::file_content_version_normalized(&self.buffer.text()),
+            content_len: content.len(),
+            content_version: persistence::file_content_version_normalized(content),
             scroll_y,
             row_anchor: self.capture_scroll_row_anchor(scroll_y),
             row_layout: self.capture_document_row_layout(),

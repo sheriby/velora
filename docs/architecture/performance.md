@@ -36,6 +36,7 @@ cargo test probe_attribute_ten_mib -- --ignored --nocapture   # 大文档按键�
 | `panel_rows_rendered` / `panel_first_row_rendered` | 侧栏列表上帧渲染行数 / 窗口起始行 | 一帧只画视口那些行 |
 | `line_prefix_from_record` / `line_prefix_measured` | 记号宽度取解析期账 / 事后按文件量 | 后者 0（迁移进度就看它） |
 | `caret_scroll_applications`、`row_stride_cache_clears` | 光标滚动入视次数、行高缓存清空次数 | 不随文档大小增长 |
+| `document_view_captures` | 采一次整篇阅读现场（视图模式 / 视口偏移 / 光标，即 `DocumentView`）：全文哈希 + 每行一条行测量 + 逐块读实体 + 撤销栈拷贝 | 自动保存 0 次；换标签、外部改动重载各 1 次 |
 | `panel_fill_frames` / `cold_fill_frames` / `scroll_settle_frames`（`u8`） | 补帧计数 | 有上限 |
 
 `DocumentTree`：`whole_document_renders`（**非兜底路径上悄悄发生的**整篇序列化）、`snapshot_rebuilds` / `snapshot_nanos`。
@@ -50,6 +51,8 @@ cargo test probe_attribute_ten_mib -- --ignored --nocapture   # 大文档按键�
 - `a_real_editing_session_never_measures_marker_widths_after_the_fact` — 记号宽度不许事后按文件量（`line_prefix_measured` 全程 0）。
 - `typing_a_plain_character_does_not_rebuild_the_row_plan`、`typing_in_a_heading_without_a_toc_block_reuses_the_row_plan`、`row_plan_rebuild_reads_only_the_headings_not_every_block`。
 - `per_keystroke_document_passes_stay_bounded`、`typing_does_not_rescan_status_bar_statistics_every_key`。
+- `autosave_does_not_capture_the_reading_position` — 自动保存的那一下只同步内容与脏位，
+  不许采整篇阅读现场；同时守住「换标签必须采一次」，防止把该记的现场一并删掉。
 - `the_incremental_outline_matches_a_whole_document_scan`（差分 + 钉住"全程一次整篇重扫都不许发生"——只比结果的话退回整篇照样一致，等于自证）、`the_outline_is_only_built_for_a_reader`、`outline_panel_renders_only_the_rows_in_the_viewport`。
 - `clicking_an_outline_heading_unfolds_it_without_a_document_wide_mapping`、`document_find_highlights_map_only_the_blocks_with_hits`、`typing_at_the_document_head_keeps_every_root_span_tiled`。
 - `asking_for_line_numbers_does_not_read_the_text`、`rebuilding_the_line_index_costs_only_the_edited_bytes`。

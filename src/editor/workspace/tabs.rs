@@ -232,7 +232,7 @@ impl Editor {
         if is_active {
             let path = path.to_path_buf();
             // 还是这一篇：现场当场记下再交回去，模式、视口、光标都不动。
-            let view = self.capture_document_view(cx);
+            let view = self.capture_document_view(&self.buffer.text(), cx);
             if is_markdown_file(&path) {
                 self.restore_document_from_markdown(disk, path, Some(view), cx);
             } else {
