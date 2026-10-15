@@ -128,6 +128,11 @@ pub(super) struct DocumentTree {
     /// O(文档)：10 MiB 一次按键那 175 毫秒的第一嫌疑就是这里，先把它变成数得到的东西。
     pub(crate) snapshot_rebuilds: std::cell::Cell<u64>,
     pub(crate) snapshot_nanos: std::cell::Cell<u64>,
+    /// 计数器：整篇可见块列表被克隆了几块（`flatten_visible_blocks`）。克隆一块要付
+    /// 一次 Entity 引用计数与 LeakDetector 登记；10 MiB 档 159,683 块克隆一次实测
+    /// 17ms、占满一次按键，而按键只需要拿它比「可见序列有没有变」——所以打字时这个
+    /// 数必须是 0，比身份序列（`visible_block_ids`）去。
+    pub(crate) visible_blocks_cloned: std::cell::Cell<u64>,
     /// 行元数据（`VisibleTreeSnapshot::row_spacing` 那一份）的版本：可见列表
     /// 同步整棵重排、增量追加、或某一块的行标记（`is_toc`/`had_toc`）翻面时 +1。
     /// 行计划的缓存键用它而不是「文档修订」——打字只改块内文字时行元数据不动，
@@ -174,6 +179,7 @@ impl DocumentTree {
             whole_document_renders: std::cell::Cell::new(0),
             snapshot_rebuilds: std::cell::Cell::new(0),
             snapshot_nanos: std::cell::Cell::new(0),
+            visible_blocks_cloned: std::cell::Cell::new(0),
             row_meta_version: 0,
         }
     }
@@ -295,9 +301,15 @@ impl DocumentTree {
         }
     }
 
+    /// 整篇可见块列表的克隆。要付每个 Entity 句柄的引用计数与 LeakDetector 登记，
+    /// 只能用在真正需要「前一根/后一根实体」的结构事件上；只想比序列变没变的地方
+    /// 用 [`Self::visible_block_ids`]。
     pub(super) fn flatten_visible_blocks(&self) -> Vec<VisibleBlock> {
+        self.visible_blocks_cloned
+            .set(self.visible_blocks_cloned.get() + self.snapshot.visible.len() as u64);
         self.snapshot.visible.clone()
     }
+
 
 
     pub(super) fn focused_block_entity_id(&self, window: &Window, cx: &App) -> Option<EntityId> {

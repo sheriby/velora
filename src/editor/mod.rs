@@ -239,6 +239,16 @@ pub struct Editor {
     /// 换掉整棵块树、之后要把现场交还」的入口才该付；自动保存这类只需要同步内容
     /// 与脏位的入口采了，就是按键路径上白做的整篇工作（不变量 8）。
     document_view_captures: std::cell::Cell<u64>,
+    /// 性能计数器：整篇引用注册表重建次数（`rebuild_image_runtimes`）。一次要付整篇
+    /// `buffer.text()`、三类定义表重解析、逐块读实体并同步；改动块带 `[`/`<` 或本身是
+    /// 表格/HTML/frontmatter 就要走一遍。它此前不在任何计数器里——「整篇落笔 0 次」
+    /// 全绿的同时，含链接的段落每键都在付它（10 MiB 实测单价 766ms），所以这个数只该
+    /// 随「定义行本身变了」长，不该随打字长。
+    reference_registry_rebuilds: std::cell::Cell<u64>,
+    /// 性能计数器：自动保存守卫（`has_marked_document_text`）读了几个块实体。它遍历
+    /// 全部可见块加全部表格格子来问「有没有未落定的组合文本」，而调用点在每键的
+    /// `schedule_autosave` 开头——这个数随文档长度长，就说明每键都在为一次守卫扫全篇。
+    autosave_guard_block_reads: std::cell::Cell<u64>,
     /// 性能诊断：四类全文遍数的累计耗时（纳秒），只给基准用例与诊断读。
     source_serialization_nanos: std::cell::Cell<u64>,
     source_mapping_nanos: std::cell::Cell<u64>,
@@ -854,6 +864,8 @@ impl Editor {
             line_prefix_measured: std::cell::Cell::default(),
             caret_scroll_applications: std::cell::Cell::default(),
             document_view_captures: std::cell::Cell::default(),
+            reference_registry_rebuilds: std::cell::Cell::default(),
+            autosave_guard_block_reads: std::cell::Cell::default(),
             prev_mounted_run: None,
             scroll_settle_frames: 0,
             cold_fill_frames: 0,

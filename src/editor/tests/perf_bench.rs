@@ -319,6 +319,37 @@ fn cases() -> Vec<Case> {
                 Some((0, body))
             },
         },
+        Case {
+            name: "model.undo_document",
+            group: "model",
+            unit: "次撤销（⌘Z）",
+            skip_hint: "建编辑器失败",
+            prepare: |input, cx| {
+                let Some(editor) = editor_from_fixture(input, cx) else {
+                    return None;
+                };
+                let Some(block) = first_block(&editor, cx) else {
+                    return None;
+                };
+                let bytes = input.markdown.len() as u64;
+                let body: Box<Body> = Box::new(move |cx, count| {
+                    // 一次 ⌘Z = 重放这一笔改动 + `rebuild_document_from_buffer`
+                    // + `mark_dirty`（整篇兜底重投影）。两个单价都另有用例，这一条
+                    // 量的是用户真正按下去的那一下。
+                    for _ in 0..count {
+                        block.update(cx, |block, cx| {
+                            block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+                        });
+                        cx.run_until_parked();
+                        editor.update(cx, |editor, cx| {
+                            editor.undo_document(cx);
+                        });
+                        cx.run_until_parked();
+                    }
+                });
+                Some((bytes, body))
+            },
+        },
     ]
 }
 
@@ -735,4 +766,137 @@ fn baseline_row_round_trips_through_a_line() {
     assert_eq!(columns.len(), 9, "基线一行的列数变了：{line}");
     let parsed: f64 = columns[3].parse().expect("第 4 列必须是纳秒数");
     assert!((parsed - 1234.5).abs() < 0.01, "第 4 列不是中位纳秒：{line}");
+}
+
+/// 文档当前的建树状态：懒加载档位上「量到多少块」决定这一轮数字是什么意思。
+fn document_state(editor: &Entity<Editor>, cx: &mut TestAppContext) -> String {
+    editor.read_with(cx, |editor, _| {
+        format!(
+            "缓冲区 {} 字节｜可视块 {}｜根块 {}｜待续建 {}｜待续源码 {}",
+            editor.buffer.byte_len(),
+            editor.document.visible_blocks().len(),
+            editor.document.root_blocks().len(),
+            editor.document.pending_tail().is_some(),
+            editor.document.pending_source().is_some(),
+        )
+    })
+}
+
+/// 一键前后要比的计数器：`(名字, 当前值)`。
+///
+/// 与 `bench_suite` 的分工：那一套报「一次整篇工作值多少毫秒」，这一份报「一键里
+/// 付了几次」。单价乘次数才是归因，缺任一半都只能靠猜。名字只进打印，不进断言。
+fn counter_snapshot(editor: &Entity<Editor>, cx: &mut TestAppContext) -> Vec<(&'static str, u64)> {
+    editor.read_with(cx, |editor, _| {
+        vec![
+            ("整篇引用注册表重建", editor.reference_registry_rebuilds.get()),
+            ("自动保存守卫读块", editor.autosave_guard_block_reads.get()),
+            ("整篇序列化", editor.source_serializations.get()),
+            ("mapping 重建", editor.source_mapping_builds.get()),
+            ("mapping 整篇重建", editor.source_mapping_full_builds.get()),
+            ("整篇分词", editor.word_count_scans.get()),
+            ("命中表整篇重扫", editor.document_match_scans.get()),
+            ("行计划重建", editor.row_plan_rebuilds.get()),
+            ("行计划读块", editor.row_plan_block_reads.get()),
+            ("重投影根块", editor.roots_reprojected.get()),
+            ("大纲重拼", editor.outline_rebuilds.get()),
+            ("大纲整篇重扫", editor.outline_full_rescans.get()),
+            ("大纲扫行", editor.outline_lines_scanned.get()),
+            ("整篇现场采集", editor.document_view_captures.get()),
+            ("行高缓存清空", editor.row_stride_cache_clears.get()),
+            ("光标滚动入视", editor.caret_scroll_applications.get()),
+            ("可见块克隆", editor.document.visible_blocks_cloned.get()),
+            ("大纲根块克隆", editor.outline_root_blocks_cloned.get()),
+            ("状态栏选区读块", editor.status_bar_selection_block_reads.get()),
+            ("投影重排", editor.document.snapshot_rebuilds.get()),
+            ("整篇渲染", editor.document.whole_document_renders.get()),
+        ]
+    })
+}
+
+/// 诊断探针：在指定档位上连敲一串键，把「一次按键到底做了什么」摊开——耗时切片
+/// （块侧 vs 事件之后到排空）加上每一类整篇工作的每键增量。
+///
+/// 它不断言、不进基线：基线记的是单价，这里要的是次数。1 MiB → 10 MiB 时按键成本
+/// 涨了 23.7 倍（线性只有 10 倍），超线性那一截是哪一项，跑这一条看增量就有答案。
+///
+/// ```bash
+/// VELORA_PROBE_SIZE=ten-mib VELORA_PROBE_KEYS=300 cargo test --bin velora \
+///   probe_keystroke_stage_split -- --ignored --nocapture
+/// ```
+#[gpui::test]
+#[ignore = "诊断探针：手动跑，看每键的耗时切片与计数器增量；CI 按 perf_bench 前缀整体跳过"]
+fn probe_keystroke_stage_split(cx: &mut TestAppContext) {
+    let requested = env_value("VELORA_PROBE_SIZE").unwrap_or_else(|| "ten-mib".to_string());
+    let Some(index) = SIZES.iter().position(|candidate| *candidate == requested) else {
+        panic!("未知档位 `{requested}`，可选：{}", SIZES.join(", "));
+    };
+    let size = SIZES[index];
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures/perf")
+        .join(format!("{size}.md"));
+    let markdown = fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "缺夹具 {}：先跑 `node scripts/generate-fixtures.mjs fixtures/perf`（{error}）",
+            path.display()
+        )
+    });
+    let input = Input { size, markdown };
+    let Some(editor) = editor_from_fixture(&input, cx) else {
+        panic!("{size} 夹具建不出编辑器");
+    };
+    let Some(block) = first_block(&editor, cx) else {
+        panic!("{size} 夹具没有首块");
+    };
+    println!("\n建好时：{}", document_state(&editor, cx));
+    // 夹具打开是懒加载的：只建了首块，其余挂在待续建尾巴上。不补建就量，量到的是
+    // 「首块文档」的按键成本（10 MiB 档只有 ~800 块），和补建后的完全不是一件事。
+    if env_value("VELORA_PROBE_FLUSH").is_some() {
+        let started = Instant::now();
+        editor.update(cx, |editor, cx| editor.flush_pending_materialization(cx));
+        println!(
+            "补建整篇：{:.2} ms 后 {}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            document_state(&editor, cx)
+        );
+    }
+    let keys: u64 = env_value("VELORA_PROBE_KEYS")
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(300);
+
+    let revision_before = editor.read_with(cx, |editor, _| editor.document_revision);
+    let before = counter_snapshot(&editor, cx);
+    let mut block_nanos = 0u128;
+    let mut park_nanos = 0u128;
+    for _ in 0..keys {
+        let started = Instant::now();
+        block.update(cx, |block, cx| {
+            block.replace_text_in_visible_range(0..0, "x", None, false, cx);
+        });
+        let after_block = Instant::now();
+        cx.run_until_parked();
+        let after_park = Instant::now();
+        block_nanos += (after_block - started).as_nanos();
+        park_nanos += (after_park - after_block).as_nanos();
+    }
+    let after = counter_snapshot(&editor, cx);
+    let revision_delta = editor.read_with(cx, |editor, _| editor.document_revision)
+        .wrapping_sub(revision_before);
+    assert_eq!(
+        revision_delta, keys,
+        "块改动没让编辑器进脏路径，探针测错了东西"
+    );
+
+    println!("\n== 每键耗时（{size}，连敲 {keys} 键）");
+    println!("{}", document_state(&editor, cx));
+    println!(
+        "块侧 {:.3} ms｜事件之后到排空 {:.3} ms｜合计 {:.3} ms",
+        block_nanos as f64 / keys as f64 / 1e6,
+        park_nanos as f64 / keys as f64 / 1e6,
+        (block_nanos + park_nanos) as f64 / keys as f64 / 1e6,
+    );
+    println!("\n{:<26}{:>14}", "每键增量", "次数");
+    for ((name, from), (_, to)) in before.iter().zip(&after) {
+        println!("{name:<26}{:>14.3}", (to - from) as f64 / keys as f64);
+    }
 }

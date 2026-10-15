@@ -260,6 +260,8 @@ impl Editor {
     }
 
     pub(super) fn rebuild_image_runtimes(&mut self, cx: &mut Context<Self>) {
+        self.reference_registry_rebuilds
+            .set(self.reference_registry_rebuilds.get() + 1);
         let base_dir = self.local_link_base_dir();
         // 引用定义按**文件**算：保存出去的是缓冲区，重新打开时解析器读到的就是这几
         // 个字节，渲染时必须用同一份文本。块树的序列化不保证这一点——列表项里的定义
