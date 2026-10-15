@@ -563,7 +563,22 @@ fn chunk_starts_index_matches_a_linear_scan() {
                 reference_locate(&buffer.chunks, offset),
                 "第 {step} 步编辑后 locate({offset}) 与线性参考不一致"
             );
-            offset += if offsets.is_empty() { 1 } else { 1 };
+            if buffer.is_char_boundary(offset) {
+                // `line_of` 与「前面几块各有多少换行」的表也得跟着对：它现在读前缀
+                // 索引，算错一位就会把行号报偏一行（跳转、大纲、行号栏全跟着偏）。
+                let reference = buffer.chunks[..reference_locate(&buffer.chunks, offset).0]
+                    .iter()
+                    .map(Chunk::line_count)
+                    .sum::<usize>()
+                    + buffer.chunks[reference_locate(&buffer.chunks, offset).0]
+                        .lines_before(reference_locate(&buffer.chunks, offset).1);
+                assert_eq!(
+                    buffer.line_of(offset),
+                    reference,
+                    "第 {step} 步编辑后 line_of({offset}) 与线性参考不一致"
+                );
+            }
+            offset += 1;
         }
         offsets.push(start);
     }

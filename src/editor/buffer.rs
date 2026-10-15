@@ -474,11 +474,10 @@ impl TextBuffer {
             chunk.text.is_char_boundary(local),
             "line_of 的偏移落在多字节字符中间：{offset}"
         );
-        let preceding = self.chunks[..chunk_index]
-            .iter()
-            .map(Chunk::line_count)
-            .sum::<usize>();
-        preceding + chunk.lines_before(local)
+        // 这一块之前有多少个换行，前缀索引里已经记着（`line_prefix[chunk_index]`）。
+        // 以前是拿 `chunks[..chunk_index]` 现累一遍——`reproject_root_region` 每根块
+        // 都要问两三次行号，10 万根块就是十万次线性累加。
+        self.starts.line_prefix[chunk_index] + chunk.lines_before(local)
     }
 
     /// 一次遍历把多个**升序**字节偏移的「（所在行, 本行首字节偏移）」一起取回来。
