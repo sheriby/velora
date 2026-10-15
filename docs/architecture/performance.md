@@ -147,10 +147,17 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
       （实测：一次撤销改到段落，区域 2 行，解析出 `span 末端 [1, 3]`，`within=1` 而
       `1 != 2` → 返回 `None` → 退回整篇）。要么统一「空行归谁」的口径，要么让区域由
       **解析结果**去对齐而不是由根的区间去推。
-   2. 按空行裁剪区域时会撞上区间端点不在字符边界：`line_range(line_base + region_lines - 1)`
-      给出 `start byte index … is not a char boundary`（'第' 中间，偏移 1112）。
-      `chunk_starts_index_matches_a_linear_scan` 已证明前缀索引与线性参考逐行逐偏移一致，
-      所以嫌疑在 `line_of` / `line_range` 对「非行首偏移」或越界行号那一段口径上，未定位。
+   2. 第二版（放宽验收：只要解析出的根不越进下一根原来的块就收）之后，增量那条路真的
+      跑起来了，却在**收尾刷引用注册表**时崩：`block_may_change_document_references` 拿
+      某根块的源码区间去 `buffer.slice`，区间起点落在 '第' 中间（1112..1131）。调用栈
+      （`slice` 里临时打的 `Backtrace::force_capture`）指着
+      `rebuild_table_runtimes → rebuild_image_runtimes → block_may_change_document_references`。
+      **可疑点**：给那次切片加的「区间端点是不是字符边界」体检**没有触发**，说明
+      `TextBuffer::is_char_boundary` 与 `TextBuffer::slice` 对同一个偏移给出了不同答案——
+      两处都走 `starts.locate`，那就得查增量重投影之后**区间本身**是不是对不上了
+      （部分重投影只重挂新根，旧根的区间靠 `shift_source_spans_after` 平移）。
+      下一版先写一条差分测试：「任意编辑序列之后，所有根的区间都必须落在字符边界上、
+      且互不重叠、按文档顺序单调」，再动增量。
    改动本身（判定改动字节范围 → 落在一根块里就只重投影那一根，否则退回整篇）已经写出
    来过，卡的是上面两处；谁接着做，先给 `reproject_root_region` 补一条「区域与解析边界
    对不上时怎么办」的判据，再谈接撤销。
