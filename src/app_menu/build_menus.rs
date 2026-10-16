@@ -479,6 +479,10 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &SaveDocumentAs, cx| {
         dispatch_menu_action(&SaveDocumentAs, cx);
     });
+    cx.on_action(|_: &SplitEditorLeft, cx| { dispatch_menu_action(&SplitEditorLeft, cx); });
+    cx.on_action(|_: &SplitEditorRight, cx| { dispatch_menu_action(&SplitEditorRight, cx); });
+    cx.on_action(|_: &SplitEditorUp, cx| { dispatch_menu_action(&SplitEditorUp, cx); });
+    cx.on_action(|_: &SplitEditorDown, cx| { dispatch_menu_action(&SplitEditorDown, cx); });
     cx.on_action(|_: &FileHistory, cx| {
         dispatch_menu_action(&FileHistory, cx);
     });

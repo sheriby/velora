@@ -249,6 +249,9 @@ struct PendingAutosaveDocument {
 
 impl Editor {
     pub(super) fn has_marked_document_text(&self, cx: &App) -> bool {
+        if self.split_workspace.is_some() {
+            return self.split_groups().iter().any(|group| group.read(cx).has_marked_document_text(cx));
+        }
         let mut scanned = 0u64;
         let marked = self.document.visible_blocks().iter().map(|block| &block.entity)
             .chain(self.table_cells.values().map(|binding| &binding.cell))
@@ -262,11 +265,20 @@ impl Editor {
     }
 
     pub(super) fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
+        if self.split_initializing { return; }
+        if let Some(parent) = self.split_parent.clone() {
+            cx.defer(move |cx| {
+                if let Err(error) = parent.update(cx, |editor, cx| editor.schedule_autosave(cx)) {
+                    eprintln!("安排分屏自动保存失败：{error}");
+                }
+            });
+            return;
+        }
         if self.pending_close_after_save
             || self.autosave_task.is_some()
             || self.has_external_autosave_conflict()
             || self.has_marked_document_text(cx)
-            || (!self.document_dirty && !self.has_dirty_workspace_documents())
+            || (!self.document_dirty && !self.has_dirty_workspace_documents() && !self.has_dirty_split_documents())
         {
             return;
         }
@@ -288,7 +300,7 @@ impl Editor {
                         }
                         let autosave_writes = crate::config::EditorSettings::autosave(cx);
                         let mut documents = editor
-                            .dirty_workspace_documents()
+                            .dirty_workspace_documents(cx)
                             .into_iter()
                             .map(|document| PendingAutosaveDocument {
                                 recovery: crate::config::RecoverySnapshot {
@@ -480,6 +492,7 @@ impl Editor {
                         for detail in write_failures {
                             editor.report_workspace_file_error(detail, cx);
                         }
+                        editor.propagate_split_saves(&saved_documents, cx);
                         if editor.mark_workspace_documents_saved(&saved_documents) {
                             editor.document_dirty = false;
                             editor.pending_window_edited = false;
@@ -508,7 +521,7 @@ impl Editor {
             return;
         }
         self.snapshot_current_document(cx);
-        let documents = self.dirty_workspace_documents();
+        let documents = self.dirty_workspace_documents(cx);
         if self.document_dirty && self.file_path.is_none() {
             self.pending_close_after_save = true;
             self.pending_save = true;
@@ -610,6 +623,7 @@ impl Editor {
                         }
                         saved_documents.push(document);
                     }
+                    editor.propagate_split_saves(&saved_documents, cx);
                     let active_document_saved =
                         editor.mark_workspace_documents_saved(&saved_documents);
                     if active_document_saved {
@@ -620,7 +634,7 @@ impl Editor {
                         editor.sync_current_document_content();
                     }
                     let has_unsaved_documents =
-                        editor.document_dirty || editor.has_dirty_workspace_documents();
+                        editor.document_dirty || editor.has_dirty_workspace_documents() || editor.has_dirty_split_documents();
                     if failed_save || has_unsaved_documents {
                         editor.pending_close_after_save = false;
                         editor.show_unsaved_changes_dialog = true;
@@ -832,6 +846,7 @@ impl Editor {
         anyhow::ensure!(identity == self.document_save_identity(),
             "文档在保存面板期间已改变，请重新保存当前内容");
         self.ensure_save_as_target_is_free(&path)?;
+        self.ensure_other_groups_save_as_target_is_free(&path, cx)?;
         write_atomic(&path, &saved_bytes)?;
         self.apply_successful_save(path, saved_text, saved_bytes, cx);
         Ok(())

@@ -26,6 +26,15 @@ pub(crate) struct SessionState {
     pub(crate) sidebar_tab: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sidebar_open: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) editor_groups: Option<EditorGroupLayout>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum EditorGroupLayout {
+    Editor { tabs: Vec<String>, active: Option<String>, focused: bool },
+    Split { vertical: bool, ratio: u16, first: Box<Self>, second: Box<Self> },
 }
 
 impl SessionState {
@@ -45,6 +54,16 @@ impl SessionState {
             *tab = normalize(tab);
         }
         self.active = self.active.as_deref().map(normalize);
+        fn normalize_groups(layout: &mut EditorGroupLayout, normalize: &impl Fn(&str) -> String) {
+            match layout {
+                EditorGroupLayout::Editor { tabs, active, .. } => {
+                    for tab in tabs { *tab = normalize(tab); }
+                    *active = active.as_deref().map(normalize);
+                }
+                EditorGroupLayout::Split { first, second, .. } => { normalize_groups(first, normalize); normalize_groups(second, normalize); }
+            }
+        }
+        if let Some(layout) = &mut self.editor_groups { normalize_groups(layout, &normalize); }
     }
 }
 
@@ -136,6 +155,7 @@ mod tests {
             sidebar_width: Some(280),
             sidebar_tab: Some("files".into()),
             sidebar_open: Some(false),
+            editor_groups: None,
         };
         save_session_with_dirs(&session, &dirs).expect("save session");
         let leftovers: Vec<String> = std::fs::read_dir(&dirs.root)
@@ -173,6 +193,7 @@ mod tests {
             sidebar_width: Some(300),
             sidebar_tab: Some("outline".into()),
             sidebar_open: Some(true),
+            editor_groups: None,
         };
         save_session_with_dirs(&session, &dirs).expect("save session");
         let loaded = read_session_with_dirs(&dirs).expect("read session");

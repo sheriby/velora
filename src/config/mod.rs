@@ -29,7 +29,7 @@ pub(crate) use recovery::{
 /// Windows 测试构建都没人用，门住别出警告。
 #[cfg(all(test, unix))]
 pub(crate) use recovery::save_recovery_snapshot_with_dir;
-pub(crate) use session::{SessionState, read_session, save_session};
+pub(crate) use session::{EditorGroupLayout, SessionState, read_session, save_session};
 
 /// 配置目录里落盘的文件一律收成 0600（Unix）：同目录还有 recovery/*.json（未保存
 /// 正文全文）、session.json（工作区绝对路径）与 .history/*.md（每个版本全文），

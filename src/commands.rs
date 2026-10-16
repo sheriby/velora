@@ -14,6 +14,7 @@ use gpui::Action;
 
 use crate::components::{
     BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
+    SplitEditorLeft, SplitEditorRight, SplitEditorUp, SplitEditorDown,
     CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
     NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
@@ -160,6 +161,10 @@ static COMMANDS: &[CommandSpec] = &[
     command!("print", Export, menu_print, PrintDocument),
     command!("copy_as_html", Export, menu_copy_as_html, CopyAsHtml),
     // 视图
+    command!("split_editor_left", View, split_editor_left, SplitEditorLeft),
+    command!("split_editor_right", View, split_editor_right, SplitEditorRight),
+    command!("split_editor_up", View, split_editor_up, SplitEditorUp),
+    command!("split_editor_down", View, split_editor_down, SplitEditorDown),
     command!(
         "toggle_sidebar",
         View,
@@ -276,6 +281,7 @@ mod tests {
         assert_eq!(
             view_ids,
             vec![
+                "split_editor_left", "split_editor_right", "split_editor_up", "split_editor_down",
                 "toggle_sidebar",
                 "toggle_fullscreen",
                 "toggle_view_mode",

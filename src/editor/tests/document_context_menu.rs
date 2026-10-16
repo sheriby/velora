@@ -13,14 +13,15 @@ use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
-/// 主面板的长行：图标条之外就剩这六行，行 id 与 `document_menu_rows` 里给的一致。
-const MAIN_ROWS: [&str; 6] = [
+/// 主面板的长行，行 id 与 `document_menu_rows` 里给的一致。
+const MAIN_ROWS: [&str; 10] = [
     "copy-as-markdown",
     "copy-as-html",
     "format",
     "paragraph",
     "insert",
     "toggle-source-view",
+    "split-editor-left", "split-editor-right", "split-editor-up", "split-editor-down",
 ];
 
 /// 顶部图标条那六颗，按屏上从左到右的顺序（与 `DOCUMENT_MENU_QUICK_ACTIONS` 同序）。
@@ -757,7 +758,7 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
     right_click_at(position, cx);
     assert!(menu_is_open(&editor, cx), "靠下靠右的右键该弹出菜单");
 
-    let last = row_bounds("toggle-source-view", cx);
+    let last = row_bounds("split-editor-down", cx);
     let viewport_height = f32::from(viewport.height);
     let viewport_width = f32::from(viewport.width);
     assert!(
@@ -1044,7 +1045,7 @@ async fn rows_show_their_shortcut_column_when_a_binding_exists(cx: &mut TestAppC
     );
     assert_eq!(
         shortcut_of(DocumentMenuCommand::ClearFormat, cx).as_deref(),
-        Some(if cfg!(target_os = "macos") { "⌘\\" } else { "Super+\\" }),
+        Some(if cfg!(target_os = "macos") { "⌥⌘\\" } else { "Alt+Super+\\" }),
         "清除格式的键位要与方案里写的那一条一致"
     );
 

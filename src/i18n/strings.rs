@@ -83,6 +83,12 @@ pub struct I18nStrings {
     /// File menu item for opening a new window.
     pub menu_new_window: String,
     /// File menu item for closing the current window.
+    pub split_editor_left: String,
+    pub split_editor_right: String,
+    pub split_editor_up: String,
+    pub split_editor_down: String,
+    pub split_move_here: String,
+    pub split_insufficient_space: String,
     pub menu_close_tab: String,
     pub menu_close_window: String,
     /// File menu item for opening Markdown files.

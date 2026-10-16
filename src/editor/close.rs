@@ -20,6 +20,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(parent) = self.split_parent.clone() {
+            let handle = window.window_handle();
+            cx.defer(move |cx| {
+                if let Err(error) = handle.update(cx, |_, window, cx| {
+                    if let Err(error) = parent.update(cx, |editor, cx| editor.request_close_current_window(window, cx)) {
+                        eprintln!("关闭分屏窗口失败：{error}");
+                    }
+                }) { eprintln!("访问分屏窗口失败：{error}"); }
+            });
+            return;
+        }
         self.close_menu_bar(cx);
         self.hide_info_dialog(cx);
         self.pending_close_after_save = false;
@@ -113,6 +124,13 @@ impl Editor {
     }
 
     pub(crate) fn restore_focus_after_close_dialog(&mut self, cx: &mut Context<Self>) {
+        if let Some(group) = self.active_split_editor() {
+            group.update(cx, |editor, cx| {
+                editor.pending_focus = editor.active_entity_id.or_else(|| editor.first_focusable_entity_id(cx));
+                cx.notify();
+            });
+            return;
+        }
         if let Some(focus_id) = self.close_dialog_restore_focus.take() {
             self.pending_focus = Some(focus_id);
             self.pending_scroll_active_block_into_view = true;
@@ -153,6 +171,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.collect_split_tabs(cx);
         if !self.document_dirty && !self.has_dirty_workspace_documents() {
             // 平台自己发起的关闭（macOS 红灯）不经过任何应用内关闭入口，
             // 这里是最后能读到该窗口 frame 的地方（roadmap A2）。

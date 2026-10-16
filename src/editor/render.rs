@@ -440,7 +440,7 @@ fn supports_hamburger_menu_for_target_os(target_os: &str) -> bool {
     supports_in_window_menu_for_target_os(target_os) && target_os == "windows"
 }
 
-fn supports_hamburger_menu() -> bool {
+pub(super) fn supports_hamburger_menu() -> bool {
     supports_hamburger_menu_for_target_os(std::env::consts::OS)
 }
 
@@ -630,7 +630,7 @@ fn hamburger_menu_panel_top(titlebar_height: f32, dimensions: &ThemeDimensions) 
     (titlebar_height + dimensions.menu_bar_button_height) / 2.0 + dimensions.menu_bar_gap
 }
 
-fn hamburger_menu_labels(menus: &[OwnedMenu], strings: &I18nStrings) -> Vec<SharedString> {
+pub(super) fn hamburger_menu_labels(menus: &[OwnedMenu], strings: &I18nStrings) -> Vec<SharedString> {
     menus.iter().map(|menu| menu.name.clone())
         .chain(crate::commands::hamburger_root_commands().map(|command| command.label(strings).into()))
         .collect()
@@ -649,7 +649,7 @@ fn hamburger_menu_row_top(
 }
 
 /// 汉堡模式下，第 `index` 个菜单的条目面板该画在哪：贴在列表右侧、与它那一行对齐。
-fn hamburger_menu_item_panel_origin<S: AsRef<str>>(
+pub(super) fn hamburger_menu_item_panel_origin<S: AsRef<str>>(
     index: usize,
     titlebar_height: f32,
     menu_labels: &[S],

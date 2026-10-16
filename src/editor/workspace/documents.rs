@@ -320,7 +320,9 @@ impl Editor {
         self.workspace.active_document = Some(path);
     }
 
-    pub(crate) fn dirty_workspace_documents(&mut self) -> Vec<WorkspaceAutosaveDocument> {
+    pub(crate) fn dirty_workspace_documents(&mut self, cx: &mut Context<Self>) -> Vec<WorkspaceAutosaveDocument> {
+        self.collect_split_tabs(cx);
+        self.refresh_shared_tab_snapshots(cx);
         self.sync_current_document_content();
         // 活动文档的落盘字节直接取自缓冲区；后台标签退写文本（见 struct 注释）。
         let active_bytes = self.document_bytes_for_save();
@@ -334,7 +336,8 @@ impl Editor {
                 file_version: tab.file_version,
                 path: tab.path.clone(),
                 markdown: tab.markdown.clone(),
-                bytes: (active_path.as_ref() == Some(&tab.path)).then(|| active_bytes.clone()),
+                bytes: self.split_document_bytes_for_save(&tab.path)
+                    .or_else(|| (active_path.as_ref() == Some(&tab.path)).then(|| active_bytes.clone())),
             })
             .collect()
     }
@@ -347,6 +350,7 @@ impl Editor {
     }
 
     pub(crate) fn workspace_save_snapshot_is_current(&self, id: uuid::Uuid, path: &Path, text: &str) -> bool {
+        if let Some(current) = self.split_save_snapshot_is_current(path, text) { return current; }
         if !self.workspace_save_document_is_open(id, Some(path)) {
             return false;
         }
@@ -450,8 +454,11 @@ impl Editor {
                 cancel_index: 2,
             },
             move |choice, editor, window, cx| match choice {
-                0 => editor.reload_conflicted_document(&path, cx),
+                0 => {
+                    if !editor.resolve_split_conflict(&path, false, window, cx) { editor.reload_conflicted_document(&path, cx); }
+                },
                 1 => {
+                    if editor.resolve_split_conflict(&path, true, window, cx) { return; }
                     // 另存为作用于活动文档：冲突在后台标签上时先把它切到台前，
                     // 否则存出去的是另一篇。
                     if editor.file_path.as_deref() != Some(&path) {

@@ -233,7 +233,10 @@ impl Editor {
             actions.push((strings.tab_close_all.clone(), TabMenuAction::CloseAll));
         }
 
-        let width = 200.0;
+        for direction in [split::SplitDirection::Left, split::SplitDirection::Right, split::SplitDirection::Up, split::SplitDirection::Down] {
+            actions.push((direction.label(strings), TabMenuAction::Split(direction)));
+        }
+        let width = 220.0;
         let dimensions = &theme.dimensions;
         let height = actions.len() as f32
             * (dimensions.menu_item_height + dimensions.menu_panel_gap)

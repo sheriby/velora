@@ -15,6 +15,34 @@ pub(crate) use file_shape::{starts_with_utf16_bom, FileShape};
 
 use std::ops::Range;
 use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
+type SharedDirtyRegion = Rc<RefCell<Option<Range<usize>>>>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BufferChange {
+    pub(crate) old_range: Range<usize>,
+    pub(crate) new_len: usize,
+    pub(crate) revision: u64,
+    pub(crate) origin: u64,
+}
+
+macro_rules! shared_read {
+    ($buffer:ident.$method:ident($($argument:expr),*)) => {
+        if let Some(shared) = &$buffer.shared {
+            return shared.borrow().$method($($argument),*);
+        }
+    };
+}
+
+macro_rules! shared_write {
+    ($buffer:ident.$method:ident($($argument:expr),*)) => {
+        if let Some(shared) = &$buffer.shared {
+            return shared.borrow_mut().$method($($argument),*);
+        }
+    };
+}
 
 /// 给每份新建的缓冲区发一个进程内唯一的身份号。
 static NEXT_BUFFER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -219,7 +247,6 @@ impl ChunkStarts {
 
 
 /// 文档文本。所有编辑最终都落成一次 [`TextBuffer::edit`]。
-#[derive(Clone)]
 pub(crate) struct TextBuffer {
     chunks: Vec<Chunk>,
     /// 块的前缀索引：`locate` / `line_start` / `line_count` / `slice` 都靠它，别再从
@@ -260,9 +287,73 @@ pub(crate) struct TextBuffer {
     /// 区间当成 B 的（实测就是搜索跳转后高亮整体消失）。身份号让缓存键跨文档
     /// 也不会撞车。
     identity: u64,
+    shared: Option<Rc<RefCell<TextBuffer>>>,
+    view_dirty: Option<SharedDirtyRegion>,
+    shared_views: Vec<Weak<RefCell<Option<Range<usize>>>>>,
+    shared_changes: Vec<BufferChange>,
+}
+
+impl Clone for TextBuffer {
+    fn clone(&self) -> Self {
+        shared_read!(self.clone());
+        // 撤销试算依赖独立副本；只有 shared_view 才共享可编辑正文。
+        Self {
+            chunks: self.chunks.clone(),
+            starts: self.starts.clone(),
+            total_bytes: self.total_bytes,
+            shape: self.shape,
+            pristine: self.pristine.clone(),
+            unrepresentable: self.unrepresentable.clone(),
+            dirty: self.dirty.clone(),
+            line_probe_bytes: self.line_probe_bytes.clone(),
+            revision: self.revision,
+            identity: self.identity,
+            shared: None,
+            view_dirty: None,
+            shared_views: Vec::new(),
+            shared_changes: Vec::new(),
+        }
+    }
 }
 
 impl TextBuffer {
+    pub(crate) fn shared_view(&mut self) -> Self {
+        let shared = if let Some(shared) = self.shared.clone() {
+            shared
+        } else {
+            let content = std::mem::replace(self, Self::from_text(""));
+            let shared = Rc::new(RefCell::new(content));
+            *self = Self::new_shared_view(shared.clone());
+            shared
+        };
+        Self::new_shared_view(shared)
+    }
+
+    fn new_shared_view(shared: Rc<RefCell<Self>>) -> Self {
+        let dirty = Rc::new(RefCell::new(Some(0..shared.borrow().byte_len())));
+        shared.borrow_mut().shared_views.push(Rc::downgrade(&dirty));
+        let mut view = Self::from_text("");
+        view.shared = Some(shared);
+        view.view_dirty = Some(dirty);
+        view
+    }
+
+    pub(crate) fn shared_writer_id(&self) -> u64 { self.identity }
+
+    pub(crate) fn shared_changes(&self) -> Vec<BufferChange> {
+        shared_read!(self.shared_changes());
+        self.shared_changes.clone()
+    }
+
+    pub(crate) fn shared_handle(&self) -> Option<Self> {
+        self.shared.clone().map(Self::new_shared_view)
+    }
+
+    pub(crate) fn clear_shared_changes(&mut self) {
+        shared_write!(self.clear_shared_changes());
+        self.shared_changes.clear();
+    }
+
     /// 以给定文本建一个缓冲区。切分只按字节预算走，内容一字不改。
     ///
     /// 整个内容都算「刚改过的」：派生数据（大纲这类增量视图）于是第一次一定重算，
@@ -281,11 +372,16 @@ impl TextBuffer {
             line_probe_bytes: std::cell::Cell::new(probed),
             revision: 0,
             identity: NEXT_BUFFER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            shared: None,
+            view_dirty: None,
+            shared_views: Vec::new(),
+            shared_changes: Vec::new(),
         }
     }
 
     /// 记下这个缓冲区的文件来源：打开时读到的原始字节 + 由它判定的形状。
     pub(crate) fn set_file_origin(&mut self, raw: Vec<u8>, shape: FileShape) {
+        shared_write!(self.set_file_origin(raw, shape));
         self.shape = Some(shape);
         let shared: Arc<[u8]> = raw.into();
         self.pristine = Some(shared.clone());
@@ -300,6 +396,11 @@ impl TextBuffer {
     }
 
     pub(crate) fn inherit_file_shape_from(&mut self, previous: &Self) {
+        if previous.shared.is_some() {
+            self.inherit_file_shape_from(&previous.clone());
+            return;
+        }
+        shared_write!(self.inherit_file_shape_from(previous));
         // 全文替换仍按当前文件形状写回，旧原始字节已不代表替换后的文本。
         self.shape = previous.shape;
         self.pristine = None;
@@ -307,10 +408,12 @@ impl TextBuffer {
     }
 
     pub(crate) fn file_shape(&self) -> Option<FileShape> {
+        shared_read!(self.file_shape());
         self.shape
     }
 
     pub(crate) fn restore_file_shape(&mut self, shape: FileShape) {
+        shared_write!(self.restore_file_shape(shape));
         self.shape = Some(shape);
         self.pristine = None;
     }
@@ -319,6 +422,7 @@ impl TextBuffer {
     /// 只有测试闸门读它——生产侧一律直接要 [`file_bytes`](Self::file_bytes)。
     #[cfg(test)]
     pub(crate) fn is_pristine(&self) -> bool {
+        shared_read!(self.is_pristine());
         self.pristine.is_some()
     }
 
@@ -326,6 +430,7 @@ impl TextBuffer {
     /// 形状不可无损表示时（见 [`set_file_origin`](Self::set_file_origin)）永远
     /// 是原字节——这种文档根本打不开，走到这一步说明有入口绕过了读盘漏斗。
     pub(crate) fn file_bytes(&self) -> Vec<u8> {
+        shared_read!(self.file_bytes());
         if let Some(raw) = self.pristine.as_ref() {
             return raw.to_vec();
         }
@@ -340,6 +445,10 @@ impl TextBuffer {
 
     /// 与另一个缓冲区内容相同吗？逐块比字节，不复制任何一方。
     pub(crate) fn same_content(&self, other: &Self) -> bool {
+        shared_read!(self.same_content(other));
+        if let Some(shared) = &other.shared {
+            return self.same_content(&shared.borrow());
+        }
         self.byte_len() == other.byte_len()
             && self
                 .chunks
@@ -353,6 +462,7 @@ impl TextBuffer {
     /// 按字节比，不按字符切片：块边界只对缓冲区自己的字符对齐，比较另一份内容时同样的
     /// 偏移可能落在某个多字节字符中间，`text[a..b]` 会直接 panic。
     pub(crate) fn matches_text(&self, text: &str) -> bool {
+        shared_read!(self.matches_text(text));
         if self.byte_len() != text.len() {
             return false;
         }
@@ -370,6 +480,7 @@ impl TextBuffer {
 
     /// 缓冲区当前全文。
     pub(crate) fn text(&self) -> String {
+        shared_read!(self.text());
         let mut out = String::with_capacity(self.byte_len());
         for chunk in &self.chunks {
             out.push_str(&chunk.text);
@@ -378,21 +489,25 @@ impl TextBuffer {
     }
 
     pub(crate) fn byte_len(&self) -> usize {
+        shared_read!(self.byte_len());
         self.total_bytes
     }
 
     /// 内容版本号：每次 [`edit`](Self::edit) 自增。派生缓存拿它做失效判断。
     pub(crate) fn revision(&self) -> u64 {
+        shared_read!(self.revision());
         self.revision
     }
 
     /// 这份缓冲区的身份号，与内容改了多少次无关。见 `identity` 字段的说明。
     pub(crate) fn identity(&self) -> u64 {
+        shared_read!(self.identity());
         self.identity
     }
 
     /// 取 `range` 指向的字节区间。
     pub(crate) fn slice(&self, range: Range<usize>) -> String {
+        shared_read!(self.slice(range));
         let mut out = String::with_capacity(range.end.saturating_sub(range.start));
         if range.start >= range.end || self.chunks.is_empty() {
             return out;
@@ -418,6 +533,7 @@ impl TextBuffer {
     /// 行数按 `split('\n')` 计：`"a\n"` 是 2 行（第二行为空），空文档是 1 行。
     /// 与编辑器状态栏、搜索结果的行号口径一致。
     pub(crate) fn line_count(&self) -> usize {
+        shared_read!(self.line_count());
         self.starts.line_prefix.last().copied().unwrap_or(0) + 1
     }
 
@@ -425,6 +541,7 @@ impl TextBuffer {
     /// 只有测试闸门读它（生产没有消费方）。
     #[cfg(test)]
     pub(crate) fn take_chunk_probes(&self) -> usize {
+        shared_read!(self.take_chunk_probes());
         self.starts.take_probes()
     }
 
@@ -432,6 +549,7 @@ impl TextBuffer {
     /// 只有测试闸门读它（生产没有消费方）。
     #[cfg(test)]
     pub(crate) fn take_line_probe_bytes(&self) -> usize {
+        shared_read!(self.take_line_probe_bytes());
         self.line_probe_bytes.replace(0)
     }
 
@@ -441,6 +559,7 @@ impl TextBuffer {
 
     /// 第 `line` 行首个字节的偏移。`line` 越界时返回文末偏移。
     pub(crate) fn line_start(&self, line: usize) -> usize {
+        shared_read!(self.line_start(line));
         self.starts.line_start(&self.chunks, line, self.byte_len())
     }
 
@@ -449,6 +568,7 @@ impl TextBuffer {
     /// 读取侧（搜索跳转、大纲点击、行列号）都从这里把行号换成字节，
     /// 于是它们说的坐标天然是文件坐标。
     pub(crate) fn line_range(&self, line: usize) -> std::ops::Range<usize> {
+        shared_read!(self.line_range(line));
         let start = self.line_start(line);
         let mut end = self.line_start(line + 1).min(self.byte_len());
         if end > start && self.byte_at(end - 1) == Some(b'\n') {
@@ -459,6 +579,7 @@ impl TextBuffer {
 
     /// 该偏移处的字节；越界返回 `None`（多字节字符内部的字节照样能取到）。
     pub(crate) fn byte_at(&self, offset: usize) -> Option<u8> {
+        shared_read!(self.byte_at(offset));
         let (index, local) = self.locate(offset);
         self.chunks
             .get(index)
@@ -469,6 +590,7 @@ impl TextBuffer {
     ///
     /// `offset` 必须是字符边界（搜索命中与光标位置天然是）。
     pub(crate) fn line_of(&self, offset: usize) -> usize {
+        shared_read!(self.line_of(offset));
         let (chunk_index, local) = self.locate(offset);
         let Some(chunk) = self.chunks.get(chunk_index) else {
             return 0;
@@ -491,6 +613,7 @@ impl TextBuffer {
     ///
     /// 走的是每块那张换行偏移表：一次正文都不读，代价与文档多大无关。
     pub(crate) fn lines_and_line_starts(&self, offsets: &[usize]) -> Vec<(usize, usize)> {
+        shared_read!(self.lines_and_line_starts(offsets));
         let mut out = vec![(self.line_count() - 1, self.byte_len()); offsets.len()];
         let mut base = 0usize; // 当前文本块首字节的绝对偏移
         let mut line = 0usize; // 该块首字节所在行
@@ -526,6 +649,12 @@ impl TextBuffer {
     /// 这是全编辑器唯一的文本写入口——块树、撤销、保存都必须经过它，
     /// 这样「未被编辑的字节不会被改写」才是结构性质而不是约定。
     pub(crate) fn edit(&mut self, range: Range<usize>, text: &str) -> AppliedEdit {
+        if let Some(shared) = &self.shared {
+            let mut content = shared.borrow_mut();
+            let edit = content.edit(range, text);
+            if let Some(change) = content.shared_changes.last_mut() { change.origin = self.identity; }
+            return edit;
+        }
         let total = self.byte_len();
         assert!(
             range.start <= range.end && range.end <= total,
@@ -580,6 +709,24 @@ impl TextBuffer {
         self.starts
             .rebuild_from(&self.chunks, start.saturating_sub(1));
 
+        if !self.shared_views.is_empty() {
+            self.shared_changes.push(BufferChange {
+                old_range: range,
+                new_len: text.len(),
+                revision: self.revision,
+                origin: self.identity,
+            });
+            self.shared_views.retain(|view| {
+                let Some(view) = view.upgrade() else { return false; };
+                let mut dirty = view.borrow_mut();
+                *dirty = Some(match dirty.take() {
+                    Some(seen) => seen.start.min(new_range.start)..seen.end.max(new_range.end),
+                    None => new_range.clone(),
+                });
+                true
+            });
+        }
+
         AppliedEdit {
             removed,
             new_range,
@@ -589,6 +736,9 @@ impl TextBuffer {
     /// 取走「被改过的字节范围」并清空；`None` 是「自上次取走以来一个字都没改」。
     /// 谁取走谁负责把这段范围内的派生数据重算一遍——所以取走之后必须真的重算。
     pub(crate) fn take_dirty_region(&mut self) -> Option<Range<usize>> {
+        if let Some(dirty) = &self.view_dirty {
+            return dirty.borrow_mut().take();
+        }
         self.dirty.take()
     }
 
@@ -615,6 +765,7 @@ impl TextBuffer {
     }
 
     pub(crate) fn is_char_boundary(&self, offset: usize) -> bool {
+        shared_read!(self.is_char_boundary(offset));
         let (index, local) = self.locate(offset);
         match self.chunks.get(index) {
             Some(chunk) => chunk.text.is_char_boundary(local),
@@ -630,6 +781,7 @@ impl TextBuffer {
     /// 末尾那块再问块尾），所以「在界内」必须单独查；而 `slice` 对 `start >= end`
     /// 返回空串，倒置区间会伪装成「可信的空源码」。
     pub(crate) fn span_is_trustworthy(&self, span: &Range<usize>) -> bool {
+        shared_read!(self.span_is_trustworthy(span));
         span.start <= span.end
             && span.end <= self.byte_len()
             && self.is_char_boundary(span.start)
@@ -642,6 +794,7 @@ impl TextBuffer {
     /// 插过或删过字节之后，那个偏移可能正落在多字节字符中间，而后续的行号与块区间
     /// 换算处处按边界走（[`line_of`](Self::line_of) 直接断言失败）。
     pub(crate) fn floor_char_boundary(&self, offset: usize) -> usize {
+        shared_read!(self.floor_char_boundary(offset));
         let mut offset = offset.min(self.byte_len());
         // UTF-8 的字符最长 4 字节，最多退三步。
         while offset > 0 && !self.is_char_boundary(offset) {

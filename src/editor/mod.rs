@@ -60,7 +60,7 @@ mod window_state;
 mod command_palette;
 mod quick_open;
 mod watcher;
-mod workspace;
+pub(crate) mod workspace;
 mod file_history;
 pub(crate) mod workspace_index;
 
@@ -139,6 +139,13 @@ pub struct Editor {
     file_version: Option<u64>,
     pending_file_version_text: Option<Arc<str>>,
     window_handle: Option<AnyWindowHandle>,
+    split_workspace: Option<workspace::split::SplitWorkspace>,
+    split_parent: Option<WeakEntity<Editor>>,
+    split_active: bool,
+    split_initializing: bool,
+    split_projection_revision: u64,
+    split_bounds: Bounds<Pixels>,
+    split_drop_preview: Option<Option<workspace::split::SplitDirection>>,
     system_appearance_subscription: Option<Subscription>,
     file_path: Option<PathBuf>,
     scroll_handle: ScrollHandle,
@@ -201,6 +208,8 @@ pub struct Editor {
     /// 性能计数器：重投影出来的**根块数**。整篇重解析一次就是「文档有多少根块」，
     /// 区域重解析只重建改动那一段的几根——增量重投影要守的就是这个数不跟着文档长。
     roots_reprojected: std::cell::Cell<u64>,
+    /// 分屏输入只能级联变化的接缝；整篇高亮串联留给切换或重建投影。
+    source_fence_full_rebuilds: std::cell::Cell<u64>,
     /// 性能计数器：文档大纲**整棵树重拼**了几次（侧栏收起也算，`[TOC]` 靠它）。
     /// 大纲把整个缓冲区按行重扫一遍找标题，一次就是 O(文档)——它此前不在任何
     /// 计数器里，所以「整篇落笔 0 次」全绿的同时，10 MiB 一次按键仍有 110ms
@@ -555,7 +564,7 @@ pub(crate) struct DocumentRowMeasurement {
     measured: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DocumentEditingState {
     undo_history: Vec<HistoryEntry>,
     redo_history: Vec<HistoryEntry>,
@@ -563,7 +572,7 @@ pub(crate) struct DocumentEditingState {
     blocks: Vec<DocumentBlockState>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DocumentBlockState {
     visible_index: usize,
     kind: BlockKind,
@@ -847,6 +856,13 @@ impl Editor {
                 .map(|_| persistence::file_content_version(&normalized)),
             pending_file_version_text: None,
             window_handle: None,
+            split_workspace: None,
+            split_parent: None,
+            split_active: true,
+            split_initializing: false,
+            split_projection_revision: 0,
+            split_bounds: Bounds::default(),
+            split_drop_preview: None,
             system_appearance_subscription: None,
             file_path,
             scroll_handle: ScrollHandle::new(),
@@ -875,6 +891,7 @@ impl Editor {
             row_plan_rebuilds: std::cell::Cell::default(),
             row_plan_block_reads: std::cell::Cell::default(),
             roots_reprojected: std::cell::Cell::default(),
+            source_fence_full_rebuilds: std::cell::Cell::default(),
             outline_rebuilds: std::cell::Cell::default(),
             outline_full_rescans: std::cell::Cell::default(),
             outline_lines_scanned: std::cell::Cell::default(),
@@ -1341,6 +1358,7 @@ impl Editor {
     /// entry 重算高亮。打开、切视图、undo 重投影这些整棵重建的入口走这条，
     /// O(文档) 一次——块级高亮扫描本身线性于块文本，加起来就是文档一遍。
     pub(crate) fn resync_source_fence_states(&mut self, cx: &mut App) {
+        self.source_fence_full_rebuilds.set(self.source_fence_full_rebuilds.get() + 1);
         let roots = self.document.root_blocks().to_vec();
         let mut state: Option<MarkdownSourceState> = None;
         for block in &roots {

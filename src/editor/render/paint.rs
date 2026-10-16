@@ -1,5 +1,6 @@
 use super::*;
 use crate::components::{
+    SplitEditorLeft, SplitEditorRight, SplitEditorUp, SplitEditorDown,
     BlockDown, BlockUp, End, FileHistory, FormatDocument, Home, JumpToBottom, JumpToTop, MoveLeft, MoveRight,
     PageDown, PageUp, SelectEnd, SelectHome, SelectLeft, SelectRight,
     WordMoveLeft, WordMoveRight, WordSelectLeft, WordSelectRight,
@@ -22,6 +23,7 @@ impl Render for Editor {
                     // 三个浮层（模态/文件历史/[[ 补全）各自过滤按键；都未打开
                     // 时这里只有三次布尔检查，打字热路径无感。
                     let _ = editor.update(cx, |editor, cx| {
+                        if editor.split_parent.is_some() && !editor.split_active { return; }
                         let mut consumed = editor.mermaid_preview_key_down(keystroke, cx);
                         consumed = consumed || editor.modal_handle_keystroke(keystroke, window, cx);
                         consumed = consumed || editor.file_history_key_down(keystroke, cx);
@@ -38,7 +40,7 @@ impl Render for Editor {
 
         self.window_handle = Some(window.window_handle());
         #[cfg(not(test))]
-        self.maybe_check_updates_on_startup(window, cx);
+        if self.split_parent.is_none() { self.maybe_check_updates_on_startup(window, cx); }
         if self.system_appearance_subscription.is_none() {
             self.system_appearance_subscription =
                 Some(cx.observe_window_appearance(window, |_editor, window, cx| {
@@ -49,8 +51,12 @@ impl Render for Editor {
                     cx.refresh_windows();
                 }));
         }
-        self.install_close_guard(cx, window);
-        self.apply_pending_focus(window, cx);
+        if self.split_parent.is_none() { self.install_close_guard(cx, window); }
+        if self.split_workspace.is_some() {
+            return self.render_split_workspace(window, cx);
+        }
+        if self.split_active { self.apply_pending_focus(window, cx); }
+        else { self.pending_focus = None; }
         self.apply_pending_scroll_into_view(window, cx);
         self.apply_pending_workspace_search_focus(window, cx);
         self.apply_pending_formula_editor(window, cx);
@@ -58,7 +64,7 @@ impl Render for Editor {
         self.sync_pending_save(window, cx);
         self.sync_pending_save_as(window, cx);
         self.sync_pending_workspace_tab_activation(window, cx);
-        self.sync_window_edited_state(window);
+        if self.split_parent.is_none() { self.sync_window_edited_state(window); }
 
         let viewport_bounds = self.scroll_handle.bounds();
         let viewport_size = viewport_bounds.size;
@@ -79,7 +85,7 @@ impl Render for Editor {
             &fonts.markdown_family
         };
         let strings = cx.global::<I18nManager>().strings_arc();
-        self.sync_window_title(window, &strings);
+        if self.split_parent.is_none() { self.sync_window_title(window, &strings); }
 
         let d = &theme.dimensions;
         // P4b：键命中时整帧复用行结构计划；未命中（行元数据/折叠/大纲/模式
@@ -171,9 +177,10 @@ impl Render for Editor {
         let has_menus = window_menus
             .as_ref()
             .is_some_and(|menus| !menus.is_empty());
-        let titlebar_height = custom_titlebar_height(window, d);
-        let menu_bar_height =
-            in_window_menu_bar_height_for_target_os(std::env::consts::OS, has_menus, d);
+        let titlebar_height = if self.split_parent.is_some() { 0.0 } else { custom_titlebar_height(window, d) };
+        let menu_bar_height = if self.split_parent.is_some() { 0.0 } else {
+            in_window_menu_bar_height_for_target_os(std::env::consts::OS, has_menus, d)
+        };
         let scroll_trigger_padding = (d.block_min_height * 0.75).max(16.0);
         let mut max_scroll_y = f32::from(self.scroll_handle.max_offset().height.max(px(0.0)));
         let viewport_height = f32::from(viewport_bounds.size.height.max(px(1.0)));
@@ -840,7 +847,7 @@ impl Render for Editor {
         } else {
             content_area
         };
-        let document_tabs = self.render_document_tabs(&theme, cx);
+        let document_tabs = if self.split_parent.is_none() { self.render_document_tabs(&theme, cx) } else { None };
         // Document tabs live inside the custom titlebar when it is visible;
         // without one (macOS fullscreen, server-side decorations) they fall
         // back to a standalone row above the editor column.
@@ -849,8 +856,10 @@ impl Render for Editor {
         } else {
             (None, document_tabs)
         };
+        let column_id = cx.entity_id();
         let content_area = div()
             .id("editor-column")
+            .debug_selector(move || format!("editor-column-{column_id:?}"))
             .w_full()
             .h_full()
             .flex_1()
@@ -870,7 +879,8 @@ impl Render for Editor {
                     .child(tabs)
                     .into_any_element()
             }))
-            .child(content_area)
+            .child(div().flex_1().min_h(px(0.0)).w_full().relative()
+                .child(content_area).child(self.render_split_drop_targets(&theme, cx)))
             .into_any_element();
         let content_area = if self.source_mode_fallback_required && !self.code_tab_active() {
             div()
@@ -919,6 +929,10 @@ impl Render for Editor {
                 cx.listener(Self::on_workspace_resize_mouse_up),
             )
             .capture_action(cx.listener(Self::on_copy_capture))
+            .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorLeft>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorRight>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorUp>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorDown>))
             .on_action(cx.listener(Self::on_registered_menu_action::<FormatDocument>))
             .on_action(cx.listener(Self::on_registered_menu_action::<FileHistory>))
             .capture_action(cx.listener(Self::on_cursor_motion_capture::<MoveLeft>))
@@ -1009,7 +1023,7 @@ impl Render for Editor {
         // Windows：一级菜单入口是标题栏左侧的汉堡按钮，不再单占一行。
         let hamburger_menu = (supports_hamburger_menu() && menus.is_some())
             .then(|| self.render_hamburger_menu_button(&theme, cx));
-        let base = if let Some(titlebar) = render_custom_titlebar(
+        let titlebar = if self.split_parent.is_none() { render_custom_titlebar(
             "editor-titlebar",
             format!("Velora - {}", self.workspace_breadcrumb()).into(),
             hamburger_menu,
@@ -1018,7 +1032,8 @@ impl Render for Editor {
             window,
             cx,
             Self::on_titlebar_close,
-        ) {
+        ) } else { None };
+        let base = if let Some(titlebar) = titlebar {
             base.child(titlebar)
         } else {
             base
@@ -1040,8 +1055,9 @@ impl Render for Editor {
         };
         let workspace_width =
             self.current_workspace_panel_width(f32::from(window.viewport_size().width), cx);
-        let workspace_panel =
-            self.render_workspace_panel(&theme, &strings, workspace_width, window, cx);
+        let workspace_panel = if self.split_parent.is_none() {
+            self.render_workspace_panel(&theme, &strings, workspace_width, window, cx)
+        } else { None };
         // 收起 = 整条侧边栏（图标列 + 面板）都不占布局，正文满宽。没有贴边浮层：
         // 唤出只有「视图 → 切换侧边栏」与 cmd/ctrl-b 两条，误触不会再把它甩出来。
         let mut main_content = div()
@@ -1051,7 +1067,7 @@ impl Render for Editor {
             .pt(px(titlebar_height + menu_bar_height))
             .flex()
             .min_w(px(0.0));
-        if self.workspace.is_open {
+        if self.workspace.is_open && self.split_parent.is_none() {
             // 展开：图标列与面板占位，正文被挤到右边。
             main_content = main_content.child(self.render_activity_rail(&theme, cx));
             if let Some(workspace_panel) = workspace_panel {
@@ -1060,7 +1076,8 @@ impl Render for Editor {
         }
         main_content = main_content.child(content_area);
         let base = base.child(main_content);
-        let base = if let Some(status_bar) = self.render_status_bar(&theme, &strings, window, cx) {
+        let status_bar = if self.split_parent.is_none() { self.render_status_bar(&theme, &strings, window, cx) } else { None };
+        let base = if let Some(status_bar) = status_bar {
             base.child(status_bar)
         } else {
             base
@@ -1102,72 +1119,73 @@ impl Render for Editor {
             base
         };
         let base = if let Some(toolbar) = self.render_selection_toolbar(&theme, window, cx) {
-            base.child(toolbar)
+            base.child(self.pane_overlay(toolbar.into_any_element(), window))
         } else {
             base
         };
         let base = if let Some(context_menu) =
             self.render_context_menu_overlay(&theme, window.viewport_size(), cx)
         {
-            base.child(context_menu)
+            base.child(self.pane_overlay(context_menu.into_any_element(), window))
         } else {
             base
         };
         let base =
             if let Some(menu) = self.render_workspace_context_menu_overlay(&theme, window, cx) {
-                base.child(menu)
+                base.child(self.pane_overlay(menu.into_any_element(), window))
             } else {
                 base
             };
         let base = if let Some(menu) = self.render_tab_context_menu_overlay(&theme, window, cx) {
-            base.child(menu)
+            base.child(self.pane_overlay(menu.into_any_element(), window))
         } else {
             base
         };
         let base = if let Some(table_dialog) = self.render_table_insert_dialog_overlay(&theme, cx) {
-            base.child(table_dialog)
+            base.child(self.pane_overlay(table_dialog.into_any_element(), window))
         } else {
             base
         };
         let base = if self.wikilink_completion_is_open()
             && let Some(completion) = self.render_wikilink_completion_overlay(&theme, window, cx)
         {
-            base.child(completion)
+            base.child(self.pane_overlay(completion.into_any_element(), window))
         } else {
             base
         };
         let base = if self.latex_completion_is_open()
             && let Some(completion) = self.render_latex_completion_overlay(&theme, window, cx)
         {
-            base.child(completion)
+            base.child(self.pane_overlay(completion.into_any_element(), window))
         } else {
             base
         };
         let base = if self.formula_editor.is_some()
             && let Some(panel) = self.render_formula_editor_overlay(&theme, &strings, window, cx)
         {
-            base.child(panel)
+            base.child(self.pane_overlay(panel.into_any_element(), window))
         } else {
             base
         };
         let base = if self.file_history_is_open()
             && let Some(overlay) = self.render_file_history_overlay(&theme, &strings, cx)
         {
-            base.child(overlay)
+            base.child(self.pane_overlay(overlay.into_any_element(), window))
         } else {
             base
         };
         let base = if let Some(notification) = self.render_update_notification(&theme, &strings, cx) {
-            base.child(notification)
+            base.child(self.pane_overlay(notification.into_any_element(), window))
         } else { base };
         let base = if let Some(preview) = self.render_mermaid_preview_overlay(&theme, window, cx) {
-            base.child(preview)
+            base.child(self.pane_overlay(preview.into_any_element(), window))
         } else { base };
-        if let Some(kind) = self.info_dialog {
+        let base = if let Some(kind) = self.info_dialog {
             base.child(self.render_info_dialog_overlay(&theme, kind, cx))
         } else if self.modal_is_open() {
-            match self.render_modal_overlay(&theme, cx) {
-                Some(overlay) => base.child(overlay),
+            let overlay = self.render_modal_overlay(&theme, cx).map(IntoElement::into_any_element);
+            match overlay {
+                Some(overlay) => base.child(self.pane_overlay(overlay.into_any_element(), window)),
                 None => base,
             }
         } else if self.show_drop_replace_dialog {
@@ -1178,6 +1196,7 @@ impl Render for Editor {
             base.child(self.render_folder_choice_overlay(&theme, cx).into_any_element())
         } else {
             base
-        }
+        };
+        base.into_any_element()
     }
 }

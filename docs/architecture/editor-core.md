@@ -19,6 +19,8 @@ Editor 实体（每个窗口一个，src/editor/mod.rs）
 - **区间表在树侧**：`DocumentTree::source_spans`（`EntityId → Range<usize>`，缓冲区字节坐标）。一次编辑平移整表只是一趟紧凑循环；挂在块实体上时，大文档一次按键要逐个 `read`+`update` 十万个实体。
   区间约定：**不含本块自己的行尾换行**；块之间的空行不归任何块；文档末尾无换行时最后一块右端 = 文档末尾。
 
+分屏通过 `TextBuffer::shared_view` / `shared_handle` 显式取得同一内容的视图句柄，每份视图各自消费脏区。普通 `Clone` 仍为独立内容副本，供撤销试算使用；不能把它改成共享克隆。共享编辑的字节区间日志只供各组更新投影，不保存第二份正文。
+
 ## 2. 缓冲区（src/editor/buffer.rs）
 
 - 结构：`Vec<Chunk>`，每块一段文本 + **该段内每个换行的偏移表**。行号换算只二分这张表，**一次都不读正文**（批量换算必须走 `lines_and_line_starts`；逐根块调单点 `line_of` 是平方项）。`byte_len` 必须 O(1)。

@@ -441,7 +441,8 @@ impl Element for BlockTextElement {
         let show_inline_code_backgrounds = !input.is_source_raw_mode();
         let show_source_line_numbers = input.show_source_line_numbers();
 
-        let lines = request_layout.borrow_mut().take().unwrap_or_default();
+        // 预绘制可以因布局复用再次进入，排版结果必须一直保留到本帧结束。
+        let lines = request_layout.borrow().clone().unwrap_or_default();
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         // 与 request_layout 一致：栏宽按全文档基准（整篇总行数），分块对齐。
         let gutter_width_basis = match input.source_line_gutter_basis() {

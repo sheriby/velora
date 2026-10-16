@@ -16,6 +16,9 @@ pub(crate) fn dispatch_menu_action_for_editor(
         return;
     }
 
+    let active = target.read_with(cx, |editor, _| editor.active_split_editor()).ok().flatten();
+    let target = active.as_ref().map(Entity::downgrade).unwrap_or_else(|| target.clone());
+    let target = &target;
     window.activate_window();
     if let Some(handler) = editor_menu_handler(action) {
         if let Err(error) = target.update(cx, |editor, cx| handler(editor, window, cx)) {

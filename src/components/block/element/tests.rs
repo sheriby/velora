@@ -1029,3 +1029,97 @@ async fn inline_code_in_a_heading_follows_the_heading_size(cx: &mut TestAppConte
     );
     let _ = block;
 }
+
+struct RepeatedPrepaint(super::BlockTextElement);
+
+impl gpui::IntoElement for RepeatedPrepaint {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+impl gpui::Element for RepeatedPrepaint {
+    type RequestLayoutState = <super::BlockTextElement as gpui::Element>::RequestLayoutState;
+    type PrepaintState = <super::BlockTextElement as gpui::Element>::PrepaintState;
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        self.0.request_layout(id, inspector, window, cx)
+    }
+    fn prepaint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        measured: &mut Self::RequestLayoutState,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> Self::PrepaintState {
+        self.0.prepaint(id, inspector, bounds, measured, window, cx);
+        self.0.prepaint(id, inspector, bounds, measured, window, cx)
+    }
+    fn paint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        measured: &mut Self::RequestLayoutState,
+        painted: &mut Self::PrepaintState,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.0
+            .paint(id, inspector, bounds, measured, painted, window, cx);
+    }
+}
+
+struct RepeatedPrepaintView(gpui::Entity<Block>);
+impl gpui::Render for RepeatedPrepaintView {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        RepeatedPrepaint(super::BlockTextElement::new(self.0.clone(), false))
+    }
+}
+
+#[gpui::test]
+fn repeated_prepaint_preserves_measured_text_lines(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+    });
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        RepeatedPrepaintView(cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::Paragraph,
+                    InlineTextTree::from_markdown("分屏缩窄后，段落仍应绘制正文。"),
+                ),
+            )
+        }))
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    view.read_with(cx, |view, cx| {
+        assert!(
+            view.0
+                .read(cx)
+                .last_layout
+                .as_ref()
+                .is_some_and(|lines| !lines.is_empty()),
+            "布局复用时再次预绘制不能把排版文字消费成空白"
+        );
+    });
+}

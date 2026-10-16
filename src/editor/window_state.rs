@@ -949,6 +949,7 @@ impl Editor {
         // 搜索高亮、大纲、跨块选区恢复都按缓冲区坐标算位置，少刷一次就会拿旧文本
         // 去映射新块树。
         self.resync_buffer_from_projection(cx);
+        self.split_projection_revision = self.buffer.revision();
         self.document_revision = self.document_revision.wrapping_add(1);
         if !self.document_dirty {
             self.document_dirty = true;
@@ -960,6 +961,8 @@ impl Editor {
             self.pending_window_title_refresh = true;
             cx.notify();
         }
+        // 块自身的重绘不会通知窗口根；共享文档每一笔都要唤醒其他编辑器组。
+        if self.split_parent.is_some() { cx.notify(); }
         self.refresh_source_line_starts(cx);
         self.schedule_autosave(cx);
         self.refresh_document_find_after_edit(cx);

@@ -408,6 +408,7 @@ impl Editor {
 
         div()
             .id("unsaved-changes-overlay")
+            .debug_selector(|| "unsaved-changes-overlay".to_string())
             .absolute()
             .top_0()
             .left_0()

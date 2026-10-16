@@ -77,12 +77,20 @@ impl Editor {
         root_index: usize,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
+        self.reproject_root_region_impl(root_index, false, cx)
+    }
+
+    pub(crate) fn reproject_shared_root_region(&mut self, root_index: usize, cx: &mut Context<Self>) -> Option<usize> {
+        self.reproject_root_region_impl(root_index, true, cx)
+    }
+
+    fn reproject_root_region_impl(&mut self, root_index: usize, reuse_leaf: bool, cx: &mut Context<Self>) -> Option<usize> {
         const REGION_PROBE_LINES: usize = 2;
         // 懒导入没建完时接缝归尾部那段，窗口解析与整篇解析对不上，走整篇那条路。
         if self.document.pending_tail().is_some() {
             return None;
         }
-        let roots = self.document.root_blocks().to_vec();
+        let roots = self.document.root_blocks();
         let root = roots.get(root_index)?.clone();
         let span = self.document.source_span_of(root.entity_id())?;
         if span.end > self.buffer.byte_len() {
@@ -121,6 +129,28 @@ impl Editor {
         }
         self.roots_reprojected
             .set(self.roots_reprojected.get() + within as u64);
+        if reuse_leaf && within == 1 {
+            if let Some(next) = new_roots.first() {
+                let record = next.read(cx).record.clone();
+                let reusable = root.read(cx).kind() == next.read(cx).kind()
+                    && root.read(cx).children.is_empty() && next.read(cx).children.is_empty()
+                    && record.table.is_none();
+                if reusable {
+                    root.update(cx, |block, cx| {
+                        let id = block.record.id;
+                        block.record = record;
+                        block.record.id = id;
+                        block.sync_render_cache();
+                        cx.notify();
+                    });
+                    if let Some(span) = Self::root_span_ranges(&self.buffer, &spans[..within], line_base).first() {
+                        self.document.set_source_span(root.entity_id(), span.clone());
+                    }
+                    self.document.refresh_row_spacing_for(root.entity_id(), cx);
+                    return Some(region_lines);
+                }
+            }
+        }
         self.attach_root_spans(&new_roots[..within], &spans[..within], line_base);
         self.document
             .replace_root_range(root_index..root_index + 1, new_roots[..within].to_vec(), cx);

@@ -101,6 +101,10 @@ impl PreferencesWindow {
             ShortcutCommand::QuitApplication => {
                 strings.preferences_shortcut_quit_application.clone()
             }
+            ShortcutCommand::SplitEditorLeft => strings.split_editor_left.clone(),
+            ShortcutCommand::SplitEditorRight => strings.split_editor_right.clone(),
+            ShortcutCommand::SplitEditorUp => strings.split_editor_up.clone(),
+            ShortcutCommand::SplitEditorDown => strings.split_editor_down.clone(),
             ShortcutCommand::CloseTab => strings.preferences_shortcut_close_tab.clone(),
             ShortcutCommand::CloseWindow => strings.preferences_shortcut_close_window.clone(),
             ShortcutCommand::DismissTransientUi => {

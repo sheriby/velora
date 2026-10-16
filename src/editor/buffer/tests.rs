@@ -4,6 +4,23 @@ use std::time::{Duration, Instant};
 use super::*;
 
 #[test]
+fn split_views_share_document_bytes_while_history_clones_stay_independent() {
+    let mut left = TextBuffer::from_text("标题\n\n正文");
+    let mut right = left.shared_view();
+    left.edit(0..0, "# ");
+    assert_eq!(right.text(), "# 标题\n\n正文", "左侧编辑必须立即对右侧可见");
+    let end = right.byte_len();
+    right.edit(end..end, "🎉");
+    assert_eq!(left.text(), right.text(), "两侧必须编辑同一份文档");
+    assert_eq!(left.identity(), right.identity());
+    let mut history_probe = right.clone();
+    history_probe.edit(0..2, "");
+    assert_eq!(left.text(), "# 标题\n\n正文🎉", "撤销试算的副本不得修改共享正文");
+    left.take_dirty_region();
+    assert!(right.take_dirty_region().is_some(), "一侧消费脏区不能让另一侧漏掉刷新");
+}
+
+#[test]
 fn core_repair_editing_does_not_accumulate_one_chunk_per_keystroke() {
     let mut buffer = TextBuffer::from_text("start");
     for _ in 0..1000 {

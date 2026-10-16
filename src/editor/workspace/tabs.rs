@@ -457,6 +457,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(group) = self.active_split_editor() {
+            let handle = window.window_handle();
+            cx.defer(move |cx| {
+                if let Err(error) = handle.update(cx, |_, window, cx| group.update(cx, |editor, cx| {
+                    editor.open_workspace_file_in_mode(path, mode, window, cx);
+                })) { eprintln!("在活动分屏打开文件失败：{error}"); }
+            });
+            return;
+        }
         if self.file_path.as_ref() == Some(&path) {
             // 已是当前文档：双击树节点要把已打开的预览标签升级为固定。
             if mode == WorkspaceOpenMode::Pinned
@@ -515,12 +524,24 @@ impl Editor {
                 .map(|tab| tab.path.clone())
                 .collect()
         };
-        let cached = self
+        let shared = self.shared_document_for_open(&path, cx);
+        let mut cached = self
             .workspace
             .open_documents
             .iter()
             .find(|tab| tab.path == path)
             .cloned();
+        if let Some((buffer, dirty, version, recovery_id)) = &shared {
+            if let Some(tab) = cached.as_mut() {
+                tab.markdown = buffer.text(); tab.dirty = *dirty; tab.recovery_id = *recovery_id;
+                tab.file_shape = buffer.file_shape();
+                if let Some(version) = version { tab.file_version = *version; }
+            } else {
+                cached = Some(WorkspaceDocumentTab { path: path.clone(), recovery_id: *recovery_id,
+                    file_version: version.unwrap_or(0), markdown: buffer.text(), file_shape: buffer.file_shape(),
+                    dirty: *dirty, preview: false, view: None });
+            }
+        }
         // 这个标签上次离开时的阅读现场。取不到就是本次会话第一次读这篇，按打开新
         // 文档的口径走（渲染态、文档顶部）。
         let cached_view = cached.as_ref().and_then(|tab| tab.view.clone());
@@ -535,8 +556,8 @@ impl Editor {
                 .unwrap_or_else(uuid::Uuid::new_v4);
             (String::new(), Vec::new(), false, recovery_id, 0)
         } else if let Some(tab) = cached {
-            if tab.dirty {
-                (tab.markdown, Vec::new(), true, tab.recovery_id, tab.file_version)
+            if tab.dirty || shared.is_some() {
+                (tab.markdown, Vec::new(), tab.dirty, tab.recovery_id, tab.file_version)
             } else {
                 match crate::editor::encoding::load_document(&path) {
                     Ok(document) => {
@@ -619,6 +640,11 @@ impl Editor {
         self.attach_file_origin(raw);
         if let Some(shape) = cached_file_shape {
             self.buffer.restore_file_shape(shape);
+        }
+        if let Some((buffer, _, _, recovery_id)) = shared {
+            self.buffer = buffer;
+            self.recovery_id = recovery_id;
+            self.split_projection_revision = self.buffer.revision();
         }
         self.document_dirty = dirty;
         self.file_version = Some(file_version);
@@ -711,6 +737,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let TabMenuAction::Split(direction) = action {
+            self.request_split_document(cx.entity().downgrade(), target.to_path_buf(), direction, true, window, cx);
+            return;
+        }
         let paths: Vec<PathBuf> = {
             let tabs = &self.workspace.open_documents;
             let Some(index) = tabs.iter().position(|tab| tab.path == target) else {
@@ -733,6 +763,7 @@ impl Editor {
                     .map(|tab| tab.path.clone())
                     .collect(),
                 TabMenuAction::CloseAll => tabs.iter().map(|tab| tab.path.clone()).collect(),
+                TabMenuAction::Split(_) => Vec::new(),
             }
         };
         self.close_workspace_tabs(&paths, window, cx);
@@ -751,6 +782,7 @@ impl Editor {
         }
         // Capture the live editor content into its tab before deciding what is
         // dirty, so closing the active document sees up-to-date state.
+        self.refresh_shared_tab_snapshots(cx);
         self.snapshot_current_document(cx);
         self.dismiss_contextual_overlays(cx);
 
@@ -766,7 +798,7 @@ impl Editor {
         }
         let dirty: Vec<WorkspaceDocumentTab> = closing
             .iter()
-            .filter(|tab| tab.dirty)
+            .filter(|tab| tab.dirty && !self.shared_tab_has_other_view(&tab.path, cx))
             .cloned()
             .collect();
 
@@ -863,7 +895,7 @@ impl Editor {
                 return;
             }
             for tab in closing {
-                if !tab.dirty {
+                if !tab.dirty || self.shared_tab_has_other_view(&tab.path, cx) {
                     continue;
                 }
                 // 活动文档的正文在缓冲区里，而 `closing` 是弹框那一刻的标签快照：
@@ -913,6 +945,7 @@ impl Editor {
         }
 
         let closing_paths: Vec<PathBuf> = closing.iter().map(|tab| tab.path.clone()).collect();
+        self.preserve_shared_history_before_close(&closing_paths, cx);
         let active_was_closed = closing_paths
             .iter()
             .any(|path| self.workspace.active_document.as_ref() == Some(path));

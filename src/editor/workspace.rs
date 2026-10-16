@@ -19,6 +19,8 @@ pub(super) use crate::config::TreeSortPreference;
 pub(super) use crate::i18n::{I18nManager, I18nStrings};
 pub(super) use crate::theme::{Theme, ThemeManager};
 
+pub(crate) mod split;
+
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 const ACTIVITY_FILES_ICON: &str = "icon/workspace/activity-files.svg";
 const ACTIVITY_SEARCH_ICON: &str = "icon/workspace/activity-search.svg";
@@ -250,6 +252,7 @@ struct WorkspaceNameEdit {
 #[derive(Clone)]
 pub(super) struct TabDrag {
     pub(super) from_path: PathBuf,
+    pub(super) source: WeakEntity<Editor>,
 }
 
 /// 拖拽预览视图：被拖动标签的文件名。
@@ -284,6 +287,7 @@ pub(crate) enum TabMenuAction {
     CloseLeft,
     CloseRight,
     CloseAll,
+    Split(split::SplitDirection),
 }
 
 #[derive(Clone, Copy)]

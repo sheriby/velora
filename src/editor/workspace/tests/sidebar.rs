@@ -537,6 +537,7 @@ async fn opening_a_file_directly_restores_the_remembered_sidebar_state(
         sidebar_width: None,
         sidebar_tab: Some("outline".into()),
         sidebar_open: Some(false),
+        editor_groups: None,
     })
     .expect("写会话记忆");
     cx.update(|cx| crate::config::EditorSettings::init(cx, true));

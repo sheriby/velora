@@ -2,13 +2,35 @@ use super::*;
 
 use crate::config::{SidebarOpenPreference, SidebarPanelPreference};
 
+
+
 impl Editor {
     /// write runs on the background executor: on Windows a synchronous small
     /// write in a click handler stalls the interaction (Defender 实时扫描放大
     /// 延迟，曾导致打开第二个文件起界面卡顿)。写入用全局锁串行，避免并发
     /// 交错。
     pub(crate) fn persist_session(&mut self, cx: &mut Context<Self>) {
-        self.snapshot_current_document(cx);
+        if self.split_initializing { return; }
+        if let Some(parent) = self.split_parent.clone() {
+            cx.defer(move |cx| {
+                if let Err(error) = parent.update(cx, |editor, cx| {
+                    editor.remove_empty_split_groups(cx);
+                    editor.persist_session(cx);
+                }) { eprintln!("保存分屏会话失败：{error}"); }
+            });
+            return;
+        }
+        self.collect_split_tabs(cx);
+        if self.split_workspace.is_none() { self.snapshot_current_document(cx); }
+        let active_group = self.active_split_editor();
+        if let Some(group) = &active_group {
+            let editor = group.read(cx);
+            self.workspace.panel_width = editor.workspace.panel_width;
+            self.workspace.is_open = editor.workspace.is_open;
+            self.workspace.sidebar_memory_tab = editor.workspace.sidebar_memory_tab;
+        }
+        let active = active_group.as_ref().and_then(|group| group.read(cx).file_path.clone())
+            .or_else(|| self.workspace.active_document.clone());
         let session = crate::config::SessionState {
             root: self
                 .workspace
@@ -21,14 +43,11 @@ impl Editor {
                 .iter()
                 .map(|tab| tab.path.to_string_lossy().into_owned())
                 .collect(),
-            active: self
-                .workspace
-                .active_document
-                .as_ref()
-                .map(|path| path.to_string_lossy().into_owned()),
+            active: active.as_ref().map(|path| path.to_string_lossy().into_owned()),
             sidebar_width: self.workspace.panel_width.map(|width| width.round() as u16),
             sidebar_tab: Some(self.workspace.sidebar_memory_tab.session_key().to_string()),
             sidebar_open: Some(self.workspace.is_open),
+            editor_groups: self.split_session_layout(cx),
         };
         let background = cx.background_executor().clone();
         background
@@ -43,11 +62,33 @@ impl Editor {
     }
 
     pub(crate) fn set_workspace_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        if let Some(parent) = self.split_parent.clone() {
+            cx.defer(move |cx| {
+                if let Err(error) = parent.update(cx, |editor, cx| editor.set_workspace_root(root, cx)) {
+                    eprintln!("切换分屏工作区失败：{error}");
+                }
+            });
+            return;
+        }
         // Canonicalize so recent-folder entries read as real absolute paths
         // (a CLI "." would otherwise be recorded as "<cwd>/.")，再去掉 Windows 的
         // verbatim 前缀：canonicalize 在那边返回 `\\?\C:\…`，直接落进最近文件夹与
         // 会话就是用户看不懂的一串（口径见 `file_url::canonical_path`）。
         let root = crate::file_url::canonical_path(&root);
+        if self.split_workspace.is_some() {
+            let active = self.active_split_editor().and_then(|group| group.read(cx).file_path.clone());
+            self.collect_split_tabs(cx);
+            self.autosave_task = None;
+            if !self.prune_workspace_tabs_outside_root(&root, cx) { return; }
+            let active = active.filter(|path| self.workspace.open_documents.iter().any(|tab| tab.path == *path))
+                .or_else(|| self.workspace.open_documents.first().map(|tab| tab.path.clone()));
+            self.split_workspace = None;
+            self.workspace.active_document = None;
+            self.pending_workspace_tab_activation = active.clone();
+            self.show_welcome = active.is_none();
+            self.apply_workspace_root(root, cx);
+            return;
+        }
         self.snapshot_current_document(cx);
         if self.document_dirty && self.file_path.as_ref().is_some_and(|path| !path_is_within_root(&root, path)) {
             let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
@@ -203,8 +244,20 @@ impl Editor {
 
     /// watcher 事件统一入口：外部文件的增/删/改都走这里。
     pub(crate) fn on_watched_path_changed(&mut self, path: &Path, cx: &mut Context<Self>) {
-        self.reload_externally_changed_document(path, cx);
-        self.schedule_workspace_tree_refresh(cx);
+        if self.split_workspace.is_some() {
+            self.reload_hidden_shared_document(path, cx);
+            let groups = self.split_groups();
+            for group in groups {
+                group.update(cx, |editor, cx| {
+                    editor.reload_externally_changed_document(path, cx);
+                    editor.schedule_workspace_tree_refresh(cx);
+                });
+                self.sync_shared_groups(group.entity_id(), cx);
+            }
+        } else {
+            self.reload_externally_changed_document(path, cx);
+            self.schedule_workspace_tree_refresh(cx);
+        }
     }
 
     /// 合并连续的 watcher 事件，防抖后强制重扫文件树：外部新建/删除/改名

@@ -13,6 +13,7 @@ pub(super) use gpui::*;
 
 pub(super) use crate::commands::{CommandMenu, CommandSpec};
 pub(super) use crate::components::{
+    SplitEditorLeft, SplitEditorRight, SplitEditorUp, SplitEditorDown,
     AddLanguageConfig, AddThemeConfig, BoldSelection, CheckForUpdates, CloseTab, CloseWindow,
     ExportHtml, ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
@@ -251,6 +252,13 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
     }
 
     let handle = open_editor_window(cx, String::new(), None);
+    if let Some(layout) = &session.editor_groups {
+        if let Err(error) = handle.update(cx, |editor, window, cx| {
+            editor.set_workspace_root(root, cx);
+            editor.restore_split_session(layout, window, cx);
+        }) { eprintln!("恢复分屏会话失败：{error}"); return false; }
+        return true;
+    }
     // 活动标签先同步打开（决定窗口内容与焦点），其余标签分散到后续事件循环打开，
     // 避免恢复大量标签阻塞首帧（roadmap G5）。
     let mut deferred: Vec<PathBuf> = Vec::new();
@@ -568,7 +576,11 @@ fn with_active_editor<R>(
     update: impl FnOnce(&mut Editor, &mut Window, &mut Context<Editor>) -> R,
 ) -> Option<R> {
     let window = cx.active_window()?.downcast::<Editor>()?;
-    match window.update(cx, update) {
+    let active = window.read_with(cx, |editor, _| editor.active_split_editor()).ok().flatten();
+    let result = if let Some(active) = active {
+        AnyWindowHandle::from(window).update(cx, |_, window, cx| active.update(cx, |editor, cx| update(editor, window, cx)))
+    } else { window.update(cx, update) };
+    match result {
         Ok(result) => Some(result),
         Err(error) => {
             // 同上：窗口正被自己的事件派发 take 着时这里必失败。动作本身没法重试
@@ -815,7 +827,15 @@ fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindo
 pub(crate) type EditorMenuHandler = fn(&mut Editor, &mut Window, &mut Context<Editor>);
 
 pub(crate) fn editor_menu_handler(action: &dyn Action) -> Option<EditorMenuHandler> {
-    if action.as_any().is::<FormatDocument>() {
+    if action.as_any().is::<SplitEditorLeft>() {
+        Some(|editor, window, cx| editor.split_active_document(crate::editor::workspace::split::SplitDirection::Left, window, cx))
+    } else if action.as_any().is::<SplitEditorRight>() {
+        Some(|editor, window, cx| editor.split_active_document(crate::editor::workspace::split::SplitDirection::Right, window, cx))
+    } else if action.as_any().is::<SplitEditorUp>() {
+        Some(|editor, window, cx| editor.split_active_document(crate::editor::workspace::split::SplitDirection::Up, window, cx))
+    } else if action.as_any().is::<SplitEditorDown>() {
+        Some(|editor, window, cx| editor.split_active_document(crate::editor::workspace::split::SplitDirection::Down, window, cx))
+    } else if action.as_any().is::<FormatDocument>() {
         Some(|editor, _, cx| { editor.format_document(cx); })
     } else if action.as_any().is::<FileHistory>() {
         Some(|editor, _, cx| editor.open_file_history(cx))

@@ -7,11 +7,32 @@ impl Editor {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.ensure_current_document_tab(cx);
-        if self.workspace.open_documents.is_empty() {
+        let tabs = self.render_document_tab_items(theme, None, cx);
+        if tabs.is_empty() {
             return None;
         }
+        let group_id = cx.entity_id();
+        Some(
+            div()
+                .id("document-tabs")
+                .debug_selector(move || format!("document-tabs-{group_id:?}"))
+                .h_full()
+                .min_w(px(0.0))
+                .flex()
+                .track_scroll(&self.workspace.tabs_scroll_handle)
+                .overflow_x_scroll()
+                .children(tabs)
+                .into_any_element(),
+        )
+    }
 
+    pub(crate) fn render_document_tab_items(
+        &mut self,
+        theme: &Theme,
+        group_accent: Option<Hsla>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        self.ensure_current_document_tab(cx);
         let editor = cx.entity().downgrade();
         let c = &theme.colors;
         let tabs = self
@@ -103,8 +124,9 @@ impl Editor {
                     .items_center()
                     .gap(px(6.0))
                     .relative()
-                    .border_r(px(1.0))
-                    .border_color(c.dialog_border)
+                    .when(group_accent.is_none(), |this| {
+                        this.border_r(px(1.0)).border_color(c.dialog_border)
+                    })
                     .bg(if active {
                         c.editor_background
                     } else {
@@ -124,6 +146,25 @@ impl Editor {
                     } else {
                         c.dialog_muted
                     })
+                    .children(group_accent.map(|accent| {
+                        let group_id = cx.entity_id();
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(2.0))
+                            .flex()
+                            .items_center()
+                            .child(
+                                div()
+                                    .debug_selector(move || format!("tab-group-left-border-{group_id:?}-{index}"))
+                                    .w_full()
+                                    .h(px(18.0))
+                                    .rounded(px(1.0))
+                                    .bg(accent),
+                            )
+                    }))
                     .children(active.then(|| {
                         div()
                             .absolute()
@@ -131,7 +172,7 @@ impl Editor {
                             .left_0()
                             .right_0()
                             .h(px(2.0))
-                            .bg(c.dialog_primary_button_bg)
+                            .bg(if self.split_active { c.dialog_primary_button_bg } else { c.dialog_border })
                     }))
                     .children([false, true].into_iter().map(|after| {
                         let drop_target_path = path.clone();
@@ -160,13 +201,7 @@ impl Editor {
                             })
                             .on_drop(move |drag: &TabDrag, window, cx| {
                                 if let Err(error) = drop_editor.update(cx, |editor, cx| {
-                                    editor.move_tab_to_position(
-                                        &drag.from_path,
-                                        &drop_target_path,
-                                        after,
-                                        window,
-                                        cx,
-                                    );
+                                    editor.receive_tab_drop(drag, Some((drop_target_path.clone(), after)), None, window, cx);
                                 }) {
                                     eprintln!("移动标签失败：{error}");
                                 }
@@ -228,6 +263,7 @@ impl Editor {
                     .on_drag(
                         TabDrag {
                             from_path: drag_from_path.clone(),
+                            source: editor.clone(),
                         },
                         move |drag, _offset, _window, cx| {
                             let label = drag
@@ -259,16 +295,6 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        Some(
-            div()
-                .id("document-tabs")
-                .h_full()
-                .min_w(px(0.0))
-                .flex()
-                .track_scroll(&self.workspace.tabs_scroll_handle)
-                .overflow_x_scroll()
-                .children(tabs)
-                .into_any_element(),
-        )
+        tabs
     }
 }
