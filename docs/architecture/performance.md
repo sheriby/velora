@@ -103,6 +103,7 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 - `chunk_lookups_do_not_scan_every_chunk` — 按偏移/行号取字节不许从第 0 块线性找（`ChunkStarts::probes` ≤ 32 次比较 / 272 块）。
 - `reattaching_root_spans_does_not_scan_candidates_per_block`、`undo_does_not_fall_back_to_a_whole_document_resync` — 整篇落笔给根块挂区间是每根块查一次表；撤销收尾不许再序列化整篇。
 - `typing_a_link_paragraph_does_not_rebuild_the_reference_registry` — 段落里带 `[文字](链接)` 或 `a < b` 时打字不许触发整篇引用注册表重建；正控是改定义行必须触发。
+- `typing_in_a_table_cell_does_not_rebuild_the_reference_registry` — 格子里含 `[文字](链接)` 或 `a < b` 时打字不许整篇重建（格子没有源码区间，旧口径退回行内树宽口径每键付一次 766ms）；正控是格子里引入 `[^note]` 必须重建。该条修复前红。
 - `introducing_a_reference_definition_refreshes_the_reference_registry` — 屏幕看的是**落笔前**的缓冲区字节，所以「原来没有 `]:`/`[^`、这一下才写进去」的编辑（粘贴一行定义、把定义搬过来）要由落笔后再问一次兜住；`renaming_a_footnote_definition_sub_block_refreshes_the_registry` 钉住另一半：没有源码区间的定义类子块（容器里的脚注定义，标题就是标签本身）只能靠宽口径里的 kind 那一档认出来。两条修复前都红。
 - `a_directory_that_failed_to_scan_is_not_retried_every_frame` — 侧栏目录扫失败要留痕：面板补齐挂在每帧的 `sync_workspace_models` 上，失败不留痕就是每帧一次 `read_dir` 加一次 `notify`（修复前实测 5 帧 5 次重试）；`a_walk_reports_how_many_entries_it_could_not_read` 钉住走盘名单的跳过条目要有计数。
 - `a_second_display_render_does_not_read_the_disk_again` — 同一条 mermaid 的第二次渲染一次盘都不许读（`TEST_CACHE_READS`）。
@@ -123,7 +124,7 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 
 ## 4. 成本结构：什么已经收敛，什么还随文档长
 
-**与文档大小无关（已收敛）**：稳态帧（不打字不重算任何东西）· 打字后的整篇序列化（0 次）· 引用注册表重建（只在改动块的**源码字节**出现 `]:` 或 `[^` 时才走：带 `[文字](链接)` 的段落、`a < b` 这类正文不再触发；10 MiB 档它一次 766ms）· mermaid 重绘（进程内缓存命中，一次盘都不读）· 行号查询（只二分每块的换行偏移表）· 大纲（按根块增量，没人看就不算）· 行计划（打字不重排，缓存键是结构版本不是文档修订）· 区间平移（树侧一趟循环）· 搜索高亮（只为有命中的根块建映射）· shape（跨帧备忘）· 撤销内存（存增量）。
+**与文档大小无关（已收敛）**：稳态帧（不打字不重算任何东西）· 打字后的整篇序列化（0 次）· 引用注册表重建（只在改动块的**源码字节**出现 `]:` 或 `[^` 时才走：带 `[文字](链接)` 的段落、`a < b` 这类正文不再触发；10 MiB 档它一次 766ms。表格格子没有源码区间，另有一条更窄的屏幕：定义行不可能长在表格行里，格子只看 `[^` 脚注引用）· mermaid 重绘（进程内缓存命中，一次盘都不读）· 行号查询（只二分每块的换行偏移表）· 大纲（按根块增量，没人看就不算）· 行计划（打字不重排，缓存键是结构版本不是文档修订）· 区间平移（树侧一趟循环）· 搜索高亮（只为有命中的根块建映射）· shape（跨帧备忘）· 撤销内存（存增量）。
 
 **仍与文档大小同向**：
 

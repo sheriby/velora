@@ -1846,6 +1846,58 @@ async fn renaming_a_footnote_definition_sub_block_refreshes_the_registry(
     assert!(!has_old, "旧标签还留在脚注注册表里");
 }
 
+/// 表格格子里打字不许每键整篇重建引用注册表。
+///
+/// 格子没有源码区间（区间挂在表根块上），屏幕于是退回行内树的宽口径：格子里有
+/// `[文字](链接)` 或 `a < b`，每键就付一次整篇注册表重建（10 MiB 档一次 766ms）。
+/// 而定义行不可能长在表格行里（解析器只认行首的 `[label]:`，表格行首是 `|`），
+/// 格子这一格只可能改脚注引用表：`[^label]` 决定「哪几块引用了这个脚注」。
+#[gpui::test]
+async fn typing_in_a_table_cell_does_not_rebuild_the_reference_registry(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "| 列 | 值 |\n| --- | --- |\n| [文字](https://example.com) | a < b |\n";
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None)));
+    cx.run_until_parked();
+
+    let cell = editor.read_with(cx, |editor, cx| {
+        editor
+            .table_cells
+            .values()
+            .map(|binding| binding.cell.clone())
+            .find(|cell| {
+                cell.read(cx)
+                    .record
+                    .title
+                    .fragments
+                    .iter()
+                    .any(|fragment| fragment.link.is_some())
+            })
+            .expect("夹具应有一个带链接的格子")
+    });
+    let before = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(before > 0, "建文档时就没重建过注册表，这条闸门量不到东西");
+
+    cell.update(cx, |cell, cx| {
+        cell.replace_text_in_visible_range(0..0, "x", None, false, cx);
+    });
+    cx.run_until_parked();
+    let after = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert_eq!(after, before, "格子里打字触发了整篇引用注册表重建");
+
+    // 正控：格子里新引入脚注引用（`[^`）必须重建——它改的是「哪几块引用了这个脚注」。
+    cell.update(cx, |cell, cx| {
+        cell.replace_text_in_visible_range(0..0, "[^note]", None, false, cx);
+    });
+    cx.run_until_parked();
+    let after_footnote = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(
+        after_footnote > after,
+        "格子里引入脚注引用却没重建引用注册表"
+    );
+}
+
 /// 一次 ⌘Z 不许再做一遍整篇落笔。
 ///
 /// 撤销先重放逆操作、再 `rebuild_document_from_buffer`：块树整篇来自缓冲区，缓冲区就是

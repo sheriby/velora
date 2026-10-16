@@ -33,8 +33,20 @@ impl Editor {
             .filter(|span| self.buffer.span_is_trustworthy(span))
             .map(|span| self.buffer.slice(span));
         let Some(source) = source else {
-            // 没有可信区间：退回**原来的**宽口径（宁可多重建一次，也别漏掉定义行的更新）。
-            // 这一档里两类都要看：
+            // 表格格子是唯一一类「宽口径可以更窄」的无区间块：定义行不可能长在表格行
+            // 里（解析器只认行首的 `[label]:`，而表格行首是 `|`），格子这一格只可能
+            // 改**脚注引用表**——`[^label]` 决定「哪几块引用了这个脚注」。旧口径对含
+            // `[文字](链接)` 或 `a < b` 的格子每键付一次整篇重建（10 MiB 档 766ms，
+            // 闸门 `typing_in_a_table_cell_does_not_rebuild_the_reference_registry`）。
+            if self.table_cells.contains_key(&block.entity_id()) {
+                return block.read_with(cx, |block, _cx| {
+                    block.record.title.fragments.iter().any(|fragment| {
+                        fragment.footnote.is_some() || fragment.text.contains("[^")
+                    })
+                });
+            }
+            // 其余无区间块（列表项、引用容器的子块）退回**原来的**宽口径（宁可多重建
+            // 一次，也别漏掉定义行的更新）。这一档里两类都要看：
             // 1. 定义类的块无条件算「可能改」（`FootnoteDefinition` 这类块的行内树标题
             //    就是标签本身，既没有 `]:` 也没有 `[^`——容器里的脚注定义是子块，改标签
             //    时只能靠这一条认出来，闸门
