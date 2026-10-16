@@ -30,12 +30,6 @@ UninstPage instfiles
 
 Section "安装 Velora" SEC_MAIN
   SetOutPath "$INSTDIR"
-  ; 兜底：更新那条路已经由 PowerShell 帮手先请一遍、并确认没有实例了（那边的关法是
-  ; 不带 /F 的 taskkill，让窗口弹自己的「未保存」提示）。这里留着 /F 是防「确认之后又
-  ; 有人双击图标」这种竞态——那时窗口里还没有内容。
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM velora.exe /F /T'
-  Pop $0
-  Sleep 300
   File "${REPO_ROOT}\target\release\velora.exe"
   File "${REPO_ROOT}\LICENSE-APACHE"
 

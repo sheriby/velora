@@ -171,22 +171,6 @@ error_file="$4"
 previous_executable="$5"
 shift 5
 while /bin/kill -0 "$process_id" 2>/dev/null; do /bin/sleep 0.2; done
-# 其他窗口各自是别的进程（命令行启动、`open -n`、或另一份副本）。它们还在跑旧版本时：
-# `installer` 往 /Applications 里覆盖这个正在用的 bundle，而 `open` 只会唤醒那个还在跑
-# 的旧实例、`--args` 被丢掉——用户看到的还是旧版本在提示更新，与 Windows 那次同源。
-/usr/bin/killall -TERM velora 2>/dev/null
-# 与 Windows 用同一种做法：只请它们自己关（TERM 走正常终止流程，窗口有机会弹「未保存」），
-# 等满这个上限还不退就放弃这趟更新——0.5 秒后强杀会把用户正在编辑的内容一起带走。
-close_timeout_seconds=30
-deadline=$((`/bin/date +%s` + close_timeout_seconds))
-while /usr/bin/killall -0 velora 2>/dev/null; do
-  if [ "`/bin/date +%s`" -ge "$deadline" ]; then
-    /bin/echo '还有其他 Velora 窗口未关闭（请在那些窗口里保存或放弃改动，再更新一次）' >"$error_file"
-    "$previous_executable" "$@" >/dev/null 2>&1 &
-    exit 0
-  fi
-  /bin/sleep 0.2
-done
 /usr/bin/osascript -e 'on run argv
   do shell script "/usr/sbin/installer -pkg " & quoted form of (item 1 of argv) & " -target /" with administrator privileges
 end run' "$package" >"$error_file" 2>&1
@@ -202,29 +186,12 @@ fi
 
 const WINDOWS_HELPER: &str = r#"param([string]$ConfigPath)
 $ErrorActionPreference = 'Stop'
-# 等其他实例自己退的上限：其他窗口里可能正弹着「未保存」提示，用户在那边保存需要时间。
-# 到点还没退就放弃这趟更新（写失败原因 + 把旧版本开回来），不硬杀。
-$closeTimeoutSeconds = 30
 $plan = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 try {
     try {
         $parent = [System.Diagnostics.Process]::GetProcessById([int]$plan.process_id)
         $parent.WaitForExit()
     } catch [System.ArgumentException] { }
-    # 还在跑的实例（多窗口各自成进程）：先请它们自己关。不带 /F 的 taskkill 只发
-    # WM_CLOSE，那个窗口会弹出自己的「未保存」提示，用户能在那里真的保存。它们不退就
-    # 别装：硬杀会把用户正在编辑的内容一起带走（恢复快照只兜住 debounce 窗口内的输入）。
-    & "$env:SystemRoot\System32\taskkill.exe" /IM velora.exe /T 2>$null | Out-Null
-    $deadline = (Get-Date).AddSeconds($closeTimeoutSeconds)
-    $straggler = { Get-Process -Name velora -ErrorAction SilentlyContinue |
-        Where-Object { $_.Id -ne [int]$plan.process_id } }
-    while ((Get-Date) -lt $deadline -and (& $straggler)) {
-        Start-Sleep -Milliseconds 200
-    }
-    # 排除发起安装的那个进程号（它刚退出，列表里可能还挂着）：它自己不算「没关」。
-    if (& $straggler) {
-        throw '还有其他 Velora 窗口未关闭（请在那些窗口里保存或放弃改动，再更新一次）'
-    }
     $settings = New-Object System.Diagnostics.ProcessStartInfo
     $settings.FileName = $plan.package_path
     $settings.Arguments = '/S /D=' + $plan.install_dir
@@ -250,94 +217,6 @@ try {
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// 更新时别的实例各自成进程（资源管理器再开一个文件就是一个进程，应用内「新建
-    /// 窗口」是同一个进程的多个窗口），它们在用着 `velora.exe`，不关掉就覆盖不了。
-    /// 但关法要分两步：先请它们自己退（不带 `/F` 的 `taskkill` 只发 WM_CLOSE，那个窗口
-    /// 会弹出自己的「未保存」提示，用户能在那里真保存），不退就放弃这趟更新，不硬杀。
-    #[test]
-    fn windows_update_asks_other_instances_to_close_instead_of_killing_them() {
-        let ask = WINDOWS_HELPER
-            .lines()
-            .find(|line| line.contains("taskkill.exe"))
-            .expect("请退那一行");
-        assert!(ask.contains("/IM velora.exe /T"), "{ask}");
-        assert!(
-            !ask.contains("/F"),
-            "硬杀会把用户正在编辑的内容一起带走：{ask}"
-        );
-        assert!(WINDOWS_HELPER.contains("还有其他 Velora 窗口未关闭"));
-        assert!(
-            WINDOWS_HELPER.contains("Get-Process -Name velora"),
-            "请退之后要等到真的退干净：{WINDOWS_HELPER}"
-        );
-        // 顺序：请退 → 等待 → 还有就放弃 → 才轮到装。
-        let ask_at = WINDOWS_HELPER.find("taskkill.exe").expect("请退");
-        let install_at = WINDOWS_HELPER.find("$plan.package_path").expect("安装");
-        assert!(ask_at < install_at, "先请退再装：{WINDOWS_HELPER}");
-    }
-
-    /// 安装包这层只做兜底：应用层（`WINDOWS_HELPER`）已经请过一遍并确认没有实例了，
-    /// 这里留着 `/F` 是防「确认之后又有人双击图标」这种竞态，那时窗口里还没有内容。
-    #[test]
-    fn windows_installer_clears_stragglers_before_overwriting_the_executable() {
-        let script = include_str!("../../../scripts/package-windows.nsi");
-        assert!(
-            script.contains("taskkill.exe\" /IM velora.exe /F /T"),
-            "覆盖前要兜住装完又冒出来的实例"
-        );
-    }
-
-    /// 卸载同样要删 `velora.exe`，但卸载器没有应用层帮它先请一遍，所以它自己请：留着
-    /// 没退就不继续删——硬删会把用户正在编辑的内容一起带走。
-    #[test]
-    fn windows_uninstaller_stops_when_instances_refuse_to_close() {
-        let script = include_str!("../../../scripts/package-windows.nsi");
-        let uninstall = script
-            .split("Section \"Uninstall\"")
-            .nth(1)
-            .expect("卸载段");
-        let ask = uninstall
-            .lines()
-            .find(|line| line.contains("taskkill.exe"))
-            .expect("卸载里的请退那一行");
-        assert!(ask.contains("/IM velora.exe /T"), "{ask}");
-        assert!(!ask.contains("/F"), "卸载也不硬杀：{ask}");
-        assert!(uninstall.contains("MessageBox") && uninstall.contains("Quit"));
-        // 判据是「删不掉就说明还锁着」，不能只看进程列表。
-        assert!(uninstall.contains("IfFileExists \"$INSTDIR\\velora.exe\""));
-    }
-
-    /// macOS 侧收掉其他实例的理由与 Windows 不同（`installer` 覆盖的是正在使用的 bundle，
-    /// 而 `open` 只会唤醒还在跑的旧实例、`--args` 被丢掉），但**两边关法必须一致**：
-    /// 先请它们自己退，到点还不退就放弃这趟更新。`killall -KILL` 会把别的窗口里未保存的
-    /// 正文一起带走——GPUI 不在 SIGTERM 里跑窗口关闭流程，那句「还有未保存的修改」根本
-    /// 弹不出来。
-    #[test]
-    fn macos_helper_asks_other_instances_to_close_instead_of_killing_them() {
-        assert!(MACOS_HELPER.contains("/usr/bin/killall -TERM velora"));
-        assert!(
-            !MACOS_HELPER.contains("-KILL"),
-            "强杀会把其他窗口里未保存的编辑一起带走：{MACOS_HELPER}"
-        );
-        assert!(
-            MACOS_HELPER.contains("还有其他 Velora 窗口未关闭"),
-            "不退就该放弃这趟更新：{MACOS_HELPER}"
-        );
-        let ask = MACOS_HELPER.find("-TERM velora").expect("先请退");
-        let poll = MACOS_HELPER
-            .find("killall -0 velora")
-            .expect("再等它退干净");
-        let install = MACOS_HELPER.find("installer -pkg").expect("最后才安装");
-        assert!(
-            ask < poll && poll < install,
-            "先请退、等退干净、再安装：{MACOS_HELPER}"
-        );
-        assert!(
-            MACOS_HELPER.contains("$previous_executable"),
-            "放弃这趟要把旧版本开回来"
-        );
-    }
-
     #[test]
     fn installer_helpers_wait_for_exit_and_use_installer_arguments_as_data() {
         assert!(MACOS_HELPER.contains("while /bin/kill -0"));

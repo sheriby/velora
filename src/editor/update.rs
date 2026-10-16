@@ -16,10 +16,6 @@ use crate::theme::Theme;
 #[derive(Default)]
 struct UpdateSession {
     startup_checked: bool,
-    /// 上次安装失败的原因。开机路径只写日志不打扰用户（见
-    /// [`Editor::maybe_check_updates_on_startup`]），留在这里让用户自己点「检查更新」时
-    /// 能看见——不然安装失败只剩「点了更新没动静、再点一次还是失败」。
-    install_error: Option<String>,
     download_active: bool,
     download_cancel: Option<Arc<AtomicBool>>,
     download_window: Option<WindowId>,
@@ -151,9 +147,6 @@ impl Editor {
         match update_check::take_install_error() {
             Ok(Some(detail)) => {
                 eprintln!("上次更新安装失败：{detail}");
-                cx.update_global::<UpdateSession, _>(|session, _| {
-                    session.install_error = Some(detail)
-                });
                 return;
             }
             Ok(None) => {}
@@ -186,14 +179,6 @@ impl Editor {
         }
         if self.update_check_in_progress {
             self.show_info_dialog(InfoDialogKind::CheckForUpdates, cx);
-            return;
-        }
-        // 上次安装失败的原因先给用户看一眼：这一趟不再重复检查，看清了再点一次。
-        let previous_failure = cx.update_global::<UpdateSession, _>(|session, _| {
-            session.install_error.take()
-        });
-        if let Some(detail) = previous_failure {
-            self.show_update_failure(&detail, cx);
             return;
         }
         self.start_update_check(true, window, cx);
@@ -747,51 +732,6 @@ mod tests {
             assert!(
                 !editor.update_check_in_progress,
                 "前置：有安装失败记录时开机路径不该同时去发网络请求"
-            );
-        });
-                let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 上次安装失败的原因在开机路径上只进日志（上一条守着），但用户自己点「检查更新」
-    /// 时要看得见：不报的话，安装失败只剩「点了更新没动静、再点一次还是失败」，而套件
-    /// 里的更新包还在，用户只会反复下载。
-    #[gpui::test]
-    async fn manual_update_check_shows_the_previous_install_failure(cx: &mut TestAppContext) {
-        let root =
-            std::env::temp_dir().join(format!("velora-update-manual-{}", uuid::Uuid::new_v4()));
-        let _config_root = crate::config::override_test_config_root(root.clone());
-        cx.update(|cx| {
-            crate::i18n::I18nManager::init(cx);
-            crate::theme::ThemeManager::init(cx);
-            crate::components::init(cx);
-            super::init_update_session(cx);
-            let mut settings = crate::config::preferences::UpdatePreferences::default();
-            settings.check_on_startup = false;
-            crate::config::EditorSettings::set_updates_in_memory(cx, settings);
-        });
-        let updates = crate::net::update::updates_dir().expect("更新目录");
-        std::fs::create_dir_all(&updates).expect("建更新目录");
-        std::fs::write(updates.join("install-error.txt"), "安装包被占用").expect("写安装失败记录");
-
-        let (editor, cx) =
-            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
-        editor.update_in(cx, |editor, window, cx| {
-            // 开机路径先经过一次：它把原因记进会话，不弹窗。
-            editor.maybe_check_updates_on_startup(window, cx);
-            assert!(!editor.modal_is_open(), "开机路径不该弹窗");
-            // 用户自己点这一下：原因要报出来，这一趟不再重复发网络请求。
-            editor.request_check_updates(window, cx);
-            assert!(
-                editor.modal_is_open(),
-                "手动检查更新该把上次安装失败的原因报出来"
-            );
-            assert!(
-                !editor.update_check_in_progress,
-                "报完原因这一趟就不再检查，等用户看清了再点一次"
-            );
-            assert!(
-                cx.global::<UpdateSession>().install_error.is_none(),
-                "报过之后不该留着再报一次"
             );
         });
         let _ = std::fs::remove_dir_all(root);
