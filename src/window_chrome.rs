@@ -4,7 +4,8 @@ use std::sync::OnceLock;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Bounds, ClickEvent, Context, Decorations, DisplayId, Hsla, MouseButton, Pixels,
+    AnyElement, App, Bounds, ClickEvent, Context, Decorations, DisplayId, Hsla, MouseButton,
+    MouseDownEvent, Pixels,
     SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowDecorations, WindowOptions, div, point, px, rgba, svg,
 };
@@ -192,6 +193,8 @@ pub(crate) fn velora_window_options_for_target_os(
         // 丢）。把 frame 所在的显示器一并传下去，副屏上的窗口才能原样恢复。
         display_id,
         titlebar: Some(titlebar_options_for_target_os(target_os, title)),
+        // AppKit 仍会在视图收到鼠标事件后拖窗，macOS 只由标题栏显式发起移动。
+        is_movable: target_os != "macos",
         window_background: WindowBackgroundAppearance::Opaque,
         window_decorations: window_decorations_for_target_os(target_os),
         ..WindowOptions::default()
@@ -236,17 +239,27 @@ pub(crate) fn custom_titlebar_layout_for_target_os(
     }
 }
 
-/// Windows/macOS use hit-test drag areas; Linux client decorations need an explicit move request.
+/// macOS 与 Linux 自绘标题栏显式发起移动，Windows 使用原生命中测试。
 pub(crate) fn titlebar_drag_strategy_for_target_os(
     target_os: &str,
     decorations: Decorations,
 ) -> TitlebarDragStrategy {
     match target_os {
+        "macos" => TitlebarDragStrategy::ExplicitMoveRequest,
         "linux" | "freebsd" if matches!(decorations, Decorations::Client { .. }) => {
             TitlebarDragStrategy::ExplicitMoveRequest
         }
         _ => TitlebarDragStrategy::PlatformHitTest,
     }
+}
+
+fn on_titlebar_mouse_down(event: &MouseDownEvent, window: &mut Window, cx: &mut App) {
+    if event.click_count >= 2 {
+        window.zoom_window();
+    } else {
+        window.start_window_move();
+    }
+    cx.stop_propagation();
 }
 
 pub(crate) fn custom_titlebar_height_for_target_os(
@@ -349,14 +362,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
         match drag_strategy {
             TitlebarDragStrategy::PlatformHitTest => drag_title,
             TitlebarDragStrategy::ExplicitMoveRequest => {
-                drag_title.on_mouse_down(MouseButton::Left, |event, window, cx| {
-                    if event.click_count >= 2 {
-                        window.zoom_window();
-                    } else {
-                        window.start_window_move();
-                    }
-                    cx.stop_propagation();
-                })
+                drag_title.on_mouse_down(MouseButton::Left, on_titlebar_mouse_down)
             }
         }
         .on_click(|event, window, _cx| {
@@ -375,6 +381,12 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
             .h_full()
             .window_control_area(WindowControlArea::Drag)
             .min_w(px(12.0));
+        let filler = match drag_strategy {
+            TitlebarDragStrategy::PlatformHitTest => filler,
+            TitlebarDragStrategy::ExplicitMoveRequest => {
+                filler.on_mouse_down(MouseButton::Left, on_titlebar_mouse_down)
+            }
+        };
         if flex_grow {
             filler.flex_1()
         } else {
@@ -577,6 +589,53 @@ mod tests {
     use gpui::Tiling;
 
     #[test]
+    fn macos_tabs_disable_automatic_window_dragging() {
+        for target_os in ["macos", "windows"] {
+            let options = velora_window_options_for_target_os(
+                target_os,
+                "Velora".into(),
+                Bounds::new(point(px(0.0), px(0.0)), gpui::size(px(800.0), px(600.0))),
+                None,
+            );
+            assert_eq!(
+                options.is_movable,
+                target_os != "macos",
+                "macOS 必须关闭原生默认拖窗，否则标签和窗口会同时跟着鼠标移动"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[allow(unexpected_cfgs)]
+    fn macos_content_view_keeps_mouse_drags_for_document_tabs() {
+        use cocoa::appkit::NSView;
+        use cocoa::base::nil;
+        use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize};
+        use objc::runtime::{BOOL, Class, NO, Object, Sel};
+        use objc::{sel, sel_impl};
+
+        unsafe {
+            let pool = NSAutoreleasePool::new(nil);
+            let view = NSView::alloc(nil).initWithFrame_(NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(10.0, 10.0),
+            ));
+            assert!(!view.is_null());
+            let view_class = Class::get("GPUIView").expect("GPUI 原生视图");
+            let method = view_class
+                .instance_method(sel!(mouseDownCanMoveWindow))
+                .expect("原生拖窗判定");
+            let can_move: unsafe extern "C" fn(&Object, Sel) -> BOOL =
+                std::mem::transmute(method.implementation());
+            let actual = can_move(&*view, sel!(mouseDownCanMoveWindow));
+            view.autorelease();
+            pool.drain();
+            assert_eq!(actual, NO, "内容视图不能默认把标签上的拖动交给原生拖窗");
+        }
+    }
+
+    #[test]
     fn titlebar_options_enable_transparency_on_mac_and_windows() {
         assert!(titlebar_options_for_target_os("windows", "velora".into()).appears_transparent);
         assert!(titlebar_options_for_target_os("macos", "velora".into()).appears_transparent);
@@ -631,7 +690,7 @@ mod tests {
         );
         assert_eq!(
             titlebar_drag_strategy_for_target_os("macos", Decorations::Server),
-            TitlebarDragStrategy::PlatformHitTest
+            TitlebarDragStrategy::ExplicitMoveRequest
         );
         assert_eq!(
             titlebar_drag_strategy_for_target_os(

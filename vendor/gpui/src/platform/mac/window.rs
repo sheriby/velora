@@ -129,6 +129,11 @@ unsafe fn build_classes() {
                     sel!(mouseDown:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
+                // 本地补丁：透明内容视图默认允许原生拖窗，会抢走标题栏标签的拖动。
+                decl.add_method(
+                    sel!(mouseDownCanMoveWindow),
+                    no as extern "C" fn(&Object, Sel) -> BOOL,
+                );
                 decl.add_method(
                     sel!(mouseUp:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
@@ -1341,6 +1346,28 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn start_window_move(&self) {
+        unsafe {
+            let application = NSApplication::sharedApplication(nil);
+            let event: id = msg_send![application, currentEvent];
+            if event.is_null() {
+                return;
+            }
+            let this = self.0.lock();
+            let event = objc::rc::StrongPtr::retain(event);
+            let window = objc::rc::StrongPtr::retain(this.native_window);
+            // 原生拖窗会运行嵌套事件循环，先归还 GPUI 借用并保留本次按下事件。
+            this.executor
+                .spawn(async move {
+                    let movable: BOOL = msg_send![*window, isMovable];
+                    (*window).setMovable_(YES);
+                    let _: () = msg_send![*window, performWindowDragWithEvent: *event];
+                    (*window).setMovable_(movable);
+                })
+                .detach();
+        }
+    }
+
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
@@ -1604,6 +1631,10 @@ unsafe fn drop_window_state(object: &Object) {
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
     YES
+}
+
+extern "C" fn no(_: &Object, _: Sel) -> BOOL {
+    NO
 }
 
 extern "C" fn dealloc_window(this: &Object, _: Sel) {

@@ -366,11 +366,12 @@ impl Editor {
         self.cursor_history_forward.clear();
     }
 
-    /// 拖拽标签落到目标标签上：把被拖标签移动到目标位置（roadmap E3）。
+    /// 按落点半区把标签插到目标之前或之后。
     pub(crate) fn move_tab_to_position(
         &mut self,
         from_path: &Path,
         to_path: &Path,
+        after: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -394,8 +395,8 @@ impl Editor {
             return;
         };
         let tab = self.workspace.open_documents.remove(from);
-        let mut insert_at = to;
-        if from < to {
+        let mut insert_at = to + usize::from(after);
+        if from < insert_at {
             insert_at = insert_at.saturating_sub(1);
         }
         self.workspace.open_documents.insert(insert_at, tab);

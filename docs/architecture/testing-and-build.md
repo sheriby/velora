@@ -76,6 +76,8 @@ cargo test --bin velora     # 全绿
 8. **`Entity::read_untracked`**：跳过 accessed 集合登记的读。状态栏一类每帧扫描在十万级块文档上曾把大量集合插入变成稳态帧的最大单项。
 9. **剪贴板的 HTML 味道**（db8b009）：`platform.rs` 加 `mod cf_html;` 与 `pub use cf_html::*;`；新增 `platform/cf_html.rs`——从 `CF_HTML` 载荷按 `StartFragment`/`EndFragment`（退回 `StartHTML`/`EndHTML`）的**字节**偏移切出选中的那段标记，载荷不是合法 UTF-8 就当这一味道不存在；`platform/windows/clipboard.rs` 加 `CLIPBOARD_HTML_FORMAT` 与 `read_html_from_clipboard`，带 `MAX_CLIPBOARD_HTML_BYTES`（2 MiB）上限，超限交回 `None` 让粘贴回退到同一次复制的纯文本。没有它，从网站复制的**无表头表格**在 Windows 上只会粘成纯文本（c42baff 的消费面）。macOS 侧不经这里，由 `src/components/markdown/html_paste.rs:clipboard_html` 直读 pasteboard 的 `public.html`。
 
+10. **macOS 标题栏标签拖动**：`platform/mac/window.rs` 的 `GPUIView::mouseDownCanMoveWindow` 返回 NO，窗口选项同时关闭默认移动，避免 AppKit 在标签收到事件后仍然拖窗；`MacWindow::start_window_move` 保留按下事件并延后调用 `performWindowDragWithEvent:`，仅在该次调用期间允许原生移动，返回后恢复原值。移动由应用标题和空白区显式发起；延后是为了避开原生拖窗嵌套事件循环中的 GPUI 重入借用。
+
 ## 8. 脚本与资源
 
 - `scripts/generate-fixtures.mjs`（perf 夹具：1MiB/10MiB 重复中文段落单元）+ `.test.mjs` 自测。

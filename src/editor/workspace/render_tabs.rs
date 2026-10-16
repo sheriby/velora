@@ -1,4 +1,5 @@
 use super::*;
+use gpui::prelude::FluentBuilder;
 
 impl Editor {
     pub(crate) fn render_document_tabs(
@@ -23,7 +24,6 @@ impl Editor {
                 let click_path = path.clone();
                 let middle_click_path = path.clone();
                 let drag_from_path = path.clone();
-                let drop_target_path = path.clone();
                 let close_path = path.clone();
                 let active = self.workspace.active_document.as_ref() == Some(&tab.path);
                 let dirty = if active {
@@ -133,6 +133,45 @@ impl Editor {
                             .h(px(2.0))
                             .bg(c.dialog_primary_button_bg)
                     }))
+                    .children([false, true].into_iter().map(|after| {
+                        let drop_target_path = path.clone();
+                        let drag_hover_path = path.clone();
+                        let drop_editor = editor.clone();
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .w(relative(0.5))
+                            .when(after, |this| this.right_0())
+                            .when(!after, |this| this.left_0())
+                            .drag_over::<TabDrag>(move |style, drag, _window, cx| {
+                                if drag.from_path == drag_hover_path {
+                                    return style;
+                                }
+                                let theme = cx.global::<ThemeManager>().current_arc();
+                                let style = if after {
+                                    style.border_r(px(2.0))
+                                } else {
+                                    style.border_l(px(2.0))
+                                };
+                                style
+                                    .border_color(theme.colors.dialog_primary_button_bg)
+                                    .bg(theme.colors.dialog_secondary_button_hover)
+                            })
+                            .on_drop(move |drag: &TabDrag, window, cx| {
+                                if let Err(error) = drop_editor.update(cx, |editor, cx| {
+                                    editor.move_tab_to_position(
+                                        &drag.from_path,
+                                        &drop_target_path,
+                                        after,
+                                        window,
+                                        cx,
+                                    );
+                                }) {
+                                    eprintln!("移动标签失败：{error}");
+                                }
+                            })
+                    }))
                     .child(if tab_is_image {
                         svg()
                             .path(GENERIC_FILE_ICON)
@@ -201,34 +240,6 @@ impl Editor {
                             })
                         },
                     )
-                    .drag_over::<TabDrag>({
-                        let drag_hover_path = path.clone();
-                        move |style, drag, _window, cx| {
-                            if drag.from_path == drag_hover_path {
-                                return style;
-                            }
-                            // 拖拽中的目标位置高亮（roadmap E3）：左侧强调边 +
-                            // 悬浮底色，明确落点。
-                            let theme = cx.global::<ThemeManager>().current_arc();
-                            style
-                                .border_l(px(2.0))
-                                .border_color(theme.colors.dialog_primary_button_bg)
-                                .bg(theme.colors.dialog_secondary_button_hover)
-                        }
-                    })
-                    .on_drop({
-                        let drop_editor = editor.clone();
-                        move |drag: &TabDrag, window, cx| {
-                        let _ = drop_editor.update(cx, |editor, cx| {
-                            editor.move_tab_to_position(
-                                &drag.from_path,
-                                &drop_target_path,
-                                window,
-                                cx,
-                            );
-                        });
-                        }
-                    })
                     .on_mouse_down(MouseButton::Middle, {
                         let middle_editor = editor.clone();
                         move |_event, window, cx| {

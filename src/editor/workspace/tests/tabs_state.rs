@@ -4,6 +4,94 @@ use gpui::{TestAppContext, px};
 use std::fs;
 
 #[gpui::test]
+async fn dragging_tabs_can_insert_after_the_last_tab_and_before_the_first(
+    cx: &mut TestAppContext,
+) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "tab-drop-sides");
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    let paths = [
+        root.join("alpha.md"),
+        root.join("beta.md"),
+        root.join("gamma.md"),
+    ];
+    for path in &paths {
+        fs::write(path, "正文\n").expect("标签夹具");
+    }
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        for path in &paths {
+            editor.open_workspace_file(path.clone(), window, cx);
+        }
+    });
+    let drag_tab = |cx: &mut gpui::VisualTestContext, source: &'static str, target: &'static str, after: bool| {
+        use gpui::{Modifiers, MouseButton, point};
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.run_until_parked();
+        }
+        let source_bounds = cx.debug_bounds(source).expect("起点标签");
+        let target_bounds = cx.debug_bounds(target).expect("落点标签");
+        let start = point(source_bounds.origin.x + px(30.0), source_bounds.center().y);
+        let end = point(
+            target_bounds.origin.x + target_bounds.size.width * if after { 0.75 } else { 0.25 },
+            target_bounds.center().y,
+        );
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(
+            start + point(px(15.0), px(0.0)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        assert!(cx.cx.read(|cx| cx.has_active_drag()), "拖动应启动标签排序");
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    };
+    drag_tab(cx, "document-tab-0", "document-tab-2", true);
+    editor.read_with(cx, |editor, _| {
+        let ordered: Vec<_> = editor.workspace.open_documents.iter()
+            .map(|tab| tab.path.clone()).collect();
+        assert_eq!(
+            ordered,
+            vec![paths[1].clone(), paths[2].clone(), paths[0].clone()],
+            "右半区应插到目标后面，允许移到末尾"
+        );
+        assert_eq!(editor.workspace.active_document.as_ref(), Some(&paths[2]));
+    });
+    drag_tab(cx, "document-tab-2", "document-tab-0", false);
+    editor.read_with(cx, |editor, _| {
+        let ordered: Vec<_> = editor.workspace.open_documents.iter()
+            .map(|tab| tab.path.clone()).collect();
+        assert_eq!(ordered, paths, "左半区应插到目标前面");
+    });
+    drag_tab(cx, "document-tab-2", "document-tab-0", true);
+    editor.read_with(cx, |editor, _| {
+        let ordered: Vec<_> = editor.workspace.open_documents.iter()
+            .map(|tab| tab.path.clone()).collect();
+        assert_eq!(
+            ordered,
+            vec![paths[0].clone(), paths[2].clone(), paths[1].clone()],
+            "向左拖动同样按目标右半区插到后面"
+        );
+    });
+    drag_tab(cx, "document-tab-0", "document-tab-0", true);
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let first = cx.debug_bounds("document-tab-0").expect("待关闭标签");
+    cx.simulate_click(
+        gpui::point(first.right() - px(18.0), first.center().y),
+        gpui::Modifiers::none(),
+    );
+    editor.read_with(cx, |editor, _| {
+        let ordered: Vec<_> = editor.workspace.open_documents.iter()
+            .map(|tab| tab.path.clone()).collect();
+        assert_eq!(ordered, vec![paths[2].clone(), paths[1].clone()], "半区落点不能挡住关闭按钮");
+    });
+}
+
+#[gpui::test]
 async fn switching_tabs_preserves_each_documents_undo_history(cx: &mut TestAppContext) {
     init_review_workspace_app(cx);
     let root = review_workspace_fixture(cx, "state-audit-undo");
