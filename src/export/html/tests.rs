@@ -1607,4 +1607,22 @@ mod tests {
         );
         assert!(body.contains("收尾段"), "闭合 $$ 之后的正文不许被吞：{body}");
     }
+
+    /// 段首未闭合 `$$` 与链接目标里的 `$$` 同时出现时，整段不许从导出件里消失。
+    ///
+    /// 定位闭合点的增量计数会扫过**被 recon 丢弃的 gap**（链接/图片目标的字节），
+    /// 而 `emit_merged_display` 仍按 recon 判闭合：两边口径一旦不一致，前者说
+    /// 「凑够两个 `$$`」、后者在 recon 里找不到闭合点，于是什么都不发，调用方还把
+    /// 这一段当成已消费跳过——整段内容从 HTML / PDF / PNG / 复制为 HTML 里消失。
+    /// 旧实现两次判据同源（都 `find("$$")` on recon），这个分支到不了。
+    #[test]
+    fn a_dollar_pair_inside_a_link_target_never_swallows_the_paragraph() {
+        let markdown = "$$ 开头 [链接](b$$c) 结尾\n";
+        let html = render_html(markdown, &Theme::default_theme(), "吞段");
+        let body = body_only(&html);
+        assert!(
+            body.contains("开头") && body.contains("结尾"),
+            "段首未闭合 $$ 与链接目标里的 $$ 撞上时整段被吞了：{body}"
+        );
+    }
 }
