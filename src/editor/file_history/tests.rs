@@ -492,3 +492,38 @@ fn history_restore_waits_until_ime_composition_is_finished(cx: &mut TestAppConte
         );
     });
 }
+
+#[gpui::test]
+fn history_code_lines_follow_code_font_preferences_and_zoom(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        cx.cx.update(|cx| {
+            let mut preferences =
+                crate::config::load_or_create_app_preferences().expect("配置");
+            preferences.fonts.code_family = "Menlo".into();
+            preferences.fonts.code_size = 20;
+            preferences.zoom_percent = 150;
+            let dirs = crate::config::VeloraConfigDirs::from_system().expect("目录");
+            crate::config::preferences::save_app_preferences_with_dirs(&preferences, &dirs)
+                .expect("保存字体配置");
+            cx.remove_global::<crate::config::EditorSettings>();
+            crate::config::EditorSettings::init(cx, true);
+        });
+        editor.update(cx, |editor, cx| editor.open_file_history(cx));
+        redraw(cx);
+        for compare in [false, true] {
+            if compare {
+                let button = cx.debug_bounds("file-history-compare").expect("对比按钮");
+                cx.simulate_click(button.center(), gpui::Modifiers::none());
+                redraw(cx);
+            }
+            let line = cx
+                .debug_bounds("file-history-code-line-0")
+                .expect("历史代码行");
+            assert_eq!(
+                f32::from(line.size.height),
+                45.0,
+                "预览与对比应采用代码字号及缩放后的行高"
+            );
+        }
+    });
+}

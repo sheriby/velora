@@ -284,6 +284,8 @@ impl Editor {
                     )
             })
             .collect::<Vec<_>>();
+        let code_family: SharedString = EditorSettings::fonts(cx).code_family.into();
+        let code_size = EditorSettings::scaled_font_sizes(cx).1;
         let content = uniform_list(
             "file-history-lines",
             lines.len().max(1),
@@ -305,12 +307,13 @@ impl Editor {
                             .map(|value| value.to_string())
                             .unwrap_or_default();
                         div()
+                            .debug_selector(move || format!("file-history-code-line-{index}"))
                             .flex()
-                            .h(px(22.0))
+                            .h(px(code_size * 1.5))
                             .items_center()
                             .bg(background)
-                            .font_family("monospace")
-                            .text_size(px(13.0))
+                            .font_family(code_family.clone())
+                            .text_size(px(code_size))
                             .child(
                                 div()
                                     .w(px(52.0))
