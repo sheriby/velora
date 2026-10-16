@@ -145,7 +145,7 @@ pub struct Editor {
     split_initializing: bool,
     split_projection_revision: u64,
     split_bounds: Bounds<Pixels>,
-    split_drop_preview: Option<Option<workspace::split::SplitDirection>>,
+    split_drop_preview: Option<(Option<workspace::split::SplitDirection>, bool)>,
     system_appearance_subscription: Option<Subscription>,
     file_path: Option<PathBuf>,
     scroll_handle: ScrollHandle,

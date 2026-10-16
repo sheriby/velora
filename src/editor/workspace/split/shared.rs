@@ -178,10 +178,59 @@ impl Editor {
         Ok(())
     }
 
-    pub(in crate::editor) fn has_dirty_split_documents(&self) -> bool {
-        self.split_workspace
-            .as_ref()
-            .is_some_and(|workspace| workspace.documents.values().any(|document| document.dirty))
+    pub(in crate::editor) fn has_dirty_split_documents(&self, cx: &App) -> bool {
+        self.split_groups()
+            .iter()
+            .any(|group| group.read(cx).document_dirty)
+            || self.split_workspace.as_ref().is_some_and(|workspace| {
+                workspace.documents.values().any(|document| document.dirty)
+            })
+    }
+
+    pub(in crate::editor) fn split_untitled_recoveries(
+        &self,
+        cx: &App,
+    ) -> Vec<crate::config::RecoverySnapshot> {
+        self.split_groups()
+            .iter()
+            .filter_map(|group| {
+                let editor = group.read(cx);
+                (editor.file_path.is_none() && editor.document_dirty).then(|| {
+                    crate::config::RecoverySnapshot {
+                        id: editor.recovery_id,
+                        source_path: editor.recovery_source_path.clone(),
+                        markdown: editor.buffer.text(),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    pub(in crate::editor) fn save_untitled_split_before_close(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(group) = self.split_groups().into_iter().find(|group| {
+            let editor = group.read(cx);
+            editor.file_path.is_none() && editor.document_dirty
+        }) else {
+            return false;
+        };
+        self.activate_split_group(group.entity_id(), cx);
+        self.hide_unsaved_changes_dialog(cx);
+        let handle = window.window_handle();
+        cx.defer(move |cx| {
+            if let Err(error) = handle.update(cx, |_, window, cx| {
+                group.update(cx, |editor, cx| {
+                    editor.pending_close_after_save = true;
+                    editor.save_document(window, cx);
+                });
+            }) {
+                eprintln!("保存未命名分屏文档失败：{error}");
+            }
+        });
+        true
     }
 
     pub(in crate::editor) fn split_document_bytes_for_save(&self, path: &Path) -> Option<Vec<u8>> {
@@ -325,6 +374,21 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let groups = self.split_groups();
+        if let Some(source) = groups.iter().find(|group| group.entity_id() == changed) {
+            let untitled_changed = source.update(cx, |editor, _| {
+                if editor.file_path.is_none()
+                    && editor.split_projection_revision != editor.buffer.revision()
+                {
+                    editor.split_projection_revision = editor.buffer.revision();
+                    true
+                } else {
+                    false
+                }
+            });
+            if untitled_changed {
+                self.document_revision = self.document_revision.wrapping_add(1);
+            }
+        }
         if self
             .split_workspace
             .as_ref()

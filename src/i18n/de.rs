@@ -51,6 +51,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) split_editor_up: Option<String>,
     pub(crate) split_editor_down: Option<String>,
     pub(crate) split_move_here: Option<String>,
+    pub(crate) split_open_here: Option<String>,
     pub(crate) split_insufficient_space: Option<String>,
     pub(crate) menu_close_tab: Option<String>,
     pub(crate) menu_close_window: Option<String>,

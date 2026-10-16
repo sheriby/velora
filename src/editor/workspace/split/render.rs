@@ -543,8 +543,8 @@ impl Editor {
             .id("split-drop-targets")
             .absolute()
             .inset_0()
-            .on_drag_move::<TabDrag>(cx.listener(
-                |editor, event: &DragMoveEvent<TabDrag>, _, cx| {
+            .on_drag_move::<EditorFileDrag>(cx.listener(
+                |editor, event: &DragMoveEvent<EditorFileDrag>, _, cx| {
                     let bounds = event.bounds;
                     let point = event.event.position;
                     let next = bounds.contains(&point).then(|| {
@@ -564,6 +564,7 @@ impl Editor {
                             None
                         }
                     });
+                    let next = next.map(|direction| (direction, event.drag(cx).source.is_none()));
                     if next != editor.split_drop_preview {
                         editor.split_drop_preview = next;
                         cx.notify();
@@ -609,21 +610,29 @@ impl Editor {
                             .w(relative(0.5))
                             .h(relative(0.5))
                     })
-                    .on_drop(cx.listener(move |editor, drag: &TabDrag, window, cx| {
-                        editor.split_drop_preview = None;
-                        editor.receive_tab_drop(drag, None, direction, window, cx);
-                        cx.notify();
-                    })),
+                    .on_drop(
+                        cx.listener(move |editor, drag: &EditorFileDrag, window, cx| {
+                            editor.split_drop_preview = None;
+                            editor.receive_editor_file_drop(drag, None, direction, window, cx);
+                            cx.notify();
+                        }),
+                    ),
             );
         }
-        if let Some(direction) = self.split_drop_preview {
+        if let Some((direction, from_tree)) = self.split_drop_preview {
             let strings = cx.global::<I18nManager>().strings();
             let allowed =
                 direction.is_none_or(|direction| direction.fits(self.scroll_handle.bounds().size));
             let label = if allowed {
                 direction
                     .map(|direction| direction.label(strings))
-                    .unwrap_or_else(|| strings.split_move_here.clone())
+                    .unwrap_or_else(|| {
+                        if from_tree {
+                            strings.split_open_here.clone()
+                        } else {
+                            strings.split_move_here.clone()
+                        }
+                    })
             } else {
                 strings.split_insufficient_space.clone()
             };

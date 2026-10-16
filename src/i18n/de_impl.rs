@@ -106,6 +106,7 @@ impl I18nStringsDe {
             split_editor_up: self.split_editor_up.unwrap_or(defaults.split_editor_up),
             split_editor_down: self.split_editor_down.unwrap_or(defaults.split_editor_down),
             split_move_here: self.split_move_here.unwrap_or(defaults.split_move_here),
+            split_open_here: self.split_open_here.unwrap_or(defaults.split_open_here),
             split_insufficient_space: self.split_insufficient_space.unwrap_or(defaults.split_insufficient_space),
             menu_close_tab: self.menu_close_tab.unwrap_or(defaults.menu_close_tab),
             menu_close_window: self.menu_close_window.unwrap_or(defaults.menu_close_window),

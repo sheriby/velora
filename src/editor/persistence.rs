@@ -278,7 +278,7 @@ impl Editor {
             || self.autosave_task.is_some()
             || self.has_external_autosave_conflict()
             || self.has_marked_document_text(cx)
-            || (!self.document_dirty && !self.has_dirty_workspace_documents() && !self.has_dirty_split_documents())
+            || (!self.document_dirty && !self.has_dirty_workspace_documents() && !self.has_dirty_split_documents(cx))
         {
             return;
         }
@@ -327,6 +327,9 @@ impl Editor {
                                 bytes: None,
                             });
                         }
+                        documents.extend(editor.split_untitled_recoveries(cx).into_iter().map(|recovery| PendingAutosaveDocument {
+                            recovery, path: None, write_file: false, file_version: None, bytes: None,
+                        }));
                         if documents.is_empty() {
                             return None;
                         }
@@ -423,6 +426,10 @@ impl Editor {
                         if editor.document_revision != revision {
                             for document in &documents {
                                 if !editor.workspace_save_document_is_open(document.recovery.id, document.path.as_deref())
+                                    && !editor.split_groups().iter().any(|group| {
+                                        let group = group.read(cx);
+                                        group.file_path.is_none() && group.recovery_id == document.recovery.id
+                                    })
                                     && let Err(error) = crate::config::remove_recovery_snapshot(document.recovery.id)
                                 {
                                     eprintln!("无法清理已关闭文档的恢复快照：{error}");
@@ -514,6 +521,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.save_untitled_split_before_close(window, cx) { return; }
         if self.has_marked_document_text(cx) {
             self.pending_close_after_save = true;
             self.pending_save = true;
@@ -634,7 +642,7 @@ impl Editor {
                         editor.sync_current_document_content();
                     }
                     let has_unsaved_documents =
-                        editor.document_dirty || editor.has_dirty_workspace_documents() || editor.has_dirty_split_documents();
+                        editor.document_dirty || editor.has_dirty_workspace_documents() || editor.has_dirty_split_documents(cx);
                     if failed_save || has_unsaved_documents {
                         editor.pending_close_after_save = false;
                         editor.show_unsaved_changes_dialog = true;
@@ -872,6 +880,7 @@ impl Editor {
         let weak_editor_for_close = weak_editor.clone();
         let window_handle = window.window_handle();
         let should_close_after_save = self.pending_close_after_save;
+        let split_parent = self.split_parent.clone();
 
         cx.spawn(async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let mut path = match prompt.await {
@@ -927,6 +936,12 @@ impl Editor {
                 move |_view: AnyView, window: &mut Window, cx: &mut App| {
                     window.set_window_edited(false);
                     if should_close_after_save {
+                        if let Some(parent) = split_parent {
+                            if let Err(error) = parent.update(cx, |editor, cx| editor.save_dirty_workspace_documents_and_close(window, cx)) {
+                                eprintln!("保存未命名文档后关闭工作区失败：{error}");
+                            }
+                            return;
+                        }
                         let has_dirty_tabs = weak_editor_for_close
                             .update(cx, |this, _cx| this.has_dirty_workspace_documents())
                             .unwrap_or(false);

@@ -348,7 +348,15 @@ impl Editor {
             cx.defer(move |cx| {
                 if let Err(error) = handle.update(cx, |_, window, cx| {
                     if let Err(error) = parent.update(cx, |parent, cx| {
-                        parent.create_split(source, target, path, direction, copy, window, cx);
+                        parent.create_split(
+                            Some(source),
+                            target,
+                            path,
+                            direction,
+                            copy,
+                            window,
+                            cx,
+                        );
                     }) {
                         eprintln!("创建分屏失败：{error}");
                     }
@@ -361,7 +369,7 @@ impl Editor {
                 .active_split_editor()
                 .map(|group| group.entity_id())
                 .unwrap_or_else(|| cx.entity_id());
-            self.create_split(source, target, path, direction, copy, window, cx);
+            self.create_split(Some(source), target, path, direction, copy, window, cx);
         }
     }
 
@@ -376,7 +384,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(direction) = direction {
-            self.create_split(source, target, path, direction, copy, window, cx);
+            self.create_split(Some(source), target, path, direction, copy, window, cx);
         } else {
             let groups = self.split_groups();
             let Some(source) = groups
@@ -448,9 +456,9 @@ impl Editor {
         cx.notify();
     }
 
-    pub(in crate::editor) fn receive_tab_drop(
+    pub(in crate::editor) fn receive_editor_file_drop(
         &mut self,
-        drag: &TabDrag,
+        drag: &EditorFileDrag,
         position: Option<(PathBuf, bool)>,
         direction: Option<SplitDirection>,
         window: &mut Window,
@@ -459,7 +467,35 @@ impl Editor {
         if direction.is_some_and(|direction| !direction.fits(self.scroll_handle.bounds().size)) {
             return;
         }
-        if drag.source.entity_id() == cx.entity_id() && direction.is_none() {
+        if drag.source.is_none() && direction.is_none() {
+            self.open_workspace_file(drag.from_path.clone(), window, cx);
+            if let Some((target, after)) = position {
+                self.move_tab_to_position(&drag.from_path, &target, after, window, cx);
+            }
+            if self.workspace.active_document.as_ref() == Some(&drag.from_path) {
+                self.pending_focus = self
+                    .active_entity_id
+                    .or_else(|| self.first_focusable_entity_id(cx));
+                if let Some(parent) = self.split_parent.clone() {
+                    let target = cx.entity_id();
+                    cx.defer(move |cx| {
+                        if let Err(error) = parent.update(cx, |editor, cx| {
+                            editor.activate_split_group(target, cx);
+                            editor.persist_session(cx);
+                        }) {
+                            eprintln!("激活文件拖入的分组失败：{error}");
+                        }
+                    });
+                }
+            }
+            return;
+        }
+        if drag
+            .source
+            .as_ref()
+            .is_some_and(|source| source.entity_id() == cx.entity_id())
+            && direction.is_none()
+        {
             if let Some((target, after)) = position {
                 self.move_tab_to_position(&drag.from_path, &target, after, window, cx);
             }
@@ -478,15 +514,27 @@ impl Editor {
             cx.defer(move |cx| {
                 if let Err(error) = handle.update(cx, |_, window, cx| {
                     if let Err(error) = parent.update(cx, |editor, cx| {
-                        editor.transfer_split_tab(
-                            source,
-                            target,
-                            path.clone(),
-                            direction,
-                            copy,
-                            window,
-                            cx,
-                        );
+                        if let Some(source) = source {
+                            editor.transfer_split_tab(
+                                source,
+                                target,
+                                path.clone(),
+                                direction,
+                                copy,
+                                window,
+                                cx,
+                            );
+                        } else if let Some(direction) = direction {
+                            editor.create_split(
+                                None,
+                                target,
+                                path.clone(),
+                                direction,
+                                true,
+                                window,
+                                cx,
+                            );
+                        }
                         if let Some((destination, after)) = position {
                             if let Some(group) = editor
                                 .split_groups()
@@ -512,7 +560,11 @@ impl Editor {
                 }
             });
         } else {
-            self.transfer_split_tab(source, target, path, direction, copy, window, cx);
+            if let Some(source) = source {
+                self.transfer_split_tab(source, target, path, direction, copy, window, cx);
+            } else if let Some(direction) = direction {
+                self.create_split(None, target, path, direction, true, window, cx);
+            }
         }
     }
 
@@ -867,9 +919,31 @@ impl Editor {
         self.finalize_pending_undo_capture(cx);
         self.snapshot_current_document(cx);
         let active = self.file_path.clone();
-        let shared_buffer = self.buffer.shared_view();
+        let mut shared_buffer = self.buffer.shared_view();
+        let untitled_view =
+            (active.is_none() && !self.show_welcome && self.unsupported_preview_path.is_none())
+                .then(|| self.capture_document_view(&self.buffer.text(), cx));
         let tabs = std::mem::take(&mut self.workspace.open_documents);
         let group = self.new_editor_group(tabs, active.clone(), window, cx);
+        if let Some(view) = untitled_view {
+            group.update(cx, |editor, cx| {
+                editor.replace_document_content(
+                    shared_buffer.text(),
+                    None,
+                    None,
+                    crate::editor::file_drop::ImportKind::Restore(view),
+                    cx,
+                );
+                editor.buffer = shared_buffer.shared_view();
+                editor.document_dirty = self.document_dirty;
+                editor.recovery_id = self.recovery_id;
+                editor.recovery_source_path = self.recovery_source_path.clone();
+                editor.is_recovered_document = self.is_recovered_document;
+                editor.split_projection_revision = editor.buffer.revision();
+            });
+        } else if active.is_none() {
+            group.update(cx, |editor, _| editor.show_welcome = self.show_welcome);
+        }
         group.update(cx, |editor, _| editor.split_active = true);
         let mut documents = HashMap::new();
         if let Some(path) = active {
@@ -899,7 +973,7 @@ impl Editor {
 
     fn create_split(
         &mut self,
-        source: WeakEntity<Editor>,
+        source: Option<WeakEntity<Editor>>,
         target: EntityId,
         path: PathBuf,
         direction: SplitDirection,
@@ -908,12 +982,13 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let original = cx.entity_id();
-        if source.entity_id() != original
-            && !self
-                .split_groups()
-                .iter()
-                .any(|group| group.entity_id() == source.entity_id())
-        {
+        if source.as_ref().is_some_and(|source| {
+            source.entity_id() != original
+                && !self
+                    .split_groups()
+                    .iter()
+                    .any(|group| group.entity_id() == source.entity_id())
+        }) {
             return;
         }
         let target_size = if target == original {
@@ -936,53 +1011,95 @@ impl Editor {
         self.ensure_split_workspace(window, cx);
         let groups = self.split_groups();
         let fallback = groups.first().cloned();
-        let source = if source.entity_id() == original {
-            fallback.clone()
-        } else {
-            source.upgrade()
-        };
+        let from_tree = source.is_none();
+        let source = source.and_then(|source| {
+            if source.entity_id() == original {
+                fallback.clone()
+            } else {
+                source.upgrade()
+            }
+        });
         let target = if target == original {
             fallback.map(|group| group.entity_id())
         } else {
             Some(target)
         };
-        let (Some(source), Some(target)) = (source, target) else {
+        let Some(target) = target else {
             return;
         };
+        if !from_tree && source.is_none() {
+            return;
+        }
         if !groups.iter().any(|group| group.entity_id() == target) {
             return;
         }
-        let tab = source.update(cx, |editor, cx| {
-            editor.finalize_pending_undo_capture(cx);
-            editor.snapshot_current_document(cx);
-            editor
-                .workspace
+        let tab = if let Some(source) = &source {
+            source.update(cx, |editor, cx| {
+                editor.finalize_pending_undo_capture(cx);
+                editor.snapshot_current_document(cx);
+                editor
+                    .workspace
+                    .open_documents
+                    .iter()
+                    .find(|tab| tab.path == path)
+                    .cloned()
+            })
+        } else {
+            self.collect_split_tabs(cx);
+            self.workspace
                 .open_documents
                 .iter()
                 .find(|tab| tab.path == path)
                 .cloned()
-        });
-        let Some(mut tab) = tab else {
-            return;
         };
-        tab.preview = false;
-        if let Some(document) = self
-            .split_workspace
-            .as_ref()
-            .and_then(|workspace| workspace.documents.get(&path))
-        {
-            tab.markdown = document.buffer.text();
-            tab.dirty = document.dirty;
-            tab.file_shape = document.buffer.file_shape();
+        let mut tabs = Vec::new();
+        if let Some(mut tab) = tab {
+            tab.preview = false;
+            if from_tree {
+                tab.view = None;
+            }
+            if let Some(document) = self
+                .split_workspace
+                .as_ref()
+                .and_then(|workspace| workspace.documents.get(&path))
+            {
+                tab.markdown = document.buffer.text();
+                tab.dirty = document.dirty;
+                tab.file_shape = document.buffer.file_shape();
+            }
+            tabs.push(tab);
+        } else if !from_tree {
+            return;
         }
-        let group = self.new_editor_group(vec![tab], Some(path.clone()), window, cx);
+        let group = self.new_editor_group(tabs, Some(path.clone()), window, cx);
+        if from_tree {
+            if let Some(error) = group.read(cx).workspace.file_error.clone() {
+                let title = cx
+                    .global::<I18nManager>()
+                    .strings()
+                    .open_failed_title
+                    .clone();
+                self.show_message_modal(title, error, cx);
+                return;
+            }
+            group.update(cx, |editor, _| {
+                if let Some(tab) = editor
+                    .workspace
+                    .open_documents
+                    .iter_mut()
+                    .find(|tab| tab.path == path)
+                {
+                    tab.preview = false;
+                }
+            });
+        }
         if let Some(workspace) = self.split_workspace.as_mut() {
             let document = workspace.documents.entry(path.clone()).or_insert_with(|| {
-                let owner = if source.read(cx).file_path.as_ref() == Some(&path) {
-                    source.clone()
-                } else {
-                    group.clone()
-                };
+                let owner = source
+                    .as_ref()
+                    .filter(|source| source.read(cx).file_path.as_ref() == Some(&path))
+                    .cloned()
+                    .unwrap_or_else(|| group.clone());
                 let buffer = owner.update(cx, |editor, _| editor.buffer.shared_view());
                 SharedDocument::new(buffer, &owner, cx)
             });
@@ -994,7 +1111,9 @@ impl Editor {
         }
         self.observe_editor_group(&group, cx);
         if !copy {
-            source.update(cx, |editor, cx| editor.detach_split_tab(&path, window, cx));
+            if let Some(source) = source {
+                source.update(cx, |editor, cx| editor.detach_split_tab(&path, window, cx));
+            }
         }
         self.activate_split_group(group.entity_id(), cx);
         self.remove_empty_split_groups(cx);

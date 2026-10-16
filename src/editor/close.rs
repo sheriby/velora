@@ -172,7 +172,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         self.collect_split_tabs(cx);
-        if !self.document_dirty && !self.has_dirty_workspace_documents() {
+        if !self.document_dirty && !self.has_dirty_workspace_documents() && !self.has_dirty_split_documents(cx) {
             // 平台自己发起的关闭（macOS 红灯）不经过任何应用内关闭入口，
             // 这里是最后能读到该窗口 frame 的地方（roadmap A2）。
             Self::persist_window_frame(window);
@@ -221,6 +221,11 @@ impl Editor {
                 eprintln!("failed to remove discarded tab recovery snapshot: {error}");
             }
         }
+        for snapshot in self.split_untitled_recoveries(cx) {
+            if let Err(error) = crate::config::remove_recovery_snapshot(snapshot.id) {
+                eprintln!("清理未命名分屏的恢复快照失败：{error}");
+            }
+        }
         if let Err(error) = crate::config::remove_recovery_snapshot(self.recovery_id) {
             eprintln!("failed to remove discarded document recovery snapshot: {error}");
         }
@@ -233,9 +238,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.has_dirty_workspace_documents()
+        if self.split_workspace.is_some() || (self.has_dirty_workspace_documents()
             && (self.file_path.is_some() || !self.document_dirty)
-        {
+        ) {
             self.close_menu_bar(cx);
             self.hide_unsaved_changes_dialog(cx);
             self.save_dirty_workspace_documents_and_close(window, cx);

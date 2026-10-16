@@ -35,6 +35,40 @@ impl Editor {
         self.ensure_current_document_tab(cx);
         let editor = cx.entity().downgrade();
         let c = &theme.colors;
+        if self.split_parent.is_some()
+            && self.file_path.is_none()
+            && !self.show_welcome
+            && self.unsupported_preview_path.is_none()
+            && self.workspace.open_documents.is_empty()
+        {
+            return vec![div()
+                .id("untitled-tab")
+                .debug_selector(|| "untitled-tab".into())
+                .h_full()
+                .min_w(px(120.0))
+                .px(px(10.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .relative()
+                .cursor_pointer()
+                .text_size(px(theme.typography.ui_text_size(12.0)))
+                .text_color(c.text_default)
+                .when_some(group_accent, |tab, accent| {
+                    tab.child(div().absolute().left_0().top_0().bottom_0()
+                        .w(px(2.0)).flex().items_center()
+                        .child(div().w_full().h(px(18.0)).rounded(px(1.0)).bg(accent)))
+                })
+                .child(svg().path(MARKDOWN_ICON).size(px(14.0)).text_color(c.dialog_primary_button_bg))
+                .child("Untitled")
+                .when(self.document_dirty, |tab| tab.child(
+                    div().size(px(7.0)).rounded(px(4.0)).bg(c.dialog_primary_button_bg)
+                ))
+                .child(div().absolute().left_0().right_0().bottom_0().h(px(2.0))
+                    .bg(if self.split_active { c.dialog_primary_button_bg } else { c.dialog_border }))
+                .into_any_element()];
+        }
         let tabs = self
             .workspace
             .open_documents
@@ -185,7 +219,7 @@ impl Editor {
                             .w(relative(0.5))
                             .when(after, |this| this.right_0())
                             .when(!after, |this| this.left_0())
-                            .drag_over::<TabDrag>(move |style, drag, _window, cx| {
+                            .drag_over::<EditorFileDrag>(move |style, drag, _window, cx| {
                                 if drag.from_path == drag_hover_path {
                                     return style;
                                 }
@@ -199,9 +233,9 @@ impl Editor {
                                     .border_color(theme.colors.dialog_primary_button_bg)
                                     .bg(theme.colors.dialog_secondary_button_hover)
                             })
-                            .on_drop(move |drag: &TabDrag, window, cx| {
+                            .on_drop(move |drag: &EditorFileDrag, window, cx| {
                                 if let Err(error) = drop_editor.update(cx, |editor, cx| {
-                                    editor.receive_tab_drop(drag, Some((drop_target_path.clone(), after)), None, window, cx);
+                                    editor.receive_editor_file_drop(drag, Some((drop_target_path.clone(), after)), None, window, cx);
                                 }) {
                                     eprintln!("移动标签失败：{error}");
                                 }
@@ -261,9 +295,9 @@ impl Editor {
                         });
                     })
                     .on_drag(
-                        TabDrag {
+                        EditorFileDrag {
                             from_path: drag_from_path.clone(),
-                            source: editor.clone(),
+                            source: Some(editor.clone()),
                         },
                         move |drag, _offset, _window, cx| {
                             let label = drag

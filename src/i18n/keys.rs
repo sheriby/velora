@@ -48,6 +48,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "split_editor_up",
     "split_editor_down",
     "split_move_here",
+    "split_open_here",
     "split_insufficient_space",
     "menu_close_tab",
     "menu_close_window",

@@ -355,6 +355,12 @@ impl Editor {
         }
         let click_editor = editor.clone();
         let click_kind = node.kind.clone();
+        let drag_path = match &node.kind {
+            WorkspaceTreeKind::MarkdownFile(path)
+            | WorkspaceTreeKind::CodeFile(path)
+            | WorkspaceTreeKind::OtherFile(path) => Some(path.clone()),
+            _ => None,
+        };
         let context_editor = editor.clone();
         let context_kind = node.kind.clone();
         let arrow_node_id = node.id.clone();
@@ -433,6 +439,12 @@ impl Editor {
             })
             .hover(|this| this.bg(c.dialog_secondary_button_hover))
             .cursor_pointer()
+            .when_some(drag_path, |row, path| {
+                row.on_drag(EditorFileDrag { from_path: path, source: None }, |drag, _, _, cx| {
+                    let label = file_label(&drag.from_path);
+                    cx.new(|_| DraggedTabPreview { label: label.into() })
+                })
+            })
             .child(arrow_el)
             .children(icon.map(|(path, color)| {
                 svg()

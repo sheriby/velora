@@ -16,6 +16,7 @@ fn fixture_with_callback(
 ) {
     let root = std::env::temp_dir().join(format!("velora-split-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("分屏夹具目录");
+    let root = crate::file_url::canonical_path(root);
     let _config = crate::config::override_test_config_root(root.join("config"));
     let path = root.join("notes.md");
     std::fs::write(&path, "正文\n").expect("分屏夹具");
@@ -38,6 +39,351 @@ fn redraw(cx: &mut VisualTestContext) {
         cx.update(|window, cx| window.draw(cx).clear());
         cx.run_until_parked();
     }
+}
+
+fn drag_tree_file(
+    cx: &mut VisualTestContext,
+    path: &std::path::Path,
+    end: gpui::Point<gpui::Pixels>,
+) {
+    use gpui::{Modifiers, MouseButton, point, px};
+    let selector = format!(
+        "workspace-node-{}",
+        super::super::stable_node_hash(&super::super::file_node_id(
+            &crate::file_url::canonical_path(path)
+        ))
+    );
+    let row = cx
+        .debug_bounds(Box::leak(selector.into_boxed_str()))
+        .expect("文件树节点");
+    let start = point(row.left() + px(65.0), row.center().y);
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        start + point(px(15.0), px(0.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    assert!(cx.cx.read(|cx| cx.has_active_drag()), "文件树文件应能拖动");
+}
+
+#[gpui::test]
+fn tree_file_drag_previews_and_opens_an_unopened_file_in_a_new_split(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, path| {
+        use gpui::{Modifiers, MouseButton};
+        let other = path.with_file_name("other.rs");
+        std::fs::write(&other, "fn main() {}\n").expect("代码文件夹具");
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(path.parent().expect("夹具目录").to_path_buf(), cx);
+        });
+        redraw(cx);
+        let edge = cx.debug_bounds("split-drop-1").expect("右侧落点");
+        drag_tree_file(cx, &other, edge.center());
+        assert!(
+            cx.debug_bounds("split-preview-right").is_some(),
+            "松手前显示分屏预览"
+        );
+        assert!(cx.debug_bounds("split-preview-label").is_some());
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.file_path.clone()),
+            Some(path.clone()),
+            "拖动期间不打开文件"
+        );
+        cx.simulate_mouse_up(edge.center(), MouseButton::Left, Modifiers::none());
+        redraw(cx);
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            groups
+                .first()
+                .expect("左组")
+                .read_with(cx, |editor, _| editor.file_path.clone()),
+            Some(path)
+        );
+        groups.get(1).expect("右组").read_with(cx, |editor, _| {
+            assert_eq!(editor.file_path.as_ref(), Some(&other));
+            assert_eq!(editor.buffer.text(), "fn main() {}\n");
+            assert!(
+                !editor
+                    .workspace
+                    .open_documents
+                    .iter()
+                    .find(|tab| tab.path == other)
+                    .expect("新标签")
+                    .preview,
+                "拖入文件固定为标签"
+            );
+        });
+    });
+}
+
+#[gpui::test]
+fn tree_file_drag_splits_the_target_pane_and_preserves_shared_unsaved_content(
+    cx: &mut TestAppContext,
+) {
+    fixture(cx, |editor, cx, path| {
+        use gpui::{Modifiers, MouseButton, point};
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_workspace_root(path.parent().expect("夹具目录").to_path_buf(), cx);
+            editor.split_active_document(SplitDirection::Right, window, cx);
+        });
+        redraw(cx);
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        let left = groups.first().expect("左组").clone();
+        left.update(cx, |editor, cx| {
+            editor.buffer.edit(0..0, "未保存");
+            editor.document_dirty = true;
+            cx.notify();
+        });
+        redraw(cx);
+        let bounds = cx.debug_bounds("editor-group-0").expect("左组正文");
+        let end = point(bounds.center().x, bounds.top() + bounds.size.height * 0.9);
+        drag_tree_file(cx, &path, end);
+        assert!(cx.debug_bounds("split-preview-down").is_some());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        redraw(cx);
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups.first(), Some(&left), "保留目标组的原视图");
+        let upper = cx.debug_bounds("editor-group-0").expect("左上");
+        let lower = cx.debug_bounds("editor-group-1").expect("左下");
+        assert!(upper.bottom() <= lower.top(), "应拆分鼠标所在的左组");
+        for group in groups {
+            assert_eq!(
+                group.read_with(cx, |editor, _| editor.buffer.text()),
+                "未保存正文\n"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(path).expect("原文件"), "正文\n");
+    });
+}
+
+#[gpui::test]
+fn tree_file_drag_to_center_opens_in_place_and_cancellation_keeps_tabs(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, path| {
+        use gpui::{Modifiers, MouseButton, point, px};
+        let other = path.with_file_name("other.md");
+        std::fs::write(&other, "其他\n").expect("夹具");
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_root(path.parent().expect("目录").to_path_buf(), cx)
+        });
+        redraw(cx);
+        let outside = point(px(2.0), px(2.0));
+        drag_tree_file(cx, &other, outside);
+        cx.simulate_mouse_up(outside, MouseButton::Left, Modifiers::none());
+        redraw(cx);
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.file_path.clone()),
+            Some(path)
+        );
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.workspace.open_documents.len()),
+            1
+        );
+        let center = cx.debug_bounds("split-drop-4").expect("中央落点").center();
+        drag_tree_file(cx, &other, center);
+        cx.simulate_mouse_up(center, MouseButton::Left, Modifiers::none());
+        redraw(cx);
+        editor.read_with(cx, |editor, _| {
+            assert!(editor.split_workspace.is_none());
+            assert_eq!(editor.file_path.as_ref(), Some(&other));
+            assert_eq!(editor.workspace.open_documents.len(), 2);
+        });
+    });
+}
+
+#[gpui::test]
+fn tree_file_drag_to_an_inactive_pane_activates_it_without_moving_the_source_tab(
+    cx: &mut TestAppContext,
+) {
+    fixture(cx, |editor, cx, path| {
+        use gpui::{Modifiers, MouseButton};
+        let other = path.with_file_name("other.md");
+        std::fs::write(&other, "其他\n").expect("夹具");
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_workspace_root(path.parent().expect("目录").to_path_buf(), cx);
+            editor.split_active_document(SplitDirection::Right, window, cx);
+        });
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        let left = groups.first().expect("左组").clone();
+        let right = groups.get(1).expect("右组").clone();
+        left.update_in(cx, |editor, window, cx| {
+            editor.open_workspace_file(other.clone(), window, cx)
+        });
+        right.update(cx, |editor, cx| {
+            editor.buffer.edit(0..0, "未保存");
+            editor.document_dirty = true;
+            cx.notify();
+        });
+        redraw(cx);
+        let center = cx.debug_bounds("editor-group-0").expect("左组").center();
+        drag_tree_file(cx, &path, center);
+        cx.simulate_mouse_up(center, MouseButton::Left, Modifiers::none());
+        redraw(cx);
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.split_groups().len()),
+            2
+        );
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.active_split_editor()),
+            Some(left.clone()),
+            "应激活落点组"
+        );
+        for group in [left, right] {
+            group.read_with(cx, |editor, _| {
+                assert_eq!(editor.file_path.as_ref(), Some(&path));
+                assert_eq!(editor.buffer.text(), "未保存正文\n");
+                assert!(
+                    editor
+                        .workspace
+                        .open_documents
+                        .iter()
+                        .any(|tab| tab.path == path)
+                );
+            });
+        }
+    });
+}
+
+fn split_untitled_by_tree_drag(
+    editor: &Entity<Editor>,
+    cx: &mut VisualTestContext,
+    path: &std::path::Path,
+) {
+    use gpui::{Modifiers, MouseButton};
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(path.parent().expect("目录").to_path_buf(), cx);
+        editor.workspace.open_documents.clear();
+        editor.workspace.active_document = None;
+        editor.replace_document_from_markdown("未保存的新文档\n".into(), None, cx);
+        editor.document_dirty = true;
+        editor.show_welcome = false;
+    });
+    redraw(cx);
+    let edge = cx.debug_bounds("split-drop-1").expect("右侧落点").center();
+    drag_tree_file(cx, &path, edge);
+    cx.simulate_mouse_up(edge, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+}
+
+#[gpui::test]
+fn tree_file_drag_does_not_discard_an_unsaved_untitled_document(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, path| {
+        split_untitled_by_tree_drag(&editor, cx, &path);
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        assert_eq!(groups.len(), 2, "未命名文档保留在原分屏");
+        assert!(
+            cx.debug_bounds("untitled-tab").is_some(),
+            "未命名文档显示 Untitled 标签"
+        );
+        groups.first().expect("原分屏").read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), "未保存的新文档\n");
+            assert!(editor.document_dirty);
+            assert!(editor.file_path.is_none());
+        });
+        assert_eq!(
+            groups
+                .get(1)
+                .expect("新分屏")
+                .read_with(cx, |editor, _| editor.file_path.clone()),
+            Some(path.clone())
+        );
+        assert!(
+            !editor.update_in(cx, |editor, window, cx| editor
+                .on_window_should_close(window, cx)),
+            "未命名文档必须参与关窗检查"
+        );
+        groups.get(1).expect("文件分屏").update(cx, |editor, cx| {
+            editor.buffer.edit(0..0, "已修改");
+            editor.document_dirty = true;
+            cx.notify();
+        });
+        redraw(cx);
+        let saved = path.with_file_name("saved.md");
+        editor.update_in(cx, |editor, window, cx| {
+            editor.on_save_and_close(&gpui::ClickEvent::default(), window, cx)
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.cx.did_prompt_for_new_path(),
+            "保存并关闭应先为 Untitled 选择路径"
+        );
+        cx.cx.simulate_new_path_selection(|_| Some(saved.clone()));
+        cx.run_until_parked();
+        assert_eq!(
+            std::fs::read_to_string(saved).expect("保存未命名文档"),
+            "未保存的新文档\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(path).expect("保存其他脏文件"),
+            "已修改正文\n"
+        );
+        assert!(cx.cx.windows().is_empty(), "所有分屏都保存后才关闭窗口");
+    });
+}
+
+#[gpui::test]
+fn cancelling_untitled_split_save_keeps_the_window_and_unsaved_content(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, path| {
+        split_untitled_by_tree_drag(&editor, cx, &path);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.on_save_and_close(&gpui::ClickEvent::default(), window, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.cx.did_prompt_for_new_path());
+        cx.cx.simulate_new_path_selection(|_| None);
+        cx.run_until_parked();
+        assert_eq!(cx.cx.windows().len(), 1);
+        assert!(!editor.update_in(cx, |editor, window, cx| {
+            editor.on_window_should_close(window, cx)
+        }));
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        groups
+            .first()
+            .expect("Untitled 分屏")
+            .read_with(cx, |editor, _| {
+                assert_eq!(editor.buffer.text(), "未保存的新文档\n");
+                assert!(editor.document_dirty);
+                assert!(!editor.pending_close_after_save);
+            });
+        assert_eq!(std::fs::read_to_string(path).expect("原文件"), "正文\n");
+    });
+}
+
+#[gpui::test]
+fn untitled_split_autosave_keeps_a_recovery_snapshot_without_writing_a_file(
+    cx: &mut TestAppContext,
+) {
+    fixture(cx, |editor, cx, path| {
+        cx.cx
+            .update(|cx| crate::config::EditorSettings::init(cx, true));
+        split_untitled_by_tree_drag(&editor, cx, &path);
+        let group = editor
+            .read_with(cx, |editor, _| editor.split_groups())
+            .first()
+            .expect("Untitled 分屏")
+            .clone();
+        let recovery_id = group.read_with(cx, |editor, _| editor.recovery_id);
+        group.update(cx, |editor, cx| {
+            editor.buffer.edit(0..0, "继续编辑");
+            editor.schedule_autosave(cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        cx.run_until_parked();
+        let snapshots = crate::config::read_recovery_snapshots().expect("读取恢复快照");
+        let snapshot = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == recovery_id)
+            .expect("Untitled 应有独立恢复快照");
+        assert_eq!(snapshot.markdown, "继续编辑未保存的新文档\n");
+        assert!(snapshot.source_path.is_none(), "Untitled 不是磁盘文件路径");
+        assert_eq!(std::fs::read_to_string(path).expect("原文件"), "正文\n");
+        assert!(group.read_with(cx, |editor, _| editor.document_dirty));
+    });
 }
 
 #[gpui::test]
@@ -1327,16 +1673,18 @@ fn dropping_on_a_pane_that_is_too_small_just_cancels_the_split(cx: &mut TestAppC
             .get(1)
             .expect("窄落点组")
             .update_in(cx, |editor, window, cx| {
-                editor.receive_tab_drop(
-                    &super::TabDrag {
-                        from_path: path,
-                        source,
-                    },
-                    None,
-                    Some(SplitDirection::Right),
-                    window,
-                    cx,
-                );
+                for source in [Some(source), None] {
+                    editor.receive_editor_file_drop(
+                        &super::EditorFileDrag {
+                            from_path: path.clone(),
+                            source,
+                        },
+                        None,
+                        Some(SplitDirection::Right),
+                        window,
+                        cx,
+                    );
+                }
             });
         cx.run_until_parked();
         assert_eq!(

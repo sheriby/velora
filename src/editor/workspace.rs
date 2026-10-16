@@ -248,11 +248,11 @@ struct WorkspaceNameEdit {
     _blur_subscription: Subscription,
 }
 
-/// Drag payload for reordering document tabs (roadmap E3).
+/// 文件树与标签共用落区；只有标签拖拽才有需要移动的来源视图。
 #[derive(Clone)]
-pub(super) struct TabDrag {
+pub(super) struct EditorFileDrag {
     pub(super) from_path: PathBuf,
-    pub(super) source: WeakEntity<Editor>,
+    pub(super) source: Option<WeakEntity<Editor>>,
 }
 
 /// 拖拽预览视图：被拖动标签的文件名。

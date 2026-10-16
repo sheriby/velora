@@ -88,6 +88,7 @@ pub struct I18nStrings {
     pub split_editor_up: String,
     pub split_editor_down: String,
     pub split_move_here: String,
+    pub split_open_here: String,
     pub split_insufficient_space: String,
     pub menu_close_tab: String,
     pub menu_close_window: String,
