@@ -368,10 +368,10 @@ pub struct Editor {
     document_selection_active: std::rc::Rc<std::cell::Cell<bool>>,
     #[cfg(test)]
     selection_visual_visits: std::cell::Cell<usize>,
-    /// 计数器（测试探针）：重挂根块区间时为每根块比较了几条候选。整篇落笔要给
-    /// 每根块挂一次区间，线性查找是 O(根块数 × 条数)——实测一次 ⌘Z 在 10 MiB 档
-    /// 35 秒里绝大部分样本落在 `reattach_root_spans` 那次 `find` 上。建成一张表之后
-    /// 每根块只查一次，这个数只该随根块数长。
+    /// 计数器（测试探针）：重挂根块区间时**查了几条候选**（不是「跑了几轮循环」）。
+    /// 今天是一张 `HashMap`，每根块恰好一条；退回逐根块线性 `find` 时，自增点必须
+    /// 挪进比较里（每比一条 +1），否则闸门是自证式的——实测一次 ⌘Z 在 10 MiB 档
+    /// 35 秒里绝大部分样本落在 `reattach_root_spans` 那次 `find` 上。
     #[cfg(test)]
     span_reattach_probes: std::cell::Cell<u64>,
     /// 计数器（测试探针）：侧栏目录扫描**发起了几次**。扫失败过的目录不许每帧
@@ -2094,6 +2094,10 @@ impl Editor {
         }
         for block in roots {
             block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
+            // 一次查表算**一条候选**：今天每根块恰好一条，退回逐根块线性 `find` 时
+            // 这里要改成「每比较一条候选自增一次」，闸门
+            // `reattaching_root_spans_does_not_scan_candidates_per_block` 才认得出
+            // O(根块数 × 条数)。
             #[cfg(test)]
             self.span_reattach_probes
                 .set(self.span_reattach_probes.get() + 1);
