@@ -472,19 +472,37 @@ fn count_display_markers_in_group(
             | Event::FootnoteReference(_)
             | Event::SoftBreak
             | Event::HardBreak => {
-                count += count_display_markers_between(body, *last_end, range.start, pending_dollar);
+                count += count_display_markers_in_gap(body, *last_end, range.start, pending_dollar);
                 count += count_display_markers_between(body, Some(range.start), range.end, pending_dollar);
                 *last_end = Some(range.end);
             }
             Event::Code(_) | Event::InlineHtml(_) => {
                 // 代码跨度与内联 HTML 是屏障：内容不扫，只推进游标。
-                count += count_display_markers_between(body, *last_end, range.start, pending_dollar);
+                count += count_display_markers_in_gap(body, *last_end, range.start, pending_dollar);
                 *last_end = Some(range.end);
             }
             _ => {}
         }
     }
     count
+}
+
+/// 组间 gap 只有是正文（[`recon_gap_is_content`]）才计入——与 `build_recon`
+/// 丢字节的口径一致。
+fn count_display_markers_in_gap(
+    body: &str,
+    start: Option<usize>,
+    end: usize,
+    pending_dollar: &mut bool,
+) -> usize {
+    let Some(start) = start else { return 0 };
+    let is_content = body
+        .get(start..end)
+        .is_some_and(recon_gap_is_content);
+    if !is_content {
+        return 0;
+    }
+    count_display_markers_between(body, Some(start), end, pending_dollar)
 }
 
 /// 数 `body[start..end]` 里的非重叠 `$$`，跨调用边界悬着的单个 `$` 由
@@ -551,12 +569,20 @@ fn push_recon_gap(
     let Some(gap) = body.get(start..to) else {
         return;
     };
-    // 只有「转义反斜杠」和「跨段合并时的空行」这两个 gap 是正文的一部分；
-    // 其余 gap（`> ` 引用标记、`**` 强调围栏）是块结构，跳过。
-    let keep = gap == "\\" || gap.chars().all(|ch| ch == '\n' || ch == '\r');
-    if keep {
+    if recon_gap_is_content(gap) {
         push_recon_slice(bytes, positions, gap, start);
     }
+}
+
+/// 这段 gap 是不是正文的一部分：只有「转义反斜杠」和「跨段合并时的空行」是，
+/// 其余 gap（`> ` 引用标记、`**` 强调围栏、链接/图片的目标与 title）是块结构。
+///
+/// 判据只能有一处：`build_recon` 丢掉的字节**计数时也不许算**，否则两边口径
+/// 一旦不一致，「段首未闭合 `$$` 往后并段」会按计数说「闭合了」、按 recon 说
+/// 「没闭合」，整段内容从导出件里消失（闸门
+/// `a_dollar_pair_inside_a_link_target_never_swallows_the_paragraph`）。
+fn recon_gap_is_content(gap: &str) -> bool {
+    gap == "\\" || gap.chars().all(|ch| ch == '\n' || ch == '\r')
 }
 
 fn push_recon_slice(bytes: &mut Vec<u8>, positions: &mut Vec<usize>, slice: &str, global_start: usize) {
@@ -1393,8 +1419,8 @@ impl<'a> ExportRewriter<'a> {
             && recon.text.trim_start().starts_with("$$")
             && display_spans.is_empty()
             && let Some(merged_end) = self.merge_display_paragraphs(start, end)
+            && self.emit_merged_display(start, merged_end, output)
         {
-            self.emit_merged_display(start, merged_end, output);
             return merged_end - start;
         }
 
@@ -1546,16 +1572,21 @@ impl<'a> ExportRewriter<'a> {
 
     /// 把 `start..merged_end` 的多个段落当成一块重建：块级公式出 `<div>`，
     /// 闭合 `$$` 之后还有内容的，剩余部分单独成段。
-    fn emit_merged_display(&self, start: usize, merged_end: usize, output: &mut Vec<Event<'a>>) {
+    ///
+    /// 返回「到底发出去了没有」：找不到闭合点时**一个事件都不发**，调用方必须
+    /// 当成并段失败、按普通段落继续渲染这段内容——不返回这个事实，调用方会把
+    /// 整段当成已消费跳过，段落就从导出件里消失了（判据与计数口径短暂不一致时
+    /// 就能撞上，见 `recon_gap_is_content`）。
+    fn emit_merged_display(&self, start: usize, merged_end: usize, output: &mut Vec<Event<'a>>) -> bool {
         let Some(slice) = self.events.get(start..merged_end) else {
-            return;
+            return false;
         };
         let recon = build_recon(self.body, slice);
         let Some(opener) = recon.text.find("$$") else {
-            return;
+            return false;
         };
         let Some(relative) = recon.text.get(opener + 2..).and_then(|rest| rest.find("$$")) else {
-            return;
+            return false;
         };
         let span_end = opener + 4 + relative;
         let span = DetectedSpan {
@@ -1565,7 +1596,7 @@ impl<'a> ExportRewriter<'a> {
         };
         self.push_display_block(&span, &recon, output);
         if recon.text.get(span_end..).unwrap_or_default().trim().is_empty() {
-            return;
+            return true;
         }
         let floor = recon.global_end(span_end).unwrap_or(self.body.len());
         let inner: Vec<(Event<'a>, Range<usize>)> = slice
@@ -1596,6 +1627,7 @@ impl<'a> ExportRewriter<'a> {
         output.push(Event::Html(CowStr::from("<p>")));
         output.extend(self.walk_group(&inner, &replacements, floor, ceiling));
         output.push(Event::Html(CowStr::from("</p>")));
+        true
     }
 
     fn rewrite_heading(
