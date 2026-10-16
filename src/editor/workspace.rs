@@ -96,6 +96,10 @@ pub(crate) struct WorkspaceTreeNode {
     /// 子目录是否已经扫过：文件恒为 `true`，扫到的目录先置 `false`，展开时才扫它
     /// 下一层（懒加载，见 `scan_workspace_dir_level`）。空目录与未扫目录靠它区分。
     pub(crate) children_loaded: bool,
+    /// 这一层扫过一次但失败了（权限、目录被删、网络盘掉线）。面板的补齐每帧都跑，
+    /// 失败不留痕就等于每帧重试一次 `read_dir`（还跟着一次 `notify`，帧帧不停）。
+    /// 记在节点上而不是一张全局表：树重扫会长出新节点，标记自然清掉，那时再试。
+    pub(crate) children_load_failed: bool,
 }
 
 struct WorkspaceTooltip {

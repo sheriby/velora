@@ -37,7 +37,10 @@ impl Editor {
     pub(crate) fn toggle_workspace_node(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.workspace.expanded.remove(id) {
             self.workspace.expanded.insert(id.to_string());
-            // 展开时才扫这一层（懒加载）。
+            // 展开时才扫这一层（懒加载）。用户再展一次是明确的「再试一次」，所以
+            // 先清掉上一次失败留下的标记——每帧的补齐（`load_expanded_workspace_dirs`）
+            // 不看这一下，它只认标记，不会自己重试。
+            self.clear_workspace_dir_load_failure(id);
             self.load_workspace_dir_level(id, cx);
         }
         cx.notify();

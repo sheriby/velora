@@ -100,6 +100,7 @@ fn scan_workspace_dir_until(
                     kind: WorkspaceTreeKind::Directory(entry_path),
                     children: Vec::new(),
                     children_loaded: false,
+                    children_load_failed: false,
                 }
             });
         } else if file_type.is_file() && is_markdown_file(&entry_path) {
@@ -109,6 +110,7 @@ fn scan_workspace_dir_until(
                 kind: WorkspaceTreeKind::MarkdownFile(entry_path),
                 children: Vec::new(),
                 children_loaded: true,
+                children_load_failed: false,
             });
         } else if file_type.is_file() && is_code_file(&entry_path) {
             children.push(WorkspaceTreeNode {
@@ -117,6 +119,7 @@ fn scan_workspace_dir_until(
                 kind: WorkspaceTreeKind::CodeFile(entry_path),
                 children: Vec::new(),
                 children_loaded: true,
+                children_load_failed: false,
             });
         } else if file_type.is_file() {
             children.push(WorkspaceTreeNode {
@@ -125,6 +128,7 @@ fn scan_workspace_dir_until(
                 kind: WorkspaceTreeKind::OtherFile(entry_path),
                 children: Vec::new(),
                 children_loaded: true,
+                children_load_failed: false,
             });
         }
     }
@@ -137,6 +141,7 @@ fn scan_workspace_dir_until(
         kind: WorkspaceTreeKind::Directory(path.to_path_buf()),
         children,
         children_loaded: true,
+        children_load_failed: false,
     })
 }
 
@@ -196,8 +201,24 @@ enum TreeSortKey {
 /// 过滤来源）。结果排序后再返回，保证同一棵目录搜出同一份顺序。
 ///
 /// 调用方负责在后台执行：~35 万文件的目录一次走盘要几秒。
+///
+/// 只要名单、不看跳过计数的调用方（现在只有测试夹具）用这个；产品路径走
+/// [`collect_workspace_files_on_disk_reporting_skips`]，好把读不了的条目报给界面。
+#[cfg(test)]
 pub(crate) fn collect_workspace_files_on_disk(root: &Path) -> Vec<PathBuf> {
+    collect_workspace_files_on_disk_reporting_skips(root).0
+}
+
+/// 同 [`collect_workspace_files_on_disk`]，另外报出走盘时**读不了、被跳过**的条目数。
+///
+/// 名单是搜索 / 全部替换 / 快速切换 / 索引的唯一输入：跳过的条目必须能让调用方
+/// 看见（侧栏那条 `file_error`），否则用户只会以为「搜不到 = 没有」——需要忽略的
+/// 地方不许静默吞错（AGENTS §1）。
+pub(crate) fn collect_workspace_files_on_disk_reporting_skips(
+    root: &Path,
+) -> (Vec<PathBuf>, usize) {
     let files = std::sync::Mutex::new(Vec::new());
+    let skipped = std::sync::atomic::AtomicUsize::new(0);
     let walker = ignore::WalkBuilder::new(root)
         .hidden(false)
         .ignore(false)
@@ -211,9 +232,11 @@ pub(crate) fn collect_workspace_files_on_disk(root: &Path) -> Vec<PathBuf> {
         .build_parallel();
     walker.run(|| {
         let files = &files;
+        let skipped = &skipped;
         Box::new(move |entry| {
             let Ok(entry) = entry else {
-                // 单个条目读失败（权限、扫描中删除）不影响其余名单。
+                // 单个条目读失败（权限、扫描中删除）不影响其余名单，但要计数上报。
+                skipped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return ignore::WalkState::Continue;
             };
             if entry.file_type().is_some_and(|kind| kind.is_file()) {
@@ -228,7 +251,7 @@ pub(crate) fn collect_workspace_files_on_disk(root: &Path) -> Vec<PathBuf> {
         .into_inner()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     files.sort();
-    files
+    (files, skipped.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 pub(crate) fn search_utf16_to_utf8(text: &str, offset: usize) -> usize {

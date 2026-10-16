@@ -373,6 +373,12 @@ pub struct Editor {
     /// 每根块只查一次，这个数只该随根块数长。
     #[cfg(test)]
     span_reattach_probes: std::cell::Cell<u64>,
+    /// 计数器（测试探针）：侧栏目录扫描**发起了几次**。扫失败过的目录不许每帧
+    /// 重试——面板的补齐（`load_expanded_workspace_dirs`）每帧都跑，失败不留痕
+    /// 就是 60Hz 空转（闸门
+    /// `a_directory_that_failed_to_scan_is_not_retried_every_frame`）。
+    #[cfg(test)]
+    dir_scan_attempts: std::cell::Cell<u64>,
     cross_block_drag: Option<CrossBlockDrag>,
     rendered_select_all_cycle: Option<RenderedSelectAllCycle>,
     /// Open top-level menu in the in-window fallback menu bar.
@@ -941,6 +947,8 @@ impl Editor {
             document_selection_active: std::rc::Rc::new(std::cell::Cell::new(false)),
             #[cfg(test)]
             selection_visual_visits: std::cell::Cell::new(0),
+            #[cfg(test)]
+            dir_scan_attempts: std::cell::Cell::new(0),
             #[cfg(test)]
             span_reattach_probes: std::cell::Cell::new(0),
             cross_block_drag: None,
@@ -2084,6 +2092,10 @@ impl Editor {
         }
         for block in roots {
             block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
+            // 一次查表算**一条候选**：今天每根块恰好一条，退回逐根块线性 `find` 时
+            // 这里要改成「每比较一条候选自增一次」，闸门
+            // `reattaching_root_spans_does_not_scan_candidates_per_block` 才认得出
+            // O(根块数 × 条数)。
             #[cfg(test)]
             self.span_reattach_probes
                 .set(self.span_reattach_probes.get() + 1);
