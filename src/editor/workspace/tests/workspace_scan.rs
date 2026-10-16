@@ -7,7 +7,8 @@
 
 use super::super::{
     Editor, SearchMatcher, SearchOptions, WorkspaceSearchScope, WorkspaceTab,
-    collect_workspace_files_on_disk, is_likely_text_file, search_workspace_files,
+    collect_workspace_files_on_disk, collect_workspace_files_on_disk_reporting_skips,
+    is_likely_text_file, search_workspace_files,
 };
 use crate::editor::encoding::decode_document_bytes;
 use gpui::TestAppContext;
@@ -623,4 +624,27 @@ async fn clicking_a_workspace_hit_after_deleting_the_line_falls_back(cx: &mut Te
             "退回的第一个命中必须仍是命中文本"
         );
     });
+}
+
+/// 走盘读不了的条目要计数上报，不许静默吞掉。
+///
+/// 这份名单是搜索 / 全部替换 / 快速切换 / 索引的唯一输入：跳过多少必须能报出来
+/// （侧栏那条 `file_error`），不然用户只会以为「搜不到 = 没有」。
+#[test]
+fn a_walk_reports_how_many_entries_it_could_not_read() {
+    let root = std::env::temp_dir().join(format!("velora-walk-skips-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create root");
+    fs::write(root.join("note.md"), "# note\n").expect("write note");
+
+    let (files, skipped) = collect_workspace_files_on_disk_reporting_skips(&root);
+    assert_eq!(files.len(), 1, "正常目录应扫到那一个文件");
+    assert_eq!(skipped, 0, "正常目录不该报跳过");
+
+    // 读不了的根：walker 对它报错，这条不能静默。
+    let missing = root.join("gone");
+    let (files, skipped) = collect_workspace_files_on_disk_reporting_skips(&missing);
+    assert!(files.is_empty(), "不存在的根扫不出文件");
+    assert!(skipped > 0, "读不了的根没被计数上报");
+
+    let _ = fs::remove_dir_all(root);
 }

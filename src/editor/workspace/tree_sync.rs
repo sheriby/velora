@@ -533,11 +533,12 @@ impl Editor {
         self.workspace.files_on_disk_walk_root = Some(root.clone());
         let editor = cx.entity().downgrade();
         let walk_root = root.clone();
-        let walk =
-            cx.background_spawn(async move { collect_workspace_files_on_disk(&walk_root) });
+        let walk = cx.background_spawn(async move {
+            collect_workspace_files_on_disk_reporting_skips(&walk_root)
+        });
         self.workspace.files_on_disk_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
-                let files = walk.await;
+                let (files, skipped) = walk.await;
                 editor
                     .update(cx, |editor, cx| {
                         if editor.workspace.files_on_disk_walk_root.as_ref() != Some(&root) {
@@ -546,6 +547,13 @@ impl Editor {
                         editor.workspace.files_on_disk_walk_root = None;
                         editor.workspace.files_on_disk_root = Some(root.clone());
                         editor.workspace.files_on_disk = files;
+                        if skipped > 0 {
+                            // 名单是搜索/替换/快速切换的唯一输入：读不了的条目要报
+                            // 出来，否则用户只会以为「搜不到 = 没有」。
+                            editor.workspace.file_error = Some(format!(
+                                "有 {skipped} 个条目读不了，可能有文件没进搜索名单"
+                            ));
+                        }
                         // 名单落地前发起的工作区搜索此时才有文件列表可用。
                         if editor.workspace.active_tab == WorkspaceTab::Search
                             && !editor.workspace.search_query.is_empty()
@@ -579,6 +587,8 @@ impl Editor {
         let WorkspaceTreeKind::Directory(path) = node.kind.clone() else {
             return;
         };
+        #[cfg(test)]
+        self.dir_scan_attempts.set(self.dir_scan_attempts.get() + 1);
         let tree_sort = crate::config::EditorSettings::tree_sort(cx);
         let editor = cx.entity().downgrade();
         let scan = cx.background_spawn(async move { scan_workspace_dir_level(&path, tree_sort) });
@@ -589,7 +599,12 @@ impl Editor {
                 .update(cx, |editor, cx| {
                     match result {
                         Ok(scanned) => editor.install_workspace_dir_children(&id, scanned),
-                        Err(error) => editor.workspace.file_error = Some(error.to_string()),
+                        Err(error) => {
+                            // 失败要留痕：`load_expanded_workspace_dirs` 每帧都跑，
+                            // 不留记号就等于每帧重试一次（还带一次 `notify`）。
+                            editor.mark_workspace_dir_load_failed(&id);
+                            editor.workspace.file_error = Some(error.to_string());
+                        }
                     }
                     cx.notify();
                 })
@@ -616,6 +631,27 @@ impl Editor {
         };
         node.children = scanned.children;
         node.children_loaded = true;
+        node.children_load_failed = false;
+    }
+
+    /// 记下「这一层扫过、失败了」：每帧的补齐不再重排队，等用户再展一次或树重扫。
+    fn mark_workspace_dir_load_failed(&mut self, node_id: &str) {
+        let Some(tree) = self.workspace.file_tree.as_mut() else {
+            return;
+        };
+        if let Some(node) = find_workspace_node_mut(std::slice::from_mut(tree), node_id) {
+            node.children_load_failed = true;
+        }
+    }
+
+    /// 用户明确再展一次：清掉失败标记，让这次展开重新试。
+    pub(crate) fn clear_workspace_dir_load_failure(&mut self, node_id: &str) {
+        let Some(tree) = self.workspace.file_tree.as_mut() else {
+            return;
+        };
+        if let Some(node) = find_workspace_node_mut(std::slice::from_mut(tree), node_id) {
+            node.children_load_failed = false;
+        }
     }
 
     /// 展开过但还没扫的目录（会话恢复、树刷新、切回标签之后）在这里补齐：渲染期
@@ -631,7 +667,13 @@ impl Editor {
                 pending: &mut Vec<String>,
             ) {
                 for node in nodes {
-                    if node.kind_dir() && expanded.contains(&node.id) && !node.children_loaded {
+                    // 失败过的目录不再每帧重排队：`children_load_failed` 由
+                    // `mark_workspace_dir_load_failed` 记上，用户再展一次会清掉它。
+                    if node.kind_dir()
+                        && expanded.contains(&node.id)
+                        && !node.children_loaded
+                        && !node.children_load_failed
+                    {
                         pending.push(node.id.clone());
                     }
                     collect(&node.children, expanded, pending);

@@ -619,6 +619,7 @@ pub(crate) fn nest_outline_headings(headings: &[OutlineHeading]) -> Vec<Workspac
             },
             children: Vec::new(),
             children_loaded: true,
+            children_load_failed: false,
         };
 
         let siblings = if let Some((_, parent_path)) = stack.last() {

@@ -1402,3 +1402,76 @@ fn workspace_scan_sorts_by_modified_time_newest_first() {
     assert_eq!(labels, vec!["目录乙", "新.md", "中.md", "老.md"]);
     let _ = fs::remove_dir_all(root);
 }
+
+/// 扫失败的目录不许每帧重试。
+///
+/// 面板的补齐（`load_expanded_workspace_dirs`）挂在每帧的 `sync_workspace_models`
+/// 上：失败不留下任何记号时，一个读不了的目录（被删掉、没权限、网络盘掉线）会
+/// **每帧**重新排一次 `read_dir`，还跟着一次 `notify`（又催出下一帧）——帧帧不停。
+/// 这条钉住「失败留痕：每帧的补齐不再重排队，等用户再展一次或树重扫」。
+#[gpui::test]
+async fn a_directory_that_failed_to_scan_is_not_retried_every_frame(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-scan-failure-{}", uuid::Uuid::new_v4()));
+    // 默认只扫三层：第三层的 c 是占位目录（`children_loaded == false`），展开时才扫。
+    let placeholder = root.join("a").join("b").join("c");
+    fs::create_dir_all(placeholder.join("d")).expect("create deep dirs");
+    fs::write(placeholder.join("d").join("note.md"), "# note\n").expect("write deep note");
+    cx.on_quit({
+        let root = root.clone();
+        move || {
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    cx.run_until_parked();
+
+    let dir_path = crate::file_url::canonical_path(&placeholder);
+    let dir_id = file_node_id(&dir_path);
+    editor.read_with(cx, |editor, _| {
+        let tree = editor.workspace.file_tree.as_ref().expect("换根后应有树");
+        let node = find_workspace_node(std::slice::from_ref(tree), &dir_id).expect("c 目录");
+        assert!(!node.children_loaded, "第三层应是占位目录");
+    });
+
+    // 目录从盘上消失：展开时那一次扫描必然失败，而树里那一行还在。
+    fs::remove_dir_all(root.join("a")).expect("remove subtree");
+
+    let before = editor.read_with(cx, |editor, _| editor.dir_scan_attempts.get());
+    editor.update(cx, |editor, cx| editor.toggle_workspace_node(&dir_id, cx));
+    cx.run_until_parked();
+    let after_expand = editor.read_with(cx, |editor, _| editor.dir_scan_attempts.get());
+    assert!(
+        after_expand > before,
+        "展开没触发扫描，这条闸门量不到东西"
+    );
+
+    // 面板每帧都会跑一次补齐：失败之后不许再排新的扫描。
+    for _ in 0..5 {
+        editor.update(cx, |editor, cx| editor.sync_workspace_models(cx));
+        cx.run_until_parked();
+    }
+    let after_frames = editor.read_with(cx, |editor, _| editor.dir_scan_attempts.get());
+    editor.read_with(cx, |editor, _| {
+        let tree = editor.workspace.file_tree.as_ref().expect("树还在");
+        let node = find_workspace_node(std::slice::from_ref(tree), &dir_id).expect("节点还在");
+        assert!(
+            !node.children_loaded,
+            "这次扫描本来就该失败：目录已经从盘上删了"
+        );
+        assert!(
+            node.children_load_failed,
+            "失败没留痕，每帧的补齐会一直重新排队"
+        );
+    });
+    assert_eq!(
+        after_frames, after_expand,
+        "扫失败的目录被每帧重试了：展开时 {after_expand} 次，五帧之后 {after_frames} 次"
+    );
+}
