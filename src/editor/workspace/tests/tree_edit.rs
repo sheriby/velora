@@ -589,7 +589,8 @@ async fn the_file_tree_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
         editor
             .workspace
             .tree_scroll_handle
-            .set_offset(gpui::point(gpui::px(0.0), gpui::px(6.0 + 1000.0 * 24.0)));
+            // 负值才是真滚轮会产生的偏移（gpui 的内容偏移是已滚过距离的相反数）。
+            .set_offset(gpui::point(gpui::px(0.0), gpui::px(-(6.0 + 1000.0 * 24.0))));
     });
     redraw(cx);
     let (first, rows) = editor.read_with(cx, |editor, _| {

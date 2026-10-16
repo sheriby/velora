@@ -1946,10 +1946,13 @@ async fn outline_panel_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
     );
 
     // 滚动之后窗口要跟着走：滚到第 1000 行附近，那一行得落在窗口里。
+    // 偏移用**负值**：gpui 里内容偏移是「已滚过距离的相反数」，向下滚只会是
+    // `[-max, 0]`（`workspace/tests/sidebar.rs` 用真滚轮断言过 `offset < 0`）。
+    // 注入正值是物理上不可能的状态，窗口算错也照样绿。
     editor.update(cx, |editor, _cx| {
         editor.workspace.tree_scroll_handle.set_offset(gpui::point(
             gpui::px(0.0),
-            gpui::px(6.0 + 1000.0 * 24.0),
+            gpui::px(-(6.0 + 1000.0 * 24.0)),
         ));
     });
     redraw(cx);

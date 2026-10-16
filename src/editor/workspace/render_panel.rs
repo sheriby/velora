@@ -130,8 +130,13 @@ impl Editor {
         if viewport_height <= 0.0 {
             return 0..PANEL_WINDOW_FALLBACK_ROWS.min(total);
         }
+        // gpui 的内容偏移是**已滚过距离的相反数**（向下滚只会落在 `[-max, 0]`，
+        // 见 `workspace/tests/sidebar.rs` 用真滚轮断言的 `offset < 0`）。拿它当正
+        // 距离用，`max(0.0)` 会把窗口永远钉在第 0 行：超过 200 行的列表滚下去就
+        // 只剩上下垫的空白（闸门 `outline_panel_renders_only_the_rows_in_the_viewport`
+        // 用负偏移钉住这一点，注入正值是物理上到不了的状态）。
         let scrolled =
-            (f32::from(self.workspace.tree_scroll_handle.offset().y) - WORKSPACE_PANEL_PADDING_Y)
+            (-f32::from(self.workspace.tree_scroll_handle.offset().y) - WORKSPACE_PANEL_PADDING_Y)
                 .max(0.0);
         let row_height = Self::workspace_node_height(theme);
         let first = (scrolled / row_height) as usize;
