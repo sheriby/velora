@@ -266,9 +266,7 @@ impl Editor {
         let heading_menu = heading_menu_open.then(|| {
             let rows = self.document_submenu_rows(DocumentSubmenu::Paragraph, cx);
             let geometry =
-                DocumentMenuGeometry::measure(&rows, &strings, &theme.dimensions, &|command| {
-                    document_menu_shortcut(command, cx)
-                });
+                DocumentMenuGeometry::measure_in_window(&rows, &strings, theme, window, cx);
             let (offset, menu_origin) =
                 Self::heading_menu_offsets(origin, size, geometry.size, viewport);
             (rows, geometry, offset, menu_origin)

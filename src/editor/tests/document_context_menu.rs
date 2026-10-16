@@ -742,8 +742,19 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
     let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, text, None));
     redraw(cx);
 
+    let width = cx.update(|window, cx| {
+        let mut theme = cx.global::<ThemeManager>().derived_theme(cx).as_ref().clone();
+        crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
+        let strings = cx.global::<I18nManager>().strings().clone();
+        editor.read_with(cx, |editor, cx| {
+            let main = DocumentMenuGeometry::measure_in_window(&editor.document_menu_rows(), &strings, &theme, window, cx);
+            let submenu = DocumentMenuGeometry::measure_in_window(&editor.document_submenu_rows(DocumentSubmenu::Paragraph, cx), &strings, &theme, window, cx);
+            // 两侧都放不下时产品会重叠夹紧；此用例明确构造左侧放得下的视口。
+            (main.size.width + submenu.size.width + px(theme.dimensions.context_menu_submenu_gap + 12.0)).max(px(420.0))
+        })
+    });
     cx.simulate_resize(Size {
-        width: px(420.0),
+        width,
         height: px(600.0),
     });
     redraw(cx);
@@ -1313,10 +1324,10 @@ async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut T
 
     // 屏上的面板宽与按当前语言算出来的几何一致，渲染处不许另算一套。分节线也在其中：
     // 少了四条，面板高度就差出四条分节线的高度。
-    let geometry = cx.update(|_window, app| {
-        DocumentMenuGeometry::measure(&rows, &strings, &dimensions, &|command| {
-            document_menu_shortcut(command, app)
-        })
+    let geometry = cx.update(|window, app| {
+        let mut theme = app.global::<ThemeManager>().derived_theme(app).as_ref().clone();
+        crate::config::EditorSettings::apply_ui_typography(app, &mut theme);
+        DocumentMenuGeometry::measure_in_window(&rows, &strings, &theme, window, app)
     });
     assert_eq!(
         f32::from(panel.size.width),
@@ -1362,5 +1373,39 @@ async fn clicking_the_strip_button_runs_the_same_action_as_the_key(cx: &mut Test
             .as_deref(),
         Some("alpha"),
         "剪下来的那五个字该在剪贴板里"
+    );
+}
+
+#[gpui::test]
+fn document_menu_geometry_fits_measured_punctuation_in_custom_labels(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (_, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.into(), None));
+    let mut strings = I18nStrings::en_us();
+    strings.context_menu_copy_as_markdown = "+".repeat(120);
+    let theme = Theme::default_theme();
+    let rows = vec![DocumentMenuRow::Item {
+        command: DocumentMenuCommand::CopyAsMarkdown,
+        name: "copy-as-markdown",
+        enabled: true,
+    }];
+    let measured = real_label_widths(
+        &[strings.context_menu_copy_as_markdown.clone()],
+        theme.dimensions.menu_text_size,
+        cx,
+    )[0];
+    let geometry = cx.update(|window, cx| {
+        DocumentMenuGeometry::measure_in_window(&rows, &strings, &theme, window, cx)
+    });
+    let required = measured
+        + MENU_ICON_SIZE
+        + MENU_ROW_GAP
+        + theme.dimensions.menu_item_padding_x * 2.0
+        + theme.dimensions.menu_panel_padding * 2.0
+        + theme.dimensions.dialog_border_width * 2.0;
+    assert!(
+        f32::from(geometry.size.width) >= required,
+        "定位用的面板宽度必须容纳实际字宽：{} < {required}",
+        f32::from(geometry.size.width)
     );
 }

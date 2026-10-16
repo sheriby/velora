@@ -1125,7 +1125,7 @@ impl Render for Editor {
             base
         };
         let base = if let Some(context_menu) =
-            self.render_context_menu_overlay(&theme, window.viewport_size(), cx)
+            self.render_context_menu_overlay(&theme, window, cx)
         {
             base.child(self.pane_overlay(context_menu.into_any_element(), window))
         } else {

@@ -563,11 +563,7 @@ fn toolbar_origin_prefers_above_and_falls_back_below() {
 
 /// 「段落」那一档的面板宽度按真实字体度量核一遍，中英文各核一次。
 ///
-/// 宽度是估出来的（`estimated_menu_label_width`），估少了标签会被 `.truncate()` 切掉一角
-/// ——这一处出过两次问题：「一级标题」只剩「一级标」。这里对同一批行数据算一份
-/// `DocumentMenuGeometry`，再用系统实际的文本度量量出最宽那一行，比两者：面板内框
-/// （面板宽 − 面板内边距与边框 − 行自己的左右内边距）要装得下量出来的字宽。
-/// 两份语言各核一遍，界面当前是哪国语言不影响这条判据。
+/// 定位、绘制与标签适配共用当前字体实测，不能因平台快捷键或语言变化而撑宽面板。
 #[gpui::test]
 async fn the_paragraph_panel_fits_its_labels_measured_with_the_real_font(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -603,13 +599,13 @@ async fn the_paragraph_panel_fits_its_labels_measured_with_the_real_font(cx: &mu
         .collect::<Vec<_>>();
 
     let dimensions = Theme::default_theme().dimensions;
-    let without_shortcut = |_command| None;
     for (tag, strings) in [
         ("中文", I18nStrings::zh_cn()),
         ("英文", I18nStrings::en_us()),
     ] {
-        let geometry =
-            DocumentMenuGeometry::measure(&rows, &strings, &dimensions, &without_shortcut);
+        let geometry = cx.update(|window, cx| {
+            DocumentMenuGeometry::measure_in_window(&rows, &strings, &Theme::default_theme(), window, cx)
+        });
         let inner_box = f32::from(geometry.size.width)
             - (dimensions.menu_panel_padding + dimensions.dialog_border_width) * 2.0
             - dimensions.menu_item_padding_x * 2.0;
@@ -627,8 +623,9 @@ async fn the_paragraph_panel_fits_its_labels_measured_with_the_real_font(cx: &mu
     }
     // 屏上那份面板与按当前语言算出来的这份要一致，否则说明渲染处另算了一套宽度。
     let current = cx.update(|_window, cx| cx.global::<I18nManager>().strings().clone());
-    let current_geometry =
-        DocumentMenuGeometry::measure(&rows, &current, &dimensions, &without_shortcut);
+    let current_geometry = cx.update(|window, cx| {
+        DocumentMenuGeometry::measure_in_window(&rows, &current, &Theme::default_theme(), window, cx)
+    });
     assert_eq!(
         f32::from(panel.size.width),
         f32::from(current_geometry.size.width),

@@ -169,7 +169,8 @@ fn tree_file_drag_to_center_opens_in_place_and_cancellation_keeps_tabs(cx: &mut 
             editor.set_workspace_root(path.parent().expect("目录").to_path_buf(), cx)
         });
         redraw(cx);
-        let outside = point(px(2.0), px(2.0));
+        // Windows 的首个标签可以从窗口左缘开始，取消点必须在窗口之外。
+        let outside = point(px(-20.0), px(-20.0));
         drag_tree_file(cx, &other, outside);
         cx.simulate_mouse_up(outside, MouseButton::Left, Modifiers::none());
         redraw(cx);

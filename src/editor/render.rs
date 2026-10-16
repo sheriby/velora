@@ -38,7 +38,7 @@ pub(crate) fn open_about_github_url(cx: &mut App) {
     cx.open_url(ABOUT_GITHUB_URL);
 }
 
-fn editor_text_font(family: &str) -> Font {
+pub(in crate::editor) fn editor_text_font(family: &str) -> Font {
     // FontFallbacks is internally `Arc<Vec<String>>` — building it once
     // per process and Arc-cloning per render is the right shape, since
     // editor_text_font() is called from Editor::render on every frame.

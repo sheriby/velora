@@ -85,10 +85,11 @@ impl Editor {
     pub(crate) fn render_context_menu_overlay(
         &self,
         theme: &Theme,
-        viewport: Size<Pixels>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let menu = self.context_menu.as_ref()?;
+        let viewport = window.viewport_size();
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
@@ -101,9 +102,8 @@ impl Editor {
                 ..
             } => {
                 let rows = self.document_menu_rows();
-                // 宽度按当前生效的键位那一列估，用户改过绑定也不会截字。
-                let shortcut_of = &|command| document_menu_shortcut(command, cx);
-                let panel = DocumentMenuGeometry::measure(&rows, &s, d, shortcut_of);
+                // 平台快捷键的文字宽度不同，定位与绘制必须共用实测尺寸。
+                let panel = DocumentMenuGeometry::measure_in_window(&rows, &s, theme, window, cx);
                 // 二级面板与父行顶部对齐；父行离底部太近时由落点函数向上收。
                 let submenu_panels = open_submenu.map(|submenu| {
                     let sub_rows = self.document_submenu_rows(submenu, cx);
@@ -111,7 +111,7 @@ impl Editor {
                         matches!(row, DocumentMenuRow::Submenu { id, .. } if *id == submenu)
                     });
                     (
-                        DocumentMenuGeometry::measure(&sub_rows, &s, d, shortcut_of),
+                        DocumentMenuGeometry::measure_in_window(&sub_rows, &s, theme, window, cx),
                         panel.row_top(index),
                     )
                 });
@@ -183,7 +183,7 @@ impl Editor {
                             .absolute()
                             .left(origin.x)
                             .top(origin.y)
-                            .min_w(panel.size.width)
+                            .w(panel.size.width)
                             .p(px(d.menu_panel_padding))
                             .flex()
                             .flex_col()
@@ -901,7 +901,7 @@ impl Editor {
             .absolute()
             .left(origin.x)
             .top(origin.y)
-            .min_w(geometry.size.width)
+            .w(geometry.size.width)
             .p(px(d.menu_panel_padding))
             .flex()
             .flex_col()

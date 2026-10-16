@@ -862,10 +862,7 @@ fn readable_key(part: &str) -> String {
 const MENU_VIEWPORT_MARGIN: f32 = 6.0;
 /// 二级菜单父行右侧那枚箭头的占位。
 const SUBMENU_ARROW: &str = "\u{203a}";
-/// 一行宽度的余量：`estimated_menu_label_width` 是按字符类别估的，实测英文最宽那一行
-/// （`Numbered List`，12 号字）估出来只比真实宽度多 0.4px——换个字体回落或缩放就截字。
-/// Windows 原生测试又量到面板被内容撑宽 1px，留 4px 覆盖字形回落和像素取整差异，
-/// 面板尺寸仍由同一份几何决定。
+/// 字形回落和像素取整仍可能带来尾差；定位与绘制都保留同一份余量。
 const MENU_ROW_WIDTH_ALLOWANCE: f32 = 4.0;
 
 /// 一列行的几何：面板尺寸与每一行的顶部偏移。渲染摆放与落点计算共用同一份，
@@ -876,13 +873,75 @@ pub(crate) struct DocumentMenuGeometry {
 }
 
 impl DocumentMenuGeometry {
-    /// `shortcut_of` 由调用方给（渲染路径用当前生效的键位，纯函数用例给一份桩），
-    /// 面板宽度按屏上真要写出来的那串按键估，用户改过键位也不会截字。
+    pub(crate) fn measure_in_window(
+        rows: &[DocumentMenuRow],
+        strings: &crate::i18n::I18nStrings,
+        theme: &crate::theme::Theme,
+        window: &gpui::Window,
+        cx: &gpui::App,
+    ) -> Self {
+        let mut font = super::super::render::editor_text_font(
+            &crate::config::EditorSettings::fonts(cx).ui_family,
+        );
+        font.weight = theme.typography.dialog_body_weight.to_font_weight();
+        let width_of = |label: &str| {
+            let run = TextRun {
+                len: label.len(),
+                font: font.clone(),
+                color: theme.colors.text_default,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+                font_size: None,
+            };
+            match window.text_system().shape_text(
+                label.to_string().into(),
+                px(theme.dimensions.menu_text_size),
+                &[run],
+                None,
+                None,
+            ) {
+                Ok(lines) => lines
+                    .iter()
+                    .map(|line| f32::from(line.width()))
+                    .fold(0.0_f32, f32::max),
+                Err(error) => {
+                    eprintln!("测量菜单文字失败：{error}");
+                    crate::editor::render::estimated_menu_label_width(
+                        label,
+                        theme.dimensions.menu_text_size,
+                    )
+                }
+            }
+        };
+        Self::measure_with_labels(
+            rows,
+            strings,
+            &theme.dimensions,
+            &|command| document_menu_shortcut(command, cx),
+            &width_of,
+        )
+    }
+
+    /// 无窗口的几何测试使用字符估算；产品入口按窗口当前字体实测。
+    #[cfg(test)]
     pub(crate) fn measure(
         rows: &[DocumentMenuRow],
         strings: &crate::i18n::I18nStrings,
         dimensions: &ThemeDimensions,
         shortcut_of: &dyn Fn(DocumentMenuCommand) -> Option<SharedString>,
+    ) -> Self {
+        Self::measure_with_labels(rows, strings, dimensions, shortcut_of, &|label| {
+            crate::editor::render::estimated_menu_label_width(label, dimensions.menu_text_size)
+        })
+    }
+
+    fn measure_with_labels(
+        rows: &[DocumentMenuRow],
+        strings: &crate::i18n::I18nStrings,
+        dimensions: &ThemeDimensions,
+        shortcut_of: &dyn Fn(DocumentMenuCommand) -> Option<SharedString>,
+        width_of: &dyn Fn(&str) -> f32,
     ) -> Self {
         let mut widest = 0.0_f32;
         // 第一行的顶部就是面板内边距；往下逐行累加行高与行间距。
@@ -903,7 +962,13 @@ impl DocumentMenuGeometry {
                 DocumentMenuRow::QuickActions => QUICK_ACTION_BUTTON_SIZE,
             };
             top += row_height;
-            widest = widest.max(Self::row_width(row, strings, dimensions, shortcut_of));
+            widest = widest.max(Self::row_width(
+                row,
+                strings,
+                dimensions,
+                shortcut_of,
+                width_of,
+            ));
         }
         // 末尾再补一份内边距：面板高度 = 最后一行底部 + 内边距。宽度那一条算过边框，
         // 高度同理漏了会把面板下沿推出落点之外（`document_menu_origins` 按这份高夹紧）。
@@ -928,8 +993,8 @@ impl DocumentMenuGeometry {
         strings: &crate::i18n::I18nStrings,
         dimensions: &ThemeDimensions,
         shortcut_of: &dyn Fn(DocumentMenuCommand) -> Option<SharedString>,
+        width_of: &dyn Fn(&str) -> f32,
     ) -> f32 {
-        let text_size = dimensions.menu_text_size;
         let (label, shortcut, submenu, icon) = match row {
             // 图标条没有文字可估：宽度就是那六颗格子加竖线与间隙，行高另说。
             DocumentMenuRow::Separator => return 0.0,
@@ -947,7 +1012,7 @@ impl DocumentMenuGeometry {
                 document_submenu_icon(*id),
             ),
         };
-        let mut width = crate::editor::render::estimated_menu_label_width(&label, text_size);
+        let mut width = width_of(&label);
         // 行首图标占的那一列：图标框边一份，它与文字之间用的就是 flex 那一份行距。
         // 这一列漏算就等于面板内框比行窄，中文标签被截掉半个字（FP12 那条根因）。
         if icon.is_some() {
@@ -955,11 +1020,11 @@ impl DocumentMenuGeometry {
         }
         if let Some(shortcut) = shortcut {
             width += MENU_ROW_GAP
-                + crate::editor::render::estimated_menu_label_width(shortcut.as_ref(), text_size);
+                + width_of(shortcut.as_ref());
         }
         if submenu {
             width += MENU_ROW_GAP
-                + crate::editor::render::estimated_menu_label_width(SUBMENU_ARROW, text_size);
+                + width_of(SUBMENU_ARROW);
         }
         width + dimensions.menu_item_padding_x * 2.0 + MENU_ROW_WIDTH_ALLOWANCE
     }
@@ -1208,7 +1273,7 @@ mod tests {
             let widest = rows
                 .iter()
                 .map(|row| {
-                    DocumentMenuGeometry::row_width(row, &strings, &dimensions, &stub_shortcut)
+                    DocumentMenuGeometry::row_width(row, &strings, &dimensions, &stub_shortcut, &|label| crate::editor::render::estimated_menu_label_width(label, dimensions.menu_text_size))
                 })
                 .fold(0.0_f32, f32::max);
             let inner_box = f32::from(geometry.size.width)
