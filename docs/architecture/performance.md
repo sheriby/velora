@@ -36,24 +36,29 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 - 缺夹具直接失败，不静默跳过：少了这一步就会得到一份「全绿但什么都没量」的基线。
 - 档位与产品同档（测试跑的是 dev 构建：本地代码 O0，gpui/pulldown-cmark 这些重依赖继续吃 opt-level=3），所以量出来的就是用户那台机器上的成本。
 
-一次实测（2026-10-15，macos aarch64，dev 档，单线程；**别把这张表当基线，要数字就跑套件**）：
+一次实测（2026-10-16 重测，macos aarch64，dev 档，单线程；**别把这张表当基线，要数字就跑套件**）：
 
 | 用例 | 1MiB | 10MiB | 10MiB/1MiB |
 |---|---|---|---|
-| `text.buffer_serialize` 一次整篇序列化 | 23.8µs | 261.7µs | 11 |
-| `text.content_version` 一次整篇哈希 | 1.37ms | 13.81ms | 10 |
-| `text.word_count` 一次整篇分词 | 6.44ms | 65.29ms | 10 |
-| `text.reference_definitions` 一次整篇引用定义解析 | 37.14ms | 374.43ms | 10 |
-| `model.document_rebuild` 一次整篇重解析建树 | 628.6ms | 8506ms | 13.5 |
-| `model.image_runtime_rebuild` 一次整篇引用注册表重建 | 64.1ms | 766.5ms | 12 |
-| `model.capture_document_view` 一次整篇现场采集 | 1.63ms | 16.62ms | 10 |
-| `model.buffer_edit` 一次缓冲区写入 | 1.6µs | 10.7µs | 6.7 |
-| `model.edit_and_undo_record` 一次写入加撤销记账 | 1.6µs | 10.7µs | 6.7 |
-| `model.keystroke_through_block` 一次按键（走块事件） | 1.61ms → **1.04ms** | **38.15ms → 3.38ms** | 23.7 → 3.3 |
-| `model.undo_document` 一次撤销（⌘Z） | 0.60s | **6.96s** | 11.5 |
-| `model.document_resync_fallback` 一次整篇兜底重投影 | 217.4ms | 17869ms | 82 |
+| `text.buffer_serialize` 一次整篇序列化 | 24.0µs | 249.3µs | 10 |
+| `text.content_version` 一次整篇哈希 | 1.37ms | 13.77ms | 10 |
+| `text.word_count` 一次整篇分词 | 6.57ms | 65.30ms | 10 |
+| `text.reference_definitions` 一次整篇引用定义解析 | 37.12ms | 375.45ms | 10 |
+| `model.document_rebuild` 一次整篇重解析建树 | 556.1ms | 6010ms | 10.8 |
+| `model.image_runtime_rebuild` 一次整篇引用注册表重建 | 68.4ms | 797.0ms | 11.6 |
+| `model.capture_document_view` 一次整篇现场采集 | 1.62ms | 16.15ms | 10 |
+| `model.buffer_edit` 一次缓冲区写入 | 2.8µs | 20.4µs | 7.3 |
+| `model.edit_and_undo_record` 一次写入加撤销记账 | 2.8µs | 20.3µs | 7.3 |
+| `model.keystroke_through_block` 一次按键（走块事件） | 1.04ms | 3.38ms | 3.3 |
+| `model.undo_document` 一次撤销（⌘Z） | 0.60s | 6.68s | 11.1 |
+| `model.document_resync_fallback` 一次整篇兜底重投影 | 56.2ms | 604ms | 10.8 |
 
-读法：`text.*` 那四条和 `capture_document_view` 的比值贴着 10（文档大 10 倍就贵 10 倍），`document_rebuild`、`image_runtime_rebuild` 略高（12~13.5），这几位都是纯整篇工作。四行不是：**按键那一条涨 23.7 倍**（10MiB 档一次按键 38ms，一秒钟敲不到 26 个字——原因见 §4.1，已收掉，现在 3.38ms）；**撤销那一条现在涨 11.5 倍**（10MiB 档 6.96s、1MiB 档 0.60s）——它早先记成 34 倍（62 秒），后来查明**测量装置本身有错**：用例与探针都攥着撤销**之前**那个块句柄往文档里打字，而撤销会把整棵树换成新实体，于是那一键打在已经不在文档里的块上，写回必然失败、每键退回整篇兜底重投影（实测 9.2s/键，把这一条从 7 秒抬到 16 秒）。改成每轮重新取块之后：10MiB 档一次撤销 **6.9s**、撤销后打字 4–6ms（§4.5）。**兜底重投影涨 82 倍**（超线性，一次都碰不得，所以 §3 的形状闸门把它按在 0 次）；**一次缓冲区写入涨 6.7 倍**（1.6µs→10.7µs：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），10MiB 就是两千多块，每写一次都要把 `chunks` 这一列整体后移，`locate()` 还是沿块线性找下标；dev 档的 `debug_assert` 也走这一位，发布包会轻一些）。
+读法：比值贴着 10 的那几条是纯整篇工作（文档大 10 倍就贵 10 倍）。四行不是：
+
+- **按键那一条现在涨 3.3 倍**（10MiB 一次 3.38ms；早先记的 23.7 倍是 `on_block_events` 对每个块事件克隆整篇可见块列表，已收掉，见 §4.1）。它是**热路径**的数：打开之后**头一次**按键还含行计划重建等一趟冷活，10MiB 实测约 159ms、1MiB 约 17ms（`perf_budgets.rs` 两条 `*_typing_stays_within_budget` 会把它打印出来）。
+- **撤销那一条涨 11.1 倍**（10MiB 档 6.68s、1MiB 档 0.60s）。账在 §4.4：整篇重投影 10.6 万根块 + 投影重排 + 恰一遍引用注册表重建。早先记的 34 倍（62 秒）里有 9.2s/键是**测量装置**的错（用例攥着撤销**之前**那个块句柄打字，写回必然失败、每键退回整篇兜底重投影）；改成每轮重新取块之后才是这个数。
+- **兜底重投影从 82 倍降到 10.8 倍**（`448c721` 把逐根块扫候选换成查表：10MiB 档 17.9s → 604ms）。它本来就一次都不该发生，形状闸门仍按着 0 次；但绝对值 604ms 说明这条退路依旧碰不得。
+- **一次缓冲区写入涨 7.3 倍**（1MiB 2.8µs → 10MiB 20.4µs）：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），10MiB 就是两千多块，每写一次都要把 `chunks` 这一列整体后移，`ChunkStarts::rebuild_from` 还要把改动点**之后**的前缀重算一遍（§4.5）。绝对值还很小（占一次按键的 0.6%），但它每键都付。
 
 ## 2. 计数器：成本的唯一读法
 
@@ -98,6 +103,8 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 - `chunk_lookups_do_not_scan_every_chunk` — 按偏移/行号取字节不许从第 0 块线性找（`ChunkStarts::probes` ≤ 32 次比较 / 272 块）。
 - `reattaching_root_spans_does_not_scan_candidates_per_block`、`undo_does_not_fall_back_to_a_whole_document_resync` — 整篇落笔给根块挂区间是每根块查一次表；撤销收尾不许再序列化整篇。
 - `typing_a_link_paragraph_does_not_rebuild_the_reference_registry` — 段落里带 `[文字](链接)` 或 `a < b` 时打字不许触发整篇引用注册表重建；正控是改定义行必须触发。
+- `introducing_a_reference_definition_refreshes_the_reference_registry` — 屏幕看的是**落笔前**的缓冲区字节，所以「原来没有 `]:`/`[^`、这一下才写进去」的编辑（粘贴一行定义、把定义搬过来）要由落笔后再问一次兜住；`renaming_a_footnote_definition_sub_block_refreshes_the_registry` 钉住另一半：没有源码区间的定义类子块（容器里的脚注定义，标题就是标签本身）只能靠宽口径里的 kind 那一档认出来。两条修复前都红。
+- `a_directory_that_failed_to_scan_is_not_retried_every_frame` — 侧栏目录扫失败要留痕：面板补齐挂在每帧的 `sync_workspace_models` 上，失败不留痕就是每帧一次 `read_dir` 加一次 `notify`（修复前实测 5 帧 5 次重试）；`a_walk_reports_how_many_entries_it_could_not_read` 钉住走盘名单的跳过条目要有计数。
 - `a_second_display_render_does_not_read_the_disk_again` — 同一条 mermaid 的第二次渲染一次盘都不许读（`TEST_CACHE_READS`）。
 - `autosave_does_not_capture_the_reading_position` — 自动保存的那一下只同步内容与脏位，
   不许采整篇阅读现场；同时守住「换标签必须采一次」，防止把该记的现场一并删掉。
@@ -111,6 +118,8 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
 **实测套件**（§1.1，`perf_bench.rs` 的 `bench_suite_measures_the_core_costs`）同样 `#[ignore]`、CI 里 `--skip perf_bench` 排掉：它量的是这台机器上的单价，与 `benchmarks/` 里本机基线比趋势，慢过 30% 才红。它不数「做了多少遍整篇」，那还是计数器的活。
 
 > 并行跑测下**绝对墙钟会误报**：新写性能用例优先断言形状（计数器、相对关系、访问规模），不要断言毫秒数。
+
+> **量滚动窗口的闸门必须注入真滚轮会产生的偏移（负值）**：gpui 的内容偏移是「已滚过距离的相反数」（`workspace/tests/sidebar.rs` 用真滚轮断言过 `offset < 0`），注入正值是物理上到不了的状态——窗口算式把符号搞反也照样绿。三条视口闸门（文件树 / 搜索 / 大纲）都踩过这个坑，实测「滚到第 1000 行」时窗口停在 `0..52`。
 
 ## 4. 成本结构：什么已经收敛，什么还随文档长
 
@@ -184,7 +193,7 @@ VELORA_BENCH_TOLERANCE=5 cargo test --bin velora bench_suite -- --ignored --test
    改动本身（判定改动字节范围 → 落在一根块里就只重投影那一根，否则退回整篇）已经写出
    来过，卡的是上面两处；谁接着做，先给 `reproject_root_region` 补一条「区域与解析边界
    对不上时怎么办」的判据，再谈接撤销。
-5. **缓冲区自己的写入**：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），一次写入要把 `chunks` 这一列整体后移，`locate()` 沿块线性找下标。1MiB 档 1.6µs、10MiB 档 10.7µs——绝对值还很小，但它是每键都付的，别把它当成常数。
+5. **缓冲区自己的写入**：正文按 4KiB 一块存（`buffer.rs` 的 `MAX_CHUNK_BYTES`），一次写入要把 `chunks` 这一列整体后移，`ChunkStarts::rebuild_from(start - 1)` 还要把改动点**之后**的全部前缀重算一遍（`edit` 里那句「前缀索引只重建这一段」说的是**前缀没变**，不是尾段不扫：改在第一块时它就是整篇）。1MiB 档 2.8µs、10MiB 档 20.4µs（≈7.3 倍，随块数线性）。这笔账是 2026-10-15 的前缀索引（`c3e9e16`）换来的：`locate` / `line_of` / `slice` 从「从第 0 块线性找」改成二分，撤销那条路上省的是几十秒（§4.4），代价就是每键 O(尾块数)。绝对值还很小，但它是每键都付的，别把它当成常数；要再降一档得把尾巴从「逐块重算」改成「整体加常数」，或者换掉这层扁平索引。
 
 6. **行高起估为什么还是「一行高」**（试过，退回来了）。渲染态没量过的行一律按
    `block_min_height`（28px）起估；想按「这块有几行」放大时踩到三件事：

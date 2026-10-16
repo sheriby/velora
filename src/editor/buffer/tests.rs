@@ -530,8 +530,16 @@ fn chunk_starts_index_matches_a_linear_scan() {
         }
     }
 
+    // 夹具必须**跨多块**：一段 < 4 KiB 的文本在 `chunkify` 之后只有一块，那样
+    // 每次编辑都是「切开又合并回一块」，`note_split` 的高下标、
+    // `rebuild_from` 从中间起算、跨块二分这些全都没被比到。这里约 40 KiB（≈10 块）。
     let mut buffer = TextBuffer::from_text(
-        &"第一行\n第二行长一些\n\n## 标题甲\n正文乙丙丁\n".repeat(24),
+        &"第一行\n第二行长一些\n\n## 标题甲\n正文乙丙丁\n".repeat(700),
+    );
+    assert!(
+        buffer.chunks.len() >= 5,
+        "夹具只有 {} 块，差分闸门量不到跨块维护",
+        buffer.chunks.len()
     );
     let mut offsets = Vec::new();
     for step in 0..60usize {

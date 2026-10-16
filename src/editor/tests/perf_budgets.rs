@@ -1629,6 +1629,10 @@ async fn probe_attribute_ten_mib_markdown_with_outline_open(cx: &mut TestAppCont
 /// `reattach_root_spans` 原来对每根块在 `block_spans` 里线性 `find` 一遍，是
 /// O(根块数 × 条数)：10 MiB 档 106,456 根。采样里这一次 `find` 占满整篇落笔的
 /// 绝大部分样本——一次 ⌘Z 35 秒就是这么来的。摊成一张表之后每根块只查一次。
+///
+/// 探针口径是「查了几条候选」而不是「跑了几轮循环」：查表版每根块 +1，退回线性
+/// `find` 时必须改成每比较一条候选 +1（见 `Editor::span_reattach_probes` 的注释），
+/// 所以这里断言的是 `<= 根块数`——这个上界只在「每根块恰好一条候选」时成立。
 #[gpui::test]
 async fn reattaching_root_spans_does_not_scan_candidates_per_block(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
@@ -1657,8 +1661,8 @@ async fn reattaching_root_spans_does_not_scan_candidates_per_block(cx: &mut Test
         "这次操作没走重挂区间那一段，闸门测错了东西"
     );
     assert!(
-        probes <= roots * 2,
-        "给 {roots} 根块挂区间比较了 {probes} 次候选：这是逐根块扫一遍"
+        probes <= roots,
+        "给 {roots} 根块挂区间查了 {probes} 条候选：这是逐根块扫一遍候选表"
     );
 }
 
