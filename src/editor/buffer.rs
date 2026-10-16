@@ -138,6 +138,9 @@ impl ChunkStarts {
         if self.line_prefix.is_empty() {
             self.line_prefix.push(0);
         }
+        // `from - 1` 不会越界：上面的 `truncate(from)` 之后 `byte_starts.len() <= from`，
+        // 而 `from <= chunks.len()`（入口已经钳过）——也就是 `from == 0` 时走 `None`
+        // 那一支，`from >= 1` 时 `chunks[from - 1]` 一定在界内。
         let mut bytes = match self.byte_starts.last() {
             Some(start) => start + chunks[from - 1].byte_len(),
             None => 0,
@@ -554,6 +557,9 @@ impl TextBuffer {
         self.chunks.splice(start..end, inserted);
         let mut index = start.saturating_sub(1);
         let mut boundary = (start + inserted_chunks + 1).min(self.chunks.len());
+        // 下标有界：`index + 1 < boundary`，而 `boundary` 初值是
+        // `(start + inserted_chunks + 1).min(chunks.len())`、每次合并只减一，
+        // 所以 `index + 1 < chunks.len()` 恒成立。
         while index + 1 < boundary {
             if self.chunks[index].byte_len() + self.chunks[index + 1].byte_len() <= MAX_CHUNK_BYTES {
                 let right = self.chunks.remove(index + 1);
@@ -614,6 +620,20 @@ impl TextBuffer {
             Some(chunk) => chunk.text.is_char_boundary(local),
             None => offset == 0,
         }
+    }
+
+    /// 这个区间能不能拿去做 [`slice`](Self::slice)：两端都在界内、都落在字符边界
+    /// 上，而且没有倒置。
+    ///
+    /// 判据只此一处（`runtime_context` 的引用屏幕与 `history` 的行签名都拿它当
+    /// 可信性闸）：`is_char_boundary` 对**越界**偏移会返回 true（`locate` 先把它钳到
+    /// 末尾那块再问块尾），所以「在界内」必须单独查；而 `slice` 对 `start >= end`
+    /// 返回空串，倒置区间会伪装成「可信的空源码」。
+    pub(crate) fn span_is_trustworthy(&self, span: &Range<usize>) -> bool {
+        span.start <= span.end
+            && span.end <= self.byte_len()
+            && self.is_char_boundary(span.start)
+            && self.is_char_boundary(span.end)
     }
 
     /// 把偏移向左退到字符边界（越界先钳到文末）。

@@ -1745,6 +1745,103 @@ async fn typing_a_link_paragraph_does_not_rebuild_the_reference_registry(cx: &mu
     );
 }
 
+/// 把定义行**引入**文档的那一次编辑也必须重建引用注册表。
+///
+/// 屏幕（`block_may_change_document_references`）读的是块在缓冲区里的源码区间，
+/// 而这一笔要到 `on_block_changed` 后半段才落笔——所以它看到的是改动**之前**的
+/// 字节。原来没有 `]:`、这一下才写进去的编辑（粘贴一行定义、把定义从别处搬过来、
+/// 打完整定义的最后那一键）在「只看缓冲区」的口径下看不见，注册表就停在旧的定义
+/// 集上：引用式图片指着旧地址或压根解不出来。这条闸门钉住「落笔前后两份文本都要看」。
+#[gpui::test]
+async fn introducing_a_reference_definition_refreshes_the_reference_registry(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "第一段文字\n\n![图][asset]\n";
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None)));
+    cx.run_until_parked();
+
+    let blocks = editor.read_with(cx, |editor, _cx| editor.document.root_blocks().to_vec());
+    assert!(blocks.len() >= 2, "夹具应有段落与图片两块，实际 {}", blocks.len());
+    let paragraph = blocks[0].clone();
+    let image = blocks[1].clone();
+
+    let before = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(before > 0, "建文档时就没重建过注册表，这条闸门量不到东西");
+
+    let end = paragraph.read_with(cx, |paragraph, _cx| paragraph.visible_len());
+    paragraph.update(cx, |block, cx| {
+        block.replace_text_in_visible_range(0..end, "[asset]: ./assets/a.png", None, false, cx);
+    });
+    cx.run_until_parked();
+
+    let after = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+    assert!(
+        after > before,
+        "这一笔把定义行写进了段落，引用注册表却没重建"
+    );
+    assert_eq!(
+        image.read_with(cx, |image, _cx| image
+            .image_runtime()
+            .map(|runtime| runtime.src.clone())),
+        Some("./assets/a.png".into()),
+        "定义行已经写进文档，引用式图片却还指着旧地址"
+    );
+}
+
+/// 没有源码区间的脚注定义块改标签，也要重建注册表。
+///
+/// 屏幕在块**没有可信源码区间**时退回行内树那份宽口径。收窄（`596be0e`）把宽口径里的
+/// 「块本身是定义类（`FootnoteDefinition` / `Table` / `HtmlBlock` / `RawMarkdown` /
+/// `FrontMatter`）」那一档漏掉了：容器里的脚注定义是**子块**（没有区间），它的行内树
+/// 标题就是标签本身（`display_text() == "note"`），既没有 `]:` 也没有 `[^`——于是改标签
+/// 那一笔答 false，`footnote_registry` 的键停在旧标签上：`[^note]` 还指着改了名的定义，
+/// `[^other]` 解析不出来。
+#[gpui::test]
+async fn renaming_a_footnote_definition_sub_block_refreshes_the_registry(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let markdown = "Root reference.[^note]\n\n> [^note]: Nested quote footnote";
+    let editor = cx.update(|cx| cx.new(|cx| Editor::from_markdown(cx, markdown.to_string(), None)));
+    cx.run_until_parked();
+
+    let definition = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::FootnoteDefinition)
+            .expect("引用容器里应有脚注定义子块")
+            .entity
+            .clone()
+    });
+    let before = editor.read_with(cx, |editor, _cx| editor.reference_registry_rebuilds.get());
+
+    definition.update(cx, |definition, cx| {
+        definition
+            .record
+            .set_title(crate::components::InlineTextTree::plain("other"));
+        definition.sync_render_cache();
+        cx.emit(BlockEvent::Changed);
+    });
+    cx.run_until_parked();
+
+    let (after, has_new, has_old) = editor.read_with(cx, |editor, _cx| {
+        (
+            editor.reference_registry_rebuilds.get(),
+            editor.footnote_registry.bindings.contains_key("other"),
+            editor.footnote_registry.bindings.contains_key("note"),
+        )
+    });
+    assert!(
+        after > before,
+        "改了脚注定义的标签却没重建引用注册表（键会停在旧标签上）"
+    );
+    assert!(has_new, "新标签没进脚注注册表");
+    assert!(!has_old, "旧标签还留在脚注注册表里");
+}
+
 /// 一次 ⌘Z 不许再做一遍整篇落笔。
 ///
 /// 撤销先重放逆操作、再 `rebuild_document_from_buffer`：块树整篇来自缓冲区，缓冲区就是
