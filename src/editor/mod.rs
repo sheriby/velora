@@ -741,7 +741,7 @@ impl Editor {
         file_path: Option<PathBuf>,
         first_chunk_roots: usize,
     ) -> Self {
-        let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+        let normalized = encoding::normalize_document_text(&markdown);
         // 缓冲区先于块树建好：导入器要把每根块的源码区间换算成字节区间，
         // 靠的就是它的行索引。
         let buffer = buffer::TextBuffer::from_text(&normalized);

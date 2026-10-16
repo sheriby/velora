@@ -1847,3 +1847,27 @@ fn tab_group_accents_have_distinct_colors_in_light_and_dark_themes() {
         }
     }
 }
+
+#[gpui::test]
+fn split_history_restore_refreshes_every_view_and_keeps_shared_undo(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, path| {
+        crate::config::record_file_history(&path, "历史正文\n").expect("历史版本");
+        editor.update_in(cx, |editor, window, cx| editor.split_active_document(SplitDirection::Right, window, cx));
+        redraw(cx);
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        let left = groups.first().expect("左组"); let right = groups.get(1).expect("右组");
+        right.update(cx, |editor, cx| { editor.open_file_history(cx); editor.restore_file_history_version(0, cx); });
+        right.update_in(cx, |editor, window, cx| editor.dismiss_modal(0, window, cx));
+        redraw(cx);
+        for group in &groups { group.read_with(cx, |editor, cx| {
+            assert_eq!(editor.buffer.text(), "历史正文\n");
+            assert_eq!(editor.document.markdown_text(cx), "历史正文");
+        }); }
+        editor.update(cx, |editor, cx| editor.activate_split_group(left.entity_id(), cx));
+        left.update(cx, |editor, cx| editor.undo_document(cx));
+        redraw(cx);
+        for group in &groups { assert_eq!(group.read_with(cx, |editor, _| editor.buffer.text()), "正文\n"); }
+        let versions = crate::config::file_history::list_versions(&path, Default::default(), std::time::SystemTime::now()).expect("历史");
+        assert!(versions.iter().any(|version| version.source == crate::config::file_history::HistorySource::BeforeRestore));
+    });
+}

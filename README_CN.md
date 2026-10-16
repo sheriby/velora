@@ -56,6 +56,7 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 ### 可靠性与性能
 
 - **文字不丢**——自动保存（防抖间隔可配置）、原子写入（临时文件 + rename）、崩溃后自动恢复未保存内容。
+- **文件历史**——自动保存也记录版本，默认最少间隔 5 分钟、每文件最多 30 条、保留 7 天，三项均可在偏好设置中调整；手动保存标记检查点。先预览历史原文、对比当前内容，再确认恢复；恢复前备份当前内容，恢复操作可撤销。
 - **长文依然快**——超大手稿首屏同步建块、立即呈现，其余内容经后台分批流入，打字与滚动全程不卡。
 - **启动快**——初始化分散到后续帧，窗口即刻呈现。
 - **应用内更新**——启动时检查 GitHub 正式版（可在设置中关闭或包含预发布版本；菜单与命令面板可手动检查）；更新通知确认后下载并校验 SHA-256，随后安装并重启。
@@ -137,6 +138,7 @@ cargo test
 | --- | --- | --- |
 | `[window]` | `default_window_width`、`default_window_height`、`open_position`、`remember_bounds`、`zoom_percent` | 默认尺寸、居中还是记住位置打开、窗口记忆、界面缩放 |
 | `[editor]` | `tree_sort`、`autosave`、`autosave_debounce_ms`、`new_file_template`、`smart_punctuation`、`external_change_policy`、`delete_policy`、`workspace_sidebar_width` | 文件树排序、自动保存开关（关掉只停写文件，恢复快照与外部改动检测照跑）、自动保存间隔、新建文件模板（`{date}` 会展开）、智能标点、外部变更处理、移入废纸篓还是永久删除、侧栏宽度 |
+| `[file_history]` | `interval_minutes`、`max_entries`、`retention_days` | 自动快照最少间隔（默认 5 分钟）、每文件数量上限（默认 30 条）、保留天数（默认 7 天）；手动保存和恢复前检查点不受间隔限制，所有版本共同受数量与天数上限约束 |
 | `[export]` | `theme` | 导出 HTML、PDF 与 PNG 时使用 `current` / `light` / `dark` |
 | `[updates]` | `check_on_startup`、`include_prereleases` | 启动时检查更新；包含预发布版本 |
 

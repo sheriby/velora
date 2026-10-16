@@ -381,6 +381,9 @@ impl PreferencesWindow {
                     tree_sort_dropdown,
                 ),
                 self.settings_row(theme, strings.preferences_autosave.clone(), autosave_toggle),
+                self.history_setting_row(&strings.preferences_history_interval, 0, theme, cx),
+                self.history_setting_row(&strings.preferences_history_count, 1, theme, cx),
+                self.history_setting_row(&strings.preferences_history_days, 2, theme, cx),
                 self.settings_row(
                     theme,
                     strings.preferences_file_autosave_debounce.clone(),
@@ -634,6 +637,33 @@ impl PreferencesWindow {
             dropdown = dropdown.child(self.dropdown_menu(id, list, theme));
         }
         dropdown.into_any_element()
+    }
+
+    fn history_setting_row(&self, label: &str, field: usize, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let (name, value) = match field {
+            0 => ("interval", self.file_history.interval_minutes),
+            1 => ("count", self.file_history.max_entries as u64),
+            _ => ("days", self.file_history.retention_days),
+        };
+        let mut control = div().flex().items_center().gap(px(8.0));
+        for (suffix, sign, delta) in [("less", "−", -1i64), ("more", "+", 1)] {
+            if delta > 0 { control = control.child(div().w(px(52.0)).text_center().child(value.to_string())); }
+            let id = format!("preferences-history-{name}-{suffix}");
+            control = control.child(div().id(SharedString::from(id.clone())).debug_selector(move || id.clone())
+                .w(px(32.0)).h(px(30.0)).flex().items_center().justify_center()
+                .rounded(px(5.0)).border_1().border_color(theme.colors.dialog_border)
+                .bg(theme.colors.dialog_secondary_button_bg).cursor_pointer().child(sign)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let policy = &mut this.file_history;
+                    match field {
+                        0 => policy.interval_minutes = (policy.interval_minutes as i64 + delta).clamp(0, 1440) as u64,
+                        1 => policy.max_entries = (policy.max_entries as i64 + delta).clamp(1, 1000) as usize,
+                        _ => policy.retention_days = (policy.retention_days as i64 + delta).clamp(1, 3650) as u64,
+                    }
+                    cx.notify();
+                })));
+        }
+        self.settings_row(theme, label.to_string(), control)
     }
 
     fn font_size_row(

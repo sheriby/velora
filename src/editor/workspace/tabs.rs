@@ -1137,6 +1137,9 @@ impl Editor {
                     Ok(()) => {
                         let version = crate::editor::persistence::file_content_version(&tab.markdown);
                         self.mark_workspace_document_saved(&tab.path, version, &tab.markdown);
+                        if !self.record_saved_history(&tab.path, &bytes, crate::config::file_history::HistorySource::Exit, cx) {
+                            return;
+                        }
                         if self.file_path.as_ref() == Some(&tab.path) {
                             self.document_dirty = false;
                             self.file_version = Some(version);

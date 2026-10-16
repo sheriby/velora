@@ -842,6 +842,7 @@
         ));
         let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = AppPreferences {
+            file_history: super::HistoryPolicy::default(),
             updates: super::UpdatePreferences::default(),            startup_open: StartupOpenPreference::LastOpenedFile,
             default_language_id: "zh-CN".into(),
             default_theme_id: "velora-light".into(),
@@ -977,6 +978,7 @@
         ));
         let dirs = VeloraConfigDirs::from_root(&root);
         let preferences = AppPreferences {
+            file_history: super::HistoryPolicy::default(),
             updates: super::UpdatePreferences::default(),            startup_open: StartupOpenPreference::NewFile,
             smart_punctuation: false,
             external_change_policy: ExternalChangePolicy::Auto,
@@ -1019,6 +1021,7 @@
             SidebarOpenPreference::Never,
             SidebarPanelPreference::Files,
             800,
+            super::HistoryPolicy::default(),
             true,
             WindowOpenPosition::Center,
             true,
@@ -1453,6 +1456,7 @@ fn window_size_bounds_are_shared_by_read_and_save() {
         loaded.sidebar_open,
         loaded.sidebar_panel,
         loaded.autosave_debounce_ms,
+        loaded.file_history,
         loaded.remember_window_bounds,
         loaded.window_open_position,
         loaded.smart_punctuation,
@@ -1622,6 +1626,7 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
             on_disk.sidebar_open,
             on_disk.sidebar_panel,
             on_disk.autosave_debounce_ms,
+            on_disk.file_history,
             on_disk.remember_window_bounds,
             on_disk.window_open_position,
             on_disk.smart_punctuation,
@@ -1684,4 +1689,30 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
             "查不到的 action_id 该在读取处判掉，只留对得上的那一条"
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    fn file_history_preferences_controls_save_and_apply_all_three_values(cx: &mut TestAppContext) {
+        let root = std::env::temp_dir().join(format!("velora-history-preferences-{}", uuid::Uuid::new_v4()));
+        let _config = crate::config::override_test_config_root(&root);
+        init_preferences_test_app(cx);
+        crate::config::load_or_create_app_preferences().expect("默认偏好");
+        let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1500.0))));
+        let mut window_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+        for selector in ["preferences-history-interval-more", "preferences-history-count-less", "preferences-history-days-more"] {
+            window_cx.update(|window, cx| window.draw(cx).clear()); window_cx.run_until_parked();
+            let control = window_cx.debug_bounds(selector).expect("历史参数控件必须可见");
+            window_cx.simulate_click(control.center(), gpui::Modifiers::none());
+        }
+        handle.update(cx, |preferences, window, cx| {
+            assert!(preferences.has_unsaved_changes());
+            assert_eq!(preferences.file_history, super::HistoryPolicy { interval_minutes: 6, max_entries: 29, retention_days: 8 });
+            preferences.save(&gpui::ClickEvent::default(), window, cx);
+            assert!(preferences.save_error.is_none());
+            assert!(!preferences.has_unsaved_changes());
+        }).expect("保存偏好");
+        let expected = super::HistoryPolicy { interval_minutes: 6, max_entries: 29, retention_days: 8 };
+        assert_eq!(crate::config::read_app_preferences().expect("落盘配置").file_history, expected);
+        assert_eq!(cx.update(|cx| EditorSettings::file_history(cx)), expected);
+        cx.on_quit(move || std::fs::remove_dir_all(root).expect("清理配置"));
     }

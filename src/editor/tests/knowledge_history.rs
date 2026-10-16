@@ -26,12 +26,16 @@ async fn review_history_restore_keeps_crlf_shape(cx: &mut TestAppContext) {
     fs::create_dir_all(&root).unwrap();
     cx.on_quit({ let root = root.clone(); move || fs::remove_dir_all(root).unwrap() });
     let path = root.join("notes.md"); fs::write(&path, "当前\r\n正文\r\n").unwrap();
-    let version = root.join("version.md"); fs::write(&version, "旧\r\n正文\r\n").unwrap();
-    let editor = cx.new(|cx| Editor::from_markdown(cx, "当前\n正文\n".into(), Some(path.clone())));
+    let _config_guard = crate::config::override_test_config_root(root.join("config"));
+    crate::config::record_file_history(&path, "旧\r\n正文\r\n").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "当前\n正文\n".into(), Some(path.clone())));
     editor.update(cx, |editor, cx| {
         editor.attach_file_origin(fs::read(&path).unwrap());
-        editor.file_history_overlay = Some(crate::editor::file_history::FileHistoryOverlay { versions: vec![version], selected: 0 });
+        editor.open_file_history(cx);
         editor.restore_file_history_version(0, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| editor.dismiss_modal(0, window, cx));
+    editor.read_with(cx, |editor, _| {
         assert_eq!(editor.buffer.file_bytes(), "旧\r\n正文\r\n".as_bytes());
         assert_eq!(editor.buffer.text(), "旧\n正文\n");
     });
@@ -306,7 +310,7 @@ fn file_history_version_label_parses_nanosecond_stems() {
 
 #[test]
 fn file_history_records_dedupes_and_prunes() {
-    // 存储约定：时间戳命名、同内容去重、每文件保留最近 20 条。
+    // 存储约定：时间戳命名、同内容去重、每文件保留最近 30 条。
     let root = std::env::temp_dir().join(format!("velora-fhist-{}", temp_fixture_token()));
     let _ = std::fs::remove_dir_all(&root);
     let file = root.join("doc.md");
@@ -315,20 +319,20 @@ fn file_history_records_dedupes_and_prunes() {
     // 记录走的是 config 全局目录；测试构建用进程级临时配置根
     // （VeloraConfigDirs::from_system 的 test 分支），不能直接指定 root，
     // 所以这里只验证去重与上限行为，目录隔离交给测试根。
-    for index in 0..25 {
+    for index in 0..35 {
         let content = format!("版本 {index}");
         crate::config::record_file_history(&file, &content).expect("record");
     }
     let versions = crate::config::list_file_history(&file);
-    assert_eq!(versions.len(), 20, "超出上限应裁剪到 20 条");
+    assert_eq!(versions.len(), 30, "超出上限应裁剪到 30 条");
     let newest = std::fs::read_to_string(&versions[0]).expect("read newest");
-    assert_eq!(newest, "版本 24", "最新一条应是最后一次保存的内容");
+    assert_eq!(newest, "版本 34", "最新一条应是最后一次保存的内容");
     let oldest = std::fs::read_to_string(&versions.last().unwrap()).expect("read oldest");
     assert_eq!(oldest, "版本 5", "最老的 0..=4 应被裁掉");
 
     // 同内容再保存不重复落盘。
-    crate::config::record_file_history(&file, "版本 24").expect("record dup");
-    assert_eq!(crate::config::list_file_history(&file).len(), 20);
+    crate::config::record_file_history(&file, "版本 34").expect("record dup");
+    assert_eq!(crate::config::list_file_history(&file).len(), 30);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -510,6 +514,7 @@ async fn file_history_restore_can_be_undone(cx: &mut TestAppContext) {
         editor.open_file_history(cx);
         editor.restore_file_history_version(0, cx);
     });
+    editor.update_in(cx, |editor, window, cx| editor.dismiss_modal(0, window, cx));
     redraw(cx);
     editor.read_with(cx, |editor, cx| {
         assert_eq!(
@@ -563,9 +568,11 @@ async fn file_history_overlay_restores_version_as_unsaved_edit(cx: &mut TestAppC
         );
     });
 
-    // ↓ 选上一版，Enter 恢复为未保存修改。
+    // ↓ 选上一版，Enter 请求确认后再恢复为未保存修改。
     cx.simulate_keystrokes("down");
     cx.simulate_keystrokes("enter");
+    assert!(editor.read_with(cx, |editor, _| editor.modal_is_open()));
+    editor.update_in(cx, |editor, window, cx| editor.dismiss_modal(0, window, cx));
     redraw(cx);
     editor.read_with(cx, |editor, cx| {
         assert!(

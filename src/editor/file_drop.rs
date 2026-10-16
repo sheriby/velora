@@ -672,7 +672,10 @@ impl Editor {
 
             let saved_path = save_path.clone();
             let replace_result = weak_editor.update(cx, move |this, cx| {
-                this.apply_successful_save(saved_path, saved_text, markdown, cx);
+                if !this.apply_successful_save(saved_path, saved_text, markdown, cx) {
+                    this.abort_pending_drop_replace_after_save(cx);
+                    anyhow::bail!("文件已保存，但文件历史写入失败");
+                }
                 this.pending_drop_replace_path = Some(drop_path);
                 this.replace_after_successful_save_async(cx)
             });

@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Serialize)]
 pub(crate) struct PreferencesFile {
+    file_history: HistoryPolicy,
     updates: UpdatePreferences,
     preferences_version: i64,
     startup: StartupPreferencesFile,
@@ -126,6 +127,7 @@ impl From<&StatusBarPreferences> for StatusBarPreferencesFile {
 impl From<&AppPreferences> for PreferencesFile {
     fn from(value: &AppPreferences) -> Self {
         Self {
+            file_history: value.file_history,
             preferences_version: PREFERENCES_VERSION,
             updates: value.updates.clone(),
             startup: StartupPreferencesFile {
@@ -542,6 +544,9 @@ pub(crate) fn app_preferences_from_toml_value(
         ignored_version: value.get("updates").and_then(|updates| updates.get("ignored_version")).and_then(toml::Value::as_str).unwrap_or_default().into(),
     };
     AppPreferences {
+        file_history: value.get("file_history").cloned()
+            .and_then(|value| value.try_into::<HistoryPolicy>().ok())
+            .unwrap_or_default().normalized(),
         updates,
         startup_open,
         default_language_id,
@@ -736,6 +741,7 @@ pub(crate) fn save_preferences_from_window(
     sidebar_open: SidebarOpenPreference,
     sidebar_panel: SidebarPanelPreference,
     autosave_debounce_ms: u64,
+    file_history: HistoryPolicy,
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
@@ -761,6 +767,7 @@ pub(crate) fn save_preferences_from_window(
         sidebar_open,
         sidebar_panel,
         autosave_debounce_ms,
+        file_history,
         remember_window_bounds,
         window_open_position,
         smart_punctuation,
@@ -789,6 +796,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     sidebar_open: SidebarOpenPreference,
     sidebar_panel: SidebarPanelPreference,
     autosave_debounce_ms: u64,
+    file_history: HistoryPolicy,
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
@@ -815,6 +823,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     preferences.sidebar_open = sidebar_open;
     preferences.sidebar_panel = sidebar_panel;
     preferences.autosave_debounce_ms = autosave_debounce_ms;
+    preferences.file_history = file_history.normalized();
     preferences.remember_window_bounds = remember_window_bounds;
     preferences.window_open_position = window_open_position;
     preferences.smart_punctuation = smart_punctuation;

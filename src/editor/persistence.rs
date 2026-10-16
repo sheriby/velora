@@ -87,6 +87,7 @@ fn canonical_write_target(path: &Path) -> PathBuf {
 impl StagedDocumentWrite {
     fn prepare(path: &Path, contents: &[u8]) -> std::io::Result<Self> {
         use std::io::Write;
+        crate::config::file_history::capture_baseline(path)?;
         let target = canonical_write_target(path);
         let permissions = match std::fs::metadata(&target) {
             Ok(metadata) => Some(metadata.permissions()),
@@ -375,7 +376,7 @@ impl Editor {
                                     verify_file_version(path, expected_version)
                                         .map_err(|error| (failing_path.clone(), error))?;
                                 }
-                                Some(staged)
+                                Some((staged, payload))
                             } else {
                                 None
                             };
@@ -458,7 +459,7 @@ impl Editor {
                                     eprintln!("清理已关闭草稿的异步快照失败：{error}");
                                 }
                             }
-                            let (Some(path), Some(staged)) =
+                            let (Some(path), Some((staged, saved_bytes))) =
                                 (document.path.as_ref(), staged)
                             else {
                                 continue;
@@ -486,6 +487,7 @@ impl Editor {
                                 }
                                 continue;
                             }
+                            editor.record_saved_history(path, &saved_bytes, crate::config::file_history::HistorySource::Automatic, cx);
                             if let Err(error) =
                                 crate::config::remove_recovery_snapshot(document.recovery.id)
                             {
@@ -496,7 +498,7 @@ impl Editor {
                                 file_version: file_content_version(&document.recovery.markdown),
                                 path: path.clone(),
                                 markdown: document.recovery.markdown.clone(),
-                                bytes: document.bytes.clone(),
+                                bytes: Some(saved_bytes),
                             });
                         }
                         if let Some((path, detail)) = conflict {
@@ -577,7 +579,7 @@ impl Editor {
                             format!("failed to stage '{}'", document.path.display())
                         })?;
                         verify_file_version(&document.path, document.file_version)?;
-                        prepared.push((document, staged));
+                        prepared.push((document, staged, payload));
                     }
                     Ok::<_, anyhow::Error>(prepared)
                 })
@@ -613,7 +615,7 @@ impl Editor {
                     if let Some(hook) = editor.save_commit_hook.take() {
                         hook(editor, cx);
                     }
-                    for (document, staged) in prepared {
+                    for (document, staged, payload) in prepared {
                         if !editor.workspace_save_snapshot_is_current(document.recovery_id, &document.path, &document.markdown) {
                             failed_save = true;
                             continue;
@@ -629,6 +631,9 @@ impl Editor {
                             }
                             failed_save = true;
                             continue;
+                        }
+                        if !editor.record_saved_history(&document.path, &payload, crate::config::file_history::HistorySource::Exit, cx) {
+                            failed_save = true;
                         }
                         if let Err(error) =
                             crate::config::remove_recovery_snapshot(document.recovery_id)
@@ -726,13 +731,38 @@ impl Editor {
         }
     }
 
+    pub(crate) fn record_saved_history(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        source: crate::config::file_history::HistorySource,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match crate::config::file_history::record_snapshot_at(
+            path, bytes, source, crate::config::EditorSettings::file_history(cx), std::time::SystemTime::now(),
+        ) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("记录文件历史失败 '{}': {error}", path.display());
+                let title = cx.global::<I18nManager>().strings().menu_file_history.clone();
+                self.show_message_modal(title, format!("{}: {error}", path.display()), cx);
+                false
+            }
+        }
+    }
+
     pub(super) fn apply_successful_save(
         &mut self,
         path: PathBuf,
         saved_text: String,
         saved_bytes: Vec<u8>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        let source = if self.pending_close_after_save || !self.pending_tab_close_after_save.is_empty() {
+            crate::config::file_history::HistorySource::Exit
+        } else {
+            crate::config::file_history::HistorySource::Manual
+        };
         self.document_revision = self.document_revision.wrapping_add(1);
         // 版本号取实际写入的文本，不能由完成时的另一份状态推算。
         let saved_markdown = saved_text;
@@ -742,23 +772,7 @@ impl Editor {
         if let Some(file_version) = self.file_version {
             self.mark_workspace_document_saved(&path, file_version, &saved_markdown);
         }
-        // 本地历史：每次成功保存后台落一条版本快照（同内容去重、每文件
-        // 保留最近 20 条）。写盘不在保存关键路径上。
-        let history_path = path.clone();
-        cx.spawn(async move |editor, cx| {
-            let result = cx.update(|_cx| crate::config::record_file_history_bytes(&history_path, &saved_bytes))
-                .and_then(|result| result.map_err(anyhow::Error::from));
-            if let Err(error) = result {
-                if let Err(update_error) = editor.update(cx, |editor, cx| {
-                    let title = cx.global::<I18nManager>().strings().save_failed_title.clone();
-                    editor.show_message_modal(title, format!("无法记录文件历史：{error}"), cx);
-                }) {
-                    eprintln!("无法显示文件历史错误：{update_error}");
-                }
-            }
-        })
-        .detach();
-        self.file_path = Some(path);
+        self.file_path = Some(path.clone());
         self.recovery_source_path = None;
         self.is_recovered_document = false;
         self.document_dirty = false;
@@ -773,6 +787,7 @@ impl Editor {
         }
         self.sync_workspace_after_document_path_change(cx);
         cx.notify();
+        self.record_saved_history(&path, &saved_bytes, source, cx)
     }
 
     pub(super) fn save_to_existing_path(
@@ -825,9 +840,9 @@ impl Editor {
         });
         match result {
             Ok(_) => {
-                self.apply_successful_save(path.to_path_buf(), saved_text, bytes, cx);
+                let history_saved = self.apply_successful_save(path.to_path_buf(), saved_text, bytes, cx);
                 window.set_window_edited(false);
-                true
+                history_saved
             }
             Err(err) => {
                 let detail = err.to_string();
@@ -862,7 +877,7 @@ impl Editor {
         self.ensure_save_as_target_is_free(&path)?;
         self.ensure_other_groups_save_as_target_is_free(&path, cx)?;
         write_atomic(&path, &saved_bytes)?;
-        self.apply_successful_save(path, saved_text, saved_bytes, cx);
+        anyhow::ensure!(self.apply_successful_save(path, saved_text, saved_bytes, cx), "文件已保存，但文件历史写入失败");
         Ok(())
     }
 

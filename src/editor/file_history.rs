@@ -1,30 +1,37 @@
-//! 文件本地历史：每次成功保存落一条版本快照，浮层浏览、Enter 恢复为
-//! 未保存修改（不直接写盘，可继续编辑或撤销）。
+//! 文件历史只读预览与差异对比；恢复需确认，并保留当前内容和撤销链。
 
-use std::path::PathBuf;
-
+use super::{Editor, HistoryEntry, modal::ModalSpec};
+use crate::{
+    config::{
+        self, EditorSettings,
+        file_history::{HistorySource, HistoryVersion},
+    },
+    i18n::{I18nManager, I18nStrings},
+    theme::Theme,
+};
+use gpui::prelude::FluentBuilder;
 use gpui::*;
+use std::{path::PathBuf, sync::Arc, time::SystemTime};
 
-use super::{HistoryEntry, buffer};
-use crate::config;
-use crate::i18n::I18nStrings;
-use crate::theme::Theme;
+mod diff;
+#[cfg(test)]
+mod tests;
 
-use super::Editor;
-
-/// 浮层会话：版本列表（最新在前）+ 当前选中项。
 pub(crate) struct FileHistoryOverlay {
-    pub(crate) versions: Vec<PathBuf>,
+    versions: Vec<HistoryVersion>,
     pub(crate) selected: usize,
+    document: PathBuf,
+    buffer_id: u64,
+    compare: bool,
+    preview: String,
+    lines: Arc<Vec<diff::DiffLine>>,
+    compared_revision: Option<u64>,
+    scroll: UniformListScrollHandle,
 }
 
-/// 历史版本的文件名是**纳秒**时间戳（`record_file_history_bytes` 用纳秒命名，
-/// 同一毫秒内的连续保存不能互相覆盖）；浮层把它换算成 Unix 秒后格式化。
-/// 换算单位必须与记录端一致，否则 1.7e18 级的数值被当日期解析，
-/// 浮层每行日期都是垃圾。
+#[cfg(test)]
 pub(crate) fn file_history_version_label(stem: &str) -> Option<String> {
-    let stamp = stem.parse::<u64>().ok()?;
-    let seconds = stamp / 1_000_000_000;
+    let seconds = stem.parse::<u64>().ok()? / 1_000_000_000;
     Some(super::workspace::chrono_like_date_string_public(seconds))
 }
 
@@ -33,18 +40,64 @@ impl Editor {
         self.file_history_overlay.is_some()
     }
 
-    /// 打开浮层：读取当前文档对应的历史版本（同步读，≤20 个小文件）。
     pub(crate) fn open_file_history(&mut self, cx: &mut Context<Self>) {
         self.dismiss_contextual_overlays(cx);
         let Some(path) = self.file_path.clone() else {
             return;
         };
-        let versions = config::list_file_history(&path);
-        self.file_history_overlay = Some(super::file_history::FileHistoryOverlay {
+        let versions = match config::file_history::list_versions(
+            &path,
+            EditorSettings::file_history(cx),
+            SystemTime::now(),
+        ) {
+            Ok(versions) => versions,
+            Err(error) => {
+                self.history_error(format!("无法读取文件历史：{error}"), cx);
+                return;
+            }
+        };
+        self.file_history_overlay = Some(FileHistoryOverlay {
             versions,
             selected: 0,
+            document: path,
+            buffer_id: self.buffer.identity(),
+            compare: false,
+            preview: String::new(),
+            lines: Arc::new(Vec::new()),
+            compared_revision: None,
+            scroll: UniformListScrollHandle::new(),
         });
+        self.select_file_history_version(0, cx);
         cx.notify();
+    }
+
+    fn history_error(&mut self, detail: String, cx: &mut Context<Self>) {
+        eprintln!("{detail}");
+        let title = cx
+            .global::<I18nManager>()
+            .strings()
+            .menu_file_history
+            .clone();
+        self.show_message_modal(title, detail, cx);
+    }
+
+    fn select_file_history_version(&mut self, selected: usize, cx: &mut Context<Self>) {
+        let Some(overlay) = self.file_history_overlay.as_mut() else {
+            return;
+        };
+        let Some(version) = overlay.versions.get(selected) else {
+            return;
+        };
+        match super::encoding::load_document(&version.path) {
+            Ok(document) => {
+                overlay.selected = selected;
+                overlay.preview = super::encoding::normalize_document_text(&document.text);
+                overlay.compared_revision = None;
+                overlay.scroll = UniformListScrollHandle::new();
+                cx.notify();
+            }
+            Err(error) => self.history_error(format!("无法读取历史版本：{error}"), cx),
+        }
     }
 
     pub(crate) fn close_file_history(&mut self, cx: &mut Context<Self>) {
@@ -53,243 +106,281 @@ impl Editor {
         }
     }
 
-    /// 浮层按键（intercept_keystrokes 钩子调用）：↑/↓ 选择、Enter 恢复、
-    /// Esc 关闭。返回是否消费。
     pub(crate) fn file_history_key_down(
         &mut self,
-        keystroke: &gpui::Keystroke,
-        cx: &mut gpui::Context<Self>,
+        keystroke: &Keystroke,
+        cx: &mut Context<Self>,
     ) -> bool {
-        if !self.file_history_is_open() {
+        let Some(overlay) = self.file_history_overlay.as_ref() else {
             return false;
-        }
+        };
+        let selected = overlay.selected;
+        let count = overlay.versions.len();
         match keystroke.key.as_str() {
             "up" | "down" => {
-                if let Some(overlay) = self.file_history_overlay.as_mut()
-                    && !overlay.versions.is_empty()
-                {
-                    let count = overlay.versions.len();
-                    if keystroke.key == "up" {
-                        overlay.selected = (overlay.selected + count - 1) % count;
+                if count > 0 {
+                    let next = if keystroke.key == "up" {
+                        (selected + count - 1) % count
                     } else {
-                        overlay.selected = (overlay.selected + 1) % count;
-                    }
-                    cx.notify();
+                        (selected + 1) % count
+                    };
+                    self.select_file_history_version(next, cx);
                 }
-                cx.stop_propagation();
-                true
             }
-            "enter" => {
-                let selected = self
-                    .file_history_overlay
-                    .as_ref()
-                    .map(|overlay| overlay.selected)
-                    .unwrap_or(0);
-                cx.stop_propagation();
-                self.restore_file_history_version(selected, cx);
-                true
-            }
-            "escape" => {
-                cx.stop_propagation();
-                self.close_file_history(cx);
-                true
-            }
-            _ => false,
+            "enter" => self.restore_file_history_version(selected, cx),
+            "escape" => self.close_file_history(cx),
+            _ => return false,
         }
+        cx.stop_propagation();
+        true
     }
 
-    /// 恢复版本：整篇替换为历史内容并标记未保存（用户可继续编辑/撤销）。
-    pub(crate) fn restore_file_history_version(
-        &mut self,
-        selected: usize,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let Some(overlay) = self.file_history_overlay.take() else {
+    pub(crate) fn restore_file_history_version(&mut self, selected: usize, cx: &mut Context<Self>) {
+        let Some(overlay) = self.file_history_overlay.as_ref() else {
             return;
         };
-        let Some(path) = overlay.versions.get(selected) else {
-            cx.notify();
+        let Some(version) = overlay.versions.get(selected) else {
             return;
         };
-        let content = match super::encoding::load_document(path) {
-            Ok(document) => document.text,
-            Err(error) => {
-                let title = cx.global::<crate::i18n::I18nManager>().strings().menu_file_history.clone();
-                self.show_message_modal(title, format!("无法读取历史版本：{error}"), cx);
-                return;
-            }
-        };
-        let file_path = self.file_path.clone();
-        // 兑现「可撤销」：恢复前把当前文档压进撤销栈，⌘Z 能回到恢复前的
-        // 内容。
-        let selection_before = self.capture_source_selection_snapshot(cx);
-        let pre_restore_text = self.buffer.text();
-        self.pending_undo_capture = None;
-        self.replace_document_from_markdown(content, file_path, cx);
-        self.undo_history.clear();
-        self.redo_history.clear();
-        // 恢复整篇文档 = 一次「全文替换」的写入：撤销把它换回来。
-        self.undo_history.push(HistoryEntry {
-            edits: vec![buffer::AppliedEdit {
-                removed: pre_restore_text,
-                new_range: 0..self.buffer.byte_len(),
-            }],
-            selection: selection_before,
-            timestamp: std::time::Instant::now(),
-            kind: crate::components::UndoCaptureKind::NonCoalescible,
-        });
-        self.mark_dirty(cx);
-        cx.notify();
+        let version = version.path.clone();
+        let document = overlay.document.clone();
+        let buffer_id = overlay.buffer_id;
+        let strings = cx.global::<I18nManager>().strings();
+        self.show_modal(
+            ModalSpec {
+                title: strings.file_history_confirm_title.clone().into(),
+                detail: Some(strings.file_history_confirm_detail.clone().into()),
+                buttons: vec![
+                    strings.file_history_confirm.clone().into(),
+                    strings.preferences_cancel.clone().into(),
+                ],
+                default_index: 1,
+                cancel_index: 1,
+            },
+            move |choice, editor, _window, cx| {
+                if choice != 0 {
+                    return;
+                }
+                if editor.file_path.as_ref() != Some(&document)
+                    || editor.buffer.identity() != buffer_id
+                {
+                    editor.history_error("当前文档已改变，请重新打开文件历史。".into(), cx);
+                    return;
+                }
+                if editor.has_marked_document_text(cx) {
+                    editor.history_error("请先完成输入法输入，再恢复历史版本。".into(), cx);
+                    return;
+                }
+                // 上限可配置为一条，先读目标再备份，避免备份清理掉待恢复版本。
+                let content = match super::encoding::load_document(&version) {
+                    Ok(document) => super::encoding::normalize_document_text(&document.text),
+                    Err(error) => {
+                        editor.history_error(format!("无法读取历史版本：{error}"), cx);
+                        return;
+                    }
+                };
+                let current = editor.buffer.file_bytes();
+                if !editor.record_saved_history(
+                    &document,
+                    &current,
+                    HistorySource::BeforeRestore,
+                    cx,
+                ) {
+                    return;
+                }
+                editor.finalize_pending_undo_capture(cx);
+                let selection = editor.capture_source_selection_snapshot(cx);
+                let edit = editor.buffer.edit(0..editor.buffer.byte_len(), &content);
+                editor.undo_history.push(HistoryEntry {
+                    edits: vec![edit],
+                    selection,
+                    timestamp: std::time::Instant::now(),
+                    kind: crate::components::UndoCaptureKind::NonCoalescible,
+                });
+                editor.redo_history.clear();
+                editor.clear_cross_block_selection(cx);
+                editor.rebuild_document_from_buffer(cx);
+                editor.close_file_history(cx);
+                editor.mark_dirty_written_back(cx);
+                editor.pending_focus = editor.first_focusable_entity_id(cx);
+                cx.notify();
+            },
+            cx,
+        );
     }
 
-    /// 历史浮层：居中列表面板，行 = UTC 时间戳，Enter/点击恢复。
     pub(crate) fn render_file_history_overlay(
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
-        cx: &mut gpui::Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        use gpui::*;
-        let overlay = self.file_history_overlay.as_ref()?;
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
-        let selected = overlay.selected;
-        let versions = overlay.versions.clone();
-        if versions.is_empty() {
-            return Some(
-                div()
-                    .id("file-history-overlay")
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .occlude()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(c.dialog_backdrop)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|editor, _: &MouseDownEvent, _window, cx| {
-                        editor.close_file_history(cx);
-                    }))
-                    .child(
-                        div()
-                            .w(px(d.dialog_width))
-                            .p(px(d.dialog_padding))
-                            .rounded(px(d.dialog_radius))
-                            .bg(c.dialog_surface)
-                            .border(px(d.dialog_border_width))
-                            .border_color(c.dialog_border)
-                            .text_color(c.dialog_muted)
-                            .child(strings.file_history_empty.clone()),
-                    )
-                    .into_any_element(),
-            );
-        }
-
-        let mut rows = Vec::new();
-        for (index, version) in versions.iter().enumerate() {
-            let label = version
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .and_then(file_history_version_label)
-                .unwrap_or_else(|| version.display().to_string());
-            let restore = cx.listener(move |editor, _: &MouseDownEvent, _window, cx| {
-                editor.restore_file_history_version(index, cx);
+        let overlay = self.file_history_overlay.as_mut()?;
+        if overlay.compared_revision != Some(self.buffer.revision()) {
+            overlay.lines = Arc::new(if overlay.compare {
+                diff::diff_lines(&overlay.preview, &self.buffer.text())
+            } else {
+                diff::diff_lines(&overlay.preview, &overlay.preview)
             });
-            rows.push(
+            overlay.compared_revision = Some(self.buffer.revision());
+        }
+        let selected = overlay.selected;
+        let compare = overlay.compare;
+        let empty = overlay.versions.is_empty();
+        let lines = overlay.lines.clone();
+        let colors = theme.colors.clone();
+        let rows = overlay
+            .versions
+            .iter()
+            .enumerate()
+            .map(|(index, version)| {
+                let seconds = version
+                    .timestamp
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let date = format!(
+                    "{}:{:02} UTC",
+                    super::workspace::chrono_like_date_string_public(seconds),
+                    seconds % 60
+                );
+                let source = match version.source {
+                    HistorySource::Automatic => &strings.file_history_automatic,
+                    HistorySource::Manual => &strings.file_history_manual,
+                    HistorySource::Exit => &strings.file_history_exit,
+                    HistorySource::BeforeRestore => &strings.file_history_before_restore,
+                    HistorySource::Baseline => &strings.file_history_baseline,
+                    HistorySource::Legacy => &strings.file_history_legacy,
+                };
                 div()
-                    .id(gpui::ElementId::Name(format!("file-history-entry-{index}").into()))
+                    .id(ElementId::Name(
+                        format!("file-history-entry-{index}").into(),
+                    ))
                     .debug_selector(move || format!("file-history-entry-{index}"))
-                    .h(px(28.0))
-                    .w_full()
-                    .overflow_hidden()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(px(8.0))
-                    .rounded(px(4.0))
+                    .flex_col()
+                    .px_2()
+                    .py_2()
+                    .rounded_sm()
                     .cursor_pointer()
                     .bg(if index == selected {
-                        c.selection
+                        colors.selection
                     } else {
-                        hsla(0.0, 0.0, 0.0, 0.0)
+                        transparent_black()
                     })
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .on_mouse_down(MouseButton::Left, restore)
-                    .child(
-                        div()
-                            .text_size(px(t.ui_text_size(16.0 * 0.92)))
-                            .text_color(c.text_default)
-                            .child(label),
+                    .hover(|this| this.bg(colors.dialog_secondary_button_hover))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |editor, _, _, cx| {
+                            editor.select_file_history_version(index, cx)
+                        }),
                     )
+                    .child(div().child(date))
                     .child(
                         div()
-                            .text_size(px(t.ui_text_size(16.0 * 0.78)))
-                            .text_color(c.dialog_muted)
-                            .child(format!("#{}", index + 1)),
-                    ),
-            );
-        }
-
-        Some(
-            div()
-                .id("file-history-overlay")
-                .debug_selector(|| "file-history-overlay".to_string())
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .occlude()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(c.dialog_backdrop)
-                .on_mouse_down(MouseButton::Left, cx.listener(|editor, _: &MouseDownEvent, _window, cx| {
-                    editor.close_file_history(cx);
-                }))
-                .child(
-                    div()
-                        .w(px(d.dialog_width))
-                        .max_w(relative(1.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(d.dialog_gap))
-                        .p(px(d.dialog_padding))
-                        .rounded(px(d.dialog_radius))
-                        .bg(c.dialog_surface)
-                        .border(px(d.dialog_border_width))
-                        .border_color(c.dialog_border)
-                        .shadow_lg()
-                        .child(
-                            div()
-                                .text_size(px(t.dialog_title_size))
-                                .font_weight(t.dialog_title_weight.to_font_weight())
-                                .text_color(c.dialog_title)
-                                .child(strings.menu_file_history.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(2.0))
-                                .children(rows),
-                        ),
-                )
-                .into_any_element(),
+                            .text_color(colors.dialog_muted)
+                            .text_size(px(12.0))
+                            .child(source.clone()),
+                    )
+            })
+            .collect::<Vec<_>>();
+        let content = uniform_list(
+            "file-history-lines",
+            lines.len().max(1),
+            move |range, _, _| {
+                range
+                    .map(|index| {
+                        let line = lines.get(index);
+                        let (background, sign) = match line.map(|line| line.kind) {
+                            Some(diff::DiffKind::Added) => (hsla(0.33, 0.6, 0.45, 0.16), "+"),
+                            Some(diff::DiffKind::Removed) => (hsla(0.0, 0.7, 0.5, 0.16), "−"),
+                            _ => (transparent_black(), " "),
+                        };
+                        let old = line
+                            .and_then(|line| line.old_line)
+                            .map(|value| value.to_string())
+                            .unwrap_or_default();
+                        let new = line
+                            .and_then(|line| line.new_line)
+                            .map(|value| value.to_string())
+                            .unwrap_or_default();
+                        div()
+                            .flex()
+                            .h(px(22.0))
+                            .items_center()
+                            .bg(background)
+                            .font_family("monospace")
+                            .text_size(px(13.0))
+                            .child(
+                                div()
+                                    .w(px(52.0))
+                                    .flex_shrink_0()
+                                    .text_color(colors.dialog_muted)
+                                    .child(old),
+                            )
+                            .when(compare, |this| {
+                                this.child(
+                                    div()
+                                        .w(px(52.0))
+                                        .flex_shrink_0()
+                                        .text_color(colors.dialog_muted)
+                                        .child(new),
+                                )
+                            })
+                            .child(div().w(px(20.0)).flex_shrink_0().child(sign))
+                            .child(
+                                div().whitespace_nowrap().child(
+                                    line.map(|line| line.text.trim_end_matches('\n').to_string())
+                                        .unwrap_or_default(),
+                                ),
+                            )
+                    })
+                    .collect()
+            },
         )
+        .track_scroll(overlay.scroll.clone())
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+        .flex_1()
+        .min_h(px(0.0))
+        .min_w(px(0.0));
+        let colors = &theme.colors;
+        Some(div().id("file-history-overlay").debug_selector(|| "file-history-overlay".into())
+            .absolute().inset_0().occlude().flex().items_center().justify_center().bg(colors.dialog_backdrop)
+            .on_mouse_down(MouseButton::Left, cx.listener(|editor, _, _, cx| editor.close_file_history(cx)))
+            .child(div().w(relative(0.94)).h(relative(0.86)).max_w(px(1200.0)).min_w(px(0.0)).flex().flex_col().gap_3().p_4()
+                .rounded(px(theme.dimensions.dialog_radius)).bg(colors.dialog_surface).border_1().border_color(colors.dialog_border).shadow_lg()
+                .text_color(colors.text_default).text_size(px(theme.typography.ui_text_size(14.0)))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(div().flex().justify_between().items_center()
+                    .child(div().text_size(px(theme.typography.dialog_title_size)).child(strings.menu_file_history.clone()))
+                    .child(div().id("file-history-close").cursor_pointer().px_2().py_1().child(strings.file_history_close.clone())
+                        .on_mouse_down(MouseButton::Left, cx.listener(|editor, _, _, cx| editor.close_file_history(cx)))))
+                .when(empty, |this| this.child(div().flex_1().child(strings.file_history_empty.clone())))
+                .when(!empty, |this| this.child(div().flex().flex_1().min_h(px(0.0)).gap_3()
+                    .child(div().id("file-history-versions").w(px(205.0)).flex_shrink_0().overflow_y_scroll().children(rows))
+                    .child(div().flex().flex_col().flex_1().min_w(px(0.0)).min_h(px(0.0)).gap_2()
+                        .child(div().flex().gap_2().children([
+                            (false, "file-history-preview", strings.file_history_preview.clone()),
+                            (true, "file-history-compare", strings.file_history_compare.clone()),
+                        ].into_iter().map(|(mode, id, label)| div().id(id).debug_selector(move || id.into())
+                            .px_3().py_1().rounded_sm().cursor_pointer().bg(if compare == mode { colors.selection } else { colors.dialog_surface })
+                            .child(label).on_mouse_down(MouseButton::Left, cx.listener(move |editor, _, _, cx| {
+                                if let Some(overlay) = editor.file_history_overlay.as_mut() {
+                                    overlay.compare = mode; overlay.compared_revision = None; overlay.scroll = UniformListScrollHandle::new();
+                                    cx.notify();
+                                }
+                            })))))
+                        .child(content))))
+                .when(!empty, |this| this.child(div().flex().justify_end().child(div().id("file-history-restore").debug_selector(|| "file-history-restore".into())
+                    .px_3().py_2().rounded_sm().cursor_pointer().bg(colors.dialog_primary_button_bg).text_color(colors.dialog_primary_button_text)
+                    .child(strings.file_history_restore.clone())
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |editor, _, _, cx| editor.restore_file_history_version(selected, cx)))))))
+            .into_any_element())
     }
-}
 
-use crate::components::FileHistory;
-
-impl Editor {
-    /// 菜单/命令面板入口：打开当前文档的历史浮层。
     pub(crate) fn on_file_history_action(
         &mut self,
-        _: &FileHistory,
+        _: &crate::components::FileHistory,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {

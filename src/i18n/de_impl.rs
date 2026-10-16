@@ -135,6 +135,54 @@ impl I18nStringsDe {
             file_history_empty: self
                 .file_history_empty
                 .unwrap_or(defaults.file_history_empty),
+            preferences_history_interval: self
+                .preferences_history_interval
+                .unwrap_or(defaults.preferences_history_interval),
+            preferences_history_count: self
+                .preferences_history_count
+                .unwrap_or(defaults.preferences_history_count),
+            preferences_history_days: self
+                .preferences_history_days
+                .unwrap_or(defaults.preferences_history_days),
+            file_history_preview: self
+                .file_history_preview
+                .unwrap_or(defaults.file_history_preview),
+            file_history_compare: self
+                .file_history_compare
+                .unwrap_or(defaults.file_history_compare),
+            file_history_restore: self
+                .file_history_restore
+                .unwrap_or(defaults.file_history_restore),
+            file_history_confirm_title: self
+                .file_history_confirm_title
+                .unwrap_or(defaults.file_history_confirm_title),
+            file_history_confirm_detail: self
+                .file_history_confirm_detail
+                .unwrap_or(defaults.file_history_confirm_detail),
+            file_history_confirm: self
+                .file_history_confirm
+                .unwrap_or(defaults.file_history_confirm),
+            file_history_close: self
+                .file_history_close
+                .unwrap_or(defaults.file_history_close),
+            file_history_automatic: self
+                .file_history_automatic
+                .unwrap_or(defaults.file_history_automatic),
+            file_history_manual: self
+                .file_history_manual
+                .unwrap_or(defaults.file_history_manual),
+            file_history_exit: self
+                .file_history_exit
+                .unwrap_or(defaults.file_history_exit),
+            file_history_before_restore: self
+                .file_history_before_restore
+                .unwrap_or(defaults.file_history_before_restore),
+            file_history_baseline: self
+                .file_history_baseline
+                .unwrap_or(defaults.file_history_baseline),
+            file_history_legacy: self
+                .file_history_legacy
+                .unwrap_or(defaults.file_history_legacy),
             menu_quit: self.menu_quit.unwrap_or(defaults.menu_quit),
             menu_export_html: self.menu_export_html.unwrap_or(defaults.menu_export_html),
             menu_export_pdf: self.menu_export_pdf.unwrap_or(defaults.menu_export_pdf),

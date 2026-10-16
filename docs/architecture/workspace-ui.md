@@ -122,6 +122,10 @@
 - `config.toml`：启动/语言/主题/导出/快捷键/editor 段。**运行时镜像是 `EditorSettings` Global**（渲染路径零磁盘 IO）；setter 同时更新全局与持久化。窗口 frame 存取也在这里。
 - `session.json`：根、标签、活动标签、侧栏宽度、侧栏页签与开关（**页签键是落盘契约，不许改文案**）。结构性标签变化时后台写，带全局锁。
 - `recovery/*.json`：恢复快照（id、来源路径、内容），原子写；autosave 周期落盘脏标签。
+- `history/<路径哈希>/<纳秒>.md`：保存原始编码字节，配套 `.json` 记录时间与来源；兼容没有元数据的旧快照。`config/file_history.rs` 统一去重和清理，默认自动快照间隔 5 分钟、最多 30 条、保留 7 天；`config.toml [file_history]` 与偏好设置同步这三项。间隔只限制自动保存产生的新快照，手动保存、退出保存、恢复前检查点可立即记录，全部版本共用保留上限。读写历史时清理到期和超额版本。
+- 保存入口统一调用 `Editor::record_saved_history`，使用实际写盘字节；`StagedDocumentWrite::prepare` 首次覆盖前保留原始磁盘内容。自动保存、关闭标签、切换工作区、批量退出、工作区替换均接入。未命名文档仍通过恢复快照保护，首次保存后具有文件历史。
+- `editor/file_history.rs`：版本选择只刷新只读预览，差异视图对比历史与当前缓冲区，按修订号刷新并虚拟化行。恢复需应用内模态确认，默认取消；先读目标，再备份当前字节，然后通过 `TextBuffer::edit` 整篇替换并重建投影，保留既有撤销链和当前文件形状。确认时检查文档身份，读取或备份失败不替换正文。
+
 - **主题**（`src/theme/`）：`Theme = { name, colors, dimensions, typography, placeholders }`，serde 带 fallback 合并（旧字段缺失不炸）。内置主题 + `system`（跟随窗口外观）。`ThemeManager` Global 启动时从主题目录加载自定义主题，`current_arc()` 给渲染热路径 O(1) 拿 Arc。`Editor::render` 每帧 clone 一次并应用字体偏好与缩放（缩放是整套字号乘系数）；派生主题共享，只在度量输入变化时失效。token 全表见 [../theme-tokens.md](../theme-tokens.md)。
 - **i18n**（`src/i18n/`）：`I18nStrings` 是**代码不是数据文件**——结构体字段 + `zh_cn()` + `en_us()` 三处都要登记（漏一处编译或解析出错）；外部 JSON(C) 语言包从语言目录加载并 fallback 补全（支持剥注释）。`I18nManager` Global 提供 `strings()` / `strings_arc()`。菜单文案走 `CommandSpec.label` 闭包。
 

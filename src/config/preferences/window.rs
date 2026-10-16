@@ -50,6 +50,8 @@ pub(crate) struct PreferencesWindow {
     pub(super) sidebar_open_dropdown_open: bool,
     pub(super) sidebar_panel: SidebarPanelPreference,
     pub(super) sidebar_panel_dropdown_open: bool,
+    pub(super) file_history: HistoryPolicy,
+    saved_file_history: HistoryPolicy,
     pub(super) autosave_debounce_ms: u64,
     pub(super) autosave: bool,
     pub(super) remember_window_bounds: bool,
@@ -151,6 +153,8 @@ impl PreferencesWindow {
             sidebar_open_dropdown_open: false,
             sidebar_panel,
             sidebar_panel_dropdown_open: false,
+            file_history: preferences.file_history,
+            saved_file_history: preferences.file_history,
             autosave_debounce_ms,
             autosave,
             remember_window_bounds,
@@ -247,6 +251,7 @@ impl PreferencesWindow {
             || self.tree_sort != self.saved_tree_sort
             || self.sidebar_open != self.saved_sidebar_open
             || self.sidebar_panel != self.saved_sidebar_panel
+            || self.file_history != self.saved_file_history
             || self.autosave_debounce_ms != self.saved_autosave_debounce_ms
             || self.autosave != self.saved_autosave
             || self.remember_window_bounds != self.saved_remember_window_bounds
@@ -531,6 +536,7 @@ impl PreferencesWindow {
             self.sidebar_open,
             self.sidebar_panel,
             self.autosave_debounce_ms,
+            self.file_history,
             self.remember_window_bounds,
             self.window_open_position,
             self.smart_punctuation,
@@ -561,6 +567,7 @@ impl PreferencesWindow {
         EditorSettings::set_sidebar_open_on_startup(cx, self.sidebar_open);
         EditorSettings::set_sidebar_panel_on_startup(cx, self.sidebar_panel);
         EditorSettings::set_autosave_debounce_ms(cx, self.autosave_debounce_ms);
+        EditorSettings::set_file_history_in_memory(cx, preferences.file_history);
         EditorSettings::set_smart_punctuation(cx, self.smart_punctuation);
         EditorSettings::set_autosave(cx, self.autosave);
         EditorSettings::set_zoom_percent(cx, self.zoom_percent);
@@ -623,6 +630,7 @@ impl PreferencesWindow {
         self.saved_tree_sort = self.tree_sort;
         self.saved_sidebar_open = self.sidebar_open;
         self.saved_sidebar_panel = self.sidebar_panel;
+        self.saved_file_history = self.file_history;
         self.saved_autosave_debounce_ms = self.autosave_debounce_ms;
         self.saved_autosave = self.autosave;
         self.saved_check_updates_on_startup = self.check_updates_on_startup;

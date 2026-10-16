@@ -320,6 +320,7 @@ impl Editor {
                 Ok(()) => {
                     let version = crate::editor::persistence::file_content_version(&tab.markdown);
                     self.mark_workspace_document_saved(&tab.path, version, &tab.markdown);
+                    if !self.record_saved_history(&tab.path, &bytes, crate::config::file_history::HistorySource::Exit, cx) { return false; }
                     if let Err(error) = crate::config::remove_recovery_snapshot(tab.recovery_id) {
                         eprintln!("无法移除已保存标签的恢复快照：{error}");
                     }

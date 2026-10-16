@@ -753,6 +753,7 @@ impl Editor {
             };
             match crate::editor::persistence::write_atomic(&path, &bytes) {
                 Ok(()) => {
+                    self.record_saved_history(&path, &bytes, crate::config::file_history::HistorySource::Manual, cx);
                     total += count_matches_in_source(&source, &matcher);
                     if let Some(index) = open_tab_index {
                         let tab = &mut self.workspace.open_documents[index];

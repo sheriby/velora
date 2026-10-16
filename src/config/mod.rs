@@ -11,6 +11,7 @@ use serde_json::{Map, Value};
 pub(crate) mod preferences;
 mod recovery;
 mod session;
+pub(crate) mod file_history;
 
 pub(crate) use preferences::{
     DeletePolicy, EditorSettings, ExportThemePreference, ExternalChangePolicy, ImagePasteBehavior,
@@ -220,76 +221,22 @@ impl VeloraConfigDirs {
     }
 }
 
-/// 文件本地历史的存储约定：`<配置根>/history/<路径哈希>/<毫秒时间戳>.md`。
-/// 每文件保留最近 `MAX_VERSIONS_PER_FILE` 条，与最早条目内容相同的保存
-/// 不重复落盘。
 #[cfg(test)]
 pub(crate) fn record_file_history(file: &Path, content: &str) -> std::io::Result<()> {
     record_file_history_bytes(file, content.as_bytes())
 }
 
+#[cfg(test)]
 pub(crate) fn record_file_history_bytes(file: &Path, content: &[u8]) -> std::io::Result<()> {
-    const MAX_VERSIONS_PER_FILE: usize = 20;
-    let Ok(dirs) = VeloraConfigDirs::from_system() else {
-        return Ok(());
-    };
-    let dir = file_history_dir(&dirs, file);
-    std::fs::create_dir_all(&dir)?;
-    if list_file_history(file)
-        .first()
-        .and_then(|newest| std::fs::read(newest).ok())
-        .is_some_and(|existing| existing == content)
-    {
-        return Ok(());
-    }
-    // 纳秒命名：同一毫秒内的连续保存不能互相覆盖。
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let version_path = dir.join(format!("{stamp}.md"));
-    std::fs::write(&version_path, content)?;
-    // 版本文件是文档全文：写完即收 0600，同目录判据只有上面那一条。
-    #[cfg(unix)]
-    restrict_config_file_to_owner(&version_path)?;
-    // 按时间戳升序保留最新的 N 条。
-    let mut versions = list_file_history_asc(file);
-    while versions.len() > MAX_VERSIONS_PER_FILE {
-        let oldest = versions.remove(0);
-        let _ = std::fs::remove_file(oldest);
-    }
-    Ok(())
+    file_history::record_snapshot_at(file, content, file_history::HistorySource::Manual, file_history::HistoryPolicy::default(), std::time::SystemTime::now())
 }
 
-fn file_history_dir(dirs: &VeloraConfigDirs, file: &Path) -> PathBuf {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    file.hash(&mut hasher);
-    dirs.history_root().join(format!("{:016x}", hasher.finish()))
-}
-
-/// 某文件的版本列表，最新在前。
+#[cfg(test)]
 pub(crate) fn list_file_history(file: &Path) -> Vec<PathBuf> {
-    let mut versions = list_file_history_asc(file);
-    versions.reverse();
-    versions
-}
-
-fn list_file_history_asc(file: &Path) -> Vec<PathBuf> {
-    let Ok(dirs) = VeloraConfigDirs::from_system() else {
-        return Vec::new();
-    };
-    let dir = file_history_dir(&dirs, file);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut versions: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
-        .collect();
-    versions.sort();
-    versions
+    match file_history::list_versions(file, file_history::HistoryPolicy::default(), std::time::SystemTime::now()) {
+        Ok(versions) => versions.into_iter().map(|version| version.path).collect(),
+        Err(error) => { eprintln!("读取文件历史失败：{error}"); Vec::new() }
+    }
 }
 
 /// 「导入主题/语言配置」对话框的起始目录：velora 自己的配置子目录。目录不存在就

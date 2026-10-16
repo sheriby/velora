@@ -118,6 +118,23 @@ pub struct I18nStrings {
     pub image_scale: String,
     /// 历史浮层空态（该文件还没有保存版本）。
     pub file_history_empty: String,
+    pub preferences_history_interval: String,
+    pub preferences_history_count: String,
+    pub preferences_history_days: String,
+    pub file_history_preview: String,
+    pub file_history_compare: String,
+    pub file_history_restore: String,
+    pub file_history_confirm_title: String,
+    pub file_history_confirm_detail: String,
+    pub file_history_confirm: String,
+    pub file_history_close: String,
+    pub file_history_automatic: String,
+    pub file_history_manual: String,
+    pub file_history_exit: String,
+    pub file_history_before_restore: String,
+    pub file_history_baseline: String,
+    pub file_history_legacy: String,
+
     /// File menu item for quitting the app.
     pub menu_quit: String,
     /// Export menu item for writing an HTML document.

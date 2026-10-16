@@ -9,6 +9,7 @@ pub(super) use gpui::*;
 pub(super) use serde::{Deserialize, Serialize};
 
 pub(super) use super::{VeloraConfigDirs, read_recent_files};
+pub(crate) use super::file_history::HistoryPolicy;
 pub(super) use crate::components::{
     ShortcutCategory, ShortcutCommand, ShortcutDefinition, install_keybindings,
     normalize_shortcut_config, normalize_shortcut_keys, resolved_shortcut_keys,
@@ -412,6 +413,7 @@ impl Default for UpdatePreferences {
 /// User preferences persisted under the app config directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AppPreferences {
+    pub(crate) file_history: HistoryPolicy,
     pub(crate) updates: UpdatePreferences,
     pub(crate) startup_open: StartupOpenPreference,
     pub(crate) default_language_id: String,
@@ -457,6 +459,7 @@ pub(crate) struct AppPreferences {
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
+            file_history: HistoryPolicy::default(),
             updates: UpdatePreferences::default(),
             startup_open: StartupOpenPreference::NewFile,
             default_language_id: DEFAULT_LANGUAGE_ID.into(),
@@ -520,6 +523,7 @@ impl StatusBarSettings {
 /// render path can read them without touching disk. Toggling persists the new
 /// value back to the preferences file.
 pub struct EditorSettings {
+    file_history: HistoryPolicy,
     updates: UpdatePreferences,
     show_table_headers: bool,
     smart_punctuation: bool,
@@ -649,7 +653,12 @@ impl EditorSettings {
             .unwrap_or_default();
         let updates = cx.try_global::<Self>().map(|settings| settings.updates.clone())
             .or_else(|| stored.as_ref().map(|preferences| preferences.updates.clone())).unwrap_or_default();
+        let file_history = cx.try_global::<Self>()
+            .map(|settings| settings.file_history)
+            .or_else(|| stored.as_ref().map(|preferences| preferences.file_history))
+            .unwrap_or_default();
         cx.set_global(Self {
+            file_history,
             updates,
             show_table_headers,
             smart_punctuation,
@@ -677,6 +686,18 @@ impl EditorSettings {
                 custom_buttons: status_bar.custom_buttons.clone(),
             },
         });
+    }
+
+    pub(crate) fn file_history(cx: &App) -> HistoryPolicy {
+        cx.try_global::<Self>()
+            .map(|settings| settings.file_history)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_file_history_in_memory(cx: &mut App, policy: HistoryPolicy) {
+        if cx.try_global::<Self>().is_some() {
+            cx.update_global::<Self, _>(|settings, _| settings.file_history = policy.normalized());
+        }
     }
 
     pub(crate) fn updates(cx: &App) -> UpdatePreferences {

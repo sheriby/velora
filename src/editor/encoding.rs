@@ -41,6 +41,10 @@ impl LoadedDocument {
     }
 }
 
+pub(super) fn normalize_document_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 /// 读并解码一个文档文件。IO 错误原样上抛（与 read_to_string 同语义）。
 ///
 /// 不能无损写回磁盘的编码返回 [`io::ErrorKind::InvalidData`]，理由是给用户的

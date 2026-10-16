@@ -1,7 +1,7 @@
 use super::super::{Editor, WorkspaceOpenMode, WorkspaceSearchScope};
 use crate::components::Block;
 use gpui::{
-    AppContext, EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
+    EntityInputHandler, Modifiers, ScrollDelta, ScrollWheelEvent,
     TestAppContext, TouchPhase, point, px,
 };
 use std::fs;
@@ -530,12 +530,16 @@ async fn review_history_restore_decodes_utf16_snapshots(cx: &mut TestAppContext)
     init_review_workspace_app(cx);
     let root = review_workspace_fixture(cx, "history-utf16");
     let path = root.join("notes.md"); fs::write(&path, utf16_le_with_bom("新\r\n")).unwrap();
-    let version = root.join("version.md"); fs::write(&version, utf16_le_with_bom("旧\r\n")).unwrap();
-    let editor = cx.new(|cx| Editor::from_markdown(cx, "新\n".into(), Some(path.clone())));
+    let _config_guard = crate::config::override_test_config_root(root.join("config"));
+    crate::config::record_file_history_bytes(&path, &utf16_le_with_bom("旧\r\n")).unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "新\n".into(), Some(path.clone())));
     editor.update(cx, |editor, cx| {
         editor.attach_file_origin(fs::read(&path).unwrap());
-        editor.file_history_overlay = Some(crate::editor::file_history::FileHistoryOverlay { versions: vec![version], selected: 0 });
+        editor.open_file_history(cx);
         editor.restore_file_history_version(0, cx);
+    });
+    editor.update_in(cx, |editor, window, cx| editor.dismiss_modal(0, window, cx));
+    editor.read_with(cx, |editor, _| {
         assert_eq!(editor.buffer.text(), "旧\n");
         assert_eq!(editor.buffer.file_bytes(), utf16_le_with_bom("旧\r\n"));
     });
@@ -2102,4 +2106,21 @@ async fn switching_source_tabs_restores_the_first_frame_without_followup_scrolli
         cx.executor().advance_clock(Duration::from_millis(16));
         cx.run_until_parked();
     }
+}
+
+#[gpui::test]
+fn history_workspace_replace_records_a_checkpoint_and_original_disk_bytes(cx: &mut TestAppContext) {
+    init_review_workspace_app(cx);
+    let root = review_workspace_fixture(cx, "history-replace");
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    let path = root.join("other.md"); fs::write(&path, "替换前\r\n").expect("其他文件");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.workspace.files_on_disk = vec![path.clone()];
+        editor.workspace.search_query = "前".into(); editor.workspace.replace_query = "后".into();
+        assert_eq!(editor.replace_all_workspace_matches(window, cx), 1);
+    });
+    let versions = crate::config::file_history::list_versions(&path, Default::default(), std::time::SystemTime::now()).expect("历史");
+    assert!(versions.iter().any(|version| std::fs::read(&version.path).expect("版本") == "替换前\r\n".as_bytes()));
+    assert!(versions.iter().any(|version| version.source == crate::config::file_history::HistorySource::Manual && std::fs::read(&version.path).expect("检查点") == "替换后\r\n".as_bytes()));
 }
