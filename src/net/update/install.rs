@@ -22,12 +22,49 @@ pub(crate) struct InstallPlan {
     pub(crate) error_path: PathBuf,
 }
 
+pub(crate) fn ensure_no_other_instances() -> anyhow::Result<()> {
+    // GPUI 的窗口列表只覆盖当前进程，另一次启动的工作区会继续占用安装目标。
+    let executable = std::env::current_exe()?;
+    let executable_name = executable
+        .file_name()
+        .context("无法确定 Velora 程序名")?
+        .to_string_lossy();
+    let current_process = sysinfo::Pid::from_u32(std::process::id());
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
+    ensure!(
+        system.process(current_process).is_some(),
+        "无法检查其他 Velora 实例，已停止更新。请关闭其他 Velora 窗口后重试。"
+    );
+    let other_instances = system
+        .processes()
+        .values()
+        .filter(|process| {
+            process.pid() != current_process
+                && (process.exe() == Some(executable.as_path())
+                    || process
+                        .name()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(&executable_name))
+        })
+        .count();
+    ensure!(
+        other_instances == 0,
+        "还有 {other_instances} 个 Velora 工作区程序在运行。请先保存并关闭其他 Velora 窗口，再重试更新。本次更新已停止，当前窗口不会退出。"
+    );
+    Ok(())
+}
+
 pub(crate) fn prepare_install(
     package: &UpdatePackage,
     package_path: &Path,
     launch_args: Vec<String>,
 ) -> anyhow::Result<InstallPlan> {
     ensure!(package_path.is_file(), "更新安装包不存在");
+    ensure_no_other_instances()?;
     let previous_executable = std::env::current_exe()?;
     let install_dir = match package.platform {
         UpdatePlatform::MacOsArm64 | UpdatePlatform::MacOsX64 => PathBuf::from("/Applications"),
@@ -68,9 +105,21 @@ pub(crate) fn prepare_install(
 }
 
 pub(crate) fn launch_install_helper(plan: &InstallPlan) -> anyhow::Result<()> {
+    install_helper_command(plan)?
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("无法启动更新安装程序")?;
+    Ok(())
+}
+
+fn install_helper_command(plan: &InstallPlan) -> anyhow::Result<Command> {
+    // 下载和保存期间可能又打开了其他工作区，退出前必须重新检查占用。
+    ensure_no_other_instances()?;
     let directory = plan.package_path.parent().context("安装包目录不存在")?;
     ensure!(plan.package_path.is_file(), "更新安装包不存在");
-    let mut command = match plan.platform {
+    let command = match plan.platform {
         UpdatePlatform::MacOsArm64 | UpdatePlatform::MacOsX64 => {
             ensure!(cfg!(target_os = "macos"), "当前系统不能安装 macOS 更新");
             let script = directory.join("install-update.sh");
@@ -118,13 +167,7 @@ pub(crate) fn launch_install_helper(plan: &InstallPlan) -> anyhow::Result<()> {
             command
         }
     };
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("无法启动更新安装程序")?;
-    Ok(())
+    Ok(command)
 }
 
 pub(crate) fn take_install_error() -> anyhow::Result<Option<String>> {
@@ -217,6 +260,95 @@ try {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn update_instance_probe() {
+        let Some(directory) = std::env::var_os("VELORA_UPDATE_INSTANCE_PROBE") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        fs::write(directory.join("ready"), b"").expect("实例已启动");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !directory.join("stop").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn another_running_instance_blocks_update_before_the_current_workspace_exits() {
+        struct Probe(std::process::Child);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                if matches!(self.0.try_wait(), Ok(Some(_))) {
+                    return;
+                }
+                if let Err(error) = self.0.kill() {
+                    eprintln!("结束测试实例：{error}");
+                }
+                if let Err(error) = self.0.wait() {
+                    eprintln!("等待测试实例结束：{error}");
+                }
+            }
+        }
+        let directory = std::env::temp_dir()
+            .join(format!("velora-update-instance-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory).expect("测试目录");
+        let _config = crate::config::override_test_config_root(directory.join("config"));
+        let package_path = directory.join("package");
+        fs::write(&package_path, b"fixture").expect("测试安装包");
+        let package = super::super::UpdatePackage {
+            name: "package".into(),
+            url: String::new(),
+            size: 7,
+            digest: None,
+            platform: UpdatePlatform::current().expect("支持的系统"),
+        };
+        let plan = prepare_install(&package, &package_path, Vec::new()).expect("单实例允许更新");
+        let mut probe = Probe(
+            Command::new(std::env::current_exe().expect("测试程序"))
+                .args(["--exact", "net::update::install::tests::update_instance_probe"])
+                .env("VELORA_UPDATE_INSTANCE_PROBE", &directory)
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("启动另一个工作区进程"),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !directory.join("ready").exists() && std::time::Instant::now() < deadline {
+            assert!(
+                probe.0.try_wait().expect("实例状态").is_none(),
+                "测试实例提前退出"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(directory.join("ready").is_file(), "测试实例未就绪");
+        let result = prepare_install(&package, &package_path, Vec::new());
+        assert!(
+            result.is_err(),
+            "还有另一个工作区进程时，不应允许当前工作区退出并安装"
+        );
+        let detail = result.expect_err("更新应被阻止").to_string();
+        assert!(
+            detail.contains("Velora") && detail.contains("关闭"),
+            "应明确提示关闭其他工作区：{detail}"
+        );
+        assert!(
+            install_helper_command(&plan).is_err(),
+            "生成安装计划后又打开的实例，也必须阻止安装辅助程序启动"
+        );
+        assert!(!directory.join("install-update.sh").exists());
+        assert!(!directory.join("install-update.ps1").exists());
+        assert!(
+            probe.0.try_wait().expect("实例状态").is_none(),
+            "不得强杀其他工作区"
+        );
+        fs::write(directory.join("stop"), b"").expect("请求测试实例退出");
+        assert!(probe.0.wait().expect("实例退出").success());
+        assert!(
+            prepare_install(&package, &package_path, Vec::new()).is_ok(),
+            "其他实例退出后应能重新更新"
+        );
+        fs::remove_dir_all(directory).expect("清理测试目录");
+    }
+
     #[test]
     fn installer_helpers_wait_for_exit_and_use_installer_arguments_as_data() {
         assert!(MACOS_HELPER.contains("while /bin/kill -0"));

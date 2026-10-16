@@ -319,6 +319,10 @@ impl Editor {
             self.show_update_failure("缺少当前系统的安装包", cx);
             return;
         };
+        if let Err(error) = update_check::ensure_no_other_instances() {
+            self.show_update_failure(&error.to_string(), cx);
+            return;
+        }
         cx.update_global::<UpdateSession, _>(|session, _| session.download_active = true);
         let progress = Arc::new(AtomicU64::new(0));
         let cancelled = Arc::new(AtomicBool::new(false));

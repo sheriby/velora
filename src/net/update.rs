@@ -18,7 +18,9 @@ const RELEASES_API_URL: &str = "https://api.github.com/repos/sheriby/velora/rele
 const MAX_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
 
 mod install;
-pub(crate) use install::{InstallPlan, launch_install_helper, prepare_install, take_install_error};
+pub(crate) use install::{
+    InstallPlan, ensure_no_other_instances, launch_install_helper, prepare_install, take_install_error,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UpdateSource {
