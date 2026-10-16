@@ -5,7 +5,7 @@ mod tests {
         recent_menu_entries,
     };
     use crate::components::{
-        AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, NewWindow, NoRecentFiles,
+        AddLanguageConfig, AddThemeConfig, CheckForUpdates, CloseWindow, NewDocument, NoRecentFiles,
         OpenFile, OpenPreferences, OpenRecentFile, QuitApplication, SaveDocument, SelectLanguage,
         SelectTheme, ShowAbout,
     };
@@ -225,14 +225,14 @@ mod tests {
 
         // 菜单项一律按命令 id 找：平台差异只体现在「命令落在哪个菜单」，
         // 不再写成 menus[1] / menus[0] 这种下标算术（下标会随注册表增删漂移）。
-        let file_menu = command_menu(&menus, "new_window");
+        let file_menu = command_menu(&menus, "new_document");
         assert_eq!(file_menu.name.to_string(), "File");
 
-        // New Window 领文件菜单，关闭标签页与关闭窗口紧跟其后。
-        assert_eq!(command_slot(file_menu, "new_window"), 0);
+        // 新建文档领文件菜单，关闭标签页与关闭窗口紧跟其后。
+        assert_eq!(command_slot(file_menu, "new_document"), 0);
         assert_eq!(command_slot(file_menu, "close_tab"), 1);
         assert_eq!(command_slot(file_menu, "close_window"), 2);
-        assert_eq!(command_label(file_menu, "new_window"), "New Window");
+        assert_eq!(command_label(file_menu, "new_document"), "New Document");
         assert_eq!(command_label(file_menu, "close_tab"), "Close Tab");
         assert_eq!(command_label(file_menu, "close_window"), "Close Window");
 
@@ -314,7 +314,7 @@ mod tests {
 
         // 菜单项一律按命令 id 找：平台差异只体现在「命令落在哪个菜单」，
         // 不再写成 menus[1] / menus[0] 这种下标算术（下标会随注册表增删漂移）。
-        let file_menu = command_menu(&menus, "new_window");
+        let file_menu = command_menu(&menus, "new_document");
         assert_eq!(file_menu.name.to_string(), "文件");
 
         assert_eq!(
@@ -346,10 +346,10 @@ mod tests {
             vec!["文件", "导出", "语言", "主题", "视图", "帮助"]
         );
 
-        assert_eq!(command_slot(file_menu, "new_window"), 0);
+        assert_eq!(command_slot(file_menu, "new_document"), 0);
         assert_eq!(command_slot(file_menu, "close_tab"), 1);
         assert_eq!(command_slot(file_menu, "close_window"), 2);
-        assert_eq!(command_label(file_menu, "new_window"), "新建窗口");
+        assert_eq!(command_label(file_menu, "new_document"), "新建文档");
         assert_eq!(command_label(file_menu, "close_tab"), "关闭标签页");
         assert_eq!(command_label(file_menu, "close_window"), "关闭窗口");
 
@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn fallback_menu_routes_window_context_actions_without_app_defer() {
-        assert!(crate::app_menu::is_window_context_menu_action(&NewWindow));
+        assert!(crate::app_menu::is_window_context_menu_action(&NewDocument));
         assert!(crate::app_menu::is_window_context_menu_action(&OpenFile));
         assert!(crate::app_menu::is_window_context_menu_action(&OpenPreferences));
         assert!(crate::app_menu::is_window_context_menu_action(&OpenRecentFile {

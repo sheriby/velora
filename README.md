@@ -9,7 +9,6 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 ## 🖼️ Screenshots
 
 *WYSIWYG editing: inline styles, tables, code highlighting and LaTeX, with tabs merged into the title bar.*
-
 ![Live WYSIWYG Markdown editing: inline styles, tables, code highlighting and LaTeX](assets/screenshots/editor.png)
 
 *The workspace: file tree and multiple tabs, with frontmatter rendered as a property card, collapsible headings and syntax-highlighted code blocks.*
@@ -93,7 +92,7 @@ macOS keys shown; Ctrl-based equivalents work on other platforms. Shortcuts are 
 | `⌘+` / `⌘−` / `⌘0` | Zoom in / out / reset |
 | `⌃⌘F` / `F11` | Toggle fullscreen |
 | `⌃W` | Toggle sidebar |
-| `⌘N` / `⌘O` | New window / open file |
+| `⌘N` / `⌘O` | New document / open file |
 
 ## 🚀 Building from source
 
@@ -141,16 +140,16 @@ The main `config.toml` sections:
 
 ## 🙏 Acknowledgements
 
-- **[Zed](https://github.com/zed-industries/zed)**: The GPUI framework behind Velora's native, GPU-rendered interface.
-- **[Velotype](https://github.com/manyougz/velotype)**: Reference for the editor's early implementation.
-- **[Merman](https://github.com/Latias94/merman)**: Native Mermaid parsing, layout and SVG rendering.
-- **[RaTeX](https://github.com/erweixin/RaTeX)**: LaTeX math parsing, layout and SVG rendering.
-- **[Tree-sitter](https://github.com/tree-sitter/tree-sitter)**: Language parsers and syntax highlighting.
-- **[ripgrep](https://github.com/BurntSushi/ripgrep)**: In-process search and file traversal through its `grep-*` and `ignore` crates.
-- **[pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark)**: Markdown parsing for HTML export.
-- **[htmd](https://github.com/letmutex/htmd)**: HTML-to-Markdown conversion for rich-text paste.
-- **[resvg](https://github.com/linebender/resvg)**: SVG rasterization in GPUI.
-- **[chromiumoxide](https://github.com/mattsse/chromiumoxide)**: Chromium automation for PDF and PNG export and printing.
+- [**Zed**](https://github.com/zed-industries/zed): The GPUI framework behind Velora's native, GPU-rendered interface.
+- [**Velotype**](https://github.com/manyougz/velotype): Reference for the editor's early implementation.
+- [**Merman**](https://github.com/Latias94/merman): Native Mermaid parsing, layout and SVG rendering.
+- [**RaTeX**](https://github.com/erweixin/RaTeX): LaTeX math parsing, layout and SVG rendering.
+- [**Tree-sitter**](https://github.com/tree-sitter/tree-sitter): Language parsers and syntax highlighting.
+- [**ripgrep**](https://github.com/BurntSushi/ripgrep): In-process search and file traversal through its `grep-*` and `ignore` crates.
+- [**pulldown-cmark**](https://github.com/pulldown-cmark/pulldown-cmark): Markdown parsing for HTML export.
+- [**htmd**](https://github.com/letmutex/htmd): HTML-to-Markdown conversion for rich-text paste.
+- [**resvg**](https://github.com/linebender/resvg): SVG rasterization in GPUI.
+- [**chromiumoxide**](https://github.com/mattsse/chromiumoxide): Chromium automation for PDF and PNG export and printing.
 
 ## 📄 License
 

@@ -269,14 +269,10 @@ impl Editor {
     pub(crate) fn on_welcome_new_document(
         &mut self,
         _: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_welcome = false;
-        self.replace_document_from_markdown(String::new(), None, cx);
-        self.pending_focus = self.first_focusable_entity_id(cx);
-        self.active_entity_id = self.pending_focus;
-        cx.notify();
+        self.new_workspace_document(window, cx);
     }
 
     /// In-app dialog asking whether a picked folder should replace this

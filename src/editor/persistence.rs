@@ -278,7 +278,7 @@ impl Editor {
             || self.autosave_task.is_some()
             || self.has_external_autosave_conflict()
             || self.has_marked_document_text(cx)
-            || (!self.document_dirty && !self.has_dirty_workspace_documents() && !self.has_dirty_split_documents(cx))
+            || (!self.document_dirty && !self.has_dirty_workspace_documents() && !self.has_dirty_split_documents(cx) && !self.has_untitled_documents(cx))
         {
             return;
         }
@@ -314,7 +314,7 @@ impl Editor {
                                 bytes: document.bytes,
                             })
                             .collect::<Vec<_>>();
-                        if editor.document_dirty && editor.file_path.is_none() {
+                        if editor.document_dirty && editor.file_path.is_none() && editor.active_document_path().is_none() {
                             documents.push(PendingAutosaveDocument {
                                 recovery: crate::config::RecoverySnapshot {
                                     id: editor.recovery_id,
@@ -327,7 +327,7 @@ impl Editor {
                                 bytes: None,
                             });
                         }
-                        documents.extend(editor.split_untitled_recoveries(cx).into_iter().map(|recovery| PendingAutosaveDocument {
+                        documents.extend(editor.untitled_recovery_snapshots(cx).into_iter().map(|recovery| PendingAutosaveDocument {
                             recovery, path: None, write_file: false, file_version: None, bytes: None,
                         }));
                         if documents.is_empty() {
@@ -425,11 +425,12 @@ impl Editor {
 
                         if editor.document_revision != revision {
                             for document in &documents {
-                                if !editor.workspace_save_document_is_open(document.recovery.id, document.path.as_deref())
-                                    && !editor.split_groups().iter().any(|group| {
-                                        let group = group.read(cx);
-                                        group.file_path.is_none() && group.recovery_id == document.recovery.id
-                                    })
+                                let is_open = if document.path.is_none() {
+                                    editor.is_untitled_recovery_open(document.recovery.id, cx)
+                                } else {
+                                    editor.workspace_save_document_is_open(document.recovery.id, document.path.as_deref())
+                                };
+                                if !is_open
                                     && let Err(error) = crate::config::remove_recovery_snapshot(document.recovery.id)
                                 {
                                     eprintln!("无法清理已关闭文档的恢复快照：{error}");
@@ -452,6 +453,11 @@ impl Editor {
                             hook(editor, cx);
                         }
                         for (document, staged) in documents.iter().zip(prepared) {
+                            if document.path.is_none() && !editor.is_untitled_recovery_open(document.recovery.id, cx) {
+                                if let Err(error) = crate::config::remove_recovery_snapshot(document.recovery.id) {
+                                    eprintln!("清理已关闭草稿的异步快照失败：{error}");
+                                }
+                            }
                             let (Some(path), Some(staged)) =
                                 (document.path.as_ref(), staged)
                             else {
@@ -886,6 +892,9 @@ impl Editor {
             let mut path = match prompt.await {
                 Ok(Ok(Some(path))) => path,
                 Ok(Ok(None)) | Err(_) => {
+                    if let Err(error) = weak_editor_for_cancel.update(cx, |editor, _| editor.pending_tab_close_after_save.clear()) {
+                        eprintln!("取消草稿标签关闭失败：{error}");
+                    }
                     if should_close_after_save {
                         let _ = weak_editor_for_cancel
                             .update(cx, |this, cx| this.abort_pending_close_after_save(cx));
@@ -893,6 +902,9 @@ impl Editor {
                     return;
                 }
                 Ok(Err(err)) => {
+                    if let Err(error) = weak_editor_for_error.update(cx, |editor, _| editor.pending_tab_close_after_save.clear()) {
+                        eprintln!("取消草稿标签关闭失败：{error}");
+                    }
                     if should_close_after_save {
                         let _ = weak_editor_for_error
                             .update(cx, |this, cx| this.abort_pending_close_after_save(cx));
@@ -915,6 +927,9 @@ impl Editor {
                 this.complete_save_request(path, identity, saved_text, markdown, cx)
             }).and_then(|result| result);
             if let Err(err) = result {
+                if let Err(error) = weak_editor_for_write_error.update(cx, |editor, _| editor.pending_tab_close_after_save.clear()) {
+                    eprintln!("取消草稿标签关闭失败：{error}");
+                }
                 if should_close_after_save
                     && let Err(error) = weak_editor_for_write_error
                         .update(cx, |this, cx| this.abort_pending_close_after_save(cx))
@@ -935,6 +950,11 @@ impl Editor {
                 window_handle,
                 move |_view: AnyView, window: &mut Window, cx: &mut App| {
                     window.set_window_edited(false);
+                    match weak_editor_for_close.update(cx, |editor, cx| editor.finish_pending_tab_close(window, cx)) {
+                        Ok(true) => return,
+                        Ok(false) => {}
+                        Err(error) => { eprintln!("保存草稿后关闭标签失败：{error}"); return; }
+                    }
                     if should_close_after_save {
                         if let Some(parent) = split_parent {
                             if let Err(error) = parent.update(cx, |editor, cx| editor.save_dirty_workspace_documents_and_close(window, cx)) {

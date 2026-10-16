@@ -21,6 +21,16 @@ pub(super) use crate::theme::{Theme, ThemeManager};
 
 pub(crate) mod split;
 
+/// 未命名文档使用稳定的标签身份，不能把它当作可读写的磁盘路径。
+pub(crate) fn untitled_document_id(path: &Path) -> Option<uuid::Uuid> {
+    let (identity, _) = path.to_str()?.strip_prefix("untitled:")?.split_once('/')?;
+    uuid::Uuid::parse_str(identity).ok()
+}
+
+pub(crate) fn untitled_document_path(id: uuid::Uuid, number: usize) -> PathBuf {
+    PathBuf::from(format!("untitled:{id}/Untitled-{number}"))
+}
+
 const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 const ACTIVITY_FILES_ICON: &str = "icon/workspace/activity-files.svg";
 const ACTIVITY_SEARCH_ICON: &str = "icon/workspace/activity-search.svg";

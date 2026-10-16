@@ -221,7 +221,7 @@ impl Editor {
                 eprintln!("failed to remove discarded tab recovery snapshot: {error}");
             }
         }
-        for snapshot in self.split_untitled_recoveries(cx) {
+        for snapshot in self.untitled_recovery_snapshots(cx) {
             if let Err(error) = crate::config::remove_recovery_snapshot(snapshot.id) {
                 eprintln!("清理未命名分屏的恢复快照失败：{error}");
             }

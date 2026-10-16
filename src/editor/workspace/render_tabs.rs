@@ -35,40 +35,6 @@ impl Editor {
         self.ensure_current_document_tab(cx);
         let editor = cx.entity().downgrade();
         let c = &theme.colors;
-        if self.split_parent.is_some()
-            && self.file_path.is_none()
-            && !self.show_welcome
-            && self.unsupported_preview_path.is_none()
-            && self.workspace.open_documents.is_empty()
-        {
-            return vec![div()
-                .id("untitled-tab")
-                .debug_selector(|| "untitled-tab".into())
-                .h_full()
-                .min_w(px(120.0))
-                .px(px(10.0))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .relative()
-                .cursor_pointer()
-                .text_size(px(theme.typography.ui_text_size(12.0)))
-                .text_color(c.text_default)
-                .when_some(group_accent, |tab, accent| {
-                    tab.child(div().absolute().left_0().top_0().bottom_0()
-                        .w(px(2.0)).flex().items_center()
-                        .child(div().w_full().h(px(18.0)).rounded(px(1.0)).bg(accent)))
-                })
-                .child(svg().path(MARKDOWN_ICON).size(px(14.0)).text_color(c.dialog_primary_button_bg))
-                .child("Untitled")
-                .when(self.document_dirty, |tab| tab.child(
-                    div().size(px(7.0)).rounded(px(4.0)).bg(c.dialog_primary_button_bg)
-                ))
-                .child(div().absolute().left_0().right_0().bottom_0().h(px(2.0))
-                    .bg(if self.split_active { c.dialog_primary_button_bg } else { c.dialog_border }))
-                .into_any_element()];
-        }
         let tabs = self
             .workspace
             .open_documents
@@ -96,9 +62,9 @@ impl Editor {
                 // Markdown glyph only for real markdown files; code files and
                 // extension-less dotfiles render as source, binaries show as
                 // placeholders — neither is markdown.
-                let tab_shows_code_icon = is_code_file(&path)
+                let tab_shows_code_icon = untitled_document_id(&path).is_none() && (is_code_file(&path)
                     || path.extension().is_none()
-                    || self.unsupported_preview_path.as_ref() == Some(&path);
+                    || self.unsupported_preview_path.as_ref() == Some(&path));
                 let tab_is_image = crate::components::Block::has_supported_image_extension(&path);
                 // The close button carries its own hover state: highlighting
                 // the whole tab was indistinguishable from the tab's own
@@ -267,7 +233,9 @@ impl Editor {
                         if tab.preview {
                             title_el = title_el.italic();
                         }
-                        title_el.child(title)
+                        title_el
+                            .when(untitled_document_id(&path).is_some(), |title| title.debug_selector(|| "untitled-tab".into()))
+                            .child(title)
                     })
                     .children(dirty.then(|| {
                         // 未保存的圆点：每个脏标签都点，包括当前这一篇（用户需求：

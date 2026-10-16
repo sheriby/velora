@@ -100,7 +100,7 @@ impl I18nStringsDe {
             menu_add_theme_config: self
                 .menu_add_theme_config
                 .unwrap_or(defaults.menu_add_theme_config),
-            menu_new_window: self.menu_new_window.unwrap_or(defaults.menu_new_window),
+            menu_new_document: self.menu_new_document.unwrap_or(defaults.menu_new_document),
             split_editor_left: self.split_editor_left.unwrap_or(defaults.split_editor_left),
             split_editor_right: self.split_editor_right.unwrap_or(defaults.split_editor_right),
             split_editor_up: self.split_editor_up.unwrap_or(defaults.split_editor_up),
@@ -452,9 +452,9 @@ impl I18nStringsDe {
             preferences_shortcut_format_document: self
                 .preferences_shortcut_format_document
                 .unwrap_or(defaults.preferences_shortcut_format_document),
-            preferences_shortcut_new_window: self
-                .preferences_shortcut_new_window
-                .unwrap_or(defaults.preferences_shortcut_new_window),
+            preferences_shortcut_new_document: self
+                .preferences_shortcut_new_document
+                .unwrap_or(defaults.preferences_shortcut_new_document),
             preferences_shortcut_open_file: self
                 .preferences_shortcut_open_file
                 .unwrap_or(defaults.preferences_shortcut_open_file),

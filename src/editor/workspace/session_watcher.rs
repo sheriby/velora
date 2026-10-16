@@ -29,7 +29,7 @@ impl Editor {
             self.workspace.is_open = editor.workspace.is_open;
             self.workspace.sidebar_memory_tab = editor.workspace.sidebar_memory_tab;
         }
-        let active = active_group.as_ref().and_then(|group| group.read(cx).file_path.clone())
+        let active = active_group.as_ref().and_then(|group| group.read(cx).active_document_path().cloned())
             .or_else(|| self.workspace.active_document.clone());
         let session = crate::config::SessionState {
             root: self
@@ -76,7 +76,7 @@ impl Editor {
         // 会话就是用户看不懂的一串（口径见 `file_url::canonical_path`）。
         let root = crate::file_url::canonical_path(&root);
         if self.split_workspace.is_some() {
-            let active = self.active_split_editor().and_then(|group| group.read(cx).file_path.clone());
+            let active = self.active_split_editor().and_then(|group| group.read(cx).active_document_path().cloned());
             self.collect_split_tabs(cx);
             self.autosave_task = None;
             if !self.prune_workspace_tabs_outside_root(&root, cx) { return; }
@@ -292,7 +292,7 @@ impl Editor {
             .workspace
             .open_documents
             .iter()
-            .filter(|tab| !path_is_within_root(root, &tab.path))
+            .filter(|tab| untitled_document_id(&tab.path).is_none() && !path_is_within_root(root, &tab.path))
             .cloned()
             .collect::<Vec<_>>();
         if stale.is_empty() {

@@ -995,6 +995,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_find_next_match))
             .on_action(cx.listener(Self::on_find_previous_match))
             .on_action(cx.listener(Self::on_toggle_workspace_action))
+            .on_action(cx.listener(Self::on_new_document))
             .on_action(cx.listener(Self::on_select_tab_index))
             .on_action(cx.listener(Self::on_quick_open_action))
             .on_action(cx.listener(Self::on_open_command_palette))

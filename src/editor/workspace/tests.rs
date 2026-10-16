@@ -14,6 +14,7 @@ mod sidebar;
 mod outline_fences;
 mod tabs_sessions;
 mod tabs_state;
+mod untitled;
 mod tree_files;
 mod tree_edit;
 mod workspace_scan;

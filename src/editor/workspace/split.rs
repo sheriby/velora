@@ -264,9 +264,9 @@ impl Editor {
     ) {
         let source = self.active_split_editor().unwrap_or_else(|| cx.entity());
         let path = if source.entity_id() == cx.entity_id() {
-            self.file_path.clone()
+            self.active_document_path().cloned()
         } else {
-            source.read(cx).file_path.clone()
+            source.read(cx).active_document_path().cloned()
         };
         if let Some(path) = path {
             self.request_split_document(source.downgrade(), path, direction, true, window, cx);
@@ -668,15 +668,14 @@ impl Editor {
             return;
         };
         if self
-            .file_path
-            .as_ref()
+            .active_document_path()
             .is_some_and(|path| paths.contains(path))
         {
             self.finalize_pending_undo_capture(cx);
         }
         let current = cx.entity_id();
         for path in paths {
-            let history = if self.file_path.as_ref() == Some(path) {
+            let history = if self.active_document_path() == Some(path) {
                 Some((
                     self.undo_history.clone(),
                     self.redo_history.clone(),
@@ -723,7 +722,7 @@ impl Editor {
                     });
                     if let Some(target) = target {
                         target.update(cx, |editor, _| {
-                            if editor.file_path.as_ref() == Some(&path) {
+                            if editor.active_document_path() == Some(&path) {
                                 editor.undo_history = history.0;
                                 editor.redo_history = history.1;
                                 editor.pending_undo_capture = history.2;
@@ -835,7 +834,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Entity<Editor> {
         let preserve_cached = active.as_ref().is_some_and(|path| {
-            self.file_path.as_ref() == Some(path)
+            self.active_document_path() == Some(path)
                 || self
                     .split_workspace
                     .as_ref()
@@ -917,31 +916,19 @@ impl Editor {
         }
         self.split_bounds = self.scroll_handle.bounds();
         self.finalize_pending_undo_capture(cx);
+        if self.file_path.is_none()
+            && self.workspace.active_document.is_none()
+            && !self.show_welcome
+            && self.unsupported_preview_path.is_none()
+        {
+            self.register_untitled_document(cx);
+        }
         self.snapshot_current_document(cx);
-        let active = self.file_path.clone();
-        let mut shared_buffer = self.buffer.shared_view();
-        let untitled_view =
-            (active.is_none() && !self.show_welcome && self.unsupported_preview_path.is_none())
-                .then(|| self.capture_document_view(&self.buffer.text(), cx));
+        let active = self.active_document_path().cloned();
+        let shared_buffer = self.buffer.shared_view();
         let tabs = std::mem::take(&mut self.workspace.open_documents);
         let group = self.new_editor_group(tabs, active.clone(), window, cx);
-        if let Some(view) = untitled_view {
-            group.update(cx, |editor, cx| {
-                editor.replace_document_content(
-                    shared_buffer.text(),
-                    None,
-                    None,
-                    crate::editor::file_drop::ImportKind::Restore(view),
-                    cx,
-                );
-                editor.buffer = shared_buffer.shared_view();
-                editor.document_dirty = self.document_dirty;
-                editor.recovery_id = self.recovery_id;
-                editor.recovery_source_path = self.recovery_source_path.clone();
-                editor.is_recovered_document = self.is_recovered_document;
-                editor.split_projection_revision = editor.buffer.revision();
-            });
-        } else if active.is_none() {
+        if active.is_none() {
             group.update(cx, |editor, _| editor.show_welcome = self.show_welcome);
         }
         group.update(cx, |editor, _| editor.split_active = true);
@@ -1097,7 +1084,7 @@ impl Editor {
             let document = workspace.documents.entry(path.clone()).or_insert_with(|| {
                 let owner = source
                     .as_ref()
-                    .filter(|source| source.read(cx).file_path.as_ref() == Some(&path))
+                    .filter(|source| source.read(cx).active_document_path() == Some(&path))
                     .cloned()
                     .unwrap_or_else(|| group.clone());
                 let buffer = owner.update(cx, |editor, _| editor.buffer.shared_view());
@@ -1125,7 +1112,7 @@ impl Editor {
         self.split_initializing = true;
         self.snapshot_current_document(cx);
         self.workspace.open_documents.retain(|tab| tab.path != path);
-        if self.file_path.as_deref() == Some(path) {
+        if self.active_document_path().map(PathBuf::as_path) == Some(path) {
             self.file_path = None;
             self.document_dirty = false;
             self.workspace.active_document = None;

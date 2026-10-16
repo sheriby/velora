@@ -255,7 +255,7 @@ impl Editor {
     /// 调用点是 `document_dirty` 从 false 翻 true 的那一次（`finish_dirty`），所以一次
     /// 编辑会话只走一遍。转了固定之后，切走时它不再算「可替换的预览」，标签与内容都留着。
     pub(crate) fn pin_active_preview_tab(&mut self) {
-        let Some(path) = self.file_path.as_deref() else {
+        let Some(path) = self.active_document_path().cloned() else {
             return;
         };
         if let Some(tab) = self
@@ -285,7 +285,7 @@ impl Editor {
     }
 
     fn write_current_document_tab(&mut self, markdown: String, view: Option<DocumentView>) {
-        let Some(path) = self.file_path.clone() else {
+        let Some(path) = self.active_document_path().cloned() else {
             return;
         };
         let file_shape = self.buffer.file_shape();
@@ -330,7 +330,7 @@ impl Editor {
         self.workspace
             .open_documents
             .iter()
-            .filter(|tab| tab.dirty)
+            .filter(|tab| tab.dirty && untitled_document_id(&tab.path).is_none())
             .map(|tab| WorkspaceAutosaveDocument {
                 recovery_id: tab.recovery_id,
                 file_version: tab.file_version,
@@ -345,7 +345,7 @@ impl Editor {
     pub(crate) fn workspace_save_document_is_open(&self, id: uuid::Uuid, path: Option<&Path>) -> bool {
         (self.recovery_id == id && self.file_path.as_deref() == path)
             || self.workspace.open_documents.iter().any(|tab| {
-                tab.recovery_id == id && Some(tab.path.as_path()) == path
+                tab.recovery_id == id && (Some(tab.path.as_path()) == path || (path.is_none() && untitled_document_id(&tab.path).is_some()))
             })
     }
 

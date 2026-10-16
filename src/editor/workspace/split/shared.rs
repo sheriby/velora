@@ -187,23 +187,92 @@ impl Editor {
             })
     }
 
-    pub(in crate::editor) fn split_untitled_recoveries(
+    pub(in crate::editor) fn has_untitled_documents(&self, cx: &App) -> bool {
+        self.workspace
+            .open_documents
+            .iter()
+            .any(|tab| untitled_document_id(&tab.path).is_some())
+            || self.split_groups().iter().any(|group| {
+                group
+                    .read(cx)
+                    .workspace
+                    .open_documents
+                    .iter()
+                    .any(|tab| untitled_document_id(&tab.path).is_some())
+            })
+    }
+
+    pub(in crate::editor) fn is_untitled_recovery_open(&self, id: uuid::Uuid, cx: &App) -> bool {
+        let matches = |editor: &Editor| {
+            editor
+                .workspace
+                .open_documents
+                .iter()
+                .any(|tab| tab.recovery_id == id && untitled_document_id(&tab.path).is_some())
+                || (editor.active_document_path().is_none()
+                    && editor.document_dirty
+                    && editor.recovery_id == id)
+        };
+        if self.split_workspace.is_some() {
+            self.split_groups()
+                .iter()
+                .any(|group| matches(group.read(cx)))
+        } else {
+            matches(self)
+        }
+    }
+
+    pub(in crate::editor) fn untitled_recovery_snapshots(
         &self,
         cx: &App,
     ) -> Vec<crate::config::RecoverySnapshot> {
-        self.split_groups()
-            .iter()
-            .filter_map(|group| {
-                let editor = group.read(cx);
-                (editor.file_path.is_none() && editor.document_dirty).then(|| {
+        let mut snapshots = HashMap::new();
+        let mut collect = |editor: &Editor| {
+            for tab in &editor.workspace.open_documents {
+                if untitled_document_id(&tab.path).is_none() {
+                    continue;
+                }
+                let markdown = self
+                    .split_workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.documents.get(&tab.path))
+                    .map(|document| document.buffer.text())
+                    .unwrap_or_else(|| {
+                        if editor.active_document_path() == Some(&tab.path) {
+                            editor.buffer.text()
+                        } else {
+                            tab.markdown.clone()
+                        }
+                    });
+                snapshots.insert(
+                    tab.recovery_id,
+                    crate::config::RecoverySnapshot {
+                        id: tab.recovery_id,
+                        source_path: None,
+                        markdown,
+                    },
+                );
+            }
+            if editor.split_parent.is_some()
+                && editor.file_path.is_none()
+                && editor.document_dirty
+                && editor.workspace.active_document.is_none()
+            {
+                snapshots.insert(
+                    editor.recovery_id,
                     crate::config::RecoverySnapshot {
                         id: editor.recovery_id,
                         source_path: editor.recovery_source_path.clone(),
                         markdown: editor.buffer.text(),
-                    }
-                })
-            })
-            .collect()
+                    },
+                );
+            }
+        };
+        collect(self);
+        for group in self.split_groups() {
+            collect(group.read(cx));
+        }
+        snapshots.into_values().collect()
     }
 
     pub(in crate::editor) fn save_untitled_split_before_close(
@@ -211,9 +280,35 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.collect_split_tabs(cx);
+        self.snapshot_current_document(cx);
+        if self.split_workspace.is_none() {
+            if let Some(path) = self
+                .workspace
+                .open_documents
+                .iter()
+                .find(|tab| tab.dirty && untitled_document_id(&tab.path).is_some())
+                .map(|tab| tab.path.clone())
+            {
+                if self.active_document_path() == Some(&path) {
+                    return false;
+                }
+                self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Activate, window, cx);
+                self.pending_close_after_save = true;
+                self.pending_save = true;
+                cx.notify();
+                return true;
+            }
+            return false;
+        }
         let Some(group) = self.split_groups().into_iter().find(|group| {
             let editor = group.read(cx);
-            editor.file_path.is_none() && editor.document_dirty
+            (editor.file_path.is_none() && editor.document_dirty)
+                || editor
+                    .workspace
+                    .open_documents
+                    .iter()
+                    .any(|tab| tab.dirty && untitled_document_id(&tab.path).is_some())
         }) else {
             return false;
         };
@@ -223,6 +318,20 @@ impl Editor {
         cx.defer(move |cx| {
             if let Err(error) = handle.update(cx, |_, window, cx| {
                 group.update(cx, |editor, cx| {
+                    let path = editor
+                        .workspace
+                        .open_documents
+                        .iter()
+                        .find(|tab| tab.dirty && untitled_document_id(&tab.path).is_some())
+                        .map(|tab| tab.path.clone());
+                    if let Some(path) = path {
+                        editor.open_workspace_file_in_mode(
+                            path,
+                            WorkspaceOpenMode::Activate,
+                            window,
+                            cx,
+                        );
+                    }
                     editor.pending_close_after_save = true;
                     editor.save_document(window, cx);
                 });
@@ -291,7 +400,7 @@ impl Editor {
                         tab.markdown = saved.markdown.clone();
                         changed = true;
                     }
-                    if editor.file_path.as_ref() == Some(&saved.path) {
+                    if editor.active_document_path() == Some(&saved.path) {
                         editor.document_dirty = false;
                         editor.file_version = Some(version);
                     }
@@ -311,7 +420,7 @@ impl Editor {
         else {
             return;
         };
-        let Some(path) = target.read(cx).file_path.clone() else {
+        let Some(path) = target.read(cx).active_document_path().cloned() else {
             return;
         };
         let Some(owner) = self
@@ -327,7 +436,7 @@ impl Editor {
         }
         let history = owner.update(cx, |editor, cx| {
             editor.autosave_task = None;
-            if editor.file_path.as_ref() == Some(&path) {
+            if editor.active_document_path() == Some(&path) {
                 editor.finalize_pending_undo_capture(cx);
                 Some((
                     editor.undo_history.clone(),
@@ -401,7 +510,7 @@ impl Editor {
         };
         let mut documents = std::mem::take(&mut workspace.documents);
         if let Some(source) = groups.iter().find(|group| group.entity_id() == changed) {
-            if let Some(path) = source.read(cx).file_path.clone() {
+            if let Some(path) = source.read(cx).active_document_path().cloned() {
                 let identity = source.read(cx).buffer.identity();
                 let renamed = documents
                     .iter()
@@ -428,8 +537,9 @@ impl Editor {
                                     tab.path = path.clone();
                                 }
                             }
-                            if editor.file_path.as_ref() == Some(&previous) {
-                                editor.file_path = Some(path.clone());
+                            if editor.active_document_path() == Some(&previous) {
+                                editor.file_path =
+                                    untitled_document_id(&path).is_none().then(|| path.clone());
                                 if previous.parent() != path.parent() {
                                     editor.rebuild_image_runtimes(cx);
                                 }
@@ -453,7 +563,7 @@ impl Editor {
             let source = groups
                 .iter()
                 .find(|group| {
-                    group.read(cx).file_path.as_ref() == Some(path)
+                    group.read(cx).active_document_path() == Some(path)
                         && writer.map_or(group.entity_id() == changed, |writer| {
                             group.read(cx).buffer.shared_writer_id() == writer
                         })
@@ -477,7 +587,7 @@ impl Editor {
                 }
             }
             let state = document.owner.read_with(cx, |editor, _| {
-                if editor.file_path.as_ref() == Some(path) {
+                if editor.active_document_path() == Some(path) {
                     Some((editor.document_dirty, editor.file_version))
                 } else {
                     editor
@@ -501,7 +611,7 @@ impl Editor {
                 self.document_revision = self.document_revision.wrapping_add(1);
             }
             for group in &groups {
-                let active = group.read(cx).file_path.as_ref() == Some(path);
+                let active = group.read(cx).active_document_path() == Some(path);
                 if !active {
                     group.update(cx, |editor, _| {
                         if let Some(tab) = editor

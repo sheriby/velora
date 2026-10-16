@@ -118,6 +118,11 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
         }
     };
     for snapshot in snapshots {
+        if snapshot.source_path.is_none() && cx.windows().iter().any(|window| {
+            window.downcast::<components::Editor>().is_some_and(|editor| {
+                editor.read(cx).is_ok_and(|editor| editor.has_recovery_document(snapshot.id, cx))
+            })
+        }) { continue; }
         if snapshot
             .source_path
             .as_ref()

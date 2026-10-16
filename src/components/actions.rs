@@ -71,7 +71,7 @@ actions!(
         ExitCodeBlock,
         SaveDocument,
         FormatDocument,
-        NewWindow,
+        NewDocument,
         OpenFile,
         OpenFolder,
         OpenPreferences,
@@ -219,7 +219,7 @@ pub(crate) enum ShortcutCommand {
     FormatDocument,
     FileHistory,
     PrintDocument,
-    NewWindow,
+    NewDocument,
     OpenFile,
     QuitApplication,
     CloseTab,
@@ -659,8 +659,8 @@ const SHORTCUT_DEFINITIONS: &[ShortcutDefinition] = &[
         context: None,
     },
     ShortcutDefinition {
-        command: ShortcutCommand::NewWindow,
-        id: "new_window",
+        command: ShortcutCommand::NewDocument,
+        id: "new_document",
         category: ShortcutCategory::File,
         default_keys: &["cmd-n", "ctrl-n"],
         context: None,
@@ -811,6 +811,7 @@ fn default_keys(definition: ShortcutDefinition) -> Vec<String> {
 fn legacy_shortcut_ids(definition: ShortcutDefinition) -> &'static [&'static str] {
     match definition.command {
         ShortcutCommand::SelectAll => LEGACY_SELECT_ALL_IDS,
+        ShortcutCommand::NewDocument => &["new_window"],
         _ => &[],
     }
 }
@@ -994,7 +995,7 @@ fn key_binding_for(
         ShortcutCommand::FormatDocument => KeyBinding::new(key, FormatDocument, context),
         ShortcutCommand::FileHistory => KeyBinding::new(key, FileHistory, context),
         ShortcutCommand::PrintDocument => KeyBinding::new(key, PrintDocument, context),
-        ShortcutCommand::NewWindow => KeyBinding::new(key, NewWindow, context),
+        ShortcutCommand::NewDocument => KeyBinding::new(key, NewDocument, context),
         ShortcutCommand::OpenFile => KeyBinding::new(key, OpenFile, context),
         ShortcutCommand::QuitApplication => KeyBinding::new(key, QuitApplication, context),
         ShortcutCommand::SplitEditorLeft => KeyBinding::new(key, SplitEditorLeft, context),

@@ -282,6 +282,7 @@ pub struct Editor {
     show_unsaved_changes_dialog: bool,
     /// When true, the window will close after the next successful save.
     pending_close_after_save: bool,
+    pending_tab_close_after_save: Vec<uuid::Uuid>,
     /// Focus target to restore when the close dialog is dismissed.
     close_dialog_restore_focus: Option<EntityId>,
     pending_drop_replace_path: Option<PathBuf>,
@@ -913,6 +914,7 @@ impl Editor {
             close_guard_installed: false,
             show_unsaved_changes_dialog: false,
             pending_close_after_save: false,
+            pending_tab_close_after_save: Vec::new(),
             close_dialog_restore_focus: None,
             pending_drop_replace_path: None,
             show_drop_replace_dialog: false,
@@ -2183,6 +2185,7 @@ impl Editor {
         editor.recovery_source_path = snapshot.source_path;
         editor.is_recovered_document = true;
         editor.document_dirty = true;
+        if editor.recovery_source_path.is_none() { editor.register_untitled_document(cx); }
         editor.pending_window_edited = true;
         editor.pending_window_title_refresh = true;
         editor

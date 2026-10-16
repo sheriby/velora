@@ -195,6 +195,7 @@ impl Editor {
             .on_action(cx.listener(Self::forward_split_action::<SplitEditorRight>))
             .on_action(cx.listener(Self::forward_split_action::<SplitEditorUp>))
             .on_action(cx.listener(Self::forward_split_action::<SplitEditorDown>))
+            .on_action(cx.listener(Self::on_new_document))
             .on_action(cx.listener(Self::forward_split_action::<SaveDocument>))
             .on_action(cx.listener(Self::forward_split_action::<SaveDocumentAs>))
             .on_action(cx.listener(Self::forward_split_action::<CloseTab>))

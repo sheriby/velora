@@ -11,6 +11,200 @@ const UNREADABLE_EXTERNAL_CHANGE: &str = "读不出外部改动";
 const EXTERNAL_CHANGE_RECHECK_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
 impl Editor {
+    pub(crate) fn on_new_document(
+        &mut self,
+        _: &crate::components::NewDocument,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.new_workspace_document(window, cx);
+    }
+
+    pub(crate) fn active_document_path(&self) -> Option<&PathBuf> {
+        self.file_path.as_ref().or_else(|| {
+            self.workspace
+                .active_document
+                .as_ref()
+                .filter(|path| untitled_document_id(path).is_some())
+        })
+    }
+
+    pub(crate) fn finish_pending_tab_close(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let pending = std::mem::take(&mut self.pending_tab_close_after_save);
+        if pending.is_empty() {
+            return false;
+        }
+        let closing = self
+            .workspace
+            .open_documents
+            .iter()
+            .filter(|tab| pending.contains(&tab.recovery_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.finish_close_workspace_tabs(&closing, true, window, cx);
+        true
+    }
+
+    pub(crate) fn restore_untitled_tabs(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if !paths
+            .iter()
+            .any(|path| untitled_document_id(path).is_some())
+        {
+            return;
+        }
+        let snapshots = match crate::config::read_recovery_snapshots() {
+            Ok(snapshots) => snapshots,
+            Err(error) => {
+                let title = cx
+                    .global::<I18nManager>()
+                    .strings()
+                    .open_failed_title
+                    .clone();
+                self.show_message_modal(title, error.to_string(), cx);
+                return;
+            }
+        };
+        for path in paths {
+            let Some(id) = untitled_document_id(path) else {
+                continue;
+            };
+            if self
+                .workspace
+                .open_documents
+                .iter()
+                .any(|tab| tab.path == *path)
+            {
+                continue;
+            }
+            let snapshot = snapshots.iter().find(|snapshot| snapshot.id == id);
+            self.workspace.open_documents.push(WorkspaceDocumentTab {
+                path: path.clone(),
+                recovery_id: id,
+                file_version: 0,
+                markdown: snapshot
+                    .map(|snapshot| snapshot.markdown.clone())
+                    .unwrap_or_default(),
+                file_shape: None,
+                dirty: snapshot.is_some(),
+                preview: false,
+                view: None,
+            });
+        }
+    }
+
+    pub(crate) fn restore_workspace_tab_order(
+        &mut self,
+        paths: &[PathBuf],
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.open_documents.sort_by_cached_key(|tab| {
+            paths
+                .iter()
+                .position(|path| path == &tab.path)
+                .unwrap_or(usize::MAX)
+        });
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn has_recovery_document(&self, id: uuid::Uuid, cx: &App) -> bool {
+        self.workspace
+            .open_documents
+            .iter()
+            .any(|tab| tab.recovery_id == id)
+            || self.split_groups().iter().any(|group| {
+                group
+                    .read(cx)
+                    .workspace
+                    .open_documents
+                    .iter()
+                    .any(|tab| tab.recovery_id == id)
+            })
+    }
+
+    pub(crate) fn register_untitled_document(&mut self, cx: &mut Context<Self>) -> PathBuf {
+        if let Some(path) = self
+            .workspace
+            .active_document
+            .as_ref()
+            .filter(|path| untitled_document_id(path).is_some())
+        {
+            return path.clone();
+        }
+        let number = self
+            .workspace
+            .open_documents
+            .iter()
+            .filter(|tab| untitled_document_id(&tab.path).is_some())
+            .filter_map(|tab| {
+                tab.path
+                    .file_name()?
+                    .to_str()?
+                    .strip_prefix("Untitled-")?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        let path = untitled_document_path(self.recovery_id, number);
+        let markdown = self.buffer.text();
+        self.workspace.open_documents.push(WorkspaceDocumentTab {
+            path: path.clone(),
+            recovery_id: self.recovery_id,
+            file_version: 0,
+            markdown: markdown.clone(),
+            file_shape: self.buffer.file_shape(),
+            dirty: self.document_dirty,
+            preview: false,
+            view: Some(self.capture_document_view(&markdown, cx)),
+        });
+        self.workspace.active_document = Some(path.clone());
+        path
+    }
+
+    pub(crate) fn new_workspace_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(group) = self.active_split_editor() {
+            let handle = window.window_handle();
+            cx.defer(move |cx| {
+                if let Err(error) = handle.update(cx, |_, window, cx| {
+                    group.update(cx, |editor, cx| editor.new_workspace_document(window, cx))
+                }) {
+                    eprintln!("在活动分组新建文档失败：{error}");
+                }
+            });
+            return;
+        }
+        if self.file_path.is_none()
+            && self.workspace.active_document.is_none()
+            && self.document_dirty
+        {
+            self.register_untitled_document(cx);
+        }
+        self.finalize_pending_undo_capture(cx);
+        self.snapshot_current_document(cx);
+        self.workspace.active_document = None;
+        self.replace_document_from_markdown(String::new(), None, cx);
+        self.recovery_id = uuid::Uuid::new_v4();
+        self.recovery_source_path = None;
+        self.is_recovered_document = false;
+        self.document_dirty = false;
+        self.show_welcome = false;
+        self.unsupported_preview_path = None;
+        self.unsupported_preview_detail = None;
+        self.register_untitled_document(cx);
+        self.schedule_autosave(cx);
+        self.pending_focus = self
+            .active_entity_id
+            .or_else(|| self.first_focusable_entity_id(cx));
+        self.persist_session(cx);
+        cx.notify();
+    }
     /// ⌘1-⌘9: focus the Nth document tab (roadmap E5).
     pub(crate) fn on_select_tab_index(
         &mut self,
@@ -466,7 +660,8 @@ impl Editor {
             });
             return;
         }
-        if self.file_path.as_ref() == Some(&path) {
+        let untitled = untitled_document_id(&path).is_some();
+        if self.active_document_path() == Some(&path) {
             // 已是当前文档：双击树节点要把已打开的预览标签升级为固定。
             if mode == WorkspaceOpenMode::Pinned
                 && let Some(tab) = self
@@ -489,8 +684,8 @@ impl Editor {
         // 只能声明「编码不支持」。解码/编码现在是对称的（`FileShape` 带 BOM 与
         // 行尾一起走），能不能读交给唯一的读盘漏斗 `encoding::load_document` 判定，
         // 入口不再各自猜编码——否则支持的编码越加越多，这里的白名单越漏。
-        let image_file = crate::components::Block::is_supported_local_image_path(&path);
-        if !image_file && !is_likely_text_file(&path) {
+        let image_file = !untitled && crate::components::Block::is_supported_local_image_path(&path);
+        if !untitled && !image_file && !is_likely_text_file(&path) {
             self.show_welcome = false;
             self.show_preview_unavailable(path.clone(), window, cx);
             return;
@@ -498,7 +693,8 @@ impl Editor {
         self.unsupported_preview_path = None;
         self.unsupported_preview_detail = None;
         self.show_welcome = false;
-        if self.file_path.is_none() && self.document_dirty {
+        if self.file_path.is_none() && self.document_dirty
+            && self.workspace.active_document.as_ref().is_none_or(|path| untitled_document_id(path).is_none()) {
             self.request_dropped_markdown_replace(path, window, cx);
             return;
         }
@@ -542,6 +738,11 @@ impl Editor {
                     dirty: *dirty, preview: false, view: None });
             }
         }
+        if untitled && cached.is_none() {
+            self.restore_untitled_tabs(std::slice::from_ref(&path), cx);
+            cached = self.workspace.open_documents.iter().find(|tab| tab.path == path).cloned();
+            if cached.is_none() { return; }
+        }
         // 这个标签上次离开时的阅读现场。取不到就是本次会话第一次读这篇，按打开新
         // 文档的口径走（渲染态、文档顶部）。
         let cached_view = cached.as_ref().and_then(|tab| tab.view.clone());
@@ -556,7 +757,7 @@ impl Editor {
                 .unwrap_or_else(uuid::Uuid::new_v4);
             (String::new(), Vec::new(), false, recovery_id, 0)
         } else if let Some(tab) = cached {
-            if tab.dirty || shared.is_some() {
+            if untitled || tab.dirty || shared.is_some() {
                 (tab.markdown, Vec::new(), tab.dirty, tab.recovery_id, tab.file_version)
             } else {
                 match crate::editor::encoding::load_document(&path) {
@@ -589,7 +790,7 @@ impl Editor {
         if !dirty {
             self.clear_external_change_conflict_for(&path);
         }
-        let preview = mode != WorkspaceOpenMode::Pinned;
+        let preview = !untitled && mode != WorkspaceOpenMode::Pinned;
         if !self
             .workspace
             .open_documents
@@ -625,13 +826,18 @@ impl Editor {
         self.recovery_source_path = None;
         self.is_recovered_document = false;
         self.workspace.active_document = Some(path.clone());
-        self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
-        self.reveal_path_in_tree(&path);
+        if !untitled {
+            self.workspace.selected = Some(WorkspaceSelection::File(path.clone()));
+            self.reveal_path_in_tree(&path);
+        }
         // Markdown rendering is for .md/.markdown only; every other text file
         // (code, dotfiles, plain text) opens as monospace source text.
         if image_file {
             self.replace_document_from_markdown(String::new(), Some(path.clone()), cx);
             self.load_image_file_preview(path.clone(), cx);
+        } else if untitled {
+            let kind = cached_view.map(crate::editor::file_drop::ImportKind::Restore).unwrap_or(crate::editor::file_drop::ImportKind::Open);
+            self.replace_document_content(markdown, None, None, kind, cx);
         } else if is_markdown_document(&path) {
             self.restore_document_from_markdown(markdown, path.clone(), cached_view, cx);
         } else {
@@ -724,7 +930,7 @@ impl Editor {
     /// 「关闭标签页」命令：关掉当前这一页。当前文档没有对应标签页（未保存的新文档、
     /// 恢复中的快照）时什么也不做——不顺手关窗口（误按一次不该把整窗口带走）。
     pub(crate) fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.file_path.clone() else {
+        let Some(path) = self.active_document_path().cloned() else {
             return;
         };
         self.close_workspace_document(&path, window, cx);
@@ -894,6 +1100,12 @@ impl Editor {
                 cx.notify();
                 return;
             }
+            if let Some(tab) = closing.iter().find(|tab| tab.dirty && untitled_document_id(&tab.path).is_some() && !self.shared_tab_has_other_view(&tab.path, cx)) {
+                self.pending_tab_close_after_save = closing.iter().map(|tab| tab.recovery_id).collect();
+                self.open_workspace_file_in_mode(tab.path.clone(), WorkspaceOpenMode::Activate, window, cx);
+                self.save_document(window, cx);
+                return;
+            }
             for tab in closing {
                 if !tab.dirty || self.shared_tab_has_other_view(&tab.path, cx) {
                     continue;
@@ -959,6 +1171,14 @@ impl Editor {
             .open_documents
             .retain(|tab| !closing_paths.contains(&tab.path));
 
+        for tab in closing {
+            if untitled_document_id(&tab.path).is_some() && !self.shared_tab_has_other_view(&tab.path, cx) {
+                if let Err(error) = crate::config::remove_recovery_snapshot(tab.recovery_id) {
+                    eprintln!("清理已关闭草稿失败：{error}");
+                }
+            }
+        }
+
         if active_was_closed {
             let next_path = first_closed_index.and_then(|index| {
                 self.workspace
@@ -974,6 +1194,7 @@ impl Editor {
             // Detach the closing document from the editor first so snapshot /
             // dirty-guard logic inside open_workspace_file cannot resurrect it.
             self.file_path = None;
+            self.workspace.active_document = None;
             self.document_dirty = false;
             if let Some(next_path) = next_path {
                 self.open_workspace_file(next_path, window, cx);

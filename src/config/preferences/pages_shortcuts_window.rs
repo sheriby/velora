@@ -96,7 +96,7 @@ impl PreferencesWindow {
             }
             ShortcutCommand::FileHistory => strings.menu_file_history.clone(),
             ShortcutCommand::PrintDocument => strings.menu_print.clone(),
-            ShortcutCommand::NewWindow => strings.preferences_shortcut_new_window.clone(),
+            ShortcutCommand::NewDocument => strings.preferences_shortcut_new_document.clone(),
             ShortcutCommand::OpenFile => strings.preferences_shortcut_open_file.clone(),
             ShortcutCommand::QuitApplication => {
                 strings.preferences_shortcut_quit_application.clone()

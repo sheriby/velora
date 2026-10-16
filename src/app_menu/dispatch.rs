@@ -28,9 +28,7 @@ pub(crate) fn dispatch_menu_action_for_editor(
     }
     let current_window = Some(window.window_handle());
 
-    if action.as_any().is::<NewWindow>() {
-        open_editor_window(cx, String::new(), None);
-    } else if action.as_any().is::<OpenFile>() {
+    if action.as_any().is::<OpenFile>() {
         prompt_and_open_files_with_error_window(cx, current_window);
     } else if action.as_any().is::<OpenFolder>() {
         prompt_and_open_folder_with_error_window(cx, current_window);

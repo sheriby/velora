@@ -86,14 +86,18 @@ impl Editor {
                 let group = self.new_editor_group(Vec::new(), None, window, cx);
                 group.update(cx, |editor, cx| {
                     editor.split_initializing = true;
-                    for path in tabs.iter().map(PathBuf::from).filter(|path| path.is_file()) {
+                    let order = tabs.iter().map(PathBuf::from).collect::<Vec<_>>();
+                    editor.restore_untitled_tabs(&order, cx);
+                    for path in tabs.iter().map(PathBuf::from).filter(|path| {
+                        path.is_file()
+                            || crate::editor::workspace::untitled_document_id(path).is_some()
+                    }) {
                         editor.open_workspace_file(path, window, cx);
                     }
-                    if let Some(path) = active
-                        .as_ref()
-                        .map(PathBuf::from)
-                        .filter(|path| path.is_file())
-                    {
+                    if let Some(path) = active.as_ref().map(PathBuf::from).filter(|path| {
+                        path.is_file()
+                            || crate::editor::workspace::untitled_document_id(path).is_some()
+                    }) {
                         editor.open_workspace_file_in_mode(
                             path,
                             WorkspaceOpenMode::Activate,
@@ -101,6 +105,7 @@ impl Editor {
                             cx,
                         );
                     }
+                    editor.restore_workspace_tab_order(&order, cx);
                     editor.split_initializing = false;
                     editor.split_projection_revision = editor.buffer.revision();
                 });

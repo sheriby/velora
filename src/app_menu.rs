@@ -17,7 +17,7 @@ pub(super) use crate::components::{
     AddLanguageConfig, AddThemeConfig, BoldSelection, CheckForUpdates, CloseTab, CloseWindow,
     ExportHtml, ExportPdf,
     ExportPng, FindInDocument, FindNextMatch, FindPreviousMatch, InstallCliTool, NoRecentFiles,
-    NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
+    NewDocument, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, OpenRecentFile, PrintDocument,
     FormatDocument, QuitApplication, SaveDocument,
     FileHistory,
     SaveDocumentAs,
@@ -159,7 +159,7 @@ pub(crate) fn open_editor_window(
 }
 
 /// 从一次真实读盘开窗：原始字节跟着进编辑器，「打开后没编辑就保存」才可能
-/// 一个字节都不改。只有文本可用时（新建窗口、测试）走 `open_editor_window`。
+/// 一个字节都不改。只有文本可用时（空白启动、测试）走 `open_editor_window`。
 pub(crate) fn open_editor_window_from_document(
     cx: &mut App,
     document: crate::editor::encoding::LoadedDocument,
@@ -229,23 +229,21 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
         Ok(session) => session,
         Err(_) => return false,
     };
-    let Some(root) = session
-        .root
-        .as_ref()
-        .map(PathBuf::from)
-        .filter(|root| root.is_dir())
-    else {
+    let root = session.root.as_ref().map(PathBuf::from).filter(|root| root.is_dir());
+    if root.is_none() && !session.tabs.iter().any(|path| crate::editor::workspace::untitled_document_id(Path::new(path)).is_some()) {
         return false;
-    };
+    }
     let mut tabs: Vec<PathBuf> = session
         .tabs
         .iter()
         .map(PathBuf::from)
-        .filter(|path| path.is_file())
+        .filter(|path| path.is_file() || crate::editor::workspace::untitled_document_id(path).is_some())
         .collect();
+    let restore_order = tabs.clone();
+    let restored_active = session.active.as_ref().map(PathBuf::from);
     // Reorder so the previously active tab opens last and ends up focused.
     if let Some(active) = session.active.as_ref().map(PathBuf::from) {
-        if active.is_file() {
+        if active.is_file() || crate::editor::workspace::untitled_document_id(&active).is_some() {
             tabs.retain(|tab| tab != &active);
             tabs.push(active);
         }
@@ -254,7 +252,7 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
     let handle = open_editor_window(cx, String::new(), None);
     if let Some(layout) = &session.editor_groups {
         if let Err(error) = handle.update(cx, |editor, window, cx| {
-            editor.set_workspace_root(root, cx);
+            if let Some(root) = root { editor.set_workspace_root(root, cx); }
             editor.restore_split_session(layout, window, cx);
         }) { eprintln!("恢复分屏会话失败：{error}"); return false; }
         return true;
@@ -267,13 +265,14 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
         deferred = tabs;
         let _ = handle.update(cx, |editor, window, cx| {
             editor.show_welcome = false;
-            editor.set_workspace_root(root, cx);
+            if let Some(root) = root { editor.set_workspace_root(root, cx); }
+            editor.restore_untitled_tabs(&restore_order, cx);
             editor.open_workspace_file(active, window, cx);
         });
     } else {
         let _ = handle.update(cx, |editor, _window, cx| {
             editor.show_welcome = true;
-            editor.set_workspace_root(root, cx);
+            if let Some(root) = root { editor.set_workspace_root(root, cx); }
         });
     }
     if !deferred.is_empty() {
@@ -287,6 +286,12 @@ pub(crate) fn restore_last_session(cx: &mut App) -> bool {
                     editor.open_workspace_file(tab, window, cx);
                 });
             }
+            if let Err(error) = handle.update(cx, |editor, window, cx| {
+                editor.restore_workspace_tab_order(&restore_order, cx);
+                if let Some(active) = restored_active {
+                    editor.open_workspace_file_in_mode(active, crate::editor::workspace::WorkspaceOpenMode::Activate, window, cx);
+                }
+            }) { eprintln!("恢复文档标签顺序失败：{error}"); }
         })
         .detach();
     }
@@ -827,7 +832,9 @@ fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindo
 pub(crate) type EditorMenuHandler = fn(&mut Editor, &mut Window, &mut Context<Editor>);
 
 pub(crate) fn editor_menu_handler(action: &dyn Action) -> Option<EditorMenuHandler> {
-    if action.as_any().is::<SplitEditorLeft>() {
+    if action.as_any().is::<NewDocument>() {
+        Some(|editor, window, cx| editor.new_workspace_document(window, cx))
+    } else if action.as_any().is::<SplitEditorLeft>() {
         Some(|editor, window, cx| editor.split_active_document(crate::editor::workspace::split::SplitDirection::Left, window, cx))
     } else if action.as_any().is::<SplitEditorRight>() {
         Some(|editor, window, cx| editor.split_active_document(crate::editor::workspace::split::SplitDirection::Right, window, cx))
@@ -870,7 +877,7 @@ fn is_editor_scoped_menu_action(action: &dyn Action) -> bool {
 }
 
 pub(crate) fn is_window_context_menu_action(action: &dyn Action) -> bool {
-    action.as_any().is::<NewWindow>()
+    action.as_any().is::<NewDocument>()
         || action.as_any().is::<OpenFile>()
         || action.as_any().is::<OpenFolder>()
         || action.as_any().is::<OpenPreferences>()
@@ -978,13 +985,18 @@ fn perform_quit_application(cx: &mut App) {
 pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
     if let Some(handler) = editor_menu_handler(action) {
         if with_active_editor(cx, handler).is_none() {
-            eprintln!("无法派发编辑器菜单动作：活动窗口不可用");
+            if action.as_any().is::<NewDocument>() {
+                let editor = open_editor_window(cx, String::new(), None);
+                if let Err(error) = editor.update(cx, |editor, window, cx| editor.new_workspace_document(window, cx)) {
+                    eprintln!("新建文档失败：{error}");
+                }
+            } else {
+                eprintln!("无法派发编辑器菜单动作：活动窗口不可用");
+            }
         }
         return;
     }
-    if action.as_any().is::<NewWindow>() {
-        open_editor_window(cx, String::new(), None);
-    } else if action.as_any().is::<OpenFile>() {
+    if action.as_any().is::<OpenFile>() {
         prompt_and_open_files(cx);
     } else if action.as_any().is::<OpenFolder>() {
         prompt_and_open_folder(cx);

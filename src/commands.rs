@@ -17,7 +17,7 @@ use crate::components::{
     SplitEditorLeft, SplitEditorRight, SplitEditorUp, SplitEditorDown,
     CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
-    NewWindow, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
+    NewDocument, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
     PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, SelectDocument, ShowAbout,
     CheckForUpdates, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,
     ToggleFocusMode, ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode,
@@ -87,7 +87,7 @@ static COMMANDS: &[CommandSpec] = &[
     command!("check_updates", App, menu_check_updates, CheckForUpdates),
     command!(sep "quit", App, menu_quit, QuitApplication),
     // 文件
-    command!("new_window", File, menu_new_window, NewWindow),
+    command!("new_document", File, menu_new_document, NewDocument),
     command!("close_tab", File, menu_close_tab, CloseTab),
     command!("close_window", File, menu_close_window, CloseWindow),
     command!(sep "open_file", File, menu_open_file, OpenFile),
