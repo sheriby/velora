@@ -728,7 +728,11 @@ impl Editor {
         let source = self
             .document
             .source_span_of(id)
-            .filter(|span| span.end <= self.buffer.byte_len())
+            // 撤销收尾这条路上，区间可能是增量重投影留下的坏值（端点落在多字节
+            // 字符中间）。这里只是个签名，答不出就退回块自己的文本——拿坏区间去
+            // `slice` 是 panic，而 panic 换不来任何正确性。判据只有一处：
+            // `TextBuffer::span_is_trustworthy`。
+            .filter(|span| self.buffer.span_is_trustworthy(span))
             .map(|span| self.buffer.slice(span))
             .unwrap_or_else(|| block.record.markdown_line(0, None));
         format!(

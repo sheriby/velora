@@ -877,6 +877,13 @@ impl Editor {
                 rescan_everything = true;
                 break;
             };
+            // 区间不可信（端点不在字符边界上、越界、或倒置）就整篇重扫：下面要拿它
+            // 去 `buffer.slice`，坏区间是当场 panic，而大纲只是阅读辅助，多扫一遍
+            // 换的是不崩。判据只有一处：`TextBuffer::span_is_trustworthy`。
+            if !self.buffer.span_is_trustworthy(&span) {
+                rescan_everything = true;
+                break;
+            }
             let touched = dirty
                 .as_ref()
                 .is_some_and(|dirty| Self::region_touches(dirty, &span));

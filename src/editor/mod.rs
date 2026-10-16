@@ -1249,9 +1249,9 @@ impl Editor {
         let ends_with_newline = buffer.line_start(buffer.line_count().saturating_sub(1)) >= total;
         line_spans
             .iter()
-            .map(|span| {
-                let start = buffer.line_start(line_base + span.start).min(total);
-                let raw_end = buffer.line_start(line_base + span.end).min(total);
+            .map(|line_span| {
+                let start = buffer.line_start(line_base + line_span.start).min(total);
+                let raw_end = buffer.line_start(line_base + line_span.end).min(total);
                 let end = if raw_end < total || ends_with_newline {
                     raw_end.saturating_sub(1)
                 } else {
@@ -1262,14 +1262,14 @@ impl Editor {
                 // `history_row_signature`，偏移 718 落在中文 '第' 的第二个字节上）。
                 // 断言装在这一处，才能区分是「重挂区间那条 attach」还是「平移那条
                 // `shift_source_spans_after`」把区间弄坏的——消费者那边只能看到症状。
-                let span = start..end.max(start);
+                let byte_span = start..end.max(start);
                 debug_assert!(
-                    buffer.is_char_boundary(span.start) && buffer.is_char_boundary(span.end),
-                    "根块区间 {span:?} 的端点落在多字节字符中间（line_base {line_base}、\
-                     行区间 {span:?}、全文 {total} 字节）",
-                    span = span,
+                    buffer.is_char_boundary(byte_span.start)
+                        && buffer.is_char_boundary(byte_span.end),
+                    "根块区间 {byte_span:?} 的端点落在多字节字符中间（line_base {line_base}、\
+                     行区间 {line_span:?}、全文 {total} 字节）",
                 );
-                span
+                byte_span
             })
             .collect()
     }
@@ -2092,10 +2092,6 @@ impl Editor {
         }
         for block in roots {
             block.update(cx, |block, _| block.record.source_kind = block.record.kind.clone());
-            // 一次查表算**一条候选**：今天每根块恰好一条，退回逐根块线性 `find` 时
-            // 这里要改成「每比较一条候选自增一次」，闸门
-            // `reattaching_root_spans_does_not_scan_candidates_per_block` 才认得出
-            // O(根块数 × 条数)。
             #[cfg(test)]
             self.span_reattach_probes
                 .set(self.span_reattach_probes.get() + 1);

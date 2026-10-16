@@ -1080,7 +1080,16 @@ impl Editor {
         // 引用定义要从缓冲区重解析，就得等这一笔落完：早一步读到的是改之前
         // 的定义行——改 `[asset]:` 的地址，图片还指着旧地址
         // （`editing_image_reference_definition_refreshes_existing_image`）。
-        if needs_reference_refresh {
+        // 落笔**前后**两份源码都要看：上面那次问的是「这一笔之前缓冲区里是什么」，
+        // 而「原来没有 `]:`、这一下才写进去」的定义行（粘贴一行定义、把定义从别处
+        // 搬过来、打完整定义的最后那一键）只有落笔之后才在缓冲区里看得见。少看这
+        // 一份，注册表就停在旧的定义集上：引用式图片指着旧地址或压根解不出来
+        // （闸门 `introducing_a_reference_definition_refreshes_the_reference_registry`）。
+        // 这一份用同一套窄口径，所以带 `[文字](链接)` 的段落依旧不会每键重建。
+        if needs_reference_refresh
+            || (!should_normalize_quote
+                && self.changed_block_needs_runtime_context_refresh(&block, cx))
+        {
             self.rebuild_image_runtimes(cx);
         }
         self.request_active_block_scroll_into_view(cx);

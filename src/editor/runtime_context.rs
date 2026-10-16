@@ -22,18 +22,35 @@ impl Editor {
         // 那会让整篇注册表重建当场 panic，而这里只是个**屏幕**——退回行内树那份保守
         // 口径就够了（多重建一次，换的是不崩）。区间本身的问题由
         // `root_spans_stay_on_char_boundaries_across_edits_and_undo` 那条不变式闸门报。
+        // 区间不可信时（端点落在多字节字符中间、越过缓冲区末尾、或区间倒置）不要
+        // 拿它去切片：那会让整篇注册表重建当场 panic，而这里只是个**屏幕**——退回
+        // 行内树那份保守口径就够了（多重建一次，换的是不崩）。判据只有一处：
+        // `TextBuffer::span_is_trustworthy`。区间本身的问题由
+        // `root_spans_stay_on_char_boundaries_across_edits_and_undo` 那条不变式闸门报。
         let source = self
             .document
             .source_span_of(block.entity_id())
-            .filter(|span| {
-                span.end <= self.buffer.byte_len()
-                    && self.buffer.is_char_boundary(span.start)
-                    && self.buffer.is_char_boundary(span.end)
-            })
+            .filter(|span| self.buffer.span_is_trustworthy(span))
             .map(|span| self.buffer.slice(span));
         let Some(source) = source else {
-            // 没有区间：退回行内树那份宽口径（宁可多重建一次，也别漏掉定义行的更新）。
+            // 没有可信区间：退回**原来的**宽口径（宁可多重建一次，也别漏掉定义行的更新）。
+            // 这一档里两类都要看：
+            // 1. 定义类的块无条件算「可能改」（`FootnoteDefinition` 这类块的行内树标题
+            //    就是标签本身，既没有 `]:` 也没有 `[^`——容器里的脚注定义是子块，改标签
+            //    时只能靠这一条认出来，闸门
+            //    `renaming_a_footnote_definition_sub_block_refreshes_the_registry`）；
+            // 2. 行内树片段里出现 `[` 或 `<`。
             return block.read_with(cx, |block, _cx| {
+                if matches!(
+                    block.kind(),
+                    BlockKind::RawMarkdown
+                        | BlockKind::FrontMatter
+                        | BlockKind::HtmlBlock
+                        | BlockKind::FootnoteDefinition
+                        | BlockKind::Table
+                ) {
+                    return true;
+                }
                 block.record.title.fragments.iter().any(|fragment| {
                     fragment.link.is_some()
                         || fragment.footnote.is_some()
