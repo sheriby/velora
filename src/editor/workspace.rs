@@ -267,6 +267,11 @@ pub(super) struct EditorFileDrag {
     pub(super) source: Option<WeakEntity<Editor>>,
 }
 
+#[derive(Clone)]
+pub(super) struct WorkspaceDirectoryDrag {
+    path: PathBuf,
+}
+
 /// 拖拽预览视图：被拖动标签的文件名。
 pub(super) struct DraggedTabPreview {
     pub(super) label: SharedString,

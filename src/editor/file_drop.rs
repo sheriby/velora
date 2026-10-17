@@ -1,4 +1,4 @@
-//! External Markdown file drops for replacing the current editor window.
+//! 外部文件拖入与文档替换入口。
 
 use std::path::{Path, PathBuf};
 
@@ -100,64 +100,27 @@ impl Editor {
 }
 
 impl Editor {
-    pub(super) fn is_markdown_file_path(path: &Path) -> bool {
-        path.is_file() && super::workspace::is_markdown_document(path)
-    }
-
-    pub(super) fn first_dropped_markdown_path(paths: &[PathBuf]) -> Option<PathBuf> {
-        paths
-            .iter()
-            .find(|path| Self::is_markdown_file_path(path))
-            .cloned()
-    }
-
-    pub(super) fn first_dropped_image_path(paths: &[PathBuf]) -> Option<PathBuf> {
-        paths
-            .iter()
-            .find(|path| super::Block::is_supported_local_image_path(path))
-            .cloned()
-    }
-
     pub(crate) fn on_external_paths_drop(
         &mut self,
         paths: &ExternalPaths,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        cx.stop_propagation();
         self.show_welcome = false;
-        // Dropping a folder makes it the working set of this window.
-        if let Some(folder) = paths
-            .paths()
-            .iter()
-            .find(|path| path.is_dir())
-            .cloned()
+        self.dismiss_contextual_overlays(cx);
+        if self.file_path.is_none()
+            && self.document_dirty
+            && paths.paths().iter().any(|path| path.is_file())
         {
-            self.set_workspace_root(folder, cx);
-            return;
+            self.register_untitled_document(cx);
         }
-
-        if let Some(path) = Self::first_dropped_markdown_path(paths.paths()) {
-            self.request_dropped_markdown_replace(path, window, cx);
-            return;
+        if let Some(directory) = paths.paths().iter().find(|path| path.is_dir()) {
+            self.set_workspace_root(directory.clone(), cx);
         }
-
-        if let Some(path) = Self::first_dropped_image_path(paths.paths()) {
-            if self.image_preview.is_some() {
-                self.open_workspace_file(path, window, cx);
-                return;
-            }
-            if self.insert_image_at_caret(path, cx) {
-                return;
-            }
-            self.show_image_paste_error(
-                anyhow::anyhow!("no focused Markdown block is available for the dropped image"),
-                cx,
-            );
-            return;
+        for path in paths.paths().iter().filter(|path| !path.is_dir()) {
+            self.open_workspace_file(crate::file_url::canonical_path(path), window, cx);
         }
-
-        let strings = cx.global::<I18nManager>().strings().clone();
-        self.show_drop_open_failed_prompt(strings.drop_no_markdown_file_message, window, cx);
     }
 
     pub(crate) fn request_dropped_markdown_replace(

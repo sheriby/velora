@@ -1345,3 +1345,389 @@ async fn the_workspace_context_menu_stops_hover_at_its_own_surface(cx: &mut Test
         "鼠标压在菜单面板上时，菜单底下那一行还算是悬停"
     );
 }
+
+fn tree_drop_node_bounds(
+    cx: &mut VisualTestContext,
+    path: &std::path::Path,
+) -> gpui::Bounds<gpui::Pixels> {
+    let selector = format!(
+        "workspace-node-{}",
+        super::super::stable_node_hash(&super::super::file_node_id(path))
+    );
+    cx.debug_bounds(Box::leak(selector.into_boxed_str()))
+        .expect("文件树节点")
+}
+
+fn drag_tree_entry_to(
+    cx: &mut VisualTestContext,
+    source: &std::path::Path,
+    destination: gpui::Point<gpui::Pixels>,
+) {
+    let row = tree_drop_node_bounds(cx, source);
+    let start = gpui::point(row.left() + gpui::px(65.0), row.center().y);
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        start + gpui::point(gpui::px(15.0), gpui::px(0.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.simulate_mouse_move(destination, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    assert!(
+        cx.cx.read(|cx| cx.has_active_drag()),
+        "文件和目录都应能开始拖动"
+    );
+    cx.simulate_mouse_up(destination, MouseButton::Left, Modifiers::none());
+    redraw(cx);
+    redraw(cx);
+}
+
+fn drop_external_tree_paths(
+    cx: &mut VisualTestContext,
+    paths: Vec<PathBuf>,
+    position: gpui::Point<gpui::Pixels>,
+) {
+    cx.simulate_event(gpui::FileDropEvent::Entered {
+        position,
+        paths: gpui::ExternalPaths::new(paths),
+    });
+    redraw(cx);
+    cx.simulate_event(gpui::FileDropEvent::Submit { position });
+    redraw(cx);
+    redraw(cx);
+}
+
+#[gpui::test]
+fn tree_drop_moves_a_file_and_keeps_its_unsaved_document(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let source = root.join("note.md");
+    let folder = root.join("folder");
+    fs::write(&source, "原文\n").unwrap();
+    fs::create_dir(&folder).unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(source.clone(), window, cx);
+        editor.replace_document_from_markdown("未保存的修改\n".into(), Some(source.clone()), cx);
+        editor.mark_dirty(cx);
+        editor.refresh_workspace_tree(cx);
+    });
+    redraw(cx);
+    let recovery_id = editor.read_with(cx, |editor, _| editor.recovery_id);
+    let target = tree_drop_node_bounds(cx, &folder).center();
+    drag_tree_entry_to(cx, &source, target);
+    assert!(!source.exists(), "拖入目录后源路径应移动");
+    assert_eq!(
+        fs::read_to_string(folder.join("note.md")).unwrap(),
+        "原文\n"
+    );
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.file_path, Some(folder.join("note.md")));
+        assert_eq!(editor.buffer.text(), "未保存的修改\n");
+        assert!(editor.document_dirty);
+        assert_eq!(editor.recovery_id, recovery_id);
+    });
+}
+
+#[gpui::test]
+fn tree_drop_moves_a_directory_with_its_children(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let source = root.join("source");
+    let folder = root.join("target");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::create_dir(&folder).unwrap();
+    fs::write(source.join("nested/note.md"), "正文").unwrap();
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    redraw(cx);
+    let target = tree_drop_node_bounds(cx, &folder).center();
+    drag_tree_entry_to(cx, &source, target);
+    assert!(!source.exists(), "目录应可拖入另一目录");
+    assert_eq!(
+        fs::read_to_string(folder.join("source/nested/note.md")).unwrap(),
+        "正文"
+    );
+}
+
+#[gpui::test]
+fn tree_drop_imports_external_files_into_the_actual_target_instead_of_opening_them(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let outside = root.with_file_name(format!("velora-drop-external-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&outside).unwrap();
+    cx.cx.on_quit({
+        let outside = outside.clone();
+        move || fs::remove_dir_all(outside).unwrap()
+    });
+    let first = outside.join("first.rs");
+    let second = outside.join("second.md");
+    fs::write(&first, "fn main() {}\n").unwrap();
+    fs::write(&second, "外部文件\n").unwrap();
+    let folder = root.join("target");
+    fs::create_dir(&folder).unwrap();
+    let active = root.join("active.md");
+    fs::write(&active, "当前正文\n").unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(active.clone(), window, cx);
+        editor.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
+        editor.refresh_workspace_tree(cx);
+    });
+    redraw(cx);
+    let target = tree_drop_node_bounds(cx, &folder).center();
+    drop_external_tree_paths(cx, vec![first.clone(), second.clone()], target);
+    assert_eq!(
+        fs::read_to_string(folder.join("first.rs")).ok().as_deref(),
+        Some("fn main() {}\n"),
+        "外部文件应复制进落点目录"
+    );
+    assert_eq!(
+        fs::read_to_string(folder.join("second.md")).unwrap(),
+        "外部文件\n"
+    );
+    assert!(first.exists() && second.exists(), "外部拖入保留源文件");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.file_path, Some(active));
+        assert_eq!(editor.buffer.text(), "当前正文\n");
+    });
+}
+
+#[gpui::test]
+fn tree_drop_opens_all_external_files_in_the_editor_without_inserting_images(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let active = root.join("active.md");
+    let other = root.join("other.rs");
+    let image = root.join("pixel.png");
+    fs::write(&active, "当前正文\n").unwrap();
+    fs::write(&other, "fn main() {}\n").unwrap();
+    fs::write(&image, [137, 80, 78, 71, 13, 10, 26, 10]).unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(active.clone(), window, cx);
+        editor.refresh_workspace_tree(cx);
+    });
+    redraw(cx);
+    let target = cx.debug_bounds("editor-scroll").expect("正文落点").center();
+    drop_external_tree_paths(cx, vec![other.clone(), image.clone()], target);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.file_path, Some(image));
+        assert!(editor.image_preview.is_some(), "图片拖入正文应打开图片预览");
+        assert!(
+            editor
+                .workspace
+                .open_documents
+                .iter()
+                .any(|tab| tab.path == other),
+            "多文件都应打开为固定标签"
+        );
+        assert!(
+            editor
+                .workspace
+                .open_documents
+                .iter()
+                .any(|tab| tab.path == active)
+        );
+    });
+    assert_eq!(fs::read_to_string(active).unwrap(), "当前正文\n");
+}
+
+#[gpui::test]
+fn tree_drop_rejects_collisions_for_moves_and_external_copies(cx: &mut TestAppContext) {
+    for external in [false, true] {
+        let (editor, cx, root) = tree_fixture(cx);
+        let source = root.join("note.md");
+        let folder = root.join("target");
+        fs::create_dir(&folder).unwrap();
+        fs::write(&source, "源文件").unwrap();
+        fs::write(folder.join("note.md"), "目标原文").unwrap();
+        editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+        redraw(cx);
+        let target = tree_drop_node_bounds(cx, &folder).center();
+        if external {
+            drop_external_tree_paths(cx, vec![source.clone()], target);
+        } else {
+            drag_tree_entry_to(cx, &source, target);
+        }
+        assert_eq!(fs::read_to_string(&source).unwrap(), "源文件");
+        assert_eq!(
+            fs::read_to_string(folder.join("note.md")).unwrap(),
+            "目标原文"
+        );
+        assert!(
+            editor.read_with(cx, |editor, _| editor.modal_is_open()),
+            "同名冲突应显示应用内错误"
+        );
+    }
+}
+
+#[gpui::test]
+fn tree_drop_rejects_moving_a_directory_into_its_descendant(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let source = root.join("source");
+    let child = source.join("nested");
+    fs::create_dir_all(&child).unwrap();
+    fs::write(source.join("note.md"), "保留").unwrap();
+    editor.update(cx, |editor, cx| {
+        editor
+            .workspace
+            .expanded
+            .insert(super::super::file_node_id(&source));
+        editor.refresh_workspace_tree(cx);
+    });
+    redraw(cx);
+    redraw(cx);
+    let target = tree_drop_node_bounds(cx, &child).center();
+    drag_tree_entry_to(cx, &source, target);
+    assert_eq!(fs::read_to_string(source.join("note.md")).unwrap(), "保留");
+    assert!(!child.join("source").exists());
+    assert!(editor.read_with(cx, |editor, _| editor.modal_is_open()));
+}
+
+#[gpui::test]
+fn tree_drop_uses_a_files_parent_and_the_root_for_blank_space(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let folder = root.join("target");
+    fs::create_dir(&folder).unwrap();
+    let first = root.join("first.md");
+    let second = folder.join("second.md");
+    let anchor = folder.join("anchor.txt");
+    fs::write(&first, "first").unwrap();
+    fs::write(&second, "second").unwrap();
+    fs::write(&anchor, "anchor").unwrap();
+    editor.update(cx, |editor, cx| {
+        editor
+            .workspace
+            .expanded
+            .insert(super::super::file_node_id(&folder));
+        editor.refresh_workspace_tree(cx);
+    });
+    redraw(cx);
+    redraw(cx);
+    let target = tree_drop_node_bounds(cx, &anchor).center();
+    drag_tree_entry_to(cx, &first, target);
+    assert_eq!(
+        fs::read_to_string(folder.join("first.md")).unwrap(),
+        "first"
+    );
+    assert!(!first.exists());
+    let panel = cx.debug_bounds("workspace-panel").expect("文件树面板");
+    let target = gpui::point(panel.center().x, panel.bottom() - gpui::px(20.0));
+    drag_tree_entry_to(cx, &second, target);
+    assert_eq!(
+        fs::read_to_string(root.join("second.md")).unwrap(),
+        "second"
+    );
+    assert!(!second.exists());
+}
+
+#[gpui::test]
+fn tree_drop_preserves_dirty_untitled_content_when_opening_an_external_file(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let target = root.join("open.rs");
+    fs::write(&target, "fn main() {}\n").unwrap();
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = false;
+        editor.replace_document_from_markdown("未命名的未保存正文\n".into(), None, cx);
+        editor.mark_dirty(cx);
+    });
+    redraw(cx);
+    let point = cx.debug_bounds("editor-scroll").unwrap().center();
+    drop_external_tree_paths(cx, vec![target.clone()], point);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.file_path, Some(target));
+        assert!(!editor.show_drop_replace_dialog);
+        assert!(
+            editor.workspace.open_documents.iter().any(|tab| {
+                super::super::untitled_document_id(&tab.path).is_some()
+                    && tab.dirty
+                    && tab.markdown == "未命名的未保存正文\n"
+            }),
+            "拖入应打开新标签，并保留未命名文档"
+        );
+    });
+}
+
+#[gpui::test]
+fn tree_drop_imports_external_directories_without_decoding_their_files(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let outside = root.with_file_name(format!("velora-drop-directory-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(outside.join("nested/empty")).unwrap();
+    cx.cx.on_quit({
+        let outside = outside.clone();
+        move || fs::remove_dir_all(outside).unwrap()
+    });
+    fs::write(outside.join("nested/raw.bin"), [0, 255, 0, 128]).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("..", outside.join("nested/cycle")).unwrap();
+    let point = tree_drop_node_bounds(cx, &root).center();
+    drop_external_tree_paths(cx, vec![outside.clone()], point);
+    let imported = root.join(outside.file_name().unwrap());
+    assert!(imported.join("nested/empty").is_dir());
+    assert_eq!(
+        fs::read(imported.join("nested/raw.bin")).unwrap(),
+        [0, 255, 0, 128]
+    );
+    assert!(outside.join("nested/raw.bin").is_file());
+    #[cfg(unix)]
+    assert_eq!(
+        fs::read_link(imported.join("nested/cycle")).unwrap(),
+        PathBuf::from("..")
+    );
+    assert!(editor.read_with(cx, |editor, _| editor.file_path.is_none()));
+}
+
+#[gpui::test]
+fn tree_drop_directory_moves_update_every_split_group_and_keep_shared_edits(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let source = root.join("source");
+    let target = root.join("target");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&target).unwrap();
+    let path = source.join("note.md");
+    fs::write(&path, "原文\n").unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(path.clone(), window, cx);
+        editor.set_workspace_root(root.clone(), cx);
+        editor.refresh_workspace_tree(cx);
+        editor.split_active_document(super::super::split::SplitDirection::Right, window, cx);
+    });
+    redraw(cx);
+    redraw(cx);
+    let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+    assert_eq!(groups.len(), 2);
+    groups.first().unwrap().update(cx, |editor, cx| {
+        editor.buffer.edit(0..0, "未保存");
+        editor.document_dirty = true;
+        cx.notify();
+    });
+    redraw(cx);
+    let point = tree_drop_node_bounds(cx, &target).center();
+    drag_tree_entry_to(cx, &source, point);
+    redraw(cx);
+    let destination = target.join("source/note.md");
+    assert!(destination.is_file());
+    assert!(!path.exists());
+    for group in &groups {
+        group.read_with(cx, |editor, _| {
+            assert_eq!(editor.file_path, Some(destination.clone()));
+            assert_eq!(editor.buffer.text(), "未保存原文\n");
+            assert!(editor.document_dirty);
+            assert!(
+                editor
+                    .workspace
+                    .open_documents
+                    .iter()
+                    .all(|tab| tab.path != path)
+            );
+        });
+    }
+    let active = editor.read_with(cx, |editor, _| editor.active_split_editor().unwrap());
+    active.update_in(cx, |editor, window, cx| {
+        assert!(editor.save_to_existing_path(&destination, window, cx));
+    });
+    redraw(cx);
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "未保存原文\n");
+    assert!(!path.exists(), "保存不能重新创建移动前的目录和文件");
+}

@@ -3,6 +3,32 @@ use crate::editor::ViewMode;
 use crate::editor::buffer::BufferChange;
 
 impl Editor {
+    pub(in crate::editor) fn remap_split_workspace_paths(
+        &mut self,
+        source: &Path,
+        destination: &Path,
+        is_directory: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.split_workspace.as_mut() {
+            workspace.documents = std::mem::take(&mut workspace.documents)
+                .into_iter()
+                .map(|(path, document)| {
+                    (
+                        remap_moved_path(&path, source, destination, is_directory).unwrap_or(path),
+                        document,
+                    )
+                })
+                .collect();
+        }
+        for group in self.split_groups() {
+            group.update(cx, |editor, cx| {
+                editor.apply_workspace_rename(source, destination, is_directory, cx);
+                cx.notify();
+            });
+        }
+    }
+
     pub(in crate::editor) fn resolve_split_conflict(
         &mut self,
         path: &Path,

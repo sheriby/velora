@@ -275,7 +275,158 @@ impl Editor {
         cx.notify();
     }
 
-    fn apply_workspace_rename(
+    pub(super) fn receive_workspace_tree_drop(
+        &mut self,
+        sources: Vec<PathBuf>,
+        directory: PathBuf,
+        move_source: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self.workspace.root.clone() else {
+            return;
+        };
+        if let Some(parent) = self.split_parent.clone() {
+            let handle = window.window_handle();
+            cx.defer(move |cx| {
+                if let Err(error) = handle
+                    .update(cx, |_, window, cx| {
+                        parent.update(cx, |editor, cx| {
+                            editor.start_workspace_tree_transfer(
+                                sources,
+                                directory,
+                                root,
+                                move_source,
+                                window,
+                                cx,
+                            );
+                        })
+                    })
+                    .and_then(|result| result)
+                {
+                    eprintln!("转交文件树拖放失败：{error}");
+                }
+            });
+            return;
+        }
+        self.start_workspace_tree_transfer(sources, directory, root, move_source, window, cx);
+    }
+
+    fn start_workspace_tree_transfer(
+        &mut self,
+        sources: Vec<PathBuf>,
+        directory: PathBuf,
+        root: PathBuf,
+        move_source: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if sources.is_empty() {
+            return;
+        }
+        if move_source {
+            self.document_revision = self.document_revision.wrapping_add(1);
+            self.autosave_task = None;
+            for group in self.split_groups() {
+                group.update(cx, |editor, _| {
+                    editor.document_revision = editor.document_revision.wrapping_add(1);
+                    editor.autosave_task = None;
+                });
+            }
+        }
+        let operation = cx.background_spawn(async move {
+            sources
+                .into_iter()
+                .map(|source| {
+                    let result = transfer_workspace_path(&root, &source, &directory, move_source);
+                    (source, result)
+                })
+                .collect::<Vec<_>>()
+        });
+        let handle = window.window_handle();
+        let editor = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            let results = operation.await;
+            if let Err(error) = handle
+                .update(cx, |_, _, cx| {
+                    editor.update(cx, |editor, cx| {
+                        let mut errors = Vec::new();
+                        for (source, result) in results {
+                            match result {
+                                Ok(Some((destination, is_directory))) => {
+                                    if move_source {
+                                        editor.apply_workspace_rename(
+                                            &source,
+                                            &destination,
+                                            is_directory,
+                                            cx,
+                                        );
+                                        editor.remap_split_workspace_paths(
+                                            &source,
+                                            &destination,
+                                            is_directory,
+                                            cx,
+                                        );
+                                    } else {
+                                        editor.reveal_workspace_transfer(&destination, cx);
+                                        for group in editor.split_groups() {
+                                            group.update(cx, |editor, cx| {
+                                                editor.reveal_workspace_transfer(&destination, cx)
+                                            });
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    let detail =
+                                        if error.kind() == std::io::ErrorKind::AlreadyExists {
+                                            cx.global::<I18nManager>()
+                                                .strings()
+                                                .workspace_name_exists
+                                                .clone()
+                                        } else {
+                                            error.to_string()
+                                        };
+                                    errors.push(format!("{}：{detail}", source.display()));
+                                }
+                            }
+                        }
+                        if !errors.is_empty() {
+                            let title = cx
+                                .global::<I18nManager>()
+                                .strings()
+                                .workspace_tab_files
+                                .clone();
+                            editor.show_message_modal(title, errors.join("\n"), cx);
+                        }
+                        if move_source
+                            && (editor.document_dirty
+                                || editor.has_dirty_workspace_documents()
+                                || editor.has_dirty_split_documents(cx))
+                        {
+                            editor.schedule_autosave(cx);
+                        }
+                        editor.persist_session(cx);
+                        cx.notify();
+                    })
+                })
+                .and_then(|result| result)
+            {
+                eprintln!("更新文件树拖放结果失败：{error}");
+            }
+        })
+        .detach();
+    }
+
+    fn reveal_workspace_transfer(&mut self, destination: &Path, cx: &mut Context<Self>) {
+        if let Some(parent) = destination.parent() {
+            self.workspace.expanded.insert(file_node_id(parent));
+        }
+        self.refresh_workspace_paths(&[destination.to_path_buf()], cx);
+        cx.notify();
+    }
+
+    pub(super) fn apply_workspace_rename(
         &mut self,
         source: &Path,
         destination: &Path,
@@ -294,7 +445,7 @@ impl Editor {
         {
             self.file_path = Some(path);
             self.pending_window_title_refresh = true;
-            if is_directory && !self.code_document {
+            if !self.code_document && (is_directory || source.parent() != destination.parent()) {
                 self.rebuild_image_runtimes(cx);
             }
         }
@@ -306,11 +457,51 @@ impl Editor {
         {
             self.workspace.active_document = Some(path);
         }
+        if let Some(path) = self
+            .image_preview
+            .as_ref()
+            .and_then(|preview| remap_moved_path(&preview.path, source, destination, is_directory))
+        {
+            if let Some(preview) = self
+                .image_preview
+                .as_mut()
+                .filter(|preview| preview.image.is_some())
+            {
+                preview.path = path;
+            } else {
+                self.load_image_file_preview(path, cx);
+            }
+        }
+        if let Some(path) = self
+            .unsupported_preview_path
+            .as_ref()
+            .and_then(|path| remap_moved_path(path, source, destination, is_directory))
+        {
+            self.unsupported_preview_path = Some(path);
+        }
+        if is_directory {
+            self.workspace.expanded = self
+                .workspace
+                .expanded
+                .iter()
+                .map(|id| {
+                    id.strip_prefix("file:")
+                        .and_then(|path| {
+                            remap_moved_path(Path::new(path), source, destination, true)
+                        })
+                        .map(|path| file_node_id(&path))
+                        .unwrap_or_else(|| id.clone())
+                })
+                .collect();
+        }
         self.workspace.selected = Some(if is_directory {
             WorkspaceSelection::Directory(destination.to_path_buf())
         } else {
             WorkspaceSelection::File(destination.to_path_buf())
         });
+        if let Some(parent) = destination.parent() {
+            self.workspace.expanded.insert(file_node_id(parent));
+        }
         if is_directory {
             self.workspace.expanded.insert(file_node_id(destination));
         }
@@ -700,5 +891,120 @@ fn perform_workspace_name_operation(
             }
             fs::rename(source, destination)
         }
+    }
+}
+
+fn transfer_workspace_path(
+    root: &Path,
+    source: &Path,
+    directory: &Path,
+    move_source: bool,
+) -> std::io::Result<Option<(PathBuf, bool)>> {
+    use std::io::{Error, ErrorKind};
+    let root = crate::file_url::strip_verbatim_prefix(&fs::canonicalize(root)?);
+    let directory = crate::file_url::strip_verbatim_prefix(&fs::canonicalize(directory)?);
+    if !directory.is_dir() || !directory.starts_with(&root) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "拖放目标必须是工作区内的目录",
+        ));
+    }
+    let name = source
+        .file_name()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "无法移动文件系统根目录"))?;
+    let parent = source
+        .parent()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "文件没有父目录"))?;
+    // 保留末级符号链接本身，不能 canonicalize 后把链接指向的实体移走。
+    let source = crate::file_url::strip_verbatim_prefix(&fs::canonicalize(parent)?).join(name);
+    if move_source && (source == root || !source.starts_with(&root)) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "不能移动工作区根目录或工作区外的文件",
+        ));
+    }
+    let is_directory = fs::metadata(&source)?.is_dir();
+    if is_directory
+        && directory.starts_with(
+            fs::canonicalize(&source).map(|path| crate::file_url::strip_verbatim_prefix(&path))?,
+        )
+    {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "不能将目录放入自身或它的子目录",
+        ));
+    }
+    let destination = directory.join(name);
+    if source == destination {
+        return Ok(None);
+    }
+    if move_source {
+        perform_workspace_name_operation(
+            &WorkspaceEditKind::Rename {
+                source,
+                is_directory,
+            },
+            &destination,
+        )?;
+    } else {
+        copy_workspace_drop_path(&source, &destination)?;
+    }
+    Ok(Some((destination, is_directory)))
+}
+
+fn copy_workspace_drop_path(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(source)?;
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, destination);
+        #[cfg(windows)]
+        return if source.is_dir() {
+            std::os::windows::fs::symlink_dir(target, destination)
+        } else {
+            std::os::windows::fs::symlink_file(target, destination)
+        };
+    }
+    if metadata.is_dir() {
+        fs::create_dir(destination)?;
+        let result = (|| {
+            for entry in fs::read_dir(source)? {
+                let entry = entry?;
+                copy_workspace_drop_path(&entry.path(), &destination.join(entry.file_name()))?;
+            }
+            Ok(())
+        })();
+        if result.is_err()
+            && let Err(error) = fs::remove_dir_all(destination)
+        {
+            eprintln!(
+                "清理未完成的拖入目录失败 {}：{error}",
+                destination.display()
+            );
+        }
+        result
+    } else if metadata.is_file() {
+        let mut input = fs::File::open(source)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)?;
+        let result = std::io::copy(&mut input, &mut output)
+            .and_then(|_| fs::set_permissions(destination, metadata.permissions()));
+        drop(output);
+        if result.is_err()
+            && let Err(error) = fs::remove_file(destination)
+        {
+            eprintln!(
+                "清理未完成的拖入文件失败 {}：{error}",
+                destination.display()
+            );
+        }
+        result
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "只能拖入普通文件或目录",
+        ))
     }
 }

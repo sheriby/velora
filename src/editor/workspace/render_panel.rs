@@ -62,6 +62,11 @@ impl Editor {
                 .child(
                     div()
                         .id("workspace-panel-scroll")
+                        .when_some(
+                            (self.workspace.active_tab == WorkspaceTab::Files)
+                                .then(|| self.workspace.root.clone()).flatten(),
+                            |element, root| workspace_tree_drop_target(element, root, &editor, None),
+                        )
                         .track_focus(&tree_focus)
                         .on_key_down(cx.listener(Self::on_workspace_tree_key_down))
                         .flex_1()
@@ -405,6 +410,15 @@ impl Editor {
             | WorkspaceTreeKind::OtherFile(path) => Some(path.clone()),
             _ => None,
         };
+        let directory_drag = match &node.kind {
+            WorkspaceTreeKind::Directory(path) if self.workspace.root.as_ref() != Some(path) => Some(path.clone()),
+            _ => None,
+        };
+        let drop_directory = match &node.kind {
+            WorkspaceTreeKind::Directory(path) => Some(path.clone()),
+            WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) | WorkspaceTreeKind::OtherFile(path) => path.parent().map(Path::to_path_buf),
+            WorkspaceTreeKind::Heading { .. } => None,
+        };
         let context_editor = editor.clone();
         let context_kind = node.kind.clone();
         let arrow_node_id = node.id.clone();
@@ -488,6 +502,15 @@ impl Editor {
                     let label = file_label(&drag.from_path);
                     cx.new(|_| DraggedTabPreview { label: label.into() })
                 })
+            })
+            .when_some(directory_drag, |row, path| {
+                row.on_drag(WorkspaceDirectoryDrag { path }, |drag, _, _, cx| {
+                    let label = file_label(&drag.path);
+                    cx.new(|_| DraggedTabPreview { label: label.into() })
+                })
+            })
+            .when_some(drop_directory, |row, directory| {
+                workspace_tree_drop_target(row, directory, editor, Some(c.selection))
             })
             .child(arrow_el)
             .children(icon.map(|(path, color)| {
@@ -670,4 +693,103 @@ pub(crate) fn path_is_affected(path: &Path, target: &Path, target_is_directory: 
     } else {
         path == target
     }
+}
+
+fn workspace_tree_drop_target<T: InteractiveElement>(
+    element: T,
+    directory: PathBuf,
+    editor: &WeakEntity<Editor>,
+    highlight: Option<Hsla>,
+) -> T {
+    let file_editor = editor.clone();
+    let directory_editor = editor.clone();
+    let external_editor = editor.clone();
+    let file_target = directory.clone();
+    let directory_target = directory.clone();
+    let external_target = directory.clone();
+    let file_hover_target = directory.clone();
+    element
+        .can_drop(|drag, _, _| {
+            drag.is::<EditorFileDrag>()
+                || drag.is::<WorkspaceDirectoryDrag>()
+                || drag.is::<ExternalPaths>()
+        })
+        .drag_over::<EditorFileDrag>(move |style, drag, _, _| {
+            if drag.from_path.parent() == Some(file_hover_target.as_path()) {
+                style
+            } else if let Some(color) = highlight {
+                style.bg(color)
+            } else {
+                style
+            }
+        })
+        .drag_over::<WorkspaceDirectoryDrag>(move |style, drag, _, _| {
+            if directory.starts_with(&drag.path) || drag.path.parent() == Some(directory.as_path())
+            {
+                style
+            } else if let Some(color) = highlight {
+                style.bg(color)
+            } else {
+                style
+            }
+        })
+        .drag_over::<ExternalPaths>(move |style, _, _, _| {
+            if let Some(color) = highlight {
+                style.bg(color)
+            } else {
+                style
+            }
+        })
+        .on_drop(move |drag: &EditorFileDrag, window, cx| {
+            cx.stop_propagation();
+            if let Err(error) = file_editor.update(cx, |editor, cx| {
+                let move_source = editor
+                    .workspace
+                    .root
+                    .as_ref()
+                    .is_some_and(|root| drag.from_path.starts_with(root));
+                editor.receive_workspace_tree_drop(
+                    vec![drag.from_path.clone()],
+                    file_target.clone(),
+                    move_source,
+                    window,
+                    cx,
+                );
+            }) {
+                eprintln!("移动拖入文件树的文件失败：{error}");
+            }
+        })
+        .on_drop(move |drag: &WorkspaceDirectoryDrag, window, cx| {
+            cx.stop_propagation();
+            if let Err(error) = directory_editor.update(cx, |editor, cx| {
+                let move_source = editor
+                    .workspace
+                    .root
+                    .as_ref()
+                    .is_some_and(|root| drag.path.starts_with(root));
+                editor.receive_workspace_tree_drop(
+                    vec![drag.path.clone()],
+                    directory_target.clone(),
+                    move_source,
+                    window,
+                    cx,
+                );
+            }) {
+                eprintln!("移动拖入文件树的目录失败：{error}");
+            }
+        })
+        .on_drop(move |paths: &ExternalPaths, window, cx| {
+            cx.stop_propagation();
+            if let Err(error) = external_editor.update(cx, |editor, cx| {
+                editor.receive_workspace_tree_drop(
+                    paths.paths().to_vec(),
+                    external_target.clone(),
+                    false,
+                    window,
+                    cx,
+                );
+            }) {
+                eprintln!("导入拖入文件树的路径失败：{error}");
+            }
+        })
 }
