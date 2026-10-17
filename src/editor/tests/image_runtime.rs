@@ -1402,6 +1402,64 @@ async fn image_file_preview_refreshes_after_external_changes(cx: &mut TestAppCon
     });
 }
 
+/// 外部等长替换并保留 mtime 后，正文各入口必须显示新图，不能继续复用旧解码。
+#[gpui::test]
+fn embedded_images_refresh_after_external_changes(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let cases = [
+        ("block", "![图](picture.svg)"),
+        ("inline", "正文 ![图](./picture.svg) 结尾"),
+        ("quote", "> ![图](picture.svg)"),
+        ("table", "| 图片 |\n| --- |\n| ![图](picture.svg) |"),
+        ("html", "<img src=\"picture.svg\" />"),
+    ];
+    let mut stale = Vec::new();
+    for (name, markdown) in cases {
+        let markdown = format!("说明\n\n{markdown}");
+        let directory = root.join(name);
+        fs::create_dir_all(&directory).expect("创建图片目录");
+        let path = directory.join("picture.svg");
+        let svg = |height| {
+            format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"{height}\"><rect width=\"100\" height=\"{height}\" fill=\"red\"/></svg>"
+            )
+        };
+        fs::write(&path, svg(20)).expect("写入原图");
+        let stamp = fs::metadata(&path).unwrap().modified().unwrap();
+        let (editor, cx) = cx.add_window_view(|_, cx| {
+            Editor::from_markdown(cx, markdown.clone(), Some(directory.join("note.md")))
+        });
+        for _ in 0..4 {
+            redraw(cx);
+        }
+        let before = cx
+            .debug_bounds("image-content")
+            .unwrap_or_else(|| panic!("{name} 原图已显示"));
+        assert!(before.size.height > px(0.0), "{name} 原图应有高度");
+        fs::write(&path, svg(40)).expect("外部替换图片");
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp)
+            .expect("保留原时间戳");
+        editor.update(cx, |editor, cx| editor.on_watched_path_changed(&path, cx));
+        for _ in 0..4 {
+            redraw(cx);
+        }
+        let after = cx.debug_bounds("image-content").expect("替换后图片已显示");
+        if (f32::from(after.size.height) / f32::from(before.size.height) - 2.0).abs() > 0.05 {
+            stale.push((name, before.size, after.size));
+        }
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), markdown, "刷新图片不应改写文档");
+            assert!(!editor.document_dirty);
+        });
+    }
+    assert!(stale.is_empty(), "这些图片仍显示外部替换前的内容：{stale:?}");
+}
+
 #[gpui::test]
 async fn image_file_preview_prompts_before_discarding_an_untitled_draft(cx: &mut TestAppContext) {
     init_editor_test_app(cx);

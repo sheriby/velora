@@ -242,6 +242,8 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if crate::components::Block::has_supported_image_extension(path) {
+            // 正文 img(path) 与独立预览使用不同的加载器，缓存必须分别失效。
+            gpui::ImageSource::from(path).remove_asset(cx);
             cx.remove_asset::<ImageAssetLoader>(&Resource::Path(path.to_path_buf().into()));
             if self
                 .image_preview
@@ -250,6 +252,7 @@ impl Editor {
             {
                 self.load_image_file_preview(path.to_path_buf(), cx);
             }
+            cx.notify();
             return;
         }
         self.reload_externally_changed_document_with_recheck(path, true, cx);

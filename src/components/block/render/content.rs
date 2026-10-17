@@ -63,6 +63,7 @@ impl Block {
             ImageResolvedSource::Local(path) => img(path),
             ImageResolvedSource::Remote(uri) => img(uri),
         }
+        .debug_selector(|| "image-content".to_string())
         .max_w(max_width)
         .max_h(max_height)
         .object_fit(ObjectFit::Contain)
