@@ -175,12 +175,14 @@ impl Editor {
                 .left_0()
                 .right_0()
                 .bottom_0()
-                // 遮罩要挡住底下的命中：没有 occlude，菜单底下的树行在鼠标压在
-                // 菜单上时仍然算悬停（亮起来），点击也会穿到底下的行。
-                .occlude()
+                // 只拦截左键关闭，面板外的右键仍交给真实目标；面板自身阻止穿透。
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = close_editor
-                        .update(cx, |editor, cx| editor.close_workspace_context_menu(cx));
+                    if let Err(error) = close_editor
+                        .update(cx, |editor, cx| editor.close_workspace_context_menu(cx))
+                    {
+                        eprintln!("关闭文件树右键菜单失败：{error}");
+                    }
+                    cx.stop_propagation();
                 })
                 .child(
                     div()
@@ -299,7 +301,7 @@ impl Editor {
                 .left_0()
                 .right_0()
                 .bottom_0()
-                // 同工作区菜单：遮罩不 occlude，菜单底下那一行的悬停与点击都会漏过去。
+                // 菜单面板挡住下方标签的悬停与点击，避免穿透。
                 .occlude()
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = close_editor_left

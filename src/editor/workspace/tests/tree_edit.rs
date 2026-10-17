@@ -981,10 +981,173 @@ async fn the_file_tree_renders_only_the_rows_in_the_viewport(cx: &mut TestAppCon
     );
 }
 
+#[gpui::test]
+fn workspace_context_menu_retargets_on_each_right_click(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let first = root.join("z.md");
+    let second = root.join("a.md");
+    let directory = root.join("目录");
+    fs::create_dir(&directory).expect("创建目录");
+    fs::write(&first, "正文 A").expect("写文件 A");
+    fs::write(&second, "正文 B").expect("写文件 B");
+    cx.update(|window, cx| {
+        window.resize(gpui::size(gpui::px(900.0), gpui::px(650.0)));
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(first.clone(), window, cx);
+            editor.refresh_workspace_tree(cx);
+        });
+    });
+    redraw(cx);
+    let row_position = |cx: &mut VisualTestContext, path: &PathBuf| {
+        let selector = Box::leak(
+            format!(
+                "workspace-node-{}",
+                super::super::stable_node_hash(&super::super::file_node_id(path))
+            )
+            .into_boxed_str(),
+        );
+        let bounds = cx.debug_bounds(selector).expect("文件树节点");
+        gpui::point(bounds.left() + gpui::px(8.0), bounds.center().y)
+    };
+    let right_click = |cx: &mut VisualTestContext, position| {
+        if let Some(menu) = cx.debug_bounds("workspace-context-panel") {
+            assert!(!menu.contains(&position), "点击目标必须露在菜单面板外");
+        }
+        cx.simulate_mouse_down(position, MouseButton::Right, Modifiers::none());
+        cx.simulate_mouse_up(position, MouseButton::Right, Modifiers::none());
+        redraw(cx);
+    };
+    let mut position = row_position(cx, &first);
+    position.x += gpui::px(100.0);
+    right_click(cx, position);
+    let position = row_position(cx, &second);
+    right_click(cx, position);
+    let mut failures = Vec::new();
+    if editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.target.clone())
+    }) != Some(WorkspaceSelection::File(second.clone()))
+    {
+        failures.push("文件 A → 文件 B");
+    }
+    let copy_name = cx
+        .debug_bounds("menu-item-workspace-context-action-CopyFileName")
+        .expect("复制文件名");
+    cx.simulate_click(copy_name.center(), Modifiers::none());
+    redraw(cx);
+    cx.update(|_, cx| {
+        if cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref()
+            != Some("a.md")
+        {
+            failures.push("菜单操作仍指向旧文件");
+        }
+    });
+    let mut position = row_position(cx, &first);
+    position.x += gpui::px(100.0);
+    right_click(cx, position);
+    let position = row_position(cx, &directory);
+    right_click(cx, position);
+    if editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.target.clone())
+    }) != Some(WorkspaceSelection::Directory(directory))
+        || cx
+            .debug_bounds("menu-item-workspace-context-action-NewFile")
+            .is_none()
+    {
+        failures.push("文件 → 目录");
+    }
+    let panel = cx.debug_bounds("workspace-panel").expect("侧栏");
+    right_click(
+        cx,
+        gpui::point(
+            panel.left() + gpui::px(12.0),
+            panel.bottom() - gpui::px(10.0),
+        ),
+    );
+    if editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.target.clone())
+    }) != Some(WorkspaceSelection::WorkspaceRoot(root))
+        || cx
+            .debug_bounds("menu-item-workspace-context-action-CopyFileName")
+            .is_some()
+    {
+        failures.push("目录 → 空白处");
+    }
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.file_path.clone()),
+        Some(first),
+        "右键不能切换正文"
+    );
+    assert!(failures.is_empty(), "连续右键没有更新目标：{failures:?}");
+}
+
+#[gpui::test]
+fn workspace_context_menu_left_dismiss_does_not_click_the_file_underneath(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let first = root.join("z.md");
+    let second = root.join("a.md");
+    for path in [&first, &second] {
+        fs::write(path, "正文").expect("写夹具");
+    }
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(first.clone(), window, cx);
+            editor.refresh_workspace_tree(cx);
+        });
+    });
+    redraw(cx);
+    let row_position = |cx: &mut VisualTestContext, path: &PathBuf| {
+        let selector = Box::leak(
+            format!(
+                "workspace-node-{}",
+                super::super::stable_node_hash(&super::super::file_node_id(path))
+            )
+            .into_boxed_str(),
+        );
+        let bounds = cx.debug_bounds(selector).expect("文件行");
+        gpui::point(bounds.left() + gpui::px(8.0), bounds.center().y)
+    };
+    let mut position = row_position(cx, &first);
+    position.x += gpui::px(100.0);
+    cx.simulate_mouse_down(position, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(position, MouseButton::Right, Modifiers::none());
+    redraw(cx);
+    let position = row_position(cx, &second);
+    assert!(
+        !cx.debug_bounds("workspace-context-panel")
+            .expect("菜单")
+            .contains(&position)
+    );
+    cx.simulate_click(position, Modifiers::none());
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.context_menu.is_none(), "左键应关闭菜单");
+        assert_eq!(
+            editor.file_path,
+            Some(first),
+            "关闭菜单不能顺便打开下方文件"
+        );
+    });
+}
+
 /// 菜单开着时，鼠标压在菜单面板上，面板底下那一行文件不该还算悬停。
 ///
 /// 现象：右键菜单弹出来以后，鼠标在菜单上面移动，菜单下面的文件跟着亮
-/// 悬停底色。根因：工作区菜单的遮罩与面板都没 `occlude`，GPUI 的命中测试
+/// 悬停底色。根因：菜单面板没有 `occlude`，GPUI 的命中测试
 /// （`Window::hit_test`）只在遇到 `HitboxBehavior::BlockMouse` 时才停，于是菜单底下那一
 /// 层的行也进了命中集合，`is_hovered` 跟着为真（点击也会一起漏过去）。
 #[gpui::test]
