@@ -213,8 +213,8 @@ pub(crate) struct SearchHighlightKey {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum WorkspaceSearchScope {
-    #[default]
     Workspace,
+    #[default]
     Document,
 }
 
@@ -483,7 +483,7 @@ impl Default for WorkspaceState {
             open_documents: Vec::new(),
             active_document: None,
             search_query: String::new(),
-            search_scope: WorkspaceSearchScope::Workspace,
+            search_scope: WorkspaceSearchScope::default(),
             search_active_index: None,
             search_selected_range: 0..0,
             search_input_state: SearchInputState::default(),

@@ -168,7 +168,7 @@ impl Editor {
         // 设置里选「跟随上次」（默认）时听记忆，钉死了（总是打开/总是关闭、文件数/
         // 大纲）就听设置。
         self.apply_sidebar_startup_state(session.as_ref(), cx);
-        self.workspace.search_scope = WorkspaceSearchScope::Workspace;
+        self.workspace.search_scope = WorkspaceSearchScope::default();
         self.workspace.search_focus_pending = false;
         self.workspace.search_query.clear();
         self.workspace.search_selected_range = 0..0;

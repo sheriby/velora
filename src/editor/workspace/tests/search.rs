@@ -11,6 +11,66 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
+#[test]
+fn sidebar_search_defaults_to_the_current_document() {
+    assert_eq!(
+        super::super::WorkspaceState::default().search_scope,
+        super::super::WorkspaceSearchScope::Document,
+    );
+}
+
+#[gpui::test]
+async fn opening_a_workspace_defaults_to_current_document_search(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-search-default-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("创建夹具目录");
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    let current = root.join("current.md");
+    fs::write(&current, "当前文档 needle\n").expect("当前文档");
+    fs::write(root.join("other.md"), "其他文档 needle\n").expect("其他文档");
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    cx.on_quit({
+        let root = root.clone();
+        move || fs::remove_dir_all(root).expect("清理夹具")
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_workspace_root(root, cx);
+        editor.open_workspace_file(current, window, cx);
+        editor.set_workspace_tab(WorkspaceTab::Search, cx);
+        editor.workspace.search_query = "needle".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.search_results.len(),
+            1,
+            "默认只显示当前文档的命中"
+        );
+        assert_eq!(
+            editor.workspace.search_results.first().expect("命中").label,
+            "current.md"
+        );
+    });
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.search_results.len(),
+            2,
+            "手动切换后搜索所有文件"
+        );
+    });
+}
 
 #[test]
 fn search_cache_detects_a_rewrite_with_a_restored_mtime() {
@@ -398,6 +458,7 @@ async fn workspace_search_returns_content_hits_after_typing(cx: &mut TestAppCont
     editor.update(cx, |editor, cx| {
         editor.set_workspace_root(root, cx);
         editor.workspace.active_tab = super::super::WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
         editor.workspace.search_query = "独特".into();
         editor.schedule_workspace_search(cx);
     });
@@ -444,6 +505,7 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
         editor.set_workspace_root(root.clone(), cx);
         editor.workspace.is_open = true;
         editor.workspace.active_tab = super::super::WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
         editor.workspace.search_query = "velora".into();
         editor.schedule_workspace_search(cx);
     });
@@ -555,6 +617,7 @@ async fn re_search_keeps_previous_results_visible(cx: &mut TestAppContext) {
         editor.set_workspace_root(root.clone(), cx);
         editor.workspace.is_open = true;
         editor.workspace.active_tab = super::super::WorkspaceTab::Search;
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
         editor.workspace.search_query = "velora".into();
         editor.schedule_workspace_search(cx);
     });
@@ -639,6 +702,7 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
             editor.open_workspace_file(root.join("start.md"), window, cx);
             editor.workspace.is_open = true;
             editor.workspace.active_tab = WorkspaceTab::Search;
+            editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
             editor.workspace.search_query = "测试".into();
             editor.schedule_workspace_search(cx);
         });
@@ -895,6 +959,7 @@ async fn workspace_search_reports_all_hits_and_jumps_by_proximity(cx: &mut TestA
             editor.open_workspace_file(root.join("start.md"), window, cx);
             editor.workspace.is_open = true;
             editor.workspace.active_tab = WorkspaceTab::Search;
+            editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
             editor.workspace.search_query = "测试".into();
             editor.schedule_workspace_search(cx);
         });
