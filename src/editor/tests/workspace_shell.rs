@@ -24,6 +24,33 @@ async fn native_about_menu_action_opens_dialog_after_window_event(cx: &mut TestA
     );
 }
 
+#[gpui::test]
+async fn native_update_menu_action_opens_dialog_after_window_event(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    cx.update(|cx| {
+        let mut settings = crate::config::preferences::UpdatePreferences::default();
+        settings.check_on_startup = false;
+        crate::config::EditorSettings::set_updates_in_memory(cx, settings);
+    });
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, _| editor.update_check_in_progress = true);
+    redraw(cx);
+    let dispatched = cx.update(|window, cx| {
+        window.activate_window();
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::app_menu::dispatch_menu_action(&crate::components::CheckForUpdates, cx);
+        }))
+        .is_ok()
+    });
+    assert!(dispatched, "原生菜单派发期间不能重读已借出的活动窗口");
+    cx.run_until_parked();
+    assert!(editor.read_with(cx, |editor, _| matches!(
+        editor.info_dialog,
+        Some(crate::editor::InfoDialogKind::CheckForUpdates)
+    )), "事件结束后应显示检查更新弹层");
+}
+
 struct HamburgerMenuHarness {
     editor: gpui::Entity<Editor>,
     menus: Vec<gpui::OwnedMenu>,

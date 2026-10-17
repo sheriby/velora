@@ -9,6 +9,7 @@ mod block_source_write_back;
 mod clipboard_text;
 mod clear_format;
 mod common;
+mod update_flow;
 mod document_context_menu;
 
 mod editing_misc;

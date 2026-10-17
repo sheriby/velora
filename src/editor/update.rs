@@ -1,6 +1,7 @@
 //! 已发布版本的通知、下载和保存后安装。
 
 use gpui::*;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -10,11 +11,74 @@ use super::{Editor, InfoDialogKind};
 use crate::config::EditorSettings;
 use crate::config::preferences::update_app_preferences;
 use crate::i18n::{I18nManager, I18nStrings};
-use crate::net::update::{self as update_check, InstallPlan, UpdateCheckResult, UpdateVersionInfo};
+use crate::net::update::{
+    self as update_check, InstallPlan, UpdateCheckResult, UpdatePackage, UpdateVersionInfo,
+};
 use crate::theme::Theme;
 
-#[derive(Default)]
+// 测试仅替换外部副作用，窗口事件、校验、保存守卫和安装交接沿用同一条流程。
+pub(super) trait UpdateBackend: Send + Sync {
+    fn check(
+        &self,
+        current: &str,
+        prereleases: bool,
+    ) -> Result<UpdateCheckResult, update_check::UpdateCheckError>;
+    fn ensure_single_instance(&self) -> anyhow::Result<()>;
+    fn download(
+        &self,
+        package: &UpdatePackage,
+        cancelled: &AtomicBool,
+        progress: &mut dyn FnMut(u64),
+    ) -> anyhow::Result<PathBuf>;
+    fn prepare_install(
+        &self,
+        package: &UpdatePackage,
+        path: &Path,
+        arguments: Vec<String>,
+    ) -> anyhow::Result<InstallPlan>;
+    fn launch_install(&self, plan: &InstallPlan) -> anyhow::Result<()>;
+}
+
+struct SystemUpdateBackend;
+
+impl UpdateBackend for SystemUpdateBackend {
+    fn check(
+        &self,
+        current: &str,
+        prereleases: bool,
+    ) -> Result<UpdateCheckResult, update_check::UpdateCheckError> {
+        if prereleases {
+            update_check::check_latest_version_with_options(current, true)
+        } else {
+            update_check::check_latest_version(current)
+        }
+    }
+    fn ensure_single_instance(&self) -> anyhow::Result<()> {
+        update_check::ensure_no_other_instances()
+    }
+    fn download(
+        &self,
+        package: &UpdatePackage,
+        cancelled: &AtomicBool,
+        progress: &mut dyn FnMut(u64),
+    ) -> anyhow::Result<PathBuf> {
+        update_check::download_package(package, cancelled, progress)
+    }
+    fn prepare_install(
+        &self,
+        package: &UpdatePackage,
+        path: &Path,
+        arguments: Vec<String>,
+    ) -> anyhow::Result<InstallPlan> {
+        update_check::prepare_install(package, path, arguments)
+    }
+    fn launch_install(&self, plan: &InstallPlan) -> anyhow::Result<()> {
+        update_check::launch_install_helper(plan)
+    }
+}
+
 struct UpdateSession {
+    backend: Arc<dyn UpdateBackend>,
     startup_checked: bool,
     download_active: bool,
     download_cancel: Option<Arc<AtomicBool>>,
@@ -24,6 +88,27 @@ struct UpdateSession {
     closed_subscription: Option<Subscription>,
 }
 impl Global for UpdateSession {}
+
+impl Default for UpdateSession {
+    fn default() -> Self {
+        Self {
+            backend: Arc::new(SystemUpdateBackend),
+            startup_checked: false,
+            download_active: false,
+            download_cancel: None,
+            download_window: None,
+            pending_install: None,
+            fallback_notification: None,
+            closed_subscription: None,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn set_test_update_backend(cx: &mut App, backend: Arc<dyn UpdateBackend>) {
+    init_update_session(cx);
+    cx.update_global::<UpdateSession, _>(|session, _| session.backend = backend);
+}
 
 fn init_update_session(cx: &mut App) {
     if cx.try_global::<UpdateSession>().is_some() {
@@ -48,9 +133,11 @@ fn init_update_session(cx: &mut App) {
                 session.download_window = None;
             });
         }
-        if cx
-            .try_global::<UpdateSession>()
-            .is_some_and(|session| session.pending_install.is_some())
+        // 最后一个窗口由应用统一退出入口接管，避免重复发起安装和退出。
+        if !cx.windows().is_empty()
+            && cx
+                .try_global::<UpdateSession>()
+                .is_some_and(|session| session.pending_install.is_some())
         {
             crate::app_menu::request_quit_application(cx);
         }
@@ -77,11 +164,7 @@ pub(crate) fn cancel_pending_install(cx: &mut App) {
                     continue;
                 };
                 if let Err(error) = handle.update(cx, |editor, _, cx| {
-                    if let Some(cancelled) = editor.update_download_cancel.take() {
-                        cancelled.store(true, Ordering::Relaxed);
-                    }
-                    editor.update_download_progress = None;
-                    cx.notify();
+                    editor.clear_update_download_state(cx);
                 }) {
                     eprintln!("取消更新状态失败：{error}");
                 }
@@ -99,7 +182,7 @@ pub(crate) fn install_pending_update(cx: &mut App) -> bool {
     let Some(plan) = plan else {
         return true;
     };
-    match update_check::launch_install_helper(&plan) {
+    match cx.global::<UpdateSession>().backend.launch_install(&plan) {
         Ok(()) => true,
         Err(error) => {
             show_failure_on_app(cx, &error.to_string());
@@ -109,23 +192,65 @@ pub(crate) fn install_pending_update(cx: &mut App) -> bool {
 }
 
 fn show_failure_on_app(cx: &mut App, detail: &str) {
-    for handle in cx.windows() {
+    cx.update_global::<UpdateSession, _>(|session, _| {
+        session.pending_install = None;
+        session.download_active = false;
+        if let Some(cancelled) = session.download_cancel.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        session.download_window = None;
+    });
+    // 保存确认可能已关闭最后一个文档，安装失败仍须有窗口承载错误提示。
+    if cx
+        .windows()
+        .iter()
+        .all(|window| window.downcast::<Editor>().is_none())
+    {
+        let (width, height) = EditorSettings::default_window_size(cx);
+        let bounds = Bounds::centered(None, size(px(width as f32), px(height as f32)), cx);
+        let options = crate::window_chrome::velora_window_options("Velora".into(), bounds);
+        if let Err(error) = cx.open_window(options, |_, cx| {
+            cx.new(|cx| Editor::from_markdown(cx, String::new(), None))
+        }) {
+            eprintln!("无法打开更新错误窗口：{error}");
+        }
+    }
+    let active = cx.active_window();
+    let mut windows = cx.windows();
+    windows.sort_by_key(|window| Some(*window) != active);
+    let mut shown = false;
+    for handle in windows {
         let Some(handle) = handle.downcast::<Editor>() else {
             continue;
         };
-        match handle.update(cx, |editor, _, cx| {
-            editor.update_download_progress = None;
-            editor.update_download_cancel = None;
-            editor.show_update_failure(detail, cx);
+        match handle.update(cx, |editor, window, cx| {
+            editor.clear_update_download_state(cx);
+            if !shown {
+                window.activate_window();
+                editor.show_update_failure(detail, cx);
+            }
         }) {
-            Ok(()) => return,
+            Ok(()) => shown = true,
             Err(error) => eprintln!("显示更新错误失败：{error}"),
         }
     }
-    eprintln!("更新失败：{detail}");
+    if !shown {
+        eprintln!("更新失败：{detail}");
+    }
 }
 
 impl Editor {
+    fn clear_update_download_state(&mut self, cx: &mut Context<Self>) {
+        if let Some(cancelled) = self.update_download_cancel.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        self.update_download_progress = None;
+        for group in self.split_groups() {
+            group.update(cx, |editor, cx| editor.clear_update_download_state(cx));
+        }
+        cx.notify();
+    }
+
     pub(crate) fn maybe_check_updates_on_startup(
         &mut self,
         window: &mut Window,
@@ -190,13 +315,10 @@ impl Editor {
             self.show_info_dialog(InfoDialogKind::CheckForUpdates, cx);
         }
         let preferences = EditorSettings::updates(cx);
+        let backend = cx.global::<UpdateSession>().backend.clone();
         let weak_editor = cx.entity().downgrade();
         let worker = cx.background_executor().spawn(async move {
-            if preferences.include_prereleases {
-                update_check::check_latest_version_with_options(env!("CARGO_PKG_VERSION"), true)
-            } else {
-                update_check::check_latest_version(env!("CARGO_PKG_VERSION"))
-            }
+            backend.check(env!("CARGO_PKG_VERSION"), preferences.include_prereleases)
         });
         self.update_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -319,7 +441,8 @@ impl Editor {
             self.show_update_failure("缺少当前系统的安装包", cx);
             return;
         };
-        if let Err(error) = update_check::ensure_no_other_instances() {
+        let backend = cx.global::<UpdateSession>().backend.clone();
+        if let Err(error) = backend.ensure_single_instance() {
             self.show_update_failure(&error.to_string(), cx);
             return;
         }
@@ -336,8 +459,9 @@ impl Editor {
             let progress = progress.clone();
             let cancelled = cancelled.clone();
             let package = package.clone();
+            let backend = backend.clone();
             async move {
-                update_check::download_package(&package, &cancelled, |bytes| {
+                backend.download(&package, &cancelled, &mut |bytes| {
                     progress.store(bytes, Ordering::Relaxed)
                 })
             }
@@ -377,7 +501,7 @@ impl Editor {
                                     Err(error) => eprintln!("记录更新前的文档失败：{error}"),
                                 }
                             }
-                            match update_check::prepare_install(&package,&path,arguments) {
+                            match backend.prepare_install(&package,&path,arguments) {
                                 Ok(plan) => {
                                     cx.update_global::<UpdateSession,_>(|session,_| session.pending_install = Some(plan));
                                     crate::app_menu::request_quit_application(cx);
@@ -512,6 +636,96 @@ mod tests {
     };
     use crate::net::update::UpdateSource;
     use gpui::{BorrowAppContext, TestAppContext};
+    fn missing_install_plan() -> crate::net::update::InstallPlan {
+        let path = std::env::temp_dir().join(format!("missing-update-{}", uuid::Uuid::new_v4()));
+        crate::net::update::InstallPlan {
+            package_path: path.clone(),
+            platform: crate::net::update::UpdatePlatform::current().expect("支持的系统"),
+            process_id: std::process::id(),
+            install_dir: path.clone(),
+            launch_path: path.clone(),
+            previous_executable: path.clone(),
+            launch_arguments: String::new(),
+            launch_args: Vec::new(),
+            error_path: path,
+        }
+    }
+
+    #[gpui::test]
+    async fn last_window_close_attempts_pending_install_before_quit(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+            super::init_update_session(cx);
+            cx.update_global::<UpdateSession, _>(|session, _| {
+                session.pending_install = Some(missing_install_plan());
+            });
+            crate::app_menu::handle_window_closed(cx);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(
+                cx.global::<UpdateSession>().pending_install.is_none(),
+                "最后一个窗口关闭也必须处理待安装更新，不能直接退出"
+            )
+        });
+        cx.update(|cx| {
+            assert!(
+                cx.windows().iter().any(|window| {
+                    window.downcast::<Editor>().is_some_and(|window| {
+                        window
+                            .read_with(cx, |editor, _| editor.modal_is_open())
+                            .unwrap_or(false)
+                    })
+                }),
+                "安装助手启动失败时，关闭全部窗口也必须看到错误"
+            )
+        });
+    }
+
+    #[gpui::test]
+    async fn failed_install_releases_the_downloading_window_and_shows_its_error(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::i18n::I18nManager::init(cx);
+            crate::theme::ThemeManager::init(cx);
+            crate::components::init(cx);
+            super::init_update_session(cx);
+        });
+        let (_other, _) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "其他窗口".into(), None));
+        let (owner, visual) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, "下载窗口".into(), None));
+        visual.update(|window, cx| {
+            window.activate_window();
+            owner.update(cx, |editor, _| {
+                editor.update_download_progress =
+                    Some(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(100)));
+                editor.update_download_cancel = Some(std::sync::Arc::new(
+                    std::sync::atomic::AtomicBool::new(false),
+                ));
+            });
+            cx.update_global::<UpdateSession, _>(|session, _| {
+                session.pending_install = Some(missing_install_plan());
+            });
+            cx.defer(|cx| assert!(!super::install_pending_update(cx), "缺失安装包应阻止退出"));
+        });
+        cx.run_until_parked();
+        owner.read_with(cx, |editor, _| {
+            assert!(
+                editor.update_download_progress.is_none(),
+                "安装失败后不能永久显示正在准备"
+            );
+            assert!(editor.update_download_cancel.is_none());
+            assert!(editor.modal_is_open(), "错误应显示在当前窗口");
+        });
+        cx.update(|cx| {
+            assert!(!cx.global::<UpdateSession>().download_active);
+            assert!(cx.global::<UpdateSession>().pending_install.is_none());
+        });
+    }
     #[gpui::test]
     async fn dismissing_another_windows_notice_keeps_the_download_active(
         cx: &mut TestAppContext,

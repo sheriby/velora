@@ -458,6 +458,7 @@ impl Editor {
                                     .child(
                                         div()
                                             .id("cancel-close-dialog")
+                                            .debug_selector(|| "cancel-close-dialog".into())
                                             .h(px(d.dialog_button_height))
                                             .px(px(d.dialog_button_padding_x))
                                             .flex()
@@ -502,6 +503,7 @@ impl Editor {
                                     .child(
                                         div()
                                             .id("save-and-close-dialog")
+                                            .debug_selector(|| "save-and-close-dialog".into())
                                             .h(px(d.dialog_button_height))
                                             .px(px(d.dialog_button_padding_x))
                                             .flex()

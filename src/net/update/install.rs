@@ -65,6 +65,14 @@ pub(crate) fn prepare_install(
 ) -> anyhow::Result<InstallPlan> {
     ensure!(package_path.is_file(), "更新安装包不存在");
     ensure_no_other_instances()?;
+    prepare_install_plan(package, package_path, launch_args)
+}
+
+pub(crate) fn prepare_install_plan(
+    package: &UpdatePackage,
+    package_path: &Path,
+    launch_args: Vec<String>,
+) -> anyhow::Result<InstallPlan> {
     let previous_executable = std::env::current_exe()?;
     let install_dir = match package.platform {
         UpdatePlatform::MacOsArm64 | UpdatePlatform::MacOsX64 => PathBuf::from("/Applications"),

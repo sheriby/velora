@@ -62,6 +62,18 @@ cargo test --bin velora     # 全绿
 - **验证出包**（不建标签）：Release 工作流点 `Run workflow`，选分支与 `action=package`；`tag` 留空用该分支 `Cargo.toml` 的版本，也可填 `vX.Y.Z` 覆盖。产物是 `release-macos-arm64` / `release-macos-x64` / `release-windows-x64` 三份 artifact，分别实机安装启动验证。手动出包只上传 artifact；`action=update-notes` 用于更新既有发布说明，必须填现有标签。
 - 发版流程见技能 `velora-release`：发布说明是 `docs/releases/<标签名>.md`，一笔 `chore(release)` 只动 `Cargo.toml`、`Cargo.lock`、`CHANGELOG.md`、发布说明；**tag 只能打在 main**，先 ff-merge dev 到 main 并推送，再打标签、推标签前请人确认。
 
+### 更新链路自动演练
+
+无需新版本、网络或真实安装，在仓库目录执行：
+
+```sh
+cargo test --bin velora update_flow_ -- --test-threads=1
+```
+
+`editor/tests/update_flow.rs` 驱动菜单检查、更新按钮及保存／取消按钮，使用内存发布信息和少量夹具字节，复用正式发布解析、大小／格式／SHA-256 校验、保存守卫及安装计划生成。安装器由只记录调用的测试桩代替，GPUI 测试平台不退出实际应用；夹具和文档仅写入独立临时目录。
+
+五条用例覆盖干净文档更新、未保存文档保存后继续、取消后保留编辑、校验失败后重试、安装器启动失败后重试。正式构建固定使用系统更新后端，替换入口只在测试构建存在。系统安装器执行、权限、签名及更新后真实应用启动仍需独立验收，这条命令验证应用内部链路。
+
 ## 7. vendor/gpui 本地补丁清单（升级 gpui 必须重放）
 
 权威说明见 `vendor/gpui/README.md`（那份 README **低估了改动面**，以代码内 `本地补丁` 标注为准）。

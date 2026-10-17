@@ -419,9 +419,9 @@ pub(super) fn prompt_and_import_theme_config_with_error_window(
     .detach();
 }
 
-fn handle_window_closed(cx: &mut App) {
+pub(crate) fn handle_window_closed(cx: &mut App) {
     if cx.windows().is_empty() {
-        cx.quit();
+        request_quit_application(cx);
     }
 }
 

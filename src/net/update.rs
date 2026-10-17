@@ -18,6 +18,8 @@ const RELEASES_API_URL: &str = "https://api.github.com/repos/sheriby/velora/rele
 const MAX_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
 
 mod install;
+#[cfg(test)]
+pub(crate) use install::prepare_install_plan;
 pub(crate) use install::{
     InstallPlan, ensure_no_other_instances, launch_install_helper, prepare_install, take_install_error,
 };
@@ -167,7 +169,7 @@ where
     )
 }
 
-fn select_release(
+pub(crate) fn select_release(
     body: &str,
     current_version: &str,
     include_prereleases: bool,
@@ -330,7 +332,7 @@ pub(crate) fn download_package(
     }
     result
 }
-fn receive_package(
+pub(crate) fn receive_package(
     mut reader: impl Read,
     package: &UpdatePackage,
     writer: &mut impl Write,

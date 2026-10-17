@@ -609,8 +609,11 @@ fn show_info_dialog_on_active_editor(cx: &mut App, kind: InfoDialogKind) {
 }
 
 fn request_update_check_on_active_editor(cx: &mut App) {
-    let _ = with_active_editor(cx, |editor, window, cx| {
-        editor.request_check_updates(window, cx);
+    // 原生菜单仍在窗口派发栈中，退出这一轮事件后才能重新读取活动窗口。
+    cx.defer(|cx| {
+        let _ = with_active_editor(cx, |editor, window, cx| {
+            editor.request_check_updates(window, cx);
+        });
     });
 }
 
@@ -891,8 +894,16 @@ pub(crate) fn is_window_context_menu_action(action: &dyn Action) -> bool {
 }
 
 fn current_window_candidates(cx: &mut App) -> Vec<AnyWindowHandle> {
+    let live_windows = cx.windows();
     let mut candidates = Vec::new();
     let mut push_unique = |window: AnyWindowHandle| {
+        // 平台焦点可能晚于关窗回调更新，过期活动句柄不能阻断退出与安装交接。
+        if !live_windows
+            .iter()
+            .any(|live| live.window_id() == window.window_id())
+        {
+            return;
+        }
         if candidates
             .iter()
             .all(|candidate: &AnyWindowHandle| candidate.window_id() != window.window_id())
@@ -909,7 +920,7 @@ fn current_window_candidates(cx: &mut App) -> Vec<AnyWindowHandle> {
             push_unique(window);
         }
     }
-    for window in cx.windows() {
+    for window in live_windows.iter().copied() {
         push_unique(window);
     }
 
