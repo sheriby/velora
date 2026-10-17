@@ -1169,7 +1169,7 @@ impl Render for Editor {
             base
         };
         let base = if self.file_history_is_open()
-            && let Some(overlay) = self.render_file_history_overlay(&theme, &strings, cx)
+            && let Some(overlay) = self.render_file_history_overlay(&theme, &strings, window, cx)
         {
             base.child(self.pane_overlay(overlay.into_any_element(), window))
         } else {

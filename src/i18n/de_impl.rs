@@ -150,6 +150,12 @@ impl I18nStringsDe {
             file_history_compare: self
                 .file_history_compare
                 .unwrap_or(defaults.file_history_compare),
+            file_history_previous_change: self
+                .file_history_previous_change
+                .unwrap_or(defaults.file_history_previous_change),
+            file_history_next_change: self
+                .file_history_next_change
+                .unwrap_or(defaults.file_history_next_change),
             file_history_restore: self
                 .file_history_restore
                 .unwrap_or(defaults.file_history_restore),

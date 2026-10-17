@@ -2,6 +2,274 @@ use super::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use std::path::PathBuf;
 
+#[test]
+fn history_title_identifies_the_file_in_both_languages() {
+    for (strings, expected) in [
+        (
+            crate::i18n::I18nStrings::zh_cn(),
+            "文件历史 · 写作 notes.md",
+        ),
+        (
+            crate::i18n::I18nStrings::en_us(),
+            "File History · 写作 notes.md",
+        ),
+    ] {
+        assert_eq!(
+            super::file_history_title(std::path::Path::new("folder/写作 notes.md"), &strings),
+            expected
+        );
+    }
+}
+
+#[test]
+fn history_timestamps_show_only_local_date_and_time() {
+    for seconds in [0, 1_791_676_800, 1_768_435_200] {
+        let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+        let local: chrono::DateTime<chrono::Local> = timestamp.into();
+        assert_eq!(
+            super::file_history_timestamp_label(timestamp),
+            local.format("%Y-%m-%d %H:%M").to_string()
+        );
+    }
+}
+
+#[gpui::test]
+fn history_content_has_no_explanatory_header_or_legend(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| editor.open_file_history(cx));
+        redraw(cx);
+        let compare = cx.debug_bounds("file-history-compare").expect("对比按钮");
+        cx.simulate_click(compare.center(), gpui::Modifiers::none());
+        redraw(cx);
+        for selector in [
+            "file-history-old-line-label",
+            "file-history-current-line-label",
+            "file-history-diff-legend",
+        ] {
+            assert!(
+                cx.debug_bounds(selector).is_none(),
+                "正文不应常驻解释文字：{selector}"
+            );
+        }
+    });
+}
+
+#[gpui::test]
+fn history_closes_with_a_compact_icon_button(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| editor.open_file_history(cx));
+        redraw(cx);
+        let icon = cx
+            .debug_bounds("file-history-close-icon")
+            .expect("关闭使用图标");
+        assert!(icon.size.width <= gpui::px(16.0));
+        assert!(icon.size.height <= gpui::px(16.0));
+        cx.simulate_click(icon.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert!(
+            !editor.read_with(cx, |editor, _| editor.file_history_is_open()),
+            "图标仍应正常关闭浮层"
+        );
+    });
+}
+
+#[test]
+fn history_mode_and_restore_labels_are_brief() {
+    let chinese = crate::i18n::I18nStrings::zh_cn();
+    assert_eq!(chinese.file_history_preview, "预览");
+    assert_eq!(chinese.file_history_compare, "对比");
+    assert_eq!(chinese.file_history_restore, "恢复");
+    let english = crate::i18n::I18nStrings::en_us();
+    assert_eq!(english.file_history_preview, "Preview");
+    assert_eq!(english.file_history_compare, "Compare");
+    assert_eq!(english.file_history_restore, "Restore");
+}
+
+#[gpui::test]
+fn history_comparison_jumps_between_changes_in_a_long_document(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        let before = format!(
+            "{}旧段落\n{}旧结尾\n{}",
+            "保留\n".repeat(80),
+            "保留\n".repeat(80),
+            "保留\n".repeat(80)
+        );
+        let after = before
+            .replace("旧段落", "新段落")
+            .replace("旧结尾", "新结尾");
+        editor.update(cx, |editor, cx| {
+            editor.buffer.edit(0..editor.buffer.byte_len(), &after);
+            editor.rebuild_document_from_buffer(cx);
+            editor.open_file_history(cx);
+            let overlay = editor.file_history_overlay.as_mut().expect("历史面板");
+            overlay.preview = before;
+            overlay.compared_revision = None;
+        });
+        redraw(cx);
+        let compare = cx.debug_bounds("file-history-compare").expect("对比按钮");
+        cx.simulate_click(compare.center(), gpui::Modifiers::none());
+        redraw(cx);
+        let next = cx
+            .debug_bounds("file-history-next-change")
+            .expect("下一处差异按钮");
+        let previous = cx
+            .debug_bounds("file-history-previous-change")
+            .expect("上一处差异按钮");
+        assert!(
+            cx.debug_bounds("file-history-next-change-icon").is_some(),
+            "差异导航使用图标"
+        );
+        assert!(
+            cx.debug_bounds("file-history-previous-change-icon")
+                .is_some(),
+            "差异导航使用图标"
+        );
+        assert!(
+            next.size.width <= gpui::px(28.0),
+            "图标按钮不应占用长文字的宽度"
+        );
+        assert!(
+            cx.debug_bounds("file-history-code-line-80").is_some(),
+            "进入对比应定位首处差异"
+        );
+        cx.simulate_click(next.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("file-history-code-line-162").is_some(),
+            "下一处应跳过未改变的正文"
+        );
+        cx.simulate_click(previous.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("file-history-code-line-80").is_some(),
+            "上一处应返回首处差异"
+        );
+    });
+}
+
+#[gpui::test]
+fn history_horizontal_scrollbar_supports_mouse_dragging(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| {
+            editor.open_file_history(cx);
+            let overlay = editor.file_history_overlay.as_mut().expect("历史面板");
+            overlay.preview = format!("短行\n{}\n", "长文本 ".repeat(300));
+            overlay.compared_revision = None;
+        });
+        redraw(cx);
+        let bounds = cx
+            .debug_bounds("file-history-horizontal-scrollbar")
+            .expect("横向滚动条");
+        cx.simulate_mouse_down(
+            gpui::point(bounds.left() + gpui::px(4.0), bounds.center().y),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        cx.simulate_mouse_move(
+            gpui::point(bounds.right(), bounds.center().y),
+            Some(gpui::MouseButton::Left),
+            gpui::Modifiers::none(),
+        );
+        cx.simulate_mouse_up(
+            gpui::point(bounds.right(), bounds.center().y),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        redraw(cx);
+        editor.read_with(cx, |editor, _| {
+            let overlay = editor.file_history_overlay.as_ref().expect("历史面板");
+            let state = overlay.scroll.0.borrow();
+            let size = state.last_item_size.expect("列表几何");
+            assert!(
+                (size.contents.width - size.item.width + state.base_handle.offset().x).abs()
+                    < gpui::px(1.0),
+                "拖动应滚至完整长行的末尾"
+            );
+        });
+    });
+}
+
+#[gpui::test]
+fn history_long_lines_scroll_to_the_end_in_preview_and_comparison(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        let content = format!("# 标题\n\n{}末尾\n", "长行 Markdown 内容 ".repeat(200));
+        editor.update(cx, |editor, cx| {
+            editor.open_file_history(cx);
+            let overlay = editor.file_history_overlay.as_mut().expect("历史面板");
+            overlay.preview = content;
+            overlay.compared_revision = None;
+        });
+        for compare in [false, true] {
+            if compare {
+                let button = cx.debug_bounds("file-history-compare").expect("对比按钮");
+                cx.simulate_click(button.center(), gpui::Modifiers::none());
+            }
+            redraw(cx);
+            let handle = editor.read_with(cx, |editor, _| {
+                editor
+                    .file_history_overlay
+                    .as_ref()
+                    .expect("历史面板")
+                    .scroll
+                    .clone()
+            });
+            let size = handle.0.borrow().last_item_size.expect("列表几何");
+            assert!(
+                size.contents.width > size.item.width,
+                "首行短、后续行长时仍应有完整横向滚动范围：{size:?}"
+            );
+            let position = handle.0.borrow().base_handle.bounds().center();
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position,
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(-100000.0), gpui::px(0.0))),
+                modifiers: gpui::Modifiers::none(),
+                touch_phase: gpui::TouchPhase::Moved,
+            });
+            redraw(cx);
+            let offset = handle.0.borrow().base_handle.offset().x;
+            assert!(offset < gpui::px(0.0), "横向滚动必须能到达长行末尾");
+            assert!(
+                (size.contents.width - size.item.width + offset).abs() < gpui::px(1.0),
+                "必须能滚到完整内容的最右侧"
+            );
+        }
+    });
+}
+
+#[gpui::test]
+fn history_short_and_empty_diff_rows_fill_the_viewport(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| {
+            editor.open_file_history(cx);
+            let overlay = editor.file_history_overlay.as_mut().expect("历史面板");
+            overlay.preview = "删除\n\n".into();
+            overlay.compare = true;
+            overlay.compared_revision = None;
+        });
+        redraw(cx);
+        let width = editor.read_with(cx, |editor, _| {
+            editor
+                .file_history_overlay
+                .as_ref()
+                .expect("历史面板")
+                .scroll
+                .0
+                .borrow()
+                .last_item_size
+                .expect("列表几何")
+                .item
+                .width
+        });
+        for selector in ["file-history-code-line-0", "file-history-code-line-1"] {
+            let bounds = cx.debug_bounds(selector).expect("删除行");
+            assert!(
+                bounds.size.width >= width,
+                "短行和空行的差异背景应铺满视口：{bounds:?}，视口宽 {width:?}"
+            );
+        }
+    });
+}
+
 fn fixture(
     cx: &mut TestAppContext,
     check: impl FnOnce(Entity<Editor>, &mut VisualTestContext, PathBuf),

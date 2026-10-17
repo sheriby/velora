@@ -70,6 +70,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_history_days",
     "file_history_preview",
     "file_history_compare",
+    "file_history_previous_change",
+    "file_history_next_change",
     "file_history_restore",
     "file_history_confirm_title",
     "file_history_confirm_detail",

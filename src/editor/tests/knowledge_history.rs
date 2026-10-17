@@ -302,7 +302,9 @@ fn file_history_version_label_parses_nanosecond_stems() {
     // 1791676800 秒 = 2026-10-11 00:00 UTC。
     let label = super::super::file_history::file_history_version_label("1791676800000000000")
         .expect("纳秒文件名应能换算出标签");
-    assert_eq!(label, "2026-10-11 00:00");
+    let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_791_676_800);
+    let local: chrono::DateTime<chrono::Local> = timestamp.into();
+    assert_eq!(label, local.format("%Y-%m-%d %H:%M").to_string());
 
     // 非数字文件名（人工放置的文件）回退原样显示，不参与换算。
     assert_eq!(super::super::file_history::file_history_version_label("notes"), None);

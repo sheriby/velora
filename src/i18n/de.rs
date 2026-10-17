@@ -73,6 +73,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_history_days: Option<String>,
     pub(crate) file_history_preview: Option<String>,
     pub(crate) file_history_compare: Option<String>,
+    pub(crate) file_history_previous_change: Option<String>,
+    pub(crate) file_history_next_change: Option<String>,
     pub(crate) file_history_restore: Option<String>,
     pub(crate) file_history_confirm_title: Option<String>,
     pub(crate) file_history_confirm_detail: Option<String>,

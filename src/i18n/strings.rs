@@ -123,6 +123,8 @@ pub struct I18nStrings {
     pub preferences_history_days: String,
     pub file_history_preview: String,
     pub file_history_compare: String,
+    pub file_history_previous_change: String,
+    pub file_history_next_change: String,
     pub file_history_restore: String,
     pub file_history_confirm_title: String,
     pub file_history_confirm_detail: String,
