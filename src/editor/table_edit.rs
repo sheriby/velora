@@ -599,6 +599,7 @@ impl Editor {
         table: &TableData,
         cx: &mut Context<Self>,
     ) {
+        let reading_mode = table_block.read(cx).reading_mode.clone();
         let header = table
             .header
             .iter()
@@ -611,7 +612,7 @@ impl Editor {
                     .copied()
                     .unwrap_or(TableColumnAlignment::Default);
                 let position = TableCellPosition { row: 0, column };
-                let cell = Self::new_table_cell_block(cx, title, position, alignment);
+                let cell = Self::new_table_cell_block(cx, title, position, alignment, reading_mode.clone());
                 self.table_cells.insert(
                     cell.entity_id(),
                     TableCellBinding {
@@ -642,7 +643,7 @@ impl Editor {
                             row: body_row_index + 1,
                             column,
                         };
-                        let cell = Self::new_table_cell_block(cx, title, position, alignment);
+                        let cell = Self::new_table_cell_block(cx, title, position, alignment, reading_mode.clone());
                         self.table_cells.insert(
                             cell.entity_id(),
                             TableCellBinding {
@@ -768,6 +769,10 @@ impl Editor {
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
 
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
@@ -811,6 +816,10 @@ impl Editor {
     }
 
     pub(super) fn append_table_row(&mut self, table_block: &Entity<Block>, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
 
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
@@ -910,6 +919,10 @@ impl Editor {
         alignment: TableColumnAlignment,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
@@ -951,6 +964,10 @@ impl Editor {
         delta: i32,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
@@ -1012,6 +1029,10 @@ impl Editor {
         delta: i32,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
@@ -1070,6 +1091,10 @@ impl Editor {
         row_index: usize,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
@@ -1134,6 +1159,10 @@ impl Editor {
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
@@ -1174,6 +1203,10 @@ impl Editor {
         column: usize,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         self.sync_table_record_from_runtime(table_block, cx);
         let Some(mut table) = table_block.read(cx).record.table.clone() else {
             return;
@@ -1227,6 +1260,10 @@ impl Editor {
         table_block: &Entity<Block>,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         let Some(location) = self.document.find_block_location(table_block.entity_id()) else {
             return;
         };

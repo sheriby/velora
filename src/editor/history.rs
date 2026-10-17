@@ -884,6 +884,10 @@ impl Editor {
     }
 
     pub(super) fn undo_document(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         let Some(entry) = self.undo_history.pop() else {
             return;
         };
@@ -917,6 +921,10 @@ impl Editor {
     }
 
     pub(super) fn redo_document(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         let Some(entry) = self.redo_history.pop() else {
             return;
         };

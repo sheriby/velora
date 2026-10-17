@@ -1,4 +1,5 @@
 use super::*;
+use gpui::prelude::FluentBuilder;
 
 impl Editor {
 
@@ -29,7 +30,7 @@ impl Editor {
             theme,
             cx,
         );
-        let replace_visible = self.workspace.replace_visible;
+        let replace_visible = self.workspace.replace_visible && !self.is_read_only();
         let replace_input = replace_visible.then(|| {
             let replace_focused = self
                 .workspace
@@ -86,6 +87,9 @@ impl Editor {
             })
             .on_click(move |_, _, cx| {
                 let _ = toggle_editor.update(cx, |editor, cx| {
+                    if editor.is_read_only() {
+                        return;
+                    }
                     editor.workspace.replace_visible = !editor.workspace.replace_visible;
                     cx.notify();
                 });
@@ -111,7 +115,7 @@ impl Editor {
                     .items_center()
                     .gap(px(4.0))
                     .child(search_input)
-                    .child(toggle_button),
+                    .when(!self.is_read_only(), |this| this.child(toggle_button)),
             )
             .children(replace_input)
             .child(options_row)
@@ -257,7 +261,7 @@ impl Editor {
             ));
 
         let scope = self.workspace.search_scope;
-        if self.workspace.replace_visible {
+        if self.workspace.replace_visible && !self.is_read_only() {
             let replace_editor = editor.clone();
             let replace_all_editor = editor.clone();
             let replace_row = div()

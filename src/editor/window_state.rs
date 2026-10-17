@@ -409,6 +409,32 @@ impl Editor {
         cx.notify();
     }
 
+    pub(crate) fn toggle_reading_mode(&mut self, cx: &mut Context<Self>) {
+        if let Some(parent) = self.split_parent.clone() {
+            cx.defer(move |cx| {
+                if let Err(error) = parent.update(cx, |editor, cx| editor.toggle_reading_mode(cx)) {
+                    eprintln!("切换阅读模式失败：{error}");
+                }
+            });
+            return;
+        }
+        self.finish_ime_composition(cx);
+        self.dismiss_contextual_overlays(cx);
+        self.reading_mode.set(!self.reading_mode.get());
+        for group in self.split_groups() {
+            group.update(cx, |editor, cx| {
+                editor.finish_ime_composition(cx);
+                editor.dismiss_contextual_overlays(cx);
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.reading_mode.get()
+    }
+
     pub(crate) fn toggle_typewriter_mode(&mut self, cx: &mut Context<Self>) {
         self.typewriter_mode = !self.typewriter_mode;
         self.pending_scroll_active_block_into_view = true;
@@ -1006,7 +1032,10 @@ impl Editor {
         // 全文档一致（此前 512 上下行号对不齐）。
         let basis = self.buffer.line_count();
         for block in &blocks {
-            block.update(cx, |block, _cx| block.set_source_line_gutter_basis(basis));
+            block.update(cx, |block, _cx| {
+                block.reading_mode = Some(self.reading_mode.clone());
+                block.set_source_line_gutter_basis(basis);
+            });
         }
     }
 
@@ -1205,6 +1234,10 @@ impl Editor {
     /// （而不是「再规范化一次」）。已经规范化到位的那一次什么都不做：不动字节、不标脏、
     /// 不留空撤销组。
     pub(crate) fn format_document(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         // 源码/代码视图没有「模型的写法」可言：那里的块就是文件本身。
         if self.view_mode != ViewMode::Rendered || self.image_preview.is_some() {
             return;

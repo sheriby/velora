@@ -105,6 +105,10 @@ impl Block {
     }
 
     pub(crate) fn request_image_edit_expansion(&mut self) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.image_runtime.is_some() {
             self.image_expand_requested = true;
         }

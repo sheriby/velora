@@ -440,6 +440,9 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &OpenFolder, cx| {
         dispatch_menu_action(&OpenFolder, cx);
     });
+    cx.on_action(|_: &crate::components::ToggleReadingMode, cx| {
+        dispatch_menu_action(&crate::components::ToggleReadingMode, cx);
+    });
     cx.on_action(|_: &ToggleViewMode, cx| {
         dispatch_menu_action(&ToggleViewMode, cx);
     });

@@ -933,6 +933,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorRight>))
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorUp>))
             .on_action(cx.listener(Self::on_registered_menu_action::<SplitEditorDown>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::ToggleReadingMode>))
             .on_action(cx.listener(Self::on_registered_menu_action::<FormatDocument>))
             .on_action(cx.listener(Self::on_registered_menu_action::<FileHistory>))
             .capture_action(cx.listener(Self::on_cursor_motion_capture::<MoveLeft>))

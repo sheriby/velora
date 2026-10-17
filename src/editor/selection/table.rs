@@ -515,6 +515,10 @@ impl Editor {
         undo_kind: UndoCaptureKind,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if self.table_text_selection.is_none() {
             return false;
         }

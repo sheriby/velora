@@ -190,6 +190,7 @@ impl Editor {
                 .child(deferred(self.render_unsaved_changes_overlay(&theme, cx)).with_priority(20));
         }
         root = root
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::ToggleReadingMode>))
             .on_action(cx.listener(Self::on_dismiss_transient_ui))
             .on_action(cx.listener(Self::forward_split_action::<SplitEditorLeft>))
             .on_action(cx.listener(Self::forward_split_action::<SplitEditorRight>))

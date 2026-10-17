@@ -362,6 +362,10 @@ impl Editor {
         trailing: &InlineTextTree,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         let (kind, title, cursor) = block.read_with(cx, |block, _cx| {
             let mut title = leading.clone();
             title.append_tree(Self::inserted_image_tree_for_block(block, markdown));
@@ -386,6 +390,10 @@ impl Editor {
         trailing: &InlineTextTree,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         let Some(location) = self.document.find_block_location(block.entity_id()) else {
             return false;
         };
@@ -446,6 +454,9 @@ impl Editor {
         trailing: &InlineTextTree,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
         let (markdown, created_path) = match self.pasted_image_markdown(source) {
             Ok(result) => result,
             Err(err) => {

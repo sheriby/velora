@@ -194,6 +194,10 @@ impl Editor {
     }
 
     pub(crate) fn restore_file_history_version(&mut self, selected: usize, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         let Some(overlay) = self.file_history_overlay.as_ref() else {
             return;
         };
@@ -216,7 +220,7 @@ impl Editor {
                 cancel_index: 1,
             },
             move |choice, editor, _window, cx| {
-                if choice != 0 {
+                if choice != 0 || editor.is_read_only() {
                     return;
                 }
                 if editor.file_path.as_ref() != Some(&document)
@@ -278,6 +282,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        let read_only = self.is_read_only();
         if self.file_history_overlay.as_ref().is_some_and(|overlay| overlay.compared_revision != Some(self.buffer.revision()))
             && !self.file_history_document_is_supported() {
             self.close_file_history(cx);
@@ -587,7 +592,7 @@ impl Editor {
                         .bg(colors.dialog_secondary_button_bg.opacity(0.15)).children(rows))
                     .child(div().flex().flex_col().flex_1().min_w(px(0.0)).min_h(px(0.0)).px_3().pt_3().pb_1()
                         .child(content).child(scrollbar))))
-                .when(!empty, |this| this.child(div().flex().justify_end().items_center().h(px(50.0)).px_5().flex_shrink_0()
+                .when(!empty && !read_only, |this| this.child(div().flex().justify_end().items_center().h(px(50.0)).px_5().flex_shrink_0()
                     .border_t_1().border_color(colors.dialog_border.opacity(0.55))
                     .child(div().id("file-history-restore").debug_selector(|| "file-history-restore".into())
                         .h(px(30.0)).px_4().flex().items_center().rounded(px(6.0)).cursor_pointer()

@@ -167,9 +167,11 @@ impl Editor {
         title: InlineTextTree,
         position: TableCellPosition,
         alignment: TableColumnAlignment,
+        reading_mode: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     ) -> Entity<Block> {
         let block = Self::new_block(cx, BlockRecord::new(BlockKind::Paragraph, title));
         block.update(cx, |block, _cx| {
+            block.reading_mode = reading_mode;
             block.set_table_cell_mode(position, alignment);
         });
         block
@@ -197,8 +199,10 @@ impl Editor {
         let link_reference_definitions = self.link_reference_definitions.clone();
         let footnote_registry = self.footnote_registry.clone();
         let document_selection_active = self.document_selection_active.clone();
+        let reading_mode = self.reading_mode.clone();
         block.update(cx, move |block, cx| {
             block.document_selection_active = Some(document_selection_active.clone());
+            block.reading_mode = Some(reading_mode.clone());
             block.set_runtime_context(
                 next_base_dir.clone(),
                 image_reference_definitions.clone(),

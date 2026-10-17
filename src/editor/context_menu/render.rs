@@ -101,7 +101,7 @@ impl Editor {
                 open_submenu,
                 ..
             } => {
-                let rows = self.document_menu_rows();
+                let rows = self.document_menu_rows(cx);
                 // 平台快捷键的文字宽度不同，定位与绘制必须共用实测尺寸。
                 let panel = DocumentMenuGeometry::measure_in_window(&rows, &s, theme, window, cx);
                 // 二级面板与父行顶部对齐；父行离底部太近时由落点函数向上收。

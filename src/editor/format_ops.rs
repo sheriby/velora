@@ -42,6 +42,10 @@ impl Editor {
     /// 右键菜单那一行与选中工具栏那颗格子共用这一条判定；键盘不查它——按下去没有可剥的就
     /// 什么都不做，与「菜单里灰掉的行按同一个键没反应」是同一条口径的两面。
     pub(crate) fn clear_format_is_available(&self, cx: &App) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if !self.has_text_selection(cx) || !self.writes_through_the_buffer() {
             return false;
         }
@@ -85,6 +89,10 @@ impl Editor {
         edit: InlineSelectionEdit,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         let Some(normalized) = self.normalized_cross_block_selection(cx) else {
             let Some(target) = self.current_edit_target_from_state(cx) else {
                 return false;

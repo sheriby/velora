@@ -127,7 +127,7 @@ impl Editor {
     /// 「别的浮层」这一条不看层级只看状态：工具栏画在窗口根上，比画在正文区里的
     /// 面板与快速打开更靠后，收不掉就会浮在它们之上。
     fn selection_toolbar_anchor(&self, cx: &App) -> Option<Bounds<Pixels>> {
-        if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
+        if self.is_read_only() || self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return None;
         }
         if self.cross_block_drag.is_some()

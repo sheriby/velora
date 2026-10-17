@@ -84,6 +84,7 @@ pub struct Editor {
     pub(crate) view_mode: ViewMode,
     focus_mode: bool,
     typewriter_mode: bool,
+    reading_mode: std::rc::Rc<std::cell::Cell<bool>>,
     /// Keeps ambiguous Markdown extensions in source mode until their syntax is removed.
     source_mode_fallback_required: bool,
     code_document: bool,
@@ -817,6 +818,7 @@ impl Editor {
             },
             focus_mode: false,
             typewriter_mode: false,
+            reading_mode: std::rc::Rc::new(std::cell::Cell::new(false)),
             source_mode_fallback_required,
             code_document: false,
             pending_focus,
@@ -1346,7 +1348,10 @@ impl Editor {
         // 续建的块到这里也一并拿到正确的基准。
         let basis = self.buffer.line_count();
         for block in roots {
-            block.update(cx, |block, _cx| block.set_source_line_gutter_basis(basis));
+            block.update(cx, |block, _cx| {
+                block.reading_mode = Some(self.reading_mode.clone());
+                block.set_source_line_gutter_basis(basis);
+            });
         }
     }
 

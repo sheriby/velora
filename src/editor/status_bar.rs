@@ -1,6 +1,7 @@
 //! Bottom status bar: cursor position, word count, and custom buttons.
 
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use unicode_segmentation::UnicodeSegmentation;
 
 const VIEW_SOURCE_ICON: &str = "icon/workspace/view-source.svg";
@@ -141,16 +142,6 @@ impl Editor {
             ));
         }
 
-        // 右下角的模式切换按钮（用户需求：阅读时长信息换成源码切换）。
-        // 普通文本/代码文件与无法渲染的 markdown 没有渲染视图可切，不显示
-        // （纯文本文件右下角不该有源码图标）。
-        if !(self.code_document
-            || self.source_mode_fallback_required
-            || self.image_preview.is_some())
-        {
-            right_items.push(self.render_view_mode_toggle(theme, cx));
-        }
-
         if self.long_source_block_hint(cx) {
             right_items.push(
                 div()
@@ -170,6 +161,21 @@ impl Editor {
                 cx,
             ));
         }
+
+        let mut mode_controls = div()
+            .id("status-bar-mode-controls")
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(px(2.0))
+            .child(self.render_reading_mode_toggle(theme, strings, cx));
+        if !(self.code_document
+            || self.source_mode_fallback_required
+            || self.image_preview.is_some())
+        {
+            mode_controls = mode_controls.child(self.render_view_mode_toggle(theme, cx));
+        }
+        right_items.push(mode_controls.into_any_element());
 
         // 面包屑：工作区根 → 当前文档相对路径（roadmap E8）。点击在树中定位。
         let breadcrumb = self.render_breadcrumb(theme, cx);
@@ -323,6 +329,53 @@ fn render_word_count(
 
 /// 右下角的视图模式切换按钮：`</>` 图标，点击在渲染态/源码态之间切换（用户需求）。
 impl Editor {
+    fn render_reading_mode_toggle(
+        &self,
+        theme: &Theme,
+        strings: &I18nStrings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let active = self.is_read_only();
+        let label = if active {
+            &strings.reading_mode_enabled
+        } else {
+            &strings.command_toggle_reading_mode
+        }
+        .clone();
+        div()
+            .id("status-bar-reading-mode")
+            .debug_selector(|| "status-bar-reading-mode".to_string())
+            .size(px(24.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .rounded_sm()
+            .hover(|this| this.bg(theme.colors.dialog_secondary_button_hover))
+            .when(active, |this| {
+                this.bg(theme.colors.dialog_secondary_button_hover)
+            })
+            .tooltip(move |_, cx| {
+                cx.new(|_| crate::components::HoverPreviewTooltip {
+                    label: label.clone().into(),
+                })
+                .into()
+            })
+            .on_click(cx.listener(|editor, _, _, cx| editor.toggle_reading_mode(cx)))
+            .child(
+                svg()
+                    .path("icon/workspace/reading-mode.svg")
+                    .size(px(14.0))
+                    .text_color(if active {
+                        theme.colors.text_link
+                    } else {
+                        theme.colors.status_bar_text_dim
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn render_view_mode_toggle(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let c = &theme.colors;
         let editor = cx.entity().downgrade();
@@ -333,7 +386,14 @@ impl Editor {
             .id("status-bar-view-mode-toggle")
             .debug_selector(|| "status-bar-view-mode-toggle".to_string())
             .group("status-bar-view-mode-toggle")
+            .size(px(24.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
             .cursor_pointer()
+            .rounded_sm()
+            .hover(|this| this.bg(c.dialog_secondary_button_hover))
             .child(
                 svg()
                     .path(VIEW_SOURCE_ICON)

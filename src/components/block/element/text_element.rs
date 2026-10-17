@@ -518,7 +518,7 @@ impl Element for BlockTextElement {
                             cursor_color,
                         )),
                     )
-                } else if selected_range.is_empty() {
+                } else if selected_range.is_empty() && !input.is_read_only() {
                     // No selection: current-line wash + bracket pair + cursor.
                     let text = input.display_text();
                     let shared_ranges = input.shared_hard_line_ranges();
@@ -810,6 +810,7 @@ impl Element for BlockTextElement {
         }
 
         if focus_handle.is_focused(window)
+            && !self.input.read(cx).is_read_only()
             && let Some(cursor) = prepaint.cursor.take()
         {
             window.paint_quad(cursor);

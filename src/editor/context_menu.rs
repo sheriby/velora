@@ -115,7 +115,7 @@ impl Editor {
         target: TableInsertTarget,
         cx: &mut Context<Self>,
     ) {
-        if self.view_mode != ViewMode::Rendered {
+        if self.view_mode != ViewMode::Rendered && !self.is_read_only() {
             return;
         }
 
@@ -153,6 +153,10 @@ impl Editor {
     }
 
     fn set_image_scale_from_menu(&mut self, percent: u8, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         if !(20..=100).contains(&percent) || self.view_mode != ViewMode::Rendered {
             return;
         }
@@ -230,6 +234,10 @@ impl Editor {
         selection: TableAxisSelection,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            self.open_insert_context_menu(position, TableInsertTarget::Append, cx);
+            return;
+        }
         if self.view_mode != ViewMode::Rendered {
             return;
         }
@@ -280,7 +288,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.view_mode != ViewMode::Rendered {
+        if self.view_mode != ViewMode::Rendered && !self.is_read_only() {
             return;
         }
         cx.stop_propagation();
@@ -294,10 +302,15 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.view_mode != ViewMode::Rendered {
+        if self.view_mode != ViewMode::Rendered && !self.is_read_only() {
             return;
         }
         cx.stop_propagation();
+
+        if self.is_read_only() {
+            self.open_insert_context_menu(event.position, TableInsertTarget::Append, cx);
+            return;
+        }
 
         // 图片菜单持有右键目标，避免缩放写到此前聚焦的图片上。
         if let Some(block) = self.focusable_entity_by_id(entity_id)
@@ -378,6 +391,10 @@ impl Editor {
 
     /// 从当前正文菜单的插入位置打开表格对话框（菜单那一行与插入表格的命令共用这一条）。
     pub(super) fn open_table_insert_dialog_from_menu(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         let Some(ContextMenuState::Document { target, .. }) = self.context_menu.take() else {
             return;
         };
@@ -459,6 +476,10 @@ impl Editor {
     /// 从已打开的插入对话框插入表格。与 UI 事件解耦（便于测试），并把这次
     /// 结构插入纳入撤销栈：其它表格操作都走 prepare/finalize，此前这条漏了。
     pub(super) fn insert_table_from_dialog(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         let Some(dialog) = self.table_insert_dialog.take() else {
             return false;
         };

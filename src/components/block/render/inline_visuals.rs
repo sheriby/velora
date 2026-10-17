@@ -346,7 +346,7 @@ impl Block {
                     .relative()
                     .py(px(d.block_padding_y.max(6.0)))
                     .child(div().w_full().flex().justify_center().child(image))
-                    .child(edit)
+                    .when(!self.is_read_only(), |this| this.child(edit))
                     .into_any_element()
             }
             Err(err) => div()

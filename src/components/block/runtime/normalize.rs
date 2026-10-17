@@ -550,6 +550,10 @@ impl Block {
         mark_inserted_text: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
 
         if self.kind().is_separator() && !self.uses_raw_text_editing() {
             return;

@@ -282,6 +282,9 @@ impl Editor {
             self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
             return;
         }
+        if self.is_read_only() {
+            return;
+        }
         // Create `<target>.md` at the workspace root.
         let path = self
             .workspace
@@ -442,6 +445,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if self.workspace.search_scope != WorkspaceSearchScope::Document {
             return false;
         }
@@ -462,6 +469,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         let Some(range) = self.workspace.document_active_range.clone() else {
             return false;
         };
@@ -483,6 +494,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
+        if self.is_read_only() {
+            return 0;
+        }
+
         // 命中来自那张表——和结果列表、高亮、跳转同一份数据，
         // 「替换计数」与「列表说有几个」因此不可能对不上。
         let replacement = self.workspace.replace_query.clone();
@@ -599,6 +614,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         let Some(entity_id) = self.active_entity_id else {
             return false;
         };
@@ -612,6 +631,10 @@ impl Editor {
     }
 
     pub(crate) fn request_replace_all_matches(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         let query = self.workspace.search_query.clone();
         let replacement = self.workspace.replace_query.clone();
         let options = self.search_options();
@@ -708,6 +731,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
+        if self.is_read_only() {
+            return 0;
+        }
+
         let matcher = SearchMatcher::new(self.workspace.search_query.trim(), self.search_options());
         let replacement = self.workspace.replace_query.clone();
         let active_path = self.file_path.clone();

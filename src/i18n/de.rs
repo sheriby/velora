@@ -281,6 +281,8 @@ pub(crate) struct I18nStringsDe {
     pub(crate) tree_sort_mtime: Option<String>,
     pub(crate) tree_sort_type: Option<String>,
     pub(crate) command_palette_placeholder: Option<String>,
+    pub(crate) command_toggle_reading_mode: Option<String>,
+    pub(crate) reading_mode_enabled: Option<String>,
     pub(crate) command_toggle_focus_mode: Option<String>,
     pub(crate) command_toggle_typewriter_mode: Option<String>,
     pub(crate) command_toggle_sidebar: Option<String>,

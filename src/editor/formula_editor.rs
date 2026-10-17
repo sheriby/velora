@@ -487,6 +487,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         let Some(block) = self.document.block_entity_by_id(target) else {
             return;
         };
@@ -690,6 +694,10 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         let Some(state) = self.formula_editor.take() else {
             return;
         };

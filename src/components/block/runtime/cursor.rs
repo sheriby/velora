@@ -1,6 +1,10 @@
 use super::*;
 
 impl Block {
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.reading_mode.as_ref().is_some_and(|mode| mode.get())
+    }
+
     pub(crate) fn clean_to_current_cursor_offset(&self, clean: usize) -> usize {
         let Some(projection) = &self.projection else {
             return clean;

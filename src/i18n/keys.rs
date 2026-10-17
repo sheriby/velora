@@ -278,6 +278,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "tree_sort_mtime",
     "tree_sort_type",
     "command_palette_placeholder",
+    "command_toggle_reading_mode",
+    "reading_mode_enabled",
     "command_toggle_focus_mode",
     "command_toggle_typewriter_mode",
     "command_toggle_sidebar",

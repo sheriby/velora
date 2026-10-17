@@ -168,6 +168,7 @@ pub struct Block {
     /// 跨块/跨格逻辑切片保留干净坐标，显示范围在当前投影下即时派生。
     pub(crate) editor_selection_clean_range: Option<Range<usize>>,
     pub(crate) document_selection_active: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+    pub(crate) reading_mode: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     pub marked_range: Option<Range<usize>>,
     pub last_layout: Option<std::sync::Arc<Vec<WrappedLine>>>,
     pub last_bounds: Option<Bounds<Pixels>>,
@@ -352,6 +353,7 @@ impl Block {
             selection_reversed: false,
             editor_selection_clean_range: None,
             document_selection_active: None,
+            reading_mode: None,
             marked_range: None,
             last_layout: None,
             last_bounds: None,

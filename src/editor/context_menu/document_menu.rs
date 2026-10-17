@@ -58,6 +58,7 @@ pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option
         DocumentMenuCommand::PasteAsPlainText => Some("icon/editor/paste-plain.svg"),
         DocumentMenuCommand::CopyAsMarkdown => Some("icon/editor/copy-markdown.svg"),
         DocumentMenuCommand::CopyAsHtml => Some("icon/editor/copy-html.svg"),
+        DocumentMenuCommand::ToggleReadingMode => Some("icon/workspace/reading-mode.svg"),
         DocumentMenuCommand::ToggleSourceView => Some("icon/editor/toggle-source.svg"),
         DocumentMenuCommand::Format(_)
         | DocumentMenuCommand::Heading(_)
@@ -132,6 +133,7 @@ pub(crate) enum DocumentMenuCommand {
     InsertToc,
     InsertFrontMatter,
     ToggleSourceView,
+    ToggleReadingMode,
 }
 
 impl DocumentMenuCommand {
@@ -172,6 +174,7 @@ impl DocumentMenuCommand {
             Self::InsertToc => "insert-toc",
             Self::InsertFrontMatter => "insert-front-matter",
             Self::ToggleSourceView => "toggle-source-view",
+            Self::ToggleReadingMode => "toggle-reading-mode",
         }
     }
 
@@ -204,7 +207,8 @@ impl DocumentMenuCommand {
             | Self::InsertSeparator
             | Self::InsertToc
             | Self::InsertFrontMatter
-            | Self::ToggleSourceView => None,
+            | Self::ToggleSourceView
+            | Self::ToggleReadingMode => None,
         }
     }
 }
@@ -280,7 +284,7 @@ impl Editor {
     /// 撤销/重做看对应的历史。
     pub(crate) fn quick_action_is_available(&self, command: DocumentMenuCommand, cx: &App) -> bool {
         let selectable = self.has_text_selection(cx);
-        let editable = self.writes_through_the_buffer();
+        let editable = !self.is_read_only() && self.writes_through_the_buffer();
         match command {
             DocumentMenuCommand::Undo => !self.undo_history.is_empty() && editable,
             DocumentMenuCommand::Redo => !self.redo_history.is_empty() && editable,
@@ -294,7 +298,37 @@ impl Editor {
     }
 
     /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图。
-    pub(crate) fn document_menu_rows(&self) -> Vec<DocumentMenuRow> {
+    pub(crate) fn document_menu_rows(&self, cx: &App) -> Vec<DocumentMenuRow> {
+        if self.is_read_only() {
+            return vec![
+                DocumentMenuRow::Item {
+                    command: DocumentMenuCommand::Copy,
+                    name: "copy",
+                    enabled: self.has_text_selection(cx),
+                },
+                DocumentMenuRow::Item {
+                    command: DocumentMenuCommand::CopyAsMarkdown,
+                    name: "copy-as-markdown",
+                    enabled: true,
+                },
+                DocumentMenuRow::Item {
+                    command: DocumentMenuCommand::CopyAsHtml,
+                    name: "copy-as-html",
+                    enabled: true,
+                },
+                DocumentMenuRow::Separator,
+                DocumentMenuRow::Item {
+                    command: DocumentMenuCommand::ToggleSourceView,
+                    name: "toggle-source-view",
+                    enabled: true,
+                },
+                DocumentMenuRow::Item {
+                    command: DocumentMenuCommand::ToggleReadingMode,
+                    name: "toggle-reading-mode",
+                    enabled: true,
+                },
+            ];
+        }
         vec![
             DocumentMenuRow::QuickActions,
             DocumentMenuRow::Separator,
@@ -325,6 +359,11 @@ impl Editor {
             DocumentMenuRow::Item {
                 command: DocumentMenuCommand::ToggleSourceView,
                 name: "toggle-source-view",
+                enabled: true,
+            },
+            DocumentMenuRow::Item {
+                command: DocumentMenuCommand::ToggleReadingMode,
+                name: "toggle-reading-mode",
                 enabled: true,
             },
         ]
@@ -359,7 +398,7 @@ impl Editor {
                 .map(|format| {
                     item(
                         DocumentMenuCommand::Format(format),
-                        selectable && self.writes_through_the_buffer(),
+                        selectable && !self.is_read_only() && self.writes_through_the_buffer(),
                     )
                 })
                 // 分隔线之后两行：链接补 `[文字]()` 外壳、清除格式剥掉已有的样式记号。
@@ -515,6 +554,7 @@ impl Editor {
             DocumentMenuCommand::ClearFormat => {
                 self.clear_inline_format_on_selection(cx);
             }
+            DocumentMenuCommand::ToggleReadingMode => self.toggle_reading_mode(cx),
             DocumentMenuCommand::ToggleSourceView => {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
             }
@@ -702,6 +742,7 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::InsertSeparator => strings.insert_separator.clone(),
         DocumentMenuCommand::InsertToc => strings.insert_toc.clone(),
         DocumentMenuCommand::InsertFrontMatter => strings.insert_front_matter.clone(),
+        DocumentMenuCommand::ToggleReadingMode => strings.command_toggle_reading_mode.clone(),
         DocumentMenuCommand::ToggleSourceView => strings.context_menu_toggle_source_view.clone(),
     }
 }
@@ -751,6 +792,7 @@ pub(crate) fn document_menu_shortcut(
         DocumentMenuCommand::Link => ShortcutCommand::LinkSelection,
         DocumentMenuCommand::InsertImage => ShortcutCommand::InsertImage,
         DocumentMenuCommand::ToggleSourceView => ShortcutCommand::ToggleViewMode,
+        DocumentMenuCommand::ToggleReadingMode => ShortcutCommand::ToggleReadingMode,
         // 段落与插入那一档不给默认键：标题的 ⌘1..⌘6 与本仓换标签的 ⌘1-9 撞车，列表、引用、
         // 代码块与目录、分割线这些也没有通行的键位可以对齐，硬造一串反而要多记一件事。
         DocumentMenuCommand::Heading(_)

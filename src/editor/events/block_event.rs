@@ -9,6 +9,32 @@ impl Editor {
         event: &BlockEvent,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only()
+            && !matches!(
+                event,
+                BlockEvent::CompositionChanged
+                    | BlockEvent::RequestToggleFold
+                    | BlockEvent::RequestJumpToHeadingLine { .. }
+                    | BlockEvent::RequestRenderedSelectAll
+                    | BlockEvent::RequestMermaidPreview { .. }
+                    | BlockEvent::RequestOpenWikilink { .. }
+                    | BlockEvent::RequestOpenLink { .. }
+                    | BlockEvent::RequestJumpToFootnoteDefinition { .. }
+                    | BlockEvent::RequestJumpToFootnoteBackref { .. }
+                    | BlockEvent::RequestTableCellMoveHorizontal { .. }
+                    | BlockEvent::RequestTableCellMoveVertical { .. }
+                    | BlockEvent::RequestTableAxisPreview { .. }
+                    | BlockEvent::RequestSelectTableAxis { .. }
+                    | BlockEvent::RequestOpenTableAxisMenu { .. }
+                    | BlockEvent::RequestFocusPrev { .. }
+                    | BlockEvent::RequestFocusNext { .. }
+                    | BlockEvent::RequestBlockUp
+                    | BlockEvent::RequestBlockDown
+                    | BlockEvent::RequestFocus
+            )
+        {
+            return;
+        }
         if matches!(event, BlockEvent::CompositionChanged) {
             if self.focusable_entity_by_id(block.entity_id()).is_some() {
                 if !block.read(cx).has_marked_text() {

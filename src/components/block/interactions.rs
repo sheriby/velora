@@ -285,6 +285,10 @@ impl Block {
     }
 
     pub(crate) fn on_newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         // Enter is ordered from special editors to rich-text splitting:
         // table/source/code/quote-like blocks keep local newline semantics,
         // while normal rendered blocks emit an editor-level split request.
@@ -470,6 +474,10 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         let cursor = self.cursor_offset();
         if self.selected_range.is_empty()
             && self.marked_range.is_none()
@@ -595,6 +603,10 @@ impl Block {
     }
 
     pub(crate) fn on_delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.is_table_cell() {
             if self.selected_range.is_empty() {
                 let next = self.next_boundary(self.cursor_offset());
@@ -656,6 +668,10 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.selected_range.is_empty() {
             if self.cursor_offset() == 0 {
                 // Nothing to the left in this block; defer to grapheme
@@ -675,6 +691,10 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.selected_range.is_empty() {
             if self.cursor_offset() == self.visible_len() {
                 // Nothing to the right in this block; defer to grapheme
@@ -694,6 +714,10 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.is_table_cell() {
             cx.emit(BlockEvent::RequestTableCellMoveHorizontal { delta: 1 });
             return;
@@ -713,6 +737,10 @@ impl Block {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.is_table_cell() {
             cx.emit(BlockEvent::RequestTableCellMoveHorizontal { delta: -1 });
             return;

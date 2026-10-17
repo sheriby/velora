@@ -835,7 +835,9 @@ fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindo
 pub(crate) type EditorMenuHandler = fn(&mut Editor, &mut Window, &mut Context<Editor>);
 
 pub(crate) fn editor_menu_handler(action: &dyn Action) -> Option<EditorMenuHandler> {
-    if action.as_any().is::<NewDocument>() {
+    if action.as_any().is::<crate::components::ToggleReadingMode>() {
+        Some(|editor, _, cx| editor.toggle_reading_mode(cx))
+    } else if action.as_any().is::<NewDocument>() {
         Some(|editor, window, cx| editor.new_workspace_document(window, cx))
     } else if action.as_any().is::<SplitEditorLeft>() {
         Some(|editor, window, cx| editor.split_active_document(crate::editor::workspace::split::SplitDirection::Left, window, cx))

@@ -191,6 +191,10 @@ impl Block {
         range: Range<usize>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if range.is_empty() || self.uses_raw_text_editing() {
             return false;
         }
@@ -222,6 +226,10 @@ impl Block {
         reversed: Option<bool>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if selection.is_empty() || self.uses_raw_text_editing() {
             return false;
         }
@@ -274,6 +282,10 @@ impl Block {
         reversed: Option<bool>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if selection.is_empty() || self.uses_raw_text_editing() {
             return false;
         }

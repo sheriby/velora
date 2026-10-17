@@ -132,6 +132,10 @@ impl Block {
     }
 
     pub(crate) fn on_cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         if !self.selected_range.is_empty() {
             self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
             let text = self.display_text();
@@ -213,6 +217,10 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.kind().is_separator() && !self.uses_raw_text_editing() {
             return;
         }
@@ -595,6 +603,10 @@ impl Block {
     /// 图片缩放比例写回源码 `{width=NN%}`；
     /// 100% 时移除属性以保持源码干净。
     pub(crate) fn write_image_width_back_to_source(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+
         if self.image_runtime().is_none() {
             return;
         }

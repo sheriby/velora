@@ -20,7 +20,7 @@ use crate::components::{
     NewDocument, OpenCommandPalette, OpenFile, OpenFolder, OpenPreferences, PasteAsPlainText,
     PrintDocument, QuitApplication, SaveDocument, SaveDocumentAs, SelectDocument, ShowAbout,
     CheckForUpdates, StrikethroughSelection, SubscriptSelection, SuperscriptSelection,
-    ToggleFocusMode, ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode,
+    ToggleFocusMode, ToggleFullscreen, ToggleSidebar, ToggleTypewriterMode, ToggleViewMode, ToggleReadingMode,
     UnderlineSelection, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::i18n::I18nStrings;
@@ -184,6 +184,12 @@ static COMMANDS: &[CommandSpec] = &[
         ToggleViewMode
     ),
     command!(
+        "toggle_reading_mode",
+        View,
+        command_toggle_reading_mode,
+        ToggleReadingMode
+    ),
+    command!(
         "toggle_focus_mode",
         View,
         command_toggle_focus_mode,
@@ -285,6 +291,7 @@ mod tests {
                 "toggle_sidebar",
                 "toggle_fullscreen",
                 "toggle_view_mode",
+                "toggle_reading_mode",
                 "toggle_focus_mode",
                 "toggle_typewriter_mode",
                 "open_command_palette",

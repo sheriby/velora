@@ -35,6 +35,10 @@ impl Editor {
         target: BlockKindTarget,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         // 源码视图里根块就是文件本身，换种类等于改写用户的字面文本（计划 §6 的边界）。
         if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return false;
@@ -275,6 +279,10 @@ impl Editor {
     /// 菜单的置灰与命令的实际行为读同一条（[`Self::block_kind_conversion`]），
     /// 不会出现「点了没反应」。
     pub(crate) fn block_kind_target_is_available(&self, target: BlockKindTarget, cx: &App) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return false;
         }

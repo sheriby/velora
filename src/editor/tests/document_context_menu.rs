@@ -14,13 +14,14 @@ use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
 /// 主面板的长行，行 id 与 `document_menu_rows` 里给的一致。
-const MAIN_ROWS: [&str; 6] = [
+const MAIN_ROWS: [&str; 7] = [
     "copy-as-markdown",
     "copy-as-html",
     "format",
     "paragraph",
     "insert",
     "toggle-source-view",
+    "toggle-reading-mode",
 ];
 
 /// 顶部图标条那六颗，按屏上从左到右的顺序（与 `DOCUMENT_MENU_QUICK_ACTIONS` 同序）。
@@ -768,7 +769,7 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
         crate::config::EditorSettings::apply_ui_typography(cx, &mut theme);
         let strings = cx.global::<I18nManager>().strings().clone();
         editor.read_with(cx, |editor, cx| {
-            let main = DocumentMenuGeometry::measure_in_window(&editor.document_menu_rows(), &strings, &theme, window, cx);
+            let main = DocumentMenuGeometry::measure_in_window(&editor.document_menu_rows(cx), &strings, &theme, window, cx);
             let submenu = DocumentMenuGeometry::measure_in_window(&editor.document_submenu_rows(DocumentSubmenu::Paragraph, cx), &strings, &theme, window, cx);
             // 两侧都放不下时产品会重叠夹紧；此用例明确构造左侧放得下的视口。
             (main.size.width + submenu.size.width + px(theme.dimensions.context_menu_submenu_gap + 12.0)).max(px(420.0))
@@ -1247,7 +1248,7 @@ async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut T
     let panel = cx
         .debug_bounds("editor-context-menu-panel")
         .expect("右键该有主面板");
-    let rows = editor.read_with(cx, |editor, _app| editor.document_menu_rows());
+    let rows = editor.read_with(cx, |editor, cx| editor.document_menu_rows(cx));
     let specs = rows
         .iter()
         .filter_map(|row| match row {

@@ -46,10 +46,11 @@ pub(super) struct PendingSourceTail {
 }
 
 /// Ordinal/blank-run carry-over for [`DocumentTree::append_roots`].
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct SyncSeeds {
     numbered_list_ordinal: usize,
     previous_was_list_item: bool,
+    reading_mode: Option<std::rc::Rc<std::cell::Cell<bool>>>,
 }
 
 /// A block together with its position in the current visible DFS order.
@@ -476,6 +477,7 @@ impl DocumentTree {
             None => (0, false),
         };
         let base_index = self.roots.len();
+        let reading_mode = self.roots.first().and_then(|block| block.read(cx).reading_mode.clone());
         Self::sync_block_list(
             &roots,
             None,
@@ -493,6 +495,7 @@ impl DocumentTree {
             SyncSeeds {
                 numbered_list_ordinal,
                 previous_was_list_item,
+                reading_mode,
             },
         );
         self.roots.extend(roots.clone());
@@ -986,6 +989,10 @@ impl DocumentTree {
     ) {
         let mut numbered_list_ordinal = seeds.numbered_list_ordinal;
         let mut previous_was_list_item = seeds.previous_was_list_item;
+        // 续建块在整篇上下文重建前就能被点击，必须随父块立即继承只读状态。
+        let reading_mode = seeds.reading_mode.or_else(|| {
+            parent_entity.as_ref().and_then(|parent| parent.read(cx).reading_mode.clone())
+        });
         for (index, block) in blocks.iter().enumerate() {
             let entity_id = block.entity_id();
             let (
@@ -1120,7 +1127,11 @@ impl DocumentTree {
                 },
             );
 
+            let reading_mode = reading_mode.clone();
             block.update(cx, move |block, cx| {
+                if let Some(reading_mode) = reading_mode {
+                    block.reading_mode = Some(reading_mode);
+                }
                 block.record.parent = parent_id;
                 block.record.content = content.clone();
                 block.render_depth = list_depth;

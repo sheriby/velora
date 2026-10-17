@@ -19,6 +19,7 @@ More screenshots: [Workspace and tabs](assets/screenshots/workspace.png) · [Spl
 ### Writing & editing
 
 - **WYSIWYG + source modes** — Markdown renders as you type; switch to raw source at any time, and undo history survives mode switches.
+- **Reading mode** — a window-wide read-only toggle that stays active across tabs and split panes. Browse, select, copy and search while document edits are blocked; toggle it from the status bar, View menu or `⌘⇧R` / `Ctrl+Shift+R`.
 - **A full block set** — headings, ordered/bulleted/task lists, tables, code blocks, quotes, footnotes, callouts, horizontal rules and images; inline bold/italic, inline code, links and strikethrough.
 - **Math & diagrams in place** — LaTeX formulas and Mermaid diagrams render directly inside the document.
 - **Images** — paste or drag one in and it is copied into the document's assets folder with a relative link; 100% maps to 95% of the visible text column by default and images never overflow it; right-click offers 25% / 50% / 75% / 100% scaling that keeps the aspect ratio, and the chosen ratio is written back to the source as `{width=NN%}`.

@@ -36,6 +36,10 @@ impl Editor {
         target: InsertBlockTarget,
         cx: &App,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return false;
         }
@@ -124,6 +128,10 @@ impl Editor {
     /// 「插入 → 图片」这一行现在能不能点：渲染态、写得动缓冲区，并且有一个编辑目标。
     /// 目标那块是不是正文不参与判断——落不进正文时由粘贴那条路改走块内替换。
     pub(crate) fn image_insert_is_available(&self, cx: &App) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         self.view_mode == ViewMode::Rendered
             && self.writes_through_the_buffer()
             && self.current_edit_target_from_state(cx).is_some()
@@ -134,6 +142,9 @@ impl Editor {
     /// 图片文件的落盘与相对路径写法也由它负责。返回值只说明有没有一个落点，
     /// 图片本身读不读得动由那一条路自己报告。
     pub(crate) fn insert_image_at_caret(&mut self, path: PathBuf, cx: &mut Context<Self>) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
         // 落点与拖放那条路一致：没有焦点块时退回文档第一块。
         let Some(block) = self
             .current_edit_target_from_state(cx)
@@ -271,6 +282,10 @@ impl Editor {
     /// 只有光标时点不动——空的 `[]()` 在行内树里存不住（重读时被当成空链接丢掉），
     /// 与格式那一档其余八行同一条口径。
     pub(crate) fn link_insert_is_available(&self, cx: &App) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return false;
         }

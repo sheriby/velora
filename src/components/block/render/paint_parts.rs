@@ -23,14 +23,18 @@ impl Render for Block {
         if !focused || self.record.kind != BlockKind::MathBlock {
             self.math_edit_preview_source = None;
         }
-        self.set_hide_markdown_markers(crate::config::EditorSettings::hide_markdown_markers(cx));
+        self.set_hide_markdown_markers(
+            self.is_read_only() || crate::config::EditorSettings::hide_markdown_markers(cx),
+        );
         let code_language_focused = self.code_language_focus_handle.is_focused(window);
         // 输入态（含 33ms 光标闪烁任务）还要求窗口是活动窗口：gpui 的 `is_focused`
         // 判不出窗口已不是 key window（macOS 红绿灯变灰时 window.focus 不清零），
         // 只看焦点时后台窗口持续闪烁、前台线程每拍全块重绘；公式编辑器的草稿
         // 光标（formula_editor.rs）同一条语义。
-        let input_active = (focused || code_language_focused) && window.is_window_active();
-        if self.sync_image_focus_state(focused) {
+        let input_active = !self.is_read_only()
+            && (focused || code_language_focused)
+            && window.is_window_active();
+        if self.sync_image_focus_state(focused && !self.is_read_only()) {
             cx.notify();
         }
 
@@ -182,8 +186,8 @@ impl Render for Block {
         // 聚焦的数学块要放行到下面的 kind 分支：ƒx 按钮、公式编辑卡片与
         // SVG↔文本切换都挂在那里——这里早退会把它们全拦成死代码。
         if self.is_source_raw_mode()
-            && (focused && self.kind() != BlockKind::MathBlock
-                || !focused
+            && (focused && !self.is_read_only() && self.kind() != BlockKind::MathBlock
+                || (!focused || self.is_read_only())
                     && !matches!(
                         self.kind(),
                         BlockKind::HtmlBlock | BlockKind::MathBlock | BlockKind::MermaidBlock
@@ -191,7 +195,7 @@ impl Render for Block {
         {
             // 闪烁开关同上一处：焦点之外还要窗口是活动窗口；分支选择本身仍只看
             // 焦点——后台化不能改变这里渲染哪种元素树。
-            let blink_active = focused && window.is_window_active();
+            let blink_active = focused && !self.is_read_only() && window.is_window_active();
             if blink_active && self.cursor_blink_task.is_none() {
                 self.start_cursor_blink(cx);
             } else if !blink_active && self.cursor_blink_task.is_some() {
@@ -836,7 +840,7 @@ impl Render for Block {
                 }
             }
             BlockKind::CodeBlock { .. } => {
-                let show_language_input = focused || code_language_focused;
+                let show_language_input = !self.is_read_only() && (focused || code_language_focused);
                 let language_placeholder =
                     SharedString::from(strings.code_language_placeholder.clone());
                 let code_panel = focused_base
@@ -1494,10 +1498,12 @@ impl Render for Block {
                                 .bg(c.table_cell_bg)
                                 .children(rows),
                         )
-                        .child(column_edge_band)
-                        .child(row_edge_band)
-                        .child(column_control)
-                        .child(row_control)
+                        .when(!self.is_read_only(), |this| {
+                            this.child(column_edge_band)
+                                .child(row_edge_band)
+                                .child(column_control)
+                                .child(row_control)
+                        })
                         .child(
                             canvas(move |bounds, _, cx| {
                                 let width = bounds.size.width;
@@ -1546,6 +1552,7 @@ impl Render for Block {
                     .into_any_element()
             }
             BlockKind::MathBlock => {
+                let focused = focused && !self.is_read_only();
                 if !focused {
                     self.last_layout = None;
                     self.last_bounds = None;
@@ -1628,6 +1635,7 @@ impl Render for Block {
                 }
             }
             BlockKind::MermaidBlock => {
+                let focused = focused && !self.is_read_only();
                 if !focused {
                     self.last_layout = None;
                     self.last_bounds = None;

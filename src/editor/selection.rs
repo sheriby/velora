@@ -119,6 +119,11 @@ impl Editor {
     }
 
     pub(super) fn on_cut_capture(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            cx.propagate();
+            return;
+        }
+
         if let Some(text) = self.table_text_selection_text(cx) {
             if !self.replace_table_text_selection_with_text("", None, false, UndoCaptureKind::NonCoalescible, cx) {
                 cx.propagate();
@@ -736,6 +741,10 @@ impl Editor {
         undo_kind: UndoCaptureKind,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
+
         if self.table_text_selection.is_some() {
             return self.replace_table_text_selection_with_text(new_text, selected_range_relative, mark_inserted_text, undo_kind, cx);
         }
@@ -796,6 +805,9 @@ impl Editor {
     }
 
     fn delete_cross_block_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
         let Some(selection) = self.normalized_cross_block_selection(cx) else {
             return false;
         };

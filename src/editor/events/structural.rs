@@ -307,6 +307,9 @@ impl Editor {
         block: &Entity<crate::editor::Block>,
         cx: &mut Context<Self>,
     ) {
+        if self.is_read_only() {
+            return;
+        }
         let strands = {
             let block = block.read(cx);
             let kind = block.kind();
