@@ -197,20 +197,13 @@ fn ai_runtime_completes_http_tools_from_a_small_native_background_stack() {
             .unwrap();
         return;
     }
-    // 使用不同名称的副本，避免被并行的更新测试识别为另一个工作区实例。
-    let current = std::env::current_exe().unwrap();
-    let mut probe = current.with_file_name(format!("ai-stack-probe-{}", uuid::Uuid::new_v4()));
-    if cfg!(target_os = "windows") {
-        probe.set_extension("exe");
-    }
-    std::fs::copy(&current, &probe).unwrap();
+    let _process_guard = crate::test_support::exclusive_process_probe();
     // 栈溢出会终止整个进程，子进程让回归仍能明确落在退出状态断言上。
-    let output = std::process::Command::new(&probe)
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "ai::runtime::protocol_tests::ai_runtime_completes_http_tools_from_a_small_native_background_stack", "--nocapture"])
         .env(PROBE, "1")
         .output()
         .unwrap();
-    std::fs::remove_file(&probe).unwrap();
     assert!(
         output.status.success(),
         "原生后台线程必须完成实际 HTTP 工具链，不能栈溢出：{}\n{}",

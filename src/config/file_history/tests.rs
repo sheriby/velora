@@ -415,6 +415,7 @@ fn history_storage_process_probe() {
 
 #[test]
 fn concurrent_processes_keep_retained_delta_chains_readable() {
+    let _process_guard = crate::test_support::exclusive_process_probe();
     fixture(|path| {
         let root = path.parent().expect("夹具目录");
         let mut children = Vec::new();

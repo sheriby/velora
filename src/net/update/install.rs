@@ -283,6 +283,7 @@ mod tests {
 
     #[test]
     fn another_running_instance_blocks_update_before_the_current_workspace_exits() {
+        let _process_guard = crate::test_support::exclusive_process_probe();
         struct Probe(std::process::Child);
         impl Drop for Probe {
             fn drop(&mut self) {

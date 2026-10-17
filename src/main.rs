@@ -21,6 +21,8 @@ use gpui::*;
 
 mod app_identity;
 mod ai;
+#[cfg(test)]
+mod test_support;
 mod app_menu;
 mod commands;
 mod components;
