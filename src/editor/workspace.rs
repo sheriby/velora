@@ -218,7 +218,7 @@ enum WorkspaceSearchScope {
     Document,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum WorkspaceMenuAction {
     NewFile,
     NewMarkdown,
@@ -252,6 +252,7 @@ struct WorkspaceNameEdit {
     pending: bool,
     last_line: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    revealed_row: Option<usize>,
     scroll_x: Pixels,
     caret: usize,
     selection_anchor: usize,

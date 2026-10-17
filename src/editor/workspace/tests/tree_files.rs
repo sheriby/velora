@@ -1307,7 +1307,7 @@ async fn every_context_menu_row_uses_the_same_geometry(cx: &mut TestAppContext) 
     });
     cx.update(|window, cx| window.draw(cx).clear());
     let tree_row = cx
-        .debug_bounds("menu-item-workspace-context-action-0")
+        .debug_bounds("menu-item-workspace-context-action-Reveal")
         .expect("文件树菜单的第一行");
 
     editor.update(cx, |editor, cx| {

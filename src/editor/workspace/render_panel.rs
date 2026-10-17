@@ -114,25 +114,7 @@ impl Editor {
             && let Some(WorkspaceSelection::Outline(selected)) = &self.workspace.selected
             && let Some(index) = rows.iter().position(|(node, _)| &node.id == selected)
         {
-            // 虚拟化后行可能还未挂载，定位必须用完整可见列表的行号与同一份行高。
-            let row_height = Self::workspace_node_height(theme);
-            let height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
-            let offset = self.workspace.tree_scroll_handle.offset();
-            let current = f32::from(offset.y);
-            let top = WORKSPACE_PANEL_PADDING_Y + index as f32 * row_height;
-            let bottom = top + row_height;
-            let target = if top + current < WORKSPACE_PANEL_PADDING_Y {
-                WORKSPACE_PANEL_PADDING_Y - top
-            } else if bottom + current > height - WORKSPACE_PANEL_PADDING_Y {
-                height - WORKSPACE_PANEL_PADDING_Y - bottom
-            } else {
-                current
-            };
-            let maximum =
-                (total as f32 * row_height + WORKSPACE_PANEL_PADDING_Y * 2.0 - height).max(0.0);
-            self.workspace
-                .tree_scroll_handle
-                .set_offset(point(offset.x, px(target.clamp(-maximum, 0.0))));
+            self.reveal_workspace_row(index, total, theme);
         }
         let window = self.workspace_list_window(total, theme);
         let visible = rows[window.clone()]
@@ -143,6 +125,31 @@ impl Editor {
             self.workspace.outline_reveal_pending = false;
         }
         self.workspace_windowed_body(total, window, visible, theme, cx)
+    }
+
+    pub(super) fn reveal_workspace_row(&self, index: usize, total: usize, theme: &Theme) -> bool {
+        let height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
+        if height <= 0.0 {
+            return false;
+        }
+        // 虚拟化后行可能还未挂载，定位必须用完整可见列表的行号与同一份行高。
+        let row_height = Self::workspace_node_height(theme);
+        let offset = self.workspace.tree_scroll_handle.offset();
+        let current = f32::from(offset.y);
+        let top = WORKSPACE_PANEL_PADDING_Y + index as f32 * row_height;
+        let bottom = top + row_height;
+        let target = if top + current < WORKSPACE_PANEL_PADDING_Y {
+            WORKSPACE_PANEL_PADDING_Y - top
+        } else if bottom + current > height - WORKSPACE_PANEL_PADDING_Y {
+            height - WORKSPACE_PANEL_PADDING_Y - bottom
+        } else {
+            current
+        };
+        let maximum =
+            (total as f32 * row_height + WORKSPACE_PANEL_PADDING_Y * 2.0 - height).max(0.0);
+        self.workspace.tree_scroll_handle
+            .set_offset(point(offset.x, px(target.clamp(-maximum, 0.0))));
+        true
     }
 
     /// 视口内的行区间：行高固定，从滚动偏移直接除得出来。大纲与文件树共用。
@@ -301,20 +308,27 @@ impl Editor {
             for node in nodes {
                 rows.push(WorkspaceTreeRow::Node(node, depth));
                 let is_expanded = workspace.expanded.contains(&node.id);
-                if is_expanded
+                let name_edit = is_expanded
                     && workspace.name_edit.as_ref().is_some_and(|edit| {
                         !matches!(edit.kind, WorkspaceEditKind::Rename { .. })
                             && tree_node_path(node) == edit.directory.as_path()
-                    })
-                {
-                    rows.push(WorkspaceTreeRow::NameEdit(depth + 1));
-                }
+                    });
                 if is_expanded && node.kind_dir() && !node.children_loaded {
                     // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
                     rows.push(WorkspaceTreeRow::Loading(depth + 1));
                 }
-                if !node.children.is_empty() && is_expanded {
-                    walk(&node.children, depth + 1, workspace, rows);
+                if is_expanded {
+                    let insertion = if name_edit {
+                        node.children.partition_point(WorkspaceTreeNode::kind_dir)
+                    } else {
+                        node.children.len()
+                    };
+                    let (before, after) = node.children.split_at(insertion);
+                    walk(before, depth + 1, workspace, rows);
+                    if name_edit {
+                        rows.push(WorkspaceTreeRow::NameEdit(depth + 1));
+                    }
+                    walk(after, depth + 1, workspace, rows);
                 }
             }
         }

@@ -125,6 +125,7 @@ impl Editor {
             pending: false,
             last_line: None,
             last_bounds: None,
+            revealed_row: None,
             scroll_x: px(0.0),
             caret: selected_end,
             selection_anchor: 0,

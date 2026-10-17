@@ -52,11 +52,22 @@ impl Editor {
 
         let rows = self.workspace_files_rows();
         let total = rows.len();
+        let revealed_row = self.workspace.name_edit.as_ref().and_then(|edit| {
+            rows.iter()
+                .position(|row| matches!(row, WorkspaceTreeRow::NameEdit(_)))
+                .filter(|index| edit.revealed_row != Some(*index)
+                    && self.reveal_workspace_row(*index, total, theme))
+        });
         let window = self.workspace_list_window(total, theme);
         let visible = rows[window.clone()]
             .iter()
             .map(|row| self.render_workspace_tree_row(row, theme, editor))
             .collect();
+        if let Some(index) = revealed_row
+            && let Some(edit) = self.workspace.name_edit.as_mut()
+        {
+            edit.revealed_row = Some(index);
+        }
         self.workspace_windowed_body(total, window, visible, theme, cx)
     }
 }

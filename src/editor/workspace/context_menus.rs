@@ -62,20 +62,29 @@ impl Editor {
     ) -> Option<AnyElement> {
         let menu = self.workspace.context_menu.as_ref()?;
         let strings = cx.global::<crate::i18n::I18nManager>().strings();
-        let mut actions = vec![
-            (strings.workspace_new_generic_file.clone(), WorkspaceMenuAction::NewFile),
-            (strings.workspace_new_file.clone(), WorkspaceMenuAction::NewMarkdown),
-            (strings.workspace_new_folder.clone(), WorkspaceMenuAction::NewFolder),
-            (strings.workspace_reveal_in_file_manager.clone(), WorkspaceMenuAction::Reveal),
-            (strings.workspace_copy_absolute_path.clone(), WorkspaceMenuAction::CopyAbsolutePath),
-            (strings.workspace_copy_relative_path.clone(), WorkspaceMenuAction::CopyRelativePath),
-            (strings.workspace_copy_file_name.clone(), WorkspaceMenuAction::CopyFileName),
-        ];
         let is_file = matches!(menu.target, Some(WorkspaceSelection::File(_)));
+        let mut actions = Vec::new();
+        if !is_file {
+            actions.extend([
+                (strings.workspace_new_generic_file.clone(), WorkspaceMenuAction::NewFile),
+                (strings.workspace_new_file.clone(), WorkspaceMenuAction::NewMarkdown),
+                (strings.workspace_new_folder.clone(), WorkspaceMenuAction::NewFolder),
+            ]);
+        }
+        if matches!(menu.target, Some(WorkspaceSelection::File(_) | WorkspaceSelection::Directory(_))) {
+            actions.extend([
+                (strings.workspace_reveal_in_file_manager.clone(), WorkspaceMenuAction::Reveal),
+                (strings.workspace_copy_absolute_path.clone(), WorkspaceMenuAction::CopyAbsolutePath),
+                (strings.workspace_copy_relative_path.clone(), WorkspaceMenuAction::CopyRelativePath),
+                (strings.workspace_copy_file_name.clone(), WorkspaceMenuAction::CopyFileName),
+            ]);
+        }
         if menu.has_target && is_file {
             actions.push((strings.workspace_copy.clone(), WorkspaceMenuAction::Copy));
         }
-        actions.push((strings.workspace_paste.clone(), WorkspaceMenuAction::Paste));
+        if !is_file {
+            actions.push((strings.workspace_paste.clone(), WorkspaceMenuAction::Paste));
+        }
         if menu.has_target {
             actions.push((strings.workspace_rename.clone(), WorkspaceMenuAction::Rename));
             if is_file {
@@ -85,10 +94,15 @@ impl Editor {
         }
         let width = theme.dimensions.menu_panel_width.max(220.0);
         let dimensions = &theme.dimensions;
+        let separates_group = |index, action| index > 0
+            && (matches!(action, WorkspaceMenuAction::Reveal | WorkspaceMenuAction::Copy | WorkspaceMenuAction::Rename)
+                || matches!(action, WorkspaceMenuAction::Paste) && !is_file);
+        let separators = actions.iter().enumerate()
+            .filter(|(index, (_, action))| separates_group(*index, *action)).count();
         let height = actions.len() as f32
             * (dimensions.menu_item_height + dimensions.menu_panel_gap)
             + dimensions.menu_panel_padding * 2.0
-            + 3.0 * (dimensions.menu_separator_height + dimensions.menu_separator_margin_y * 2.0);
+            + separators as f32 * (dimensions.menu_separator_height + dimensions.menu_separator_margin_y * 2.0);
         let viewport = window.viewport_size();
         let left = f32::from(menu.position.x)
             .min((f32::from(viewport.width) - width - 8.0).max(8.0))
@@ -103,12 +117,11 @@ impl Editor {
             .map(|(index, (label, action))| {
                 let editor = editor.clone();
                 let selection = menu.target.clone();
-                let separator = matches!(action, WorkspaceMenuAction::Reveal | WorkspaceMenuAction::Copy | WorkspaceMenuAction::Rename)
-                    || matches!(action, WorkspaceMenuAction::Paste) && !is_file;
+                let separator = separates_group(index, action);
                 let shortcut = matches!(action, WorkspaceMenuAction::Rename).then(|| SharedString::from("F2"));
                 let row = crate::components::menu::menu_item(
                     theme,
-                    format!("workspace-context-action-{index}"),
+                    format!("workspace-context-action-{action:?}"),
                     label,
                     shortcut,
                     true,

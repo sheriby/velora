@@ -474,7 +474,7 @@ async fn right_click_selects_the_target_and_menu_actions_keep_their_target(
     });
     redraw(cx);
     let copy_name = cx
-        .debug_bounds("menu-item-workspace-context-action-6")
+        .debug_bounds("menu-item-workspace-context-action-CopyFileName")
         .expect("复制文件名菜单项");
     cx.simulate_click(copy_name.center(), Modifiers::none());
     redraw(cx);
@@ -547,6 +547,250 @@ async fn markdown_creation_opens_an_input_inside_the_tree(cx: &mut TestAppContex
         fs::read_dir(&root).expect("查看夹具目录").count(),
         0,
         "确认名称之前不创建磁盘文件"
+    );
+}
+
+#[gpui::test]
+fn tree_creation_context_menus_only_offer_actions_for_the_clicked_target(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let directory = root.join("目录");
+    fs::create_dir(&directory).expect("创建目录");
+    let file = directory.join("note.md");
+    fs::write(&file, "正文").expect("写夹具");
+    let creation = ["NewFile", "NewMarkdown", "NewFolder", "Paste"];
+    let paths = [
+        "Reveal",
+        "CopyAbsolutePath",
+        "CopyRelativePath",
+        "CopyFileName",
+    ];
+    let mut file_actions = paths.to_vec();
+    file_actions.extend(["Copy", "Rename", "Duplicate", "Delete"]);
+    let mut directory_actions = creation.to_vec();
+    directory_actions.extend(paths);
+    directory_actions.extend(["Rename", "Delete"]);
+    let mut root_actions = creation.to_vec();
+    root_actions.extend(paths);
+    let actions = [
+        "NewFile",
+        "NewMarkdown",
+        "NewFolder",
+        "Reveal",
+        "CopyAbsolutePath",
+        "CopyRelativePath",
+        "CopyFileName",
+        "Copy",
+        "Paste",
+        "Rename",
+        "Duplicate",
+        "Delete",
+    ];
+    let mut mismatches = Vec::new();
+    for (label, selection, expected) in [
+        (
+            "文件",
+            Some(WorkspaceSelection::File(file.clone())),
+            file_actions,
+        ),
+        (
+            "目录",
+            Some(WorkspaceSelection::Directory(directory)),
+            directory_actions,
+        ),
+        (
+            "根目录",
+            Some(WorkspaceSelection::Directory(root)),
+            root_actions,
+        ),
+        ("空白", None, creation.to_vec()),
+    ] {
+        editor.update(cx, |editor, cx| {
+            editor.workspace.selected = Some(WorkspaceSelection::File(file.clone()));
+            editor.open_workspace_context_menu(
+                gpui::point(gpui::px(60.0), gpui::px(80.0)),
+                selection,
+                cx,
+            );
+        });
+        redraw(cx);
+        for action in actions {
+            let selector =
+                Box::leak(format!("menu-item-workspace-context-action-{action}").into_boxed_str());
+            if cx.debug_bounds(selector).is_some() != expected.contains(&action) {
+                mismatches.push(format!("{label}: {action}"));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "右键菜单包含不适用的操作或缺少操作：{mismatches:?}"
+    );
+}
+
+#[gpui::test]
+fn tree_creation_inputs_appear_after_subfolders_and_before_the_first_file(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let directory = root.join("目录-a");
+    let nested = directory.join("子目录");
+    fs::create_dir_all(&nested).expect("创建嵌套目录");
+    fs::create_dir(root.join("目录-b")).expect("创建另一个目录");
+    fs::write(nested.join("child.md"), "正文").expect("写嵌套文件");
+    for parent in [&root, &directory] {
+        for name in ["first.md", "second.md"] {
+            fs::write(parent.join(name), "正文").expect("写夹具");
+        }
+    }
+    editor.update(cx, |editor, cx| {
+        editor
+            .workspace
+            .expanded
+            .insert(super::super::file_node_id(&directory));
+        editor
+            .workspace
+            .expanded
+            .insert(super::super::file_node_id(&nested));
+        editor.refresh_workspace_tree(cx);
+    });
+    redraw(cx);
+    redraw(cx);
+    let mut misplaced = Vec::new();
+    for (selection, parent) in [
+        (None, root.clone()),
+        (
+            Some(WorkspaceSelection::Directory(directory.clone())),
+            directory.clone(),
+        ),
+    ] {
+        for action in ["NewFile", "NewMarkdown", "NewFolder"] {
+            editor.update(cx, |editor, cx| {
+                editor.workspace.selected =
+                    Some(WorkspaceSelection::File(directory.join("second.md")));
+                editor.open_workspace_context_menu(
+                    gpui::point(gpui::px(60.0), gpui::px(80.0)),
+                    selection.clone(),
+                    cx,
+                );
+            });
+            redraw(cx);
+            let selector =
+                Box::leak(format!("menu-item-workspace-context-action-{action}").into_boxed_str());
+            let item = cx.debug_bounds(selector).expect("新建菜单项");
+            cx.simulate_click(item.center(), Modifiers::none());
+            redraw(cx);
+            editor.read_with(cx, |editor, _| {
+                use super::super::render_panel::WorkspaceTreeRow;
+                assert_eq!(
+                    editor
+                        .workspace
+                        .name_edit
+                        .as_ref()
+                        .expect("名称编辑")
+                        .directory,
+                    parent
+                );
+                let rows = editor.workspace_files_rows();
+                let input = rows
+                    .iter()
+                    .position(|row| matches!(row, WorkspaceTreeRow::NameEdit(_)))
+                    .expect("输入行");
+                let first_file = rows
+                    .iter()
+                    .position(|row| {
+                        matches!(row, WorkspaceTreeRow::Node(node, _) if !node.kind_dir()
+                        && super::super::tree_node_path(node).parent() == Some(parent.as_path()))
+                    })
+                    .expect("目录中的第一个文件");
+                if input + 1 != first_file {
+                    misplaced.push(format!("{}: {action}", parent.display()));
+                }
+            });
+            assert!(
+                cx.debug_bounds("workspace-name-input").is_some(),
+                "名称输入框应可见"
+            );
+            cx.update(|window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.cancel_workspace_name_edit(window, cx)
+                });
+            });
+            redraw(cx);
+        }
+    }
+    assert!(
+        misplaced.is_empty(),
+        "输入框应位于子目录之后、第一个文件之前：{misplaced:?}"
+    );
+}
+
+#[gpui::test]
+fn tree_creation_input_follows_all_folders_when_there_are_no_files(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    for name in ["目录-a", "目录-b"] {
+        fs::create_dir(root.join(name)).expect("创建子目录");
+    }
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    redraw(cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.prompt_create_workspace_file(window, cx)
+        });
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        use super::super::render_panel::WorkspaceTreeRow;
+        let rows = editor.workspace_files_rows();
+        assert!(
+            matches!(rows.last(), Some(WorkspaceTreeRow::NameEdit(1))),
+            "没有文件时输入框应在所有子目录之后"
+        );
+    });
+}
+
+#[gpui::test]
+fn tree_creation_input_is_visible_after_large_directories_load(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let directory = root.join("目录-200");
+    for index in 0..240 {
+        fs::create_dir_all(root.join(format!("目录-{index:03}"))).expect("创建根目录夹具");
+        fs::create_dir_all(directory.join(format!("子目录-{index:03}"))).expect("创建子目录夹具");
+    }
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    cx.update(|window, _| window.resize(gpui::size(gpui::px(800.0), gpui::px(320.0))));
+    redraw(cx);
+    let mut hidden = Vec::new();
+    for parent in [&root, &directory] {
+        editor.update(cx, |editor, _| {
+            editor.workspace.selected = Some(WorkspaceSelection::Directory(parent.clone()));
+        });
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.prompt_create_workspace_file(window, cx)
+            });
+        });
+        redraw(cx);
+        redraw(cx);
+        let viewport =
+            editor.read_with(cx, |editor, _| editor.workspace.tree_scroll_handle.bounds());
+        match cx.debug_bounds("workspace-name-input") {
+            Some(input) if viewport.contains(&input.center()) => {}
+            _ => hidden.push(parent.clone()),
+        }
+        cx.simulate_input("新笔记");
+        if hidden.is_empty() {
+            editor.read_with(cx, |editor, _| {
+                assert_eq!(editor.input_text(OverlayInputKind::TreeName), "新笔记.md");
+            });
+        }
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.cancel_workspace_name_edit(window, cx)
+            });
+        });
+        redraw(cx);
+    }
+    assert!(
+        hidden.is_empty(),
+        "长目录加载后名称输入框不可见：{hidden:?}"
     );
 }
 
