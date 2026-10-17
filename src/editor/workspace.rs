@@ -376,6 +376,8 @@ pub(super) struct WorkspaceState {
     /// 只有该文件被重新加载才清除，扫描或普通错误清空不得影响它。
     external_change_conflict: Option<(PathBuf, String)>,
     pub(super) outline_tree: Vec<WorkspaceTreeNode>,
+    // 只消费一次正文跟随请求，避免重绘把手动浏览大纲的位置拉回。
+    outline_reveal_pending: bool,
     /// 大纲的增量缓存：每根块「自己那几行里有哪些标题」的摘要，按「块的 EntityId +
     /// 走进这块时的围栏状态」存。键用 EntityId 而不是下标：重投影只换掉改动那几根的实体，
     /// 新 id 自然没缓存（于是重算），没动的块 id 不变（于是照用），删掉的块在下次重建时
@@ -472,6 +474,7 @@ impl Default for WorkspaceState {
             file_error: None,
             external_change_conflict: None,
             outline_tree: Vec::new(),
+            outline_reveal_pending: false,
             outline_segments: HashMap::new(),
             outline_root_count: 0,
             outline_stale: true,

@@ -431,6 +431,7 @@ impl Editor {
             && self.workspace.selected != Some(WorkspaceSelection::Outline(id.clone()))
         {
             self.workspace.selected = Some(WorkspaceSelection::Outline(id));
+            self.workspace.outline_reveal_pending = true;
             cx.notify();
         }
     }

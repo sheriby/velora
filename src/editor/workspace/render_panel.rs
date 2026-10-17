@@ -108,11 +108,40 @@ impl Editor {
         }
         let rows = self.workspace_outline_rows();
         let total = rows.len();
+        let reveal = self.workspace.outline_reveal_pending
+            && self.workspace.tree_scroll_handle.bounds().size.height > px(0.0);
+        if reveal
+            && let Some(WorkspaceSelection::Outline(selected)) = &self.workspace.selected
+            && let Some(index) = rows.iter().position(|(node, _)| &node.id == selected)
+        {
+            // 虚拟化后行可能还未挂载，定位必须用完整可见列表的行号与同一份行高。
+            let row_height = Self::workspace_node_height(theme);
+            let height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
+            let offset = self.workspace.tree_scroll_handle.offset();
+            let current = f32::from(offset.y);
+            let top = WORKSPACE_PANEL_PADDING_Y + index as f32 * row_height;
+            let bottom = top + row_height;
+            let target = if top + current < WORKSPACE_PANEL_PADDING_Y {
+                WORKSPACE_PANEL_PADDING_Y - top
+            } else if bottom + current > height - WORKSPACE_PANEL_PADDING_Y {
+                height - WORKSPACE_PANEL_PADDING_Y - bottom
+            } else {
+                current
+            };
+            let maximum =
+                (total as f32 * row_height + WORKSPACE_PANEL_PADDING_Y * 2.0 - height).max(0.0);
+            self.workspace
+                .tree_scroll_handle
+                .set_offset(point(offset.x, px(target.clamp(-maximum, 0.0))));
+        }
         let window = self.workspace_list_window(total, theme);
         let visible = rows[window.clone()]
             .iter()
             .map(|(node, depth)| self.render_workspace_node(node, *depth, theme, editor))
             .collect();
+        if reveal {
+            self.workspace.outline_reveal_pending = false;
+        }
         self.workspace_windowed_body(total, window, visible, theme, cx)
     }
 
@@ -139,8 +168,9 @@ impl Editor {
             (-f32::from(self.workspace.tree_scroll_handle.offset().y) - WORKSPACE_PANEL_PADDING_Y)
                 .max(0.0);
         let row_height = Self::workspace_node_height(theme);
-        let first = (scrolled / row_height) as usize;
         let visible = (viewport_height / row_height).ceil() as usize + 1;
+        // 滚轮偏移在布局前可能尚未钳制，先限制到最后一屏，避免切片越界或少铺行。
+        let first = ((scrolled / row_height) as usize).min(total.saturating_sub(visible));
         let start = first.saturating_sub(PANEL_WINDOW_OVERDRAW_ROWS);
         let end = (first + visible + PANEL_WINDOW_OVERDRAW_ROWS).min(total);
         start..end

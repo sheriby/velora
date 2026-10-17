@@ -882,3 +882,151 @@ async fn a_recent_entry_opens_a_file_and_reports_a_missing_one(cx: &mut TestAppC
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+fn check_long_outline_follow(cx: &mut TestAppContext, headings: usize, zoom: i64) {
+    use crate::editor::workspace::{WorkspaceSelection, WorkspaceTab, stable_node_hash};
+    let root = temp_fixture_dir().join(format!("outline-follow-{}", temp_fixture_token()));
+    fs::create_dir_all(&root).unwrap();
+    let _config = crate::config::override_test_config_root(&root);
+    cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+    init_editor_test_app(cx);
+    cx.update(|cx| {
+        crate::config::EditorSettings::install_test_settings(cx, false);
+        crate::config::EditorSettings::set_zoom_percent(cx, zoom);
+    });
+    let source = (0..headings)
+        .map(|index| format!("# 第 {index} 节\n\n这一节的正文内容。\n\n"))
+        .collect::<String>();
+    let (editor, visual) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    visual.simulate_resize(gpui::size(px(1200.0), px(720.0)));
+    editor.update(visual, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Outline;
+        editor.sync_workspace_outline(cx);
+        cx.notify();
+    });
+    for _ in 0..4 {
+        redraw(visual);
+    }
+    let body = editor.read_with(visual, |editor, _| editor.scroll_handle.bounds().center());
+    let scroll = |visual: &mut VisualTestContext, position, delta| {
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(delta))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        for _ in 0..6 {
+            redraw(visual);
+        }
+    };
+    scroll(visual, body, -250.0);
+    assert_eq!(
+        editor.read_with(visual, |editor, _| editor
+            .workspace
+            .tree_scroll_handle
+            .offset()
+            .y),
+        px(0.0),
+        "当前标题仍可见时不应移动大纲"
+    );
+    let distance = editor.read_with(visual, |editor, _| {
+        f32::from(editor.scroll_handle.max_offset().height) * 0.7
+    });
+    assert!(distance > 1000.0, "正文应足够长");
+    scroll(visual, body, -distance);
+    let (selected, sidebar, body_offset) = editor.read_with(visual, |editor, _| {
+        let Some(WorkspaceSelection::Outline(selected)) = &editor.workspace.selected else {
+            panic!("应跟随正文选中标题")
+        };
+        (
+            selected.clone(),
+            editor.workspace.tree_scroll_handle.bounds(),
+            editor.scroll_handle.offset().y,
+        )
+    });
+    assert_ne!(selected, "outline:0");
+    let selector = format!("workspace-node-{}", stable_node_hash(&selected));
+    let row = visual
+        .debug_bounds(Box::leak(selector.into_boxed_str()))
+        .expect("正文当前标题对应的大纲行应已渲染");
+    assert!(
+        row.top() >= sidebar.top() && row.bottom() <= sidebar.bottom(),
+        "{headings} 条大纲、{zoom}% 缩放：当前标题应滚入可视区域，行 {row:?}，视口 {sidebar:?}"
+    );
+    scroll(visual, sidebar.center(), 1000000.0);
+    assert_eq!(
+        editor.read_with(visual, |editor, _| editor
+            .workspace
+            .tree_scroll_handle
+            .offset()
+            .y),
+        px(0.0),
+        "手动浏览大纲时不能被当前标题反复拉回"
+    );
+    assert_eq!(
+        editor.read_with(visual, |editor, _| editor.scroll_handle.offset().y),
+        body_offset
+    );
+    scroll(visual, sidebar.center(), -1000000.0);
+    assert!(
+        editor.read_with(visual, |editor, _| editor
+            .workspace
+            .tree_scroll_handle
+            .offset()
+            .y)
+            < px(0.0)
+    );
+    scroll(visual, body, 1000000.0);
+    editor.read_with(visual, |editor, _| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(WorkspaceSelection::Outline("outline:0".into()))
+        );
+        assert_eq!(
+            editor.workspace.tree_scroll_handle.offset().y,
+            px(0.0),
+            "正文回到开头时大纲也应把当前标题滚入可视区域"
+        );
+    });
+}
+
+#[gpui::test]
+async fn long_outline_scrolls_active_heading_into_view_without_overriding_manual_scroll(
+    cx: &mut TestAppContext,
+) {
+    check_long_outline_follow(cx, 80, 100);
+}
+
+#[gpui::test]
+async fn virtual_outline_scrolls_active_heading_into_view_without_overriding_manual_scroll(
+    cx: &mut TestAppContext,
+) {
+    check_long_outline_follow(cx, 260, 150);
+}
+
+#[gpui::test]
+async fn overscrolling_virtual_outline_keeps_its_render_window_in_range(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, visual) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# 标题\n".into(), None));
+    for _ in 0..2 {
+        redraw(visual);
+    }
+    let range = editor.update(visual, |editor, cx| {
+        let previous = editor.workspace.tree_scroll_handle.offset();
+        editor
+            .workspace
+            .tree_scroll_handle
+            .set_offset(gpui::point(px(0.0), px(-1000000.0)));
+        let theme = cx.global::<ThemeManager>().derived_theme(cx);
+        let range = editor.workspace_list_window(260, &theme);
+        editor.workspace.tree_scroll_handle.set_offset(previous);
+        range
+    });
+    assert!(
+        range.start <= range.end && range.end <= 260,
+        "快速滚动后的列表范围不能越界：{range:?}"
+    );
+    assert_eq!(range.end, 260, "大幅下滚后仍应包含末尾条目");
+}
