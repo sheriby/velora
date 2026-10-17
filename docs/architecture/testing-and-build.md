@@ -74,21 +74,25 @@ cargo test --bin velora update_flow_ -- --test-threads=1
 
 五条用例覆盖干净文档更新、未保存文档保存后继续、取消后保留编辑、校验失败后重试、安装器启动失败后重试。正式构建固定使用系统更新后端，替换入口只在测试构建存在。系统安装器执行、权限、签名及更新后真实应用启动仍需独立验收，这条命令验证应用内部链路。
 
-## 7. vendor/gpui 本地补丁清单（升级 gpui 必须重放）
+## 7. vendor/gpui 本地补丁索引
 
-权威说明见 `vendor/gpui/README.md`（那份 README **低估了改动面**，以代码内 `本地补丁` 标注为准）。
+完整说明以 [vendor/gpui/README.md](../../vendor/gpui/README.md) 为准，涵盖发布包基线、修改原因、平台差异、全部源码文件及升级验证。不能只依赖“本地补丁”注释或 vendor 引入后的提交记录。下列编号保留代码注释中的引用关系（例如 CF_HTML 指向本节第 9 条），细节不再维护第二份。
 
-1. **Focus-handle 清理**（最大补丁）：`window.rs` 的 FocusMap 加一个"已释放"原子标志，`app.rs:release_dropped_focus_handles` 仅在置位时清理。原版每个事件全表扫描焦点句柄，大文档建块时是主要瓶颈。
-2. **逐 run 字号**：`TextRun::font_size: Option<Pixels>`（text_system.rs / line_layout.rs；macOS CoreText、Windows DirectWrite、Noop 测试端已接，**Linux cosmic-text 未接**，恒 None）。
-3. **`debug_bounds` 逐帧清理**：`Frame::clear` 清 debug_bounds（test 门控），防断言读到陈旧边界。
-4. **测试用真实平台 shaping**：`shape_line_with_platform_text_system`（macOS + test-support）。
-5. **Windows 着色器内嵌**：HLSL `include_str!` 进二进制，修交叉编译产物启动失败。
-6. **Windows 主线程任务泵限时**：`WindowsPlatformInner::run_foreground_task` 一次唤醒最多跑 10ms 主线程任务，跑满就重投一次自定义消息（对齐上游 zed#43678）。原版把队列一次 drain 完，任务积压时消息循环拿不到处理机会——原生文件对话框的模态循环靠它转，表现是对话框卡住不响应。该结构体因此多持一个窗口句柄（构造签名多一个 `HWND`）。
-7. **Windows 原生文件对话框走专用 STA 线程**：`prompt_for_paths` / `prompt_for_new_path` 在专用线程上创建并 `Show`（该线程自己 `OleInitialize`/`OleUninitialize`），结果经 oneshot 发回。原因：gpui 的 UI 线程启动时就 `OleInitialize`，对话框原先住在同一个 STA 公寓里，刚关掉的模态会在这个线程队列里留下激活/焦点消息，导致同进程第 2 次开对话框时壳层把窗口建好却十几秒不 `ShowWindow`（同类先例 AvaloniaUI/Avalonia#21266、#21433）。`HWND` 不是 `Send`，用包装类型带过去，到线程后再 `IsWindow` 复验。两个对话框都设了固定 `SetClientGuid` 把旧状态一次性退役（**注意是一次性的**，状态会重新攒起来）。管不到的情形：壳层在显示窗口前访问不可达位置（断开的映射网络盘、失联的快速访问项、慢的第三方命名空间扩展）——那类只能在打开前用 `SetFolder` 显式指定目录压掉（保存对话框已有，打开对话框受 `PathPromptOptions` 所限还没有）。
-8. **`Entity::read_untracked`**：跳过 accessed 集合登记的读。状态栏一类每帧扫描在十万级块文档上曾把大量集合插入变成稳态帧的最大单项。
-9. **剪贴板的 HTML 味道**（db8b009）：`platform.rs` 加 `mod cf_html;` 与 `pub use cf_html::*;`；新增 `platform/cf_html.rs`——从 `CF_HTML` 载荷按 `StartFragment`/`EndFragment`（退回 `StartHTML`/`EndHTML`）的**字节**偏移切出选中的那段标记，载荷不是合法 UTF-8 就当这一味道不存在；`platform/windows/clipboard.rs` 加 `CLIPBOARD_HTML_FORMAT` 与 `read_html_from_clipboard`，带 `MAX_CLIPBOARD_HTML_BYTES`（2 MiB）上限，超限交回 `None` 让粘贴回退到同一次复制的纯文本。没有它，从网站复制的**无表头表格**在 Windows 上只会粘成纯文本（c42baff 的消费面）。macOS 侧不经这里，由 `src/components/markdown/html_paste.rs:clipboard_html` 直读 pasteboard 的 `public.html`。
-
-10. **macOS 标题栏标签拖动**：`platform/mac/window.rs` 的 `GPUIView::mouseDownCanMoveWindow` 返回 NO，窗口选项同时关闭默认移动，避免 AppKit 在标签收到事件后仍然拖窗；`MacWindow::start_window_move` 保留按下事件并延后调用 `performWindowDragWithEvent:`，仅在该次调用期间允许原生移动，返回后恢复原值。移动由应用标题和空白区显式发起；延后是为了避开原生拖窗嵌套事件循环中的 GPUI 重入借用。
+1. **焦点句柄清理**：`window.rs:FocusMap` 与 `app.rs:release_dropped_focus_handles`，只在发生最后引用释放时清理焦点表。
+2. **逐段字号**：`TextRun` / `FontRun` / `ShapedRun` 的字号覆盖贯穿 shaping、缓存与绘制；macOS、Windows、Noop 已接入，Linux 仅补齐字段。
+3. **测试帧数据**：`Frame::clear` 清理 `debug_bounds` 与 `debug_hovered`；Div 记录悬停事实，`VisualTestContext::debug_hovered` 提供查询，均受测试门控。
+4. **真实平台 shaping 测试入口**：`platform.rs:shape_line_with_platform_text_system` 仅在 macOS 的 `test` / `test-support` 下提供。
+5. **Windows 着色器内嵌**：`directx_renderer.rs:build_shader_blob` 在 `debug_assertions` 路径从内存编译 HLSL，并展开 include；非调试断言路径仍使用既有预编译字节。
+6. **Windows 前台任务预算**：`WindowsPlatformInner::run_foreground_task` 按 10 ms 批次预算让出消息循环，不抢占单个长任务；已撤销的 vsync 补偿不属于当前补丁。
+7. **文件选择器**：Windows 打开/保存均走专用 STA 线程，复验 owner、区分取消和错误；`PathPromptOptions::directory` 在 Windows、macOS、Linux portal 接入起始目录，打开对话框也已支持。固定 client GUID 只隔离壳层旧状态，不会永久消除不可达目录的等待。
+8. **无追踪实体读**：`Entity::read_untracked` 跳过 accessed 登记，调用方自行保证必要的重绘通知。
+9. **HTML 剪贴板**：`ClipboardItem` 增加 HTML 载荷；Windows 读取 CF_HTML 片段，读取入口有 2 MiB 上限及 `GlobalLock` 空指针检查；macOS 支持写入 HTML，读取仍在应用层。Windows 未增加 HTML 写入，Linux 仅有字段兼容。
+10. **macOS 标签拖动与拖窗**：内容视图禁用默认鼠标拖窗，`MacWindow::start_window_move` 保留事件并延后发起原生拖窗，临时允许移动后恢复，避免嵌套事件循环重入。
+11. **中文排版**：`LineWrapper` 共用行首/行末禁则，`WrappedLine::wrap_at_boundaries` 接收合法及紧急断点；`add_horizontal_spacing` / `spacing_before` 提供不修改原文的视觉留白。
+12. **图片布局**：`Img::image_scale` 缩放固有宽高，百分比宽度的高度交给宽高比推导。
+13. **外部拖放载荷**：`ExternalPaths::new` 为原生文件拖放回归提供构造入口，复制、移动和打开仍由应用实现。
+14. **测试窗口观察**：TestWindow 支持读取标题、记录移动请求与调用控件命中回调；`VisualTestContext` 提供对应查询。
+15. **构建兼容与裁剪**：Taffy 网格参数显式标注 `f32`；本地 manifest 移除未复制的示例及独立测试目标，`build.rs` 保持发布包原样。
 
 ## 8. 脚本与资源
 
