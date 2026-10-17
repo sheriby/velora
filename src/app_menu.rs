@@ -996,6 +996,12 @@ fn perform_quit_application(cx: &mut App) {
 
 /// Executes one of the app-menu actions against the current application state.
 pub(crate) fn dispatch_menu_action(action: &dyn Action, cx: &mut App) {
+    // 原生菜单回调可能仍在窗口派发栈内，先退出当前事件再读取或更新窗口。
+    let action = action.boxed_clone();
+    cx.defer(move |cx| dispatch_menu_action_after_event(action.as_ref(), cx));
+}
+
+fn dispatch_menu_action_after_event(action: &dyn Action, cx: &mut App) {
     if let Some(handler) = editor_menu_handler(action) {
         if with_active_editor(cx, handler).is_none() {
             if action.as_any().is::<NewDocument>() {

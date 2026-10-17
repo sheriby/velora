@@ -805,3 +805,20 @@ async fn a_prompt_raised_inside_the_window_dispatch_still_shows(cx: &mut TestApp
         "在窗口派发内部发出的提示也要弹出来，不能没有下文"
     );
 }
+
+#[gpui::test]
+fn native_editor_menu_actions_wait_until_the_window_dispatch_has_finished(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    cx.update(crate::app_menu::init);
+    let (editor,cx) = cx.add_window_view(|_,cx| Editor::from_markdown(cx,"菜单目标".into(),None));
+    redraw(cx);
+    cx.update(|window,cx| {
+        window.activate_window();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::app_menu::dispatch_menu_action(&crate::components::ToggleReadingMode,cx);
+        }));
+        assert!(result.is_ok(),"原生菜单不得重入读取当前窗口");
+    });
+    cx.run_until_parked();
+    editor.read_with(cx,|editor,_| assert!(editor.is_read_only()));
+}
