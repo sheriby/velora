@@ -103,7 +103,15 @@ impl Editor {
         };
         let focus = cx.focus_handle();
         let blur_subscription = cx.on_blur(&focus, window, |editor, window, cx| {
-            editor.confirm_workspace_name_edit(window, cx);
+            if editor.workspace.name_edit.as_ref().is_some_and(|edit| {
+                !edit.pending && edit.marked_range.is_none() && edit.draft.trim().is_empty()
+            }) {
+                // 失焦来自另一处点击，取消空草稿时应保留点击目标的焦点。
+                editor.workspace.name_edit = None;
+                cx.notify();
+            } else {
+                editor.confirm_workspace_name_edit(window, cx);
+            }
         });
         self.dismiss_contextual_overlays(cx);
         self.workspace.active_tab = WorkspaceTab::Files;

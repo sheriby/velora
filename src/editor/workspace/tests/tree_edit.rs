@@ -135,6 +135,137 @@ async fn tree_name_escape_cancels_without_creating_files(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn empty_tree_names_cancel_on_blur_and_keep_the_clicked_documents_focus(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    editor.update(cx, |editor, cx| {
+        editor.show_welcome = false;
+        editor.replace_document_from_markdown("点击这段正文\n".into(), None, cx);
+    });
+    cx.update(|window, _| window.activate_window());
+    redraw(cx);
+    let mut uncancelled = Vec::new();
+    for action in [
+        WorkspaceMenuAction::NewFile,
+        WorkspaceMenuAction::NewMarkdown,
+        WorkspaceMenuAction::NewFolder,
+    ] {
+        for draft in ["", "   "] {
+            cx.update(|window, cx| {
+                editor.update(cx, |editor, cx| match action {
+                    WorkspaceMenuAction::NewFile => {
+                        editor.create_generic_workspace_file(window, cx)
+                    }
+                    WorkspaceMenuAction::NewMarkdown => {
+                        editor.prompt_create_workspace_file(window, cx)
+                    }
+                    WorkspaceMenuAction::NewFolder => {
+                        editor.prompt_create_workspace_folder(window, cx)
+                    }
+                    _ => unreachable!(),
+                });
+            });
+            redraw(cx);
+            cx.simulate_keystrokes(select_all_key());
+            cx.simulate_keystrokes("backspace");
+            if !draft.is_empty() {
+                cx.simulate_input(draft);
+            }
+            redraw(cx);
+            let body = editor.read_with(cx, |editor, cx| {
+                editor
+                    .document
+                    .visible_blocks()
+                    .first()
+                    .expect("正文")
+                    .entity
+                    .read(cx)
+                    .last_bounds
+                    .expect("正文几何")
+            });
+            cx.simulate_click(body.center(), Modifiers::none());
+            redraw(cx);
+            if editor.read_with(cx, |editor, _| editor.workspace.name_edit.is_some()) {
+                uncancelled.push(format!("{action:?}/{draft:?}"));
+            }
+            cx.update(|window, cx| {
+                editor.read_with(cx, |editor, cx| {
+                    assert!(
+                        editor
+                            .document
+                            .visible_blocks()
+                            .first()
+                            .expect("正文")
+                            .entity
+                            .read(cx)
+                            .focus_handle
+                            .is_focused(window),
+                        "取消空草稿不能抢走正文焦点"
+                    );
+                });
+                editor.update(cx, |editor, cx| {
+                    editor.cancel_workspace_name_edit(window, cx)
+                });
+            });
+            redraw(cx);
+        }
+    }
+    assert_eq!(
+        fs::read_dir(root).expect("查看目录").count(),
+        0,
+        "取消不能创建磁盘条目"
+    );
+    assert!(
+        uncancelled.is_empty(),
+        "空名称失焦后仍残留输入框或红字：{uncancelled:?}"
+    );
+}
+
+#[gpui::test]
+fn valid_tree_names_still_confirm_on_blur(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    cx.update(|window, cx| {
+        window.activate_window();
+        editor.update(cx, |editor, cx| {
+            editor.create_generic_workspace_file(window, cx)
+        });
+    });
+    redraw(cx);
+    cx.simulate_input("新笔记.md");
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.focus_workspace_tree(window, cx));
+    });
+    redraw(cx);
+    assert!(
+        root.join("新笔记.md").is_file(),
+        "有效名称失焦后仍应完成创建"
+    );
+    assert!(editor.read_with(cx, |editor, _| editor.workspace.name_edit.is_none()));
+}
+
+#[gpui::test]
+fn empty_tree_names_keep_validation_on_enter(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    cx.update(|window, cx| {
+        window.activate_window();
+        editor.update(cx, |editor, cx| {
+            editor.create_generic_workspace_file(window, cx)
+        });
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor
+            .workspace
+            .name_edit
+            .as_ref()
+            .is_some_and(|edit| edit.error.is_some() && !edit.pending)),
+        "主动提交空名称仍应提示校验错误"
+    );
+    assert_eq!(fs::read_dir(root).expect("查看目录").count(), 0);
+}
+
+#[gpui::test]
 async fn tree_rename_keeps_unsaved_document_and_changes_only_the_name(cx: &mut TestAppContext) {
     let (editor, cx, root) = tree_fixture(cx);
     let original = root.join("original.md");
