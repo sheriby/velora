@@ -28,6 +28,13 @@ More screenshots: [Workspace and tabs](assets/screenshots/workspace.png) · [Spl
 - **VS Code–style find & replace** — powered by ripgrep's engine, in-process: case, whole-word, regex (multi-line patterns included) and fuzzy matching; every match is highlighted while the panel is open, and the result list, highlighting, jumping and replace-all read the same match table.
 - **Syntax highlighting** — Rust, JavaScript/TypeScript, C/C++, C#, Go, Java, PHP, Python, Ruby, HTML/CSS, JSON, YAML, TOML and Bash; other text files open and edit as plain text.
 
+### AI document assistant
+
+- **On demand** — open a compact panel from a selection, the editor context menu or `⌘J` / `Ctrl+J`; expand it into a sidebar without starting a new conversation.
+- **Markdown tasks** — polish, proofread, translate, summarize and continue writing; search workspace notes as needed, use `@file` / `@folder` to choose sources, and navigate to references.
+- **Review before applying** — review changes across documents and accept or reject individual edits, files or all changes; accepted edits support normal undo. Reading mode still allows questions and proposals.
+- **Your models and instructions** — multiple connections, API keys in the configuration file, custom instructions and Skills loaded on demand. Sessions and pending changes stay local; configure models in Preferences → AI and use the assistant's `⋯` menu for history, instructions and Skills. See the [AI usage guide](docs/ai.md).
+
 ### Workspace & knowledge
 
 - **Folder = workspace** — the file tree creates and renames files and folders with inline input, duplicates, copies / pastes and deletes (to the system Trash); sort order (name, modification time or type) is set in Settings; right-click reveals a file in the system file manager or copies its absolute / relative path; hover shows its size and modification time.
@@ -76,6 +83,7 @@ macOS keys shown; Ctrl-based equivalents work on other platforms. Shortcuts are 
 | Keys | Action |
 | --- | --- |
 | `⌘P` | Quick file switcher |
+| `⌘J` | AI document assistant |
 | `⇧⌘P` | Command palette |
 | `⌘F` | Find & replace (`⌘G` next match, `⇧⌘G` previous) |
 | `⌃Tab` | Toggle WYSIWYG / source mode |

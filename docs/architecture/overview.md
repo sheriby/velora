@@ -13,6 +13,7 @@
 | [render-pipeline.md](./render-pipeline.md) | 帧入口、行计划、虚拟化、块渲染分派、文本元素、缓存 | 画面不对、滚动跳动、掉帧、缓存不失效 |
 | [workspace-ui.md](./workspace-ui.md) | 启动、标签、文件树、侧栏、搜索、浮层、事件路由、命令与键位、配置/主题/i18n | 面板/菜单/快捷键/搜索/标签/窗口行为 |
 | [testing-and-build.md](./testing-and-build.md) | 测试组织、门禁、夹具、CI、打包、vendored gpui 补丁 | 怎么跑测试、怎么出包、升级 gpui 要重放什么 |
+| [ai.md](./ai.md) | Agent 运行时、文档工具、模型凭据、修改审阅、Skills 与会话恢复 | AI 任务、资料范围、待审阅修改或会话问题 |
 | [performance.md](./performance.md) | 计数器、闸门、成本结构、优化套路 | 性能改动前后怎么量、哪些路径禁止全文操作 |
 | [../theme-tokens.md](../theme-tokens.md) | 主题 token 全表 | 加/改颜色与尺寸 |
 
