@@ -1030,3 +1030,90 @@ async fn overscrolling_virtual_outline_keeps_its_render_window_in_range(cx: &mut
     );
     assert_eq!(range.end, 260, "大幅下滚后仍应包含末尾条目");
 }
+
+#[gpui::test]
+async fn outline_arrows_toggle_nested_headings_without_navigating(cx: &mut TestAppContext) {
+    use crate::editor::workspace::{WorkspaceSelection, WorkspaceTab, stable_node_hash};
+    init_editor_test_app(cx);
+    let source =
+        "# 章一\n\n正文甲\n\n## 子节\n\n正文乙\n\n### 孙节\n\n正文丙\n\n# 章二\n\n正文丁\n";
+    let (editor, visual) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update(visual, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Outline;
+        editor.sync_workspace_outline(cx);
+        cx.notify();
+    });
+    for _ in 0..3 {
+        redraw(visual);
+    }
+    let row = |visual: &mut VisualTestContext, line| {
+        let selector = format!(
+            "workspace-node-{}",
+            stable_node_hash(&format!("outline:{line}"))
+        );
+        visual.debug_bounds(Box::leak(selector.into_boxed_str()))
+    };
+    let next = row(visual, 12).expect("第二章的大纲行");
+    visual.simulate_click(next.center(), Modifiers::none());
+    for _ in 0..3 {
+        redraw(visual);
+    }
+    let selected = Some(WorkspaceSelection::Outline("outline:12".into()));
+    assert_eq!(
+        editor.read_with(visual, |editor, _| editor.workspace.selected.clone()),
+        selected
+    );
+    let body_offset = editor.read_with(visual, |editor, _| editor.scroll_handle.offset());
+    let click_arrow = |visual: &mut VisualTestContext, line, depth: f32| {
+        let bounds = row(visual, line).expect("有下级标题的大纲行");
+        visual.simulate_click(
+            gpui::point(bounds.left() + px(14.0 + depth * 16.0), bounds.center().y),
+            Modifiers::none(),
+        );
+        for _ in 0..3 {
+            redraw(visual);
+        }
+    };
+    click_arrow(visual, 4, 1.0);
+    assert!(
+        !editor.read_with(visual, |editor, _| editor
+            .workspace
+            .expanded
+            .contains("outline:4")),
+        "点击子节箭头应折叠，而不是按整行点击重新展开"
+    );
+    assert!(row(visual, 4).is_some());
+    assert!(row(visual, 8).is_none(), "折叠子节后孙节应隐藏");
+    click_arrow(visual, 0, 0.0);
+    assert!(!editor.read_with(visual, |editor, _| {
+        editor.workspace.expanded.contains("outline:0")
+    }));
+    assert!(row(visual, 4).is_none(), "折叠章后子节应隐藏");
+    click_arrow(visual, 0, 0.0);
+    assert!(row(visual, 4).is_some(), "重新展开章后子节应恢复");
+    assert!(row(visual, 8).is_none(), "父级展开不能重置子节的折叠状态");
+    click_arrow(visual, 4, 1.0);
+    assert!(row(visual, 8).is_some(), "再次展开子节后孙节应恢复");
+    editor.read_with(visual, |editor, cx| {
+        assert_eq!(
+            editor.workspace.selected, selected,
+            "点击折叠箭头不应改变当前标题"
+        );
+        assert_eq!(
+            editor.scroll_handle.offset(),
+            body_offset,
+            "折叠大纲不应跳转正文"
+        );
+        assert_eq!(editor.buffer.text(), source);
+        assert!(
+            editor
+                .document
+                .root_blocks()
+                .iter()
+                .all(|block| !block.read(cx).folded),
+            "大纲折叠不应折叠正文"
+        );
+    });
+}

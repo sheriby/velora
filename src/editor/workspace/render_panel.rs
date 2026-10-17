@@ -359,8 +359,8 @@ impl Editor {
     ) -> AnyElement {
         let c = &theme.colors;
         let is_expanded = self.workspace.expanded.contains(&node.id);
-        // 目录永远带展开箭头（子项还没扫时也得能展开）；已扫过的空目录不带。
-        let has_children = node.kind_dir() && (!node.children_loaded || !node.children.is_empty());
+        // 未加载目录也需展开入口，大纲标题有下级时同样必须提供折叠箭头。
+        let has_children = !node.children.is_empty() || (node.kind_dir() && !node.children_loaded);
         let selected = match (&self.workspace.selected, &node.kind) {
             (Some(WorkspaceSelection::Directory(selected)), WorkspaceTreeKind::Directory(path)) => {
                 selected == path
