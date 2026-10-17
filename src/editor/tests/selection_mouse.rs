@@ -1655,17 +1655,28 @@ async fn dragging_through_an_unfocused_paragraph_with_inline_math_selects_it(cx:
     });
 }
 
-/// 报修原文（`fixtures/regressions/15-long-doc-math-selection.md`，512 行、含公式与表格）
-/// 上的三处拖动：表格里的公式、公式下面那一段、从第 4 章往下拖。
-///
-/// 现象：① 表格里只装公式的格子选不中；② 从 2.2 往 2.3 拖，公式下面那一段选不上，
-/// 越往下拖越选不上；③ 从第 4 章往下拖，文档前面按不到的内容也被选中。
+/// 长文档中的三处拖动：表格里的公式、公式下面的段落、回滚后的章节。
+/// 表格公式与公式下方的段落都应进入选区，回滚后不能选中文档前面的内容。
 #[gpui::test]
 #[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
 async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    let markdown = std::fs::read_to_string("fixtures/regressions/15-long-doc-math-selection.md")
-        .expect("报修原文");
+    let mut markdown = String::from("# 长文档选区测试\n\n前文标记，不应进入回滚后的选区。\n\n");
+    markdown.push_str(&"前文段落，用于撑开滚动距离。\n\n".repeat(20));
+    markdown.push_str("## 回滚后的选区起点\n\n");
+    markdown.push_str(&"正文段落，包含行内公式 $a+b$，用于测试长文档滚动。\n\n".repeat(70));
+    markdown.push_str(
+        "### 表格章节\n\n\
+         | 符号 | 说明 |\n\
+         | --- | --- |\n\
+         | $q$ | 公式说明 $q+1$ |\n\
+         | $r$ | 另一行说明 |\n\n\
+         ### 公式章节\n\n\
+         $$m_{all}=a+b$$\n\n\
+         $y$ 就是这里的计算结果。\n\n\
+         ### 后续段落\n\n",
+    );
+    markdown.push_str(&"后续正文，用于保留公式下方的拖动空间。\n\n".repeat(160));
     let (editor, cx) = cx.add_window_view(|_window, cx| Editor::from_markdown(cx, markdown, None));
     redraw(cx);
     redraw(cx);
@@ -1711,9 +1722,12 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
         })
     };
 
-    // ① 2.1 那张表：格子里装的是公式。
-    let section_21 = index_of(&mut cx.clone(), "2.1 基本量");
-    assert!(visible_with_room(&mut cx.clone(), section_21), "2.1 该滚进视口");
+    // ① 表格里的纯公式与公式混排格子都能选中。
+    let table_section = index_of(&mut cx.clone(), "表格章节");
+    assert!(
+        visible_with_room(&mut cx.clone(), table_section),
+        "表格章节该滚进视口"
+    );
     let (start, end) = editor.read_with(cx, |editor, cx| {
         let viewport_bottom = editor.scroll_handle.bounds().bottom();
         let table = editor
@@ -1721,9 +1735,9 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
             .visible_blocks()
             .iter()
             .enumerate()
-            .filter(|(index, _)| *index >= section_21)
+            .filter(|(index, _)| *index >= table_section)
             .find(|(_, visible)| visible.entity.read(cx).kind() == BlockKind::Table)
-            .expect("2.1 下面该有表格")
+            .expect("表格章节下面该有表格")
             .1
             .entity
             .clone();
@@ -1744,20 +1758,23 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
         let text = editor.selected_visible_text(cx).expect("表格里该有选区");
         assert!(text.contains("$q$"), "只装公式的格子该选上：{text:?}");
         assert!(
-            text.contains("该行的 query 向量"),
+            text.contains("公式说明"),
             "公式与文字混着的格子该选上：{text:?}"
         );
     });
 
-    // ② 从 2.2 往 2.3 拖：中间的公式与公式下面那一段都要进来。
-    let section_22 = index_of(&mut cx.clone(), "2.2 真值");
-    assert!(visible_with_room(&mut cx.clone(), section_22), "2.2 该滚进视口");
+    // ② 从公式章节往下拖：公式与公式下面的段落都要进入选区。
+    let formula_section = index_of(&mut cx.clone(), "公式章节");
+    assert!(
+        visible_with_room(&mut cx.clone(), formula_section),
+        "公式章节该滚进视口"
+    );
     let (start, end) = editor.read_with(cx, |editor, cx| {
-        let bounds = editor.document.visible_blocks()[section_22]
+        let bounds = editor.document.visible_blocks()[formula_section]
             .entity
             .read(cx)
             .last_bounds
-            .expect("2.2 该有边界");
+            .expect("公式章节该有边界");
         let start = gpui::point(bounds.left() + px(1.0), bounds.center().y);
         let bottom = f32::from(editor.scroll_handle.bounds().bottom()) - 40.0;
         let end_y = (f32::from(start.y) + 260.0).min(bottom);
@@ -1765,8 +1782,10 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
     });
     drag_across(&mut cx.clone(), start, &[], end);
     editor.read_with(cx, |editor, cx| {
-        let text = editor.selected_visible_text(cx).expect("2.2 往下拖该有选区");
-        assert!(text.contains("2.2 真值"), "起点那一段该在选区里：{text:?}");
+        let text = editor
+            .selected_visible_text(cx)
+            .expect("公式章节往下拖该有选区");
+        assert!(text.contains("公式章节"), "起点那一段该在选区里：{text:?}");
         assert!(text.contains("m_{all}"), "中间的公式该在选区里：{text:?}");
         assert!(
             text.contains("$y$ 就是"),
@@ -1774,13 +1793,13 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
         );
     });
 
-    // ③ 从第 4 章往下拖：不能把文档前面的内容也拉进来。
-    let chapter_4 = index_of(&mut cx.clone(), "第 4 章");
+    // ③ 回滚到前面的章节再往下拖：不能把起点之前的内容也拉进来。
+    let earlier_section = index_of(&mut cx.clone(), "回滚后的选区起点");
     for _ in 0..60 {
         redraw(cx);
         redraw(cx);
         let visible = editor.read_with(cx, |editor, cx| {
-            editor.document.visible_blocks()[chapter_4]
+            editor.document.visible_blocks()[earlier_section]
                 .entity
                 .read(cx)
                 .last_bounds
@@ -1798,11 +1817,11 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
         });
     }
     let (start, end) = editor.read_with(cx, |editor, cx| {
-        let bounds = editor.document.visible_blocks()[chapter_4]
+        let bounds = editor.document.visible_blocks()[earlier_section]
             .entity
             .read(cx)
             .last_bounds
-            .expect("第 4 章该有边界");
+            .expect("回滚后的章节该有边界");
         let start = gpui::point(bounds.left() + px(30.0), bounds.center().y);
         let bottom = f32::from(editor.scroll_handle.bounds().bottom()) - 40.0;
         let end_y = (f32::from(start.y) + 480.0).min(bottom);
@@ -1810,10 +1829,12 @@ async fn report_long_document_selection_gestures(cx: &mut TestAppContext) {
     });
     drag_across(&mut cx.clone(), start, &[], end);
     editor.read_with(cx, |editor, cx| {
-        let text = editor.selected_visible_text(cx).expect("第 4 章往下拖该有选区");
-        assert!(text.contains("反向推导"), "起点那一段该在选区里：{text:?}");
+        let text = editor
+            .selected_visible_text(cx)
+            .expect("回滚后往下拖该有选区");
+        assert!(text.contains("选区起点"), "起点那一段该在选区里：{text:?}");
         assert!(
-            !text.contains("符号定义"),
+            !text.contains("前文标记"),
             "文档前面的内容不该被拉进来：{text:?}"
         );
     });
