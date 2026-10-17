@@ -792,7 +792,7 @@ impl Render for Editor {
             && self.quick_open.is_none()
             && self.command_palette.is_none()
         {
-            self.render_image_file_preview(&theme, &strings)
+            self.render_image_file_preview(&theme, &strings, cx)
         } else if let Some(path) = self.unsupported_preview_path.as_ref() {
             let file_name = path
                 .file_name()

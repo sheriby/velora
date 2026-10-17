@@ -7,10 +7,19 @@ use super::Editor;
 use crate::i18n::{I18nManager, I18nStrings};
 use crate::theme::Theme;
 
+const MERMAID_PREVIEW_MAX_SCALE: f32 = 2.0;
+
+fn preview_wheel_zoom_factor(event: &ScrollWheelEvent) -> Option<f32> {
+    let delta = f32::from(event.delta.pixel_delta(px(20.0)).y);
+    (delta.is_finite() && delta != 0.0)
+        .then(|| (delta / 100.0).exp().clamp(1.0 / 1.2, 1.2))
+}
+
 pub(super) struct ImageFilePreview {
     pub(super) path: PathBuf,
     pub(super) image: Option<Arc<RenderImage>>,
     error: Option<String>,
+    zoom: f32,
     _load_task: Task<()>,
 }
 
@@ -32,7 +41,7 @@ impl MermaidPreview {
     fn scale(&self) -> f32 {
         self.scale
             .unwrap_or_else(|| self.fit_scale())
-            .clamp(self.fit_scale(), 1.0)
+            .clamp(self.fit_scale(), MERMAID_PREVIEW_MAX_SCALE)
     }
 
     fn clamp_pan(&mut self) {
@@ -74,8 +83,7 @@ impl Editor {
             return;
         };
         let old_scale = preview.scale();
-        // 上限保留原始文字分辨率；继续放大既有位图会重新引入模糊。
-        let scale = (old_scale * factor).clamp(preview.fit_scale(), 1.0);
+        let scale = (old_scale * factor).clamp(preview.fit_scale(), MERMAID_PREVIEW_MAX_SCALE);
         preview.scale = Some(scale);
         preview.pan = point(
             preview.pan.x * (scale / old_scale),
@@ -270,9 +278,8 @@ impl Editor {
             .cursor(CursorStyle::OpenHand)
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _, cx| {
                 cx.stop_propagation();
-                let delta = event.delta.pixel_delta(px(20.0)).y;
-                if delta != px(0.0) {
-                    editor.zoom_mermaid_preview(if delta > px(0.0) { 1.2 } else { 1.0 / 1.2 }, cx);
+                if let Some(factor) = preview_wheel_zoom_factor(event) {
+                    editor.zoom_mermaid_preview(factor, cx);
                 }
             }))
             .on_mouse_down(
@@ -402,6 +409,7 @@ impl Editor {
             path,
             image: None,
             error: None,
+            zoom: 1.0,
             _load_task: task,
         });
         self.active_entity_id = None;
@@ -413,16 +421,19 @@ impl Editor {
         &self,
         theme: &Theme,
         strings: &I18nStrings,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(preview) = &self.image_preview else {
             return div().into_any_element();
         };
         let content = if let Some(image) = &preview.image {
             img(image.clone())
+                .image_scale(preview.zoom)
                 .id(("image-file-preview-image", image.id.0))
                 .debug_selector(|| "image-file-preview-image".into())
-                .max_w(relative(1.0))
-                .max_h(relative(1.0))
+                .max_w(relative(preview.zoom))
+                .max_h(relative(preview.zoom))
+                .flex_shrink_0()
                 .object_fit(ObjectFit::Contain)
                 .into_any_element()
         } else if preview.error.is_some() {
@@ -446,6 +457,16 @@ impl Editor {
             .p(px(24.0))
             .overflow_hidden()
             .text_color(theme.colors.dialog_muted)
+            .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _, cx| {
+                cx.stop_propagation();
+                if let Some(factor) = preview_wheel_zoom_factor(event)
+                    && let Some(preview) = editor.image_preview.as_mut()
+                    && preview.image.is_some()
+                {
+                    preview.zoom = (preview.zoom * factor).clamp(0.1, 8.0);
+                    cx.notify();
+                }
+            }))
             .child(content)
             .into_any_element()
     }

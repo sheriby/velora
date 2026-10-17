@@ -92,6 +92,59 @@ async fn mermaid_preview_opens_zooms_and_closes_without_editing_document(cx: &mu
 }
 
 #[gpui::test]
+fn mermaid_preview_zoom_reaches_two_hundred_percent(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let markdown = "```mermaid\nflowchart LR\nA[起点] --> B[终点]\n```".to_string();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    cx.update(|window, _| window.activate_window());
+    editor.update(cx, |editor, cx| editor.open_mermaid_preview(&markdown, cx));
+    redraw(cx);
+    redraw(cx);
+    let mut capped = Vec::new();
+    for method in ["button", "wheel", "keyboard"] {
+        let original = cx
+            .debug_bounds("mermaid-preview-original")
+            .expect("原始大小按钮");
+        cx.simulate_click(original.center(), Modifiers::none());
+        redraw(cx);
+        let before = cx.debug_bounds("mermaid-preview-image").expect("原始图像");
+        for _ in 0..8 {
+            match method {
+                "button" => {
+                    let button = cx
+                        .debug_bounds("mermaid-preview-zoom-in")
+                        .expect("放大按钮");
+                    cx.simulate_click(button.center(), Modifiers::none());
+                }
+                "wheel" => {
+                    let viewport = cx
+                        .debug_bounds("mermaid-preview-viewport")
+                        .expect("预览视口");
+                    cx.simulate_event(gpui::ScrollWheelEvent {
+                        position: viewport.center(),
+                        delta: gpui::ScrollDelta::Lines(gpui::point(0.0, 3.0)),
+                        modifiers: Modifiers::none(),
+                        touch_phase: gpui::TouchPhase::default(),
+                    });
+                }
+                _ => cx.simulate_keystrokes("="),
+            }
+            redraw(cx);
+        }
+        let after = cx.debug_bounds("mermaid-preview-image").expect("放大图像");
+        if (f32::from(after.size.width) / f32::from(before.size.width) - 2.0).abs() > 0.01 {
+            capped.push(method);
+        }
+    }
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.buffer.text()),
+        markdown
+    );
+    assert!(capped.is_empty(), "这些入口仍无法放大到 200%：{capped:?}");
+}
+
+#[gpui::test]
 async fn standalone_root_image_installs_runtime_and_resolves_relative_path(
     cx: &mut TestAppContext,
 ) {
@@ -1063,6 +1116,84 @@ async fn image_file_preview_first_frame_does_not_flash_placeholder_text(cx: &mut
         redraw(cx);
         assert!(cx.debug_bounds("image-file-preview-image").is_some());
     }
+}
+
+#[gpui::test]
+fn image_file_preview_zoom_responds_to_wheel_in_both_directions(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = image_preview_fixture_root(cx);
+    let path = root.join("滚轮缩放.svg");
+    fs::write(&path, r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900"><rect width="1600" height="900" fill="#48a"/></svg>"##).expect("生成大图夹具");
+    let original_bytes = fs::read(&path).expect("读取原图");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.update(|window, cx| {
+        window.resize(gpui::size(px(900.0), px(650.0)));
+        editor.update(cx, |editor, cx| {
+            editor.open_workspace_file(path.clone(), window, cx)
+        });
+    });
+    redraw(cx);
+    redraw(cx);
+    let before = cx
+        .debug_bounds("image-file-preview-image")
+        .expect("已加载的图片");
+    let viewport = cx.debug_bounds("image-file-preview").expect("图片视口");
+    assert!(before.size.width < px(1600.0), "大图初始应适应视口");
+    let mut unchanged = Vec::new();
+    for (label, delta) in [
+        ("鼠标滚轮", gpui::ScrollDelta::Lines(gpui::point(0.0, 3.0))),
+        (
+            "触控板",
+            gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(20.0))),
+        ),
+    ] {
+        for _ in 0..3 {
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: viewport.center(),
+                delta,
+                modifiers: Modifiers::none(),
+                touch_phase: gpui::TouchPhase::default(),
+            });
+            redraw(cx);
+        }
+        let enlarged = cx
+            .debug_bounds("image-file-preview-image")
+            .expect("放大后的图片");
+        if enlarged.size.width <= before.size.width || enlarged.size.width <= viewport.size.width {
+            unchanged.push(label);
+        }
+        for _ in 0..3 {
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: match delta {
+                    gpui::ScrollDelta::Lines(lines) => {
+                        gpui::ScrollDelta::Lines(gpui::point(-lines.x, -lines.y))
+                    }
+                    gpui::ScrollDelta::Pixels(pixels) => {
+                        gpui::ScrollDelta::Pixels(gpui::point(-pixels.x, -pixels.y))
+                    }
+                },
+                modifiers: Modifiers::none(),
+                touch_phase: gpui::TouchPhase::default(),
+            });
+            redraw(cx);
+        }
+        let reduced = cx
+            .debug_bounds("image-file-preview-image")
+            .expect("缩小后的图片");
+        if reduced.size.width >= enlarged.size.width {
+            unchanged.push("反向滚动未缩小");
+        }
+    }
+    assert_eq!(fs::read(&path).expect("读取缩放后的原文件"), original_bytes);
+    editor.read_with(cx, |editor, _| {
+        assert!(!editor.document_dirty);
+        assert!(editor.buffer.text().is_empty());
+    });
+    assert!(
+        unchanged.is_empty(),
+        "滚轮未改变图片显示大小：{unchanged:?}"
+    );
 }
 
 #[gpui::test]
