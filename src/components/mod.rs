@@ -14,6 +14,8 @@ pub(crate) const LONG_LINE_SOURCE_LIMIT: usize = 1024;
 pub(crate) const LONG_LINE_DISPLAY_CHARS: usize = 10_000;
 
 mod actions;
+pub(crate) mod text_field;
+pub(crate) use text_field::TextField;
 mod block;
 pub(crate) mod latex;
 pub(crate) mod menu;
