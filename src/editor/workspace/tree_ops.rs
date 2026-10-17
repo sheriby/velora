@@ -1,5 +1,10 @@
 use super::*;
 
+pub(super) enum WorkspacePasteSource {
+    File(PathBuf),
+    Image(gpui::Image),
+}
+
 impl Editor {
     pub(crate) fn reveal_selected_workspace_path(&mut self, cx: &mut Context<Self>) {
         let Some(path) = self.selected_workspace_path() else { return; };
@@ -178,8 +183,27 @@ impl Editor {
         cx.notify();
     }
 
+    pub(super) fn workspace_paste_source(&self, cx: &App) -> Option<WorkspacePasteSource> {
+        let clipboard = cx.read_from_clipboard()?;
+        if let Some(source) = self.tree_clipboard.as_ref()
+            && clipboard.text().as_deref() == Some(source.to_string_lossy().as_ref())
+            && source.is_file()
+        {
+            return Some(WorkspacePasteSource::File(source.clone()));
+        }
+        clipboard.into_entries().find_map(|entry| match entry {
+            ClipboardEntry::Image(image) if !image.bytes.is_empty() => {
+                Some(WorkspacePasteSource::Image(image))
+            }
+            _ => None,
+        })
+    }
+
     /// 树右键「粘贴」：把已复制的文件或剪贴板图片落到目标目录（roadmap D6）。
     pub(crate) fn paste_into_workspace_tree(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = self.workspace_paste_source(cx) else {
+            return;
+        };
         let Some(target_dir) = self.workspace_paste_target_dir() else {
             return;
         };
@@ -189,41 +213,25 @@ impl Editor {
             return;
         }
 
-        if let Some(source) = self.tree_clipboard.clone().filter(|path| path.is_file()) {
-            match fs::read(&source) {
-                Ok(contents) => {
-                    let candidate = unique_workspace_copy_path(&target_dir, &source);
-                    if let Err(error) = fs::write(&candidate, contents) {
-                        self.workspace.file_error = Some(error.to_string());
-                    } else {
-                        self.refresh_workspace_paths(std::slice::from_ref(&candidate), cx);
+        let image = match source {
+            WorkspacePasteSource::File(source) => {
+                match fs::read(&source) {
+                    Ok(contents) => {
+                        let candidate = unique_workspace_copy_path(&target_dir, &source);
+                        if let Err(error) = fs::write(&candidate, contents) {
+                            self.workspace.file_error = Some(error.to_string());
+                        } else {
+                            self.refresh_workspace_paths(std::slice::from_ref(&candidate), cx);
+                        }
                     }
-                    cx.notify();
-                    return;
+                    Err(error) => {
+                        self.workspace.file_error = Some(error.to_string());
+                    }
                 }
-                Err(error) => {
-                    self.workspace.file_error = Some(error.to_string());
-                    cx.notify();
-                    return;
-                }
+                cx.notify();
+                return;
             }
-        }
-
-        let image = cx.read_from_clipboard().and_then(|item| {
-            item.entries().iter().find_map(|entry| match entry {
-                gpui::ClipboardEntry::Image(image) => Some(image.clone()),
-                gpui::ClipboardEntry::String(_) => None,
-            })
-        });
-        let Some(image) = image else {
-            self.workspace.file_error = Some(
-                cx.global::<crate::i18n::I18nManager>()
-                    .strings()
-                    .workspace_paste_empty
-                    .clone(),
-            );
-            cx.notify();
-            return;
+            WorkspacePasteSource::Image(image) => image,
         };
 
         let file_name = format!(

@@ -171,6 +171,7 @@ struct WorkspaceContextMenu {
     position: Point<Pixels>,
     has_target: bool,
     target: Option<WorkspaceSelection>,
+    can_paste: bool,
 }
 
 #[derive(Clone, Copy)]

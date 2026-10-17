@@ -35,10 +35,15 @@ impl Editor {
                 .clone()
                 .map(WorkspaceSelection::WorkspaceRoot)
         });
+        // 打开时读取一次，避免菜单重绘反复读取和复制剪贴板图片。
+        let can_paste = matches!(self.workspace.selected,
+            Some(WorkspaceSelection::Directory(_) | WorkspaceSelection::WorkspaceRoot(_)))
+            && self.workspace_paste_source(cx).is_some();
         self.workspace.context_menu = Some(WorkspaceContextMenu {
             position,
             has_target,
             target: self.workspace.selected.clone(),
+            can_paste,
         });
         cx.notify();
     }
@@ -82,7 +87,7 @@ impl Editor {
         if menu.has_target && is_file {
             actions.push((strings.workspace_copy.clone(), WorkspaceMenuAction::Copy));
         }
-        if !is_file {
+        if menu.can_paste {
             actions.push((strings.workspace_paste.clone(), WorkspaceMenuAction::Paste));
         }
         if menu.has_target {

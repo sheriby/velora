@@ -688,6 +688,10 @@ fn tree_creation_context_menus_only_offer_actions_for_the_clicked_target(cx: &mu
     fs::create_dir(&directory).expect("创建目录");
     let file = directory.join("note.md");
     fs::write(&file, "正文").expect("写夹具");
+    editor.update(cx, |editor, cx| {
+        editor.workspace.selected = Some(WorkspaceSelection::File(file.clone()));
+        editor.copy_selected_workspace_file(cx);
+    });
     let creation = ["NewFile", "NewMarkdown", "NewFolder", "Paste"];
     let paths = [
         "Reveal",
@@ -756,6 +760,155 @@ fn tree_creation_context_menus_only_offer_actions_for_the_clicked_target(cx: &mu
         mismatches.is_empty(),
         "右键菜单包含不适用的操作或缺少操作：{mismatches:?}"
     );
+}
+
+#[gpui::test]
+fn tree_paste_menu_only_shows_for_current_pasteable_content(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let source = root.join("source.md");
+    let directory = root.join("目标目录");
+    fs::create_dir(&directory).expect("创建目标目录");
+    let mut mismatches = Vec::new();
+    for (label, clipboard, copy_file, delete_source, expected) in [
+        ("空剪贴板", None, false, false, false),
+        (
+            "空文本",
+            Some(gpui::ClipboardItem::new_string(String::new())),
+            false,
+            false,
+            false,
+        ),
+        (
+            "普通文字",
+            Some(gpui::ClipboardItem::new_string("文字".into())),
+            false,
+            false,
+            false,
+        ),
+        ("已复制文件", None, true, false, true),
+        (
+            "复制后改为文字",
+            Some(gpui::ClipboardItem::new_string("别的文字".into())),
+            true,
+            false,
+            false,
+        ),
+        (
+            "复制后清空",
+            Some(gpui::ClipboardItem::new_string(String::new())),
+            true,
+            false,
+            false,
+        ),
+        ("源文件已删除", None, true, true, false),
+        (
+            "空图片",
+            Some(gpui::ClipboardItem::new_image(&gpui::Image::empty())),
+            false,
+            false,
+            false,
+        ),
+    ] {
+        fs::write(&source, "源文件").expect("写夹具");
+        editor.update(cx, |editor, cx| {
+            editor.tree_clipboard = None;
+            editor.workspace.selected = Some(WorkspaceSelection::File(source.clone()));
+            if copy_file {
+                editor.copy_selected_workspace_file(cx);
+            }
+            if let Some(clipboard) = clipboard {
+                cx.write_to_clipboard(clipboard);
+            }
+        });
+        if delete_source {
+            fs::remove_file(&source).expect("删除已复制的文件");
+        }
+        for selection in [Some(WorkspaceSelection::Directory(directory.clone())), None] {
+            editor.update(cx, |editor, cx| {
+                editor.open_workspace_context_menu(
+                    gpui::point(gpui::px(60.0), gpui::px(80.0)),
+                    selection.clone(),
+                    cx,
+                );
+            });
+            redraw(cx);
+            let visible = cx
+                .debug_bounds("menu-item-workspace-context-action-Paste")
+                .is_some();
+            if visible != expected {
+                mismatches.push(format!("{label}/{selection:?}"));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "粘贴入口没有反映剪贴板内容：{mismatches:?}"
+    );
+}
+
+#[gpui::test]
+fn tree_paste_does_not_use_a_file_after_the_clipboard_is_replaced(cx: &mut TestAppContext) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let source = root.join("source.md");
+    let directory = root.join("目标目录");
+    fs::write(&source, "源文件").expect("写夹具");
+    fs::create_dir(&directory).expect("创建目标目录");
+    editor.update(cx, |editor, cx| {
+        editor.workspace.selected = Some(WorkspaceSelection::File(source));
+        editor.copy_selected_workspace_file(cx);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("普通文字".into()));
+        editor.workspace.selected = Some(WorkspaceSelection::Directory(directory.clone()));
+        editor.paste_into_workspace_tree(cx);
+    });
+    assert_eq!(
+        fs::read_dir(directory).expect("读取目标目录").count(),
+        0,
+        "不能粘贴已被普通文字取代的旧文件"
+    );
+    assert!(
+        editor.read_with(cx, |editor, _| editor.workspace.file_error.is_none()),
+        "没有可粘贴内容不应让文件树进入错误态"
+    );
+}
+
+#[gpui::test]
+fn tree_paste_menu_uses_the_current_image_instead_of_a_previously_copied_file(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, root) = tree_fixture(cx);
+    let source = root.join("source.md");
+    let directory = root.join("目标目录");
+    fs::write(&source, "源文件").expect("写夹具");
+    fs::create_dir(&directory).expect("创建目标目录");
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![0x89, b'P', b'N', b'G']);
+    editor.update(cx, |editor, cx| {
+        editor.workspace.selected = Some(WorkspaceSelection::File(source));
+        editor.copy_selected_workspace_file(cx);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_image(&image));
+        editor.open_workspace_context_menu(
+            gpui::point(gpui::px(60.0), gpui::px(80.0)),
+            Some(WorkspaceSelection::Directory(directory.clone())),
+            cx,
+        );
+    });
+    redraw(cx);
+    let paste = cx
+        .debug_bounds("menu-item-workspace-context-action-Paste")
+        .expect("有图片时应显示粘贴");
+    cx.simulate_click(paste.center(), Modifiers::none());
+    redraw(cx);
+    let entries = fs::read_dir(&directory)
+        .expect("读取粘贴目录")
+        .map(|entry| entry.expect("目录条目").path())
+        .collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1, "应只粘贴当前图片");
+    let pasted = entries.first().expect("粘贴产物");
+    assert_eq!(
+        pasted.extension().and_then(|extension| extension.to_str()),
+        Some("png"),
+        "不能把旧文件当作当前图片粘贴"
+    );
+    assert_eq!(fs::read(pasted).expect("读取图片"), image.bytes);
 }
 
 #[gpui::test]
