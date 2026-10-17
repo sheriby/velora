@@ -495,7 +495,7 @@ impl Editor {
 
     /// All markdown/code files of the workspace, for the quick switcher.
     ///
-    /// 读的是换根后后台走盘填的名单（`spawn_workspace_files_walk`），不再从侧栏那棵
+    /// 读的是全局功能首次使用后后台走盘填的名单（`spawn_workspace_files_walk`），不再从侧栏那棵
     /// 树收集：树只加载展开过的层，拿它当名单会让范围随展开状态漂移。
     pub(crate) fn workspace_text_files(&self) -> Vec<PathBuf> {
         self.text_files_on_disk()

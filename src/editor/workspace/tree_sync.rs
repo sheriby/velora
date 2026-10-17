@@ -459,6 +459,10 @@ impl Editor {
             return;
         }
 
+        if self.workspace.root != next_root {
+            self.invalidate_workspace_files_walk();
+            self.workspace.pending_wikilink_open = None;
+        }
         self.workspace.root = next_root.clone();
         self.clear_workspace_file_error();
 
@@ -466,8 +470,7 @@ impl Editor {
             self.workspace.file_tree = None;
             self.workspace.selected = None;
             self.workspace.tree_scan_root = None;
-            self.workspace.files_on_disk.clear();
-            self.workspace.files_on_disk_root = None;
+            self.invalidate_workspace_files_walk();
             return;
         };
 
@@ -487,9 +490,6 @@ impl Editor {
         let editor = cx.entity().downgrade();
         let scan_root = root.clone();
         let scan = cx.background_spawn(async move { scan_workspace_dir(&scan_root, tree_sort) });
-        // 文件名单（搜索 / 全部替换 / 快速切换 / 双链）与树分开：换根后并行走
-        // 一次盘就够了，不必递归建树（树只加载展开过的层）。
-        self.spawn_workspace_files_walk(root.clone(), cx);
         // Dropping the previous task cancels a scan that is no longer relevant.
         self.workspace.tree_scan_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -502,13 +502,20 @@ impl Editor {
                         match result {
                             Ok(tree) => {
                                 editor.workspace.expanded.insert(tree.id.clone());
-                                editor.workspace.file_tree = Some(tree);
+                                if editor.workspace.file_tree.as_ref().is_some_and(|old| old.id == tree.id) {
+                                    let id = tree.id.clone();
+                                    editor.install_workspace_dir_children(&id, tree);
+                                } else {
+                                    editor.workspace.file_tree = Some(tree);
+                                }
                                 editor.follow_active_document_in_workspace_tree();
                             }
                             Err(err) => {
                                 editor.workspace.file_error = Some(err.to_string());
                             }
                         }
+                        editor.workspace.tree_scan_task = None;
+                        editor.refresh_workspace_changed_paths(cx);
                         cx.notify();
                     })
                     .ok();
@@ -516,11 +523,73 @@ impl Editor {
         ));
     }
 
-    /// 换根后走一次盘，把「工作区里可打开的文件」名单填进缓存，
+    pub(crate) fn invalidate_workspace_files_walk(&mut self) {
+        self.workspace.files_on_disk_task = None;
+        self.workspace.files_on_disk_walk_root = None;
+        self.workspace.files_on_disk_root = None;
+        self.workspace.files_on_disk.clear();
+        self.workspace.paths_refresh_task = None;
+        self.workspace.tree_refresh_task = None;
+        self.workspace.pending_changed_paths.clear();
+    }
+
+    pub(crate) fn refresh_workspace_file_consumers(&mut self, cx: &mut Context<Self>) {
+        if (self.workspace.active_tab == WorkspaceTab::Search || self.workspace.search_pending)
+            && self.workspace.search_scope == WorkspaceSearchScope::Workspace
+            && !self.workspace.search_query.is_empty()
+        {
+            self.schedule_workspace_search(cx);
+        }
+        if self.quick_open.is_some() {
+            self.refresh_quick_open_results(cx);
+        }
+        if let Some(block) = self
+            .wikilink_completion
+            .as_ref()
+            .and_then(|state| self.document.block_entity_by_id(state.block_id))
+        {
+            self.update_wikilink_completion_for_block(&block, cx);
+        }
+        if self.workspace.pending_changed_paths.is_empty()
+            && self.workspace.paths_refresh_task.is_none()
+            && self.workspace.files_on_disk_root.is_some()
+            && let Some((target, handle)) = self.workspace.pending_wikilink_open.take()
+        {
+            let editor = cx.entity().downgrade();
+            let root = self.workspace.root.clone();
+            cx.defer(move |cx| {
+                let opened = cx.update_window(handle, |_, window, cx| {
+                    editor.update(cx, |editor, cx| {
+                        if editor.workspace.root == root {
+                            editor.open_wikilink(target, window, cx);
+                        }
+                    })
+                });
+                match opened {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) | Err(error) => eprintln!("打开双链目标失败：{error}"),
+                }
+            });
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn ensure_workspace_files_walk(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(root) = self.workspace.root.clone() else {
+            return true;
+        };
+        if self.workspace.files_on_disk_root.as_ref() == Some(&root) {
+            return true;
+        }
+        self.spawn_workspace_files_walk(root, cx);
+        false
+    }
+
+    /// 首次使用全局功能时走盘，把「工作区里可打开的文件」名单填进缓存，
     /// 重跑以这份名单为输入的工作区搜索。
     ///
     /// 走盘用 ripgrep 的并行 walker（`collect_workspace_files_on_disk`），
-    /// 关掉 gitignore 与隐藏文件规则，过滤规则与侧栏扫描逐条一致。
+    /// 关掉 gitignore 与隐藏文件规则；内部目录与侧栏共同跳过，构建目录不进全局名单。
     pub(crate) fn spawn_workspace_files_walk(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         if self.workspace.files_on_disk_root.as_ref() == Some(&root)
             || self.workspace.files_on_disk_walk_root.as_ref() == Some(&root)
@@ -532,6 +601,8 @@ impl Editor {
         self.workspace.files_on_disk_root = None;
         self.workspace.files_on_disk.clear();
         self.workspace.files_on_disk_walk_root = Some(root.clone());
+        #[cfg(test)]
+        { self.workspace.files_walk_count += 1; }
         let editor = cx.entity().downgrade();
         let walk_root = root.clone();
         let walk = cx.background_spawn(async move {
@@ -540,7 +611,7 @@ impl Editor {
         self.workspace.files_on_disk_task = Some(cx.spawn(
             async move |_this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let (files, skipped) = walk.await;
-                editor
+                let updated = editor
                     .update(cx, |editor, cx| {
                         if editor.workspace.files_on_disk_walk_root.as_ref() != Some(&root) {
                             return;
@@ -555,15 +626,12 @@ impl Editor {
                                 "有 {skipped} 个条目读不了，可能有文件没进搜索名单"
                             ));
                         }
-                        // 名单落地前发起的工作区搜索此时才有文件列表可用。
-                        if editor.workspace.active_tab == WorkspaceTab::Search
-                            && !editor.workspace.search_query.is_empty()
-                        {
-                            editor.schedule_workspace_search(cx);
-                        }
-                        cx.notify();
-                    })
-                    .ok();
+                        editor.refresh_workspace_changed_paths(cx);
+                        editor.refresh_workspace_file_consumers(cx);
+                    });
+                if let Err(error) = updated {
+                    eprintln!("更新工作区文件名单失败：{error}");
+                }
             },
         ));
     }
@@ -571,6 +639,10 @@ impl Editor {
     /// 展开目录时才扫它下一层：`scan_workspace_dir_level` 建的是占位目录，子项在
     /// 这里补齐。同一个目录的重复请求由 `dir_scan_tasks` 挡掉（渲染帧每帧都会问）。
     pub(crate) fn load_workspace_dir_level(&mut self, node_id: &str, cx: &mut Context<Self>) {
+        self.scan_workspace_dir_level(node_id, false, cx);
+    }
+
+    fn scan_workspace_dir_level(&mut self, node_id: &str, force: bool, cx: &mut Context<Self>) {
         if self.workspace.dir_scan_tasks.contains_key(node_id) {
             return;
         }
@@ -582,7 +654,7 @@ impl Editor {
         else {
             return;
         };
-        if node.children_loaded {
+        if node.children_loaded && !force {
             return;
         }
         let WorkspaceTreeKind::Directory(path) = node.kind.clone() else {
@@ -613,8 +685,9 @@ impl Editor {
             // 收尾时把自己的句柄移出表：放在更新之后，让 drop 只取消已经没活干的
             // 调度（同一个目录下次展开才会重新扫）。
             editor
-                .update(cx, |editor, _| {
+                .update(cx, |editor, cx| {
                     editor.workspace.dir_scan_tasks.remove(&id);
+                    editor.refresh_workspace_changed_paths(cx);
                 })
                 .ok();
         });
@@ -623,16 +696,119 @@ impl Editor {
 
     /// 把一层的扫描结果挂到树上：按节点 id 定位，树的其余部分（展开态、选中态、
     /// 已扫过的其它层）原样不动。
-    fn install_workspace_dir_children(&mut self, node_id: &str, scanned: WorkspaceTreeNode) {
+    fn install_workspace_dir_children(&mut self, node_id: &str, mut scanned: WorkspaceTreeNode) {
         let Some(tree) = self.workspace.file_tree.as_mut() else {
             return;
         };
         let Some(node) = find_workspace_node_mut(std::slice::from_mut(tree), node_id) else {
             return;
         };
+        let mut previous: HashMap<_, _> = std::mem::take(&mut node.children)
+            .into_iter()
+            .map(|child| (child.id.clone(), child))
+            .collect();
+        for child in &mut scanned.children {
+            if child.kind_dir()
+                && let Some(mut old) = previous.remove(&child.id)
+                && old.kind_dir()
+            {
+                child.children = std::mem::take(&mut old.children);
+                child.children_loaded = old.children_loaded;
+                child.children_load_failed = old.children_load_failed;
+            }
+        }
         node.children = scanned.children;
         node.children_loaded = true;
         node.children_load_failed = false;
+    }
+
+    pub(super) fn apply_workspace_tree_path_update(
+        &mut self,
+        mut update: WorkspacePathUpdate,
+        changed_parents: &mut HashSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.root.as_ref() == Some(&update.path) {
+            if update
+                .node
+                .as_ref()
+                .is_some_and(WorkspaceTreeNode::kind_dir)
+            {
+                self.sync_workspace_file_tree_inner(true, cx);
+            } else {
+                self.workspace.file_tree = None;
+                self.workspace.file_error =
+                    Some(format!("工作区目录不可用：{}", update.path.display()));
+            }
+            return;
+        }
+        let sort = crate::config::EditorSettings::tree_sort(cx);
+        let Some(tree) = self.workspace.file_tree.as_mut() else {
+            return;
+        };
+        let Some(parent_path) = update.path.parent() else {
+            return;
+        };
+        let parent_id = file_node_id(parent_path);
+        let Some(parent) = find_workspace_node_mut(std::slice::from_mut(tree), &parent_id) else {
+            return;
+        };
+        if !parent.children_loaded {
+            return;
+        }
+        let child_id = file_node_id(&update.path);
+        let old = parent
+            .children
+            .iter_mut()
+            .find(|child| child.id == child_id);
+        let mut refresh_directory = None;
+        let mut needs_sort = false;
+        if let Some(old) = old {
+            if let Some(mut next) = update.node.take() {
+                needs_sort = old.id != next.id || old.kind_dir() != next.kind_dir();
+                if old.id == next.id && old.kind_dir() && next.kind_dir() {
+                    next.children = std::mem::take(&mut old.children);
+                    next.children_loaded = old.children_loaded;
+                    next.children_load_failed = old.children_load_failed;
+                    if next.children_loaded {
+                        refresh_directory = Some(next.id.clone());
+                    }
+                }
+                *old = next;
+            } else {
+                parent.children.retain(|child| child.id != child_id);
+            }
+        } else if let Some(node) = update.node.take() {
+            parent.children.push(node);
+            needs_sort = true;
+        }
+        if needs_sort || sort == TreeSortPreference::ModifiedTime {
+            changed_parents.insert(parent_id);
+        }
+        if let Some(id) = refresh_directory {
+            self.scan_workspace_dir_level(&id, true, cx);
+        }
+    }
+
+    pub(super) fn sort_workspace_changed_parents(
+        &mut self,
+        parents: HashSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let sort = crate::config::EditorSettings::tree_sort(cx);
+        for id in parents {
+            if sort == TreeSortPreference::ModifiedTime {
+                self.scan_workspace_dir_level(&id, true, cx);
+            } else if let Some(tree) = self.workspace.file_tree.as_mut()
+                && let Some(parent) = find_workspace_node_mut(std::slice::from_mut(tree), &id)
+            {
+                #[cfg(test)]
+                {
+                    self.workspace.paths_sort_count += 1;
+                }
+                sort_workspace_children(&mut parent.children, sort);
+            }
+        }
     }
 
     /// 记下「这一层扫过、失败了」：每帧的补齐不再重排队，等用户再展一次或树重扫。

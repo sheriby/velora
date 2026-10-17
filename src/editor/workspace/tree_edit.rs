@@ -201,14 +201,14 @@ impl Editor {
                             editor.workspace.name_edit = None;
                             match kind {
                                 WorkspaceEditKind::File => {
-                                    editor.refresh_workspace_tree(cx);
+                                    editor.refresh_workspace_paths(std::slice::from_ref(&destination), cx);
                                     editor.open_workspace_file(destination, window, cx);
                                 }
                                 WorkspaceEditKind::Folder => {
                                     editor.workspace.selected =
                                         Some(WorkspaceSelection::Directory(destination.clone()));
                                     editor.workspace.expanded.insert(file_node_id(&destination));
-                                    editor.refresh_workspace_tree(cx);
+                                    editor.refresh_workspace_paths(std::slice::from_ref(&destination), cx);
                                     editor.focus_workspace_tree(window, cx);
                                 }
                                 WorkspaceEditKind::Rename {
@@ -305,7 +305,7 @@ impl Editor {
         if is_directory {
             self.workspace.expanded.insert(file_node_id(destination));
         }
-        self.refresh_workspace_tree(cx);
+        self.refresh_workspace_paths(&[source.to_path_buf(), destination.to_path_buf()], cx);
         self.persist_session(cx);
         if self.document_dirty || self.has_dirty_workspace_documents() {
             self.schedule_autosave(cx);

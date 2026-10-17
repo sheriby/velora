@@ -295,6 +295,164 @@ async fn an_unreadable_external_change_is_reported_and_rechecked(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn workspace_events_flush_while_more_files_keep_changing(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-busy-workspace-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("创建目录");
+    let root = crate::file_url::canonical_path(&root);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.ensure_workspace_files_walk(cx);
+    });
+    cx.run_until_parked();
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    fs::write(&first, "第一份").expect("创建文件");
+    editor.update(cx, |editor, cx| editor.on_watched_path_changed(&first, cx));
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    fs::write(&second, "第二份").expect("继续创建文件");
+    editor.update(cx, |editor, cx| editor.on_watched_path_changed(&second, cx));
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.workspace.files_on_disk.contains(&first),
+            "持续变动不能推迟已经排队的更新"
+        );
+        assert!(
+            editor.workspace.files_on_disk.contains(&second),
+            "同一窗口内的事件应合并更新"
+        );
+        assert_eq!(editor.workspace.files_walk_count, 1);
+        assert_eq!(
+            editor.workspace.paths_sort_count, 1,
+            "同一批事件的父目录只能重排一次"
+        );
+    });
+    fs::remove_dir_all(root).expect("清理夹具");
+}
+
+#[gpui::test]
+async fn file_events_reuse_the_index_and_unaffected_loaded_directories(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-index-reuse-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("keep/deep")).expect("创建目录");
+    fs::write(root.join("keep/deep/note.md"), "保持不变").expect("写入文件");
+    let root = crate::file_url::canonical_path(&root);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.ensure_workspace_files_walk(cx);
+    });
+    cx.run_until_parked();
+    let keep_id = super::super::file_node_id(&root.join("keep"));
+    editor.update(cx, |editor, cx| editor.toggle_workspace_node(&keep_id, cx));
+    cx.run_until_parked();
+    let added = root.join("added.md");
+    fs::write(&added, "第一次写入").expect("新建文件");
+    editor.update(cx, |editor, cx| editor.on_watched_path_changed(&added, cx));
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.workspace.files_on_disk.contains(&added),
+            "增量名单应包含新文件"
+        );
+        assert_eq!(
+            editor.workspace.files_walk_count, 1,
+            "新建文件不能重建整个工作区名单"
+        );
+        let tree = editor.workspace.file_tree.as_ref().expect("文件树");
+        let keep = super::super::find_workspace_node(std::slice::from_ref(tree), &keep_id)
+            .expect("未变动的目录");
+        assert!(keep.children_loaded, "未变动目录的已加载内容必须复用");
+        assert_eq!(keep.children.len(), 1);
+    });
+    fs::write(&added, "第二次写入").expect("修改文件");
+    editor.update(cx, |editor, cx| editor.on_watched_path_changed(&added, cx));
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    fs::remove_file(&added).expect("删除文件");
+    editor.update(cx, |editor, cx| editor.on_watched_path_changed(&added, cx));
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            !editor.workspace.files_on_disk.contains(&added),
+            "删除后应移除名单条目"
+        );
+        assert_eq!(
+            editor.workspace.files_walk_count, 1,
+            "修改和删除也不能重复全盘扫描"
+        );
+    });
+    let created_dir = root.join("new/nested");
+    fs::create_dir_all(&created_dir).expect("创建新子树");
+    fs::write(created_dir.join("fresh.md"), "新文件").expect("写入新子树");
+    let source = root.join("new");
+    editor.update(cx, |editor, cx| editor.on_watched_path_changed(&source, cx));
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    let destination = root.join("NEW");
+    fs::rename(&source, &destination).expect("仅改名字大小写");
+    editor.update(cx, |editor, cx| {
+        editor.on_watched_path_changed(&source, cx);
+        editor.on_watched_path_changed(&destination, cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.files_on_disk,
+            vec![
+                destination.join("nested/fresh.md"),
+                root.join("keep/deep/note.md"),
+            ],
+            "目录改名后名单应无重复、无旧路径，并保持排序"
+        );
+        assert_eq!(
+            editor.workspace.files_walk_count, 1,
+            "新目录和改名只扫描受影响的子树"
+        );
+    });
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.files_on_disk_root.as_ref(),
+            Some(&root),
+            "再次打开同一工作区应复用已经建立的文件名单"
+        );
+        assert_eq!(editor.workspace.files_walk_count, 1);
+    });
+    let missed = root.join("missed.md");
+    fs::write(&missed, "遗漏的事件").expect("模拟监听事件丢失");
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            editor.workspace.files_on_disk.contains(&missed),
+            "显式重新同步应修复遗漏事件"
+        );
+        assert_eq!(
+            editor.workspace.files_walk_count, 2,
+            "仅重新同步时才再次全盘扫描"
+        );
+    });
+    fs::remove_dir_all(root).expect("清理夹具");
+}
+
+#[gpui::test]
 async fn external_file_events_refresh_the_workspace_tree(cx: &mut TestAppContext) {
     // 审查发现：watcher 只转发 Modify/Create 且从不刷新文件树，外部新建/
     // 删除/改名的文件在树、⌘P、工作区搜索的文件列表里永远是旧的。
@@ -325,6 +483,7 @@ async fn external_file_events_refresh_the_workspace_tree(cx: &mut TestAppContext
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
     editor.update(cx, |editor, cx| {
         editor.set_workspace_root(root.clone(), cx);
+        editor.ensure_workspace_files_walk(cx);
         editor.workspace.is_open = true;
     });
     cx.run_until_parked();

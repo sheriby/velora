@@ -152,17 +152,19 @@ impl Editor {
         self.workspace.selected = Some(WorkspaceSelection::Directory(root.clone()));
         // 切换工作区 = 换一套工作集：不属于新根目录的标签必须收起
         // （此前换了工作区之后顶栏还留着上一个工作区的标签）。
+        let same_root = self.workspace.root.as_ref() == Some(&root);
         self.workspace.root = Some(root);
-        self.workspace.file_tree = None;
-        // 打开新文件夹必须重新扫描：清掉缓存结果标记（roadmap D9）。
-        self.workspace.tree_scan_root = None;
-        // 文件名单（⌘P / 搜索 / 全部替换 / 双链共用）同理：换根重走一次。
-        self.workspace.files_on_disk.clear();
-        self.workspace.files_on_disk_root = None;
-        // 旧根上在飞的按需扫层结果全部作废（drop 即取消）。
-        self.workspace.dir_scan_tasks.clear();
+        if !same_root {
+            self.workspace.file_tree = None;
+            self.workspace.tree_scan_root = None;
+            self.invalidate_workspace_files_walk();
+            self.workspace.dir_scan_tasks.clear();
+            self.workspace.expanded.clear();
+        } else if self.workspace.file_tree.is_none() && self.workspace.tree_scan_task.is_none() {
+            self.workspace.tree_scan_root = None;
+        }
+        self.workspace.pending_wikilink_open = None;
         self.clear_workspace_file_error();
-        self.workspace.expanded.clear();
         // 侧栏开关与面板是**全局**记忆（用户要求：不按工作区记）：上次关着就关着，
         // 上次挑的是哪个面板就还是它——搜索不参与记忆，所以记忆里只会是非搜索面板。
         // 设置里选「跟随上次」（默认）时听记忆，钉死了（总是打开/总是关闭、文件数/
@@ -250,38 +252,132 @@ impl Editor {
             for group in groups {
                 group.update(cx, |editor, cx| {
                     editor.reload_externally_changed_document(path, cx);
-                    editor.schedule_workspace_tree_refresh(cx);
+                    editor.schedule_workspace_tree_refresh(path, cx);
                 });
                 self.sync_shared_groups(group.entity_id(), cx);
             }
         } else {
             self.reload_externally_changed_document(path, cx);
-            self.schedule_workspace_tree_refresh(cx);
+            self.schedule_workspace_tree_refresh(path, cx);
         }
     }
 
-    /// 合并连续的 watcher 事件，防抖后强制重扫文件树：外部新建/删除/改名
-    /// 也要反映到树、⌘P 与工作区搜索的文件列表里（此前外部改动后
-    /// 树一直是旧的，点进去报「无法预览」）。
-    pub(crate) fn schedule_workspace_tree_refresh(&mut self, cx: &mut Context<Self>) {
-        self.workspace.tree_refresh_generation = self
+    pub(crate) fn on_workspace_watch_rescan(&mut self, cx: &mut Context<Self>) {
+        if self.split_workspace.is_some() {
+            for group in self.split_groups() {
+                group.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+            }
+        } else {
+            self.refresh_workspace_tree(cx);
+        }
+    }
+
+    /// 合并文件事件，只更新变动路径，避免保存一次就重新遍历整个工作区。
+    pub(crate) fn schedule_workspace_tree_refresh(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if !self
             .workspace
-            .tree_refresh_generation
-            .wrapping_add(1);
-        let generation = self.workspace.tree_refresh_generation;
-        cx.spawn(async move |editor, cx| {
+            .root
+            .as_ref()
+            .is_some_and(|root| path.starts_with(root))
+        {
+            return;
+        }
+        self.workspace
+            .pending_changed_paths
+            .insert(path.to_path_buf());
+        if self.workspace.tree_refresh_task.is_some() {
+            return;
+        }
+        self.workspace.tree_refresh_task = Some(cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(250))
                 .await;
-            editor
-                .update(cx, |editor, cx| {
-                    if editor.workspace.tree_refresh_generation == generation {
-                        editor.refresh_workspace_tree(cx);
+            if let Err(error) = editor.update(cx, |editor, cx| {
+                editor.workspace.tree_refresh_task = None;
+                editor.refresh_workspace_changed_paths(cx);
+            }) {
+                eprintln!("合并工作区文件事件失败：{error}");
+            }
+        }));
+    }
+
+    pub(crate) fn refresh_workspace_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if let Some(root) = &self.workspace.root {
+            self.workspace
+                .pending_changed_paths
+                .extend(paths.iter().filter(|path| path.starts_with(root)).cloned());
+        }
+        self.refresh_workspace_changed_paths(cx);
+    }
+
+    pub(crate) fn refresh_workspace_changed_paths(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.pending_changed_paths.is_empty()
+            || self.workspace.paths_refresh_task.is_some()
+            || self.workspace.files_on_disk_walk_root.is_some()
+            || self.workspace.tree_scan_task.is_some()
+            || !self.workspace.dir_scan_tasks.is_empty()
+        {
+            return;
+        }
+        let Some(root) = self.workspace.root.clone() else {
+            return;
+        };
+        let update_index = self.workspace.files_on_disk_root.as_ref() == Some(&root);
+        let mut paths: Vec<_> = std::mem::take(&mut self.workspace.pending_changed_paths)
+            .into_iter()
+            .collect();
+        paths.sort();
+        #[cfg(test)]
+        if update_index && paths.iter().any(|path| path == &root) {
+            self.workspace.files_walk_count += 1;
+        }
+        let updates = cx.background_spawn({
+            let root = root.clone();
+            async move {
+                paths
+                    .into_iter()
+                    .map(|path| read_workspace_path_update(&root, path, update_index))
+                    .collect::<Vec<_>>()
+            }
+        });
+        self.workspace.paths_refresh_task = Some(cx.spawn(async move |editor, cx| {
+            let updates = updates.await;
+            if let Err(error) = editor.update(cx, |editor, cx| {
+                if editor.workspace.root.as_ref() != Some(&root) {
+                    return;
+                }
+                editor.workspace.paths_refresh_task = None;
+                let mut changes = Vec::new();
+                for update in updates {
+                    match update {
+                        Ok(update) => changes.push(update),
+                        Err(error) => editor.workspace.file_error = Some(error.to_string()),
                     }
-                })
-                .ok();
-        })
-        .detach();
+                }
+                if update_index {
+                    apply_workspace_file_updates(&mut editor.workspace.files_on_disk, &changes);
+                }
+                let mut changed_parents = HashSet::new();
+                for update in changes {
+                    if !update_index
+                        && (editor.workspace.files_on_disk_root.is_some()
+                            || editor.workspace.files_on_disk_walk_root.is_some())
+                    {
+                        editor
+                            .workspace
+                            .pending_changed_paths
+                            .insert(update.path.clone());
+                    }
+                    editor.apply_workspace_tree_path_update(update, &mut changed_parents, cx);
+                }
+                editor.sort_workspace_changed_parents(changed_parents, cx);
+                editor.refresh_workspace_changed_paths(cx);
+                editor.refresh_workspace_file_consumers(cx);
+                cx.notify();
+            }) {
+                eprintln!("更新工作区变动路径失败：{error}");
+            }
+        }));
     }
 
     /// 收起落在新工作区之外的标签；脏标签先写回自己的文件，内容不丢。
@@ -386,11 +482,23 @@ impl Editor {
     }
 
     pub(crate) fn refresh_workspace_tree(&mut self, cx: &mut Context<Self>) {
+        fn invalidate_children(node: &mut WorkspaceTreeNode) {
+            for child in &mut node.children {
+                if child.kind_dir() {
+                    child.children_loaded = false;
+                    child.children_load_failed = false;
+                    invalidate_children(child);
+                }
+            }
+        }
+        if let Some(tree) = self.workspace.file_tree.as_mut() { invalidate_children(tree); }
         // 外部新建 / 删除 / 改名也要刷新文件名单：⌘P、工作区搜索、全部替换与双链
         // 都读这一份，只重扫树会让它们继续拿旧名单。
-        self.workspace.files_on_disk_root = None;
-        if let Some(root) = self.workspace.root.clone() {
-            self.spawn_workspace_files_walk(root, cx);
+        let list_requested = self.workspace.files_on_disk_root.is_some()
+            || self.workspace.files_on_disk_walk_root.is_some();
+        self.invalidate_workspace_files_walk();
+        if list_requested {
+            self.ensure_workspace_files_walk(cx);
         }
         // 保留旧树直到新扫描落地，避免侧栏在扫描期间闪空。
         self.sync_workspace_file_tree_inner(true, cx);

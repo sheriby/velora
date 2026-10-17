@@ -78,7 +78,10 @@ impl Editor {
                 && state.query == query
         });
         match self.wikilink_completion.as_mut() {
-            Some(_) if unchanged => {}
+            Some(state) if unchanged => {
+                state.results = results;
+                state.selected = state.selected.min(state.results.len().saturating_sub(1));
+            }
             Some(state) => {
                 state.anchor = anchor;
                 state.query = query.to_string();
@@ -96,6 +99,7 @@ impl Editor {
                 });
             }
         }
+        self.ensure_workspace_files_walk(cx);
         cx.notify();
     }
 

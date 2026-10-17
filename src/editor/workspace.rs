@@ -396,8 +396,9 @@ pub(super) struct WorkspaceState {
     /// 扁平标题清单（roadmap C2）：供正文里的 `[TOC]` 块渲染目录。
     pub(crate) toc_entries: Vec<TocEntry>,
     pub(super) expanded: HashSet<String>,
-    /// 外部文件事件的树刷新防抖代数（见 `schedule_workspace_tree_refresh`）。
-    tree_refresh_generation: u32,
+    tree_refresh_task: Option<Task<()>>,
+    pending_changed_paths: HashSet<PathBuf>,
+    paths_refresh_task: Option<Task<()>>,
     pub(super) selected: Option<WorkspaceSelection>,
     open_documents: Vec<WorkspaceDocumentTab>,
     active_document: Option<PathBuf>,
@@ -442,15 +443,20 @@ pub(super) struct WorkspaceState {
     /// 展开时按需扫层的在途任务，按键是目录节点 id：任务存这里才不会一丢就取消，
     /// 同一个目录也不会重复发起（渲染帧、点击都可能请求）。
     dir_scan_tasks: HashMap<String, Task<()>>,
-    /// 工作区里可打开文件的名单：搜索 / 全部替换 / 快速切换 / 双链共用。换根后
-    /// 在后台走一次盘填好（`spawn_workspace_files_walk`），不再从侧栏那棵树
+    /// 工作区里可打开文件的名单：搜索 / 全部替换 / 快速切换 / 双链首次使用时
+    /// 在后台走盘填好（`spawn_workspace_files_walk`），不再从侧栏那棵树
     /// 收集——树只加载展开过的层，拿它当名单会让范围随展开状态漂移。
     files_on_disk: Vec<PathBuf>,
-    /// 名单已经填好的根（走盘落地才置上）：`None` + 已有根 = 名单正在走盘。
+    /// 名单已经填好的根；`None` 表示尚未请求或仍在走盘。
     files_on_disk_root: Option<PathBuf>,
     /// 正在走盘的根：同一个根不重复发起。
     files_on_disk_walk_root: Option<PathBuf>,
     files_on_disk_task: Option<Task<()>>,
+    #[cfg(test)]
+    files_walk_count: usize,
+    #[cfg(test)]
+    paths_sort_count: usize,
+    pending_wikilink_open: Option<(String, AnyWindowHandle)>,
     context_menu: Option<WorkspaceContextMenu>,
     name_edit: Option<WorkspaceNameEdit>,
     tree_focus: Option<FocusHandle>,
@@ -481,7 +487,9 @@ impl Default for WorkspaceState {
             outline_dirty: None,
             toc_entries: Vec::new(),
             expanded: HashSet::new(),
-            tree_refresh_generation: 0,
+            tree_refresh_task: None,
+            pending_changed_paths: HashSet::new(),
+            paths_refresh_task: None,
             selected: None,
             open_documents: Vec::new(),
             active_document: None,
@@ -521,6 +529,11 @@ impl Default for WorkspaceState {
             files_on_disk_root: None,
             files_on_disk_walk_root: None,
             files_on_disk_task: None,
+            #[cfg(test)]
+            files_walk_count: 0,
+            #[cfg(test)]
+            paths_sort_count: 0,
+            pending_wikilink_open: None,
             context_menu: None,
             name_edit: None,
             tree_focus: None,

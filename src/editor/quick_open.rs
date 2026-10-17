@@ -243,6 +243,7 @@ impl Editor {
     /// Recomputes the fuzzy file list for the current query. Matching runs on
     /// the lowercase file name; empty queries list every workspace file.
     pub(super) fn refresh_quick_open_results(&mut self, cx: &mut Context<Self>) {
+        self.ensure_workspace_files_walk(cx);
         let query = self
             .quick_open
             .as_ref()

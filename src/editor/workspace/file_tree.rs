@@ -44,22 +44,182 @@ pub(crate) fn tree_node_path(node: &WorkspaceTreeNode) -> &Path {
     }
 }
 
-/// 侧栏扫描与搜索走盘共用的跳过名单：仓库 / 构建产物目录既不进侧栏，也不进搜索
-/// 与索引的文件清单。两边必须逐条一致，否则会出现「侧栏看得见、搜索搜不到」。
-pub(crate) const SKIPPED_DIR_NAMES: [&str; 5] = [".git", "target", "node_modules", ".worktrees", "dist"];
+/// 内部目录既不进侧栏，也不进搜索与索引的文件清单。
+pub(crate) const SKIPPED_DIR_NAMES: [&str; 3] = [".git", "node_modules", ".worktrees"];
 
 fn is_skipped_dir(name: &std::ffi::OsStr) -> bool {
     name.to_str()
         .is_some_and(|name| SKIPPED_DIR_NAMES.contains(&name))
 }
 
-/// 换根时先扫几层：根算第 1 层，再深一层展开时才扫（懒加载）。
-///
-/// 以前这里递归扫完整个树：目录没有层数上限时（打开单个文件，隐含根就是它所在
-/// 目录）一次扫描要走上万次 readdir——实测系统临时根目录 26 万条目要 30 秒 CPU、
-/// macOS 的 ~/Library 更多；而这一步在侧栏展开时是自动发生的。三层是取舍：常
-/// 用的笔记目录整棵都在三层以内，扫完就是完整视图；超大目录也只付三层。
-pub(crate) const WORKSPACE_SCAN_DEPTH: usize = 3;
+fn is_build_dir(name: &std::ffi::OsStr) -> bool {
+    matches!(name.to_str(), Some("target" | "dist"))
+}
+
+pub(super) fn workspace_entry_node(path: PathBuf, directory: bool) -> WorkspaceTreeNode {
+    let kind = if directory {
+        WorkspaceTreeKind::Directory(path.clone())
+    } else if is_markdown_file(&path) {
+        WorkspaceTreeKind::MarkdownFile(path.clone())
+    } else if is_code_file(&path) {
+        WorkspaceTreeKind::CodeFile(path.clone())
+    } else {
+        WorkspaceTreeKind::OtherFile(path.clone())
+    };
+    WorkspaceTreeNode {
+        id: file_node_id(&path),
+        label: file_label(&path),
+        kind,
+        children: Vec::new(),
+        children_loaded: !directory,
+        children_load_failed: false,
+    }
+}
+
+fn workspace_path_visible(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        relative
+            .components()
+            .all(|component| !is_skipped_dir(component.as_os_str()))
+    })
+}
+
+pub(super) struct WorkspacePathUpdate {
+    pub(super) path: PathBuf,
+    pub(super) node: Option<WorkspaceTreeNode>,
+    pub(super) files: Vec<PathBuf>,
+}
+
+pub(super) fn read_workspace_path_update(
+    root: &Path,
+    path: PathBuf,
+    update_index: bool,
+) -> Result<WorkspacePathUpdate> {
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).with_context(|| format!("无法读取 {}", path.display())),
+    };
+    // 根路径保留原来的写法；文件名取磁盘实际大小写，避免仅改大小写时留下旧条目。
+    let actual_path = if metadata
+        .as_ref()
+        .is_some_and(|metadata| metadata.is_file() || metadata.is_dir())
+    {
+        let actual = crate::file_url::canonical_path(&path);
+        let actual_root = crate::file_url::canonical_path(root);
+        actual
+            .strip_prefix(&actual_root)
+            .map(|relative| root.join(relative))
+            .unwrap_or(path.clone())
+    } else {
+        path.clone()
+    };
+    let node = metadata
+        .as_ref()
+        .filter(|metadata| metadata.is_file() || metadata.is_dir())
+        .filter(|_| workspace_path_visible(root, &actual_path))
+        .map(|metadata| workspace_entry_node(actual_path.clone(), metadata.is_dir()));
+    let indexed = update_index
+        && workspace_path_visible(root, &actual_path)
+        && actual_path.strip_prefix(root).is_ok_and(|relative| {
+            relative
+                .components()
+                .all(|component| !is_build_dir(component.as_os_str()))
+        });
+    let files = if indexed && metadata.as_ref().is_some_and(|metadata| metadata.is_dir()) {
+        let (files, skipped) = collect_workspace_files_on_disk_reporting_skips(&actual_path);
+        if skipped > 0 {
+            anyhow::bail!("更新 {} 时有 {skipped} 个条目无法读取", path.display());
+        }
+        files
+    } else if indexed && metadata.as_ref().is_some_and(|metadata| metadata.is_file()) {
+        vec![actual_path]
+    } else {
+        Vec::new()
+    };
+    Ok(WorkspacePathUpdate { path, node, files })
+}
+
+fn workspace_file_range(files: &[PathBuf], path: &Path) -> Range<usize> {
+    let start = files.partition_point(|candidate| candidate.as_path() < path);
+    let end = start
+        + files
+            .iter()
+            .skip(start)
+            .take_while(|candidate| candidate.starts_with(path))
+            .count();
+    start..end
+}
+
+fn apply_workspace_file_update(files: &mut Vec<PathBuf>, update: &WorkspacePathUpdate) {
+    let range = workspace_file_range(files, &update.path);
+    if files.get(range.clone()) != Some(update.files.as_slice()) {
+        drop(files.splice(range, update.files.iter().cloned()));
+        if update
+            .files
+            .iter()
+            .any(|path| !path.starts_with(&update.path))
+        {
+            // 不区分大小写的文件系统上，旧名字仍可能读到改名后的文件。
+            files.sort();
+            files.dedup();
+        }
+    }
+}
+
+pub(super) fn apply_workspace_file_updates(
+    files: &mut Vec<PathBuf>,
+    updates: &[WorkspacePathUpdate],
+) {
+    let mut ranges: Vec<_> = updates
+        .iter()
+        .map(|update| workspace_file_range(files, &update.path))
+        .collect();
+    if ranges
+        .iter()
+        .zip(updates)
+        .all(|(range, update)| files.get(range.clone()) == Some(update.files.as_slice()))
+    {
+        return;
+    }
+    let mut additions = Vec::new();
+    for update in updates {
+        apply_workspace_file_update(&mut additions, update);
+    }
+    ranges.sort_unstable_by_key(|range| range.start);
+    let mut ranges = ranges
+        .into_iter()
+        .filter(|range| !range.is_empty())
+        .peekable();
+    let mut position = 0;
+    files.retain(|_| {
+        while ranges.peek().is_some_and(|range| range.end <= position) {
+            drop(ranges.next());
+        }
+        let retain = ranges.peek().is_none_or(|range| position < range.start);
+        position += 1;
+        retain
+    });
+    // 一批变动只移动一次旧名单，避免逐个插入把大工作区变成 N×M 次搬运。
+    let mut existing = std::mem::take(files).into_iter().peekable();
+    files.reserve(existing.len() + additions.len());
+    let mut additions = additions.into_iter().peekable();
+    while let (Some(before), Some(after)) = (existing.peek(), additions.peek()) {
+        match before.cmp(after) {
+            std::cmp::Ordering::Less => files.extend(existing.next()),
+            std::cmp::Ordering::Equal => {
+                drop(existing.next());
+                files.extend(additions.next());
+            }
+            std::cmp::Ordering::Greater => files.extend(additions.next()),
+        }
+    }
+    files.extend(existing);
+    files.extend(additions);
+}
+
+/// 首次只读根目录；即使只有三层，临时目录也可能包含数十万条目。
+pub(crate) const WORKSPACE_SCAN_DEPTH: usize = 1;
 
 /// 扫到默认层数：更深的目录留 `children_loaded: false`，展开时由
 /// `load_workspace_dir_level` 补扫。
@@ -91,45 +251,14 @@ fn scan_workspace_dir_until(
             if is_skipped_dir(&entry.file_name()) {
                 continue;
             }
-            children.push(if depth > 1 {
+            // 构建产物可能有数十万项：目录可见，但只有明确展开后才读下一层。
+            children.push(if depth > 1 && !is_build_dir(&entry.file_name()) {
                 scan_workspace_dir_until(&entry_path, sort, depth - 1)?
             } else {
-                WorkspaceTreeNode {
-                    id: file_node_id(&entry_path),
-                    label: file_label(&entry_path),
-                    kind: WorkspaceTreeKind::Directory(entry_path),
-                    children: Vec::new(),
-                    children_loaded: false,
-                    children_load_failed: false,
-                }
-            });
-        } else if file_type.is_file() && is_markdown_file(&entry_path) {
-            children.push(WorkspaceTreeNode {
-                id: file_node_id(&entry_path),
-                label: file_label(&entry_path),
-                kind: WorkspaceTreeKind::MarkdownFile(entry_path),
-                children: Vec::new(),
-                children_loaded: true,
-                children_load_failed: false,
-            });
-        } else if file_type.is_file() && is_code_file(&entry_path) {
-            children.push(WorkspaceTreeNode {
-                id: file_node_id(&entry_path),
-                label: file_label(&entry_path),
-                kind: WorkspaceTreeKind::CodeFile(entry_path),
-                children: Vec::new(),
-                children_loaded: true,
-                children_load_failed: false,
+                workspace_entry_node(entry_path, true)
             });
         } else if file_type.is_file() {
-            children.push(WorkspaceTreeNode {
-                id: file_node_id(&entry_path),
-                label: file_label(&entry_path),
-                kind: WorkspaceTreeKind::OtherFile(entry_path),
-                children: Vec::new(),
-                children_loaded: true,
-                children_load_failed: false,
-            });
+            children.push(workspace_entry_node(entry_path, false));
         }
     }
 
@@ -154,7 +283,7 @@ pub(crate) fn scan_workspace_dir_recursive(
     scan_workspace_dir_until(path, sort, usize::MAX)
 }
 
-fn sort_workspace_children(children: &mut [WorkspaceTreeNode], sort: TreeSortPreference) {
+pub(super) fn sort_workspace_children(children: &mut [WorkspaceTreeNode], sort: TreeSortPreference) {
     // 键每个节点只算一次（sort_by_cached_key）：按修改时间排序时比较器里
     // 现开两次 fs::metadata，约 2·n·log n 次系统调用（Windows 上 Defender
     // 还会放大）；标签的小写比较也从每次比较两份分配降到每节点一份。
@@ -197,8 +326,8 @@ enum TreeSortKey {
 /// 漂移。文本类消费方自己过滤（`workspace_text_files` 只要 Markdown + 代码）。
 ///
 /// 用 ripgrep 的 walker 并行走盘，但关掉 gitignore / 隐藏文件 / `.ignore` 规则：
-/// 侧栏扫描不读这些文件，两边的文件集合必须逐条相同（`SKIPPED_DIR_NAMES` 是唯一的
-/// 过滤来源）。结果排序后再返回，保证同一棵目录搜出同一份顺序。
+/// 内部目录共用 `SKIPPED_DIR_NAMES`；构建目录虽在侧栏可展开，仍不进入全局名单，
+/// 避免每次工作区刷新都遍历大量产物。结果排序后再返回，保证同一目录的顺序稳定。
 ///
 /// 调用方负责在后台执行：~35 万文件的目录一次走盘要几秒。
 ///
@@ -228,7 +357,10 @@ pub(crate) fn collect_workspace_files_on_disk_reporting_skips(
         .parents(false)
         .follow_links(false)
         // 根目录自己不受跳过名单影响：工作区就叫 target 时也要能扫。
-        .filter_entry(|entry| entry.depth() == 0 || !is_skipped_dir(entry.file_name()))
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || (!is_skipped_dir(entry.file_name()) && !is_build_dir(entry.file_name()))
+        })
         .build_parallel();
     walker.run(|| {
         let files = &files;

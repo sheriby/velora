@@ -4,7 +4,9 @@ use super::super::{
     WorkspaceTreeKind, WorkspaceTreeNode, build_outline_tree, clamp_workspace_panel_width,
     create_workspace_file, create_workspace_folder, is_code_file, tree_node_path,
     path_is_affected, prune_outline_state, remap_moved_path,
-    file_node_id, find_workspace_node, scan_workspace_dir_recursive,
+    collect_workspace_files_on_disk, file_node_id, find_workspace_node,
+    scan_workspace_dir, scan_workspace_dir_level,
+    scan_workspace_dir_recursive,
 };
 use crate::components::{Block, UndoCaptureKind};
 use gpui::{
@@ -94,6 +96,133 @@ fn workspace_scan_includes_markdown_and_code_files() {
     }
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn workspace_tree_first_load_reads_only_root_children() {
+    let root = std::env::temp_dir().join(format!("velora-wide-tree-{}", uuid::Uuid::new_v4()));
+    for index in 0..32 {
+        let directory = root.join(format!("folder-{index}"));
+        fs::create_dir_all(directory.join("nested")).expect("创建目录");
+        fs::write(directory.join("nested/note.md"), "正文").expect("写入嵌套文件");
+    }
+    fs::write(root.join("opened.md"), "当前文档").expect("写入当前文档");
+    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("扫描根目录");
+    assert_eq!(tree.children.len(), 33, "根目录的条目应完整显示");
+    for directory in tree.children.iter().filter(|node| node.kind_dir()) {
+        assert!(!directory.children_loaded, "未展开目录不能预读：{}", directory.label);
+        assert!(directory.children.is_empty(), "首次加载不能扫描子目录内容");
+    }
+    fs::remove_dir_all(root).expect("清理夹具");
+}
+
+#[gpui::test]
+async fn workspace_tree_opening_one_file_does_not_start_a_global_walk(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let root = std::env::temp_dir().join(format!("velora-implicit-root-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("nested/deeper")).expect("创建目录");
+    let root = crate::file_url::canonical_path(&root);
+    let path = root.join("opened.md");
+    fs::write(&path, "当前文档").expect("写入当前文档");
+    fs::write(root.join("nested/deeper/other.md"), "深层文档").expect("写入嵌套文件");
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_file_source(cx, "当前文档".into(), Some(path))
+    });
+    editor.update(cx, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = super::super::WorkspaceTab::Files;
+        editor.sync_workspace_models(cx);
+    });
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.file_tree.is_some(), "文件树应完成首层加载");
+        assert!(editor.workspace.files_on_disk_root.is_none(), "打开文件不能递归建立全局名单");
+        assert!(editor.workspace.files_on_disk_walk_root.is_none(), "不应启动后台全局遍历");
+        assert!(editor.workspace.files_on_disk.is_empty(), "不能为当前文件预读其它目录");
+    });
+    editor.update(cx, |editor, cx| editor.refresh_workspace_tree(cx));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.files_on_disk_root.is_none(), "刷新文件树也不能触发全局遍历");
+    });
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_query = "当前".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.executor().advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.files_on_disk_root.is_none(), "当前文档搜索不需要全局名单");
+    });
+    editor.update(cx, |editor, cx| {
+        editor.workspace.search_scope = super::super::WorkspaceSearchScope::Workspace;
+        editor.workspace.search_query = "深层文档".into();
+        editor.schedule_workspace_search(cx);
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    let deep_path = crate::file_url::canonical_path(&root.join("nested/deeper/other.md"));
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.search_results.iter().any(|hit| hit.path == deep_path),
+            "首次全局搜索应等待名单，并搜到未展开目录里的文件");
+        assert!(!editor.workspace.search_pending, "全局搜索应完成");
+    });
+    fs::remove_dir_all(root).expect("清理夹具");
+}
+
+#[test]
+fn workspace_tree_lists_build_directories_without_scanning_their_contents() {
+    let root = std::env::temp_dir().join(format!("velora-build-dirs-{}", uuid::Uuid::new_v4()));
+    for parent in [&root, &root.join("nested")] {
+        for name in ["dist", "target"] {
+            let directory = parent.join(name);
+            fs::create_dir_all(directory.join("debug")).expect("创建构建目录");
+            fs::write(directory.join("artifact.md"), "构建说明").expect("写入构建文件");
+            fs::write(directory.join("debug/output.log"), "构建日志").expect("写入嵌套文件");
+        }
+    }
+    fs::write(root.join("note.md"), "正文").expect("写入普通文件");
+    for name in [".git", "node_modules", ".worktrees"] {
+        fs::create_dir_all(root.join(name)).expect("创建隐藏目录");
+        fs::write(root.join(name).join("internal.md"), "内部文件").expect("写入内部文件");
+    }
+
+    let tree = scan_workspace_dir(&root, TreeSortPreference::Name).expect("扫描文件树");
+    assert_eq!(
+        collect_workspace_files_on_disk(&root), vec![root.join("note.md")],
+        "全局搜索仍应跳过构建目录和内部目录"
+    );
+    assert_eq!(
+        tree.children.iter().map(|node| node.label.as_str()).collect::<Vec<_>>(),
+        vec!["dist", "nested", "target", "note.md"],
+        "构建目录应显示，内部目录保持隐藏"
+    );
+    for parent in [&root, &root.join("nested")] {
+        let parent_tree = scan_workspace_dir_level(parent, TreeSortPreference::Name)
+            .expect("展开父目录");
+        for name in ["dist", "target"] {
+            let directory = parent.join(name);
+            let node = find_workspace_node(std::slice::from_ref(&parent_tree), &file_node_id(&directory))
+                .expect("文件树中的构建目录");
+            assert!(!node.children_loaded, "构建目录应等展开后再加载");
+            assert!(node.children.is_empty(), "未展开时不应扫描构建目录的内容");
+
+            let expanded = scan_workspace_dir_level(&directory, TreeSortPreference::Name)
+                .expect("展开构建目录");
+            assert_eq!(
+                expanded.children.iter().map(|child| child.label.as_str()).collect::<Vec<_>>(),
+                vec!["debug", "artifact.md"]
+            );
+            let debug = expanded.children.first().expect("下一层目录");
+            assert!(!debug.children_loaded, "展开时只加载一层");
+        }
+    }
+    fs::remove_dir_all(root).expect("清理夹具");
 }
 
 #[test]
@@ -1241,7 +1370,7 @@ fn collect_menu_separator_offenders(dir: &std::path::Path, offenders: &mut Vec<S
 
 #[gpui::test]
 async fn dirs_below_the_default_depth_load_when_expanded(cx: &mut TestAppContext) {
-    // 换根默认只扫三层（WORKSPACE_SCAN_DEPTH）：更深的目录先留占位（`children_loaded`
+    // 换根默认只扫一层（WORKSPACE_SCAN_DEPTH）：更深的目录先留占位（`children_loaded`
     // 为 false），展开时才扫它下一层。这是「打开文件不再把整个目录树走穿」的守卫——
     // 谁把扫描改回递归，这条用例就会红（深层文件在展开前就出现在树里）。
     cx.update(|cx| {
@@ -1262,20 +1391,23 @@ async fn dirs_below_the_default_depth_load_when_expanded(cx: &mut TestAppContext
 
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
-    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    editor.update(cx, |editor, cx| {
+        editor.set_workspace_root(root.clone(), cx);
+        editor.ensure_workspace_files_walk(cx);
+    });
     cx.run_until_parked();
 
     // 根会被 canonicalize（macOS 的 /var 是 /private/var 的软链），节点 id 按
     // 规范路径算。
-    let dir_path = crate::file_url::canonical_path(&root.join("a").join("b").join("c"));
+    let dir_path = crate::file_url::canonical_path(&root.join("a"));
     let dir_id = file_node_id(&dir_path);
     editor.read_with(cx, |editor, _| {
         let tree = editor.workspace.file_tree.as_ref().expect("换根后应有树");
         let dir = find_workspace_node(std::slice::from_ref(tree), &dir_id)
-            .expect("第三层的 c 目录应已列出");
+            .expect("第一层的 a 目录应已列出");
         assert!(
             !dir.children_loaded,
-            "三层以下的目录应留占位，等展开再扫：{:?}",
+            "一层以下的目录应留占位，等展开再扫：{:?}",
             dir.label
         );
         assert!(dir.children.is_empty(), "占位目录不该带着子项");
@@ -1289,19 +1421,19 @@ async fn dirs_below_the_default_depth_load_when_expanded(cx: &mut TestAppContext
         );
     });
 
-    // 展开：扫它下一层，深层的 d 目录出现（且它自己仍是占位）。
+    // 展开：扫它下一层，b 目录出现（且它自己仍是占位）。
     editor.update(cx, |editor, cx| editor.toggle_workspace_node(&dir_id, cx));
     cx.run_until_parked();
     editor.read_with(cx, |editor, _| {
         let tree = editor.workspace.file_tree.as_ref().expect("树还在");
-        let dir = find_workspace_node(std::slice::from_ref(tree), &dir_id).expect("c 目录");
+        let dir = find_workspace_node(std::slice::from_ref(tree), &dir_id).expect("a 目录");
         assert!(dir.children_loaded, "展开后应标记这一层已扫");
         assert_eq!(
             dir.children
                 .iter()
                 .map(|node| node.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["d"],
+            vec!["b"],
             "展开后应出现下一层"
         );
         let next = &dir.children[0];
@@ -1417,8 +1549,8 @@ async fn a_directory_that_failed_to_scan_is_not_retried_every_frame(cx: &mut Tes
         crate::components::init(cx);
     });
     let root = std::env::temp_dir().join(format!("velora-scan-failure-{}", uuid::Uuid::new_v4()));
-    // 默认只扫三层：第三层的 c 是占位目录（`children_loaded == false`），展开时才扫。
-    let placeholder = root.join("a").join("b").join("c");
+    // 默认只扫一层：a 是占位目录，展开时才扫。
+    let placeholder = root.join("a");
     fs::create_dir_all(placeholder.join("d")).expect("create deep dirs");
     fs::write(placeholder.join("d").join("note.md"), "# note\n").expect("write deep note");
     cx.on_quit({
@@ -1436,8 +1568,8 @@ async fn a_directory_that_failed_to_scan_is_not_retried_every_frame(cx: &mut Tes
     let dir_id = file_node_id(&dir_path);
     editor.read_with(cx, |editor, _| {
         let tree = editor.workspace.file_tree.as_ref().expect("换根后应有树");
-        let node = find_workspace_node(std::slice::from_ref(tree), &dir_id).expect("c 目录");
-        assert!(!node.children_loaded, "第三层应是占位目录");
+        let node = find_workspace_node(std::slice::from_ref(tree), &dir_id).expect("a 目录");
+        assert!(!node.children_loaded, "第一层应是占位目录");
     });
 
     // 目录从盘上消失：展开时那一次扫描必然失败，而树里那一行还在。

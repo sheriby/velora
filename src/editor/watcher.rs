@@ -13,12 +13,19 @@ use super::Editor;
 /// Starts a recursive watcher on `root`, forwarding modified file paths into
 /// the editor. Any previous watcher is dropped (replacing the workspace root).
 pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Context<Editor>) {
+    enum WorkspaceEvent { Changed(PathBuf), Rescan }
     editor.external_watcher = None;
 
-    let (tx, rx) = mpsc::unbounded::<PathBuf>();
+    let (tx, rx) = mpsc::unbounded::<WorkspaceEvent>();
     let watcher = notify::recommended_watcher(
         move |res: Result<notify::Event, notify::Error>| {
             let Ok(event) = res else { return };
+            if event.need_rescan() {
+                if let Err(error) = tx.unbounded_send(WorkspaceEvent::Rescan) {
+                    eprintln!("发送工作区重新同步事件失败：{error}");
+                }
+                return;
+            }
             let relevant = matches!(
                 event.kind,
                 notify::EventKind::Modify(_)
@@ -29,7 +36,10 @@ pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Co
                 return;
             }
             for path in event.paths {
-                let _ = tx.unbounded_send(path);
+                if let Err(error) = tx.unbounded_send(WorkspaceEvent::Changed(path)) {
+                    eprintln!("发送工作区文件变动失败：{error}");
+                    return;
+                }
             }
         },
     );
@@ -48,13 +58,19 @@ pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Co
     // must move into the spawn, so the editor field is filled from a clone
     // stored beforehand: use an Option swap instead.
     editor.external_watcher = Some(watcher);
+    let watch_root = root.to_path_buf();
     let mut events = rx;
     cx.spawn(async move |this, cx| {
-        while let Some(path) = events.next().await {
+        while let Some(event) = events.next().await {
             let Ok(()) = cx.update(|cx| {
-                let _ = this.update(cx, |editor, cx| {
-                    editor.on_watched_path_changed(&path, cx);
-                });
+                if let Err(error) = this.update(cx, |editor, cx| match event {
+                    WorkspaceEvent::Changed(path) => editor.on_watched_path_changed(&path, cx),
+                    WorkspaceEvent::Rescan => {
+                        if editor.workspace_root_path() == Some(watch_root.as_path()) {
+                            editor.on_workspace_watch_rescan(cx);
+                        }
+                    }
+                }) { eprintln!("处理工作区监听事件失败：{error}"); }
             }) else {
                 return;
             };

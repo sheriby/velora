@@ -46,12 +46,6 @@ impl Editor {
             return;
         }
         let scope = self.workspace.search_scope;
-        let files = self.workspace.files_on_disk.clone();
-        // 名单还在走盘（换根 / watcher 刷新之后）：这不是「没有文件」，是「还没到」。
-        // 保持「进行中」并让旧结果继续显示，名单落地时会重新调度搜索；拿空名单跑
-        // 一轮会把面板先清空，正是要避免的那次闪烁。
-        let list_pending =
-            self.workspace.files_on_disk_root.is_none() && self.workspace.root.is_some();
         if matcher.is_empty() {
             self.workspace.document_active_range = None;
             self.workspace.document_active_index = None;
@@ -61,12 +55,18 @@ impl Editor {
             cx.notify();
             return;
         }
+        // 按需建立名单，等待期间保留旧结果；走盘完成后再接着搜索。
+        if scope == WorkspaceSearchScope::Workspace && !self.ensure_workspace_files_walk(cx) {
+            self.workspace.search_pending = true;
+            cx.notify();
+            return;
+        }
+        let files = if scope == WorkspaceSearchScope::Workspace {
+            self.workspace.files_on_disk.clone()
+        } else {
+            Vec::new()
+        };
         if scope == WorkspaceSearchScope::Workspace && files.is_empty() {
-            if list_pending {
-                self.workspace.search_pending = true;
-                cx.notify();
-                return;
-            }
             self.workspace.search_results.clear();
             self.workspace.search_pending = false;
             self.sync_document_search_highlights(cx);
@@ -262,6 +262,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.ensure_workspace_files_walk(cx) {
+            self.workspace.pending_wikilink_open = Some((target, window.window_handle()));
+            return;
+        }
         let needle = target.to_lowercase();
         let found = self.workspace_text_files().into_iter().find(|path| {
             let stem = path
@@ -291,7 +295,7 @@ impl Editor {
                 cx.notify();
                 return;
             }
-            self.refresh_workspace_tree(cx);
+            self.refresh_workspace_paths(std::slice::from_ref(&path), cx);
         }
         self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
     }
@@ -710,6 +714,7 @@ impl Editor {
 
         let files = self.text_files_on_disk();
         let mut total = 0usize;
+        let mut changed_paths = Vec::new();
         for path in files {
             if Some(&path) == active_path.as_ref() {
                 // The active document goes through the live editor path so the
@@ -754,6 +759,7 @@ impl Editor {
             match crate::editor::persistence::write_atomic(&path, &bytes) {
                 Ok(()) => {
                     self.record_saved_history(&path, &bytes, crate::config::file_history::HistorySource::Manual, cx);
+                    changed_paths.push(path.clone());
                     total += count_matches_in_source(&source, &matcher);
                     if let Some(index) = open_tab_index {
                         let tab = &mut self.workspace.open_documents[index];
@@ -770,7 +776,8 @@ impl Editor {
             }
         }
         if total > 0 {
-            self.refresh_workspace_tree(cx);
+            self.refresh_workspace_paths(&changed_paths, cx);
+            self.refresh_workspace_file_consumers(cx);
         }
         total
     }

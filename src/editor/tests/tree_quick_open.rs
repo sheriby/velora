@@ -1,7 +1,7 @@
 use super::common::*;
 
 #[gpui::test]
-async fn workspace_tree_scan_is_async_and_applies_result(cx: &mut TestAppContext) {
+async fn workspace_tree_and_quick_open_load_independently(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-async-tree-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("nested")).expect("create nested");
@@ -16,10 +16,17 @@ async fn workspace_tree_scan_is_async_and_applies_result(cx: &mut TestAppContext
     });
 
     cx.run_until_parked();
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace_text_files().is_empty(), "只加载文件树不应遍历全局文件");
+    });
+    editor.update_in(cx, |editor, window, cx| editor.toggle_quick_open(window, cx));
+    cx.run_until_parked();
     let expected =
         crate::file_url::canonical_path(&root.join("nested").join("note.md"));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
+        assert_eq!(editor.quick_open.as_ref().expect("快速打开").results, vec![expected.clone()],
+            "首次快速打开应在名单完成后刷新，包含未展开目录中的文件");
     });
     let _ = std::fs::remove_dir_all(root);
 }
@@ -38,8 +45,10 @@ async fn workspace_tree_scan_discards_stale_root_results(cx: &mut TestAppContext
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
     editor.update(cx, |editor, cx| {
         editor.set_workspace_root(root_a.clone(), cx);
+        editor.ensure_workspace_files_walk(cx);
         // 第一次扫描尚未落地就切到新根：旧结果必须被丢弃。
         editor.set_workspace_root(root_b.clone(), cx);
+        editor.ensure_workspace_files_walk(cx);
     });
 
     cx.run_until_parked();
@@ -52,7 +61,7 @@ async fn workspace_tree_scan_discards_stale_root_results(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-async fn reopening_workspace_root_rescans_after_tree_is_cleared(cx: &mut TestAppContext) {
+async fn reopening_workspace_root_reuses_the_loaded_file_list(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-tree-reopen-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("create root");
@@ -62,6 +71,7 @@ async fn reopening_workspace_root_rescans_after_tree_is_cleared(cx: &mut TestApp
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, String::new(), None));
     editor.update(cx, |editor, cx| {
         editor.set_workspace_root(root.clone(), cx);
+        editor.ensure_workspace_files_walk(cx);
     });
     cx.run_until_parked();
     let expected = crate::file_url::canonical_path(&root.join("a.md"));
@@ -69,11 +79,11 @@ async fn reopening_workspace_root_rescans_after_tree_is_cleared(cx: &mut TestApp
         assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
     });
 
-    // 再次打开同一文件夹：旧树先清空，随后必须重新扫描出结果，
-    // 不能因为"该根已扫描过"而卡在空树（roadmap D9 缓存标记）。
+    // 同一工作区继续复用已经加载的名单，不闪空也不重新遍历目录。
     editor.update(cx, |editor, cx| {
         editor.set_workspace_root(root.clone(), cx);
-        assert!(editor.workspace_text_files().is_empty());
+        editor.ensure_workspace_files_walk(cx);
+        assert_eq!(editor.workspace_text_files(), vec![expected.clone()]);
     });
     cx.run_until_parked();
     editor.read_with(cx, |editor, _cx| {
@@ -808,6 +818,7 @@ async fn a_recent_workspace_entry_switches_the_workspace(cx: &mut TestAppContext
             cx,
         )
     });
+    editor.update(cx, |editor, cx| { editor.ensure_workspace_files_walk(cx); });
     cx.run_until_parked();
 
     editor.read_with(cx, |editor, _| {

@@ -69,7 +69,7 @@ impl Editor {
             cx.notify();
             return;
         }
-        self.refresh_workspace_tree(cx);
+        self.refresh_workspace_paths(std::slice::from_ref(&candidate), cx);
         cx.notify();
         let _ = window;
     }
@@ -196,7 +196,7 @@ impl Editor {
                     if let Err(error) = fs::write(&candidate, contents) {
                         self.workspace.file_error = Some(error.to_string());
                     } else {
-                        self.refresh_workspace_tree(cx);
+                        self.refresh_workspace_paths(std::slice::from_ref(&candidate), cx);
                     }
                     cx.notify();
                     return;
@@ -236,7 +236,7 @@ impl Editor {
         if let Err(error) = fs::write(&candidate, &image.bytes) {
             self.workspace.file_error = Some(error.to_string());
         } else {
-            self.refresh_workspace_tree(cx);
+            self.refresh_workspace_paths(std::slice::from_ref(&candidate), cx);
         }
         cx.notify();
     }

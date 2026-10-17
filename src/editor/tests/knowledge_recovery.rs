@@ -25,6 +25,7 @@ async fn wikilink_creates_missing_file_at_workspace_root(cx: &mut TestAppContext
     });
     // The open path is canonicalized by set_workspace_root, so compare
     // against the canonical form of the created file.
+    cx.run_until_parked();
     let canonical_created = crate::file_url::canonical_path(&created_for_assert);
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.file_path, Some(canonical_created.clone()));
@@ -42,7 +43,8 @@ async fn wikilink_opens_existing_workspace_file(cx: &mut TestAppContext) {
     });
     let root = temp_fixture_dir().join(format!("velora-wikilink-open-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("create root");
-    let existing = root.join("target.md");
+    let existing = root.join("nested/target.md");
+    std::fs::create_dir_all(root.join("nested")).expect("创建嵌套目录");
     std::fs::write(&existing, "# target\n").expect("write");
 
     let (editor, cx) =
@@ -56,6 +58,8 @@ async fn wikilink_opens_existing_workspace_file(cx: &mut TestAppContext) {
         });
         window.draw(cx).clear();
     });
+    cx.run_until_parked();
+    assert!(!root.join("target.md").exists(), "名单未就绪时不能创建同名副本");
     let canonical_existing = crate::file_url::canonical_path(&existing);
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.file_path.as_deref(), Some(canonical_existing.as_path()));

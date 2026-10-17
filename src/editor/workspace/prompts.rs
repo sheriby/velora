@@ -159,7 +159,7 @@ impl Editor {
                                 window.set_window_edited(false);
                             }
                         }
-                        editor.refresh_workspace_tree(cx);
+                        editor.refresh_workspace_paths(std::slice::from_ref(&target_for_update), cx);
                         if editor.document_dirty || editor.has_dirty_workspace_documents() {
                             editor.schedule_autosave(cx);
                         }
