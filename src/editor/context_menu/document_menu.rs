@@ -58,7 +58,6 @@ pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option
         DocumentMenuCommand::PasteAsPlainText => Some("icon/editor/paste-plain.svg"),
         DocumentMenuCommand::CopyAsMarkdown => Some("icon/editor/copy-markdown.svg"),
         DocumentMenuCommand::CopyAsHtml => Some("icon/editor/copy-html.svg"),
-        DocumentMenuCommand::Split(_) => Some("icon/editor/toggle-source.svg"),
         DocumentMenuCommand::ToggleSourceView => Some("icon/editor/toggle-source.svg"),
         DocumentMenuCommand::Format(_)
         | DocumentMenuCommand::Heading(_)
@@ -133,7 +132,6 @@ pub(crate) enum DocumentMenuCommand {
     InsertToc,
     InsertFrontMatter,
     ToggleSourceView,
-    Split(crate::editor::workspace::split::SplitDirection),
 }
 
 impl DocumentMenuCommand {
@@ -173,12 +171,6 @@ impl DocumentMenuCommand {
             Self::InsertSeparator => "insert-separator",
             Self::InsertToc => "insert-toc",
             Self::InsertFrontMatter => "insert-front-matter",
-            Self::Split(direction) => match direction {
-                crate::editor::workspace::split::SplitDirection::Left => "split-editor-left",
-                crate::editor::workspace::split::SplitDirection::Right => "split-editor-right",
-                crate::editor::workspace::split::SplitDirection::Up => "split-editor-up",
-                crate::editor::workspace::split::SplitDirection::Down => "split-editor-down",
-            },
             Self::ToggleSourceView => "toggle-source-view",
         }
     }
@@ -212,7 +204,6 @@ impl DocumentMenuCommand {
             | Self::InsertSeparator
             | Self::InsertToc
             | Self::InsertFrontMatter
-            | Self::Split(_)
             | Self::ToggleSourceView => None,
         }
     }
@@ -304,7 +295,7 @@ impl Editor {
 
     /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图。
     pub(crate) fn document_menu_rows(&self) -> Vec<DocumentMenuRow> {
-        let mut rows = vec![
+        vec![
             DocumentMenuRow::QuickActions,
             DocumentMenuRow::Separator,
             DocumentMenuRow::Item {
@@ -336,13 +327,7 @@ impl Editor {
                 name: "toggle-source-view",
                 enabled: true,
             },
-        ];
-        for direction in [crate::editor::workspace::split::SplitDirection::Left, crate::editor::workspace::split::SplitDirection::Right,
-            crate::editor::workspace::split::SplitDirection::Up, crate::editor::workspace::split::SplitDirection::Down] {
-            let command = DocumentMenuCommand::Split(direction);
-            rows.push(DocumentMenuRow::Item { command, name: command.row_name(), enabled: self.file_path.is_some() });
-        }
-        rows
+        ]
     }
 
     /// 二级菜单的行。链接排在「格式」那一档（写法在行内，与八种行内样式同一条口径），
@@ -530,7 +515,6 @@ impl Editor {
             DocumentMenuCommand::ClearFormat => {
                 self.clear_inline_format_on_selection(cx);
             }
-            DocumentMenuCommand::Split(direction) => self.split_active_document(direction, window, cx),
             DocumentMenuCommand::ToggleSourceView => {
                 window.dispatch_action(Box::new(ToggleViewMode), cx);
             }
@@ -718,7 +702,6 @@ pub(crate) fn document_menu_label(
         DocumentMenuCommand::InsertSeparator => strings.insert_separator.clone(),
         DocumentMenuCommand::InsertToc => strings.insert_toc.clone(),
         DocumentMenuCommand::InsertFrontMatter => strings.insert_front_matter.clone(),
-        DocumentMenuCommand::Split(direction) => direction.label(strings),
         DocumentMenuCommand::ToggleSourceView => strings.context_menu_toggle_source_view.clone(),
     }
 }
@@ -767,12 +750,6 @@ pub(crate) fn document_menu_shortcut(
         DocumentMenuCommand::ClearFormat => ShortcutCommand::ClearFormatSelection,
         DocumentMenuCommand::Link => ShortcutCommand::LinkSelection,
         DocumentMenuCommand::InsertImage => ShortcutCommand::InsertImage,
-        DocumentMenuCommand::Split(direction) => match direction {
-            crate::editor::workspace::split::SplitDirection::Left => ShortcutCommand::SplitEditorLeft,
-            crate::editor::workspace::split::SplitDirection::Right => ShortcutCommand::SplitEditorRight,
-            crate::editor::workspace::split::SplitDirection::Up => ShortcutCommand::SplitEditorUp,
-            crate::editor::workspace::split::SplitDirection::Down => ShortcutCommand::SplitEditorDown,
-        },
         DocumentMenuCommand::ToggleSourceView => ShortcutCommand::ToggleViewMode,
         // 段落与插入那一档不给默认键：标题的 ⌘1..⌘6 与本仓换标签的 ⌘1-9 撞车，列表、引用、
         // 代码块与目录、分割线这些也没有通行的键位可以对齐，硬造一串反而要多记一件事。

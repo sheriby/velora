@@ -14,14 +14,13 @@ use gpui::{point, px, Entity, Modifiers, MouseButton, Size};
 const TWO_PARAGRAPHS: &str = "alpha one\n\nbeta two\n";
 
 /// 主面板的长行，行 id 与 `document_menu_rows` 里给的一致。
-const MAIN_ROWS: [&str; 10] = [
+const MAIN_ROWS: [&str; 6] = [
     "copy-as-markdown",
     "copy-as-html",
     "format",
     "paragraph",
     "insert",
     "toggle-source-view",
-    "split-editor-left", "split-editor-right", "split-editor-up", "split-editor-down",
 ];
 
 /// 顶部图标条那六颗，按屏上从左到右的顺序（与 `DOCUMENT_MENU_QUICK_ACTIONS` 同序）。
@@ -255,6 +254,28 @@ fn submenu_enabled_rows(
             })
             .collect()
     })
+}
+
+#[gpui::test]
+fn selected_text_context_menu_offers_document_editing_actions(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    select_head_of_first_block(&editor, cx);
+    right_click(&editor, 0, cx);
+    assert!(menu_is_open(&editor, cx), "正文右键菜单应正常显示");
+    for name in [
+        "split-editor-left",
+        "split-editor-right",
+        "split-editor-up",
+        "split-editor-down",
+    ] {
+        assert!(
+            cx.debug_bounds(item_selector(name)).is_none(),
+            "正文编辑菜单的操作应与文本相关：{name}"
+        );
+    }
 }
 
 #[gpui::test]
@@ -769,7 +790,7 @@ async fn the_menu_is_pulled_back_inside_the_viewport(cx: &mut TestAppContext) {
     right_click_at(position, cx);
     assert!(menu_is_open(&editor, cx), "靠下靠右的右键该弹出菜单");
 
-    let last = row_bounds("split-editor-down", cx);
+    let last = row_bounds("toggle-source-view", cx);
     let viewport_height = f32::from(viewport.height);
     let viewport_width = f32::from(viewport.width);
     assert!(

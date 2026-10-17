@@ -40,7 +40,7 @@ const CODE_SIZE: f32 = 11.0;
 const SEPARATOR_WIDTH: f32 = 1.0;
 const SEPARATOR_HEIGHT: f32 = 16.0;
 /// 一条上的子元素个数：「段落」一颗、六颗行内格式、链接、清除格式，再加两条分节线。
-const SLOT_COUNT: f32 = 15.0;
+const SLOT_COUNT: f32 = FORMAT_BUTTONS.len() as f32 + 5.0;
 
 /// 「段落」那颗的宽度：图标 + 间距 + 箭头 + 左右各一份留白。
 const HEADING_BUTTON_WIDTH: f32 =
@@ -159,7 +159,7 @@ impl Editor {
     }
 
     fn toolbar_size(theme: &Theme) -> Size<Pixels> {
-        // 九颗格子（六个行内样式、链接、清除格式）+「段落」那颗按图标算的宽 + 两条分节线，
+        // 八颗格子（六个行内样式、链接、清除格式）+「段落」那颗按图标算的宽 + 两条分节线，
         // 子元素之间各一个间距；`SLOT_COUNT` 与 `render_selection_toolbar` 里挂的顺序一致。
         // 边框那一份也要算进来：gpui 的描边画在边界之内，不算就会让最后一颗顶到边线上，
         // 与菜单面板截字是同一处漏算。
@@ -289,16 +289,6 @@ impl Editor {
         toolbar = toolbar.child(self.link_button(&strings, theme, cx));
         let clear_enabled = self.clear_format_is_available(cx);
         toolbar = toolbar.child(self.clear_format_button(&strings, theme, clear_enabled, cx));
-        for (direction, label) in [(super::workspace::split::SplitDirection::Left, "◧"),
-            (super::workspace::split::SplitDirection::Right, "◨"),
-            (super::workspace::split::SplitDirection::Up, "⬒"), (super::workspace::split::SplitDirection::Down, "⬓")] {
-            let tooltip = direction.label(&strings);
-            toolbar = toolbar.child(div().id(SharedString::from(format!("toolbar-split-{direction:?}")))
-                .size(px(BUTTON_SIZE)).flex().items_center().justify_center().cursor_pointer()
-                .hover(|style| style.bg(theme.colors.dialog_secondary_button_hover))
-                .tooltip(move |_, cx| cx.new(|_| HoverPreviewTooltip { label: tooltip.clone().into() }).into())
-                .child(label).on_click(cx.listener(move |editor, _, window, cx| editor.split_active_document(direction, window, cx))));
-        }
         if let Some((rows, geometry, offset, _)) = heading_menu.as_ref() {
             toolbar = toolbar.child(self.heading_menu_panel(
                 theme,

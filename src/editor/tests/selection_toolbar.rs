@@ -115,6 +115,43 @@ fn toolbar_is_hidden(cx: &mut VisualTestContext) -> bool {
 }
 
 #[gpui::test]
+fn selecting_text_only_shows_text_tools_without_split_buttons(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    select_head_of_first_block(&editor, cx);
+    assert!(toolbar_bounds(cx).is_some(), "选中文字应显示格式工具栏");
+    for selector in [
+        "toolbar-split-Left",
+        "toolbar-split-Right",
+        "toolbar-split-Up",
+        "toolbar-split-Down",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_none(),
+            "文本操作工具栏不应出现分屏按钮：{selector}"
+        );
+    }
+}
+
+#[gpui::test]
+fn text_toolbar_ends_at_the_clear_format_button(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) = cx
+        .add_window_view(|_window, cx| Editor::from_markdown(cx, TWO_PARAGRAPHS.to_string(), None));
+    redraw(cx);
+    select_head_of_first_block(&editor, cx);
+    let panel = toolbar_bounds(cx).expect("选中工具栏");
+    let last_button = button_bounds("toolbar-clear-format", cx);
+    let inset = panel.right() - last_button.right();
+    assert!(
+        inset >= px(4.0) && inset <= px(6.0),
+        "最后一颗按钮应完整位于面板内，右侧只保留内边距：{inset:?}"
+    );
+}
+
+#[gpui::test]
 async fn dragging_a_selection_pops_the_toolbar_after_the_button_is_released(
     cx: &mut TestAppContext,
 ) {
