@@ -125,7 +125,8 @@ pub(crate) async fn run_with_provider(
     config.context_config = Some(context_config);
     let mut limits = yoagent::context::ExecutionLimits::default();
     limits.max_turns = request.max_turns.clamp(1, 128);
-    limits.max_duration = request.timeout;
+    // 时长统一由外层 timeout 控制，涵盖等待模型响应；避免与轮间检查竞争。
+    limits.max_duration = std::time::Duration::MAX;
     config.execution_limits = Some(limits);
     config.get_steering_messages = Some(Box::new({
         let steering = control.steering.clone();
@@ -230,8 +231,13 @@ pub(crate) async fn run_with_provider(
     }) && output.error.is_none() {
         output.error = Some("任务已达到执行预算，可以继续讨论".into());
     }
-    output.history = context
-        .messages
+    // 强制超时可能发生在 tool_use 与 tool_result 之间，只恢复完整轮次的检查点。
+    let history = if timed_out {
+        observed_history
+    } else {
+        context.messages
+    };
+    output.history = history
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<_, _>>()?;

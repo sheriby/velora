@@ -186,19 +186,16 @@ fn ai_runtime_configured_backend_reads_proposes_and_verifies_an_exact_change() {
     assert!(output.history.len() >= 5);
 }
 
-struct SlowProvider;
+struct HangingProvider;
 #[async_trait::async_trait]
-impl StreamProvider for SlowProvider {
+impl StreamProvider for HangingProvider {
     async fn stream(
         &self,
-        config: yoagent::provider::StreamConfig,
-        sender: tokio::sync::mpsc::UnboundedSender<yoagent::provider::StreamEvent>,
-        cancel: CancellationToken,
+        _config: yoagent::provider::StreamConfig,
+        _sender: tokio::sync::mpsc::UnboundedSender<yoagent::provider::StreamEvent>,
+        _cancel: CancellationToken,
     ) -> std::result::Result<Message, yoagent::provider::ProviderError> {
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        MockProvider::new(vec![MockResponse::Text("迟到的结果".into())])
-            .stream(config, sender, cancel)
-            .await
+        std::future::pending().await
     }
 }
 
@@ -213,7 +210,7 @@ fn ai_runtime_deadline_stops_a_provider_that_does_not_finish_within_budget() {
             request,
             workspace,
             RunControl::default(),
-            Arc::new(SlowProvider),
+            Arc::new(HangingProvider),
             |_| {},
         ))
         .unwrap();
@@ -223,5 +220,77 @@ fn ai_runtime_deadline_stops_a_provider_that_does_not_finish_within_budget() {
             .as_ref()
             .is_some_and(|error| error.contains("超时")),
         "{output:?}"
+    );
+}
+
+#[test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_runtime_timeout_during_a_tool_keeps_the_conversation_resumable() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let entered = Arc::new(AtomicBool::new(false));
+    let control = RunControl::default();
+    let mut documents = AiWorkspace::new(
+        None,
+        vec![DocumentSnapshot {
+            id: "note.md".into(),
+            source: "原文".into(),
+        }],
+    )
+    .unwrap();
+    documents.refresh.callback = Some(Arc::new({
+        let entered = entered.clone();
+        let cancel = control.cancel.clone();
+        move |_| {
+            entered.store(true, Ordering::SeqCst);
+            while !cancel.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            anyhow::bail!("任务已停止")
+        }
+    }));
+    let workspace = Arc::new(Mutex::new(documents));
+    let mut first_request = request();
+    first_request.timeout = Duration::from_secs(2);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let first = runtime
+        .block_on(run_with_provider(
+            first_request,
+            workspace.clone(),
+            control,
+            Arc::new(MockProvider::new(vec![call(
+                "read_document",
+                json!({"path":"note.md"}),
+            )])),
+            |_| {},
+        ))
+        .unwrap();
+    assert!(
+        entered.load(Ordering::SeqCst),
+        "必须实际进入被中断的文档工具"
+    );
+    assert!(
+        first
+            .error
+            .as_ref()
+            .is_some_and(|error| error.contains("超时"))
+    );
+    let mut resumed = request();
+    resumed.history = first.history;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(run_with_provider(
+            resumed,
+            workspace,
+            RunControl::default(),
+            Arc::new(MockProvider::new(vec![MockResponse::Text(
+                "继续完成".into(),
+            )])),
+            |_| {},
+        ))
+    }));
+    assert!(result.is_ok(), "恢复请求不能包含未配对的工具消息");
+    let second = result.unwrap().unwrap();
+    assert!(
+        second.error.is_none(),
+        "超时后不能留下模型拒绝接收的工具消息序列：{second:?}"
     );
 }
