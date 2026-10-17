@@ -18,6 +18,7 @@ pub(crate) struct TestWindowState {
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
+    pub(crate) window_move_requests: usize,
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
@@ -51,6 +52,13 @@ impl HasDisplayHandle for TestWindow {
 }
 
 impl TestWindow {
+    pub(crate) fn hit_test_window_control(&self) -> Option<WindowControlArea> {
+        let mut callback = self.0.lock().hit_test_window_control_callback.take()?;
+        let result = callback();
+        self.0.lock().hit_test_window_control_callback = Some(callback);
+        result
+    }
+
     pub fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
@@ -65,6 +73,7 @@ impl TestWindow {
             sprite_atlas: Arc::new(TestAtlas::new()),
             title: Default::default(),
             edited: false,
+            window_move_requests: 0,
             should_close_handler: None,
             hit_test_window_control_callback: None,
             input_callback: None,
@@ -290,7 +299,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn start_window_move(&self) {
-        unimplemented!()
+        self.0.lock().window_move_requests += 1;
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}

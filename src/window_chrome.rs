@@ -18,7 +18,7 @@ const TITLEBAR_BUTTON_WIDTH: f32 = 46.0;
 const TITLEBAR_ICON_SIZE: f32 = 12.0;
 const TITLEBAR_MENU_ICON_SIZE: f32 = 14.0;
 const MAC_TRAFFIC_LIGHT_RESERVED_WIDTH: f32 = 84.0;
-/// Reserved drag area between the last tab and the right window edge.
+/// 标签占满时也要保留可抓取的空白，不能随标签宽度一起压缩。
 const TITLEBAR_DRAG_FILLER_WIDTH: f32 = 40.0;
 const TITLEBAR_CLOSE_ICON: &str = "icon/titlebar/chrome-close.svg";
 const TITLEBAR_MAXIMIZE_ICON: &str = "icon/titlebar/chrome-maximize.svg";
@@ -262,6 +262,24 @@ fn on_titlebar_mouse_down(event: &MouseDownEvent, window: &mut Window, cx: &mut 
     cx.stop_propagation();
 }
 
+pub(crate) fn render_titlebar_drag_area(
+    id: impl Into<gpui::ElementId>,
+    window: &Window,
+) -> gpui::Stateful<gpui::Div> {
+    let area = div().id(id).h_full();
+    if cfg!(target_os = "macos") && window.is_fullscreen() {
+        return area;
+    }
+    // 各空白区共用平台策略，避免原生命中与显式移动的区域脱节。
+    let area = area.window_control_area(WindowControlArea::Drag);
+    match titlebar_drag_strategy_for_target_os(std::env::consts::OS, window.window_decorations()) {
+        TitlebarDragStrategy::PlatformHitTest => area,
+        TitlebarDragStrategy::ExplicitMoveRequest => {
+            area.on_mouse_down(MouseButton::Left, on_titlebar_mouse_down)
+        }
+    }
+}
+
 pub(crate) fn custom_titlebar_height_for_target_os(
     target_os: &str,
     decorations: Decorations,
@@ -324,8 +342,6 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
         window.window_decorations(),
         &theme.dimensions,
     )?;
-    let drag_strategy =
-        titlebar_drag_strategy_for_target_os(std::env::consts::OS, window.window_decorations());
     let c = &theme.colors;
     let t = &theme.typography;
     let controls = window.window_controls();
@@ -339,16 +355,13 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
         .unwrap_or("")
         .to_string();
     let make_drag_title = || {
-        let drag_title = div()
-            .id("window-titlebar-drag-title")
-            .h_full()
+        render_titlebar_drag_area("window-titlebar-drag-title", window)
             .flex_1()
             .min_w(px(0.0))
             .px(px(12.0))
             .flex()
             .items_center()
             .justify_center()
-            .window_control_area(WindowControlArea::Drag)
             .child(
                 div()
                     .min_w(px(0.0))
@@ -357,41 +370,20 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                     .font_weight(t.dialog_button_weight.to_font_weight())
                     .text_color(c.text_default)
                     .child(breadcrumb.clone()),
-            );
-
-        match drag_strategy {
-            TitlebarDragStrategy::PlatformHitTest => drag_title,
-            TitlebarDragStrategy::ExplicitMoveRequest => {
-                drag_title.on_mouse_down(MouseButton::Left, on_titlebar_mouse_down)
-            }
-        }
-        .on_click(|event, window, _cx| {
-            if event.is_right_click() {
-                window.show_window_menu(event.position());
-            }
-        })
+            )
+            .on_click(|event, window, _cx| {
+                if event.is_right_click() {
+                    window.show_window_menu(event.position());
+                }
+            })
     };
 
-    // With document tabs the title moves out of the way (the active tab already
-    // names the document) and the tab strip fills the bar; empty space around
-    // the strip stays draggable.
-    let drag_filler = |flex_grow: bool| {
-        let filler = div()
-            .id("window-titlebar-drag-filler")
-            .h_full()
-            .window_control_area(WindowControlArea::Drag)
-            .min_w(px(12.0));
-        let filler = match drag_strategy {
-            TitlebarDragStrategy::PlatformHitTest => filler,
-            TitlebarDragStrategy::ExplicitMoveRequest => {
-                filler.on_mouse_down(MouseButton::Left, on_titlebar_mouse_down)
-            }
-        };
-        if flex_grow {
-            filler.flex_1()
-        } else {
-            filler.w(px(TITLEBAR_DRAG_FILLER_WIDTH)).flex_shrink_0()
-        }
+    let drag_filler = || {
+        render_titlebar_drag_area("window-titlebar-drag-filler", window)
+            .debug_selector(|| "window-titlebar-drag-filler".into())
+            .flex_1()
+            .min_w(px(TITLEBAR_DRAG_FILLER_WIDTH))
+            .flex_shrink_0()
     };
 
     let root = div()
@@ -421,7 +413,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
             if let Some(tabs) = tabs {
                 root.child(traffic_light_spacer())
                     .child(tabs)
-                    .child(drag_filler(true))
+                    .child(drag_filler())
             } else {
                 root.child(traffic_light_spacer())
                     .child(make_drag_title())
@@ -565,7 +557,7 @@ pub(crate) fn render_custom_titlebar<T: 'static>(
                     .flex()
                     .items_center()
                     .child(tabs)
-                    .child(drag_filler(true))
+                    .child(drag_filler())
                     .into_any_element(),
                 None => make_drag_title().into_any_element(),
             };

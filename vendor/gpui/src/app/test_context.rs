@@ -805,6 +805,16 @@ impl VisualTestContext {
         self.simulate_window_resize(self.window, size)
     }
 
+    /// 查询平台拖窗请求次数，供真实鼠标命中回归断言。
+    pub fn window_move_requests(&self) -> usize {
+        self.cx.test_window(self.window).0.lock().window_move_requests
+    }
+
+    /// 复用平台回调，检查当前鼠标位置的窗口控件命中区域。
+    pub fn hit_test_window_control(&self) -> Option<crate::WindowControlArea> {
+        self.cx.test_window(self.window).hit_test_window_control()
+    }
+
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())

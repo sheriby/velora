@@ -56,7 +56,7 @@ impl Editor {
             (rail, panel, status, editor.workspace_breadcrumb())
         });
         let groups = self.split_groups();
-        let mut group_tabs = self.render_group_tabs(&theme, cx);
+        let mut group_tabs = self.render_group_tabs(&theme, window, cx);
         let header_height = if height > 0.0 {
             height
         } else if group_tabs.is_some() {
@@ -218,7 +218,12 @@ impl Editor {
         root.into_any_element()
     }
 
-    fn render_group_tabs(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_group_tabs(
+        &mut self,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let groups = self.split_groups();
         let show_group_accents = groups.len() > 1;
         let active_group = self
@@ -245,13 +250,15 @@ impl Editor {
             }
             if !tabs.is_empty() {
                 tabs.push(
-                    div()
-                        .id(("tab-group-gap", group_index))
-                        .debug_selector(move || format!("tab-group-gap-{group_index}"))
-                        .flex_shrink_0()
-                        .w(px(12.0))
-                        .h_full()
-                        .into_any_element(),
+                    crate::window_chrome::render_titlebar_drag_area(
+                        ("tab-group-gap", group_index),
+                        window,
+                    )
+                    .debug_selector(move || format!("tab-group-gap-{group_index}"))
+                    .flex_shrink_0()
+                    .w(px(12.0))
+                    .h_full()
+                    .into_any_element(),
                 );
             }
             let id = group.entity_id();
@@ -314,7 +321,6 @@ impl Editor {
                 .debug_selector(|| "window-editor-tabs".into())
                 .h_full()
                 .min_w(px(0.0))
-                .flex_auto()
                 .flex()
                 .track_scroll(&self.workspace.tabs_scroll_handle)
                 .overflow_x_scroll()

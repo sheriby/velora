@@ -141,7 +141,7 @@
 
 ## 11. 窗口 chrome（src/window_chrome.rs）
 
-`render_custom_titlebar` 是泛型（Editor 与偏好设置窗共用）；macOS 全屏返回 None。macOS 用原生红绿灯 + 一段**不可压缩**的保留空档（否则标签溢出时布局会把空档挤掉、首个标签滑进红绿灯下面）。Windows 自绘三键 + 最左汉堡菜单钮。Linux/FreeBSD 用 client decorations + 自绘按钮，左右分布读 gsettings。拖拽区分两种策略：平台命中测试（Windows）与显式移动请求（macOS、Linux 自绘标题栏）。macOS 同时关闭窗口的默认移动（`is_movable: false`）与内容视图的鼠标透传；仅关闭透传时 AppKit 仍会让标签与窗口同时移动。标题与空白填充区显式发起移动，后端仅在该次原生拖窗期间临时允许移动。**标签条并入标题栏**：有标签时标题让位，条后补一段拖拽填充；无标签走居中的文档标题。
+`render_custom_titlebar` 是泛型（Editor 与偏好设置窗共用）；macOS 全屏返回 None。macOS 用原生红绿灯 + 一段**不可压缩**的保留空档（否则标签溢出时布局会把空档挤掉、首个标签滑进红绿灯下面）。Windows 自绘三键 + 最左汉堡菜单钮。Linux/FreeBSD 用 client decorations + 自绘按钮，左右分布读 gsettings。拖拽区分两种策略：平台命中测试（Windows）与显式移动请求（macOS、Linux 自绘标题栏）。macOS 同时关闭窗口的默认移动（`is_movable: false`）与内容视图的鼠标透传；仅关闭透传时 AppKit 仍会让标签与窗口同时移动。标题与空白区域通过 `render_titlebar_drag_area` 共享平台策略，后端仅在该次原生拖窗期间临时允许移动。**标签条并入标题栏**：有标签时标题让位，标签区按内容占宽，剩余空白与分组间空白均可拖窗，右侧拖动区最小 40px 且不可压缩；标签占满后继续横向滚动，保留区不会被挤掉。无标签走居中的文档标题，macOS 全屏的标签空白不发起拖窗。
 
 ## 12. 陷阱
 

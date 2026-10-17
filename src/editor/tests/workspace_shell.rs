@@ -481,3 +481,165 @@ async fn heading_fold_chevron_renders_and_click_toggles_fold(cx: &mut TestAppCon
         assert_eq!(filtered, vec!["Section".to_string(), "Empty".to_string()]);
     });
 }
+
+#[gpui::test]
+fn titlebar_blank_space_after_tabs_can_start_a_window_drag(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = temp_markdown_path("titlebar-blank-drag");
+    fs::create_dir_all(&root).unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || fs::remove_dir_all(root).unwrap()
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
+    editor.update_in(cx, |editor, window, cx| {
+        for index in 0..3 {
+            let path = root.join(format!("document-with-a-long-visible-title-{index}.md"));
+            fs::write(&path, "正文\n").unwrap();
+            editor.open_workspace_file(path, window, cx);
+        }
+    });
+    redraw(cx);
+    redraw(cx);
+    for grouped in [false, true] {
+        if grouped {
+            editor.update_in(cx, |editor, window, cx| {
+                editor.split_active_document(
+                    crate::editor::workspace::split::SplitDirection::Right,
+                    window,
+                    cx,
+                );
+            });
+            redraw(cx);
+            redraw(cx);
+            let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+            let left = groups.first().expect("左组").clone();
+            let right = groups.get(1).expect("右组").clone();
+            let active = right.read_with(cx, |editor, _| editor.file_path.clone().unwrap());
+            editor.update_in(cx, |editor, window, cx| {
+                editor.transfer_split_tab(
+                    right.downgrade(),
+                    left.entity_id(),
+                    active,
+                    None,
+                    false,
+                    window,
+                    cx,
+                );
+            });
+            redraw(cx);
+            redraw(cx);
+            assert_eq!(
+                editor.read_with(cx, |editor, _| editor.split_groups().len()),
+                1
+            );
+        }
+        let last = cx.debug_bounds("document-tab-2").expect("最后一个标签");
+        let filler = cx
+            .debug_bounds("window-titlebar-drag-filler")
+            .expect("标题栏拖动区");
+        let point = gpui::point(last.right() + px(16.0), filler.center().y);
+        assert!(point.x < filler.right(), "夹具必须留下标签后的空白");
+        cx.simulate_mouse_move(point, None, Modifiers::none());
+        assert_eq!(
+            cx.hit_test_window_control(),
+            Some(gpui::WindowControlArea::Drag),
+            "标签后的空白应全部可拖窗，最后标签 {last:?}，右侧拖动区 {filler:?}"
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let before = cx.window_move_requests();
+            cx.simulate_mouse_down(point, gpui::MouseButton::Left, Modifiers::none());
+            assert_eq!(
+                cx.window_move_requests(),
+                before + 1,
+                "macOS 空白处应实际发起拖窗"
+            );
+            cx.simulate_mouse_up(point, gpui::MouseButton::Left, Modifiers::none());
+        }
+    }
+}
+
+#[gpui::test]
+fn titlebar_keeps_a_drag_area_when_tabs_overflow(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = temp_markdown_path("titlebar-reserved-drag");
+    fs::create_dir_all(&root).unwrap();
+    cx.on_quit({
+        let root = root.clone();
+        move || fs::remove_dir_all(root).unwrap()
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.simulate_resize(gpui::size(px(1000.0), px(800.0)));
+    editor.update_in(cx, |editor, window, cx| {
+        for index in 0..14 {
+            let path = root.join(format!("long-document-name-{index}.md"));
+            fs::write(&path, "正文\n").unwrap();
+            editor.open_workspace_file(path, window, cx);
+        }
+    });
+    redraw(cx);
+    redraw(cx);
+    let filler = cx
+        .debug_bounds("window-titlebar-drag-filler")
+        .expect("固定拖动区");
+    assert!(
+        filler.size.width >= px(40.0),
+        "标签占满仍须留下至少 40px 拖动区，实际 {filler:?}"
+    );
+    assert!(filler.right() <= px(1000.0), "固定拖动区不能溢出窗口");
+    cx.simulate_mouse_move(filler.center(), None, Modifiers::none());
+    assert_eq!(
+        cx.hit_test_window_control(),
+        Some(gpui::WindowControlArea::Drag)
+    );
+    assert!(
+        editor.read_with(cx, |editor, _| editor
+            .workspace
+            .tabs_scroll_handle
+            .max_offset()
+            .width
+            > px(0.0)),
+        "其余标签应继续横向滚动"
+    );
+}
+
+#[gpui::test]
+fn titlebar_blank_space_between_groups_can_start_a_window_drag(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let path = temp_markdown_path("titlebar-group-gap-drag");
+    fs::write(&path, "正文\n").unwrap();
+    cx.on_quit({
+        let path = path.clone();
+        move || fs::remove_file(path).unwrap()
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
+    cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_workspace_file(path, window, cx);
+        editor.split_active_document(
+            crate::editor::workspace::split::SplitDirection::Right,
+            window,
+            cx,
+        );
+    });
+    redraw(cx);
+    redraw(cx);
+    let gap = cx
+        .debug_bounds("tab-group-gap-1")
+        .expect("标签分组之间的空白");
+    cx.simulate_mouse_move(gap.center(), None, Modifiers::none());
+    assert_eq!(
+        cx.hit_test_window_control(),
+        Some(gpui::WindowControlArea::Drag),
+        "分组之间的空白也应属于拖窗区域"
+    );
+    #[cfg(target_os = "macos")]
+    {
+        let before = cx.window_move_requests();
+        cx.simulate_mouse_down(gap.center(), gpui::MouseButton::Left, Modifiers::none());
+        assert_eq!(cx.window_move_requests(), before + 1);
+        cx.simulate_mouse_up(gap.center(), gpui::MouseButton::Left, Modifiers::none());
+    }
+}
