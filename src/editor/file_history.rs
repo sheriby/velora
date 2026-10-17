@@ -61,6 +61,29 @@ pub(crate) fn file_history_version_label(stem: &str) -> Option<String> {
 }
 
 impl Editor {
+    fn file_history_document_is_supported(&self) -> bool {
+        let Some(path) = self.file_path.as_ref() else {
+            return false;
+        };
+        if !config::file_history::supports_document(path, 0) {
+            return false;
+        }
+        // UTF-8 每个标量最多四字节，先排除必然超限的正文，避免为大文件复制全文。
+        if self.buffer.byte_len() > config::file_history::MAX_SNAPSHOT_BYTES * 4 {
+            return false;
+        }
+        config::file_history::supports_document(path, self.buffer.file_bytes().len() as u64)
+    }
+
+    fn show_file_history_limits(&mut self, cx: &mut Context<Self>) {
+        let strings = cx.global::<I18nManager>().strings();
+        self.show_message_modal(
+            strings.menu_file_history.clone(),
+            strings.file_history_supported_files.clone(),
+            cx,
+        );
+    }
+
     pub(crate) fn file_history_is_open(&self) -> bool {
         self.file_history_overlay.is_some()
     }
@@ -70,6 +93,11 @@ impl Editor {
         let Some(path) = self.file_path.clone() else {
             return;
         };
+        if !self.file_history_document_is_supported() {
+            self.close_file_history(cx);
+            self.show_file_history_limits(cx);
+            return;
+        }
         let versions = match config::file_history::list_versions(
             &path,
             EditorSettings::file_history(cx),
@@ -117,7 +145,7 @@ impl Editor {
         let Some(version) = overlay.versions.get(selected) else {
             return;
         };
-        match super::encoding::load_document(&version.path) {
+        match super::encoding::load_history_document(&version.path) {
             Ok(document) => {
                 overlay.selected = selected;
                 overlay.preview = super::encoding::normalize_document_text(&document.text);
@@ -201,8 +229,12 @@ impl Editor {
                     editor.history_error("请先完成输入法输入，再恢复历史版本。".into(), cx);
                     return;
                 }
+                if !editor.file_history_document_is_supported() {
+                    editor.show_file_history_limits(cx);
+                    return;
+                }
                 // 上限可配置为一条，先读目标再备份，避免备份清理掉待恢复版本。
-                let content = match super::encoding::load_document(&version) {
+                let content = match super::encoding::load_history_document(&version) {
                     Ok(document) => super::encoding::normalize_document_text(&document.text),
                     Err(error) => {
                         editor.history_error(format!("无法读取历史版本：{error}"), cx);
@@ -246,10 +278,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.file_history_overlay.as_ref().is_some_and(|overlay| overlay.compared_revision != Some(self.buffer.revision()))
+            && !self.file_history_document_is_supported() {
+            self.close_file_history(cx);
+            return None;
+        }
         let overlay = self.file_history_overlay.as_mut()?;
         if overlay.compared_revision != Some(self.buffer.revision()) {
             overlay.lines = Arc::new(if overlay.compare {
-                diff::diff_lines(&overlay.preview, &self.buffer.text())
+                diff::diff_lines(&self.buffer.text(), &overlay.preview)
             } else {
                 diff::diff_lines(&overlay.preview, &overlay.preview)
             });

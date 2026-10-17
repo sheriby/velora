@@ -2,6 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+mod delta;
+
+pub(crate) const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
+const MAX_DELTA_DEPTH: usize = 16;
+
+pub(crate) fn supports_document(file: &Path, bytes: u64) -> bool {
+    crate::file_url::is_markdown_document(file) && bytes <= MAX_SNAPSHOT_BYTES as u64
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct HistoryPolicy {
@@ -46,6 +55,86 @@ struct Metadata {
 
 static HISTORY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+fn lock_history() -> std::io::Result<(std::sync::MutexGuard<'static, ()>, std::fs::File)> {
+    let guard = HISTORY_LOCK
+        .lock()
+        .map_err(|_| std::io::Error::other("文件历史锁已损坏"))?;
+    let folder = super::VeloraConfigDirs::from_system()
+        .map_err(std::io::Error::other)?
+        .history_root();
+    std::fs::create_dir_all(&folder)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(folder.join(".lock"))?;
+    file.lock()?;
+    Ok((guard, file))
+}
+
+pub(crate) fn read_snapshot_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    let _guard = lock_history()?;
+    read_snapshot_with_depth(path, 0).map(|(bytes, _)| bytes)
+}
+
+fn read_limited(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_SNAPSHOT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_SNAPSHOT_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "历史版本超过 1 MiB",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn read_snapshot_with_depth(path: &Path, level: usize) -> std::io::Result<(Vec<u8>, usize)> {
+    let payload = read_limited(path)?;
+    if path
+        .extension()
+        .is_none_or(|extension| extension != "delta")
+    {
+        return Ok((payload, 0));
+    }
+    if level >= MAX_DELTA_DEPTH {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "历史增量链超过上限",
+        ));
+    }
+    let patch = delta::Delta::decode(&payload)?;
+    let sequence = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.parse::<u128>().ok());
+    if sequence.is_none_or(|sequence| patch.base_sequence >= sequence) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "历史增量的基准序号无效",
+        ));
+    }
+    let folder = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("历史目录无效"))?;
+    let full = folder.join(format!("{}.md", patch.base_sequence));
+    let base = match std::fs::metadata(&full) {
+        Ok(_) => full,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            folder.join(format!("{}.delta", patch.base_sequence))
+        }
+        Err(error) => return Err(error),
+    };
+    let (bytes, depth) = read_snapshot_with_depth(&base, level + 1)?;
+    Ok((patch.apply(&bytes, MAX_SNAPSHOT_BYTES)?, depth + 1))
+}
+
 impl HistoryPolicy {
     pub(crate) fn normalized(self) -> Self {
         Self {
@@ -84,6 +173,17 @@ fn timestamp(value: u128) -> std::io::Result<SystemTime> {
 
 fn remove_version(version: &HistoryVersion) -> std::io::Result<()> {
     std::fs::remove_file(&version.path)?;
+    if version
+        .path
+        .extension()
+        .is_some_and(|extension| extension == "md")
+    {
+        match std::fs::remove_file(version.path.with_extension("delta")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
     match std::fs::remove_file(version.path.with_extension("json")) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -104,8 +204,15 @@ fn load_and_prune(
     };
     let mut versions = Vec::new();
     for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_none_or(|extension| extension != "md") {
+        let entry = entry?;
+        let path = entry.path();
+        if path
+            .extension()
+            .is_none_or(|extension| extension != "md" && extension != "delta")
+        {
+            continue;
+        }
+        if entry.metadata()?.len() > MAX_SNAPSHOT_BYTES as u64 {
             continue;
         }
         let Some(stamp) = path
@@ -125,6 +232,13 @@ fn load_and_prune(
             },
             Err(error) => return Err(error),
         };
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "delta")
+            && path.with_extension("md").exists()
+        {
+            continue;
+        }
         versions.push(HistoryVersion {
             path,
             timestamp: timestamp(metadata.timestamp_nanos)?,
@@ -139,6 +253,7 @@ fn load_and_prune(
             .then_with(|| right.sequence.cmp(&left.sequence))
     });
     let mut kept = Vec::new();
+    let mut removed = Vec::new();
     for version in versions {
         if kept.len() >= policy.max_entries
             || now
@@ -147,10 +262,35 @@ fn load_and_prune(
                 .as_secs()
                 >= policy.retention_days.saturating_mul(86400)
         {
-            remove_version(&version)?;
+            removed.push(version);
         } else {
             kept.push(version);
         }
+    }
+    let retained: std::collections::HashSet<_> =
+        kept.iter().map(|version| version.sequence).collect();
+    if !removed.is_empty() {
+        for version in &mut kept {
+            if version
+                .path
+                .extension()
+                .is_some_and(|extension| extension == "delta")
+            {
+                let payload = read_limited(&version.path)?;
+                let patch = delta::Delta::decode(&payload)?;
+                if !retained.contains(&patch.base_sequence) {
+                    let (bytes, _) = read_snapshot_with_depth(&version.path, 0)?;
+                    let full = version.path.with_extension("md");
+                    // 新基准先原子落盘，再移除旧增量及祖先；中途退出仍有可读版本。
+                    super::write_config_bytes_atomic(&full, &bytes)?;
+                    std::fs::remove_file(&version.path)?;
+                    version.path = full;
+                }
+            }
+        }
+    }
+    for version in removed {
+        remove_version(&version)?;
     }
     Ok(kept)
 }
@@ -171,9 +311,10 @@ pub(crate) fn record_snapshot_at(
     policy: HistoryPolicy,
     now: SystemTime,
 ) -> std::io::Result<()> {
-    let _guard = HISTORY_LOCK
-        .lock()
-        .map_err(|_| std::io::Error::other("文件历史锁已损坏"))?;
+    if !supports_document(file, bytes.len() as u64) {
+        return Ok(());
+    }
+    let _guard = lock_history()?;
     let policy = policy.normalized();
     let versions = load_and_prune(file, policy, now)?;
     if source == HistorySource::Automatic {
@@ -191,14 +332,26 @@ pub(crate) fn record_snapshot_at(
             }
         }
     }
-    if let Some(last) = versions.first() {
-        if std::fs::read(&last.path)? == bytes {
+    let previous = versions
+        .first()
+        .map(|last| read_snapshot_with_depth(&last.path, 0))
+        .transpose()?;
+    if let (Some(last), Some((previous, _))) = (versions.first(), previous.as_ref()) {
+        if previous == bytes {
             if source != HistorySource::Automatic && source != HistorySource::Baseline {
                 write_metadata(&last.path, source, now)?;
             }
             return Ok(());
         }
     }
+    let patch = match (versions.first(), previous.as_ref()) {
+        (Some(last), Some((before, depth))) if *depth < MAX_DELTA_DEPTH => {
+            delta::encode(last.sequence, before, bytes)
+        }
+        _ => None,
+    };
+    let extension = if patch.is_some() { "delta" } else { "md" };
+    let payload = patch.as_deref().unwrap_or(bytes);
     let folder = directory(file)?;
     std::fs::create_dir_all(&folder)?;
     let mut stamp = versions
@@ -214,12 +367,17 @@ pub(crate) fn record_snapshot_at(
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    // pending 名称同时作跨进程占位；只在内容和元数据落稳后发布 .md。
+    // pending 名称同时作跨进程占位；内容和元数据落稳后再发布版本。
     let (path, temporary, mut snapshot) = loop {
-        let path = folder.join(format!("{stamp}.md"));
+        let path = folder.join(format!("{stamp}.{extension}"));
         let temporary = folder.join(format!("{stamp}.pending"));
         match options.open(&temporary) {
-            Ok(snapshot) if !path.exists() => break (path, temporary, snapshot),
+            Ok(snapshot)
+                if !folder.join(format!("{stamp}.md")).exists()
+                    && !folder.join(format!("{stamp}.delta")).exists() =>
+            {
+                break (path, temporary, snapshot);
+            }
             Ok(snapshot) => {
                 drop(snapshot);
                 std::fs::remove_file(&temporary)?;
@@ -233,7 +391,7 @@ pub(crate) fn record_snapshot_at(
     };
     let mut metadata_written = false;
     let result = (|| {
-        snapshot.write_all(bytes)?;
+        snapshot.write_all(payload)?;
         snapshot.sync_all()?;
         drop(snapshot);
         write_metadata(&path, source, now)?;
@@ -264,20 +422,30 @@ pub(crate) fn list_versions(
     policy: HistoryPolicy,
     now: SystemTime,
 ) -> std::io::Result<Vec<HistoryVersion>> {
-    let _guard = HISTORY_LOCK
-        .lock()
-        .map_err(|_| std::io::Error::other("文件历史锁已损坏"))?;
+    if !supports_document(file, 0) {
+        return Ok(Vec::new());
+    }
+    let _guard = lock_history()?;
     load_and_prune(file, policy, now)
 }
 
 pub(crate) fn capture_baseline(file: &Path) -> std::io::Result<()> {
+    if !supports_document(file, 0) {
+        return Ok(());
+    }
+    match std::fs::metadata(file) {
+        Ok(metadata) if !supports_document(file, metadata.len()) => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
     let policy = super::read_app_preferences()
         .map(|preferences| preferences.file_history)
         .unwrap_or_default();
     if !list_versions(file, policy, SystemTime::now())?.is_empty() {
         return Ok(());
     }
-    match std::fs::read(file) {
+    match read_limited(file) {
         Ok(bytes) => record_snapshot_at(
             file,
             &bytes,
@@ -285,7 +453,14 @@ pub(crate) fn capture_baseline(file: &Path) -> std::io::Result<()> {
             policy,
             SystemTime::now(),
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData
+            ) =>
+        {
+            Ok(())
+        }
         Err(error) => Err(error),
     }
 }

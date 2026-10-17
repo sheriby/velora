@@ -8,6 +8,13 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
+pub(crate) fn is_markdown_document(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        let extension = extension.to_string_lossy();
+        extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+    })
+}
+
 /// Parses a local file URL into a path.
 ///
 /// GPUI's macOS `on_open_urls` callback provides `file://` URLs, while tests

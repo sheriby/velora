@@ -68,6 +68,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) image_copy_address: Option<String>,
     pub(crate) image_scale: Option<String>,
     pub(crate) file_history_empty: Option<String>,
+    pub(crate) file_history_supported_files: Option<String>,
     pub(crate) preferences_history_interval: Option<String>,
     pub(crate) preferences_history_count: Option<String>,
     pub(crate) preferences_history_days: Option<String>,

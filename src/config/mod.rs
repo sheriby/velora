@@ -48,6 +48,10 @@ fn restrict_config_file_to_owner(path: &Path) -> std::io::Result<()> {
 /// 而读取端把解析失败当成「没有配置」静默回退默认值——等于丢掉用户设置。
 /// 临时文件与目标同目录，rename 在同一文件系统内是原子的。
 pub(crate) fn write_config_file_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    write_config_bytes_atomic(path, contents.as_bytes())
+}
+
+pub(crate) fn write_config_bytes_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let file_name = path
         .file_name()
@@ -58,7 +62,7 @@ pub(crate) fn write_config_file_atomic(path: &Path, contents: &str) -> std::io::
     // 建出就收紧：临时文件里同样是配置全文，不留给 umask 一个可读窗口。
     #[cfg(unix)]
     restrict_config_file_to_owner(&temp)?;
-    file.write_all(contents.as_bytes())?;
+    file.write_all(contents)?;
     // rename 前落稳内容，避免断电后留下已替换名称的空配置。
     file.sync_all()?;
     drop(file);

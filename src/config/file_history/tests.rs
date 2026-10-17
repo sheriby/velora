@@ -1,4 +1,4 @@
-use super::{HistoryPolicy, HistorySource, list_versions, record_snapshot_at};
+use super::{HistoryPolicy, HistorySource, list_versions, read_snapshot_bytes, record_snapshot_at};
 use std::time::{Duration, SystemTime};
 
 fn fixture(check: impl FnOnce(&std::path::Path)) {
@@ -11,6 +11,447 @@ fn fixture(check: impl FnOnce(&std::path::Path)) {
 
 fn time(seconds: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000 + seconds)
+}
+
+#[test]
+fn small_markdown_history_enforces_the_file_type_and_byte_limit() {
+    fixture(|path| {
+        for (name, size, expected) in [
+            ("below.md", 1024 * 1024 - 1, 1),
+            ("boundary.MARKDOWN", 1024 * 1024, 1),
+            ("above.md", 1024 * 1024 + 1, 0),
+            ("application.log", 100, 0),
+            ("notes.txt", 100, 0),
+        ] {
+            let source = path.with_file_name(name);
+            let bytes = vec![b'a'; size];
+            record_snapshot_at(
+                &source,
+                &bytes,
+                HistorySource::Manual,
+                Default::default(),
+                time(0),
+            )
+            .expect("保存历史");
+            assert_eq!(
+                list_versions(&source, Default::default(), time(0))
+                    .expect("历史")
+                    .len(),
+                expected,
+                "{name}"
+            );
+        }
+    });
+}
+
+#[test]
+fn baseline_capture_checks_the_limit_before_copying_the_source() {
+    fixture(|path| {
+        let file = std::fs::File::create(path).expect("原文");
+        file.set_len(1024 * 1024 + 1).expect("超限原文");
+        super::capture_baseline(path).expect("正常保存可继续");
+        assert!(
+            !super::directory(path).expect("目录").exists(),
+            "超限文档应跳过基准复制"
+        );
+    });
+}
+
+#[test]
+fn a_full_baseline_and_small_deltas_restore_without_the_original_file() {
+    fixture(|path| {
+        let baseline = "# 标题\r\n".repeat(1000);
+        let second = format!("{baseline}第二版\r\n");
+        let third = format!("{second}第三版\r\n");
+        for (index, text) in [&baseline, &second, &third].iter().enumerate() {
+            std::fs::write(path, text).expect("当前文件");
+            record_snapshot_at(
+                path,
+                text.as_bytes(),
+                HistorySource::Manual,
+                Default::default(),
+                time(index as u64),
+            )
+            .expect("历史");
+        }
+        std::fs::remove_file(path).expect("删除原文");
+        let versions = list_versions(path, Default::default(), time(3)).expect("历史");
+        assert_eq!(
+            versions
+                .first()
+                .expect("最新")
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("delta")
+        );
+        assert_eq!(
+            versions
+                .last()
+                .expect("基准")
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("md")
+        );
+        let payload_bytes: u64 = versions
+            .iter()
+            .map(|version| std::fs::metadata(&version.path).expect("大小").len())
+            .sum();
+        assert!(
+            payload_bytes < baseline.len() as u64 + 1024,
+            "小改动只需增量：{payload_bytes}"
+        );
+        for (version, expected) in versions.iter().zip([&third, &second, &baseline]) {
+            assert_eq!(
+                read_snapshot_bytes(&version.path).expect("历史独立恢复"),
+                expected.as_bytes()
+            );
+        }
+    });
+}
+
+#[test]
+fn large_deltas_fall_back_to_full_versions() {
+    fixture(|path| {
+        for (index, byte) in [b'a', b'b'].into_iter().enumerate() {
+            record_snapshot_at(
+                path,
+                &vec![byte; 4096],
+                HistorySource::Manual,
+                Default::default(),
+                time(index as u64),
+            )
+            .expect("历史");
+        }
+        let latest = list_versions(path, Default::default(), time(2))
+            .expect("历史")
+            .remove(0);
+        assert_eq!(
+            latest
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("md")
+        );
+        assert_eq!(
+            read_snapshot_bytes(&latest.path).expect("完整版本"),
+            vec![b'b'; 4096]
+        );
+    });
+}
+
+#[test]
+fn pruning_rebases_retained_deltas_before_removing_their_ancestors() {
+    fixture(|path| {
+        let policy = HistoryPolicy {
+            max_entries: 3,
+            ..Default::default()
+        };
+        let mut content = "# 基准\n".repeat(1000);
+        let mut expected = Vec::new();
+        for index in 0..7 {
+            content.push_str(&format!("版本 {index}\n"));
+            expected.push(content.clone());
+            record_snapshot_at(
+                path,
+                content.as_bytes(),
+                HistorySource::Manual,
+                policy,
+                time(index),
+            )
+            .expect("历史");
+        }
+        let versions = list_versions(path, policy, time(7)).expect("保留版本");
+        assert_eq!(versions.len(), 3);
+        assert_eq!(
+            versions
+                .first()
+                .expect("最新")
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("delta")
+        );
+        assert_eq!(
+            versions
+                .last()
+                .expect("保留边界")
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("md")
+        );
+        for (version, expected) in versions.iter().zip(expected.iter().rev()) {
+            assert_eq!(
+                read_snapshot_bytes(&version.path).expect("清理后仍可恢复"),
+                expected.as_bytes()
+            );
+        }
+    });
+}
+
+#[test]
+fn expiration_rebases_a_retained_version_at_the_day_boundary() {
+    fixture(|path| {
+        let policy = HistoryPolicy {
+            retention_days: 1,
+            ..Default::default()
+        };
+        let baseline = "原文\n".repeat(1000);
+        let after = format!("{baseline}追加\n");
+        record_snapshot_at(
+            path,
+            baseline.as_bytes(),
+            HistorySource::Manual,
+            policy,
+            time(0),
+        )
+        .expect("基准");
+        record_snapshot_at(
+            path,
+            after.as_bytes(),
+            HistorySource::Manual,
+            policy,
+            time(86399),
+        )
+        .expect("增量");
+        let before_pruning = list_versions(path, policy, time(86399)).expect("到期前");
+        assert_eq!(
+            before_pruning
+                .first()
+                .expect("增量")
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("delta")
+        );
+        let versions = list_versions(path, policy, time(86400)).expect("到期后");
+        assert_eq!(versions.len(), 1);
+        let restored = read_snapshot_bytes(&versions.first().expect("保留版本").path);
+        assert!(
+            restored.as_deref().is_ok_and(|bytes| bytes == after.as_bytes()),
+            "清理后仍可还原保留版本：{:?}",
+            restored.as_ref().map(Vec::len)
+        );
+    });
+}
+
+#[test]
+fn long_delta_histories_periodically_create_full_checkpoints() {
+    fixture(|path| {
+        let policy = HistoryPolicy {
+            max_entries: 100,
+            ..Default::default()
+        };
+        let mut content = "段落\n".repeat(1000);
+        for index in 0..40 {
+            content.push_str(&format!("{index}\n"));
+            record_snapshot_at(
+                path,
+                content.as_bytes(),
+                HistorySource::Manual,
+                policy,
+                time(index),
+            )
+            .expect("历史");
+        }
+        let versions = list_versions(path, policy, time(40)).expect("历史");
+        let full = versions
+            .iter()
+            .filter(|version| {
+                version
+                    .path
+                    .extension()
+                    .is_some_and(|extension| extension == "md")
+            })
+            .count();
+        assert!(
+            full >= 2 && full < versions.len(),
+            "版本链应包含定期完整基准及增量：{full}"
+        );
+        assert_eq!(
+            read_snapshot_bytes(&versions.first().expect("最新").path).expect("恢复"),
+            content.as_bytes()
+        );
+    });
+}
+
+#[test]
+fn damaged_baselines_are_rejected_instead_of_silently_restoring_wrong_bytes() {
+    fixture(|path| {
+        let baseline = "基准\n".repeat(1000);
+        record_snapshot_at(
+            path,
+            baseline.as_bytes(),
+            HistorySource::Manual,
+            Default::default(),
+            time(0),
+        )
+        .expect("基准");
+        record_snapshot_at(
+            path,
+            format!("{baseline}追加\n").as_bytes(),
+            HistorySource::Manual,
+            Default::default(),
+            time(1),
+        )
+        .expect("增量");
+        let versions = list_versions(path, Default::default(), time(2)).expect("历史");
+        std::fs::write(&versions.last().expect("基准").path, "损坏").expect("破坏基准");
+        assert!(
+            read_snapshot_bytes(&versions.first().expect("增量").path).is_err(),
+            "基准不匹配时应拒绝恢复"
+        );
+    });
+}
+
+#[test]
+fn delta_versions_preserve_utf16_bom_and_crlf_bytes() {
+    fixture(|path| {
+        let before = format!("{}A\r\n", "中文段落\r\n".repeat(1000));
+        let after = format!("{}B\r\n", "中文段落\r\n".repeat(1000));
+        let encoded = |text: &str| {
+            let mut bytes = vec![0xff, 0xfe];
+            for unit in text.encode_utf16() {
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+            bytes
+        };
+        record_snapshot_at(
+            path,
+            &encoded(&before),
+            HistorySource::Manual,
+            Default::default(),
+            time(0),
+        )
+        .expect("基准");
+        record_snapshot_at(
+            path,
+            &encoded(&after),
+            HistorySource::Manual,
+            Default::default(),
+            time(1),
+        )
+        .expect("增量");
+        let versions = list_versions(path, Default::default(), time(2)).expect("历史");
+        assert_eq!(
+            versions
+                .first()
+                .expect("最新")
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("delta")
+        );
+        assert_eq!(
+            read_snapshot_bytes(&versions.first().expect("最新").path).expect("恢复字节"),
+            encoded(&after)
+        );
+    });
+}
+
+#[test]
+fn modified_delta_payloads_are_rejected_by_the_result_checksum() {
+    use std::io::Write;
+    fixture(|path| {
+        let baseline = "正文\n".repeat(1000);
+        record_snapshot_at(
+            path,
+            baseline.as_bytes(),
+            HistorySource::Manual,
+            Default::default(),
+            time(0),
+        )
+        .expect("基准");
+        record_snapshot_at(
+            path,
+            format!("{baseline}追加\n").as_bytes(),
+            HistorySource::Manual,
+            Default::default(),
+            time(1),
+        )
+        .expect("增量");
+        let latest = list_versions(path, Default::default(), time(2))
+            .expect("历史")
+            .remove(0);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&latest.path)
+            .expect("增量")
+            .write_all(b"x")
+            .expect("篡改载荷");
+        assert!(
+            read_snapshot_bytes(&latest.path).is_err(),
+            "还原结果必须匹配保存时的校验和"
+        );
+    });
+}
+
+#[test]
+fn history_storage_process_probe() {
+    let Some(root) = std::env::var_os("VELORA_HISTORY_PROCESS_PROBE") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    let _config = crate::config::override_test_config_root(root.join("config"));
+    let path = root.join("notes.md");
+    let policy = HistoryPolicy {
+        max_entries: 3,
+        ..Default::default()
+    };
+    for index in 0..8 {
+        let text = format!("{}{}-{index}\n", "段落\n".repeat(1000), std::process::id());
+        record_snapshot_at(
+            &path,
+            text.as_bytes(),
+            HistorySource::Manual,
+            policy,
+            SystemTime::now(),
+        )
+        .expect("并发保存");
+    }
+}
+
+#[test]
+fn concurrent_processes_keep_retained_delta_chains_readable() {
+    fixture(|path| {
+        let root = path.parent().expect("夹具目录");
+        let mut children = Vec::new();
+        for _ in 0..2 {
+            children.push(
+                std::process::Command::new(std::env::current_exe().expect("测试程序"))
+                    .args([
+                        "--exact",
+                        "config::file_history::tests::history_storage_process_probe",
+                    ])
+                    .env("VELORA_HISTORY_PROCESS_PROBE", root)
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .expect("测试进程"),
+            );
+        }
+        for mut child in children {
+            assert!(child.wait().expect("进程结束").success());
+        }
+        let versions = list_versions(
+            path,
+            HistoryPolicy {
+                max_entries: 3,
+                ..Default::default()
+            },
+            SystemTime::now(),
+        )
+        .expect("并发历史");
+        assert_eq!(versions.len(), 3);
+        for version in versions {
+            assert!(
+                !read_snapshot_bytes(&version.path)
+                    .expect("历史链可恢复")
+                    .is_empty()
+            );
+        }
+    });
 }
 
 #[test]

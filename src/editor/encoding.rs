@@ -51,6 +51,15 @@ pub(super) fn normalize_document_text(text: &str) -> String {
 /// 文案（各入口都把它送进应用内模态/错误条，不写盘、不覆盖）。
 pub(crate) fn load_document(path: &Path) -> io::Result<LoadedDocument> {
     let raw = std::fs::read(path)?;
+    decode_loaded_document(path, raw)
+}
+
+pub(crate) fn load_history_document(path: &Path) -> io::Result<LoadedDocument> {
+    let raw = crate::config::file_history::read_snapshot_bytes(path)?;
+    decode_loaded_document(path, raw)
+}
+
+fn decode_loaded_document(path: &Path, raw: Vec<u8>) -> io::Result<LoadedDocument> {
     let (shape, text) = FileShape::detect_and_decode(&raw);
     if !shape.is_lossless() {
         return Err(unrepresentable_encoding_error(path));

@@ -582,12 +582,7 @@ pub(crate) use is_markdown_document as is_markdown_file;
 
 /// 是否按 Markdown 文档打开：仅 `.md` / `.markdown`。所有打开入口（工作区树、
 /// 拖拽、命令行）必须共用这一条判定，否则同一文件两条入口行为不一致。
-pub(crate) fn is_markdown_document(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| {
-        let extension = extension.to_string_lossy();
-        extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
-    })
-}
+pub(crate) use crate::file_url::is_markdown_document;
 
 pub(crate) fn create_workspace_file(path: &Path) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;

@@ -118,6 +118,7 @@ pub struct I18nStrings {
     pub image_scale: String,
     /// 历史浮层空态（该文件还没有保存版本）。
     pub file_history_empty: String,
+    pub file_history_supported_files: String,
     pub preferences_history_interval: String,
     pub preferences_history_count: String,
     pub preferences_history_days: String,

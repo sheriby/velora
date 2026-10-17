@@ -86,6 +86,118 @@ fn history_mode_and_restore_labels_are_brief() {
 }
 
 #[gpui::test]
+fn oversized_current_documents_do_not_open_the_history_overlay(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| {
+            editor
+                .buffer
+                .edit(0..editor.buffer.byte_len(), &"a".repeat(1024 * 1024 + 1));
+            editor.open_file_history(cx);
+        });
+        assert!(
+            !editor.read_with(cx, |editor, _| editor.file_history_is_open()),
+            "超限正文应跳过历史预览与对比"
+        );
+    });
+}
+
+#[gpui::test]
+fn oversized_markdown_saves_normally_without_creating_another_history_version(
+    cx: &mut TestAppContext,
+) {
+    fixture(cx, |editor, cx, path| {
+        let count = versions(&path).len();
+        editor.update_in(cx, |editor, window, cx| {
+            editor
+                .buffer
+                .edit(0..editor.buffer.byte_len(), &"a".repeat(1024 * 1024 + 1));
+            editor.mark_dirty_written_back(cx);
+            assert!(
+                editor.save_to_existing_path(&path, window, cx),
+                "正常保存应成功"
+            );
+        });
+        assert_eq!(
+            std::fs::metadata(&path).expect("保存文件").len(),
+            1024 * 1024 + 1
+        );
+        assert_eq!(versions(&path).len(), count, "超限保存应跳过历史写入");
+    });
+}
+
+#[gpui::test]
+fn history_size_limit_uses_encoded_bytes_instead_of_utf8_text_length(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| {
+            let text = "a".repeat(600_000);
+            editor.buffer = crate::editor::buffer::TextBuffer::from_text(&text);
+            let mut raw = vec![0xff, 0xfe];
+            for unit in text.encode_utf16() {
+                raw.extend_from_slice(&unit.to_le_bytes());
+            }
+            editor.attach_file_origin(raw);
+            editor.open_file_history(cx);
+        });
+        assert!(
+            !editor.read_with(cx, |editor, _| editor.file_history_is_open()),
+            "UTF-16 文件字节超过上限"
+        );
+    });
+}
+
+#[gpui::test]
+fn small_utf16_files_can_open_history_when_their_utf8_projection_is_larger(
+    cx: &mut TestAppContext,
+) {
+    fixture(cx, |editor, cx, _| {
+        editor.update(cx, |editor, cx| {
+            let text = "中".repeat(500_000);
+            editor.buffer = crate::editor::buffer::TextBuffer::from_text(&text);
+            let mut raw = vec![0xff, 0xfe];
+            for unit in text.encode_utf16() {
+                raw.extend_from_slice(&unit.to_le_bytes());
+            }
+            editor.attach_file_origin(raw);
+            editor.open_file_history(cx);
+        });
+        assert!(
+            editor.read_with(cx, |editor, _| editor.file_history_is_open()),
+            "按原始文件字节判断资格"
+        );
+    });
+}
+
+#[gpui::test]
+fn history_previews_and_restores_delta_versions_after_the_source_is_deleted(
+    cx: &mut TestAppContext,
+) {
+    fixture(cx, |editor, cx, path| {
+        let baseline = "原始段落\n".repeat(500);
+        let after = format!("{baseline}追加内容\n");
+        crate::config::record_file_history(&path, &baseline).expect("基准");
+        crate::config::record_file_history(&path, &after).expect("增量");
+        std::fs::remove_file(&path).expect("删除原文件");
+        editor.update(cx, |editor, cx| editor.open_file_history(cx));
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor
+                    .file_history_overlay
+                    .as_ref()
+                    .expect("历史面板")
+                    .preview,
+                after
+            );
+        });
+        editor.update(cx, |editor, cx| editor.restore_file_history_version(0, cx));
+        editor.update_in(cx, |editor, window, cx| editor.dismiss_modal(0, window, cx));
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.buffer.text()),
+            after
+        );
+    });
+}
+
+#[gpui::test]
 fn history_comparison_jumps_between_changes_in_a_long_document(cx: &mut TestAppContext) {
     fixture(cx, |editor, cx, _| {
         let before = format!(
@@ -462,14 +574,14 @@ fn history_comparison_is_readonly_and_tracks_current_unsaved_content(cx: &mut Te
                 overlay
                     .lines
                     .iter()
-                    .any(|line| line.kind == super::diff::DiffKind::Added
+                    .any(|line| line.kind == super::diff::DiffKind::Removed
                         && line.text.contains("当前内容"))
             );
             assert!(
                 overlay
                     .lines
                     .iter()
-                    .any(|line| line.kind == super::diff::DiffKind::Removed
+                    .any(|line| line.kind == super::diff::DiffKind::Added
                         && line.text.contains("历史内容"))
             );
             assert!(!editor.document_dirty);
@@ -484,9 +596,51 @@ fn history_comparison_is_readonly_and_tracks_current_unsaved_content(cx: &mut Te
                     .expect("历史面板")
                     .lines
                     .iter()
-                    .any(|line| line.text.contains("新输入"))
+                    .any(|line| line.kind == super::diff::DiffKind::Removed
+                        && line.text.contains("新输入"))
             )
         });
+    });
+}
+
+#[gpui::test]
+fn every_history_version_is_compared_from_the_current_unsaved_document(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, path| {
+        let baseline = "共享段落\n".repeat(100);
+        let middle = format!("{baseline}中间版本\n");
+        let latest = format!("{middle}最新版本\n");
+        for text in [&baseline, &middle, &latest] {
+            crate::config::record_file_history(&path, text).expect("历史版本");
+        }
+        edit(&editor, cx, "当前未保存\n");
+        let current = editor.read_with(cx, |editor, _| editor.buffer.text());
+        editor.update(cx, |editor, cx| editor.open_file_history(cx));
+        redraw(cx);
+        let compare = cx.debug_bounds("file-history-compare").expect("对比按钮");
+        cx.simulate_click(compare.center(), gpui::Modifiers::none());
+        for (index, historical) in [&latest, &middle, &baseline].into_iter().enumerate() {
+            editor.update(cx, |editor, cx| {
+                editor.select_file_history_version(index, cx)
+            });
+            redraw(cx);
+            editor.read_with(cx, |editor, _| {
+                let overlay = editor.file_history_overlay.as_ref().expect("历史面板");
+                let before: String = overlay
+                    .lines
+                    .iter()
+                    .filter(|line| line.kind != super::diff::DiffKind::Added)
+                    .map(|line| line.text.as_str())
+                    .collect();
+                let after: String = overlay
+                    .lines
+                    .iter()
+                    .filter(|line| line.kind != super::diff::DiffKind::Removed)
+                    .map(|line| line.text.as_str())
+                    .collect();
+                assert_eq!(before, current, "每个历史版本都以当前未保存正文为基准");
+                assert_eq!(&after, historical, "对比目标是所选历史版本");
+            });
+        }
     });
 }
 

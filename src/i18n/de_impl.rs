@@ -135,6 +135,9 @@ impl I18nStringsDe {
             file_history_empty: self
                 .file_history_empty
                 .unwrap_or(defaults.file_history_empty),
+            file_history_supported_files: self
+                .file_history_supported_files
+                .unwrap_or(defaults.file_history_supported_files),
             preferences_history_interval: self
                 .preferences_history_interval
                 .unwrap_or(defaults.preferences_history_interval),

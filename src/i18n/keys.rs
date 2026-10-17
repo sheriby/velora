@@ -65,6 +65,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "image_copy_address",
     "image_scale",
     "file_history_empty",
+    "file_history_supported_files",
     "preferences_history_interval",
     "preferences_history_count",
     "preferences_history_days",
