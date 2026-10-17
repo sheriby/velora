@@ -55,7 +55,7 @@ impl Element for TextFieldElement {
         cx: &mut App,
     ) -> FieldPaint {
         let theme = cx.global::<crate::theme::ThemeManager>().derived_theme(cx);
-        let (display, empty, focused, selected, marked, old_scroll) = {
+        let (display, empty, focused, selected, caret, marked, old_scroll) = {
             let input = self.input.read(cx);
             let display = if input.value.is_empty() {
                 input.placeholder.clone()
@@ -64,8 +64,9 @@ impl Element for TextFieldElement {
             } else {
                 input.value.replace(['\r', '\n'], " ").into()
             };
-            let selected = input.display_offset(input.selected_range.start)
-                ..input.display_offset(input.selected_range.end);
+            let range = input.normalized_selection();
+            let selected = input.display_offset(range.start)..input.display_offset(range.end);
+            let caret = input.display_offset(input.selected_range.end);
             let marked = input
                 .marked_range
                 .as_ref()
@@ -75,6 +76,7 @@ impl Element for TextFieldElement {
                 input.value.is_empty(),
                 input.focus.is_focused(window),
                 selected,
+                caret,
                 marked,
                 input.scroll_x,
             )
@@ -100,7 +102,7 @@ impl Element for TextFieldElement {
             &[run],
             None,
         );
-        let caret_x = line.x_for_index(if empty { 0 } else { selected.end });
+        let caret_x = line.x_for_index(if empty { 0 } else { caret });
         let mut scroll = old_scroll.max(0.0);
         let available = f32::from(bounds.size.width).max(2.0);
         if empty {
@@ -184,8 +186,10 @@ impl Element for TextFieldElement {
             );
         }
         #[cfg(test)]
-        self.input
-            .update(cx, |input, _| input.painted_caret = state.cursor.is_some());
+        self.input.update(cx, |input, _| {
+            input.painted_caret = state.cursor.is_some();
+            input.painted_selection = state.selection.is_some();
+        });
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             if let Some(selection) = state.selection.take() {
                 window.paint_quad(selection);

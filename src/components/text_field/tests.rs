@@ -210,3 +210,29 @@ fn ai_text_fields_collapse_reversed_selections_at_the_expected_end(cx: &mut Test
         assert_eq!(field.selected_range, 8..8);
     });
 }
+
+#[gpui::test]
+fn ai_text_fields_render_reversed_selection_and_report_its_direction(cx: &mut TestAppContext) {
+    cx.update(init_theme);
+    let (field, cx) = cx.add_window_view(|_, cx| TextField::new("", cx));
+    field.update_in(cx, |field, window, cx| {
+        window.activate_window();
+        field.set_value("ab中文", cx);
+        field.focus(window, cx);
+        field.selected_range = field.value.len()..0;
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    field.update_in(cx, |field, window, cx| {
+        let selection = field.selected_text_range(false, window, cx).unwrap();
+        assert_eq!(
+            (
+                field.painted_selection,
+                field.painted_caret,
+                selection.reversed
+            ),
+            (true, false, true),
+            "反向选择必须有高亮，并向输入法报告真实方向"
+        );
+    });
+}

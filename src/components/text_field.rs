@@ -37,6 +37,8 @@ pub(crate) struct TextField {
     dragging: bool,
     #[cfg(test)]
     painted_caret: bool,
+    #[cfg(test)]
+    painted_selection: bool,
 }
 
 impl TextField {
@@ -85,6 +87,8 @@ impl TextField {
             dragging: false,
             #[cfg(test)]
             painted_caret: false,
+            #[cfg(test)]
+            painted_selection: false,
         }
     }
 
@@ -432,7 +436,7 @@ impl EntityInputHandler for TextField {
         Some(UTF16Selection {
             range: utf8_to_utf16_offset(&self.value, selection.start)
                 ..utf8_to_utf16_offset(&self.value, selection.end),
-            reversed: false,
+            reversed: self.selected_range.start > self.selected_range.end,
         })
     }
 
