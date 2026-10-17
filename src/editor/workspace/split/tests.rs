@@ -1428,6 +1428,58 @@ fn split_drag_shows_a_labelled_half_pane_preview_before_drop(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn single_editor_group_hides_tab_color_after_splits_collapse(cx: &mut TestAppContext) {
+    fixture(cx, |editor, cx, path| {
+        redraw(cx);
+        let initial_marker =
+            Box::leak(format!("tab-group-left-border-{:?}-0", editor.entity_id()).into_boxed_str());
+        assert!(
+            cx.debug_bounds(initial_marker).is_none(),
+            "未分组时不应有组颜色"
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split_active_document(SplitDirection::Right, window, cx)
+        });
+        redraw(cx);
+        let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+        assert_eq!(groups.len(), 2);
+        let left = groups.first().expect("左组").clone();
+        let right = groups.get(1).expect("右组").clone();
+        let left_marker =
+            Box::leak(format!("tab-group-left-border-{:?}-0", left.entity_id()).into_boxed_str());
+        let right_marker =
+            Box::leak(format!("tab-group-left-border-{:?}-0", right.entity_id()).into_boxed_str());
+        assert!(cx.debug_bounds(left_marker).is_some(), "多组时保留组颜色");
+        assert!(cx.debug_bounds(right_marker).is_some(), "每组都应有组颜色");
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.transfer_split_tab(
+                right.downgrade(),
+                left.entity_id(),
+                path.clone(),
+                None,
+                false,
+                window,
+                cx,
+            );
+        });
+        redraw(cx);
+        assert_eq!(
+            editor.read_with(cx, |editor, _| editor.split_groups().len()),
+            1
+        );
+        let remaining_tab =
+            Box::leak(format!("group-tab-{:?}-0", left.entity_id()).into_boxed_str());
+        assert!(cx.debug_bounds(remaining_tab).is_some(), "剩余标签仍然显示");
+        assert!(
+            cx.debug_bounds(left_marker).is_none(),
+            "只剩一组时必须移除组颜色"
+        );
+    });
+}
+
+#[gpui::test]
 fn split_groups_give_every_tab_a_matching_left_color_border(cx: &mut TestAppContext) {
     fixture(cx, |editor, cx, path| {
         let other = path.with_file_name("second.md");

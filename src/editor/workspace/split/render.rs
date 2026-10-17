@@ -220,6 +220,7 @@ impl Editor {
 
     fn render_group_tabs(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let groups = self.split_groups();
+        let show_group_accents = groups.len() > 1;
         let active_group = self
             .split_workspace
             .as_ref()
@@ -228,7 +229,7 @@ impl Editor {
         let mut active_tab = None;
         for (group_index, group) in groups.into_iter().enumerate() {
             let (items, selected) = group.update(cx, |editor, cx| {
-                let accent = Some(tab_group_accent(theme, group_index));
+                let accent = show_group_accents.then(|| tab_group_accent(theme, group_index));
                 let items = editor.render_document_tab_items(theme, accent, cx);
                 let selected = editor
                     .workspace
