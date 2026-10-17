@@ -816,17 +816,34 @@ impl Editor {
                     }
                     if message.role == "assistant" {
                         let copied = message.text.clone();
-                        row = row.child(div().flex().gap(px(4.0)).child(self.ai_button(
-                            ("ai-copy", index),
-                            strings.ai_panel_copy.clone(),
-                            false,
-                            true,
-                            theme,
-                            cx,
-                            move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
-                            },
-                        )));
+                        let inserted = message.text.clone();
+                        row = row.child(
+                            div()
+                                .flex()
+                                .gap(px(4.0))
+                                .child(self.ai_button(
+                                    ("ai-copy", index),
+                                    strings.ai_panel_copy.clone(),
+                                    false,
+                                    true,
+                                    theme,
+                                    cx,
+                                    move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copied.clone(),
+                                        ))
+                                    },
+                                ))
+                                .child(self.ai_button(
+                                    ("ai-insert", index),
+                                    strings.ai_panel_insert.clone(),
+                                    false,
+                                    !session.saved.running,
+                                    theme,
+                                    cx,
+                                    move |editor, _, cx| editor.propose_ai_reply(&inserted, cx),
+                                )),
+                        );
                     }
                     content = content.child(row);
                 }
@@ -846,6 +863,145 @@ impl Editor {
                             .text_size(px(12.0))
                             .text_color(theme.colors.dialog_muted)
                             .child(activity.clone()),
+                    );
+                }
+                for (file_index, (id, proposal)) in
+                    session.saved.workspace.changes.proposals.iter().enumerate()
+                {
+                    let mut review = div()
+                        .w_full()
+                        .p(px(8.0))
+                        .border_1()
+                        .border_color(theme.colors.dialog_border)
+                        .rounded(px(6.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .child(format!("{} · {id}", strings.ai_panel_pending)),
+                        );
+                    for (index, edit) in proposal.edits().iter().enumerate() {
+                        let before = proposal
+                            .base
+                            .source
+                            .get(edit.range.clone())
+                            .unwrap_or_default();
+                        let accepted_id = id.clone();
+                        let rejected_id = id.clone();
+                        review = review
+                            .child(div().w_full().text_size(px(12.0)).child(format!(
+                                "− {}\n+ {}",
+                                before.chars().take(1200).collect::<String>(),
+                                edit.replacement.chars().take(1200).collect::<String>()
+                            )))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(4.0))
+                                    .child(self.ai_button(
+                                        ("ai-edit-accept", file_index * 1000 + index),
+                                        strings.ai_panel_accept_edit.clone(),
+                                        false,
+                                        !session.saved.running && !self.is_read_only(),
+                                        theme,
+                                        cx,
+                                        move |editor, window, cx| {
+                                            editor.apply_ai_review(
+                                                Some(accepted_id.clone()),
+                                                Some(index),
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                    .child(self.ai_button(
+                                        ("ai-edit-reject", file_index * 1000 + index),
+                                        strings.ai_panel_reject.clone(),
+                                        false,
+                                        !session.saved.running,
+                                        theme,
+                                        cx,
+                                        move |editor, _, cx| {
+                                            editor.reject_ai_review(&rejected_id, Some(index), cx)
+                                        },
+                                    )),
+                            );
+                    }
+                    if session.saved.workspace.changes.invalid.contains(id) {
+                        review = review.child(
+                            div()
+                                .text_size(px(12.0))
+                                .child(strings.ai_panel_stale.clone()),
+                        );
+                    } else if session
+                        .saved
+                        .workspace
+                        .changes
+                        .dependencies
+                        .get(id)
+                        .is_some_and(|dependencies| !dependencies.is_empty())
+                    {
+                        review = review.child(
+                            div()
+                                .text_size(px(12.0))
+                                .child(strings.ai_panel_related.clone()),
+                        );
+                    }
+                    let rejected_id = id.clone();
+                    review = review.child(self.ai_button(
+                        ("ai-file-reject", file_index),
+                        strings.ai_panel_reject.clone(),
+                        false,
+                        !session.saved.running,
+                        theme,
+                        cx,
+                        move |editor, _, cx| editor.reject_ai_review(&rejected_id, None, cx),
+                    ));
+                    let id = id.clone();
+                    review = review.child(self.ai_button(
+                        ("ai-file-accept", file_index),
+                        strings.ai_panel_accept_file.clone(),
+                        false,
+                        !session.saved.running && !self.is_read_only(),
+                        theme,
+                        cx,
+                        move |editor, window, cx| {
+                            editor.apply_ai_review(Some(id.clone()), None, window, cx)
+                        },
+                    ));
+                    content = content.child(review);
+                }
+                if !session.saved.workspace.changes.proposals.is_empty() {
+                    content = content.child(
+                        div()
+                            .flex()
+                            .gap(px(6.0))
+                            .child(self.ai_button(
+                                "ai-accept-all",
+                                strings.ai_panel_accept_all.clone(),
+                                true,
+                                !session.saved.running && !self.is_read_only(),
+                                theme,
+                                cx,
+                                |editor, window, cx| editor.apply_ai_review(None, None, window, cx),
+                            ))
+                            .child(self.ai_button(
+                                "ai-discard-all",
+                                strings.ai_panel_discard.clone(),
+                                false,
+                                !session.saved.running,
+                                theme,
+                                cx,
+                                |editor, _, cx| {
+                                    if let Some(session) = editor.ai_session.as_mut() {
+                                        session.saved.workspace.discard_proposals();
+                                    }
+                                    editor.persist_ai_session(cx);
+                                    cx.notify();
+                                },
+                            )),
                     );
                 }
                 if !session.saved.workspace.source_records.is_empty() {

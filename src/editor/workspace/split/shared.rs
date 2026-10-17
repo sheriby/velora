@@ -3,6 +3,12 @@ use crate::editor::ViewMode;
 use crate::editor::buffer::BufferChange;
 
 impl Editor {
+    pub(in crate::editor) fn adopt_ai_shared_document(&mut self, path: PathBuf, buffer: crate::editor::buffer::TextBuffer, owner: WeakEntity<Editor>, version: u64, recovery_id: uuid::Uuid) {
+        if let Some(workspace) = self.split_workspace.as_mut() {
+            let synced = (buffer.identity(), buffer.revision(), buffer.file_shape());
+            workspace.documents.insert(path, super::SharedDocument { buffer, owner, dirty: true, file_version: Some(version), recovery_id, synced });
+        }
+    }
     pub(in crate::editor) fn remap_split_workspace_paths(
         &mut self,
         source: &Path,

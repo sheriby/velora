@@ -724,6 +724,11 @@ impl Editor {
                 .map(|name| name.to_string_lossy().to_string());
             (directory, suggested_name)
         } else {
+            if let Some(path) = self.active_document_path().filter(|path| super::workspace::untitled_document_id(path).is_some()) {
+                if let Some(name) = path.file_name().filter(|name| crate::file_url::is_markdown_document(Path::new(name))) {
+                    return (self.workspace_root_path().map(Path::to_path_buf).unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))), Some(name.to_string_lossy().into_owned()));
+                }
+            }
             (
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
                 Some("untitled.md".to_string()),

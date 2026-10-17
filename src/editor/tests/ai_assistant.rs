@@ -84,6 +84,286 @@ fn ai_reading_mode_still_offers_selection_assistance(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn ai_review_applies_only_after_acceptance_and_one_undo_restores_the_document(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let original = "# 标题\n\n原始内容。";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, original.into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        let target = session.saved.target.as_ref().unwrap().document_id.clone();
+        let snapshot = session.saved.workspace.documents[&target].clone();
+        session
+            .saved
+            .workspace
+            .changes
+            .propose(snapshot, "原始内容。", "修订内容。🙂")
+            .unwrap();
+        assert_eq!(editor.buffer.text(), original);
+        let applied = editor.accept_ai_proposals(None, None, window, cx);
+        assert!(applied.is_ok(), "{applied:?}");
+        assert_eq!(editor.buffer.text(), "# 标题\n\n修订内容。🙂");
+        editor.on_undo(&crate::components::Undo, window, cx);
+        assert_eq!(editor.buffer.text(), original);
+    });
+}
+
+#[gpui::test]
+fn ai_review_refuses_reading_mode_and_user_edits_without_discarding_the_proposal(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "原始内容".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        let target = session.saved.target.as_ref().unwrap().document_id.clone();
+        let snapshot = session.saved.workspace.documents[&target].clone();
+        session
+            .saved
+            .workspace
+            .changes
+            .propose(snapshot, "原始内容", "修订内容")
+            .unwrap();
+        editor.toggle_reading_mode(cx);
+        assert!(editor.accept_ai_proposals(None, None, window, cx).is_err());
+        assert_eq!(editor.buffer.text(), "原始内容");
+        editor.toggle_reading_mode(cx);
+        editor.prepare_undo_capture(crate::components::UndoCaptureKind::NonCoalescible, cx);
+        editor.write_back_cross_block_source_edit(0..0, "用户新写的", cx);
+        editor.mark_dirty_written_back(cx);
+        editor.finalize_pending_undo_capture(cx);
+        assert!(editor.accept_ai_proposals(None, None, window, cx).is_err());
+        assert_eq!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .saved
+                .workspace
+                .changes
+                .proposals
+                .len(),
+            1
+        );
+        assert_eq!(editor.buffer.text(), "用户新写的原始内容");
+    });
+}
+
+#[gpui::test]
+fn ai_review_accepts_multiple_documents_into_tabs_and_preserves_utf16(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-ai-review-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    std::fs::write(&first, "# 第一篇\n\n原文 A。\n").unwrap();
+    let original_second = "# 第二篇\r\n\r\n原文 B。\r\n";
+    let bytes: Vec<u8> = [0xff, 0xfe]
+        .into_iter()
+        .chain(original_second.encode_utf16().flat_map(u16::to_le_bytes))
+        .collect();
+    std::fs::write(&second, &bytes).unwrap();
+    let document = crate::editor::encoding::load_document(&first).unwrap();
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_loaded_document(cx, document, Some(first.clone())));
+    editor.update_in(cx, |editor, window, cx| {
+        crate::config::EditorSettings::install_test_settings(cx, false);
+        crate::config::EditorSettings::set_autosave_in_memory(false, cx);
+        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
+        let workspace = &mut editor.ai_session.as_mut().unwrap().saved.workspace;
+        workspace
+            .call(
+                "propose_edit",
+                &serde_json::json!({"path":"first.md","before":"原文 A。","after":"修订 A。"}),
+            )
+            .unwrap();
+        workspace
+            .call(
+                "propose_edit",
+                &serde_json::json!({"path":"second.md","before":"原文 B。","after":"修订 B。"}),
+            )
+            .unwrap();
+        let accepted = editor.accept_ai_proposals(None, None, window, cx);
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert!(editor.buffer.text().contains("修订 A。"));
+        assert_eq!(std::fs::read(&second).unwrap(), bytes);
+        let (cached, dirty) = editor.cached_tab_content_for_path(&second, cx).unwrap();
+        assert!(cached.contains("修订 B。"));
+        assert!(dirty);
+        editor.open_workspace_file(second.clone(), window, cx);
+        let saved = editor.document_bytes_for_save();
+        assert!(saved.starts_with(&[0xff, 0xfe]));
+        assert!(saved.windows(2).any(|pair| pair == [0x0d, 0x00]));
+        editor.on_undo(&crate::components::Undo, window, cx);
+        assert_eq!(editor.buffer.text(), "# 第二篇\n\n原文 B。\n");
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui::test]
+fn ai_review_preflights_every_document_before_accepting_any_change(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-ai-conflict-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let first = root.join("first.md");
+    let second = root.join("second.md");
+    std::fs::write(&first, "original A").unwrap();
+    std::fs::write(&second, "original B").unwrap();
+    let (editor, cx) = cx.add_window_view(|_, cx| {
+        Editor::from_markdown(cx, "original A".into(), Some(first.clone()))
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
+        let workspace = &mut editor.ai_session.as_mut().unwrap().saved.workspace;
+        for (path, before) in [("first.md", "original A"), ("second.md", "original B")] {
+            workspace
+                .call(
+                    "propose_edit",
+                    &serde_json::json!({"path":path,"before":before,"after":"changed"}),
+                )
+                .unwrap();
+        }
+        std::fs::write(&second, "external edit").unwrap();
+        assert!(editor.accept_ai_proposals(None, None, window, cx).is_err());
+        assert_eq!(editor.buffer.text(), "original A");
+        assert_eq!(
+            editor
+                .ai_session
+                .as_ref()
+                .unwrap()
+                .saved
+                .workspace
+                .changes
+                .proposals
+                .len(),
+            2
+        );
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui::test]
+fn ai_review_new_document_becomes_an_unsaved_tab_without_creating_a_file(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-ai-new-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let first = root.join("first.md");
+    std::fs::write(&first, "原始内容").unwrap();
+    let (editor, cx) = cx
+        .add_window_view(|_, cx| Editor::from_markdown(cx, "原始内容".into(), Some(first.clone())));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
+        let workspace = &mut editor.ai_session.as_mut().unwrap().saved.workspace;
+        workspace
+            .call(
+                "propose_document",
+                &serde_json::json!({"path":"weekly.md","content":"# 周报\n\n整理结果"}),
+            )
+            .unwrap();
+        let accepted = editor.accept_ai_proposals(None, None, window, cx);
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert!(!root.join("weekly.md").exists());
+        assert!(
+            editor
+                .ai_cached_document_sources()
+                .iter()
+                .any(|(_, content)| content.contains("整理结果"))
+        );
+        assert_eq!(editor.buffer.text(), "原始内容");
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui::test]
+fn ai_review_shared_document_updates_both_split_views(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-ai-split-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("note.md");
+    std::fs::write(&path, "原始内容").unwrap();
+    let (editor, cx) = cx
+        .add_window_view(|_, cx| Editor::from_markdown(cx, "原始内容".into(), Some(path.clone())));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.split_active_document(
+            crate::editor::workspace::split::SplitDirection::Right,
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    redraw(cx);
+    let groups = editor.read_with(cx, |editor, _| editor.split_groups());
+    assert_eq!(groups.len(), 2);
+    groups[0].update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx)
+    });
+    cx.run_until_parked();
+    redraw(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        let workspace = &mut editor.ai_session.as_mut().unwrap().saved.workspace;
+        workspace
+            .call(
+                "propose_edit",
+                &serde_json::json!({"path":"note.md","before":"原始内容","after":"两边同步更新"}),
+            )
+            .unwrap();
+        let accepted = editor.accept_ai_proposals(None, None, window, cx);
+        assert!(accepted.is_ok(), "{accepted:?}");
+    });
+    cx.run_until_parked();
+    redraw(cx);
+    for group in groups {
+        group.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), "两边同步更新")
+        });
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui::test]
+fn ai_review_rejects_a_dirty_copy_of_the_current_document_in_another_window(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let root = std::env::temp_dir().join(format!("velora-ai-windows-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("note.md");
+    std::fs::write(&path, "原始内容").unwrap();
+    let (first, cx) = cx
+        .add_window_view(|_, cx| Editor::from_markdown(cx, "原始内容".into(), Some(path.clone())));
+    let first_window = gpui::VisualContext::window_handle(cx);
+    let (second, cx) = cx
+        .cx
+        .add_window_view(|_, cx| Editor::from_markdown(cx, "原始内容".into(), Some(path.clone())));
+    second.update(cx, |editor, _| editor.document_dirty = true);
+    first_window
+        .update(&mut cx.cx, |_, window, cx| {
+            first.update(cx, |editor, cx| {
+                editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx);
+                editor
+                    .ai_session
+                    .as_mut()
+                    .unwrap()
+                    .saved
+                    .workspace
+                    .call(
+                        "propose_edit",
+                        &serde_json::json!({"path":"note.md","before":"原始内容","after":"建议"}),
+                    )
+                    .unwrap();
+                assert!(editor.accept_ai_proposals(None, None, window, cx).is_err());
+                assert_eq!(editor.buffer.text(), "原始内容");
+            })
+        })
+        .unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[gpui::test]
 fn ai_window_commands_capture_the_active_split_document(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let root = std::env::temp_dir().join(format!("velora-ai-command-{}", uuid::Uuid::new_v4()));

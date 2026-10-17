@@ -2,6 +2,10 @@ use super::*;
 use super::super::{DocumentBlockState, DocumentEditingState, DocumentRowLayout, ViewMode};
 
 impl Editor {
+    pub(in crate::editor) fn ai_cached_document_sources(&self) -> Vec<(PathBuf, String)> {
+        self.workspace.open_documents.iter().map(|tab| (tab.path.clone(), tab.markdown.clone())).collect()
+    }
+
     pub(in crate::editor) fn ai_cached_document_paths(&self) -> Vec<(PathBuf, uuid::Uuid)> {
         self.workspace.open_documents.iter().filter(|tab| crate::file_url::is_markdown_document(&tab.path) || super::untitled_document_id(&tab.path).is_some())
             .map(|tab| (tab.path.clone(), tab.recovery_id)).collect()
@@ -12,6 +16,16 @@ impl Editor {
             .map(|tab| tab.markdown.clone())
     }
 
+    pub(in crate::editor) fn ai_prepare_cached_document(&self, path: &Path) -> Option<(String, Option<DocumentView>, Option<super::super::buffer::FileShape>, u64, uuid::Uuid)> {
+        self.workspace.open_documents.iter().find(|tab| tab.path == path)
+            .map(|tab| (tab.markdown.clone(), tab.view.clone(), tab.file_shape, tab.file_version, tab.recovery_id))
+    }
+
+    pub(in crate::editor) fn ai_store_prepared_tab(&mut self, path: PathBuf, markdown: String, shape: Option<super::super::buffer::FileShape>, version: u64, recovery_id: uuid::Uuid, view: DocumentView) {
+        let tab = WorkspaceDocumentTab { path: path.clone(), recovery_id, file_version: version, markdown, file_shape: shape, dirty: true, preview: false, view: Some(view) };
+        if let Some(existing) = self.workspace.open_documents.iter_mut().find(|tab| tab.path == path) { *existing = tab; }
+        else { self.workspace.open_documents.push(tab); }
+    }
     pub(crate) fn capture_document_editing_state(&self, cx: &App) -> DocumentEditingState {
         let tables: HashSet<_> = self
             .table_cells

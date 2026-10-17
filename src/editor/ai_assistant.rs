@@ -13,6 +13,7 @@ use crate::ai::workspace::AiWorkspace;
 use crate::ai::{AiCommand, DocumentSnapshot};
 use crate::components::TextField;
 
+mod apply;
 mod render;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -235,6 +236,85 @@ impl Editor {
         }
         cx.notify();
     }
+    fn apply_ai_review(
+        &mut self,
+        document: Option<String>,
+        edit: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.accept_ai_proposals(document.as_deref(), edit, window, cx) {
+            self.show_message_modal("AI", error.to_string(), cx);
+        }
+    }
+
+    fn reject_ai_review(&mut self, id: &str, edit: Option<usize>, cx: &mut Context<Self>) {
+        if let Some(session) = self.ai_session.as_mut() {
+            if session.saved.running {
+                return;
+            }
+            if let Some(index) = edit {
+                if let Err(error) = session.saved.workspace.changes.reject_edit(id, index) {
+                    session.error = Some(error.to_string());
+                }
+            } else {
+                session.saved.workspace.changes.invalidate_dependents(id);
+                session.saved.workspace.changes.proposals.remove(id);
+            }
+            if !session.saved.workspace.changes.proposals.contains_key(id)
+                && session.saved.workspace.new_documents.remove(id)
+            {
+                session.saved.workspace.documents.remove(id);
+            }
+        }
+        self.persist_ai_session(cx);
+        cx.notify();
+    }
+
+    fn propose_ai_reply(&mut self, text: &str, cx: &mut Context<Self>) {
+        let current = self
+            .ai_session
+            .as_ref()
+            .and_then(|session| session.saved.target.as_ref())
+            .and_then(|target| self.ai_current_snapshot(&target.document_id, cx));
+        if let Some(session) = self.ai_session.as_mut() {
+            let Some(target) = session.saved.target.as_ref() else {
+                return;
+            };
+            let Some(document) = session
+                .saved
+                .workspace
+                .documents
+                .get(&target.document_id)
+                .cloned()
+            else {
+                return;
+            };
+            if current.as_ref().is_none_or(|document| {
+                super::persistence::file_content_version(&document.source) != target.version
+            }) {
+                session.error = Some("插入位置所在的文档已变化，请重新选择插入位置".into());
+            } else if session
+                .saved
+                .workspace
+                .changes
+                .proposals
+                .contains_key(&target.document_id)
+            {
+                session.error = Some("请先审阅此文档的已有修改，再插入回答".into());
+            } else if document.source.get(..target.range.end).is_some() {
+                let mut proposed = document.source.clone();
+                proposed.insert_str(target.range.end, &format!("\n\n{text}"));
+                session.saved.workspace.changes.proposals.insert(
+                    target.document_id.clone(),
+                    crate::ai::Proposal::new(document, proposed),
+                );
+            }
+        }
+        self.persist_ai_session(cx);
+        cx.notify();
+    }
+
     fn retry_ai_task(&mut self, cx: &mut Context<Self>) {
         if let Some(session) = self.ai_session.as_mut() {
             if let Some(prompt) = session
