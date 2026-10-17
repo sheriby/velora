@@ -2,6 +2,16 @@ use super::*;
 use super::super::{DocumentBlockState, DocumentEditingState, DocumentRowLayout, ViewMode};
 
 impl Editor {
+    pub(in crate::editor) fn ai_cached_document_paths(&self) -> Vec<(PathBuf, uuid::Uuid)> {
+        self.workspace.open_documents.iter().filter(|tab| crate::file_url::is_markdown_document(&tab.path) || super::untitled_document_id(&tab.path).is_some())
+            .map(|tab| (tab.path.clone(), tab.recovery_id)).collect()
+    }
+
+    pub(in crate::editor) fn ai_cached_source_for_id(&self, id: &str, root: Option<&Path>, bound: Option<&Path>) -> Option<String> {
+        self.workspace.open_documents.iter().find(|tab| bound == Some(tab.path.as_path()) || super::super::ai_assistant::ai_document_id(Some(&tab.path), root, tab.recovery_id) == id)
+            .map(|tab| tab.markdown.clone())
+    }
+
     pub(crate) fn capture_document_editing_state(&self, cx: &App) -> DocumentEditingState {
         let tables: HashSet<_> = self
             .table_cells

@@ -1266,7 +1266,7 @@ async fn the_main_panel_rows_draw_their_icons_inside_the_measured_box(cx: &mut T
         .collect::<Vec<_>>();
     assert_eq!(
         specs.iter().map(|(name, ..)| *name).collect::<Vec<_>>(),
-        MAIN_ROWS,
+        MAIN_ROWS.into_iter().chain(["ai-ask", "ai-summarize", "ai-continue"]).collect::<Vec<_>>(),
         "主面板的行序与行名清单对不上"
     );
 

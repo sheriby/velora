@@ -1281,6 +1281,20 @@ impl Editor {
     /// 链接跳转要 `&mut Window`，且不能在本次窗口更新里重入，因此与 wikilink
     /// 一样延后到当前更新结束后执行。
     pub(crate) fn defer_open_link(&mut self, open_target: String, cx: &mut Context<Self>) {
+        let open_target = if self.ai_result_preview {
+            match classify_link_target(&open_target) {
+                LinkTarget::Anchor(anchor) => { self.jump_to_heading_anchor(&anchor, cx); return; }
+                LinkTarget::External(url) => url,
+                LinkTarget::Local { path, anchor } => {
+                    let resolved = resolve_local_link_path(self.local_link_base_dir().as_deref(), &path);
+                    let Some(root) = self.local_link_base_dir() else { return; };
+                    let Ok(canonical) = resolved.canonicalize() else { return; };
+                    if !canonical.starts_with(root) { return; }
+                    let Ok(mut url) = url::Url::from_file_path(canonical) else { return; };
+                    url.set_fragment(anchor.as_deref()); url.to_string()
+                }
+            }
+        } else { open_target };
         let Some(any_handle) = self.window_handle else {
             return;
         };
@@ -1288,9 +1302,9 @@ impl Editor {
             return;
         };
         cx.defer(move |cx| {
-            let _ = handle.update(cx, |editor, window, cx| {
+            if let Err(error) = handle.update(cx, |editor, window, cx| {
                 editor.open_link_target(open_target.clone(), window, cx);
-            });
+            }) { eprintln!("打开文档链接失败：{error}"); }
         });
     }
 

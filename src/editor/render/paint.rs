@@ -983,6 +983,11 @@ impl Render for Editor {
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_save_document))
             .on_action(cx.listener(Self::on_file_history_action))
+            .on_action(cx.listener(Self::on_open_ai_assistant))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiPolish>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiTranslate>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiSummarize>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiContinue>))
             .on_action(cx.listener(Self::on_save_document_as))
             .on_action(cx.listener(Self::on_export_html))
             .on_action(cx.listener(Self::on_export_pdf))
@@ -1077,6 +1082,7 @@ impl Render for Editor {
             }
         }
         main_content = main_content.child(content_area);
+        if let Some(sidebar) = self.render_ai_sidebar(&theme, window, cx) { main_content = main_content.child(sidebar); }
         let base = base.child(main_content);
         let status_bar = if self.split_parent.is_none() { self.render_status_bar(&theme, &strings, window, cx) } else { None };
         let base = if let Some(status_bar) = status_bar {
@@ -1125,6 +1131,9 @@ impl Render for Editor {
         } else {
             base
         };
+        let base = if let Some(panel) = self.render_ai_assistant(&theme, window, cx) {
+            base.child(panel)
+        } else { base };
         let base = if let Some(context_menu) =
             self.render_context_menu_overlay(&theme, window, cx)
         {

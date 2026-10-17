@@ -835,7 +835,17 @@ fn open_recent_folder(cx: &mut App, path: PathBuf, error_window: Option<AnyWindo
 pub(crate) type EditorMenuHandler = fn(&mut Editor, &mut Window, &mut Context<Editor>);
 
 pub(crate) fn editor_menu_handler(action: &dyn Action) -> Option<EditorMenuHandler> {
-    if action.as_any().is::<crate::components::ToggleReadingMode>() {
+    if action.as_any().is::<crate::components::AiPolish>() {
+        Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Polish, window, cx))
+    } else if action.as_any().is::<crate::components::AiTranslate>() {
+        Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Translate, window, cx))
+    } else if action.as_any().is::<crate::components::AiSummarize>() {
+        Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Summarize, window, cx))
+    } else if action.as_any().is::<crate::components::AiContinue>() {
+        Some(|editor, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Continue, window, cx))
+    } else if action.as_any().is::<crate::components::OpenAiAssistant>() {
+        Some(|editor, window, cx| editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx))
+    } else if action.as_any().is::<crate::components::ToggleReadingMode>() {
         Some(|editor, _, cx| editor.toggle_reading_mode(cx))
     } else if action.as_any().is::<NewDocument>() {
         Some(|editor, window, cx| editor.new_workspace_document(window, cx))

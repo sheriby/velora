@@ -233,6 +233,10 @@ impl Editor {
                 cx.notify();
             }
             BlockEvent::RequestOpenWikilink { target } => {
+                if self.ai_result_preview {
+                    let destination = if crate::file_url::is_markdown_document(std::path::Path::new(&target)) { target.clone() } else { format!("{target}.md") };
+                    self.defer_open_link(destination, cx); return;
+                }
                 // `[[wikilink]]` 点击：打开工作区同名文件，缺失则在根目录创建
                 // （roadmap C3）。defer 到当前更新完成后执行（打开流程需要
                 // &mut Window，且不能在本次窗口更新内重入）。

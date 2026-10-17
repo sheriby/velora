@@ -378,6 +378,7 @@ impl Editor {
             self.close_menu_bar(cx);
             return;
         }
+        if self.dismiss_ai_panel(window, cx) { cx.stop_propagation(); return; }
         if self.cancel_workspace_name_edit(window, cx) {
             cx.stop_propagation();
             self.dismiss_contextual_overlays(cx);

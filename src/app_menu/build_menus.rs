@@ -431,6 +431,9 @@ pub(crate) fn init(cx: &mut App) {
     let subscription = cx.on_window_closed(handle_window_closed);
     cx.global_mut::<AppMenuState>().window_closed_subscription = Some(subscription);
 
+    cx.on_action(|_: &crate::components::OpenAiAssistant, cx| {
+        dispatch_menu_action(&crate::components::OpenAiAssistant, cx);
+    });
     cx.on_action(|_: &NewDocument, cx| {
         dispatch_menu_action(&NewDocument, cx);
     });

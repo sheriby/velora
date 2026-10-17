@@ -40,7 +40,7 @@ const CODE_SIZE: f32 = 11.0;
 const SEPARATOR_WIDTH: f32 = 1.0;
 const SEPARATOR_HEIGHT: f32 = 16.0;
 /// 一条上的子元素个数：「段落」一颗、六颗行内格式、链接、清除格式，再加两条分节线。
-const SLOT_COUNT: f32 = FORMAT_BUTTONS.len() as f32 + 5.0;
+const SLOT_COUNT: f32 = FORMAT_BUTTONS.len() as f32 + 6.0;
 
 /// 「段落」那颗的宽度：图标 + 间距 + 箭头 + 左右各一份留白。
 const HEADING_BUTTON_WIDTH: f32 =
@@ -127,7 +127,7 @@ impl Editor {
     /// 「别的浮层」这一条不看层级只看状态：工具栏画在窗口根上，比画在正文区里的
     /// 面板与快速打开更靠后，收不掉就会浮在它们之上。
     fn selection_toolbar_anchor(&self, cx: &App) -> Option<Bounds<Pixels>> {
-        if self.is_read_only() || self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
+        if self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
             return None;
         }
         if self.cross_block_drag.is_some()
@@ -163,7 +163,7 @@ impl Editor {
         // 子元素之间各一个间距；`SLOT_COUNT` 与 `render_selection_toolbar` 里挂的顺序一致。
         // 边框那一份也要算进来：gpui 的描边画在边界之内，不算就会让最后一颗顶到边线上，
         // 与菜单面板截字是同一处漏算。
-        let squares = (FORMAT_BUTTONS.len() as f32 + 2.0) * BUTTON_SIZE;
+        let squares = (FORMAT_BUTTONS.len() as f32 + 3.0) * BUTTON_SIZE;
         let separators = SEPARATOR_WIDTH * 2.0;
         let border = theme.dimensions.dialog_border_width * 2.0;
         let width = PANEL_PADDING * 2.0
@@ -256,7 +256,9 @@ impl Editor {
             self.selection_toolbar = None;
             return None;
         }
-        let size = Self::toolbar_size(theme);
+        let size = if self.is_read_only() {
+            size(px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width), px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width))
+        } else { Self::toolbar_size(theme) };
         let origin = Self::toolbar_origin(selection, size, viewport);
 
         let heading_menu_open = self
@@ -280,6 +282,9 @@ impl Editor {
         state.panel_bounds = Some(panel);
 
         let mut toolbar = Self::toolbar_panel(theme, origin, size);
+        if self.is_read_only() {
+            return Some(toolbar.child(self.ai_toolbar_button(theme, cx)).into_any_element());
+        }
         toolbar = toolbar.child(self.heading_button(&strings, theme, heading_menu_open, cx));
         toolbar = toolbar.child(Self::toolbar_separator(theme));
         for (format, id) in FORMAT_BUTTONS {
@@ -287,6 +292,7 @@ impl Editor {
         }
         toolbar = toolbar.child(Self::toolbar_separator(theme));
         toolbar = toolbar.child(self.link_button(&strings, theme, cx));
+        toolbar = toolbar.child(self.ai_toolbar_button(theme, cx));
         let clear_enabled = self.clear_format_is_available(cx);
         toolbar = toolbar.child(self.clear_format_button(&strings, theme, clear_enabled, cx));
         if let Some((rows, geometry, offset, _)) = heading_menu.as_ref() {
@@ -300,6 +306,17 @@ impl Editor {
             ));
         }
         Some(toolbar.into_any_element())
+    }
+
+    fn ai_toolbar_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = cx.global::<crate::i18n::I18nManager>().strings().ai_assistant.clone();
+        div().id("toolbar-ai").debug_selector(|| "toolbar-ai".into())
+            .size(px(BUTTON_SIZE)).flex().items_center().justify_center()
+            .text_size(px(11.0)).text_color(theme.colors.dialog_title)
+            .rounded(px(4.0)).cursor_pointer().child("AI")
+            .tooltip(move |_, cx| cx.new(|_| HoverPreviewTooltip { label: label.clone().into() }).into())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|editor, _, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx)))
     }
 
     fn toolbar_panel(theme: &Theme, origin: Point<Pixels>, size: Size<Pixels>) -> Stateful<Div> {

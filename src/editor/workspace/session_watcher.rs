@@ -155,6 +155,8 @@ impl Editor {
         let same_root = self.workspace.root.as_ref() == Some(&root);
         self.workspace.root = Some(root);
         if !same_root {
+            self.stop_ai_task(cx);
+            drop(self.ai_session.take());
             self.workspace.file_tree = None;
             self.workspace.tree_scan_root = None;
             self.invalidate_workspace_files_walk();

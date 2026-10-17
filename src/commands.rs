@@ -13,7 +13,7 @@
 use gpui::Action;
 
 use crate::components::{
-    BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
+    OpenAiAssistant, BoldSelection, ClearFormatSelection, CloseWindow, CodeSelection, CopyAsHtml, CopyAsMarkdown,
     SplitEditorLeft, SplitEditorRight, SplitEditorUp, SplitEditorDown,
     CloseTab, ExportHtml, ExportPdf, ExportPng, FileHistory, FindInDocument, FindNextMatch,
     FindPreviousMatch, FormatDocument, HighlightSelection, ItalicSelection, LinkSelection,
@@ -84,6 +84,12 @@ macro_rules! command {
 static COMMANDS: &[CommandSpec] = &[
     // 应用菜单；Windows 的设置和更新入口放在汉堡菜单一级，退出放在文件菜单末尾。
     command!("preferences", App, menu_preferences, OpenPreferences),
+    command!("open_ai_assistant", View, ai_assistant, OpenAiAssistant),
+    CommandSpec { id: "ai_polish", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_polish), action: || Box::new(crate::components::AiPolish) },
+    CommandSpec { id: "ai_translate", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_translate), action: || Box::new(crate::components::AiTranslate) },
+    CommandSpec { id: "ai_summarize", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_summarize), action: || Box::new(crate::components::AiSummarize) },
+    CommandSpec { id: "ai_continue", menu: CommandMenu::Edit, separator_before: false, label: |strings| format!("AI {}", strings.ai_action_continue), action: || Box::new(crate::components::AiContinue) },
+
     command!("check_updates", App, menu_check_updates, CheckForUpdates),
     command!(sep "quit", App, menu_quit, QuitApplication),
     // 文件
@@ -287,6 +293,7 @@ mod tests {
         assert_eq!(
             view_ids,
             vec![
+                "open_ai_assistant",
                 "split_editor_left", "split_editor_right", "split_editor_up", "split_editor_down",
                 "toggle_sidebar",
                 "toggle_fullscreen",
@@ -324,7 +331,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             edit_ids,
-            vec!["select_document", "paste_as_plain_text", "copy_as_markdown"]
+            vec!["ai_polish", "ai_translate", "ai_summarize", "ai_continue", "select_document", "paste_as_plain_text", "copy_as_markdown"]
         );
 
         let format_ids = super::commands_for(CommandMenu::Format)

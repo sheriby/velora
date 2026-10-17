@@ -93,6 +93,7 @@ impl Editor {
                 cx,
             ));
         }
+        if let Some(sidebar) = self.render_ai_sidebar(&theme, window, cx) { main = main.child(sidebar); }
         let menus = self.window_menus(cx).filter(|menus| !menus.is_empty());
         let leading = (crate::editor::render::supports_hamburger_menu() && menus.is_some())
             .then(|| self.render_hamburger_menu_button(&theme, cx));
@@ -152,6 +153,7 @@ impl Editor {
                     .child(tabs),
             );
         }
+        if let Some(panel) = self.render_ai_assistant(&theme, window, cx) { root = root.child(deferred(panel).with_priority(10)); }
         if let Some(menus) = menus {
             if let Some(menu) = self.render_hamburger_menu_panel(&theme, cx, &menus, height) {
                 root = root.child(deferred(menu).with_priority(20));
@@ -190,6 +192,11 @@ impl Editor {
                 .child(deferred(self.render_unsaved_changes_overlay(&theme, cx)).with_priority(20));
         }
         root = root
+            .on_action(cx.listener(Self::on_open_ai_assistant))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiPolish>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiTranslate>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiSummarize>))
+            .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::AiContinue>))
             .on_action(cx.listener(Self::on_registered_menu_action::<crate::components::ToggleReadingMode>))
             .on_action(cx.listener(Self::on_dismiss_transient_ui))
             .on_action(cx.listener(Self::forward_split_action::<SplitEditorLeft>))

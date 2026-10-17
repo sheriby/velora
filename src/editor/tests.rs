@@ -3,6 +3,7 @@
 //! 各子模块通过 `use super::common::*` 引入。纯移动拆分，用例本身未改。
 
 mod author_report;
+mod ai_assistant;
 mod block_source_spans;
 mod caret;
 mod block_source_write_back;

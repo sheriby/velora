@@ -50,6 +50,7 @@ pub(crate) fn document_submenu_label(
 /// 二级面板里的行不给图标：那一档排的是「一级标题」「有序列表」这种条目名，图标只会把每行拉宽。
 pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option<&'static str> {
     match command {
+        DocumentMenuCommand::Ai(_) => Some("icon/editor/ai.svg"),
         DocumentMenuCommand::Undo => Some("icon/editor/undo.svg"),
         DocumentMenuCommand::Redo => Some("icon/editor/redo.svg"),
         DocumentMenuCommand::Cut => Some("icon/editor/cut.svg"),
@@ -134,6 +135,7 @@ pub(crate) enum DocumentMenuCommand {
     InsertFrontMatter,
     ToggleSourceView,
     ToggleReadingMode,
+    Ai(crate::ai::AiCommand),
 }
 
 impl DocumentMenuCommand {
@@ -141,6 +143,13 @@ impl DocumentMenuCommand {
     /// 行渲染、置灰与用例点名的都是同一个名字。
     pub(crate) fn row_name(self) -> &'static str {
         match self {
+            Self::Ai(command) => match command {
+                crate::ai::AiCommand::Polish => "ai-polish",
+                crate::ai::AiCommand::Translate => "ai-translate",
+                crate::ai::AiCommand::Summarize => "ai-summarize",
+                crate::ai::AiCommand::Continue => "ai-continue",
+                _ => "ai-ask",
+            },
             Self::Undo => "undo",
             Self::Redo => "redo",
             Self::Cut => "cut",
@@ -189,7 +198,8 @@ impl DocumentMenuCommand {
             Self::TaskList => Some(BlockKindTarget::TaskList),
             Self::Quote => Some(BlockKindTarget::Quote),
             Self::CodeBlock => Some(BlockKindTarget::CodeBlock),
-            Self::Format(_)
+            Self::Ai(_)
+            | Self::Format(_)
             | Self::Link
             | Self::ClearFormat
             | Self::Undo
@@ -299,6 +309,21 @@ impl Editor {
 
     /// 主菜单的行序：顶部图标条 → 复制为 → 格式 / 段落 / 插入 → 视图。
     pub(crate) fn document_menu_rows(&self, cx: &App) -> Vec<DocumentMenuRow> {
+        let mut rows = self.document_menu_rows_without_ai(cx);
+        let commands = if self.has_text_selection(cx) {
+            vec![crate::ai::AiCommand::Polish, crate::ai::AiCommand::Translate, crate::ai::AiCommand::Summarize, crate::ai::AiCommand::Ask]
+        } else {
+            vec![crate::ai::AiCommand::Ask, crate::ai::AiCommand::Summarize, crate::ai::AiCommand::Continue]
+        };
+        rows.push(DocumentMenuRow::Separator);
+        rows.extend(commands.into_iter().map(|action| {
+            let command = DocumentMenuCommand::Ai(action);
+            DocumentMenuRow::Item { command, name: command.row_name(), enabled: !self.code_document }
+        }));
+        rows
+    }
+
+    fn document_menu_rows_without_ai(&self, cx: &App) -> Vec<DocumentMenuRow> {
         if self.is_read_only() {
             return vec![
                 DocumentMenuRow::Item {
@@ -512,6 +537,7 @@ impl Editor {
             self.close_context_menu(cx);
         }
         match command {
+            DocumentMenuCommand::Ai(command) => self.open_ai_assistant(command, window, cx),
             DocumentMenuCommand::Undo => window.dispatch_action(Box::new(Undo), cx),
             DocumentMenuCommand::Redo => window.dispatch_action(Box::new(Redo), cx),
             DocumentMenuCommand::Cut => window.dispatch_action(Box::new(Cut), cx),
@@ -708,6 +734,8 @@ pub(crate) fn document_menu_label(
     strings: &crate::i18n::I18nStrings,
 ) -> String {
     match command {
+        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => strings.ai_panel_more.clone(),
+        DocumentMenuCommand::Ai(command) => format!("AI {}", command.label(strings)),
         DocumentMenuCommand::Undo => strings.context_menu_undo.clone(),
         DocumentMenuCommand::Redo => strings.context_menu_redo.clone(),
         DocumentMenuCommand::Cut => strings.context_menu_cut.clone(),
@@ -767,6 +795,8 @@ pub(crate) fn document_menu_shortcut(
     cx: &App,
 ) -> Option<SharedString> {
     let shortcut = match command {
+        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => ShortcutCommand::OpenAiAssistant,
+        DocumentMenuCommand::Ai(_) => return None,
         DocumentMenuCommand::Undo => ShortcutCommand::Undo,
         DocumentMenuCommand::Redo => ShortcutCommand::Redo,
         DocumentMenuCommand::Cut => ShortcutCommand::Cut,

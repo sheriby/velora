@@ -27,6 +27,7 @@ use crate::components::{
     TableData, TableRuntime, UndoCaptureKind, serialize_table_cell_markdown,
 };
 mod buffer;
+mod ai_assistant;
 mod clipboard_ops;
 mod close;
 mod context_menu;
@@ -74,6 +75,8 @@ use self::workspace::WorkspaceState;
 /// emitted by child blocks. Structural changes are handled centrally so focus,
 /// scrolling, dirty tracking, and serialization stay synchronized.
 pub struct Editor {
+    ai_session: Option<ai_assistant::AiSession>,
+    ai_result_preview: bool,
     document: DocumentTree,
     /// 文档文本的**唯一事实源**：块树是它上面的一份投影，保存写的是它。
     buffer: buffer::TextBuffer,
@@ -819,6 +822,8 @@ impl Editor {
             focus_mode: false,
             typewriter_mode: false,
             reading_mode: std::rc::Rc::new(std::cell::Cell::new(false)),
+            ai_session: None,
+            ai_result_preview: false,
             source_mode_fallback_required,
             code_document: false,
             pending_focus,
