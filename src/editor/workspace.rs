@@ -656,6 +656,7 @@ pub(crate) fn copy_as_html_clipboard_item(html: String) -> ClipboardItem {
 
 // 各子模块的自由函数/类型经此聚合，供根与兄弟模块(含 tests)按原路径引用。
 pub(super) use file_tree::*;
+pub(crate) use file_tree::collect_workspace_files_on_disk_reporting_skips;
 pub(super) use input_handler::*;
 pub(super) use render_panel::*;
 pub(super) use search_backend::*;

@@ -20,6 +20,7 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::*;
 
 mod app_identity;
+mod ai;
 mod app_menu;
 mod commands;
 mod components;

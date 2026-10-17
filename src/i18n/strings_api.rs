@@ -447,6 +447,71 @@ impl I18nStrings {
         strings.preferences_image_paste_copy_to_assets_folder = "复制图片到 ./assets 文件夹".into();
         strings.preferences_image_paste_copy_to_named_assets_folder =
             "复制图片到 ./${filename}.assets 文件夹".into();
+        strings.ai_assistant = "AI 助手".into();
+        strings.ai_action_shorten = "缩短".into();
+        strings.ai_action_expand = "扩写".into();
+        strings.ai_action_explain = "解释".into();
+        strings.ai_panel_send = "发送".into();
+        strings.ai_panel_settings = "设置".into();
+        strings.ai_panel_accept_all = "全部接受".into();
+        strings.ai_panel_accept_file = "接受此篇".into();
+        strings.ai_panel_reject = "拒绝".into();
+        strings.ai_panel_discard = "丢弃修改".into();
+        strings.ai_panel_reload = "重新加载".into();
+        strings.ai_panel_disabled = "已禁用".into();
+        strings.ai_panel_instructions = "自定义指令".into();
+        strings.ai_panel_exclusions = "排除的文件或目录（逗号分隔）".into();
+        strings.ai_panel_save = "保存".into();
+        strings.ai_panel_related = "关联修改需一起接受".into();
+        strings.ai_panel_stale = "依据已变化，请重新生成".into();
+        strings.ai_panel_history = "历史会话".into();
+        strings.ai_panel_new_chat = "新会话".into();
+        strings.ai_panel_copy = "复制".into();
+        strings.ai_panel_insert = "插入正文".into();
+        strings.ai_panel_sources = "来源".into();
+        strings.ai_panel_skills = "任务说明".into();
+        strings.ai_panel_save_instruction = "保存指令".into();
+        strings.ai_panel_instruction_name = "指令名称".into();
+        strings.ai_panel_context_budget = "上下文预算".into();
+        strings.ai_panel_pending = "待审阅".into();
+        strings.ai_panel_ask = "询问 AI…".into();
+        strings.ai_panel_more = "更多 AI…".into();
+        strings.ai_panel_add_context = "添加资料".into();
+        strings.ai_panel_clear_key = "清除密钥".into();
+        strings.ai_panel_keep_key = "已保存密钥，留空保留".into();
+        strings.ai_panel_make_default = "设为默认".into();
+        strings.ai_panel_input_tokens = "输入".into();
+        strings.ai_panel_output_tokens = "输出".into();
+        strings.ai_panel_accept_edit = "接受此处".into();
+        strings.ai_panel_files_scope = "只查阅所选资料与当前文档".into();
+        strings.ai_activity_read = "读取文档".into();
+        strings.ai_activity_search = "检索资料".into();
+        strings.ai_activity_outline = "查看大纲".into();
+        strings.ai_activity_list = "查找文档".into();
+        strings.ai_activity_edit = "准备修改建议".into();
+        strings.ai_activity_new = "准备新文档".into();
+        strings.ai_activity_skill = "读取任务说明".into();
+        strings.ai_action_polish = "润色".into();
+        strings.ai_action_fix_grammar = "语法纠错".into();
+        strings.ai_action_translate = "翻译…".into();
+        strings.ai_action_summarize = "总结".into();
+        strings.ai_action_continue = "续写".into();
+        strings.ai_custom_placeholder = "输入自定义指令，回车执行…".into();
+        strings.ai_panel_retry = "重试".into();
+        strings.ai_panel_stop = "停止".into();
+        strings.ai_panel_running = "生成中…".into();
+        strings.preferences_ai_api_base_url = "API 地址".into();
+        strings.preferences_ai_api_key = "API 密钥".into();
+        strings.preferences_ai_model = "模型".into();
+        strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
+        strings.preferences_shortcut_open_ai_assistant = "AI 助手".into();
+        strings.preferences_ai_add_endpoint = "添加端点…".into();
+        strings.preferences_ai_delete = "删除".into();
+        strings.preferences_ai_name = "名称".into();
+        strings.preferences_ai_test_connection = "测试连接".into();
+        strings.preferences_ai_test_running = "正在测试…".into();
+        strings.preferences_ai_test_ok = "连接成功".into();
+        strings.preferences_ai_save_endpoint = "保存端点".into();
         strings
     }
 
@@ -890,6 +955,70 @@ impl I18nStrings {
             preferences_status_bar_show_cursor_position: "Cursor Position".into(),
             preferences_status_bar_show_sidebar_toggle: "Sidebar Toggle".into(),
             preferences_status_bar_show_mode_switch: "Mode Switch".into(),
+            ai_assistant: "AI Assistant".into(),
+            ai_action_shorten: "Shorten".into(),
+            ai_action_expand: "Expand".into(),
+            ai_action_explain: "Explain".into(),
+            ai_panel_send: "Send".into(),
+            ai_panel_settings: "Settings".into(),
+            ai_panel_accept_all: "Accept all".into(),
+            ai_panel_accept_file: "Accept file".into(),
+            ai_panel_reject: "Reject".into(),
+            ai_panel_discard: "Discard changes".into(),
+            ai_panel_reload: "Reload".into(),
+            ai_panel_disabled: "Disabled".into(),
+            ai_panel_instructions: "Custom instructions".into(),
+            ai_panel_exclusions: "Excluded files or folders (comma separated)".into(),
+            ai_panel_save: "Save".into(),
+            ai_panel_related: "Accept related changes together".into(),
+            ai_panel_stale: "Source changed; regenerate this proposal".into(),
+            ai_panel_history: "History".into(),
+            ai_panel_new_chat: "New chat".into(),
+            ai_panel_copy: "Copy".into(),
+            ai_panel_insert: "Insert into document".into(),
+            ai_panel_sources: "Sources".into(),
+            ai_panel_skills: "Skills".into(),
+            ai_panel_save_instruction: "Save instruction".into(),
+            ai_panel_instruction_name: "Instruction name".into(),
+            ai_panel_context_budget: "Context budget".into(),
+            ai_panel_pending: "Pending review".into(),
+            ai_panel_ask: "Ask AI…".into(),
+            ai_panel_more: "More AI…".into(),
+            ai_panel_add_context: "Add context".into(),
+            ai_panel_clear_key: "Clear key".into(),
+            ai_panel_keep_key: "Key saved; leave blank to keep".into(),
+            ai_panel_make_default: "Set as default".into(),
+            ai_panel_input_tokens: "Input".into(),
+            ai_panel_output_tokens: "Output".into(),
+            ai_panel_accept_edit: "Accept change".into(),
+            ai_panel_files_scope: "Use selected sources and the current document".into(),
+            ai_activity_read: "Reading documents".into(),
+            ai_activity_search: "Searching notes".into(),
+            ai_activity_outline: "Reading outline".into(),
+            ai_activity_list: "Finding documents".into(),
+            ai_activity_edit: "Preparing changes".into(),
+            ai_activity_new: "Drafting document".into(),
+            ai_activity_skill: "Reading skill".into(),
+            ai_action_polish: "Improve writing".into(),
+            ai_action_fix_grammar: "Fix spelling & grammar".into(),
+            ai_action_translate: "Translate…".into(),
+            ai_action_summarize: "Summarize".into(),
+            ai_action_continue: "Continue writing".into(),
+            ai_custom_placeholder: "Custom instruction; press Enter to run…".into(),
+            ai_panel_retry: "Retry".into(),
+            ai_panel_stop: "Stop".into(),
+            ai_panel_running: "Generating…".into(),
+            preferences_shortcut_open_ai_assistant: "AI Assistant".into(),
+            preferences_ai_add_endpoint: "Add endpoint…".into(),
+            preferences_ai_delete: "Delete".into(),
+            preferences_ai_name: "Name".into(),
+            preferences_ai_test_connection: "Test connection".into(),
+            preferences_ai_test_running: "Testing…".into(),
+            preferences_ai_test_ok: "Works".into(),
+            preferences_ai_save_endpoint: "Save endpoint".into(),
+            preferences_ai_api_base_url: "API base URL".into(),
+            preferences_ai_api_key: "API key".into(),
+            preferences_ai_model: "Model".into(),
         }
     }
 

@@ -224,7 +224,7 @@ fn autosave_payload(document: &PendingAutosaveDocument, disk_raw: &[u8]) -> Vec<
     }
 }
 
-pub(super) fn file_content_version(markdown: &str) -> u64 {
+pub(crate) fn file_content_version(markdown: &str) -> u64 {
     let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
     file_content_version_normalized(&normalized)
 }

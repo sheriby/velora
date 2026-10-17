@@ -41,7 +41,7 @@ impl LoadedDocument {
     }
 }
 
-pub(super) fn normalize_document_text(text: &str) -> String {
+pub(crate) fn normalize_document_text(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 

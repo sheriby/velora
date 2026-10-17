@@ -43,7 +43,7 @@ mod image_preview;
 mod latex_completion;
 mod formula_editor;
 mod paragraph_ops;
-mod persistence;
+pub(crate) mod persistence;
 mod render;
 mod runtime_context;
 mod selection;
