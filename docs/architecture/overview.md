@@ -18,7 +18,7 @@
 
 ## Velora 是什么
 
-原生 Markdown 编辑器（对标 Typora/Obsidian）。Rust + **vendored GPUI 0.2.2**（`Cargo.toml` 的 `[patch.crates-io]` 指向 `vendor/gpui`，带本地补丁，清单见 testing-and-build.md §7）。**单 bin crate、无 workspace**：全部代码在 `src/`，入口 `src/main.rs`，测试全是 bin 内的 `#[cfg(test)]` 模块。发布平台 macOS（ARM64 + Intel）与 Windows x64，不支持 Linux。
+原生所见即所得的 Markdown 编辑器。Rust + **vendored GPUI 0.2.2**（`Cargo.toml` 的 `[patch.crates-io]` 指向 `vendor/gpui`，带本地补丁，清单见 testing-and-build.md §7）。**单 bin crate、无 workspace**：全部代码在 `src/`，入口 `src/main.rs`，测试全是 bin 内的 `#[cfg(test)]` 模块。发布平台 macOS（ARM64 + Intel）与 Windows x64，不支持 Linux。
 
 ## 核心分层与所有权
 

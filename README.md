@@ -4,21 +4,15 @@
 
 ---
 
+> **Project status:** This project is at an early stage, with features and implementation evolving rapidly. AI agents handle nearly all coding, testing, and release work, while the human developer defines requirements, discusses design, and guides the project's direction. Stability and compatibility remain under ongoing validation. If you encounter an issue, please report it through [Issues](https://github.com/sheriby/velora/issues). We will investigate and work to resolve it as soon as possible.
+
 Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebView, with the interface rendered directly on the GPU — faster startup, lower overhead, steadier response. WYSIWYG by default, switchable to Markdown source at any time. Beyond raw performance, the interface stays modern, clean and readable — light and fluid.
 
 ## 🖼️ Screenshots
 
-*WYSIWYG editing: inline styles, tables, code highlighting and LaTeX, with tabs merged into the title bar.*
-
 ![Live WYSIWYG Markdown editing: inline styles, tables, code highlighting and LaTeX](assets/screenshots/editor.png)
 
-*The workspace: file tree and multiple tabs, with frontmatter rendered as a property card, collapsible headings and syntax-highlighted code blocks.*
-
-![The Velora workspace: file tree, multiple tabs and rendered Markdown (frontmatter card, collapsible headings, lists and code blocks)](assets/screenshots/workspace.png)
-
-*Six built-in themes, with automatic switching to the system appearance.*
-
-![The six built-in themes: Velora Light, Paper, Forest, Velora Dark, Midnight and Ink](assets/screenshots/themes.png)
+More screenshots: [Workspace and tabs](assets/screenshots/workspace.png) · [Split panes](assets/screenshots/workspace-split.png) · [Formula editor](assets/screenshots/formula-editor.png) · [Six built-in themes](assets/screenshots/themes.png)
 
 ## ✨ Features
 
@@ -36,6 +30,7 @@ Velora is a native Markdown editor built on Rust and GPUI: no Electron, no WebVi
 ### Workspace & knowledge
 
 - **Folder = workspace** — the file tree creates and renames files and folders with inline input, duplicates, copies / pastes and deletes (to the system Trash); sort order (name, modification time or type) is set in Settings; right-click reveals a file in the system file manager or copies its absolute / relative path; hover shows its size and modification time.
+- **Split panes & editor groups** — combine side-by-side and stacked panes in nested layouts; drag a tab or a file from the tree to create a split. Each group scrolls independently, and multiple views of the same file stay in sync.
 - **Global search** matches file names *and* contents, with workspace-wide replace; file bodies are decoded the same way documents are (UTF-8 first, GB18030 fallback).
 - **Image preview** — JPG, PNG, WebP, ICO and other images open from the file tree, Open File, quick switcher, recent files or a startup argument as read-only previews that scale to fit the window, with dimensions in the status bar; images never enter the text buffer or save path.
 - **Outline pane** — click to jump, follows scrolling to highlight the current section, double-click a heading to rename it in the body.

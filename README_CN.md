@@ -4,21 +4,15 @@
 
 ---
 
+> **项目状态**：本项目目前处于早期阶段，功能与实现仍在快速迭代。代码编写、测试与版本发布几乎全部由 AI Agent 完成，人类开发者负责梳理需求、讨论设计与把握项目方向。稳定性与兼容性尚需持续验证。如在使用过程中遇到问题，欢迎通过 [Issue](https://github.com/sheriby/velora/issues) 提交反馈，我们将尽快排查并修复。
+
 Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron、无 WebView，界面由 GPU 直接渲染，启动快、开销低、响应稳。WYSIWYG所见即所得，可随时切换 Markdown 源码。在性能之外，界面同样保持现代、简洁与可读，轻量而流畅。
 
 ## 🖼️ 界面预览
 
-*所见即所得：行内样式、表格、代码高亮与 LaTeX 公式，标签页并入标题栏。*
-
 ![实时所见即所得编辑：行内样式、表格、代码高亮与 LaTeX 公式](assets/screenshots/editor.png)
 
-*工作区：文件树与多标签页，正文里的 frontmatter 收成属性卡片、标题可折叠、代码块带语法高亮。*
-
-![Velora 工作区：文件树、多标签页与渲染中的 Markdown（frontmatter 卡片、可折叠标题、列表与代码块）](assets/screenshots/workspace.png)
-
-*六套内置主题，并可跟随系统外观自动切换。*
-
-![六套内置主题：Velora Light、Paper、Forest、Velora Dark、Midnight 与 Ink](assets/screenshots/themes.png)
+更多截图：[工作区与多标签页](assets/screenshots/workspace.png) · [分屏阅读与编辑](assets/screenshots/workspace-split.png) · [公式编辑器](assets/screenshots/formula-editor.png) · [六套内置主题](assets/screenshots/themes.png)
 
 ## ✨ 功能
 
@@ -36,6 +30,7 @@ Velora 是基于 Rust 与 GPUI 构建的原生 Markdown 编辑器：无 Electron
 ### 工作区与知识管理
 
 - **文件夹即工作区**——文件树支持新建文件与文件夹、重命名（名称在树内直接输入）、创建副本、复制粘贴与删除（移入系统废纸篓）；排序方式（按名称、修改时间或类型）在偏好设置中选择；右键可在文件管理器中打开或复制绝对/相对路径；悬停文件显示大小与修改时间。
+- **分屏与编辑器组**——左右、上下分屏可嵌套组合；拖动标签或文件树中的文件创建分屏，各组独立滚动，同一文件的多处视图保持内容同步。
 - **全局搜索**同时匹配文件名*与*文件内容，支持工作区范围替换；正文解码与打开文档同一口径（UTF-8 优先、GB18030 回退）。
 - **图片文件预览**——从文件树、打开文件、快速打开、最近文件或启动参数查看 JPG、PNG、WebP、ICO 等图片，按窗口大小适配显示，状态栏显示尺寸；图片只读，不进入文本编辑与保存流程。
 - **大纲面板**——点击跳转，跟随滚动高亮当前章节，双击标题在正文中重命名。
