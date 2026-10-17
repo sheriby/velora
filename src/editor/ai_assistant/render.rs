@@ -318,6 +318,7 @@ impl Editor {
                             theme,
                             cx,
                             move |editor, _, cx| {
+                                editor.invalidate_ai_connection_test(cx);
                                 if let Some(draft) = editor
                                     .ai_session
                                     .as_mut()
@@ -448,7 +449,7 @@ impl Editor {
                             }
                         },
                     ));
-                if !session.activity.is_empty() {
+                if !session.activity.is_empty() && !session.saved.running {
                     content =
                         content.child(div().text_size(px(12.0)).child(session.activity.clone()));
                 }

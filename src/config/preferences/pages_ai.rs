@@ -171,6 +171,7 @@ impl PreferencesWindow {
     fn stop_ai_preferences_probe(&mut self) {
         if let Some(state) = self.ai_preferences.as_mut() {
             state.control.cancel.cancel();
+            state.status = None;
             state.testing = false;
             state.generation = state.generation.wrapping_add(1);
         }
@@ -512,3 +513,6 @@ impl PreferencesWindow {
             }))
     }
 }
+
+#[cfg(test)]
+mod tests;

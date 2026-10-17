@@ -65,6 +65,8 @@ pub(super) struct AiSession {
     output_tokens: u64,
     context_candidates: Vec<String>,
     settings_saving: bool,
+    // 连接编辑独立于任务代数，避免改配置干扰正在运行的文档任务。
+    settings_revision: u64,
 }
 
 impl AiSession {
@@ -784,6 +786,7 @@ impl Editor {
                 output_tokens: 0,
                 context_candidates: Vec::new(),
                 settings_saving: false,
+                settings_revision: 0,
             });
         }
         let Some(session) = self.ai_session.as_mut() else {
@@ -1354,7 +1357,20 @@ impl Editor {
         }
     }
 
+    fn invalidate_ai_connection_test(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = self.ai_session.as_mut() {
+            session.settings_revision = session.settings_revision.wrapping_add(1);
+            if !session.saved.running {
+                session.control.cancel.cancel();
+                session.generation = session.generation.wrapping_add(1);
+                session.activity.clear();
+            }
+            cx.notify();
+        }
+    }
+
     pub(super) fn edit_ai_endpoint(&mut self, endpoint: Option<Endpoint>, cx: &mut Context<Self>) {
+        self.invalidate_ai_connection_test(cx);
         let Some(session) = self.ai_session.as_mut() else {
             return;
         };
@@ -1366,13 +1382,23 @@ impl Editor {
             ..Endpoint::default()
         });
         let field = |value: &str, masked: bool, cx: &mut Context<Self>| {
+            let owner = cx.entity().downgrade();
             cx.new(|cx| {
                 let mut field = TextField::new("", cx);
                 field.set_value(value, cx);
                 if masked {
                     field = field.masked();
                 }
-                field
+                field.on_change(move |cx| {
+                    let owner = owner.clone();
+                    cx.defer(move |cx| {
+                        if let Err(error) =
+                            owner.update(cx, |editor, cx| editor.invalidate_ai_connection_test(cx))
+                        {
+                            eprintln!("更新 AI 连接输入失败：{error}");
+                        }
+                    });
+                })
             })
         };
         session.draft = Some(EndpointDraft {
@@ -1388,6 +1414,7 @@ impl Editor {
     }
 
     pub(super) fn save_ai_endpoint(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_ai_connection_test(cx);
         let Some(session) = self.ai_session.as_mut() else {
             return;
         };
@@ -1413,6 +1440,7 @@ impl Editor {
         let mut settings = session.settings.clone();
         let id = endpoint.id.clone();
         let session_id = session.saved.id.clone();
+        let revision = session.settings_revision;
         session.settings_saving = true;
         let save = cx.background_spawn(async move {
             settings.save_endpoint(
@@ -1434,9 +1462,11 @@ impl Editor {
                     match result {
                         Ok(settings) => {
                             session.settings = settings;
-                            session.saved.endpoint_id = id;
-                            session.mode = PanelMode::Chat;
-                            session.draft = None;
+                            if session.settings_revision == revision {
+                                session.saved.endpoint_id = id;
+                                session.mode = PanelMode::Chat;
+                                session.draft = None;
+                            }
                             session.error = None;
                         }
                         Err(error) => session.error = Some(error.to_string()),
@@ -1561,6 +1591,7 @@ impl Editor {
     }
 
     fn delete_ai_endpoint(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.invalidate_ai_connection_test(cx);
         let Some(session) = self
             .ai_session
             .as_mut()
@@ -1661,3 +1692,6 @@ pub(in crate::editor) fn ai_document_id(
     }
     format!("untitled:{recovery}")
 }
+
+#[cfg(test)]
+mod tests;
