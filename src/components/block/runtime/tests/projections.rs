@@ -842,3 +842,141 @@ async fn standalone_script_projection_uses_html_marker_fallback(cx: &mut TestApp
     );
 }
 
+
+#[gpui::test]
+async fn hidden_markdown_markers_keep_inline_text_and_styles_on_focus(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    for markdown in [
+        "**加粗**",
+        "*斜体*",
+        "~~删除~~",
+        "==高亮==",
+        "`代码`",
+        "x^上标^",
+        "x~下标~",
+        "<sup>上标</sup>",
+        "<sub>下标</sub>",
+        "[链接](https://example.com)",
+        "[^note]",
+        "**粗体 *嵌套斜体* 末尾**",
+    ] {
+        let block = cx.new(|cx| {
+            Block::with_record(
+                cx,
+                BlockRecord::new(
+                    BlockKind::Paragraph,
+                    InlineTextTree::from_markdown(markdown),
+                ),
+            )
+        });
+        block.update(cx, |block, _cx| {
+            let clean = block.display_text().to_string();
+            let spans = block.inline_spans().to_vec();
+            block.set_hide_markdown_markers(true);
+            for cursor in clean
+                .char_indices()
+                .map(|(offset, _)| offset)
+                .chain([clean.len()])
+            {
+                block.selected_range = cursor..cursor;
+                block.sync_inline_projection_for_focus(true);
+                assert_eq!(block.display_text(), clean, "聚焦后不应显形：{markdown}");
+                assert_eq!(
+                    block.inline_spans(),
+                    spans,
+                    "隐藏记号不能丢失样式：{markdown}"
+                );
+                assert_eq!(block.selected_range, cursor..cursor);
+            }
+            block.selected_range = 0..clean.len();
+            block.sync_inline_projection_for_focus(true);
+            assert_eq!(block.display_text(), clean, "选中后也不应显形：{markdown}");
+        });
+    }
+}
+
+#[gpui::test]
+async fn hidden_markdown_markers_toggle_preserves_reversed_selection_and_ime(
+    cx: &mut TestAppContext,
+) {
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| {
+        Block::with_record(
+            cx,
+            BlockRecord::new(
+                BlockKind::Paragraph,
+                InlineTextTree::from_markdown("**中文加粗** 尾文"),
+            ),
+        )
+    });
+    block.update(cx, |block, _cx| {
+        block.selected_range = 0.."中文".len();
+        block.selection_reversed = true;
+        block.marked_range = Some(0.."中".len());
+        block.sync_inline_projection_for_focus(true);
+        assert!(block.display_text().contains("**"), "默认保持可编辑记号");
+        block.set_hide_markdown_markers(true);
+        block.sync_inline_projection_for_focus(true);
+        assert_eq!(block.display_text(), "中文加粗 尾文");
+        assert_eq!(block.selected_range, 0.."中文".len());
+        assert!(block.selection_reversed);
+        assert_eq!(block.marked_range, Some(0.."中".len()));
+        block.sync_render_cache();
+        assert_eq!(block.display_text(), "中文加粗 尾文");
+        block.set_hide_markdown_markers(false);
+        block.sync_inline_projection_for_focus(true);
+        assert!(block.display_text().contains("**"), "关闭后恢复显形");
+        assert!(block.selection_reversed);
+        assert_eq!(
+            block.current_to_clean_range(block.selected_range.clone()),
+            0.."中文".len()
+        );
+    });
+}
+
+#[gpui::test]
+async fn hidden_markdown_markers_stay_hidden_when_typing_closing_delimiters(
+    cx: &mut TestAppContext,
+) {
+    use gpui::EntityInputHandler;
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph("**中文")));
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.set_hide_markdown_markers(true);
+            let end = block.display_text().len();
+            block.selected_range = end..end;
+            block.replace_text_in_range(None, "**", window, cx);
+            assert_eq!(
+                block.display_text(),
+                "中文",
+                "输入形成样式后不应重建显形记号"
+            );
+            assert!(block.inline_spans().iter().any(|span| span.style.bold));
+            assert_eq!(block.record.title.serialize_markdown(), "**中文**");
+        })
+    });
+}
+
+#[gpui::test]
+async fn hidden_markdown_markers_allow_typing_over_selected_text(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler;
+    let cx = cx.add_empty_window();
+    let block = cx.new(|cx| Block::with_record(cx, BlockRecord::paragraph("中文尾文")));
+    cx.update(|window, cx| {
+        block.update(cx, |block, cx| {
+            block.set_hide_markdown_markers(true);
+            block.selected_range = 0.."中文".len();
+            block.replace_text_in_range(None, "*", window, cx);
+            assert_eq!(block.display_text(), "中文尾文");
+            assert_eq!(
+                block.selected_range,
+                0.."中文".len(),
+                "配对标记吸收后选区仍在可见正文内"
+            );
+            block.replace_text_in_range(None, "新", window, cx);
+            assert_eq!(block.display_text(), "新尾文");
+            assert_eq!(block.record.title.serialize_markdown(), "*新*尾文");
+        })
+    });
+}

@@ -131,15 +131,14 @@ impl EntityInputHandler for Block {
             }
             let selected = self.display_text()[visible_range.clone()].to_string();
             let wrapped = format!("{open}{selected}{close}");
+            // 记号隐藏后会被解析吸收，选区必须走同一份映射，不能按记号字节数平移。
             self.replace_text_in_visible_range(
-                visible_range.clone(),
+                visible_range,
                 &wrapped,
-                None,
+                Some(open.len()..open.len() + selected.len()),
                 false,
                 cx,
             );
-            let inner_start = visible_range.start + open.len();
-            self.selected_range = inner_start..inner_start + selected.len();
             cx.notify();
             return;
         }

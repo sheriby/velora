@@ -849,6 +849,7 @@
             export_theme: ExportThemePreference::Dark,
             show_table_headers: false,
             smart_punctuation: true,
+            hide_markdown_markers: true,
             external_change_policy: ExternalChangePolicy::Manual,
             delete_policy: DeletePolicy::Permanent,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
@@ -883,6 +884,7 @@
         let loaded = read_app_preferences_with_dirs(&dirs).expect("preferences should read back");
         assert_eq!(loaded, preferences);
         assert!(loaded.smart_punctuation);
+        assert!(loaded.hide_markdown_markers);
         assert_eq!(loaded.external_change_policy, ExternalChangePolicy::Manual);
         assert_eq!(loaded.delete_policy, DeletePolicy::Permanent);
         let text =
@@ -981,6 +983,7 @@
             file_history: super::HistoryPolicy::default(),
             updates: super::UpdatePreferences::default(),            startup_open: StartupOpenPreference::NewFile,
             smart_punctuation: false,
+            hide_markdown_markers: false,
             external_change_policy: ExternalChangePolicy::Auto,
             delete_policy: DeletePolicy::Trash,
             default_language_id: "zh-CN".into(),
@@ -1025,6 +1028,7 @@
             true,
             WindowOpenPosition::Center,
             true,
+            true,
             // 两个相邻的 bool 各给一个非默认方向，位置写反就会被下面两行抓住。
             false,
             110,
@@ -1043,6 +1047,7 @@
         assert_eq!(saved.autosave_debounce_ms, 800);
         assert!(!saved.autosave);
         assert!(saved.smart_punctuation);
+        assert!(saved.hide_markdown_markers);
         assert!(saved.remember_window_bounds);
         assert_eq!(saved.zoom_percent, 110);
         assert_eq!(saved.default_window_width, 1280);
@@ -1460,6 +1465,7 @@ fn window_size_bounds_are_shared_by_read_and_save() {
         loaded.remember_window_bounds,
         loaded.window_open_position,
         loaded.smart_punctuation,
+        loaded.hide_markdown_markers,
         loaded.autosave,
         loaded.zoom_percent,
         loaded.default_window_width,
@@ -1630,6 +1636,7 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
             on_disk.remember_window_bounds,
             on_disk.window_open_position,
             on_disk.smart_punctuation,
+            on_disk.hide_markdown_markers,
             on_disk.autosave,
             on_disk.zoom_percent as i64,
             1080,
@@ -1716,3 +1723,64 @@ async fn installing_settings_reads_the_config_file_once(cx: &mut gpui::TestAppCo
         assert_eq!(cx.update(|cx| EditorSettings::file_history(cx)), expected);
         cx.on_quit(move || std::fs::remove_dir_all(root).expect("清理配置"));
     }
+
+#[test]
+fn hidden_markdown_markers_default_off_and_round_trip() {
+    let value: toml::Value = toml::from_str("[editor]\nhide_markdown_markers = true").unwrap();
+    let (preferences, _) = super::load_preferences_from_toml_value(&value, "zh-CN");
+    let saved = toml::Value::try_from(super::PreferencesFile::from(&preferences)).unwrap();
+    assert_eq!(
+        saved
+            .get("editor")
+            .and_then(|editor| editor.get("hide_markdown_markers"))
+            .and_then(toml::Value::as_bool),
+        Some(true)
+    );
+    let defaults =
+        toml::Value::try_from(super::PreferencesFile::from(&AppPreferences::default())).unwrap();
+    assert_eq!(
+        defaults
+            .get("editor")
+            .and_then(|editor| editor.get("hide_markdown_markers"))
+            .and_then(toml::Value::as_bool),
+        Some(false)
+    );
+}
+
+#[gpui::test]
+async fn hidden_markdown_markers_preferences_save_and_apply(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-hidden-markers-{}", uuid::Uuid::new_v4()));
+    let _guard = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    let handle = cx.update(|cx| {
+        open_preferences_window_with_state(
+            cx,
+            AppPreferences::default(),
+            default_theme_options(),
+            "Preferences".into(),
+        )
+    });
+    cx.run_until_parked();
+    handle
+        .update(cx, |preferences, window, cx| {
+            assert!(!preferences.hide_markdown_markers);
+            preferences.hide_markdown_markers = true;
+            assert!(preferences.has_unsaved_changes());
+            preferences.save(&gpui::ClickEvent::default(), window, cx);
+            assert!(preferences.save_error.is_none());
+            assert!(!preferences.has_unsaved_changes());
+            assert!(EditorSettings::hide_markdown_markers(cx), "保存后立即生效");
+        })
+        .unwrap();
+    let saved = read_app_preferences_with_dirs(&VeloraConfigDirs::from_root(&root)).unwrap();
+    assert!(saved.hide_markdown_markers);
+    let reopened = cx.update(|cx| {
+        open_preferences_window_with_state(cx, saved, default_theme_options(), "Preferences".into())
+    });
+    reopened
+        .update(cx, |preferences, _, _| {
+            assert!(preferences.hide_markdown_markers)
+        })
+        .unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(root).expect("清理配置"));
+}

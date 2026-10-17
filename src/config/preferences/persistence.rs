@@ -24,6 +24,7 @@ struct StartupPreferencesFile {
 struct EditorPreferencesFile {
     show_table_headers: bool,
     smart_punctuation: bool,
+    hide_markdown_markers: bool,
     external_change_policy: String,
     delete_policy: String,
     image_paste_behavior: String,
@@ -145,6 +146,7 @@ impl From<&AppPreferences> for PreferencesFile {
             editor: EditorPreferencesFile {
                 show_table_headers: value.show_table_headers,
                 smart_punctuation: value.smart_punctuation,
+                hide_markdown_markers: value.hide_markdown_markers,
                 external_change_policy: value.external_change_policy.as_str().into(),
                 delete_policy: value.delete_policy.as_str().into(),
                 image_paste_behavior: value.image_paste_behavior.as_str().into(),
@@ -344,6 +346,11 @@ pub(crate) fn app_preferences_from_toml_value(
         .get("editor")
         .and_then(|editor| editor.get("smart_punctuation"))
         .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let hide_markdown_markers = value
+        .get("editor")
+        .and_then(|editor| editor.get("hide_markdown_markers"))
+        .and_then(toml::Value::as_bool)
         .unwrap_or(false);
     let external_change_policy = value
         .get("editor")
@@ -554,6 +561,7 @@ pub(crate) fn app_preferences_from_toml_value(
         export_theme,
         show_table_headers,
         smart_punctuation,
+        hide_markdown_markers,
         external_change_policy,
         delete_policy,
         image_paste_behavior,
@@ -745,6 +753,7 @@ pub(crate) fn save_preferences_from_window(
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
+    hide_markdown_markers: bool,
     autosave: bool,
     zoom_percent: i64,
     default_window_width: i64,
@@ -771,6 +780,7 @@ pub(crate) fn save_preferences_from_window(
         remember_window_bounds,
         window_open_position,
         smart_punctuation,
+        hide_markdown_markers,
         autosave,
         zoom_percent,
         default_window_width,
@@ -800,6 +810,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     remember_window_bounds: bool,
     window_open_position: WindowOpenPosition,
     smart_punctuation: bool,
+    hide_markdown_markers: bool,
     autosave: bool,
     zoom_percent: i64,
     default_window_width: i64,
@@ -827,6 +838,7 @@ pub(crate) fn save_preferences_from_window_with_dirs(
     preferences.remember_window_bounds = remember_window_bounds;
     preferences.window_open_position = window_open_position;
     preferences.smart_punctuation = smart_punctuation;
+    preferences.hide_markdown_markers = hide_markdown_markers;
     preferences.autosave = autosave;
     preferences.external_change_policy = external_change_policy;
     preferences.delete_policy = delete_policy;

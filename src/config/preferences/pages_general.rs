@@ -346,6 +346,14 @@ impl PreferencesWindow {
                     cx.notify();
                 }));
 
+        let hide_markers_toggle =
+            crate::components::switch::Switch::new("preferences-hide-markdown-markers")
+                .checked(self.hide_markdown_markers)
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    this.hide_markdown_markers = !this.hide_markdown_markers;
+                    cx.notify();
+                }));
+
         let autosave_toggle = crate::components::switch::Switch::new("preferences-autosave")
             .checked(self.autosave)
             .on_click(cx.listener(|this, _event, _window, cx| {
@@ -393,6 +401,11 @@ impl PreferencesWindow {
                     theme,
                     strings.preferences_smart_punctuation.clone(),
                     smart_punctuation_toggle,
+                ),
+                self.settings_row(
+                    theme,
+                    strings.preferences_hide_markdown_markers.clone(),
+                    hide_markers_toggle,
                 ),
                 self.settings_row(
                     theme,

@@ -303,6 +303,7 @@ pub(crate) struct I18nStringsDe {
     pub(crate) preferences_delete_policy_trash: Option<String>,
     pub(crate) preferences_delete_policy_permanent: Option<String>,
     pub(crate) preferences_smart_punctuation: Option<String>,
+    pub(crate) preferences_hide_markdown_markers: Option<String>,
     pub(crate) status_bar_long_block_source: Option<String>,
     pub(crate) menu_copy_as_html: Option<String>,
     pub(crate) workspace_duplicate: Option<String>,

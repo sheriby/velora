@@ -190,6 +190,7 @@ pub struct Block {
     /// Cached projection used to show editable inline delimiters for the
     /// currently touched inline span(s).
     pub(crate) projection: Option<ExpandedInlineProjection>,
+    hide_markdown_markers: bool,
     /// Inputs that produced the current `projection`. When the next
     /// `sync_inline_projection_for_focus` computes the same inputs, the
     /// rebuild is skipped — saves a full O(fragments + text) walk per
@@ -368,6 +369,7 @@ impl Block {
             vertical_motion_x: None,
             cursor_blink_task: None,
             projection: None,
+            hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,
             cached_display_text: SharedString::default(),
             display_generation: 0,

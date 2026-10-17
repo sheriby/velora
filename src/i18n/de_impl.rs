@@ -746,6 +746,9 @@ impl I18nStringsDe {
             preferences_delete_policy_permanent: self
                 .preferences_delete_policy_permanent
                 .unwrap_or(defaults.preferences_delete_policy_permanent),
+            preferences_hide_markdown_markers: self
+                .preferences_hide_markdown_markers
+                .unwrap_or(defaults.preferences_hide_markdown_markers),
             preferences_smart_punctuation: self
                 .preferences_smart_punctuation
                 .unwrap_or(defaults.preferences_smart_punctuation),

@@ -300,6 +300,7 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "preferences_delete_policy_trash",
     "preferences_delete_policy_permanent",
     "preferences_smart_punctuation",
+    "preferences_hide_markdown_markers",
     "status_bar_long_block_source",
     "menu_copy_as_html",
     "workspace_duplicate",

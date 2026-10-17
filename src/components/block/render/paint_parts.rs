@@ -20,6 +20,7 @@ impl Render for Block {
         }
 
         let focused = self.focus_handle.is_focused(window);
+        self.set_hide_markdown_markers(crate::config::EditorSettings::hide_markdown_markers(cx));
         let code_language_focused = self.code_language_focus_handle.is_focused(window);
         // 输入态（含 33ms 光标闪烁任务）还要求窗口是活动窗口：gpui 的 `is_focused`
         // 判不出窗口已不是 key window（macOS 红绿灯变灰时 window.focus 不清零），

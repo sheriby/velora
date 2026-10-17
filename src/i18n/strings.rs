@@ -467,6 +467,7 @@ pub struct I18nStrings {
     pub preferences_delete_policy_trash: String,
     pub preferences_delete_policy_permanent: String,
     pub preferences_smart_punctuation: String,
+    pub preferences_hide_markdown_markers: String,
     pub status_bar_long_block_source: String,
     /// Export menu item: copy rendered HTML source to clipboard.
     pub menu_copy_as_html: String,

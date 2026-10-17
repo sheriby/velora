@@ -57,6 +57,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) remember_window_bounds: bool,
     pub(super) window_open_position: WindowOpenPosition,
     pub(super) smart_punctuation: bool,
+    pub(super) hide_markdown_markers: bool,
     pub(super) zoom_percent: i64,
     pub(super) default_window_width: i64,
     pub(super) default_window_height: i64,
@@ -75,6 +76,7 @@ pub(crate) struct PreferencesWindow {
     pub(super) saved_remember_window_bounds: bool,
     pub(super) saved_window_open_position: WindowOpenPosition,
     pub(super) saved_smart_punctuation: bool,
+    saved_hide_markdown_markers: bool,
     pub(super) saved_zoom_percent: i64,
     pub(super) saved_default_window_width: i64,
     pub(super) saved_default_window_height: i64,
@@ -123,6 +125,7 @@ impl PreferencesWindow {
         let remember_window_bounds = preferences.remember_window_bounds;
         let window_open_position = preferences.window_open_position;
         let smart_punctuation = preferences.smart_punctuation;
+        let hide_markdown_markers = preferences.hide_markdown_markers;
         let zoom_percent = preferences.zoom_percent;
         let default_window_width = preferences.default_window_width;
         let default_window_height = preferences.default_window_height;
@@ -160,6 +163,7 @@ impl PreferencesWindow {
             remember_window_bounds,
             window_open_position,
             smart_punctuation,
+            hide_markdown_markers,
             zoom_percent,
             default_window_width,
             default_window_height,
@@ -176,6 +180,7 @@ impl PreferencesWindow {
             saved_remember_window_bounds: remember_window_bounds,
             saved_window_open_position: window_open_position,
             saved_smart_punctuation: smart_punctuation,
+            saved_hide_markdown_markers: hide_markdown_markers,
             saved_zoom_percent: zoom_percent,
             saved_default_window_width: default_window_width,
             saved_default_window_height: default_window_height,
@@ -257,6 +262,7 @@ impl PreferencesWindow {
             || self.remember_window_bounds != self.saved_remember_window_bounds
             || self.window_open_position != self.saved_window_open_position
             || self.smart_punctuation != self.saved_smart_punctuation
+            || self.hide_markdown_markers != self.saved_hide_markdown_markers
             || self.zoom_percent != self.saved_zoom_percent
             || self.default_window_width != self.saved_default_window_width
             || self.default_window_height != self.saved_default_window_height
@@ -540,6 +546,7 @@ impl PreferencesWindow {
             self.remember_window_bounds,
             self.window_open_position,
             self.smart_punctuation,
+            self.hide_markdown_markers,
             self.autosave,
             self.zoom_percent,
             self.default_window_width,
@@ -596,6 +603,7 @@ impl PreferencesWindow {
                 theme_manager.set_theme_by_id(DEFAULT_THEME_ID)
             });
         }
+        EditorSettings::set_hide_markdown_markers_in_memory(cx, preferences.hide_markdown_markers);
         cx.clear_key_bindings();
         install_keybindings(cx, &preferences.keybindings);
         crate::app_menu::install_menus(cx);
@@ -638,6 +646,7 @@ impl PreferencesWindow {
         self.saved_remember_window_bounds = self.remember_window_bounds;
         self.saved_window_open_position = self.window_open_position;
         self.saved_smart_punctuation = self.smart_punctuation;
+        self.saved_hide_markdown_markers = self.hide_markdown_markers;
         self.saved_zoom_percent = self.zoom_percent;
         self.saved_default_window_width = self.default_window_width;
         self.saved_default_window_height = self.default_window_height;

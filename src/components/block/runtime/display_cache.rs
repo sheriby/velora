@@ -15,7 +15,7 @@ impl Block {
         let (anchor_affinity, focus_affinity) = self.selection_endpoint_affinities();
         let collapsed_affinity = self.current_collapsed_caret_affinity();
         let keep_projection =
-            self.projection.is_some() && self.edit_mode.supports_inline_projection();
+            self.projection.is_some() && self.supports_inline_projection();
         let next_cache = self.record.title.render_cache();
         if next_cache.spans() != self.render_cache.spans() {
             self.render_generation = self.render_generation.wrapping_add(1);
@@ -298,8 +298,19 @@ impl Block {
             .unwrap_or(&self.render_cache)
     }
 
+    pub(crate) fn set_hide_markdown_markers(&mut self, hide: bool) {
+        if self.hide_markdown_markers != hide {
+            self.hide_markdown_markers = hide;
+            self.clear_inline_projection();
+        }
+    }
+
+    pub(super) fn supports_inline_projection(&self) -> bool {
+        self.edit_mode.supports_inline_projection() && !self.hide_markdown_markers
+    }
+
     pub(crate) fn sync_inline_projection_for_focus(&mut self, focused: bool) {
-        let supports_projection = self.edit_mode.supports_inline_projection();
+        let supports_projection = self.supports_inline_projection();
         if !focused || !supports_projection {
             self.clear_inline_projection();
             return;
@@ -407,8 +418,12 @@ impl Block {
         clean_selected: Range<usize>,
         clean_marked: Option<Range<usize>>,
     ) {
+        if !self.supports_inline_projection() {
+            self.clear_inline_projection();
+            return;
+        }
         self.projection_cache_key = Some((
-            self.edit_mode.supports_inline_projection(),
+            self.supports_inline_projection(),
             clean_selected.clone(),
             clean_marked.clone(),
         ));

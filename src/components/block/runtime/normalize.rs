@@ -462,7 +462,7 @@ impl Block {
         let old_title_was_empty = old_title.visible_text().is_empty();
         let mut collapsed_affinity = self.current_collapsed_caret_affinity();
         let keep_projection =
-            self.projection.is_some() && self.edit_mode.supports_inline_projection();
+            self.projection.is_some() && self.supports_inline_projection();
 
         let (next_kind, normalized_title, adjusted_cursor, shortcut_removed_len, next_list_marker) =
             self.normalize_after_title_edit(next_title, cursor_clean);
@@ -492,7 +492,7 @@ impl Block {
         self.sync_edit_mode_from_kind();
         self.sync_render_cache();
         // 新解析出样式时也要展开记号，光标仍需区分填入正文与刚输入结束记号。
-        if self.edit_mode.supports_inline_projection()
+        if self.supports_inline_projection()
             && (keep_projection || new_span_caret_affinity.is_some())
         {
             self.rebuild_inline_projection(next_selected_clean.clone(), next_marked_clean.clone());

@@ -74,6 +74,8 @@
 
 **定界符投影**（`runtime/projection.rs` + `projection/build.rs`）：把光标/选区/IME **触碰到的**行内构造的定界符显形进显示文本，并产出双向偏移表。三套坐标系要分清：**clean**（`record.title` 可见文本）、**current/display**（投影后的显示文本，`selected_range` 与 `marked_range` 都在这一系）、**markdown**（序列化源码）。块内偏移一律是 UTF-8 字节；只有 IME 边界是 UTF-16（`block/input.rs` 换算）。
 
+`config.toml [editor] hide_markdown_markers`（偏好设置「隐藏 Markdown 标记」，默认关闭）禁用富文本行内定界符投影：粗斜体、删除线、高亮、代码、上下标、链接与脚注在聚焦、选中及输入形成样式时仍保持渲染文本。判据统一在 `Block::supports_inline_projection`；块初始化读取运行时设置，每帧同步设置变化，切换时用既有投影映射保留选区方向与 IME 范围。仅改变显示，不修改缓冲区或序列化；源码视图及公式、图表、代码块等独立源码编辑区域沿用现有方式。
+
 **源码视图的 markdown 高亮**：每块记 `source_fence_entry/exit`（围栏/数学/frontmatter/注释状态），编辑器在整树重建后 `resync_source_fence_states` 全量串联，打字后 `cascade_source_fence_states_after` 增量级联（下一块入口一致就停）。行号槽宽按全文档总行数统一（`source_line_gutter_basis`），分块右对齐。
 
 ## 7. 帧几何与命中测试

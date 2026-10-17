@@ -423,6 +423,7 @@ pub(crate) struct AppPreferences {
     pub(crate) show_table_headers: bool,
     /// Typographic quote/dash substitution while typing (default off).
     pub(crate) smart_punctuation: bool,
+    pub(crate) hide_markdown_markers: bool,
     /// 外部变更策略（roadmap H2）。
     pub(crate) external_change_policy: ExternalChangePolicy,
     /// 删除策略（roadmap H2）。
@@ -467,6 +468,7 @@ impl Default for AppPreferences {
             export_theme: ExportThemePreference::Current,
             show_table_headers: true,
             smart_punctuation: false,
+            hide_markdown_markers: false,
             external_change_policy: ExternalChangePolicy::Auto,
             delete_policy: DeletePolicy::Trash,
             image_paste_behavior: ImagePasteBehavior::CopyToAssetsFolder,
@@ -527,6 +529,7 @@ pub struct EditorSettings {
     updates: UpdatePreferences,
     show_table_headers: bool,
     smart_punctuation: bool,
+    hide_markdown_markers: bool,
     external_change_policy: ExternalChangePolicy,
     delete_policy: DeletePolicy,
     status_bar_settings: StatusBarSettings,
@@ -657,11 +660,16 @@ impl EditorSettings {
             .map(|settings| settings.file_history)
             .or_else(|| stored.as_ref().map(|preferences| preferences.file_history))
             .unwrap_or_default();
+        let hide_markdown_markers = cx.try_global::<Self>()
+            .map(|settings| settings.hide_markdown_markers)
+            .or_else(|| stored.as_ref().map(|preferences| preferences.hide_markdown_markers))
+            .unwrap_or(false);
         cx.set_global(Self {
             file_history,
             updates,
             show_table_headers,
             smart_punctuation,
+            hide_markdown_markers,
             external_change_policy,
             delete_policy,
             fonts,
@@ -745,6 +753,18 @@ impl EditorSettings {
         cx.try_global::<Self>()
             .map(|settings| settings.smart_punctuation)
             .unwrap_or(false)
+    }
+
+    pub(crate) fn hide_markdown_markers(cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .is_some_and(|settings| settings.hide_markdown_markers)
+    }
+
+    pub(crate) fn set_hide_markdown_markers_in_memory(cx: &mut App, hide: bool) {
+        if cx.try_global::<Self>().is_none() {
+            Self::init(cx, true);
+        }
+        cx.update_global::<Self, _>(|settings, _| settings.hide_markdown_markers = hide);
     }
 
     pub(crate) fn fonts(cx: &App) -> FontPreferences {

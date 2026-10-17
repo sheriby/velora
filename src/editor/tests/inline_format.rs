@@ -274,3 +274,81 @@ async fn cmd_backslash_clears_the_styles_in_the_selection(cx: &mut TestAppContex
         "⌘\\ 没把选区里的粗体记号剥掉"
     );
 }
+
+#[gpui::test]
+async fn hidden_markdown_markers_setting_keeps_layout_and_source_bytes(cx: &mut TestAppContext) {
+    use crate::config::EditorSettings;
+    let root = temp_fixture_dir().join(format!("hidden-markers-{}", temp_fixture_token()));
+    fs::create_dir_all(&root).expect("创建配置目录");
+    let _guard = crate::config::override_test_config_root(&root);
+    cx.on_quit(move || fs::remove_dir_all(root).expect("清理配置"));
+    init_editor_test_app(cx);
+    cx.update(|cx| EditorSettings::set_hide_markdown_markers_in_memory(cx, true));
+    let paragraph = "开头 **加粗中文** 尾文 ".repeat(25);
+    let markdown = format!("第一段\n\n{paragraph}\n");
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown.clone(), None));
+    redraw(cx);
+    redraw(cx);
+    let block = visible_block(&editor, 1, cx);
+    let (clean, height, wraps) = block.read_with(cx, |block, _| {
+        (
+            block.display_text().to_string(),
+            block.last_bounds.unwrap().size.height,
+            block
+                .last_layout
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|line| line.wrap_boundaries().len())
+                .collect::<Vec<_>>(),
+        )
+    });
+    assert!(wraps.iter().sum::<usize>() > 0, "夹具应存在软换行");
+    select(&editor, 1, "开头 加".len().."开头 加".len(), cx);
+    focus_block_at(&editor, 1, cx);
+    redraw(cx);
+    block.read_with(cx, |block, _| {
+        assert_eq!(block.display_text(), clean, "焦点不应改变显示文本");
+        assert_eq!(
+            block.last_bounds.unwrap().size.height,
+            height,
+            "点击不应多占一行"
+        );
+        let focused_wraps = block
+            .last_layout
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|line| line.wrap_boundaries().len())
+            .collect::<Vec<_>>();
+        assert_eq!(focused_wraps, wraps);
+    });
+    cx.update(|_, cx| {
+        EditorSettings::set_hide_markdown_markers_in_memory(cx, false);
+        cx.refresh_windows();
+    });
+    redraw(cx);
+    assert!(block.read_with(cx, |block, _| block.display_text().contains("**")));
+    cx.update(|_, cx| {
+        EditorSettings::set_hide_markdown_markers_in_memory(cx, true);
+        cx.refresh_windows();
+    });
+    redraw(cx);
+    block.read_with(cx, |block, _| assert_eq!(block.display_text(), clean));
+    assert_eq!(
+        buffer_text(&editor, cx),
+        markdown,
+        "开关与焦点变化不能修改原文"
+    );
+    editor.update(cx, |editor, cx| editor.toggle_view_mode_from_ui(cx));
+    redraw(cx);
+    assert!(
+        editor.read_with(cx, |editor, cx| editor
+            .document
+            .visible_blocks()
+            .iter()
+            .any(|block| block.entity.read(cx).display_text().contains("**"))),
+        "源码视图保留全部标记"
+    );
+}
