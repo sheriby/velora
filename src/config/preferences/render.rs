@@ -22,6 +22,7 @@ impl Render for PreferencesWindow {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
+        self.refresh_ai_preferences_dirty(cx);
         let can_save = self.has_unsaved_changes();
         let window_title =
             SharedString::from(format!("Velora - {}", strings.preferences_window_title));
@@ -33,6 +34,7 @@ impl Render for PreferencesWindow {
                 PreferencesNav::File => strings.preferences_nav_file.clone(),
                 PreferencesNav::Theme => strings.preferences_nav_theme.clone(),
                 PreferencesNav::Image => strings.preferences_nav_image.clone(),
+                PreferencesNav::Ai => strings.ai_assistant.clone(),
                 PreferencesNav::Shortcuts => strings.preferences_nav_shortcuts.clone(),
                 PreferencesNav::StatusBar => strings.preferences_nav_status_bar.clone(),
                 PreferencesNav::Window => strings.preferences_nav_window.clone(),
@@ -40,7 +42,7 @@ impl Render for PreferencesWindow {
 
             // 侧边栏：左对齐 + 选中强调条（旧版把标签右对齐地堆在 30% 宽的栏里，
             // 看起来像没有设计）。
-            let nav_items: [(&'static str, String, bool, fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>)); 6] = [
+            let nav_items: [(&'static str, String, bool, fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>)); 7] = [
                 (
                     "preferences-nav-file",
                     strings.preferences_nav_file.clone(),
@@ -58,6 +60,12 @@ impl Render for PreferencesWindow {
                     strings.preferences_nav_image.clone(),
                     self.nav == PreferencesNav::Image,
                     Self::set_nav_image,
+                ),
+                (
+                    "preferences-nav-ai",
+                    "AI".into(),
+                    self.nav == PreferencesNav::Ai,
+                    Self::set_nav_ai,
                 ),
                 (
                     "preferences-nav-shortcuts",
@@ -107,6 +115,7 @@ impl Render for PreferencesWindow {
                 PreferencesNav::File => self.render_startup_page(&theme, &strings, cx),
                 PreferencesNav::Theme => self.render_theme_page(&theme, &strings, cx),
                 PreferencesNav::Image => self.render_image_page(&theme, &strings, cx),
+                PreferencesNav::Ai => self.render_ai_page(&theme, &strings, cx),
                 PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, cx),
                 PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, cx),
                 PreferencesNav::Window => self.render_window_page(&theme, &strings, cx),

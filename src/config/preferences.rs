@@ -1104,6 +1104,7 @@ pub(crate) use render::open_preferences_window;
 pub(crate) use render::{open_preferences_window_with_size, open_preferences_window_with_state};
 pub(crate) use window::{PreferencesNav, PreferencesWindow};
 
+mod pages_ai;
 mod pages_general;
 mod pages_shortcuts_window;
 mod persistence;

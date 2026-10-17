@@ -1784,3 +1784,87 @@ async fn hidden_markdown_markers_preferences_save_and_apply(cx: &mut TestAppCont
         .unwrap();
     cx.on_quit(move || std::fs::remove_dir_all(root).expect("清理配置"));
 }
+
+#[gpui::test]
+fn ai_preferences_page_edits_and_saves_the_same_connection_file(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-ai-preferences-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx);
+    crate::config::load_or_create_app_preferences().unwrap();
+    let mut settings = crate::ai::settings::AiSettings::default();
+    let path = crate::ai::settings::settings_path().unwrap();
+    settings.save_endpoint(&path, crate::ai::settings::Endpoint { id: "local".into(), name: "本地模型".into(), base_url: "http://localhost:11434/v1".into(), model: "old-model".into(), ..Default::default() }, Some("test-api-key")).unwrap();
+    let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1200.0))));
+    let mut window_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    window_cx.update(|window, cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let nav = window_cx.debug_bounds("preferences-nav-ai").expect("偏好设置必须有 AI 页面");
+    window_cx.simulate_click(nav.center(), gpui::Modifiers::none());
+    window_cx.update(|window, cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let field = window_cx.debug_bounds("preferences-ai-model").expect("模型名称输入框");
+    window_cx.simulate_click(field.center(), gpui::Modifiers::none());
+    window_cx.simulate_keystrokes(if cfg!(target_os="macos") {"cmd-a"} else {"ctrl-a"});
+    window_cx.simulate_input("new-model");
+    window_cx.update(|window, cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let save = window_cx.debug_bounds("preferences-save").unwrap();
+    window_cx.simulate_click(save.center(), gpui::Modifiers::none());
+    window_cx.run_until_parked();
+    let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
+    assert_eq!(saved.endpoints[0].model, "new-model");
+    assert_eq!(saved.endpoints[0].api_key, "test-api-key");
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}
+
+#[gpui::test]
+fn ai_preferences_invalid_input_preserves_configuration_and_cancel_discards_the_draft(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-ai-preferences-invalid-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx); crate::config::load_or_create_app_preferences().unwrap();
+    let path = crate::ai::settings::settings_path().unwrap();
+    let mut settings = crate::ai::settings::AiSettings::default();
+    settings.save_endpoint(&path, crate::ai::settings::Endpoint { id:"local".into(), name:"local".into(), base_url:"http://localhost:11434/v1".into(), model:"model".into(), ..Default::default() }, Some("test-key")).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0), px(1200.0))));
+    let mut window_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let nav = window_cx.debug_bounds("preferences-nav-ai").unwrap(); window_cx.simulate_click(nav.center(),gpui::Modifiers::none());
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let field = window_cx.debug_bounds("preferences-ai-context").unwrap(); window_cx.simulate_click(field.center(),gpui::Modifiers::none());
+    window_cx.simulate_keystrokes(if cfg!(target_os="macos") {"cmd-a"} else {"ctrl-a"}); window_cx.simulate_input("invalid");
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let save = window_cx.debug_bounds("preferences-save").unwrap(); window_cx.simulate_click(save.center(),gpui::Modifiers::none());
+    handle.update(cx, |preferences,_,_| assert!(preferences.save_error.is_some())).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    handle.update(cx, |preferences,window,cx| preferences.cancel(&gpui::ClickEvent::default(),window,cx)).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}
+
+#[gpui::test]
+fn ai_preferences_can_choose_a_default_clear_a_key_and_delete_a_connection(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!("velora-ai-preferences-manage-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&root);
+    init_preferences_test_app(cx); crate::config::load_or_create_app_preferences().unwrap();
+    let path = crate::ai::settings::settings_path().unwrap();
+    let mut settings = crate::ai::settings::AiSettings::default();
+    for id in ["one","two"] { settings.save_endpoint(&path, crate::ai::settings::Endpoint { id:id.into(),name:id.into(),base_url:"http://localhost:11434/v1".into(),model:"model".into(),..Default::default() },Some("test-key")).unwrap(); }
+    let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0),px(1500.0))));
+    let mut window_cx = gpui::VisualTestContext::from_window(handle.into(),cx);
+    for selector in ["preferences-nav-ai", "preferences-ai-connection-1", "preferences-ai-default"] {
+        window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+        let control = window_cx.debug_bounds(selector).unwrap(); window_cx.simulate_click(control.center(),gpui::Modifiers::none());
+    }
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let key = window_cx.debug_bounds("preferences-ai-key").unwrap(); window_cx.simulate_click(key.center(),gpui::Modifiers::none());
+    window_cx.simulate_keystrokes(if cfg!(target_os="macos") {"cmd-a backspace"} else {"ctrl-a backspace"});
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let save = window_cx.debug_bounds("preferences-save").unwrap(); window_cx.simulate_click(save.center(),gpui::Modifiers::none());
+    let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
+    assert_eq!(saved.default_endpoint,"two"); assert_eq!(saved.endpoints[1].api_key, "");
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let delete = window_cx.debug_bounds("preferences-ai-delete").unwrap(); window_cx.simulate_click(delete.center(),gpui::Modifiers::none());
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let save = window_cx.debug_bounds("preferences-save").unwrap(); window_cx.simulate_click(save.center(),gpui::Modifiers::none());
+    let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
+    assert_eq!(saved.endpoints.len(),1); assert_eq!(saved.default_endpoint,"one");
+    cx.on_quit(move || std::fs::remove_dir_all(root).unwrap());
+}

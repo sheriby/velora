@@ -4,6 +4,7 @@ pub(crate) enum PreferencesNav {
     File,
     Theme,
     Image,
+    Ai,
     Shortcuts,
     StatusBar,
     Window,
@@ -12,6 +13,8 @@ pub(crate) enum PreferencesNav {
 /// Independent preferences window view.
 pub(crate) struct PreferencesWindow {
     pub(super) nav: PreferencesNav,
+    pub(super) ai_preferences: Option<super::pages_ai::AiPreferences>,
+    pub(super) ai_preferences_dirty: std::rc::Rc<std::cell::Cell<bool>>,
     pub(super) startup_open: StartupOpenPreference,
     pub(super) check_updates_on_startup: bool,
     pub(super) include_prereleases: bool,
@@ -133,6 +136,8 @@ impl PreferencesWindow {
         let delete_policy = preferences.delete_policy;
         Self {
             nav: PreferencesNav::File,
+            ai_preferences: None,
+            ai_preferences_dirty: Default::default(),
             check_updates_on_startup: preferences.updates.check_on_startup,
             include_prereleases: preferences.updates.include_prereleases,
             saved_check_updates_on_startup: preferences.updates.check_on_startup,
@@ -239,7 +244,7 @@ impl PreferencesWindow {
     }
 
     pub(crate) fn has_unsaved_changes(&self) -> bool {
-        self.check_updates_on_startup != self.saved_check_updates_on_startup
+        self.ai_preferences_dirty.get() || self.check_updates_on_startup != self.saved_check_updates_on_startup
             || self.include_prereleases != self.saved_include_prereleases
             || self.startup_open != self.saved_startup_open
             || self.selected_theme_id != self.saved_theme_id
@@ -516,11 +521,10 @@ impl PreferencesWindow {
     }
 
     pub(crate) fn save(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_unsaved_changes() {
-            return;
-        }
-
+        self.refresh_ai_preferences_dirty(cx);
+        if !self.has_unsaved_changes() { return; }
         self.save_error = None;
+        if let Err(error) = self.save_ai_preferences(cx) { self.save_error = Some(error.to_string()); cx.notify(); return; }
         let preferences = match save_preferences_from_window(
             self.startup_open,
             &self.selected_theme_id,
