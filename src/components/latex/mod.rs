@@ -398,7 +398,7 @@ pub(crate) fn render_latex_to_svg(
 ) -> anyhow::Result<String> {
     #[cfg(test)]
     LATEX_LAYOUT_COUNT.with(|count| count.set(count.get() + 1));
-    let parsed = ratex_parser::parse(latex).map_err(|err| anyhow!("{err}"))?;
+    let parsed = parse_latex_for_render(latex).map_err(|err| anyhow!("{err}"))?;
     let layout_options = ratex_layout::LayoutOptions {
         style: math_layout.ratex_style(),
         ..ratex_layout::LayoutOptions::default()
@@ -416,6 +416,38 @@ pub(crate) fn render_latex_to_svg(
     );
     svg = recolor_default_black(&svg, &svg_color(text_color));
     Ok(normalize_svg_size_units_to_px(&svg))
+}
+
+fn parse_latex_for_render(latex: &str) -> ratex_parser::ParseResult<Vec<ratex_parser::ParseNode>> {
+    let mut unknown_commands = HashMap::<String, String>::new();
+    loop {
+        let mut parser = ratex_parser::Parser::new(latex);
+        for (command, literal) in &unknown_commands {
+            parser.gullet.set_text_macro(command, literal);
+        }
+        match parser.parse() {
+            Ok(parsed) => return Ok(parsed),
+            Err(error) => {
+                // 命令判据仍由 RaTeX 决定，只把它报告的未知命令显示为红色字面量。
+                let Some(command) = error.message.strip_prefix("Undefined control sequence: ")
+                else {
+                    return Err(error);
+                };
+                // 限制错误输入的重解析次数，避免粘贴大量未知命令阻塞输入。
+                if unknown_commands.len() >= 32 || unknown_commands.contains_key(command) {
+                    return Err(error);
+                }
+                let literal = command
+                    .chars()
+                    .map(|character| format!(r#"\char"{:X}"#, character as u32))
+                    .collect::<String>();
+                unknown_commands.insert(
+                    command.to_string(),
+                    format!(r"\textcolor{{red}}{{\text{{{literal}}}}}"),
+                );
+            }
+        }
+    }
 }
 
 /// ratex 把根标签的 `width`/`height` 标成 `pt`，而 usvg/gpui（以及浏览器）会按
@@ -753,6 +785,30 @@ mod tests {
             render_latex_to_svg("\\frac{1}{2}", Hsla::from(rgba(0xffffffff)), 18.0, MathLayout::Display).expect("svg");
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));
+    }
+
+    #[test]
+    fn unknown_latex_commands_render_in_place_without_losing_the_formula() {
+        let color = Hsla::from(rgba(0xffffffff));
+        for layout in [MathLayout::Display, MathLayout::Inline] {
+            for (source, expected) in [
+                (
+                    r"\frac{1}{2} + \xx + x^2",
+                    r#"\frac{1}{2} + \textcolor{red}{\text{\char"5C\char"78\char"78}} + x^2"#,
+                ),
+                (
+                    r"\sqrt{\xx} + \yy + \xx",
+                    r#"\sqrt{\textcolor{red}{\text{\char"5C\char"78\char"78}}} + \textcolor{red}{\text{\char"5C\char"79\char"79}} + \textcolor{red}{\text{\char"5C\char"78\char"78}}"#,
+                ),
+                (r"x^2 \", r#"x^2 \textcolor{red}{\text{\char"5C}}"#),
+            ] {
+                let actual = render_latex_to_svg(source, color, 18.0, layout)
+                    .expect("未知命令应在原位置容错显示");
+                let expected =
+                    render_latex_to_svg(expected, color, 18.0, layout).expect("显式红色文字公式");
+                assert_eq!(actual, expected, "未知命令不能吞掉公式的其他部分：{source}");
+            }
+        }
     }
 
     #[test]

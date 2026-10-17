@@ -288,7 +288,12 @@ impl Block {
 
             if self.uses_raw_text_editing() {
                 self.prepare_undo_capture(UndoCaptureKind::NonCoalescible, cx);
-                self.replace_text_in_range(None, &text, window, cx);
+                // 粘贴单个括号也应保留原文，不触发公式输入的自动配对。
+                let range = (self.kind() == BlockKind::MathBlock).then(|| {
+                    let range = self.marked_range.as_ref().unwrap_or(&self.selected_range);
+                    self.range_to_utf16(range)
+                });
+                self.replace_text_in_range(range, &text, window, cx);
                 return;
             }
 

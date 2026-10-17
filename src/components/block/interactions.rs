@@ -470,6 +470,17 @@ impl Block {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let cursor = self.cursor_offset();
+        if self.selected_range.is_empty()
+            && self.marked_range.is_none()
+            && let (Some(start), Some(end)) = (cursor.checked_sub(1), cursor.checked_add(1))
+            && self.math_brace_context_at(start)
+            && self.display_text().get(start..end) == Some("{}")
+        {
+            self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
+            self.replace_text_in_visible_range(start..end, "", None, false, cx);
+            return;
+        }
         if self.is_table_cell() {
             if self.selected_range.is_empty() {
                 let previous = self.previous_boundary(self.cursor_offset());

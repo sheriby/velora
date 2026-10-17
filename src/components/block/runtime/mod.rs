@@ -183,10 +183,13 @@ pub struct Block {
     pub(crate) footnote_anchor: Option<uuid::Uuid>,
     pub(crate) parent_is_list_item: bool,
     pub list_ordinal: Option<usize>,
+    pub(crate) math_ordinal: Option<usize>,
     pub is_selecting: bool,
     pub cursor_blink_epoch: Instant,
     pub vertical_motion_x: Option<Pixels>,
     pub(super) cursor_blink_task: Option<Task<()>>,
+    // 语法未完成时沿用成功源码；SVG 仍按当前主题与字号取缓存。
+    pub(super) math_edit_preview_source: Option<String>,
     /// Cached projection used to show editable inline delimiters for the
     /// currently touched inline span(s).
     pub(crate) projection: Option<ExpandedInlineProjection>,
@@ -364,10 +367,12 @@ impl Block {
             footnote_anchor: None,
             parent_is_list_item: false,
             list_ordinal: None,
+            math_ordinal: None,
             is_selecting: false,
             cursor_blink_epoch: Instant::now(),
             vertical_motion_x: None,
             cursor_blink_task: None,
+            math_edit_preview_source: None,
             projection: None,
             hide_markdown_markers: crate::config::EditorSettings::hide_markdown_markers(cx),
             projection_cache_key: None,

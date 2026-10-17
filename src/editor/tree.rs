@@ -84,6 +84,8 @@ pub(super) struct VisibleTreeSnapshot {
     /// 显示文本是 `[TOC]` 的行有几条：正文里有没有目录读者，行计划的缓存键
     /// 与大纲的「换标签要不要叫醒折叠过滤」都靠它判断。
     toc_rows: usize,
+    // 只索引公式块，种类就地变化时只需重编号后续公式。
+    math_blocks: Vec<(usize, Entity<Block>)>,
     visible_index_by_entity: HashMap<EntityId, usize>,
     location_by_entity: HashMap<EntityId, BlockLocation>,
     last_visible_descendant_by_entity: HashMap<EntityId, EntityId>,
@@ -94,6 +96,7 @@ impl VisibleTreeSnapshot {
         self.visible.clear();
         self.row_spacing.clear();
         self.toc_rows = 0;
+        self.math_blocks.clear();
         self.visible_index_by_entity.clear();
         self.location_by_entity.clear();
         self.last_visible_descendant_by_entity.clear();
@@ -238,7 +241,11 @@ impl DocumentTree {
     /// 块自己的文本变了：`[TOC]` 是一个**文本形状**，而整棵同步只在结构变化时
     /// 重跑，所以命中这里的块要当场把它那一条元数据刷新（折叠过滤随后读到的
     /// 就是新形状，而不是导入那一刻的旧文本）。
-    pub(super) fn refresh_row_spacing_for(&mut self, entity_id: EntityId, cx: &App) {
+    pub(super) fn refresh_row_spacing_for(
+        &mut self,
+        entity_id: EntityId,
+        cx: &mut Context<Editor>,
+    ) {
         let Some(index) = self.visible_index_for_entity_id(entity_id) else {
             return;
         };
@@ -298,6 +305,41 @@ impl DocumentTree {
         }
         if changed {
             self.row_meta_version = self.row_meta_version.wrapping_add(1);
+        }
+        let is_math = kind == BlockKind::MathBlock;
+        let math_index = self
+            .snapshot
+            .math_blocks
+            .partition_point(|(visible_index, _)| *visible_index < index);
+        let was_math = self
+            .snapshot
+            .math_blocks
+            .get(math_index)
+            .is_some_and(|(visible_index, _)| *visible_index == index);
+        if is_math != was_math {
+            if is_math {
+                self.snapshot
+                    .math_blocks
+                    .insert(math_index, (index, visible.entity.clone()));
+            } else {
+                let (_, block) = self.snapshot.math_blocks.remove(math_index);
+                block.update(cx, |block, cx| {
+                    block.math_ordinal = None;
+                    cx.notify();
+                });
+            }
+            for (ordinal, (_, block)) in self
+                .snapshot
+                .math_blocks
+                .iter()
+                .enumerate()
+                .skip(math_index)
+            {
+                block.update(cx, |block, cx| {
+                    block.math_ordinal = Some(ordinal + 1);
+                    cx.notify();
+                });
+            }
         }
     }
 
@@ -1040,6 +1082,12 @@ impl DocumentTree {
             // 可见列表与行元数据成对记下：这一趟算出的锚点此刻还在局部变量里
             // （块上写的是上一趟的），行计划重建读这一份就够了，不必逐块读实体。
             let visible_index = snapshot.visible.len();
+            let math_ordinal = if kind == BlockKind::MathBlock {
+                snapshot.math_blocks.push((visible_index, block.clone()));
+                Some(snapshot.math_blocks.len())
+            } else {
+                None
+            };
             snapshot.visible.push(VisibleBlock {
                 entity: block.clone(),
             });
@@ -1072,7 +1120,7 @@ impl DocumentTree {
                 },
             );
 
-            block.update(cx, move |block, _cx| {
+            block.update(cx, move |block, cx| {
                 block.record.parent = parent_id;
                 block.record.content = content.clone();
                 block.render_depth = list_depth;
@@ -1086,6 +1134,10 @@ impl DocumentTree {
                 block.footnote_anchor = footnote_anchor;
                 block.parent_is_list_item = parent_is_list_item;
                 block.list_ordinal = list_ordinal;
+                if block.math_ordinal != math_ordinal {
+                    block.math_ordinal = math_ordinal;
+                    cx.notify();
+                }
                 block.list_group_separator_candidate = list_group_separator_candidate;
             });
 

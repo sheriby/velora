@@ -1268,6 +1268,552 @@ async fn focused_math_block_fx_button_sits_inside_the_card(cx: &mut TestAppConte
     );
 }
 
+#[gpui::test]
+fn math_block_numbers_follow_document_order_without_changing_the_source(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "正文 $z^2$。\n\n$$\na^2\n$$\n\n> $$\n> b^2\n> $$\n\n$$c^2$$\n\n```text\n$$not_math$$\n```\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    redraw(cx);
+    for (ordinal, selector) in [
+        (1, "math-block-number-1"),
+        (2, "math-block-number-2"),
+        (3, "math-block-number-3"),
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "第 {ordinal} 个块公式应显示编号"
+        );
+    }
+    assert!(
+        cx.debug_bounds("math-block-number-4").is_none(),
+        "行内公式与代码内容不参与编号"
+    );
+    let first = cx.debug_bounds("math-block-number-1").unwrap();
+    let second = cx.debug_bounds("math-block-number-2").unwrap();
+    let third = cx.debug_bounds("math-block-number-3").unwrap();
+    assert!(first.top() < second.top() && second.top() < third.top());
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+}
+
+#[gpui::test]
+fn math_block_numbers_stay_on_the_right_in_the_editing_preview(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "$$\nx^2\n$$\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("块公式");
+    editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    let number = cx.debug_bounds("math-block-number-1");
+    assert!(number.is_some(), "编辑预览也应显示公式编号");
+    let number = number.unwrap();
+    let formula = cx
+        .debug_bounds("math-block-rendered-formula")
+        .expect("公式图像");
+    let preview = cx.debug_bounds("math-block-live-preview").expect("预览区");
+    assert!(number.left() >= formula.right(), "编号不能盖住公式");
+    assert!(
+        (f32::from(formula.center().x - preview.center().x)).abs() <= 1.0,
+        "编号不能把公式挤离中央"
+    );
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+}
+
+#[gpui::test]
+fn math_block_numbers_update_after_insertion_and_undo(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "正文\n\n$$\na^2\n$$\n\n$$\nb^2\n$$\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("math-block-number-2").is_some(),
+        "原有两个公式"
+    );
+    editor.update(cx, |editor, cx| {
+        let paragraph = block_with_text(editor, cx, "正文").expect("普通段落");
+        editor.focus_block(paragraph.entity_id());
+        assert!(editor.insert_block_after_selection(InsertBlockTarget::MathBlock, cx));
+    });
+    redraw(cx);
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("math-block-number-3").is_some(),
+        "新公式插入后应重编号"
+    );
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    redraw(cx);
+    assert!(cx.debug_bounds("math-block-number-2").is_some());
+    assert!(
+        cx.debug_bounds("math-block-number-3").is_none(),
+        "撤销后编号不能残留"
+    );
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+}
+
+#[gpui::test]
+fn math_block_numbers_continue_across_progressive_import_chunks(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "$$\na\n$$\n\n> $$\n> b\n> $$\n\n$$\nc\n$$\n";
+    for budget in [1, 2] {
+        let editor =
+            cx.new(|cx| Editor::from_markdown_with_chunk_budget(cx, source.into(), None, budget));
+        editor.update(cx, |editor, cx| {
+            assert!(editor.document.pending_tail().is_some());
+            editor.flush_pending_materialization(cx);
+        });
+        editor.read_with(cx, |editor, cx| {
+            let ordinals = editor
+                .document
+                .visible_blocks()
+                .iter()
+                .filter_map(|visible| {
+                    let block = visible.entity.read(cx);
+                    (block.kind() == BlockKind::MathBlock).then_some(block.math_ordinal)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                ordinals,
+                vec![Some(1), Some(2), Some(3)],
+                "续建不能重新从 1 编号"
+            );
+            assert_eq!(editor.buffer.text(), source);
+        });
+    }
+}
+
+#[gpui::test]
+fn math_block_numbers_refresh_after_an_in_place_kind_change(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let editor = cx.new(|cx| Editor::from_markdown(cx, "x^2\n\n$$\na\n$$\n".into(), None));
+    editor.update(cx, |editor, cx| {
+        let paragraph = block_with_text(editor, cx, "x^2").expect("普通段落");
+        let math = math_block_entity(editor, cx).expect("已有公式");
+        // 只驱动块种类与元数据同步，不做结构重建，覆盖就地换种类的索引更新。
+        paragraph.update(cx, |block, _| block.record.kind = BlockKind::MathBlock);
+        editor
+            .document
+            .refresh_row_spacing_for(paragraph.entity_id(), cx);
+        assert_eq!(paragraph.read(cx).math_ordinal, Some(1));
+        assert_eq!(math.read(cx).math_ordinal, Some(2));
+        paragraph.update(cx, |block, _| block.record.kind = BlockKind::Paragraph);
+        editor
+            .document
+            .refresh_row_spacing_for(paragraph.entity_id(), cx);
+        assert_eq!(paragraph.read(cx).math_ordinal, None);
+        assert_eq!(math.read(cx).math_ordinal, Some(1));
+    });
+}
+
+#[gpui::test]
+fn math_block_live_preview_tracks_edits_above_the_source(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for source in ["$$\nx^2\n$$\n\n正文\n", "> $$\n> x^2\n> $$\n\n正文\n"] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+        cx.update(|window, _| window.activate_window());
+        redraw(cx);
+        let math = editor
+            .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+            .expect("块公式");
+        editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+        redraw(cx);
+        redraw(cx);
+        let card = cx.debug_bounds("math-block-card").expect("源码卡片");
+        let preview = cx
+            .debug_bounds("math-block-live-preview")
+            .expect("编辑时应显示上方预览");
+        assert!(preview.bottom() <= card.top(), "预览必须位于源码上方");
+        let before = cx
+            .debug_bounds("math-block-rendered-formula")
+            .expect("预览中的公式图像");
+        editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+        let replacement = "\\frac{a+b}{c+d}";
+        math.update(cx, |block, cx| {
+            let start = block.display_text().find("x^2").expect("公式正文");
+            block.replace_text_in_visible_range(start..start + 3, replacement, None, false, cx);
+        });
+        redraw(cx);
+        redraw(cx);
+        let after = cx
+            .debug_bounds("math-block-rendered-formula")
+            .expect("编辑后仍有预览");
+        assert!(
+            after.size.height > before.size.height,
+            "分式预览应随输入更新"
+        );
+        let preview = cx
+            .debug_bounds("math-block-live-preview")
+            .expect("更新后的预览区域");
+        math.read_with(cx, |block, _| {
+            assert!(block.has_text_layout(), "预览不能清除源码布局");
+            let bounds = block.last_bounds.expect("源码命中区域");
+            assert!(
+                bounds.top() >= preview.bottom(),
+                "预览不能覆盖源码的命中几何"
+            );
+        });
+        math.update(cx, |block, cx| {
+            let start = block.display_text().find(replacement).expect("新公式正文");
+            block.move_to(start + replacement.len() - 1, cx);
+        });
+        redraw(cx);
+        let selection = math.read_with(cx, |block, _| block.selected_range.clone());
+        let preview = cx
+            .debug_bounds("math-block-live-preview")
+            .expect("预览区域");
+        cx.simulate_click(preview.center(), Modifiers::none());
+        redraw(cx);
+        assert_eq!(
+            math.read_with(cx, |block, _| block.selected_range.clone()),
+            selection,
+            "点击只读预览不能移动源码光标"
+        );
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), source.replace("x^2", replacement))
+        });
+        let paragraph = editor
+            .read_with(cx, |editor, cx| block_with_text(editor, cx, "正文"))
+            .expect("普通段落");
+        editor.update(cx, |editor, _| editor.focus_block(paragraph.entity_id()));
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("math-block-live-preview").is_none(),
+            "失焦后恢复正常公式展示"
+        );
+    }
+}
+
+#[gpui::test]
+fn math_block_live_preview_stays_above_latex_completion(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "$$\n\\al\n$$\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    cx.update(|window, _| window.activate_window());
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("块公式");
+    editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+    math.update(cx, |block, cx| {
+        block.move_to(block.display_text().len(), cx)
+    });
+    editor.update(cx, |editor, cx| {
+        editor.update_latex_completion_for_block(&math, cx)
+    });
+    redraw(cx);
+    redraw(cx);
+    let preview = cx
+        .debug_bounds("math-block-live-preview")
+        .expect("实时预览");
+    let completion = cx
+        .debug_bounds("latex-completion-panel")
+        .expect("命令补全应保持打开");
+    assert!(
+        preview.bottom() <= completion.top(),
+        "源码下方的补全面板不能挡住公式预览"
+    );
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+}
+
+#[gpui::test]
+fn math_block_live_preview_keeps_the_last_valid_result_until_input_recovers(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "$$\nx^2\n$$\n".into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("块公式");
+    editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("math-block-live-preview").is_some(),
+        "编辑时应保留预览区"
+    );
+    for body in ["\\frac{a}", "\\frac{a}{b}"] {
+        math.update(cx, |block, cx| {
+            let end = block.display_text().len();
+            block.replace_text_in_visible_range(0..end, body, None, false, cx);
+        });
+        redraw(cx);
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("math-block-render-error").is_none(),
+            "输入过程中不应插入报错条"
+        );
+        assert!(
+            cx.debug_bounds("math-block-rendered-formula").is_some(),
+            "未完成时保留上一次成功的预览"
+        );
+        assert!(
+            math.read_with(cx, |block, _| block.has_text_layout()),
+            "输入不完整也应保留源码编辑能力"
+        );
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), format!("$$\n{body}\n$$\n"));
+            assert!(!editor.modal_is_open(), "预览错误不应打断输入");
+        });
+    }
+}
+
+#[gpui::test]
+fn math_block_live_preview_keeps_the_source_position_stable_while_typing(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let formula = r"\int_{-\infty}^{+\infty} e^{-x^2}\,dx = \sqrt{\pi}";
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, format!("$$\n{formula}\n$$\n"), None));
+    cx.update(|window, _| window.activate_window());
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("块公式");
+    editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    let original_card = cx.debug_bounds("math-block-card").expect("源码卡片");
+    let original_preview = cx.debug_bounds("math-block-live-preview").expect("预览区");
+    for body in [
+        format!("{formula} \\"),
+        format!("{formula} \\fr"),
+        "x^2".into(),
+        "\\frac{1}{\\frac{2}{3}}".into(),
+    ] {
+        math.update(cx, |block, cx| {
+            let end = block.display_text().len();
+            block.replace_text_in_visible_range(0..end, &body, None, false, cx);
+        });
+        for _ in 0..3 {
+            redraw(cx);
+            let card = cx
+                .debug_bounds("math-block-card")
+                .expect("输入区应保持可见");
+            let preview = cx
+                .debug_bounds("math-block-live-preview")
+                .expect("预览区应保持可见");
+            assert_eq!(
+                card.top(),
+                original_card.top(),
+                "预览变化不能挤动源码输入区：{body:?}"
+            );
+            assert_eq!(
+                preview.size.height, original_preview.size.height,
+                "预览占位高度应稳定"
+            );
+            assert!(
+                cx.debug_bounds("math-block-render-error").is_none(),
+                "输入中不插入报错条"
+            );
+        }
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), format!("$$\n{body}\n$$\n"))
+        });
+    }
+}
+
+#[gpui::test]
+fn math_block_live_preview_reserves_space_when_no_valid_result_exists(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "$$\n\\frac{a}\n$$\n".into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("块公式");
+    editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+    redraw(cx);
+    redraw(cx);
+    let card = cx.debug_bounds("math-block-card").expect("源码卡片");
+    assert!(
+        cx.debug_bounds("math-block-render-error").is_none(),
+        "没有成功预览也不显示报错条"
+    );
+    assert!(
+        cx.debug_bounds("math-block-rendered-formula").is_none(),
+        "没有旧结果时保留空白"
+    );
+    math.update(cx, |block, cx| {
+        let end = block.display_text().len();
+        block.replace_text_in_visible_range(0..end, "\\frac{a}{b}", None, false, cx);
+    });
+    redraw(cx);
+    redraw(cx);
+    assert_eq!(
+        cx.debug_bounds("math-block-card").expect("源码卡片").top(),
+        card.top()
+    );
+    assert!(
+        cx.debug_bounds("math-block-rendered-formula").is_some(),
+        "完成后恢复实时预览"
+    );
+}
+
+#[gpui::test]
+fn math_block_live_preview_renders_unknown_commands_without_a_previous_result(
+    cx: &mut TestAppContext,
+) {
+    init_editor_test_app(cx);
+    let source = "$$\nx^2 + \\xx\n$$\n\n正文\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("公式块");
+    for focused in [true, false] {
+        editor.update(cx, |editor, cx| {
+            let target = if focused {
+                math.clone()
+            } else {
+                block_with_text(editor, cx, "正文").expect("普通段落")
+            };
+            editor.focus_block(target.entity_id());
+        });
+        redraw(cx);
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("math-block-rendered-formula").is_some(),
+            "未知命令不能让整个公式预览消失"
+        );
+        assert!(
+            cx.debug_bounds("math-block-render-error").is_none(),
+            "未知命令应直接参与容错排版"
+        );
+        editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+    }
+}
+
+#[gpui::test]
+fn math_block_braces_pair_is_one_undo_step(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler;
+    init_editor_test_app(cx);
+    let source = "$$\nx\n$$\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("公式块");
+    cx.update(|window, cx| {
+        math.update(cx, |block, cx| {
+            block.move_to(block.display_text().len(), cx);
+            block.replace_text_in_range(None, "{", window, cx);
+        });
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "$$\nx{}\n$$\n")
+    });
+    editor.update(cx, |editor, cx| editor.undo_document(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+    editor.update(cx, |editor, cx| editor.redo_document(cx));
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "$$\nx{}\n$$\n")
+    });
+}
+
+#[gpui::test]
+fn math_block_braces_pair_and_skip_closing_braces(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler;
+    init_editor_test_app(cx);
+    for source in ["$$\nx\n$$\n", "> $$\n> x\n> $$\n"] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+        redraw(cx);
+        let math = editor
+            .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+            .expect("公式块");
+        cx.update(|window, cx| {
+            math.update(cx, |block, cx| {
+                block.move_to(block.display_text().find('x').expect("正文") + 1, cx);
+                block.replace_text_in_range(None, "{", window, cx);
+                let first_caret = block.cursor_offset();
+                assert_eq!(
+                    block.display_text().get(first_caret - 1..first_caret + 1),
+                    Some("{}")
+                );
+                block.replace_text_in_range(None, "a", window, cx);
+                block.replace_text_in_range(None, "{", window, cx);
+                block.replace_text_in_range(None, "b", window, cx);
+                let before = block.display_text().to_string();
+                let caret = block.cursor_offset();
+                block.replace_text_in_range(None, "}", window, cx);
+                block.replace_text_in_range(None, "}", window, cx);
+                assert_eq!(block.display_text(), before, "闭括号应跳过已有括号");
+                assert_eq!(block.cursor_offset(), caret + 2);
+            });
+        });
+        redraw(cx);
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), source.replace('x', "x{a{b}}"));
+        });
+    }
+}
+
+#[gpui::test]
+fn math_block_braces_delete_an_empty_pair_together(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = "$$\nx{}\n$$\n";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    redraw(cx);
+    let math = editor
+        .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+        .expect("公式块");
+    cx.update(|window, cx| {
+        math.update(cx, |block, cx| {
+            block.move_to(block.display_text().find('}').expect("右括号"), cx);
+            block.on_delete_back(&crate::components::DeleteBack, window, cx);
+        });
+    });
+    redraw(cx);
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.buffer.text(), "$$\nx\n$$\n")
+    });
+}
+
+#[gpui::test]
+fn math_block_braces_preserve_escaped_braces_paste_and_explicit_replacement(
+    cx: &mut TestAppContext,
+) {
+    use gpui::EntityInputHandler;
+    init_editor_test_app(cx);
+    for (body, paste, explicit, expected) in [
+        (r"x \", false, false, r"x \{"),
+        ("x", true, false, "x{"),
+        ("x", false, true, "x{"),
+    ] {
+        let (editor, cx) = cx
+            .add_window_view(|_, cx| Editor::from_markdown(cx, format!("$$\n{body}\n$$\n"), None));
+        redraw(cx);
+        let math = editor
+            .read_with(cx, |editor, cx| math_block_entity(editor, cx))
+            .expect("公式块");
+        cx.update(|window, cx| {
+            math.update(cx, |block, cx| {
+                let end = block.display_text().len();
+                block.move_to(end, cx);
+                if paste {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string("{".into()));
+                    block.on_paste(&crate::components::Paste, window, cx);
+                } else {
+                    let range = explicit.then(|| block.range_to_utf16(&(end..end)));
+                    block.replace_text_in_range(range, "{", window, cx);
+                }
+            });
+        });
+        redraw(cx);
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), format!("$$\n{expected}\n$$\n"))
+        });
+    }
+}
+
 fn draft_line<'a>(
     lines: &'a [crate::editor::formula_editor::FormulaDraftLine],
     index: usize,

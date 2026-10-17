@@ -107,12 +107,33 @@ impl EntityInputHandler for Block {
             return;
         }
 
-        self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
         let mut visible_range = range_utf16
             .as_ref()
             .map(|range| self.range_from_utf16(range))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        if range_utf16.is_none()
+            && self.marked_range.is_none()
+            && visible_range.is_empty()
+            && matches!(new_text, "{" | "}")
+            && self.math_brace_context_at(visible_range.start)
+        {
+            if new_text == "}"
+                && self
+                    .display_text()
+                    .get(visible_range.start..)
+                    .is_some_and(|tail| tail.starts_with('}'))
+            {
+                self.move_to(visible_range.start + 1, cx);
+                return;
+            }
+            if new_text == "{" {
+                self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
+                self.replace_text_in_visible_range(visible_range, "{}", Some(1..1), false, cx);
+                return;
+            }
+        }
+        self.prepare_undo_capture(self.text_edit_undo_kind(), cx);
         let smart_punctuation = crate::config::EditorSettings::smart_punctuation(cx)
             && !self.kind().is_code_block()
             && !self.uses_raw_text_editing();
@@ -302,6 +323,23 @@ impl EntityInputHandler for Block {
             text, ranges[line_idx].start + utf8_offset_in_line,
         );
         Some(Self::utf8_to_utf16_in(self.display_text(), utf8_index))
+    }
+}
+
+impl Block {
+    pub(super) fn math_brace_context_at(&self, offset: usize) -> bool {
+        if self.kind() != crate::components::BlockKind::MathBlock {
+            return false;
+        }
+        let Some(prefix) = self.display_text().get(..offset) else {
+            return false;
+        };
+        let backslashes = prefix
+            .chars()
+            .rev()
+            .take_while(|character| *character == '\\')
+            .count();
+        !crate::components::markdown::inline::backslash_run_escapes(backslashes)
     }
 }
 

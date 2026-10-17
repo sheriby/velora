@@ -20,6 +20,9 @@ impl Render for Block {
         }
 
         let focused = self.focus_handle.is_focused(window);
+        if !focused || self.record.kind != BlockKind::MathBlock {
+            self.math_edit_preview_source = None;
+        }
         self.set_hide_markdown_markers(crate::config::EditorSettings::hide_markdown_markers(cx));
         let code_language_focused = self.code_language_focus_handle.is_focused(window);
         // 输入态（含 33ms 光标闪烁任务）还要求窗口是活动窗口：gpui 的 `is_focused`
@@ -1550,7 +1553,7 @@ impl Render for Block {
                 let child = if focused {
                     BlockTextElement::new(cx.entity(), is_placeholder).into_any_element()
                 } else {
-                    self.render_math_content(&theme, cx)
+                    self.render_math_content(&theme, false, cx)
                 };
                 if !focused {
                     focused_base.w_full().child(child).into_any_element()
@@ -1593,6 +1596,22 @@ impl Render for Block {
                         .child("ƒx");
                     focused_base
                         .w_full()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .id("math-block-live-preview")
+                                .debug_selector(|| "math-block-live-preview".to_string())
+                                .w_full()
+                                // 预览内容可以变化，源码输入区的位置不能随之变化。
+                                .h(px((t.text_size * t.text_line_height * 3.0).max(64.0)))
+                                .flex_shrink_0()
+                                .overflow_y_scroll()
+                                .mb(px(card_padding_y))
+                                .cursor(CursorStyle::Arrow)
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(self.render_math_content(&theme, true, cx)),
+                        )
                         .child(
                             div()
                                 .w_full()

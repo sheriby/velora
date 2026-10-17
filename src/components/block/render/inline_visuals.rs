@@ -127,83 +127,146 @@ impl Block {
         container.into_any_element()
     }
 
-    pub(crate) fn render_math_content(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
+    pub(crate) fn render_math_content(
+        &mut self,
+        theme: &Theme,
+        editing: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let raw = self
             .record
             .raw_fallback
             .as_deref()
             .unwrap_or_else(|| self.display_text());
 
+        let content = match self.render_math_source(raw, theme, editing) {
+            Some(content) => {
+                if editing && self.math_edit_preview_source.as_deref() != Some(raw) {
+                    self.math_edit_preview_source = Some(raw.to_string());
+                }
+                content
+            }
+            // 半截命令是正常输入过程，不用错误条替换正在阅读的预览。
+            None => self
+                .math_edit_preview_source
+                .as_deref()
+                .and_then(|source| self.render_math_source(source, theme, true))
+                .unwrap_or_else(|| div().into_any_element()),
+        };
+        let container = div().w_full();
+        let container = if let Some(ordinal) = self.math_ordinal {
+            let label = format!("({ordinal})");
+            // 两侧留等宽槽，编号靠右且不改变公式的居中位置。
+            let gutter_width = px(theme.typography.text_size * label.len().max(4) as f32 * 0.65);
+            container
+                .flex()
+                .items_center()
+                .child(div().w(gutter_width).flex_shrink_0())
+                .child(div().flex_1().min_w(px(0.0)).child(content))
+                .child(
+                    div()
+                        .debug_selector(move || format!("math-block-number-{ordinal}"))
+                        .w(gutter_width)
+                        .flex_shrink_0()
+                        .text_right()
+                        .text_size(px(theme.typography.text_size))
+                        .text_color(theme.colors.text_default)
+                        .child(SharedString::from(label)),
+                )
+        } else {
+            container.child(content)
+        };
+        container
+            // 输入几何只属于源码卡片，阅读态的命中区域包含公式与编号。
+            .when(!editing, |this| this.child(Self::block_bounds_recorder(cx)))
+            .into_any_element()
+    }
+
+    fn render_math_source(&self, raw: &str, theme: &Theme, editing: bool) -> Option<AnyElement> {
+        let c = &theme.colors;
+        let d = &theme.dimensions;
+        let t = &theme.typography;
         let Some(segments) = crate::components::latex::parse_display_math_segments(raw) else {
-            return div()
-                .w_full()
-                .text_size(px(t.text_size))
-                .line_height(relative(t.text_line_height))
-                .text_color(c.text_default)
-                .child(SharedString::from(raw.to_string()))
-                .into_any_element();
+            if editing {
+                return None;
+            }
+            return Some(
+                div()
+                    .w_full()
+                    .text_size(px(t.text_size))
+                    .line_height(relative(t.text_line_height))
+                    .text_color(c.text_default)
+                    .child(SharedString::from(raw.to_string()))
+                    .into_any_element(),
+            );
         };
 
         // 分段渲染整个源码跨度：公式归公式，`$$` 前后的文字照常显示（旧实现只取
         // 第一个公式体，闭合 `$$` 之后的内容被解析器丢掉，cases/03-formula-tail.md）。
-        let content = segments.into_iter().map(|segment| match segment {
-            crate::components::latex::DisplayMathSegment::Formula { raw, body } => {
-                let source = crate::components::latex::DisplayMathSource { raw, body };
-                match render_display_math_svg(
-                    &source,
-                    c.text_default,
-                    display_math_font_size(t.text_size),
-                ) {
-                    Ok(rendered) => div()
-                        .w_full()
-                        .flex()
-                        .justify_center()
-                        .child(
-                            img(rendered.path)
-                                .max_w(Length::Definite(relative(1.0)))
-                                .max_h(px(if d.image_root_max_height > 0.0 {
-                                    d.image_root_max_height
-                                } else {
-                                    420.0
-                                }))
-                                .object_fit(ObjectFit::Contain),
-                        )
-                        .into_any_element(),
-                    Err(err) => div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .rounded_sm()
-                        .bg(c.source_mode_block_bg)
-                        .px(px(d.block_padding_x))
-                        .py(px(d.block_padding_y))
-                        .text_size(px(t.text_size))
-                        .line_height(relative(t.text_line_height))
-                        .text_color(c.text_default)
-                        .child(SharedString::from(source.raw.clone()))
-                        .child(
-                            div()
-                                .text_size(px(t.code_size))
-                                .text_color(c.dialog_muted)
-                                .child(SharedString::from(format!("LaTeX render error: {err}"))),
-                        )
-                        .into_any_element(),
+        let mut content = Vec::new();
+        for segment in segments {
+            let element = match segment {
+                crate::components::latex::DisplayMathSegment::Formula { raw, body } => {
+                    let source = crate::components::latex::DisplayMathSource { raw, body };
+                    match render_display_math_svg(
+                        &source,
+                        c.text_default,
+                        display_math_font_size(t.text_size),
+                    ) {
+                        Ok(rendered) => div()
+                            .w_full()
+                            .flex()
+                            .justify_center()
+                            .child(
+                                img(rendered.path)
+                                    .debug_selector(|| "math-block-rendered-formula".to_string())
+                                    .max_w(Length::Definite(relative(1.0)))
+                                    .max_h(px(if d.image_root_max_height > 0.0 {
+                                        d.image_root_max_height
+                                    } else {
+                                        420.0
+                                    }))
+                                    .object_fit(ObjectFit::Contain),
+                            )
+                            .into_any_element(),
+                        Err(_) if editing => return None,
+                        Err(err) => div()
+                            .debug_selector(|| "math-block-render-error".to_string())
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .rounded_sm()
+                            .bg(c.source_mode_block_bg)
+                            .px(px(d.block_padding_x))
+                            .py(px(d.block_padding_y))
+                            .text_size(px(t.text_size))
+                            .line_height(relative(t.text_line_height))
+                            .text_color(c.text_default)
+                            .child(SharedString::from(source.raw))
+                            .child(
+                                div()
+                                    .text_size(px(t.code_size))
+                                    .text_color(c.dialog_muted)
+                                    .child(SharedString::from(format!(
+                                        "LaTeX render error: {err}"
+                                    ))),
+                            )
+                            .into_any_element(),
+                    }
                 }
-            }
-            crate::components::latex::DisplayMathSegment::Text { markdown } => div()
-                .w_full()
-                .text_size(px(t.text_size))
-                .line_height(relative(t.text_line_height))
-                .text_color(c.text_default)
-                .child(SharedString::from(
-                    crate::components::InlineTextTree::from_markdown(&markdown).visible_text(),
-                ))
-                .into_any_element(),
-        });
+                crate::components::latex::DisplayMathSegment::Text { markdown } => div()
+                    .w_full()
+                    .text_size(px(t.text_size))
+                    .line_height(relative(t.text_line_height))
+                    .text_color(c.text_default)
+                    .child(SharedString::from(
+                        crate::components::InlineTextTree::from_markdown(&markdown).visible_text(),
+                    ))
+                    .into_any_element(),
+            };
+            content.push(element);
+        }
 
         let container = div()
             .w_full()
@@ -211,8 +274,7 @@ impl Block {
             .flex_col()
             .gap(px(d.block_padding_y.max(4.0)))
             .py(px(d.block_padding_y.max(6.0)))
-            .children(content)
-            .child(Self::block_bounds_recorder(cx));
+            .children(content);
         // 跨块选区把这一块整段选上时它是一张图片，没有文字布局可铺高亮：不在这里
         // 补一条底色，选中的公式在屏幕上和没选中一样。
         let container = if self
@@ -226,7 +288,7 @@ impl Block {
         } else {
             container
         };
-        container.into_any_element()
+        Some(container.into_any_element())
     }
 
     pub(crate) fn render_mermaid_content(&self, theme: &Theme, window: &Window, cx: &mut Context<Self>) -> AnyElement {
