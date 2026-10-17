@@ -30,9 +30,6 @@ pub struct PrepaintState {
     lines: std::sync::Arc<Vec<WrappedLine>>,
     source_line_numbers: Vec<ShapedLine>,
     source_line_number_gutter_width: Pixels,
-    /// 超长行的行号槽折叠指示符（▸ 折叠 / ▾ 展开），有超长行才有。
-    long_line_chevron_collapsed: Option<ShapedLine>,
-    long_line_chevron_expanded: Option<ShapedLine>,
     /// (源行下标, 是否展开)：paint 时按行顶画指示符。
     long_line_markers: Vec<(usize, bool)>,
     cursor: Option<PaintQuad>,
@@ -479,50 +476,16 @@ impl Element for BlockTextElement {
             Vec::new()
         };
 
-        // 超长行指示符（▸ 折叠 / ▾ 展开）：画在行号槽最左侧，点击行号切换。
-        // 只有真的存在超长行时才 shape，常规块零开销。
-        let has_long_lines = input
+        let long_line_markers = input
             .long_line_plan
             .as_ref()
-            .is_some_and(|(_, plan)| !plan.long_lines.is_empty());
-        let (long_line_chevron_collapsed, long_line_chevron_expanded, long_line_markers) =
-            if has_long_lines {
-                let chevron = |label: &'static str| {
-                    window.text_system().shape_line(
-                        SharedString::from(label),
-                        font_size,
-                        &[TextRun {
-                            len: label.len(),
-                            font: style.font(),
-                            color: theme.colors.text_placeholder,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                            font_size: None,
-                        }],
-                        None,
-                    )
-                };
-                let markers = input
-                    .long_line_plan
-                    .as_ref()
-                    .map(|(_, plan)| {
-                        plan.long_lines
-                            .iter()
-                            .map(|&line_idx| {
-                                (line_idx, input.expanded_long_lines.contains(&line_idx))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                (
-                    Some(chevron("▸")),
-                    Some(chevron("▾")),
-                    markers,
-                )
-            } else {
-                (None, None, Vec::new())
-            };
+            .map(|(_, plan)| {
+                plan.long_lines
+                    .iter()
+                    .map(|&line_idx| (line_idx, input.expanded_long_lines.contains(&line_idx)))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let cursor_opacity = input.cursor_opacity();
         let cursor_color = {
@@ -702,8 +665,6 @@ impl Element for BlockTextElement {
             lines,
             source_line_numbers,
             source_line_number_gutter_width,
-            long_line_chevron_collapsed,
-            long_line_chevron_expanded,
             long_line_markers,
             cursor: cursor_quad,
             current_line: current_line_quads,
@@ -786,14 +747,15 @@ impl Element for BlockTextElement {
         let text_align = self.input.read(cx).text_align();
         let text_bounds = source_text_bounds(bounds, prepaint.source_line_number_gutter_width);
         let line_number_tops = source_line_number_tops(&lines, line_height);
-        let line_number_gap = px(SOURCE_LINE_NUMBER_GAP);
+        let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+        let (number_right, marker_left) = source_gutter_columns(text_bounds.left(), font_size);
         let line_numbers = std::mem::take(&mut prepaint.source_line_numbers);
         for (line_number, y_offset) in line_numbers.iter().zip(line_number_tops.iter()) {
             let line_number_width = line_number.x_for_index(line_number.len());
             line_number
                 .paint(
                     point(
-                        text_bounds.left() - line_number_gap - line_number_width,
+                        number_right - line_number_width,
                         bounds.origin.y + *y_offset,
                     ),
                     line_height,
@@ -803,27 +765,32 @@ impl Element for BlockTextElement {
                 .ok();
         }
 
-        // 超长行的折叠指示符：贴行号槽最左缘，指向可点。
         if !prepaint.long_line_markers.is_empty() {
-            let gutter_left = text_bounds.left() - prepaint.source_line_number_gutter_width;
+            let marker_color = cx.global::<ThemeManager>().current_arc().colors.text_placeholder;
             for (line_idx, expanded) in &prepaint.long_line_markers {
                 let Some(y_top) = line_number_tops.get(*line_idx) else {
                     continue;
                 };
-                let chevron = if *expanded {
-                    prepaint.long_line_chevron_expanded.as_ref()
+                let icon = if *expanded {
+                    "icon/workspace/chevron-down.svg"
                 } else {
-                    prepaint.long_line_chevron_collapsed.as_ref()
+                    "icon/workspace/chevron-right.svg"
                 };
-                if let Some(chevron) = chevron {
-                    chevron
-                        .paint(
-                            point(gutter_left + px(2.0), bounds.origin.y + *y_top),
-                            line_height,
-                            window,
-                            cx,
-                        )
-                        .ok();
+                let marker_bounds = Bounds::new(
+                    point(
+                        marker_left,
+                        bounds.top() + *y_top + (line_height - font_size) / 2.0,
+                    ),
+                    size(font_size, font_size),
+                );
+                if let Err(error) = window.paint_svg(
+                    marker_bounds,
+                    icon.into(),
+                    TransformationMatrix::default(),
+                    marker_color,
+                    cx,
+                ) {
+                    eprintln!("绘制长行折叠箭头失败：{error}");
                 }
             }
         }
@@ -848,11 +815,15 @@ impl Element for BlockTextElement {
             window.paint_quad(cursor);
         }
 
-        self.input.update(cx, |input, _cx| {
+        let hovering_long_line = self.input.update(cx, |input, _cx| {
             input.last_layout = Some(lines.clone());
             input.last_bounds = Some(text_bounds);
             input.last_line_height = line_height;
             input.last_gutter_width = prepaint.source_line_number_gutter_width;
+            input.long_line_at_gutter(window.mouse_position()).is_some()
         });
+        if hovering_long_line && prepaint.hitbox.is_hovered(window) {
+            window.set_cursor_style(CursorStyle::PointingHand, &prepaint.hitbox);
+        }
     }
 }

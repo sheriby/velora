@@ -73,13 +73,32 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
     let (editor, cx) = open_code_document_window(cx, &source, "expand");
 
     redraw(cx);
-    // 点行号槽（text_bounds 左侧的 gutter 区）第 2 行（超长行）。
-    let click_position = editor.read_with(cx, |editor, cx| {
+    // 点行号右侧的箭头，第 2 行（超长行）。
+    let (click_position, text_left, gutter_width) = editor.read_with(cx, |editor, cx| {
         let block = editor.document.visible_blocks()[0].entity.read(cx);
         let bounds = block.last_bounds.as_ref().expect("应已布局");
-        gpui::point(
-            bounds.left() - block.last_gutter_width / 2.0,
+        let marker_position = gpui::point(
+            bounds.left() - gpui::px(16.0),
             bounds.top() + block.last_line_height * 1.5,
+        );
+        assert_eq!(
+            block.long_line_at_gutter(marker_position), Some(1),
+            "长行箭头区域应可命中，以显示手形光标"
+        );
+        assert_eq!(
+            block.long_line_at_gutter(gpui::point(bounds.left() + gpui::px(1.0), marker_position.y)),
+            None, "正文区域不应显示折叠手形"
+        );
+        assert_eq!(
+            block.long_line_at_gutter(gpui::point(
+                marker_position.x, bounds.top() + block.last_line_height / 2.0,
+            )),
+            None, "普通行不应显示折叠手形"
+        );
+        (
+            marker_position,
+            bounds.left(),
+            block.last_gutter_width,
         )
     });
     let toggled = editor.update(cx, |editor, cx| {
@@ -93,6 +112,11 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
         .read_with(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
             assert!(block.expanded_long_lines.contains(&1), "展开状态应记录");
+            assert_eq!(block.last_gutter_width, gutter_width, "展开不能改变行号槽宽");
+            assert_eq!(
+                block.last_bounds.expect("应已布局").left(), text_left,
+                "展开不能改变正文起点"
+            );
             let lines = block.last_layout.as_deref().expect("应完成排版");
             assert_eq!(lines.len(), 4, "展开不改变源行条目数（含空尾行）");
             assert!(
@@ -113,7 +137,7 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
         let block = editor.document.visible_blocks()[0].entity.read(cx);
         let bounds = block.last_bounds.as_ref().expect("应已布局");
         gpui::point(
-            bounds.left() - block.last_gutter_width / 2.0,
+            bounds.left() - gpui::px(16.0),
             bounds.top() + block.last_line_height * 1.5,
         )
     });
@@ -126,6 +150,11 @@ async fn gutter_click_expands_long_line_into_wrapped_rows(cx: &mut TestAppContex
     editor
         .read_with(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[0].entity.read(cx);
+            assert_eq!(block.last_gutter_width, gutter_width, "收起不能改变行号槽宽");
+            assert_eq!(
+                block.last_bounds.expect("应已布局").left(), text_left,
+                "收起不能改变正文起点"
+            );
             assert!(
                 !block.expanded_long_lines.contains(&1),
                 "收起后不应留在展开集合里"

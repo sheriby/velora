@@ -207,6 +207,53 @@
         assert!(three_digits > two_digits);
     }
 
+    #[gpui::test]
+    fn source_gutter_leaves_space_for_long_line_chevrons(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.update(|window, _| {
+            for font_size in [px(12.0), px(16.0), px(32.0)] {
+                for label in ["25", "100", "10000"] {
+                    let shape = |text: &str| {
+                        window.text_system().shape_line(
+                            text.to_string().into(),
+                            font_size,
+                            &[TextRun {
+                                len: text.len(),
+                                font: font("monospace"),
+                                color: Hsla::from(rgba(0xffffffff)),
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                                font_size: None,
+                            }],
+                            None,
+                        )
+                    };
+                    let number = shape(label);
+                    let gutter_width = source_line_number_gutter_width(
+                        label.parse().expect("数字行号"),
+                        font_size,
+                    );
+                    let (number_right, marker_left) =
+                        super::source_gutter_columns(gutter_width, font_size);
+                    assert!(
+                        number_right - number.x_for_index(number.len()) >= px(0.0),
+                        "行号不能溢出左侧槽边界"
+                    );
+                    assert!(
+                        number_right + px(4.0) <= marker_left,
+                        "{font_size:?} 字号的 {label} 行号应在箭头左侧且留有间隔：\
+                         行号右缘 {number_right:?}，箭头左缘 {marker_left:?}"
+                    );
+                    assert!(
+                        marker_left + font_size + px(4.0) <= gutter_width,
+                        "箭头应与正文保留间隔"
+                    );
+                }
+            }
+        });
+    }
+
     #[test]
     fn source_text_bounds_are_offset_by_gutter_width() {
         let bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(300.0), px(120.0)));

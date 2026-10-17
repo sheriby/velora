@@ -133,8 +133,16 @@ pub(crate) fn source_line_number_gutter_width(line_count: usize, font_size: Pixe
         .to_string()
         .len()
         .max(SOURCE_LINE_NUMBER_MIN_DIGITS);
+    // 箭头占独立的一字宽槽；所有源码块都预留，避免长行出现或展开时正文横跳。
     px(digits as f32 * f32::from(font_size) * SOURCE_LINE_NUMBER_DIGIT_WIDTH_RATIO)
         + px(SOURCE_LINE_NUMBER_GAP)
+        + font_size
+        + px(4.0)
+}
+
+fn source_gutter_columns(text_left: Pixels, font_size: Pixels) -> (Pixels, Pixels) {
+    let marker_left = text_left - px(SOURCE_LINE_NUMBER_GAP / 2.0) - font_size;
+    (marker_left - px(4.0), marker_left)
 }
 
 pub(crate) fn source_text_bounds(bounds: Bounds<Pixels>, gutter_width: Pixels) -> Bounds<Pixels> {

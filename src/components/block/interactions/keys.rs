@@ -322,26 +322,30 @@ impl Block {
         }
     }
 
-    /// 是超长行时切换展开态。返回是否发生了切换。
-    pub(crate) fn toggle_long_line_at_gutter(&mut self, position: Point<Pixels>) -> bool {
-        let (Some(bounds), Some(lines)) = (self.last_bounds.as_ref(), self.last_layout.as_deref())
-        else {
-            return false;
-        };
-        if self.last_gutter_width <= px(0.0) {
-            return false;
+    pub(crate) fn long_line_at_gutter(&self, position: Point<Pixels>) -> Option<usize> {
+        if !self.long_line_folding_enabled() || self.last_gutter_width <= px(0.0) {
+            return None;
         }
-        // 行号槽区间 = [text_bounds.left - gutter, text_bounds.left]。
-        if position.x < bounds.left() - self.last_gutter_width || position.x > bounds.left() {
-            return false;
+        let bounds = self.last_bounds.as_ref()?;
+        let lines = self.last_layout.as_deref()?;
+        if position.x < bounds.left() - self.last_gutter_width || position.x >= bounds.left() {
+            return None;
         }
         let relative_y = position.y - bounds.top();
-        if relative_y < px(0.0) {
-            return false;
+        if relative_y < px(0.0) || position.y >= bounds.bottom() {
+            return None;
         }
-        let Some((line_idx, _)) =
-            crate::components::block::element::wrapped_line_for_y(lines, self.last_line_height, relative_y)
-        else {
+        let (line_idx, _) = crate::components::block::element::wrapped_line_for_y(
+            lines,
+            self.last_line_height,
+            relative_y,
+        )?;
+        self.is_long_line(line_idx).then_some(line_idx)
+    }
+
+    /// 是超长行时切换展开态。返回是否发生了切换。
+    pub(crate) fn toggle_long_line_at_gutter(&mut self, position: Point<Pixels>) -> bool {
+        let Some(line_idx) = self.long_line_at_gutter(position) else {
             return false;
         };
         self.toggle_long_line_expanded(line_idx)
