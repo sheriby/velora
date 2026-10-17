@@ -40,6 +40,8 @@
 6. **按 kind 分派**：分隔线 / 标题（带折叠 chevron）/ 三种列表项（标记列 + 内容）/ 引用 / callout 头行 / 脚注定义（徽章 + 回跳）/ 代码块面板（红绿灯、复制按钮、语言输入框）/ frontmatter（键值卡片，聚焦退 YAML 源码）/ 表格网格 / HTML 块递归渲染 / 数学与 mermaid（未聚焦画 SVG，聚焦退回文本编辑）/ `[TOC]` 目录 / 兜底文本。
 7. 出口统一 `wrap_with_quote_guides`（引用竖线）。
 
+数学块的预览与编辑都走统一出口，避免预览提前返回时丢掉引用竖线。没有正文、只承载子块的空引用容器在未聚焦时为零高；聚焦后恢复可编辑行，文档结构与源码不变。
+
 兜底那一路 `render_text_or_mixed_inline_visuals`（`render/inline_visuals.rs`）再分三档：未聚焦且超长块 → 纯 div 源码文本（**长块护栏**）；聚焦或无混合视觉 → `BlockTextElement`；未聚焦但含混合视觉（行内公式/上下标/行内图片）→ flex_wrap 词段 div + `block_bounds_recorder`。
 
 公共壳 `render/shell.rs:render_shell` 挂 `key_context("BlockEditor")`、`track_focus`、全部块级动作与鼠标处理。

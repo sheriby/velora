@@ -118,6 +118,96 @@ fn item05_math_inside_blockquote_exports_as_math() {
     assert!(!html.contains("$$"), "还留着 $$ 原文：{html}");
 }
 
+#[gpui::test]
+async fn item05_math_preview_keeps_the_quote_guides(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    for (source, depth) in [
+        (case_text("05-quote-math"), 1),
+        ("# Nested\n\n> > $$\n> > x^2\n> > $$\n".to_string(), 2),
+    ] {
+        let (editor, cx) =
+            cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+        redraw(cx);
+        redraw(cx);
+        let math = editor.read_with(cx, |editor, cx| {
+            editor
+                .document
+                .visible_blocks()
+                .iter()
+                .find(|visible| visible.entity.read(cx).kind() == BlockKind::MathBlock)
+                .expect("引用中的公式")
+                .entity
+                .clone()
+        });
+        let math_id = math.read_with(cx, |block, _| {
+            assert_eq!(block.visible_quote_depth, depth);
+            block.record.id
+        });
+        for level in 0..depth {
+            let selector = Box::leak(format!("quote-guide-{math_id}-{level}").into_boxed_str());
+            let guide = cx
+                .debug_bounds(selector)
+                .expect("引用竖线必须覆盖未聚焦的公式");
+            let formula = math.read_with(cx, |block, _| block.last_bounds.expect("公式预览几何"));
+            assert!(
+                guide.top() <= formula.top() && guide.bottom() >= formula.bottom(),
+                "引用竖线应覆盖完整公式预览"
+            );
+            assert!(guide.left() < formula.left(), "引用竖线应位于公式内容左侧");
+        }
+        editor.update(cx, |editor, _| editor.focus_block(math.entity_id()));
+        redraw(cx);
+        assert!(cx.debug_bounds("math-block-card").is_some(), "公式仍可聚焦编辑");
+        for level in 0..depth {
+            let selector = Box::leak(format!("quote-guide-{math_id}-{level}").into_boxed_str());
+            assert!(cx.debug_bounds(selector).is_some(), "公式编辑时也应保留引用竖线");
+        }
+        editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+    }
+}
+
+#[gpui::test]
+async fn item05_empty_quote_container_does_not_add_a_blank_row(cx: &mut TestAppContext) {
+    init_editor_test_app(cx);
+    let source = case_text("05-quote-math");
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), None));
+    redraw(cx);
+    redraw(cx);
+    let quote = editor.read_with(cx, |editor, cx| {
+        editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|visible| visible.entity.read(cx).kind() == BlockKind::Quote)
+            .expect("结构性引用容器")
+            .entity
+            .clone()
+    });
+    let quote_id = quote.read_with(cx, |block, _| {
+        assert!(block.display_text().is_empty());
+        assert!(!block.children.is_empty());
+        block.record.id
+    });
+    let selector = Box::leak(format!("quote-guide-{quote_id}-0").into_boxed_str());
+    let anchor = cx.debug_bounds(selector).expect("引用容器几何");
+    assert_eq!(
+        anchor.size.height,
+        gpui::px(0.0),
+        "只承载子块的空引用容器不应多占一行"
+    );
+    editor.update(cx, |editor, _| editor.focus_block(quote.entity_id()));
+    redraw(cx);
+    assert!(
+        cx.debug_bounds(selector)
+            .expect("编辑中的引用行")
+            .size
+            .height
+            > gpui::px(0.0),
+        "聚焦后应保留可编辑的引用行"
+    );
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), source));
+}
+
 /// 报修第 6 条：代码与链接地址里的 `$` 不参与公式替换。
 #[test]
 fn item06_dollars_in_code_and_link_destination_stay_literal() {

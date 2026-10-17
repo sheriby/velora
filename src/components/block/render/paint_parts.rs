@@ -691,6 +691,17 @@ impl Render for Block {
                     },
                 ])
                 .into_any_element(),
+            BlockKind::Quote
+                if !focused
+                    && self.display_text().is_empty()
+                    && !self.children.is_empty()
+                    && self.marked_range.is_none() =>
+            {
+                // 空标题只承担容器结构，子块前不应再多出一行引用空白。
+                self.last_layout = None;
+                self.last_bounds = None;
+                div().w_full().h(px(0.0)).into_any_element()
+            }
             BlockKind::Quote => focused_base
                 .text_size(px(t.text_size))
                 .text_color(c.text_quote)
@@ -1542,59 +1553,60 @@ impl Render for Block {
                     self.render_math_content(&theme, cx)
                 };
                 if !focused {
-                    return focused_base.w_full().child(child).into_any_element();
+                    focused_base.w_full().child(child).into_any_element()
+                } else {
+                    // 聚焦编辑：整个块（含 $$ 定界行）铺公式卡片底色——底色只盖
+                    // 公式行时，$$ 行像掉在块外。编辑器入口两个：
+                    // 卡片右上角的 ƒx 小标记（与首行 `$$` 同一水平带），双击也可。
+                    let card_padding_x = d.block_padding_x.max(8.0);
+                    let card_padding_y = d.block_padding_y.max(6.0);
+                    let fx_height = px(20.0);
+                    // 块内文本的行高口径与 BlockTextElement 一致（数学块没有逐段
+                    // 字号覆盖），标记要跟首行居中对齐就得用同一个值。
+                    let first_line_height = f32::from(window.line_height()).max(f32::from(fx_height));
+                    let fx_top = card_padding_y + (first_line_height - f32::from(fx_height)) / 2.0;
+                    let fx_button = div()
+                        .id(ElementId::Name(
+                            format!("math-fx-button-{}", self.record.id).into(),
+                        ))
+                        .debug_selector(|| "math-fx-button".to_string())
+                        .absolute()
+                        .h(fx_height)
+                        .px(px(6.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(c.dialog_border)
+                        .bg(c.dialog_surface)
+                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
+                        .cursor_pointer()
+                        .text_size(px(t.text_size * 0.68))
+                        .text_color(c.dialog_muted)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_block, _event: &MouseDownEvent, _window, cx| {
+                                cx.stop_propagation();
+                                cx.emit(BlockEvent::RequestFormulaEditor);
+                            }),
+                        )
+                        .child("ƒx");
+                    focused_base
+                        .w_full()
+                        .child(
+                            div()
+                                .w_full()
+                                .debug_selector(|| "math-block-card".to_string())
+                                .relative()
+                                .rounded(px(8.0))
+                                .bg(c.code_bg)
+                                .px(px(card_padding_x))
+                                .py(px(card_padding_y))
+                                .child(child)
+                                .child(fx_button.top(px(fx_top)).right(px(card_padding_x))),
+                        )
+                        .into_any_element()
                 }
-                // 聚焦编辑：整个块（含 $$ 定界行）铺公式卡片底色——底色只盖
-                // 公式行时，$$ 行像掉在块外。编辑器入口两个：
-                // 卡片右上角的 ƒx 小标记（与首行 `$$` 同一水平带），双击也可。
-                let card_padding_x = d.block_padding_x.max(8.0);
-                let card_padding_y = d.block_padding_y.max(6.0);
-                let fx_height = px(20.0);
-                // 块内文本的行高口径与 BlockTextElement 一致（数学块没有逐段
-                // 字号覆盖），标记要跟首行居中对齐就得用同一个值。
-                let first_line_height = f32::from(window.line_height()).max(f32::from(fx_height));
-                let fx_top = card_padding_y + (first_line_height - f32::from(fx_height)) / 2.0;
-                let fx_button = div()
-                    .id(ElementId::Name(
-                        format!("math-fx-button-{}", self.record.id).into(),
-                    ))
-                    .debug_selector(|| "math-fx-button".to_string())
-                    .absolute()
-                    .h(fx_height)
-                    .px(px(6.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(4.0))
-                    .border_1()
-                    .border_color(c.dialog_border)
-                    .bg(c.dialog_surface)
-                    .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                    .cursor_pointer()
-                    .text_size(px(t.text_size * 0.68))
-                    .text_color(c.dialog_muted)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_block, _event: &MouseDownEvent, _window, cx| {
-                            cx.stop_propagation();
-                            cx.emit(BlockEvent::RequestFormulaEditor);
-                        }),
-                    )
-                    .child("ƒx");
-                focused_base
-                    .w_full()
-                    .child(
-                        div()
-                            .w_full()
-                            .debug_selector(|| "math-block-card".to_string())
-                            .relative()
-                            .rounded(px(8.0))
-                            .bg(c.code_bg)
-                            .px(px(card_padding_x))
-                            .py(px(card_padding_y))
-                            .child(child)
-                            .child(fx_button.top(px(fx_top)).right(px(card_padding_x))),
-                    )
-                    .into_any_element()
             }
             BlockKind::MermaidBlock => {
                 if !focused {
@@ -1668,7 +1680,7 @@ impl Render for Block {
                 .into_any_element(),
         };
 
-        wrap_with_quote_guides(content, visible_quote_guides(self), &theme)
+        wrap_with_quote_guides(content, visible_quote_guides(self), self.record.id, &theme)
     }
 }
 

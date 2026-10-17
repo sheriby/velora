@@ -289,7 +289,12 @@ fn render_loading_placeholder(
         .into_any_element()
 }
 
-fn wrap_with_quote_guides(content: AnyElement, quote_depth: usize, theme: &Theme) -> AnyElement {
+fn wrap_with_quote_guides(
+    content: AnyElement,
+    quote_depth: usize,
+    block_id: uuid::Uuid,
+    theme: &Theme,
+) -> AnyElement {
     if quote_depth == 0 {
         return content;
     }
@@ -306,6 +311,7 @@ fn wrap_with_quote_guides(content: AnyElement, quote_depth: usize, theme: &Theme
         .child(content)
         .children((0..quote_depth).map(|level| {
             div()
+                .debug_selector(move || format!("quote-guide-{block_id}-{level}"))
                 .absolute()
                 .top_0()
                 .bottom_0()
