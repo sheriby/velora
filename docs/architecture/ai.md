@@ -20,7 +20,7 @@
 
 侧栏宿主明确使用纵向 flex 布局，避免内部百分比宽度退回内容宽度而把空输入框压成窄条。输入区占满可用宽度，批量接受与发送操作对齐右侧；正文与修改预览的切换放入更多菜单。“更多”使用 Kit `DropdownMenu`／`PopupMenu` 就地展开，保留会话与草稿；历史、任务说明、自定义指令与来源仍在面板内查看，设置打开偏好设置窗口。菜单动作校验展开时的会话身份，避免旧菜单操作新任务。编辑器的关闭临时界面绑定限定在 `VeloraEditor` 上下文，原生菜单的取消动作优先处理 Esc。
 
-普通窗口与分屏宿主共用 `render.rs:render_ai_sidebar_layout`，由 Kit `ResizablePanelGroup` 管理正文区域和 AI 侧栏的宽度与指针拖动。`AiSidebarLayout` 属于窗口宿主，保留运行期间的布局状态，切换任务、隐藏或回浮窗不重置侧栏宽度；窗口缩放按当前可用空间约束尺寸。0.7.3 的分隔条没有键盘入口，应用只补充可聚焦的 `Splitter` 语义与左右箭头、Home／End，尺寸仍调用 Kit `ResizableState:resize_panel`，不另写一套拖动或边界算法。
+普通窗口与分屏宿主共用 `render.rs:render_ai_sidebar_layout`，由 Kit `ResizablePanelGroup` 管理正文区域和 AI 侧栏的宽度与指针拖动。`AiSidebarLayout` 属于窗口宿主，保留运行期间的布局状态，切换任务、隐藏或回浮窗不重置侧栏宽度；窗口缩放按当前可用空间约束尺寸。0.7.3 的分隔条没有键盘入口，应用通过共用的 `ui/resize.rs:PanelResizeHandle` 补充 `Splitter` 语义与左右箭头、Home／End，并配置焦点句柄自身的 Tab 属性，尺寸仍调用 Kit `ResizableState:resize_panel`，不另写一套拖动或边界算法。
 
 窗口放不下工作区导航、正文与 AI 侧栏时，同一任务临时以浮窗显示，停靠按钮说明需要拓宽窗口；不更改 `expanded` 偏好，不新建会话或重置输入、消息与滚动。空间恢复后继续使用原有侧栏状态。可停靠判据和缩放边界读取同一份 `workspace_navigation_width`，工作区展开或改宽后，正文仍有独立的最低空间。
 

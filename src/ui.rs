@@ -9,6 +9,9 @@ use gpui::{
 use gpui_kit::component::{Theme as ComponentTheme, ThemeMode};
 use std::{collections::HashMap, marker::PhantomData};
 
+mod resize;
+pub(crate) use resize::PanelResizeHandle;
+
 #[derive(Default)]
 struct WindowContents {
     views: HashMap<WindowId, AnyWeakEntity>,

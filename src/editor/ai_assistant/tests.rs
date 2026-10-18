@@ -4195,3 +4195,34 @@ fn kit_workspace_navigation_closing_in_split_returns_focus_to_visible_ai_review(
 ) {
     navigation_returns_focus_to_ai_review(cx, true);
 }
+
+#[gpui::test]
+fn ai_sidebar_separator_is_in_native_tab_order(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.workspace.is_open = false;
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().expanded = true;
+        cx.notify();
+    });
+    for _ in 0..4 {
+        draw(cx);
+    }
+    cx.update(|window, cx| {
+        for _ in 0..20 {
+            if window.find("ai-sidebar-resize").focused() == Some(true) {
+                break;
+            }
+            window.focus_next(cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(
+            window.find("ai-sidebar-resize").focused(),
+            Some(true),
+            "分隔条必须能通过 Tab 顺序到达，不能只支持程序聚焦"
+        );
+    });
+}

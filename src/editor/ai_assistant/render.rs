@@ -1,9 +1,7 @@
 use super::*;
-use gpui::prelude::FluentBuilder as _;
-use gpui_kit::component::ThemeStyled as _;
 use gpui_kit::component::form::{Field, Form};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::component::resizable::{h_resizable, resizable_panel, resize_handle_appearance};
+use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 
 impl Editor {
     pub(super) fn ai_sidebar_fits(&self, window: &Window, cx: &App) -> bool {
@@ -144,74 +142,22 @@ impl Editor {
             .min(viewport - document_minimum)
             .max(minimum);
         let preferred = (viewport * 0.3).clamp(minimum, maximum);
-        let appearance = resize_handle_appearance();
         h_resizable("ai-workspace-layout")
             .with_state(&state)
-            .with_handle_appearance(std::rc::Rc::new(move |handle, window, cx| {
-                let line = appearance(handle, window, cx);
-                let width = state.read(cx).sizes().get(1).copied().unwrap_or(preferred);
-                let resize_state = state.clone();
-                // Kit 0.7 的分隔条只处理指针；键盘仍通过它的同一套尺寸约束调整。
-                Some(
-                    div()
-                        .id("ai-sidebar-resize")
-                        .debug_selector(|| "ai-sidebar-resize".into())
-                        .test_support()
-                        .track_focus(&focus)
-                        .tab_index(0)
-                        .role(Role::Splitter)
-                        .aria_label("Resize AI sidebar")
-                        .aria_orientation(Orientation::Vertical)
-                        .aria_numeric_value(f64::from(f32::from(width)))
-                        .aria_min_numeric_value(f64::from(f32::from(minimum)))
-                        .aria_max_numeric_value(f64::from(f32::from(maximum)))
-                        // 与库分隔条共享单物理像素边界，焦点环在边界外绘制。
-                        .relative()
-                        .w(px(1.0))
-                        .h_full()
-                        .when(
-                            focus.is_focused(window) && window.last_input_was_keyboard(),
-                            |line| line.focus_ring_style(window, cx),
-                        )
-                        .on_key_down(
-                            move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
-                                let modifiers = event.keystroke.modifiers;
-                                if modifiers.control
-                                    || modifiers.platform
-                                    || modifiers.alt
-                                    || modifiers.function
-                                {
-                                    return;
-                                }
-                                let step = window.rem_size()
-                                    * if event.keystroke.modifiers.shift {
-                                        4.0
-                                    } else {
-                                        1.0
-                                    };
-                                let current = resize_state
-                                    .read(cx)
-                                    .sizes()
-                                    .get(1)
-                                    .copied()
-                                    .unwrap_or(preferred);
-                                let width = match event.keystroke.key.as_str() {
-                                    "left" => current + step,
-                                    "right" => current - step,
-                                    "home" => minimum,
-                                    "end" => maximum,
-                                    _ => return,
-                                };
-                                resize_state.update(cx, |state, cx| {
-                                    state.resize_panel(1, width, window, cx)
-                                });
-                                cx.stop_propagation();
-                            },
-                        )
-                        .children(line)
-                        .into_any_element(),
-                )
-            }))
+            .with_handle_appearance(
+                crate::ui::PanelResizeHandle {
+                    id: "ai-sidebar-resize",
+                    label: "Resize AI sidebar",
+                    state: state.clone(),
+                    focus,
+                    panel_index: 1,
+                    edge: gpui_kit::base::HandleEdge::Leading,
+                    minimum,
+                    maximum,
+                    initial: preferred,
+                }
+                .appearance(),
+            )
             .child(
                 resizable_panel()
                     .size_range(document_minimum..Pixels::MAX)
