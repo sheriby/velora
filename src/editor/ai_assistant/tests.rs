@@ -464,7 +464,9 @@ fn ai_reference_picker_keeps_multiple_selections_visible_until_done(cx: &mut Tes
     assert!(cx.debug_bounds("ai-command-bar").is_some());
 }
 
-fn native_ui_chain(cx: &mut TestAppContext, reading: bool) {
+fn native_ui_chain(cx: &mut TestAppContext, command: AiCommand) {
+    let reading = command.is_reading_task();
+    let writing = command == AiCommand::Polish;
     use serde_json::json;
     use std::io::Write;
     initialize(cx);
@@ -478,7 +480,11 @@ fn native_ui_chain(cx: &mut TestAppContext, reading: bool) {
     listener.set_nonblocking(true).unwrap();
     let server = std::thread::spawn(move || {
         let mut requests = Vec::new();
-        for tool in [true, false] {
+        for tool in if writing {
+            vec![false]
+        } else {
+            vec![true, false]
+        } {
             let started = std::time::Instant::now();
             let mut stream = loop {
                 match listener.accept() {
@@ -496,7 +502,7 @@ fn native_ui_chain(cx: &mut TestAppContext, reading: bool) {
             let delta = if tool {
                 json!({"role":"assistant","tool_calls":[{"index":0,"id":"create_note","type":"function","function":{"name":"propose_document","arguments":json!({"path":"generated.md","content":"# 新文档\n\n**完整排版的建议**"}).to_string()}}]})
             } else {
-                json!({"role":"assistant","content":"已准备新文档。"})
+                json!({"role":"assistant","content":if writing {"这段表达已经清晰，无需修改。"} else {"已准备新文档。"}})
             };
             let first = json!({"choices":[{"index":0,"delta":delta,"finish_reason":null}]});
             let last = json!({"choices":[{"index":0,"delta":{},"finish_reason":if tool {"tool_calls"} else {"stop"}}]});
@@ -526,25 +532,72 @@ fn native_ui_chain(cx: &mut TestAppContext, reading: bool) {
     draw(cx);
     editor.update_in(cx, |editor, window, cx| {
         window.activate_window();
-        if reading {
+        if command != AiCommand::Ask {
             editor.select_document(cx);
-            editor.open_ai_assistant(AiCommand::Explain, window, cx);
-        } else {
-            editor.open_ai_assistant(AiCommand::Ask, window, cx);
         }
+        editor.open_ai_assistant(command, window, cx);
     });
     draw(cx);
-    cx.simulate_input("新建一篇笔记，等待我审阅");
-    cx.simulate_keystrokes("enter");
+    if command == AiCommand::Ask {
+        cx.simulate_input("新建一篇笔记，等待我审阅");
+        cx.simulate_keystrokes("enter");
+    }
     for _ in 0..10 {
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(50));
         draw(cx);
     }
     let requests = server.join().unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), if writing { 1 } else { 2 });
     assert!(requests[0].to_string().contains("workspace_path"));
     assert!(requests[0].to_string().contains("open_tabs"));
+    if writing {
+        let prompt = requests[0]
+            .get("messages")
+            .and_then(serde_json::Value::as_array)
+            .unwrap()
+            .iter()
+            .filter(|message| {
+                message.get("role").and_then(serde_json::Value::as_str) == Some("user")
+            })
+            .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            prompt.contains(AiCommand::Polish.instruction()),
+            "快捷指令必须把完整任务要求发给模型"
+        );
+        assert!(prompt.contains("必须调用 propose_edit"));
+        assert!(prompt.contains("不要重复列出原文"));
+        assert!(prompt.contains("# 原文\n\n保留的内容"));
+        let tools = requests[0].get("tools").unwrap().to_string();
+        assert!(tools.contains("propose_edit"));
+        assert!(!tools.contains("propose_document"));
+        assert!(!tools.contains("propose_insert_at_cursor"));
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(editor.buffer.text(), "# 原文\n\n保留的内容")
+        });
+        assert!(cx.debug_bounds("ai-review-workspace").is_none());
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor
+                    .ai_session
+                    .as_ref()
+                    .unwrap()
+                    .saved
+                    .workspace
+                    .changes
+                    .proposals
+                    .is_empty()
+            )
+        });
+        assert_eq!(
+            std::fs::read_to_string(source_path).unwrap(),
+            "# 原文\n\n保留的内容"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+        return;
+    }
     if reading {
         let tools = requests[0]
             .get("tools")
@@ -615,7 +668,7 @@ fn native_ui_chain(cx: &mut TestAppContext, reading: bool) {
 fn ai_instruction_to_native_tool_to_document_review_completes_through_the_ui(
     cx: &mut TestAppContext,
 ) {
-    native_ui_chain(cx, false);
+    native_ui_chain(cx, AiCommand::Ask);
 }
 
 #[gpui::test]
@@ -623,7 +676,7 @@ fn ai_instruction_to_native_tool_to_document_review_completes_through_the_ui(
 fn ai_reading_request_omits_write_tools_and_cannot_apply_an_unsolicited_model_edit(
     cx: &mut TestAppContext,
 ) {
-    native_ui_chain(cx, true);
+    native_ui_chain(cx, AiCommand::Explain);
 }
 
 #[gpui::test]
@@ -1628,4 +1681,12 @@ fn ai_writing_dialog_keeps_model_selection_in_settings_and_omits_single_change_n
         ) <= 360.0,
         "正文已有差异时，浮窗应保留阅读空间"
     );
+}
+
+#[gpui::test]
+#[ignore = "慢用例（>1s）：本地默认跳过，CI 跑"]
+fn ai_polish_sends_full_task_requirements_and_keeps_the_document_unchanged_without_a_proposal(
+    cx: &mut TestAppContext,
+) {
+    native_ui_chain(cx, AiCommand::Polish);
 }
