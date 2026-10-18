@@ -1029,6 +1029,13 @@ impl I18nStringsDe {
                 .ai_assistant
                 .unwrap_or(defaults.ai_assistant),
             preferences_ai_enabled: self.preferences_ai_enabled.unwrap_or(defaults.preferences_ai_enabled),
+            preferences_ai_custom_provider: self.preferences_ai_custom_provider.unwrap_or(defaults.preferences_ai_custom_provider),
+            preferences_ai_advanced: self.preferences_ai_advanced.unwrap_or(defaults.preferences_ai_advanced),
+            preferences_ai_key_required: self.preferences_ai_key_required.unwrap_or(defaults.preferences_ai_key_required),
+            preferences_ai_model_required: self.preferences_ai_model_required.unwrap_or(defaults.preferences_ai_model_required),
+            preferences_ai_context_invalid: self.preferences_ai_context_invalid.unwrap_or(defaults.preferences_ai_context_invalid),
+            preferences_ai_url_invalid: self.preferences_ai_url_invalid.unwrap_or(defaults.preferences_ai_url_invalid),
+            preferences_ai_default_connection: self.preferences_ai_default_connection.unwrap_or(defaults.preferences_ai_default_connection),
             ai_feature_disabled: self.ai_feature_disabled.unwrap_or(defaults.ai_feature_disabled),
             ai_action_shorten: self.ai_action_shorten.unwrap_or(defaults.ai_action_shorten),
             ai_action_expand: self.ai_action_expand.unwrap_or(defaults.ai_action_expand),

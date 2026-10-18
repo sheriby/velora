@@ -22,6 +22,7 @@ impl Render for PreferencesWindow {
         let c = &theme.colors;
         let d = &theme.dimensions;
         let t = &theme.typography;
+        self.apply_ai_preferences_focus(window, cx);
         self.refresh_ai_preferences_dirty(cx);
         let can_save = self.has_unsaved_changes();
         let window_title =

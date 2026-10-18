@@ -19,7 +19,12 @@ fn changing_a_connection_clears_the_previous_test_status(cx: &mut TestAppContext
             .unwrap()
             .settings
             .enabled = true;
-        preferences.select_ai_preferences_endpoint(None, cx);
+        preferences.select_ai_preferences_endpoint(
+            crate::ai::providers::ProviderPreset::get("custom")
+                .unwrap()
+                .endpoint(),
+            cx,
+        );
         let state = preferences.ai_preferences.as_mut().unwrap();
         state.control = RunControl::default();
         state.testing = true;
@@ -149,7 +154,12 @@ fn ai_preferences_keeps_newer_unsaved_connection_input_after_a_save(cx: &mut Tes
             .unwrap()
             .settings
             .enabled = true;
-        preferences.select_ai_preferences_endpoint(None, cx);
+        preferences.select_ai_preferences_endpoint(
+            crate::ai::providers::ProviderPreset::get("custom")
+                .unwrap()
+                .endpoint(),
+            cx,
+        );
         preferences
             .ai_preferences
             .as_ref()
@@ -183,4 +193,215 @@ fn ai_preferences_keeps_newer_unsaved_connection_input_after_a_save(cx: &mut Tes
             "newer-unsaved-model"
         );
     });
+}
+
+#[gpui::test]
+fn ai_provider_picker_prefills_service_details_and_keeps_advanced_fields_collapsed(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+    });
+    let (preferences, cx) = cx
+        .add_window_view(|_, cx| PreferencesWindow::new(AppPreferences::default(), Vec::new(), cx));
+    preferences.update_in(cx, |preferences, window, cx| {
+        preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx);
+        preferences
+            .ai_preferences
+            .as_mut()
+            .unwrap()
+            .settings
+            .enabled = true;
+    });
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let provider = cx.debug_bounds("preferences-ai-provider-deepseek");
+    assert!(
+        provider.is_some(),
+        "新建连接应先选提供商，而不是手填协议和地址"
+    );
+    cx.simulate_click(provider.unwrap().center(), gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    preferences.read_with(cx, |preferences, cx| {
+        let draft = preferences
+            .ai_preferences
+            .as_ref()
+            .unwrap()
+            .draft
+            .as_ref()
+            .unwrap();
+        assert_eq!(draft.model.read(cx).value(), "deepseek-flash");
+        assert_eq!(draft.address.read(cx).value(), "https://api.deepseek.com");
+        assert!(draft.key.read(cx).value().is_empty());
+    });
+    assert!(cx.debug_bounds("preferences-ai-key").is_some());
+    assert!(cx.debug_bounds("preferences-ai-model").is_some());
+    assert!(cx.debug_bounds("preferences-ai-address").is_none());
+    assert!(cx.debug_bounds("preferences-ai-context").is_none());
+    cx.simulate_input("  pasted-test-key  ");
+    preferences.read_with(cx, |preferences, cx| {
+        let settings = preferences.ai_preferences.as_ref().unwrap().staged(cx).unwrap();
+        assert_eq!(settings.active_endpoint().unwrap().api_key, "pasted-test-key",
+            "选择服务后应直接输入 Key，复制时的边界空白不应进入凭据");
+    });
+}
+
+#[gpui::test]
+fn ai_provider_switching_and_deleting_preserves_incomplete_drafts_and_separate_keys(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+    });
+    let (preferences, cx) = cx
+        .add_window_view(|_, cx| PreferencesWindow::new(AppPreferences::default(), Vec::new(), cx));
+    preferences.update_in(cx, |preferences, window, cx| {
+        preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx);
+        preferences
+            .ai_preferences
+            .as_mut()
+            .unwrap()
+            .settings
+            .enabled = true;
+        preferences.add_ai_preferences_provider(
+            crate::ai::providers::ProviderPreset::get("deepseek").unwrap(),
+            cx,
+        );
+        let first = {
+            let draft = preferences
+                .ai_preferences
+                .as_ref()
+                .unwrap()
+                .draft
+                .as_ref()
+                .unwrap();
+            draft
+                .key
+                .update(cx, |field, cx| field.set_value("first-key", cx));
+            draft.model.update(cx, |field, cx| field.set_value("", cx));
+            draft.endpoint.clone()
+        };
+        preferences.add_ai_preferences_provider(
+            crate::ai::providers::ProviderPreset::get("openai").unwrap(),
+            cx,
+        );
+        let second = preferences
+            .ai_preferences
+            .as_ref()
+            .unwrap()
+            .draft
+            .as_ref()
+            .unwrap();
+        assert!(second.key.read(cx).value().is_empty());
+        second
+            .key
+            .update(cx, |field, cx| field.set_value("second-key", cx));
+        second
+            .model
+            .update(cx, |field, cx| field.set_value("second-model", cx));
+        preferences.select_ai_preferences_endpoint(first, cx);
+        let draft = preferences
+            .ai_preferences
+            .as_ref()
+            .unwrap()
+            .draft
+            .as_ref()
+            .unwrap();
+        assert_eq!(draft.key.read(cx).value(), "first-key");
+        assert_eq!(draft.model.read(cx).value(), "");
+        assert!(
+            preferences.save_error.is_none(),
+            "不完整草稿不能阻止切换连接"
+        );
+    });
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let advanced = cx.debug_bounds("preferences-ai-advanced").unwrap();
+    cx.simulate_click(advanced.center(), gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    let delete = cx.debug_bounds("preferences-ai-delete").unwrap();
+    cx.simulate_click(delete.center(), gpui::Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    preferences.read_with(cx, |preferences, cx| {
+        let draft = preferences
+            .ai_preferences
+            .as_ref()
+            .unwrap()
+            .draft
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            draft.key.read(cx).value(),
+            "second-key",
+            "删除另一连接后也不能重建并丢弃已有草稿"
+        );
+        assert_eq!(draft.model.read(cx).value(), "second-model");
+    });
+}
+
+#[gpui::test]
+fn ai_provider_disabling_preserves_a_cleared_key_and_paused_connection_draft(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+    });
+    let path = crate::ai::settings::settings_path().unwrap();
+    let mut settings = crate::ai::settings::AiSettings::default();
+    let mut endpoint = crate::ai::providers::ProviderPreset::get("deepseek")
+        .unwrap()
+        .endpoint();
+    endpoint.api_key = "old-key".into();
+    settings.set_endpoint(endpoint).unwrap();
+    settings.enabled = true;
+    settings.save_at(&path).unwrap();
+    let (preferences, cx) = cx
+        .add_window_view(|_, cx| PreferencesWindow::new(AppPreferences::default(), Vec::new(), cx));
+    preferences.update_in(cx, |preferences, window, cx| {
+        preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx);
+        let draft = preferences
+            .ai_preferences
+            .as_ref()
+            .unwrap()
+            .draft
+            .as_ref()
+            .unwrap();
+        draft.key.update(cx, |field, cx| field.set_value("", cx));
+        draft.model.update(cx, |field, cx| field.set_value("", cx));
+    });
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.run_until_parked();
+    }
+    let toggle = cx.debug_bounds("preferences-ai-enabled").unwrap();
+    cx.simulate_click(toggle.center(), gpui::Modifiers::none());
+    preferences.update(cx, |preferences, cx| {
+        preferences.save_ai_preferences(cx).unwrap()
+    });
+    let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
+    assert!(!saved.enabled);
+    assert!(
+        saved.endpoints[0].api_key.is_empty(),
+        "停用不能恢复已经清空的旧 Key"
+    );
+    assert!(
+        saved.endpoints[0].model.is_empty(),
+        "停用时保留尚未填写完的连接，而不阻止关闭"
+    );
 }

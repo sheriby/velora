@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai::providers::ProviderPreset;
 use crate::ai::runtime::{RunControl, RunOutput};
 use crate::ai::settings::{AiSettings, Endpoint, Protocol};
 use crate::components::TextField;
@@ -7,6 +8,11 @@ pub(super) struct AiPreferences {
     settings: AiSettings,
     saved: AiSettings,
     draft: Option<ConnectionDraft>,
+    drafts: std::collections::BTreeMap<String, ConnectionDraft>,
+    choosing_provider: bool,
+    advanced: bool,
+    pub(super) connection_menu_open: bool,
+    pending_focus: Option<Entity<TextField>>,
     excluded: Entity<TextField>,
     testing: bool,
     generation: u64,
@@ -23,6 +29,24 @@ struct ConnectionDraft {
     context: Entity<TextField>,
 }
 
+impl ConnectionDraft {
+    fn value(&self, cx: &App, strict: bool) -> anyhow::Result<Endpoint> {
+        let mut endpoint = self.endpoint.clone();
+        endpoint.name = self.name.read(cx).value().trim().to_owned();
+        endpoint.base_url = self.address.read(cx).value().trim().to_owned();
+        endpoint.model = self.model.read(cx).value().trim().to_owned();
+        endpoint.api_key = self.key.read(cx).value().trim().to_owned();
+        endpoint.context_tokens = match self.context.read(cx).value().parse() {
+            Ok(value) => value,
+            Err(_) if strict => {
+                return Err(crate::ai::settings::EndpointError::InvalidContext.into());
+            }
+            Err(_) => endpoint.context_tokens,
+        };
+        Ok(endpoint)
+    }
+}
+
 impl Drop for AiPreferences {
     fn drop(&mut self) {
         self.control.cancel.cancel();
@@ -30,11 +54,19 @@ impl Drop for AiPreferences {
 }
 
 impl AiPreferences {
+    fn connection_name(&self, endpoint: &Endpoint, cx: &App) -> String {
+        self.draft
+            .as_ref()
+            .filter(|draft| draft.endpoint.id == endpoint.id)
+            .or_else(|| self.drafts.get(&endpoint.id))
+            .map_or_else(
+                || endpoint.name.clone(),
+                |draft| draft.name.read(cx).value().to_owned(),
+            )
+    }
+
     fn staged(&self, cx: &App) -> anyhow::Result<AiSettings> {
         let mut settings = self.settings.clone();
-        if !settings.enabled {
-            return Ok(settings);
-        }
         settings.excluded_paths = self
             .excluded
             .read(cx)
@@ -44,19 +76,20 @@ impl AiPreferences {
             .filter(|path| !path.is_empty())
             .map(str::to_owned)
             .collect();
-        if let Some(draft) = &self.draft {
-            let mut endpoint = draft.endpoint.clone();
-            endpoint.name = draft.name.read(cx).value().trim().to_owned();
-            endpoint.base_url = draft.address.read(cx).value().trim().to_owned();
-            endpoint.model = draft.model.read(cx).value().trim().to_owned();
-            endpoint.api_key = draft.key.read(cx).value().to_owned();
-            endpoint.context_tokens = draft
-                .context
-                .read(cx)
-                .value()
-                .parse()
-                .context("请输入有效的上下文 token 数量")?;
-            settings.set_endpoint(endpoint)?;
+        for draft in self.drafts.values().chain(self.draft.iter()) {
+            let staged = draft
+                .value(cx, settings.enabled)
+                .and_then(|endpoint| settings.set_endpoint(endpoint));
+            if let Err(error) = staged {
+                return Err(anyhow::anyhow!(
+                    "{}: {}",
+                    draft.name.read(cx).value(),
+                    crate::ai::settings::error_message(
+                        &error,
+                        cx.global::<I18nManager>().strings()
+                    )
+                ));
+            }
         }
         Ok(settings)
     }
@@ -85,7 +118,12 @@ impl PreferencesWindow {
         })
     }
 
-    pub(crate) fn set_nav_ai(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_ai(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_dropdowns();
         self.focus_handle.focus(window);
         self.nav = PreferencesNav::Ai;
@@ -99,6 +137,11 @@ impl PreferencesWindow {
                         saved: settings.clone(),
                         settings,
                         draft: None,
+                        drafts: Default::default(),
+                        choosing_provider: false,
+                        advanced: false,
+                        connection_menu_open: false,
+                        pending_focus: None,
                         excluded,
                         testing: false,
                         generation: 0,
@@ -132,32 +175,114 @@ impl PreferencesWindow {
         cx.notify();
     }
 
-    fn select_ai_preferences_endpoint(
+    fn select_ai_preferences_endpoint(&mut self, endpoint: Endpoint, cx: &mut Context<Self>) {
+        self.stop_ai_preferences_probe();
+        if let Some(state) = self.ai_preferences.as_mut() {
+            if let Some(previous) = state.draft.take() {
+                state.drafts.insert(previous.endpoint.id.clone(), previous);
+            }
+            state.choosing_provider = false;
+            state.connection_menu_open = false;
+            state.settings.default_endpoint = endpoint.id.clone();
+        }
+        let cached = self
+            .ai_preferences
+            .as_mut()
+            .and_then(|state| state.drafts.remove(&endpoint.id));
+        if let Some(draft) = cached {
+            if let Some(state) = self.ai_preferences.as_mut() {
+                state.draft = Some(draft);
+            }
+            cx.notify();
+        } else {
+            self.load_ai_preferences_draft(endpoint, cx);
+        }
+    }
+
+    fn begin_ai_preferences_connection(&mut self, cx: &mut Context<Self>) {
+        self.stop_ai_preferences_probe();
+        if let Some(state) = self.ai_preferences.as_mut() {
+            if let Some(previous) = state.draft.take() {
+                state.drafts.insert(previous.endpoint.id.clone(), previous);
+            }
+            state.choosing_provider = true;
+        }
+        cx.notify();
+    }
+
+    fn add_ai_preferences_provider(
         &mut self,
-        endpoint: Option<Endpoint>,
+        preset: &'static ProviderPreset,
         cx: &mut Context<Self>,
     ) {
-        if let Some(state) = self.ai_preferences.as_ref() {
-            match state.staged(cx) {
-                Ok(settings) => {
-                    if let Some(state) = self.ai_preferences.as_mut() {
-                        state.settings = settings;
-                    }
-                }
-                Err(error) => {
-                    self.save_error = Some(error.to_string());
-                    cx.notify();
-                    return;
-                }
-            }
+        let mut endpoint = preset.endpoint();
+        if preset.id == "custom" {
+            endpoint.name = cx
+                .global::<I18nManager>()
+                .strings()
+                .preferences_ai_custom_provider
+                .clone();
         }
-        let endpoint = endpoint.unwrap_or_else(|| Endpoint {
-            id: uuid::Uuid::new_v4().to_string(),
-            name: "OpenAI Compatible".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            ..Endpoint::default()
-        });
-        self.load_ai_preferences_draft(endpoint, cx);
+        if let Some(state) = self.ai_preferences.as_mut() {
+            let name = endpoint.name.clone();
+            let mut suffix = 2;
+            while state
+                .settings
+                .endpoints
+                .iter()
+                .any(|saved| saved.name == endpoint.name)
+            {
+                endpoint.name = format!("{name} {suffix}");
+                suffix += 1;
+            }
+            if state.settings.default_endpoint.is_empty() {
+                state.settings.default_endpoint = endpoint.id.clone();
+            }
+            state.settings.endpoints.push(endpoint.clone());
+            state.advanced = false;
+        }
+        self.select_ai_preferences_endpoint(endpoint, cx);
+        if let Some(state) = self.ai_preferences.as_mut()
+            && let Some(draft) = state.draft.as_ref()
+        {
+            state.pending_focus = Some(if preset.requires_key {
+                draft.key.clone()
+            } else {
+                draft.model.clone()
+            });
+        }
+    }
+
+    fn toggle_ai_connection_menu(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = self
+            .ai_preferences
+            .as_ref()
+            .is_some_and(|state| !state.connection_menu_open);
+        self.close_dropdowns();
+        if let Some(state) = self.ai_preferences.as_mut() {
+            state.connection_menu_open = open;
+        }
+        cx.notify();
+    }
+
+    pub(super) fn apply_ai_preferences_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.nav == PreferencesNav::Ai
+            && let Some(field) = self
+                .ai_preferences
+                .as_mut()
+                .and_then(|state| state.pending_focus.take())
+        {
+            field.update(cx, |field, cx| field.focus(window, cx));
+        }
     }
 
     fn stop_ai_preferences_probe(&mut self) {
@@ -201,26 +326,19 @@ impl PreferencesWindow {
         let Some(state) = self.ai_preferences.as_ref() else {
             return;
         };
-        let settings = match state.staged(cx) {
-            Ok(settings) => settings,
+        let Some(draft) = state.draft.as_ref() else {
+            return;
+        };
+        let endpoint = match draft.value(cx, true) {
+            Ok(endpoint) => endpoint,
             Err(error) => {
-                self.save_error = Some(error.to_string());
+                self.save_error = Some(crate::ai::settings::error_message(
+                    &error,
+                    cx.global::<I18nManager>().strings(),
+                ));
                 cx.notify();
                 return;
             }
-        };
-        let Some(endpoint) = state
-            .draft
-            .as_ref()
-            .and_then(|draft| {
-                settings
-                    .endpoints
-                    .iter()
-                    .find(|endpoint| endpoint.id == draft.endpoint.id)
-            })
-            .cloned()
-        else {
-            return;
         };
         self.stop_ai_preferences_probe();
         let Some(state) = self.ai_preferences.as_mut() else {
@@ -255,7 +373,8 @@ impl PreferencesWindow {
                         Ok(RunOutput { .. }) => state.status = Some(strings.preferences_ai_test_ok),
                         Err(error) => {
                             state.status = None;
-                            preferences.save_error = Some(error.to_string());
+                            preferences.save_error =
+                                Some(crate::ai::settings::error_message(&error, &strings));
                         }
                     }
                     cx.notify();
@@ -277,51 +396,101 @@ impl PreferencesWindow {
         let Some(state) = self.ai_preferences.as_ref() else {
             return div().into_any_element();
         };
-        let toggle = div().debug_selector(|| "preferences-ai-enabled".into())
-            .child(crate::components::switch::Switch::new("preferences-ai-enabled-switch")
-                .checked(state.settings.enabled)
-                .on_click(cx.listener(|preferences, _, _, cx| {
-                    preferences.stop_ai_preferences_probe();
-                    if let Some(state) = preferences.ai_preferences.as_mut() {
-                        state.settings.enabled = !state.settings.enabled;
-                    }
-                    cx.notify();
-                })));
+        let toggle = div()
+            .debug_selector(|| "preferences-ai-enabled".into())
+            .child(
+                crate::components::switch::Switch::new("preferences-ai-enabled-switch")
+                    .checked(state.settings.enabled)
+                    .on_click(cx.listener(|preferences, _, _, cx| {
+                        preferences.stop_ai_preferences_probe();
+                        if let Some(state) = preferences.ai_preferences.as_mut() {
+                            state.settings.enabled = !state.settings.enabled;
+                        }
+                        cx.notify();
+                    })),
+            );
         let enabled_row = self.settings_row(theme, strings.preferences_ai_enabled.clone(), toggle);
-        let mut content = div().w_full().flex().flex_col().gap(px(12.0)).child(enabled_row);
+        let mut content = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(enabled_row);
         if !state.settings.enabled {
-            return self.settings_card(theme, vec![div().w_full().p(px(16.0)).child(content).into_any_element()]);
-        }
-        for (index, endpoint) in state.settings.endpoints.iter().enumerate() {
-            let endpoint = endpoint.clone();
-            content = content.child(self.ai_preference_button(
-                ("preferences-ai-connection", index),
-                format!(
-                    "{} · {}{}",
-                    endpoint.name,
-                    endpoint.model,
-                    if state.settings.default_endpoint == endpoint.id {
-                        " ✓"
-                    } else {
-                        ""
-                    }
-                ),
-                true,
+            return self.settings_card(
                 theme,
-                cx,
-                move |preferences, cx| {
-                    preferences.select_ai_preferences_endpoint(Some(endpoint.clone()), cx)
-                },
-            ));
+                vec![div().w_full().p(px(16.0)).child(content).into_any_element()],
+            );
         }
-        content = content.child(self.ai_preference_button(
-            "preferences-ai-add",
-            strings.preferences_ai_add_endpoint.clone(),
-            true,
-            theme,
-            cx,
-            |preferences, cx| preferences.select_ai_preferences_endpoint(None, cx),
-        ));
+        if let Some(active) = state.settings.active_endpoint() {
+            let mut dropdown = div().relative().child(Self::dropdown_button(
+                "preferences-ai-connection-menu",
+                state.connection_name(active, cx),
+                theme,
+                Self::toggle_ai_connection_menu,
+                cx,
+            ));
+            if state.connection_menu_open {
+                let mut list = div().w_full().flex().flex_col().gap(px(4.0));
+                for (index, endpoint) in state.settings.endpoints.iter().enumerate() {
+                    let label = state.connection_name(endpoint, cx);
+                    let endpoint = endpoint.clone();
+                    list = list.child(Self::dropdown_item(
+                        ("preferences-ai-connection", index),
+                        label,
+                        state.settings.default_endpoint == endpoint.id,
+                        theme,
+                        move |preferences, _, _, cx| {
+                            preferences.select_ai_preferences_endpoint(endpoint.clone(), cx)
+                        },
+                        cx,
+                    ));
+                }
+                dropdown = dropdown.child(self.dropdown_menu(
+                    "preferences-ai-connection-menu",
+                    list,
+                    theme,
+                ));
+            }
+            content = content.child(
+                self.settings_row(
+                    theme,
+                    strings.preferences_ai_default_connection.clone(),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(dropdown)
+                        .child(self.ai_preference_button(
+                            "preferences-ai-add",
+                            "+",
+                            true,
+                            theme,
+                            cx,
+                            |preferences, cx| preferences.begin_ai_preferences_connection(cx),
+                        )),
+                ),
+            );
+        }
+        if state.choosing_provider || state.settings.endpoints.is_empty() {
+            let mut choices = div().w_full().flex().flex_wrap().gap(px(8.0));
+            for preset in ProviderPreset::all() {
+                let label = if preset.id == "custom" {
+                    strings.preferences_ai_custom_provider.clone()
+                } else {
+                    preset.name.into()
+                };
+                choices = choices.child(self.ai_preference_button(
+                    SharedString::from(format!("preferences-ai-provider-{}", preset.id)),
+                    label,
+                    true,
+                    theme,
+                    cx,
+                    move |preferences, cx| preferences.add_ai_preferences_provider(preset, cx),
+                ));
+            }
+            content = content.child(choices);
+        }
         if let Some(draft) = &state.draft {
             for (id, label, field) in [
                 (
@@ -350,6 +519,15 @@ impl PreferencesWindow {
                     draft.context.clone(),
                 ),
             ] {
+                let custom_address = id == "preferences-ai-address"
+                    && (draft.endpoint.provider == "custom"
+                        || ProviderPreset::for_endpoint(&draft.endpoint).is_none());
+                if !state.advanced
+                    && !custom_address
+                    && !matches!(id, "preferences-ai-model" | "preferences-ai-key")
+                {
+                    continue;
+                }
                 content = content.child(
                     div()
                         .w_full()
@@ -406,9 +584,11 @@ impl PreferencesWindow {
                     },
                 ));
             }
-            let id = draft.endpoint.id.clone();
-            let removed_id = id.clone();
-            content = content.child(protocols).child(
+            let removed_id = draft.endpoint.id.clone();
+            if state.advanced {
+                content = content.child(protocols);
+            }
+            content = content.child(
                 div()
                     .flex()
                     .flex_wrap()
@@ -421,52 +601,59 @@ impl PreferencesWindow {
                         cx,
                         |preferences, cx| preferences.test_ai_preferences_connection(cx),
                     ))
-                    .child(self.ai_preference_button(
-                        "preferences-ai-default",
-                        strings.ai_panel_make_default.clone(),
-                        true,
-                        theme,
-                        cx,
-                        move |preferences, cx| {
-                            if let Some(state) = preferences.ai_preferences.as_mut() {
-                                state.settings.default_endpoint = id.clone();
-                            }
-                            cx.notify();
-                        },
-                    ))
-                    .child(self.ai_preference_button(
-                        "preferences-ai-delete",
-                        strings.preferences_ai_delete.clone(),
-                        true,
-                        theme,
-                        cx,
-                        move |preferences, cx| {
-                            preferences.stop_ai_preferences_probe();
-                            let next = preferences.ai_preferences.as_mut().and_then(|state| {
-                                state.settings.remove_endpoint(&removed_id);
-                                state.draft = None;
-                                state.settings.active_endpoint().cloned()
-                            });
-                            if let Some(next) = next {
-                                preferences.load_ai_preferences_draft(next, cx);
-                            }
-                            cx.notify();
-                        },
-                    )),
+                    .when(state.advanced, |actions| {
+                        actions.child(self.ai_preference_button(
+                            "preferences-ai-delete",
+                            strings.preferences_ai_delete.clone(),
+                            true,
+                            theme,
+                            cx,
+                            move |preferences, cx| {
+                                preferences.stop_ai_preferences_probe();
+                                let next = preferences.ai_preferences.as_mut().and_then(|state| {
+                                    state.settings.remove_endpoint(&removed_id);
+                                    state.drafts.remove(&removed_id);
+                                    state.draft = None;
+                                    state.settings.active_endpoint().cloned()
+                                });
+                                if let Some(next) = next {
+                                    preferences.select_ai_preferences_endpoint(next, cx);
+                                }
+                                cx.notify();
+                            },
+                        ))
+                    }),
             );
         }
-        content = content
-            .child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(theme.colors.dialog_muted)
-                    .child(strings.ai_panel_exclusions.clone()),
-            )
-            .child(state.excluded.clone());
+        content = content.child(self.ai_preference_button(
+            "preferences-ai-advanced",
+            strings.preferences_ai_advanced.clone(),
+            true,
+            theme,
+            cx,
+            |preferences, cx| {
+                if let Some(state) = preferences.ai_preferences.as_mut() {
+                    state.advanced = !state.advanced;
+                }
+                cx.notify();
+            },
+        ));
+        if state.advanced {
+            content = content
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme.colors.dialog_muted)
+                        .child(strings.ai_panel_exclusions.clone()),
+                )
+                .child(state.excluded.clone());
+        }
         if let Some(status) = &state.status {
             content = content.child(div().text_size(px(12.0)).child(status.clone()));
         }
-        if let Ok(path) = crate::ai::settings::settings_path() {
+        if let Ok(path) = crate::ai::settings::settings_path()
+            && state.advanced
+        {
             content = content.child(
                 div()
                     .text_size(px(11.0))
@@ -500,7 +687,7 @@ impl PreferencesWindow {
             .cursor_pointer()
             .bg(theme.colors.dialog_secondary_button_bg)
             .text_color(theme.colors.dialog_secondary_button_text)
-            .when(!enabled, |element| element.opacity(0.5))
+            .when(!enabled, |element| element.opacity(0.5).cursor_default())
             .child(label.into())
             .on_click(cx.listener(move |preferences, _, _, cx| {
                 if enabled {

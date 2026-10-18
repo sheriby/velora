@@ -186,9 +186,18 @@ impl Editor {
             .when(!sidebar, |panel| panel.child(titlebar))
             .child(header)
             .when(!has_messages, |panel| panel.child(quick));
-        if session.settings.endpoints.is_empty() {
+        if session
+            .settings
+            .active_endpoint()
+            .is_none_or(|endpoint| endpoint.request_config().is_err())
+        {
             panel = panel.child(self.ai_button(
-                "ai-configure", strings.ai_panel_settings.clone(), false, true, theme, cx,
+                "ai-configure",
+                strings.ai_panel_settings.clone(),
+                false,
+                true,
+                theme,
+                cx,
                 |editor, _, cx| editor.open_ai_settings(cx),
             ));
         }

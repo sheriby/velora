@@ -298,6 +298,10 @@ impl PreferencesWindow {
             changed |= *open;
             *open = false;
         }
+        if let Some(state) = self.ai_preferences.as_mut() {
+            changed |= state.connection_menu_open;
+            state.connection_menu_open = false;
+        }
         self.dropdown_scroll.set_offset(Point::default());
         changed
     }

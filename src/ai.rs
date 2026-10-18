@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) mod context;
 pub(crate) mod runtime;
+pub(crate) mod providers;
 pub(crate) mod session;
 pub(crate) mod settings;
 pub(crate) mod skills;

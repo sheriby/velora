@@ -1293,10 +1293,10 @@ impl Editor {
             self.open_ai_settings(cx);
             return;
         };
-        let model = match endpoint.model_config() {
+        let model = match endpoint.request_config() {
             Ok(model) => model,
             Err(error) => {
-                session.error = Some(error.to_string());
+                session.error = Some(crate::ai::settings::error_message(&error, cx.global::<crate::i18n::I18nManager>().strings()));
                 cx.notify();
                 return;
             }
@@ -1445,7 +1445,7 @@ impl Editor {
         let background = cx.background_spawn(async move {
             let result = (|| -> Result<RunOutput> {
                 let mut request = request;
-                request.api_key = endpoint.api_key.clone();
+                request.api_key = endpoint.api_key.trim().to_owned();
                 crate::ai::runtime::run_blocking(request, workspace, control.clone(), |event| {
                     if sender.send(WorkerEvent::Runtime(event)).is_err() {
                         control.cancel.cancel();

@@ -6,7 +6,11 @@ Velora 的 AI 围绕 Markdown 的阅读、写作和跨文档整理工作。助�
 
 AI 默认关闭。先在「偏好设置 → AI」开启「启用 AI」并保存，再添加模型连接。关闭时正文右键、选区工具栏、命令面板和系统菜单都隐藏 AI 入口；关闭后取消正在运行的任务，待审阅修改保留在历史中，已配置连接不会删除。
 
-添加连接并填写：
+首次启用后选择 DeepSeek、OpenAI、Anthropic、Ollama 或自定义服务。预设会填好协议、地址和默认模型；新连接不继承其他连接的 Key。本地模型填写已经安装的模型名，Velora 不会自动下载模型。
+
+常用界面只保留模型和 Key；地址、协议、预算与排除规则位于「高级」。默认连接可从下拉框选择，保存后用于新对话；切换连接不会丢弃尚未填写完的草稿。
+
+可填写的连接参数：
 
 | 设置 | 填写内容 |
 |---|---|
@@ -189,3 +193,8 @@ description: 校对技术文章中的术语、事实与引用
 - 提议无法接受：按提示检查阅读模式、外部修改、其他窗口和关联提议；保留建议并重新生成，不强行覆盖正文。
 
 实现与测试入口见 [AI 架构说明](architecture/ai.md)。
+
+
+## 提供商预设的参考
+
+预设目录集中在 `src/ai/providers.rs`，协议与工具兼容设置由同一条目录记录声明。服务地址与模型示例参考 [OpenAI 官方快速入门](https://developers.openai.com/api/docs/quickstart)、[DeepSeek 官方 API 文档](https://api-docs.deepseek.com/guides/codex) 与 [Claude Messages API](https://platform.claude.com/docs/en/api/messages/create)。模型名称可按账户可用范围修改，连接测试会检查实际的工具调用。

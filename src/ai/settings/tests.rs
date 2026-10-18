@@ -58,6 +58,7 @@ fn ai_settings_failed_save_preserves_old_configuration_and_key() {
     pending.set_endpoint(connection).unwrap();
     assert!(pending.save_at(&path.join("blocked.json")).is_err());
     assert_eq!(AiSettings::load_at(&path).unwrap(), settings);
+    pending.enabled = true;
     let previous = pending.clone();
     let mut invalid = endpoint();
     invalid.model.clear();

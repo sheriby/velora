@@ -1828,6 +1828,8 @@ fn ai_preferences_invalid_input_preserves_configuration_and_cancel_discards_the_
     window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
     let nav = window_cx.debug_bounds("preferences-nav-ai").unwrap(); window_cx.simulate_click(nav.center(),gpui::Modifiers::none());
     window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let advanced = window_cx.debug_bounds("preferences-ai-advanced").unwrap(); window_cx.simulate_click(advanced.center(), gpui::Modifiers::none());
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
     let field = window_cx.debug_bounds("preferences-ai-context").unwrap(); window_cx.simulate_click(field.center(),gpui::Modifiers::none());
     window_cx.simulate_keystrokes(if cfg!(target_os="macos") {"cmd-a"} else {"ctrl-a"}); window_cx.simulate_input("invalid");
     window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
@@ -1849,7 +1851,7 @@ fn ai_preferences_can_choose_a_default_clear_a_key_and_delete_a_connection(cx: &
     for id in ["one","two"] { settings.set_endpoint(crate::ai::settings::Endpoint { id:id.into(),name:id.into(),base_url:"http://localhost:11434/v1".into(),model:"model".into(),api_key:"test-key".into(),..Default::default() }).unwrap(); } settings.save_at(&path).unwrap();
     let handle = cx.update(|cx| open_preferences_window_with_size(cx, AppPreferences::default(), default_theme_options(), "偏好设置".into(), gpui::size(px(1000.0),px(1500.0))));
     let mut window_cx = gpui::VisualTestContext::from_window(handle.into(),cx);
-    for selector in ["preferences-nav-ai", "preferences-ai-connection-1", "preferences-ai-default"] {
+    for selector in ["preferences-nav-ai", "preferences-ai-connection-menu", "preferences-ai-connection-1"] {
         window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
         let control = window_cx.debug_bounds(selector).unwrap(); window_cx.simulate_click(control.center(),gpui::Modifiers::none());
     }
@@ -1860,6 +1862,8 @@ fn ai_preferences_can_choose_a_default_clear_a_key_and_delete_a_connection(cx: &
     let save = window_cx.debug_bounds("preferences-save").unwrap(); window_cx.simulate_click(save.center(),gpui::Modifiers::none());
     let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
     assert_eq!(saved.default_endpoint,"two"); assert_eq!(saved.endpoints[1].api_key, "");
+    window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
+    let advanced = window_cx.debug_bounds("preferences-ai-advanced").unwrap(); window_cx.simulate_click(advanced.center(), gpui::Modifiers::none());
     window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();
     let delete = window_cx.debug_bounds("preferences-ai-delete").unwrap(); window_cx.simulate_click(delete.center(),gpui::Modifiers::none());
     window_cx.update(|window,cx| window.draw(cx).clear()); window_cx.run_until_parked();

@@ -257,11 +257,11 @@ pub(crate) fn test_connection(
     endpoint: super::settings::Endpoint,
     control: RunControl,
 ) -> Result<RunOutput> {
-    let mut model = endpoint.model_config()?;
+    let mut model = endpoint.request_config()?;
     model.max_tokens = 128;
     let workspace = Arc::new(Mutex::new(AiWorkspace::new(None, Vec::new())?));
     let output = run_blocking(RunRequest {
-        model, api_key: endpoint.api_key, history: Vec::new(),
+        model, api_key: endpoint.api_key.trim().to_owned(), history: Vec::new(),
         prompt: "Call list_documents once to verify tool calling, then reply OK. This is an empty isolated test workspace.".into(),
         system: "You are a connectivity and tool-calling probe.".into(), max_turns: 4, timeout: std::time::Duration::from_secs(30),
     }, workspace, control, |_| {})?;

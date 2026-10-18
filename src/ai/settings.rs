@@ -1,6 +1,6 @@
 //! 模型连接与配置文件中的 API Key。
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,8 @@ pub(crate) enum Protocol {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Endpoint {
     pub id: String,
+    #[serde(default)]
+    pub provider: String,
     pub name: String,
     pub protocol: Protocol,
     pub base_url: String,
@@ -30,6 +32,7 @@ impl Default for Endpoint {
     fn default() -> Self {
         Self {
             id: String::new(),
+            provider: String::new(),
             name: String::new(),
             protocol: Protocol::default(),
             base_url: String::new(),
@@ -100,7 +103,9 @@ impl AiSettings {
     }
 
     pub fn set_endpoint(&mut self, mut endpoint: Endpoint) -> Result<()> {
-        endpoint.model_config()?;
+        if self.enabled {
+            endpoint.model_config()?;
+        }
         if endpoint.id.is_empty() {
             endpoint.id = uuid::Uuid::new_v4().to_string();
         }
@@ -143,20 +148,31 @@ impl std::fmt::Debug for Endpoint {
 }
 
 impl Endpoint {
+    pub fn request_config(&self) -> Result<yoagent::provider::ModelConfig> {
+        let model = self.model_config()?;
+        if self.api_key.trim().is_empty()
+            && super::providers::ProviderPreset::for_endpoint(self)
+                .is_some_and(|preset| preset.requires_key)
+        {
+            return Err(EndpointError::MissingKey.into());
+        }
+        Ok(model)
+    }
+
     pub fn model_config(&self) -> Result<yoagent::provider::ModelConfig> {
         if self.model.trim().is_empty() {
-            bail!("请输入模型名称");
+            return Err(EndpointError::MissingModel.into());
         }
         if !(4096..=2_000_000).contains(&self.context_tokens) {
-            bail!("上下文 token 预算应在 4096 到 2000000 之间");
+            return Err(EndpointError::InvalidContext.into());
         }
-        let url = url::Url::parse(self.base_url.trim()).context("服务地址无效")?;
+        let url = url::Url::parse(self.base_url.trim()).map_err(|_| EndpointError::InvalidUrl)?;
         if !matches!(url.scheme(), "https" | "http")
             || url.host_str().is_none()
             || !url.username().is_empty()
             || url.password().is_some()
         {
-            bail!("请输入不含密钥的 HTTP 或 HTTPS 服务地址");
+            return Err(EndpointError::InvalidUrl.into());
         }
         let protocol = match self.protocol {
             Protocol::ChatCompletions => yoagent::provider::ApiProtocol::OpenAiCompletions,
@@ -170,9 +186,9 @@ impl Endpoint {
             self.model.trim(),
             self.name.clone(),
         );
-        if self.protocol == Protocol::ChatCompletions && url.host_str() == Some("api.deepseek.com")
-        {
-            model.compat = Some(yoagent::provider::OpenAiCompat::deepseek());
+        if self.protocol == Protocol::ChatCompletions {
+            model.compat = super::providers::ProviderPreset::for_endpoint(self)
+                .and_then(|preset| preset.compatibility.map(|configure| configure()));
         }
         model.context_window = self.context_tokens;
         model.max_tokens = 8192.min(model.context_window / 4);
@@ -230,5 +246,36 @@ impl AiFeature {
             crate::app_menu::install_menus(cx);
         }
         cx.refresh_windows();
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum EndpointError {
+    MissingKey,
+    MissingModel,
+    InvalidContext,
+    InvalidUrl,
+}
+impl std::fmt::Display for EndpointError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::MissingKey => "API key is required",
+            Self::MissingModel => "Model name is required",
+            Self::InvalidContext => "Context budget must be between 4096 and 2000000",
+            Self::InvalidUrl => {
+                "A HTTP(S) service address without embedded credentials is required"
+            }
+        })
+    }
+}
+impl std::error::Error for EndpointError {}
+
+pub(crate) fn error_message(error: &anyhow::Error, strings: &crate::i18n::I18nStrings) -> String {
+    match error.downcast_ref::<EndpointError>() {
+        Some(EndpointError::MissingKey) => strings.preferences_ai_key_required.clone(),
+        Some(EndpointError::MissingModel) => strings.preferences_ai_model_required.clone(),
+        Some(EndpointError::InvalidContext) => strings.preferences_ai_context_invalid.clone(),
+        Some(EndpointError::InvalidUrl) => strings.preferences_ai_url_invalid.clone(),
+        None => error.to_string(),
     }
 }

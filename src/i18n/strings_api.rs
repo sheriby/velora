@@ -449,6 +449,13 @@ impl I18nStrings {
             "复制图片到 ./${filename}.assets 文件夹".into();
         strings.ai_assistant = "AI 助手".into();
         strings.preferences_ai_enabled = "启用 AI".into();
+        strings.preferences_ai_custom_provider = "自定义服务".into();
+        strings.preferences_ai_advanced = "高级".into();
+        strings.preferences_ai_key_required = "请填写 API Key".into();
+        strings.preferences_ai_model_required = "请填写模型名称".into();
+        strings.preferences_ai_context_invalid = "上下文预算应在 4096 到 2000000 之间".into();
+        strings.preferences_ai_url_invalid = "请填写不含账号密码的 HTTP 或 HTTPS 服务地址".into();
+        strings.preferences_ai_default_connection = "默认连接".into();
         strings.ai_feature_disabled = "AI 尚未启用".into();
         strings.ai_action_shorten = "缩短".into();
         strings.ai_action_expand = "扩写".into();
@@ -976,6 +983,13 @@ impl I18nStrings {
             preferences_status_bar_show_mode_switch: "Mode Switch".into(),
             ai_assistant: "AI Assistant".into(),
             preferences_ai_enabled: "Enable AI".into(),
+            preferences_ai_custom_provider: "Custom service".into(),
+            preferences_ai_advanced: "Advanced".into(),
+            preferences_ai_key_required: "Enter an API key".into(),
+            preferences_ai_model_required: "Enter a model name".into(),
+            preferences_ai_context_invalid: "Use a context budget from 4096 to 2000000".into(),
+            preferences_ai_url_invalid: "Enter an HTTP or HTTPS address without embedded credentials".into(),
+            preferences_ai_default_connection: "Default connection".into(),
             ai_feature_disabled: "AI is disabled".into(),
             ai_action_shorten: "Shorten".into(),
             ai_action_expand: "Expand".into(),
