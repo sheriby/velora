@@ -123,6 +123,7 @@ impl Editor {
             (session.review_open && session.review_focus.contains_focused(window, cx))
                 || (session.visible
                     && (session.panel_focus.contains_focused(window, cx)
+                        || self.ai_sidebar_layout.as_ref().is_some_and(|layout| layout.focus.is_focused(window))
                         || session.input.read(cx).focus_handle(cx).is_focused(window)
                         || session.conversation.as_ref().is_some_and(|view| view.read(cx).contains_focus(window, cx))
                         || session

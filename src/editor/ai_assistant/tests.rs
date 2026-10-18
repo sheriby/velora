@@ -1798,7 +1798,7 @@ fn ai_sidebar_composer_uses_the_available_width_in_both_sidebar_sizes(cx: &mut T
     let dock = cx.debug_bounds("ai-expand").unwrap().center();
     cx.simulate_click(dock, gpui::Modifiers::none());
     for width in [1920.0, 1000.0] {
-        cx.update(|window, _| window.resize(gpui::size(gpui::px(width), gpui::px(1080.0))));
+        cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(1080.0)));
         draw(cx);
         draw(cx);
         draw(cx);
@@ -3797,4 +3797,165 @@ fn ai_more_menu_keyboard_opens_history_and_returns_to_the_same_draft(cx: &mut Te
         assert_eq!(session.saved.id, identity);
         assert_eq!(session.input.read(cx).value(), "草稿");
     });
+}
+
+#[gpui::test]
+fn ai_sidebar_resize_preserves_draft_and_width_when_floated_and_docked(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    let identity = editor.update_in(cx, |editor, window, cx| {
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.expanded = true;
+        session
+            .input
+            .update(cx, |input, cx| input.set_value("未发送的草稿", window, cx));
+        session.saved.id.clone()
+    });
+    draw(cx);
+    cx.simulate_resize(gpui::size(gpui::px(1200.0), gpui::px(800.0)));
+    for _ in 0..4 {
+        draw(cx);
+    }
+    let original = cx.debug_bounds("ai-sidebar").unwrap();
+    let start = gpui::point(original.left() + gpui::px(1.0), original.center().y);
+    let end = start - gpui::point(gpui::px(100.0), gpui::px(0.0));
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), gpui::Modifiers::none());
+    draw(cx);
+    cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), gpui::Modifiers::none());
+    cx.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::none());
+    for _ in 0..4 {
+        draw(cx);
+    }
+    let resized = cx.debug_bounds("ai-sidebar").unwrap();
+    assert!(
+        resized.size.width >= original.size.width + gpui::px(80.0),
+        "拖动侧栏边界应改变宽度：{original:?} -> {resized:?}"
+    );
+    for _ in 0..2 {
+        let dock = cx.debug_bounds("ai-expand").unwrap().center();
+        cx.simulate_click(dock, gpui::Modifiers::none());
+        for _ in 0..4 {
+            draw(cx);
+        }
+    }
+    assert_eq!(
+        cx.debug_bounds("ai-sidebar").unwrap().size.width,
+        resized.size.width
+    );
+    editor.read_with(cx, |editor, cx| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, identity);
+        assert_eq!(session.input.read(cx).value(), "未发送的草稿");
+        assert_eq!(editor.buffer.text(), "正文");
+    });
+}
+
+#[gpui::test]
+fn ai_sidebar_separator_supports_keyboard_resize_and_clamps_at_narrow_windows(
+    cx: &mut TestAppContext,
+) {
+    initialize(cx);
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        editor.ai_session.as_mut().unwrap().expanded = true;
+    });
+    cx.simulate_resize(gpui::size(gpui::px(1200.0), gpui::px(800.0)));
+    for _ in 0..4 {
+        draw(cx);
+    }
+    editor.update_in(cx, |editor, window, cx| {
+        let focus = editor.ai_sidebar_layout.as_ref().unwrap().focus.clone();
+        window.focus(&focus, cx);
+    });
+    draw(cx);
+    let original = cx.debug_bounds("ai-sidebar").unwrap().size.width;
+    cx.simulate_keystrokes("left");
+    for _ in 0..3 {
+        draw(cx);
+    }
+    let enlarged = cx.debug_bounds("ai-sidebar").unwrap().size.width;
+    assert!(enlarged > original, "左箭头应向左扩大右侧面板");
+    cx.simulate_keystrokes("home right");
+    for _ in 0..3 {
+        draw(cx);
+    }
+    let minimum = cx.debug_bounds("ai-sidebar").unwrap().size.width;
+    cx.simulate_keystrokes("right");
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert_eq!(cx.debug_bounds("ai-sidebar").unwrap().size.width, minimum);
+    cx.simulate_keystrokes("end left");
+    for _ in 0..3 {
+        draw(cx);
+    }
+    let maximum = cx.debug_bounds("ai-sidebar").unwrap().size.width;
+    cx.simulate_keystrokes("left");
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert_eq!(cx.debug_bounds("ai-sidebar").unwrap().size.width, maximum);
+    for (width, document_minimum) in [(800.0, 480.0), (640.0, 384.0), (1200.0, 512.0)] {
+        cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(800.0)));
+        for _ in 0..4 {
+            draw(cx);
+        }
+        let sidebar = cx.debug_bounds("ai-sidebar").unwrap();
+        assert_eq!(sidebar.right(), gpui::px(width), "侧栏应始终靠齐窗口右侧");
+        assert!(
+            sidebar.left() >= gpui::px(document_minimum),
+            "窄窗口应优先保留正文空间：{width}，{sidebar:?}"
+        );
+        assert!(sidebar.size.width >= gpui::px(240.0));
+    }
+    editor.read_with(cx, |editor, _| assert_eq!(editor.buffer.text(), "正文"));
+}
+
+#[gpui::test]
+fn ai_split_workspace_uses_the_same_resizable_sidebar_and_menu_escape_scope(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, _, _) = tab_review_fixture(cx);
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.split_active_document(
+            crate::editor::workspace::split::SplitDirection::Right,
+            window,
+            cx,
+        );
+        assert!(editor.active_split_editor().is_some());
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        editor.ai_session.as_mut().unwrap().expanded = true;
+        cx.notify();
+    });
+    cx.simulate_resize(gpui::size(gpui::px(1400.0), gpui::px(900.0)));
+    for _ in 0..4 {
+        draw(cx);
+    }
+    assert!(
+        cx.debug_bounds("ai-sidebar-resize").is_some(),
+        "分屏窗口也必须使用 Kit 分隔条"
+    );
+    let sidebar = cx.debug_bounds("ai-sidebar").unwrap();
+    assert!(sidebar.size.width < gpui::px(700.0));
+    let options = cx.debug_bounds("ai-options").unwrap().center();
+    cx.simulate_click(options, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    draw(cx);
+    assert_eq!(
+        cx.debug_bounds("ai-sidebar"),
+        Some(sidebar),
+        "Esc 只关闭菜单，不隐藏分屏侧栏"
+    );
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
 }

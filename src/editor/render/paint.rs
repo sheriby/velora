@@ -1090,7 +1090,6 @@ impl Render for Editor {
             .w_full()
             .flex_1()
             .min_h(px(0.0))
-            .pt(px(titlebar_height + menu_bar_height))
             .flex()
             .min_w(px(0.0));
         if self.workspace.is_open && self.split_parent.is_none() {
@@ -1101,8 +1100,9 @@ impl Render for Editor {
             }
         }
         main_content = main_content.child(self.render_ai_workspace(content_area, &theme, window, cx));
-        if let Some(sidebar) = self.render_ai_sidebar(&theme, window, cx) { main_content = main_content.child(sidebar); }
-        let base = base.child(main_content);
+        let main_content = self.render_ai_sidebar_layout(main_content.into_any_element(), &theme, window, cx);
+        let base = base.child(div().flex_1().min_h_0().flex().flex_col()
+            .pt(px(titlebar_height + menu_bar_height)).child(main_content));
         let status_bar = if self.split_parent.is_none() { self.render_status_bar(&theme, &strings, window, cx) } else { None };
         let base = if let Some(status_bar) = status_bar {
             base.child(status_bar)

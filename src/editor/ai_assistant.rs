@@ -39,6 +39,11 @@ pub(super) enum PanelMode {
     Sources,
 }
 
+pub(super) struct AiSidebarLayout {
+    state: Entity<gpui_kit::component::resizable::ResizableState>,
+    focus: FocusHandle,
+}
+
 pub(super) struct AiSession {
     document: uuid::Uuid,
     panel_navigation: bool,

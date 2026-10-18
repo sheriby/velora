@@ -77,6 +77,7 @@ use self::workspace::WorkspaceState;
 pub struct Editor {
     ai_session: Option<ai_assistant::AiSession>,
     ai_task_sessions: Vec<ai_assistant::AiSession>,
+    ai_sidebar_layout: Option<ai_assistant::AiSidebarLayout>,
     ai_result_preview: bool,
     ai_surface_visible: std::rc::Rc<std::cell::Cell<bool>>,
     ai_review_marks: Vec<ai_assistant::inline_review::ReviewMark>,
@@ -828,6 +829,7 @@ impl Editor {
             reading_mode: std::rc::Rc::new(std::cell::Cell::new(false)),
             ai_session: None,
             ai_task_sessions: Vec::new(),
+            ai_sidebar_layout: None,
             ai_result_preview: false,
             ai_surface_visible: Default::default(),
             ai_review_marks: Vec::new(),

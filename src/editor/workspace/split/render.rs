@@ -76,8 +76,7 @@ impl Editor {
             .flex()
             .flex_1()
             .min_h(px(0.0))
-            .min_w(px(0.0))
-            .pt(px(header_height));
+            .min_w(px(0.0));
         if let Some(rail) = rail {
             main = main.child(rail);
         }
@@ -89,7 +88,7 @@ impl Editor {
             let groups = self.render_group_node(&layout, &theme, &mut index, cx);
             main = main.child(self.render_ai_workspace(groups, &theme, window, cx));
         }
-        if let Some(sidebar) = self.render_ai_sidebar(&theme, window, cx) { main = main.child(sidebar); }
+        let main = self.render_ai_sidebar_layout(main.into_any_element(), &theme, window, cx);
         let menus = self.window_menus(cx).filter(|menus| !menus.is_empty());
         let leading = (crate::editor::render::supports_hamburger_menu() && menus.is_some())
             .then(|| self.render_hamburger_menu_button(&theme, cx));
@@ -121,7 +120,8 @@ impl Editor {
                 }
             }))
             .bg(theme.colors.editor_background)
-            .child(main);
+            .child(div().flex_1().min_h_0().flex().flex_col()
+                .pt(px(header_height)).child(main));
         if let Some(status) = status {
             root = root.child(status);
         }

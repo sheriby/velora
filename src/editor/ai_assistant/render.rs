@@ -1,6 +1,9 @@
 use super::*;
+use gpui::prelude::FluentBuilder as _;
+use gpui_kit::component::ThemeStyled as _;
 use gpui_kit::component::form::{Field, Form};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::resizable::{h_resizable, resizable_panel, resize_handle_appearance};
 
 impl Editor {
     pub(in crate::editor) fn render_ai_assistant(
@@ -106,7 +109,115 @@ impl Editor {
         )
     }
 
-    pub(in crate::editor) fn render_ai_sidebar(
+    pub(in crate::editor) fn render_ai_sidebar_layout(
+        &mut self,
+        content: AnyElement,
+        theme: &crate::theme::Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(sidebar) = self.render_ai_sidebar(theme, window, cx) else {
+            return content;
+        };
+        let layout = self
+            .ai_sidebar_layout
+            .get_or_insert_with(|| AiSidebarLayout {
+                state: cx.new(|_| Default::default()),
+                focus: cx.focus_handle(),
+            });
+        let state = layout.state.clone();
+        let focus = layout.focus.clone();
+        let viewport = window.viewport_size().width;
+        let minimum = (window.rem_size() * 20.0).min(viewport * 0.4);
+        let document_minimum = (window.rem_size() * 32.0).min(viewport - minimum);
+        let maximum = (window.rem_size() * 40.0)
+            .min(viewport - document_minimum)
+            .max(minimum);
+        let preferred = (viewport * 0.3).clamp(minimum, maximum);
+        let appearance = resize_handle_appearance();
+        h_resizable("ai-workspace-layout")
+            .with_state(&state)
+            .with_handle_appearance(std::rc::Rc::new(move |handle, window, cx| {
+                let line = appearance(handle, window, cx);
+                let width = state.read(cx).sizes().get(1).copied().unwrap_or(preferred);
+                let resize_state = state.clone();
+                // Kit 0.7 的分隔条只处理指针；键盘仍通过它的同一套尺寸约束调整。
+                Some(
+                    div()
+                        .id("ai-sidebar-resize")
+                        .debug_selector(|| "ai-sidebar-resize".into())
+                        .test_support()
+                        .track_focus(&focus)
+                        .tab_index(0)
+                        .role(Role::Splitter)
+                        .aria_label("Resize AI sidebar")
+                        .aria_orientation(Orientation::Vertical)
+                        .aria_numeric_value(f64::from(f32::from(width)))
+                        .aria_min_numeric_value(f64::from(f32::from(minimum)))
+                        .aria_max_numeric_value(f64::from(f32::from(maximum)))
+                        // 与库分隔条共享单物理像素边界，焦点环在边界外绘制。
+                        .relative()
+                        .w(px(1.0))
+                        .h_full()
+                        .when(
+                            focus.is_focused(window) && window.last_input_was_keyboard(),
+                            |line| line.focus_ring_style(window, cx),
+                        )
+                        .on_key_down(
+                            move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+                                let modifiers = event.keystroke.modifiers;
+                                if modifiers.control
+                                    || modifiers.platform
+                                    || modifiers.alt
+                                    || modifiers.function
+                                {
+                                    return;
+                                }
+                                let step = window.rem_size()
+                                    * if event.keystroke.modifiers.shift {
+                                        4.0
+                                    } else {
+                                        1.0
+                                    };
+                                let current = resize_state
+                                    .read(cx)
+                                    .sizes()
+                                    .get(1)
+                                    .copied()
+                                    .unwrap_or(preferred);
+                                let width = match event.keystroke.key.as_str() {
+                                    "left" => current + step,
+                                    "right" => current - step,
+                                    "home" => minimum,
+                                    "end" => maximum,
+                                    _ => return,
+                                };
+                                resize_state.update(cx, |state, cx| {
+                                    state.resize_panel(1, width, window, cx)
+                                });
+                                cx.stop_propagation();
+                            },
+                        )
+                        .children(line)
+                        .into_any_element(),
+                )
+            }))
+            .child(
+                resizable_panel()
+                    .size_range(document_minimum..Pixels::MAX)
+                    .child(content),
+            )
+            .child(
+                resizable_panel()
+                    .size(preferred)
+                    .size_range(minimum..maximum)
+                    .flex_none()
+                    .child(sidebar),
+            )
+            .into_any_element()
+    }
+
+    fn render_ai_sidebar(
         &self,
         theme: &crate::theme::Theme,
         window: &Window,
@@ -116,7 +227,6 @@ impl Editor {
             .ai_session
             .as_ref()
             .filter(|session| session.visible && session.expanded)?;
-        let width = (f32::from(window.viewport_size().width) * 0.30).clamp(320.0, 480.0);
         let height = f32::from(window.viewport_size().height) - 100.0;
         let content = if session.mode == PanelMode::Task {
             self.render_ai_workbench(theme, height, true, window, cx)
@@ -131,9 +241,7 @@ impl Editor {
         Some(
             div()
                 .bg(theme.colors.dialog_surface)
-                .border_l_1()
-                .border_color(theme.colors.dialog_border)
-                .w(px(width))
+                .w_full()
                 .h_full()
                 .flex_shrink_0()
                 // 块布局会让内部百分比宽度按内容收缩，侧栏要给子视图明确的横向约束。
