@@ -37,8 +37,6 @@ pub(crate) struct TextField {
     /// 回车回调(AI 面板用它触发自定义指令;设置页不用)。
     on_enter: Option<OnEnterCallback>,
     on_change: Option<Box<dyn Fn(&mut Context<TextField>)>>,
-    /// 密钥模式:渲染成圆点(值本身仍是明文,测试连接用得到)。
-    masked: bool,
     framed: bool,
     last_line: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
@@ -62,12 +60,7 @@ impl TextField {
     }
 
     fn display_offset(&self, source: usize) -> usize {
-        let source = self.value.floor_char_boundary(source.min(self.value.len()));
-        if self.masked {
-            self.value.get(..source).unwrap_or_default().chars().count() * "•".len()
-        } else {
-            source
-        }
+        self.value.floor_char_boundary(source.min(self.value.len()))
     }
 
     fn index_for_point(&self, position: Point<Pixels>) -> usize {
@@ -81,16 +74,7 @@ impl TextField {
             return self.value.len();
         };
         let display = line.closest_index_for_x(position.x - bounds.left() + px(self.scroll_x));
-        if self.masked {
-            self.value
-                .char_indices()
-                .nth(display / "•".len())
-                .map(|(index, _)| index)
-                .unwrap_or(self.value.len())
-        } else {
-            self.value
-                .floor_char_boundary(display.min(self.value.len()))
-        }
+        self.value.floor_char_boundary(display.min(self.value.len()))
     }
     pub(crate) fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         Self {
@@ -101,7 +85,6 @@ impl TextField {
             placeholder: placeholder.into(),
             on_enter: None,
             on_change: None,
-            masked: false,
             framed: true,
             last_line: None,
             last_bounds: None,
@@ -133,12 +116,6 @@ impl TextField {
             scroll_y: px(0.0),
             reveal_caret: true,
         });
-        self
-    }
-
-    /// 密钥模式:内容显示为圆点,长度与真实值一致。
-    pub(crate) fn masked(mut self) -> Self {
-        self.masked = true;
         self
     }
 

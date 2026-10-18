@@ -6,30 +6,33 @@ use crate::ai::{
 
 pub(super) struct InstructionDraft {
     pub command: AiCommand,
-    pub field: Entity<TextField>,
+    pub field: Entity<TextareaState>,
     locale: String,
+    _subscription: Subscription,
 }
 
 impl InstructionDraft {
-    pub fn new(settings: &AiSettings, cx: &mut Context<PreferencesWindow>) -> Self {
+    pub fn new(
+        settings: &AiSettings,
+        window: &mut Window,
+        cx: &mut Context<PreferencesWindow>,
+    ) -> Self {
         let locale = cx.global::<I18nManager>().current_language_id().to_owned();
-        let owner = cx.entity().downgrade();
         let field = cx.new(|cx| {
-            let mut field = TextField::new("", cx).multiline(6, 10);
-            field.set_value(effective_instruction(settings, AiCommand::Ask, &locale), cx);
-            field.on_change(move |cx| {
-                let owner = owner.clone();
-                cx.defer(move |cx| {
-                    if let Err(error) = owner.update(cx, |_, cx| cx.notify()) {
-                        eprintln!("更新 AI 指令输入失败：{error}");
-                    }
-                });
-            })
+            TextareaState::new(window, cx)
+                .auto_grow(6, 10)
+                .default_value(effective_instruction(settings, AiCommand::Ask, &locale))
+        });
+        let subscription = cx.subscribe(&field, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
         });
         Self {
             command: AiCommand::Ask,
             field,
             locale,
+            _subscription: subscription,
         }
     }
 
@@ -41,37 +44,60 @@ impl InstructionDraft {
         } else {
             settings
                 .quick_instructions
-                .insert(self.command.id().into(), body.into());
+                .insert(self.command.id().into(), body.to_string());
         }
     }
 
-    fn load(&mut self, settings: &AiSettings, command: AiCommand, locale: String, cx: &mut App) {
+    fn load(
+        &mut self,
+        settings: &AiSettings,
+        command: AiCommand,
+        locale: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.locale = locale;
         self.command = command;
         let body = effective_instruction(settings, command, &self.locale);
-        self.field.update(cx, |field, cx| field.set_value(body, cx));
+        self.field
+            .update(cx, |field, cx| field.set_value(body, window, cx));
     }
 }
 
 impl PreferencesWindow {
-    pub(super) fn refresh_ai_instruction_locale(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_ai_instruction_locale(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let locale = cx.global::<I18nManager>().current_language_id().to_owned();
         if let Some(state) = self.ai_preferences.as_mut()
             && state.instruction.locale != locale
         {
             state.instruction.stage(&mut state.settings, cx);
-            state
-                .instruction
-                .load(&state.settings, state.instruction.command, locale, cx);
+            state.instruction.load(
+                &state.settings,
+                state.instruction.command,
+                locale,
+                window,
+                cx,
+            );
         }
     }
 
-    fn select_ai_instruction(&mut self, command: AiCommand, cx: &mut Context<Self>) {
+    fn select_ai_instruction(
+        &mut self,
+        command: AiCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_dropdowns();
         let locale = cx.global::<I18nManager>().current_language_id().to_owned();
         if let Some(state) = self.ai_preferences.as_mut() {
             state.instruction.stage(&mut state.settings, cx);
-            state.instruction.load(&state.settings, command, locale, cx);
+            state
+                .instruction
+                .load(&state.settings, command, locale, window, cx);
         }
         cx.notify();
     }
@@ -123,7 +149,7 @@ impl PreferencesWindow {
             ),
         ] {
             tabs = tabs.child(
-                self.ai_preference_button(id, label, true, theme, cx, move |preferences, cx| {
+                self.ai_preference_button(id, label, true, theme, cx, move |preferences, _, cx| {
                     preferences.close_dropdowns();
                     if let Some(state) = preferences.ai_preferences.as_mut() {
                         state.show_instructions = instructions;
@@ -169,7 +195,9 @@ impl PreferencesWindow {
                     label(command),
                     command == state.instruction.command,
                     theme,
-                    move |preferences, _, _, cx| preferences.select_ai_instruction(command, cx),
+                    move |preferences, _, window, cx| {
+                        preferences.select_ai_instruction(command, window, cx)
+                    },
                     cx,
                 ));
             }
@@ -193,13 +221,19 @@ impl PreferencesWindow {
                         true,
                         theme,
                         cx,
-                        |preferences, cx| {
+                        |preferences, window, cx| {
                             let locale =
                                 cx.global::<I18nManager>().current_language_id().to_owned();
                             if let Some(state) = preferences.ai_preferences.as_mut() {
                                 let command = state.instruction.command;
                                 state.settings.quick_instructions.remove(command.id());
-                                state.instruction.load(&state.settings, command, locale, cx);
+                                state.instruction.load(
+                                    &state.settings,
+                                    command,
+                                    locale,
+                                    window,
+                                    cx,
+                                );
                             }
                             cx.notify();
                         },
@@ -209,7 +243,11 @@ impl PreferencesWindow {
                 div()
                     .debug_selector(|| "preferences-ai-instruction-body".into())
                     .w_full()
-                    .child(state.instruction.field.clone()),
+                    .child(
+                        Textarea::new(&state.instruction.field)
+                            .accessibility_id("preferences-ai-instruction-input")
+                            .aria_label(label(state.instruction.command)),
+                    ),
             )
             .into_any_element()
     }

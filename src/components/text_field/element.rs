@@ -59,8 +59,6 @@ impl Element for TextFieldElement {
             let input = self.input.read(cx);
             let display = if input.value.is_empty() {
                 input.placeholder.clone()
-            } else if input.masked {
-                "•".repeat(input.value.chars().count()).into()
             } else {
                 input.value.replace(['\r', '\n'], " ").into()
             };

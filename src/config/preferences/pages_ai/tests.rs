@@ -23,6 +23,7 @@ fn changing_a_connection_clears_the_previous_test_status(cx: &mut TestAppContext
             crate::ai::providers::ProviderPreset::get("custom")
                 .unwrap()
                 .endpoint(),
+            window,
             cx,
         );
         let state = preferences.ai_preferences.as_mut().unwrap();
@@ -158,6 +159,7 @@ fn ai_preferences_keeps_newer_unsaved_connection_input_after_a_save(cx: &mut Tes
             crate::ai::providers::ProviderPreset::get("custom")
                 .unwrap()
                 .endpoint(),
+            window,
             cx,
         );
         preferences
@@ -168,7 +170,7 @@ fn ai_preferences_keeps_newer_unsaved_connection_input_after_a_save(cx: &mut Tes
             .as_ref()
             .unwrap()
             .model
-            .update(cx, |field, cx| field.set_value("saved-model", cx));
+            .update(cx, |field, cx| field.set_value("saved-model", window, cx));
         preferences.save_ai_preferences(cx).unwrap();
         preferences
             .ai_preferences
@@ -178,7 +180,9 @@ fn ai_preferences_keeps_newer_unsaved_connection_input_after_a_save(cx: &mut Tes
             .as_ref()
             .unwrap()
             .model
-            .update(cx, |field, cx| field.set_value("newer-unsaved-model", cx));
+            .update(cx, |field, cx| {
+                field.set_value("newer-unsaved-model", window, cx)
+            });
     });
     cx.run_until_parked();
     preferences.read_with(cx, |preferences, cx| {
@@ -246,9 +250,17 @@ fn ai_provider_picker_prefills_service_details_and_keeps_advanced_fields_collaps
     assert!(cx.debug_bounds("preferences-ai-context").is_none());
     cx.simulate_input("  pasted-test-key  ");
     preferences.read_with(cx, |preferences, cx| {
-        let settings = preferences.ai_preferences.as_ref().unwrap().staged(cx).unwrap();
-        assert_eq!(settings.active_endpoint().unwrap().api_key, "pasted-test-key",
-            "选择服务后应直接输入 Key，复制时的边界空白不应进入凭据");
+        let settings = preferences
+            .ai_preferences
+            .as_ref()
+            .unwrap()
+            .staged(cx)
+            .unwrap();
+        assert_eq!(
+            settings.active_endpoint().unwrap().api_key,
+            "pasted-test-key",
+            "选择服务后应直接输入 Key，复制时的边界空白不应进入凭据"
+        );
     });
 }
 
@@ -274,6 +286,7 @@ fn ai_provider_switching_and_deleting_preserves_incomplete_drafts_and_separate_k
             .enabled = true;
         preferences.add_ai_preferences_provider(
             crate::ai::providers::ProviderPreset::get("deepseek").unwrap(),
+            window,
             cx,
         );
         let first = {
@@ -286,12 +299,15 @@ fn ai_provider_switching_and_deleting_preserves_incomplete_drafts_and_separate_k
                 .unwrap();
             draft
                 .key
-                .update(cx, |field, cx| field.set_value("first-key", cx));
-            draft.model.update(cx, |field, cx| field.set_value("", cx));
+                .update(cx, |field, cx| field.set_value("first-key", window, cx));
+            draft
+                .model
+                .update(cx, |field, cx| field.set_value("", window, cx));
             draft.endpoint.clone()
         };
         preferences.add_ai_preferences_provider(
             crate::ai::providers::ProviderPreset::get("openai").unwrap(),
+            window,
             cx,
         );
         let second = preferences
@@ -304,11 +320,11 @@ fn ai_provider_switching_and_deleting_preserves_incomplete_drafts_and_separate_k
         assert!(second.key.read(cx).value().is_empty());
         second
             .key
-            .update(cx, |field, cx| field.set_value("second-key", cx));
+            .update(cx, |field, cx| field.set_value("second-key", window, cx));
         second
             .model
-            .update(cx, |field, cx| field.set_value("second-model", cx));
-        preferences.select_ai_preferences_endpoint(first, cx);
+            .update(cx, |field, cx| field.set_value("second-model", window, cx));
+        preferences.select_ai_preferences_endpoint(first, window, cx);
         let draft = preferences
             .ai_preferences
             .as_ref()
@@ -382,8 +398,12 @@ fn ai_provider_disabling_preserves_a_cleared_key_and_paused_connection_draft(
             .draft
             .as_ref()
             .unwrap();
-        draft.key.update(cx, |field, cx| field.set_value("", cx));
-        draft.model.update(cx, |field, cx| field.set_value("", cx));
+        draft
+            .key
+            .update(cx, |field, cx| field.set_value("", window, cx));
+        draft
+            .model
+            .update(cx, |field, cx| field.set_value("", window, cx));
     });
     for _ in 0..2 {
         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -491,16 +511,17 @@ fn ai_preferences_customizes_quick_instructions_as_multiline_unsaved_drafts(
             .is_empty(),
         "未保存的指令不能改变实际配置"
     );
-    for selector in ["preferences-ai-command-summarize", "preferences-ai-command-polish"] {
+    for selector in [
+        "preferences-ai-command-summarize",
+        "preferences-ai-command-polish",
+    ] {
         let menu = cx.debug_bounds("preferences-ai-command-menu").unwrap();
         cx.simulate_click(menu.center(), gpui::Modifiers::none());
         for _ in 0..2 {
             cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.run_until_parked();
         }
-        let item = cx
-            .debug_bounds(selector)
-            .unwrap();
+        let item = cx.debug_bounds(selector).unwrap();
         cx.simulate_click(item.center(), gpui::Modifiers::none());
         for _ in 0..2 {
             cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -592,7 +613,7 @@ fn ai_preferences_updates_default_instruction_language_without_overwriting_a_cus
     cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "zh-CN"));
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    preferences.update(cx, |preferences, cx| {
+    preferences.update_in(cx, |preferences, window, cx| {
         let state = preferences.ai_preferences.as_ref().unwrap();
         assert_eq!(
             state.instruction.field.read(cx).value(),
@@ -602,10 +623,9 @@ fn ai_preferences_updates_default_instruction_language_without_overwriting_a_cus
             state.staged(cx).unwrap().quick_instructions.is_empty(),
             "切换语言的默认要求不能被误存为自定义指令"
         );
-        state
-            .instruction
-            .field
-            .update(cx, |field, cx| field.set_value("保持自然，避免套话。", cx));
+        state.instruction.field.update(cx, |field, cx| {
+            field.set_value("保持自然，避免套话。", window, cx)
+        });
     });
     cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "en-US"));
     cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -628,5 +648,70 @@ fn ai_preferences_updates_default_instruction_language_without_overwriting_a_cus
             .is_empty(),
         "取消设置不保存语言切换中的草稿"
     );
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}
+
+#[gpui::test]
+fn ai_connection_inputs_are_named_and_do_not_expose_the_key(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let directory = std::env::temp_dir().join(format!("velora-ai-inputs-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&directory);
+    let mut settings = crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    let mut endpoint = crate::ai::providers::ProviderPreset::get("deepseek")
+        .unwrap()
+        .endpoint();
+    endpoint.api_key = "test-secret".into();
+    let model = endpoint.model.clone();
+    settings.set_endpoint(endpoint).unwrap();
+    settings
+        .save_at(&crate::ai::settings::settings_path().unwrap())
+        .unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+    });
+    let handle = cx.update(|cx| {
+        super::super::open_preferences_window_with_state(
+            cx,
+            AppPreferences::default(),
+            Vec::new(),
+            "Preferences".into(),
+        )
+    });
+    handle
+        .update(cx, |preferences, window, cx| {
+            preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx)
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .try_find("preferences-ai-model")
+                .and_then(|input| input.role()),
+            Some(gpui::Role::TextInput),
+            "模型必须是具有名称的标准输入框"
+        );
+        let input = window.find("preferences-ai-model");
+        assert_eq!(input.value(), Some(model.as_str()));
+        assert_eq!(
+            input.label(),
+            Some(
+                cx.global::<crate::i18n::I18nManager>()
+                    .strings()
+                    .preferences_ai_model
+                    .as_str()
+            )
+        );
+        let key = window.find("preferences-ai-key");
+        assert_eq!(key.role(), Some(gpui::Role::PasswordInput));
+        assert_eq!(key.value(), None, "密钥不得暴露到可访问性树");
+    });
     cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
 }

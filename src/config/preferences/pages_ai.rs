@@ -2,7 +2,9 @@ use super::*;
 use crate::ai::providers::ProviderPreset;
 use crate::ai::runtime::{RunControl, RunOutput};
 use crate::ai::settings::{AiSettings, Endpoint, Protocol};
-use crate::components::TextField;
+use gpui_kit::component::input::{
+    Input, InputContentType, InputEvent, InputState, Textarea, TextareaState,
+};
 
 mod instructions;
 
@@ -17,8 +19,9 @@ pub(super) struct AiPreferences {
     choosing_provider: bool,
     advanced: bool,
     pub(super) connection_menu_open: bool,
-    pending_focus: Option<Entity<TextField>>,
-    excluded: Entity<TextField>,
+    pending_focus: Option<Entity<InputState>>,
+    excluded: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
     testing: bool,
     generation: u64,
     control: RunControl,
@@ -27,11 +30,12 @@ pub(super) struct AiPreferences {
 
 struct ConnectionDraft {
     endpoint: Endpoint,
-    name: Entity<TextField>,
-    address: Entity<TextField>,
-    model: Entity<TextField>,
-    key: Entity<TextField>,
-    context: Entity<TextField>,
+    name: Entity<InputState>,
+    address: Entity<InputState>,
+    model: Entity<InputState>,
+    key: Entity<InputState>,
+    context: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ConnectionDraft {
@@ -66,7 +70,7 @@ impl AiPreferences {
             .or_else(|| self.drafts.get(&endpoint.id))
             .map_or_else(
                 || endpoint.name.clone(),
-                |draft| draft.name.read(cx).value().to_owned(),
+                |draft| draft.name.read(cx).value().to_string(),
             )
     }
 
@@ -102,26 +106,27 @@ impl AiPreferences {
 }
 
 impl PreferencesWindow {
-    fn ai_field(&self, value: &str, masked: bool, cx: &mut Context<Self>) -> Entity<TextField> {
-        let owner = cx.entity().downgrade();
-        cx.new(|cx| {
-            let mut field = TextField::new("", cx);
-            field.set_value(value, cx);
-            if masked {
-                field = field.masked();
-            }
-            field.on_change(move |cx| {
-                let owner = owner.clone();
-                cx.defer(move |cx| {
-                    if let Err(error) = owner.update(cx, |preferences, cx| {
-                        preferences.stop_ai_preferences_probe();
-                        cx.notify();
-                    }) {
-                        eprintln!("更新 AI 偏好输入失败：{error}");
-                    }
-                });
-            })
-        })
+    fn ai_field(
+        value: &str,
+        masked: bool,
+        subscriptions: &mut Vec<Subscription>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        let field = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(value)
+                .masked(masked)
+        });
+        subscriptions.push(
+            cx.subscribe(&field, |preferences, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    preferences.stop_ai_preferences_probe();
+                    cx.notify();
+                }
+            }),
+        );
+        field
     }
 
     pub(crate) fn set_nav_ai(
@@ -138,8 +143,15 @@ impl PreferencesWindow {
             match AiSettings::load() {
                 Ok(settings) => {
                     let endpoint = settings.active_endpoint().cloned();
-                    let excluded = self.ai_field(&settings.excluded_paths.join(", "), false, cx);
-                    let instruction = instructions::InstructionDraft::new(&settings, cx);
+                    let mut subscriptions = Vec::new();
+                    let excluded = Self::ai_field(
+                        &settings.excluded_paths.join(", "),
+                        false,
+                        &mut subscriptions,
+                        window,
+                        cx,
+                    );
+                    let instruction = instructions::InstructionDraft::new(&settings, window, cx);
                     self.ai_preferences = Some(AiPreferences {
                         instruction,
                         show_instructions: false,
@@ -153,13 +165,14 @@ impl PreferencesWindow {
                         connection_menu_open: false,
                         pending_focus: None,
                         excluded,
+                        _subscriptions: subscriptions,
                         testing: false,
                         generation: 0,
                         control: RunControl::default(),
                         status: None,
                     });
                     if let Some(endpoint) = endpoint {
-                        self.load_ai_preferences_draft(endpoint, cx);
+                        self.load_ai_preferences_draft(endpoint, window, cx);
                     }
                 }
                 Err(error) => self.save_error = Some(error.to_string()),
@@ -168,15 +181,28 @@ impl PreferencesWindow {
         cx.notify();
     }
 
-    fn load_ai_preferences_draft(&mut self, endpoint: Endpoint, cx: &mut Context<Self>) {
+    fn load_ai_preferences_draft(
+        &mut self,
+        endpoint: Endpoint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.stop_ai_preferences_probe();
+        let mut subscriptions = Vec::new();
         let draft = ConnectionDraft {
-            name: self.ai_field(&endpoint.name, false, cx),
-            address: self.ai_field(&endpoint.base_url, false, cx),
-            model: self.ai_field(&endpoint.model, false, cx),
-            key: self.ai_field(&endpoint.api_key, true, cx),
-            context: self.ai_field(&endpoint.context_tokens.to_string(), false, cx),
+            name: Self::ai_field(&endpoint.name, false, &mut subscriptions, window, cx),
+            address: Self::ai_field(&endpoint.base_url, false, &mut subscriptions, window, cx),
+            model: Self::ai_field(&endpoint.model, false, &mut subscriptions, window, cx),
+            key: Self::ai_field(&endpoint.api_key, true, &mut subscriptions, window, cx),
+            context: Self::ai_field(
+                &endpoint.context_tokens.to_string(),
+                false,
+                &mut subscriptions,
+                window,
+                cx,
+            ),
             endpoint,
+            _subscriptions: subscriptions,
         };
         if let Some(state) = self.ai_preferences.as_mut() {
             state.draft = Some(draft);
@@ -185,7 +211,12 @@ impl PreferencesWindow {
         cx.notify();
     }
 
-    fn select_ai_preferences_endpoint(&mut self, endpoint: Endpoint, cx: &mut Context<Self>) {
+    fn select_ai_preferences_endpoint(
+        &mut self,
+        endpoint: Endpoint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.stop_ai_preferences_probe();
         if let Some(state) = self.ai_preferences.as_mut() {
             if let Some(previous) = state.draft.take() {
@@ -205,7 +236,7 @@ impl PreferencesWindow {
             }
             cx.notify();
         } else {
-            self.load_ai_preferences_draft(endpoint, cx);
+            self.load_ai_preferences_draft(endpoint, window, cx);
         }
     }
 
@@ -223,6 +254,7 @@ impl PreferencesWindow {
     fn add_ai_preferences_provider(
         &mut self,
         preset: &'static ProviderPreset,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut endpoint = preset.endpoint();
@@ -251,7 +283,7 @@ impl PreferencesWindow {
             state.settings.endpoints.push(endpoint.clone());
             state.advanced = false;
         }
-        self.select_ai_preferences_endpoint(endpoint, cx);
+        self.select_ai_preferences_endpoint(endpoint, window, cx);
         if let Some(state) = self.ai_preferences.as_mut()
             && let Some(draft) = state.draft.as_ref()
         {
@@ -285,7 +317,7 @@ impl PreferencesWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.refresh_ai_instruction_locale(cx);
+        self.refresh_ai_instruction_locale(window, cx);
         if self.nav == PreferencesNav::Ai
             && let Some(field) = self
                 .ai_preferences
@@ -472,8 +504,8 @@ impl PreferencesWindow {
                         label,
                         state.settings.default_endpoint == endpoint.id,
                         theme,
-                        move |preferences, _, _, cx| {
-                            preferences.select_ai_preferences_endpoint(endpoint.clone(), cx)
+                        move |preferences, _, window, cx| {
+                            preferences.select_ai_preferences_endpoint(endpoint.clone(), window, cx)
                         },
                         cx,
                     ));
@@ -499,7 +531,7 @@ impl PreferencesWindow {
                             true,
                             theme,
                             cx,
-                            |preferences, cx| preferences.begin_ai_preferences_connection(cx),
+                            |preferences, _, cx| preferences.begin_ai_preferences_connection(cx),
                         )),
                 ),
             );
@@ -518,7 +550,9 @@ impl PreferencesWindow {
                     true,
                     theme,
                     cx,
-                    move |preferences, cx| preferences.add_ai_preferences_provider(preset, cx),
+                    move |preferences, window, cx| {
+                        preferences.add_ai_preferences_provider(preset, window, cx)
+                    },
                 ));
             }
             content = content.child(choices);
@@ -570,13 +604,17 @@ impl PreferencesWindow {
                             div()
                                 .text_size(px(12.0))
                                 .text_color(theme.colors.dialog_muted)
-                                .child(label),
+                                .child(label.clone()),
                         )
                         .child(
-                            div()
-                                .debug_selector(move || id.into())
-                                .w_full()
-                                .child(field),
+                            div().debug_selector(move || id.into()).w_full().child(
+                                Input::new(&field)
+                                    .id(id)
+                                    .aria_label(label)
+                                    .when(id == "preferences-ai-key", |input| {
+                                        input.content_type(InputContentType::Password)
+                                    }),
+                            ),
                         ),
                 );
             }
@@ -603,7 +641,7 @@ impl PreferencesWindow {
                     true,
                     theme,
                     cx,
-                    move |preferences, cx| {
+                    move |preferences, _, cx| {
                         preferences.stop_ai_preferences_probe();
                         if let Some(draft) = preferences
                             .ai_preferences
@@ -631,7 +669,7 @@ impl PreferencesWindow {
                         !state.testing,
                         theme,
                         cx,
-                        |preferences, cx| preferences.test_ai_preferences_connection(cx),
+                        |preferences, _, cx| preferences.test_ai_preferences_connection(cx),
                     ))
                     .when(state.advanced, |actions| {
                         actions.child(self.ai_preference_button(
@@ -640,7 +678,7 @@ impl PreferencesWindow {
                             true,
                             theme,
                             cx,
-                            move |preferences, cx| {
+                            move |preferences, window, cx| {
                                 preferences.stop_ai_preferences_probe();
                                 let next = preferences.ai_preferences.as_mut().and_then(|state| {
                                     state.settings.remove_endpoint(&removed_id);
@@ -649,7 +687,7 @@ impl PreferencesWindow {
                                     state.settings.active_endpoint().cloned()
                                 });
                                 if let Some(next) = next {
-                                    preferences.select_ai_preferences_endpoint(next, cx);
+                                    preferences.select_ai_preferences_endpoint(next, window, cx);
                                 }
                                 cx.notify();
                             },
@@ -663,7 +701,7 @@ impl PreferencesWindow {
             true,
             theme,
             cx,
-            |preferences, cx| {
+            |preferences, _, cx| {
                 if let Some(state) = preferences.ai_preferences.as_mut() {
                     state.advanced = !state.advanced;
                 }
@@ -678,7 +716,11 @@ impl PreferencesWindow {
                         .text_color(theme.colors.dialog_muted)
                         .child(strings.ai_panel_exclusions.clone()),
                 )
-                .child(state.excluded.clone());
+                .child(
+                    Input::new(&state.excluded)
+                        .id("preferences-ai-excluded")
+                        .aria_label(strings.ai_panel_exclusions.clone()),
+                );
         }
         if let Some(status) = &state.status {
             content = content.child(div().text_size(px(12.0)).child(status.clone()));
@@ -706,7 +748,7 @@ impl PreferencesWindow {
         enabled: bool,
         theme: &Theme,
         cx: &mut Context<Self>,
-        handler: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        handler: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
         let id = id.into();
         let selector = id.to_string();
@@ -721,9 +763,9 @@ impl PreferencesWindow {
             .text_color(theme.colors.dialog_secondary_button_text)
             .when(!enabled, |element| element.opacity(0.5).cursor_default())
             .child(label.into())
-            .on_click(cx.listener(move |preferences, _, _, cx| {
+            .on_click(cx.listener(move |preferences, _, window, cx| {
                 if enabled {
-                    handler(preferences, cx);
+                    handler(preferences, window, cx);
                 }
             }))
     }
