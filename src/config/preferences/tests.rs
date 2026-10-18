@@ -535,6 +535,26 @@
         });
     }
 
+    #[gpui::test]
+    async fn kit_preferences_cancel_is_reachable_by_keyboard(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_state(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into()
+        ));
+        let window = gpui::AnyWindowHandle::from(handle);
+        let mut visual = gpui::VisualTestContext::from_window(window, cx);
+        for _ in 0..2 {
+            visual.update(|window, cx| window.draw(cx).clear(cx));
+            visual.run_until_parked();
+        }
+        visual.update(|window, cx| window.press("tab", cx));
+        visual.update(|window, cx| window.press("enter", cx));
+        visual.run_until_parked();
+        assert!(!cx.read(|cx| cx.windows().contains(&window)),
+            "没有待保存修改时，Tab 应能到达取消按钮，Enter 应关闭设置窗口");
+    }
+
     fn default_theme_options() -> Vec<ThemeCatalogEntry> {
         vec![
             ThemeCatalogEntry {

@@ -1,4 +1,6 @@
 use super::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::Disableable as _;
 impl Render for PreferencesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.system_font_families.is_empty() {
@@ -128,60 +130,20 @@ impl Render for PreferencesWindow {
                 .flex()
                 .items_center()
                 .justify_end()
-                .gap(px(d.dialog_button_gap))
+                .gap_2()
                 .child(
-                    div()
-                        .id("preferences-cancel")
-                        .h(px(d.dialog_button_height))
-                        .px(px(d.dialog_button_padding_x))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                        .border(px(d.dialog_border_width))
-                        .border_color(c.dialog_border)
-                        .bg(c.dialog_secondary_button_bg)
-                        .hover(|this| this.bg(c.dialog_secondary_button_hover))
-                        .cursor_pointer()
-                        .text_size(px(t.dialog_button_size))
-                        .font_weight(t.dialog_button_weight.to_font_weight())
-                        .text_color(c.dialog_secondary_button_text)
-                        .child(strings.preferences_cancel.clone())
+                    Button::new("preferences-cancel")
+                        .debug_selector(|| "preferences-cancel".into())
+                        .outline()
+                        .label(strings.preferences_cancel.clone())
                         .on_click(cx.listener(Self::cancel)),
                 )
                 .child(
-                    div()
-                        .id("preferences-save")
-                        .debug_selector(|| "preferences-save".to_string())
-                        .h(px(d.dialog_button_height))
-                        .px(px(d.dialog_button_padding_x))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px((d.dialog_radius - 4.0).max(0.0)))
-                        .border(px(if can_save { 0.0 } else { d.dialog_border_width }))
-                        .border_color(c.dialog_border)
-                        .bg(if can_save {
-                            c.dialog_primary_button_bg
-                        } else {
-                            c.dialog_secondary_button_bg
-                        })
-                        .hover(move |this| {
-                            if can_save {
-                                this.bg(c.dialog_primary_button_hover)
-                            } else {
-                                this.bg(c.dialog_secondary_button_bg)
-                            }
-                        })
-                        .when(can_save, |this| this.cursor_pointer())
-                        .text_size(px(t.dialog_button_size))
-                        .font_weight(t.dialog_button_weight.to_font_weight())
-                        .text_color(if can_save {
-                            c.dialog_primary_button_text
-                        } else {
-                            c.dialog_secondary_button_text
-                        })
-                        .child(strings.preferences_save.clone())
+                    Button::new("preferences-save")
+                        .debug_selector(|| "preferences-save".into())
+                        .primary()
+                        .label(strings.preferences_save.clone())
+                        .disabled(!can_save)
                         .on_click(cx.listener(Self::save)),
                 );
 
