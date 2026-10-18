@@ -21,7 +21,6 @@ pub(crate) mod latex;
 pub(crate) mod menu;
 pub(crate) mod markdown;
 pub(crate) mod mermaid;
-pub(crate) mod switch;
 
 pub use crate::editor::Editor;
 #[allow(unused_imports)]

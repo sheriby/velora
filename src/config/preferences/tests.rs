@@ -536,6 +536,59 @@
     }
 
     #[gpui::test]
+    fn preferences_navigation_supports_tab_and_keyboard_activation(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_state(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+        ));
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.press("tab", cx);
+            window.press("tab", cx);
+            window.press("space", cx);
+        });
+        visual.run_until_parked();
+        let selected = handle.read_with(cx, |preferences, _| preferences.nav).ok();
+        assert_eq!(selected, Some(PreferencesNav::Theme),
+            "Tab 应依次到达文件、主题导航，空格应切换页面");
+    }
+
+    #[gpui::test]
+    fn preferences_boolean_fields_support_keyboard_without_persisting_the_draft(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_size(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+            gpui::size(px(1000.0), px(1500.0)),
+        ));
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            for _ in 0..8 {
+                window.press("tab", cx);
+            }
+            window.press("space", cx);
+        });
+        visual.run_until_parked();
+        let draft = handle.read_with(cx, |preferences, _| (
+            preferences.check_updates_on_startup,
+            preferences.has_unsaved_changes(),
+        )).ok();
+        assert_eq!(draft, Some((false, true)),
+            "Tab 应到达布尔选项，空格只改变草稿");
+        visual.update(|window, cx| window.press("space", cx));
+        visual.run_until_parked();
+        handle.read_with(cx, |preferences, _| {
+            assert!(preferences.check_updates_on_startup);
+            assert!(!preferences.has_unsaved_changes());
+        }).unwrap();
+        assert!(crate::config::read_app_preferences().unwrap().updates.check_on_startup,
+            "未按保存时不得写入全局偏好");
+    }
+
+    #[gpui::test]
     async fn kit_preferences_cancel_is_reachable_by_keyboard(cx: &mut TestAppContext) {
         use gpui_kit::test::TestWindowExt as _;
         init_preferences_test_app(cx);
@@ -548,11 +601,11 @@
             visual.update(|window, cx| window.draw(cx).clear(cx));
             visual.run_until_parked();
         }
-        visual.update(|window, cx| window.press("tab", cx));
+        visual.update(|window, cx| window.press("shift-tab", cx));
         visual.update(|window, cx| window.press("enter", cx));
         visual.run_until_parked();
         assert!(!cx.read(|cx| cx.windows().contains(&window)),
-            "没有待保存修改时，Tab 应能到达取消按钮，Enter 应关闭设置窗口");
+            "没有待保存修改时，Shift+Tab 应能到达取消按钮，Enter 应关闭设置窗口");
     }
 
     fn default_theme_options() -> Vec<ThemeCatalogEntry> {

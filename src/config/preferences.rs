@@ -13,11 +13,13 @@ pub(crate) use super::file_history::HistoryPolicy;
 pub(super) use crate::components::{
     ShortcutCategory, ShortcutCommand, ShortcutDefinition, install_keybindings,
     normalize_shortcut_config, normalize_shortcut_keys, resolved_shortcut_keys,
-    shortcut_conflict_for, shortcut_definitions, switch::Switch,
+    shortcut_conflict_for, shortcut_definitions,
 };
 pub(super) use crate::i18n::{I18nManager, language_id_for_locale_preferences};
 pub(super) use crate::theme::{Theme, ThemeCatalogEntry, ThemeManager};
 pub(super) use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar, velora_window_options};
+
+pub(super) use gpui_kit::component::checkbox::Checkbox;
 
 const DEFAULT_THEME_ID: &str = "forest";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";

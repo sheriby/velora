@@ -1,60 +1,23 @@
 use super::*;
+use gpui_kit::component::{button::{Button, ButtonVariants}, Selectable};
 
 impl PreferencesWindow {
-    /// 侧边栏的一项：左对齐、选中时用强调色 + 左侧强调条。
     pub(crate) fn nav_button(
         &self,
         id: &'static str,
         label: String,
         selected: bool,
-        theme: &Theme,
+        _theme: &Theme,
         on_click: fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>),
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let c = &theme.colors;
-        let d = &theme.dimensions;
-        let t = &theme.typography;
-        let accent = c.dialog_primary_button_bg;
-        div()
-            .id(id)
+        Button::new(id)
             .debug_selector(move || id.to_string())
+            .ghost()
+            .selected(selected)
+            .label(label)
             .w_full()
-            .min_h(px((t.dialog_body_size * 1.5 + 8.0).max(34.0)))
-            .px(px(10.0))
-            .flex()
-            .items_center()
-            .gap(px(9.0))
-            .rounded(px(d.menu_item_radius))
-            .cursor_pointer()
-            .text_size(px(t.dialog_body_size))
-            .font_weight(t.dialog_button_weight.to_font_weight())
-            .text_color(if selected {
-                c.dialog_title
-            } else {
-                c.dialog_muted
-            })
-            .bg(if selected {
-                c.selection
-            } else {
-                c.dialog_surface
-            })
-            .hover(move |this| {
-                this.bg(if selected {
-                    c.selection
-                } else {
-                    c.dialog_secondary_button_hover
-                })
-            })
-            // 左侧强调条：未选中时用背景色占位，保证两种状态文字不左右跳。
-            .child(
-                div()
-                    .w(px(3.0))
-                    .h(px(16.0))
-                    .flex_shrink_0()
-                    .rounded(px(2.0))
-                    .bg(if selected { accent } else { c.dialog_surface }),
-            )
-            .child(label)
+            .justify_start()
             .on_click(cx.listener(on_click))
     }
 

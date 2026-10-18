@@ -640,7 +640,7 @@ impl PreferencesWindow {
             open_position_dropdown = open_position_dropdown.child(self.dropdown_menu("preferences-window-open-position-dropdown", list, theme));
         }
 
-        let remember_toggle = crate::components::switch::Switch::new("preferences-remember-window")
+        let remember_toggle = Checkbox::new("preferences-remember-window")
             .checked(self.remember_window_bounds)
             .on_click(cx.listener(|this, _event, _window, cx| {
                 this.remember_window_bounds = !this.remember_window_bounds;
@@ -679,9 +679,9 @@ impl PreferencesWindow {
         // 状态栏开关：五个都在同一张卡片里（侧栏按钮、模式切换之前只存着没入口）。
         let switch = |id: &'static str,
                       checked: bool,
-                      on_click: fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>),
+                      on_click: fn(&mut Self, &bool, &mut Window, &mut Context<Self>),
                       cx: &mut Context<Self>| {
-            Switch::new(id).checked(checked).on_click(cx.listener(on_click))
+            Checkbox::new(id).checked(checked).on_click(cx.listener(on_click))
         };
 
         self.settings_card(

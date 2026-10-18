@@ -339,7 +339,7 @@ impl PreferencesWindow {
         }
 
         let smart_punctuation_toggle =
-            crate::components::switch::Switch::new("preferences-smart-punctuation")
+            Checkbox::new("preferences-smart-punctuation")
                 .checked(self.smart_punctuation)
                 .on_click(cx.listener(|this, _event, _window, cx| {
                     this.smart_punctuation = !this.smart_punctuation;
@@ -347,24 +347,24 @@ impl PreferencesWindow {
                 }));
 
         let hide_markers_toggle =
-            crate::components::switch::Switch::new("preferences-hide-markdown-markers")
+            Checkbox::new("preferences-hide-markdown-markers")
                 .checked(self.hide_markdown_markers)
                 .on_click(cx.listener(|this, _event, _window, cx| {
                     this.hide_markdown_markers = !this.hide_markdown_markers;
                     cx.notify();
                 }));
 
-        let autosave_toggle = crate::components::switch::Switch::new("preferences-autosave")
+        let autosave_toggle = Checkbox::new("preferences-autosave")
             .checked(self.autosave)
             .on_click(cx.listener(|this, _event, _window, cx| {
                 this.autosave = !this.autosave;
                 cx.notify();
             }));
 
-        let update_startup = crate::components::switch::Switch::new("preferences-update-startup")
+        let update_startup = Checkbox::new("preferences-update-startup")
             .checked(self.check_updates_on_startup)
             .on_click(cx.listener(|this, _, _, cx| { this.check_updates_on_startup = !this.check_updates_on_startup; cx.notify(); }));
-        let update_beta = crate::components::switch::Switch::new("preferences-update-beta")
+        let update_beta = Checkbox::new("preferences-update-beta")
             .checked(self.include_prereleases)
             .on_click(cx.listener(|this, _, _, cx| { this.include_prereleases = !this.include_prereleases; cx.notify(); }));
         self.settings_card(
