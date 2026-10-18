@@ -7,13 +7,13 @@
 use gpui::*;
 
 use super::context_menu::{
-    document_menu_label, document_menu_shortcut, DocumentMenuCommand, DocumentMenuGeometry,
-    DocumentMenuRow, DocumentSubmenu,
+    DocumentMenuCommand, DocumentMenuGeometry, DocumentMenuRow, DocumentSubmenu,
+    document_menu_label, document_menu_shortcut,
 };
 use super::paragraph_ops::BlockKindTarget;
 use super::{Editor, ViewMode};
 use crate::components::HoverPreviewTooltip;
-use crate::components::{menu::menu_item, InlineFormat};
+use crate::components::{InlineFormat, menu::menu_item};
 use crate::i18n::I18nManager;
 use crate::theme::Theme;
 
@@ -62,7 +62,13 @@ pub(crate) enum SelectionToolbarCommand {
 #[derive(Default)]
 pub(crate) struct SelectionToolbarState {
     panel_bounds: Option<Bounds<Pixels>>,
-    heading_menu_open: bool,
+    open_menu: Option<SelectionToolbarMenu>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionToolbarMenu {
+    Paragraph,
+    Ai,
 }
 
 impl SelectionToolbarState {
@@ -127,7 +133,10 @@ impl Editor {
     /// 「别的浮层」这一条不看层级只看状态：工具栏画在窗口根上，比画在正文区里的
     /// 面板与快速打开更靠后，收不掉就会浮在它们之上。
     fn selection_toolbar_anchor(&self, cx: &App) -> Option<Bounds<Pixels>> {
-        if self.ai_surface_visible.get() || self.view_mode != ViewMode::Rendered || !self.writes_through_the_buffer() {
+        if self.ai_surface_visible.get()
+            || self.view_mode != ViewMode::Rendered
+            || !self.writes_through_the_buffer()
+        {
             return None;
         }
         if self.cross_block_drag.is_some()
@@ -262,56 +271,94 @@ impl Editor {
             return None;
         }
         let mut size = if self.is_read_only() {
-            size(px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width), px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width))
-        } else { Self::toolbar_size(theme) };
+            size(
+                px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width),
+                px(BUTTON_SIZE + 2.0 * PANEL_PADDING + 2.0 * theme.dimensions.dialog_border_width),
+            )
+        } else {
+            Self::toolbar_size(theme)
+        };
         if !self.is_read_only() && !ai_enabled {
             size.width -= px(BUTTON_SIZE + BUTTON_GAP);
         }
         let origin = Self::toolbar_origin(selection, size, viewport);
 
-        let heading_menu_open = self
+        let open_menu = self
             .selection_toolbar
             .as_ref()
-            .is_some_and(|state| state.heading_menu_open);
-        let heading_menu = heading_menu_open.then(|| {
-            let rows = self.document_submenu_rows(DocumentSubmenu::Paragraph, cx);
-            let geometry =
+            .and_then(|state| state.open_menu);
+        let open_menu = open_menu.filter(|menu| *menu != SelectionToolbarMenu::Ai || ai_enabled);
+        let menu = open_menu.map(|kind| {
+            let (rows, selector) = match kind {
+                SelectionToolbarMenu::Paragraph => (
+                    self.document_submenu_rows(DocumentSubmenu::Paragraph, cx),
+                    "editor-toolbar-heading-menu",
+                ),
+                SelectionToolbarMenu::Ai => (
+                    crate::ai::AiCommand::ALL
+                        .into_iter()
+                        .map(|action| {
+                            let command = DocumentMenuCommand::Ai(action);
+                            DocumentMenuRow::Item {
+                                command,
+                                name: command.row_name(),
+                                enabled: !self.code_document,
+                            }
+                        })
+                        .collect(),
+                    "editor-toolbar-ai-menu",
+                ),
+            };
+            let mut geometry =
                 DocumentMenuGeometry::measure_in_window(&rows, &strings, theme, window, cx);
-            let (offset, menu_origin) =
-                Self::heading_menu_offsets(origin, size, geometry.size, viewport);
-            (rows, geometry, offset, menu_origin)
+            let mut anchor = origin;
+            if kind == SelectionToolbarMenu::Ai {
+                geometry.size.width = geometry.size.width.max(px(144.0));
+                anchor.x = (origin.x + size.width - geometry.size.width).max(px(VIEWPORT_MARGIN));
+            }
+            let (_, menu_origin) =
+                Self::heading_menu_offsets(anchor, size, geometry.size, viewport);
+            (rows, geometry, menu_origin, selector)
         });
 
         let state = self.selection_toolbar.get_or_insert_default();
+        state.open_menu = open_menu;
         let mut panel = Bounds::new(origin, size);
-        if let Some((_, geometry, _, menu_origin)) = heading_menu.as_ref() {
+        if let Some((_, geometry, menu_origin, _)) = menu.as_ref() {
             panel = panel.union(&Bounds::new(*menu_origin, geometry.size));
         }
         state.panel_bounds = Some(panel);
 
         let mut toolbar = Self::toolbar_panel(theme, origin, size);
         if self.is_read_only() {
-            return Some(toolbar.child(self.ai_toolbar_button(theme, cx)).into_any_element());
-        }
-        toolbar = toolbar.child(self.heading_button(&strings, theme, heading_menu_open, cx));
-        toolbar = toolbar.child(Self::toolbar_separator(theme));
-        for (format, id) in FORMAT_BUTTONS {
-            toolbar = toolbar.child(self.format_button(format, id, &strings, theme, cx));
-        }
-        toolbar = toolbar.child(Self::toolbar_separator(theme));
-        toolbar = toolbar.child(self.link_button(&strings, theme, cx));
-        if ai_enabled {
             toolbar = toolbar.child(self.ai_toolbar_button(theme, cx));
+        } else {
+            toolbar = toolbar.child(self.heading_button(
+                &strings,
+                theme,
+                open_menu == Some(SelectionToolbarMenu::Paragraph),
+                cx,
+            ));
+            toolbar = toolbar.child(Self::toolbar_separator(theme));
+            for (format, id) in FORMAT_BUTTONS {
+                toolbar = toolbar.child(self.format_button(format, id, &strings, theme, cx));
+            }
+            toolbar = toolbar.child(Self::toolbar_separator(theme));
+            toolbar = toolbar.child(self.link_button(&strings, theme, cx));
+            if ai_enabled {
+                toolbar = toolbar.child(self.ai_toolbar_button(theme, cx));
+            }
+            let clear_enabled = self.clear_format_is_available(cx);
+            toolbar = toolbar.child(self.clear_format_button(&strings, theme, clear_enabled, cx));
         }
-        let clear_enabled = self.clear_format_is_available(cx);
-        toolbar = toolbar.child(self.clear_format_button(&strings, theme, clear_enabled, cx));
-        if let Some((rows, geometry, offset, _)) = heading_menu.as_ref() {
-            toolbar = toolbar.child(self.heading_menu_panel(
+        if let Some((rows, geometry, menu_origin, selector)) = menu.as_ref() {
+            toolbar = toolbar.child(self.toolbar_menu_panel(
                 theme,
                 &strings,
                 rows,
                 geometry.size.width,
-                *offset,
+                *menu_origin - origin,
+                selector,
                 cx,
             ));
         }
@@ -319,14 +366,40 @@ impl Editor {
     }
 
     fn ai_toolbar_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
-        let label = cx.global::<crate::i18n::I18nManager>().strings().ai_assistant.clone();
-        div().id("toolbar-ai").debug_selector(|| "toolbar-ai".into())
-            .size(px(BUTTON_SIZE)).flex().items_center().justify_center()
-            .text_size(px(11.0)).text_color(theme.colors.dialog_title)
-            .rounded(px(4.0)).cursor_pointer().child("AI")
-            .tooltip(move |_, cx| cx.new(|_| HoverPreviewTooltip { label: label.clone().into() }).into())
+        let label = cx
+            .global::<crate::i18n::I18nManager>()
+            .strings()
+            .ai_assistant
+            .clone();
+        div()
+            .id("toolbar-ai")
+            .debug_selector(|| "toolbar-ai".into())
+            .size(px(BUTTON_SIZE))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(11.0))
+            .text_color(theme.colors.dialog_title)
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .child("AI")
+            .tooltip(move |_, cx| {
+                cx.new(|_| HoverPreviewTooltip {
+                    label: label.clone().into(),
+                })
+                .into()
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|editor, _, window, cx| editor.open_ai_assistant(crate::ai::AiCommand::Ask, window, cx)))
+            .on_click(cx.listener(|editor, _, _, cx| {
+                if let Some(state) = editor.selection_toolbar.as_mut() {
+                    state.open_menu = if state.open_menu == Some(SelectionToolbarMenu::Ai) {
+                        None
+                    } else {
+                        Some(SelectionToolbarMenu::Ai)
+                    };
+                    cx.notify();
+                }
+            }))
     }
 
     fn toolbar_panel(theme: &Theme, origin: Point<Pixels>, size: Size<Pixels>) -> Stateful<Div> {
@@ -406,7 +479,11 @@ impl Editor {
                 let Some(state) = editor.selection_toolbar.as_mut() else {
                     return;
                 };
-                state.heading_menu_open = !state.heading_menu_open;
+                state.open_menu = if state.open_menu == Some(SelectionToolbarMenu::Paragraph) {
+                    None
+                } else {
+                    Some(SelectionToolbarMenu::Paragraph)
+                };
                 cx.notify();
             }))
             .into_any_element()
@@ -665,24 +742,23 @@ impl Editor {
         }
     }
 
-    /// 标题档位列表：与右键菜单段落那一档同一份行数据、同一条派发路径。
-    /// `top` 是相对工具栏面板的偏移，所以它随工具栏一起摆放。
-    fn heading_menu_panel(
+    fn toolbar_menu_panel(
         &self,
         theme: &Theme,
         strings: &crate::i18n::I18nStrings,
         rows: &[DocumentMenuRow],
         width: Pixels,
-        top: Pixels,
+        offset: Point<Pixels>,
+        selector: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let d = &theme.dimensions;
         let c = &theme.colors;
         div()
-            .id("editor-toolbar-heading-menu")
+            .id(selector)
             .absolute()
-            .left(px(0.0))
-            .top(top)
+            .left(offset.x)
+            .top(offset.y)
             .w(width)
             .p(px(d.menu_panel_padding))
             .flex()
@@ -694,7 +770,7 @@ impl Editor {
             .border_color(c.dialog_border)
             .rounded(px(d.menu_panel_radius))
             .shadow_lg()
-            .debug_selector(|| "editor-toolbar-heading-menu".to_string())
+            .debug_selector(move || selector.to_string())
             .children(rows.iter().map(|row| match row {
                 DocumentMenuRow::Separator => {
                     crate::components::menu::menu_separator(theme).into_any_element()
@@ -704,14 +780,11 @@ impl Editor {
                     name,
                     enabled,
                 } => {
-                    let Some(target) = command.as_block_target() else {
-                        return div().into_any_element();
-                    };
-                    let action = SelectionToolbarCommand::Paragraph(target);
+                    let command = *command;
                     let row = menu_item(
                         theme,
                         *name,
-                        document_menu_label(*command, strings),
+                        document_menu_label(command, strings),
                         None,
                         *enabled,
                         false,
@@ -721,8 +794,15 @@ impl Editor {
                         None,
                     );
                     if *enabled {
-                        row.on_click(cx.listener(move |editor, _event, _window, cx| {
-                            editor.run_selection_toolbar_command(action, cx);
+                        row.on_click(cx.listener(move |editor, _event, window, cx| {
+                            if let DocumentMenuCommand::Ai(action) = command {
+                                editor.open_ai_assistant(action, window, cx);
+                            } else if let Some(target) = command.as_block_target() {
+                                editor.run_selection_toolbar_command(
+                                    SelectionToolbarCommand::Paragraph(target),
+                                    cx,
+                                );
+                            }
                         }))
                         .into_any_element()
                     } else {
@@ -754,15 +834,19 @@ impl Editor {
             }
             SelectionToolbarCommand::Paragraph(target) => {
                 self.apply_block_kind_to_selection(target, cx);
-                self.close_selection_toolbar_heading_menu(cx);
+                self.close_selection_toolbar_menu(cx);
             }
         }
     }
 
-    fn close_selection_toolbar_heading_menu(&mut self, cx: &mut Context<Self>) {
-        if let Some(state) = self.selection_toolbar.as_mut() {
-            state.heading_menu_open = false;
+    pub(super) fn close_selection_toolbar_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        let closed = self
+            .selection_toolbar
+            .as_mut()
+            .is_some_and(|state| state.open_menu.take().is_some());
+        if closed {
+            cx.notify();
         }
-        cx.notify();
+        closed
     }
 }

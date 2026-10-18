@@ -50,7 +50,8 @@ pub(crate) fn document_submenu_label(
 /// 二级面板里的行不给图标：那一档排的是「一级标题」「有序列表」这种条目名，图标只会把每行拉宽。
 pub(crate) fn document_menu_command_icon(command: DocumentMenuCommand) -> Option<&'static str> {
     match command {
-        DocumentMenuCommand::Ai(_) => Some("icon/editor/ai.svg"),
+        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => Some("icon/editor/ai.svg"),
+        DocumentMenuCommand::Ai(_) => None,
         DocumentMenuCommand::Undo => Some("icon/editor/undo.svg"),
         DocumentMenuCommand::Redo => Some("icon/editor/redo.svg"),
         DocumentMenuCommand::Cut => Some("icon/editor/cut.svg"),
@@ -314,13 +315,11 @@ impl Editor {
         if !crate::ai::settings::AiFeature::enabled(cx) {
             return rows;
         }
-        let commands=crate::ai::AiCommand::ALL.into_iter().filter(|command|!command.requires_selection()||self.has_text_selection(cx))
-            .chain(std::iter::once(crate::ai::AiCommand::Ask));
+        let command = DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask);
         rows.push(DocumentMenuRow::Separator);
-        rows.extend(commands.into_iter().map(|action| {
-            let command = DocumentMenuCommand::Ai(action);
-            DocumentMenuRow::Item { command, name: command.row_name(), enabled: !self.code_document }
-        }));
+        rows.push(DocumentMenuRow::Item {
+            command, name: command.row_name(), enabled: !self.code_document,
+        });
         rows
     }
 
@@ -735,8 +734,8 @@ pub(crate) fn document_menu_label(
     strings: &crate::i18n::I18nStrings,
 ) -> String {
     match command {
-        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => strings.ai_panel_more.clone(),
-        DocumentMenuCommand::Ai(command) => format!("AI {}", command.label(strings)),
+        DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask) => "AI".into(),
+        DocumentMenuCommand::Ai(command) => command.label(strings),
         DocumentMenuCommand::Undo => strings.context_menu_undo.clone(),
         DocumentMenuCommand::Redo => strings.context_menu_redo.clone(),
         DocumentMenuCommand::Cut => strings.context_menu_cut.clone(),

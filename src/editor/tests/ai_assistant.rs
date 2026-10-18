@@ -7,7 +7,7 @@ fn init_ai_test_app(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn ai_selection_toolbar_opens_the_assistant_without_changing_the_document(cx: &mut TestAppContext) {
+fn ai_selection_toolbar_lists_quick_actions_before_starting_a_task(cx: &mut TestAppContext) {
     init_ai_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one\n\nbeta two".into(), None));
@@ -23,52 +23,45 @@ fn ai_selection_toolbar_opens_the_assistant_without_changing_the_document(cx: &m
     let center = button.unwrap().center();
     cx.simulate_click(center, gpui::Modifiers::none());
     redraw(cx);
+    assert!(cx.debug_bounds("ai-assistant-panel").is_none(), "点击 AI 应先展开列表，不直接启动任务");
+    assert!(cx.debug_bounds("editor-toolbar-ai-menu").is_some());
+    for selector in ["menu-item-ai-summarize", "menu-item-ai-explain", "menu-item-ai-translate", "menu-item-ai-polish", "menu-item-ai-expand"] {
+        assert!(cx.debug_bounds(selector).is_some(), "缺少选区快捷指令：{selector}");
+    }
+    let translate = cx.debug_bounds("menu-item-ai-translate").unwrap();
+    cx.simulate_click(translate.center(), gpui::Modifiers::none());
+    redraw(cx);
+    redraw(cx);
     assert!(cx.debug_bounds("ai-assistant-panel").is_some());
+    assert!(cx.debug_bounds("editor-toolbar-ai-menu").is_none());
     editor.read_with(cx, |editor, _| {
-        assert_eq!(editor.buffer.text(), "alpha one\n\nbeta two")
+        assert_eq!(editor.buffer.text(), "alpha one\n\nbeta two");
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.kind, crate::ai::session::SessionKind::QuickCommand);
+        assert!(session.saved.workspace.read_only);
+        assert_eq!(session.saved.target.as_ref().unwrap().selection, "alpha");
     });
 }
 
 #[gpui::test]
-fn ai_context_menu_exposes_common_commands_and_an_empty_selection_has_clear_scope(
-    cx: &mut TestAppContext,
-) {
+fn ai_context_menu_has_one_ai_entry_with_or_without_a_selection(cx: &mut TestAppContext) {
     init_ai_test_app(cx);
-    let (editor, cx) =
-        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), None));
-    let block = editor.read_with(cx, |editor, _| {
-        editor.document.first_root().unwrap().clone()
-    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "alpha one".into(), None));
+    let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
     editor.update(cx, |editor, _| editor.focus_block(block.entity_id()));
-    block.update(cx, |block, _| block.selected_range = 0..5);
-    editor.read_with(cx, |editor, cx| {
-        let names: Vec<_> = editor
-            .document_menu_rows(cx)
-            .into_iter()
-            .filter_map(|row| match row {
-                DocumentMenuRow::Item { name, .. } => Some(name),
+    for range in [0..5, 0..0] {
+        block.update(cx, |block, _| block.selected_range = range);
+        editor.read_with(cx, |editor, cx| {
+            let entries: Vec<_> = editor.document_menu_rows(cx).into_iter().filter_map(|row| match row {
+                DocumentMenuRow::Item { command: crate::editor::context_menu::DocumentMenuCommand::Ai(command), name, .. } => Some((command,name)),
                 _ => None,
-            })
-            .collect();
-        for name in ["ai-summarize", "ai-explain", "ai-translate", "ai-polish", "ai-expand", "ai-ask"] {
-            assert!(names.contains(&name), "缺少常用指令：{name}");
-        }
-    });
-    block.update(cx, |block, _| block.selected_range = 0..0);
-    editor.read_with(cx, |editor, cx| {
-        let names: Vec<_> = editor
-            .document_menu_rows(cx)
-            .into_iter()
-            .filter_map(|row| match row {
-                DocumentMenuRow::Item { name, .. } => Some(name),
-                _ => None,
-            })
-            .collect();
-        assert!(names.contains(&"ai-summarize"));
-        assert!(names.contains(&"ai-ask"));
-        for name in ["ai-explain", "ai-translate", "ai-polish", "ai-expand"] { assert!(!names.contains(&name)); }
-        assert!(!names.contains(&"ai-polish"), "无选区不能默默改成润色全文");
-    });
+            }).collect();
+            assert_eq!(entries, vec![(crate::ai::AiCommand::Ask, "ai-ask")], "右键菜单只保留一个 AI 对话入口");
+            for strings in [crate::i18n::I18nStrings::en_us(), crate::i18n::I18nStrings::zh_cn()] {
+                assert_eq!(crate::editor::context_menu::document_menu_label(crate::editor::context_menu::DocumentMenuCommand::Ai(crate::ai::AiCommand::Ask), &strings), "AI");
+            }
+        });
+    }
 }
 
 #[gpui::test]
@@ -88,6 +81,14 @@ fn ai_reading_mode_still_offers_selection_assistance(cx: &mut TestAppContext) {
     redraw(cx);
     assert!(cx.debug_bounds("toolbar-ai").is_some());
     assert!(cx.debug_bounds("toolbar-bold").is_none());
+    let button = cx.debug_bounds("toolbar-ai").unwrap();
+    cx.simulate_click(button.center(), gpui::Modifiers::none());
+    redraw(cx);
+    let menu = cx.debug_bounds("editor-toolbar-ai-menu").expect("阅读模式也应展开指令列表");
+    cx.update(|window,_| {
+        assert!(menu.left() >= gpui::px(0.0) && menu.right() <= window.viewport_size().width);
+        assert!(menu.top() >= gpui::px(0.0) && menu.bottom() <= window.viewport_size().height);
+    });
 }
 
 #[gpui::test]
@@ -634,6 +635,9 @@ fn ai_selection_button_opens_after_a_real_drag_and_tooltip_hover(cx: &mut TestAp
     redraw(cx);
     cx.simulate_click(button, gpui::Modifiers::none());
     redraw(cx);
+    let translate = cx.debug_bounds("menu-item-ai-translate").expect("AI 按钮应先展开列表");
+    cx.simulate_click(translate.center(), gpui::Modifiers::none());
+    redraw(cx);
     redraw(cx);
     assert!(
         cx.debug_bounds("ai-assistant-panel").is_some(),
@@ -712,6 +716,9 @@ fn ai_selection_button_in_an_editor_group_displays_the_window_assistant(cx: &mut
         .expect("编辑器组中的选区 AI 按钮")
         .center();
     cx.simulate_click(button, gpui::Modifiers::none());
+    redraw(cx);
+    let translate = cx.debug_bounds("menu-item-ai-translate").expect("AI 按钮应先展开列表");
+    cx.simulate_click(translate.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     redraw(cx);
     redraw(cx);
@@ -780,5 +787,36 @@ fn ai_opt_in_default_shortcut_does_not_create_a_task(cx: &mut TestAppContext) {
     editor.update_in(cx, |editor, window, cx| {
         editor.on_open_ai_assistant(&crate::components::OpenAiAssistant, window, cx);
         assert!(editor.ai_session.is_none(), "未开启 AI 不能创建或发送任务");
+    });
+}
+
+#[gpui::test]
+fn ai_toolbar_menu_toggles_and_escape_keeps_the_source_selection(cx: &mut TestAppContext) {
+    init_ai_test_app(cx);
+    let (editor,cx) = cx.add_window_view(|_,cx| Editor::from_markdown(cx,"alpha selected text".into(),None));
+    redraw(cx);
+    let block = editor.read_with(cx, |editor,_| editor.document.first_root().unwrap().clone());
+    editor.update_in(cx, |editor,window,_| { window.activate_window(); editor.focus_block(block.entity_id()); });
+    block.update(cx, |block,_| block.selected_range = 0..5);
+    redraw(cx);
+    for selector in ["toolbar-ai", "toolbar-ai", "toolbar-heading", "toolbar-ai"] {
+        let button = cx.debug_bounds(selector).unwrap();
+        cx.simulate_click(button.center(),gpui::Modifiers::none());
+        redraw(cx);
+        if selector == "toolbar-heading" {
+            assert!(cx.debug_bounds("editor-toolbar-heading-menu").is_some());
+            assert!(cx.debug_bounds("editor-toolbar-ai-menu").is_none());
+        }
+    }
+    assert!(cx.debug_bounds("editor-toolbar-heading-menu").is_none());
+    assert!(cx.debug_bounds("editor-toolbar-ai-menu").is_some());
+    cx.dispatch_action(crate::components::DismissTransientUi);
+    redraw(cx);
+    assert!(cx.debug_bounds("editor-toolbar-ai-menu").is_none());
+    assert!(cx.debug_bounds("editor-selection-toolbar").is_some());
+    block.read_with(cx, |block,_| assert_eq!(block.selected_range,0..5));
+    editor.read_with(cx, |editor,_| {
+        assert!(editor.ai_session.is_none(),"展开和关闭指令列表不能创建对话");
+        assert_eq!(editor.buffer.text(),"alpha selected text");
     });
 }
