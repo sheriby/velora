@@ -19,7 +19,7 @@ pub(super) use crate::i18n::{I18nManager, language_id_for_locale_preferences};
 pub(super) use crate::theme::{Theme, ThemeCatalogEntry, ThemeManager};
 pub(super) use crate::window_chrome::{custom_titlebar_height, render_custom_titlebar, velora_window_options};
 
-pub(super) use gpui_kit::component::checkbox::Checkbox;
+pub(super) use gpui_kit::component::switch::Switch;
 
 const DEFAULT_THEME_ID: &str = "forest";
 const DEFAULT_LANGUAGE_ID: &str = "en-US";

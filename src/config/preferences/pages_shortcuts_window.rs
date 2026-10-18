@@ -640,7 +640,7 @@ impl PreferencesWindow {
             open_position_dropdown = open_position_dropdown.child(self.dropdown_menu("preferences-window-open-position-dropdown", list, theme));
         }
 
-        let remember_toggle = Checkbox::new("preferences-remember-window")
+        let remember_toggle = Switch::new("preferences-remember-window")
             .checked(self.remember_window_bounds)
             .on_click(cx.listener(|this, _event, _window, cx| {
                 this.remember_window_bounds = !this.remember_window_bounds;
@@ -681,7 +681,7 @@ impl PreferencesWindow {
                       checked: bool,
                       on_click: fn(&mut Self, &bool, &mut Window, &mut Context<Self>),
                       cx: &mut Context<Self>| {
-            Checkbox::new(id).checked(checked).on_click(cx.listener(on_click))
+            Switch::new(id).checked(checked).on_click(cx.listener(on_click))
         };
 
         self.settings_card(

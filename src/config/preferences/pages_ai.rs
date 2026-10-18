@@ -423,7 +423,7 @@ impl PreferencesWindow {
         let toggle = div()
             .debug_selector(|| "preferences-ai-enabled".into())
             .child(
-                Checkbox::new("preferences-ai-enabled-switch")
+                Switch::new("preferences-ai-enabled-switch")
                     .checked(state.settings.enabled)
                     .on_click(cx.listener(|preferences, _, _, cx| {
                         preferences.stop_ai_preferences_probe();

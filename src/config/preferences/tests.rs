@@ -608,6 +608,45 @@
             "没有待保存修改时，Shift+Tab 应能到达取消按钮，Enter 应关闭设置窗口");
     }
 
+    #[gpui::test]
+    fn kit_preferences_display_options_use_switch_controls(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        init_preferences_test_app(cx);
+        let handle = cx.update(|cx| open_preferences_window_with_state(
+            cx, AppPreferences::default(), default_theme_options(), "Preferences".into(),
+        ));
+        handle.update(cx, |preferences, _, cx| {
+            preferences.nav = PreferencesNav::StatusBar;
+            cx.notify();
+        }).unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("preferences-status-bar-enabled").role(), Some(gpui::Role::Switch),
+                "显示偏好应使用开关，而不是复选框");
+        });
+    }
+
+    #[gpui::test]
+    fn kit_preferences_primary_buttons_follow_the_product_theme(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        cx.update(crate::ui::init);
+        for theme in ["forest", "velora-dark", "velora-light", "paper", "midnight", "ink"] {
+            cx.update_global::<ThemeManager, _>(|manager, _| {
+                assert!(manager.set_theme_by_id(theme), "缺少主题 {theme}");
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let source = &cx.global::<ThemeManager>().current().colors;
+                let kit = gpui_kit::component::Theme::global(cx);
+                assert_eq!(kit.colors.button_primary, source.dialog_primary_button_bg,
+                    "{theme} 的主按钮不能继续使用 Kit 默认配色");
+                assert_eq!(kit.colors.button_primary_foreground, source.dialog_primary_button_text);
+                assert_eq!(kit.colors.button_primary_hover, source.dialog_primary_button_hover);
+            });
+        }
+    }
+
     fn default_theme_options() -> Vec<ThemeCatalogEntry> {
         vec![
             ThemeCatalogEntry {
