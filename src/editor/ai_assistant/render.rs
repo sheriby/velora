@@ -34,7 +34,7 @@ impl Editor {
             }
             return None;
         }
-        if session.mode == PanelMode::Task && session.expanded {
+        if session.expanded {
             return None;
         }
         let viewport = window.viewport_size();
@@ -124,22 +124,34 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.ai_session.as_ref().filter(|session| {
-            session.visible && session.expanded && session.mode == PanelMode::Task
-        })?;
+        let session = self
+            .ai_session
+            .as_ref()
+            .filter(|session| session.visible && session.expanded)?;
         let width = (f32::from(window.viewport_size().width) * 0.30).clamp(320.0, 480.0);
+        let height = f32::from(window.viewport_size().height) - 100.0;
+        let content = if session.mode == PanelMode::Task {
+            self.render_ai_workbench(theme, height, true, cx)
+        } else {
+            self.render_ai_panel(theme, height, cx)
+                .w_full()
+                .h_full()
+                .max_h(relative(1.0))
+                .border_0()
+                .border_l_1()
+                .into_any_element()
+        };
         Some(
             div()
                 .w(px(width))
                 .h_full()
                 .flex_shrink_0()
+                // 块布局会让内部百分比宽度按内容收缩，侧栏要给子视图明确的横向约束。
+                .flex()
+                .flex_col()
+                .min_w_0()
                 .debug_selector(|| "ai-sidebar".into())
-                .child(self.render_ai_workbench(
-                    theme,
-                    f32::from(window.viewport_size().height) - 100.0,
-                    true,
-                    cx,
-                ))
+                .child(content)
                 .into_any_element(),
         )
     }
@@ -274,6 +286,28 @@ impl Editor {
                         |editor, window, cx| editor.new_ai_task(window, cx),
                     ));
                 if !session.saved.workspace.changes.proposals.is_empty() {
+                    content = content.child(self.ai_button(
+                        "ai-options-view",
+                        if session.review_open {
+                            strings.ai_task_return.clone()
+                        } else {
+                            strings.ai_review_title.clone()
+                        },
+                        false,
+                        true,
+                        theme,
+                        cx,
+                        |editor, window, cx| {
+                            if let Some(session) = editor.ai_session.as_mut() {
+                                session.review_open = !session.review_open;
+                                session.mode = PanelMode::Task;
+                                session
+                                    .input
+                                    .update(cx, |input, cx| input.focus(window, cx));
+                            }
+                            cx.notify();
+                        },
+                    ));
                     content = content.child(self.ai_button(
                         "ai-options-discard",
                         strings.ai_panel_discard.clone(),
@@ -895,7 +929,6 @@ impl Editor {
             "ai-copy-result" => Some(strings.ai_panel_copy.clone()),
             "ai-context" => Some(strings.ai_panel_add_context.clone()),
             "ai-regenerate" => Some(strings.ai_panel_retry.clone()),
-            "ai-review-return" => Some(strings.ai_task_return.clone()),
             "ai-expand" => Some(
                 if self
                     .ai_session
@@ -927,7 +960,7 @@ impl Editor {
             "ai-send" => Some("icon/editor/ai-send.svg"),
             "ai-stop" => Some("icon/editor/ai-stop.svg"),
             "ai-regenerate" => Some("icon/editor/ai-retry.svg"),
-            "ai-review-return" => Some("icon/editor/ai-back.svg"),
+            "ai-back" => Some("icon/editor/ai-back.svg"),
             "ai-expand" => Some(
                 if self
                     .ai_session

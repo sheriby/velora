@@ -375,7 +375,14 @@ impl Editor {
                 cx,
                 |editor, _, cx| editor.show_ai_context(cx),
             ))
-            .child(div().flex_1().min_w_0().child(session.input.clone()))
+            .child(
+                div()
+                    .id("ai-composer-input")
+                    .debug_selector(|| "ai-composer-input".into())
+                    .flex_1()
+                    .min_w_0()
+                    .child(session.input.clone()),
+            )
             .when(session.saved.running, |row| {
                 row.child(self.ai_button(
                     "ai-stop",
@@ -435,7 +442,13 @@ impl Editor {
                 },
             ));
         }
-        let mut actions = div().w_full().flex().items_center().gap(px(6.0));
+        let mut actions = div()
+            .id("ai-review-actions")
+            .debug_selector(|| "ai-review-actions".into())
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(6.0));
         if let Some(review) = &session.review {
             if review.edits.len() > 1 {
                 actions = actions
@@ -464,6 +477,30 @@ impl Editor {
                         |editor, _, cx| editor.move_ai_review_change(true, cx),
                     ));
             }
+        }
+        actions = actions
+            .child(self.ai_button(
+                "ai-regenerate",
+                "↻",
+                false,
+                !session.saved.running,
+                theme,
+                cx,
+                |editor, _, cx| editor.retry_ai_task(cx),
+            ))
+            .child(div().flex_1());
+        if session.saved.workspace.changes.proposals.len() > 1 {
+            actions = actions.child(self.ai_button(
+                "ai-accept-all",
+                strings.ai_panel_accept_all.clone(),
+                false,
+                self.ai_review_can_accept(None, false),
+                theme,
+                cx,
+                |editor, window, cx| editor.apply_ai_review(None, None, window, cx),
+            ));
+        }
+        if let Some(review) = &session.review {
             let id = review.id.clone();
             actions = actions.child(
                 self.ai_button(
@@ -481,42 +518,9 @@ impl Editor {
                 .text_align(TextAlign::Center),
             );
         }
-        if session.saved.workspace.changes.proposals.len() > 1 {
-            actions = actions.child(self.ai_button(
-                "ai-accept-all",
-                strings.ai_panel_accept_all.clone(),
-                false,
-                self.ai_review_can_accept(None, false),
-                theme,
-                cx,
-                |editor, window, cx| editor.apply_ai_review(None, None, window, cx),
-            ));
-        }
-        actions = actions
-            .child(self.ai_button(
-                "ai-regenerate",
-                "↻",
-                false,
-                !session.saved.running,
-                theme,
-                cx,
-                |editor, _, cx| editor.retry_ai_task(cx),
-            ))
-            .child(self.ai_button(
-                "ai-review-return",
-                "←",
-                false,
-                true,
-                theme,
-                cx,
-                |editor, _, cx| {
-                    if let Some(session) = editor.ai_session.as_mut() {
-                        session.review_open = false;
-                    }
-                    cx.notify();
-                },
-            ));
         div()
+            .w_full()
+            .min_w_0()
             .flex()
             .flex_col()
             .gap(px(4.0))

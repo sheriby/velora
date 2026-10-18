@@ -1690,3 +1690,108 @@ fn ai_polish_sends_full_task_requirements_and_keeps_the_document_unchanged_witho
 ) {
     native_ui_chain(cx, AiCommand::Polish);
 }
+
+#[gpui::test]
+fn ai_sidebar_composer_uses_the_available_width_in_both_sidebar_sizes(cx: &mut TestAppContext) {
+    let (_editor, cx) = writing_dialog(cx);
+    let dock = cx.debug_bounds("ai-expand").unwrap().center();
+    cx.simulate_click(dock, gpui::Modifiers::none());
+    for width in [1920.0, 1000.0] {
+        cx.update(|window, _| window.resize(gpui::size(gpui::px(width), gpui::px(1080.0))));
+        draw(cx);
+        draw(cx);
+        draw(cx);
+        let sidebar = cx.debug_bounds("ai-sidebar").unwrap();
+        let composer = cx.debug_bounds("ai-composer").unwrap();
+        let input = cx.debug_bounds("ai-composer-input").unwrap();
+        let send = cx.debug_bounds("ai-send").unwrap();
+        assert!(
+            input.size.width >= sidebar.size.width - gpui::px(110.0),
+            "侧栏输入框不能按空内容收缩为窄条"
+        );
+        assert!(send.right() <= sidebar.right() - gpui::px(8.0));
+        assert!(
+            send.right() >= sidebar.right() - gpui::px(16.0),
+            "发送按钮应靠齐侧栏右侧"
+        );
+        assert!(composer.size.height <= gpui::px(48.0));
+    }
+}
+
+#[gpui::test]
+fn ai_inline_controls_stay_below_the_changed_text_and_sidebar_acceptance_aligns_right(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx) = writing_dialog(cx);
+    let dock = cx.debug_bounds("ai-expand").unwrap().center();
+    cx.simulate_click(dock, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    draw(cx);
+    let block = editor.read_with(cx, |editor, cx| {
+        let tracked = editor
+            .ai_session
+            .as_ref()
+            .unwrap()
+            .review
+            .as_ref()
+            .unwrap()
+            .tracked
+            .read(cx);
+        tracked
+            .document
+            .root_blocks()
+            .iter()
+            .find(|block| block.read(cx).display_text() == "润色后的段落。")
+            .unwrap()
+            .read(cx)
+            .last_bounds
+            .unwrap()
+    });
+    let controls = cx.debug_bounds("ai-inline-controls").unwrap();
+    assert!(
+        controls.top() >= block.bottom(),
+        "审阅操作不能浮在原文与改文之间或盖住段落"
+    );
+    let actions = cx.debug_bounds("ai-review-actions").unwrap();
+    let accept = cx.debug_bounds("ai-review-file-accept").unwrap();
+    assert!(
+        (actions.right() - accept.right()).abs() <= gpui::px(1.0),
+        "接受操作应在右侧，对齐输入区"
+    );
+}
+
+#[gpui::test]
+fn ai_review_can_be_left_and_reopened_from_the_more_menu(cx: &mut TestAppContext) {
+    let (_editor, cx) = writing_dialog(cx);
+    let dock = cx.debug_bounds("ai-expand").unwrap().center();
+    cx.simulate_click(dock, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    let sidebar = cx.debug_bounds("ai-sidebar").unwrap();
+    for visible in [false, true] {
+        let options = cx.debug_bounds("ai-options").unwrap().center();
+        cx.simulate_click(options, gpui::Modifiers::none());
+        draw(cx);
+        draw(cx);
+        assert_eq!(
+            cx.debug_bounds("ai-sidebar"),
+            Some(sidebar),
+            "侧栏菜单不能收走侧栏使正文重新排版"
+        );
+        assert!(
+            cx.debug_bounds("ai-floating-workbench").is_none(),
+            "停靠后在侧栏内切换菜单"
+        );
+        let toggle = cx.debug_bounds("ai-options-view");
+        assert!(toggle.is_some(), "正文与修改预览之间的切换应放在具名菜单里");
+        cx.simulate_click(toggle.unwrap().center(), gpui::Modifiers::none());
+        draw(cx);
+        draw(cx);
+        assert_eq!(cx.debug_bounds("ai-review-workspace").is_some(), visible);
+        assert!(
+            cx.debug_bounds("ai-review-return").is_none(),
+            "底部不重复摆放含义不明的返回箭头"
+        );
+    }
+}

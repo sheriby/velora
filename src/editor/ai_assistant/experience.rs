@@ -405,6 +405,12 @@ impl Editor {
         if self.ai_review_marks.is_empty() {
             return element;
         }
+        let next_start = self
+            .document
+            .visible_blocks()
+            .get(visible.end)
+            .and_then(|block| self.document.source_span_of(block.entity.entity_id()))
+            .map(|span| span.start);
         let Some(blocks) = self.document.visible_blocks().get(visible) else {
             return element;
         };
@@ -429,6 +435,8 @@ impl Editor {
             .w(px(width))
             .max_w(relative(1.0))
             .flex_shrink_0()
+            .flex()
+            .flex_col()
             .bg(Hsla { a: 0.08, ..color })
             .child(element)
             .child(
@@ -452,9 +460,7 @@ impl Editor {
                         .find(|mark| mark.edits.contains(&binding.index))
                 });
             if preferred.is_some_and(|preferred| std::ptr::eq(mark, preferred))
-                && spans
-                    .iter()
-                    .any(|span| span.start <= mark.range.start && mark.range.start < span.end)
+                && next_start.is_none_or(|start| start >= mark.range.end)
             {
                 row = row.child(self.render_ai_inline_controls(binding, theme, cx));
             }
@@ -472,30 +478,27 @@ impl Editor {
         let mut controls = div()
             .id("ai-inline-controls")
             .debug_selector(|| "ai-inline-controls".into())
-            .absolute()
-            .right_0()
-            .top(px(-14.0))
+            .w_full()
+            .h(px(32.0))
+            .flex_shrink_0()
             .flex()
-            .gap(px(2.0))
-            .p(px(2.0))
-            .rounded(px(5.0))
-            .shadow_sm()
-            .bg(theme.colors.dialog_surface)
-            .border_1()
-            .border_color(theme.colors.dialog_border)
+            .items_center()
+            .justify_end()
+            .gap(px(4.0))
+            .px(px(8.0))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        for (accept, id, label, tooltip) in [
-            (
-                true,
-                "ai-review-accept",
-                "✓",
-                strings.ai_panel_accept_edit.clone(),
-            ),
+        for (accept, id, path, tooltip) in [
             (
                 false,
                 "ai-review-reject",
-                "×",
+                "icon/titlebar/chrome-close.svg",
                 strings.ai_panel_reject.clone(),
+            ),
+            (
+                true,
+                "ai-review-accept",
+                "icon/workspace/check.svg",
+                strings.ai_panel_accept_edit.clone(),
             ),
         ] {
             let binding = binding.clone();
@@ -507,13 +510,21 @@ impl Editor {
             let button = div()
                 .id(id)
                 .debug_selector(move || id.into())
-                .px(px(7.0))
-                .py(px(3.0))
-                .rounded(px(3.0))
+                .size(px(28.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.0))
                 .cursor_pointer()
-                .when(!enabled, |button| button.opacity(0.4))
-                .hover(|style| style.bg(theme.colors.dialog_secondary_button_hover))
-                .child(label)
+                .when(!enabled, |button| button.opacity(0.35).cursor_default())
+                .when(enabled, |button| {
+                    button.hover(|style| style.bg(theme.colors.dialog_secondary_button_hover))
+                })
+                .child(svg().path(path).size(px(14.0)).text_color(if accept {
+                    theme.colors.dialog_primary_button_bg
+                } else {
+                    theme.colors.dialog_muted
+                }))
                 .tooltip(move |_, cx| {
                     cx.new(|_| crate::components::HoverPreviewTooltip {
                         label: tooltip.clone().into(),
