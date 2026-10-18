@@ -30,7 +30,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.startup_open = StartupOpenPreference::from_str(value),
+            |this, value, _, _| this.startup_open = StartupOpenPreference::from_str(value),
         );
         let sidebar_open = self.choice_field(
             "preferences-sidebar-open-dropdown",
@@ -64,7 +64,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.sidebar_open = SidebarOpenPreference::from_str(value),
+            |this, value, _, _| this.sidebar_open = SidebarOpenPreference::from_str(value),
         );
         let sidebar_panel = self.choice_field(
             "preferences-sidebar-panel-dropdown",
@@ -98,7 +98,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.sidebar_panel = SidebarPanelPreference::from_str(value),
+            |this, value, _, _| this.sidebar_panel = SidebarPanelPreference::from_str(value),
         );
         let tree_sort = self.choice_field(
             "preferences-tree-sort-dropdown",
@@ -127,7 +127,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.tree_sort = TreeSortPreference::from_str(value),
+            |this, value, _, _| this.tree_sort = TreeSortPreference::from_str(value),
         );
         let debounce = self.choice_field(
             "preferences-autosave-dropdown",
@@ -153,7 +153,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| {
+            |this, value, _, _| {
                 if let Ok(value) = value.parse() {
                     this.autosave_debounce_ms = value;
                 }
@@ -187,7 +187,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.external_change_policy = ExternalChangePolicy::from_str(value),
+            |this, value, _, _| this.external_change_policy = ExternalChangePolicy::from_str(value),
         );
         let deletion = self.choice_field(
             "preferences-delete-policy-dropdown",
@@ -217,7 +217,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.delete_policy = DeletePolicy::from_str(value),
+            |this, value, _, _| this.delete_policy = DeletePolicy::from_str(value),
         );
         let interval = self.number_field(
             "preferences-history-interval",
@@ -390,7 +390,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.selected_theme_id = value.to_owned(),
+            |this, value, _, _| this.selected_theme_id = value.to_owned(),
         );
         let chinese = cx.global::<I18nManager>().current_language_id() == "zh-CN";
         let width = self.choice_field(
@@ -428,7 +428,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.writing_width = WritingWidthPreference::from_str(value),
+            |this, value, _, _| this.writing_width = WritingWidthPreference::from_str(value),
         );
         let appearance = Self::preference_group(
             "preferences-appearance-group",
@@ -541,7 +541,7 @@ impl PreferencesWindow {
             true,
             window,
             cx,
-            move |this, value| match role {
+            move |this, value, _, _| match role {
                 FontRole::Ui => this.fonts.ui_family = value.to_owned(),
                 FontRole::Body => this.fonts.markdown_family = value.to_owned(),
                 FontRole::Code => this.fonts.code_family = value.to_owned(),
@@ -626,7 +626,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |this, value| this.image_paste_behavior = ImagePasteBehavior::from_str(value),
+            |this, value, _, _| this.image_paste_behavior = ImagePasteBehavior::from_str(value),
         );
         Self::preference_group(
             "preferences-images-group",

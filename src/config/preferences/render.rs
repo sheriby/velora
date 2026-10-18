@@ -39,7 +39,7 @@ impl Render for PreferencesWindow {
                 PreferencesNav::File => strings.preferences_nav_file.clone(),
                 PreferencesNav::Theme => strings.preferences_nav_theme.clone(),
                 PreferencesNav::Image => strings.preferences_nav_image.clone(),
-                PreferencesNav::Ai => strings.ai_assistant.clone(),
+                PreferencesNav::Ai => "AI".into(),
                 PreferencesNav::Shortcuts => strings.preferences_nav_shortcuts.clone(),
                 PreferencesNav::StatusBar => strings.preferences_nav_status_bar.clone(),
                 PreferencesNav::Window => strings.preferences_nav_window.clone(),
@@ -126,7 +126,7 @@ impl Render for PreferencesWindow {
                 PreferencesNav::File => self.render_startup_page(&theme, &strings, window, cx),
                 PreferencesNav::Theme => self.render_theme_page(&theme, &strings, window, cx),
                 PreferencesNav::Image => self.render_image_page(&theme, &strings, window, cx),
-                PreferencesNav::Ai => self.render_ai_page(&theme, &strings, cx),
+                PreferencesNav::Ai => self.render_ai_page(&theme, &strings, window, cx),
                 PreferencesNav::Shortcuts => self.render_shortcuts_page(&theme, &strings, cx),
                 PreferencesNav::StatusBar => self.render_status_bar_page(&theme, &strings, cx),
                 PreferencesNav::Window => self.render_window_page(&theme, &strings, window, cx),
@@ -192,13 +192,8 @@ impl Render for PreferencesWindow {
                                         .flex_1()
                                         .min_h(px(0.0))
                                         .overflow_y_scroll()
-                                        .on_scroll_wheel(cx.listener(|this, _, window, cx| {
-                                            if gpui_kit::base::GlobalState::is_in_deferred_context(cx) {
-                                                window.dispatch_action(Box::new(gpui_kit::base::actions::Cancel), cx);
-                                            }
-                                            if this.close_dropdowns() {
-                                                cx.notify();
-                                            }
+                                        .on_scroll_wheel(cx.listener(|_this, _, window, cx| {
+                                            Self::dismiss_preferences_popup(window, cx);
                                         }))
                                         .flex()
                                         .flex_col()

@@ -461,6 +461,8 @@ impl I18nStrings {
             "复制图片到 ./${filename}.assets 文件夹".into();
         strings.ai_assistant = "AI 助手".into();
         strings.ai_sidebar = "AI 侧边栏".into();
+        strings.preferences_ai_add_connection = "新增连接".into();
+        strings.preferences_ai_protocol = "接口协议".into();
         strings.preferences_ai_enabled = "启用 AI".into();
         strings.preferences_ai_connections = "连接".into();
         strings.preferences_ai_instructions = "指令".into();
@@ -1004,6 +1006,8 @@ impl I18nStrings {
             preferences_status_bar_show_mode_switch: "Mode Switch".into(),
             ai_assistant: "AI Assistant".into(),
             ai_sidebar: "AI Sidebar".into(),
+            preferences_ai_add_connection: "Add connection".into(),
+            preferences_ai_protocol: "API protocol".into(),
             preferences_ai_enabled: "Enable AI".into(),
             preferences_ai_connections: "Connections".into(),
             preferences_ai_instructions: "Instructions".into(),

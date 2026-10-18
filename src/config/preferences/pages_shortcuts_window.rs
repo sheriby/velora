@@ -545,7 +545,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |preferences, value| {
+            |preferences, value, _, _| {
                 if let Ok(percent) = value.parse() {
                     preferences.zoom_percent = percent;
                 }
@@ -582,7 +582,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |preferences, value| {
+            |preferences, value, _, _| {
                 if let Some((width, height)) = value.split_once('x') {
                     if let (Ok(width), Ok(height)) = (width.parse(), height.parse()) {
                         preferences.default_window_width = width;
@@ -611,7 +611,7 @@ impl PreferencesWindow {
             false,
             window,
             cx,
-            |preferences, value| {
+            |preferences, value, _, _| {
                 preferences.window_open_position = if value == "center" {
                     WindowOpenPosition::Center
                 } else {

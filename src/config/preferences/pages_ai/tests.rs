@@ -715,3 +715,88 @@ fn ai_connection_inputs_are_named_and_do_not_expose_the_key(cx: &mut TestAppCont
     });
     cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
 }
+
+#[gpui::test]
+fn ai_instruction_selector_supports_keyboard_confirmation(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let directory =
+        std::env::temp_dir().join(format!("velora-ai-selector-{}", uuid::Uuid::new_v4()));
+    let _config = crate::config::override_test_config_root(&directory);
+    crate::ai::settings::AiSettings {
+        enabled: true,
+        ..Default::default()
+    }
+    .save_at(&crate::ai::settings::settings_path().unwrap())
+    .unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+        crate::config::EditorSettings::init(cx, true);
+    });
+    let handle = cx.update(|cx| {
+        super::super::open_preferences_window_with_state(
+            cx,
+            AppPreferences::default(),
+            Vec::new(),
+            "Preferences".into(),
+        )
+    });
+    handle
+        .update(cx, |preferences, window, cx| {
+            preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx);
+            cx.notify();
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.update(|window, cx| window.render_frame(cx));
+    let tab = visual
+        .debug_bounds("preferences-ai-connections-tab")
+        .expect("连接分段应可见");
+    visual.simulate_click(tab.center(), gpui::Modifiers::none());
+    visual.update(|window, cx| window.press("right", cx));
+    visual.run_until_parked();
+    assert!(
+        handle
+            .read_with(cx, |preferences, _| preferences
+                .ai_preferences
+                .as_ref()
+                .unwrap()
+                .show_instructions)
+            .unwrap(),
+        "方向键应能切换到指令分段"
+    );
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        let tab = window.within("preferences-ai-tabs").find(1usize);
+        assert_eq!(tab.role(), Some(gpui::Role::Tab));
+        assert_eq!(tab.selected(), Some(true));
+        assert!(handle.read_with(cx, |preferences, _| preferences.ai_preferences.as_ref().unwrap().instructions_focus.is_focused(window)).unwrap(),
+            "键盘切换后实际窗口焦点应跟随所选分段");
+        assert_eq!(
+            window
+                .try_find("preferences-ai-command-menu")
+                .and_then(|input| input.role()),
+            Some(gpui::Role::ComboBox),
+            "指令选择应使用标准选择器"
+        );
+        window.click("preferences-ai-command-menu", cx);
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    visual.run_until_parked();
+    handle
+        .read_with(cx, |preferences, _| {
+            assert_eq!(
+                preferences
+                    .ai_preferences
+                    .as_ref()
+                    .unwrap()
+                    .instruction
+                    .command,
+                crate::ai::AiCommand::Summarize
+            );
+        })
+        .unwrap();
+    cx.on_quit(move || std::fs::remove_dir_all(directory).unwrap());
+}

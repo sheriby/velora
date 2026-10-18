@@ -617,6 +617,23 @@
     }
 
     #[gpui::test]
+    fn kit_switch_track_is_visible_on_grouped_settings_in_every_builtin_theme(cx: &mut TestAppContext) {
+        init_preferences_test_app(cx);
+        cx.update(crate::ui::init);
+        for theme in ["forest", "velora-dark", "velora-light", "paper", "midnight", "ink"] {
+            cx.update_global::<ThemeManager, _>(|manager, _| {
+                assert!(manager.set_theme_by_id(theme));
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let kit = gpui_kit::component::Theme::global(cx);
+                assert_ne!(kit.colors.switch, kit.colors.group_box,
+                    "{theme} 的关闭轨道不能融入分组表面，否则只能看见圆点");
+            });
+        }
+    }
+
+    #[gpui::test]
     fn preferences_startup_choice_can_be_changed_from_the_keyboard(cx: &mut TestAppContext) {
         use gpui_kit::test::TestWindowExt as _;
         init_preferences_test_app(cx);

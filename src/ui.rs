@@ -83,7 +83,8 @@ fn sync_theme(cx: &mut App) {
         theme.colors.accent = colors.selection;
         theme.colors.accent_foreground = colors.dialog_body;
         theme.colors.selection = colors.selection;
-        theme.colors.switch = colors.dialog_secondary_button_bg;
+        // 关闭轨道需要独立于分组表面，避免开关只剩下圆点。
+        theme.colors.switch = colors.dialog_muted;
         theme.colors.switch_thumb = colors.dialog_primary_button_text;
         theme.colors.ring = colors.dialog_primary_button_bg;
         theme.colors.input = colors.dialog_border;

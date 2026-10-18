@@ -3,6 +3,8 @@ use crate::ai::{
     AiCommand,
     instructions::{default_instruction, effective_instruction},
 };
+use gpui_kit::component::ThemeStyled as _;
+use gpui_kit::component::tab::{Tab, TabBar};
 
 pub(super) struct InstructionDraft {
     pub command: AiCommand,
@@ -91,7 +93,7 @@ impl PreferencesWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_dropdowns();
+        Self::dismiss_preferences_popup(window, cx);
         let locale = cx.global::<I18nManager>().current_language_id().to_owned();
         if let Some(state) = self.ai_preferences.as_mut() {
             state.instruction.stage(&mut state.settings, cx);
@@ -102,75 +104,93 @@ impl PreferencesWindow {
         cx.notify();
     }
 
-    fn toggle_ai_instruction_menu(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let open = self
-            .ai_preferences
-            .as_ref()
-            .is_some_and(|state| !state.instruction_menu_open);
-        self.close_dropdowns();
-        if let Some(state) = self.ai_preferences.as_mut() {
-            state.instruction_menu_open = open;
-        }
-        cx.notify();
-    }
-
     pub(super) fn ai_preferences_tabs(
         &self,
-        theme: &Theme,
         strings: &crate::i18n::I18nStrings,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let selected = self
-            .ai_preferences
-            .as_ref()
-            .is_some_and(|state| state.show_instructions);
-        let mut tabs = div()
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .p(px(3.0))
-            .rounded(px(7.0))
-            .bg(theme.colors.dialog_secondary_button_bg);
-        for (id, label, instructions) in [
-            (
-                "preferences-ai-connections-tab",
-                strings.preferences_ai_connections.clone(),
-                false,
-            ),
-            (
-                "preferences-ai-instructions-tab",
-                strings.preferences_ai_instructions.clone(),
-                true,
-            ),
-        ] {
-            tabs = tabs.child(
-                self.ai_preference_button(id, label, true, theme, cx, move |preferences, _, cx| {
-                    preferences.close_dropdowns();
-                    if let Some(state) = preferences.ai_preferences.as_mut() {
-                        state.show_instructions = instructions;
-                    }
-                    cx.notify();
-                })
-                .when(selected == instructions, |tab| {
-                    tab.bg(theme.colors.dialog_surface)
-                }),
-            );
-        }
-        div().child(tabs).into_any_element()
-    }
-
-    pub(super) fn render_ai_instruction_editor(
-        &self,
-        theme: &Theme,
-        strings: &crate::i18n::I18nStrings,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(state) = self.ai_preferences.as_ref() else {
+            return div().into_any_element();
+        };
+        let instructions = state.show_instructions;
+        let connections_focus = state.connections_focus.clone().tab_stop(!instructions);
+        let instructions_focus = state.instructions_focus.clone().tab_stop(instructions);
+        let tabs = TabBar::new("preferences-ai-tabs")
+            .segmented()
+            .w_auto()
+            .selected_index(usize::from(instructions))
+            .child(
+                Tab::new()
+                    .label(strings.preferences_ai_connections.clone())
+                    .track_focus(&connections_focus)
+                    .debug_selector(|| "preferences-ai-connections-tab".into()),
+            )
+            .child(
+                Tab::new()
+                    .label(strings.preferences_ai_instructions.clone())
+                    .track_focus(&instructions_focus)
+                    .debug_selector(|| "preferences-ai-instructions-tab".into()),
+            )
+            .on_click(cx.listener(|preferences, index: &usize, window, cx| {
+                Self::dismiss_preferences_popup(window, cx);
+                if let Some(state) = preferences.ai_preferences.as_mut() {
+                    state.show_instructions = *index == 1;
+                    let focus = if state.show_instructions {
+                        &state.instructions_focus
+                    } else {
+                        &state.connections_focus
+                    };
+                    focus.focus(window, cx);
+                }
+                cx.notify();
+            }));
+        // Kit 0.7.3 的 Tab 不提供键盘导航；焦点与页面切换由本页共同维护。
+        let focused = connections_focus.is_focused(window) || instructions_focus.is_focused(window);
+        let group = div()
+            .relative()
+            .rounded(gpui_kit::component::Theme::global(cx).radius)
+            .child(tabs)
+            .when(focused, |group| group.focus_ring_style(window, cx))
+            .on_key_down(
+                cx.listener(|preferences, event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.modifiers != Modifiers::none() {
+                        return;
+                    }
+                    let Some(state) = preferences.ai_preferences.as_mut() else {
+                        return;
+                    };
+                    let instructions = match event.keystroke.key.as_str() {
+                        "left" | "home" => false,
+                        "right" | "end" => true,
+                        "enter" | "space" => state.show_instructions,
+                        _ => return,
+                    };
+                    state.show_instructions = instructions;
+                    let focus = if instructions {
+                        &state.instructions_focus
+                    } else {
+                        &state.connections_focus
+                    };
+                    focus.focus(window, cx);
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            );
+        div().flex().items_center().child(group).into_any_element()
+    }
+
+    pub(super) fn render_ai_instruction_editor(
+        &mut self,
+        strings: &crate::i18n::I18nStrings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(command) = self
+            .ai_preferences
+            .as_ref()
+            .map(|state| state.instruction.command)
+        else {
             return div().into_any_element();
         };
         let label = |command: AiCommand| {
@@ -180,73 +200,89 @@ impl PreferencesWindow {
                 command.label(strings)
             }
         };
-        let mut dropdown = div().relative().child(Self::dropdown_button(
-            "preferences-ai-command-menu",
-            label(state.instruction.command),
-            theme,
-            Self::toggle_ai_instruction_menu,
-            cx,
-        ));
-        if state.instruction_menu_open {
-            let mut items = div().w_full().flex().flex_col().gap(px(4.0));
-            for command in std::iter::once(AiCommand::Ask).chain(AiCommand::ALL) {
-                items = items.child(Self::dropdown_item(
-                    SharedString::from(format!("preferences-ai-command-{}", command.id())),
+        let choices = std::iter::once(AiCommand::Ask)
+            .chain(AiCommand::ALL)
+            .map(|command| {
+                super::super::controls::PreferenceChoice::new(
+                    command.id(),
                     label(command),
-                    command == state.instruction.command,
-                    theme,
-                    move |preferences, _, window, cx| {
-                        preferences.select_ai_instruction(command, window, cx)
-                    },
-                    cx,
-                ));
-            }
-            dropdown =
-                dropdown.child(self.dropdown_menu("preferences-ai-command-menu", items, theme));
-        }
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap(px(12.0))
+                    format!("preferences-ai-command-{}", command.id()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let selector = self.choice_field(
+            "preferences-ai-command-menu",
+            strings.preferences_ai_instructions.clone(),
+            command.id(),
+            |_| choices,
+            false,
+            window,
+            cx,
+            |preferences, id, window, cx| {
+                if let Some(command) = std::iter::once(AiCommand::Ask)
+                    .chain(AiCommand::ALL)
+                    .find(|command| command.id() == id)
+                {
+                    preferences.select_ai_instruction(command, window, cx);
+                }
+            },
+        );
+        let Some(state) = self.ai_preferences.as_ref() else {
+            return div().into_any_element();
+        };
+        GroupBox::new()
+            .id("preferences-ai-instruction-fields")
+            .fill()
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(dropdown)
-                    .child(self.ai_preference_button(
-                        "preferences-ai-restore-instruction",
-                        strings.preferences_ai_restore_instruction.clone(),
-                        true,
-                        theme,
-                        cx,
-                        |preferences, window, cx| {
-                            let locale =
-                                cx.global::<I18nManager>().current_language_id().to_owned();
-                            if let Some(state) = preferences.ai_preferences.as_mut() {
-                                let command = state.instruction.command;
-                                state.settings.quick_instructions.remove(command.id());
-                                state.instruction.load(
-                                    &state.settings,
-                                    command,
-                                    locale,
-                                    window,
-                                    cx,
-                                );
-                            }
-                            cx.notify();
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .debug_selector(|| "preferences-ai-instruction-body".into())
                     .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
                     .child(
-                        Textarea::new(&state.instruction.field)
-                            .accessibility_id("preferences-ai-instruction-input")
-                            .aria_label(label(state.instruction.command)),
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(selector)
+                            .child(
+                                self.ai_preference_button(
+                                    "preferences-ai-restore-instruction",
+                                    strings.preferences_ai_restore_instruction.clone(),
+                                    true,
+                                    cx,
+                                    |preferences, window, cx| {
+                                        let locale = cx
+                                            .global::<I18nManager>()
+                                            .current_language_id()
+                                            .to_owned();
+                                        if let Some(state) = preferences.ai_preferences.as_mut() {
+                                            let command = state.instruction.command;
+                                            state.settings.quick_instructions.remove(command.id());
+                                            state.instruction.load(
+                                                &state.settings,
+                                                command,
+                                                locale,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                        cx.notify();
+                                    },
+                                )
+                                .ghost(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "preferences-ai-instruction-body".into())
+                            .w_full()
+                            .child(
+                                Textarea::new(&state.instruction.field)
+                                    .accessibility_id("preferences-ai-instruction-input")
+                                    .aria_label(label(command)),
+                            ),
                     ),
             )
             .into_any_element()

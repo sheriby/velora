@@ -41,7 +41,6 @@ pub(crate) struct PreferencesWindow {
     pub(super) save_error: Option<String>,
     /// 右侧内容区的滚动位置（单测用它验「真的能滚」）。
     pub(super) page_scroll: ScrollHandle,
-    pub(super) dropdown_scroll: ScrollHandle,
     pub(super) tree_sort: TreeSortPreference,
     pub(super) sidebar_open: SidebarOpenPreference,
     pub(super) sidebar_panel: SidebarPanelPreference,
@@ -177,7 +176,6 @@ impl PreferencesWindow {
             shortcut_error: None,
             save_error: None,
             page_scroll: ScrollHandle::new(),
-            dropdown_scroll: ScrollHandle::new(),
             status_bar_enabled: preferences.status_bar.enabled,
             status_bar_show_word_count: preferences.status_bar.show_word_count,
             status_bar_show_cursor_position: preferences.status_bar.show_cursor_position,
@@ -237,54 +235,49 @@ impl PreferencesWindow {
             || self.delete_policy != self.saved_delete_policy
     }
 
-    pub(crate) fn close_dropdowns(&mut self) -> bool {
-        let mut changed = false;
-        if let Some(state) = self.ai_preferences.as_mut() {
-            changed |= state.connection_menu_open || state.instruction_menu_open;
-            state.connection_menu_open = false;
-            state.instruction_menu_open = false;
+    pub(super) fn dismiss_preferences_popup(window: &mut Window, cx: &mut Context<Self>) {
+        if gpui_kit::base::GlobalState::is_in_deferred_context(cx) {
+            window.dispatch_action(Box::new(gpui_kit::base::actions::Cancel), cx);
         }
-        self.dropdown_scroll.set_offset(Point::default());
-        changed
     }
 
-    pub(crate) fn set_nav_file(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_file(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::File;
-        self.close_dropdowns();
+        Self::dismiss_preferences_popup(window, cx);
         self.recording_shortcut = None;
         cx.notify();
     }
 
-    pub(crate) fn set_nav_theme(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_theme(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Theme;
-        self.close_dropdowns();
+        Self::dismiss_preferences_popup(window, cx);
         self.recording_shortcut = None;
         cx.notify();
     }
 
-    pub(crate) fn set_nav_image(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_image(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Image;
-        self.close_dropdowns();
+        Self::dismiss_preferences_popup(window, cx);
         self.recording_shortcut = None;
         cx.notify();
     }
 
-    pub(crate) fn set_nav_shortcuts(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_shortcuts(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Shortcuts;
-        self.close_dropdowns();
+        Self::dismiss_preferences_popup(window, cx);
         self.shortcut_error = None;
         cx.notify();
     }
 
-    pub(crate) fn set_nav_window(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_window(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::Window;
-        self.close_dropdowns();
+        Self::dismiss_preferences_popup(window, cx);
         cx.notify();
     }
 
-    pub(crate) fn set_nav_status_bar(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_nav_status_bar(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.nav = PreferencesNav::StatusBar;
-        self.close_dropdowns();
+        Self::dismiss_preferences_popup(window, cx);
         self.recording_shortcut = None;
         cx.notify();
     }

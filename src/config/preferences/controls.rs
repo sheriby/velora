@@ -7,7 +7,7 @@ use gpui_kit::component::{
     select::{Select, SelectEvent, SelectState},
 };
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct PreferenceChoice {
     value: SharedString,
     label: SharedString,
@@ -119,7 +119,7 @@ impl PreferencesWindow {
         searchable: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-        change: impl Fn(&mut Self, &str) + 'static,
+        change: impl Fn(&mut Self, &str, &mut Window, &mut Context<Self>) + 'static,
     ) -> AnyElement {
         let value = value.into();
         let state = if let Some(control) = self.controls.choices.get_mut(id) {
@@ -151,11 +151,16 @@ impl PreferencesWindow {
                 SelectState::new(SearchableVec::new(choices.clone()), selected, window, cx)
                     .searchable(searchable)
             });
-            let subscription = cx.subscribe(
+            let subscription = cx.subscribe_in(
                 &state,
-                move |preferences, _, event: &SelectEvent<SearchableVec<PreferenceChoice>>, cx| {
+                window,
+                move |preferences,
+                      _,
+                      event: &SelectEvent<SearchableVec<PreferenceChoice>>,
+                      window,
+                      cx| {
                     if let SelectEvent::Confirm(Some(value)) = event {
-                        change(preferences, value.as_ref());
+                        change(preferences, value.as_ref(), window, cx);
                         cx.notify();
                     }
                 },
@@ -183,6 +188,27 @@ impl PreferencesWindow {
                     .w_full(),
             )
             .into_any_element()
+    }
+
+    pub(super) fn sync_choice_options(
+        &mut self,
+        id: &'static str,
+        mut choices: Vec<PreferenceChoice>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(control) = self.controls.choices.get_mut(id) else {
+            return;
+        };
+        PreferenceChoice::include_current(&mut choices, id, &control.value);
+        if control.choices == choices {
+            return;
+        }
+        control.choices = choices.clone();
+        control.state.update(cx, |state, cx| {
+            state.set_items(SearchableVec::new(choices), window, cx);
+            state.set_selected_value(&control.value, window, cx);
+        });
     }
 
     pub(super) fn number_field(
