@@ -71,3 +71,32 @@ fn ai_session_deleted_history_cannot_be_recreated_by_a_late_background_write() {
     assert!(!path.exists());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn ai_session_persists_task_kind_and_recognizes_legacy_quick_command_permissions() {
+    let directory = std::env::temp_dir().join(format!("velora-ai-kind-{}", uuid::Uuid::new_v4()));
+    let path = directory.join("session.json");
+    let mut saved = SavedSession::new(AiWorkspace::new(None, vec![]).unwrap());
+    saved.kind = SessionKind::QuickCommand;
+    saved.save_at(&path).unwrap();
+    assert_eq!(
+        SavedSession::load_at(&path, None).unwrap().kind,
+        SessionKind::QuickCommand
+    );
+    saved.kind = SessionKind::Conversation;
+    saved.sequence += 1;
+    saved.save_at(&path).unwrap();
+    assert_eq!(
+        SavedSession::load_at(&path, None).unwrap().kind,
+        SessionKind::Conversation
+    );
+    let mut legacy = serde_json::to_value(&saved).unwrap();
+    legacy.as_object_mut().unwrap().remove("kind");
+    legacy["workspace"]["read_only"] = true.into();
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(
+        SavedSession::load_at(&path, None).unwrap().kind,
+        SessionKind::QuickCommand
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}

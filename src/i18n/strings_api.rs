@@ -465,6 +465,8 @@ impl I18nStrings {
         strings.ai_panel_related = "关联修改需一起接受".into();
         strings.ai_panel_stale = "依据已变化，请重新生成".into();
         strings.ai_panel_history = "历史任务".into();
+        strings.ai_history_conversations = "对话".into();
+        strings.ai_history_quick_commands = "快捷指令".into();
         strings.ai_panel_new_chat = "新任务".into();
         strings.ai_panel_copy = "复制".into();
         strings.ai_panel_insert = "插入正文".into();
@@ -988,6 +990,8 @@ impl I18nStrings {
             ai_panel_related: "Accept related changes together".into(),
             ai_panel_stale: "Source changed; regenerate this proposal".into(),
             ai_panel_history: "History".into(),
+            ai_history_conversations: "Conversations".into(),
+            ai_history_quick_commands: "Quick commands".into(),
             ai_panel_new_chat: "New task".into(),
             ai_panel_copy: "Copy".into(),
             ai_panel_insert: "Insert into document".into(),

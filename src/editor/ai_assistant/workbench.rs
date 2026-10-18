@@ -39,7 +39,17 @@ impl Editor {
                     .flex()
                     .items_center()
                     .gap(px(8.0))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("AI"))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(
+                        if session.saved.kind == SessionKind::QuickCommand {
+                            if session.command == AiCommand::Ask {
+                                strings.ai_history_quick_commands.clone()
+                            } else {
+                                session.command.label(&strings)
+                            }
+                        } else {
+                            "AI".into()
+                        },
+                    ))
                     .child(
                         div()
                             .truncate()
@@ -244,10 +254,22 @@ impl Editor {
         if !session.saved.workspace.changes.proposals.is_empty() {
             panel = panel.child(self.render_ai_pending_actions(theme, cx));
         }
-        if session.command == AiCommand::Translate {
+        if session.command == AiCommand::Translate && !has_messages {
             panel = panel.child(session.language.clone());
         }
-        panel = panel.child(self.render_ai_composer(theme, cx));
+        if session.saved.kind == SessionKind::Conversation || !has_messages {
+            panel = panel.child(self.render_ai_composer(theme, cx));
+        } else if session.saved.running {
+            panel = panel.child(self.ai_button(
+                "ai-stop",
+                "■",
+                false,
+                true,
+                theme,
+                cx,
+                |editor, _, cx| editor.stop_ai_task(cx),
+            ));
+        }
         if session.error.is_some() {
             panel = panel.child(self.ai_button(
                 "ai-retry",

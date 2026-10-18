@@ -630,48 +630,71 @@ impl Editor {
                     ));
             }
             PanelMode::History => {
-                for (path, title) in &session.history_files {
-                    let path = path.clone();
-                    let title = title.clone();
-                    let delete_path = path.clone();
-                    let identity = path
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
+                for kind in [SessionKind::Conversation, SessionKind::QuickCommand] {
+                    if !session
+                        .history_files
+                        .iter()
+                        .any(|(_, _, entry)| *entry == kind)
+                    {
+                        continue;
+                    }
                     content = content.child(
                         div()
-                            .w_full()
-                            .flex()
-                            .gap(px(4.0))
-                            .child(
-                                self.ai_button(
-                                    SharedString::from(format!("ai-history-{identity}")),
-                                    title,
+                            .text_size(px(11.0))
+                            .text_color(theme.colors.dialog_muted)
+                            .child(if kind == SessionKind::Conversation {
+                                strings.ai_history_conversations.clone()
+                            } else {
+                                strings.ai_history_quick_commands.clone()
+                            }),
+                    );
+                    for (path, title, _) in session
+                        .history_files
+                        .iter()
+                        .filter(|(_, _, entry)| *entry == kind)
+                    {
+                        let path = path.clone();
+                        let title = title.clone();
+                        let delete_path = path.clone();
+                        let identity = path
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned();
+                        content = content.child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .gap(px(4.0))
+                                .child(
+                                    self.ai_button(
+                                        SharedString::from(format!("ai-history-{identity}")),
+                                        title,
+                                        false,
+                                        true,
+                                        theme,
+                                        cx,
+                                        move |editor, window, cx| {
+                                            editor.restore_ai_history(path.clone(), window, cx)
+                                        },
+                                    )
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden(),
+                                )
+                                .child(self.ai_button(
+                                    SharedString::from(format!("ai-history-delete-{identity}")),
+                                    "×",
                                     false,
                                     true,
                                     theme,
                                     cx,
                                     move |editor, window, cx| {
-                                        editor.restore_ai_history(path.clone(), window, cx)
+                                        editor.delete_ai_history(delete_path.clone(), window, cx)
                                     },
-                                )
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden(),
-                            )
-                            .child(self.ai_button(
-                                SharedString::from(format!("ai-history-delete-{identity}")),
-                                "×",
-                                false,
-                                true,
-                                theme,
-                                cx,
-                                move |editor, window, cx| {
-                                    editor.delete_ai_history(delete_path.clone(), window, cx)
-                                },
-                            )),
-                    );
+                                )),
+                        );
+                    }
                 }
             }
             PanelMode::Skills => {

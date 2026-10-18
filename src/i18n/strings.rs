@@ -681,6 +681,8 @@ pub struct I18nStrings {
     pub ai_panel_related: String,
     pub ai_panel_stale: String,
     pub ai_panel_history: String,
+    pub ai_history_conversations: String,
+    pub ai_history_quick_commands: String,
     pub ai_panel_new_chat: String,
     pub ai_panel_copy: String,
     pub ai_panel_insert: String,

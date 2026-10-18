@@ -432,6 +432,8 @@ pub(crate) const I18N_STRING_KEYS: &[&str] = &[
     "ai_panel_related",
     "ai_panel_stale",
     "ai_panel_history",
+    "ai_history_conversations",
+    "ai_history_quick_commands",
     "ai_panel_new_chat",
     "ai_panel_copy",
     "ai_panel_insert",

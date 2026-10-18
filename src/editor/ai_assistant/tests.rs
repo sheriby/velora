@@ -2267,6 +2267,110 @@ fn ai_late_events_and_snapshot_reads_belong_to_the_original_task_even_with_equal
 }
 
 #[gpui::test]
+fn ai_quick_result_has_no_follow_up_composer_in_either_surface(cx: &mut TestAppContext) {
+    initialize(cx);
+    let (editor, cx) =
+        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "选中的原文".into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_document(cx);
+        editor.open_ai_assistant(AiCommand::Polish, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "assistant".into(),
+                text: "已完成润色".into(),
+            });
+        editor.refresh_ai_preview(cx);
+    });
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-dialog-result").is_some());
+    assert!(
+        cx.debug_bounds("ai-composer").is_none(),
+        "快捷指令结果不能把用户输入接在旧选区与权限后面"
+    );
+    let dock = cx.debug_bounds("ai-expand").unwrap().center();
+    cx.simulate_click(dock, gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(cx.debug_bounds("ai-sidebar").is_some());
+    assert!(
+        cx.debug_bounds("ai-composer").is_none(),
+        "停靠不把快捷指令变成用户对话"
+    );
+}
+
+#[gpui::test]
+fn ai_user_conversation_accepts_cross_document_edits_and_keeps_its_history_when_docked(
+    cx: &mut TestAppContext,
+) {
+    let (editor, cx, directory, _first, second) = tab_review_fixture(cx);
+    let task = editor.update_in(cx, |editor, window, cx| {
+        editor.jump_to_document_search_range(0.."旧第一段。".len(), cx);
+        editor.open_ai_assistant(AiCommand::Ask, window, cx);
+        let session = editor.ai_session.as_mut().unwrap();
+        session.mode = PanelMode::Task;
+        session.expanded = true;
+        session
+            .saved
+            .messages
+            .push(crate::ai::session::ChatMessage {
+                role: "user".into(),
+                text: "一起整理两篇文档".into(),
+            });
+        session
+            .saved
+            .history
+            .push(serde_json::json!({"role":"user", "content":"固定的上一轮"}));
+        let id = session.saved.id.clone();
+        assert!(session.saved.workspace.selection_scope.is_none());
+        assert!(!session.saved.workspace.read_only);
+        session
+            .saved
+            .workspace
+            .call(
+                "propose_edit",
+                &serde_json::json!({
+                    "path":"first.md", "before":"旧第二段。", "after":"选区外的建议"
+                }),
+            )
+            .unwrap();
+        session
+            .saved
+            .workspace
+            .call(
+                "propose_edit",
+                &serde_json::json!({
+                    "path":"second.md", "before":"另外一篇", "after":"第二篇建议"
+                }),
+            )
+            .unwrap();
+        editor.open_workspace_file(second, window, cx);
+        id
+    });
+    draw(cx);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("ai-sidebar").is_some(),
+        "明确停靠的用户对话应可跨标签继续"
+    );
+    assert!(cx.debug_bounds("ai-composer").is_some());
+    editor.read_with(cx, |editor, _| {
+        let session = editor.ai_session.as_ref().unwrap();
+        assert_eq!(session.saved.id, task);
+        assert_eq!(session.saved.history[0]["content"], "固定的上一轮");
+        assert_eq!(
+            session.saved.workspace.changes.proposals["second.md"].proposed,
+            "第二篇建议"
+        );
+    });
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[gpui::test]
 fn ai_cmd_j_always_starts_a_new_conversation_even_at_the_same_position(cx: &mut TestAppContext) {
     initialize(cx);
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));

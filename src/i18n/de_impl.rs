@@ -1045,6 +1045,8 @@ impl I18nStringsDe {
             ai_panel_related: self.ai_panel_related.unwrap_or(defaults.ai_panel_related),
             ai_panel_stale: self.ai_panel_stale.unwrap_or(defaults.ai_panel_stale),
             ai_panel_history: self.ai_panel_history.unwrap_or(defaults.ai_panel_history),
+            ai_history_conversations: self.ai_history_conversations.unwrap_or(defaults.ai_history_conversations),
+            ai_history_quick_commands: self.ai_history_quick_commands.unwrap_or(defaults.ai_history_quick_commands),
             ai_panel_new_chat: self.ai_panel_new_chat.unwrap_or(defaults.ai_panel_new_chat),
             ai_panel_copy: self.ai_panel_copy.unwrap_or(defaults.ai_panel_copy),
             ai_panel_insert: self.ai_panel_insert.unwrap_or(defaults.ai_panel_insert),

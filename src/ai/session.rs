@@ -10,8 +10,18 @@ pub(crate) struct ChatMessage {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum SessionKind {
+    #[default]
+    Conversation,
+    QuickCommand,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SavedSession {
+    #[serde(default)]
+    pub kind: SessionKind,
     pub format: u32,
     #[serde(default)]
     pub sequence: u64,
@@ -46,6 +56,7 @@ pub(crate) struct TargetSnapshot {
 impl SavedSession {
     pub fn new(workspace: AiWorkspace) -> Self {
         Self {
+            kind: SessionKind::Conversation,
             format: 1,
             sequence: 0,
             id: uuid::Uuid::new_v4().to_string(),
@@ -101,6 +112,9 @@ impl SavedSession {
         let expected = workspace.map(std::fs::canonicalize).transpose()?;
         if session.workspace.root != expected {
             bail!("此会话属于另一个工作区");
+        }
+        if session.workspace.read_only || session.workspace.selection_scope.is_some() {
+            session.kind = SessionKind::QuickCommand;
         }
         session.interrupted |= session.running;
         session.running = false;
