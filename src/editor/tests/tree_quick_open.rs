@@ -1019,28 +1019,52 @@ async fn virtual_outline_scrolls_active_heading_into_view_without_overriding_man
 
 #[gpui::test]
 async fn overscrolling_virtual_outline_keeps_its_render_window_in_range(cx: &mut TestAppContext) {
+    use crate::editor::workspace::{WorkspaceTab, stable_node_hash};
     init_editor_test_app(cx);
-    let (editor, visual) =
-        cx.add_window_view(|_, cx| Editor::from_markdown(cx, "# 标题\n".into(), None));
-    for _ in 0..2 {
+    let source = (0..260)
+        .map(|index| format!("# 第 {index} 节\n\n"))
+        .collect::<String>();
+    let (editor, visual) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source, None));
+    editor.update(visual, |editor, cx| {
+        editor.workspace.is_open = true;
+        editor.workspace.active_tab = WorkspaceTab::Outline;
+        editor.sync_workspace_outline(cx);
+        cx.notify();
+    });
+    for _ in 0..4 {
         redraw(visual);
     }
-    let range = editor.update(visual, |editor, cx| {
-        let previous = editor.workspace.tree_scroll_handle.offset();
-        editor
-            .workspace
-            .tree_scroll_handle
-            .set_offset(gpui::point(px(0.0), px(-1000000.0)));
-        let theme = cx.global::<ThemeManager>().derived_theme(cx);
-        let range = editor.workspace_list_window(260, &theme);
-        editor.workspace.tree_scroll_handle.set_offset(previous);
-        range
+    let sidebar = editor.read_with(visual, |editor, _| {
+        editor.workspace.tree_scroll_handle.bounds()
+    });
+    visual.simulate_event(gpui::ScrollWheelEvent {
+        position: sidebar.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-1000000.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    for _ in 0..4 {
+        redraw(visual);
+    }
+    let (first, count) = editor.read_with(visual, |editor, _| {
+        (
+            editor.panel_first_row_rendered.get(),
+            editor.panel_rows_rendered.get(),
+        )
     });
     assert!(
-        range.start <= range.end && range.end <= 260,
-        "快速滚动后的列表范围不能越界：{range:?}"
+        first > 0 && first < 260,
+        "快速滚动后的首行不能越界：{first}"
     );
-    assert_eq!(range.end, 260, "大幅下滚后仍应包含末尾条目");
+    assert_eq!(first + count, 260, "大幅下滚后仍应包含末尾条目");
+    let selector = format!("workspace-node-{}", stable_node_hash("outline:518"));
+    let last = visual
+        .debug_bounds(Box::leak(selector.into_boxed_str()))
+        .expect("末尾大纲行应实际渲染");
+    assert!(
+        last.top() >= sidebar.top() && last.bottom() <= sidebar.bottom(),
+        "末尾条目应位于可视范围：行 {last:?}，视口 {sidebar:?}"
+    );
 }
 
 #[gpui::test]

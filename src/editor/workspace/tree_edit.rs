@@ -134,6 +134,7 @@ impl Editor {
             last_line: None,
             last_bounds: None,
             revealed_row: None,
+            row_height: None,
             scroll_x: px(0.0),
             caret: selected_end,
             selection_anchor: 0,
@@ -518,6 +519,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.workspace.name_edit.is_none()
+            && self.workspace.context_menu.is_none()
+            && !event.keystroke.modifiers.modified()
+            && self
+                .workspace
+                .tree_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+            && self.navigate_workspace_tree(event.keystroke.key.as_str(), cx)
+        {
+            cx.stop_propagation();
+            return;
+        }
         match event.keystroke.key.as_str() {
             "f2" if self.workspace.active_tab == WorkspaceTab::Files
                 && self.workspace.name_edit.is_none() =>
@@ -528,8 +542,37 @@ impl Editor {
                 if self.workspace.active_tab == WorkspaceTab::Files
                     && self.workspace.name_edit.is_none() =>
             {
-                if let Some(WorkspaceSelection::File(path)) = self.workspace.selected.clone() {
-                    self.open_workspace_file_in_mode(path, WorkspaceOpenMode::Pinned, window, cx);
+                match self.workspace.selected.clone() {
+                    Some(WorkspaceSelection::File(path)) => self.open_workspace_file_in_mode(
+                        path,
+                        WorkspaceOpenMode::Pinned,
+                        window,
+                        cx,
+                    ),
+                    Some(WorkspaceSelection::Directory(path)) => {
+                        self.toggle_workspace_node(&file_node_id(&path), cx)
+                    }
+                    _ => {}
+                }
+            }
+            "enter" if self.workspace.active_tab == WorkspaceTab::Outline => {
+                let target =
+                    self.workspace
+                        .selected
+                        .as_ref()
+                        .and_then(|selection| match selection {
+                            WorkspaceSelection::Outline(id) => find_workspace_node(
+                                &self.workspace.outline_tree,
+                                id,
+                            )
+                            .and_then(|node| match node.kind {
+                                WorkspaceTreeKind::Heading { line, .. } => Some((id.clone(), line)),
+                                _ => None,
+                            }),
+                            _ => None,
+                        });
+                if let Some((id, line)) = target {
+                    self.open_outline_node(id, line, cx);
                 }
             }
             "escape" if self.workspace.context_menu.is_some() => {
@@ -673,16 +716,11 @@ impl Editor {
                 }
         );
         let icon = if is_directory {
-            FOLDER_ICON
-        } else if is_markdown_document(Path::new(&edit.draft)) {
-            MARKDOWN_ICON
+            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Folder)
+                .text_color(theme.colors.dialog_muted).into_any_element()
         } else {
-            GENERIC_FILE_ICON
-        };
-        let icon_color = if is_directory {
-            Hsla::from(rgba(0x4a93d8ff))
-        } else {
-            theme.colors.dialog_primary_button_bg
+            let path = if is_markdown_document(Path::new(&edit.draft)) { MARKDOWN_ICON } else { GENERIC_FILE_ICON };
+            svg().path(path).size_4().text_color(theme.colors.dialog_primary_button_bg).into_any_element()
         };
         let draft: SharedString = edit.draft.clone().into();
         let selection = edit.selected_range.clone();
@@ -835,17 +873,17 @@ impl Editor {
                 div()
                     .h(px(Self::workspace_node_height(theme)))
                     .w_full()
-                    .pl(px(6.0 + depth as f32 * WORKSPACE_NODE_INDENT))
+                    .pl(Self::workspace_tree_indent(depth))
                     .flex()
                     .items_center()
                     .gap(px(4.0))
-                    .child(div().w(px(16.0)).flex_shrink_0())
-                    .child(svg().path(icon).size(px(16.0)).text_color(icon_color))
+                    .child(div().w_5().flex_shrink_0())
+                    .child(icon)
                     .child(input),
             )
             .children(edit.error.as_ref().map(|error| {
                 div()
-                    .pl(px(42.0 + depth as f32 * WORKSPACE_NODE_INDENT))
+                    .pl(Self::workspace_tree_indent(depth) + rems(2.75))
                     .text_size(px(theme.typography.ui_text_size(10.0)))
                     .text_color(theme.colors.dialog_danger_button_bg)
                     .child(error.clone())

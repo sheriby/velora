@@ -4,6 +4,35 @@ impl WorkspaceTreeNode {
     pub(crate) fn kind_dir(&self) -> bool {
         matches!(self.kind, WorkspaceTreeKind::Directory(_))
     }
+
+    pub(super) fn matches_workspace_selection(
+        &self,
+        selection: Option<&WorkspaceSelection>,
+    ) -> bool {
+        match (selection, &self.kind) {
+            (Some(WorkspaceSelection::Directory(selected)), WorkspaceTreeKind::Directory(path)) => {
+                selected == path
+            }
+            (
+                Some(WorkspaceSelection::File(selected)),
+                WorkspaceTreeKind::MarkdownFile(path)
+                | WorkspaceTreeKind::CodeFile(path)
+                | WorkspaceTreeKind::OtherFile(path),
+            ) => selected == path,
+            (Some(WorkspaceSelection::Outline(selected)), WorkspaceTreeKind::Heading { .. }) => {
+                selected == &self.id
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn workspace_selection(&self) -> WorkspaceSelection {
+        match &self.kind {
+            WorkspaceTreeKind::Directory(path) => WorkspaceSelection::Directory(path.clone()),
+            WorkspaceTreeKind::Heading { .. } => WorkspaceSelection::Outline(self.id.clone()),
+            _ => WorkspaceSelection::File(tree_node_path(self).to_path_buf()),
+        }
+    }
 }
 
 pub(crate) fn find_workspace_node<'a>(

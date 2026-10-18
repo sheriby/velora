@@ -31,7 +31,6 @@ pub(crate) fn untitled_document_path(id: uuid::Uuid, number: usize) -> PathBuf {
     PathBuf::from(format!("untitled:{id}/Untitled-{number}"))
 }
 
-const FOLDER_ICON: &str = "icon/workspace/folder.svg";
 pub(super) const WORKSPACE_ACTIVITY_WIDTH: Rems = rems(3.0);
 const WORKSPACE_PANEL_MIN_WIDTH: f32 = 180.0;
 const MARKDOWN_ICON: &str = "icon/workspace/markdown.svg";
@@ -42,9 +41,7 @@ const TAB_CLOSE_ICON: &str = "icon/workspace/tab-close.svg";
 const GENERIC_FILE_ICON: &str = "icon/workspace/generic-file.svg";
 const IMAGE_ICON: &str = "icon/workspace/image.svg";
 pub(crate) const WORKSPACE_NODE_HEIGHT: f32 = 24.0;
-const WORKSPACE_NODE_INDENT: f32 = 16.0;
-/// 列表行数超过这个数就按视口开窗渲染：元素树一帧只建视口那几十行。
-/// 大纲与文件树共用这一套；小树（几百行以内）照旧整棵走一遍，行为与既有交互完全相同。
+/// 搜索结果超过阈值时开窗；文件树和大纲的窗口由 Kit 管理。
 pub(crate) const PANEL_WINDOW_THRESHOLD_ROWS: usize = 200;
 /// 窗口上下各多铺几行：滚动时先看到内容、再补精确边界，不是先看到空档。
 const PANEL_WINDOW_OVERDRAW_ROWS: usize = 8;
@@ -52,8 +49,7 @@ const PANEL_WINDOW_OVERDRAW_ROWS: usize = 8;
 const PANEL_WINDOW_FALLBACK_ROWS: usize = 120;
 /// 补帧上限：量到尺寸就停，避免每帧重排（与正文冷启动同数）。
 pub(crate) const PANEL_FILL_MAX_FRAMES: u8 = 8;
-/// 面板滚动容器的上下内边距（`#workspace-panel-scroll` 的 `py(6)`）。
-/// 行在内容坐标系里的起点要减掉它才是「第几行」。
+/// 搜索外壳与树虚拟列表共用的上下内容边距。
 const WORKSPACE_PANEL_PADDING_Y: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -244,6 +240,13 @@ enum WorkspaceEditKind {
     Rename { source: PathBuf, is_directory: bool },
 }
 
+struct WorkspaceTreeListLayout {
+    count: usize,
+    height: Pixels,
+    name_row: Option<(usize, Pixels)>,
+    sizes: std::rc::Rc<Vec<Size<Pixels>>>,
+}
+
 struct WorkspaceNameEdit {
     kind: WorkspaceEditKind,
     directory: PathBuf,
@@ -256,6 +259,7 @@ struct WorkspaceNameEdit {
     last_line: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     revealed_row: Option<usize>,
+    row_height: Option<Pixels>,
     scroll_x: Pixels,
     caret: usize,
     selection_anchor: usize,
@@ -475,6 +479,8 @@ pub(super) struct WorkspaceState {
     panel_layout: Option<WorkspacePanelLayout>,
     /// 侧栏文件树滚动位置：让「点文件后重扫不跳回顶部」可断言。
     pub(crate) tree_scroll_handle: ScrollHandle,
+    tree_virtual_scroll: Option<gpui_kit::component::VirtualListScrollHandle>,
+    tree_list_layout: Option<WorkspaceTreeListLayout>,
 }
 
 impl Default for WorkspaceState {
@@ -552,6 +558,8 @@ impl Default for WorkspaceState {
             panel_width: None,
             panel_layout: None,
             tree_scroll_handle: ScrollHandle::new(),
+            tree_virtual_scroll: None,
+            tree_list_layout: None,
         }
     }
 }

@@ -1,12 +1,12 @@
 use super::*;
 use gpui::prelude::FluentBuilder;
+use gpui_kit::component::ThemeStyled as _;
 
-/// 文件树摊平出来的一行。节点行之外，名称输入行与懒加载占位行也各占一行，
-/// 三者同高才能按固定行高开窗（`Editor::workspace_list_window`）。
+/// 文件树的领域行；名称编辑的实际高度由视图测量，目录占位仍保留父节点身份。
 pub(crate) enum WorkspaceTreeRow<'a> {
     Node(&'a WorkspaceTreeNode, usize),
     NameEdit(usize),
-    Loading(usize),
+    Loading(&'a str, usize),
 }
 
 impl Editor {
@@ -34,14 +34,18 @@ impl Editor {
             .clone();
         let c = &theme.colors;
 
+        if self.workspace.active_tab != WorkspaceTab::Search {
+            let handle = self.workspace.tree_scroll_handle.clone();
+            self.workspace
+                .tree_virtual_scroll
+                .get_or_insert_with(|| handle.into());
+        }
         let search_header = (self.workspace.active_tab == WorkspaceTab::Search)
             .then(|| self.render_search_header(theme, strings, window, cx));
         let body = match self.workspace.active_tab {
-            WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, &editor, cx),
+            WorkspaceTab::Files => self.render_workspace_files_tree(theme, strings, cx),
             WorkspaceTab::Search => self.render_search_results(theme, strings, &editor, cx),
-            WorkspaceTab::Outline => {
-                self.render_workspace_outline_tree(theme, strings, &editor, cx)
-            }
+            WorkspaceTab::Outline => self.render_workspace_outline_tree(theme, strings, cx),
         };
 
         Some(
@@ -63,6 +67,17 @@ impl Editor {
                 .child(
                     div()
                         .id("workspace-panel-scroll")
+                        .test_support()
+                        .role(if self.workspace.active_tab == WorkspaceTab::Search {
+                            Role::List
+                        } else {
+                            Role::Tree
+                        })
+                        .aria_label(match self.workspace.active_tab {
+                            WorkspaceTab::Files => strings.workspace_tab_files.clone(),
+                            WorkspaceTab::Outline => strings.workspace_tab_outline.clone(),
+                            WorkspaceTab::Search => strings.workspace_tab_search.clone(),
+                        })
                         .when_some(
                             (self.workspace.active_tab == WorkspaceTab::Files)
                                 .then(|| self.workspace.root.clone())
@@ -71,14 +86,23 @@ impl Editor {
                                 workspace_tree_drop_target(element, root, &editor, None)
                             },
                         )
-                        .track_focus(&tree_focus)
+                        .track_focus(&tree_focus.clone().tab_index(0).tab_stop(true))
                         .on_key_down(cx.listener(Self::on_workspace_tree_key_down))
                         .flex_1()
                         .min_h(px(0.0))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.workspace.tree_scroll_handle)
-                        .px(px(4.0))
-                        .py(px(6.0))
+                        .when(
+                            self.workspace.active_tab != WorkspaceTab::Search
+                                && tree_focus.is_focused(window)
+                                && window.last_input_was_keyboard(),
+                            |tree| tree.focus_ring_style(window, cx),
+                        )
+                        .when(self.workspace.active_tab == WorkspaceTab::Search, |panel| {
+                            panel
+                                .overflow_y_scroll()
+                                .track_scroll(&self.workspace.tree_scroll_handle)
+                                .px(px(4.0))
+                                .py(px(6.0))
+                        })
                         .child(body),
                 )
                 .into_any_element(),
@@ -89,7 +113,6 @@ impl Editor {
         &mut self,
         theme: &Theme,
         strings: &I18nStrings,
-        editor: &WeakEntity<Editor>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.workspace.outline_tree.is_empty() {
@@ -105,18 +128,19 @@ impl Editor {
         {
             self.reveal_workspace_row(index, total, theme);
         }
-        let window = self.workspace_list_window(total, theme);
-        let visible = rows[window.clone()]
-            .iter()
-            .map(|(node, depth)| self.render_workspace_node(node, *depth, theme, editor))
-            .collect();
         if reveal {
             self.workspace.outline_reveal_pending = false;
         }
-        self.workspace_windowed_body(total, window, visible, theme, cx)
+        self.render_workspace_tree_list(total, None, theme, cx)
     }
 
     pub(super) fn reveal_workspace_row(&self, index: usize, total: usize, theme: &Theme) -> bool {
+        if self.workspace.active_tab != WorkspaceTab::Search
+            && let Some(handle) = self.workspace.tree_virtual_scroll.as_ref()
+        {
+            handle.scroll_to_item(index, ScrollStrategy::Nearest);
+            return true;
+        }
         let height = f32::from(self.workspace.tree_scroll_handle.bounds().size.height);
         if height <= 0.0 {
             return false;
@@ -136,12 +160,14 @@ impl Editor {
         };
         let maximum =
             (total as f32 * row_height + WORKSPACE_PANEL_PADDING_Y * 2.0 - height).max(0.0);
-        self.workspace.tree_scroll_handle
+        self.workspace
+            .tree_scroll_handle
             .set_offset(point(offset.x, px(target.clamp(-maximum, 0.0))));
         true
     }
 
-    /// 视口内的行区间：行高固定，从滚动偏移直接除得出来。大纲与文件树共用。
+    pub(super) fn workspace_tree_indent(depth: usize) -> Rems { rems(0.25 + depth as f32) }
+
     pub(crate) fn workspace_node_height(theme: &Theme) -> f32 {
         theme.typography.ui_text_size(WORKSPACE_NODE_HEIGHT)
             .max(WORKSPACE_NODE_HEIGHT)
@@ -224,7 +250,7 @@ impl Editor {
     }
 
     /// 展开状态下的标题树按行摊平：`(节点, 深度)` 的顺序就是屏幕顺序。
-    fn workspace_outline_rows(&self) -> Vec<(&WorkspaceTreeNode, usize)> {
+    pub(super) fn workspace_outline_rows(&self) -> Vec<(&WorkspaceTreeNode, usize)> {
         fn walk<'a>(
             nodes: &'a [WorkspaceTreeNode],
             depth: usize,
@@ -302,9 +328,9 @@ impl Editor {
                         !matches!(edit.kind, WorkspaceEditKind::Rename { .. })
                             && tree_node_path(node) == edit.directory.as_path()
                     });
-                if is_expanded && node.kind_dir() && !node.children_loaded {
+                if is_expanded && node.kind_dir() && !node.children_loaded && !node.children_load_failed {
                     // 展开的这一层还没扫到（懒加载）：先挂一行占位，扫描落地后换成子项。
-                    rows.push(WorkspaceTreeRow::Loading(depth + 1));
+                    rows.push(WorkspaceTreeRow::Loading(&node.id, depth + 1));
                 }
                 if is_expanded {
                     let insertion = if name_edit {
@@ -328,250 +354,7 @@ impl Editor {
         rows
     }
 
-    /// 摊平出来的一行变成元素。
-    pub(crate) fn render_workspace_tree_row(
-        &self,
-        row: &WorkspaceTreeRow<'_>,
-        theme: &Theme,
-        editor: &WeakEntity<Editor>,
-    ) -> AnyElement {
-        match row {
-            WorkspaceTreeRow::Node(node, depth) => {
-                self.render_workspace_node(node, *depth, theme, editor)
-            }
-            WorkspaceTreeRow::NameEdit(depth) => {
-                self.render_workspace_name_row(*depth, theme, editor)
-            }
-            WorkspaceTreeRow::Loading(depth) => div()
-                .w_full()
-                .h(px(Self::workspace_node_height(theme)))
-                .pl(px(6.0 + *depth as f32 * WORKSPACE_NODE_INDENT))
-                .text_size(px(theme.typography.ui_text_size(14.0)))
-                .text_color(theme.colors.dialog_muted)
-                .child("…")
-                .into_any_element(),
-        }
-    }
 
-    pub(crate) fn render_workspace_node(
-        &self,
-        node: &WorkspaceTreeNode,
-        depth: usize,
-        theme: &Theme,
-        editor: &WeakEntity<Editor>,
-    ) -> AnyElement {
-        let c = &theme.colors;
-        let is_expanded = self.workspace.expanded.contains(&node.id);
-        // 未加载目录也需展开入口，大纲标题有下级时同样必须提供折叠箭头。
-        let has_children = !node.children.is_empty() || (node.kind_dir() && !node.children_loaded);
-        let selected = match (&self.workspace.selected, &node.kind) {
-            (Some(WorkspaceSelection::Directory(selected)), WorkspaceTreeKind::Directory(path)) => {
-                selected == path
-            }
-            (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::MarkdownFile(path)) => {
-                selected == path
-            }
-            (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::CodeFile(path)) => {
-                selected == path
-            }
-            (Some(WorkspaceSelection::File(selected)), WorkspaceTreeKind::OtherFile(path)) => selected == path,
-            (Some(WorkspaceSelection::Outline(selected)), _) => selected == &node.id,
-            _ => false,
-        };
-        let node_id = node.id.clone();
-        let node_selector = format!("workspace-node-{}", stable_node_hash(&node.id));
-        if self.workspace.name_edit.as_ref().is_some_and(|edit| {
-            matches!(&edit.kind, WorkspaceEditKind::Rename { source, .. }
-                if tree_node_path(node) == source.as_path())
-        }) {
-            return self.render_workspace_name_row(depth, theme, editor);
-        }
-        let click_editor = editor.clone();
-        let click_kind = node.kind.clone();
-        let drag_path = match &node.kind {
-            WorkspaceTreeKind::MarkdownFile(path)
-            | WorkspaceTreeKind::CodeFile(path)
-            | WorkspaceTreeKind::OtherFile(path) => Some(path.clone()),
-            _ => None,
-        };
-        let directory_drag = match &node.kind {
-            WorkspaceTreeKind::Directory(path) if self.workspace.root.as_ref() != Some(path) => Some(path.clone()),
-            _ => None,
-        };
-        let drop_directory = match &node.kind {
-            WorkspaceTreeKind::Directory(path) => Some(path.clone()),
-            WorkspaceTreeKind::MarkdownFile(path) | WorkspaceTreeKind::CodeFile(path) | WorkspaceTreeKind::OtherFile(path) => path.parent().map(Path::to_path_buf),
-            WorkspaceTreeKind::Heading { .. } => None,
-        };
-        let context_editor = editor.clone();
-        let context_kind = node.kind.clone();
-        let arrow_node_id = node.id.clone();
-        let arrow_editor = editor.clone();
-        let arrow_icon = has_children.then_some(if is_expanded {
-            CHEVRON_DOWN_ICON
-        } else {
-            CHEVRON_RIGHT_ICON
-        });
-
-        let icon = match &node.kind {
-            WorkspaceTreeKind::Directory(_) => Some((FOLDER_ICON, Hsla::from(rgba(0x4a93d8ff)))),
-            WorkspaceTreeKind::MarkdownFile(_) => Some((MARKDOWN_ICON, c.dialog_primary_button_bg)),
-            WorkspaceTreeKind::CodeFile(path) | WorkspaceTreeKind::OtherFile(path)
-                if crate::components::Block::has_supported_image_extension(path) =>
-            {
-                Some((IMAGE_ICON, c.dialog_muted))
-            }
-            WorkspaceTreeKind::CodeFile(_) => Some((CODE_ICON, c.dialog_muted)),
-            WorkspaceTreeKind::OtherFile(_) => Some((GENERIC_FILE_ICON, c.dialog_muted)),
-            WorkspaceTreeKind::Heading { .. } => None,
-        };
-
-        let label_color = if selected {
-            c.text_default
-        } else {
-            c.dialog_muted
-        };
-
-        let mut arrow_el = div()
-            .w(px(16.0))
-            .h(px(20.0))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .children(
-                arrow_icon.map(|path| svg().path(path).size(px(14.0)).text_color(c.dialog_muted)),
-            );
-        if has_children {
-            arrow_el = arrow_el.cursor_pointer().on_mouse_down(
-                MouseButton::Left,
-                move |_event, _window, cx| {
-                    let _ = arrow_editor.update(cx, |editor, cx| {
-                        editor.toggle_workspace_node(&arrow_node_id, cx);
-                    });
-                    cx.stop_propagation();
-                },
-            );
-        }
-
-        // 文件节点悬停显示 大小 · 修改时间（roadmap D7）。这份提示里那次
-        // `fs::metadata` 只有真的悬停才该付：放在行构造期就是每个可见文件节点每帧
-        // 一次 stat（用户可能从不悬停），所以这里只搬两样字段、把 stat 留在闭包里。
-        let tooltip_facts = TreeTooltipFacts::from_node(&node);
-        div()
-            .id(("workspace-node", stable_node_hash(&node.id)))
-            .debug_selector(move || node_selector.clone())
-            .h(px(Self::workspace_node_height(theme)))
-            .w_full()
-            .overflow_hidden()
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .pl(px(6.0 + depth as f32 * WORKSPACE_NODE_INDENT))
-            .pr(px(6.0))
-            .rounded(px(4.0))
-            .when(!node.kind_dir() && self.workspace.context_menu.is_none() && self.workspace.name_edit.is_none(), |this| this.tooltip(move |_, cx| {
-                let label = tree_node_tooltip(&tooltip_facts);
-                cx.new(|_| WorkspaceTooltip { label }).into()
-            }))
-            .bg(if selected {
-                c.selection
-            } else {
-                hsla(0.0, 0.0, 0.0, 0.0)
-            })
-            .hover(|this| this.bg(c.dialog_secondary_button_hover))
-            .cursor_pointer()
-            .when_some(drag_path, |row, path| {
-                row.on_drag(EditorFileDrag { from_path: path, source: None }, |drag, _, _, cx| {
-                    let label = file_label(&drag.from_path);
-                    cx.new(|_| DraggedTabPreview { label: label.into() })
-                })
-            })
-            .when_some(directory_drag, |row, path| {
-                row.on_drag(WorkspaceDirectoryDrag { path }, |drag, _, _, cx| {
-                    let label = file_label(&drag.path);
-                    cx.new(|_| DraggedTabPreview { label: label.into() })
-                })
-            })
-            .when_some(drop_directory, |row, directory| {
-                workspace_tree_drop_target(row, directory, editor, Some(c.selection))
-            })
-            .child(arrow_el)
-            .children(icon.map(|(path, color)| {
-                svg()
-                    .path(path)
-                    .size(px(16.0))
-                    .flex_shrink_0()
-                    .text_color(color)
-                    .into_any_element()
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .overflow_hidden()
-                    .truncate()
-                    .text_size(px(theme.typography.ui_text_size(12.0)))
-                    .line_height(px(theme.typography.ui_text_size(18.0)))
-                    .text_color(label_color)
-                    .child(node.label.clone()),
-            )
-            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                let selection = match &context_kind {
-                    WorkspaceTreeKind::Directory(path) => {
-                        Some(WorkspaceSelection::Directory(path.clone()))
-                    }
-                    WorkspaceTreeKind::MarkdownFile(path)
-                    | WorkspaceTreeKind::CodeFile(path)
-                    | WorkspaceTreeKind::OtherFile(path) => {
-                        Some(WorkspaceSelection::File(path.clone()))
-                    }
-                    WorkspaceTreeKind::Heading { .. } => None,
-                };
-                let _ = context_editor.update(cx, |editor, cx| {
-                    editor.open_workspace_context_menu(event.position, selection, cx);
-                    editor.focus_workspace_tree(window, cx);
-                });
-                cx.stop_propagation();
-            })
-            .on_click(move |event, window, cx| {
-                if !event.standard_click() {
-                    return;
-                }
-                let node_id = node_id.clone();
-                let click_kind = click_kind.clone();
-                let _ = click_editor.update(cx, |editor, cx| {
-                    let is_file_tree = !matches!(click_kind, WorkspaceTreeKind::Heading { .. });
-                    match click_kind {
-                    WorkspaceTreeKind::Directory(path) => {
-                        editor.workspace.selected = Some(WorkspaceSelection::Directory(path));
-                        editor.toggle_workspace_node(&node_id, cx);
-                    }
-                    WorkspaceTreeKind::MarkdownFile(path) => {
-                        let mode = Self::tree_click_open_mode(&event);
-                        editor.open_workspace_file_in_mode(path, mode, window, cx);
-                    }
-                    WorkspaceTreeKind::CodeFile(path) => {
-                        let mode = Self::tree_click_open_mode(&event);
-                        editor.open_workspace_file_in_mode(path, mode, window, cx);
-                    }
-                    WorkspaceTreeKind::OtherFile(path) => {
-                        let mode = Self::tree_click_open_mode(&event);
-                        editor.open_workspace_file_in_mode(path, mode, window, cx);
-                    }
-                    WorkspaceTreeKind::Heading { line, .. } => {
-                        if event.click_count() >= 2 {
-                            editor.rename_outline_heading(line, cx);
-                        } else {
-                            editor.open_outline_node(node_id, line, cx);
-                        }
-                    }
-                    }
-                    if is_file_tree && event.click_count() < 2 { editor.focus_workspace_tree(window, cx); }
-                });
-            })
-            .into_any_element()
-    }
 }
 
 /// 永久删除（roadmap H2 的「永久删除」策略）。
@@ -679,7 +462,7 @@ pub(crate) fn path_is_affected(path: &Path, target: &Path, target_is_directory: 
     }
 }
 
-fn workspace_tree_drop_target<T: InteractiveElement>(
+pub(super) fn workspace_tree_drop_target<T: InteractiveElement>(
     element: T,
     directory: PathBuf,
     editor: &WeakEntity<Editor>,

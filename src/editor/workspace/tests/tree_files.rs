@@ -1607,3 +1607,260 @@ async fn a_directory_that_failed_to_scan_is_not_retried_every_frame(cx: &mut Tes
         "扫失败的目录被每帧重试了：展开时 {after_expand} 次，五帧之后 {after_frames} 次"
     );
 }
+
+#[gpui::test]
+fn workspace_tree_empty_directories_keep_native_row_and_disclosure_semantics(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    let root = std::env::temp_dir().join(format!("velora-tree-controls-{}", uuid::Uuid::new_v4()));
+    let empty = root.join("a-empty");
+    fs::create_dir_all(&empty).unwrap();
+    fs::write(root.join("z.md"), "file").unwrap();
+    let root = root.canonicalize().unwrap();
+    let empty = root.join("a-empty");
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init_with_language_id(cx, "en-US");
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    cx.run_until_parked();
+    let id = file_node_id(&empty);
+    editor.update(cx, |editor, cx| editor.toggle_workspace_node(&id, cx));
+    cx.run_until_parked();
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, _| {
+        let tree = editor.workspace.file_tree.as_ref().unwrap();
+        let directory = find_workspace_node(std::slice::from_ref(tree), &id).unwrap();
+        assert!(directory.children_loaded && directory.children.is_empty());
+    });
+    let hash = super::super::stable_node_hash(&id);
+    let toggle = cx.update(|window, _| {
+        assert_eq!(
+            window
+                .try_find("workspace-panel-scroll")
+                .and_then(|item| item.role()),
+            Some(gpui::Role::Tree)
+        );
+        assert_eq!(
+            window
+                .try_find("workspace-tree-viewport")
+                .and_then(|item| item.role()),
+            Some(gpui::Role::Group),
+            "树应有独立的原生虚拟滚动视口"
+        );
+        let row = window.find(("workspace-node", hash));
+        assert_eq!(row.role(), Some(gpui::Role::TreeItem));
+        assert_eq!(row.label(), Some("a-empty"));
+        assert_eq!(row.expanded(), Some(true));
+        let disclosure = window.find(("workspace-node-toggle", hash));
+        assert_eq!(disclosure.role(), Some(gpui::Role::Button));
+        disclosure.bounds().center()
+    });
+    cx.simulate_click(toggle, gpui::Modifiers::none());
+    for _ in 0..2 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            !editor.workspace.expanded.contains(&id),
+            "展开按钮只能切换一次"
+        );
+        assert_eq!(
+            editor.workspace_files_rows().len(),
+            3,
+            "空目录不生成虚假子行"
+        );
+        assert_eq!(editor.buffer.text(), "正文");
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.focus_workspace_tree(window, cx);
+    });
+    cx.simulate_keystrokes("home down");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(WorkspaceSelection::Directory(empty.clone())),
+            "方向键按真实节点选择"
+        )
+    });
+    cx.simulate_keystrokes("right down");
+    editor.read_with(cx, |editor, _| {
+        assert!(editor.workspace.expanded.contains(&id));
+        assert_eq!(
+            editor.workspace.selected,
+            Some(WorkspaceSelection::File(root.join("z.md"))),
+            "展开空目录后，下一个键盘目标应为真实文件"
+        );
+        assert_eq!(editor.buffer.text(), "正文", "选择行不自动打开文档");
+    });
+    cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+}
+
+#[gpui::test]
+fn workspace_outline_native_rows_support_keyboard_navigation_and_opening(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let source = "# Parent\n\n## Child\n\n# Last";
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.into(), None));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.workspace.active_tab = super::super::WorkspaceTab::Outline;
+        editor.workspace.is_open = true;
+        editor.sync_workspace_outline(cx);
+        editor.workspace.expanded.remove("outline:0");
+        window.activate_window();
+        editor.focus_workspace_tree(window, cx);
+        cx.notify();
+    });
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, _| {
+        assert!(!editor.workspace.expanded.contains("outline:0"))
+    });
+    cx.simulate_keystrokes("home right down");
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(
+            editor.workspace.selected,
+            Some(WorkspaceSelection::Outline("outline:2".into()))
+        )
+    });
+    cx.simulate_keystrokes("down enter");
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, cx| {
+        let last = editor
+            .document
+            .visible_blocks()
+            .iter()
+            .find(|block| block.entity.read(cx).display_text() == "Last")
+            .unwrap()
+            .entity
+            .entity_id();
+        assert_eq!(
+            editor.current_edit_target_entity_id_from_state(cx),
+            Some(last)
+        );
+        assert_eq!(editor.buffer.text(), source);
+    });
+}
+
+#[gpui::test]
+fn workspace_tree_virtual_rows_measure_name_validation_and_reuse_size_cache(
+    cx: &mut TestAppContext,
+) {
+    let root = std::env::temp_dir().join(format!("velora-tree-measure-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("note.md"), "note").unwrap();
+    let root = root.canonicalize().unwrap();
+    cx.update(|cx| {
+        crate::i18n::I18nManager::init(cx);
+        crate::theme::ThemeManager::init(cx);
+        crate::components::init(cx);
+    });
+    let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
+    editor.update(cx, |editor, cx| editor.set_workspace_root(root.clone(), cx));
+    cx.run_until_parked();
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    let sizes = editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .tree_list_layout
+            .as_ref()
+            .unwrap()
+            .sizes
+            .clone()
+    });
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, _| {
+        assert!(
+            std::rc::Rc::ptr_eq(
+                &sizes,
+                &editor.workspace.tree_list_layout.as_ref().unwrap().sizes
+            ),
+            "普通重绘复用原生行尺寸缓存"
+        )
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.activate_window();
+        editor.create_generic_workspace_file(window, cx);
+    });
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    let normal = editor.read_with(cx, |editor, _| {
+        editor
+            .workspace
+            .name_edit
+            .as_ref()
+            .unwrap()
+            .row_height
+            .unwrap()
+    });
+    cx.simulate_keystrokes("enter");
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, _| {
+        let edit = editor.workspace.name_edit.as_ref().unwrap();
+        assert!(edit.error.is_some());
+        assert!(edit.row_height.unwrap() > normal, "校验信息应占据真实行高");
+    });
+    cx.simulate_input("valid.md");
+    for _ in 0..4 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+    editor.read_with(cx, |editor, _| {
+        let edit = editor.workspace.name_edit.as_ref().unwrap();
+        assert!(edit.error.is_none());
+        assert_eq!(edit.row_height, Some(normal), "错误消失后不保留多余空白");
+        assert_eq!(editor.buffer.text(), "正文");
+    });
+    cx.on_quit(move || fs::remove_dir_all(root).unwrap());
+}
+
+#[gpui::test]
+fn workspace_tree_failed_directory_does_not_keep_a_loading_row(cx: &mut TestAppContext) {
+    let editor = cx.new(|cx| Editor::from_markdown(cx, String::new(), None));
+    editor.update(cx, |editor, _| {
+        let id = "failed-directory".to_string();
+        editor.workspace.expanded.insert(id.clone());
+        editor.workspace.file_tree = Some(WorkspaceTreeNode {
+            id,
+            label: "failed".into(),
+            kind: WorkspaceTreeKind::Directory(PathBuf::from("failed")),
+            children: Vec::new(),
+            children_loaded: false,
+            children_load_failed: true,
+        });
+        assert!(
+            !editor.workspace_files_rows().iter().any(|row| matches!(
+                row,
+                super::super::render_panel::WorkspaceTreeRow::Loading(..)
+            )),
+            "扫描失败后不能继续表示正在加载"
+        );
+    });
+}
