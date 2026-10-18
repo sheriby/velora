@@ -41,7 +41,7 @@ async fn review_same_text_ime_commit_inside_a_link_label_finishes_the_compositio
     // 标签“中”在展开后的显示坐标里是 1..4；选中整段标签再上屏，走的才是那条早退分支。
     let label = 1..1 + "中".len();
     block.update_in(cx, |block, window, cx| {
-        block.focus_handle.focus(window);
+        block.focus_handle.focus(window, cx);
         block.selected_range = label.clone();
         block.sync_inline_projection_for_focus(true);
         // 组合开始：把整段标签换成同一个字，走的正是那条早退分支。
@@ -116,7 +116,7 @@ async fn core_repair_language_same_text_commit_resumes_autosave(cx: &mut TestApp
         block.replace_text_in_visible_range(0..length, "edited", None, false, cx);
     });
     block.update_in(cx, |block, window, cx| {
-        block.code_language_focus_handle.focus(window);
+        block.code_language_focus_handle.focus(window, cx);
         block.replace_and_mark_text_in_range(Some(0..4), "rust", Some(4..4), window, cx);
     });
     cx.executor().advance_clock(Duration::from_secs(1));

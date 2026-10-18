@@ -115,7 +115,7 @@ fn init_update_session(cx: &mut App) {
         return;
     }
     cx.set_global(UpdateSession::default());
-    let subscription = cx.on_window_closed(|cx| {
+    let subscription = cx.on_window_closed(|cx, _| {
         let closed_download = cx
             .global::<UpdateSession>()
             .download_window
@@ -160,7 +160,7 @@ pub(crate) fn cancel_pending_install(cx: &mut App) {
         });
         cx.defer(|cx| {
             for handle in cx.windows() {
-                let Some(handle) = handle.downcast::<Editor>() else {
+                let Some(handle) = crate::ui::window_content::<Editor>(handle, cx) else {
                     continue;
                 };
                 if let Err(error) = handle.update(cx, |editor, _, cx| {
@@ -204,12 +204,12 @@ fn show_failure_on_app(cx: &mut App, detail: &str) {
     if cx
         .windows()
         .iter()
-        .all(|window| window.downcast::<Editor>().is_none())
+        .all(|window| crate::ui::window_content::<Editor>(window, cx).is_none())
     {
         let (width, height) = EditorSettings::default_window_size(cx);
         let bounds = Bounds::centered(None, size(px(width as f32), px(height as f32)), cx);
         let options = crate::window_chrome::velora_window_options("Velora".into(), bounds);
-        if let Err(error) = cx.open_window(options, |_, cx| {
+        if let Err(error) = crate::ui::open_window(options, cx, |_, cx| {
             cx.new(|cx| Editor::from_markdown(cx, String::new(), None))
         }) {
             eprintln!("无法打开更新错误窗口：{error}");
@@ -220,7 +220,7 @@ fn show_failure_on_app(cx: &mut App, detail: &str) {
     windows.sort_by_key(|window| Some(*window) != active);
     let mut shown = false;
     for handle in windows {
-        let Some(handle) = handle.downcast::<Editor>() else {
+        let Some(handle) = crate::ui::window_content::<Editor>(handle, cx) else {
             continue;
         };
         match handle.update(cx, |editor, window, cx| {
@@ -336,11 +336,9 @@ impl Editor {
                 }) {
                     eprintln!("更新检查窗口已关闭：{error}");
                     if let Some(info) = available {
-                        if let Err(error) = cx.update_global::<UpdateSession, _>(|session, _| {
+                        cx.update_global::<UpdateSession, _>(|session, _| {
                             session.fallback_notification = Some(info)
-                        }) {
-                            eprintln!("保留更新通知失败：{error}");
-                        }
+                        });
                     }
                 }
             },
@@ -491,7 +489,7 @@ impl Editor {
                         cx.defer(move |cx| {
                             let mut arguments = Vec::new();
                             for window in cx.windows() {
-                                let Some(window) = window.downcast::<Editor>() else { continue; };
+                                let Some(window) = crate::ui::window_content::<Editor>(window, cx) else { continue; };
                                 match window.update(cx, |editor, _, cx| {
                                     editor.persist_session(cx);
                                     editor.workspace.root.clone().or_else(|| editor.file_path.clone())
@@ -673,7 +671,7 @@ mod tests {
         cx.update(|cx| {
             assert!(
                 cx.windows().iter().any(|window| {
-                    window.downcast::<Editor>().is_some_and(|window| {
+                    crate::ui::window_content::<Editor>(window, cx).is_some_and(|window| {
                         window
                             .read_with(cx, |editor, _| editor.modal_is_open())
                             .unwrap_or(false)
@@ -798,7 +796,7 @@ mod tests {
             editor.apply_update_result(Ok(UpdateCheckResult::UpdateAvailable(info)), true, cx);
             assert!(editor.update_notification.is_some());
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.debug_bounds("update-notification").is_some());
         assert!(cx.debug_bounds("update-confirm").is_some());
         assert!(cx.debug_bounds("update-cancel").is_some());

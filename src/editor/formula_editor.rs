@@ -501,7 +501,7 @@ impl Editor {
         self.dismiss_contextual_overlays(cx);
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         let mut editor = FormulaEditorState {
             target,
             selected_range: draft.len()..draft.len(),
@@ -1193,7 +1193,7 @@ impl Editor {
             return;
         };
         if let Some(focus) = state.focus.as_ref() {
-            window.focus(focus);
+            window.focus(focus, cx);
         }
         state.completion = None;
         state.selecting_with_mouse = true;
@@ -1352,7 +1352,7 @@ impl Editor {
             }
             // max_offset 要等滚动容器画过一帧才有（首帧是 0），这时先不记完成，
             // 补一帧再滚；不然光标永远进不了可见区。
-            let max_offset_y = state.input_scroll.max_offset().height;
+            let max_offset_y = state.input_scroll.max_offset().y;
             let needs_scroll = desired != current.y;
             if needs_scroll && max_offset_y <= px(0.0) {
                 state.last_autoscroll_epoch = None;

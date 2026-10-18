@@ -842,7 +842,7 @@ impl Editor {
                     .input
                     .update(cx, |input, cx| input.focus(window, cx));
             } else {
-                session.panel_focus.focus(window);
+                session.panel_focus.focus(window, cx);
             }
             cx.notify();
         } else {
@@ -1831,7 +1831,7 @@ impl Editor {
                 .windows()
                 .into_iter()
                 .find_map(|window| {
-                    window.downcast::<crate::config::preferences::PreferencesWindow>()
+                    crate::ui::window_content::<crate::config::preferences::PreferencesWindow>(window, cx)
                 })
                 .unwrap_or_else(|| crate::config::open_preferences_window(cx));
             if let Err(error) = handle.update(cx, |preferences, window, cx| {

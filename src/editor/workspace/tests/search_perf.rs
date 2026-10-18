@@ -49,7 +49,7 @@ fn open_document(
         cx.run_until_parked();
     }
     for _ in 0..4 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     editor.update(cx, |editor, cx| {

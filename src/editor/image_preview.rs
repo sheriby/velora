@@ -361,7 +361,8 @@ impl Editor {
 
     pub(super) fn load_image_file_preview(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let source = Resource::Path(path.clone().into());
-        let (loaded, _) = cx.fetch_asset::<ImageAssetLoader>(&source);
+        let load = ImageAssetLoader::load(source, cx);
+        let loaded = cx.background_spawn(load);
         let task = cx.spawn({
             let path = path.clone();
             async move |this, cx| {

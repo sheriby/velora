@@ -11,7 +11,7 @@ fn initialize(cx: &mut TestAppContext) {
 }
 
 fn draw(cx: &mut VisualTestContext) {
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 }
 
@@ -924,8 +924,8 @@ fn ai_review_accepts_the_focused_change_with_the_platform_enter_shortcut(cx: &mu
     });
     draw(cx);
     draw(cx);
-    editor.update_in(cx, |editor, window, _| {
-        window.focus(&editor.ai_session.as_ref().unwrap().review_focus)
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.ai_session.as_ref().unwrap().review_focus, cx)
     });
     cx.simulate_keystrokes(if cfg!(target_os = "macos") {
         "cmd-enter"
@@ -2346,7 +2346,7 @@ fn ai_settings_entry_opens_preferences_and_preserves_the_running_conversation(cx
     let settings = cx.debug_bounds("ai-settings").unwrap();
     cx.simulate_click(settings.center(), gpui::Modifiers::none());
     cx.run_until_parked();
-    assert!(cx.read(|cx| cx.windows().iter().any(|window| window.downcast::<crate::config::preferences::PreferencesWindow>().is_some())),
+    assert!(cx.read(|cx| cx.windows().iter().any(|window| crate::ui::window_content::<crate::config::preferences::PreferencesWindow>(window, cx).is_some())),
         "AI 设置必须使用偏好设置，不在对话里编辑连接");
     assert!(!control.cancel.is_cancelled());
     editor.read_with(cx, |editor, cx| {
@@ -2367,7 +2367,7 @@ fn ai_settings_reuses_the_preferences_window(cx: &mut TestAppContext) {
         editor.open_ai_settings(cx);
     });
     cx.run_until_parked();
-    assert_eq!(cx.read(|cx| cx.windows().iter().filter(|window| window.downcast::<crate::config::preferences::PreferencesWindow>().is_some()).count()),
+    assert_eq!(cx.read(|cx| cx.windows().iter().filter(|window| crate::ui::window_content::<crate::config::preferences::PreferencesWindow>(*window, cx).is_some()).count()),
         1, "配置入口应复用偏好设置，避免多份未保存的连接草稿");
 }
 

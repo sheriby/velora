@@ -266,7 +266,7 @@ pub(crate) fn open_preferences_window_with_state(
     preferences: AppPreferences,
     theme_options: Vec<ThemeCatalogEntry>,
     title: String,
-) -> WindowHandle<PreferencesWindow> {
+) -> crate::ui::ContentWindowHandle<PreferencesWindow> {
     open_preferences_window_with_size(
         cx,
         preferences,
@@ -284,12 +284,12 @@ pub(crate) fn open_preferences_window_with_size(
     theme_options: Vec<ThemeCatalogEntry>,
     title: String,
     window_size: Size<Pixels>,
-) -> WindowHandle<PreferencesWindow> {
+) -> crate::ui::ContentWindowHandle<PreferencesWindow> {
     let bounds = Bounds::centered(None, window_size, cx);
     let window_title = SharedString::from(format!("Velora - {title}"));
-    let handle = cx
-        .open_window(
+    let handle = crate::ui::open_window(
             velora_window_options(window_title, bounds),
+            cx,
             move |_window, cx| {
                 cx.new(move |cx| PreferencesWindow::new(preferences, theme_options, cx))
             },
@@ -297,16 +297,16 @@ pub(crate) fn open_preferences_window_with_size(
         .expect("preferences window should open");
 
     handle
-        .update(cx, |preferences, window, _cx| {
+        .update(cx, |preferences, window, cx| {
             window.activate_window();
-            preferences.focus_handle.focus(window);
+            preferences.focus_handle.focus(window, cx);
         })
         .expect("newly opened preferences window should be updateable");
 
     handle
 }
 
-pub(crate) fn open_preferences_window(cx: &mut App) -> WindowHandle<PreferencesWindow> {
+pub(crate) fn open_preferences_window(cx: &mut App) -> crate::ui::ContentWindowHandle<PreferencesWindow> {
     let preferences = match read_app_preferences() {
         Ok(preferences) => preferences,
         Err(err) => {

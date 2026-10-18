@@ -91,7 +91,7 @@ impl Block {
     pub(super) fn sync_code_highlight(&mut self) {
         let result = match &self.record.kind {
             BlockKind::CodeBlock { language } => highlight_code_block(
-                language.as_deref().map(|value| &**value),
+                language.as_deref(),
                 self.render_cache.visible_text(),
             ),
             // 源码文档的 markdown 分块是 Paragraph：语言在打开/切视图时记在
@@ -107,7 +107,7 @@ impl Block {
                 spans: highlight_latex_source(self.render_cache.visible_text()),
             }),
             _ => self.source_language.as_deref().and_then(|language| {
-                if &**language == "markdown" {
+                if language == "markdown" {
                     let highlight = highlight_markdown_source(
                         self.render_cache.visible_text(),
                         self.source_line_start == 1,

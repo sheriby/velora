@@ -201,7 +201,7 @@ async fn workspace_context_menu_keeps_the_right_clicked_directory(cx: &mut TestA
         });
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             editor.workspace.selected,
@@ -220,7 +220,7 @@ async fn workspace_context_menu_keeps_the_right_clicked_directory(cx: &mut TestA
         });
     });
     // 菜单渲染帧：以前会把选中项改回活动文件。
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             editor.workspace.selected,
@@ -243,7 +243,7 @@ async fn workspace_context_menu_keeps_the_right_clicked_directory(cx: &mut TestA
             );
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.selected_workspace_path(), Some(other), "右键文件不能被活动文件顶掉");
         assert_eq!(editor.file_path.as_ref(), Some(&note), "右键选择不应打开另一篇文档");

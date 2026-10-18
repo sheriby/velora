@@ -7,7 +7,7 @@ impl Editor {
             .tree_focus
             .get_or_insert_with(|| cx.focus_handle());
         self.pending_focus = None;
-        window.focus(focus);
+        window.focus(focus, cx);
     }
 
     pub(crate) fn prompt_create_workspace_file(
@@ -140,7 +140,7 @@ impl Editor {
             _blur_subscription: blur_subscription,
         });
         self.pending_focus = None;
-        window.focus(&focus);
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -247,7 +247,7 @@ impl Editor {
                             if let Some(edit) = editor.workspace.name_edit.as_mut() {
                                 edit.pending = false;
                                 edit.error = Some(detail.clone());
-                                window.focus(&edit.focus);
+                                window.focus(&edit.focus, cx);
                             }
                             if !exists {
                                 let title = cx
@@ -754,7 +754,7 @@ impl Editor {
                                 colors.selection,
                             ));
                         }
-                        if let Err(error) = line.paint(origin, bounds.size.height, window, cx) {
+                        if let Err(error) = line.paint(origin, bounds.size.height, gpui::TextAlign::Left, None, window, cx) {
                             eprintln!("绘制文件名失败：{error}");
                         }
                         if focus.is_focused(window) {
@@ -801,7 +801,7 @@ impl Editor {
             .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                 if let Err(error) = click_editor.update(cx, |editor, cx| {
                     if let Some(edit) = editor.workspace.name_edit.as_mut() {
-                        window.focus(&edit.focus);
+                        window.focus(&edit.focus, cx);
                         if let Some((line, bounds)) = edit.last_line.as_ref().zip(edit.last_bounds)
                         {
                             let index = line.closest_index_for_x(

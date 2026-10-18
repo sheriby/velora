@@ -19,7 +19,7 @@
 
 ## Velora 是什么
 
-原生所见即所得的 Markdown 编辑器。Rust + **vendored GPUI 0.2.2**（`Cargo.toml` 的 `[patch.crates-io]` 指向 `vendor/gpui`，带本地补丁，清单见 testing-and-build.md §7）。**单 bin crate、无 workspace**：全部代码在 `src/`，入口 `src/main.rs`，测试全是 bin 内的 `#[cfg(test)]` 模块。发布平台 macOS（ARM64 + Intel）与 Windows x64，不支持 Linux。
+原生所见即所得的 Markdown 编辑器。Rust + **GPUI Kit 0.7.3 / GPUI 快照 0.3.9**（`Cargo.toml` 的 `[patch.crates-io]` 使用 `vendor/` 中的兼容副本，说明见 `vendor/README.md`）。**单 bin crate、无 workspace**：全部代码在 `src/`，入口 `src/main.rs`，测试全是 bin 内的 `#[cfg(test)]` 模块。发布平台 macOS（ARM64 + Intel）与 Windows x64，不支持 Linux。
 
 ## 核心分层与所有权
 
@@ -79,7 +79,7 @@ src/
 ├── i18n/                双语内置表 + 外置语言包（i18n 是代码不是数据文件）
 ├── net/                 HTTP 客户端与应用更新检查
 └── export/              HTML / PDF / PNG / 打印（PDF、PNG、打印走无头 Chromium）
-vendor/gpui/             vendored 框架 + 本地补丁
+vendor/                 GPUI 快照、组件库兼容副本与补丁说明
 scripts/ fixtures/       夹具生成、打包脚本；fixtures/perf 不进版本库
 ```
 
@@ -148,4 +148,4 @@ scripts/ fixtures/       夹具生成、打包脚本；fixtures/perf 不进版�
 | 应用更新 | `src/editor/update.rs` + `src/net/` |
 | 启动顺序 / 窗口 frame 记忆 | `src/main.rs`、`src/editor/close.rs` |
 | 拖放文件 | `src/editor/file_drop.rs` |
-| gpui 行为异常（焦点、派发、shaping、Windows 对话框） | 先查 testing-and-build.md §7 的本地补丁清单，再读 `vendor/gpui` |
+| gpui 行为异常（焦点、派发、shaping、Windows 对话框） | 先查 testing-and-build.md §7 的本地补丁清单，再读 `vendor/README.md` 与对应包 |

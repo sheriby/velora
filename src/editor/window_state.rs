@@ -854,7 +854,7 @@ impl Editor {
                 estimated
             }
         };
-        let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
+        let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
         let current = self.scroll_handle.offset().y;
         let target = target.min(px(0.0)).max(-max_offset_y);
         let mut offset = self.scroll_handle.offset();
@@ -1298,7 +1298,7 @@ impl Editor {
         let Some(any_handle) = self.window_handle else {
             return;
         };
-        let Some(handle) = any_handle.downcast::<Editor>() else {
+        let Some(handle) = crate::ui::window_content::<Editor>(any_handle, cx) else {
             return;
         };
         cx.defer(move |cx| {

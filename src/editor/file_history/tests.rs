@@ -411,7 +411,7 @@ fn fixture(
 
 fn redraw(cx: &mut VisualTestContext) {
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
 }

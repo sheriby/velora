@@ -505,7 +505,7 @@ impl Render for Block {
                         // 冲出右边界。
                         let max_width = relative(1.0);
                         if let Some(runtime) = self.image_runtime() {
-                            div().flex_grow().child(self.render_image_content(
+                            div().flex_grow(1.0).child(self.render_image_content(
                                 runtime,
                                 max_width.into(),
                                 px(d.image_root_max_height),
@@ -514,7 +514,7 @@ impl Render for Block {
                                 &strings,
                             ))
                         } else {
-                            div().min_w(px(0.0)).flex_grow().child(
+                            div().min_w(px(0.0)).flex_grow(1.0).child(
                                 self.render_text_or_mixed_inline_visuals(
                                     &theme,
                                     focused,
@@ -529,7 +529,7 @@ impl Render for Block {
                             )
                         }
                     } else {
-                        div().min_w(px(0.0)).flex_grow().child(
+                        div().min_w(px(0.0)).flex_grow(1.0).child(
                             self.render_text_or_mixed_inline_visuals(
                                 &theme,
                                 focused,
@@ -591,7 +591,7 @@ impl Render for Block {
                         if showing_rendered_image {
                             let max_width = relative(1.0);
                             if let Some(runtime) = self.image_runtime() {
-                                div().flex_grow().child(self.render_image_content(
+                                div().flex_grow(1.0).child(self.render_image_content(
                                     runtime,
                                     max_width.into(),
                                     px(d.image_root_max_height),
@@ -600,7 +600,7 @@ impl Render for Block {
                                     &strings,
                                 ))
                             } else {
-                                div().min_w(px(0.0)).flex_grow().child(
+                                div().min_w(px(0.0)).flex_grow(1.0).child(
                                     self.render_text_or_mixed_inline_visuals(
                                         &theme,
                                         focused,
@@ -615,7 +615,7 @@ impl Render for Block {
                                 )
                             }
                         } else {
-                            div().min_w(px(0.0)).flex_grow().child(
+                            div().min_w(px(0.0)).flex_grow(1.0).child(
                                 self.render_text_or_mixed_inline_visuals(
                                     &theme,
                                     focused,
@@ -658,7 +658,7 @@ impl Render for Block {
                         // 冲出右边界。
                         let max_width = relative(1.0);
                         if let Some(runtime) = self.image_runtime() {
-                            div().flex_grow().child(self.render_image_content(
+                            div().flex_grow(1.0).child(self.render_image_content(
                                 runtime,
                                 max_width.into(),
                                 px(d.image_root_max_height),
@@ -667,7 +667,7 @@ impl Render for Block {
                                 &strings,
                             ))
                         } else {
-                            div().min_w(px(0.0)).flex_grow().child(
+                            div().min_w(px(0.0)).flex_grow(1.0).child(
                                 self.render_text_or_mixed_inline_visuals(
                                     &theme,
                                     focused,
@@ -682,7 +682,7 @@ impl Render for Block {
                             )
                         }
                     } else {
-                        div().min_w(px(0.0)).flex_grow().child(
+                        div().min_w(px(0.0)).flex_grow(1.0).child(
                             self.render_text_or_mixed_inline_visuals(
                                 &theme,
                                 focused,
@@ -740,7 +740,7 @@ impl Render for Block {
                 } else {
                     div()
                         .min_w(px(0.0))
-                        .flex_grow()
+                        .flex_grow(1.0)
                         .text_size(px(t.text_size))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(accent)
@@ -802,7 +802,7 @@ impl Render for Block {
                     .child(
                         div()
                             .min_w(px(0.0))
-                            .flex_grow()
+                            .flex_grow(1.0)
                             .text_color(c.text_quote)
                             .child(self.render_text_or_mixed_inline_visuals(
                                 &theme,
@@ -1030,10 +1030,10 @@ impl Render for Block {
                     for (key, values) in &rows {
                         // 值一律普通正文：列表值逗号连接、自然折行，不做任何胶囊装饰。
                         let value_div = if values.is_empty() {
-                            div().flex_grow().min_w(px(0.0))
+                            div().flex_grow(1.0).min_w(px(0.0))
                         } else {
                             div()
-                                .flex_grow()
+                                .flex_grow(1.0)
                                 .min_w(px(0.0))
                                 .text_size(text_size)
                                 .text_color(c.text_default)

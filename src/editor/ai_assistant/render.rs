@@ -792,7 +792,7 @@ impl Editor {
             .on_click(cx.listener(move |editor, _, window, cx| {
                 if enabled {
                     if opens_menu && let Some(session) = editor.ai_session.as_ref() {
-                        window.focus(&session.panel_focus);
+                        window.focus(&session.panel_focus, cx);
                     }
                     handler(editor, window, cx);
                 }

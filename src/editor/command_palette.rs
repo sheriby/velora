@@ -56,7 +56,7 @@ impl Editor {
         let mut state = CommandPaletteState::default();
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         state.focus = Some(focus);
         self.command_palette = Some(state);
         cx.notify();

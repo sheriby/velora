@@ -137,7 +137,7 @@ async fn core_repair_focus_island_relearns_its_real_height(cx: &mut TestAppConte
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, markdown, None));
     for _ in 0..4 { redraw(cx); }
     for _ in 0..6 {
-        editor.update(cx, |editor, _| editor.scroll_handle.set_offset(gpui::point(px(0.0), -editor.scroll_handle.max_offset().height)));
+        editor.update(cx, |editor, _| editor.scroll_handle.set_offset(gpui::point(px(0.0), -editor.scroll_handle.max_offset().y)));
         redraw(cx);
     }
     editor.update(cx, |editor, _| {
@@ -158,7 +158,7 @@ async fn core_repair_focus_island_relearns_its_real_height(cx: &mut TestAppConte
 #[gpui::test]
 async fn scrollbar_reaches_the_end_when_the_last_source_line_is_visible(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
-    let source = include_str!("../../../vendor/gpui/src/platform/linux/platform.rs");
+    let source = include_str!("../../../vendor/gpui-pre-macos/src/platform.rs");
     let path = temp_markdown_path("scrollbar-source-platform").with_extension("rs");
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_file_source(cx, source.into(), Some(path)));
@@ -189,7 +189,7 @@ async fn scrollbar_reaches_the_end_when_the_last_source_line_is_visible(cx: &mut
     }
     editor.read_with(cx, |editor, _cx| {
         let position = -f32::from(editor.scroll_handle.offset().y);
-        let max = f32::from(editor.scroll_handle.max_offset().height);
+        let max = f32::from(editor.scroll_handle.max_offset().y);
         let progress = editor.scrollbar_document_position(position, false)
             / editor.scrollbar_document_position(max, false);
         println!("源码文末：位置 {position} / {max}，滑块进度 {progress}");
@@ -285,7 +285,7 @@ async fn scrollbar_reaches_the_end_when_the_last_source_line_is_visible(cx: &mut
             "拖到底时末行仍应可见"
         );
         assert!(
-            (editor.scroll_handle.max_offset().height + editor.scroll_handle.offset().y).abs()
+            (editor.scroll_handle.max_offset().y + editor.scroll_handle.offset().y).abs()
                 < px(1.0),
             "滑块底端应对应实际滚动终点"
         );
@@ -620,7 +620,7 @@ async fn scrolling_a_long_document_keeps_the_viewport_filled(cx: &mut TestAppCon
 
     for fraction in [0.5_f32, 1.0] {
         editor.update(cx, |editor, _cx| {
-            let max = editor.scroll_handle.max_offset().height;
+            let max = editor.scroll_handle.max_offset().y;
             editor
                 .scroll_handle
                 .set_offset(gpui::point(gpui::px(0.0), -max * fraction));
@@ -720,7 +720,7 @@ async fn reading_to_the_bottom_leaves_the_caret_row_behind(cx: &mut TestAppConte
 
     for _ in 0..10 {
         editor.update(cx, |editor, _cx| {
-            let max = editor.scroll_handle.max_offset().height;
+            let max = editor.scroll_handle.max_offset().y;
             editor
                 .scroll_handle
                 .set_offset(gpui::point(gpui::px(0.0), -max));
@@ -1113,7 +1113,7 @@ fn scroll_viewport_to_fraction(editor: &gpui::Entity<Editor>, cx: &mut VisualTes
     // `set_vertical_scroll_offset` 会作废还在排队的「把光标块滚进视口」，
     // 和鼠标滚轮/拖滑块是同一条语义（`on_editor_scroll_wheel`）。
     editor.update(cx, |editor, cx| {
-        let max = editor.scroll_handle.max_offset().height;
+        let max = editor.scroll_handle.max_offset().y;
         editor.set_vertical_scroll_offset(-max * fraction, cx);
     });
     settle_view_frames(cx);

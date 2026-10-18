@@ -450,7 +450,7 @@ impl Editor {
                         }
                         let display_line = placeholder_line.as_ref().unwrap_or(&line);
                         if let Err(error) =
-                            display_line.paint(origin, bounds.size.height, window, cx)
+                            display_line.paint(origin, bounds.size.height, gpui::TextAlign::Left, None, window, cx)
                         {
                             eprintln!("绘制搜索输入框失败：{error}");
                         }
@@ -542,7 +542,7 @@ impl Editor {
                     // 用户点击的输入框优先于上一帧排队的搜索跳转焦点。
                     editor.workspace.search_focus_pending = false;
                     editor.pending_focus = None;
-                    window.focus(&focus_for_click);
+                    window.focus(&focus_for_click, cx);
                     editor.select_search_input_at(kind, event.position, event.modifiers.shift, cx);
                     cx.stop_propagation();
                 }),

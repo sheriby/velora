@@ -1,6 +1,51 @@
 use super::common::*;
 
 #[gpui::test]
+async fn kit_window_overlays_dismiss_and_keep_native_menu_routing(cx: &mut TestAppContext) {
+    use gpui_kit::component::WindowExt as _;
+
+    init_editor_test_app(cx);
+    cx.update(|cx| {
+        if cx.try_global::<gpui_kit::component::Theme>().is_none() { gpui_kit::init(cx); }
+    });
+    let handle = cx.update(|cx| {
+        crate::app_menu::open_editor_window(cx, "文档正文".into(), None)
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    redraw(&mut visual);
+    assert!(visual.update(|window, _| {
+        window.root::<gpui_kit::base::Root>().flatten().is_some()
+    }), "编辑器窗口必须挂接 Kit 的窗口级浮层和焦点管理");
+
+    let document_focus = handle.read_with(&visual, |editor, cx| {
+        editor.document.visible_blocks().first().expect("正文块")
+            .entity.read(cx).focus_handle.clone()
+    }).expect("文档窗口");
+    visual.update(|window, cx| document_focus.focus(window, cx));
+
+    visual.update(|window, cx| {
+        window.open_dialog(cx, |dialog, _, _| dialog.title("组件集成"));
+    });
+    redraw(&mut visual);
+    assert!(visual.update(|window, cx| window.has_active_dialog(cx)));
+    visual.simulate_keystrokes("escape");
+    redraw(&mut visual);
+    assert!(!visual.update(|window, cx| window.has_active_dialog(cx)),
+        "Escape 应关闭最上层组件对话框");
+    assert!(visual.update(|window, _| document_focus.is_focused(window)),
+        "关闭组件浮层后应恢复原文档焦点");
+
+    visual.update(|window, cx| {
+        window.activate_window();
+        crate::app_menu::dispatch_menu_action(&crate::components::ShowAbout, cx);
+    });
+    visual.run_until_parked();
+    assert!(handle.read_with(&visual, |editor, _| matches!(
+        editor.info_dialog, Some(crate::editor::InfoDialogKind::About)
+    )).expect("编辑器窗口仍存在"), "Root 包装后原生菜单仍应定位到文档编辑器");
+}
+
+#[gpui::test]
 async fn native_about_menu_action_opens_dialog_after_window_event(cx: &mut TestAppContext) {
     init_editor_test_app(cx);
     let (editor, cx) =
@@ -82,6 +127,7 @@ async fn windows_hamburger_menu_root_actions_open_settings_and_update_dialog(
         editor.update_check_in_progress = true;
     });
     let menus = vec![gpui::OwnedMenu {
+            disabled: false,
         name: "File".into(),
         items: Vec::new(),
     }];
@@ -114,9 +160,7 @@ async fn windows_hamburger_menu_root_actions_open_settings_and_update_dialog(
     cx.simulate_click(preferences.center(), Modifiers::none());
     cx.run_until_parked();
     assert!(
-        cx.update(|_, cx| cx.windows().iter().any(|window| window
-            .downcast::<crate::config::preferences::PreferencesWindow>()
-            .is_some())),
+        cx.update(|_, cx| cx.windows().iter().any(|window| crate::ui::window_content::<crate::config::preferences::PreferencesWindow>(window, cx).is_some())),
         "一级偏好设置按钮应打开设置窗口"
     );
 }
@@ -258,7 +302,7 @@ async fn welcome_page_renders_and_dismisses_into_a_new_document(cx: &mut TestApp
     });
     // The welcome overlay must render without panicking.
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     // 新建文档 dismisses the page and leaves an editable empty document.
@@ -266,7 +310,7 @@ async fn welcome_page_renders_and_dismisses_into_a_new_document(cx: &mut TestApp
         editor.update(cx, |editor, cx| {
             editor.on_welcome_new_document(&gpui::ClickEvent::default(), window, cx);
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     editor.read_with(cx, |editor, _cx| {
         assert!(!editor.show_welcome);
@@ -296,7 +340,7 @@ async fn welcome_page_hides_once_a_document_opens(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| {
             editor.open_workspace_file(doc.clone(), window, cx);
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     editor.read_with(cx, |editor, _cx| {
         assert!(!editor.show_welcome);
@@ -366,7 +410,7 @@ async fn status_bar_breadcrumb_renders_without_panicking(cx: &mut TestAppContext
     });
     // 渲染含面包屑的状态栏不应 panic。
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.file_path.as_deref(), Some(doc.as_path()));
@@ -433,7 +477,7 @@ async fn many_tabs_never_slide_under_the_window_controls(cx: &mut TestAppContext
         editor.workspace.tabs_scroll_handle.max_offset()
     });
     assert!(
-        max_offset.width > px(0.0),
+        max_offset.x > px(0.0),
         "溢出的标签条应该可以横向滚动，实测 max_offset {max_offset:?}"
     );
 }
@@ -599,7 +643,7 @@ fn titlebar_keeps_a_drag_area_when_tabs_overflow(cx: &mut TestAppContext) {
             .workspace
             .tabs_scroll_handle
             .max_offset()
-            .width
+            .x
             > px(0.0)),
         "其余标签应继续横向滚动"
     );

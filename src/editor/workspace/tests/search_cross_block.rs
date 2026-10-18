@@ -443,7 +443,7 @@ async fn jumping_to_a_cross_block_hit_centers_it_in_the_viewport(cx: &mut TestAp
         editor.update(cx, |editor, cx| editor.advance_search_match(false, window, cx));
     });
     for _ in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let drift = editor.read_with(cx, |editor, cx| {

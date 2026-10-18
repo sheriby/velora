@@ -40,6 +40,8 @@
 
     fn disabled_menu_action(name: &str) -> OwnedMenuItem {
         OwnedMenuItem::Action {
+            disabled: false,
+            checked: false,
             name: name.into(),
             action: Box::new(NoRecentFiles),
             os_action: None,
@@ -48,6 +50,8 @@
 
     fn add_theme_menu_action() -> OwnedMenuItem {
         OwnedMenuItem::Action {
+            disabled: false,
+            checked: false,
             name: "Add Theme Config".into(),
             action: Box::new(AddThemeConfig),
             os_action: None,
@@ -56,6 +60,8 @@
 
     fn add_language_menu_action() -> OwnedMenuItem {
         OwnedMenuItem::Action {
+            disabled: false,
+            checked: false,
             name: "Add Language Config".into(),
             action: Box::new(AddLanguageConfig),
             os_action: None,
@@ -500,8 +506,11 @@
         let items = vec![
             OwnedMenuItem::Separator,
             OwnedMenuItem::Submenu(OwnedMenu {
+            disabled: false,
                 name: "Recent".into(),
                 items: vec![OwnedMenuItem::Action {
+            disabled: false,
+            checked: false,
                     name: r"C:\Users\someone\Documents\notes.md".into(),
                     action: Box::new(NoRecentFiles),
                     os_action: None,
@@ -544,8 +553,11 @@
         let dimensions = &theme.dimensions;
         let labels = vec!["File".to_string()];
         let items = vec![OwnedMenuItem::Submenu(OwnedMenu {
+            disabled: false,
             name: "Open Recently Used Markdown File".into(),
             items: vec![OwnedMenuItem::Action {
+            disabled: false,
+            checked: false,
                 name: r"C:\Users\someone\Documents\Very Long Folder\notes.md".into(),
                 action: Box::new(NoRecentFiles),
                 os_action: None,

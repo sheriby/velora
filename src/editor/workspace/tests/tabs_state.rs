@@ -27,7 +27,7 @@ async fn dragging_tabs_can_insert_after_the_last_tab_and_before_the_first(
     let drag_tab = |cx: &mut gpui::VisualTestContext, source: &'static str, target: &'static str, after: bool| {
         use gpui::{Modifiers, MouseButton, point};
         for _ in 0..2 {
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.run_until_parked();
         }
         let source_bounds = cx.debug_bounds(source).expect("起点标签");
@@ -76,7 +76,7 @@ async fn dragging_tabs_can_insert_after_the_last_tab_and_before_the_first(
     });
     drag_tab(cx, "document-tab-0", "document-tab-0", true);
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let first = cx.debug_bounds("document-tab-0").expect("待关闭标签");
@@ -106,7 +106,7 @@ async fn switching_tabs_preserves_each_documents_undo_history(cx: &mut TestAppCo
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.simulate_input("X");
     cx.run_until_parked();
@@ -125,7 +125,7 @@ async fn switching_tabs_preserves_each_documents_undo_history(cx: &mut TestAppCo
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.update(cx, |editor, cx| editor.undo_document(cx));
     assert_eq!(
@@ -160,7 +160,7 @@ async fn switching_tabs_preserves_folded_sections(cx: &mut TestAppContext) {
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.update(cx, |editor, cx| {
         let heading = editor.document.root_blocks()[0].clone();
@@ -172,13 +172,13 @@ async fn switching_tabs_preserves_folded_sections(cx: &mut TestAppContext) {
         assert!(heading.read(cx).folded, "前置：第一节已折叠");
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-700.0), cx)
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     let offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
     cx.update(|window, cx| {
@@ -188,7 +188,7 @@ async fn switching_tabs_preserves_folded_sections(cx: &mut TestAppContext) {
         })
     });
     for frame in 0..8 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y),
             offset,
@@ -229,7 +229,7 @@ async fn switching_tabs_preserves_expanded_source_lines(cx: &mut TestAppContext)
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.update(cx, |editor, cx| {
         let block = editor.document.root_blocks()[0].clone();
@@ -243,7 +243,7 @@ async fn switching_tabs_preserves_expanded_source_lines(cx: &mut TestAppContext)
         });
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
@@ -252,7 +252,7 @@ async fn switching_tabs_preserves_expanded_source_lines(cx: &mut TestAppContext)
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.read_with(cx, |editor, cx| {
         let block = editor.document.root_blocks()[0].read(cx);
@@ -290,7 +290,7 @@ async fn switching_tabs_preserves_table_column_geometry(cx: &mut TestAppContext)
     });
     for _ in 0..5 {
         cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     let widths = |cx: &gpui::VisualTestContext| {
         editor.read_with(cx, |editor, cx| {
@@ -324,7 +324,7 @@ async fn switching_tabs_preserves_table_column_geometry(cx: &mut TestAppContext)
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     // update 结束会处理 canvas 通知引起的重绘，切换回调内守住首轮列宽比例。
     cx.update(|window, cx| {
@@ -342,7 +342,7 @@ async fn switching_tabs_preserves_table_column_geometry(cx: &mut TestAppContext)
         });
     });
     for frame in 0..8 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let after = widths(cx);
         assert_eq!(after, before, "切回第 {frame} 帧表格列宽不应变化");
     }
@@ -364,7 +364,7 @@ async fn switching_tabs_isolates_undo_and_redo_for_both_documents(cx: &mut TestA
             })
         });
         for _ in 0..3 {
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
         }
         cx.simulate_input(input);
         cx.run_until_parked();
@@ -425,7 +425,7 @@ async fn switching_tabs_starts_a_new_typing_group_after_returning(cx: &mut TestA
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.simulate_input("X");
     cx.run_until_parked();
@@ -436,7 +436,7 @@ async fn switching_tabs_starts_a_new_typing_group_after_returning(cx: &mut TestA
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.simulate_input("Y");
     cx.run_until_parked();
@@ -472,7 +472,7 @@ async fn externally_rewritten_tabs_discard_incompatible_history(cx: &mut TestApp
         })
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.simulate_input("X");
     cx.run_until_parked();
@@ -529,7 +529,7 @@ async fn switching_tabs_remeasures_columns_when_layout_inputs_change(cx: &mut Te
         })
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     for change in ["窗口宽度", "主题度量"] {
         cx.update(|window, cx| {
@@ -548,7 +548,7 @@ async fn switching_tabs_remeasures_columns_when_layout_inputs_change(cx: &mut Te
             });
         }
         for _ in 0..5 {
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
         }
         cx.update(|window, cx| {
             editor.update(cx, |editor, cx| {
@@ -584,7 +584,7 @@ async fn switching_tabs_remeasures_columns_when_layout_inputs_change(cx: &mut Te
             });
         });
         for _ in 0..5 {
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
         }
     }
 }

@@ -197,7 +197,7 @@ impl Element for TextFieldElement {
             }
             if let Err(error) = state
                 .line
-                .paint(state.origin, state.line_height, window, cx)
+                .paint(state.origin, state.line_height, gpui::TextAlign::Left, None, window, cx)
             {
                 eprintln!("绘制输入文字失败：{error}");
             }

@@ -323,6 +323,7 @@ async fn captured_tab_key_inserts_visible_indent_in_paragraph(cx: &mut TestAppCo
     redraw(cx);
 
     let event = KeyDownEvent {
+        prefer_character_input: false,
         keystroke: Keystroke::parse("tab").expect("valid tab keystroke"),
         is_held: false,
     };
@@ -378,7 +379,7 @@ async fn down_from_code_language_at_document_end_creates_trailing_paragraph(
         let block = editor.document.visible_blocks()[0].entity.clone();
         editor.focus_block(block.entity_id());
         block.update(cx, |block, block_cx| {
-            block.code_language_focus_handle.focus(window);
+            block.code_language_focus_handle.focus(window, block_cx);
             block.on_code_language_focus_next(&FocusNext, window, block_cx);
         });
     });
@@ -403,7 +404,7 @@ async fn enter_in_code_language_does_not_exit_block(cx: &mut TestAppContext) {
         let block = editor.document.visible_blocks()[0].entity.clone();
         editor.focus_block(block.entity_id());
         block.update(cx, |block, block_cx| {
-            block.code_language_focus_handle.focus(window);
+            block.code_language_focus_handle.focus(window, block_cx);
             block.on_code_language_newline(&Newline, window, block_cx);
         });
     });
@@ -428,20 +429,21 @@ async fn captured_tab_key_does_not_modify_code_language_input(cx: &mut TestAppCo
         block.update(cx, |block, block_cx| {
             block.move_to(1, block_cx);
         });
-        block.update(cx, |block, _cx| {
-            block.code_language_focus_handle.focus(window);
+        block.update(cx, |block, block_cx| {
+            block.code_language_focus_handle.focus(window, block_cx);
         });
     });
     redraw(cx);
 
     editor.update_in(cx, |editor, window, cx| {
         let block = editor.document.visible_blocks()[0].entity.clone();
-        block.update(cx, |block, _cx| {
-            block.code_language_focus_handle.focus(window);
+        block.update(cx, |block, block_cx| {
+            block.code_language_focus_handle.focus(window, block_cx);
         });
     });
 
     let event = KeyDownEvent {
+        prefer_character_input: false,
         keystroke: Keystroke::parse("tab").expect("valid tab keystroke"),
         is_held: false,
     };

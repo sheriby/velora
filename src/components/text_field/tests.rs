@@ -23,7 +23,7 @@ fn ai_text_fields_show_a_caret_and_place_mouse_input_at_the_clicked_character(
         field.set_value("abc中文🙂", cx);
         field.focus(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let target = field.read_with(cx, |field, _| {
         assert!(field.painted_caret, "聚焦输入框必须实际绘制光标");
@@ -61,6 +61,7 @@ fn key_event(key: &str, secondary: bool, shift: bool) -> KeyDownEvent {
     }
     keystroke.modifiers.shift = shift;
     KeyDownEvent {
+        prefer_character_input: false,
         keystroke,
         is_held: false,
     }
@@ -224,7 +225,7 @@ fn ai_text_fields_render_reversed_selection_and_report_its_direction(cx: &mut Te
         field.focus(window, cx);
         field.selected_range = field.value.len()..0;
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     field.update_in(cx, |field, window, cx| {
         let selection = field.selected_text_range(false, window, cx).unwrap();
@@ -249,7 +250,7 @@ fn multiline_input_reserves_rows_and_preserves_newlines_on_paste(cx: &mut TestAp
         field.focus(window, cx);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("甲\n乙🙂".into()));
     });
     cx.run_until_parked();
@@ -288,7 +289,7 @@ fn multiline_input_shift_enter_edits_without_submitting_and_enter_submits_once(
         field.set_value("first", cx);
         field.focus(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.simulate_keystrokes("shift-enter");
     cx.simulate_input("second");
@@ -309,7 +310,7 @@ fn multiline_input_up_arrow_moves_between_rows_without_changing_text(cx: &mut Te
         field.set_value("abc\nxyz", cx);
         field.focus(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.simulate_keystrokes("up");
     field.read_with(cx, |field, _| {
@@ -330,7 +331,7 @@ fn multiline_input_undo_keeps_an_ime_composition_as_one_edit(cx: &mut TestAppCon
         field.replace_and_mark_text_in_range(None, "你", Some(1..1), window, cx);
         field.replace_text_in_range(None, "你好", window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.simulate_keystrokes(if cfg!(target_os = "macos") {
         "cmd-z"
@@ -355,7 +356,7 @@ fn multiline_input_mouse_and_ime_follow_the_second_row(cx: &mut TestAppContext) 
         field.set_value("ab\n中文🙂\nz", cx);
         field.focus(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let target = field.read_with(cx, |field, _| {
         let state = field.multiline.as_ref().unwrap();
@@ -386,7 +387,7 @@ fn multiline_input_wraps_without_changing_text_and_limits_visible_rows(cx: &mut 
         field.set_value(&text, cx);
         field.focus(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     field.read_with(cx, |field, _| {
         let state = field.multiline.as_ref().unwrap();
@@ -450,14 +451,14 @@ fn unmark_text_requests_the_repaint_that_clears_the_composition_underline(
         field.set_value("hello", cx);
         field.replace_and_mark_text_in_range(Some(0..5), "mark", None, window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let before = harness.read_with(cx, |harness, _| harness.notifications.get());
     field.update_in(cx, |field, window, cx| {
         assert!(field.painted_marked, "组词期必须画出下划线 quad");
         field.unmark_text(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     harness.read_with(cx, |harness, _| {
         assert!(
@@ -481,7 +482,7 @@ fn multiline_input_down_arrow_on_the_last_row_keeps_the_caret_at_the_end(
         field.set_value("abc\nxyz", cx);
         field.focus(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.simulate_keystrokes("down");
     field.read_with(cx, |field, _| {
@@ -504,7 +505,7 @@ fn multiline_input_click_below_the_text_lands_at_the_end_of_the_last_row(
         field.set_value("abc\nxyz", cx);
         field.focus(window, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let target = field.read_with(cx, |field, _| {
         let state = field.multiline.as_ref().unwrap();
@@ -558,7 +559,7 @@ fn releasing_a_drag_outside_the_field_does_not_hijack_later_drags(cx: &mut TestA
         window.activate_window();
         field.set_value("0123456789", cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let (inside_two, inside_eight, inside_four, outside) = field.read_with(cx, |field, _| {
         let bounds = field.last_bounds.unwrap();

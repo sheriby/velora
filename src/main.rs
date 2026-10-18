@@ -8,6 +8,8 @@
 // editor/workspace 的测试模块类型层级较深，默认 128 会爆递归限制。
 #![recursion_limit = "256"]
 
+extern crate gpui_kit as gpui;
+
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::{
@@ -34,6 +36,7 @@ mod i18n;
 mod net;
 mod theme;
 mod window_chrome;
+mod ui;
 
 use app_menu::{
     init as init_app_menu, open_editor_window, open_editor_window_from_document,
@@ -122,7 +125,7 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
     };
     for snapshot in snapshots {
         if snapshot.source_path.is_none() && cx.windows().iter().any(|window| {
-            window.downcast::<components::Editor>().is_some_and(|editor| {
+            crate::ui::window_content::<components::Editor>(window, cx).is_some_and(|editor| {
                 editor.read(cx).is_ok_and(|editor| editor.has_recovery_document(snapshot.id, cx))
             })
         }) { continue; }
@@ -154,7 +157,7 @@ fn restore_recovery_windows(cx: &mut App, restored: &AtomicBool) {
 fn close_pristine_startup_windows(cx: &mut App) {
     let handles = cx.windows();
     for handle in handles {
-        let Some(editor) = handle.downcast::<components::Editor>() else {
+        let Some(editor) = crate::ui::window_content::<components::Editor>(handle, cx) else {
             continue;
         };
         let pristine = editor
@@ -180,7 +183,7 @@ fn merge_snapshot_into_open_session(
     recovery_id: uuid::Uuid,
 ) -> bool {
     for handle in cx.windows() {
-        let Some(editor) = handle.downcast::<components::Editor>() else {
+        let Some(editor) = crate::ui::window_content::<components::Editor>(handle, cx) else {
             continue;
         };
         let merged = editor
@@ -349,12 +352,12 @@ impl AssetSource for VeloraAssets {
             "icon/titlebar/menu-hamburger.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icon/titlebar/menu-hamburger.svg"
             )))),
-            _ => Ok(None),
+            _ => gpui_kit::assets::Assets.load(path),
         }
     }
 
-    fn list(&self, _path: &str) -> gpui::Result<Vec<SharedString>> {
-        Ok(Vec::new())
+    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+        gpui_kit::assets::Assets.list(path)
     }
 }
 
@@ -450,7 +453,7 @@ fn main() {
     #[cfg(target_os = "macos")]
     let open_file_requested = Arc::new(AtomicBool::new(false));
 
-    let app = Application::new().with_assets(VeloraAssets);
+    let app = gpui_kit::application().with_assets(VeloraAssets);
 
     #[cfg(target_os = "macos")]
     {

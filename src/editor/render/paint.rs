@@ -189,7 +189,7 @@ impl Render for Editor {
             in_window_menu_bar_height_for_target_os(std::env::consts::OS, has_menus, d)
         };
         let scroll_trigger_padding = (d.block_min_height * 0.75).max(16.0);
-        let mut max_scroll_y = f32::from(self.scroll_handle.max_offset().height.max(px(0.0)));
+        let mut max_scroll_y = f32::from(self.scroll_handle.max_offset().y.max(px(0.0)));
         let viewport_height = f32::from(viewport_bounds.size.height.max(px(1.0)));
         // Extra room below the last block so the lowest line can be scrolled up
         // to the viewport center instead of being pinned to the bottom edge.
@@ -640,7 +640,7 @@ impl Render for Editor {
             .font(editor_text_font(body_font_family))
             .flex()
             .flex_col()
-            .flex_grow()
+            .flex_grow(1.0)
             .h_full()
             .items_center()
             // 正文区域（含最后一块下方那片空白）默认就是文字光标：块自己的命中区

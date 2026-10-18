@@ -1095,7 +1095,7 @@ async fn image_file_preview_first_frame_does_not_flash_placeholder_text(cx: &mut
                 editor.open_workspace_file_in_mode(path, WorkspaceOpenMode::Preview, window, cx);
                 editor.focus_workspace_tree(window, cx);
             });
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         assert!(cx.debug_bounds("image-file-preview").is_some());
         assert!(
@@ -1506,7 +1506,7 @@ async fn image_file_preview_is_available_from_new_window_open(cx: &mut TestAppCo
         crate::app_menu::open_file_in_new_window(cx, &path).expect("二进制图片应正常打开");
         cx.windows()
             .into_iter()
-            .find_map(|handle| handle.downcast::<Editor>())
+            .find_map(|handle| crate::ui::window_content::<Editor>(handle, cx))
             .expect("图片窗口")
     });
     cx.run_until_parked();

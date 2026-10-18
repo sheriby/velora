@@ -50,7 +50,7 @@ mod tests {
         redraw(cx);
         cx.update(|window, cx| editor.update(cx, |editor, cx| {
             let block = editor.document.visible_blocks()[1].entity.clone();
-            block.update(cx, |block, cx| { block.move_to(4, cx); block.focus_handle.focus(window); });
+            block.update(cx, |block, cx| { block.move_to(4, cx); block.focus_handle.focus(window, cx); });
             editor.active_entity_id = Some(block.entity_id());
             set_selection(editor, 0, 1, 1, 4, cx);
         }));
@@ -83,7 +83,7 @@ mod tests {
                 let block = editor.document.visible_blocks()[1].entity.clone();
                 block.update(cx, |block, cx| {
                     block.move_to(0, cx);
-                    block.focus_handle.focus(window);
+                    block.focus_handle.focus(window, cx);
                 });
                 editor.active_entity_id = Some(block.entity_id());
                 set_selection(editor, 0, 2, 1, 0, cx);
@@ -110,7 +110,7 @@ mod tests {
     }
 
     fn redraw(cx: &mut gpui::VisualTestContext) {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
 
@@ -844,7 +844,7 @@ mod tests {
             editor.document.root_blocks()[1].clone()
         });
         target.update_in(cx, |block, window, cx| {
-            block.focus_handle.focus(window);
+            block.focus_handle.focus(window, cx);
             block.selected_range = 1..1;
             block.sync_inline_projection_for_focus(true);
             assert!(block.display_text().len() > block.clean_visible_len(), "text={}", block.display_text());

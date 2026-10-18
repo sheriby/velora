@@ -241,7 +241,7 @@ impl Editor {
                 // （roadmap C3）。defer 到当前更新完成后执行（打开流程需要
                 // &mut Window，且不能在本次窗口更新内重入）。
                 if let Some(any_handle) = self.window_handle
-                    && let Some(handle) = any_handle.downcast::<Editor>()
+                    && let Some(handle) = crate::ui::window_content::<Editor>(any_handle, cx)
                 {
                     let deferred_target = target.clone();
                     cx.defer(move |cx| {

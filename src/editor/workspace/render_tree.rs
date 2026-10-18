@@ -8,6 +8,7 @@ impl Editor {
             ClickEvent::Mouse(mouse) if mouse.up.click_count >= 2 => WorkspaceOpenMode::Pinned,
             ClickEvent::Mouse(_) => WorkspaceOpenMode::Preview,
             ClickEvent::Keyboard(_) => WorkspaceOpenMode::Pinned,
+            ClickEvent::Touch(_) => WorkspaceOpenMode::Preview,
         }
     }
 

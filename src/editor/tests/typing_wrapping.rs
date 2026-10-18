@@ -366,7 +366,7 @@ async fn cjk_wrapping_does_not_start_lines_with_punctuation(cx: &mut TestAppCont
             let text_system = cx.text_system().clone();
             let mut wrapper = text_system.line_wrapper(font.clone(), px(12.0));
             wrapper
-                .wrap_line(&[gpui::LineFragment::text(&text)], px(width as f32))
+                .wrap_line(&[gpui::LineFragment::text(&text)], px(width as f32), gpui::IndentAdjustment::SameIndent)
                 .map(|boundary| boundary.ix)
                 .collect::<Vec<_>>()
         });

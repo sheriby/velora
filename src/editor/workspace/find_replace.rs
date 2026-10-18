@@ -351,7 +351,7 @@ impl Editor {
                 .search_focus
                 .get_or_insert_with(|| cx.focus_handle())
                 .clone();
-            window.focus(&focus);
+            window.focus(&focus, cx);
             self.workspace.search_focus_pending = false;
         }
     }

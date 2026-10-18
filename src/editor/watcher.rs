@@ -62,7 +62,7 @@ pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Co
     let mut events = rx;
     cx.spawn(async move |this, cx| {
         while let Some(event) = events.next().await {
-            let Ok(()) = cx.update(|cx| {
+            cx.update(|cx| {
                 if let Err(error) = this.update(cx, |editor, cx| match event {
                     WorkspaceEvent::Changed(path) => editor.on_watched_path_changed(&path, cx),
                     WorkspaceEvent::Rescan => {
@@ -71,9 +71,7 @@ pub(crate) fn start_watching(editor: &mut Editor, root: &Path, cx: &mut gpui::Co
                         }
                     }
                 }) { eprintln!("处理工作区监听事件失败：{error}"); }
-            }) else {
-                return;
-            };
+            });
         }
     })
     .detach();

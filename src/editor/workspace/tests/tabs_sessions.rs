@@ -38,14 +38,14 @@ async fn review_save_and_close_defers_while_an_ime_composition_is_open(
             editor.open_workspace_file(path.clone(), window, cx);
         })
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let block = editor.read_with(cx, |editor, _| editor.document.first_root().unwrap().clone());
     block.update(cx, |block, _| block.selected_range = 0..0);
     block.update_in(cx, |block, window, cx| {
         block.replace_and_mark_text_in_range(None, "新", Some(1..1), window, cx)
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     cx.update(|window, cx| {
@@ -96,13 +96,13 @@ async fn review_save_and_close_writes_the_buffer_typed_while_the_dialog_was_open
             editor.set_workspace_root(root.clone(), cx);
             editor.open_workspace_file(path.clone(), window, cx);
             let block = editor.document.first_root().unwrap().clone();
-            block.update(cx, |block, _| block.focus_handle.focus(window));
+            block.update(cx, |block, cx| block.focus_handle.focus(window, cx));
         })
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.simulate_input("甲");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     // 点标签 X：先快照、再弹「保存并关闭」。
@@ -114,7 +114,7 @@ async fn review_save_and_close_writes_the_buffer_typed_while_the_dialog_was_open
     });
     // 框开着：继续打字（模态不抢焦点，输入直接落到缓冲区）。
     cx.simulate_input("乙");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let live = editor.read_with(cx, |editor, _| editor.buffer.text());
     assert!(live.contains("甲乙"), "夹具前提：框开着时新打的字进了缓冲区：{live:?}");
@@ -122,7 +122,7 @@ async fn review_save_and_close_writes_the_buffer_typed_while_the_dialog_was_open
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| editor.dismiss_modal(0, window, cx))
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(
@@ -465,11 +465,11 @@ async fn review_workspace_switch_confirms_live_unsaved_buffer(cx: &mut TestAppCo
         editor.set_workspace_root(root_a.clone(), cx);
         editor.open_workspace_file(path, window, cx);
         let block = editor.document.first_root().unwrap().clone();
-        block.update(cx, |block, _| block.focus_handle.focus(window));
+        block.update(cx, |block, cx| block.focus_handle.focus(window, cx));
     }));
-    cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx)); cx.run_until_parked();
     cx.simulate_input("新");
-    cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx)); cx.run_until_parked();
     let live = editor.read_with(cx, |editor, _| { assert!(editor.document_dirty); editor.buffer.text() });
     assert!(live.contains('新'));
     editor.update(cx, |editor, cx| {
@@ -495,11 +495,11 @@ async fn review_workspace_switch_save_and_discard_choices_preserve_disk_intent(c
             editor.set_workspace_root(root_a, cx);
             editor.open_workspace_file(path.clone(), window, cx);
             let block = editor.document.first_root().unwrap().clone();
-            block.update(cx, |block, _| block.focus_handle.focus(window));
+            block.update(cx, |block, cx| block.focus_handle.focus(window, cx));
         }));
-        cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx)); cx.run_until_parked();
         cx.simulate_input("新");
-        cx.update(|window, cx| window.draw(cx).clear()); cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx)); cx.run_until_parked();
         let live = editor.read_with(cx, |editor, _| editor.buffer.text());
         editor.update(cx, |editor, cx| {
             editor.set_workspace_root(root_b.clone(), cx);
@@ -784,7 +784,7 @@ async fn switching_workspace_keeps_inner_tabs_and_reopens_one(cx: &mut TestAppCo
             .collect::<Vec<_>>();
         assert_eq!(kept, vec![inside.clone()], "只应留下新根目录内的标签");
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         // 活动标签被收起后，补开剩下的那个（延后一帧，那时才拿得到 Window）。
         assert_eq!(
@@ -894,7 +894,7 @@ async fn clicking_a_file_keeps_the_tree_scroll_offset(cx: &mut TestAppContext) {
     cx.run_until_parked();
     // 压矮窗口，让 80 行的树必须滚动才有下方内容。
     cx.update(|window, _cx| window.resize(gpui::size(px(320.0), px(260.0))));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_event(ScrollWheelEvent {
         position: point(px(60.0), px(200.0)),
@@ -902,7 +902,7 @@ async fn clicking_a_file_keeps_the_tree_scroll_offset(cx: &mut TestAppContext) {
         modifiers: Modifiers::default(),
         touch_phase: TouchPhase::default(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let scrolled =
         editor.read_with(cx, |editor, _| editor.workspace.tree_scroll_handle.offset().y);
     assert!(
@@ -917,7 +917,7 @@ async fn clicking_a_file_keeps_the_tree_scroll_offset(cx: &mut TestAppContext) {
         });
     });
     // 重扫落地前的那一帧：树不能被丢掉。
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(
             editor.workspace.file_tree.is_some(),
@@ -929,7 +929,7 @@ async fn clicking_a_file_keeps_the_tree_scroll_offset(cx: &mut TestAppContext) {
     assert_eq!(after_click, scrolled, "点文件那一刻滚动位置不应被重置");
 
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let settled =
         editor.read_with(cx, |editor, _| editor.workspace.tree_scroll_handle.offset().y);
     assert_eq!(settled, scrolled, "重扫落地后滚动位置仍应保持");
@@ -981,12 +981,12 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
         })
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     // alpha 的现场：源码模式、滚到中段、光标放在缓冲区中段的一个字符边界上。
     editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-3000.0), cx);
         let block = editor.document.root_blocks()[0].clone();
@@ -1010,7 +1010,7 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
         })
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             editor.view_mode,
@@ -1041,7 +1041,7 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     });
     cx.run_until_parked();
     for _ in 0..4 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     let restored = editor.read_with(cx, |editor, cx| {
         editor.capture_document_view(&editor.buffer.text(), cx)
@@ -1071,7 +1071,7 @@ async fn switching_tabs_keeps_each_documents_reading_position(cx: &mut TestAppCo
     });
     cx.run_until_parked();
     for _ in 0..4 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     let restored = editor.read_with(cx, |editor, cx| {
         editor.capture_document_view(&editor.buffer.text(), cx)
@@ -1293,7 +1293,7 @@ async fn the_dirty_dot_marks_the_active_tab(cx: &mut TestAppContext) {
             editor.open_workspace_file(alpha.clone(), window, cx);
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("document-tab-dirty-0").is_none(),
         "干净的标签不该点"
@@ -1312,7 +1312,7 @@ async fn the_dirty_dot_marks_the_active_tab(cx: &mut TestAppContext) {
     editor.read_with(cx, |editor, _| {
         assert!(editor.document_dirty, "前置：打字要留下未保存修改");
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("document-tab-dirty-0").is_some(),
         "活动标签改了字要在标签上点出圆点"
@@ -1324,7 +1324,7 @@ async fn the_dirty_dot_marks_the_active_tab(cx: &mut TestAppContext) {
     editor.read_with(cx, |editor, _| {
         assert!(!editor.document_dirty, "前置：防抖到点后要已落盘");
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("document-tab-dirty-0").is_none(),
         "落盘之后圆点要消失"
@@ -1375,7 +1375,7 @@ async fn the_close_tab_command_closes_the_active_tab(cx: &mut TestAppContext) {
 
     // 命令派发（键位与菜单都走这一条）：活动页 beta 关掉，alpha 留着。
     cx.dispatch_action(crate::components::CloseTab);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         let open = editor.workspace.open_documents.clone();
         assert_eq!(open.len(), 1, "应只剩一个标签，实测 {open:?}");
@@ -1388,7 +1388,7 @@ async fn the_close_tab_command_closes_the_active_tab(cx: &mut TestAppContext) {
 
     // 最后一个标签也照样关（和浏览器一致），回到欢迎页；窗口不关。
     cx.dispatch_action(crate::components::CloseTab);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.workspace.open_documents.is_empty(), "最后一个标签也该关掉");
         assert!(editor.show_welcome, "没有标签页时应回到欢迎页");
@@ -1396,7 +1396,7 @@ async fn the_close_tab_command_closes_the_active_tab(cx: &mut TestAppContext) {
 
     // 已经没页可关时是空操作，不该报错也不该关窗口。
     cx.dispatch_action(crate::components::CloseTab);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.workspace.open_documents.is_empty());
         assert!(editor.file_path.is_none());
@@ -1846,7 +1846,7 @@ async fn switching_three_tabs_keeps_each_position(cx: &mut TestAppContext) {
     let settle = |frames: usize, cx: &mut gpui::VisualTestContext| {
         for _ in 0..frames {
             cx.run_until_parked();
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
         }
     };
     let anchor_now = |cx: &gpui::VisualTestContext| {
@@ -1933,12 +1933,12 @@ async fn switching_tabs_restores_the_first_frame_without_followup_scrolling(
         })
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-3000.0), cx)
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (offset, visible_index, visible_top) = editor.read_with(cx, |editor, cx| {
         let viewport = editor.scroll_handle.bounds();
         let (index, bounds) = editor
@@ -1966,7 +1966,7 @@ async fn switching_tabs_restores_the_first_frame_without_followup_scrolling(
         })
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
@@ -1976,7 +1976,7 @@ async fn switching_tabs_restores_the_first_frame_without_followup_scrolling(
         })
     });
     for frame in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         editor.read_with(cx, |editor, cx| {
             assert_eq!(
                 editor.scroll_handle.offset().y,
@@ -2008,13 +2008,13 @@ async fn typing_immediately_after_restoring_a_tab_keeps_the_caret_visible(cx: &m
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, source.clone(), Some(path.clone())));
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-1200.0), cx)
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     let view = editor.read_with(cx, |editor, cx| {
         editor.capture_document_view(&editor.buffer.text(), cx)
@@ -2022,11 +2022,11 @@ async fn typing_immediately_after_restoring_a_tab_keeps_the_caret_visible(cx: &m
     editor.update(cx, |editor, cx| {
         editor.restore_document_from_markdown(source, path, Some(view), cx)
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_input("X");
     cx.run_until_parked();
     for _ in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.read_with(cx, |editor, cx| {
         assert!(
@@ -2071,13 +2071,13 @@ async fn switching_source_tabs_restores_the_first_frame_without_followup_scrolli
         })
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-15000.0), cx)
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     let offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
     assert!(offset <= px(-15000.0), "前置：视口深入第二个源码分块");
@@ -2087,7 +2087,7 @@ async fn switching_source_tabs_restores_the_first_frame_without_followup_scrolli
         })
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.update(|window, cx| {
         editor.update(cx, |editor, cx| {
@@ -2095,7 +2095,7 @@ async fn switching_source_tabs_restores_the_first_frame_without_followup_scrolli
         })
     });
     for frame in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         editor.read_with(cx, |editor, _| {
             assert_eq!(
                 editor.scroll_handle.offset().y,

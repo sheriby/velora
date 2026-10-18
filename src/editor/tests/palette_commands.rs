@@ -180,7 +180,7 @@ async fn the_palette_runs_the_inline_format_commands(cx: &mut TestAppContext) {
 }
 
 /// 面板执行选中项必须认**平台真会发出来的键名**。gpui 三个平台都把 Return 键报成
-/// `"enter"`（`vendor/gpui/src/platform/mac/events.rs`、`platform/windows/events.rs`
+/// `"enter"`（`vendor/gpui-pre-macos/src/events.rs`、`vendor/gpui-pre-windows/src/events.rs`
 /// 的 `VK_RETURN`、`platform/linux/platform.rs` 的 `Keysym::Return`），
 /// `Keystroke::parse` 又不做 enter/return 归一，所以匹配 `"return"` 的那一支在生产里
 /// 永不命中——面板只能用鼠标点。守卫若自己发 `"return"`，造的正是 OS 永不产生的字符串，

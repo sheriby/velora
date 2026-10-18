@@ -567,9 +567,7 @@ async fn a_real_write_failure_still_reports_save_failed(cx: &mut TestAppContext)
 }
 
 fn moved_document_dir(root: &std::path::Path) -> PathBuf {
-    let mut moved = root.to_path_buf();
-    moved.set_file_name("moved-document-dir");
-    moved
+    root.with_extension("moved")
 }
 
 #[gpui::test]

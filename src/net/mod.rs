@@ -169,10 +169,6 @@ fn apply_missing_default_headers(
 }
 
 impl HttpClient for ReqwestTransportHttpClient {
-    fn type_name(&self) -> &'static str {
-        "velora_reqwest_transport_http_client"
-    }
-
     fn user_agent(&self) -> Option<&HeaderValue> {
         Some(&self.user_agent)
     }

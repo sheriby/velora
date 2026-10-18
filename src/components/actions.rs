@@ -1180,10 +1180,12 @@ pub(crate) fn install_keybindings(cx: &mut App, config: &BTreeMap<String, Vec<St
 /// Register key bindings for the block editor.
 #[allow(dead_code)]
 pub fn init(cx: &mut App) {
+    crate::ui::init(cx);
     install_keybindings(cx, &BTreeMap::new());
 }
 
 pub(crate) fn init_with_keybindings(cx: &mut App, config: &BTreeMap<String, Vec<String>>) {
+    crate::ui::init(cx);
     install_keybindings(cx, config);
 }
 

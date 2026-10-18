@@ -45,7 +45,9 @@ async fn core_repair_new_table_cells_route_input_from_an_empty_selection_anchor(
         editor.focus_block(cell.entity_id());
         cell
     });
-    cell.update_in(cx, |cell, window, cx| cell.replace_text_in_range(None, "X", window, cx));
+    cx.update(|window, cx| {
+        cell.update(cx, |cell, cx| cell.replace_text_in_range(None, "X", window, cx));
+    });
     redraw(cx);
     assert_eq!(editor.read_with(cx, |editor, _| editor.buffer.text()), source.replacen("| ab | cd |", "| ab | Xd |", 1));
 }
@@ -145,7 +147,7 @@ async fn core_repair_offscreen_table_bounds_cannot_claim_a_mounted_cell(cx: &mut
         editor.update(cx, |editor, _| {
             editor.pending_scroll_active_block_into_view = false;
             editor.pending_scroll_recheck_after_layout = false;
-            editor.scroll_handle.set_offset(gpui::point(px(0.0), -editor.scroll_handle.max_offset().height));
+            editor.scroll_handle.set_offset(gpui::point(px(0.0), -editor.scroll_handle.max_offset().y));
         });
         redraw(cx);
     }
@@ -288,7 +290,7 @@ async fn review_arrow_clears_cross_cell_selection_before_delete(cx: &mut TestApp
     cx.update(|window, cx| editor.update(cx, |editor, cx| {
         let table = editor.document.first_root().unwrap().clone();
         let cell = table.read(cx).table_runtime.as_ref().unwrap().header[1].clone();
-        cell.update(cx, |cell, cx| { cell.move_to(2, cx); cell.focus_handle.focus(window); });
+        cell.update(cx, |cell, cx| { cell.move_to(2, cx); cell.focus_handle.focus(window, cx); });
         editor.active_entity_id = Some(cell.entity_id());
         editor.table_text_selection = Some(TableTextSelection {
             table_block_id: table.entity_id(),

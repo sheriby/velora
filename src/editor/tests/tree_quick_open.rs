@@ -206,6 +206,7 @@ async fn quick_open_ignores_enter_during_ime_composition(cx: &mut TestAppContext
     cx.simulate_input("alpha");
 
     let enter = gpui::KeyDownEvent {
+        prefer_character_input: false,
         keystroke: gpui::Keystroke::parse("enter").expect("valid enter keystroke"),
         is_held: false,
     };
@@ -942,7 +943,7 @@ fn check_long_outline_follow(cx: &mut TestAppContext, headings: usize, zoom: i64
         "当前标题仍可见时不应移动大纲"
     );
     let distance = editor.read_with(visual, |editor, _| {
-        f32::from(editor.scroll_handle.max_offset().height) * 0.7
+        f32::from(editor.scroll_handle.max_offset().y) * 0.7
     });
     assert!(distance > 1000.0, "正文应足够长");
     scroll(visual, body, -distance);

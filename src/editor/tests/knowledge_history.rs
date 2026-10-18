@@ -350,12 +350,12 @@ async fn command_palette_accepts_non_ascii_typing(cx: &mut TestAppContext) {
         window.activate_window();
         editor.update(cx, |editor, cx| editor.toggle_command_palette(window, cx));
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.command_palette.is_some(), "前置：面板已打开");
     });
     cx.simulate_input("中文");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert_eq!(
             editor.command_palette.as_ref().expect("面板").query,
@@ -407,16 +407,16 @@ async fn escape_dismisses_the_info_dialog(cx: &mut TestAppContext) {
     cx.update(|cx| crate::app_menu::init(cx));
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n".into(), None));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.update(cx, |editor, cx| {
         editor.show_info_dialog(crate::editor::InfoDialogKind::About, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.info_dialog.is_some(), "前置：弹窗已打开");
     });
     cx.simulate_keystrokes("escape");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.info_dialog.is_none(), "Esc 应关掉信息弹窗");
     });
@@ -429,16 +429,16 @@ async fn escape_closes_the_in_window_menu_bar(cx: &mut TestAppContext) {
     cx.update(|cx| crate::app_menu::init(cx));
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n".into(), None));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.update(cx, |editor, _cx| {
         editor.menu_bar_open = Some(0);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.menu_bar_open.is_some(), "前置：菜单已打开");
     });
     cx.simulate_keystrokes("escape");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.menu_bar_open.is_none(), "Esc 应关掉标题栏菜单");
     });
@@ -451,7 +451,7 @@ async fn closing_quick_open_restores_focus_to_the_document(cx: &mut TestAppConte
     cx.update(|cx| crate::app_menu::init(cx));
     let (editor, cx) =
         cx.add_window_view(|_window, cx| Editor::from_markdown(cx, "# a\n\nbody\n".into(), None));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let block_id = editor.read_with(cx, |editor, _| {
         editor.document.root_blocks()[1].entity_id()
     });
@@ -461,18 +461,18 @@ async fn closing_quick_open_restores_focus_to_the_document(cx: &mut TestAppConte
                 .document
                 .block_entity_by_id(block_id)
                 .expect("目标块");
-            window.focus(&block.read(cx).focus_handle);
+            block.read(cx).focus_handle.clone().focus(window, cx);
             editor.toggle_quick_open(window, cx);
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.quick_open.is_some(), "前置：⌘P 已打开");
     });
     // Esc 关闭（走全局 DismissTransientUi 路径）。
     cx.simulate_keystrokes("escape");
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         editor.read_with(cx, |editor, cx| {
             assert!(editor.quick_open.is_none(), "前置：⌘P 已关闭");

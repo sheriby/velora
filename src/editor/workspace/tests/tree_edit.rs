@@ -27,7 +27,7 @@ fn tree_fixture(cx: &mut TestAppContext) -> (Entity<Editor>, &mut VisualTestCont
 
 fn redraw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 }
 
@@ -669,7 +669,7 @@ async fn markdown_creation_opens_an_input_inside_the_tree(cx: &mut TestAppContex
             editor.prompt_create_workspace_file(window, cx)
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("workspace-name-input").is_some(),
         "新建 Markdown 应在文件树内显示名称输入框"

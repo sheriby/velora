@@ -12,7 +12,7 @@ impl Block {
             return;
         }
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -26,7 +26,7 @@ impl Block {
             return;
         }
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -260,7 +260,7 @@ impl Block {
             return;
         }
         cx.stop_propagation();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -310,7 +310,7 @@ impl Block {
     ) {
         cx.stop_propagation();
         self.code_language_is_selecting = true;
-        self.code_language_focus_handle.focus(window);
+        self.code_language_focus_handle.focus(window, cx);
         let offset = self.code_language_index_for_mouse_position(event.position);
         if event.modifiers.shift {
             self.select_code_language_to(offset, cx);

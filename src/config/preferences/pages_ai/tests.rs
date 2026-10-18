@@ -37,10 +37,10 @@ fn changing_a_connection_clears_the_previous_test_status(cx: &mut TestAppContext
             .update(cx, |field, cx| field.focus(window, cx));
         state.control.clone()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.simulate_input("changed-model");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     preferences.read_with(cx, |preferences, _| {
         assert!(
@@ -88,7 +88,7 @@ fn ai_opt_in_preferences_only_apply_on_save_and_keep_connection_data_when_disabl
         preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx)
     });
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     assert!(cx.debug_bounds("preferences-ai-model").is_none());
@@ -96,7 +96,7 @@ fn ai_opt_in_preferences_only_apply_on_save_and_keep_connection_data_when_disabl
         .debug_bounds("preferences-ai-enabled")
         .expect("AI 设置应从启用开关开始");
     cx.simulate_click(toggle.center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     preferences.read_with(cx, |preferences, cx| {
         assert!(
@@ -217,7 +217,7 @@ fn ai_provider_picker_prefills_service_details_and_keeps_advanced_fields_collaps
             .enabled = true;
     });
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let provider = cx.debug_bounds("preferences-ai-provider-deepseek");
@@ -226,7 +226,7 @@ fn ai_provider_picker_prefills_service_details_and_keeps_advanced_fields_collaps
         "新建连接应先选提供商，而不是手填协议和地址"
     );
     cx.simulate_click(provider.unwrap().center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     preferences.read_with(cx, |preferences, cx| {
         let draft = preferences
@@ -324,16 +324,16 @@ fn ai_provider_switching_and_deleting_preserves_incomplete_drafts_and_separate_k
         );
     });
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let advanced = cx.debug_bounds("preferences-ai-advanced").unwrap();
     cx.simulate_click(advanced.center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let delete = cx.debug_bounds("preferences-ai-delete").unwrap();
     cx.simulate_click(delete.center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     preferences.read_with(cx, |preferences, cx| {
         let draft = preferences
@@ -386,7 +386,7 @@ fn ai_provider_disabling_preserves_a_cleared_key_and_paused_connection_draft(
         draft.model.update(cx, |field, cx| field.set_value("", cx));
     });
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let toggle = cx.debug_bounds("preferences-ai-enabled").unwrap();
@@ -434,7 +434,7 @@ fn ai_preferences_customizes_quick_instructions_as_multiline_unsaved_drafts(
         preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx);
     });
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let tab = cx
@@ -442,19 +442,19 @@ fn ai_preferences_customizes_quick_instructions_as_multiline_unsaved_drafts(
         .expect("AI 偏好设置需要独立的指令页");
     cx.simulate_click(tab.center(), gpui::Modifiers::none());
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let menu = cx.debug_bounds("preferences-ai-command-menu").unwrap();
     cx.simulate_click(menu.center(), gpui::Modifiers::none());
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let polish = cx.debug_bounds("preferences-ai-command-polish").unwrap();
     cx.simulate_click(polish.center(), gpui::Modifiers::none());
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let body = cx.debug_bounds("preferences-ai-instruction-body").unwrap();
@@ -495,7 +495,7 @@ fn ai_preferences_customizes_quick_instructions_as_multiline_unsaved_drafts(
         let menu = cx.debug_bounds("preferences-ai-command-menu").unwrap();
         cx.simulate_click(menu.center(), gpui::Modifiers::none());
         for _ in 0..2 {
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.run_until_parked();
         }
         let item = cx
@@ -503,7 +503,7 @@ fn ai_preferences_customizes_quick_instructions_as_multiline_unsaved_drafts(
             .unwrap();
         cx.simulate_click(item.center(), gpui::Modifiers::none());
         for _ in 0..2 {
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.run_until_parked();
         }
     }
@@ -527,7 +527,7 @@ fn ai_preferences_customizes_quick_instructions_as_multiline_unsaved_drafts(
     let saved = crate::ai::settings::AiSettings::load_at(&path).unwrap();
     assert_eq!(saved.quick_instructions["polish"], "保留术语。\n保留链接。");
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let reset = cx
@@ -590,7 +590,7 @@ fn ai_preferences_updates_default_instruction_language_without_overwriting_a_cus
         preferences.set_nav_ai(&gpui::ClickEvent::default(), window, cx)
     });
     cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "zh-CN"));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     preferences.update(cx, |preferences, cx| {
         let state = preferences.ai_preferences.as_ref().unwrap();
@@ -608,7 +608,7 @@ fn ai_preferences_updates_default_instruction_language_without_overwriting_a_cus
             .update(cx, |field, cx| field.set_value("保持自然，避免套话。", cx));
     });
     cx.update(|_, cx| crate::i18n::I18nManager::init_with_language_id(cx, "en-US"));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     preferences.read_with(cx, |preferences, cx| {
         let state = preferences.ai_preferences.as_ref().unwrap();

@@ -759,6 +759,8 @@ impl Element for BlockTextElement {
                         bounds.origin.y + *y_offset,
                     ),
                     line_height,
+                    gpui::TextAlign::Left,
+                    None,
                     window,
                     cx,
                 )
@@ -786,6 +788,7 @@ impl Element for BlockTextElement {
                 if let Err(error) = window.paint_svg(
                     marker_bounds,
                     icon.into(),
+                    None,
                     TransformationMatrix::default(),
                     marker_color,
                     cx,

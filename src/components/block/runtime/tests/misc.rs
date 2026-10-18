@@ -301,10 +301,10 @@ async fn background_window_stops_the_cursor_blink_task(cx: &mut TestAppContext) 
     cx.update(|window, cx| {
         window.activate_window();
         let handle = block.read(cx).focus_handle.clone();
-        window.focus(&handle);
+        window.focus(&handle, cx);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     assert!(
@@ -315,7 +315,7 @@ async fn background_window_stops_the_cursor_blink_task(cx: &mut TestAppContext) 
     // 窗口失活（用户切到别的应用/窗口）：闪烁任务必须停。
     cx.deactivate_window();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     assert!(
@@ -342,14 +342,14 @@ async fn unchanged_text_reuses_the_same_layout_arc_across_frames(cx: &mut TestAp
     });
 
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     let first = block.read_with(cx, |block, _| block.last_layout.clone());
     let first = first.expect("第一帧后应有布局");
 
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     let second = block.read_with(cx, |block, _| block.last_layout.clone());

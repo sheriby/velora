@@ -127,7 +127,7 @@ async fn table_cells_have_rounded_corners_accent_headers_and_a_subtle_hover(
     };
     let header_style = style_for(&header, cx);
     let accent = cx.update(|_, cx| cx.global::<ThemeManager>().current().colors.text_link);
-    let header_text = header_style.text.as_ref().expect("表头文字样式");
+    let header_text = &header_style.text;
     assert_eq!(header_text.color, Some(accent), "表头应使用主题强调色");
     assert_eq!(header_text.font_weight, Some(gpui::FontWeight::BOLD));
     assert_eq!(header_style.corner_radii.top_left, Some(px(10.0).into()));
@@ -158,8 +158,8 @@ async fn table_cells_have_rounded_corners_accent_headers_and_a_subtle_hover(
         "悬停单元格应有淡淡的背景变化"
     );
     assert_eq!(
-        after.text.as_ref().map(|text| text.color),
-        before.text.as_ref().map(|text| text.color)
+        after.text.color,
+        before.text.color
     );
     cx.simulate_mouse_move(
         gpui::point(px(2.0), px(2.0)),

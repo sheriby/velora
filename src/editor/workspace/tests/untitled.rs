@@ -31,7 +31,7 @@ fn fixture(
 
 fn redraw(cx: &mut VisualTestContext) {
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
 }
@@ -324,10 +324,7 @@ fn restarting_restores_untitled_tabs_without_opening_duplicate_recovery_windows(
                     1,
                     "会话与草稿恢复不能把同一文档打开两次"
                 );
-                cx.windows()
-                    .first()
-                    .expect("恢复窗口")
-                    .downcast::<Editor>()
+                crate::ui::window_content::<Editor>(cx.windows().first().expect("恢复窗口"), cx)
                     .expect("编辑器窗口")
             });
             for _ in 0..4 {

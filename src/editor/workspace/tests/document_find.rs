@@ -180,7 +180,7 @@ async fn document_find_jump_keeps_the_query_field_focused(cx: &mut TestAppContex
         editor.workspace.search_query = "alpha".into();
         editor.schedule_workspace_search(cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         editor.read_with(cx, |editor, _| {
             let focus = editor.workspace.search_focus.as_ref().expect("find focus");
@@ -192,7 +192,7 @@ async fn document_find_jump_keeps_the_query_field_focused(cx: &mut TestAppContex
     editor.update(cx, |editor, cx| {
         editor.find_next_document_match(false, cx);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         editor.read_with(cx, |editor, _| {
             let focus = editor.workspace.search_focus.as_ref().expect("find focus");
@@ -202,7 +202,7 @@ async fn document_find_jump_keeps_the_query_field_focused(cx: &mut TestAppContex
     // 继续敲字：必须进查询，不是进正文。
     let before = editor.read_with(cx, |editor, cx| editor.current_document_source(cx));
     cx.simulate_input("X");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, cx| {
         assert!(
             editor.workspace.search_query.contains('X'),
@@ -401,10 +401,10 @@ async fn cmd_f_opens_current_document_find_in_sidebar(cx: &mut TestAppContext) {
     });
     cx.update(|window, cx| {
         window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.simulate_keystrokes(if cfg!(target_os = "macos") { "cmd-f" } else { "ctrl-f" });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _cx| {
         assert!(editor.workspace.is_open);
         assert!(editor.workspace.active_tab == super::super::WorkspaceTab::Search);
@@ -416,12 +416,12 @@ async fn cmd_f_opens_current_document_find_in_sidebar(cx: &mut TestAppContext) {
     cx.simulate_input("hello");
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace.search_results.len(), 2);
     });
     cx.simulate_keystrokes("enter");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(editor.workspace.search_active_index, Some(0));
     });
@@ -590,7 +590,7 @@ async fn document_find_highlights_map_only_the_blocks_with_hits(cx: &mut TestApp
             None,
         )
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.update(cx, |editor, cx| {
         editor.open_document_find(cx);
         editor.workspace.search_query = "alpha".into();
@@ -635,7 +635,7 @@ async fn replace_all_replaces_exactly_the_hits_it_reports(cx: &mut TestAppContex
     let (editor, cx) = cx.add_window_view(|_, cx| {
         Editor::from_markdown(cx, "> 引用甲\n\n正文甲、又是甲。\n".into(), None)
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     editor.update(cx, |editor, cx| {
         editor.open_document_find(cx);

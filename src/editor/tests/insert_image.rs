@@ -1,5 +1,5 @@
 //! 「插入 → 图片」那一条入口。选文件那一步走原生选择器，gpui 的测试壳把
-//! `prompt_for_paths` 写成 `unimplemented!()`（vendor/gpui/src/platform/test/platform.rs:334），
+//! `prompt_for_paths` 写成 `unimplemented!()`（vendor/gpui-pre/src/platform/test/platform.rs），
 //! 一点就 panic，所以用例测的是选择器交回的那条公共入口 `Editor::insert_image_at_caret`
 //! ——拖放那条路现在也收在这里。
 //!

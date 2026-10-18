@@ -250,10 +250,10 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            block.update(cx, |block, _cx| {
-                block.focus_handle.focus(window);
+            block.update(cx, |block, cx| {
+                block.focus_handle.focus(window, cx);
             });
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         cx.run_until_parked();
 

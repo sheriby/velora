@@ -166,7 +166,7 @@ impl TextField {
     /// 让输入框拿到焦点(光标移到末尾)。
     pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to(self.value.len(), false);
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -789,7 +789,7 @@ impl Render for TextField {
                     let offset = input.index_for_point(event.position);
                     input.move_to(offset, event.modifiers.shift);
                     input.dragging = true;
-                    window.focus(&input.focus);
+                    window.focus(&input.focus, cx);
                     cx.stop_propagation();
                     cx.notify();
                 }),

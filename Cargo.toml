@@ -79,8 +79,7 @@ grep-matcher = "0.1.9"
 ignore = "0.4"
 notify = "6"
 uuid = "1.23"
-# manifest 由应用 build.rs 唯一嵌入，框架默认 manifest 会让原生 MSVC 链接重复资源。
-gpui = { version = "0.2", default-features = false, features = ["font-kit", "wayland", "x11", "runtime_shaders"] }
+gpui-kit = "=0.7.3"
 unicode-segmentation = "1.13"
 icu_segmenter = { version = "2.3", default-features = false, features = ["compiled_data"] }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -144,8 +143,7 @@ tree-sitter-toml = { package = "adot-tree-sitter-toml", version = "0.1", optiona
 [dev-dependencies]
 roxmltree = "0.20"
 usvg = "0.45"
-# Cargo 会合并生产与测试的特性，测试入口也必须关闭框架默认 manifest。
-gpui = { version = "0.2", default-features = false, features = ["test-support"] }
+gpui-kit = { version = "=0.7.3", features = ["test-support"] }
 unicode-segmentation = "1.13"
 
 [[bin]]
@@ -156,6 +154,9 @@ bench = false
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui-apple = { package = "gpui-pre-apple", version = "=0.3.9", features = ["font-kit"] }
 
 [build-dependencies]
 embed-resource = "3"
@@ -184,16 +185,15 @@ dugong = { opt-level = 3 }
 merman = { opt-level = 3 }
 merman-core = { opt-level = 3 }
 merman-render = { opt-level = 3 }
-gpui = { opt-level = 3 }
-gpui-macros = { opt-level = 3 }
-gpui_http_client = { opt-level = 3 }
-gpui_sum_tree = { opt-level = 3 }
-gpui_util = { opt-level = 3 }
-gpui_util_macros = { opt-level = 3 }
-gpui_collections = { opt-level = 3 }
-gpui_media = { opt-level = 3 }
-gpui_refineable = { opt-level = 3 }
-gpui_semantic_version = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-macros = { opt-level = 3 }
+gpui-pre-macos = { opt-level = 3 }
+gpui-pre-apple = { opt-level = 3 }
+gpui-pre-windows = { opt-level = 3 }
+gpui-pre-linux = { opt-level = 3 }
+gpui-pre-wgpu = { opt-level = 3 }
+gpui-base = { opt-level = 3 }
+gpui-component = { opt-level = 3 }
 taffy = { opt-level = 3 }
 cosmic-text = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
@@ -222,4 +222,11 @@ serde = { opt-level = 3 }
 serde_json = { opt-level = 3 }
 
 [patch.crates-io]
-gpui = { path = "vendor/gpui" }
+gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
+gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
+gpui-base = { path = "vendor/gpui-base" }
+gpui-component = { path = "vendor/gpui-component" }

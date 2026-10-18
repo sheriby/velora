@@ -292,7 +292,7 @@ async fn opening_code_files_keeps_them_in_the_editor(cx: &mut TestAppContext) {
             editor.open_workspace_file(path.clone(), window, cx)
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     editor.read_with(cx, |editor, cx| {
         assert!(editor.code_tab_active());
@@ -310,7 +310,7 @@ async fn opening_code_files_keeps_them_in_the_editor(cx: &mut TestAppContext) {
             editor.open_workspace_file(plain_path.clone(), window, cx)
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     editor.read_with(cx, |editor, cx| {
         assert_eq!(editor.workspace.open_documents.len(), 2);
@@ -433,7 +433,7 @@ async fn right_click_menu_renders_for_a_workspace_file(cx: &mut TestAppContext) 
             cx,
         );
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.workspace.context_menu.as_ref().expect("右键菜单").has_target);
     });
@@ -613,7 +613,7 @@ async fn saving_an_edited_code_file_keeps_the_file_shape(cx: &mut TestAppContext
             editor.open_workspace_file(path.clone(), window, cx)
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let block = editor.read_with(cx, |editor, _| {
@@ -779,7 +779,7 @@ async fn the_outline_is_only_built_for_a_reader(cx: &mut TestAppContext) {
     let (editor, cx) = cx.add_window_view(|_window, cx| {
         Editor::from_markdown(cx, "# 一\n\n正文段落。\n".to_string(), None)
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let before = editor.read_with(cx, |editor, _| editor.outline_rebuilds.get());
@@ -797,7 +797,7 @@ async fn the_outline_is_only_built_for_a_reader(cx: &mut TestAppContext) {
         });
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     editor.read_with(cx, |editor, _| {
         assert_eq!(
@@ -812,7 +812,7 @@ async fn the_outline_is_only_built_for_a_reader(cx: &mut TestAppContext) {
         editor.replace_document_from_markdown("[TOC]\n\n# 一\n\n正文段落。\n".to_string(), None, cx);
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(
@@ -869,7 +869,7 @@ async fn a_fence_crossing_a_source_chunk_seam_still_scans_per_block(cx: &mut Tes
     let (editor, cx) = cx.add_window_view(move |_window, cx| {
         Editor::from_loaded_document(cx, document, Some(path.clone()))
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     editor.read_with(cx, |editor, cx| {
@@ -922,7 +922,7 @@ async fn a_fence_crossing_a_source_chunk_seam_still_scans_per_block(cx: &mut Tes
         });
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let before_typing = editor.read_with(cx, |editor, _| editor.outline_full_rescans.get());
     editor.update(cx, |editor, cx| editor.sync_workspace_outline(cx));
@@ -981,7 +981,7 @@ async fn a_longer_fence_above_pulls_the_following_chunks_inside_it(cx: &mut Test
     let document = crate::editor::encoding::load_document(&path).expect("load fixture");
     let (editor, cx) =
         cx.add_window_view(move |_window, cx| Editor::from_loaded_document(cx, document, Some(path.clone())));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     editor.read_with(cx, |editor, cx| {
@@ -1040,7 +1040,7 @@ async fn a_longer_fence_above_pulls_the_following_chunks_inside_it(cx: &mut Test
         });
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     sync(&editor, cx, "开栏长一格");
     editor.read_with(cx, |editor, _cx| {
@@ -1054,7 +1054,7 @@ async fn a_longer_fence_above_pulls_the_following_chunks_inside_it(cx: &mut Test
     // 撤掉那一格：后面几片又回到栏外，摘要得重新算出来（换过键的旧那档不该留着）。
     editor.update(cx, |editor, cx| editor.undo_document(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     sync(&editor, cx, "撤销那一格");
     editor.read_with(cx, |editor, _cx| {
@@ -1102,7 +1102,7 @@ async fn pasting_crlf_clipboard_text_into_a_crlf_code_file_never_writes_crcrlf(
     cx.update(|_window, cx| {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("x\r\ny".into()));
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let block = editor.read_with(cx, |editor, _| {
@@ -1172,7 +1172,7 @@ async fn autosaving_a_dirty_crlf_document_keeps_its_line_endings(cx: &mut TestAp
             editor.open_workspace_file(path.clone(), window, cx)
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     // 改一个字（文档变脏），等 autosave 防抖到期。
@@ -1229,7 +1229,7 @@ async fn reloading_an_externally_changed_file_keeps_its_shape(cx: &mut TestAppCo
             editor.open_workspace_file(path.clone(), window, cx)
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     // 外部把文件改成别的 CRLF 内容，然后走重载。
@@ -1305,7 +1305,7 @@ async fn every_context_menu_row_uses_the_same_geometry(cx: &mut TestAppContext) 
             cx,
         )
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let tree_row = cx
         .debug_bounds("menu-item-workspace-context-action-Reveal")
         .expect("文件树菜单的第一行");
@@ -1313,7 +1313,7 @@ async fn every_context_menu_row_uses_the_same_geometry(cx: &mut TestAppContext) 
     editor.update(cx, |editor, cx| {
         editor.open_tab_context_menu(point(px(80.0), px(40.0)), 0, cx)
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let tab_row = cx
         .debug_bounds("menu-item-tab-context-action-0")
         .expect("标签菜单的第一行");
@@ -1462,7 +1462,7 @@ async fn folder_hover_has_no_name_tooltip_and_file_metadata_tooltip_remains(
         editor.workspace.expanded.insert(file_node_id(&root));
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let selector = |path: &Path| -> &'static str {
         Box::leak(
             format!(
@@ -1474,24 +1474,24 @@ async fn folder_hover_has_no_name_tooltip_and_file_metadata_tooltip_remains(
     };
     let folder = cx.debug_bounds(selector(&root)).expect("目录行");
     cx.simulate_mouse_move(folder.center(), None, gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.executor()
         .advance_clock(std::time::Duration::from_millis(600));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("workspace-tooltip").is_none(),
         "文件夹不应弹出只有名称的提示"
     );
     let file = cx.debug_bounds(selector(&path)).expect("文件行");
     cx.simulate_mouse_move(file.center(), None, gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.executor()
         .advance_clock(std::time::Duration::from_millis(600));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("workspace-tooltip").is_some(),
         "文件的大小、修改时间提示应保留"

@@ -21,7 +21,7 @@ async fn wikilink_creates_missing_file_at_workspace_root(cx: &mut TestAppContext
         editor.update(cx, |editor, cx| {
             editor.open_wikilink("fresh note".into(), window, cx);
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     // The open path is canonicalized by set_workspace_root, so compare
     // against the canonical form of the created file.
@@ -56,7 +56,7 @@ async fn wikilink_opens_existing_workspace_file(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| {
             editor.open_wikilink("target".into(), window, cx);
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     assert!(!root.join("target.md").exists(), "名单未就绪时不能创建同名副本");

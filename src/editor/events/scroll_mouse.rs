@@ -150,7 +150,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
+        let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
         self.set_vertical_scroll_offset(-max_offset_y, cx);
     }
 
@@ -166,7 +166,7 @@ impl Editor {
     /// range. Offsets run from 0 at the top to `-max_offset` at the bottom.
     pub(crate) fn set_vertical_scroll_offset(&mut self, target_y: Pixels, cx: &mut Context<Self>) {
         self.outline_clicked_document_identity = None;
-        let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
+        let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
         let mut offset = self.scroll_handle.offset();
         offset.y = target_y.min(px(0.0)).max(-max_offset_y);
         self.scroll_handle.set_offset(offset);

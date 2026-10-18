@@ -150,7 +150,7 @@ pub(crate) fn open_editor_window(
     cx: &mut App,
     markdown: String,
     file_path: Option<PathBuf>,
-) -> WindowHandle<Editor> {
+) -> crate::ui::ContentWindowHandle<Editor> {
     open_editor_window_from_document(
         cx,
         crate::editor::encoding::LoadedDocument::from_text(markdown),
@@ -164,12 +164,12 @@ pub(crate) fn open_editor_window_from_document(
     cx: &mut App,
     document: crate::editor::encoding::LoadedDocument,
     file_path: Option<PathBuf>,
-) -> WindowHandle<Editor> {
+) -> crate::ui::ContentWindowHandle<Editor> {
     let RestoredWindow { bounds, display_id } = restored_window_bounds(cx);
     let title = window_title(file_path.as_deref());
-    let handle = cx
-        .open_window(
+    let handle = crate::ui::open_window(
             velora_window_options_on_display(title, bounds, display_id),
+            cx,
             move |_window, cx| cx.new(move |cx| Editor::from_loaded_document(cx, document, file_path)),
         )
         .unwrap();
@@ -196,9 +196,9 @@ pub(crate) fn open_recovered_editor_window(cx: &mut App, snapshot: RecoverySnaps
         .clone();
     let title = format!("Velora - {recovered_title}");
     let RestoredWindow { bounds, display_id } = restored_window_bounds(cx);
-    let handle = cx
-        .open_window(
+    let handle = crate::ui::open_window(
             velora_window_options_on_display(title.into(), bounds, display_id),
+            cx,
             move |_window, cx| cx.new(move |cx| Editor::from_recovery(cx, snapshot)),
         )
         .unwrap();
@@ -546,7 +546,7 @@ fn show_message_on_active_editor_in(
     detail: &str,
     cx: &mut App,
 ) {
-    let Some(handle) = window.and_then(|window| window.downcast::<Editor>()) else {
+    let Some(handle) = window.and_then(|window| crate::ui::window_content::<Editor>(window, cx)) else {
         eprintln!("{title}: {detail}");
         return;
     };
@@ -580,7 +580,7 @@ fn with_active_editor<R>(
     cx: &mut App,
     update: impl FnOnce(&mut Editor, &mut Window, &mut Context<Editor>) -> R,
 ) -> Option<R> {
-    let window = cx.active_window()?.downcast::<Editor>()?;
+    let window = crate::ui::window_content::<Editor>(cx.active_window()?, cx)?;
     let active = window.read_with(cx, |editor, _| editor.active_split_editor()).ok().flatten();
     let result = if let Some(active) = active {
         AnyWindowHandle::from(window).update(cx, |_, window, cx| active.update(cx, |editor, cx| update(editor, window, cx)))
@@ -597,7 +597,7 @@ fn with_active_editor<R>(
 }
 
 fn show_info_dialog_on_active_editor(cx: &mut App, kind: InfoDialogKind) {
-    let target = cx.active_window().and_then(|window| window.downcast::<Editor>());
+    let target = cx.active_window().and_then(|window| crate::ui::window_content::<Editor>(window, cx));
     // 原生菜单动作仍在窗口派发栈中，退出这一轮事件后才能通过句柄更新窗口。
     cx.defer(move |cx| {
         if let Some(target) = target
@@ -944,7 +944,7 @@ fn current_window_candidates(cx: &mut App) -> Vec<AnyWindowHandle> {
 }
 
 fn request_close_editor_window(window: AnyWindowHandle, cx: &mut App) -> bool {
-    let Some(window) = window.downcast::<Editor>() else {
+    let Some(window) = crate::ui::window_content::<Editor>(window, cx) else {
         return false;
     };
 
@@ -986,7 +986,7 @@ fn perform_quit_application(cx: &mut App) {
     }
 
     for window in candidates {
-        let Some(window) = window.downcast::<Editor>() else {
+        let Some(window) = crate::ui::window_content::<Editor>(window, cx) else {
             continue;
         };
 

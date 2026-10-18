@@ -227,7 +227,7 @@ impl Editor {
         // 记住打开前的正文焦点，关闭时还回去。
         self.overlay_focus_restore_target = self.focused_edit_target_entity_id(window, cx);
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         state.focus = Some(focus);
         self.quick_open = Some(state);
         self.refresh_quick_open_results(cx);

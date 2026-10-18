@@ -17,6 +17,8 @@ pub(super) fn command_menu_item(strings: &I18nStrings, spec: &CommandSpec) -> Me
         name: spec.label(strings).into(),
         action: spec.boxed_action(),
         os_action: None,
+        disabled: false,
+        checked: false,
     }
 }
 
@@ -40,6 +42,7 @@ pub(super) fn file_menu_items(strings: &I18nStrings, recent_items: Vec<MenuItem>
         if spec.id == "open_folder" {
             if let Some(recent_items) = recent_items.take() {
                 items.push(MenuItem::submenu(Menu {
+            disabled: false,
                     name: strings.menu_open_recent_file.clone().into(),
                     items: recent_items,
                 }));

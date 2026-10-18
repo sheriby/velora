@@ -345,7 +345,7 @@ impl Block {
                 let mut element =
                     div()
                         .min_w(px(0.0))
-                        .flex_grow()
+                        .flex_grow(1.0)
                         .border(px(1.0))
                         .border_color(c.table_border)
                         .px(px(d.table_cell_padding_x))

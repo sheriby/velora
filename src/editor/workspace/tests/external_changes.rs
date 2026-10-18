@@ -596,12 +596,12 @@ async fn reloading_an_externally_changed_document_keeps_source_mode_and_viewport
         })
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     // 用户现场：源码模式 + 视口停在文档中段。
     editor.update(cx, |editor, cx| editor.toggle_view_mode(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-3000.0), cx);
     });
@@ -626,7 +626,7 @@ async fn reloading_an_externally_changed_document_keeps_source_mode_and_viewport
     cx.run_until_parked();
     // 重载会挂上滚动校正帧；视口若被拽回顶部就发生在这些帧里。
     for _ in 0..8 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
 
     editor.read_with(cx, |editor, _| {
@@ -688,7 +688,7 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
         })
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     editor.update(cx, |editor, cx| {
         editor.set_vertical_scroll_offset(px(-3000.0), cx);
@@ -698,7 +698,7 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
         block.update(cx, |block, _cx| block.selected_range = 3..3);
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     let offset_before = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
     let anchor_before = editor.read_with(cx, |editor, cx| {
@@ -722,7 +722,7 @@ async fn reloading_an_externally_changed_rendered_document_keeps_viewport_and_ca
     });
     cx.run_until_parked();
     for _ in 0..8 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
 
     editor.read_with(cx, |editor, cx| {
@@ -788,7 +788,7 @@ async fn reloading_a_chunked_code_document_keeps_the_caret(cx: &mut TestAppConte
         })
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _cx| {
         assert_eq!(
             editor.document.root_count(),

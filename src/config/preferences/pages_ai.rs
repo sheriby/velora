@@ -131,7 +131,7 @@ impl PreferencesWindow {
         cx: &mut Context<Self>,
     ) {
         self.close_dropdowns();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         self.nav = PreferencesNav::Ai;
         self.page_scroll.set_offset(Point::default());
         if self.ai_preferences.is_none() {

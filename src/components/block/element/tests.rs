@@ -360,7 +360,7 @@
         });
 
         block.update(cx, |block, _cx| {
-            block.last_layout = Some(std::sync::Arc::new(lines.clone()));
+            block.last_layout = Some(std::sync::Arc::new(lines));
             block.last_bounds = Some(bounds);
             block.last_line_height = px(20.0);
             block.selected_range = 0..0;
@@ -596,7 +596,14 @@
             run_with("plain ".len(), "Menlo", None),
             run_with("code".len(), "Menlo", Some(px(13.0))),
         ];
-        let layout = gpui::shape_line_with_platform_text_system(text.into(), px(16.0), &runs);
+        use gpui::PlatformTextSystem as _;
+        let text_system = gpui_apple::AppleTextSystem::new();
+        let font_runs = runs.iter().map(|run| gpui::FontRun {
+            len: run.len,
+            font_id: text_system.font_id(&run.font).expect("测试字体应可解析"),
+            font_size: run.font_size,
+        }).collect::<Vec<_>>();
+        let layout = text_system.layout_line(text, px(16.0), &font_runs);
 
         let advance = |run: &gpui::ShapedRun| {
             let first = run.glyphs.first().expect("run should have glyphs");
@@ -625,15 +632,14 @@
     #[test]
     fn vendored_text_system_keeps_the_per_run_font_size_patch() {
         // 行内代码跟随「代码块字体大小」依赖 vendored gpui 的本地补丁：逐段字号
-        // 必须一路走到各平台排版层。mac 这条路径需要 Metal 工具链才能编译测试
-        // （本机没有），这里守住补丁本身，升级 vendored 副本时不会被悄悄覆盖。
-        let mac = include_str!("../../../../vendor/gpui/src/platform/mac/text_system.rs");
+        // 必须一路走到各平台排版层；静态守卫补充当前系统无法执行的另一平台。
+        let mac = include_str!("../../../../vendor/gpui-pre-apple/src/text_system.rs");
         assert!(
             mac.contains("run.font_size.unwrap_or(font_size)"),
             "mac 排版层应把逐段字号用于字体实例"
         );
         assert!(
-            mac.contains("clone_with_font_size(run_font_size.into())"),
+            mac.contains("clone_with_font_size(font_size.into())"),
             "mac 排版层应按逐段字号创建 CTFont"
         );
         assert!(
@@ -641,9 +647,9 @@
             "mac 排版层应把逐段字号写回 ShapedRun"
         );
 
-        let windows = include_str!("../../../../vendor/gpui/src/platform/windows/direct_write.rs");
+        let windows = include_str!("../../../../vendor/gpui-pre-windows/src/direct_write.rs");
         assert!(
-            windows.contains("run.font_size.unwrap_or(font_size).0"),
+            windows.contains("run.font_size.unwrap_or(font_size).as_f32()"),
             "windows 排版层应把逐段字号写进 DirectWrite 布局"
         );
         assert!(
@@ -966,17 +972,17 @@ async fn shape_memo_hits_skip_run_rebuilds_on_unchanged_frames(cx: &mut TestAppC
     });
     // 前两帧让 shape 备忘写稳。
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
 
     let before = super::probe::text_runs_builds();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     let builds = super::probe::text_runs_builds() - before;
@@ -1008,21 +1014,21 @@ async fn unchanged_text_reuses_the_hard_line_table_across_frames(cx: &mut TestAp
     // 聚焦 + 非空选区：选区 quad 路径每帧都要行表。
     cx.update(|window, cx| {
         let handle = block.read(cx).focus_handle.clone();
-        window.focus(&handle);
+        window.focus(&handle, cx);
         block.update(cx, |block, _cx| block.selected_range = 0..6);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
 
     let before = super::probe::builds();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     let builds = super::probe::builds() - before;
@@ -1053,7 +1059,7 @@ async fn inline_code_in_a_heading_follows_the_heading_size(cx: &mut TestAppConte
         )
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
 
@@ -1158,7 +1164,7 @@ fn repeated_prepaint_preserves_measured_text_lines(cx: &mut TestAppContext) {
             )
         }))
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     view.read_with(cx, |view, cx| {
         assert!(
             view.0

@@ -36,7 +36,7 @@ fn fixture_with_callback(
 
 fn redraw(cx: &mut VisualTestContext) {
     for _ in 0..2 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
 }
@@ -709,9 +709,9 @@ fn split_session_restores_nested_groups_and_active_tabs(cx: &mut TestAppContext)
         let right = editor
             .read_with(cx, |editor, _| editor.active_split_editor())
             .expect("右组");
-        right.update_in(cx, |editor, window, cx| {
+        cx.update(|window, cx| right.update(cx, |editor, cx| {
             editor.split_active_document(SplitDirection::Down, window, cx)
-        });
+        }));
         cx.run_until_parked();
         let layout = editor.read_with(cx, |editor, cx| editor.split_session_layout(cx));
         assert!(layout.is_some(), "会话必须记录分屏树而不是扁平标签集");
@@ -721,9 +721,9 @@ fn split_session_restores_nested_groups_and_active_tabs(cx: &mut TestAppContext)
         let restored = cx
             .cx
             .new(|cx| Editor::from_markdown(cx, String::new(), None));
-        restored.update_in(cx, |editor, window, cx| {
+        cx.update(|window, cx| restored.update(cx, |editor, cx| {
             editor.restore_split_session(&layout, window, cx)
-        });
+        }));
         let groups = restored.read_with(cx, |editor, _| editor.split_groups());
         assert_eq!(groups.len(), 3, "应恢复嵌套三组布局");
         for group in groups {

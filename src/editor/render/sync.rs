@@ -41,7 +41,7 @@ impl Editor {
         if let Some(entity_id) = self.pending_focus.take()
             && let Some(block) = self.focusable_entity_by_id(entity_id)
         {
-            block.read(cx).focus_handle.focus(window);
+            block.read(cx).focus_handle.clone().focus(window, cx);
         }
     }
 
@@ -116,7 +116,7 @@ impl Editor {
             // 每一帧都净逼近，绝不过冲。
             let viewport_height = f32::from(self.scroll_handle.bounds().size.height);
             let content_height =
-                f32::from(self.scroll_handle.max_offset().height) + viewport_height;
+                f32::from(self.scroll_handle.max_offset().y) + viewport_height;
             // focused_block 已是滚动实体（cell 已升级为宿主表格块），
             // 直接按它在可见列表中的位置估算。
             let index = self
@@ -130,7 +130,7 @@ impl Editor {
                 let estimate_y = content_height * (index as f32 + 0.5) / total as f32;
                 let mut offset = self.scroll_handle.offset();
                 let target_y = -(estimate_y - viewport_height * 0.5);
-                let max_offset_y = f32::from(self.scroll_handle.max_offset().height).max(0.0);
+                let max_offset_y = f32::from(self.scroll_handle.max_offset().y).max(0.0);
                 let target_y = target_y.min(0.0).max(-max_offset_y);
                 let current = f32::from(offset.y);
                 if (current - target_y).abs() <= viewport_height * 1.5 {
@@ -171,7 +171,7 @@ impl Editor {
                 f32::from(offset.y),
                 viewport_center,
                 caret_center,
-                f32::from(self.scroll_handle.max_offset().height),
+                f32::from(self.scroll_handle.max_offset().y),
             );
             if (target - f32::from(offset.y)).abs() > 0.5 {
                 offset.y = px(target);
@@ -190,7 +190,7 @@ impl Editor {
                 f32::from(active_bounds.top()) + f32::from(active_bounds.size.height) * 0.5;
             let mut offset = self.scroll_handle.offset();
             offset.y += px(viewport_center - target_center);
-            let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
+            let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
             offset.y = offset.y.min(px(0.0)).max(-max_offset_y);
             if self.scroll_handle.offset().y != offset.y {
                 self.caret_scroll_applications
@@ -215,7 +215,7 @@ impl Editor {
         }
 
         if changed {
-            let max_offset_y = self.scroll_handle.max_offset().height.max(px(0.0));
+            let max_offset_y = self.scroll_handle.max_offset().y.max(px(0.0));
             offset.y = offset.y.min(px(0.0)).max(-max_offset_y);
             if self.scroll_handle.offset().y != offset.y {
                 self.caret_scroll_applications

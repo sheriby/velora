@@ -431,7 +431,7 @@ impl Editor {
             .into_iter()
             .filter(|handle| handle.window_id() != window.window_handle().window_id())
         {
-            let Some(handle) = handle.downcast::<Editor>() else {
+            let Some(handle) = crate::ui::window_content::<Editor>(handle, cx) else {
                 continue;
             };
             let conflict = handle.read_with(cx, |editor, cx| {

@@ -25,7 +25,7 @@ async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut Test
     init_sidebar_test_app(cx);
     let (editor, cx) =
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     // 启动默认展开（用户需求）：图标列与面板都占位。
     assert_eq!(
@@ -42,7 +42,7 @@ async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut Test
     // 图标列上点当前页签：收起整条（含图标列），不留半个入口在布局里。
     let rail_button = cx.debug_bounds("activity-files").expect("展开时图标列应可点");
     cx.simulate_click(rail_button.center(), Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         sidebar_is_visible(cx),
         (false, false),
@@ -64,7 +64,7 @@ async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut Test
             editor.set_workspace_tab(tab, cx);
             editor.workspace.is_open = true;
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             sidebar_is_visible(cx),
             (true, true),
@@ -77,7 +77,7 @@ async fn the_sidebar_toggles_whole_and_leaves_no_mouse_trap_behind(cx: &mut Test
         // 图标列上点同一页签：收起整条（含图标列），不留半个入口在布局里。
         let rail_button = cx.debug_bounds(id).expect("展开时图标列应可点");
         cx.simulate_click(rail_button.center(), Modifiers::none());
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         editor.read_with(cx, |editor, _| {
             assert!(!editor.workspace.is_open, "再点 {id} 应收起侧边栏");
         });
@@ -109,21 +109,21 @@ async fn hovering_the_left_edge_does_not_open_the_sidebar(cx: &mut TestAppContex
         cx.add_window_view(|_, cx| Editor::from_markdown(cx, String::new(), None));
     // 前置：默认展开，先收起，贴边才谈得上「不该唤出」。
     editor.update(cx, |editor, _| editor.workspace.is_open = false);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_mouse_move(
         point(px(2.0), px(200.0)),
         gpui::MouseButton::Left,
         Modifiers::none(),
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     // 旧实现这里要停留满 dwell 再等滑入动画；现在等足够久也不该有反应。
     cx.executor()
         .advance_clock(std::time::Duration::from_millis(1000));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     std::thread::sleep(std::time::Duration::from_millis(400));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     editor.read_with(cx, |editor, _| {
         assert!(!editor.workspace.is_open, "贴左边缘不该展开侧边栏");
@@ -144,8 +144,8 @@ async fn hovering_the_left_edge_does_not_open_the_sidebar(cx: &mut TestAppContex
         gpui::MouseButton::Left,
         Modifiers::none(),
     );
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         sidebar_is_visible(cx),
         (false, false),
@@ -162,18 +162,18 @@ async fn ctrl_b_toggles_the_sidebar_only_when_nothing_is_selected(cx: &mut TestA
     });
     // 从收起状态测开关本身（启动默认展开由上一组用例覆盖）。
     editor.update(cx, |editor, _| editor.workspace.is_open = false);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let first_block = editor.read_with(cx, |editor, _| {
         editor.document.visible_blocks()[0].entity.clone()
     });
     editor.update(cx, |editor, _| editor.focus_block(first_block.entity_id()));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     // 空选区（只有光标）：不管文本，只开关侧边栏。
     let buffer_before = editor.read_with(cx, |editor, _| editor.buffer.text());
     cx.simulate_keystrokes("ctrl-b");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.workspace.is_open, "空选区按 ctrl-b 应展开侧边栏");
     });
@@ -184,7 +184,7 @@ async fn ctrl_b_toggles_the_sidebar_only_when_nothing_is_selected(cx: &mut TestA
     );
 
     cx.simulate_keystrokes("ctrl-b");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(!editor.workspace.is_open, "再按一次应收起侧边栏");
     });
@@ -192,7 +192,7 @@ async fn ctrl_b_toggles_the_sidebar_only_when_nothing_is_selected(cx: &mut TestA
     // 有选区：还是加粗，侧边栏状态不动。
     first_block.update(cx, |block, _cx| block.selected_range = 0..5);
     cx.simulate_keystrokes("ctrl-b");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         editor.read_with(cx, |editor, _| editor.buffer.text()),
         "**alpha** one\n\nbeta two\n",
@@ -230,13 +230,13 @@ async fn ctrl_b_toggles_the_sidebar_without_block_focus(cx: &mut TestAppContext)
         editor.workspace.is_open = true;
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     // 焦点在侧栏文件树上：ctrl-b 收起侧栏，焦点交还正文。
     editor.update_in(cx, |editor, window, cx| editor.focus_workspace_tree(window, cx));
     cx.simulate_keystrokes("ctrl-b");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(
             !editor.workspace.is_open,
@@ -261,15 +261,15 @@ async fn ctrl_b_toggles_the_sidebar_without_block_focus(cx: &mut TestAppContext)
 
     // 侧栏已收起：再按 ctrl-b 应把它打开。
     cx.simulate_keystrokes("ctrl-b");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(editor.workspace.is_open, "侧栏收起时 ctrl-b 应能打开它");
     });
 
     // 窗口里没有任何焦点（blur）：ctrl-b 仍该管用。
-    editor.update_in(cx, |_editor, window, _cx| window.blur());
+    editor.update_in(cx, |_editor, window, cx| window.blur(cx));
     cx.simulate_keystrokes("ctrl-b");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert!(
             !editor.workspace.is_open,
@@ -282,10 +282,10 @@ async fn ctrl_b_toggles_the_sidebar_without_block_focus(cx: &mut TestAppContext)
         editor.document.visible_blocks()[0].entity.clone()
     });
     editor.update(cx, |editor, _| editor.focus_block(first_block.entity_id()));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     first_block.update(cx, |block, _cx| block.selected_range = 0..5);
     cx.simulate_keystrokes("ctrl-b");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         editor.read_with(cx, |editor, _| editor.buffer.text()),
         "**alpha** one\n\nbeta two\n",
@@ -329,7 +329,7 @@ async fn scrolling_inside_the_sidebar_tree_does_not_scroll_the_document(cx: &mut
         editor.workspace.active_tab = WorkspaceTab::Files;
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     // 先证明正文可滚、且滚轮命中正文时确实会滚。
     cx.simulate_event(ScrollWheelEvent {
@@ -338,7 +338,7 @@ async fn scrolling_inside_the_sidebar_tree_does_not_scroll_the_document(cx: &mut
         modifiers: Modifiers::default(),
         touch_phase: TouchPhase::default(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let body_offset = editor.read_with(cx, |editor, _| editor.scroll_handle.offset().y);
     assert!(
         body_offset < px(0.0),
@@ -346,7 +346,7 @@ async fn scrolling_inside_the_sidebar_tree_does_not_scroll_the_document(cx: &mut
     );
 
     let tree_max = editor.read_with(cx, |editor, _| {
-        editor.workspace.tree_scroll_handle.max_offset().height
+        editor.workspace.tree_scroll_handle.max_offset().y
     });
     assert!(
         tree_max > px(0.0),
@@ -361,7 +361,7 @@ async fn scrolling_inside_the_sidebar_tree_does_not_scroll_the_document(cx: &mut
         modifiers: Modifiers::default(),
         touch_phase: TouchPhase::default(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let tree_offset = editor.read_with(cx, |editor, _| {
         editor.workspace.tree_scroll_handle.offset().y
     });
@@ -490,7 +490,7 @@ async fn opening_a_file_directly_applies_pinned_sidebar_startup_settings(
         .update(|cx| {
             cx.windows()
                 .into_iter()
-                .find_map(|handle| handle.downcast::<Editor>())
+                .find_map(|handle| crate::ui::window_content::<Editor>(handle, cx))
         })
         .expect("应开出一个编辑器窗口");
     editor
@@ -550,7 +550,7 @@ async fn opening_a_file_directly_restores_the_remembered_sidebar_state(
         .update(|cx| {
             cx.windows()
                 .into_iter()
-                .find_map(|handle| handle.downcast::<Editor>())
+                .find_map(|handle| crate::ui::window_content::<Editor>(handle, cx))
         })
         .expect("应开出一个编辑器窗口");
     editor

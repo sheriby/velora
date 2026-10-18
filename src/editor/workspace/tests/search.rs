@@ -151,10 +151,10 @@ async fn workspace_search_accepts_unicode_platform_input(cx: &mut TestAppContext
                 .search_focus
                 .get_or_insert_with(|| cx.focus_handle())
                 .clone();
-            window.focus(&focus);
+            window.focus(&focus, cx);
             cx.notify();
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.simulate_input("你好");
     editor.read_with(cx, |editor, _cx| {
@@ -464,7 +464,7 @@ async fn workspace_search_returns_content_hits_after_typing(cx: &mut TestAppCont
     });
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert_eq!(editor.workspace.search_results.len(), 1);
         assert_eq!(editor.workspace.search_results[0].line, Some(2));
@@ -511,7 +511,7 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
     });
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let hits = editor.read_with(cx, |editor, _| {
         editor
@@ -553,7 +553,7 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
     assert!(header.size.width > px(60.0));
 
     cx.simulate_click(header.center(), Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     // macOS 的 /var 会被打开流程规范化为 /private/var，断言前统一 canonicalize。
     let banner = crate::file_url::canonical_path(&root.join("assets").join("velora-banner.png"));
     editor.read_with(cx, |editor, _| {
@@ -572,7 +572,7 @@ async fn search_result_file_header_opens_the_file_and_has_no_empty_row(cx: &mut 
         .debug_bounds("workspace-search-file-1")
         .expect("第二个文件头应渲染");
     cx.simulate_click(notes_header.center(), Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let notes = crate::file_url::canonical_path(&root.join("velora-notes.md"));
     editor.read_with(cx, |editor, _| {
         assert_eq!(
@@ -623,7 +623,7 @@ async fn re_search_keeps_previous_results_visible(cx: &mut TestAppContext) {
     });
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let baseline = editor.read_with(cx, |editor, _| editor.workspace.search_results.len());
     assert_eq!(baseline, 3);
 
@@ -637,7 +637,7 @@ async fn re_search_keeps_previous_results_visible(cx: &mut TestAppContext) {
             "重新搜索期间应继续显示旧结果，而不是先清空"
         );
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("workspace-search-file-0").is_some(),
         "重新搜索期间侧栏不应闪成空白"
@@ -733,7 +733,7 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
         });
     });
     for _ in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let scroll_at_later = editor.read_with(cx, |editor, _cx| {
@@ -779,7 +779,7 @@ async fn workspace_search_jump_scrolls_to_unpainted_matches(cx: &mut TestAppCont
         });
     });
     for _ in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let scroll_at_early = editor.read_with(cx, |editor, _cx| {
@@ -883,7 +883,7 @@ async fn document_search_hit_inside_table_jumps(cx: &mut TestAppContext) {
         });
     });
     for _ in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     editor.read_with(cx, |editor, cx| {
@@ -1003,7 +1003,7 @@ async fn workspace_search_reports_all_hits_and_jumps_by_proximity(cx: &mut TestA
         });
     });
     for _ in 0..16 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     editor.read_with(cx, |editor, cx| {
@@ -1084,7 +1084,7 @@ async fn cycling_hits_within_one_viewport_still_centers(cx: &mut TestAppContext)
         editor.update(cx, |editor, cx| editor.open_search_hit(0, window, cx));
     });
     for _ in 0..12 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let drift_of = |cx: &mut TestAppContext| -> Option<f32> {
@@ -1116,7 +1116,7 @@ async fn cycling_hits_within_one_viewport_still_centers(cx: &mut TestAppContext)
         editor.update(cx, |editor, cx| editor.advance_search_match(false, window, cx));
     });
     for _ in 0..12 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     let second_drift = drift_of(cx);
@@ -1341,7 +1341,7 @@ async fn source_chunk_gutters_share_one_width_basis(cx: &mut TestAppContext) {
 
     // 渲染几帧后，每根块都记录了自己的栏宽：三块必须一致。
     for _ in 0..4 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     editor.read_with(cx, |editor, cx| {
@@ -1516,7 +1516,7 @@ async fn workspace_hit_highlight_covers_the_match_text_in_the_block(cx: &mut Tes
     });
     cx.run_until_parked();
     for _ in 0..8 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
 
@@ -1625,8 +1625,8 @@ async fn search_results_render_only_the_rows_in_the_viewport(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let (rows, hits, files) = editor.read_with(cx, |editor, _| {
         let hits = editor.workspace.search_results.len();
@@ -1655,7 +1655,7 @@ async fn search_results_render_only_the_rows_in_the_viewport(cx: &mut TestAppCon
             // 负值才是真滚轮会产生的偏移（gpui 的内容偏移是已滚过距离的相反数）。
             .set_offset(gpui::point(gpui::px(0.0), gpui::px(-(6.0 + 300.0 * 24.0))));
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (first, rows) = editor.read_with(cx, |editor, _| {
         (
             editor.panel_first_row_rendered.get(),
@@ -1689,24 +1689,24 @@ async fn sidebar_search_inputs_show_a_caret_and_replace_controls_accept_empty_te
         editor.schedule_workspace_search(cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let input = cx.debug_bounds("workspace-search-query").expect("搜索框");
     cx.simulate_click(input.center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         editor.read_with(cx, |editor, _| editor.search_input_state(super::super::SearchInputKind::Query).caret_bounds.is_some()),
         "聚焦搜索框应显示文字光标"
     );
     let replace_input = cx.debug_bounds("workspace-search-replace").expect("替换框");
     cx.simulate_click(replace_input.center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         editor.read_with(cx, |editor, _| editor.search_input_state(super::super::SearchInputKind::Replace).caret_bounds.is_some()),
         "聚焦空替换框也应显示文字光标"
     );
     cx.simulate_input("你🙂");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(editor.read_with(cx, |editor, _| editor.search_input_state(super::super::SearchInputKind::Replace).caret_bounds.is_some()));
     editor.read_with(cx, |editor, _| {
         assert_eq!(editor.workspace.replace_query, "你🙂");
@@ -1721,7 +1721,7 @@ async fn sidebar_search_inputs_show_a_caret_and_replace_controls_accept_empty_te
         "ctrl-a"
     });
     cx.simulate_keystrokes("backspace");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("workspace-search-replace-all").is_some(),
@@ -1736,7 +1736,7 @@ async fn sidebar_search_inputs_show_a_caret_and_replace_controls_accept_empty_te
         "替换图标应与 Aa 同行"
     );
     cx.simulate_click(replace.center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.read_with(cx, |editor, _| {
         assert_eq!(editor.buffer.text(), "a1b1", "确认前不能替换");
         assert!(editor.modal_is_open(), "全部替换必须先确认");
@@ -1746,7 +1746,7 @@ async fn sidebar_search_inputs_show_a_caret_and_replace_controls_accept_empty_te
         editor.read_with(cx, |editor, _| editor.buffer.text()),
         "a1b1"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let current = cx
         .debug_bounds("workspace-search-replace-current")
         .expect("替换单条");
@@ -1756,7 +1756,7 @@ async fn sidebar_search_inputs_show_a_caret_and_replace_controls_accept_empty_te
         "ab1",
         "空替换也应能删除单条匹配"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_click(replace.center(), gpui::Modifiers::none());
     editor.update_in(cx, |editor, window, cx| editor.dismiss_modal(1, window, cx));
@@ -1785,7 +1785,7 @@ async fn replace_all_nonempty_text_requires_confirmation_before_changing_the_doc
         editor.workspace.replace_query = "2".into();
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let button = cx
         .debug_bounds("workspace-search-replace-all")
         .expect("全部替换入口");
@@ -1805,7 +1805,7 @@ async fn search_input_uses_a_text_cursor_and_files_have_no_filter_header(cx: &mu
         crate::components::init(cx);
     });
     let (editor, cx) = cx.add_window_view(|_, cx| Editor::from_markdown(cx, "正文".into(), None));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("workspace-tree-header").is_none(),
         "文件树应移除过滤和排序栏"
@@ -1861,7 +1861,7 @@ async fn workspace_replace_all_keeps_disk_files_unchanged_until_explicit_confirm
         editor.workspace.replace_query = "2".into();
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let button = cx
         .debug_bounds("workspace-search-replace-all")
         .expect("全部替换入口");
@@ -1871,7 +1871,7 @@ async fn workspace_replace_all_keeps_disk_files_unchanged_until_explicit_confirm
         "a1b1",
         "确认前不能写磁盘"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("enter");
     assert_eq!(
         fs::read_to_string(&path).expect("读取夹具"),
@@ -1920,7 +1920,7 @@ async fn sidebar_search_mouse_places_the_caret_and_drags_unicode_text(cx: &mut T
             editor.workspace.replace_selected_range = "我的文稿🙂".len().."我的文稿🙂".len();
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let bounds = cx.debug_bounds(selector).expect("输入框");
         cx.simulate_click(
             gpui::point(bounds.left() + px(9.0), bounds.center().y),
@@ -1933,7 +1933,7 @@ async fn sidebar_search_mouse_places_the_caret_and_drags_unicode_text(cx: &mut T
             };
             assert_eq!(selected, &(0..0), "点击文字左侧应将光标移到开头");
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let middle = editor.update_in(cx, |editor, window, cx| {
             editor
                 .bounds_for_range(2..2, bounds, window, cx)
@@ -1952,7 +1952,7 @@ async fn sidebar_search_mouse_places_the_caret_and_drags_unicode_text(cx: &mut T
                 "点击文字中间应按实际字形定位"
             );
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let start = editor.update_in(cx, |editor, window, cx| {
             editor
                 .bounds_for_range(0..0, bounds, window, cx)
@@ -2025,7 +2025,7 @@ async fn sidebar_replace_current_works_without_first_selecting_a_document_match(
         editor.workspace.replace_query = "新文稿".into();
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let button = cx
         .debug_bounds("workspace-search-replace-current")
         .expect("单条替换");
@@ -2052,7 +2052,7 @@ async fn sidebar_replace_current_is_hidden_in_all_files_scope(cx: &mut TestAppCo
         editor.workspace.replace_visible = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("workspace-search-replace-current")
             .is_none(),
@@ -2066,7 +2066,7 @@ async fn sidebar_replace_current_is_hidden_in_all_files_scope(cx: &mut TestAppCo
         editor.workspace.search_scope = super::super::WorkspaceSearchScope::Document;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("workspace-search-replace-current")
             .is_some(),
@@ -2158,7 +2158,7 @@ async fn sidebar_document_match_focus_defaults_to_first_and_survives_replace_inp
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         editor.read_with(cx, |editor, _| editor
             .workspace
@@ -2180,7 +2180,7 @@ async fn sidebar_document_match_focus_defaults_to_first_and_survives_replace_inp
         Some(4..7),
         "相同查询刷新不能清掉手动选择"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let replacement = cx
         .debug_bounds("workspace-search-replace")
         .expect("替换输入框");
@@ -2194,7 +2194,7 @@ async fn sidebar_document_match_focus_defaults_to_first_and_survives_replace_inp
         Some(4..7),
         "填写替换内容不能丢失活动命中"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let button = cx
         .debug_bounds("workspace-search-replace-current")
         .expect("单条替换");
@@ -2207,7 +2207,7 @@ async fn sidebar_document_match_focus_defaults_to_first_and_survives_replace_inp
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         editor.read_with(cx, |editor, _| editor
             .workspace
@@ -2277,18 +2277,18 @@ async fn clicking_a_bold_search_match_keeps_highlight_through_initial_refresh(
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     editor.update(cx, |editor, cx| editor.schedule_workspace_search(cx));
     let first = cx
         .debug_bounds("workspace-search-hit-0")
         .expect("第一条匹配");
     cx.simulate_click(first.center(), Modifiers::none());
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_millis(150));
         cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         editor.read_with(cx, |editor, cx| {
             assert_eq!(
                 editor.workspace.document_active_range.as_ref(),
@@ -2322,14 +2322,14 @@ async fn clicking_replace_input_cancels_an_older_pending_search_focus(cx: &mut T
         editor.workspace.replace_visible = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let input = cx.debug_bounds("workspace-search-replace").expect("替换框");
     editor.update(cx, |editor, _| {
         editor.pending_focus = editor.document.first_root().map(|block| block.entity_id());
         editor.workspace.search_focus_pending = true;
     });
     cx.simulate_click(input.center(), Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_input("新");
     editor.read_with(cx, |editor, _| {
         assert_eq!(editor.workspace.replace_query, "新", "较早的搜索跳转不能抢走用户刚点击的输入框焦点");

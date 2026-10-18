@@ -89,10 +89,12 @@ pub(crate) fn build_menus(
         // match standard macOS conventions.
         vec![
             Menu {
+            disabled: false,
                 name: "Velora".into(),
                 items: command_menu_items(&strings, CommandMenu::App),
             },
             Menu {
+            disabled: false,
                 name: strings.menu_file.clone().into(),
                 items: file_menu_items(&strings, recent_items, true),
             },
@@ -102,6 +104,7 @@ pub(crate) fn build_menus(
     #[cfg(not(target_os = "macos"))]
     let initial_menus = {
         vec![Menu {
+            disabled: false,
             name: strings.menu_file.clone().into(),
             items: file_menu_items(&strings, recent_items, false),
         }]
@@ -112,18 +115,22 @@ pub(crate) fn build_menus(
     let mut menus = initial_menus;
     menus.extend([
         Menu {
+            disabled: false,
             name: strings.menu_export.clone().into(),
             items: command_menu_items(&strings, CommandMenu::Export),
         },
         Menu {
+            disabled: false,
             name: strings.menu_language.clone().into(),
             items: language_items,
         },
         Menu {
+            disabled: false,
             name: strings.menu_theme.clone().into(),
             items: theme_items,
         },
         Menu {
+            disabled: false,
             name: if current_language_id == "zh-CN" {
                 "视图"
             } else {
@@ -133,6 +140,7 @@ pub(crate) fn build_menus(
             items: command_menu_items(&strings, CommandMenu::View),
         },
         Menu {
+            disabled: false,
             name: strings.menu_help.clone().into(),
             items: help_items,
         },
@@ -187,7 +195,7 @@ fn hide_ai_menu_items(items: &mut Vec<MenuItem>, actions: &std::collections::Has
 
 /// Finds the editor window that should receive a picked folder: the active
 /// window when it is an editor, otherwise the most recent editor window.
-pub(super) fn editor_window_for_folder_open(cx: &App) -> Option<WindowHandle<Editor>> {
+pub(super) fn editor_window_for_folder_open(cx: &App) -> Option<crate::ui::ContentWindowHandle<Editor>> {
     let mut candidates = Vec::new();
     if let Some(window) = cx.active_window() {
         candidates.push(window);
@@ -198,12 +206,12 @@ pub(super) fn editor_window_for_folder_open(cx: &App) -> Option<WindowHandle<Edi
     candidates.extend(cx.windows());
     candidates
         .into_iter()
-        .find_map(|window| window.downcast::<Editor>())
+        .find_map(|window| crate::ui::window_content::<Editor>(window, cx))
 }
 
 /// Opens the in-app folder-destination dialog on the target window; the
 /// overlay itself renders from `Editor::pending_folder_choice`.
-fn prompt_folder_destination(cx: &mut App, target: WindowHandle<Editor>, folder: PathBuf) {
+fn prompt_folder_destination(cx: &mut App, target: crate::ui::ContentWindowHandle<Editor>, folder: PathBuf) {
     let _ = target.update(cx, |editor, _window, cx| {
         editor.pending_folder_choice = Some(folder);
         cx.notify();
@@ -461,7 +469,7 @@ pub(crate) fn handle_window_closed(cx: &mut App) {
 /// Installs menu state, action handlers, and the native menu bar.
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(AppMenuState::default());
-    let subscription = cx.on_window_closed(handle_window_closed);
+    let subscription = cx.on_window_closed(|cx, _| handle_window_closed(cx));
     cx.global_mut::<AppMenuState>().window_closed_subscription = Some(subscription);
 
     cx.on_action(|_: &crate::components::ToggleAiSidebar, cx| {

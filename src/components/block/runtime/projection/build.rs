@@ -121,6 +121,10 @@ impl ExpandedInlineProjection {
                     }
                     display_cursor += close_len;
 
+                    // 显形不能把脚注外侧的光标移进编号，否则下一次输入会改写引用。
+                    clean_to_display_cursor[clean_range.start] = run_display_start;
+                    clean_to_display_cursor[clean_range.end] = display_cursor;
+
                     footnote_runs.push(ExpandedFootnoteRun {
                         footnote: footnote.clone(),
                         clean_range: clean_range.clone(),

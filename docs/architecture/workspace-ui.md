@@ -6,12 +6,14 @@
 ## 1. 启动（src/main.rs）
 
 1. 解析参数（`-v/-h/-d(--detach)` + 文件/目录）；macOS detach 会重新拉起自身。
-2. `Application::new().with_assets(VeloraAssets)`——SVG 图标按精确路径 `include_bytes!` 内嵌。
+2. `gpui_kit::application().with_assets(VeloraAssets)`——自定义 SVG 按精确路径内嵌，其余资源交给 Kit 图标库。
 3. `app.run` 体内顺序：Dock 图标 → `config::load_or_create_app_preferences` → `I18nManager::init_with_language_id` → `ThemeManager::init_with_theme_id` → `EditorSettings::init` → `net::install_http_client` → `components::init_with_keybindings`。**菜单延迟安装**（首帧后计时器），首帧只画窗口。
 4. 首窗口：无参数 → `restore_last_session`（session.json；活动标签同步开，其余每帧间隔开一个）；有参数 → `open_startup_window`。随后 `restore_recovery_windows`（内容与磁盘一致的快照跳过）。
 5. `open_editor_window`（app_menu.rs）：恢复记住的窗口 frame（不在任何屏上就搬回主屏、尺寸保留）→ `Editor::from_file_source`；目录参数 → `open_workspace_window` + `set_workspace_root`。开窗后装两个监听：关窗前落盘 frame、拖动/缩放防抖落盘 frame（`editor/close.rs`）。
 
 `VELORA_STARTUP_TIMING=1` 把分阶段耗时打到 stderr。
+
+生产窗口通过 `src/ui.rs:open_window` 挂接 Kit `Root`，应用命令通过 `ContentWindowHandle` 与弱内容索引定位编辑器。窗口根不再直接是 `Editor`；不能用 `AnyWindowHandle::downcast::<Editor>` 识别文档窗口。
 
 ## 2. Workspace 是内嵌状态，不是实体
 
@@ -121,7 +123,7 @@
 - **命令注册表** `COMMANDS`（`src/commands.rs`）是系统菜单与命令面板的**唯一事实源**（`CommandSpec { id, 归属菜单, label 闭包读 i18n, action }`），有守卫测试。命令面板专有两档（Edit/Format）只进面板不进菜单栏，其 id 必须与键位表同名。
 - 文件菜单的「打开文件 / 打开文件夹 / 打开最近」连续排列。Windows 的偏好设置和检查更新由 `hamburger_root_commands` 提供一级动作；macOS 保留应用菜单，帮助菜单只列关于。欢迎页保留两个主按钮，最近目录显示路径并支持单条移除，移除只更新历史记录。
 - **快捷键的触发范围**：要让某个键"窗口有焦点就能按"，需要键位 `context: None` **且**动作有 App 级全局监听（`cx.on_action`）——两条缺一，焦点不在正文块上时按键会静默丢失。判据仍只有处理函数一处（如 ⌘/Ctrl-B 的"空选区开合侧栏 / 有选区加粗"全在 `Editor::on_bold_capture`）。
-- **派发机制三条**（vendor/gpui，改键盘/面板相关代码前先读）：
+- **派发机制三条**（vendor/gpui-pre，改键盘/面板相关代码前先读）：
   1. **焦点句柄不在当前渲染帧内时，按键派发回退到根节点**——挂在编辑器根元素上的 `on_action`/`capture_action` 整组收不到。所以收起侧栏要把焦点交还正文。
   2. **`App::on_action` 全局监听只在冒泡阶段回调**，且窗口 capture/bubble 任一阶段 stop_propagation 后就不再执行；它是唯一不受焦点状态影响的动作通道。
   3. **派发中的窗口还在 `window_update_stack` 上**，`WindowHandle::update` 与走 `cx.active_window()` 的助手取不到它；全局监听里要操作发键窗口必须 `cx.defer` 延后一拍（退出流程同此手法）。

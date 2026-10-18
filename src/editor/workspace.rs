@@ -561,14 +561,13 @@ fn show_async_message_modal(
     cx: &mut AsyncApp,
     build: impl FnOnce(&crate::i18n::I18nStrings) -> (String, String),
 ) {
-    let Some(handle) = window_handle.downcast::<Editor>() else {
+    let Some(handle) = cx.update(|cx| crate::ui::window_content::<Editor>(window_handle, cx)) else {
         let detail = cx
             .update(|cx| {
                 let strings = cx.global::<crate::i18n::I18nManager>().strings().clone();
                 let (title, detail) = build(&strings);
                 format!("{title}: {detail}")
-            })
-            .unwrap_or_else(|error| format!("读取提示文案失败：{error}"));
+            });
         eprintln!("无法显示提示（窗口不是编辑器窗口）：{detail}");
         return;
     };
@@ -644,6 +643,8 @@ pub(crate) fn clipboard_image_extension(format: gpui::ImageFormat) -> &'static s
         gpui::ImageFormat::Svg => "svg",
         gpui::ImageFormat::Bmp => "bmp",
         gpui::ImageFormat::Tiff => "tiff",
+        gpui::ImageFormat::Ico => "ico",
+        gpui::ImageFormat::Pnm => "pnm",
     }
 }
 

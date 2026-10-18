@@ -6,7 +6,7 @@ pub(super) use std::time::{Duration, Instant};
 pub(super) use gpui::{
     AnyWindowHandle, AppContext, ClickEvent, EntityInputHandler, Font, FontStyle, FontWeight,
     KeyDownEvent, Keystroke, Modifiers, TestAppContext, TextRun, VisualTestContext, WindowBounds,
-    WindowHandle, px,
+    px,
 };
 
 pub(super) use crate::editor::{Editor, MountedRun, ViewMode};
@@ -88,7 +88,7 @@ pub(super) fn perf_delta(
 }
 
 pub(super) fn redraw(cx: &mut gpui::VisualTestContext) {
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 }
 
@@ -142,7 +142,7 @@ pub(super) fn activate_visual_window(cx: &mut VisualTestContext) -> AnyWindowHan
 }
 
 /// 读取窗口 frame 为 (x, y, width, height)，用于窗口位置/大小断言。
-pub(super) fn windowed_rect(handle: &WindowHandle<Editor>, cx: &mut TestAppContext) -> (i32, i32, i32, i32) {
+pub(super) fn windowed_rect(handle: &crate::ui::ContentWindowHandle<Editor>, cx: &mut TestAppContext) -> (i32, i32, i32, i32) {
     handle
         .update(cx, |_editor, window, _cx| {
             let bounds = match window.window_bounds() {

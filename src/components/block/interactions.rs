@@ -27,7 +27,7 @@ impl Block {
     fn pasted_image_source_from_clipboard(item: &ClipboardItem) -> Option<PastedImageSource> {
         item.entries().iter().find_map(|entry| match entry {
             ClipboardEntry::Image(image) => Some(PastedImageSource::ClipboardImage(image.clone())),
-            ClipboardEntry::String(_) => None,
+            ClipboardEntry::String(_) | ClipboardEntry::ExternalPaths(_) => None,
         })
     }
 
@@ -811,7 +811,7 @@ impl Block {
             // language field rather than leaving the block, so the language is
             // reachable by keyboard. A further Down there exits the block.
             if self.kind().is_code_block() && !self.code_language_focus_handle.is_focused(window) {
-                self.code_language_focus_handle.focus(window);
+                self.code_language_focus_handle.focus(window, cx);
                 cx.notify();
                 return;
             }

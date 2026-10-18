@@ -385,6 +385,7 @@ async fn formula_editor_draft_backspace_deletes(cx: &mut TestAppContext) {
     });
 
     let backspace = gpui::KeyDownEvent {
+        prefer_character_input: false,
         keystroke: gpui::Keystroke::parse("backspace").expect("backspace"),
         is_held: false,
     };
@@ -574,7 +575,7 @@ async fn formula_editor_caret_only_while_draft_is_focused(cx: &mut TestAppContex
     });
 
     // 窗口失焦（截图里的状态：红绿灯是灰的，光标却还亮着）。
-    editor.update_in(cx, |_editor, window, _cx| window.blur());
+    editor.update_in(cx, |_editor, window, cx| window.blur(cx));
     redraw(cx);
     assert!(
         cx.debug_bounds("formula-editor-caret").is_none(),
@@ -677,6 +678,7 @@ async fn formula_editor_mouse_click_and_drag_select(cx: &mut TestAppContext) {
     // 选区里的退格删掉整段（删除路径本来就吃选区，这里是守住新选区接得上）。
     editor.update_in(cx, |editor, window, cx| {
         let backspace = gpui::KeyDownEvent {
+        prefer_character_input: false,
             keystroke: gpui::Keystroke::parse("backspace").expect("backspace"),
             is_held: false,
         };
@@ -870,6 +872,7 @@ fn press_draft_key(
     editor.update_in(cx, |editor, window, cx| {
         let keystroke = gpui::Keystroke::parse(keys).expect(keys);
         let event = gpui::KeyDownEvent {
+        prefer_character_input: false,
             keystroke,
             is_held: false,
         };
@@ -1174,6 +1177,7 @@ async fn formula_editor_draft_select_all_copy_cut_paste(cx: &mut TestAppContext)
         editor.update_in(cx, |editor, window, cx| {
             let keystroke = gpui::Keystroke::parse(keys).expect(keys);
             let event = gpui::KeyDownEvent {
+        prefer_character_input: false,
                 keystroke,
                 is_held: false,
             };

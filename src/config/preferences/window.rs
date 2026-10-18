@@ -638,7 +638,7 @@ impl PreferencesWindow {
         });
         cx.refresh_windows();
         window.activate_window();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         self.saved_startup_open = self.startup_open;
         self.saved_theme_id = self.selected_theme_id.clone();
         self.saved_image_paste_behavior = self.image_paste_behavior;

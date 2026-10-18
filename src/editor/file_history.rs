@@ -455,7 +455,7 @@ impl Editor {
                     .collect()
             },
         )
-        .track_scroll(overlay.scroll.clone())
+        .track_scroll(&overlay.scroll)
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .flex_1()
         .min_h(px(0.0))

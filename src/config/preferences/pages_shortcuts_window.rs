@@ -150,7 +150,7 @@ impl PreferencesWindow {
     ) {
         self.recording_shortcut = Some(command);
         self.shortcut_error = None;
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 

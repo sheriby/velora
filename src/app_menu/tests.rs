@@ -49,65 +49,114 @@ mod tests {
 
     #[test]
     fn windows_manifest_is_embedded_only_by_velora_in_builds_and_tests() {
-        let manifest: toml::Value =
-            toml::from_str(include_str!("../../Cargo.toml")).expect("应用 Cargo 配置");
-        let gpui_manifest: toml::Value =
-            toml::from_str(include_str!("../../vendor/gpui/Cargo.toml")).expect("GPUI Cargo 配置");
-        let feature_definitions = gpui_manifest["features"].as_table().expect("GPUI 特性表");
+        let manifest: toml::Value = toml::from_str(include_str!("../../Cargo.toml")).expect("应用 Cargo 配置");
+        let core: toml::Value = toml::from_str(include_str!("../../vendor/gpui-pre/Cargo.toml")).expect("GPUI Cargo 配置");
         assert!(include_str!("../../resources/windows/velora.rc").contains("1 RT_MANIFEST"));
-        assert!(
-            include_str!("../../resources/windows/velora.manifest.xml")
-                .contains("Microsoft.Windows.Common-Controls")
-        );
-
+        assert!(include_str!("../../resources/windows/velora.manifest.xml").contains("Microsoft.Windows.Common-Controls"));
         for section in ["dependencies", "dev-dependencies"] {
-            let dependency = &manifest[section]["gpui"];
-            let mut pending: Vec<String> = dependency["features"]
-                .as_array()
-                .expect("GPUI 特性列表")
-                .iter()
-                .map(|feature| feature.as_str().expect("特性名称").to_string())
-                .collect();
-            if dependency
-                .get("default-features")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(true)
-            {
-                pending.push("default".into());
-            }
-            let mut enabled = std::collections::BTreeSet::new();
-            while let Some(feature) = pending.pop() {
-                if !enabled.insert(feature.clone()) {
-                    continue;
-                }
-                if let Some(children) = feature_definitions
-                    .get(&feature)
-                    .and_then(toml::Value::as_array)
-                {
-                    pending.extend(
-                        children
-                            .iter()
-                            .filter_map(toml::Value::as_str)
-                            .map(str::to_string),
-                    );
-                }
-            }
-            // Cargo 会合并生产与测试的 GPUI 特性，任一入口启用框架 manifest 都会重复嵌入。
+            assert!(manifest[section].get("gpui").is_none(), "{section} 不应再引入另一份旧 GPUI");
+            assert!(manifest[section].get("gpui-kit").is_some(), "{section} 应共用 Kit 入口");
+        }
+        let defaults = core["features"]["default"].as_array().expect("GPUI 默认特性");
+        assert!(defaults.iter().any(|feature| feature.as_str() == Some("windows-manifest-provided-by-host")),
+            "Kit 会合并开启 GPUI 默认特性，核心必须保留宿主 manifest 的优先权");
+        assert!(include_str!("../../vendor/gpui-pre/build.rs").contains("not(feature = \"windows-manifest-provided-by-host\")"),
+            "核心构建脚本应跳过宿主已提供的 manifest");
+    }
+
+    // macOS 门禁也要发现 Windows 补丁被漏带；这组源码守卫不代替原生系统验收。
+    #[test]
+    fn vendored_windows_ime_diagnostics_cover_committed_and_composing_text() {
+        let source = include_str!("../../vendor/gpui-pre-windows/src/events.rs");
+        for event in [
+            "handled_by_app=",
+            "WM_CHAR {input:?}",
+            "WM_IME_COMPOSITION lparam=",
+            "GCS_COMPSTR",
+            "GCS_RESULTSTR",
+            "无输入处理器",
+        ] {
             assert!(
-                !enabled.contains("windows-manifest"),
-                "{section} 又启用了 GPUI manifest：原生 MSVC 会收到两个 RT_MANIFEST / name 1"
+                source.lines().any(|line| line.contains(event)
+                    && (line.contains('"') || line.contains("ime_debug_log"))),
+                "Windows IME 诊断缺少事件：{event}"
             );
-            if section == "dependencies" {
-                for feature in feature_definitions["default"].as_array().expect("GPUI 默认特性") {
-                    let feature = feature.as_str().expect("特性名称");
-                    if feature != "windows-manifest" {
-                        assert!(enabled.contains(feature), "不应丢失 GPUI 默认特性 {feature}");
-                    }
-                }
-            }
         }
     }
 
+    #[test]
+    fn vendored_windows_file_dialogs_keep_folder_fallback_and_persisted_identity() {
+        let source = include_str!("../../vendor/gpui-pre-windows/src/platform.rs");
+        assert!(
+            source.contains("fn shell_folder_item("),
+            "起始目录解析失败应回退默认目录，不能中断打开或保存"
+        );
+        assert!(
+            source.contains("0x7d1c2f5e_9a44_4b3c_8f61_5e0a9b6c4d27"),
+            "保留既有 client GUID，不重置用户的选择器状态"
+        );
+        assert_eq!(
+            source
+                .matches("SetClientGuid(&VELORA_FILE_DIALOG_CLIENT_GUID)")
+                .count(),
+            2,
+            "打开与保存共用原来的持久化标识"
+        );
+        let dialogs = source
+            .split_once("fn file_open_dialog(")
+            .expect("打开对话框")
+            .1;
+        assert!(
+            dialogs.contains("and_then(shell_folder_item)"),
+            "打开对话框应允许起始目录解析失败"
+        );
+        assert!(
+            dialogs.contains("shell_folder_item(&directory)"),
+            "保存对话框应允许起始目录解析失败"
+        );
+        assert!(
+            !dialogs.contains("SetFolder(&folder)?"),
+            "设置目录失败也应继续显示对话框"
+        );
+    }
+
+    #[test]
+    fn vendored_linux_backends_keep_the_existing_core_field_compatibility() {
+        let manifest: toml::Value =
+            toml::from_str(include_str!("../../Cargo.toml")).expect("应用 Cargo 配置");
+        for package in ["gpui-pre-linux", "gpui-pre-wgpu"] {
+            assert!(
+                manifest["patch"]["crates-io"].get(package).is_some(),
+                "新增核心字段时不能遗漏平台构造器：{package}"
+            );
+        }
+        let portal = include_str!("../../vendor/gpui-pre-linux/src/linux/platform.rs");
+        let open = portal
+            .split_once("fn prompt_for_paths(")
+            .expect("打开入口")
+            .1
+            .split("fn prompt_for_new_path(")
+            .next()
+            .expect("打开实现");
+        assert!(
+            open.contains("options.directory") && open.contains(".current_folder("),
+            "Linux 打开选择器保留原有起始目录能力"
+        );
+        let clipboard = include_str!("../../vendor/gpui-pre-linux/src/linux/wayland/clipboard.rs");
+        assert!(
+            clipboard.contains("html: None"),
+            "Wayland 图片载荷补齐核心 HTML 字段"
+        );
+        let text = include_str!("../../vendor/gpui-pre-wgpu/src/cosmic_text_system.rs");
+        assert!(
+            text.contains("font_size: None"),
+            "CosmicText 仍按整行字号排版，补齐结果字段"
+        );
+        assert!(
+            text.contains("font_size: run.font_size"),
+            "裁切 FontRun 时不能丢掉核心新增字段"
+        );
+    }
     fn action_name(item: &MenuItem) -> &str {
         match item {
             MenuItem::Action { name, .. } => name.as_ref(),
@@ -190,6 +239,7 @@ mod tests {
         let file_menu = command_menu(menus, "open_file");
         submenu(&file_menu.items[recent_submenu_slot(file_menu)])
     }
+
 
     #[test]
     fn applescript_string_literal_escapes_special_characters() {
@@ -692,6 +742,7 @@ mod tests {
         let strings = crate::i18n::I18nStrings::en_us();
         for has_app_menu in [true, false] {
             let menu = Menu {
+            disabled: false,
                 name: strings.menu_file.clone().into(),
                 items: crate::app_menu::command_menus::file_menu_items(&strings, Vec::new(), has_app_menu),
             };
